@@ -367,6 +367,21 @@
 		color-scheme: dark;
 	}
 
+	/* Tailwind v4 Preflight removes the `cursor: pointer` UA default on
+	   <button>. Put it back globally so every clickable control (rail
+	   tiles, dropdown items, icon buttons, etc.) shows the hand cursor
+	   without needing a per-button `cursor-pointer` class. Disabled
+	   controls and aria-disabled controls intentionally keep the default
+	   cursor so users get a visual hint that they can't click. */
+	button:not(:disabled):not([aria-disabled="true"]),
+	[role="button"]:not(:disabled):not([aria-disabled="true"]),
+	[role="tab"]:not(:disabled):not([aria-disabled="true"]),
+	[role="option"]:not(:disabled):not([aria-disabled="true"]),
+	[role="menuitem"]:not(:disabled):not([aria-disabled="true"]),
+	summary {
+		cursor: pointer;
+	}
+
 	html,
 	body {
 		height: 100%;

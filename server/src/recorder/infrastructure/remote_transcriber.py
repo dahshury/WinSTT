@@ -137,8 +137,7 @@ def dispatch_to_cloud_sender(envelope: dict[str, Any]) -> None:
         sender = _cloud_sender
     if sender is None:
         raise TranscriptionError(
-            "No cloud sender registered; cloud STT requires the stt_server "
-            "to call register_cloud_sender() at startup."
+            "No cloud sender registered; cloud STT requires the stt_server to call register_cloud_sender() at startup."
         )
     sender(envelope)
 
@@ -289,9 +288,7 @@ class RemoteTranscriber(ITranscriber):
             response = future.result(timeout=self._request_timeout_s)
         except FutureTimeoutError as exc:
             self._remove_pending(request_id)
-            raise TranscriptionError(
-                f"Cloud transcribe timed out after {self._request_timeout_s:.0f}s"
-            ) from exc
+            raise TranscriptionError(f"Cloud transcribe timed out after {self._request_timeout_s:.0f}s") from exc
         finally:
             self._remove_pending(request_id)
 
@@ -337,9 +334,7 @@ class RemoteTranscriber(ITranscriber):
             self._pending.clear()
         for entry in pending:
             if not entry.future.done():
-                entry.future.set_exception(
-                    TranscriptionError("RemoteTranscriber shut down with pending request")
-                )
+                entry.future.set_exception(TranscriptionError("RemoteTranscriber shut down with pending request"))
         # Only clear the active pointer if it's still pointing at us — a
         # newer swap may already have installed its own transcriber.
         global _active_transcriber
@@ -361,11 +356,7 @@ class RemoteTranscriber(ITranscriber):
             text = response.get("text", "")
             language = response.get("language") or ""
             duration = response.get("duration_seconds")
-            elapsed = (
-                float(duration)
-                if isinstance(duration, int | float)
-                else time.time() - started_at
-            )
+            elapsed = float(duration) if isinstance(duration, int | float) else time.time() - started_at
             return TranscriptionResult(
                 text=str(text),
                 language=str(language),

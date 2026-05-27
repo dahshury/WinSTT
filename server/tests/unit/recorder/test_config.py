@@ -23,7 +23,10 @@ class TestRecorderConfig:
         config = RecorderConfig()
         assert config.audio.sample_rate == 16000
         assert config.audio.buffer_size == 512
-        assert config.vad.silero_sensitivity == 0.4
+        # 0.7 → Silero trip threshold 0.3, matching Handy. The
+        # previous 0.4 default (trip > 0.6) silently rejected
+        # quiet / distant speech.
+        assert config.vad.silero_sensitivity == 0.7
         assert config.vad.speech_onset_consecutive_chunks == 3
         assert config.transcription.model == "tiny"
         assert config.wake_word.wakeword_backend == ""
@@ -93,16 +96,16 @@ class TestRecorderConfig:
         config = RecorderConfig.from_kwargs(
             buffer_size=256,
             post_speech_silence_duration=1.25,
-            beam_size=7,
-            beam_size_realtime=4,
+            language="ja",
+            realtime_processing_pause=0.5,
             wake_word_timeout=9.0,
             debug_mode=True,
             detection_speed=2.0,
         )
         assert config.audio.buffer_size == 256
         assert config.vad.post_speech_silence_duration == 1.25
-        assert config.transcription.beam_size == 7
-        assert config.realtime.beam_size_realtime == 4
+        assert config.transcription.language == "ja"
+        assert config.realtime.realtime_processing_pause == 0.5
         assert config.wake_word.wake_word_timeout == 9.0
         assert config.ui.debug_mode is True
         assert config.endpoint.detection_speed == 2.0
@@ -186,9 +189,9 @@ class TestRouteKwargsHelpers:
     def test_route_kwargs_drops_unknown_and_buckets_known(self) -> None:
         subconfigs = RecorderConfig._SUBCONFIGS
         buckets = RecorderConfig._route_kwargs(
-            {"buffer_size": 256, "beam_size": 7, "nope": 1},
+            {"buffer_size": 256, "language": "ja", "nope": 1},
             subconfigs,
         )
         assert buckets[0] == {"buffer_size": 256}
-        assert buckets[2] == {"beam_size": 7}
+        assert buckets[2] == {"language": "ja"}
         assert buckets[1] == {}

@@ -29,13 +29,13 @@ This is **in addition to** the standard Authenticode signature that the Windows 
   <Tab value="Windows">
     Using [Scoop](https://scoop.sh/):
 
-    ```pwsh
+    ```powershell
     scoop install minisign
     ```
 
     Or using [Chocolatey](https://chocolatey.org/):
 
-    ```pwsh
+    ```powershell
     choco install minisign
     ```
   </Tab>
@@ -94,7 +94,7 @@ minisign -Vm "$ARTIFACT" \
 
 On Windows PowerShell:
 
-```pwsh
+```powershell
 $ARTIFACT = "WinSTT-CPU-Portable-0.4.0.exe"
 
 minisign -Vm $ARTIFACT `

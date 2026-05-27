@@ -1,6 +1,6 @@
 import { PlugSocketIcon } from "@hugeicons/core-free-icons";
-import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,

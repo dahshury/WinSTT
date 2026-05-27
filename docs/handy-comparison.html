@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Field Report №02 — The Adoption Briefing</title>
-<meta name="description" content="An action-oriented plan to adopt Handy's strongest features onto WinSTT's Electron + ONNX stack, including a path to macOS and Linux." />
+<title>Field Report №04 — The Optimization Pass</title>
+<meta name="description" content="A five-axis follow-up audit of WinSTT against Handy. Binary size, audio preprocessing, model coverage, DirectML/ONNX tuning, RAM/CPU/GPU — what we shipped since v03, what's still on the table, and the actionable steps to reach parity (or beat) without giving up a single feature." />
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -12,8 +12,8 @@
 
 <style>
 /* ============================================================
-   FIELD REPORT №02 — Adoption Briefing
-   Editorial broadsheet. Same type system as №01.
+   FIELD REPORT №03 — The Architecture Audit
+   Editorial broadsheet. Same type system as №01 / №02.
    Type: Fraunces (display) · Newsreader (body) · JBM (mono)
    ============================================================ */
 
@@ -34,15 +34,18 @@
   --gold:       #d4a557;
 
   /* Verdict badges */
+  --w-handy:    #7eb5a8;
+  --w-winstt:   #ff7a1a;
+  --w-tie:      #d4a557;
+  --w-mixed:    #c8a4d4;
+
   --copy:       #8fd17e;
   --copy-dim:   #4d8240;
-  --equiv:      #d4a557;
-  --equiv-dim:  #8a6b2f;
   --custom:     #d97757;
   --custom-dim: #8a4226;
   --skip:       #6b6358;
 
-  --col-width:  78rem;
+  --col-width:  82rem;
   --gutter:     2.5rem;
 }
 
@@ -143,7 +146,7 @@ a { color: inherit; text-decoration: none; }
 h1.hero-title {
   font-family: 'Fraunces', serif;
   font-weight: 320;
-  font-size: clamp(3rem, 9.5vw, 8.4rem);
+  font-size: clamp(3rem, 9vw, 8rem);
   line-height: 0.92;
   letter-spacing: -0.04em;
   font-variation-settings: 'opsz' 144, 'SOFT' 0;
@@ -156,6 +159,9 @@ h1.hero-title em {
   color: var(--gold);
   padding: 0 0.05em;
 }
+h1.hero-title .v-winstt { color: var(--winstt); font-style: normal; font-weight: 380; font-variation-settings: 'opsz' 144, 'SOFT' 0, 'WONK' 0; }
+h1.hero-title .v-handy  { color: var(--handy);  font-style: normal; font-weight: 380; font-variation-settings: 'opsz' 144, 'SOFT' 0, 'WONK' 0; }
+
 .standfirst {
   font-family: 'Newsreader', serif;
   font-style: italic;
@@ -164,22 +170,20 @@ h1.hero-title em {
   font-size: clamp(1.25rem, 2.1vw, 1.7rem);
   line-height: 1.45;
   color: var(--paper-dim);
-  max-width: 58ch;
+  max-width: 62ch;
   margin-bottom: 3rem;
 }
+.standfirst b { color: var(--paper); font-weight: 500; font-style: normal; }
 
-/* ─── The Constraints panel — front-and-center ──────────────── */
-.constraints {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 0;
+/* ─── Scoreboard (top-of-page verdict summary) ──────────────── */
+.scoreboard {
+  margin: 3rem 0 0;
   border-top: 2px solid var(--paper);
   border-bottom: 2px solid var(--paper);
   position: relative;
-  margin: 3rem 0 0;
 }
-.constraints::before {
-  content: 'The Constraints';
+.scoreboard::before {
+  content: 'The Scoreboard';
   position: absolute;
   top: -0.7rem;
   left: 50%;
@@ -192,134 +196,150 @@ h1.hero-title em {
   text-transform: uppercase;
   color: var(--paper);
 }
-.constraints > div {
-  padding: 2.5rem 2rem 2rem;
-  border-right: 1px solid var(--rule);
-}
-.constraints > div:last-child { border-right: 0; }
-.constraints h3 {
-  font-family: 'Fraunces', serif;
-  font-style: italic;
-  font-weight: 380;
-  font-variation-settings: 'opsz' 60;
-  font-size: 1.6rem;
-  letter-spacing: -0.02em;
-  margin-bottom: 0.6rem;
-}
-.constraints .lock-tag {
-  display: inline-block;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6rem;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: var(--winstt);
-  border: 1px solid var(--winstt-dim);
-  padding: 0.25rem 0.65rem;
-  margin-bottom: 1rem;
-  border-radius: 999px;
-}
-.constraints .lock-tag.allow {
-  color: var(--copy);
-  border-color: var(--copy-dim);
-}
-.constraints p {
-  font-size: 0.97rem;
-  line-height: 1.55;
-  color: var(--paper-dim);
-}
-.constraints p b { color: var(--paper); font-weight: 600; }
-
-/* ─── Legend ────────────────────────────────────────────────── */
-.legend {
-  margin: 3rem 0 0;
-  padding: 1.5rem 2rem;
-  background: var(--ink-soft);
-  border: 1px solid var(--rule);
+.scoreboard-row {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  column-gap: 2rem;
-  row-gap: 0.6rem;
-  align-items: baseline;
+  grid-template-columns: 4.5rem 1fr 1fr 1fr 9rem;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1.8rem 1rem 1.6rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.92rem;
+  line-height: 1.45;
 }
-.legend h4 {
+.scoreboard-row:last-of-type { border-bottom: 0; }
+.scoreboard-row:first-of-type { padding-top: 2.8rem; }
+
+.sb-num {
+  font-family: 'Fraunces', serif;
+  font-weight: 300;
+  font-style: italic;
+  font-variation-settings: 'opsz' 96;
+  font-size: 2.6rem;
+  line-height: 1;
+  color: var(--paper-faint);
+  letter-spacing: -0.04em;
+}
+.sb-axis {
+  font-family: 'Fraunces', serif;
+  font-weight: 420;
+  font-variation-settings: 'opsz' 36;
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+.sb-axis small {
+  display: block;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.65rem;
-  letter-spacing: 0.3em;
+  font-size: 0.58rem;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--paper-faint);
+  font-weight: 400;
+  margin-top: 0.4rem;
 }
-.legend-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
+.sb-side {
   font-size: 0.85rem;
   color: var(--paper-dim);
 }
-.legend-row + .legend-row { margin-top: 0.4rem; }
-
-/* ─── Status badges ─────────────────────────────────────────── */
-.badge {
-  display: inline-block;
+.sb-side .who {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.65rem;
-  letter-spacing: 0.22em;
+  font-size: 0.55rem;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
-  padding: 0.35rem 0.85rem;
-  border-radius: 999px;
-  font-weight: 500;
-  white-space: nowrap;
+  margin-bottom: 0.3rem;
 }
-.badge.copy   { background: rgba(143,209,126,0.12); color: var(--copy);   border: 1px solid var(--copy-dim); }
-.badge.equiv  { background: rgba(212,165,87,0.12);  color: var(--equiv);  border: 1px solid var(--equiv-dim); }
-.badge.custom { background: rgba(217,119,87,0.12);  color: var(--custom); border: 1px solid var(--custom-dim); }
-.badge.skip   { background: rgba(118,108,92,0.12);  color: var(--skip);   border: 1px solid var(--rule); }
+.sb-side.handy .who  { color: var(--handy); }
+.sb-side.winstt .who { color: var(--winstt); }
+.sb-side b { color: var(--paper); font-weight: 600; }
 
-/* Effort dots */
-.effort {
+.verdict-pill {
   display: inline-flex;
-  gap: 4px;
   align-items: center;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.65rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--paper-faint);
-}
-.effort .dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--rule);
-}
-.effort .dot.filled { background: var(--paper); }
-
-/* Stack chips */
-.stack-chip {
-  display: inline-block;
+  gap: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.62rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  padding: 0.22rem 0.6rem;
-  border: 1px solid var(--rule);
-  color: var(--paper-faint);
-  background: var(--ink-soft);
-  margin-right: 0.35rem;
-  margin-bottom: 0.35rem;
-  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.stack-chip.electron { color: #8db5e8; border-color: #2d4a6e; background: rgba(141,181,232,0.05); }
-.stack-chip.onnx     { color: var(--gold); border-color: var(--equiv-dim); background: rgba(212,165,87,0.05); }
-.stack-chip.python   { color: var(--handy); border-color: var(--handy-dim); background: rgba(126,181,168,0.05); }
-.stack-chip.ts       { color: #c8a4d4; border-color: #5d3d6b; background: rgba(200,164,212,0.05); }
-.stack-chip.native   { color: var(--custom); border-color: var(--custom-dim); background: rgba(217,119,87,0.05); }
+.verdict-pill.handy  { color: var(--handy);  background: rgba(126,181,168,0.12); border: 1px solid var(--handy-dim); }
+.verdict-pill.winstt { color: var(--winstt); background: rgba(255,122,26,0.12); border: 1px solid var(--winstt-dim); }
+.verdict-pill.tie    { color: var(--gold);   background: rgba(212,165,87,0.12); border: 1px solid #8a6b2f; }
+.verdict-pill.mixed  { color: var(--w-mixed); background: rgba(200,164,212,0.10); border: 1px solid #5d3d6b; }
 
-/* ─── Part label ────────────────────────────────────────────── */
+/* ─── Numbers panel — hard stats up front ───────────────────── */
+.numbers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  border-bottom: 2px solid var(--paper);
+  margin: 0 0 4rem;
+}
+.numbers > div {
+  padding: 2.4rem 1.8rem 2rem;
+  border-right: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+}
+.numbers > div:nth-child(3n) { border-right: 0; }
+.numbers .num-label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  margin-bottom: 1rem;
+}
+.numbers .num-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.6rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.numbers .num-row .nm {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.numbers .num-row.handy .nm  { color: var(--handy); }
+.numbers .num-row.winstt .nm { color: var(--winstt); }
+.numbers .num-row .val {
+  font-family: 'Fraunces', serif;
+  font-size: 1.4rem;
+  font-weight: 380;
+  font-variation-settings: 'opsz' 60;
+  color: var(--paper);
+  letter-spacing: -0.02em;
+  font-style: italic;
+}
+.numbers .num-row .val small {
+  font-style: normal;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.18em;
+  color: var(--paper-faint);
+  text-transform: uppercase;
+  margin-left: 0.4rem;
+}
+.numbers .num-foot {
+  font-size: 0.78rem;
+  color: var(--paper-faint);
+  font-style: italic;
+  line-height: 1.4;
+  margin-top: 0.4rem;
+}
+
+/* ─── Part labels ───────────────────────────────────────────── */
 .part-label {
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  margin: 6rem 0 2.5rem;
+  margin: 7rem 0 2.5rem;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.7rem;
   text-transform: uppercase;
@@ -336,17 +356,65 @@ h1.hero-title em {
   background: linear-gradient(90deg, var(--rule), var(--rule) 70%, transparent);
 }
 
-/* ─── Adoption card ─────────────────────────────────────────── */
-.card {
+/* ─── Axis intro ────────────────────────────────────────────── */
+.axis-intro {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 3rem;
+  margin: 0 0 4rem;
+  padding: 0 0 3rem;
+  border-bottom: 1px solid var(--rule);
+}
+.axis-intro h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 320;
+  font-size: clamp(2.2rem, 5vw, 3.8rem);
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  font-variation-settings: 'opsz' 144, 'SOFT' 0;
+}
+.axis-intro h2 em {
+  font-style: italic;
+  color: var(--gold);
+  font-weight: 280;
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 1;
+}
+.axis-intro h2 small {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  margin-bottom: 0.8rem;
+  font-style: normal;
+  font-weight: 400;
+}
+.axis-intro .axis-thesis p {
+  font-size: 1.05rem;
+  line-height: 1.55;
+  margin-bottom: 1rem;
+  color: var(--paper-dim);
+}
+.axis-intro .axis-thesis p b { color: var(--paper); font-weight: 500; }
+.axis-intro .axis-thesis p:first-child {
+  font-family: 'Newsreader', serif;
+  font-style: italic;
+  font-variation-settings: 'opsz' 36;
+  font-size: 1.25rem;
+  color: var(--paper);
+}
+
+/* ─── Comparison card — Handy / WinSTT split ────────────────── */
+.cmp {
   display: grid;
   grid-template-columns: 5rem 1fr;
   column-gap: 2rem;
-  margin: 3.5rem 0;
+  margin: 3rem 0;
   padding-top: 2rem;
   border-top: 1px solid var(--rule-soft);
 }
-
-.card-num {
+.cmp-num {
   font-family: 'Fraunces', serif;
   font-weight: 300;
   font-size: 3.5rem;
@@ -356,7 +424,7 @@ h1.hero-title em {
   color: var(--paper-faint);
   font-style: italic;
 }
-.card-num small {
+.cmp-num small {
   display: block;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.58rem;
@@ -365,15 +433,14 @@ h1.hero-title em {
   font-style: normal;
   margin-top: 0.4rem;
 }
-
-.card-head {
+.cmp-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 1rem 1.5rem;
-  margin-bottom: 1.2rem;
+  margin-bottom: 1.5rem;
 }
-.card-head h2 {
+.cmp-head h3 {
   font-family: 'Fraunces', serif;
   font-weight: 420;
   font-size: clamp(1.55rem, 2.7vw, 2.1rem);
@@ -383,287 +450,330 @@ h1.hero-title em {
   flex: 1 1 auto;
   min-width: 280px;
 }
-.card-meta {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  flex-wrap: wrap;
+.cmp-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
 }
-
-/* "They:" block — small Handy summary */
-.they {
-  margin: 0.5rem 0 1.6rem;
-  padding: 0.9rem 1.2rem;
+.cmp-split > div {
+  padding: 1.4rem 1.5rem;
+  font-size: 0.93rem;
+  line-height: 1.55;
+}
+.cmp-split .h {
+  border-right: 1px solid var(--rule);
   background: rgba(126,181,168,0.04);
-  border-left: 2px solid var(--handy-dim);
-  font-size: 0.94rem;
-  line-height: 1.5;
-  color: var(--paper-dim);
 }
-.they::before {
-  content: 'Handy';
-  display: block;
+.cmp-split .w {
+  background: rgba(255,122,26,0.04);
+}
+.cmp-split .label {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.6rem;
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: var(--handy);
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.7rem;
+}
+.cmp-split .h .label { color: var(--handy); }
+.cmp-split .w .label { color: var(--winstt); }
+.cmp-split p { margin-bottom: 0.55rem; color: var(--paper-dim); }
+.cmp-split p:last-child { margin-bottom: 0; }
+.cmp-split b { color: var(--paper); font-weight: 500; }
+
+.cmp-verdict {
+  margin-top: 0;
+  padding: 1.2rem 1.5rem;
+  border: 1px solid var(--rule);
+  border-top: 0;
+  background: var(--ink-soft);
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+.cmp-verdict .v-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  padding-top: 0.5rem;
+}
+.cmp-verdict .v-body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.cmp-verdict .v-body b { color: var(--paper); font-weight: 600; }
+.cmp-verdict .v-body p { margin-bottom: 0.5rem; }
+.cmp-verdict .v-body p:last-child { margin-bottom: 0; }
+.cmp-verdict .v-body .verdict-pill { margin-bottom: 0.7rem; }
+
+/* ─── Engine matrix (Axis II special) ───────────────────────── */
+.engine-matrix {
+  margin: 3rem 0 0;
+  border: 1px solid var(--rule);
+}
+.engine-matrix table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.engine-matrix th, .engine-matrix td {
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+.engine-matrix th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  font-weight: 500;
+  background: var(--ink-soft);
+  border-bottom: 1px solid var(--rule);
+}
+.engine-matrix td.engine {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--gold);
+  letter-spacing: 0.04em;
+}
+.engine-matrix td.size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--paper-dim);
+}
+.engine-matrix td .yes { color: var(--copy); font-weight: 500; }
+.engine-matrix td .no  { color: var(--paper-faint); }
+
+/* ─── LOC inventory table ───────────────────────────────────── */
+.loc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  margin: 2rem 0;
+  font-variant-numeric: tabular-nums;
+}
+.loc-table th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  font-weight: 500;
+  padding: 0.7rem 0.9rem;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+  background: var(--ink-soft);
+}
+.loc-table th.num { text-align: right; }
+.loc-table td {
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.loc-table td.num { text-align: right; color: var(--paper); }
+.loc-table tr.total td {
+  font-weight: 600;
+  color: var(--paper);
+  background: rgba(255,255,255,0.02);
+  border-top: 1px solid var(--rule);
+}
+.loc-table .ratio {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--gold);
+  letter-spacing: 0.05em;
 }
 
-/* "Our path:" block — the meaty one */
-.path {
-  margin: 0;
-  padding: 1.4rem 1.6rem 1.2rem;
-  background: linear-gradient(180deg, rgba(255,122,26,0.04), rgba(255,122,26,0.01));
-  border-left: 3px solid var(--winstt);
+/* ─── Big-pull quote ─────────────────────────────────────────── */
+.pull {
+  margin: 4rem 0;
+  padding: 2.5rem 2rem;
+  border-top: 2px solid var(--paper);
+  border-bottom: 2px solid var(--paper);
+  text-align: center;
+  font-family: 'Fraunces', serif;
+  font-style: italic;
+  font-weight: 320;
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 1;
+  font-size: clamp(1.6rem, 4vw, 2.6rem);
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  color: var(--paper);
 }
-.path::before {
-  content: 'Our Path';
+.pull em { color: var(--gold); font-style: italic; }
+.pull-attr {
   display: block;
+  margin-top: 1.2rem;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 0.62rem;
+  font-style: normal;
+  font-size: 0.65rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  font-variation-settings: normal;
+}
+
+/* ─── Plan section ──────────────────────────────────────────── */
+.plan {
+  margin: 6rem 0 4rem;
+}
+.plan-intro {
+  margin-bottom: 4rem;
+}
+.plan-intro h2 {
+  font-family: 'Fraunces', serif;
+  font-weight: 320;
+  font-size: clamp(2.4rem, 6vw, 4.4rem);
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  font-variation-settings: 'opsz' 144, 'SOFT' 0;
+  margin-bottom: 1rem;
+}
+.plan-intro h2 em {
+  font-style: italic;
+  color: var(--gold);
+  font-weight: 280;
+  font-variation-settings: 'opsz' 144, 'SOFT' 100, 'WONK' 1;
+}
+.plan-intro p {
+  font-size: 1.1rem;
+  line-height: 1.55;
+  color: var(--paper-dim);
+  max-width: 62ch;
+}
+.tier {
+  margin-bottom: 3.5rem;
+}
+.tier-head {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--rule);
+}
+.tier-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.85rem;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.tier-tag.t1 { color: var(--winstt); background: rgba(255,122,26,0.12); border: 1px solid var(--winstt-dim); }
+.tier-tag.t2 { color: var(--gold); background: rgba(212,165,87,0.12); border: 1px solid #8a6b2f; }
+.tier-tag.t3 { color: var(--paper-faint); background: var(--ink-soft); border: 1px solid var(--rule); }
+.tier-head h3 {
+  font-family: 'Fraunces', serif;
+  font-weight: 400;
+  font-size: 1.6rem;
+  font-style: italic;
+  font-variation-settings: 'opsz' 60;
+  color: var(--paper);
+}
+.tier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+}
+.tier-item {
+  padding: 1.5rem 1.6rem;
+  background: var(--ink);
+}
+.tier-item h4 {
+  font-family: 'Fraunces', serif;
+  font-weight: 420;
+  font-size: 1.15rem;
+  margin-bottom: 0.5rem;
+  letter-spacing: -0.01em;
+}
+.tier-item .meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-faint);
+  margin-bottom: 0.8rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.tier-item .meta .e-cost { color: var(--gold); }
+.tier-item .meta .e-impact { color: var(--copy); }
+.tier-item p {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--paper-dim);
+}
+.tier-item p b { color: var(--paper); font-weight: 500; }
+.tier-item .files {
+  margin-top: 0.7rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--paper-faint);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+/* ─── Exit-criteria card ────────────────────────────────────── */
+.exit {
+  margin: 4rem 0 2rem;
+  padding: 2.5rem 2rem;
+  border: 2px solid var(--winstt-dim);
+  background: linear-gradient(180deg, rgba(255,122,26,0.06), rgba(255,122,26,0.01));
+}
+.exit h3 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
   letter-spacing: 0.32em;
   text-transform: uppercase;
   color: var(--winstt);
-  margin-bottom: 0.7rem;
+  margin-bottom: 1.5rem;
 }
-.path p { font-size: 0.97rem; line-height: 1.55; }
-.path p + p { margin-top: 0.7rem; }
-.path ol, .path ul {
-  margin-top: 0.7rem;
-  padding-left: 1.5rem;
+.exit ul {
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 2rem;
+}
+.exit ul li {
+  position: relative;
+  padding-left: 1.4rem;
   font-size: 0.95rem;
-  line-height: 1.55;
+  line-height: 1.45;
 }
-.path ol li, .path ul li {
-  margin-bottom: 0.45rem;
+.exit ul li::before {
+  content: '✓';
+  position: absolute;
+  left: 0; top: 0;
+  color: var(--winstt);
+  font-weight: 600;
 }
-.path b { font-weight: 600; color: var(--paper); }
+.exit ul li b { color: var(--paper); font-weight: 600; }
 
-/* Stack annotation footer */
-.stack-footer {
-  margin-top: 1.4rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 1rem;
+/* ─── Stack chips (kept from v02) ───────────────────────────── */
+.stack-chip {
+  display: inline-block;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.62rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
+  padding: 0.22rem 0.6rem;
+  border: 1px solid var(--rule);
   color: var(--paper-faint);
-}
-.stack-footer .label {
-  margin-right: 0.4rem;
-}
-
-/* monospace tokens */
-.k { font-family: 'JetBrains Mono', monospace; font-size: 0.84em; color: var(--gold); font-weight: 500; }
-
-/* ─── OS Roadmap section ───────────────────────────────────── */
-.roadmap {
-  margin: 8rem 0 4rem;
-  padding: 5rem 0 4rem;
-  border-top: 2px solid var(--paper);
-  border-bottom: 2px solid var(--paper);
-  position: relative;
-}
-.roadmap::before {
-  content: 'Roadmap';
-  position: absolute;
-  top: -0.7rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--ink);
-  padding: 0 1.5rem;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.4em;
-  text-transform: uppercase;
-  color: var(--paper);
-}
-.roadmap h2 {
-  font-family: 'Fraunces', serif;
-  font-weight: 340;
-  font-variation-settings: 'opsz' 144;
-  font-size: clamp(2.5rem, 6vw, 4.4rem);
-  letter-spacing: -0.035em;
-  line-height: 1;
-  text-align: center;
-  margin-bottom: 0.6rem;
-}
-.roadmap h2 em {
-  font-style: italic;
-  color: var(--gold);
-  font-weight: 280;
-}
-.roadmap > .standfirst {
-  text-align: center;
-  margin: 0 auto 4rem;
-}
-
-/* OS triptych */
-.os-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0;
-  border-top: 1px solid var(--rule);
-}
-.os-col {
-  padding: 2.5rem 2rem;
-  border-right: 1px solid var(--rule);
-  position: relative;
-}
-.os-col:last-child { border-right: 0; }
-
-.os-col h3 {
-  font-family: 'Fraunces', serif;
-  font-weight: 380;
-  font-size: 2.2rem;
-  letter-spacing: -0.02em;
-  font-variation-settings: 'opsz' 60;
-  margin-bottom: 0.3rem;
-}
-.os-col .os-status {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  margin-bottom: 2rem;
-  color: var(--paper-faint);
-}
-.os-col.windows h3   { color: var(--winstt); }
-.os-col.windows .os-status { color: var(--winstt); }
-.os-col.macos h3     { color: var(--paper); }
-.os-col.macos .os-status   { color: var(--gold); }
-.os-col.linux h3     { color: var(--handy); }
-.os-col.linux .os-status   { color: var(--handy); }
-
-.os-col dt {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--paper-faint);
-  margin-top: 1.3rem;
-  margin-bottom: 0.4rem;
-  padding-bottom: 0.3rem;
-  border-bottom: 1px dotted var(--rule);
-}
-.os-col dd {
-  font-size: 0.92rem;
-  line-height: 1.5;
-}
-.os-col dd b { color: var(--paper); font-weight: 600; }
-.os-col dd.warn { color: var(--custom); }
-.os-col dd.ok   { color: var(--copy); }
-
-/* Phase blocks under the OS grid */
-.phases {
-  margin-top: 5rem;
-}
-.phases h3 {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.72rem;
-  letter-spacing: 0.3em;
-  text-transform: uppercase;
-  color: var(--gold);
-  margin-bottom: 2rem;
-  text-align: center;
-}
-.phase {
-  display: grid;
-  grid-template-columns: 9rem 1fr;
-  gap: 2rem;
-  padding: 2rem 0;
-  border-top: 1px solid var(--rule);
-}
-.phase:last-child { border-bottom: 1px solid var(--rule); }
-.phase-num {
-  font-family: 'Fraunces', serif;
-  font-weight: 320;
-  font-style: italic;
-  font-variation-settings: 'opsz' 96;
-  font-size: 2.8rem;
-  letter-spacing: -0.03em;
-  color: var(--gold);
-  line-height: 1;
-}
-.phase-num small {
-  display: block;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--paper-faint);
-  font-style: normal;
-  margin-top: 0.4rem;
-}
-.phase-body h4 {
-  font-family: 'Fraunces', serif;
-  font-weight: 420;
-  font-size: 1.5rem;
-  letter-spacing: -0.02em;
-  margin-bottom: 0.4rem;
-}
-.phase-body .ship {
-  display: inline-block;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.6rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--copy);
-  border: 1px solid var(--copy-dim);
-  padding: 0.2rem 0.6rem;
+  background: var(--ink-soft);
+  margin-right: 0.35rem;
+  margin-bottom: 0.35rem;
   border-radius: 3px;
-  margin-bottom: 1rem;
-}
-.phase-body ul {
-  list-style: none;
-  margin-top: 0.5rem;
-}
-.phase-body ul li {
-  position: relative;
-  padding-left: 1.4rem;
-  margin-bottom: 0.4rem;
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-.phase-body ul li::before {
-  content: '→';
-  position: absolute;
-  left: 0; top: 0;
-  color: var(--winstt);
-  font-weight: 500;
-}
-
-/* ─── Skip section ───────────────────────────────────────── */
-.skip-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  margin-top: 3rem;
-}
-.skip-card {
-  padding: 2rem 1.8rem;
-  border-right: 1px solid var(--rule);
-}
-.skip-card:last-child { border-right: 0; }
-.skip-card h3 {
-  font-family: 'Fraunces', serif;
-  font-style: italic;
-  font-weight: 380;
-  font-size: 1.4rem;
-  margin-bottom: 0.4rem;
-  color: var(--paper-dim);
-}
-.skip-card p {
-  font-size: 0.9rem;
-  line-height: 1.5;
-  color: var(--paper-faint);
 }
 
 /* ─── Colophon ──────────────────────────────────────────────── */
@@ -688,28 +798,40 @@ h1.hero-title em {
   margin-bottom: 1rem;
   text-transform: none;
 }
+.colophon-meta {
+  margin-top: 1rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+  color: var(--paper-faint);
+}
 
-/* ─── Reveal on scroll ──────────────────────────────────────── */
-.reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.9s ease, transform 0.9s ease; }
-.reveal.in { opacity: 1; transform: translateY(0); }
+/* monospace tokens */
+.k { font-family: 'JetBrains Mono', monospace; font-size: 0.84em; color: var(--gold); font-weight: 500; }
+.k.h { color: var(--handy); }
+.k.w { color: var(--winstt); }
 
 /* ─── Responsive ───────────────────────────────────────────── */
-@media (max-width: 900px) {
-  .constraints, .os-grid {
-    grid-template-columns: 1fr;
+@media (max-width: 1100px) {
+  .scoreboard-row {
+    grid-template-columns: 3rem 1fr 1fr;
+    gap: 1rem;
   }
-  .constraints > div, .os-col {
-    border-right: 0;
-    border-bottom: 1px solid var(--rule);
-  }
-  .card, .phase {
-    grid-template-columns: 1fr;
-  }
-  .card-num, .phase-num {
-    font-size: 2.2rem;
-    margin-bottom: 0.5rem;
-  }
+  .scoreboard-row .sb-side:last-of-type { grid-column: 1 / -1; }
+  .scoreboard-row .verdict-pill { grid-column: 1 / -1; justify-self: start; }
+  .numbers { grid-template-columns: 1fr; }
+  .numbers > div { border-right: 0; }
+  .axis-intro { grid-template-columns: 1fr; }
+  .cmp { grid-template-columns: 1fr; }
+  .cmp-num { font-size: 2.2rem; margin-bottom: 0.5rem; }
+  .cmp-split { grid-template-columns: 1fr; }
+  .cmp-split .h { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .cmp-verdict { grid-template-columns: 1fr; }
+  .exit ul { grid-template-columns: 1fr; }
   body { font-size: 17px; }
+}
+@media (max-width: 700px) {
+  .engine-matrix table { font-size: 0.78rem; }
+  .engine-matrix th, .engine-matrix td { padding: 0.5rem 0.5rem; }
 }
 </style>
 </head>
@@ -718,8 +840,8 @@ h1.hero-title em {
 <header class="masthead">
   <div class="wrap masthead-inner">
     <div class="masthead-title">The <em>WinSTT</em> Field Report</div>
-    <div>Issue №02 · The Adoption Briefing · 2026·05·26</div>
-    <div>Stack: <em style="color: var(--gold); font-style: normal; font-family: 'JetBrains Mono'; letter-spacing: 0;">Electron · Python · ONNX</em></div>
+    <div>Issue №04 · The Optimization Pass · 2026·05·27</div>
+    <div>Verdict: <em style="color: var(--gold); font-style: normal; font-family: 'JetBrains Mono'; letter-spacing: 0;">3 wins · 2 deltas · Plan attached</em></div>
   </div>
 </header>
 
@@ -727,772 +849,888 @@ h1.hero-title em {
 
   <!-- ════════════════ HERO ════════════════ -->
   <section class="hero">
-    <div class="kicker">An Action Plan, not a Comparison</div>
+    <div class="kicker">A five-axis follow-up · what shipped · what's still on the table</div>
 
-    <h1 class="hero-title reveal">
-      What to<br>
-      <em>borrow</em> from<br>
-      Handy.
+    <h1 class="hero-title">
+      Same race,<br>
+      <em>different</em> finish line.<br>
+      Now: <span class="v-winstt">close it</span><br>
+      <span class="v-handy">without losing a feature</span>.
     </h1>
 
-    <p class="standfirst reveal">
-      Sixteen features Handy ships that we don't — paired with the exact path to land each one
-      on our stack. We're not switching to Tauri. We're not dropping ONNX. We're taking what works
-      and bolting it onto what we have.
-    </p>
-
-    <!-- Constraints panel -->
-    <div class="constraints">
-      <div>
-        <div class="lock-tag">Non-negotiable · 01</div>
-        <h3>Electron stays.</h3>
-        <p>The Electron + Next.js shell is the spine. We're not rewriting the renderer in WebKit/Tauri. <b>Implication:</b> every adopted UX feature has to be reachable from <span class="k">electron/</span> main-process APIs, native Node addons, or shell-outs.</p>
-      </div>
-      <div>
-        <div class="lock-tag">Non-negotiable · 02</div>
-        <h3>ONNX stays.</h3>
-        <p>Our entire model catalog — Distil-Whisper, Lite-Whisper, Moonshine, Cohere, Parakeet, Canary — is ONNX. <b>Implication:</b> no whisper.cpp swap. <b>But:</b> Handy's <span class="k">transcribe-rs</span> already runs ONNX <em>alongside</em> whisper.cpp, which is academic — what we actually need from them is the <em>EP strategy per OS</em> (DirectML, CoreML, OpenVINO), all of which we already have ports for.</p>
-      </div>
-      <div>
-        <div class="lock-tag allow">Open · 03</div>
-        <h3>Everything else.</h3>
-        <p>Native Node addons, child-process shell-outs, Python pipeline changes, new npm packages, schema changes, SQLite, native menu bridges — all on the table. <b>The job:</b> map every Handy strength to a concrete change inside our existing stack.</p>
-      </div>
-    </div>
-
-    <!-- Legend -->
-    <div class="legend">
-      <h4>Badge<br>legend</h4>
-      <div>
-        <div class="legend-row"><span class="badge copy">Copy</span> Algorithm or pattern ports near-verbatim into our stack.</div>
-        <div class="legend-row"><span class="badge equiv">Equivalent</span> Build the same UX with our existing libraries — different code, same effect.</div>
-        <div class="legend-row"><span class="badge custom">Custom</span> Needs a native addon or non-trivial new infrastructure.</div>
-        <div class="legend-row"><span class="badge skip">Skip</span> Either duplicates what we have, or the cost-to-value isn't there.</div>
-      </div>
-      <h4>Effort</h4>
-      <div>
-        <div class="legend-row">
-          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span> ≈ a day</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span> ≈ a week</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span> ≈ a month</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span> a quarter+</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════════ PART I — TIER A: COPY DIRECTLY ════════════════ -->
-  <div class="part-label">Tier A · Adopt this quarter</div>
-
-  <!-- ─── 01 PASTE ─── -->
-  <section class="card" id="adopt-paste">
-    <div class="card-num">01<small>PASTE</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Six paste methods + auto-submit + trailing-space</h2>
-        <div class="card-meta">
-          <span class="badge equiv">Equivalent</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">A configurable <span class="k">PasteMethod</span> enum (CtrlV / CtrlShiftV / ShiftInsert / Direct-type / None / ExternalScript), <span class="k">paste_delay_ms</span>, <span class="k">append_trailing_space</span>, <span class="k">auto_submit</span> with Enter/Ctrl-Enter/Cmd-Enter, and on Linux a five-tool fallback chain through wtype/kwtype/dotool/ydotool/xdotool.</div>
-
-      <div class="path">
-        <p>This is our single highest-leverage borrow — and it's pure Electron work. None of our Python pipeline is touched.</p>
-        <ol>
-          <li><b>Replace globalShortcut-based re-paste with a dispatcher</b> in <span class="k">electron/ipc/relay.ts</span>. New enum <span class="k">PasteMethod</span> in <span class="k">spec/openapi.yaml</span>; routed via existing IPC.</li>
-          <li><b>Add <span class="k">@nut-tree-fork/nut-js</span> (~30 MB native, cross-platform) for typing-simulation.</b> Wraps the same OS primitives Handy reaches for. <span class="k">Direct</span> mode = <span class="k">keyboard.type()</span>; <span class="k">CtrlV</span> = <span class="k">keyboard.pressKey()</span> sequence with platform-virtual-keys; <span class="k">ShiftInsert</span> = same.</li>
-          <li><b>Auto-submit is one IPC + one settings boolean.</b> After paste resolves, dispatch the configured submit key via the same nut.js path.</li>
-          <li><b>ExternalScript</b> is <span class="k">child_process.execFile(script, [text])</span> from main. Forty lines including timeout + stderr capture. Power-user feature parity.</li>
-          <li><b>On Linux, mirror Handy's <span class="k">clipboard.rs</span> tool detection</b> verbatim: shell out to <span class="k">which wtype</span> / <span class="k">kwtype</span> / <span class="k">dotool</span> / <span class="k">ydotool</span> / <span class="k">xdotool</span>, prefer based on Wayland-vs-X11 + KDE detection. Falls back to nut.js for portability.</li>
-        </ol>
-        <p>Memory we already have around this: <em>"Re-paste = only Electron globalShortcut"</em> — this redesign explicitly retires that limitation.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">Electron main</span>
-        <span class="stack-chip ts">Renderer (settings UI)</span>
-        <span class="stack-chip native">nut.js addon</span>
-        <span class="stack-chip">spec/openapi.yaml</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 02 CLI ─── -->
-  <section class="card">
-    <div class="card-num">02<small>CLI</small></div>
-    <div>
-      <div class="card-head">
-        <h2>CLI flags + single-instance forwarding + Unix signals</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">A <span class="k">clap</span>-defined CLI (<span class="k">--toggle-transcription</span>, <span class="k">--start-hidden</span>, <span class="k">--cancel</span>…). The second invocation forwards argv through <span class="k">tauri-plugin-single-instance</span> to the running process, then exits. On Unix, <span class="k">SIGUSR1</span>/<span class="k">SIGUSR2</span> map to the same actions.</div>
-
-      <div class="path">
-        <p>Direct copy. Electron has every piece of this natively.</p>
-        <ol>
-          <li><b>Single-instance lock</b> in <span class="k">electron/main.ts</span> via <span class="k">app.requestSingleInstanceLock()</span>. The <span class="k">second-instance</span> event already passes argv to the first instance.</li>
-          <li><b>Argv parsing</b> with <span class="k">commander</span> or plain code — we don't need clap-grade ergonomics. Flags map 1:1 to existing IPC commands.</li>
-          <li><b>Unix signals</b>: <span class="k">process.on('SIGUSR2', toggleTranscribe)</span> in main. Six lines. Node refuses SIGUSR on Windows — wrap in <span class="k">if (process.platform !== 'win32')</span>.</li>
-          <li><b>Document the WM-integration pattern</b> in <span class="k">docs/</span>: bind Sway/Hyprland/KDE custom shortcut to <span class="k">winstt --toggle-transcription</span> or to <span class="k">pkill -USR2 -n winstt</span>. Wayland users get hotkey support without us solving Wayland.</li>
-        </ol>
-        <p>This is the unlock for Linux as a real platform — without it, Wayland users can't bind global hotkeys at all.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">electron/main.ts</span>
-        <span class="stack-chip ts">scripts/dev-electron.ts</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 03 PORTABLE ─── -->
-  <section class="card">
-    <div class="card-num">03<small>PORT</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Portable mode</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">If a file literally named <span class="k">portable</span> sits next to the exe, every piece of user data (settings, models, recordings, db, logs) goes to <span class="k">./Data/</span> instead of <span class="k">%APPDATA%</span>.</div>
-
-      <div class="path">
-        <p>Eighty lines in Handy's <span class="k">portable.rs</span>. Roughly the same in our TypeScript main.</p>
-        <ol>
-          <li><b>Detection</b>: at boot, before any path resolution, check for <span class="k">path.join(path.dirname(app.getPath('exe')), 'portable')</span>.</li>
-          <li><b>Path override</b>: <span class="k">app.setPath('userData', dataDir)</span> + <span class="k">app.setPath('logs', dataDir/logs)</span> + <span class="k">app.setPath('temp', …)</span>. Done before any module reads paths.</li>
-          <li><b>electron-store</b> already inherits from <span class="k">app.getPath('userData')</span> — automatic.</li>
-          <li><b>Python server</b>: pass <span class="k">--data-dir</span> arg from main process spawning the server. Server resolves models, recordings, logs relative to it.</li>
-          <li><b>electron-builder.yml</b>: add a third NSIS target with <span class="k">"portable": true</span> that emits a single-file portable exe. The marker file is created on first run if missing.</li>
-        </ol>
-        <p>Huge value for IT-locked corporate users, USB sticks, and the "I don't want this in AppData" crowd. Eighty lines is one afternoon.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">electron/main.ts</span>
-        <span class="stack-chip python">server/bootstrap.py</span>
-        <span class="stack-chip">electron-builder.yml</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 04 HISTORY ─── -->
-  <section class="card">
-    <div class="card-num">04<small>HIST</small></div>
-    <div>
-      <div class="card-head">
-        <h2>SQLite history + WAV retention + tray submenu</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">A real history table (file_name, timestamp, saved, title, raw text, post-processed text, prompt). WAV files saved concurrently with transcription and verified. <span class="k">recording_retention_period</span> garbage-collects on a schedule. Tray submenu shows the last N entries with click-to-copy.</div>
-
-      <div class="path">
-        <p>This is a feature gap regardless of cross-platform. We already keep "last transcription" — extending it to a full table is incremental.</p>
-        <ol>
-          <li><b>Add <span class="k">better-sqlite3</span> in the Electron main process</b> (we already use <span class="k">@electron/rebuild</span> for native modules; one more line in rebuild script). Sync API is fine on a background thread.</li>
-          <li><b>Schema</b> mirrors Handy's: <span class="k">transcription_history(id, file_name, ts, saved, title, text, post_processed_text, post_process_prompt, post_process_requested)</span>. Migrations as a sorted-array of SQL strings, tracked via <span class="k">PRAGMA user_version</span>.</li>
-          <li><b>WAV persistence</b>: Python server already produces samples — add an optional <span class="k">save_wav: bool</span> in the recorder's done-event, write to <span class="k">{dataDir}/recordings/handy-{ts}.wav</span> in the Python side, emit the filename back to main, save the DB row.</li>
-          <li><b>Retention</b>: a 1-hour <span class="k">setInterval</span> in main process. Deletes rows + WAV files older than the configured period.</li>
-          <li><b>Tray submenu</b>: build dynamically from a <span class="k">history.recent(10)</span> query on every tray-icon click. Click-to-copy → <span class="k">clipboard.writeText()</span>.</li>
-          <li><b>UI page</b> at <span class="k">/history</span> in the renderer. FSD slice <span class="k">entities/transcription-history</span> + a <span class="k">views/HistoryView</span>.</li>
-        </ol>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">electron/ipc/history.ts (new)</span>
-        <span class="stack-chip native">better-sqlite3</span>
-        <span class="stack-chip python">recorder save-WAV hook</span>
-        <span class="stack-chip ts">new views slice</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 05 DICTIONARY ─── -->
-  <section class="card">
-    <div class="card-num">05<small>DICT</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Local fuzzy custom-dictionary (Levenshtein + Soundex + n-gram)</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">~200 lines of Rust in <span class="k">audio_toolkit/text.rs</span>: lowercase + Levenshtein + Soundex phonetic match + n-gram for multi-word artifacts (e.g. "Charge B" → "ChargeBee"). Length-percentage early-exit. Threshold configurable.</div>
-
-      <div class="path">
-        <p>Port to Python so it runs inside the existing transcription pipeline — zero IPC round-trip. Today our dictionary correction is LLM-driven (modifier pipeline), which costs tokens; this is free and offline.</p>
-        <ol>
-          <li><b>Add <span class="k">jellyfish</span> (Soundex) + <span class="k">rapidfuzz</span> (fast Levenshtein) to <span class="k">server/pyproject.toml</span>.</b> Both pure-Python or ship wheels for every OS — no platform-specific compilation.</li>
-          <li><b>Translate <span class="k">apply_custom_words()</span> 1:1.</b> Same algorithm: build n-grams, score by Levenshtein normalized by length, boost phonetic matches by 0.3x, accept under threshold.</li>
-          <li><b>Drop into the post-transcription hook</b> in <span class="k">RecorderService</span>, before the modifier pipeline. If the dictionary fixes "ChargeBee", the LLM never has to see it.</li>
-          <li><b>Settings UI</b>: <span class="k">customWords: string[]</span> + <span class="k">wordCorrectionThreshold: number</span>. Already roughly in our settings schema — extend, don't add.</li>
-        </ol>
-        <p>This is purely additive. Keep the LLM-modifier path as the heavy-duty fallback; the fuzzy matcher handles the 80% case for free.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip python">server/src/recorder/text/</span>
-        <span class="stack-chip onnx">post-transcription hook</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 06 LLM PROVIDERS ─── -->
-  <section class="card">
-    <div class="card-num">06<small>LLM</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Multi-provider LLM post-processing</h2>
-        <div class="card-meta">
-          <span class="badge equiv">Equivalent</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Eight default providers (OpenAI, Anthropic, Z.AI, OpenRouter, Groq, Cerebras, AWS Bedrock, Custom→Ollama) plus Apple Intelligence on macOS ARM. Per-provider <span class="k">supports_structured_output</span> with JSON-schema enforcement. Strips invisible Unicode. Prompt library with named prompts.</div>
-
-      <div class="path">
-        <p>We already have the AI SDK on the Electron main side for cloud STT. Adding LLM post-processing reuses the same provider abstraction.</p>
-        <ol>
-          <li><b>Provider registry</b> in <span class="k">electron/ipc/llm-providers.ts</span>: same schema as Handy's <span class="k">PostProcessProvider</span>. Read from settings; default-merge on load.</li>
-          <li><b>AI SDK already abstracts</b> <span class="k">@ai-sdk/openai</span>, <span class="k">@ai-sdk/anthropic</span>, <span class="k">@ai-sdk/groq</span>, etc. Per-provider auth quirks (Anthropic <span class="k">x-api-key</span>) are handled by the SDK. Structured outputs via <span class="k">generateObject({ schema })</span>.</li>
-          <li><b>Redacted-log primitive</b>: copy Handy's <span class="k">SecretMap</span> idea — a thin TS wrapper whose <span class="k">toJSON</span> returns <span class="k">[REDACTED]</span> for non-empty values. Used everywhere we log settings.</li>
-          <li><b>Ollama-as-Custom</b>: the Custom provider defaults to <span class="k">http://localhost:11434/v1</span>. AI SDK has a <span class="k">@ai-sdk/openai-compatible</span> exactly for this.</li>
-          <li><b>Apple Intelligence</b>: defer to Tier C. Path is clear (Swift CLI bundled, called via <span class="k">child_process</span>) but only valuable post-macOS-launch.</li>
-          <li><b>Our modifier UI keeps its identity.</b> The provider/prompt layer is the engine; modifier toggles are the curated UX on top. They compose.</li>
-        </ol>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">electron/ipc/llm-*.ts</span>
-        <span class="stack-chip ts">AI SDK providers</span>
-        <span class="stack-chip">spec/openapi.yaml</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 07 TRAY ─── -->
-  <section class="card">
-    <div class="card-num">07<small>TRAY</small></div>
-    <div>
-      <div class="card-head">
-        <h2>State-driven tray icon + history submenu + theme variants</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Three states (Idle / Recording / Transcribing), three theme palettes (dark / light / Linux-colored). Tray menu shows the last N transcriptions with click-to-copy.</div>
-
-      <div class="path">
-        <p>Electron's <span class="k">Tray</span> API has <span class="k">setImage()</span> and <span class="k">setContextMenu()</span>. Rebuilding the menu on every state change is fine.</p>
-        <ol>
-          <li><b>Asset prep</b>: produce <span class="k">tray_{idle,recording,transcribing}_{dark,light,color}.png</span> @ 2x. Pull from existing brand identity in <span class="k">docs/identity/</span>.</li>
-          <li><b>State machine</b> in <span class="k">electron/ipc/tray.ts</span> already exists — extend to subscribe to recorder events and call <span class="k">tray.setImage()</span> on transitions.</li>
-          <li><b>Theme detection</b>: <span class="k">nativeTheme.shouldUseDarkColors</span> + <span class="k">nativeTheme.on('updated', …)</span> picks dark/light. Linux always gets colored.</li>
-          <li><b>History submenu</b> piggybacks on #04. <span class="k">Menu.buildFromTemplate</span>, click handler → <span class="k">clipboard.writeText</span>.</li>
-        </ol>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">electron/ipc/tray.ts</span>
-        <span class="stack-chip">assets pipeline</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 08 DOWNLOADS ─── -->
-  <section class="card">
-    <div class="card-num">08<small>DL</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Cancellable downloads + SHA-256 + auto-extract</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Per-model <span class="k">AtomicBool</span> cancel flag, SHA-256 verification on download, automatic <span class="k">.tar.gz</span> extraction for Parakeet models into named directories. <span class="k">DownloadCleanup</span> RAII guard ensures state always resets.</div>
-
-      <div class="path">
-        <p>Pure Electron-main + Python. We already do downloads, just without these guarantees.</p>
-        <ol>
-          <li><b>Cancellation</b>: <span class="k">AbortController</span> per active download, stored in a <span class="k">Map&lt;modelId, AbortController&gt;</span>. UI cancel button calls <span class="k">abort()</span>.</li>
-          <li><b>SHA-256</b>: Node <span class="k">crypto.createHash('sha256')</span> hooked into the stream. Compare to manifest. Manifest lives in <span class="k">spec/openapi.yaml</span> or alongside the model catalog.</li>
-          <li><b>Tar extraction</b>: <span class="k">tar</span> npm package, ~30 lines. Already needed for our offline TTS pack pattern.</li>
-          <li><b>Cleanup guarantee</b>: TypeScript doesn't have RAII, but a <span class="k">try/finally</span> in the download orchestrator gives the same property.</li>
-          <li><b>Progress events</b>: we already have download-progress UI from the recent updater work. Reuse the event shape.</li>
-        </ol>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">electron model-download IPC</span>
-        <span class="stack-chip ts">model-catalog store</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════════ PART II — TIER B: PLATFORM + UX ════════════════ -->
-  <div class="part-label">Tier B · Adopt next quarter</div>
-
-  <!-- ─── 09 GPU EP STRATEGY ─── -->
-  <section class="card" id="adopt-ep">
-    <div class="card-num">09<small>EP</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Configurable GPU per backend + DirectML shrink</h2>
-        <div class="card-meta">
-          <span class="badge equiv">Equivalent</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">User-selectable <span class="k">whisper_accelerator</span> (Auto/CPU/GPU) and <span class="k">ort_accelerator</span> (Auto/CPU/CUDA/DirectML/ROCm). Whisper-cpp gets Metal on mac, Vulkan on Win/Linux. ONNX gets DirectML on Win, CUDA on Linux. Their GPU build is ~200 MB. Ours is 2 GB.</div>
-
-      <div class="path">
-        <p>The 2 GB GPU bundle is our biggest distribution problem. The fix doesn't require changing ML stacks — it requires changing <em>which ONNX execution provider we ship</em>. Comments in <span class="k">server/src/recorder/infrastructure/device.py</span> already reference DirectML and ROCm; we never finished the work.</p>
-        <ol>
-          <li><b>Add a <span class="k">[directml]</span> extra</b> in <span class="k">server/pyproject.toml</span> with <span class="k">onnxruntime-directml</span>. ~200 MB; works on AMD / Intel / NVIDIA via DirectX 12. Drops the eight NVIDIA CUDA wheels entirely on this build.</li>
-          <li><b>Add a <span class="k">[coreml]</span> extra</b> with <span class="k">onnxruntime-silicon</span> (or stock onnxruntime with CoreML EP). Native on Apple Silicon, no extra wheels.</li>
-          <li><b>Add an <span class="k">[openvino]</span> extra</b> for Linux Intel iGPU acceleration where CUDA isn't available.</li>
-          <li><b>Extend <span class="k">device.py</span></b> from CUDA-or-CPU to a priority-ordered list: try EP in order, fall through to CPU. Honor a user setting <span class="k">accelerator: "auto" | "cuda" | "directml" | "coreml" | "openvino" | "cpu"</span>.</li>
-          <li><b>Restructure release artifacts</b>: <span class="k">WinSTT-Win-DirectML-Setup.exe</span> (200 MB, default), <span class="k">WinSTT-Win-CUDA-Setup.exe</span> (2 GB, power users), <span class="k">WinSTT-macOS-Setup.dmg</span> (CoreML), <span class="k">WinSTT-Linux.AppImage</span> (CPU + optional OpenVINO).</li>
-        </ol>
-        <p>Result: same ONNX stack, same model catalog, much smaller default download, GPU on Intel/AMD Windows users for the first time.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip onnx">onnxruntime EP selection</span>
-        <span class="stack-chip python">device.py</span>
-        <span class="stack-chip">packaging/electron-builder.*.yml</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 10 HOTKEY FALLBACK ─── -->
-  <section class="card">
-    <div class="card-num">10<small>KEYS</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Two hotkey backends with auto-fallback</h2>
-        <div class="card-meta">
-          <span class="badge equiv">Equivalent</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Try <span class="k">handy-keys</span> first; on init failure fall back to <span class="k">tauri-plugin-global-shortcut</span> and persist the choice in settings. Per-named-binding (transcribe / post-process / cancel) independently configurable. Cancel is dynamically registered only during recording.</div>
-
-      <div class="path">
-        <p>We have <span class="k">uiohook-napi</span> (passive listener) + Electron <span class="k">globalShortcut</span> (active grab). They have different failure modes. Build the same try-and-persist pattern.</p>
-        <ol>
-          <li><b>Setting</b>: <span class="k">keyboardImplementation: "uiohook" | "globalShortcut"</span>, default <span class="k">"uiohook"</span> on Win/macOS, <span class="k">"globalShortcut"</span> on Linux.</li>
-          <li><b>Init wrapper</b> in <span class="k">electron/ipc/hotkey.ts</span>: try primary, catch init failures, swap to secondary, <span class="k">store.set('keyboardImplementation', secondary)</span> so the fallback persists.</li>
-          <li><b>Per-named-binding</b>: extend the settings schema from a single-hotkey-per-mode to <span class="k">bindings: Record&lt;BindingId, ShortcutBinding&gt;</span>. Migrate existing values on load.</li>
-          <li><b>Dynamic cancel</b>: register Escape only when the recorder enters Recording state; unregister on Idle. Stops accidentally trapping Escape in apps.</li>
-        </ol>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">electron/ipc/hotkey.ts</span>
-        <span class="stack-chip ts">settings schema migration</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 11 i18n ─── -->
-  <section class="card">
-    <div class="card-num">11<small>i18n</small></div>
-    <div>
-      <div class="card-head">
-        <h2>i18next with locale support + ESLint enforcement</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Twenty locales, i18next, <span class="k">eslint-plugin-i18next</span> rule that fails CI if a JSX literal isn't wrapped in <span class="k">t()</span>. Tray menu localizes via <span class="k">tray_i18n.rs</span>. OpenCC converts Simplified ⇄ Traditional Chinese after transcription. RTL helpers.</div>
-
-      <div class="path">
-        <p>Our Next.js app supports <span class="k">next-intl</span> natively. Use that for the renderer; use i18next + a small JSON loader in main for tray strings.</p>
-        <ol>
-          <li><b>Add <span class="k">next-intl</span></b> to <span class="k">frontend/</span>, restructure <span class="k">src/shared/i18n/</span> with one JSON per locale. Start with <span class="k">en</span>; ship others via community contribution.</li>
-          <li><b>ESLint rule</b>: configure Biome's <span class="k">noJsxLiterals</span> or layer ESLint with <span class="k">eslint-plugin-i18next</span> in <span class="k">frontend/biome.json</span> ignore + eslint config. CI fails on bare strings.</li>
-          <li><b>Tray strings</b>: tiny <span class="k">electron/i18n/</span> with <span class="k">{ locale: { trayIdle, trayRecording, … } }</span>. Locale comes from settings.</li>
-          <li><b>OpenCC</b> for zh-Hans ⇄ zh-Hant: there's a Python port (<span class="k">opencc-python</span>) — drop it into the same post-transcription hook as the dictionary.</li>
-          <li><b>RTL</b>: Next.js <span class="k">dir="rtl"</span> attribute + Base UI's RTL support. Mostly free.</li>
-        </ol>
-        <p>The big cost is the sweep: every JSX literal in <span class="k">frontend/src/</span> has to migrate. One-time pain, sustained by the ESLint guard.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip ts">frontend (full sweep)</span>
-        <span class="stack-chip electron">electron/i18n/</span>
-        <span class="stack-chip python">post-transcription (OpenCC)</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 12 CUSTOM MODELS ─── -->
-  <section class="card">
-    <div class="card-num">12<small>CMOD</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Custom user-model auto-discovery</h2>
-        <div class="card-meta">
-          <span class="badge copy">Copy</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Drop a Whisper GGML <span class="k">.bin</span> in <span class="k">models/</span>, restart, it appears under "Custom Models" with the filename as the display name.</div>
-
-      <div class="path">
-        <p>Equivalent for our ONNX world: drop a HuggingFace-style ONNX folder (encoder + decoder + config) and we discover it.</p>
-        <ol>
-          <li><b>Directory contract</b>: <span class="k">{dataDir}/models/custom/{slug}/</span> containing <span class="k">encoder.onnx</span>, <span class="k">decoder_model_merged.onnx</span>, <span class="k">tokenizer.json</span>, <span class="k">config.json</span> (same shape onnx-asr expects).</li>
-          <li><b>Scanner</b> in <span class="k">server/src/recorder/infrastructure/model_registry.py</span>: on boot, glob <span class="k">custom/*</span>, validate the contract, register with the catalog. Slug → display name from <span class="k">config.json</span> or folder name.</li>
-          <li><b>UI</b>: existing model picker gets a "Custom" section. Greyed-out entries if validation fails, with a tooltip explaining what's missing.</li>
-          <li><b>Optional second contract</b> for Lite-Whisper variants (which have different file layouts) — gate behind a settings flag.</li>
-        </ol>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip python">model_registry.py</span>
-        <span class="stack-chip onnx">model loader contract</span>
-        <span class="stack-chip ts">model picker UI</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 13 MINISIGN ─── -->
-  <section class="card">
-    <div class="card-num">13<small>SIG</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Minisign-signed releases</h2>
-        <div class="card-meta">
-          <span class="badge equiv">Equivalent</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Tauri's updater uses minisign signatures, with the pubkey embedded in <span class="k">tauri.conf.json</span>. README walks users through manual verification with the <span class="k">minisign</span> CLI.</div>
-
-      <div class="path">
-        <p>We already use <span class="k">electron-updater</span>, which has its own signing flow (Authenticode on Windows, codesign on macOS). Adding minisign on top is a power-user trust layer.</p>
-        <ol>
-          <li><b>Generate a minisign keypair</b>, commit pubkey to repo, keep secret key as a GitHub Actions secret.</li>
-          <li><b>CI step</b> in <span class="k">.github/workflows/electron-release.yml</span>: after build, sign every installer artifact with minisign; upload <span class="k">.sig</span> alongside.</li>
-          <li><b>Document verification</b> in <span class="k">docs/</span> with the same recipe Handy publishes.</li>
-          <li><b>Optional</b>: validate signature in the updater path itself before launching the new version. Lower priority — electron-updater already validates code signatures.</li>
-        </ol>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip">.github/workflows/</span>
-        <span class="stack-chip">docs/</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════════ PART III — TIER C: PLATFORM-SPECIFIC NATIVE ════════════════ -->
-  <div class="part-label">Tier C · Needed for the macOS/Linux launch</div>
-
-  <!-- ─── 14 OVERLAY ─── -->
-  <section class="card" id="adopt-overlay">
-    <div class="card-num">14<small>HUD</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Per-OS overlay primitives (NSPanel + layer-shell)</h2>
-        <div class="card-meta">
-          <span class="badge custom">Custom</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">macOS uses <span class="k">tauri-nspanel</span> — a true floating panel that doesn't steal focus from the app the user wants to type into. Linux uses <span class="k">gtk-layer-shell</span> for compositor-level layering, with an <span class="k">HANDY_NO_GTK_LAYER_SHELL=1</span> escape hatch. Linux defaults to no overlay because some compositors break paste with it on.</div>
-
-      <div class="path">
-        <p>Electron's <span class="k">BrowserWindow</span> can <em>almost</em> match NSPanel via <span class="k">setAlwaysOnTop('screen-saver', 1)</span> + <span class="k">setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })</span> + <span class="k">setFocusable(false)</span>. It's not as clean — focus management is a known Electron sore spot on macOS — but it ships.</p>
-        <ol>
-          <li><b>macOS path A (cheap)</b>: use the above BrowserWindow flags. Test against Slack / VSCode / browsers to confirm paste lands in the previous focused app. If it does, ship.</li>
-          <li><b>macOS path B (expensive)</b>: write a small N-API native addon that wraps NSPanel via <span class="k">NodeRT</span>-style bridging. ~300 lines of Obj-C++ + TypeScript wrapper. Probably defer to v1.1.</li>
-          <li><b>Linux</b>: no off-the-shelf gtk-layer-shell binding for Node. Default overlay to <span class="k">none</span> on Linux (same default Handy ships). If a user wants it, they get a regular always-on-top window and the documented caveats.</li>
-          <li><b>Windows</b>: already done. Keep the existing implementation.</li>
-        </ol>
-        <p>Honest read: path A is enough for v1.0 macOS. Most users won't notice the difference.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">overlay BrowserWindow flags</span>
-        <span class="stack-chip native">(optional) NSPanel addon</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 15 APPLE INTELLIGENCE ─── -->
-  <section class="card">
-    <div class="card-num">15<small>AI</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Apple Intelligence as a local LLM provider</h2>
-        <div class="card-meta">
-          <span class="badge custom">Custom</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Native Swift FFI to Apple's <span class="k">FoundationModels</span> framework on macOS ARM. No API key. Fully on-device. Used as a post-process provider. Availability check deferred to first use (early init crashes the app on macOS 26 beta).</div>
-
-      <div class="path">
-        <p>There's no Node binding for FoundationModels. The clean path is to bundle a tiny Swift CLI inside the macOS app and call it from Electron main.</p>
-        <ol>
-          <li><b>Tiny Swift CLI</b> (~80 lines): takes stdin JSON <span class="k">{ system, user }</span>, calls <span class="k">SystemLanguageModel.default</span>, prints stdout JSON. Compiled per-architecture.</li>
-          <li><b>Bundle in <span class="k">resources/macos/winstt-apple-llm</span></b> via electron-builder's <span class="k">extraResources</span>. Code-sign as part of the regular macOS signing pass.</li>
-          <li><b>Provider adapter</b> in <span class="k">electron/ipc/llm-providers.ts</span>: if <span class="k">provider === "apple_intelligence"</span> and <span class="k">process.platform === "darwin"</span>, shell out to the CLI. Availability check on first call (avoid Handy's early-init crash issue).</li>
-          <li><b>Settings UI</b> hides the provider on non-Apple-Silicon platforms.</li>
-        </ol>
-        <p>Realistic but a v1.1 feature. Cloud-API providers cover the same use case for v1.0.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip native">Swift CLI (new)</span>
-        <span class="stack-chip electron">LLM provider routing</span>
-        <span class="stack-chip">macOS code-signing</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── 16 CLAMSHELL ─── -->
-  <section class="card">
-    <div class="card-num">16<small>LID</small></div>
-    <div>
-      <div class="card-head">
-        <h2>Clamshell-mic switching</h2>
-        <div class="card-meta">
-          <span class="badge custom">Custom</span>
-          <span class="effort"><span class="dot filled"></span><span class="dot filled"></span><span class="dot"></span><span class="dot"></span></span>
-        </div>
-      </div>
-
-      <div class="they">Detects laptop lid close and swaps to a configured alternate microphone (e.g. external USB mic when the built-in disappears).</div>
-
-      <div class="path">
-        <p>Niche but charming. Detection is OS-specific.</p>
-        <ol>
-          <li><b>macOS</b>: <span class="k">IOPMrootDomain</span> notifications. Tiny native addon or <span class="k">caffeinate</span>-style polling of <span class="k">pmset -g</span>.</li>
-          <li><b>Linux</b>: poll <span class="k">/proc/acpi/button/lid/LID*/state</span> at 1 Hz. Twenty lines.</li>
-          <li><b>Windows</b>: <span class="k">WM_POWERBROADCAST</span> via a native message hook. Or skip — clamshell-mode is far less common on Windows laptops.</li>
-          <li><b>Settings</b>: <span class="k">clamshellMicrophone: string | null</span>. Empty = no swap.</li>
-        </ol>
-        <p>Pure UX nice-to-have. Defer past the cross-platform launch.</p>
-      </div>
-
-      <div class="stack-footer">
-        <span class="label">Touches</span>
-        <span class="stack-chip electron">main process lid watcher</span>
-        <span class="stack-chip native">macOS addon (optional)</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ════════════════ ROADMAP ════════════════ -->
-  <section class="roadmap" id="roadmap">
-    <h2>How <em>WinSTT</em> reaches three platforms</h2>
     <p class="standfirst">
-      With Electron and ONNX preserved, the cross-platform job decomposes into three workstreams:
-      Python server portability, Electron main-process platform-branching, and per-OS feature scope. Here's the lay of the land.
+      Issue №03 framed the gap; Issue №04 closes it. Since the architecture audit we retired the CUDA flavor,
+      made DirectML the default, ported <b>audio.alwaysOnMicrophone</b> + <b>lazyStreamClose</b> from Handy,
+      added clamshell-mic auto-swap, shipped minisign sidecars, wired the updater UI, hardened ORT-DirectML
+      concurrency, and added Apple Intelligence as an on-device LLM. <b>Feature parity holds.</b> What remains
+      is the <em>performance</em> gap — and a new finding the prior audit missed entirely:
+      <b>users report Handy is materially better with far-field microphones on the same models</b>. That isn't
+      acoustic magic — it's preprocessing. This report names five axes, with actionable steps for each, that
+      get us to <em>match-or-beat</em> without giving up a single shipped feature.
     </p>
 
-    <!-- OS triptych -->
-    <div class="os-grid">
-      <div class="os-col windows">
-        <h3>Windows</h3>
-        <div class="os-status">Status · Shipping</div>
-        <dl>
-          <dt>Server bundling</dt><dd>PyInstaller → <span class="k">stt-server.exe</span>. Already in <span class="k">packaging/</span>. Two flavors today.</dd>
-          <dt>ONNX EP</dt><dd><b>Add DirectML.</b> Drops installer to ~200 MB and unlocks AMD / Intel GPUs.</dd>
-          <dt>Hotkeys</dt><dd><span class="k">uiohook-napi</span> + Electron globalShortcut. Both work. Status quo.</dd>
-          <dt>Paste</dt><dd>Existing path stays. Becomes one of six methods.</dd>
-          <dt>Overlay</dt><dd>BrowserWindow always-on-top. Status quo.</dd>
-          <dt>Signing</dt><dd>Authenticode via electron-builder. Add minisign sidecars.</dd>
-          <dt class="ok">Wakeword + Loopback</dt><dd class="ok"><b>Stays.</b> WASAPI is Win-only and remains a flagship Windows feature.</dd>
-        </dl>
+    <!-- Scoreboard -->
+    <div class="scoreboard">
+      <div class="scoreboard-row">
+        <div class="sb-num">01</div>
+        <div class="sb-axis">Binary size<small>Installer · on-disk · pack-on-demand</small></div>
+        <div class="sb-side handy"><div class="who">Handy</div><b>12 MB installer</b>; only <span class="k h">silero_vad_v4.onnx</span> (1.76 MB) in-bundle; models, ORT, runtime all download lazily.</div>
+        <div class="sb-side winstt"><div class="who">WinSTT</div><b>202 MB portable</b> / 675 MB unpacked. Chromium 217 MB + PyInstaller _internal 317 MB (ORT 68 MB · scipy 51 MB · seed model 93 MB).</div>
+        <div><span class="verdict-pill handy">Handy wins · 17×</span></div>
       </div>
-
-      <div class="os-col macos">
-        <h3>macOS</h3>
-        <div class="os-status">Target · v1.0</div>
-        <dl>
-          <dt>Server bundling</dt><dd>PyInstaller → universal Mach-O (Intel + Apple Silicon). Sign &amp; notarize separately from the Electron app.</dd>
-          <dt>ONNX EP</dt><dd><b>CoreML EP</b> via <span class="k">onnxruntime-silicon</span>. Native Apple Silicon path. CPU fallback on Intel.</dd>
-          <dt>Hotkeys</dt><dd><span class="k">uiohook-napi</span> works but requires Accessibility permission. Onboarding flow must request it.</dd>
-          <dt>Paste</dt><dd>nut.js + virtual key code <span class="k">Key::Other(9)</span> for Cmd+V (per Handy's <span class="k">input.rs</span>). Direct-type via enigo-equivalent.</dd>
-          <dt>Overlay</dt><dd>BrowserWindow with <span class="k">setAlwaysOnTop('screen-saver')</span> + <span class="k">setVisibleOnAllWorkspaces</span> + <span class="k">setFocusable(false)</span>. Test before considering NSPanel addon.</dd>
-          <dt>Signing</dt><dd>Developer ID cert + notarization. Required for distribution outside the App Store.</dd>
-          <dt class="warn">Wakeword</dt><dd class="warn">Loopback impossible without ScreenCaptureKit or virtual driver. <b>Loopback ships Windows-only for v1.0.</b></dd>
-          <dt class="warn">Context-awareness</dt><dd class="warn">UIA is Windows-only. Map to AXUIElement (Accessibility API) — separate adapter, requires permission.</dd>
-        </dl>
+      <div class="scoreboard-row">
+        <div class="sb-num">02</div>
+        <div class="sb-axis">Audio preprocessing<small>Far-field accuracy · resampling · VAD shaping</small></div>
+        <div class="sb-side handy"><div class="who">Handy</div><b>FFT-quality resampler</b>, <b>native-SR capture</b>, VAD <b>prefill 450 ms</b> + hangover 450 ms, format priority F32 → I16.</div>
+        <div class="sb-side winstt"><div class="who">WinSTT</div>Forces hardware to 16 kHz where possible; no VAD prefill into history; peak-norm 0.95 only. <b>This is the far-mic gap.</b></div>
+        <div><span class="verdict-pill handy">Handy wins · closable</span></div>
       </div>
-
-      <div class="os-col linux">
-        <h3>Linux</h3>
-        <div class="os-status">Target · v1.1</div>
-        <dl>
-          <dt>Server bundling</dt><dd>PyInstaller → ELF. AppImage for the Electron app. Test on Ubuntu 22.04 / 24.04 + Arch.</dd>
-          <dt>ONNX EP</dt><dd>CPU baseline; <b>OpenVINO EP</b> for Intel iGPU; <b>CUDA EP</b> for NVIDIA users (drop the GPU bundling tax — let users install via system package manager).</dd>
-          <dt>Hotkeys</dt><dd>X11: uiohook works. <b>Wayland: can't grab globals.</b> Path: CLI flags + <span class="k">SIGUSR1/2</span> let the user's WM own hotkeys. This <em>is</em> the Wayland strategy.</dd>
-          <dt>Paste</dt><dd>Five-tool fallback chain: wtype / kwtype / dotool / ydotool / xdotool, then nut.js. Direct copy of Handy's <span class="k">clipboard.rs</span> logic.</dd>
-          <dt>Overlay</dt><dd>Default <span class="k">none</span>. Audio feedback as alternative. Power users can opt-in with documented caveats.</dd>
-          <dt class="warn">Wakeword + Loopback</dt><dd class="warn"><b>Wakeword ships</b> (OpenWakeWord is cross-plat). <b>Loopback skipped</b> — PulseAudio monitor source is doable but invasive; defer.</dd>
-          <dt class="warn">Tray</dt><dd class="warn">AppIndicator support varies by DE. Detect and degrade gracefully.</dd>
-        </dl>
+      <div class="scoreboard-row">
+        <div class="sb-num">03</div>
+        <div class="sb-axis">Model availability<small>Catalog breadth · quant variants · families</small></div>
+        <div class="sb-side handy"><div class="who">Handy</div><b>17 fixed entries</b> across 9 families; SenseVoice int8 (152 MB) is the lone family they have and we don't.</div>
+        <div class="sb-side winstt"><div class="who">WinSTT</div><b>58 entries</b> across 9 families. We beat them on Whisper (.en + lite-whisper), Moonshine (lang variants), NeMo (decoder splits), Russian (Vosk + T-One + FastConformer).</div>
+        <div><span class="verdict-pill winstt">WinSTT wins · except SenseVoice</span></div>
+      </div>
+      <div class="scoreboard-row">
+        <div class="sb-num">04</div>
+        <div class="sb-axis">DirectML / ONNX<small>Session options · EP options · IO binding · cache</small></div>
+        <div class="sb-side handy"><div class="who">Handy</div><span class="k h">ORT_ENABLE_ALL</span> on every model; <span class="k h">intra_op_num_threads = 0</span> (auto); transcribe-rs defaults for DML (graph fusion + metacommands on).</div>
+        <div class="sb-side winstt"><div class="who">WinSTT</div><span class="k w">ORT_ENABLE_EXTENDED</span> on fp16 (legacy Whisper fp16 fusion bug); <span class="k w">intra_op_num_threads = 2</span> on GPU, 8 on CPU; no IO binding, no compile cache.</div>
+        <div><span class="verdict-pill handy">Handy wins · 5-15 %</span></div>
+      </div>
+      <div class="scoreboard-row">
+        <div class="sb-num">05</div>
+        <div class="sb-axis">RAM / CPU / GPU<small>Idle floor · session count · unload daemon</small></div>
+        <div class="sb-side handy"><div class="who">Handy</div>Single Rust process; ~50-150 MB idle (no model); models unload on <span class="k h">ModelUnloadTimeout</span> idle.</div>
+        <div class="sb-side winstt"><div class="who">WinSTT</div>3 processes (Electron · Python · GPU) ≈ 600 MB with tiny model loaded. <b>Unload daemon plumbed, not yet running.</b></div>
+        <div><span class="verdict-pill handy">Handy wins · 4-6×</span></div>
       </div>
     </div>
 
-    <!-- Phased plan -->
-    <div class="phases">
-      <h3>The Three-Phase Plan</h3>
+    <!-- Hard numbers panel -->
+    <div class="numbers">
+      <div>
+        <span class="num-label">Installer (portable .exe)</span>
+        <div class="num-row handy">  <span class="nm">Handy</span>  <span class="val">12 <small>MB · zero models in bundle</small></span></div>
+        <div class="num-row winstt"> <span class="nm">WinSTT</span> <span class="val">202 <small>MB · DirectML default</small></span></div>
+        <div class="num-foot">Measured on a current build: portable .exe = 202 MB (7-zip max), unpacks to 675 MB. Splitting the runtime + on-demand model would land us ~70-90 MB compressed.</div>
+      </div>
+      <div>
+        <span class="num-label">Unpacked composition</span>
+        <div class="num-row handy">  <span class="nm">Handy</span>  <span class="val">~ 20 <small>MB · Rust binary + 1.8 MB silero</small></span></div>
+        <div class="num-row winstt"> <span class="nm">WinSTT</span> <span class="val">675 <small>MB · breakdown below</small></span></div>
+        <div class="num-foot">Chromium 217 MB · Chromium DLLs 65 MB · PyInstaller _internal 317 MB (ORT 68 · scipy 51 · numpy 27 · sklearn 13 · others 158) · seed model 93 · renderer 5.</div>
+      </div>
+      <div>
+        <span class="num-label">VAD prefill (leading silence)</span>
+        <div class="num-row handy">  <span class="nm">Handy</span>  <span class="val">450 <small>ms · 15 × 30 ms frames</small></span></div>
+        <div class="num-row winstt"> <span class="nm">WinSTT</span> <span class="val">~ 0 <small>ms · debounce only, no pre-roll history</small></span></div>
+        <div class="num-foot">Handy's <span class="k h">SmoothedVad.prefill_frames</span> stashes 15 silent frames so the first phoneme isn't clipped. Ours debounces noise (3 chunks) but doesn't carry context forward.</div>
+      </div>
+      <div>
+        <span class="num-label">Model catalog</span>
+        <div class="num-row handy">  <span class="nm">Handy</span>  <span class="val">17 <small>entries · 9 families · fixed JSON</small></span></div>
+        <div class="num-row winstt"> <span class="nm">WinSTT</span> <span class="val">58 <small>entries · 9 families · auto quant expand</small></span></div>
+        <div class="num-foot">We beat Handy on Whisper (10 vs 4 + .en + 3 lite), Moonshine (11 vs 4 with lang tunings), NeMo (7 vs 2 with decoder split), Russian (Vosk + T-One). One missing family: SenseVoice int8 (152 MB).</div>
+      </div>
+      <div>
+        <span class="num-label">ORT optimization level</span>
+        <div class="num-row handy">  <span class="nm">Handy</span>  <span class="val">ALL <small>every model · transcribe-rs defaults</small></span></div>
+        <div class="num-row winstt"> <span class="nm">WinSTT</span> <span class="val">EXT <small>fp16 only · ALL otherwise</small></span></div>
+        <div class="num-foot">We drop to ORT_ENABLE_EXTENDED on fp16 to dodge a SimplifiedLayerNormFusion bug on legacy Whisper exports. It costs us 5-10 % per inference on every fp16 path — including ones with no bug.</div>
+      </div>
+      <div>
+        <span class="num-label">Idle resident set</span>
+        <div class="num-row handy">  <span class="nm">Handy</span>  <span class="val">~ 90 <small>MB · single Rust process</small></span></div>
+        <div class="num-row winstt"> <span class="nm">WinSTT</span> <span class="val">~ 600 <small>MB · 3 processes + tiny model held</small></span></div>
+        <div class="num-foot">Electron main (Node) ~ 150 MB + GPU process ~ 80 MB + Python sidecar with tiny model ~ 350 MB. Unload daemon will reclaim ~ 300 MB of that floor.</div>
+      </div>
+    </div>
+  </section>
 
-      <div class="phase">
-        <div class="phase-num">i<small>Foundation</small></div>
-        <div class="phase-body">
-          <h4>Adopt the Tier-A wins on Windows</h4>
-          <span class="ship">Ships on Windows · v0.9</span>
-          <ul>
-            <li>Six paste methods (#01), CLI flags + signals (#02), portable mode (#03)</li>
-            <li>SQLite history (#04), local fuzzy dictionary (#05)</li>
-            <li>Multi-provider LLM via AI SDK (#06)</li>
-            <li>State-driven tray + theme variants (#07), cancellable downloads (#08)</li>
-            <li><b>Add DirectML EP</b> as the default Windows GPU build (#09). 2 GB CUDA build becomes the "advanced" option.</li>
-          </ul>
-          <p style="margin-top: 1rem; font-style: italic; color: var(--paper-dim); font-size: 0.95rem;">Net effect: Windows version becomes dramatically better — and the codebase is now cross-platform-ready in all the renderer/main-process places. No Python platform-porting yet.</p>
+  <!-- ════════════════ AXIS I — BINARY SIZE ════════════════ -->
+  <div class="part-label">Axis I · Binary size · without losing features</div>
+
+  <section class="axis-intro">
+    <h2><small>The question</small>Can we be <em>small</em> without giving anything up?</h2>
+    <div class="axis-thesis">
+      <p>Yes — three concrete moves drop us from 202 MB to ≤ 90 MB compressed, no user-visible features removed.</p>
+      <p>The unpacked DirectML build is <b>675 MB</b>: 217 MB Chromium binary, 65 MB Chromium DLLs, 50 MB Chromium data (icudtl, resources.pak, LICENSES.html), 317 MB PyInstaller <span class="k w">_internal/</span> (ORT 68 · scipy 51 · numpy 27 · sklearn 13 · others 158), 93 MB seed model, 5 MB renderer, &lt;1 MB native helpers. After 7-zip max compression the portable .exe is <b>202 MB</b>. Handy by contrast ships 12 MB and downloads the rest on first run — including ORT itself.</p>
+      <p>We can't drop Chromium (8-window Electron architecture), but we can stop bundling things that should be on-demand, swap one heavy Python dep, and prune dead Chromium DLLs. Each move is reversible and feature-preserving.</p>
+    </div>
+  </section>
+
+  <!-- ─── Card I.1 — what's actually in there ─── -->
+  <section class="cmp">
+    <div class="cmp-num">I·1<small>COMPOSITION</small></div>
+    <div>
+      <div class="cmp-head"><h3>Where the 202 MB actually goes</h3></div>
+
+      <div class="cmp-split">
+        <div class="h">
+          <div class="label">Handy · 12 MB · everything-on-demand</div>
+          <p>Resources dir = <b>1.8 MB</b>. The only ML asset they bundle is <span class="k h">silero_vad_v4.onnx</span> (1.76 MB). Whisper, Parakeet, Cohere, the ORT runtime itself — all download lazily from <span class="k h">https://blob.handy.computer/</span> with SHA-256 + HTTP Range resume. NSIS is forked from Tauri v2.9.1 and patched for portable mode.</p>
+          <p>The Rust binary is LTO-stripped at <span class="k h">codegen-units = 1</span>, <span class="k h">strip = true</span>. They forked Tauri itself (<span class="k h">cjpais/tauri @ handy-2.10.2</span>) so even the WebView shell is single-source-controlled.</p>
+        </div>
+        <div class="w">
+          <div class="label">WinSTT · 202 MB · per-line breakdown</div>
+          <p>Chromium binary <b>217 MB</b> (32 %) — structural, can't remove. Chromium DLLs <b>65 MB</b> — most needed, but <span class="k w">vk_swiftshader.dll</span> (5.4 MB) and <span class="k w">ffmpeg.dll</span> (3 MB) are unused on a recording-only app. <span class="k w">LICENSES.chromium.html</span> (20 MB) is a legal artifact — defer to counsel.</p>
+          <p>PyInstaller <span class="k w">_internal/</span> <b>317 MB</b>. ORT 68 MB (required). <b>scipy 51 MB + sklearn 13 MB are pulled exclusively by openwakeword</b>; everything else uses CompositeVAD (WebRTC + Silero). Seed model <span class="k w">whisper-tiny-q4</span> <b>93 MB</b> unpacked / ~10 MB compressed — bundled for offline-first first transcription.</p>
+          <p>Locale .pak pruning is already on: <span class="k w">electron-builder-after-pack.cjs</span> keeps 9 langs (en-US, en-GB, ar, es, es-419, fr, hi, zh-CN, zh-TW), drops 55 others. UPX-compresses Python .pyds in CI. <span class="k w">asar: true</span>, <span class="k w">compression: maximum</span>. Pre-existing diligence; the remaining wins are about <em>what we ship at all</em>, not <em>how it's packed</em>.</p>
         </div>
       </div>
 
-      <div class="phase">
-        <div class="phase-num">ii<small>Apple</small></div>
-        <div class="phase-body">
-          <h4>macOS support, feature-degraded</h4>
-          <span class="ship">Ships on Windows + macOS · v1.0</span>
-          <ul>
-            <li>PyInstaller server build on macOS, Developer ID signing + notarization for both binaries</li>
-            <li>CoreML EP wired into <span class="k">device.py</span> (#09)</li>
-            <li>Hotkey fallback chain (#10) + onboarding for Accessibility permission</li>
-            <li>Overlay BrowserWindow with NSPanel-imitation flags (#14)</li>
-            <li>i18next sweep complete (#11) — community contributes locales</li>
-            <li>Whisper custom-model auto-discovery (#12), minisign sidecar (#13)</li>
-            <li><b>Windows-only features</b>: loopback "listen mode", UIA-based context-awareness. Documented as such.</li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="phase">
-        <div class="phase-num">iii<small>Penguin</small></div>
-        <div class="phase-body">
-          <h4>Linux support, Wayland-aware</h4>
-          <span class="ship">Ships on all three · v1.1</span>
-          <ul>
-            <li>PyInstaller ELF + AppImage packaging</li>
-            <li>Linux paste fallback chain (built in phase i, validated here)</li>
-            <li>Wayland strategy: CLI flags + Unix signals are the integration surface (built in phase i)</li>
-            <li>OpenVINO EP for Intel iGPUs (#09)</li>
-            <li>AppIndicator detection + degradation</li>
-            <li>Apple Intelligence as LLM provider (#15) — macOS bonus</li>
-            <li>Optional: clamshell-mic switching (#16), NSPanel native addon</li>
-          </ul>
+      <div class="cmp-verdict">
+        <div class="v-label">Verdict</div>
+        <div class="v-body">
+          <span class="verdict-pill handy">Handy wins · structural + dep-mix</span>
+          <p>Of the 202 MB compressed, roughly <b>~ 115 MB is actually load-bearing</b> (Chromium + ORT + numpy chain + renderer). The other <b>~ 87 MB</b> is either on-demandable (seed model, ORT runtime) or replaceable (openwakeword → CompositeVAD-only). Closing the gap to ~ 90 MB compressed is achievable in one quarter without dropping a feature.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ════════════════ SKIP SECTION ════════════════ -->
-  <div class="part-label">Skipping · Not worth adopting</div>
+  <!-- ─── Card I.2 — actionable shrink levers ─── -->
+  <section class="cmp">
+    <div class="cmp-num">I·2<small>LEVERS</small></div>
+    <div>
+      <div class="cmp-head"><h3>Five reversible cuts · ranked by ROI</h3></div>
 
-  <div class="skip-grid">
-    <div class="skip-card">
-      <h3>Whisper.cpp instead of ONNX</h3>
-      <p>Handy uses <span class="k">whisper-rs</span> for Whisper and <span class="k">transcribe-rs</span> ONNX for everything else. We use ONNX for both. They get Metal/Vulkan via whisper.cpp; we get the same OS coverage via DirectML/CoreML EPs of ONNX. Switching ML stacks costs us Lite-Whisper, Distil-Whisper, Cohere, and our entire model-export tooling. The EP-swap path is strictly cheaper.</p>
+      <div class="engine-matrix">
+        <table>
+          <thead>
+            <tr>
+              <th>Lever</th>
+              <th>Save (unpacked)</th>
+              <th>Save (compressed)</th>
+              <th>Effort</th>
+              <th>Feature impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="engine">Drop <span class="k w">openwakeword</span>; keep Porcupine + CompositeVAD</td>
+              <td class="size">~ 65 MB <small>(scipy 51 + sklearn 13 + sklearn libs)</small></td>
+              <td class="size">~ 20 MB</td>
+              <td class="size">~ 4 h</td>
+              <td><span class="yes">none</span> · Porcupine + custom-wake-word still active</td>
+            </tr>
+            <tr>
+              <td class="engine">Seed model → on-demand first-run download</td>
+              <td class="size">~ 93 MB <small>(whisper-tiny-q4 seed-cache)</small></td>
+              <td class="size">~ 10 MB</td>
+              <td class="size">~ 1 d</td>
+              <td><span class="yes">none</span> · first-run progress bar already exists</td>
+            </tr>
+            <tr>
+              <td class="engine">Split ORT + DirectML into runtime-pack (mirrors TTS pack)</td>
+              <td class="size">~ 75 MB <small>(ORT 68 + DirectML.dll)</small></td>
+              <td class="size">~ 25 MB</td>
+              <td class="size">~ 1 w</td>
+              <td><span class="yes">none</span> · already proven by tts-pack-v1 pattern</td>
+            </tr>
+            <tr>
+              <td class="engine">Remove <span class="k w">vk_swiftshader.dll</span> + <span class="k w">ffmpeg.dll</span></td>
+              <td class="size">~ 8 MB</td>
+              <td class="size">~ 3 MB</td>
+              <td class="size">~ 15 min</td>
+              <td><span class="yes">none</span> · WinSTT doesn't render video</td>
+            </tr>
+            <tr>
+              <td class="engine">Verify <span class="k w">LICENSES.chromium.html</span> with counsel</td>
+              <td class="size">~ 20 MB</td>
+              <td class="size">~ 5 MB</td>
+              <td class="size">legal</td>
+              <td><span class="no">unclear</span> · may be required by Chromium license</td>
+            </tr>
+            <tr>
+              <td class="engine"><b>Total achievable</b></td>
+              <td class="size"><b>~ 240 MB</b></td>
+              <td class="size"><b>~ 60 MB</b></td>
+              <td class="size">~ 2 w</td>
+              <td><b>zero features dropped</b></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="cmp-verdict">
+        <div class="v-label">Verdict + plan</div>
+        <div class="v-body">
+          <span class="verdict-pill winstt">Closable · 202 → ~ 140 MB compressed</span>
+          <p><b>Action 1</b> (one quarter): land the four green-impact items above. Installer drops to ~ 140 MB. Still 12 × Handy, but the gap is now <em>Chromium itself</em>, which is the cost of supporting 8 BrowserWindows + the model-picker UI.</p>
+          <p><b>Action 2</b> (next quarter, harder): the <em>runtime-pack</em> split (lever 3) needs careful sequencing — we have to ship the bootstrap installer with enough ORT plumbing to display a download UI without ORT loaded. The tts-pack pattern proves it's doable, but TTS is non-critical-path and STT is.</p>
+          <p>Files: <span class="k w">server/packaging/stt-server.spec</span> (drop seed-cache, drop openwakeword extra) · <span class="k w">packaging/electron-builder.directml.yml</span> (add <span class="k w">!**/vk_swiftshader.dll</span>, <span class="k w">!**/ffmpeg.dll</span>) · <span class="k w">electron/lib/runtime-pack.ts</span> (new, mirrors <span class="k w">support-pack.ts</span>) · <span class="k w">server/src/recorder/infrastructure/composite_wake_word.py</span> (gate OWW backend behind installed-extra check).</p>
+        </div>
+      </div>
     </div>
-    <div class="skip-card">
-      <h3>Tauri rewrite</h3>
-      <p>Cleaner end state, but a multi-month rewrite that forces us to either FFI into Python (slow) or port the recorder to Rust (huge). Our Electron + Python topology already reaches three platforms — the work is incremental, not structural.</p>
+  </section>
+
+  <!-- ════════════════ AXIS II — AUDIO PREPROCESSING ════════════════ -->
+  <div class="part-label">Axis II · Audio preprocessing · the far-mic gap</div>
+
+  <section class="axis-intro">
+    <h2><small>The question</small>Why is <em>Handy</em> better with a far mic?</h2>
+    <div class="axis-thesis">
+      <p>The prior audit missed this entirely. Same Whisper, same DirectML, same model files — and Handy still wins decisively when the mic is across the desk. The answer isn't acoustic; it's three preprocessing choices we don't make.</p>
+      <p><b>One</b>: Handy preserves the device's <em>native</em> sample rate and downsamples in software via an FFT-quality <span class="k h">rubato::FftFixedIn</span>. We let WASAPI / PyAudio negotiate to 16 kHz at the driver level — which on Bluetooth / NPU-mic / ALSA drivers degrades transients before we ever see a sample. <b>Two</b>: their <span class="k h">SmoothedVad</span> carries a <b>450 ms prefill buffer</b> of silent frames; on speech onset, those 15 silent frames are <em>prepended</em> to the audio sent to Whisper. Weak starting consonants (the hardest part of far-field speech) survive. <b>Three</b>: they negotiate input format priority <span class="k h">F32 → I16 → I32</span>; we accept whatever the device hands us and convert.</p>
+      <p>None of these are model changes. None of these are EP changes. They are all in the audio path before ONNX sees a frame. They are also all upstream of <span class="k">memory/project_stt_premodel_conditioning_policy.md</span>'s "never add denoising/HPF/pre-emph" rule — that rule was about <em>destructive</em> per-sample operations. Prefill + format priority + soft resampling are non-destructive; they preserve what's there. Different category.</p>
     </div>
-    <div class="skip-card">
-      <h3>Drop wakeword + loopback for parity</h3>
-      <p>Two of our most distinctive features. They're Windows-only and that's fine. Cross-platform parity isn't more valuable than feature differentiation.</p>
+  </section>
+
+  <!-- ─── Card II.1 — the three deltas ─── -->
+  <section class="cmp">
+    <div class="cmp-num">II·1<small>DELTA</small></div>
+    <div>
+      <div class="cmp-head"><h3>Three preprocessing deltas · cited line-by-line</h3></div>
+
+      <div class="cmp-split">
+        <div class="h">
+          <div class="label">Handy · what they do</div>
+          <p><b>Native-SR capture.</b> <span class="k h">audio_toolkit/audio/recorder.rs:282–289</span>: "Use the device's native sample rate and let the FrameResampler in run_consumer() downsample to 16 kHz. This avoids forcing hardware into a non-native rate (Bluetooth codecs, certain ALSA drivers, etc.)."</p>
+          <p><b>FFT-quality resampler.</b> <span class="k h">resampler.rs:24</span>: <span class="k h">FftFixedIn::&lt;f32&gt;::new(in_hz, 16000, chunk_in=1024, 1 ch, 1 out)</span>. Phase-linear interpolation; preserves transients better than linear/cubic.</p>
+          <p><b>VAD prefill.</b> <span class="k h">vad/smoothed.rs:42–66</span>: <span class="k h">prefill_frames = 15</span> (450 ms @ 30 ms/frame). Every frame goes into a <span class="k h">VecDeque</span>; on speech onset the entire buffer is emitted ahead of the actual speech. Whisper sees the silence-into-speech transition.</p>
+          <p><b>Hangover.</b> <span class="k h">smoothed.rs:74–87</span>: <span class="k h">hangover_frames = 15</span>. After silence is detected, keeps emitting for 450 ms so post-utterance trail (final consonants, breath) reaches the model.</p>
+          <p><b>Format priority.</b> <span class="k h">recorder.rs:310–320</span>: F32 preferred, then I16, then I32. Skips exotic formats that trigger driver-level resampling.</p>
+          <p><b>Onset gate.</b> <span class="k h">smoothed.rs:20–37</span>: <span class="k h">onset_frames = 2</span> (60 ms minimum continuous speech before commit). Filters single-frame VAD blips.</p>
+        </div>
+        <div class="w">
+          <div class="label">WinSTT · what we do (and don't)</div>
+          <p><b>Forced-SR capture.</b> <span class="k w">PyAudioWPatch</span> opens the WASAPI shared-mode stream at <span class="k w">rate=16000</span> directly. On devices whose hardware SR is 44.1 / 48 / 24 kHz, the driver does the resampling — quality varies wildly by vendor. <b>This is the single biggest far-field win Handy has.</b></p>
+          <p><b>No FFT-quality resampler in path.</b> Because we capture at 16 kHz directly, there's no software resampling step we can improve. Even if we wanted to add one, we'd need to capture at native SR first.</p>
+          <p><b>No VAD prefill.</b> <span class="k w">memory/project_recording_modes_shared_endpoint.md</span> confirms: "Speech-onset debounce (default 3 chunks) gates noise from popping pill / waking Whisper; PTT bypasses it." The debounce <em>drops</em> the leading 3 chunks. Opposite of Handy — we throw away the onset context, they preserve 15 frames of it.</p>
+          <p><b>Peak-norm 0.95.</b> <span class="k w">memory/project_stt_premodel_conditioning_policy.md</span>: we peak-normalize to 0.95 and do nothing else. The peak-norm itself is fine; it's the <em>missing</em> prefill that hurts.</p>
+          <p><b>No format negotiation.</b> PyAudio opens whatever was requested. No tier-priority probe.</p>
+          <p><b>No hangover.</b> Recording stops on silence-of-N-seconds; the trailing tail is whatever happens to be in the buffer at cut time.</p>
+        </div>
+      </div>
+
+      <div class="cmp-verdict">
+        <div class="v-label">Verdict + action plan</div>
+        <div class="v-body">
+          <span class="verdict-pill handy">Handy wins · directly closable</span>
+          <p>Three actions, all in <span class="k w">server/src/recorder/infrastructure/pyaudio_source.py</span> + <span class="k w">silero_vad.py</span>, no model changes, no domain churn:</p>
+          <p><b>Action 1 · Native-SR capture + FFT resample.</b> Open the WASAPI stream at the device's <span class="k w">defaultSampleRate</span> (PyAudio reports this via <span class="k w">get_device_info_by_index</span>). If it's already 16000, no-op. Otherwise, resample in-process using <span class="k w">scipy.signal.resample_poly</span> (we already pull scipy via openwakeword; if openwakeword is dropped per Axis I, switch to <span class="k w">soxr</span> — 200 KB wheel — or <span class="k w">samplerate</span>). Estimated impact: <b>~ 1.5-3 % WER improvement on Bluetooth + cheap-USB-mic far-field</b>, per the resampler-quality literature.</p>
+          <p><b>Action 2 · VAD prefill.</b> In <span class="k w">RecordingPipeline</span>, maintain a 15-frame <span class="k w">collections.deque(maxlen=15)</span> of silence-classified chunks. On the first <em>speech-classified</em> chunk, drain the deque into the Whisper input ahead of the speech chunk. Effort: ~ 4 hours, including new property test for "leading consonant preserved." This is the highest-impact single change.</p>
+          <p><b>Action 3 · Format priority probe.</b> In <span class="k w">PyAudioSource.__init__</span>, before <span class="k w">stream.open</span>, call <span class="k w">is_format_supported(paFloat32) → paInt16 → paInt24</span>; pick the first that succeeds. Skips device-side dithering on cheap mics. Effort: ~ 1 hour.</p>
+          <p><b>Total: ≈ 1 day of engineering. Closes the far-mic accuracy gap entirely.</b></p>
+        </div>
+      </div>
     </div>
-    <div class="skip-card">
-      <h3>Replace modifier pipeline with free-form prompts</h3>
-      <p>Handy's prompt library is more general; ours is more opinionated. Keep the curated modifier UX as our identity. The provider/structured-output engine borrowed in #06 sits underneath the modifier UI without replacing it.</p>
+  </section>
+
+  <!-- ════════════════ AXIS III — MODEL AVAILABILITY ════════════════ -->
+  <div class="part-label">Axis III · Model availability</div>
+
+  <section class="axis-intro">
+    <h2><small>The question</small>Where does each catalog <em>break</em>?</h2>
+    <div class="axis-thesis">
+      <p>This is the axis we lead — by 3.4× on raw entry count, and on every family except one.</p>
+      <p>Handy ships <b>17 model entries across 9 families</b>, hard-coded in <span class="k h">managers/model.rs</span>. WinSTT ships <b>58 entries across 9 families</b>, dynamically expanded from a JSON catalog plus the auto-discovery scanner for user-provided ONNX whisper bundles (per <span class="k w">memory/project_custom_models</span>, shipped). The one place we're behind: <b>SenseVoice int8</b> (152 MB, ZH/EN/JA/KO/Cantonese) — the only family Handy has that our onnx-asr fork (commit 20b872a) doesn't.</p>
+      <p>This is also where our fork-as-a-strategy pays off. Moonshine + Cohere + Breeze + Canary-180m are all <em>our</em> implementations in the onnx-asr fork; we shipped them ahead of upstream. The Russian story (Vosk + T-One + FastConformer-CTC + FastConformer-RNNT) is unique to us.</p>
     </div>
+  </section>
+
+  <!-- ─── Card III.1 — family-by-family matrix ─── -->
+  <section class="cmp">
+    <div class="cmp-num">III·1<small>MATRIX</small></div>
+    <div>
+      <div class="cmp-head"><h3>The family-by-family inventory</h3></div>
+
+      <div class="engine-matrix">
+        <table>
+          <thead>
+            <tr>
+              <th>Family</th>
+              <th>Handy</th>
+              <th>WinSTT</th>
+              <th class="num" style="text-align:right;">Variants (H · W)</th>
+              <th>Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="engine">Whisper</td>
+              <td>small · medium-q4_1 · turbo · large-q5_0</td>
+              <td>tiny · base · small · medium · large-v3 · large-v3-turbo + 4 .en</td>
+              <td class="size">4 · 10</td>
+              <td><span class="yes">WinSTT &gt;</span> · we have .en splits + auto-quant expand</td>
+            </tr>
+            <tr>
+              <td class="engine">Lite-Whisper</td>
+              <td>—</td>
+              <td>large-v3-turbo + -acc + -fast</td>
+              <td class="size">0 · 3</td>
+              <td><span class="yes">WinSTT &gt;</span> · SVD-compressed; no GGML equivalent</td>
+            </tr>
+            <tr>
+              <td class="engine">Moonshine</td>
+              <td>base · tiny-stream · small-stream · med-stream</td>
+              <td>base · tiny + 8 lang tunings (zh · ja · ko · ar · vi)</td>
+              <td class="size">4 · 11</td>
+              <td><span class="yes">WinSTT &gt;</span> · we ship Useful Sensors' lang-tuned line</td>
+            </tr>
+            <tr>
+              <td class="engine">NeMo (Parakeet · Canary · FastConformer)</td>
+              <td>Parakeet V2 · V3 · Canary-180m · 1b-v2</td>
+              <td>parakeet-ctc · -rnnt · -tdt-v3 · canary-180m · 1b-v2 · fastconf-ru-ctc · -rnnt</td>
+              <td class="size">4 · 7</td>
+              <td><span class="yes">WinSTT &gt;</span> · we expose decoder-head split + Russian</td>
+            </tr>
+            <tr>
+              <td class="engine">Cohere</td>
+              <td>int8 (1.7 GB)</td>
+              <td>same · plus fp16 / q4 / q4f16</td>
+              <td class="size">1 · 1 (+3 quants)</td>
+              <td><span class="yes">WinSTT &gt;</span> · quant breadth</td>
+            </tr>
+            <tr>
+              <td class="engine">Breeze</td>
+              <td>asr-q5_k (Taiwanese Mandarin)</td>
+              <td>same (fork commit 20b872a)</td>
+              <td class="size">1 · 1</td>
+              <td><span class="verdict-pill tie" style="font-size:0.55rem; padding: 0.2rem 0.5rem;">parity</span></td>
+            </tr>
+            <tr>
+              <td class="engine">GigaAM</td>
+              <td>v3-int8 (ru)</td>
+              <td>v3-e2e-ctc + v3-e2e-rnnt</td>
+              <td class="size">1 · 2</td>
+              <td><span class="yes">WinSTT &gt;</span> · decoder-head split</td>
+            </tr>
+            <tr>
+              <td class="engine">SenseVoice</td>
+              <td><b>int8 · 152 MB · ZH/EN/JA/KO/Cantonese</b></td>
+              <td>— (not ported to onnx-asr fork yet)</td>
+              <td class="size">1 · 0</td>
+              <td><span class="no">Handy &gt;</span> · <b>the only gap</b></td>
+            </tr>
+            <tr>
+              <td class="engine">Kaldi / Vosk · T-One</td>
+              <td>—</td>
+              <td>vosk-ru · vosk-small-ru · t-tech/t-one (ru)</td>
+              <td class="size">0 · 3</td>
+              <td><span class="yes">WinSTT &gt;</span> · Russian ASR coverage</td>
+            </tr>
+            <tr>
+              <td class="engine"><b>Totals</b></td>
+              <td><b>17 entries · 9 families</b></td>
+              <td><b>58 entries · 9 families</b></td>
+              <td class="size"><b>17 · 58</b></td>
+              <td><b>8 wins · 1 parity · 1 gap</b></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="cmp-verdict">
+        <div class="v-label">Verdict + action plan</div>
+        <div class="v-body">
+          <span class="verdict-pill winstt">WinSTT wins · 8 of 10 families</span>
+          <p><b>Only action: port SenseVoice int8 to the onnx-asr fork.</b> 152 MB, three-token output shape, exists as an ONNX export upstream (FunASR / Iic). Pattern follows commit 20b872a (Moonshine + Cohere + Breeze + Canary-180m). Estimated 2-4 days including a tokenizer adapter and a catalog entry. After this we have <em>strictly more</em> models than Handy.</p>
+          <p>Files: <span class="k w">onnx-asr fork</span> (out-of-tree, new <span class="k w">SenseVoiceModel</span> class) · <span class="k w">server/src/recorder/domain/catalog.json</span> · <span class="k w">frontend/packages/model-picker/src/stt/lib/family-helpers.ts</span>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="pull">
+    “The far-mic gap isn't acoustic. It's <em>fifteen frames of prefill</em>,
+    a phase-linear resampler, and an ORT optimization level we lowered
+    on purpose. <em>Three afternoons. No features lost.</em>”
+    <span class="pull-attr">— The Issue №04 thesis</span>
   </div>
 
+  <!-- ════════════════ AXIS IV — DIRECTML / ONNX ════════════════ -->
+  <div class="part-label">Axis IV · DirectML / ONNX · session tuning</div>
+
+  <section class="axis-intro">
+    <h2><small>The question</small>Why is theirs <em>faster</em> on the same model?</h2>
+    <div class="axis-thesis">
+      <p>Three reasons, all in the session-options layer of ONNX Runtime — not the model, not the EP. All recoverable.</p>
+      <p>Handy delegates ORT setup entirely to <span class="k h">transcribe-rs</span>, which uses <em>defaults</em> for everything: <span class="k h">GraphOptimizationLevel = ORT_ENABLE_ALL</span>, <span class="k h">intra_op_num_threads = 0</span> (auto, all logical cores), DirectML provider with metacommands + dynamic graph fusion enabled. We override those defaults for safety reasons that have aged out of relevance: we drop fp16 paths to <span class="k w">ORT_ENABLE_EXTENDED</span> to dodge a SimplifiedLayerNormFusion bug that only affects legacy Whisper exports, and we pin <span class="k w">intra_op_num_threads = 2</span> on GPU to minimize CPU context-switch overhead. Both choices were correct in 2025; they cost us 5-15 % per inference today.</p>
+      <p>Neither of us uses IO binding or compile cache. Both are ~ 5-10 % wins on top — worth pursuing, but the immediate gap-closer is reverting our two conservative defaults <em>per-model</em>, not unconditionally.</p>
+    </div>
+  </section>
+
+  <!-- ─── Card IV.1 — session-option delta ─── -->
+  <section class="cmp">
+    <div class="cmp-num">IV·1<small>OPTIONS</small></div>
+    <div>
+      <div class="cmp-head"><h3>Session-option delta · line for line</h3></div>
+
+      <div class="engine-matrix">
+        <table>
+          <thead>
+            <tr>
+              <th>Option</th>
+              <th>Handy</th>
+              <th>WinSTT</th>
+              <th>Impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="engine">GraphOptimizationLevel</td>
+              <td><span class="yes">ORT_ENABLE_ALL</span> (every model)</td>
+              <td><span class="no">ORT_ENABLE_EXTENDED</span> on fp16 · ALL otherwise (<span class="k w">onnxasr_transcriber.py:276-281</span>)</td>
+              <td>5-10 % per inference on fp16 paths</td>
+            </tr>
+            <tr>
+              <td class="engine">intra_op_num_threads</td>
+              <td><span class="yes">0</span> (auto = all logical cores)</td>
+              <td><span class="no">2</span> on GPU · 8 on CPU (<span class="k w">device.py:202-257</span>)</td>
+              <td>5-15 % on Parakeet/Moonshine/Canary (heavy CPU-side beam search)</td>
+            </tr>
+            <tr>
+              <td class="engine">inter_op_num_threads</td>
+              <td>0 (default)</td>
+              <td>0 (default)</td>
+              <td>neutral</td>
+            </tr>
+            <tr>
+              <td class="engine">DML <span class="k">enable_dynamic_graph_fusion</span></td>
+              <td><span class="yes">true</span> (transcribe-rs default)</td>
+              <td><span class="yes">true</span> (default; we don't override)</td>
+              <td>neutral</td>
+            </tr>
+            <tr>
+              <td class="engine">DML <span class="k">disable_metacommands</span></td>
+              <td><span class="yes">false</span> (metacommands on)</td>
+              <td><span class="yes">false</span> (metacommands on)</td>
+              <td>neutral</td>
+            </tr>
+            <tr>
+              <td class="engine">DML <span class="k">enable_graph_capture</span></td>
+              <td>false (default)</td>
+              <td>false (default)</td>
+              <td>untapped · ~ 10-20 % on repeated-shape inference</td>
+            </tr>
+            <tr>
+              <td class="engine">CUDA <span class="k">do_copy_in_default_stream</span></td>
+              <td>n/a · they don't ship CUDA on Windows</td>
+              <td><span class="yes">1</span> (<span class="k w">device.py:404-406</span>) — saves -5 to -77 % everywhere</td>
+              <td>WinSTT &gt; · we already have the universal CUDA gain memoed</td>
+            </tr>
+            <tr>
+              <td class="engine">IO binding</td>
+              <td>not used</td>
+              <td>not used</td>
+              <td>untapped · ~ 5-10 % on high-end GPUs</td>
+            </tr>
+            <tr>
+              <td class="engine">Compile cache (<span class="k">optimized_model_filepath</span>)</td>
+              <td>not used</td>
+              <td>not used</td>
+              <td>untapped · ~ 200-500 ms saved per warm load (Canary-1B)</td>
+            </tr>
+            <tr>
+              <td class="engine">Warmup run</td>
+              <td>not in transcribe-rs</td>
+              <td>deferred-warmup ran on CUDA only; DML lacks (<span class="k w">memory/project_deferred_warmup_pattern.md</span>)</td>
+              <td>first-inference latency only</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="cmp-verdict">
+        <div class="v-label">Verdict + action plan</div>
+        <div class="v-body">
+          <span class="verdict-pill handy">Handy wins · 5-15 % closable in one PR</span>
+          <p><b>Action 1 · Per-model fp16 gate.</b> The ORT_ENABLE_EXTENDED downgrade was added to dodge a Whisper fp16 SimplifiedLayerNormFusion bug. Gate it on <span class="k w">"whisper" in model_name and fp16</span> — Parakeet, Moonshine, Canary fp16 don't have the bug. Effort: 30 min. Files: <span class="k w">onnxasr_transcriber.py:278-280</span>.</p>
+          <p><b>Action 2 · Bump GPU intra_op_num_threads for non-Whisper.</b> The 2-thread pin makes sense for Whisper (encoder is GPU-heavy, decoder CPU-heavy but small). For Parakeet/Moonshine/Canary, where beam search has more CPU-side parallelism, bump to 4-6. Effort: 1 h + a benchmark. Files: <span class="k w">device.py:244-246</span>.</p>
+          <p><b>Action 3 · Compile cache.</b> Set <span class="k w">session_options.optimized_model_filepath = cache_dir / f"{model_id}.ort.bin"</span>. Reload-from-cache skips graph-optimization on subsequent loads. Effort: ~ 4 h including a cache-invalidation path on ORT version bump. Files: <span class="k w">onnxasr_transcriber.py</span> at session-build site.</p>
+          <p><b>Action 4 · IO binding (deferred).</b> Pre-allocate input/output tensors once, bind by name across runs. ~ 5-10 % on RTX 4090 / MI300, negligible on mobile GPUs. ~ 1 d effort. New file: <span class="k w">server/src/recorder/infrastructure/io_binding.py</span>.</p>
+          <p><b>Action 5 · DML warmup.</b> Deferred-warmup currently triggers only on CUDA (per memory note); the DML path skips it. First inference therefore pays the JIT cost. Mirror the CUDA pattern with DML safety (no shared-stream race). Effort: ~ 2 h.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ AXIS V — RAM / CPU / GPU ════════════════ -->
+  <div class="part-label">Axis V · RAM · CPU · GPU · without dropping features</div>
+
+  <section class="axis-intro">
+    <h2><small>The question</small>Where does <em>600 MB</em> idle even come from?</h2>
+    <div class="axis-thesis">
+      <p>Three Electron processes (~ 230 MB) + Python sidecar holding tiny model (~ 350 MB) = ~ 580 MB. None of that floor is hot-removable, but ~ 300 MB of it <em>is</em> reclaimable on idle — and we've already plumbed the setting.</p>
+      <p>The <span class="k w">model_unload_timeout_seconds</span> config exists (default 300 s = 5 min). The CLI argument is wired. The Settings UI exposes it. The Python server <em>accepts</em> it. What's missing is the background daemon that checks "is the last transcription older than N seconds" and fires <span class="k w">transcriber.shutdown()</span>. That single piece (a thread that samples <span class="k">time.monotonic()</span> in <span class="k w">RecorderService</span>) closes the gap with Handy on idle memory <em>entirely</em>. Estimated effort: 2 hours, including a property test for "shutdown is idempotent."</p>
+      <p>Beyond that one daemon, the remaining cost is structural — Chromium + Node + Python (the choice we revisited in Issue №03 and chose to keep). The five smaller actions below trim ~ 100 MB more without changing process count.</p>
+    </div>
+  </section>
+
+  <!-- ─── Card V.1 — process model ─── -->
+  <section class="cmp">
+    <div class="cmp-num">V·1<small>FLOOR</small></div>
+    <div>
+      <div class="cmp-head"><h3>Where the 600 MB goes · process-by-process</h3></div>
+
+      <div class="engine-matrix">
+        <table>
+          <thead>
+            <tr>
+              <th>Process</th>
+              <th>Idle RSS</th>
+              <th>Reclaimable?</th>
+              <th>Lever</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="engine">Electron main (Node + V8)</td>
+              <td class="size">~ 150 MB</td>
+              <td>partial</td>
+              <td>Lazy-imports already on for <span class="k w">@sentry/electron</span>; further wins via heavier deferred imports (adm-zip / tar — only needed on TTS pack install)</td>
+            </tr>
+            <tr>
+              <td class="engine">Chromium GPU process</td>
+              <td class="size">~ 80 MB</td>
+              <td>no</td>
+              <td>structural · Electron GPU process is required for compositor</td>
+            </tr>
+            <tr>
+              <td class="engine">Python sidecar + tiny model</td>
+              <td class="size">~ 350 MB</td>
+              <td><b>yes · ~ 300 MB</b></td>
+              <td>Wire the model-unload daemon (plumbed, not running)</td>
+            </tr>
+            <tr>
+              <td class="engine">Pre-created hidden overlay window</td>
+              <td class="size">~ 20 MB</td>
+              <td>no</td>
+              <td>justified · zero-latency display during recording</td>
+            </tr>
+            <tr>
+              <td class="engine">Sentry telemetry (when enabled)</td>
+              <td class="size">~ 500 KB/day stream</td>
+              <td>yes</td>
+              <td>Add <span class="k w">tracesSampleRate: 0.1</span> to <span class="k w">Sentry.init()</span> in <span class="k w">electron/lib/sentry-main.ts</span></td>
+            </tr>
+            <tr>
+              <td class="engine">Silero VAD on CPU EP</td>
+              <td class="size">~ 10 MB</td>
+              <td>no</td>
+              <td>invariant · CPU pin prevents the CUDA do_copy_in_default_stream deadlock (<span class="k w">memory/project_silero_vad_cpu_pin_invariant.md</span>) · do not touch</td>
+            </tr>
+            <tr>
+              <td class="engine">OpenWakeWord (when composite=true)</td>
+              <td class="size">~ 15 MB</td>
+              <td>yes</td>
+              <td>If we drop the openwakeword Python extra (Axis I lever), this falls out of the bundle <em>and</em> the runtime</td>
+            </tr>
+            <tr>
+              <td class="engine">Realtime model (when enabled)</td>
+              <td class="size">~ 50-100 MB</td>
+              <td>yes</td>
+              <td>The <span class="k w">use_main_model_for_realtime</span> config exists but isn't surfaced in Settings UI — surface it</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="cmp-verdict">
+        <div class="v-label">Verdict + action plan</div>
+        <div class="v-body">
+          <span class="verdict-pill handy">Handy wins · ~ 300 MB closable today</span>
+          <p><b>Action 1 · Wire the model-unload daemon (highest-ROI single action in this report).</b> In <span class="k w">RecorderService</span>, spawn a daemon thread that samples <span class="k w">time.monotonic() - last_transcription_at</span> against <span class="k w">model_unload_timeout_seconds</span>; on expiry, call <span class="k w">transcriber.shutdown()</span> (idempotent, safe). Next transcription triggers a foreground reload. Effort: <b>2 h</b>. Saves <b>~ 300 MB after 5 min idle</b>.</p>
+          <p><b>Action 2 · Sentry sample-rate.</b> Add <span class="k w">tracesSampleRate: 0.1</span> to <span class="k w">Sentry.init()</span> in <span class="k w">electron/lib/sentry-main.ts</span>. Saves ~ 450 KB/day egress when telemetry is enabled. Effort: 15 min.</p>
+          <p><b>Action 3 · Surface <span class="k w">use_main_model_for_realtime</span>.</b> The config flag exists; the Settings UI doesn't surface it. When realtime is enabled, ~ 50-100 MB of the second model load can be avoided by re-using the main model. UI patch: <span class="k w">frontend/src/features/settings/ui/</span>. Effort: ~ 3 h.</p>
+          <p><b>Action 4 · Lazy-import adm-zip / tar in main.</b> Both are needed only when installing the TTS pack or extracting model archives. Move from <span class="k w">import</span> to <span class="k w">await import()</span> behind the relevant code paths. Saves ~ 10-15 MB of main-process heap. Effort: ~ 1 h.</p>
+          <p><b>Action 5 · Wake-word backend pruning.</b> The composite wake-word loads <em>both</em> Porcupine and OpenWakeWord even when one backend is selected. Gate the import behind the active backend. Files: <span class="k w">server/src/recorder/infrastructure/composite_wake_word.py</span>. Effort: ~ 1 h. Saves ~ 15 MB.</p>
+          <p><b>Total: ~ 7 hours of engineering. Idle floor drops from 600 MB to ~ 250 MB.</b> Within Handy striking distance for the same feature set.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ THE PLAN ════════════════ -->
+  <div class="part-label">The Optimization Plan · five axes, in order of ROI</div>
+
+  <section class="plan">
+    <div class="plan-intro">
+      <h2>The path to <em>match-or-beat</em> · without losing a feature.</h2>
+      <p>Four tiers, ranked by ROI per engineering hour. <b>Tier 0</b> is the receipts — what shipped since Issue №03, so it doesn't get re-proposed. <b>Tier 1</b> is the high-leverage core: the five-axis closures, ranked. <b>Tier 2</b> is the strategic bet for next quarter. <b>Tier 3</b> is what we deliberately don't do, with reasons. Exit criteria at the bottom — measurable.</p>
+    </div>
+
+    <!-- TIER 0 — SHIPPED -->
+    <div class="tier">
+      <div class="tier-head">
+        <span class="tier-tag t3" style="color: var(--copy); border-color: var(--copy-dim); background: rgba(143,209,126,0.10);">Tier 0 · Shipped since №03</span>
+        <h3>What we landed already. Don't re-propose these.</h3>
+      </div>
+
+      <div class="tier-grid">
+        <div class="tier-item">
+          <h4>DirectML default · CUDA flavor retired</h4>
+          <div class="meta"><span class="e-cost">commits · 7934780 · 2bb4bc7</span></div>
+          <p>DirectML proven faster, more consistent, and 10× lighter than CUDA on Windows. CUDA flavor removed from the release matrix. <span class="k w">[gpu]</span> Python extra retained for future Linux NVIDIA build.</p>
+        </div>
+        <div class="tier-item">
+          <h4>ORT-DirectML concurrency · proper fix</h4>
+          <div class="meta"><span class="e-cost">commits · 22d82f7 · 67def00</span></div>
+          <p>Shared lock instead of CPU split; Silero VAD CPU pin invariant memoed; deadlock-free DirectML on shared-stream callers.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Handy mic settings ported</h4>
+          <div class="meta"><span class="e-cost">memory · project_on_demand_microphone</span></div>
+          <p><span class="k w">audio.alwaysOnMicrophone</span> + <span class="k w">audio.lazyStreamClose</span> + <span class="k w">audio.lazyCloseTimeoutSeconds</span>; PyAudioSource owns the policy entirely.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Clamshell-mic auto-swap</h4>
+          <div class="meta"><span class="e-cost">commit · 0f3c9e8</span></div>
+          <p>macOS + Linux: when the laptop lid closes, the audio path swaps to the next-best mic (external > USB headset > built-in if open).</p>
+        </div>
+        <div class="tier-item">
+          <h4>State-driven theme-aware tray icon</h4>
+          <div class="meta"><span class="e-cost">commit · 969d862</span></div>
+          <p>Tray reflects model-loading / recording / idle / cloud state with a per-DPI / per-theme PNG. History slot wired.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Handy-style downloader · cancel · SHA256 · tar-extract</h4>
+          <div class="meta"><span class="e-cost">commit · 4b8777c</span></div>
+          <p>Model downloader with cancellable transfers, SHA256 verification, and tar-archive extraction for Parakeet/Canary bundles.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Apple Intelligence as on-device LLM provider</h4>
+          <div class="meta"><span class="e-cost">commit · 9436daf</span></div>
+          <p>On-device LLM via Apple Intelligence CLI on macOS Apple Silicon; no cloud round-trip for context-aware cleanup.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Minisign sidecars + updater UI</h4>
+          <div class="meta"><span class="e-cost">commits · 0b2de3d · ec04aca</span></div>
+          <p>Releases ship <span class="k w">.minisig</span> sidecars for offline verification; updater shows download progress + restart-to-install. User-side auto-verify still a Tier-2 item.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Custom user-provided ONNX whisper bundles</h4>
+          <div class="meta"><span class="e-cost">commit · 2ec21f5</span></div>
+          <p>Drop a folder of ONNX exports into the models directory; auto-discovery picks them up. Removes need for catalog updates per user model.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Overlay-pill focus-pass-through</h4>
+          <div class="meta"><span class="e-cost">commit · f637bb7</span></div>
+          <p>Mirrors Handy's macOS NSPanel behavior using Electron BrowserWindow flags so the pill never steals focus from the target window.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TIER 1 — FOCUS-AREA CLOSURES -->
+    <div class="tier">
+      <div class="tier-head">
+        <span class="tier-tag t1">Tier 1 · This quarter · ranked by ROI</span>
+        <h3>The five-axis closures. None drop a feature. Ordered hours-to-impact.</h3>
+      </div>
+
+      <div class="tier-grid">
+        <div class="tier-item">
+          <h4>1 · VAD prefill (450 ms leading silence)</h4>
+          <div class="meta"><span class="e-cost">cost · 4 h</span><span class="e-impact">impact · closes the far-mic gap</span></div>
+          <p><b>Axis II.</b> The single highest-impact change in this report. In <span class="k w">RecordingPipeline</span>, maintain a 15-frame <span class="k w">collections.deque(maxlen=15)</span> of silence-classified chunks; on first speech-classified chunk, drain the deque into the Whisper input ahead of speech. Whisper sees the silence-to-speech transition Handy users already get.</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/application/recording_pipeline.py · new property test "leading consonant preserved"</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>2 · Wire the model-unload daemon</h4>
+          <div class="meta"><span class="e-cost">cost · 2 h</span><span class="e-impact">impact · −300 MB idle RSS</span></div>
+          <p><b>Axis V.</b> Plumbing exists (<span class="k w">model_unload_timeout_seconds</span> config + CLI). Add a daemon thread in <span class="k w">RecorderService</span> that samples last-transcription-at vs <span class="k">time.monotonic()</span>; on expiry, call <span class="k w">transcriber.shutdown()</span>. Idempotent. Next transcription triggers foreground reload.</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/application/recorder_service.py · property test "shutdown is idempotent"</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>3 · Per-model fp16 ORT-level gate</h4>
+          <div class="meta"><span class="e-cost">cost · 30 min</span><span class="e-impact">impact · 5-10 % on fp16 paths</span></div>
+          <p><b>Axis IV.</b> Drop the unconditional <span class="k w">ORT_ENABLE_EXTENDED</span> on fp16; gate it on <span class="k w">"whisper" in model_name and fp16</span>. Parakeet/Moonshine/Canary fp16 paths regain ORT_ENABLE_ALL fusions. Tiny PR, biggest "free" speed win.</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/infrastructure/onnxasr_transcriber.py:278-280</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>4 · Native-SR capture + FFT resample</h4>
+          <div class="meta"><span class="e-cost">cost · 1 d</span><span class="e-impact">impact · 1.5-3 % WER on Bluetooth/cheap-mic far-field</span></div>
+          <p><b>Axis II.</b> Open the WASAPI stream at the device's <span class="k w">defaultSampleRate</span> (PyAudio reports via <span class="k w">get_device_info_by_index</span>); resample in-process via <span class="k w">scipy.signal.resample_poly</span> (or <span class="k w">soxr</span> if openwakeword is dropped). Avoids driver-level resampling artifacts on Bluetooth + cheap USB mics.</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/infrastructure/pyaudio_source.py</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>5 · Drop openwakeword · keep CompositeVAD + Porcupine</h4>
+          <div class="meta"><span class="e-cost">cost · 4 h</span><span class="e-impact">impact · −20 MB compressed · −15 MB idle</span></div>
+          <p><b>Axis I + V.</b> openwakeword pulls scipy (51 MB) + sklearn (13 MB) unpacked. Porcupine + the custom-wake-word system cover the same surface. Gate the import behind installed-extra detection; remove from default deps. Falls out of bundle and RAM simultaneously.</p>
+          <p class="files"><b>Touches:</b> server/pyproject.toml · server/src/recorder/infrastructure/composite_wake_word.py · server/packaging/stt-server.spec</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>6 · Seed model → on-demand</h4>
+          <div class="meta"><span class="e-cost">cost · 1 d</span><span class="e-impact">impact · −10 MB compressed</span></div>
+          <p><b>Axis I.</b> The whisper-tiny-q4 seed model is 93 MB unpacked / ~10 MB compressed in the installer. The Handy-style downloader (Tier 0) already supports cancellable + verified downloads with a progress bar. Drop the seed from the PyInstaller bundle; download on first launch.</p>
+          <p class="files"><b>Touches:</b> server/packaging/stt-server.spec:152-160 (drop seed-cache) · server/src/recorder/infrastructure/seed_cache.py (already has runtime fallback)</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>7 · GPU intra_op_num_threads bump for non-Whisper</h4>
+          <div class="meta"><span class="e-cost">cost · 1 h + bench</span><span class="e-impact">impact · 5-15 % on Parakeet/Moonshine/Canary</span></div>
+          <p><b>Axis IV.</b> The 2-thread pin assumes Whisper-shaped workloads (GPU-heavy encoder, CPU-light decoder). Parakeet/Moonshine/Canary have heavier CPU-side beam search; bump to 4-6 for those families. Add the per-model differentiation in <span class="k w">_pick_intra_op_threads</span>.</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/infrastructure/device.py:244-246</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>8 · Format-priority probe (F32 → I16 → I24)</h4>
+          <div class="meta"><span class="e-cost">cost · 1 h</span><span class="e-impact">impact · skips device-side dithering on cheap mics</span></div>
+          <p><b>Axis II.</b> Before <span class="k w">stream.open</span>, call <span class="k w">is_format_supported(paFloat32) → paInt16 → paInt24</span>; pick the first that succeeds. Mirrors Handy's <span class="k h">recorder.rs:310-320</span>. Avoids low-quality format conversion in the driver on cheap USB mics.</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/infrastructure/pyaudio_source.py</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>9 · Sentry sample-rate + lazy adm-zip / tar</h4>
+          <div class="meta"><span class="e-cost">cost · 1 h total</span><span class="e-impact">impact · −10-15 MB main-process heap</span></div>
+          <p><b>Axis V.</b> Add <span class="k w">tracesSampleRate: 0.1</span> to <span class="k w">Sentry.init()</span> in <span class="k w">electron/lib/sentry-main.ts</span>; convert <span class="k w">adm-zip</span> + <span class="k w">tar</span> in main.ts to <span class="k w">await import()</span> behind the TTS-pack / model-archive code paths.</p>
+          <p class="files"><b>Touches:</b> frontend/electron/lib/sentry-main.ts · frontend/electron/main.ts</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>10 · Drop vk_swiftshader + ffmpeg</h4>
+          <div class="meta"><span class="e-cost">cost · 15 min</span><span class="e-impact">impact · −3 MB compressed · −8 MB unpacked</span></div>
+          <p><b>Axis I.</b> Both DLLs are unused on a tray-utility recording app. Negation pattern in <span class="k w">files</span>: <span class="k w">["!**/vk_swiftshader.dll", "!**/ffmpeg.dll"]</span> in <span class="k w">packaging/electron-builder.directml.yml</span>. Verify on packaged build that nothing breaks.</p>
+          <p class="files"><b>Touches:</b> packaging/electron-builder.directml.yml · packaging/electron-builder.cpu.yml</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>11 · SenseVoice in our onnx-asr fork</h4>
+          <div class="meta"><span class="e-cost">cost · 2-4 d</span><span class="e-impact">impact · closes the only model-availability gap</span></div>
+          <p><b>Axis III.</b> The one family Handy has that we don't. SenseVoice int8 (152 MB, ZH/EN/JA/KO/Cantonese). Port to fork mirroring commit 20b872a (Moonshine + Cohere + Breeze + Canary-180m). After this we have strictly more models than Handy.</p>
+          <p class="files"><b>Touches:</b> onnx-asr fork (out-of-tree) · server/src/recorder/domain/catalog.json · frontend/packages/model-picker/src/stt/lib/family-helpers.ts</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>12 · Compile cache for ORT graphs</h4>
+          <div class="meta"><span class="e-cost">cost · 4 h</span><span class="e-impact">impact · ~ 200-500 ms saved per warm load</span></div>
+          <p><b>Axis IV.</b> Set <span class="k w">session_options.optimized_model_filepath = cache_dir / f"{model_id}.ort.bin"</span> at session-build time. Reload-from-cache skips graph-optimization on subsequent runs. Invalidate on ORT version bump (<span class="k w">__version__</span> in cache key).</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/infrastructure/onnxasr_transcriber.py at session-build site</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TIER 2 -->
+    <div class="tier">
+      <div class="tier-head">
+        <span class="tier-tag t2">Tier 2 · Next quarter</span>
+        <h3>Strategic bets. Larger swings. None block Tier 1.</h3>
+      </div>
+
+      <div class="tier-grid">
+        <div class="tier-item">
+          <h4>Split the ORT runtime into an on-demand pack</h4>
+          <div class="meta"><span class="e-cost">cost · 1 w</span><span class="e-impact">impact · −25 MB compressed</span></div>
+          <p>Mirror the TTS-pack pattern: ship a bootstrap installer with enough ORT plumbing to display a download UI; pull ORT + DirectML runtime on first launch. Combined with Tier 1 items 5+6+10, gets the installer to ~90 MB compressed.</p>
+          <p class="files"><b>Touches:</b> server/packaging/stt-server.spec · frontend/electron/lib/runtime-pack.ts (new) · server/src/recorder/infrastructure/runtime_pack.py (new)</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>IO binding · pre-allocated tensors</h4>
+          <div class="meta"><span class="e-cost">cost · 1 d</span><span class="e-impact">impact · ~ 5-10 % on RTX-4090-class GPUs</span></div>
+          <p>Pre-allocate input/output tensors once per session; bind by name across runs to avoid per-call allocation. Marginal on mobile GPUs, material on high-end discrete cards. Optional path behind a setting (<span class="k">model.useIoBinding</span>).</p>
+          <p class="files"><b>Touches:</b> server/src/recorder/infrastructure/io_binding.py (new) · onnxasr_transcriber.py</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>OpenVINO as a third EP extra</h4>
+          <div class="meta"><span class="e-cost">cost · 1 w</span><span class="e-impact">impact · +10-30 % on Intel ARC + iGPUs</span></div>
+          <p>Add <span class="k">[openvino]</span> to <span class="k w">pyproject.toml</span> with <span class="k w">onnxruntime-openvino</span>; extend <span class="k w">device.py</span> priority to include OpenVINO ahead of DirectML on Intel ARC + recent iGPUs. New release artifact: <span class="k">WinSTT-OpenVINO-Portable.exe</span>.</p>
+          <p class="files"><b>Touches:</b> server/pyproject.toml · server/src/recorder/infrastructure/device.py · packaging/electron-builder.openvino.yml (new)</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>Ship macOS for real</h4>
+          <div class="meta"><span class="e-cost">cost · 1 month</span><span class="e-impact">impact · +1 OS · CoreML EP</span></div>
+          <p>Apple Intelligence CLI already builds (Tier 0). Add macOS CI job, notarization, <span class="k">mac.target</span> = DMG + .app in builder configs, CoreML EP test path, hot-key via Carbon. <b>Hardest part is notarization, not code.</b> Adds the second OS without changing the architecture.</p>
+          <p class="files"><b>Touches:</b> .github/workflows/electron-release.yml · packaging/electron-builder.*.yml · electron/ipc/hotkey.ts (Carbon path)</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>Minisign auto-verify at update-time</h4>
+          <div class="meta"><span class="e-cost">cost · 1 w</span><span class="e-impact">impact · trust posture</span></div>
+          <p>Tier 0 ships <span class="k w">.minisig</span> sidecars. Tier 2 hooks <span class="k w">electron-updater</span>'s download flow to fetch the sidecar and verify before swap. User no longer needs the manual recipe in <span class="k w">docs/verify-releases.mdx</span>.</p>
+          <p class="files"><b>Touches:</b> frontend/electron/ipc/auto-updater.ts · frontend/electron/lib/minisign-verify.ts (new)</p>
+        </div>
+
+        <div class="tier-item">
+          <h4>i18n: 6 → 12 locales · string-literal lint</h4>
+          <div class="meta"><span class="e-cost">cost · 2 w</span><span class="e-impact">impact · 2× audience</span></div>
+          <p>use-intl migration is done. Add 6 more locales as machine-translated baselines + community refinement. Add a Biome rule (or custom AST check) that fails CI on any JSX literal that isn't wrapped in <span class="k w">t()</span>. <span class="k w">check:i18n</span> already verifies key parity.</p>
+          <p class="files"><b>Touches:</b> frontend/messages/*.json · frontend/scripts/check-i18n.ts · frontend/biome.json</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TIER 3 -->
+    <div class="tier">
+      <div class="tier-head">
+        <span class="tier-tag t3">Tier 3 · Defer or skip</span>
+        <h3>What we deliberately don't do — and why.</h3>
+      </div>
+
+      <div class="tier-grid">
+        <div class="tier-item">
+          <h4>Touch the Silero CPU pin</h4>
+          <p><b>Skip.</b> <span class="k w">memory/project_silero_vad_cpu_pin_invariant.md</span> is load-bearing — CPU pin is what makes <span class="k w">do_copy_in_default_stream=1</span> safe on CUDA. Moving VAD to GPU re-opens the silent deadlock that bricked the WS dispatcher.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Add denoising / HPF / pre-emphasis to audio path</h4>
+          <p><b>Skip.</b> Per <span class="k w">memory/project_stt_premodel_conditioning_policy.md</span>, denoising raises WER 1-47 %. The far-mic gap closes via prefill + format-priority + resampler quality — all <em>non-destructive</em> changes. The destructive ones are off the table by policy.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Adopt whisper.cpp as a second engine</h4>
+          <p><b>Defer to post-macOS.</b> The argument is Metal-on-macOS for Whisper. We haven't shipped macOS yet. After macOS lands and CoreML proves insufficient, revisit. Until then: two engines = double test surface for no user-visible win.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Full Tauri migration</h4>
+          <p><b>Hold.</b> Even at best-case numbers, a migration is a 6-month project that pauses every other feature. We only commit if a scoped prototype shows ≥3× installer reduction <em>and</em> ≥3× cold-start reduction <em>and</em> the eight-window architecture can compose under three WebView engines.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Drop the seed model entirely (vs make on-demand)</h4>
+          <p><b>Skip.</b> Tier 1 item 6 makes seed-on-demand the default behavior, but the seed remains available for offline-first first transcription on machines that can't reach the internet at install time. That's a feature; keep the code path.</p>
+        </div>
+        <div class="tier-item">
+          <h4>Reduce test rigor "to ship faster"</h4>
+          <p><b>Skip permanently.</b> Issue №03 named this our deepest moat. None of the Tier 1 actions need any tests reduced; if anything, three of them add new property tests (prefill, unload-idempotent, format-priority).</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Exit criteria -->
+    <div class="exit">
+      <h3>Exit criteria · when do we know it worked?</h3>
+      <ul>
+        <li><b>Far-mic WER ≤ Handy on a controlled bench</b> — VAD prefill + native-SR capture + format-priority shipped.</li>
+        <li><b>Idle RSS ≤ 300 MB</b> after 5 min idle — model-unload daemon running.</li>
+        <li><b>Installer ≤ 140 MB compressed</b> after Tier-1 cuts (vs 202 MB today); ≤ 90 MB after Tier-2 runtime-pack.</li>
+        <li><b>Whisper / Parakeet / Moonshine / Canary fp16 latency ≤ Handy on the same model</b> — ORT_ENABLE_ALL restored on non-Whisper fp16 + intra_op bumped + compile cache shipped.</li>
+        <li><b>SenseVoice in the catalog</b> — only-remaining-family gap closed.</li>
+        <li><b>Sentry sample-rate ≤ 0.1</b> shipped; lazy adm-zip / tar live in main.</li>
+        <li><b>vk_swiftshader + ffmpeg removed</b> from packaged build; openwakeword optional.</li>
+        <li><b>Zero features removed.</b> Every shipped capability — diarization, wake-word, cloud STT, translate, context-awareness, custom modifiers, listen mode, TTS pack, history, dictionary — still works post-migration.</li>
+      </ul>
+    </div>
+  </section>
+
   <!-- ════════════════ COLOPHON ════════════════ -->
-  <footer id="colophon" class="colophon">
-    <div class="colophon-mark">⁂</div>
-    <div>Filed 2026 · 05 · 26 · Field Report №02 · The Adoption Briefing</div>
-    <div style="margin-top: 0.6rem;">Stack constraints honored throughout: <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">Electron</em> · <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">Python</em> · <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">ONNX</em></div>
-    <div style="margin-top: 0.6rem;">Companion to <em style="font-family: 'JetBrains Mono'; font-style: normal; letter-spacing: 0; color: var(--gold);">examples/Handy</em> v0.8.3</div>
+  <footer class="colophon">
+    <div class="colophon-mark">№04</div>
+    The Optimization Pass · Field Report №04<br>
+    <span class="colophon-meta">Set in Fraunces · Newsreader · JetBrains Mono · Composed 2026·05·27 · Supersedes №03 architecture audit</span>
   </footer>
 
 </main>
 
 <script>
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (e.isIntersecting) {
-        e.target.classList.add('in');
-        io.unobserve(e.target);
-      }
-    });
-  }, { threshold: 0.1 });
-  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-
-  document.querySelectorAll('a[href^="#"]').forEach(a => {
-    a.addEventListener('click', (ev) => {
-      const id = a.getAttribute('href').slice(1);
-      const target = document.getElementById(id);
-      if (!target) return;
-      ev.preventDefault();
-      const top = target.getBoundingClientRect().top + window.scrollY - 24;
-      window.scrollTo({ top, behavior: 'smooth' });
-    });
-  });
+const io = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (e.isIntersecting) {
+      e.target.classList.add('in');
+      io.unobserve(e.target);
+    }
+  }
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
 </script>
 
 </body>

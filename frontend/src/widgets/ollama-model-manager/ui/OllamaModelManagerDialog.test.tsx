@@ -47,7 +47,7 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 const tStub = ((key: string, vars?: Record<string, unknown>) =>
 	vars ? `${key}:${JSON.stringify(vars)}` : key) as ReturnType<
-	typeof import("next-intl").useTranslations
+	typeof import("use-intl").useTranslations
 >;
 
 // ---------------------------------------------------------------------------

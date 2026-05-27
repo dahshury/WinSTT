@@ -6,6 +6,8 @@
 // path. See ./portable-boot.ts for the full rationale.
 import { portableState } from "./portable-boot";
 
+import * as fs from "node:fs";
+import { basename } from "node:path";
 import path from "node:path";
 import {
 	app,
@@ -39,7 +41,6 @@ import { setupDevicePickerHandlers } from "./ipc/device-picker-window";
 import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
-import { setupHistoryIpc } from "./ipc/history";
 import { type HotkeyComboAction, setupHotkeyHandlers } from "./ipc/hotkey";
 import {
 	decryptIpcPayload,
@@ -69,7 +70,12 @@ import {
 } from "./ipc/settings";
 import { setupCloudStt } from "./ipc/stt-cloud";
 import { handleAbortOperation, setupSttCommandHandlers } from "./ipc/stt-commands";
-import { killSttProcess, setupSttProcessHandlers, tryAutoSpawnServer } from "./ipc/stt-process";
+import {
+	killSttProcess,
+	markServerRunning,
+	setupSttProcessHandlers,
+	tryAutoSpawnServer,
+} from "./ipc/stt-process";
 import { setupSystemLocaleHandler } from "./ipc/system-locale";
 import { setupTransformHotkeys } from "./ipc/transform-hotkeys";
 import { setupTransforms } from "./ipc/transforms";
@@ -90,6 +96,7 @@ import {
 } from "./ipc/updater-status-history";
 import { registerWindowTelemetry } from "./ipc/window-telemetry";
 import { dbg } from "./lib/debug-log";
+import { verifyDownloadedUpdate } from "./lib/minisign-verify";
 import { shutdownPsHost } from "./lib/ps-host";
 import { cleanupRecordingIndicator, initRecordingIndicator } from "./lib/recording-indicator";
 import { isAllowedRendererUrl, loadRendererPage } from "./lib/renderer-url";
@@ -221,6 +228,12 @@ let isQuitting = false;
 let serverReadyFiredOnce = false;
 sttClient.on("server-ready", () => {
 	serverReadyFiredOnce = true;
+	// Flip the spawned-process status to "running". Replaces the legacy
+	// stdout-grep for "Recorder initialized" in stt-process.ts: the
+	// structured `server_ready` WS event is now the canonical "the python
+	// child is up and warm" signal, and the renderer + everything that
+	// reads stt-server:status both observe the same race-free moment.
+	markServerRunning();
 });
 // Last `runtime_info` payload from the server. Tracked at the module level so
 // it survives the gap between the SttClient firing the event and the relay
@@ -448,6 +461,136 @@ function installCspHook(): void {
 	cspHookInstalled = true;
 }
 
+/**
+ * Where the bundled minisign pubkey lives at runtime. In dev we read from
+ * the repo's `docs/winstt.pub`; in a packaged install the file is shipped
+ * under `<resources>/winstt.pub` via `extraResources` (see
+ * `packaging/electron-builder.*.yml`). The path is resolved lazily so a
+ * dev build with no pubkey in the tree still boots — verifyDownloadedUpdate
+ * returns a clear "no pubkey configured" reason and the auto-updater hook
+ * fails-open with a warning rather than blocking self-updates.
+ */
+function resolveMinisignPubkeyPath(): string {
+	if (app.isPackaged) {
+		return path.join(process.resourcesPath, "winstt.pub");
+	}
+	return path.resolve(import.meta.dirname, "..", "..", "docs", "winstt.pub");
+}
+
+/**
+ * Build the GitHub-release download URL for the .minisig sidecar of a
+ * just-downloaded update. electron-updater puts the artifact under
+ * `<userData>/winstt-updater/pending/<file>`; the matching sidecar lives
+ * at the SAME path on the GitHub Release. We reconstruct the URL from
+ * the release tag (`v<version>`) and the artifact basename.
+ */
+function buildMinisignSidecarUrl(downloadedFile: string, version: string): string {
+	const tag = version.startsWith("v") ? version : `v${version}`;
+	const artifact = basename(downloadedFile);
+	return `https://github.com/dahshury/WinSTT/releases/download/${tag}/${artifact}.minisig`;
+}
+
+/**
+ * Locate the just-downloaded installer on disk. electron-updater hands us
+ * the path on `update-downloaded.info.downloadedFile` for newer versions;
+ * older versions only exposed it via `autoUpdater.downloadedUpdateHelper`
+ * internals. Walk the documented properties and gracefully return `null`
+ * if we can't find it — the auto-updater hook treats that as "verification
+ * unavailable, fall back to Authenticode only".
+ */
+function extractDownloadedFilePath(info: unknown): string | null {
+	if (typeof info !== "object" || info === null) {
+		return null;
+	}
+	const maybe = info as Record<string, unknown>;
+	if (typeof maybe.downloadedFile === "string" && maybe.downloadedFile.length > 0) {
+		return maybe.downloadedFile;
+	}
+	// Some shapes nest it under `path`. Probe defensively.
+	if (typeof maybe.path === "string" && maybe.path.length > 0) {
+		return maybe.path;
+	}
+	return null;
+}
+
+/**
+ * Verify the just-downloaded update against the bundled minisign pubkey.
+ * On failure, DELETE the cached artifact so a subsequent quitAndInstall
+ * can't run a tampered installer, and surface the reason via the updater
+ * status history so the renderer can show it in the About panel.
+ *
+ * Fails OPEN (allow install, log a warning) when:
+ *   * the bundled `docs/winstt.pub` doesn't exist yet (maintainer hasn't
+ *     generated the keypair), OR
+ *   * the .minisig sidecar isn't on the GitHub Release (a maintainer cut
+ *     a release before the signing workflow ran — degraded but not unsafe,
+ *     Authenticode still validates).
+ *
+ * Fails CLOSED (delete artifact, block install) when:
+ *   * the pubkey IS bundled AND a sidecar IS published BUT the signature
+ *     doesn't verify. That's the tamper signal we actually care about.
+ */
+async function verifyDownloadedUpdateAndGate(info: unknown): Promise<void> {
+	const downloadedFile = extractDownloadedFilePath(info);
+	if (!downloadedFile) {
+		dbg(
+			"updater",
+			"Minisign verification skipped: downloaded file path unavailable in update-downloaded payload"
+		);
+		return;
+	}
+	const version = (info as { version?: string } | null)?.version ?? "unknown";
+	const sidecarUrl = buildMinisignSidecarUrl(downloadedFile, version);
+	const pubkeyPath = resolveMinisignPubkeyPath();
+
+	dbg("updater", `Verifying minisign signature: ${basename(downloadedFile)} <- ${sidecarUrl}`);
+	const result = await verifyDownloadedUpdate({
+		artifactPath: downloadedFile,
+		sidecarUrl,
+		pubkeyPath,
+	});
+
+	if (result.ok) {
+		dbg("updater", `Minisign verification PASSED: ${result.trustedComment}`);
+		recordUpdaterStatus({
+			status: "downloaded",
+			version,
+			message: `Signature verified: ${result.trustedComment}`,
+		});
+		return;
+	}
+
+	// Distinguish "verification couldn't run" (fail-open) from "verification
+	// failed cryptographically" (fail-closed) by inspecting the reason. Pubkey
+	// missing OR sidecar 404 → fail-open (Authenticode covers us). Any other
+	// reason → fail-closed (delete artifact, block install).
+	const reason = result.reason;
+	const failOpen =
+		reason.includes("pubkey not found") ||
+		reason.includes("HTTP 404") ||
+		reason.includes("HTTP 410");
+	if (failOpen) {
+		dbg("updater", `Minisign verification skipped (fail-open): ${reason}`);
+		recordUpdaterStatus({
+			status: "downloaded",
+			version,
+			message: `Signature verification unavailable: ${reason} — relying on Authenticode.`,
+		});
+		return;
+	}
+
+	dbg("updater", `Minisign verification FAILED — deleting artifact: ${reason}`);
+	try {
+		await fs.promises.unlink(downloadedFile);
+	} catch (e) {
+		dbg("updater", `Failed to delete tampered artifact: ${toErrorMessage(e)}`);
+	}
+	recordUpdaterStatus({
+		status: "error",
+		message: `Update signature verification FAILED — refusing to install. ${reason}`,
+	});
+}
+
 async function initAutoUpdater(): Promise<void> {
 	if (isDev || !app.isPackaged) {
 		recordUpdaterStatus({
@@ -515,6 +658,21 @@ async function initAutoUpdater(): Promise<void> {
 			const version = getUpdateVersion(info);
 			dbg("updater", "Update downloaded:", version);
 			recordUpdaterStatus({ status: "downloaded", version });
+			// Fire-and-forget minisign verification of the downloaded
+			// artifact (a parallel offline-verifiable trust layer alongside
+			// the Authenticode signature electron-updater already validates
+			// in its install step). Failures DELETE the cached artifact so
+			// the user's "Restart to install" tap becomes a no-op — much
+			// safer than letting a tampered installer reach quitAndInstall.
+			// Implementation in electron/lib/minisign-verify.ts.
+			verifyDownloadedUpdateAndGate(info).catch((error: unknown) => {
+				const message = toErrorMessage(error);
+				dbg("updater", "Minisign verification crashed:", message);
+				recordUpdaterStatus({
+					status: "error",
+					message: `Update signature verification crashed — refusing to install. ${message}`,
+				});
+			});
 		});
 		// `download-progress` fires every ~250ms while the new artifact streams
 		// in. Pass-through; the renderer formats the bytes / rate for display.
@@ -572,18 +730,50 @@ async function initAutoUpdater(): Promise<void> {
 	}
 }
 
+// ── Single-instance lock (acquired EARLY) ─────────────────────────────
+// We acquire the lock before the noisy module-level side-effects below
+// (Sentry init, portable dbg) so a second-instance launch — typically a
+// dev-mode tsup-watch restart, a tray-icon re-click, or an auto-updater
+// relaunch — quits without triplicating "Sentry disabled" / "portable
+// inactive" lines in debug.log on every kill+respawn cycle.
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+	// Primary instance's second-instance handler (installed below) takes
+	// care of focusing the user's existing window.
+	app.quit();
+}
+
 // Sentry main-process init MUST run before setupFatalErrorHandlers() so the
 // SDK's own uncaughtException handler is installed first; ours then captures
 // to Sentry too (Sentry dedupes by error identity, so the double-capture is safe).
 // The `general.sendCrashReports` setting is the user-facing opt-out — when
 // false, `initSentryMain` is a no-op and the renderer skips its own init too.
 const sendCrashReports = getStoreValue("general.sendCrashReports") ?? true;
-initSentryMain({ enabled: sendCrashReports });
+if (gotTheLock) {
+	initSentryMain({ enabled: sendCrashReports });
+}
 setupFatalErrorHandlers();
 
 // Prevent unhandled "error" events on EventEmitter from crashing the app with dialog windows.
 // WebSocket connection failures during reconnection emit "error" — just log them.
+//
+// Cold-start gate: track whether we've EVER successfully connected. The
+// first connect attempt fires immediately after spawning the Python server
+// (see ``Connecting to STT server (pre-window)`` above) and is GUARANTEED
+// to fail while Python is still importing torch/onnxruntime — the
+// reconnect loop in stt-client picks up automatically and lands a real
+// connection within 5-15 s. Surfacing that initial expected error as
+// "Connection error: ECONNREFUSED" reads as a fatal failure in the boot
+// log when it's actually normal cold-start behavior. Once we've connected
+// once, every subsequent error IS interesting and gets logged.
+let sttClientHasEverConnected = false;
+sttClient.on("connected", () => {
+	sttClientHasEverConnected = true;
+});
 sttClient.on("error", (err: unknown) => {
+	if (!sttClientHasEverConnected) {
+		return;
+	}
 	let msg: string;
 	if (err instanceof Error) {
 		msg = err.message;
@@ -623,15 +813,16 @@ if (process.env.WINSTT_E2E === "1" && !portableState.isPortable) {
 // Surface the portable-mode outcome through dbg() now that the logger is
 // fully wired. The initial decision was already logged via electron-log's
 // `portable` scope in portable-boot.ts; this gives a single line in the
-// canonical `debug-log` tag so a quick grep finds it.
-if (portableState.isPortable) {
-	dbg("portable", `active — data dir: ${portableState.dataDir}`);
-} else {
-	dbg("portable", "inactive (no valid marker found next to exe)");
+// canonical `debug-log` tag so a quick grep finds it. Gated on
+// `gotTheLock` so second-instance launches (dev-mode respawns, auto-updater
+// relaunch) don't repeat the line every cycle.
+if (gotTheLock) {
+	if (portableState.isPortable) {
+		dbg("portable", `active — data dir: ${portableState.dataDir}`);
+	} else {
+		dbg("portable", "inactive (no valid marker found next to exe)");
+	}
 }
-
-// ── Single-instance lock ─────────────────────────────────────────────
-const gotTheLock = app.requestSingleInstanceLock();
 
 if (gotTheLock) {
 	app.on("second-instance", () => {
@@ -659,8 +850,11 @@ if (gotTheLock) {
 		.then(() => {
 			// Encrypt any legacy plaintext secrets persisted before this version.
 			// Must run before any IPC handler that ships settings to the renderer.
+			// Idempotent — does nothing on steady-state installs; the inner
+			// "Encrypted secret at rest: <path>" log only fires when an actual
+			// rewrite happens.
 			migrateSecretsAtRest();
-			phase("secrets migrated");
+			phase("secret store ready");
 
 			// Kick off the stt-server child process AND the WS client
 			// connection BEFORE creating any window. The server takes
@@ -682,9 +876,15 @@ if (gotTheLock) {
 				phase("stt-server spawn dispatched");
 			}
 			dbg("stt-client", "Connecting to STT server (pre-window)...");
-			sttClient.connect().catch(() => {
-				dbg("stt-client", "Initial connect failed — will retry via reconnection");
-			});
+			// Swallow the first attempt's rejection silently. Python takes
+			// 5-15 s to import torch/onnxruntime and bind the WS ports, so
+			// this initial connect is GUARANTEED to fail on a cold boot
+			// (we kick it off ~3 ms after spawn). The reconnect loop in
+			// stt-client (250 ms → 2 s backoff) takes over from here and
+			// logs a real `error` event only if the retries genuinely
+			// exhaust without success — surfacing "Initial connect failed"
+			// here just makes the boot log look broken when it isn't.
+			sttClient.connect().catch(() => undefined);
 			sttClient.once("connected", () => phase("stt-client WS connected"));
 			sttClient.once("server-ready", () => phase("stt-server READY (recorder initialized)"));
 

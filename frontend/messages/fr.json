@@ -124,7 +124,19 @@
     "clearButton": "Effacer l'historique",
     "clearTitle": "Effacer tout l'historique des transcriptions ?",
     "clearDescription": "Toutes les transcriptions enregistrées, les mots et les données d'activité seront supprimés. Cette action est irréversible.",
-    "clearConfirm": "Effacer"
+    "clearConfirm": "Effacer",
+    "limitsTitle": "Limits & Retention",
+    "historyMaxEntries": "Max History Entries",
+    "historyMaxEntriesCaption": "Cap on saved transcriptions (10–10,000)",
+    "historyMaxEntriesTooltip": "WinSTT trims the history list whenever it exceeds this number, oldest first. Larger caps slow the settings panel and increase disk use; lower caps free space sooner. Changes apply immediately — the next save trims down to the new limit.",
+    "retention": "Recording Retention",
+    "retentionCaption": "Auto-delete saved WAVs by this policy",
+    "retentionTooltip": "Controls when saved recordings (one .wav per transcription) get cleaned up. 'Keep forever' preserves everything; 'When over limit' trims when the history-entries cap is hit; the time-based options delete recordings older than the chosen age regardless of the cap. Cleanup runs at app launch and whenever this setting changes.",
+    "retentionNever": "Keep forever",
+    "retentionCap": "When over limit",
+    "retentionDays3": "After 3 days",
+    "retentionWeeks2": "After 2 weeks",
+    "retentionMonths3": "After 3 months"
   },
   "general": {
     "recording": "Enregistrement",
@@ -150,6 +162,8 @@
     "muteSystemAudioCaption": "Réduire ou couper les haut-parleurs pendant la dictée",
     "muteSystemAudioTooltip": "Baisse (ou coupe complètement) le son de vos haut-parleurs système pendant la dictée, puis restaure le volume à l'arrêt. Empêche les boucles de rétroaction et maintient la transcription propre si vous utilisez des haut-parleurs au lieu d'un casque.",
     "systemAudioReductionMute": "Muet",
+    "systemAudioReductionOff": "Désactivé",
+    "overlaySizeOff": "Désactivé",
     "recordingSound": "Son d'enregistrement",
     "recordingSoundCaption": "Jouer un son lorsque le raccourci est appuyé",
     "soundFile": "Fichier sonore",
@@ -164,7 +178,7 @@
     "soundLibraryDefaultName": "Son intégré",
     "soundLibraryActive": "Actif",
     "soundLibraryDefault": "Par défaut",
-    "soundLibraryEmptyTitle": "Aucun son téléversé pour l'instant",
+    "soundLibraryEmptyTitle": "Ajouter un son personnalisé",
     "soundLibraryEmptyDescription": "Déposez un fichier .wav ou .mp3 ici, ou cliquez sur « Ajouter un son » pour parcourir.",
     "soundLibraryAddSound": "Ajouter un son",
     "soundLibraryRename": "Renommer",
@@ -254,7 +268,20 @@
     "wakeWordSensitivityTooltip": "0 = le plus strict (moins de faux positifs, peut manquer des prononciations douces). 1 = le plus permissif (capte des déclencheurs marmonnés mais aussi plus de bruits aléatoires). La valeur par défaut de 0,6 convient à la plupart des voix. Essayez 0,5 si vous avez des faux déclenchements, 0,7 si le moteur vous rate.",
     "wakeWordTimeout": "Délai de suivi",
     "wakeWordTimeoutCaption": "Secondes pendant lesquelles l'enregistreur reste armé après le mot de réveil",
-    "wakeWordTimeoutTooltip": "Après déclenchement du mot de réveil, l'enregistreur attend ce délai que vous parliez. Sinon, la porte se ferme et vous devez répéter le mot de réveil. Empêche qu'un bruit aléatoire ne déclenche un enregistrement accidentel des minutes plus tard."
+    "wakeWordTimeoutTooltip": "Après déclenchement du mot de réveil, l'enregistreur attend ce délai que vous parliez. Sinon, la porte se ferme et vous devez répéter le mot de réveil. Empêche qu'un bruit aléatoire ne déclenche un enregistrement accidentel des minutes plus tard.",
+    "outputDevice": "Output Device",
+    "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
+    "outputDeviceTooltip": "Selects the audio output device used for recording chimes and Text-to-Speech playback. System Default follows whatever Windows / your OS routes to. Only available when at least one playback source is enabled (recording sound or TTS).",
+    "systemDefault": "System Default",
+    "pasteBehaviorTitle": "Paste Behavior",
+    "autoSubmit": "Auto-Submit After Paste",
+    "autoSubmitCaption": "Send an Enter key after each dictation pastes",
+    "autoSubmitTooltip": "When on, WinSTT injects a key combo after each successful paste — ships chat messages without a separate Enter press. Off by default to preserve the historical 'paste and let the user review' behavior.",
+    "autoSubmitKey": "Submit Key",
+    "autoSubmitKeyCaption": "Which combo to inject",
+    "autoSubmitKeyTooltip": "Enter works for most chat boxes and forms. Ctrl+Enter is the IDE / chat-app convention (Cursor, ChatGPT desktop, etc.) where plain Enter inserts a newline.",
+    "autoSubmitKeyEnter": "Enter",
+    "autoSubmitKeyCtrlEnter": "Ctrl+Enter"
   },
   "model": {
     "resourceWarning": {
@@ -294,9 +321,6 @@
     "device": "Périphérique",
     "deviceCaptionGpu": "Auto utilise le GPU lorsqu'il est disponible",
     "deviceCaptionNoGpu": "Aucun GPU détecté",
-    "beamSize": "Taille du faisceau",
-    "beamSizeCaption": "Largeur de recherche pour le modèle principal",
-    "beamSizeTooltip": "Nombre de transcriptions candidates évaluées simultanément. Des valeurs plus élevées améliorent la précision mais augmentent le temps de traitement. La valeur par défaut de 5 est un bon équilibre pour la plupart des cas.",
     "earlyTranscription": "Transcription anticipée",
     "earlyTranscriptionCaption": "Secondes de silence pour démarrer en avance",
     "earlyTranscriptionTooltip": "Commence la transcription avant que vous ayez complètement arrêté de parler, déclenchée après ce nombre de secondes de silence. Réduit le délai entre la parole et l'affichage du texte final. Réglez à 0 pour désactiver.",
@@ -304,9 +328,6 @@
     "realtimeModelSection": "Modèle temps réel",
     "realtimeModelCaption": "Modèle plus petit pour l'aperçu en direct",
     "realtimeModelTooltip": "Un modèle séparé, plus petit, utilisé pour l'aperçu en direct pendant que vous parlez. Fonctionne en parallèle avec le modèle principal pour fournir un retour instantané sans affecter la qualité de la transcription finale.",
-    "realtimeBeamSize": "Taille du faisceau temps réel",
-    "realtimeBeamSizeCaption": "Largeur de recherche pour le temps réel",
-    "realtimeBeamSizeTooltip": "Taille du faisceau pour le modèle d'aperçu temps réel. Des valeurs plus basses donnent un retour en direct plus rapide au détriment de la précision. Cela n'affecte que l'aperçu en direct, pas la transcription finale.",
     "useMainModel": "Utiliser le modèle principal",
     "useMainModelCaption": "Meilleure qualité mais plus lent",
     "useMainModelTooltip": "Utilise le modèle principal, plus grand et plus précis, pour l'aperçu en direct au lieu du modèle temps réel plus petit. Donne un meilleur texte en direct mais augmente considérablement l'utilisation CPU/GPU et peut causer des ralentissements sur du matériel plus lent.",
@@ -317,7 +338,20 @@
     "computeDefaultLabel": "Par défaut (précision native du modèle)",
     "computeAutoLabel": "Auto (le mieux pour votre matériel)",
     "deviceAutoLabel": "Auto",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "translateToEnglish": "Translate to English",
+    "translateToEnglishCaption": "Whisper-native task=translate (multilingual → English)",
+    "translateToEnglishTooltip": "When on, multilingual Whisper exports translate non-English audio to English in a single decoder pass — no LLM round-trip and no extra latency. English-only Whispers (the *.en variants) and non-Whisper backends (NeMo, GigaAM, Moonshine) silently fall through to normal transcription. For language-pair translation that isn't 'anything → English', use the LLM Translate modifier on the LLM tab instead.",
+    "modelUnloadTimeout": "Model Unload Timeout",
+    "modelUnloadTimeoutCaption": "Free RAM/VRAM after this idle window",
+    "modelUnloadTimeoutTooltip": "Idle-tear-down policy for the loaded ONNX session(s). After this much inactivity (no transcription requests), the server unloads the model and the OS reclaims its memory. The next PTT press transparently reloads — first press pays the cold-load cost, subsequent presses are free again. Set 'Never' to keep the model resident at all times for the lowest possible latency. Default is 5 minutes.",
+    "modelUnloadImmediately": "Immediately after each transcription",
+    "modelUnloadNever": "Never",
+    "modelUnloadMin2": "After 2 minutes",
+    "modelUnloadMin5": "After 5 minutes",
+    "modelUnloadMin10": "After 10 minutes",
+    "modelUnloadMin15": "After 15 minutes",
+    "modelUnloadHour1": "After 1 hour"
   },
   "audio": {
     "inputDevice": "Périphérique d'entrée",
@@ -341,7 +375,23 @@
     "minRecordingLength": "Durée min. d'enregistrement",
     "minRecordingLengthCaption": "Durée minimale en secondes pour un enregistrement valide",
     "minRecordingLengthTooltip": "Les enregistrements plus courts que cette durée sont ignorés comme du bruit. Empêche les déclenchements accidentels comme la toux, les clics ou les sons brefs d'être transcrits.",
-    "deviceSwitchFailed": "Impossible d'ouvrir le périphérique d'entrée — {reason}"
+    "deviceSwitchFailed": "Impossible d'ouvrir le périphérique d'entrée — {reason}",
+    "outputDevice": "Output Device",
+    "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
+    "outputDeviceTooltip": "Selects the audio output device used for recording chimes and Text-to-Speech playback. System Default follows whatever Windows / your OS routes to. Only available when at least one playback source is enabled (recording sound or TTS).",
+    "clamshellLabel": "Clamshell microphone",
+    "clamshellCaption": "Auto-swap to this mic when the lid is closed",
+    "clamshellTooltip": "On macOS and Linux, WinSTT polls the laptop lid state every 5 seconds. When the lid closes, recording switches to the mic selected here (e.g. an external USB mic on a dock); when the lid reopens, it switches back to the primary microphone. Leave on 'None (disabled)' to skip lid polling entirely. Windows is not yet supported.",
+    "clamshellDisabled": "None (disabled)",
+    "advancedTitle": "Advanced",
+    "microphoneRelease": "Release Microphone",
+    "microphoneReleaseCaption": "When to close the OS audio stream after a recording",
+    "microphoneReleaseTooltip": "Picks when the OS microphone stream is released — the trade-off is mic-in-use indicator visibility versus PTT response latency. 'Always' keeps the stream open the whole time WinSTT is running for microseconds-fast PTT (indicator stays lit). 'Off' (default) closes immediately on every key-up so the indicator clears decisively. The duration options stop the engine on key-up but defer the actual close so back-to-back presses inside the window skip the ~10-50 ms reopen cost. Changing this requires a server restart.",
+    "microphoneReleaseAlways": "Always (never released)",
+    "microphoneReleaseImmediate": "Off (release on key-up)",
+    "microphoneReleaseSec30": "After 30 seconds",
+    "microphoneReleaseMin1": "After 1 minute",
+    "microphoneReleaseMin5": "After 5 minutes"
   },
   "quality": {
     "enableRealtime": "Activer le temps réel",
@@ -401,7 +451,11 @@
     "shortcutTtsStop": "Arrêter la lecture",
     "repasteKey": "Touche de recoller",
     "repasteKeyCaption": "Cliquez sur Enregistrer, appuyez sur votre combinaison de touches, puis cliquez sur Arrêter",
-    "repasteKeyTooltip": "Le raccourci clavier qui recolle votre transcription la plus récente. Cliquez sur Enregistrer, appuyez sur la combinaison de touches souhaitée, puis cliquez sur Arrêter."
+    "repasteKeyTooltip": "Le raccourci clavier qui recolle votre transcription la plus récente. Cliquez sur Enregistrer, appuyez sur la combinaison de touches souhaitée, puis cliquez sur Arrêter.",
+    "conflictError": "Conflicts with {other} ({combo}) — pick a different combination",
+    "conflictOtherPushToTalk": "Push-to-Talk",
+    "conflictOtherRepaste": "Re-paste",
+    "conflictOtherTts": "Text-to-speech"
   },
   "dictionary": {
     "title": "Dictionnaire",
@@ -417,7 +471,10 @@
     "autoAddDecline": "Ignorer",
     "emptyState": "Aucune entrée de dictionnaire pour le moment",
     "clearTitle": "Supprimer toutes les entrées du dictionnaire ?",
-    "clearDescription": "Toutes les entrées du dictionnaire seront définitivement supprimées. Cette action est irréversible."
+    "clearDescription": "Toutes les entrées du dictionnaire seront définitivement supprimées. Cette action est irréversible.",
+    "thresholdLabel": "Correction strictness",
+    "thresholdCaption": "Maximum fuzzy-match score the server-side corrector will accept. Lower = stricter (fewer false replacements).",
+    "thresholdTooltip": "The deterministic corrector runs on the server right after transcription and BEFORE the LLM cleanup. Anything it misses still gets a second pass through the LLM modifiers."
   },
   "swapFailure": {
     "headline": "Impossible de charger {model}",
@@ -798,6 +855,12 @@
     "toastRateLimitedRetry": "Réessayez dans {seconds}s",
     "toastProviderError": "Erreur STT {provider} : {message}",
     "openIntegrations": "Ouvrir Intégrations",
-    "keyRemovedMidSession": "Clé supprimée pour {provider} — changez de modèle ou restaurez la clé"
+    "keyRemovedMidSession": "Clé supprimée pour {provider} — changez de modèle ou restaurez la clé",
+    "sourceLabel": "Source",
+    "sourceCaption": "Run transcription locally or via a cloud provider",
+    "sourceTooltip": "Local runs the chosen Whisper / ONNX model on this machine. Cloud routes audio to a configured provider (OpenAI / ElevenLabs) — requires an API key set in Integrations.",
+    "sourceLocal": "Local",
+    "sourceCloud": "Cloud",
+    "cloudDisabledHint": "Add an API key in the Integrations tab to enable Cloud."
   }
 }

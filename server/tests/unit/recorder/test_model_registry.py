@@ -84,7 +84,6 @@ class TestModelCatalog:
             "moonshine-base-ja",
             "moonshine-base-ko",
             "cohere-transcribe",
-            "granite-4.0-1b-speech",
         ]
         for model_id in onnx_ids:
             info = catalog.get(model_id)

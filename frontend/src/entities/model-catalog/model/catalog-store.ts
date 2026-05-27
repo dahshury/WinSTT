@@ -1,8 +1,21 @@
 import { z } from "zod";
 import { create } from "zustand";
 import { fetchModelCatalog, onModelCatalog } from "@/shared/api/ipc-client";
+import {
+	type ModelFamily,
+	ModelFamilySchema,
+	type TranscriberBackend,
+	TranscriberBackendSchema,
+} from "@/shared/api/schema.zod";
 
 export interface ModelInfo {
+	/**
+	 * Normalized 0..1 accuracy score derived from published WER. ``0.5`` is
+	 * the "unknown" sentinel — the picker hides the bar in that case. For
+	 * shipped catalog rows this comes from the server's :func:`_accuracy_score`
+	 * (WER on the HF Open ASR Leaderboard or upstream model-card claims).
+	 */
+	accuracyScore: number;
 	/**
 	 * `true` for shipped catalog rows. `false` only for user-provided custom
 	 * model folders that failed the discovery contract (missing encoder /
@@ -12,12 +25,12 @@ export interface ModelInfo {
 	 */
 	available: boolean;
 	availableQuantizations: string[];
-	backend: "faster_whisper" | "onnx_asr";
+	backend: TranscriberBackend;
 	description: string;
 	displayName: string;
 	/** Non-empty only for broken custom-model entries; renders as a tooltip. */
 	errorMessage: string;
-	family: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one" | "custom";
+	family: ModelFamily;
 	id: string;
 	languages: string[];
 	/**
@@ -27,7 +40,21 @@ export interface ModelInfo {
 	 */
 	localPath: string | null;
 	onnxModelName: string | null;
+	/**
+	 * Exact on-HF download size in bytes for each available quantization.
+	 * Baked into `catalog.json` by `scripts/refresh_catalog.py` from
+	 * `HfApi.model_info(files_metadata=True)`. Empty for custom-model entries
+	 * and catalog rows the refresh hasn't covered; consumers fall back to
+	 * `sizeLabel` (the param-derived human label) in that case. The
+	 * download-confirmation dialog reads this to show "Need to download:
+	 * 78 MB" instead of the legacy "Size: unknown until headers fetched".
+	 */
+	sizeBytesByQuantization: Record<string, number>;
 	sizeLabel: string;
+	/**
+	 * Normalized 0..1 speed score derived from published RTFx (log-scaled
+	 * because the catalog spans 100×–2000×). ``0.5`` = unknown → hidden bar.
+	 */
 	speedScore: number;
 	supportsLanguageDetection: boolean;
 	supportsRealtime: boolean;
@@ -37,8 +64,8 @@ export interface ModelInfo {
 const rawModelInfoSchema = z.object({
 	id: z.string(),
 	display_name: z.string(),
-	backend: z.enum(["faster_whisper", "onnx_asr"]),
-	family: z.enum(["whisper", "lite-whisper", "nemo", "gigaam", "kaldi", "t-one", "custom"]),
+	backend: TranscriberBackendSchema,
+	family: ModelFamilySchema,
 	languages: z.array(z.string()),
 	supports_language_detection: z.boolean(),
 	size_label: z.string(),
@@ -46,6 +73,10 @@ const rawModelInfoSchema = z.object({
 	onnx_model_name: z.string().nullable(),
 	description: z.string(),
 	available_quantizations: z.array(z.string()).default([""]),
+	// Per-quantization HF download size in bytes. Catalog rows refreshed
+	// before this field shipped will be missing it; default to empty so the
+	// dialog falls back to `size_label` for them.
+	size_bytes_by_quantization: z.record(z.string(), z.number()).default({}),
 	// `available` / `error_message` / `local_path` are additive fields the
 	// server started emitting alongside the custom-model scanner. Older
 	// servers that haven't been redeployed yet won't send them; the defaults
@@ -53,6 +84,11 @@ const rawModelInfoSchema = z.object({
 	available: z.boolean().default(true),
 	error_message: z.string().default(""),
 	local_path: z.string().nullable().default(null),
+	// Normalized perf scores from the server. Default 0.5 keeps the picker
+	// compatible with older servers that haven't started emitting these yet
+	// — the PerfBars component treats 0.5 as the "unknown" hide-bar sentinel.
+	speed_score: z.number().default(0.5),
+	accuracy_score: z.number().default(0.5),
 });
 
 type RawModelInfo = z.infer<typeof rawModelInfoSchema>;
@@ -70,9 +106,12 @@ function mapModel(raw: RawModelInfo): ModelInfo {
 		onnxModelName: raw.onnx_model_name,
 		description: raw.description,
 		availableQuantizations: raw.available_quantizations,
+		sizeBytesByQuantization: raw.size_bytes_by_quantization,
 		available: raw.available,
 		errorMessage: raw.error_message,
 		localPath: raw.local_path,
+		speedScore: raw.speed_score,
+		accuracyScore: raw.accuracy_score,
 	};
 }
 

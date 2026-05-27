@@ -1,18 +1,29 @@
-import { BarChartIcon, Delete02Icon, ListViewIcon } from "@hugeicons/core-free-icons";
+import {
+	BarChartIcon,
+	DashboardCircleIcon,
+	Delete02Icon,
+	ListViewIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { SettingSection } from "@/entities/setting";
+import { useTranslations } from "use-intl";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { clearTranscriptionHistory } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { FormControl } from "@/shared/ui/form-control";
+import { NumberStepper } from "@/shared/ui/number-stepper";
+import { Select, type SelectOption } from "@/shared/ui/select";
 import { useTranscriptionHistorySync } from "../api/use-history-sync";
 import { aggregate, filterEntriesByDateRange } from "../lib/word-stats";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { ActivityHeatmap } from "./ActivityHeatmap";
 import { HistorySummary } from "./HistorySummary";
 import { HistoryTable } from "./HistoryTable";
+
+type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
 
 export function TranscriptionHistoryPanel() {
 	const t = useTranslations("history");
@@ -21,6 +32,18 @@ export function TranscriptionHistoryPanel() {
 	const clearLocal = useTranscriptionHistoryStore((s) => s.clear);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [selectedRange, setSelectedRange] = useState<DateRange | null>(null);
+	const historyMaxEntries = useSettingsStore((s) => s.settings.general?.historyMaxEntries ?? 1000);
+	const recordingRetention = useSettingsStore(
+		(s) => (s.settings.general?.recordingRetention as RetentionValue | undefined) ?? "cap"
+	);
+	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const retentionOptions: SelectOption[] = [
+		{ id: "never", label: t("retentionNever") },
+		{ id: "cap", label: t("retentionCap") },
+		{ id: "days3", label: t("retentionDays3") },
+		{ id: "weeks2", label: t("retentionWeeks2") },
+		{ id: "months3", label: t("retentionMonths3") },
+	];
 
 	const filteredEntries = filterEntriesByDateRange(
 		entries,
@@ -77,6 +100,44 @@ export function TranscriptionHistoryPanel() {
 			>
 				<div className="py-2">
 					<HistoryTable entries={filteredEntries} />
+				</div>
+			</SettingSection>
+
+			{/* Limits — history-entry cap and saved-recording retention.
+			    Mirrors Handy's history_limit + recording_retention_period.
+			    Cap defaults to 1000, retention defaults to "cap" (delete
+			    only when the entry count exceeds the cap; absolute time
+			    cutoffs are opt-in). */}
+			<SettingSection icon={DashboardCircleIcon} title={t("limitsTitle")}>
+				<div className="flex flex-col divide-y divide-surface-1">
+					<FormControl
+						caption={t("historyMaxEntriesCaption")}
+						label={t("historyMaxEntries")}
+						tooltip={t("historyMaxEntriesTooltip")}
+					>
+						<ElevatedSurface className="w-fit" inline>
+							<NumberStepper
+								max={10_000}
+								min={10}
+								onChange={(v) => updateGeneral({ historyMaxEntries: v })}
+								step={10}
+								value={historyMaxEntries}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+					<FormControl
+						caption={t("retentionCaption")}
+						label={t("retention")}
+						tooltip={t("retentionTooltip")}
+					>
+						<ElevatedSurface inline>
+							<Select
+								onChange={(v) => updateGeneral({ recordingRetention: v as RetentionValue })}
+								options={retentionOptions}
+								value={recordingRetention}
+							/>
+						</ElevatedSurface>
+					</FormControl>
 				</div>
 			</SettingSection>
 		</div>

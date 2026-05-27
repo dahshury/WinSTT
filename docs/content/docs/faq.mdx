@@ -1,0 +1,151 @@
+---
+title: FAQ
+description: Frequently asked questions about WinSTT — privacy, models, performance, and platform support.
+---
+
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+
+## Privacy
+
+<Accordions>
+<Accordion title="Does WinSTT send my audio anywhere?">
+No. The transcription pipeline is fully local: PortAudio → VAD → ONNX Runtime → clipboard paste. Audio frames are processed in memory and discarded immediately. The only outbound network traffic from a default install is:
+
+1. **Anonymized crash reports (Sentry)** — opt-out under Settings → General → **Anonymous crash reports**.
+2. **First-time model downloads** — only when you pick a model that isn't cached, fetched from `huggingface.co`.
+3. **Optional cloud LLM cleanup** — only when you explicitly enable OpenRouter or another cloud LLM provider under Settings → LLM.
+
+Local Ollama is on the same machine, so even that path keeps text on-device.
+</Accordion>
+
+<Accordion title="Are transcriptions stored on disk?">
+Only if you opt in. The Transcription History dashboard writes to a SQLite database at `%APPDATA%/WinSTT/history.db`; it's off by default. The rolling `debug.log` includes transcribed text at debug level for troubleshooting — set `WINSTT_LOG_NO_TEXT=1` to redact it.
+</Accordion>
+
+<Accordion title="What does the LLM cleanup actually see?">
+The exact prompt that goes to the LLM, plus the dictation text. When [Context Awareness](/docs/settings/general) is on, WinSTT also sends a short snippet of the text immediately before and after the caret in your target app (read via UI Automation). The LLM never sees audio.
+
+The full prompt is visible in `stt-server.log` at debug level — useful for testing custom modifiers.
+</Accordion>
+</Accordions>
+
+## Models
+
+<Accordions>
+<Accordion title="Which model should I pick?">
+Rough guidance, fastest → most accurate:
+
+1. **`whisper-tiny.en`** — English-only dictation, sub-100 ms first token on most laptops. Default for the realtime preview.
+2. **`whisper-base.en` / `whisper-small.en`** — English, better punctuation, still very fast.
+3. **`whisper-small`** — Multilingual general-purpose pick. Good first try for non-English work.
+4. **`parakeet-tdt-0.6b-v3`** — Excellent multilingual CPU model, very fast.
+5. **`whisper-large-v3-turbo`** — Highest accuracy on multilingual content. Wants a GPU with 6 GB+ VRAM or an M-series Mac.
+6. **`lite-whisper-large-v3-turbo-acc`** — Compressed Whisper Large variant. Smaller / faster than full Large, similar quality on clean speech.
+
+For Russian dictation specifically, **GigaAM** and **T-One** outperform Whisper.
+</Accordion>
+
+<Accordion title="What's the difference between CPU and DirectML installers?">
+| Installer | Size | Picks GPU when | Ships |
+|---|---|---|---|
+| **CPU** | ~150 MB | never | `onnxruntime` |
+| **DirectML** (default) | ~200 MB | any D3D12-capable GPU is present | `onnxruntime-directml`; auto-falls-back to CPU |
+
+DirectML is the right default for almost everyone — it's smaller and faster than the legacy CUDA bundle and works on AMD / Intel / NVIDIA equally. CPU exists for servers, headless boxes, and users who want the smallest possible download.
+</Accordion>
+
+<Accordion title="Why no CUDA installer anymore?">
+On our benchmark workload (Whisper-tiny q4, idle 3080 Ti, N=20) DirectML beat CUDA on both median and tail latency:
+
+- DirectML: p50 = 85 ms / p95 = 89 ms / stdev = 3 ms
+- CUDA: p50 = 120 ms / p95 = 151 ms / stdev = 37 ms
+
+And the DirectML build is 10× smaller (200 MB vs 2 GB). CUDA-EP detection is still in `device.py` for the eventual Linux NVIDIA build, but on Windows we don't ship a CUDA installer.
+</Accordion>
+
+<Accordion title="Can I use a fine-tuned Whisper model?">
+Yes — see [Custom Models](/docs/models#custom-models). Export your fine-tune to ONNX (Optimum / onnx-community layout), drop it under `{userData}/models/custom/<slug>/`, restart. The "Open custom models folder" button in the picker takes you straight to the right path.
+</Accordion>
+
+<Accordion title="Why are some quantizations greyed out in the picker?">
+WinSTT doesn't quantize models itself — it surfaces whatever the upstream HF repo published. If `*_q4.onnx` isn't in the repo, the q4 option is disabled. For custom models we only ever offer the default (un-suffixed) graph.
+</Accordion>
+</Accordions>
+
+## Performance
+
+<Accordions>
+<Accordion title="How fast is 'real-time' really?">
+Live preview emits a new partial transcription every ~200 ms. The polished final pass runs after the turn ends (release the PTT key, or VAD silence-stops) and is typically sub-second on `tiny`/`base`, 1–3 seconds on `small`/`medium`, 2–6 seconds on `large` depending on hardware.
+
+The architecture detail: Whisper isn't a streaming model. The "live" preview is a watermark + committed-text accumulator over a bounded sliding window. See `memory/project_realtime_architecture.md` if you want the gory details.
+</Accordion>
+
+<Accordion title="Why does the first transcription after launch feel slow?">
+The main (non-realtime) model is loaded lazily on the first turn. Subsequent turns reuse the loaded session. If first-turn latency matters, enable Settings → Quality → **Warm up on launch** so the model loads while the splash screen is up.
+</Accordion>
+
+<Accordion title="Can I run two models at once?">
+WinSTT runs a small fast model for the live preview and a larger main model for the final pass. They share the same ONNX Runtime session pool but distinct sessions. Configure them under Settings → Quality → **Realtime model** and **Main model**.
+</Accordion>
+</Accordions>
+
+## Recording modes
+
+<Accordions>
+<Accordion title="Which recording mode should I use?">
+- **PTT** for short bursts, command-line work, noisy rooms.
+- **Toggle** for paragraphs and meetings — VAD ends the turn for you.
+- **Listen** for meeting transcripts — passive loopback capture, no hotkey.
+- **Wake Word** for hands-free trigger ("computer, …" etc.) via Porcupine.
+
+Full breakdown: [Recording Modes](/docs/recording-modes).
+</Accordion>
+
+<Accordion title="Does Listen mode capture my microphone too?">
+No — Listen mode binds to a loopback device, not a microphone. To capture both yourself and the call, route your mic into VB-Cable as well, or use a software mixer.
+</Accordion>
+</Accordions>
+
+## Platforms
+
+<Accordions>
+<Accordion title="Does WinSTT work on macOS / Linux?">
+Not yet as a shipped installer. The Python server already runs on both (the hexagonal architecture has no Win32 dependency outside two Electron IPC handlers). What's missing:
+
+- **macOS:** Apple Intelligence CLI hookup in CI, Metal-aware ONNX Runtime, code signing + notarization.
+- **Linux:** AppImage / deb / rpm packaging, Wayland-friendly hotkey hooks (the `CLI` page already anticipates these).
+
+Both are on the [roadmap](https://github.com/dahshury/WinSTT/blob/main/README.md#roadmap).
+</Accordion>
+
+<Accordion title="Will WinSTT work on Windows on ARM?">
+ONNX Runtime ships ARM64 wheels, and the Electron frontend is portable. Packaging hasn't been validated yet — if you've got an ARM64 device and want to help, an issue or PR is welcome.
+</Accordion>
+</Accordions>
+
+## Contributing & community
+
+<Accordions>
+<Accordion title="I want to add a new STT model family. Where do I start?">
+The new family needs an `onnx-asr` adapter (in our [fork](https://github.com/dahshury/onnx-asr)) and a catalog entry in `server/src/recorder/domain/catalog.json`. The four most recently added families (Moonshine, Cohere, Breeze, Canary-180M) all landed in one commit (`20b872a`) — that diff is the cleanest reference. See [CONTRIBUTING.md](https://github.com/dahshury/WinSTT/blob/main/CONTRIBUTING.md) for the workflow.
+</Accordion>
+
+<Accordion title="How do I file a bug?">
+1. Reproduce with `--debug`.
+2. Generate a diagnostic bundle (Settings → Advanced → **Save Diagnostic Bundle…**).
+3. Open an issue at [github.com/dahshury/WinSTT/issues](https://github.com/dahshury/WinSTT/issues) with the bundle attached.
+
+The [Debug Mode](/docs/debug-mode) page has the full checklist.
+</Accordion>
+
+<Accordion title="Where do feature requests go?">
+[Discussions](https://github.com/dahshury/WinSTT/discussions), not Issues. Issues are reserved for bugs and well-scoped tasks. A feature request with even a rough sketch attached is much more likely to land.
+</Accordion>
+
+<Accordion title="Why is the codebase split between Python and TypeScript?">
+Each language is doing what it's best at. Python owns the ML pipeline because every upstream model and tokenizer is published as a Python artifact. TypeScript owns the desktop UI because Electron is the path of least resistance for a polished, accessible, cross-platform GUI. The two halves are glued by a small OpenAPI spec — see `spec/openapi.yaml` — which generates types on both sides so the contract can't drift silently.
+
+The split also means contributors can usually work in just one language: STT model adapters are Python-only, UI tweaks are TS-only.
+</Accordion>
+</Accordions>

@@ -1,5 +1,5 @@
-import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
+import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import {
 	buildDefaultCalendarPresets,

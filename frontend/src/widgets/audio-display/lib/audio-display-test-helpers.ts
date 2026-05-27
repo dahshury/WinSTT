@@ -1,4 +1,4 @@
-import type { useTranslations } from "next-intl";
+import type { useTranslations } from "use-intl";
 import { fileTranscribe, getFilePath } from "@/shared/api/ipc-client";
 
 const SUPPORTED_EXTENSIONS = new Set([

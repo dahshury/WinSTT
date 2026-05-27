@@ -1,7 +1,8 @@
-import { NextIntlClientProvider } from "next-intl";
 import { type ReactNode, useEffect } from "react";
+import { IntlProvider as UseIntlProvider } from "use-intl/react";
 import { getSystemLocale } from "@/shared/api/ipc-client";
 import { messages, pickLocaleFromSystem, useLocaleStore } from "@/shared/i18n";
+import { RTL_LOCALES } from "@/shared/i18n/config";
 
 const LOCALE_STORAGE_KEY = "winstt-locale";
 
@@ -37,13 +38,27 @@ export function IntlProvider({ children }: { children: ReactNode }) {
 		};
 	}, [setLocale]);
 
+	// Apply <html dir="rtl"> when the active locale is right-to-left so
+	// flex / margin / icon-position CSS flips automatically. Reverts to
+	// "ltr" on cleanup so a locale switch back to LTR also takes effect.
+	// Guarded on `typeof document` so Bun's SSR-ish test envs (where
+	// `document` may be missing) stay no-op.
+	useEffect(() => {
+		if (typeof document === "undefined") {
+			return;
+		}
+		const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
+		document.documentElement.setAttribute("dir", dir);
+		document.documentElement.setAttribute("lang", locale);
+	}, [locale]);
+
 	return (
-		<NextIntlClientProvider
+		<UseIntlProvider
 			locale={locale}
 			messages={messages[locale]}
 			timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
 		>
 			{children}
-		</NextIntlClientProvider>
+		</UseIntlProvider>
 	);
 }

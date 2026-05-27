@@ -1,6 +1,6 @@
 import { ArrowRight01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { RECORDING_MODE_COLOR_HEX, type RecordingMode } from "@/shared/config/recording-mode-color";
 import { formatKeyName } from "@/shared/lib/format-key-name";

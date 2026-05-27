@@ -59,14 +59,15 @@ describe("store module", () => {
 		// MockStore seeds from these defaults, so each key should be present
 		// with the documented production value.
 		const s = (key: string) => (store.get as (k: string) => unknown)(key);
-		expect(s("model.model")).toBe("large-v2");
+		// Defaults are now derived from `appSettingsSchema.parse({})` so the
+		// renderer schema is the single source of truth. The schema's
+		// production default is "tiny" (the bundled offline base).
+		expect(s("model.model")).toBe("tiny");
 		expect(s("model.realtimeModel")).toBe("tiny");
 		expect(s("model.language")).toBe("en");
 		expect(s("model.computeType")).toBe("default");
 		expect(s("model.device")).toBe("auto");
 		expect(s("model.backend")).toBe("faster_whisper");
-		expect(s("model.beamSize")).toBe(5);
-		expect(s("model.beamSizeRealtime")).toBe(3);
 	});
 
 	itIfClean("default store contains canonical quality defaults", () => {
@@ -75,12 +76,13 @@ describe("store module", () => {
 		expect(s("quality.realtimeProcessingPause")).toBe(0.02);
 		expect(s("quality.initRealtimeAfterSeconds")).toBe(0.2);
 		expect(s("quality.earlyTranscriptionOnSilence")).toBe(0.2);
-		expect(s("quality.batchSize")).toBe(16);
-		expect(s("quality.realtimeBatchSize")).toBe(16);
 		expect(s("quality.ensureSentenceStartingUppercase")).toBe(true);
 		expect(s("quality.ensureSentenceEndsWithPeriod")).toBe(true);
-		expect(s("quality.smartEndpoint")).toBe(false);
-		expect(s("quality.smartEndpointSpeed")).toBe(1.5);
+		// Defaults derive from the renderer Zod schema now (single source of
+		// truth). smartEndpoint defaults ON to avoid finalizing mid-thought;
+		// smartEndpointSpeed default is 2 (was 1.5 in the old literal).
+		expect(s("quality.smartEndpoint")).toBe(true);
+		expect(s("quality.smartEndpointSpeed")).toBe(2);
 	});
 
 	itIfClean("default store contains canonical audio defaults", () => {
@@ -111,7 +113,12 @@ describe("store module", () => {
 		expect(s("general.liveTranscriptionDisplay")).toBe("both");
 		expect(s("general.visualizerType")).toBe("bar");
 		expect(s("general.visualizerBarCount")).toBe(9);
-		expect(s("general.visualizerColor")).toBe("#58a6ff");
+		// `visualizerColor` was in the old electron-store literal but is not
+		// in the renderer Zod schema (the color is computed dynamically from
+		// the theme accent now). Defaults derive from the schema, so the
+		// dotted key resolves to undefined here. If we ever re-add the field
+		// to the renderer schema this assertion needs to mirror its default.
+		expect(s("general.visualizerColor")).toBeUndefined();
 	});
 
 	itIfClean("default store contains hotkey, dictionary, snippets, llm defaults", () => {
@@ -148,11 +155,17 @@ describe("store module", () => {
 		}
 	);
 
-	itIfClean("default store has audio.sileroSensitivity at 0.4 and inputDeviceIndex at null", () => {
-		const s = (key: string) => (store.get as (k: string) => unknown)(key);
-		expect(s("audio.sileroSensitivity")).toBe(0.4);
-		expect(s("audio.inputDeviceIndex")).toBeNull();
-	});
+	itIfClean(
+		"default store has audio.sileroSensitivity at 0.7 (Handy-matching) and inputDeviceIndex at null",
+		() => {
+			const s = (key: string) => (store.get as (k: string) => unknown)(key);
+			// 0.7 → Silero trip threshold 0.3, matching Handy. The
+			// previous 0.4 default (trip > 0.6) silently rejected
+			// quiet / distant speech.
+			expect(s("audio.sileroSensitivity")).toBe(0.7);
+			expect(s("audio.inputDeviceIndex")).toBeNull();
+		}
+	);
 
 	itIfClean(
 		"default store general.minimizeToTray is true (and loopbackDeviceIndex starts null)",
@@ -224,12 +237,12 @@ describe("store module", () => {
 });
 
 describe("store migration block (module-load side effects)", () => {
-	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (10) at load time", () => {
+	itIfClean("migration sets _schemaVersion to the SCHEMA_VERSION (11) at load time", () => {
 		// The migration block runs once when ./store is imported. With a fresh
 		// MockStore (empty `_schemaVersion`), `getStoreValue` returns undefined,
-		// `?? 1` makes currentVersion=1, `1 < 10` triggers migration which
-		// writes _schemaVersion=10.
-		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(10);
+		// `?? 1` makes currentVersion=1, `1 < 11` triggers migration which
+		// writes _schemaVersion=11.
+		expect((store.get as (k: string) => unknown)("_schemaVersion")).toBe(11);
 	});
 
 	itIfClean("migration v4 path resets audio.inputDeviceIndex to null", () => {
@@ -243,17 +256,18 @@ describe("store migration block (module-load side effects)", () => {
 		expect((store.get as (k: string) => unknown)("quality.useMainModelForRealtime")).toBe(false);
 	});
 
-	itIfClean("migration leaves audio.sileroSensitivity at the default 0.4", () => {
-		// silero === 0.05 branch should NOT trigger (default is 0.4).
-		// MockStore was already mutated by an earlier test, so we read via
-		// store.store directly to bypass the test-set value... actually
-		// store.set("audio.sileroSensitivity", 0.7) in an earlier test means
-		// we can only assert the migration didn't reset to 0.4 when value
-		// wasn't 0.05. The default is 0.4 → no reset, so value stays
-		// whatever was set.
-		const v = (store.get as (k: string) => unknown)("audio.sileroSensitivity");
-		expect(v).not.toBe(0.05);
-	});
+	itIfClean(
+		"migration leaves audio.sileroSensitivity at the new default 0.7 (v11 Handy port)",
+		() => {
+			// silero === 0.05 branch should NOT trigger (fresh MockStore has
+			// no persisted value, so the schema default 0.7 applies). The
+			// v11 migration only rewrites EXACTLY 0.4 → 0.7 to preserve
+			// any user customization. Locks the post-migration end state.
+			const v = (store.get as (k: string) => unknown)("audio.sileroSensitivity");
+			expect(v).not.toBe(0.05);
+			expect(v).not.toBe(0.4);
+		}
+	);
 });
 
 // applyStoreMigration is a pure function — but it's imported from `./store`,
@@ -292,7 +306,7 @@ describe("applyStoreMigration (pure)", () => {
 
 	itIfMigrationLoaded("does nothing when current >= SCHEMA_VERSION (boundary equal)", () => {
 		const writes: Write[] = [];
-		applyStoreMigration(10, fakeRead({}), fakeWrite(writes), () => undefined);
+		applyStoreMigration(11, fakeRead({}), fakeWrite(writes), () => undefined);
 		expect(writes).toEqual([]);
 	});
 
@@ -304,6 +318,11 @@ describe("applyStoreMigration (pure)", () => {
 
 	itIfMigrationLoaded("runs full migration path when current < SCHEMA_VERSION", () => {
 		const writes: Write[] = [];
+		// The fakeRead snapshot is static — the v11 step reads
+		// audio.sileroSensitivity from the snapshot (0.05) AFTER the
+		// legacy step wrote 0.4 to the writes list, so v11 doesn't see
+		// the 0.4 intermediate and doesn't fire here. In production
+		// both run live; the chained behaviour is asserted separately.
 		applyStoreMigration(
 			1,
 			fakeRead({
@@ -317,13 +336,11 @@ describe("applyStoreMigration (pure)", () => {
 		expect(map.get("quality.useMainModelForRealtime")).toBe(false);
 		expect(map.get("audio.sileroSensitivity")).toBe(0.4);
 		expect(map.get("audio.inputDeviceIndex")).toBeNull();
-		// v9 migration moves llm.presets into llm.dictation.presets
 		expect(map.get("llm.dictation.presets")).toEqual([{ key: "neutral" }]);
 		expect(map.get("general.liveTranscriptionDisplay")).toBe("both");
 		expect(map.get("general.systemAudioReductionWhileDictating")).toBe(0);
-		// v10: dictionary gets wiped on migration.
 		expect(map.get("dictionary")).toEqual([]);
-		expect(map.get("_schemaVersion")).toBe(10);
+		expect(map.get("_schemaVersion")).toBe(11);
 	});
 
 	itIfMigrationLoaded(
@@ -373,7 +390,13 @@ describe("applyStoreMigration (pure)", () => {
 		expect(writes.find((w) => w.key === "audio.sileroSensitivity")).toBeUndefined();
 	});
 
-	itIfMigrationLoaded("writes silero=0.4 when value is exactly 0.05", () => {
+	itIfMigrationLoaded("legacy silero 0.05→0.4 fix still fires under v11 schema", () => {
+		// Tests the always-on legacy fix in isolation: ``fakeRead`` is a
+		// static snapshot so the v11 step below sees the original 0.05
+		// (not the post-fix 0.4) and does not double-write. In
+		// production both steps chain via the live store; the chained
+		// behaviour is covered end-to-end by the module-load test
+		// that asserts the final ``_schemaVersion`` and value.
 		const writes: Write[] = [];
 		applyStoreMigration(
 			1,
@@ -384,7 +407,39 @@ describe("applyStoreMigration (pure)", () => {
 			fakeWrite(writes),
 			() => undefined
 		);
-		expect(writes.find((w) => w.key === "audio.sileroSensitivity")?.value).toBe(0.4);
+		const sileroWrites = writes.filter((w) => w.key === "audio.sileroSensitivity");
+		expect(sileroWrites.map((w) => w.value)).toEqual([0.4]);
+	});
+
+	itIfMigrationLoaded("v11 migration writes silero=0.7 when persisted value is exactly 0.4", () => {
+		// Mirrors the Handy-matching bump (trip threshold 0.6 → 0.3).
+		// Only EXACTLY 0.4 is rewritten — anything else (including
+		// 0.05, customized values like 0.55) is preserved.
+		const writes: Write[] = [];
+		applyStoreMigration(
+			10,
+			fakeRead({
+				"audio.sileroSensitivity": 0.4,
+			}),
+			fakeWrite(writes),
+			() => undefined
+		);
+		const sileroWrites = writes.filter((w) => w.key === "audio.sileroSensitivity");
+		expect(sileroWrites.map((w) => w.value)).toEqual([0.7]);
+	});
+
+	itIfMigrationLoaded("v11 migration preserves a user-customized silero value", () => {
+		const writes: Write[] = [];
+		applyStoreMigration(
+			10,
+			fakeRead({
+				"audio.sileroSensitivity": 0.55,
+			}),
+			fakeWrite(writes),
+			() => undefined
+		);
+		const sileroWrites = writes.filter((w) => w.key === "audio.sileroSensitivity");
+		expect(sileroWrites).toEqual([]);
 	});
 
 	itIfMigrationLoaded(
@@ -429,14 +484,14 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.from).toBe(2);
-		expect(calls[0]?.to).toBe(10);
+		expect(calls[0]?.to).toBe(11);
 		expect(calls[0]?.msg).toMatch(/_schemaVersion/);
 	});
 
 	itIfMigrationLoaded("does not log when no migration runs", () => {
 		const writes: Write[] = [];
 		const { log, calls } = fakeLog();
-		applyStoreMigration(10, fakeRead({}), fakeWrite(writes), log);
+		applyStoreMigration(11, fakeRead({}), fakeWrite(writes), log);
 		expect(calls).toEqual([]);
 	});
 
@@ -453,7 +508,7 @@ describe("applyStoreMigration (pure)", () => {
 		);
 		const last = writes.at(-1);
 		expect(last?.key).toBe("_schemaVersion");
-		expect(last?.value).toBe(10);
+		expect(last?.value).toBe(11);
 	});
 
 	itIfMigrationLoaded(

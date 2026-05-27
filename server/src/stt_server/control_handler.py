@@ -140,6 +140,22 @@ ALLOWED_PARAMETERS: list[str] = [
     # accepts a float clamped to ``[0.0, 1.0]`` by Pydantic.
     "custom_words",
     "word_correction_threshold",
+    # Locale-aware filler / stutter cleanup (Handy port). The recorder
+    # facade exposes matching ``filter_fillers`` (bool) and
+    # ``custom_filler_words`` (list[str]) properties; empty list means
+    # "use language-default disfluency table" — see
+    # ``src/recorder/text/filler_filter.py``.
+    "filter_fillers",
+    "custom_filler_words",
+    # Whisper-style decoder-bias prompt + its realtime variant. Both are
+    # stored on the recorder config via matching properties; the renderer's
+    # ``installInitialPromptSync`` (electron/lib/initial-prompt-sync.ts)
+    # pushes a freshly-composed prompt on every dictionary or static-prefix
+    # edit. Without these in the allowlist the renderer push gets rejected
+    # with an "error" response that pollutes the debug log on every server
+    # ready.
+    "initial_prompt",
+    "initial_prompt_realtime",
 ]
 
 # Sentence-pause parameters that live on ``ServerState`` rather than the
@@ -179,6 +195,41 @@ def _active_device(state: ServerState) -> str | None:
             if isinstance(dev, str):
                 return dev
     return None
+
+
+def _active_accelerator(state: ServerState) -> str | None:
+    """Best-effort resolved accelerator name (``"directml"`` / ``"cuda"`` /
+    ``"cpu"`` / ...) for catalog filtering on DML-class EPs.
+
+    Reads the user's ``transcription.accelerator`` (falling back to
+    ``transcription.device`` for older configs), then passes it through
+    :func:`resolve_accelerator` so a setting of ``"auto"`` collapses to
+    the EP the runtime would actually pick — DirectML on a DML-only venv,
+    CUDA on a [gpu] venv, etc.
+    """
+    from src.recorder.infrastructure.device import resolve_accelerator
+
+    requested: str | None = None
+    rec = state.recorder
+    if rec is not None:
+        svc = getattr(rec, "_service", None)
+        if svc is not None:
+            cfg = getattr(svc, "_config", None)
+            if cfg is not None:
+                acc = getattr(cfg.transcription, "accelerator", None)
+                if isinstance(acc, str) and acc:
+                    requested = acc
+    if requested is None:
+        cfg = state.recorder_config
+        if isinstance(cfg, dict):
+            tx = cfg.get("transcription")
+            if isinstance(tx, dict):
+                acc = tx.get("accelerator")
+                if isinstance(acc, str) and acc:
+                    requested = acc
+    if requested is None:
+        requested = _active_device(state) or "auto"
+    return resolve_accelerator(requested)
 
 
 def _log_set(name: str, value: object) -> None:
@@ -495,12 +546,19 @@ async def _handle_list_models(ws: ServerConnection, state: ServerState, data: di
 
     catalog = ModelCatalog()
     device = _active_device(state)
+    accelerator = _active_accelerator(state)
     await ws.send(
-        json.dumps({"status": "success", "command": "list_models", "models": catalog.to_dicts(device=device)})
+        json.dumps(
+            {
+                "status": "success",
+                "command": "list_models",
+                "models": catalog.to_dicts(device=device, accelerator=accelerator),
+            }
+        )
     )
 
 
-def _build_models_with_state_payload(device: str | None) -> dict[str, Any]:
+def _build_models_with_state_payload(device: str | None, accelerator: str | None) -> dict[str, Any]:
     """Synchronous catalog + cache-state assembly. Runs in a worker thread.
 
     Walks the HF snapshot tree once per model via ``model_state_dict`` — that
@@ -517,7 +575,7 @@ def _build_models_with_state_payload(device: str | None) -> dict[str, Any]:
     catalog = ModelCatalog()
     sys_info = get_system_info()
     return {
-        "models": catalog.to_dicts(device=device),
+        "models": catalog.to_dicts(device=device, accelerator=accelerator),
         "states": [model_state_dict(m, sys_info) for m in catalog.list_all()],
         "system_info": system_info_dict(sys_info),
     }
@@ -545,7 +603,8 @@ async def _handle_list_models_with_state(
     """
     request_id = data.get("request_id")
     device = _active_device(state)
-    value = await asyncio.to_thread(_build_models_with_state_payload, device)
+    accelerator = _active_accelerator(state)
+    value = await asyncio.to_thread(_build_models_with_state_payload, device, accelerator)
     # Wrap in ``value`` so SttClient.sendRequest() resolves the promise
     # with the full payload (it reads ``data.value`` by convention).
     payload: dict[str, Any] = {

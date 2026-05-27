@@ -12,7 +12,7 @@ import {
 	TextIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
 import { useDownloadListener } from "@/features/model-download";
 import { useSyncActiveModel } from "@/features/sync-active-model";

@@ -391,35 +391,45 @@ function DynamicIslandPillContent({
  * through so the rest of the pill never blocks input.
  */
 function CancelButton({ size = 16 }: { size?: number }) {
-	const handleEnter = () => overlaySetIgnoreMouse(false);
-	const handleLeave = () => overlaySetIgnoreMouse(true);
+	// Click-through is managed at the WINDOW level by OverlayPage's
+	// isRecordingActive/isThinking effect: ignore=false while the pill is
+	// active, ignore=true once the session ends. We deliberately do NOT
+	// flip ignore on hover / leave here — the hover-based dance was the
+	// reason touch input couldn't reach the X (no preceding mouseenter
+	// to flip ignore off before the synthesized mouse-down on touch).
+	// Letting the window stay interactive for the whole recording also
+	// removes the per-click IPC roundtrip race on mouse devices.
 	const handleClick = () => {
-		// Restore click-through immediately — the overlay hides as part of the
-		// abort flow but the next session re-uses the same window, so leaving
-		// it in interactive mode would block clicks until the user hovered the
-		// X again.
-		overlaySetIgnoreMouse(true);
 		sttAbortOperation();
 	};
+	// Wrap in the same glass material as the chip/island shell so the button
+	// reads as a sibling capsule — same gradient + hairline ring + drop shadow
+	// — instead of a floating raw glyph. `overflow-hidden` clips the hover
+	// tint to the circle. Size includes its own padding via `box-sizing`.
 	return (
 		<button
 			aria-label="Cancel transcription"
-			className="flex shrink-0 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white/95 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40"
+			className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-white/70 transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
 			onClick={handleClick}
-			onMouseEnter={handleEnter}
-			onMouseLeave={handleLeave}
-			style={{ width: size, height: size }}
+			style={{ width: size, height: size, boxSizing: "border-box" }}
 			type="button"
 		>
+			{/* Subtle hover wash inside the capsule — same tint logic the chip's
+			    breathing glow uses, but driven by :hover instead of VAD. */}
+			<span
+				aria-hidden="true"
+				className="pointer-events-none absolute inset-0 rounded-full bg-white/0 transition-colors duration-150 hover:bg-white/[0.08]"
+			/>
 			<svg
 				aria-hidden="true"
+				className="relative"
 				fill="none"
-				height={Math.round(size * 0.6)}
+				height={Math.round(size * 0.55)}
 				stroke="currentColor"
 				strokeLinecap="round"
 				strokeWidth={2}
 				viewBox="0 0 24 24"
-				width={Math.round(size * 0.6)}
+				width={Math.round(size * 0.55)}
 				xmlns="http://www.w3.org/2000/svg"
 			>
 				<line x1="6" x2="18" y1="6" y2="18" />
@@ -508,6 +518,23 @@ export function OverlayPage() {
 		});
 		return unsub;
 	}, [setSettings]);
+
+	// While the X cancel button is visible (a recording or LLM-thinking pass
+	// is in flight), make the whole overlay window interactive so taps land.
+	// The default is click-through (set in electron/main.ts createOverlayWindow
+	// and re-asserted by overlay.ts) so the empty pill never blocks clicks to
+	// the app underneath. The hover-based flip in CancelButton works for mouse
+	// users (mouseenter → ignore=false → click) but FAILS on touch: a touch
+	// device emits no preceding mousemove the renderer can react to in time —
+	// the synthesized mouse-down arrives at the OS before the renderer's
+	// `overlaySetIgnoreMouse(false)` IPC roundtrip completes, so the click
+	// falls through to the app underneath and the X is unreachable.
+	// Proactively disabling click-through during the active window is the
+	// only way to make the X tappable on touch.
+	useEffect(() => {
+		const interactive = isRecordingActive || isThinking;
+		overlaySetIgnoreMouse(!interactive);
+	}, [isRecordingActive, isThinking]);
 
 	const text = realtime.trim() || ephemeral?.text || "";
 	const hasText = text.length > 0;
@@ -682,10 +709,25 @@ export function OverlayPage() {
 							{showPill && (
 								<m.div
 									animate="animate"
-									className={`relative inline-flex items-center justify-center overflow-hidden rounded-full px-2.5 py-1 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+									// Hard-locked chip dimensions. The visualizer is rendered as an
+									// absolutely-positioned child below (`absolute inset-0`), so
+									// nothing it does — bars swinging with voice amplitude, radial
+									// dots oscillating, an SVG variant that draws outside its
+									// nominal `h-[24px]` box — can contribute to this element's
+									// layout. Width comes from `heightPx * 2.5 + 20`: enough room
+									// for the bar variant's widest reasonable barCount (≤12 bars at
+									// 4px + 2px gaps fits in 2.5× the icon height) plus 20px of
+									// `px-2.5` padding. Height is `heightPx + 8` (visualizer +
+									// py-1). `box-border` so the style values include padding.
+									className={`relative block shrink-0 overflow-hidden rounded-full ${GLASS_SURFACE} ${CHIP_SHADOW}`}
 									exit="exit"
 									initial="initial"
 									key="visualizer-chip"
+									style={{
+										width: Math.round(heightPx * 2.5 + 20),
+										height: heightPx + 8,
+										boxSizing: "border-box",
+									}}
 									variants={chipVariants}
 								>
 									{/* Glass refraction hairline at the very top
@@ -715,8 +757,16 @@ export function OverlayPage() {
 											/>
 										)}
 									</AnimatePresence>
-									<div className="flex items-center justify-center" style={{ zoom }}>
-										<AudioVisualizer size="icon" />
+									{/* Visualizer rendered absolutely-positioned and centered.
+									    Out-of-flow, so its zoom-scaled height never feeds back
+									    into the chip's layout box. */}
+									<div className="absolute inset-0 flex items-center justify-center">
+										<div
+											className="flex items-center justify-center"
+											style={{ zoom, height: ICON_PRESET_PX }}
+										>
+											<AudioVisualizer size="icon" />
+										</div>
 									</div>
 								</m.div>
 							)}

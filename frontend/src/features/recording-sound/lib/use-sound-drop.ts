@@ -1,5 +1,5 @@
-import type { useTranslations } from "next-intl";
 import { type DragEvent, useCallback, useState } from "react";
+import type { useTranslations } from "use-intl";
 import { getFilePath } from "@/shared/api/ipc-client";
 
 const ACCEPTED_EXTENSIONS = ["wav", "mp3"];

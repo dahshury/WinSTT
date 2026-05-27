@@ -1,0 +1,189 @@
+---
+title: Troubleshooting
+description: Diagnose and fix the most common WinSTT runtime issues — blank window, slow transcription, missing audio devices, failed model downloads.
+---
+
+import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+If WinSTT isn't behaving, work through this page first. Almost every reported issue has a fix here. When something doesn't, head to [Debug Mode](/docs/debug-mode) to gather logs and open an issue.
+
+<Callout title="Always attach a diagnostic bundle" type="info">
+  **Settings → Advanced → Save Diagnostic Bundle…** writes a single zip with `debug.log`, `stt-server.log`, GPU info, and a redacted settings file. Attach it to any bug report — it shortcuts at least three rounds of back-and-forth.
+</Callout>
+
+## App won't start
+
+<Accordions>
+<Accordion title="Window flashes and disappears (packaged build)">
+The bundled `stt-server.exe` failed to start, the Electron main process detected it, and the renderer is showing a fatal-error screen behind a borderless window that closes itself. Open `%APPDATA%/WinSTT/debug.log` — the last few lines name the cause, typically a missing Visual C++ Redistributable or a virus-scanner quarantine of `stt-server.exe`.
+
+Fixes:
+- Install the [latest VC++ x64 redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist).
+- Whitelist `%LOCALAPPDATA%/Programs/WinSTT/resources/app.asar.unpacked/stt-server/stt-server.exe` in your antivirus.
+- Run the installer as Administrator if `%APPDATA%/WinSTT/` is on a path your user can't write to.
+</Accordion>
+
+<Accordion title="Black main window in a packaged build (renderer never paints)">
+Symptom: the window opens but stays black. Dev mode looks fine. The renderer console (Settings → Advanced → Open DevTools) shows `Cannot read properties of undefined (reading 'useLayoutEffect')`.
+
+Cause: a Vite chunk-splitting regression that puts `@base-ui/react` in a different chunk from `react` / `react-dom`, creating a circular ESM import. See `memory/project_vite_chunk_circular_react.md`. Fix is in `frontend/vite.config.ts` — `manualChunks` must keep `@base-ui/react` together with React. Re-pull main; this regressed once and we caught it via this symptom.
+</Accordion>
+
+<Accordion title="Dev mode: blank window on launch">
+The renderer is waiting for the STT server. Make sure `uv run stt-server` is running in another terminal and listening on `127.0.0.1:8011` / `:8012`. If you set custom ports with `-c` / `-d`, mirror them via the `WINSTT_CONTROL_PORT` / `WINSTT_DATA_PORT` env vars before `bun electron:dev`.
+</Accordion>
+</Accordions>
+
+## Transcription is slow
+
+<Accordions>
+<Accordion title="Live preview lags by 5+ seconds">
+Verify which device the server picked. Run with `--debug` and look for a line like `Accelerator: directml` or `Accelerator: cpu` in the first second of `stt-server.log`.
+
+- If you have the DirectML build but it says `cpu`, your GPU isn't D3D12-capable — you'll need to either upgrade the GPU or accept CPU speeds.
+- If you have the CPU build but want GPU, install the DirectML installer (`WinSTT-Portable-<version>.exe`).
+- Pick a smaller realtime model in [Settings → Quality](/docs/settings/quality) — `whisper-tiny.en` runs ~4× faster than `whisper-base.en` and is usually fine for live preview.
+</Accordion>
+
+<Accordion title="Final transcription takes 10+ seconds for a short phrase">
+The main (non-realtime) model is loaded lazily on the first turn after a model swap. The first transcription after a fresh launch or a model change pays the load cost. Subsequent turns should be sub-second on small models.
+
+If every turn is slow:
+- Whisper `large-v3-turbo` on a 4–6 GB GPU will spill into CPU memory. Switch to `whisper-small` or `whisper-medium`.
+- On CPU, quantize down to `q4` in [Settings → Model](/docs/settings/model) — quality loss is small on `tiny` / `base`, larger on `large`.
+- Smart Endpoint (DistilBERT classifier) adds ~50 ms per turn. Disable it under [Settings → Quality](/docs/settings/quality) if you don't need turn-boundary smarts.
+</Accordion>
+
+<Accordion title="Server uses CPU even though I have an NVIDIA GPU">
+ORT's CUDA EP needs the *entire* NVIDIA cu12 wheel set (`cufft`, `cusparse`, `cusolver`, `curand`, etc.) — dropping any silently demotes the session to CPU. See `memory/project_ort_cuda_ep_deps.md`. The released DirectML installer doesn't ship CUDA at all (intentional — DirectML is faster on our workload). For the legacy CUDA dev path:
+
+```bash
+cd server
+uv sync --extra gpu      # installs onnxruntime-gpu + all NVIDIA cu12 wheels
+```
+
+Don't trim the `[gpu]` extra — every wheel listed there is mandatory.
+</Accordion>
+</Accordions>
+
+## Audio device problems
+
+<Accordions>
+<Accordion title="No microphone listed in Settings → Audio">
+PortAudio enumerates devices once at server start. If you plug a USB mic in afterwards, restart the server (the tray menu has **Restart STT server**, or kill `stt-server.exe` and let it respawn).
+
+If your mic still doesn't appear, run `Fix-Audio.ps1` from an elevated PowerShell — it bounces `Audiosrv`, `AudioEndpointBuilder`, and the Bluetooth user service, which clears `CM_PROB_PHANTOM` device states that block enumeration.
+</Accordion>
+
+<Accordion title="Microphone selected but no audio captured">
+Three things to check in order:
+1. Windows Sound mixer — make sure WinSTT (and `stt-server.exe`) aren't muted at the OS level.
+2. Settings → Audio → **VAD calibration**. If the noise floor is way above your speaking volume, VAD never fires. Recalibrate in a quiet room.
+3. Some headsets (Logitech, Razer) expose a virtual "Stereo Mix" device that maps to your speakers, not your mic. Pick the explicit microphone device by name.
+</Accordion>
+
+<Accordion title="Listen mode picks up nothing">
+Listen mode requires a **loopback** device — your microphone capture won't help. Install a loopback driver (e.g. [VB-Audio Virtual Cable](https://vb-audio.com/Cable/)) and set the **CABLE Output (VB-Audio)** as the loopback device in Settings → Audio → Loopback. Route the audio source you want transcribed (Teams, Zoom, OBS) into **CABLE Input** as its output device.
+
+On Windows 11 you can also use the OS-level "Listen to this device" loopback, but it's flaky on Bluetooth — VB-Cable is more reliable.
+</Accordion>
+
+<Accordion title="Push-to-talk hotkey doesn't fire">
+Three usual suspects:
+
+1. **Modifier-only chord conflict.** `Ctrl+Shift+V` is reserved for re-paste (an Electron `globalShortcut`); see `memory/project_repaste_globalshortcut.md`. Pick a different combo.
+2. **Group policy blocking low-level hooks.** Some corporate machines block `uiohook-napi`. Switch to Toggle mode (single key press, no hook required) or run WinSTT as Administrator.
+3. **Antivirus flagging the global keyboard hook.** Whitelist WinSTT's process in your AV's behavior-blocker.
+</Accordion>
+</Accordions>
+
+## Model downloads fail
+
+<Accordions>
+<Accordion title="Model download stalls at 0% or times out">
+Models live on the Hugging Face hub. If your network blocks `huggingface.co` (corporate proxy, country block), the download will silently hang. Two paths forward:
+
+1. **Manual install.** Walk through [Manual Model Install](/docs/manual-model-install) to drop the model files into the HF cache by hand. The URLs are public and resumable.
+2. **Configure a proxy.** Set `HTTPS_PROXY=http://your.proxy:8080` before launching WinSTT. WinSTT inherits the environment from your user session, so this works equally well via `setx HTTPS_PROXY ...` in PowerShell.
+</Accordion>
+
+<Accordion title="Download finished but model shows 'Unavailable'">
+The HF cache uses a `.incomplete` marker until every file in the snapshot is closed. If WinSTT was killed mid-download (`taskkill`, blue-screen, etc.), the marker is still on disk and the cache probe reports `partial`. Re-trigger the download from the picker — `huggingface_hub` resumes from the partial bytes.
+
+For pre-existing partial bytes after a crash, also acceptable to delete `~/.cache/huggingface/hub/models--<…>/blobs/*.incomplete` and the matching `snapshots/<rev>/*` symlink, then re-download.
+</Accordion>
+
+<Accordion title="404 / 403 on the TTS pack">
+The TTS pack is hosted on the **public** [winstt-assets](https://github.com/dahshury/winstt-assets) repo, not the private build repo. If you see a 404 on `tts-pack-v1`, the asset may have been renamed in a release rotation — open an issue with the URL the server tried.
+
+Anti-pattern: setting a `GITHUB_TOKEN` env var pointing at a token without read access to `dahshury/winstt-assets`. Tokenless `urllib` works fine since the repo is public — let WinSTT use its built-in unauthenticated client.
+</Accordion>
+
+<Accordion title="Custom model folder doesn't appear in picker">
+The folder must contain a complete onnx-community / Optimum export. Required files:
+
+- `encoder.onnx` or `encoder_model.onnx`
+- `decoder_model.onnx` or `decoder_model_merged.onnx`
+- `tokenizer.json` (HuggingFace tokenizers JSON — not the legacy `vocab.json` + `merges.txt`)
+- `config.json` with a non-empty `model_type`
+
+Partial folders still appear in the picker, greyed out, with a tooltip naming the missing file. See [Custom Models](/docs/models#custom-models) for the full contract.
+</Accordion>
+</Accordions>
+
+## Hotkeys, paste, and focus
+
+<Accordions>
+<Accordion title="Transcription appears in a different window than the one I was typing in">
+This is timing-sensitive: the foreground window is captured at hotkey release, not at paste. If your IME / Spotlight / launcher steals focus during the brief transcription pause, paste lands there instead.
+
+Workarounds:
+- Use **Cmd/Ctrl-tab** explicitly to confirm the focus target before talking.
+- Enable [Settings → Quality → Smart Endpoint](/docs/settings/quality) so transcription ends faster and there's less window for focus to drift.
+- For terminals / virtual machines / RDP, the host clipboard isn't always reachable — try Settings → Advanced → **Paste via SendInput** instead of the default clipboard paste.
+</Accordion>
+
+<Accordion title="Re-paste hotkey doesn't work">
+Re-paste (`general.repasteHotkey`, default `LCtrl+LShift+V`) is the *only* hotkey that goes through Electron's `globalShortcut` — every other WinSTT hotkey uses passive `uiohook-napi`. See `memory/project_repaste_globalshortcut.md`.
+
+If `globalShortcut.register()` returns `false`, another app already grabbed that chord. Pick something else in Settings → Hotkey → **Re-paste hotkey**.
+</Accordion>
+</Accordions>
+
+## LLM cleanup not working
+
+<Accordions>
+<Accordion title="Ollama option is greyed out">
+The renderer pings `http://127.0.0.1:11434/api/tags` to detect Ollama. If Ollama is running on a non-default port or a remote host, set its base URL in Settings → LLM → **Custom Ollama URL**.
+
+If `ollama serve` is running but the option is still greyed out, your firewall is probably blocking the loopback request — whitelist Ollama or run `ollama serve --host 127.0.0.1`.
+</Accordion>
+
+<Accordion title="LLM cleanup mangles the dictation">
+Two common causes:
+1. **No model selected.** The provider toggle requires a model to be chosen; if it was enabled before a model was picked, cleanup runs against `""` and the LLM returns nonsense. Pick a model explicitly (the toggle now auto-selects the smallest available — see `memory/feedback_capability_must_have_model.md` — but old settings files may have a stale empty value).
+2. **Context-awareness is on but the target app doesn't expose UI Automation.** WinSTT reads the caret + surrounding text via UIA; apps that don't implement UIA (some legacy Win32 apps, custom Electron renderers without ARIA) return blank context and the LLM fills the void. Turn off Settings → General → **Context Awareness** for those apps.
+</Accordion>
+</Accordions>
+
+## Settings keep getting reset
+
+<Accordions>
+<Accordion title="My setting was just saved but the value reverted on the next launch">
+The settings store does a partial save by section (e.g. `{ audio: … }`), and the restart-detector diffs the snapshot to decide whether to bounce the server. A bug in early 0.4.x compared the renderer payload against `undefined` for the unchanged sections and fired a spurious restart that overwrote in-flight saves. Fixed by snapshot-vs-snapshot diffing in `frontend/electron/ipc/settings.ts`. If you see this on 0.4.0+, it's a regression — please file a bug with `debug.log` attached.
+</Accordion>
+
+<Accordion title="App keeps restarting the server in a loop after every transcription">
+Same root cause as the section above. Update to the latest release. If updating isn't an option, open `%APPDATA%/WinSTT/settings.json` and unset any keys whose values are `null` or empty strings — those defaults trigger the false-positive restart in old versions.
+</Accordion>
+</Accordions>
+
+## Still stuck?
+
+1. Capture a diagnostic bundle (Settings → Advanced → **Save Diagnostic Bundle…**).
+2. Reproduce with `--debug` so `debug.log` and `stt-server.log` contain the verbose trace.
+3. File a bug at [github.com/dahshury/WinSTT/issues](https://github.com/dahshury/WinSTT/issues) with the bundle attached. See [CONTRIBUTING.md](https://github.com/dahshury/WinSTT/blob/main/CONTRIBUTING.md) for what makes a good report.
+
+Feature ideas and general questions live in [Discussions](https://github.com/dahshury/WinSTT/discussions).

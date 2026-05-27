@@ -87,6 +87,13 @@ class KokoroSynthesizer(ISpeechSynthesizer):
         Mirrors the STT-side ``device.resolve_device`` policy: "auto" tries
         CUDA first and falls back to CPU on import / DLL failure; "cuda"
         and "cpu" pin explicitly.
+
+        Routes through :func:`_probe_cuda_session` (not just
+        ``get_available_providers``) so the NVIDIA wheel DLL injection
+        runs before we hand ``CUDAExecutionProvider`` to ORT — otherwise
+        on a fresh-imported synthesizer (TTS is gated behind a separate
+        user action from STT) the CUDA EP DLL could be loaded without its
+        implicit cuBLAS/cuDNN/cuFFT deps in the process table.
         """
         wanted = self._config.device.lower()
         if wanted == "cpu":
@@ -97,9 +104,16 @@ class KokoroSynthesizer(ISpeechSynthesizer):
             providers = onnxruntime.get_available_providers()
         except Exception:
             return "CPUExecutionProvider"
-        if "CUDAExecutionProvider" in providers and wanted in ("auto", "cuda"):
-            return "CUDAExecutionProvider"
-        return "CPUExecutionProvider"
+        if "CUDAExecutionProvider" not in providers or wanted not in ("auto", "cuda"):
+            return "CPUExecutionProvider"
+        # Lazy import — keeps the recorder→synthesizer dep one-way at type
+        # check time. ``_probe_cuda_session`` is ``@lru_cache``d so this is
+        # free after the first call from anywhere in the process.
+        from src.recorder.infrastructure.device import _probe_cuda_session
+
+        if not _probe_cuda_session():
+            return "CPUExecutionProvider"
+        return "CUDAExecutionProvider"
 
     def _ensure_loaded(self) -> None:
         """Lazy-load the ONNX session + voicepacks on first use."""

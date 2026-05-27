@@ -8,11 +8,18 @@ import type { OnnxQuantization } from "@/shared/config/defaults";
 import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
 import { ModelPicker } from "../../core/ModelPicker";
 import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
+import { extractCloseReason } from "../../lib/combobox-reasons";
+import {
+	applyCloseWith,
+	isInsideMenuPopup,
+} from "../../lib/openrouter-model-selector-test-helpers";
+import { useModelSelectorClickTracking } from "../../lib/use-model-selector-click-tracking";
 import { STT_PICKER_WIDTH_CLASS } from "../lib/dimensions";
 import {
 	buildModelSearchCorpus,
 	type FamilyKey,
 	getAuthorLabel,
+	getBaseId,
 	getFamilyConfig,
 	groupModelsByAuthor,
 } from "../lib/family-helpers";
@@ -175,18 +182,44 @@ export function SttModelSelector({
 
 	// Variant-bundle expansion (collapsible card mirroring the OpenRouter
 	// selector's pattern). One ``Set<string>`` of base ids — pre-seeded with
-	// the bundle that owns the currently-selected model so the user sees
-	// their selection on first open even if it's an ``.en`` sibling.
+	// the bundle that owns the currently-selected model so the variant card
+	// is registered in Base UI's listRef the moment the popup opens.
+	//
+	// Why this matters: Base UI's Combobox uses ``useListNavigation`` with
+	// ``focusItemOnOpen: 'auto'`` (AriaCombobox.tsx). On open it sets
+	// ``activeIndex = selectedIndex`` and ``forceScrollIntoView = true``,
+	// which calls ``scrollIntoView`` on the selected item automatically.
+	// But ``selectedIndex`` is resolved via ``findItemIndex(registry, value,
+	// isItemEqualToValue)`` over ``flatItems`` / ``allValuesRef`` — which
+	// only contain items whose ``<Combobox.Item>`` is currently mounted. So
+	// if the selected variant lives inside a collapsed bundle, its index is
+	// ``-1`` and the auto-scroll is a no-op. Keeping the bundle expanded at
+	// render time means the item is always registered, and Base UI takes
+	// care of scrolling it into view without us calling scrollIntoView
+	// manually.
 	const initialExpanded = (): Set<string> => {
 		if (selectedModel === null) {
 			return new Set();
 		}
-		const base = selectedModel.id.endsWith(".en")
-			? selectedModel.id.slice(0, -3)
-			: selectedModel.id;
-		return new Set([base]);
+		return new Set([getBaseId(selectedModel.id)]);
 	};
 	const [expandedBundles, setExpandedBundles] = useState<Set<string>>(initialExpanded);
+	// Sync at render-time (cheaper than useEffect, no extra render pass —
+	// see https://react.dev/learn/you-might-not-need-an-effect): whenever
+	// the externally-controlled selection moves to a different variant,
+	// make sure its bundle is expanded BEFORE Combobox.Item renders, so
+	// the variant registers into Base UI's listRef and the built-in
+	// open-time autoscroll can find it.
+	const selectedBaseId = selectedModel === null ? null : getBaseId(selectedModel.id);
+	const prevSelectedBaseIdRef = useRef(selectedBaseId);
+	if (prevSelectedBaseIdRef.current !== selectedBaseId) {
+		prevSelectedBaseIdRef.current = selectedBaseId;
+		if (selectedBaseId !== null && !expandedBundles.has(selectedBaseId)) {
+			const next = new Set(expandedBundles);
+			next.add(selectedBaseId);
+			setExpandedBundles(next);
+		}
+	}
 	const handleToggleExpanded = (baseId: string) => {
 		setExpandedBundles((prev) => {
 			const next = new Set(prev);
@@ -204,6 +237,30 @@ export function SttModelSelector({
 	// can't fight for the same DOM matches.
 	const popupRef = useRef<HTMLElement | null>(null);
 	const [popupNode, setPopupNode] = useState<HTMLElement | null>(null);
+	// Controlled-open + click-tracking, mirroring the OpenRouter picker.
+	// Without this, the filter Popover's portaled content is treated as
+	// "outside" by Base UI's combobox dismiss logic, so the first click on
+	// any filter row collapses the whole picker. ``lastClickTargetRef`` is
+	// updated on every pointerdown at the capture phase; on close attempts
+	// we ask "was that click inside one of our friendly popups?" — if yes,
+	// we veto the close. The reason guard lets ``item-press`` (a legit
+	// model selection) close the picker even though that click lands
+	// inside the popup, while ``outside-press`` from a filter row gets
+	// intercepted.
+	const [open, setOpen] = useState(false);
+	const lastClickTargetRef = useModelSelectorClickTracking();
+	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
+		if (next) {
+			setOpen(true);
+			return;
+		}
+		applyCloseWith(
+			extractCloseReason(eventDetails),
+			"item-press",
+			isInsideMenuPopup(lastClickTargetRef.current, popupRef.current),
+			setOpen
+		);
+	};
 	const railSpy = useRailScrollSpy({
 		popupNode,
 		scrollContainerSelector: '[data-slot="stt-model-list"]',
@@ -238,7 +295,11 @@ export function SttModelSelector({
 			inline={inline}
 			isItemEqualToValue={(a, b) => a?.id === b?.id}
 			isLoading={isLoading}
-			items={groups as never /* Base UI accepts the grouped {items,value} shape */}
+			// Base UI's Combobox.Root accepts the grouped ``{value, items}[]``
+			// shape (see ``AriaCombobox.d.ts`` overload #1). ModelPicker types
+			// this through as ``readonly unknown[]`` so the typed AuthorGroup
+			// array assigns directly via covariance — no cast needed.
+			items={groups}
 			itemToStringLabel={(item) => item?.displayName ?? ""}
 			list={
 				<SttModelList
@@ -250,17 +311,33 @@ export function SttModelSelector({
 					selectedId={value}
 					statesById={statesById}
 					systemInfo={systemInfo}
+					visibleModelCount={menuFilteredModels.length}
 				/>
 			}
+			onOpenChange={handleOpenChange}
 			onValueChange={(next) => {
 				// Choosing the card itself selects the model at its default precision.
 				// Broken custom-model entries (``available=false``) are guarded
 				// against here — the user clicked a greyed-out row to read the
 				// tooltip, not to actually load broken weights.
 				if (next && next.available !== false) {
-					handleSelect(next.id);
+					// If the user's current quantization isn't published by the
+					// target model (e.g. switching from a NeMo model on int8 to
+					// Cohere which only ships ["", "q4"]), carrying the old
+					// quant through would have the server resolve to fp32 with
+					// a warning AND still trip the picker's STARTUP_ONLY
+					// restart path inconsistently. Explicitly pick a quant the
+					// target model actually publishes — preferring the first
+					// in the catalog's order, which the refresh script puts in
+					// "default-then-smaller" order so we usually land on fp32.
+					const supportsCurrent = next.availableQuantizations.includes(currentQuantization);
+					const fallback = supportsCurrent
+						? undefined
+						: ((next.availableQuantizations[0] ?? "") as OnnxQuantization);
+					handleSelect(next.id, fallback);
 				}
 			}}
+			open={open}
 			popupHeightClass={popupHeightClass}
 			popupRef={(node) => {
 				popupRef.current = node;
@@ -281,7 +358,7 @@ export function SttModelSelector({
 								catalog={baseModels}
 								disabled={disabled || isLoading}
 								kind={kind}
-								open={false /* shell owns open state; trigger uses Combobox.Trigger internally */}
+								open={open}
 								placeholder={placeholder}
 								selectedModel={selectedModel ?? undefined}
 							/>

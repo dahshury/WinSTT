@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import fc from "fast-check";
+import { ModelFamilySchema, TranscriberBackendSchema } from "@/shared/api/schema.zod";
 
 // Stub ipc-client so module-load init doesn't blow up — catalog-store.test.ts
 // uses the same pattern.
@@ -10,8 +11,8 @@ const originalElectronApi = window.electronAPI;
 
 const { useCatalogStore } = await import("./catalog-store");
 
-const BACKENDS = ["faster_whisper", "onnx_asr"] as const;
-const FAMILIES = ["whisper", "lite-whisper", "nemo", "gigaam", "kaldi", "t-one", "custom"] as const;
+const BACKENDS = TranscriberBackendSchema.options;
+const FAMILIES = ModelFamilySchema.options;
 
 interface RawValid {
 	available_quantizations?: string[];

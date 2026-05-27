@@ -1,7 +1,7 @@
 "use client";
 
-import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { useCredentialStatus, useCredentialStatusStore } from "@/entities/cloud-stt-credential";
 import { getApiKeyUrl, providerDisplayName, providerOf } from "@/entities/cloud-stt-provider";
 import { useSettingsStore } from "@/entities/setting";

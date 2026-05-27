@@ -1,11 +1,12 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
-import { appSettingsSchema } from "../../src/shared/config/settings-schema";
+import { type AppSettingsOutput, appSettingsSchema } from "../../src/shared/config/settings-schema";
 import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
 import {
 	isRealtimeEnabled,
 	type LiveTranscriptionDisplay,
 } from "../../src/shared/lib/realtime-enabled";
+import type { LeafPaths } from "../lib/leaf-paths";
 import { decryptSecret, encryptSecret, SECRET_DOT_PATHS } from "../lib/secret-storage";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
@@ -19,7 +20,14 @@ const ALLOWED_SETTINGS_KEYS: ReadonlySet<string> = new Set(Object.keys(appSettin
  * Settings keys that require a server restart when changed.
  * These are passed as CLI args and cannot be hot-reloaded.
  */
-const STARTUP_ONLY_KEYS = new Set([
+/**
+ * Settings keys that require a server restart when changed. Typed as
+ * ``LeafPaths<AppSettingsOutput>`` so a typo (``"model.bemSize"``) or a
+ * non-leaf path (``"model"``) is a compile-time error rather than a silent
+ * "restart never fires" bug. Same registry-drift class that produced the
+ * secrets-walker cascade.
+ */
+const STARTUP_ONLY_KEYS_LIST = [
 	// model.model is NOT here — it's hot-reloaded via sttSetParameter("model") which triggers
 	// an in-place model swap on the server. Including it here would kill the recorder mid-swap.
 	//
@@ -39,8 +47,6 @@ const STARTUP_ONLY_KEYS = new Set([
 	"model.computeType",
 	"model.device",
 	"model.onnxQuantization",
-	"model.beamSize",
-	"model.beamSizeRealtime",
 	"model.initialPrompt",
 	"model.initialPromptRealtime",
 	// audio.inputDeviceIndex is hot-swapped via sttSetParameter("input_device_index")
@@ -49,16 +55,29 @@ const STARTUP_ONLY_KEYS = new Set([
 	"audio.webrtcSensitivity",
 	"audio.minLengthOfRecording",
 	"audio.sileroDeactivityDetection",
+	// Consolidated mic-release picker. Boot-time policy: PyAudioSource
+	// reads always_on / lazy_stream_close / lazy_close_timeout_seconds
+	// once at construction and never re-checks. A flip needs a fresh
+	// server process to take effect.
+	"audio.microphoneRelease",
+	// Whisper task=translate is fixed in the decoder prompt array at
+	// model-load time (see OnnxAsrTranscriber._patch_translate_prompt).
+	// Toggling it requires a fresh model load.
+	"model.translateToEnglish",
+	// Idle-unload-timeout policy is read once at server boot. The
+	// runtime daemon that observes the timeout is a documented
+	// follow-up; once it lands, a hot-reload IPC can subsume this entry.
+	"model.modelUnloadTimeout",
 	"quality.useMainModelForRealtime",
 	"quality.realtimeProcessingPause",
 	"quality.earlyTranscriptionOnSilence",
 	"quality.initRealtimeAfterSeconds",
-	"quality.batchSize",
-	"quality.realtimeBatchSize",
 	// NOTE: general.speakerDiarization is intentionally NOT here — it is
 	// toggled at runtime via the `request_diarization_toggle` control
 	// command (see use-sync-settings), so it must never trigger a restart.
-]);
+] as const satisfies readonly LeafPaths<AppSettingsOutput>[];
+
+const STARTUP_ONLY_KEYS: ReadonlySet<string> = new Set(STARTUP_ONLY_KEYS_LIST);
 
 /**
  * Wake-word-mode-specific restart predicate.
@@ -84,7 +103,11 @@ function modeCrossesWakeword(oldMode: unknown, newMode: unknown): boolean {
 // change to one of these while staying in wakeword mode requires a restart
 // because the detector is built once from these values — there's no live-
 // reconfigure path on the server side.
-const WAKEWORD_CONFIG_FIELDS = ["wakeWord", "wakeWordSensitivity", "wakeWordTimeout"] as const;
+const WAKEWORD_CONFIG_FIELDS = [
+	"wakeWord",
+	"wakeWordSensitivity",
+	"wakeWordTimeout",
+] as const satisfies readonly (keyof AppSettingsOutput["general"])[];
 
 function staysInWakeword(oldMode: unknown, newMode: unknown): boolean {
 	return oldMode === "wakeword" && newMode === "wakeword";
@@ -417,7 +440,11 @@ function snapshotSettings(): Record<string, unknown> {
 // renderer-side change would otherwise clobber the just-written `onboarded:true`
 // with the renderer's stale `false` — re-showing the wizard on next launch.
 // Always re-merge the on-disk values when persisting `general`.
-const MAIN_OWNED_GENERAL_KEYS = ["onboarded", "onboardedAt", "onboardedTrack"] as const;
+const MAIN_OWNED_GENERAL_KEYS = [
+	"onboarded",
+	"onboardedAt",
+	"onboardedTrack",
+] as const satisfies readonly (keyof AppSettingsOutput["general"])[];
 
 function mergeMainOwnedFields(
 	value: Record<string, unknown>,
@@ -453,14 +480,6 @@ function applySettings(settings: Record<string, unknown>): void {
 	}
 }
 
-function parseSecretDotPath(dotPath: string): { section: string; field: string } | null {
-	const [section, field] = dotPath.split(".");
-	if (!(section && field)) {
-		return null;
-	}
-	return { section, field };
-}
-
 function isPlainObjectSection(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -483,18 +502,42 @@ function applyTransformIfPresent(
 	}
 }
 
+/**
+ * Walk a dotted path like ``integrations.openai.apiKey`` down through the
+ * settings tree and apply ``transform`` to the LEAF value.
+ *
+ * The earlier two-level implementation silently collapsed 3+ part paths to
+ * their first two segments, which meant the secrets walker was rewriting
+ * whole sub-objects (e.g. ``integrations.openai = {apiKey:"",…}``) instead
+ * of just the leaf string. On the decrypt path that handed every receiving
+ * window a payload where ``integrations.openai`` had been replaced with
+ * ``""`` (since ``decryptSecret(object) → ""``), causing the renderer's Zod
+ * to reject the whole broadcast and the codec to fall back to ALL schema
+ * defaults — which is how every model pick was silently reverting to "tiny".
+ */
 function walkSecretField(
 	settings: Record<string, unknown>,
 	dotPath: string,
 	transform: (v: unknown) => unknown
 ): void {
-	const parsed = parseSecretDotPath(dotPath);
-	if (!parsed) {
+	const segments = dotPath.split(".");
+	if (segments.length < 2) {
 		return;
 	}
-	const section = resolveSecretSection(settings, parsed.section);
-	if (section) {
-		applyTransformIfPresent(section, parsed.field, transform);
+	const leafKey = segments[segments.length - 1];
+	if (!leafKey) {
+		return;
+	}
+	let parent: Record<string, unknown> | null = settings;
+	for (let i = 0; i < segments.length - 1; i++) {
+		const segment = segments[i];
+		if (!(parent && segment)) {
+			return;
+		}
+		parent = resolveSecretSection(parent, segment);
+	}
+	if (parent) {
+		applyTransformIfPresent(parent, leafKey, transform);
 	}
 }
 

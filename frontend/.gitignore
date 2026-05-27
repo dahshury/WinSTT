@@ -4,7 +4,9 @@ node_modules
 # output
 dist
 dist-electron
+dist-electron-profile
 dist-renderer
+dist-renderer-profile
 *.tgz
 
 # code coverage

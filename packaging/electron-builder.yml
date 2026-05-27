@@ -1,9 +1,11 @@
 appId: com.winstt.app
 productName: WinSTT
 # afterPack hook trims unused Chromium locale .pak files (saves ~30 MB).
-# All relative paths resolve against projectDir = frontend (set via the
-# `--projectDir frontend` CLI flag); `../` reaches back up to repo root.
-afterPack: ./scripts/electron-builder-after-pack.cjs
+# Note: afterPack is resolved from the repo root (electron-builder's
+# launch CWD), not from projectDir — so the path reaches into frontend/
+# explicitly. extraResources.from below uses paths relative to projectDir
+# (frontend); ``../`` there reaches back up to the repo root.
+afterPack: ./frontend/scripts/electron-builder-after-pack.cjs
 asar: true
 compression: maximum
 asarUnpack:

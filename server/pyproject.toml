@@ -114,6 +114,21 @@ gpu = [
     "nvidia-cusolver-cu12>=11.0",
     "nvidia-nvjitlink-cu12>=12.4",
 ]
+# OpenVINO build — onnxruntime-openvino is the Intel-optimised ORT
+# distribution. Ships its own ``OpenVINOExecutionProvider`` that targets
+# Intel ARC discrete GPUs, recent Iris Xe / Arc iGPUs, and the CPU
+# vector path tuned for Intel cores. Mutually exclusive with the other
+# ORT packages (they share the ``onnxruntime/`` package directory — see
+# the ``conflicts`` table at the bottom of this file).
+#
+# When installed, ``OpenVINOExecutionProvider`` is the highest-priority
+# EP on Windows + Linux (Intel-first), ahead of DirectML / CUDA — see
+# ``src/recorder/infrastructure/device.py::_AUTO_PRIORITY``.
+#
+# Wheel sizes: ~250 MB on Windows (bundles the OpenVINO runtime DLLs).
+# We ship this as a separate installer flavor (see
+# ``packaging/electron-builder.openvino.yml``) rather than the default.
+openvino = ["onnxruntime-openvino>=1.18.1"]
 # Optional sentence-finished classifier (DistilBERT via transformers).
 # Fail-soft: the adapter falls back to ``is_available() == False`` if these
 # aren't installed.
@@ -153,7 +168,14 @@ link-mode = "copy"
 # share the ``onnxruntime/`` package directory, so picking more than one
 # would corrupt the install (whichever sync ran last would overwrite the
 # other's .pyd files). uv enforces the constraint at resolution time.
-conflicts = [[{ extra = "cpu" }, { extra = "gpu" }, { extra = "directml" }]]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "gpu" },
+        { extra = "directml" },
+        { extra = "openvino" },
+    ],
+]
 
 # Resolver-level metadata patch for openwakeword: upstream's wheel hard-pins
 # ``onnxruntime`` (the CPU package). If left alone, ``uv sync --extra gpu``

@@ -1,5 +1,5 @@
-import { useTranslations } from "next-intl";
 import { useEffect } from "react";
+import { useTranslations } from "use-intl";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
 	onFullSentence,

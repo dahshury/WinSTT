@@ -27,6 +27,8 @@ export interface SttModelListProps {
 	selectedId: string | undefined;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
+	/** Total filtered model count — read aloud via Combobox.Status. */
+	visibleModelCount: number;
 }
 
 function AuthorLabel({ family }: { family: FamilyKey }) {
@@ -114,9 +116,18 @@ export function SttModelList({
 	hasActiveFilters,
 	expandedBundles,
 	onToggleExpanded,
+	visibleModelCount,
 }: SttModelListProps) {
 	return (
 		<div className="flex min-h-0 flex-1 flex-col overflow-y-auto" data-slot="stt-model-list">
+			{/* Live region for assistive tech — Combobox.Status content is
+			    announced politely (`aria-live="polite"`) every time the
+			    filtered count changes, so screen-reader users hear
+			    "3 models available" instead of guessing why their list
+			    shrank. Hidden visually via the `sr-only` utility. */}
+			<Combobox.Status className="sr-only">
+				{visibleModelCount === 1 ? "1 model available" : `${visibleModelCount} models available`}
+			</Combobox.Status>
 			<Combobox.Empty className="block">
 				<EmptyState hasActiveFilters={hasActiveFilters} />
 			</Combobox.Empty>

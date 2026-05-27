@@ -8,8 +8,8 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { isRealtimeViable, SttModelSelector } from "@picker";
-import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import {
@@ -40,6 +40,7 @@ import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
+import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface ModelSettingsPanelProps {
@@ -69,13 +70,17 @@ interface MainModelSectionProps {
 	gpuAvailable: boolean;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isSwapping: boolean;
-	isWhisperBackend: boolean;
 	langOpts: SelectOption[];
 	selectedModel: string;
 	settings: ModelSettings | undefined;
 	statesById: StatesById;
 	systemInfo: SystemInfo;
 	t: TFn;
+	/** True when the active model supports a decoder-level translate
+	 *  path (Whisper multilingual variants or NeMo Canary). The toggle
+	 *  hides for engines that can't honor it — GigaAM, Moonshine,
+	 *  Kaldi/Vosk, Cohere, ``.en`` Whispers — so the UI doesn't lie. */
+	translateSupported: boolean;
 	update: UpdateModelFn;
 }
 
@@ -92,10 +97,10 @@ function MainModelSection({
 	deviceValue,
 	gpuAvailable,
 	isSwapping,
-	isWhisperBackend,
 	langOpts,
 	selectedModel,
 	handleModelChange,
+	translateSupported,
 }: MainModelSectionProps): ReactNode {
 	const tIntegrations = useTranslations("integrations");
 	const integrations = useSettingsStore((s) => s.settings.integrations);
@@ -214,32 +219,63 @@ function MainModelSection({
 						/>
 					</ElevatedSurface>
 				</FormControl>
-				{isWhisperBackend && (
+				{/* Translate-to-English. Two engine families support it
+				    natively at decoder time — Whisper (multilingual
+				    variants, via the ``<|translate|>`` token in the
+				    decoder prompt) and NeMo Canary (via the
+				    ``target_language`` kwarg on ``recognize``). The
+				    OnnxAsrTranscriber dispatches between the two
+				    paths; the server-side family check (``.en``
+				    variants of Whisper, GigaAM, Moonshine, …) silently
+				    falls through to plain transcription. We expose the
+				    toggle whenever the user's selected catalog family
+				    is one of the two supported. Matches Handy's gating
+				    (managers/transcription.rs:545 + :607). */}
+				{translateSupported && (
 					<FormControl
-						caption={t("beamSizeCaption")}
-						label={t("beamSize")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={
-									(settings?.beamSize ?? DEFAULT_SETTINGS.model.beamSize) ===
-									DEFAULT_SETTINGS.model.beamSize
-								}
-								onReset={() => update({ beamSize: DEFAULT_SETTINGS.model.beamSize })}
+						caption={t("translateToEnglishCaption")}
+						label={t("translateToEnglish")}
+						labelAddon={
+							<Toggle
+								checked={settings?.translateToEnglish ?? false}
+								onCheckedChange={(v) => update({ translateToEnglish: v })}
 							/>
 						}
-						tooltip={t("beamSizeTooltip")}
-					>
-						<ElevatedSurface className="w-fit" inline>
-							<NumberStepper
-								max={20}
-								min={1}
-								onChange={(v) => update({ beamSize: v })}
-								step={1}
-								value={settings?.beamSize ?? DEFAULT_SETTINGS.model.beamSize}
-							/>
-						</ElevatedSurface>
-					</FormControl>
+						tooltip={t("translateToEnglishTooltip")}
+					/>
 				)}
+				<FormControl
+					caption={t("modelUnloadTimeoutCaption")}
+					label={t("modelUnloadTimeout")}
+					tooltip={t("modelUnloadTimeoutTooltip")}
+				>
+					<ElevatedSurface inline>
+						<SearchableSelect
+							onChange={(v) =>
+								update({
+									modelUnloadTimeout: v as
+										| "immediately"
+										| "never"
+										| "min2"
+										| "min5"
+										| "min10"
+										| "min15"
+										| "hour1",
+								})
+							}
+							options={[
+								{ id: "immediately", label: t("modelUnloadImmediately") },
+								{ id: "never", label: t("modelUnloadNever") },
+								{ id: "min2", label: t("modelUnloadMin2") },
+								{ id: "min5", label: t("modelUnloadMin5") },
+								{ id: "min10", label: t("modelUnloadMin10") },
+								{ id: "min15", label: t("modelUnloadMin15") },
+								{ id: "hour1", label: t("modelUnloadHour1") },
+							]}
+							value={settings?.modelUnloadTimeout ?? "min5"}
+						/>
+					</ElevatedSurface>
+				</FormControl>
 			</div>
 		</SettingSection>
 	);
@@ -251,7 +287,6 @@ interface RealtimeModelSectionProps {
 	currentQuantization: OnnxQuantization;
 	handleRealtimeModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isSwapping: boolean;
-	isWhisperBackend: boolean;
 	mainModelId: string;
 	onUseMainModel: () => void;
 	quality: QualitySettings | undefined;
@@ -259,7 +294,6 @@ interface RealtimeModelSectionProps {
 	statesById: StatesById;
 	systemInfo: SystemInfo;
 	t: TFn;
-	update: UpdateModelFn;
 	updateQuality: UpdateQualityFn;
 }
 
@@ -271,7 +305,6 @@ interface RealtimeModelSectionProps {
 function RealtimeModelSection({
 	t,
 	settings,
-	update,
 	quality,
 	updateQuality,
 	catalogModels,
@@ -280,17 +313,13 @@ function RealtimeModelSection({
 	systemInfo,
 	currentQuantization,
 	isSwapping,
-	isWhisperBackend,
 	handleRealtimeModelChange,
 	mainModelId,
 	onUseMainModel,
 }: RealtimeModelSectionProps): ReactNode {
 	// The dedicated realtime picker stays interactive at all times so the user
 	// can always pick a different realtime model. The "Use Main Model" affordance
-	// is the trailing button on the picker's header. The realtime beam-size has
-	// no server-side effect once the realtime worker reuses the main model, so
-	// keep that one gated by the flag.
-	const useMainModel = quality?.useMainModelForRealtime ?? false;
+	// is the trailing button on the picker's header.
 	const realtimeModelId = settings?.realtimeModel ?? "tiny";
 	const modelsMatch = realtimeModelId === mainModelId;
 	return (
@@ -356,35 +385,6 @@ function RealtimeModelSection({
 						/>
 					</ElevatedSurface>
 				</FormControl>
-				{isWhisperBackend && (
-					<FormControl
-						caption={t("realtimeBeamSizeCaption")}
-						disabled={useMainModel}
-						label={t("realtimeBeamSize")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={
-									(settings?.beamSizeRealtime ?? DEFAULT_SETTINGS.model.beamSizeRealtime) ===
-									DEFAULT_SETTINGS.model.beamSizeRealtime
-								}
-								onReset={() =>
-									update({ beamSizeRealtime: DEFAULT_SETTINGS.model.beamSizeRealtime })
-								}
-							/>
-						}
-						tooltip={t("realtimeBeamSizeTooltip")}
-					>
-						<ElevatedSurface className="w-fit" inline>
-							<NumberStepper
-								max={20}
-								min={1}
-								onChange={(v) => update({ beamSizeRealtime: v })}
-								step={1}
-								value={settings?.beamSizeRealtime ?? DEFAULT_SETTINGS.model.beamSizeRealtime}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-				)}
 			</div>
 		</SettingSection>
 	);
@@ -536,7 +536,17 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		}
 		const next = pickDefaultSttModel(catalogModels, statesById);
 		if (next && next !== settings?.model) {
-			update({ model: next });
+			// Look up the picked model's catalog entry so we can patch
+			// ``model`` and ``backend`` together — ``updateModelSettings``
+			// rejects a model-only patch (see the typed ``ModelPatch``).
+			// This was the original drift site: the fallback used to write
+			// ``{ model: "tiny" }`` while leaving ``backend`` at whatever
+			// the previous model used. Disk saved a mismatched pair, every
+			// subsequent boot loaded the wrong engine for the right model.
+			const fallbackEntry = catalogModels.find((m) => m.id === next);
+			if (fallbackEntry?.backend) {
+				update({ model: next, backend: fallbackEntry.backend });
+			}
 		}
 	}, [catalogLoaded, catalogModels, statesById, settings?.model, update]);
 
@@ -564,7 +574,18 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 	const selectedModel = settings?.model ?? "tiny";
 	const selectedIsCloud = providerOf(selectedModel) !== null;
 	const selectedInfo = selectedIsCloud ? undefined : getModel(selectedModel);
-	const isWhisperBackend = !selectedInfo || selectedInfo.backend === "faster_whisper";
+	// Translate-to-English is honored on multilingual Whisper exports
+	// (via the ``<|translate|>`` prompt token) AND on NeMo Canary (via
+	// the ``target_language`` recognize kwarg). Anything else silently
+	// no-ops server-side, so we hide the toggle there to avoid lying
+	// to the user. ``.en`` Whisper variants are filtered by the
+	// language-detection capability — they advertise English only and
+	// have no need for translate-to-English.
+	const translateSupported =
+		!selectedIsCloud &&
+		selectedInfo !== undefined &&
+		((selectedInfo.family === "whisper" && selectedInfo.supportsLanguageDetection) ||
+			selectedInfo.family === "nemo");
 	const currentQuantization = (settings?.onnxQuantization ?? "") as OnnxQuantization;
 
 	const langOpts = useMemo(() => {
@@ -617,13 +638,13 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					gpuAvailable={gpuAvailable}
 					handleModelChange={controller.handleModelChange}
 					isSwapping={mainSwapping}
-					isWhisperBackend={isWhisperBackend}
 					langOpts={langOpts}
 					selectedModel={selectedModel}
 					settings={settings}
 					statesById={statesById}
 					systemInfo={systemInfo}
 					t={t}
+					translateSupported={translateSupported}
 					update={update}
 				/>
 			)}
@@ -634,7 +655,6 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					currentQuantization={currentQuantization}
 					handleRealtimeModelChange={handleRealtimePick}
 					isSwapping={realtimeSwapping}
-					isWhisperBackend={isWhisperBackend}
 					mainModelId={selectedModel}
 					onUseMainModel={handleUseMainModel}
 					quality={quality}
@@ -642,7 +662,6 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					statesById={statesById}
 					systemInfo={systemInfo}
 					t={t}
-					update={update}
 					updateQuality={updateQuality}
 				/>
 			)}

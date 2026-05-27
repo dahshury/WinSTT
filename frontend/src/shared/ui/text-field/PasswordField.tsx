@@ -1,8 +1,8 @@
-import { Input } from "@base-ui/react/input";
 import { ViewIcon, ViewOffIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ComponentPropsWithoutRef, type Ref, useState } from "react";
 import { cn } from "@/shared/lib/cn";
+import { TextField } from "./TextField";
 
 export interface PasswordFieldProps extends Omit<ComponentPropsWithoutRef<"input">, "type"> {
 	error?: boolean;
@@ -22,14 +22,11 @@ export function PasswordField({
 	const [revealed, setRevealed] = useState(false);
 	return (
 		<div className="relative w-full">
-			<Input
-				className={cn(
-					"h-8 w-full rounded-sm border border-border bg-surface-tertiary pr-9 pl-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
-					error && "border-error focus:border-error",
-					className
-				)}
-				ref={ref}
+			<TextField
+				className={cn("pr-9", className)}
+				error={error ?? false}
 				type={revealed ? "text" : "password"}
+				{...(ref !== undefined && { ref })}
 				{...props}
 			/>
 			<button

@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { formatKeyName } from "@/shared/lib/format-key-name";
 import type { InputGroupTone } from "@/shared/ui/input-group";
 import { Tooltip } from "@/shared/ui/tooltip";

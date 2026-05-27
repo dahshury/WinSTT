@@ -213,14 +213,28 @@ function PausedProgress({ targetCache }: { targetCache: TargetCache }): ReactNod
 function IdleInfoCard({
 	infoLevel,
 	targetCache,
+	catalogBytes,
 	fitness,
 }: {
+	catalogBytes: number;
+	fitness: DownloadFitness;
 	infoLevel: number;
 	targetCache: TargetCache;
-	fitness: DownloadFitness;
 }): ReactNode {
 	const pausedDownloaded = targetCache?.downloaded_bytes ?? 0;
 	const pausedTotal = targetCache?.total_bytes ?? 0;
+	// Prefer the per-quant byte count baked into the catalog by
+	// `scripts/refresh_catalog.py` — that's the exact HF-reported download
+	// size for the selected precision and is known offline. Fall back to
+	// the partial-cache delta (resume scenario), then to the size_label hint.
+	let sizeLine: string;
+	if (pausedTotal > pausedDownloaded) {
+		sizeLine = `Need to download: ${sizeLabel(pausedTotal - pausedDownloaded)}`;
+	} else if (catalogBytes > 0) {
+		sizeLine = `Download size: ${sizeLabel(catalogBytes)}`;
+	} else {
+		sizeLine = "Size: unknown for this variant";
+	}
 	return (
 		<div
 			className={`flex flex-col gap-1 rounded-md p-3 text-foreground-secondary text-xs ${surfaceClasses(infoLevel)}`}
@@ -229,11 +243,7 @@ function IdleInfoCard({
 				<span className="text-foreground">Status:</span> Not downloaded
 			</div>
 			<div>
-				<span className="text-foreground">
-					{pausedTotal > pausedDownloaded
-						? `Need to download: ${sizeLabel(pausedTotal - pausedDownloaded)}`
-						: "Size: unknown until headers fetched"}
-				</span>
+				<span className="text-foreground">{sizeLine}</span>
 			</div>
 			<div>
 				<span className="text-foreground">Estimated memory:</span> {fitness.estimatedLabel} ·{" "}
@@ -284,6 +294,12 @@ function DownloadConfirmationContent({
 
 	const fitness = computeFitness(state, systemInfo);
 	const displayName = info?.displayName ?? pending?.modelId ?? "";
+	// Exact HF download bytes for the selected quantization — baked into the
+	// catalog by `scripts/refresh_catalog.py`. Zero when the catalog hasn't
+	// covered this variant (custom models, fresh entries before next refresh).
+	const catalogBytes = info?.sizeBytesByQuantization?.[targetQuant] ?? 0;
+	// Header label still uses the human-readable param-derived hint
+	// (`243 MB`) — the precise byte count goes in the IdleInfoCard.
 	const sizeSuffix = info?.sizeLabel ? ` (${info.sizeLabel})` : "";
 
 	const handleStop = useCallback(() => {
@@ -308,7 +324,12 @@ function DownloadConfirmationContent({
 			{phase === "active" && <ActiveProgress live={live} />}
 			{phase === "paused" && <PausedProgress targetCache={targetCache} />}
 			{phase === "idle" && (
-				<IdleInfoCard fitness={fitness} infoLevel={infoLevel} targetCache={targetCache} />
+				<IdleInfoCard
+					catalogBytes={catalogBytes}
+					fitness={fitness}
+					infoLevel={infoLevel}
+					targetCache={targetCache}
+				/>
 			)}
 			{fitness.isUncomfortable && phase !== "active" && (
 				<div className="rounded-md border border-error/40 bg-error/10 p-3 text-error text-xs">

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DeviceTypeSchema, TranscriberBackendSchema } from "@/shared/api/schema.zod";
 import { COMPUTE_TYPES } from "./defaults";
 
 const computeTypeSchema = z.enum(COMPUTE_TYPES);
@@ -17,11 +18,9 @@ export const modelSettingsSchema = z.object({
 	realtimeModel: z.string().default("tiny"),
 	language: z.string().default("en"),
 	computeType: computeTypeSchema.default("default"),
-	device: z.enum(["auto", "cpu"]).default("auto"),
-	backend: z.enum(["faster_whisper", "onnx_asr"]).default("faster_whisper"),
+	device: DeviceTypeSchema.default("auto"),
+	backend: TranscriberBackendSchema.default("faster_whisper"),
 	onnxQuantization: z.string().default(""),
-	beamSize: z.number().int().min(1).default(5),
-	beamSizeRealtime: z.number().int().min(1).default(3),
 	initialPrompt: z.string().default(""),
 	initialPromptRealtime: z.string().default(""),
 	// Whisper-native task=translate. When true and the active model is a
@@ -31,6 +30,16 @@ export const modelSettingsSchema = z.object({
 	// non-Whisper families like Moonshine). `.catch(false)` keeps older
 	// builds from wiping the whole model section on a corrupt persisted value.
 	translateToEnglish: z.boolean().default(false).catch(false),
+	// Idle-timeout that unloads the loaded ONNX session(s) so the OS can
+	// reclaim RAM/VRAM. Enum matches Handy's ``ModelUnloadTimeout`` — the
+	// IPC layer normalizes ``never`` to a negative seconds value (server
+	// sentinel for "keep loaded forever") and ``immediately`` to ``0``
+	// (server tears down right after each transcription instead of
+	// polling for idleness). Default "min5" matches Handy's default.
+	modelUnloadTimeout: z
+		.enum(["immediately", "never", "min2", "min5", "min10", "min15", "hour1"])
+		.default("min5")
+		.catch("min5"),
 });
 
 export const qualitySettingsSchema = z.object({
@@ -38,8 +47,6 @@ export const qualitySettingsSchema = z.object({
 	realtimeProcessingPause: z.number().default(0.02),
 	initRealtimeAfterSeconds: z.number().default(0.2),
 	earlyTranscriptionOnSilence: z.number().default(0.2),
-	batchSize: z.number().int().default(16),
-	realtimeBatchSize: z.number().int().default(16),
 	ensureSentenceStartingUppercase: z.boolean().default(true),
 	ensureSentenceEndsWithPeriod: z.boolean().default(true),
 	// ON by default: the DistilBERT sentence-completion classifier extends
@@ -68,7 +75,15 @@ export const audioSettingsSchema = z.object({
 	inputDeviceIndex: z.number().int().nullable().default(null),
 	sampleRate: z.number().int().default(16_000),
 	bufferSize: z.number().int().default(512),
-	sileroSensitivity: z.number().min(0).max(1).default(0.4),
+	// Trip threshold = 1 - sileroSensitivity (see server SileroVad.detect).
+	// Default 0.7 → trip > 0.3, matching Handy. The previous default 0.4
+	// (→ trip > 0.6) silently dropped quiet/distant voices — Silero's
+	// confidence on far-mic speech routinely lives in 0.3–0.6, and 0.4
+	// sits on the wrong side of that band. Per-device adaptive
+	// calibration (`sileroSensitivityByDeviceName` below) adjusts from
+	// this baseline. A migration (store.ts SCHEMA_VERSION bump) rewrites
+	// the persisted 0.4 to 0.7 for existing users.
+	sileroSensitivity: z.number().min(0).max(1).default(0.7),
 	sileroUseOnnx: z.boolean().default(false),
 	sileroDeactivityDetection: z.boolean().default(true),
 	webrtcSensitivity: z.number().int().min(0).max(3).default(3),
@@ -98,23 +113,44 @@ export const audioSettingsSchema = z.object({
 	// `ioreg`; Linux reads `/proc/acpi/button/lid/`; Windows is a
 	// documented v1.1 deferral (no zero-cost equivalent probe).
 	clamshellMicrophone: z.number().int().nullable().default(null).catch(null),
-	// Matches Handy's ``always_on_microphone`` knob. When `false` (the
-	// default) the server boots without allocating an OS mic stream; the
-	// first PTT/toggle press lazily opens one and release closes it so
-	// the system mic-in-use indicator clears. Trade-off is ~10-50 ms of
-	// extra latency per press on Windows (the pre-roll buffer absorbs it
-	// for typical speech). When `true`, the stream stays open for the
-	// whole session — microseconds-fast PTT response but the OS sees the
-	// mic as in-use whenever the app is running. `.catch(false)` keeps
-	// older builds (or corrupt persisted values) from wiping the whole
-	// audio section.
-	alwaysOnMicrophone: z.boolean().default(false).catch(false),
-	// Only consulted when `alwaysOnMicrophone` is `false`. When `true`,
-	// PTT release stops the audio engine but defers the actual stream
-	// close by 30 s so back-to-back presses skip the open cost. When
-	// `false` (default), release closes immediately on the same key-up
-	// that ended the recording. Mirrors Handy's `lazy_stream_close`.
-	lazyStreamClose: z.boolean().default(false).catch(false),
+	// Consolidated mic-release policy. Replaces the original Handy pair
+	// (`always_on_microphone` + `lazy_stream_close`) — same five
+	// behaviors but one picker instead of "toggle + dependent toggle":
+	//
+	//   - "always"    → stream stays open for the whole session.
+	//                   Lowest PTT latency; OS mic-in-use indicator
+	//                   stays lit while WinSTT is running.
+	//   - "immediate" → release on PTT key-up (default). The OS
+	//                   indicator clears decisively on every release;
+	//                   each press pays a 10-50 ms reopen cost on
+	//                   Windows WASAPI which the pre-roll buffer
+	//                   absorbs for typical speech.
+	//   - "sec30"     → stop the engine on release, then close the
+	//                   stream after 30 s of inactivity. Back-to-back
+	//                   presses inside the window skip the reopen
+	//                   cost; idle sessions release cleanly.
+	//   - "min1"      → same, after 1 minute.
+	//   - "min5"      → same, after 5 minutes.
+	//
+	// At spawn time, `stt-process.ts` derives the three server-side
+	// CLI args from this enum (`--always_on_microphone` flag,
+	// `--lazy_stream_close` flag, `--lazy_close_timeout_seconds N`).
+	// `.catch("immediate")` keeps older builds (corrupted persists
+	// from the boolean-pair days) on the safe default that matches
+	// the historical "release on release" baseline.
+	microphoneRelease: z
+		.enum(["always", "immediate", "sec30", "min1", "min5"])
+		.default("immediate")
+		.catch("immediate"),
+	// Tail-of-recording capture window in ms applied to user-driven stops
+	// (PTT release, toggle off). The mic keeps capturing for this many ms
+	// before the pause + stop sequence runs, so trailing syllables that
+	// escape just after the key-up still land in the buffer. 0 (default)
+	// preserves the historical snap-stop behaviour; capped at 2000 ms so
+	// a bad value can't lock the recorder. Mirrors Handy's
+	// `extra_recording_buffer_ms`. `.catch(0)` keeps older builds (no
+	// key) from wiping the whole audio section on first read.
+	extraRecordingBufferMs: z.number().int().min(0).max(2000).default(0).catch(0),
 });
 
 // One entry in the recording-sound library. The default sound is implicit
@@ -325,6 +361,19 @@ export const generalSettingsSchema = z.object({
 	// keeps an older persisted value (or a corrupt entry) from wiping the
 	// whole `general` section on upgrade.
 	wordCorrectionThreshold: z.number().min(0).max(1).default(0.18).catch(0.18),
+	// Locale-aware filler-word stripping + 3+ stutter collapse. Ported
+	// from Handy's `filter_transcription_output`. When `true` (default)
+	// the server post-processor consults `customFillerWords` first; an
+	// empty list falls back to a per-language table (e.g. English
+	// "uh"/"um"/"hmm" — see `filler_filter.FILLERS_BY_LANG`). Tokens
+	// that are real words in other locales (Portuguese "um", Spanish
+	// "ha") are deliberately omitted from those tables.
+	filterFillers: z.boolean().default(true).catch(true),
+	// Optional per-user override for the language disfluency table.
+	// Empty (default) → use the language table. Non-empty → use these
+	// instead. To disable filler removal without changing the master
+	// toggle, set this AND flip `filterFillers` off.
+	customFillerWords: z.array(z.string()).default([]).catch([]),
 });
 
 export const hotkeySettingsSchema = z.object({

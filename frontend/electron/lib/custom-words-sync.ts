@@ -48,6 +48,35 @@ function readCurrentThreshold(): number {
 	return typeof raw === "number" ? raw : 0.18;
 }
 
+function readFilterFillers(): boolean {
+	const raw = getStoreRaw("general.filterFillers");
+	// Mirrors `TextCorrectionConfig.filter_fillers` default. Same
+	// rationale as above — keep the on-the-wire behaviour stable when
+	// the persisted store doesn't yet have the key.
+	return typeof raw === "boolean" ? raw : true;
+}
+
+function readCustomFillerWords(): string[] {
+	const raw = store.get("general.customFillerWords") as unknown;
+	if (!Array.isArray(raw)) {
+		return [];
+	}
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry !== "string") {
+			continue;
+		}
+		const trimmed = entry.trim();
+		if (!trimmed || seen.has(trimmed)) {
+			continue;
+		}
+		seen.add(trimmed);
+		out.push(trimmed);
+	}
+	return out;
+}
+
 /**
  * Push the live custom-word list + threshold to the STT server.
  *
@@ -63,12 +92,23 @@ function pushCustomWords(client: SttClient): void {
 	}
 	const words = readCurrentCustomWords();
 	const threshold = readCurrentThreshold();
+	const filterFillers = readFilterFillers();
+	const customFillerWords = readCustomFillerWords();
 	// Always push something — an emptied dictionary should clear the
 	// matcher rather than leave a stale word list active. Mirrors the
 	// initial-prompt sync's "always-push" semantics.
 	client.setParameter("custom_words", words);
 	client.setParameter("word_correction_threshold", threshold);
-	dbg("custom-words", `pushed ${words.length} words, threshold=${threshold.toFixed(2)}`);
+	// Filler-filter toggle + override list (Handy port). Same always-
+	// push semantics so toggling either setting reaches the server
+	// immediately without a connection-drop race.
+	client.setParameter("filter_fillers", filterFillers);
+	client.setParameter("custom_filler_words", customFillerWords);
+	dbg(
+		"custom-words",
+		`pushed ${words.length} words (thr ${threshold.toFixed(2)}), ` +
+			`fillers=${filterFillers}, custom-fillers=${customFillerWords.length}`
+	);
 }
 
 /**
@@ -93,10 +133,14 @@ export function installCustomWordsSync(client: SttClient): () => void {
 	push();
 	const offDict = store.onDidChange("dictionary", push);
 	const offThreshold = store.onDidChange("general.wordCorrectionThreshold" as never, push);
+	const offFilterFillers = store.onDidChange("general.filterFillers" as never, push);
+	const offCustomFillers = store.onDidChange("general.customFillerWords" as never, push);
 	client.on("server-ready", push);
 	return () => {
 		offDict();
 		offThreshold();
+		offFilterFillers();
+		offCustomFillers();
 		client.off("server-ready", push);
 	};
 }

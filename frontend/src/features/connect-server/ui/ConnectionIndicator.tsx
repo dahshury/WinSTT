@@ -6,8 +6,8 @@ import {
 	WifiDisconnected01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { Tooltip } from "@/shared/ui/tooltip";
 

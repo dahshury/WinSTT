@@ -131,21 +131,48 @@ class RecordingPipeline(Worker):
         if not self._silence_endpoint_enabled:
             self._emit_no_audio()
 
-    def _is_stop_blocked(self) -> bool:
-        if not self._sm.is_recording:
-            self._emit_no_audio_if_ptt()
-            return True
-        elapsed = self._clock.get_current_time() - self._recording_start_time
-        if elapsed < self._config.vad.min_length_of_recording:
-            self._emit_no_audio_if_ptt()
-            return True
-        return False
-
     def _is_ptt_stop_without_speech(self) -> bool:
         return not self._silence_endpoint_enabled and not self._speech_detected_in_recording
 
     def request_stop(self, backdate_seconds: float = 0.0) -> None:
-        if self._is_stop_blocked():
+        """Transition out of RECORDING in response to PTT release / toggle off
+        / VAD silence endpoint.
+
+        Three exits, all of which leave the state machine in a valid resting
+        state (no caller is allowed to leave us stuck in RECORDING):
+
+        1. **Not recording** — caller raced a real stop with a state we already
+           left (e.g., abort fired first, or we're in LISTENING/WAKEWORD).
+           Emit ``NoAudioDetected`` on PTT so the UI can react, no state
+           change needed.
+
+        2. **Recording too short** — recording elapsed below
+           ``min_length_of_recording`` (default 0.5 s). This is the
+           "accidental tap" case: the user pressed PTT and released before
+           any meaningful speech could be captured. **Abort** the recording
+           (state → INACTIVE, buffer cleared) — if we merely returned here
+           the state would stay at RECORDING with no audio reader feeding
+           the buffer (set_microphone(False) already paused the source),
+           and the realtime worker would tight-loop on the stale pre-roll
+           frames until process exit. (See
+           ``project_pipeline_stop_abort_too_short`` memory note + the
+           ``frame_count=27 forever`` regression that produced this fix.)
+
+        3. **PTT stop without speech** — recording lasted long enough but no
+           speech-active frame was registered (e.g., user held PTT during
+           silence). Same abort path as (2), with a non-PTT-gated
+           ``NoAudioDetected`` event so the UI knows nothing was captured.
+
+        Otherwise: finalize stop, transition to TRANSCRIBING, enqueue for
+        transcription.
+        """
+        if not self._sm.is_recording:
+            self._emit_no_audio_if_ptt()
+            return
+        elapsed = self._clock.get_current_time() - self._recording_start_time
+        if elapsed < self._config.vad.min_length_of_recording:
+            self._emit_no_audio_if_ptt()
+            self.request_abort()
             return
         if self._is_ptt_stop_without_speech():
             self._emit_no_audio()

@@ -204,6 +204,8 @@ describe("SUPPORTED_EVENT_TYPES", () => {
 				progress: 0,
 			},
 			wakeword_detected: { type: "wakeword_detected" },
+			wakeword_detection_start: { type: "wakeword_detection_start" },
+			wakeword_detection_end: { type: "wakeword_detection_end" },
 			model_swap_started: { type: "model_swap_started", kind: "main", name: "m" },
 			model_swap_completed: { type: "model_swap_completed", kind: "main", name: "m" },
 			model_swap_failed: {
@@ -227,6 +229,39 @@ describe("SUPPORTED_EVENT_TYPES", () => {
 				enabled: true,
 				reason: "boom",
 			},
+			start_turn_detection: { type: "start_turn_detection" },
+			stop_turn_detection: { type: "stop_turn_detection" },
+			transcription_start: { type: "transcription_start" },
+			no_audio_detected: { type: "no_audio_detected" },
+			vad_sensitivity_adapted: {
+				type: "vad_sensitivity_adapted",
+				new_sensitivity: 0.5,
+				noise_floor_rms: 0.001,
+				speech_peak_rms: 0.1,
+			},
+			device_switch_failed: {
+				type: "device_switch_failed",
+				requested_index: 3,
+				error_message: "device busy",
+				fallback_index: 1,
+			},
+			device_became_available: {
+				type: "device_became_available",
+				device_index: 2,
+				device_name: "USB Mic",
+			},
+			model_download_start: { type: "model_download_start", model: "m" },
+			model_download_complete: {
+				type: "model_download_complete",
+				model: "m",
+				cancelled: false,
+			},
+			speaker_segments: { type: "speaker_segments", segments: [] },
+			loopback_started: { type: "loopback_started", deviceName: "Speakers" },
+			loopback_stopped: { type: "loopback_stopped" },
+			file_transcription_progress: { type: "file_transcription_progress", progress: 0 },
+			file_transcription_complete: { type: "file_transcription_complete" },
+			file_transcription_error: { type: "file_transcription_error", error: "boom" },
 		};
 		for (const t of SUPPORTED_EVENT_TYPES) {
 			expect(validateServerEvent(minimal[t])).not.toBeNull();

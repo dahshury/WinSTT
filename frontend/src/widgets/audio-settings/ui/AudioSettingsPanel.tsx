@@ -1,7 +1,12 @@
-import { KeyboardIcon, Mic01Icon } from "@hugeicons/core-free-icons";
-import { useTranslations } from "next-intl";
+import {
+	DashboardCircleIcon,
+	KeyboardIcon,
+	Mic01Icon,
+	VolumeHighIcon,
+} from "@hugeicons/core-free-icons";
 import { useMemo } from "react";
-import { useInputDevices } from "@/entities/audio-device";
+import { useTranslations } from "use-intl";
+import { useInputDevices, useOutputDevices } from "@/entities/audio-device";
 import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,
@@ -74,6 +79,42 @@ export function AudioSettingsPanel() {
 		audio?.inputDeviceIndex == null ? "default" : String(audio.inputDeviceIndex);
 	const currentClamshellId =
 		audio?.clamshellMicrophone == null ? "disabled" : String(audio.clamshellMicrophone);
+	const microphoneRelease = audio?.microphoneRelease ?? DEFAULT_SETTINGS.audio.microphoneRelease;
+	const microphoneReleaseOptions: SelectOption[] = [
+		{ id: "always", label: t("microphoneReleaseAlways") },
+		{ id: "immediate", label: t("microphoneReleaseImmediate") },
+		{ id: "sec30", label: t("microphoneReleaseSec30") },
+		{ id: "min1", label: t("microphoneReleaseMin1") },
+		{ id: "min5", label: t("microphoneReleaseMin5") },
+	];
+
+	// Renderer-side audio-output picker. Visible only when either the
+	// recording chimes are enabled or TTS is enabled — those are the only
+	// paths that actually emit playback. Hidden otherwise so the panel
+	// doesn't carry a dead picker. Empty string == "system default"
+	// (sentinel). The TTS player + the recording-chime player both call
+	// setSinkId(deviceId) and treat the empty string as "leave at default."
+	const outputDeviceId = useSettingsStore((s) => s.settings.general?.outputDeviceId ?? "");
+	const recordingSoundEnabled = useSettingsStore((s) => s.settings.general?.recordingSound ?? true);
+	const ttsEnabled = useSettingsStore((s) => s.settings.tts?.enabled ?? false);
+	const { devices: outputDevices, defaultDevice: defaultOutputDevice } = useOutputDevices();
+	const showOutputDevice = recordingSoundEnabled || ttsEnabled;
+	const outputDeviceOptions = useMemo<SelectOption[]>(() => {
+		const defaultLabel = defaultOutputDevice
+			? `${t("systemDefault")} (${defaultOutputDevice.label})`
+			: t("systemDefault");
+		const opts: SelectOption[] = [{ id: "", label: defaultLabel }];
+		for (const d of outputDevices) {
+			// Skip the "default" sentinel — Chromium emits a dedicated row
+			// for it before the real default device. The empty string above
+			// already represents the same concept.
+			if (d.deviceId === "default" || d.deviceId === "") {
+				continue;
+			}
+			opts.push({ id: d.deviceId, label: d.label });
+		}
+		return opts;
+	}, [outputDevices, defaultOutputDevice, t]);
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -116,6 +157,29 @@ export function AudioSettingsPanel() {
 									}
 									options={clamshellOptions}
 									value={currentClamshellId}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+					</div>
+				</SettingSection>
+			)}
+
+			{/* ── Output Device (renderer-side; deviceId is consumed by
+			    HTMLAudioElement.setSinkId for chimes and AudioContext for TTS).
+			    Independent of recording mode — TTS runs regardless. */}
+			{showOutputDevice && (
+				<SettingSection icon={VolumeHighIcon} title={t("outputDevice")}>
+					<div className="flex flex-col divide-y divide-surface-1">
+						<FormControl
+							caption={t("outputDeviceCaption")}
+							label={t("outputDevice")}
+							tooltip={t("outputDeviceTooltip")}
+						>
+							<ElevatedSurface inline>
+								<Select
+									onChange={(v) => updateGeneral({ outputDeviceId: v })}
+									options={outputDeviceOptions}
+									value={outputDeviceId}
 								/>
 							</ElevatedSurface>
 						</FormControl>
@@ -204,6 +268,34 @@ export function AudioSettingsPanel() {
 							<HotkeyShortcutsLegend disabled={recordingMode === "listen"} />
 						</FormControl>
 					</div>
+				</div>
+			</SettingSection>
+
+			{/* ── Advanced — consolidated mic-release picker. Replaces the
+			    original Handy-style "always-on toggle + dependent lazy
+			    toggle" pair with a single Select that covers the five
+			    discrete behaviors (always / immediate / 30s / 1m / 5m).
+			    STARTUP_ONLY — PyAudioSource reads the resulting flags
+			    once at construction. */}
+			<SettingSection icon={DashboardCircleIcon} title={t("advancedTitle")}>
+				<div className="flex flex-col divide-y divide-surface-1">
+					<FormControl
+						caption={t("microphoneReleaseCaption")}
+						label={t("microphoneRelease")}
+						tooltip={t("microphoneReleaseTooltip")}
+					>
+						<ElevatedSurface inline>
+							<Select
+								onChange={(v) =>
+									update({
+										microphoneRelease: v as "always" | "immediate" | "sec30" | "min1" | "min5",
+									})
+								}
+								options={microphoneReleaseOptions}
+								value={microphoneRelease}
+							/>
+						</ElevatedSurface>
+					</FormControl>
 				</div>
 			</SettingSection>
 		</div>

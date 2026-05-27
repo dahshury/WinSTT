@@ -1,5 +1,5 @@
 import { TextIcon } from "@hugeicons/core-free-icons";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { DEFAULT_SETTINGS, SettingSection, useSettingsStore } from "@/entities/setting";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";

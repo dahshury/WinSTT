@@ -9,7 +9,19 @@ import {
 } from "./model-exclusion";
 
 const POPUP_ROLES: ReadonlySet<string> = new Set(["menu", "menuitem", "tooltip"]);
-const POPUP_SLOT = "model-filters-menu-content";
+/**
+ * Union of every picker's filter-menu Popover.Popup ``data-slot`` value.
+ * The literal union prevents typos at the producer side — any new picker
+ * MUST extend this union before its filter popover will be recognised as
+ * "inside a friendly popup" by ``isInsideMenuPopup``. Without the
+ * extension, clicking a filter toggle while the picker is open trips
+ * Base UI's outside-press detection and dismisses the whole selector.
+ */
+export type FilterMenuPopupSlot = "model-filters-menu-content" | "stt-filters-menu-content";
+const POPUP_SLOTS: ReadonlySet<FilterMenuPopupSlot> = new Set<FilterMenuPopupSlot>([
+	"model-filters-menu-content",
+	"stt-filters-menu-content",
+]);
 
 export interface ScrollToMakerRequest {
 	maker: string;
@@ -28,7 +40,8 @@ function nodeRoleIsPopup(node: HTMLElement): boolean {
 }
 
 function nodeSlotIsPopup(node: HTMLElement): boolean {
-	return node.dataset?.slot === POPUP_SLOT;
+	const slot = node.dataset?.slot;
+	return slot !== undefined && (POPUP_SLOTS as ReadonlySet<string>).has(slot);
 }
 
 function nodeMatchesPopupSelector(node: HTMLElement, ownPopup: HTMLElement | null): boolean {

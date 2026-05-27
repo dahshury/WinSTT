@@ -59,6 +59,19 @@ const wakewordDetectedSchema = z.object({
 	type: z.literal("wakeword_detected"),
 });
 
+// Wakeword detection lifecycle markers — emitted automatically by the
+// auto-derived simple-event mechanism for ``on_wakeword_detection_start`` /
+// ``on_wakeword_detection_end`` callbacks (see
+// ``stt_server/callbacks.py::_SIMPLE_EVENTS``). Bracket the listening
+// window so the UI can render the wakeword "armed" indicator.
+const wakewordDetectionStartSchema = z.object({
+	type: z.literal("wakeword_detection_start"),
+});
+
+const wakewordDetectionEndSchema = z.object({
+	type: z.literal("wakeword_detection_end"),
+});
+
 const modelSwapStartedSchema = z.object({
 	type: z.literal("model_swap_started"),
 	kind: z.enum(["main", "realtime"]),
@@ -139,6 +152,105 @@ const noAudioDetectedSchema = z.object({
 	type: z.literal("no_audio_detected"),
 });
 
+// Adaptive-VAD feedback: the server has recalibrated its silence threshold
+// from observed background noise vs. speech peaks. Emitted by
+// ``on_vad_sensitivity_adapted`` (see server/src/stt_server/callbacks.py)
+// after each calibration window. The renderer correlates with the currently
+// selected mic and persists ``new_sensitivity`` under that device's name in
+// ``audio.sileroSensitivityByDeviceName``.
+const vadSensitivityAdaptedSchema = z.object({
+	type: z.literal("vad_sensitivity_adapted"),
+	new_sensitivity: z.number(),
+	noise_floor_rms: z.number(),
+	speech_peak_rms: z.number(),
+});
+
+// Device switch failed: the server tried to swap to a new input device but
+// the PyAudio call rejected the index (unplugged, busy, wrong sample rate).
+// Carries the requested index, the human-readable error, and the fallback
+// index the server reverted to (or ``null`` if it stayed on the previous).
+const deviceSwitchFailedSchema = z.object({
+	type: z.literal("device_switch_failed"),
+	requested_index: z.number().int(),
+	error_message: z.string(),
+	fallback_index: z.number().int().nullable(),
+});
+
+// Device hotplug: a previously-removed input device is back. Fires when
+// the device watcher sees the index reappear so the picker can resurface it
+// in the menu and the auto-switch policy can decide whether to take it.
+const deviceBecameAvailableSchema = z.object({
+	type: z.literal("device_became_available"),
+	device_index: z.number().int(),
+	device_name: z.string(),
+});
+
+// Model download lifecycle. ``model_download_start`` and
+// ``model_download_complete`` bracket the progress stream; both carry the
+// model id so the renderer can match against the active swap. ``complete``
+// includes a ``cancelled`` flag so the UI can distinguish "finished" from
+// "user aborted mid-download".
+const modelDownloadStartSchema = z.object({
+	type: z.literal("model_download_start"),
+	model: z.string(),
+});
+
+const modelDownloadCompleteSchema = z.object({
+	type: z.literal("model_download_complete"),
+	model: z.string(),
+	cancelled: z.boolean(),
+});
+
+// Real-time diarized subtitles — per-utterance speaker segments produced
+// by the diarization stream. ``segments`` is the full per-speaker breakdown
+// for the just-finished utterance window.
+const speakerSegmentsSchema = z.object({
+	type: z.literal("speaker_segments"),
+	segments: z.array(
+		z.object({
+			speaker: z.string(),
+			start: z.number(),
+			end: z.number(),
+			text: z.string().optional(),
+		})
+	),
+});
+
+// System-audio (loopback) listen mode. The server signals when the OS
+// loopback capture is online so the UI can show the "listening to system
+// audio" indicator and surface the resolved device name.
+const loopbackStartedSchema = z.object({
+	type: z.literal("loopback_started"),
+	deviceName: z.string(),
+});
+
+const loopbackStoppedSchema = z.object({
+	type: z.literal("loopback_stopped"),
+});
+
+// File-transcription progress / completion. Emitted by the
+// ``file_transcribe`` worker for drag-drop and CLI-piped audio. Progress
+// fires repeatedly with a 0..1 fraction; complete and error are terminal.
+const fileTranscriptionProgressSchema = z.object({
+	type: z.literal("file_transcription_progress"),
+	job_id: z.string().optional(),
+	progress: z.number(),
+	stage: z.string().optional(),
+});
+
+const fileTranscriptionCompleteSchema = z.object({
+	type: z.literal("file_transcription_complete"),
+	job_id: z.string().optional(),
+	text: z.string().optional(),
+	output_path: z.string().optional(),
+});
+
+const fileTranscriptionErrorSchema = z.object({
+	type: z.literal("file_transcription_error"),
+	job_id: z.string().optional(),
+	error: z.string(),
+});
+
 // ── Union + public types ─────────────────────────────────────────────
 
 const serverEventSchema = z.discriminatedUnion("type", [
@@ -151,6 +263,8 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	audioLevelSchema,
 	modelDownloadProgressSchema,
 	wakewordDetectedSchema,
+	wakewordDetectionStartSchema,
+	wakewordDetectionEndSchema,
 	modelSwapStartedSchema,
 	modelSwapCompletedSchema,
 	modelSwapFailedSchema,
@@ -163,36 +277,39 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	stopTurnDetectionSchema,
 	transcriptionStartSchema,
 	noAudioDetectedSchema,
+	vadSensitivityAdaptedSchema,
+	deviceSwitchFailedSchema,
+	deviceBecameAvailableSchema,
+	modelDownloadStartSchema,
+	modelDownloadCompleteSchema,
+	speakerSegmentsSchema,
+	loopbackStartedSchema,
+	loopbackStoppedSchema,
+	fileTranscriptionProgressSchema,
+	fileTranscriptionCompleteSchema,
+	fileTranscriptionErrorSchema,
 ]);
 
 export type WsServerEvent = z.infer<typeof serverEventSchema>;
 
-/** All discriminator literals validated by this module. Exported for tests. */
-export const SUPPORTED_EVENT_TYPES = [
-	"realtime",
-	"fullSentence",
-	"recording_start",
-	"recording_stop",
-	"vad_detect_start",
-	"vad_detect_stop",
-	"audio_level",
-	"model_download_progress",
-	"wakeword_detected",
-	"model_swap_started",
-	"model_swap_completed",
-	"model_swap_failed",
-	"model_cache_changed",
-	"model_catalog_updated",
-	"diarization_toggle_started",
-	"diarization_toggle_completed",
-	"diarization_toggle_failed",
-	"start_turn_detection",
-	"stop_turn_detection",
-	"transcription_start",
-	"no_audio_detected",
-] as const;
+/** Discriminator string of every variant in the WS server-event union. */
+export type SupportedEventType = WsServerEvent["type"];
 
-export type SupportedEventType = (typeof SUPPORTED_EVENT_TYPES)[number];
+/**
+ * All discriminator literals validated by this module.
+ *
+ * Derived at runtime from the Zod discriminated union's ``.options`` so a
+ * new variant added to ``serverEventSchema`` automatically participates in
+ * the registry — eliminating the recurring "server emits a new event type
+ * but the renderer's hand-maintained array is stale" warning we saw in
+ * the logs (the ``start_turn_detection`` / ``no_audio_detected`` drift).
+ *
+ * The ``satisfies`` clause pins the runtime array to the type union, so if
+ * the derivation ever stops producing the full set TypeScript will flag it.
+ */
+export const SUPPORTED_EVENT_TYPES = serverEventSchema.options.map(
+	(option) => option.shape.type.value
+) as readonly SupportedEventType[];
 
 // ── Public entry point ───────────────────────────────────────────────
 

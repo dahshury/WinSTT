@@ -227,8 +227,19 @@ class TestRecordingPipeline:
         assert sm.state == RecorderState.INACTIVE
         assert len(stopped_events) == 0
 
-    def test_request_stop_too_early(self) -> None:
-        """Lines 93-95: request_stop() when elapsed < min_length_of_recording returns early."""
+    def test_request_stop_too_early_aborts_instead_of_leaving_stuck(self) -> None:
+        """When elapsed < min_length_of_recording, request_stop() ABORTS the
+        recording (state → INACTIVE) instead of returning early with state
+        stuck at RECORDING.
+
+        Locks in the fix for the regression where the realtime worker
+        tight-looped on stale audio after an accidental-tap PTT: pre-fix,
+        request_stop returned silently when elapsed < min_length so the
+        state machine stayed at RECORDING, while set_microphone(False)
+        had already paused the audio source — no new frames arrived but
+        is_recording stayed True forever. With the abort, state goes
+        INACTIVE, the buffer clears, and the realtime worker idles.
+        """
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
@@ -243,10 +254,12 @@ class TestRecordingPipeline:
         pipeline.request_start()
         assert sm.state == RecorderState.RECORDING
 
-        # Stop immediately - elapsed = 1000.0 - 1000.0 = 0.0 < 10.0
+        # Stop immediately — elapsed = 1000.0 - 1000.0 = 0.0 < 10.0
         pipeline.request_stop()
-        # Should still be recording because min_length not met
-        assert sm.state == RecorderState.RECORDING
+        # State must be INACTIVE (aborted), not stuck at RECORDING.
+        assert sm.state == RecorderState.INACTIVE
+        # No RecordingStopped event — abort doesn't emit it (would mislead
+        # the renderer into expecting a transcription).
         assert len(stopped_events) == 0
 
     def test_request_stop_with_backdate(self) -> None:
@@ -825,8 +838,16 @@ class TestRecordingPipeline:
         assert sm.state == RecorderState.INACTIVE
         assert len(no_audio_events) == 1
 
-    def test_request_stop_emits_no_audio_when_too_short_in_ptt_mode(self) -> None:
-        """In PTT mode, request_stop below min_length emits NoAudioDetected (line 105 silent-exit)."""
+    def test_request_stop_emits_no_audio_and_aborts_when_too_short_in_ptt_mode(self) -> None:
+        """In PTT mode, request_stop below min_length emits NoAudioDetected
+        AND aborts (state → INACTIVE).
+
+        Post-fix: leaving state at RECORDING after a too-short stop caused
+        the realtime worker to tight-loop on stale audio (frame_count
+        frozen, audio source paused, but is_recording stayed True). Abort
+        guarantees no state machine remains in an active branch after a
+        rejected stop.
+        """
         clock = Clock.fixed_clock(1000.0)
         cfg = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.1,
@@ -842,7 +863,9 @@ class TestRecordingPipeline:
         assert sm.state == RecorderState.RECORDING
 
         pipeline.request_stop()
-        assert sm.state == RecorderState.RECORDING
+        # State no longer stuck at RECORDING; abort transitions to INACTIVE.
+        assert sm.state == RecorderState.INACTIVE
+        # NoAudioDetected still emitted for the PTT UI feedback.
         assert len(no_audio_events) == 1
 
     def test_handle_chunk_swallows_processing_errors(self) -> None:

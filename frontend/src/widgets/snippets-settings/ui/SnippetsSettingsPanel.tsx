@@ -1,5 +1,5 @@
 import { Note01Icon } from "@hugeicons/core-free-icons";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { generateId } from "@/shared/lib/generate-id";
 import { SnippetsTable } from "./SnippetsTable";

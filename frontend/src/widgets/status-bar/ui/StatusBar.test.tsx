@@ -28,9 +28,12 @@ function model(id: string): ModelInfo {
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
+		sizeBytesByQuantization: {},
 		available: true,
 		errorMessage: "",
 		localPath: null,
+		speedScore: 0.5,
+		accuracyScore: 0.5,
 	};
 }
 

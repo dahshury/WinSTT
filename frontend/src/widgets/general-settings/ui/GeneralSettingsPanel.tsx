@@ -4,8 +4,8 @@ import {
 	Mic01Icon,
 	PowerSocket01Icon,
 } from "@hugeicons/core-free-icons";
-import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,
@@ -32,9 +32,7 @@ import {
 	buildRecordingModeOptions,
 	buildVisualizerTypeSwitcherOptions,
 	buildWakeWordOptions,
-	checkedOrFalseIfDisabled,
 	computeDisplayFlags,
-	DEFAULT_REDUCTION,
 	effectiveLiveDisplay,
 	flagsToLiveDisplay,
 	indexToReduction,
@@ -42,9 +40,11 @@ import {
 	type LiveTranscriptionDisplayValue,
 	liveDisplayToFlags,
 	liveOverlayDisabled,
-	muteEnabled,
 	muteLevel,
-	overlayTogglePatch,
+	overlaySliderLabel,
+	overlaySliderMax,
+	overlaySliderPatch,
+	overlaySliderToIndex,
 	pickLocale,
 	pickVisualizerType,
 	REDUCTION_STEPS,
@@ -55,19 +55,33 @@ import {
 	SENSITIVITY_STEPS,
 	sensitivityFromIndex,
 	sensitivityToIndex,
-	VISUALIZER_SIZE_LABELS,
-	VISUALIZER_SIZE_PRESETS,
-	visualizerSizeFromIndex,
-	visualizerSizeToIndex,
 } from "../lib/general-settings-panel-test-helpers";
 
+// Short label shown in the picker chip — same shape as the OS keyboard-
+// indicator: native-script abbreviation when one exists, ISO code
+// upper-case otherwise. Keep entries in sync with LOCALES in
+// shared/i18n/config.ts when adding a new locale baseline.
 const LOCALE_BADGE: Record<Locale, string> = {
 	en: "EN",
-	zh: "中",
-	es: "ES",
-	hi: "हि",
-	fr: "FR",
 	ar: "ع",
+	bg: "БГ",
+	cs: "CS",
+	de: "DE",
+	es: "ES",
+	fr: "FR",
+	he: "עב",
+	hi: "हि",
+	it: "IT",
+	ja: "日",
+	ko: "한",
+	pl: "PL",
+	pt: "PT",
+	ru: "РУ",
+	sv: "SV",
+	tr: "TR",
+	uk: "УК",
+	vi: "VI",
+	zh: "中",
 };
 
 const LANGUAGE_OPTIONS: SelectOption[] = LOCALES.map((code) => ({
@@ -117,34 +131,23 @@ interface MuteSystemAudioControlProps {
 
 function MuteSystemAudioControl({ general, t, update }: MuteSystemAudioControlProps): ReactNode {
 	const level = muteLevel(general);
-	const enabled = muteEnabled(general);
 	return (
 		<FormControl
 			caption={t("muteSystemAudioCaption")}
 			label={t("muteSystemAudio")}
-			labelAddon={
-				<Toggle
-					checked={enabled}
-					onCheckedChange={(v) =>
-						update({ systemAudioReductionWhileDictating: v ? DEFAULT_REDUCTION : 0 })
-					}
-				/>
-			}
 			tooltip={t("muteSystemAudioTooltip")}
 		>
-			{enabled ? (
-				<ElevatedSurface className="p-3">
-					<Slider
-						aria-label={t("muteSystemAudio")}
-						formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
-						max={REDUCTION_STEPS.length - 1}
-						min={0}
-						onChange={(v) => update({ systemAudioReductionWhileDictating: indexToReduction(v) })}
-						step={1}
-						value={reductionToIndex(level)}
-					/>
-				</ElevatedSurface>
-			) : undefined}
+			<ElevatedSurface className="p-3">
+				<Slider
+					aria-label={t("muteSystemAudio")}
+					formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
+					max={REDUCTION_STEPS.length - 1}
+					min={0}
+					onChange={(v) => update({ systemAudioReductionWhileDictating: indexToReduction(v) })}
+					step={1}
+					value={reductionToIndex(level)}
+				/>
+			</ElevatedSurface>
 		</FormControl>
 	);
 }
@@ -602,43 +605,28 @@ function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactN
 interface OverlayControlProps {
 	general: GeneralSettings | undefined;
 	isListenMode: boolean;
-	subDisabled: boolean;
 	t: GeneralT;
 	update: UpdateFn;
 }
 
-function OverlayControl({
-	t,
-	isListenMode,
-	subDisabled,
-	general,
-	update,
-}: OverlayControlProps): ReactNode {
-	const showOverlay = general?.showRecordingOverlay ?? true;
-	const size = general?.visualizerSize ?? "sm";
+function OverlayControl({ t, isListenMode, general, update }: OverlayControlProps): ReactNode {
+	const idx = overlaySliderToIndex(general);
 	return (
 		<FormControl
 			caption={t("showRecordingOverlayCaption")}
 			disabled={isListenMode}
 			label={t("showRecordingOverlay")}
-			labelAddon={
-				<Toggle
-					checked={checkedOrFalseIfDisabled(isListenMode, showOverlay)}
-					disabled={isListenMode}
-					onCheckedChange={(v) => update(overlayTogglePatch(v, general))}
-				/>
-			}
 			tooltip={t("showRecordingOverlayTooltip")}
 		>
-			<ElevatedSurface className={subDisabled ? "pointer-events-none p-3 opacity-40" : "p-3"}>
+			<ElevatedSurface className={isListenMode ? "pointer-events-none p-3 opacity-40" : "p-3"}>
 				<Slider
 					aria-label={t("showRecordingOverlay")}
-					formatValue={(v) => VISUALIZER_SIZE_LABELS[visualizerSizeFromIndex(v)]}
-					max={VISUALIZER_SIZE_PRESETS.length - 1}
+					formatValue={(v) => overlaySliderLabel(v, t)}
+					max={overlaySliderMax()}
 					min={0}
-					onChange={(idx) => update({ visualizerSize: visualizerSizeFromIndex(idx) })}
+					onChange={(v) => update(overlaySliderPatch(v, general))}
 					step={1}
-					value={visualizerSizeToIndex(size)}
+					value={idx}
 				/>
 			</ElevatedSurface>
 		</FormControl>
@@ -812,13 +800,10 @@ function DisplaySection({ isListenMode, locale, setLocale, t, update }: DisplayS
 			<div className="flex flex-col divide-y divide-surface-1">
 				<LanguageControl locale={locale} setLocale={setLocale} t={t} />
 				<VisualizerTypeControl general={general} t={t} update={update} />
-				<OverlayControl
-					general={general}
-					isListenMode={isListenMode}
-					subDisabled={flags.subDisabled}
-					t={t}
-					update={update}
-				/>
+				{isBarVisualizer(general) ? (
+					<VisualizerBarCountControl general={general} t={t} update={update} />
+				) : null}
+				<OverlayControl general={general} isListenMode={isListenMode} t={t} update={update} />
 				<OverlayModeControl
 					general={general}
 					subDisabled={flags.subDisabled}
@@ -826,9 +811,6 @@ function DisplaySection({ isListenMode, locale, setLocale, t, update }: DisplayS
 					update={update}
 				/>
 				<LiveTranscriptionDisplayControl general={general} t={t} update={update} />
-				{isBarVisualizer(general) ? (
-					<VisualizerBarCountControl general={general} t={t} update={update} />
-				) : null}
 			</div>
 		</SettingSection>
 	);

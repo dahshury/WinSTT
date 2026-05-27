@@ -1,10 +1,111 @@
-import { ipcMain } from "electron";
+import { BrowserWindow, ipcMain } from "electron";
+import { IPC } from "../../src/shared/api/ipc-channels";
+import { ConnectionError } from "../../src/shared/lib/errors";
 import { markSessionAborted } from "../lib/abort-state";
 import { dbg, dbgVerbose } from "../lib/debug-log";
 import { isRecord } from "../lib/ipc-helpers";
+import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 import { abortActiveOllamaChats } from "./llm";
 import { hideOverlay } from "./overlay";
+
+/**
+ * "Server not connected" rejections are expected during the cold-boot
+ * window — the renderer mounts windows and fires settings/picker queries
+ * before the WS handshake completes. The handler contract already returns
+ * null on error so the renderer behavior is unchanged; this just keeps the
+ * `[+N ms] startup` log readable. Any other failure (server crash, payload
+ * validation, etc.) still warns as before.
+ */
+function logSttRequestFailure(tag: string, err: unknown): void {
+	if (err instanceof ConnectionError) {
+		return;
+	}
+	console.warn(`[${tag}] request failed:`, err);
+}
+
+/**
+ * Cross-window in-flight dedup for read-only WS queries.
+ *
+ * Each renderer (main, settings, model-picker, …) mounts its own copy of
+ * the stores that fetch ``list_models_with_state`` / ``get_live_resources``
+ * / ``audio:get-devices`` on first paint. With three windows alive, the
+ * server received three identical requests in quick succession — visible in
+ * debug.log as 3× identical control responses 1-50ms apart.
+ *
+ * This map collapses those into a single in-flight WS request: subsequent
+ * IPC calls with the same key await the same promise. Entries clear on
+ * settle so a later fresh call (e.g. after a model swap invalidation) still
+ * fetches new data.
+ */
+const inflightReadOnly = new Map<string, Promise<unknown>>();
+
+function dedupeInflight<T>(key: string, factory: () => Promise<T>): Promise<T> {
+	const existing = inflightReadOnly.get(key);
+	if (existing !== undefined) {
+		return existing as Promise<T>;
+	}
+	const promise = factory().finally(() => {
+		// Guard against the rare race where a new request slipped in under
+		// the same key while the previous one was still settling.
+		if (inflightReadOnly.get(key) === promise) {
+			inflightReadOnly.delete(key);
+		}
+	});
+	inflightReadOnly.set(key, promise);
+	return promise;
+}
+
+/** Test hook — flush in-flight dedup state so each test starts clean. */
+export function __resetInflightDedupForTesting__(): void {
+	inflightReadOnly.clear();
+}
+
+/**
+ * Cross-window dedup for ``set_parameter`` pushes.
+ *
+ * Every renderer that mounts ``useSyncSettings`` (main, settings,
+ * model-picker, …) does its OWN initial settings sync the moment the
+ * server reports ``status=running``. The renderer-side
+ * ``shouldSendOnChange`` only suppresses unchanged values when it has a
+ * ``prev`` snapshot — but each new window has ``prev=undefined`` on first
+ * mount, so it pushes ALL parameters again. The server responds
+ * ``Parameter X unchanged`` to each one, polluting debug.log with ~9
+ * redundant control responses per window open.
+ *
+ * This map tracks the last value sent to the server for each parameter.
+ * A matching push is collapsed at the IPC boundary; the server never sees
+ * the redundant request. Cleared on disconnect so a reconnect (which is
+ * always preceded by a server restart in our flow) re-syncs the full set.
+ */
+const lastSentParameterValue = new Map<string, string>();
+
+/** Method-call dedup for the small set of methods whose repeat is a no-op. */
+const lastSentMethodValue = new Map<string, string>();
+
+/**
+ * Methods whose argument-equal repeat is a true no-op (server is already in
+ * the requested state). NOT generally true for all methods — e.g.
+ * ``set_microphone(true)`` after ``set_microphone(false)`` after
+ * ``set_microphone(true)`` is the natural PTT cycle and must fire every
+ * time. Only methods listed here are subject to value-equality dedup.
+ */
+const IDEMPOTENT_METHODS = new Set(["request_diarization_toggle"]);
+
+export function __resetCommandDedupForTesting__(): void {
+	lastSentParameterValue.clear();
+	lastSentMethodValue.clear();
+}
+
+/** Wire disconnect-triggered cleanup of the dedup caches. */
+export function attachCommandDedupReset(sttClient: SttClient): () => void {
+	const onDisconnect = (): void => {
+		lastSentParameterValue.clear();
+		lastSentMethodValue.clear();
+	};
+	sttClient.on("disconnected", onDisconnect);
+	return () => sttClient.off("disconnected", onDisconnect);
+}
 
 /**
  * Allowlists for STT parameters and methods that the renderer may invoke.
@@ -104,8 +205,16 @@ function handleSetParameter(
 		logSetParamRejection(reason, payload);
 		return;
 	}
+	// Cross-window dedup — see `lastSentParameterValue`'s docstring.
+	const serialized = JSON.stringify(payload.value);
+	if (lastSentParameterValue.get(payload.parameter) === serialized) {
+		// Stryker disable next-line StringLiteral: log-only diagnostic at verbose level
+		dbgVerbose("stt-cmd", "set-parameter SKIPPED (unchanged):", payload.parameter);
+		return;
+	}
+	lastSentParameterValue.set(payload.parameter, serialized);
 	// Stryker disable next-line StringLiteral: log-only side-effect; dbgVerbose is mocked to no-op in tests.
-	dbgVerbose("stt-cmd", "set-parameter:", payload.parameter, "=", JSON.stringify(payload.value));
+	dbgVerbose("stt-cmd", "set-parameter:", payload.parameter, "=", serialized);
 	sttClient.setParameter(payload.parameter, payload.value);
 }
 
@@ -123,7 +232,12 @@ function logSetParamRejection(
 	reason: "invalid" | "disallowed" | "disconnected",
 	payload: ParamPayload
 ): void {
-	dbg("stt-cmd", SET_PARAM_LOG_MESSAGES[reason](payload));
+	// `disconnected` fires routinely during the cold-boot window before the
+	// WS handshake completes — demote to verbose so it doesn't spam the
+	// terminal. `invalid` / `disallowed` indicate a real programming bug and
+	// stay at standard log level.
+	const emit = reason === "disconnected" ? dbgVerbose : dbg;
+	emit("stt-cmd", SET_PARAM_LOG_MESSAGES[reason](payload));
 }
 // Stryker restore ObjectLiteral,ArrowFunction,StringLiteral,BlockStatement
 
@@ -206,7 +320,9 @@ const CALL_METHOD_LOG_MESSAGES: Record<CallMethodReason, (p: MethodPayload) => s
 };
 
 function logCallMethodRejection(reason: CallMethodReason, payload: MethodPayload): void {
-	dbg("stt-cmd", CALL_METHOD_LOG_MESSAGES[reason](payload));
+	// Same boot-window rationale as :func:`logSetParamRejection`.
+	const emit = reason === "disconnected" ? dbgVerbose : dbg;
+	emit("stt-cmd", CALL_METHOD_LOG_MESSAGES[reason](payload));
 }
 // Stryker restore ObjectLiteral,ArrowFunction,StringLiteral,BlockStatement
 
@@ -216,8 +332,21 @@ function handleCallMethod(sttClient: SttClient, payload: MethodPayload): void {
 		logCallMethodRejection(reason, payload);
 		return;
 	}
+	const serializedArgs = JSON.stringify(payload.args ?? []);
+	// Idempotent-method dedup — only methods in IDEMPOTENT_METHODS are
+	// gated. set_microphone(true)→(false)→(true) is the natural PTT cycle
+	// and must fire every call, so most methods bypass this branch.
+	if (
+		IDEMPOTENT_METHODS.has(payload.method) &&
+		lastSentMethodValue.get(payload.method) === serializedArgs
+	) {
+		// Stryker disable next-line StringLiteral: log-only diagnostic at verbose level
+		dbgVerbose("stt-cmd", "call-method SKIPPED (unchanged):", payload.method);
+		return;
+	}
+	lastSentMethodValue.set(payload.method, serializedArgs);
 	// Stryker disable next-line StringLiteral,LogicalOperator,ArrayDeclaration: log-only debug emission; observable behavior is verified by the call-method tests asserting sttClient.callMethod was invoked with the right args.
-	dbgVerbose("stt-cmd", "call-method:", payload.method, JSON.stringify(payload.args ?? []));
+	dbgVerbose("stt-cmd", "call-method:", payload.method, serializedArgs);
 	sttClient.callMethod(payload.method, payload.args);
 }
 
@@ -347,7 +476,7 @@ async function handleListModelsWithState(sttClient: SttClient): Promise<unknown>
 		return await sttClient.listModelsWithState();
 	} catch (err) {
 		// Stryker disable next-line StringLiteral: log-only console.warn; observable behavior (returning null on error) is verified by the dedicated catch-branch test.
-		console.warn("[stt:list-models-with-state] request failed:", err);
+		logSttRequestFailure("stt:list-models-with-state", err);
 		return null;
 	}
 }
@@ -360,7 +489,7 @@ async function safeGetLiveResources(sttClient: SttClient, force: boolean): Promi
 	try {
 		return await sttClient.getLiveResources(force);
 	} catch (err) {
-		console.warn("[stt:get-live-resources] request failed:", err);
+		logSttRequestFailure("stt:get-live-resources", err);
 		return null;
 	}
 }
@@ -410,7 +539,7 @@ async function safeAssessDictationFit(
 	try {
 		return await sttClient.assessDictationFit(parsed.modelId, parsed.quantization, parsed.device);
 	} catch (err) {
-		console.warn("[stt:assess-dictation-fit] request failed:", err);
+		logSttRequestFailure("stt:assess-dictation-fit", err);
 		return null;
 	}
 }
@@ -449,12 +578,34 @@ function handleAssessDictationFit(sttClient: SttClient, payload: unknown): Promi
  * silently if there's nothing to cancel.
  */
 function abortServerRecorderIfConnected(sttClient: SttClient): void {
-	if (sttClient.isConnected) {
-		// `abort` stops the state machine; `clear_audio_queue` drops any
-		// already-buffered frames so the next text() call doesn't churn
-		// through audio the user just discarded.
-		sttClient.callMethod("abort");
-		sttClient.callMethod("clear_audio_queue");
+	if (!sttClient.isConnected) {
+		return;
+	}
+	// `abort` stops the state machine; `clear_audio_queue` drops any
+	// already-buffered frames so the next text() call doesn't churn
+	// through audio the user just discarded.
+	sttClient.callMethod("abort");
+	sttClient.callMethod("clear_audio_queue");
+
+	// Abort alone only flips the state machine; it leaves the audio
+	// source actively delivering chunks (just dropped). The OS mic-in-use
+	// indicator stays lit and, in toggle/listen mode, the stream really is
+	// still listening for audio (the user's reported symptom). Tear the
+	// input source down so the OS releases the device.
+	const mode = getStoreValue("general.recordingMode");
+
+	// PyAudio: pause hardware capture. Skipped in wakeword mode where the
+	// recorder must keep capturing to hear the trigger word — abort already
+	// reset the state machine, which is enough for that mode.
+	if (mode !== "wakeword") {
+		sttClient.callMethod("set_microphone", [false]);
+	}
+
+	// Loopback (listen mode): the mic-release path above doesn't touch it;
+	// the loopback stream is owned by a separate server-side worker driven
+	// by start_loopback / stop_loopback. Idempotent on the server.
+	if (mode === "listen") {
+		sttClient.stopLoopback();
 	}
 }
 
@@ -466,6 +617,22 @@ function safeHideOverlay(): void {
 	}
 }
 
+/**
+ * Notify every live renderer that a cancel just landed so the renderer-side
+ * "session is active" mirrors (toggle-mode `isActiveRef` in usePushToTalk)
+ * reset. Without this, after canceling a toggle-mode session the renderer
+ * still thinks the mic is on and the user has to press the hotkey twice — once
+ * to toggle "off" the phantom session, once to start a fresh one — before
+ * recording resumes.
+ */
+function broadcastSessionAborted(): void {
+	for (const win of BrowserWindow.getAllWindows()) {
+		if (!win.isDestroyed()) {
+			win.webContents.send(IPC.STT_SESSION_ABORTED);
+		}
+	}
+}
+
 export function handleAbortOperation(sttClient: SttClient): void {
 	dbg("stt-cmd", "abort-operation: user-triggered cancel");
 	// Mark first — even if the awaits below take time to land, any
@@ -474,6 +641,7 @@ export function handleAbortOperation(sttClient: SttClient): void {
 	abortActiveOllamaChats("user-cancelled-from-hotkey");
 	abortServerRecorderIfConnected(sttClient);
 	safeHideOverlay();
+	broadcastSessionAborted();
 }
 
 function isValidNonNegativeFiniteNumber(value: unknown): value is number {
@@ -492,7 +660,7 @@ async function safeAssessOllamaFit(sttClient: SttClient, sizeBytes: number): Pro
 	try {
 		return await sttClient.assessOllamaFit(sizeBytes);
 	} catch (err) {
-		console.warn("[stt:assess-ollama-fit] request failed:", err);
+		logSttRequestFailure("stt:assess-ollama-fit", err);
 		return null;
 	}
 }
@@ -503,6 +671,12 @@ function handleAssessOllamaFit(sttClient: SttClient, payload: unknown): Promise<
 }
 
 export function setupSttCommandHandlers(sttClient: SttClient): void {
+	// Reset the set-parameter / call-method dedup caches when the server
+	// disconnects so a reconnect re-syncs the full settings snapshot rather
+	// than silently relying on stale state. Caller doesn't need the
+	// dispose — these handlers live for the lifetime of the process.
+	attachCommandDedupReset(sttClient);
+
 	ipcMain.on("stt:set-parameter", (_event, payload: { parameter: string; value: unknown }) => {
 		handleSetParameter(sttClient, payload);
 	});
@@ -530,16 +704,25 @@ export function setupSttCommandHandlers(sttClient: SttClient): void {
 	// Model selector cache + fitness state. Renderer calls this on settings
 	// panel open; live invalidation comes through the data-channel
 	// model_cache_changed event (relayed via stt:model-cache-changed IPC).
-	ipcMain.handle("stt:list-models-with-state", () => handleListModelsWithState(sttClient));
+	// Wrapped in `dedupeInflight` so multiple windows mounting in the same
+	// tick collapse to one WS round-trip instead of N identical ones.
+	ipcMain.handle("stt:list-models-with-state", () =>
+		dedupeInflight("list-models-with-state", () => handleListModelsWithState(sttClient))
+	);
 
 	// Resource-aware model fitness. Renderer fetches a fresh live snapshot
 	// when the settings panel opens (or the refresh button fires) and asks
 	// the server for an authoritative assessment when the user picks a
 	// candidate. Both calls are pre-ready on the server, so the picker
 	// works before any model is loaded.
-	ipcMain.handle("stt:get-live-resources", (_event, payload: unknown) =>
-		handleGetLiveResources(sttClient, payload)
-	);
+	// `forceRefresh` is part of the dedup key so a button-triggered force
+	// doesn't get collapsed with a lazy mount-time fetch.
+	ipcMain.handle("stt:get-live-resources", (_event, payload: unknown) => {
+		const force = readForceRefresh(payload);
+		return dedupeInflight(`get-live-resources:${String(force)}`, () =>
+			safeGetLiveResources(sttClient, force)
+		);
+	});
 	ipcMain.handle("stt:assess-dictation-fit", (_event, payload: unknown) =>
 		handleAssessDictationFit(sttClient, payload)
 	);
@@ -555,7 +738,9 @@ export function setupSttCommandHandlers(sttClient: SttClient): void {
 	});
 
 	// Stryker disable next-line ArrowFunction: handler thunk; the arrow body is exercised by the audio:get-devices integration test, but Stryker's `() => undefined` mutation returns undefined which is also a valid Promise<AudioDevice[]> ⊂ unknown — equivalent at the IPC layer.
-	ipcMain.handle("audio:get-devices", () => handleGetAudioDevices(sttClient));
+	ipcMain.handle("audio:get-devices", () =>
+		dedupeInflight("audio:get-devices", () => handleGetAudioDevices(sttClient))
+	);
 }
 
 /** Test hook: extracted helpers for direct unit testing. */

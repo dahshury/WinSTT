@@ -64,11 +64,15 @@ def _file_quantization(weight_file: Path) -> str:
     """Return the quantization suffix encoded in an onnx weight filename.
 
     ``encoder_model_int8.onnx`` → ``"int8"``; ``encoder_model.onnx`` → ``""``
-    (the default, un-suffixed export). ``.onnx_data`` external-data files use
-    the same stem convention so we strip that ext too.
+    (the default, un-suffixed export). External-data sidecars use either
+    ``.onnx_data`` (onnx-community convention) or ``.onnx.data`` (istupakov
+    NeMo convention); both are stripped so the same stem-based quant lookup
+    applies. ``model.onnx.data`` → ``""``, ``model.int8.onnx.data`` → ``"int8"``.
     """
     name = weight_file.name
-    if name.endswith(".onnx_data"):
+    if name.endswith(".onnx.data"):
+        name = name[: -len(".onnx.data")]
+    elif name.endswith(".onnx_data"):
         name = name[: -len(".onnx_data")]
     elif name.endswith(".onnx"):
         name = name[: -len(".onnx")]
@@ -139,9 +143,15 @@ def _latest_snapshot(hf_repo_id: str) -> tuple[Path, Path] | None:
 
 
 def _collect_weight_files(snapshot: Path) -> list[Path]:
-    """Every ``*.onnx`` / ``*.onnx_data`` entry under ``snapshot`` (symlinks ok)."""
+    """Every ``*.onnx`` / ``*.onnx_data`` / ``*.onnx.data`` entry under ``snapshot``.
+
+    Symlinks count — HF cache resolves blobs via symlink so following these
+    is required to size the real file on disk. Both external-data tail
+    conventions are matched (``foo.onnx_data`` and ``foo.onnx.data``) since
+    different upstream exporters disagree on the separator.
+    """
     weight_files: list[Path] = []
-    for pattern in ("*.onnx", "*.onnx_data"):
+    for pattern in ("*.onnx", "*.onnx_data", "*.onnx.data"):
         for child in snapshot.rglob(pattern):
             if child.is_file() or child.is_symlink():
                 weight_files.append(child)

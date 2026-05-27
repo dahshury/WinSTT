@@ -1,6 +1,6 @@
 import { STT_PICKER_WIDTH_PX, SttModelSelector } from "@picker";
-import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import { useCatalogStore, useModelStateStore, useModelSwapStore } from "@/entities/model-catalog";

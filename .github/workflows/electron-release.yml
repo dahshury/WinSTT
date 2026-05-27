@@ -8,16 +8,20 @@ on:
 permissions:
   contents: write
 
-# Build CPU and DirectML flavors as parallel jobs. Both publish to the same
-# GitHub Release on this repo (`dahshury/WinSTT`, public). electron-builder
-# appends each artifact under its distinct ``artifactName`` (set in
-# electron-builder.{cpu,directml}.yml), so the release page ends up with two
-# installers side by side. electron-updater treats them as separate update
-# channels: a user installed via CPU gets only CPU updates, DirectML users
-# get DirectML.
+# Build CPU, DirectML and OpenVINO flavors as parallel jobs. All three
+# publish to the same GitHub Release on this repo (`dahshury/WinSTT`,
+# public). electron-builder appends each artifact under its distinct
+# ``artifactName`` (set in electron-builder.{cpu,directml,openvino}.yml),
+# so the release page ends up with three installers side by side.
+# electron-updater treats them as separate update channels: a user
+# installed via CPU gets only CPU updates, DirectML users get DirectML,
+# OpenVINO users get OpenVINO.
 #
 # DirectML is the default Windows GPU build (replaces the legacy CUDA flavor —
 # ~10x lighter and faster on our workload per the EP benchmark in device.py).
+# OpenVINO is the Intel-optimised path for Intel ARC dGPUs and recent
+# Iris Xe / Arc iGPUs — auto-picked ahead of DirectML on Intel silicon
+# when the EP is registered (see device.py::_AUTO_PRIORITY).
 # CUDA EP detection is preserved in src/recorder/infrastructure/device.py for
 # the eventual Linux NVIDIA build, but no Windows CUDA installer is shipped.
 #
@@ -29,12 +33,12 @@ jobs:
     name: Build (${{ matrix.flavor }})
     runs-on: windows-latest
     strategy:
-      # Run both flavors regardless of one failing — easier to debug than
+      # Run all flavors regardless of one failing — easier to debug than
       # bailing out half-way and re-running just the failing one needing
       # special tag manipulation.
       fail-fast: false
       matrix:
-        flavor: [cpu, directml]
+        flavor: [cpu, directml, openvino]
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       WINSTT_ENABLE_AUTO_UPDATES: "1"
@@ -190,3 +194,127 @@ jobs:
         if: ${{ secrets.MINISIGN_SECRET_KEY == '' }}
         run: |
           echo "::warning::MINISIGN_SECRET_KEY repo secret is not configured — skipping minisign signing. See docs/RELEASE_SIGNING.md."
+
+  # ────────────────────────────────────────────────────────────────────
+  # macOS build job — separate from the Windows matrix because the
+  # runner type differs and only the CPU flavor is shipped on macOS:
+  # DirectML is Windows-only, and onnxruntime-openvino on macOS targets
+  # Intel Mac iGPUs which are increasingly rare. CoreML EP is baked
+  # into the stock `onnxruntime` package the CPU flavor pulls in (see
+  # server/src/recorder/infrastructure/device.py::_AUTO_PRIORITY),
+  # so the "CPU" build on macOS automatically uses CoreML when
+  # available.
+  #
+  # Apple Intelligence CLI: tools/apple-intelligence-cli/build.sh
+  # compiles the Swift bridge and writes
+  # frontend/electron/resources/macos/winstt-apple-llm, which the mac
+  # electron-builder.cpu.yml `extraResources` block copies to
+  # <App>.app/Contents/Resources/macos/ for runtime spawn.
+  #
+  # Notarization: opt-in via the APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD
+  # / APPLE_TEAM_ID secrets. When unset, electron-builder still ships
+  # an ad-hoc-signed DMG; Gatekeeper will refuse on first launch until
+  # the user right-click → Open. See docs/RELEASE_SIGNING.md for the
+  # full setup walkthrough.
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-14
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      WINSTT_ENABLE_AUTO_UPDATES: "1"
+      # Notarization secrets — present == notarize, absent == ad-hoc-sign.
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      CSC_LINK: ${{ secrets.MAC_CERTIFICATE_BASE64 }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.6"
+
+      # Build the Swift Apple Intelligence bridge. Outputs
+      # frontend/electron/resources/macos/winstt-apple-llm.
+      # No-ops on non-Darwin runners (we'd never hit this branch from
+      # Linux/Windows, but defensive doesn't hurt — the script itself
+      # exits 0 silently when uname != Darwin).
+      - name: Build Apple Intelligence CLI
+        run: bash tools/apple-intelligence-cli/build.sh
+
+      # Build the stt-server.exe equivalent for macOS (a unix binary the
+      # Electron app's extraResources picks up). The existing
+      # build.ps1 PowerShell script is Windows-only; we shell into uv +
+      # PyInstaller directly here for the macOS leg.
+      - name: Sync server (CPU extra)
+        working-directory: server
+        run: uv sync --extra cpu --group dev
+
+      - name: Build stt-server binary
+        working-directory: server
+        run: |
+          uv run pyinstaller packaging/stt-server.spec --clean --noconfirm \
+            --distpath dist --workpath dist/build
+          mkdir -p ../packaging/stt-server-dist/cpu
+          cp -R dist/stt-server/* ../packaging/stt-server-dist/cpu/
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Install Root Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build And Publish macOS DMG + ZIP
+        # Reuses the existing publish:cpu script — `electron-builder` picks
+        # the macOS-specific block from the same yml on a macOS runner.
+        run: bun run electron:build:publish:cpu
+
+      # Mirror the Windows minisign signing step for the macOS DMG / ZIP.
+      # Same secret material, same sidecar pattern — the verifier in
+      # electron/lib/minisign-verify.ts is cross-platform.
+      - name: Install minisign (macOS)
+        if: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+        run: brew install minisign
+
+      - name: Sign artifacts with minisign (macOS)
+        if: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          keyPath="$RUNNER_TEMP/winstt.key"
+          printf '%s' "$MINISIGN_SECRET_KEY" > "$keyPath"
+          tag="${GITHUB_REF#refs/tags/}"
+          shopt -s nullglob
+          for artifact in dist/*.dmg dist/*.zip; do
+            [ -f "$artifact" ] || continue
+            echo "Signing $artifact"
+            printf '%s' "$MINISIGN_PASSWORD" | minisign -S -s "$keyPath" \
+              -m "$artifact" -t "WinSTT release $tag — $(basename "$artifact")"
+          done
+          sigs=(dist/*.minisig)
+          if [ ${#sigs[@]} -gt 0 ]; then
+            gh release upload "$tag" "${sigs[@]}" --clobber
+          fi
+
+      - name: Skip minisign (secret unset)
+        if: ${{ secrets.MINISIGN_SECRET_KEY == '' }}
+        run: echo "::warning::MINISIGN_SECRET_KEY repo secret not configured — skipping minisign on macOS build."

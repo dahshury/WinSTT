@@ -1,8 +1,8 @@
 import { PlayIcon, StopCircleIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
-import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
 import { formatKeyName } from "@/shared/lib/format-key-name";
 import { compareHotkeys, isHotkeyConflict } from "@/shared/lib/hotkey-conflict";
 import { springs } from "@/shared/lib/springs";

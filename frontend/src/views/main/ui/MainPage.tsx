@@ -1,6 +1,6 @@
 import { Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";

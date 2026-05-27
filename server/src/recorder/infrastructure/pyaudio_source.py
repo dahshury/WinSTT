@@ -115,6 +115,17 @@ class PyAudioSource(IAudioSource):
         self._audio_interface: Any = None
         self._stream: Any = None
         self._device_sample_rate: int | None = None
+        # PortAudio sample format actually negotiated for the live stream.
+        # ``_open_stream`` probes ``paFloat32`` first and falls back to
+        # ``paInt16`` so we can let the WASAPI Audio Engine hand us its
+        # native float buffer instead of forcing an in-engine i16 quantize
+        # step we don't control. Downstream still consumes int16 bytes —
+        # ``read_chunk`` converts f32→i16 right at the source so the rest
+        # of the pipeline (CompositeVAD, audio_buffer, resampler) is
+        # unchanged. ``None`` until the first ``_open_stream`` lands.
+        # Storing the int here (not pyaudio.paInt16) so the module still
+        # imports cleanly on machines that lack PyAudio for type checks.
+        self._capture_format: int | None = None
         self._active = False
         # Hardware capture state. True only between resume() and pause().
         # The OS mic-in-use indicator follows this — when False the icon
@@ -274,9 +285,21 @@ class PyAudioSource(IAudioSource):
 
         sample_rate = self._get_best_sample_rate(device_index)
 
+        # Probe paFloat32 first — on WASAPI shared mode (the Windows
+        # default for almost every input device) the Audio Engine pumps
+        # f32 internally and requesting paInt16 forces an in-engine i16
+        # quantize step we don't get to control. Asking for f32 hands us
+        # the engine's native buffer, then we do a deterministic
+        # ``np.clip * 32767`` round-to-int16 in ``read_chunk``. Falls back
+        # to paInt16 when the device doesn't advertise f32 (rare — most
+        # USB / Bluetooth mics do). Reference: Handy's
+        # ``audio_toolkit/audio/recorder.rs::get_preferred_config`` which
+        # follows the same F32 > I16 priority.
+        chosen_format = self._negotiate_format(pa, device_index, sample_rate)
+
         try:
             self._stream = pa.open(
-                format=pyaudio.paInt16,
+                format=chosen_format,
                 channels=1,
                 rate=sample_rate,
                 input=True,
@@ -289,6 +312,33 @@ class PyAudioSource(IAudioSource):
 
         self._input_device_index = device_index
         self._device_sample_rate = sample_rate
+        self._capture_format = chosen_format
+
+    def _negotiate_format(self, pa: Any, device_index: int, sample_rate: int) -> int:  # noqa: ANN401
+        """Return paFloat32 if the device supports it, otherwise paInt16.
+
+        ``is_format_supported`` raises ``ValueError`` (with paErr in
+        args[1]) when the requested format isn't valid for the device at
+        that rate; True otherwise. We silently downgrade to paInt16 on
+        any failure so the open path is robust to drivers that don't
+        implement the probe correctly (some virtual cables don't).
+        """
+        try:
+            pa.is_format_supported(
+                rate=sample_rate,
+                input_device=device_index,
+                input_channels=1,
+                input_format=pyaudio.paFloat32,
+            )
+        except (ValueError, OSError) as probe_err:
+            logger.debug(
+                "paFloat32 not supported on device %s @ %dHz (%s); using paInt16",
+                device_index,
+                sample_rate,
+                _format_pa_error(probe_err),
+            )
+            return int(pyaudio.paInt16)
+        return int(pyaudio.paFloat32)
 
     @override
     def read_chunk(self) -> AudioChunk:
@@ -350,9 +400,29 @@ class PyAudioSource(IAudioSource):
             logger.warning("Audio stream read failed (%s); re-entering hotplug-wait state", _format_pa_error(e))
             self._enter_waiting_state()
             return b"\x00" * (self._buffer_size * self._sample_width)
+        # If the stream was opened as paFloat32 (the WASAPI native), fold
+        # the f32 bytes down to int16 here so the rest of the pipeline
+        # (CompositeVAD, audio_buffer, resampler, all int16-shaped)
+        # doesn't need to know capture used floats.
+        if self._capture_format is not None and self._capture_format == pyaudio.paFloat32:
+            raw = self._float32_bytes_to_int16_bytes(raw)
         if self._device_sample_rate and self._device_sample_rate != self._target_sample_rate:
             raw = self._resample(raw, self._device_sample_rate, self._target_sample_rate)
         return raw
+
+    @staticmethod
+    def _float32_bytes_to_int16_bytes(raw: bytes) -> bytes:
+        """Convert a paFloat32 capture buffer to the canonical int16 bytes.
+
+        Round-to-nearest (numpy's ``rint``) avoids the systematic toward-
+        zero bias of a bare ``astype(int16)``. Clipping to [-1, 1] handles
+        the rare hot signal a driver might surface — WASAPI doesn't clamp
+        on input even in shared mode. Scaling by ``32767`` keeps a hot
+        +1.0 sample inside int16 range (32768 would overflow).
+        """
+        samples = np.frombuffer(raw, dtype=np.float32)
+        clipped = np.clip(samples, -1.0, 1.0)
+        return bytes(np.rint(clipped * 32767.0).astype(np.int16).tobytes())
 
     def _try_attach_default_device(self) -> None:
         """Poll for a default input device; attach + notify when one appears.
@@ -416,6 +486,10 @@ class PyAudioSource(IAudioSource):
         self._capturing = False
         self._chunks_since_last_probe = 0
         self._device_sample_rate = None
+        # Clear the format too so a stale paFloat32 doesn't trigger the
+        # f32→i16 conversion on the silence buffers ``read_chunk``
+        # returns while waiting for a replacement device.
+        self._capture_format = None
         # Reset to None so the poller probes for the *current* default
         # device. Holding on to the disappeared index would just make
         # the next ``_open_stream`` fail on the same dead handle.
@@ -529,6 +603,7 @@ class PyAudioSource(IAudioSource):
         self._capturing = False
         self._capture_intent = False
         self._waiting_for_device = False
+        self._capture_format = None
 
     @override
     def is_active(self) -> bool:
@@ -625,13 +700,6 @@ class PyAudioSource(IAudioSource):
         """
         if self._stream is None:
             return
-        # region agent log — H-C
-        _close_thread = threading.get_ident()
-        logger.warning(
-            "[debug-instrumentation] pyaudio._release_stream.enter thread=%d",
-            _close_thread,
-        )
-        # endregion
         with self._stream_op_lock:
             # Re-check after acquiring the lock — another caller may have
             # released first.
@@ -643,12 +711,7 @@ class PyAudioSource(IAudioSource):
                 self._stream.close()
             self._stream = None
             self._device_sample_rate = None
-        # region agent log — H-C
-        logger.warning(
-            "[debug-instrumentation] pyaudio._release_stream.done thread=%d",
-            _close_thread,
-        )
-        # endregion
+            self._capture_format = None
 
     def _schedule_lazy_close(self) -> None:
         """Spawn a daemon thread that closes the stream after the idle window.

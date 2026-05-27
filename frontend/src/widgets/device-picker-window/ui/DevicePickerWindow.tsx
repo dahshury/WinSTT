@@ -1,7 +1,7 @@
 import { Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend, onSettingsChanged, settingsLoad, settingsSave } from "@/shared/api/ipc-client";

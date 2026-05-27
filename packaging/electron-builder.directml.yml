@@ -8,7 +8,10 @@ productName: WinSTT
 # the CLI (`--projectDir frontend`), so e.g. `./scripts/...` lives at
 # frontend/scripts/... and `extraResources.from` paths that start with
 # `../` reach back up to the repo root.
-afterPack: ./scripts/electron-builder-after-pack.cjs
+# afterPack is resolved from the repo root (electron-builder's launch CWD),
+# not from projectDir like extraResources.from is — so the path here must
+# reach into frontend/ explicitly.
+afterPack: ./frontend/scripts/electron-builder-after-pack.cjs
 asar: true
 compression: maximum
 asarUnpack:
@@ -63,6 +66,16 @@ extraResources:
     to: LICENSE
   - from: ../THIRD_PARTY_NOTICES.md
     to: THIRD_PARTY_NOTICES.md
+  # Minisign verification pubkey. Bundled so the auto-updater can verify
+  # the .minisig sidecar of any downloaded artifact at install time (a
+  # parallel offline-verifiable trust layer alongside Authenticode).
+  # Missing on builds cut before the maintainer has generated the keypair
+  # — the auto-updater hook in electron/main.ts:verifyDownloadedUpdateAndGate
+  # treats absence as "fail-open, log warning" so distribution still works.
+  - from: ../docs/winstt.pub
+    to: winstt.pub
+    filter:
+      - "winstt.pub"
 win:
   target:
     - portable

@@ -72,25 +72,49 @@ interface IMMDeviceEnumerator {
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator {}
 
 public static class Audio {
+    // Returns null when there is no default render endpoint (no playback
+    // device, or the endpoint is being switched mid-call — Bluetooth
+    // toggling, monitor-with-speakers waking, etc.). Callers handle null
+    // as a graceful no-op instead of letting the COMException bubble out
+    // to PowerShell's stderr.
     static IAudioEndpointVolume GetEndpoint() {
-        var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
-        IMMDevice device;
-        enumerator.GetDefaultAudioEndpoint(0, 1, out device);
-        Guid iid = typeof(IAudioEndpointVolume).GUID;
-        object o;
-        device.Activate(ref iid, 23, IntPtr.Zero, out o);
-        return (IAudioEndpointVolume)o;
+        try {
+            var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumerator());
+            IMMDevice device;
+            int hr = enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+            if (hr != 0 || device == null) return null;
+            Guid iid = typeof(IAudioEndpointVolume).GUID;
+            object o;
+            hr = device.Activate(ref iid, 23, IntPtr.Zero, out o);
+            if (hr != 0 || o == null) return null;
+            return (IAudioEndpointVolume)o;
+        } catch {
+            return null;
+        }
     }
     public static float GetVolume() {
-        float v;
-        GetEndpoint().GetMasterVolumeLevelScalar(out v);
-        return v;
+        try {
+            var ep = GetEndpoint();
+            if (ep == null) return float.NaN;
+            float v;
+            ep.GetMasterVolumeLevelScalar(out v);
+            return v;
+        } catch {
+            return float.NaN;
+        }
     }
     public static void SetVolume(float level) {
-        if (level < 0f) level = 0f;
-        if (level > 1f) level = 1f;
-        Guid empty = Guid.Empty;
-        GetEndpoint().SetMasterVolumeLevelScalar(level, ref empty);
+        try {
+            if (level < 0f) level = 0f;
+            if (level > 1f) level = 1f;
+            var ep = GetEndpoint();
+            if (ep == null) return;
+            Guid empty = Guid.Empty;
+            ep.SetMasterVolumeLevelScalar(level, ref empty);
+        } catch {
+            // No default endpoint or transient COM failure — caller treats
+            // any duck/restore failure as a recoverable no-op.
+        }
     }
 }
 

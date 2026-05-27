@@ -1,8 +1,8 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { Delete02Icon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { VList } from "virtua";
 import { useSettingsStore } from "@/entities/setting";
 import {

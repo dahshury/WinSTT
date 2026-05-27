@@ -1,10 +1,78 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { renderHook, waitFor } from "@testing-library/react";
+import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { RuntimeInfo } from "@/entities/connection";
 import { useConnectionStore } from "@/entities/connection";
-import { useModelSwapStore } from "@/entities/model-catalog";
+import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { useSyncActiveModel } from "./use-sync-active-model";
+
+// adoptRuntime now requires a catalog entry so it can pair the model with its
+// backend (the typed ModelPatch refuses model-only patches). Seed the catalog
+// with the ids these tests exercise so the adoption path actually fires.
+function seedCatalog(): void {
+	useCatalogStore.setState({
+		isLoaded: true,
+		models: [
+			{
+				id: "tiny",
+				displayName: "tiny",
+				family: "whisper",
+				backend: "faster_whisper",
+				languages: [],
+				supportsLanguageDetection: false,
+				supportsRealtime: true,
+				sizeLabel: "",
+				onnxModelName: null,
+				description: "",
+				availableQuantizations: [],
+				sizeBytesByQuantization: {},
+				available: true,
+				errorMessage: "",
+				localPath: null,
+				speedScore: 0,
+				accuracyScore: 0,
+			},
+			{
+				id: "nemo-canary-1b-v2",
+				displayName: "Canary",
+				family: "nemo",
+				backend: "onnx_asr",
+				languages: [],
+				supportsLanguageDetection: false,
+				supportsRealtime: false,
+				sizeLabel: "",
+				onnxModelName: null,
+				description: "",
+				availableQuantizations: [],
+				sizeBytesByQuantization: {},
+				available: true,
+				errorMessage: "",
+				localPath: null,
+				speedScore: 0,
+				accuracyScore: 0,
+			},
+			{
+				id: "large-v3-turbo",
+				displayName: "Large v3 Turbo",
+				family: "whisper",
+				backend: "faster_whisper",
+				languages: [],
+				supportsLanguageDetection: false,
+				supportsRealtime: false,
+				sizeLabel: "",
+				onnxModelName: null,
+				description: "",
+				availableQuantizations: [],
+				sizeBytesByQuantization: {},
+				available: true,
+				errorMessage: "",
+				localPath: null,
+				speedScore: 0,
+				accuracyScore: 0,
+			},
+		],
+	});
+}
 
 const originalApi = window.electronAPI;
 
@@ -36,9 +104,18 @@ beforeEach(() => {
 		settings: { ...DEFAULT_SETTINGS, model: { ...DEFAULT_SETTINGS.model, model: "tiny" } },
 		isLoaded: true,
 	});
+	seedCatalog();
 });
 
 afterEach(() => {
+	// React Testing Library's auto-cleanup hooks into Vitest/Jest but not
+	// Bun's test runner, so leftover roots from earlier files race against
+	// this suite's hooks. Without an explicit cleanup, every prior
+	// renderHook call stays mounted and a single setState fires the
+	// reconciler effect across all of them, producing nondeterministic
+	// adoption order. (Surfaced when Pattern F tightened ``adoptRuntime``
+	// to require a catalog hit.)
+	cleanup();
 	window.electronAPI = originalApi;
 });
 
@@ -155,6 +232,12 @@ describe("useSyncActiveModel", () => {
 		// deps, the reconciler doesn't re-fire and the picker stays on
 		// canary while the server runs tiny. Locks in: the reconciler
 		// must re-fire when settings drift away from runtime.
+		// Defensive re-seed: the catalog is a module singleton; another
+		// test file run before this one (e.g. catalog-store.test) can leave
+		// it empty, and ``adoptRuntime`` now requires a catalog hit to
+		// resolve the paired backend. Re-seed unconditionally so the test
+		// is order-independent under Bun's shared-process test runner.
+		seedCatalog();
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,

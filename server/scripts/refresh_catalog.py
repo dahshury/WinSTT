@@ -55,6 +55,11 @@ PARAM_COUNTS_PATH = SCRIPT_DIR / "_model_param_counts.json"
 # — e.g. ``encoder-model.int8.onnx``).
 _QUANT_SUFFIXES: tuple[str, ...] = ("q4f16", "bnb4", "int8", "fp16", "uint8", "q4")
 _QUANT_RE = re.compile(r"[._](" + "|".join(_QUANT_SUFFIXES) + r")\.onnx$")
+#: Same suffix detector but accepts both external-data tail conventions
+#: too: ``.onnx_data`` (onnx-community) and ``.onnx.data`` (istupakov
+#: NeMo / GigaAM). Used by :func:`_refresh_sizes` so a model whose tensors
+#: live in a sibling weight-data file get attributed to the same quant.
+_QUANT_WEIGHT_RE = re.compile(r"[._](" + "|".join(_QUANT_SUFFIXES) + r")\.onnx(?:_data|\.data)?$")
 
 #: For Whisper-family repos, onnx-asr's ``WhisperHf`` adapter only loads
 #: ``decoder_model_merged*.onnx`` — the unmerged ``decoder_model.onnx`` /
@@ -111,6 +116,21 @@ def _quantization_from_filename(name: str) -> str | None:
     if not name.endswith(".onnx"):
         return None
     match = _QUANT_RE.search(name)
+    return match.group(1) if match else ""
+
+
+def _quantization_from_weight_filename(name: str) -> str | None:
+    """Return the quant suffix for a weight filename (``.onnx`` or ``.onnx_data``).
+
+    Mirrors :func:`_quantization_from_filename` but also accepts the
+    external-data tail that large ONNX exports use for tensors. Needed
+    by :func:`_refresh_sizes` so the bytes that live in a sibling
+    ``*.onnx_data`` file get attributed to the same quantization bucket
+    as the matching ``*.onnx`` graph.
+    """
+    if not (name.endswith(".onnx") or name.endswith(".onnx_data") or name.endswith(".onnx.data")):
+        return None
+    match = _QUANT_WEIGHT_RE.search(name)
     return match.group(1) if match else ""
 
 
@@ -304,6 +324,90 @@ def _refresh_quants(entry: dict[str, Any], *, offline: bool) -> None:
     entry["available_quantizations"] = _curate_quants(family, quants, entry=entry)
 
 
+def _is_weight_relevant(filename: str, family: str) -> bool:
+    """Whether ``filename`` counts toward a quant's download size.
+
+    Mirrors :func:`_is_file_relevant`, but also admits external-data
+    sidecars (``*.onnx_data`` for onnx-community, ``*.onnx.data`` for
+    istupakov / NeMo) whose corresponding ``.onnx`` graph passes the
+    family filter. The sidecars carry the actual weight tensors for
+    large models and must be summed with the graph file.
+    """
+    if filename.endswith(".onnx"):
+        return _is_file_relevant(filename, family)
+    for tail in (".onnx_data", ".onnx.data"):
+        if filename.endswith(tail):
+            sibling = filename[: -len(tail)] + ".onnx"
+            return _is_file_relevant(sibling, family)
+    return False
+
+
+def _sibling_size(sibling: object) -> int:
+    """Best-effort byte count for an ``HfApi.model_info`` sibling.
+
+    Falls back to ``sibling.lfs.size`` for LFS-tracked weight files where
+    the top-level ``size`` field is ``None``. Returns ``0`` when neither
+    is populated so the caller can skip the bucket.
+    """
+    size = getattr(sibling, "size", None)
+    if not isinstance(size, int) or size <= 0:
+        lfs = getattr(sibling, "lfs", None)
+        size = getattr(lfs, "size", None) if lfs is not None else None
+    return size if isinstance(size, int) and size > 0 else 0
+
+
+def _refresh_sizes(entry: dict[str, Any], *, offline: bool) -> None:
+    """Populate ``entry["size_bytes_by_quantization"]`` from HF, in-place.
+
+    For each quantization the catalog advertises we sum the bytes of every
+    ``.onnx`` / ``.onnx_data`` weight file matching that suffix, using the
+    same family-aware filter the runtime cache probe uses. The resulting
+    map drives the download-confirmation dialog so it can render an exact
+    "Need to download: 78 MB" the moment it opens, instead of falling back
+    to the "Size: unknown until headers fetched" placeholder.
+
+    Skips the network call entirely in ``offline`` mode (preserves whatever
+    was in the catalog). On any HF error the existing field is left alone
+    so a flaky run doesn't clobber a previously-baked good value.
+    """
+    if offline:
+        return
+    repo = _resolve_hf_repo(entry.get("onnx_model_name"))
+    if repo is None:
+        return
+    try:
+        from huggingface_hub import HfApi
+    except ImportError:
+        return
+    try:
+        info = HfApi().model_info(repo, files_metadata=True)
+    except Exception as exc:
+        print(f"  ! model_info({repo!r}) failed: {type(exc).__name__}: {exc}")
+        return
+    family = str(entry.get("family", ""))
+    advertised = set(entry.get("available_quantizations", []))
+    by_quant: dict[str, int] = {}
+    for sibling in info.siblings or []:
+        filename = getattr(sibling, "rfilename", None) or ""
+        if not _is_weight_relevant(filename, family):
+            continue
+        quant = _quantization_from_weight_filename(filename)
+        if quant is None or quant not in advertised:
+            continue
+        size = _sibling_size(sibling)
+        if size > 0:
+            by_quant[quant] = by_quant.get(quant, 0) + size
+    if not by_quant:
+        return
+    # Persist with deterministic ordering matching `available_quantizations`
+    # so the catalog JSON diff stays minimal across re-runs.
+    ordered: dict[str, int] = {}
+    for quant in entry.get("available_quantizations", []):
+        if quant in by_quant:
+            ordered[quant] = by_quant[quant]
+    entry["size_bytes_by_quantization"] = ordered
+
+
 def _refresh_params(entry: dict[str, Any], param_counts: dict[str, dict[str, Any]]) -> None:
     """Pull the latest measured/published param count from the sidecar JSON.
 
@@ -363,12 +467,17 @@ def main() -> int:
         before_quants = list(entry.get("available_quantizations", []))
         before_params = entry.get("param_count")
         before_languages = list(entry.get("languages", []))
+        before_sizes = dict(entry.get("size_bytes_by_quantization", {}))
         _refresh_quants(entry, offline=args.offline)
         _refresh_params(entry, param_counts)
         _refresh_languages(entry, offline=args.offline)
+        # Size refresh happens after the quant refresh so we only ask HF
+        # about quants that survived the curation filter.
+        _refresh_sizes(entry, offline=args.offline)
         after_quants = entry.get("available_quantizations", [])
         after_params = entry.get("param_count")
         after_languages = entry.get("languages", [])
+        after_sizes = entry.get("size_bytes_by_quantization", {})
         diffs: list[str] = []
         if before_quants != after_quants:
             diffs.append(f"quants {before_quants} -> {after_quants}")
@@ -376,6 +485,8 @@ def main() -> int:
             diffs.append(f"params {before_params} -> {after_params}")
         if before_languages != after_languages:
             diffs.append(f"languages {before_languages} -> {after_languages}")
+        if before_sizes != after_sizes:
+            diffs.append(f"sizes {before_sizes} -> {after_sizes}")
         if diffs:
             print(f"  {entry.get('id'):40s}  {'; '.join(diffs)}")
 

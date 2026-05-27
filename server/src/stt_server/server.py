@@ -136,37 +136,65 @@ def _emit_startup_fallback_swap_failed(
 
 
 def _try_load_recorder(state: ServerState, model_name: str) -> str | None:
-    """Build + warm up the recorder with ``model_name``.
+    """Build + warm the recorder with ``model_name``. Two-phase: construct
+    first (which installs ``state.recorder`` so command dispatch can find it
+    immediately), then warm in a separate try block.
 
-    ``AudioToTextRecorder.__init__`` is lazy — the actual ONNX session load
-    happens in :py:meth:`warmup`. So a fallback that only wraps construction
-    misses every real load failure (file-not-found, corrupt graph, missing
-    fp16 variant, ORT init failure). We call warmup here so any of those
-    surface as a clean failure that the caller can fall back from.
+    **Construct failure** (file-not-found, corrupt graph, missing fp16
+    variant, ORT init failure) returns a reason string and leaves
+    ``state.recorder`` cleared — the caller (``_load_recorder_with_fallback``)
+    can then try the next model.
 
-    Returns ``None`` on success (``state.recorder`` is live and warm). On
-    failure, returns a short human-readable reason string and leaves
-    ``state.recorder`` cleared so the next attempt starts from a clean
-    slot. Explicit user-cancellation (``DownloadCancelledError``) propagates
-    so the caller can distinguish "the user said no" from "the file is
-    broken".
+    **Warmup failure** (e.g. CUDA JIT compile error mid-warmup) returns a
+    reason string but **does not clear** ``state.recorder``. The recorder
+    is still usable: the first real PTT call pays the JIT cost we tried to
+    front-load, but ``set_microphone`` and ``text()`` continue to dispatch
+    correctly. This avoids the silent soft-brick that triggered the
+    Option C architecture.
+
+    Explicit user-cancellation (``DownloadCancelledError``) propagates so
+    the caller can distinguish "the user said no" from "the file is broken".
     """
     from src.recorder.domain.errors import DownloadCancelledError
 
     config = {**state.recorder_config, "model": model_name}
+
+    # ── Phase 1: construct ────────────────────────────────────────────
+    # AudioToTextRecorder.__init__ is lazy; the heavy ORT session creation
+    # happens inside ``construct()`` (which threads through _ensure_service).
+    # Any irrecoverable failure here means the model file is unusable —
+    # surface it to the fallback chain.
     try:
-        state.recorder = AudioToTextRecorder(**config)
-        # Force eager load; lazy init defers ORT session creation to first
-        # use, which would surface failures long after _recorder_thread
-        # has handed off to the WS event loop.
-        state.recorder.warmup()
+        recorder = AudioToTextRecorder(**config)
+        recorder.construct()
     except DownloadCancelledError:
         state.recorder = None
         raise
     except Exception as exc:
         reason = f"{type(exc).__name__}: {exc}"
-        print(f"{bcolors.WARNING}[startup] failed to load '{model_name}': {reason}{bcolors.ENDC}")
+        print(f"{bcolors.WARNING}[startup] failed to construct '{model_name}': {reason}{bcolors.ENDC}")
         state.recorder = None
+        return reason
+
+    # Install the recorder BEFORE warmup. If warmup raises or hangs, the
+    # WS command dispatcher can still find ``set_microphone`` / ``text``
+    # / etc. on this object (they paying the JIT cost on first call).
+    state.recorder = recorder
+
+    # ── Phase 2: warmup ───────────────────────────────────────────────
+    try:
+        recorder.warmup()
+    except DownloadCancelledError:
+        # Cancellation here is unusual (no downloads at warmup time) but
+        # honour it the same way as during construct — caller decides.
+        raise
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        print(
+            f"{bcolors.WARNING}[startup] warmup raised for '{model_name}': "
+            f"{reason} — recorder is still installed; first PTT call will "
+            f"pay the JIT cost{bcolors.ENDC}"
+        )
         return reason
     return None
 
@@ -229,6 +257,44 @@ def _load_recorder_with_fallback(state: ServerState, loop: asyncio.AbstractEvent
     return False
 
 
+def _broadcast_server_ready(
+    state: ServerState,
+    loop: asyncio.AbstractEventLoop,
+    *,
+    ready: bool,
+    error: str | None = None,
+) -> None:
+    """Send a structured ``server_ready`` message to every control client.
+
+    Replaces the legacy ``print("Recorder initialized")`` stdout-grep
+    signaling Electron used to scrape for. The WS event is now the
+    canonical signal — typed, race-free with broadcast, and able to
+    distinguish success (``ready=True``) from total-load-failure
+    (``ready=False`` with an error string).
+
+    The payload also carries ``runtime_info`` (providers list + is_gpu +
+    actually-loaded model names) so the renderer can paint an honest
+    GPU/CPU chip and the model picker without a follow-up round trip.
+    Late-joining clients fetch the same info via ``get_runtime_info``.
+    """
+    from src.stt_server.control_handler import augment_runtime_info
+
+    msg_payload: dict[str, Any] = {"type": "server_ready", "ready": ready}
+    if not ready and error:
+        msg_payload["error"] = error
+    if ready:
+        try:
+            raw_runtime_info = state.recorder.runtime_info() if state.recorder is not None else None
+        except Exception:
+            raw_runtime_info = None
+        runtime_info = augment_runtime_info(raw_runtime_info)
+        if runtime_info is not None:
+            msg_payload["runtime_info"] = runtime_info
+    msg = json.dumps(msg_payload)
+    for ws in list(state.control_connections):
+        asyncio.run_coroutine_threadsafe(ws.send(msg), loop)
+
+
 def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
     """Initialize the recorder and run the text-processing loop."""
     print(f"{bcolors.OKGREEN}Initializing RealtimeSTT server with parameters:{bcolors.ENDC}")
@@ -249,37 +315,25 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
             print(f"  {c}│{e} {' ' * key_w} {c}│{e} {chunk:<{val_w}} {c}│{e}")
     print(bot)
     print(f"{bcolors.OKGREEN}Loading and warming up models...{bcolors.ENDC}")
-    if not _load_recorder_with_fallback(state, loop):
-        # Every fallback failed (or user cancelled the original download). Unblock
-        # main() so the WS servers can still accept connections — the renderer
-        # will see ``state.recorder is None`` and surface its own error path.
+    load_ok = _load_recorder_with_fallback(state, loop)
+    if not load_ok:
+        # Every fallback failed (or user cancelled the original download).
+        # Unblock main() so the WS servers can still accept connections,
+        # broadcast a structured failure ready event so the renderer can
+        # show an explicit error chip instead of an indefinite spinner.
         state.recorder_ready.set()
+        _broadcast_server_ready(state, loop, ready=False, error="every model failed to load")
         return
-    # Backend-agnostic ready marker — Electron's stt-process.ts greps for this
-    # exact phrase to flip the spawned-server status to "running".  Keep the
-    # text stable across backend swaps (faster-whisper, onnx-asr, …) so the
-    # detection survives transcriber refactors.
-    print(f"{bcolors.OKGREEN}{bcolors.BOLD}Recorder initialized{bcolors.ENDC}")
+
+    # Operator-readable log line. NOT used by Electron for ready
+    # detection anymore — the canonical signal is the ``server_ready``
+    # WS event emitted below (see :func:`_broadcast_server_ready`).
+    # Renamed deliberately from the legacy "Recorder initialized"
+    # phrase to break any lingering stdout greppers that might still
+    # exist downstream.
+    print(f"{bcolors.OKGREEN}{bcolors.BOLD}[stt-server] recorder ready{bcolors.ENDC}")
     state.recorder_ready.set()
-
-    # Broadcast server_ready to all connected control clients. We include the
-    # runtime snapshot (providers / is_gpu / model names) so the renderer can
-    # paint an honest GPU/CPU chip without an extra round-trip — the value
-    # is also fetchable per-connection via the ``get_runtime_info`` control
-    # command for late joiners.
-    from src.stt_server.control_handler import augment_runtime_info
-
-    try:
-        raw_runtime_info = state.recorder.runtime_info() if state.recorder is not None else None
-    except Exception:
-        raw_runtime_info = None
-    runtime_info = augment_runtime_info(raw_runtime_info)
-    msg_payload: dict[str, Any] = {"type": "server_ready"}
-    if runtime_info is not None:
-        msg_payload["runtime_info"] = runtime_info
-    msg = json.dumps(msg_payload)
-    for ws in list(state.control_connections):
-        asyncio.run_coroutine_threadsafe(ws.send(msg), loop)
+    _broadcast_server_ready(state, loop, ready=True)
 
     # Capture the wav_path emitted on TranscriptionCompleted so the fullSentence
     # JSON forwarded to the renderer carries it alongside the text. Wired here
@@ -323,8 +377,38 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
 
     try:
         assert state.recorder is not None
+        # Defense-in-depth wrapper around ``recorder.text()``: the inner
+        # ``_safe_transcribe`` already catches model-runtime exceptions
+        # (ONNX RuntimeException etc.) and returns None, but anything
+        # raised OUTSIDE that path (audio source loss, VAD/wake-word
+        # adapter failure, an event-bus handler bug, …) would propagate
+        # here and kill the recorder thread silently — the user would
+        # see "Sentence: …" stop appearing and have to restart the
+        # server to dictate again. Catch broadly, log, brief backoff to
+        # avoid tight-spin on a permanently-broken state, then resume.
+        # Consecutive failures get a longer backoff so a wholly dead
+        # recorder doesn't burn CPU.
+        consecutive_failures = 0
         while not state.stop_recorder:
-            state.recorder.text(process_text)
+            try:
+                state.recorder.text(process_text)
+                consecutive_failures = 0
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                consecutive_failures += 1
+                print(
+                    f"{bcolors.FAIL}[recorder-thread] text() raised "
+                    f"(failure #{consecutive_failures}); continuing.{bcolors.ENDC}",
+                    flush=True,
+                )
+                import traceback
+
+                traceback.print_exc()
+                # 0.5 s, 1 s, 2 s, 4 s, capped at 5 s. Tight enough that
+                # a transient one-off feels instant, slow enough that a
+                # broken model doesn't melt the CPU emitting log spam.
+                time.sleep(min(0.5 * (2 ** min(consecutive_failures - 1, 4)), 5.0))
     except KeyboardInterrupt:
         print(f"{bcolors.WARNING}Exiting application due to keyboard interrupt{bcolors.ENDC}")
 
@@ -374,14 +458,18 @@ def _refresh_catalog_languages_in_background(state: ServerState, loop: asyncio.A
     # the point — settings panel would still see Arabic on Canary until
     # the user restarts the app.
     try:
-        from src.stt_server.control_handler import _active_device
+        from src.stt_server.control_handler import _active_accelerator, _active_device
 
         refreshed = ModelCatalog()
         device = _active_device(state)
+        accelerator = _active_accelerator(state)
     except Exception:
         return
     payload = json.dumps(
-        {"type": "model_catalog_updated", "models": refreshed.to_dicts(device=device)},
+        {
+            "type": "model_catalog_updated",
+            "models": refreshed.to_dicts(device=device, accelerator=accelerator),
+        },
     )
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(payload), loop)
 
@@ -508,9 +596,7 @@ async def main_async() -> None:
         "download_root": args.root,
         "realtime_model_type": args.rt_model,
         "language": args.lang,
-        "batch_size": args.batch,
         "init_realtime_after_seconds": args.init_realtime_after_seconds,
-        "realtime_batch_size": args.realtime_batch_size,
         "initial_prompt_realtime": args.initial_prompt_realtime,
         "input_device_index": args.input_device,
         "silero_sensitivity": args.silero_sensitivity,
@@ -523,8 +609,6 @@ async def main_async() -> None:
         "realtime_processing_pause": args.realtime_processing_pause,
         "silero_deactivity_detection": args.silero_deactivity_detection,
         "early_transcription_on_silence": args.early_transcription_on_silence,
-        "beam_size": args.beam_size,
-        "beam_size_realtime": args.beam_size_realtime,
         "initial_prompt": args.initial_prompt,
         "wake_words": args.wake_words,
         "wake_words_sensitivity": args.wake_words_sensitivity,
@@ -544,6 +628,18 @@ async def main_async() -> None:
         # restart (handled by STARTUP_ONLY_KEYS on the renderer side).
         "always_on_microphone": args.always_on_microphone,
         "lazy_stream_close": args.lazy_stream_close,
+        "lazy_close_timeout_seconds": args.lazy_close_timeout_seconds,
+        # Tail-of-recording capture window for user-driven stops (PTT
+        # release / toggle off). Catches trailing syllables that leave
+        # the lips just after the key-up. 0 = off; matches Handy.
+        "extra_recording_buffer_ms": args.extra_recording_buffer_ms,
+        # Whisper-native translate (multilingual → English in a single
+        # decode) + idle-unload timeout to free RAM/VRAM between sessions.
+        # Both port directly from Handy's settings vocabulary.
+        "translate_to_english": args.translate_to_english,
+        "model_unload_timeout_seconds": (
+            None if args.model_unload_timeout_seconds < 0 else args.model_unload_timeout_seconds
+        ),
         "spinner": False,
         "use_microphone": True,
         # Wire dynamic-silence classification + WS broadcast off the
@@ -564,9 +660,7 @@ async def main_async() -> None:
         "gpu_device_index": args.gpu_device_index,
         "device": args.device,
         "handle_buffer_overflow": args.handle_buffer_overflow,
-        "suppress_tokens": args.suppress_tokens,
         "allowed_latency_limit": args.allowed_latency_limit,
-        "faster_whisper_vad_filter": args.faster_whisper_vad_filter,
         "backend": args.backend,
         "onnx_quantization": args.onnx_quantization,
     }
@@ -769,6 +863,7 @@ def main() -> None:
         # the spawning Electron process — exactly the failure mode that
         # masked the DirectML / custom-models init bug we just diagnosed.
         import traceback
+
         traceback.print_exc()
         sys.stderr.flush()
         sys.stdout.flush()

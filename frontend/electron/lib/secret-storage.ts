@@ -15,19 +15,29 @@
  * Only callable from the main process; the renderer must never see ciphertext.
  */
 import { safeStorage } from "electron";
+import type { AppSettingsOutput } from "../../src/shared/config/settings-schema";
+import type { LeafPathsToString } from "./leaf-paths";
 
 const ENC_PREFIX = "enc:v1:";
 
-/** Dot-paths whose stored value should be encrypted at rest. */
-export const SECRET_DOT_PATHS: readonly string[] = [
+/**
+ * Dot-paths whose stored value should be encrypted at rest.
+ *
+ * Typed via ``LeafPathsToString<AppSettingsOutput>`` so adding a non-leaf
+ * path (e.g. accidentally dropping the ``.apiKey`` suffix) or a typo
+ * (``integrations.openai.appKey``) is a compile-time error rather than a
+ * runtime "decrypted to empty string" silent corruption. See
+ * ``leaf-paths.ts`` for the regression context.
+ */
+export const SECRET_DOT_PATHS = [
 	"llm.openrouterApiKey",
 	"integrations.openai.apiKey",
 	"integrations.elevenlabs.apiKey",
-];
+] as const satisfies readonly LeafPathsToString<AppSettingsOutput>[];
 
 /** Returns true if the dot-path identifies a secret-at-rest field. */
 export function isSecretDotPath(dotPath: string): boolean {
-	return SECRET_DOT_PATHS.includes(dotPath);
+	return (SECRET_DOT_PATHS as readonly string[]).includes(dotPath);
 }
 
 /** Returns true if the value is already wrapped ciphertext. */

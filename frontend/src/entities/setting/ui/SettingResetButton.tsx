@@ -1,7 +1,7 @@
 import { ArrowTurnBackwardIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { IconButton } from "@/shared/ui/icon-button";
 

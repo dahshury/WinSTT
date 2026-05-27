@@ -1,7 +1,7 @@
 import { PlayIcon, StopIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,

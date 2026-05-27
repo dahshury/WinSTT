@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
+import type { TranscriberBackend } from "@/shared/api/schema.zod";
 import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
 
 // How long after an IPC settingsLoad we consider a settings.model transition
@@ -138,29 +139,10 @@ export function useSyncActiveModel(): void {
 		// documents.
 		const previousModel = prevSettingsModelRef.current;
 		const activeMain = useModelSwapStore.getState().activeMain;
-		// region agent log — H-S-C/H-S-E
-		// eslint-disable-next-line no-console
-		console.warn(
-			`[diag-tiny] useSyncActiveModel.effect prev=${previousModel ?? "(undef)"} settings=${settingsModel ?? "(null)"} runtime=${runtimeModel ?? "(null)"} activeMain=${activeMain ?? "(null)"} serverStatus=${serverStatus} isLoaded=${isLoaded} ts=${Date.now()}`
-		);
-		// endregion
 		if (previousModel !== undefined && previousModel !== settingsModel) {
 			const sinceIpcLoad = Date.now() - recentIpcLoadAt();
 			const ipcLoadInducedTransition = sinceIpcLoad < IPC_LOAD_GUARD_WINDOW_MS;
-			if (ipcLoadInducedTransition) {
-				// region agent log — H-S-C
-				// eslint-disable-next-line no-console
-				console.warn(
-					`[diag-tiny] useSyncActiveModel.beginSwap.skip ipcLoadGuard prev=${previousModel} settings=${settingsModel} runtime=${runtimeModel ?? "(null)"} sinceIpcLoad=${sinceIpcLoad}ms ts=${Date.now()}`
-				);
-				// endregion
-			} else if (settingsModel && settingsModel !== runtimeModel) {
-				// region agent log — H-S-C
-				// eslint-disable-next-line no-console
-				console.warn(
-					`[diag-tiny] useSyncActiveModel.beginSwap.willFire prev=${previousModel} settings=${settingsModel} runtime=${runtimeModel ?? "(null)"} ts=${Date.now()}`
-				);
-				// endregion
+			if (!ipcLoadInducedTransition && settingsModel && settingsModel !== runtimeModel) {
 				useModelSwapStore.getState().beginSwap("main", previousModel ?? "", settingsModel);
 			}
 		}
@@ -180,17 +162,16 @@ export function useSyncActiveModel(): void {
 			// downstream (quantization eligibility, fp16 promotion, …)
 			// reads the wrong answer.
 			const catalogEntry = useCatalogStore.getState().models.find((m) => m.id === runtimeModel);
-			const patch: Parameters<typeof updateModelSettings>[0] = { model: runtimeModel };
 			if (catalogEntry?.backend) {
-				patch.backend = catalogEntry.backend as "faster_whisper" | "onnx_asr";
+				updateModelSettings({
+					model: runtimeModel,
+					backend: catalogEntry.backend as TranscriberBackend,
+				});
 			}
-			// region agent log — H-S-C
-			// eslint-disable-next-line no-console
-			console.warn(
-				`[diag-tiny] useSyncActiveModel.adoptRuntime newSettings=${runtimeModel} oldSettings=${settingsModel ?? "(null)"} backend=${catalogEntry?.backend ?? "(unknown)"} ts=${Date.now()}`
-			);
-			// endregion
-			updateModelSettings(patch);
+			// If we can't resolve the runtime model in the catalog we deliberately
+			// SKIP the adoption — patching `{ model }` without a paired backend is
+			// the exact drift the typed ``ModelPatch`` now forbids. The picker's
+			// fallback effect will pick a valid model once the catalog refreshes.
 		}
 	}, [isLoaded, serverStatus, runtimeModel, settingsModel, updateModelSettings]);
 }

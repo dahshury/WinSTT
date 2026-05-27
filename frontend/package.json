@@ -23,7 +23,7 @@
     "test:e2e:electron": "bun run electron:compile && PW_SKIP_WEBSERVER=1 playwright test --project=electron",
     "test:visual": "playwright test visual-regression",
     "test:visual:update": "playwright test visual-regression --update-snapshots",
-    "generate": "openapi-typescript ../spec/openapi.yaml -o ../spec/generated/ts/schema.d.ts",
+    "generate": "openapi-typescript ../spec/openapi.yaml -o ../spec/generated/ts/schema.d.ts && bun run scripts/generate-zod-schemas.ts",
     "knip": "knip",
     "icon:generate": "bun run scripts/generate-placeholder-icon.ts",
     "icon:tray:generate": "bun run scripts/generate-tray-icons.ts",
@@ -32,6 +32,8 @@
     "check:react-doctor": "react-doctor --fail-on error --offline",
     "check:i18n": "bun run scripts/verify-i18n.ts",
     "check:i18n:strict": "bun run scripts/verify-i18n.ts --strict",
+    "check:i18n:lint-jsx": "bun run scripts/verify-i18n.ts --lint-jsx",
+    "check:ws-contract": "bun run scripts/check-ws-contract.ts",
     "crap:gate": "bun run scripts/crap-gate.ts reports/crap-baseline.json reports/crap.json",
     "coverage:gate": "bun run scripts/coverage-gate.ts",
     "native:build": "node scripts/native/build-winstt-paste.cjs && node scripts/native/build-winstt-context.cjs",
@@ -42,7 +44,7 @@
     "electron:start": "wait-on tcp:3000 file:dist-electron/main.js file:dist-electron/preload.cjs && bun run scripts/dev-electron.ts",
     "electron:rebuild": "electron-rebuild -o uiohook-napi",
     "electron:rebuild:force": "electron-rebuild -f -o uiohook-napi",
-    "electron:dev": "rm -rf dist-electron && concurrently -k --success first -n vite,main,app -c blue,green,magenta \"bun run dev:renderer\" \"bun run electron:watch:main\" \"bun run electron:start\""
+    "electron:dev": "concurrently -k --success first -n vite,main,app -c blue,green,magenta \"bun run dev:renderer\" \"bun run electron:watch:main\" \"bun run electron:start\""
   },
   "dependencies": {
     "@ai-sdk/elevenlabs": "^2.0.33",
@@ -61,7 +63,6 @@
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "motion": "^12.38.0",
-    "next-intl": "^4.11.0",
     "pngjs": "^7.0.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
@@ -69,6 +70,7 @@
     "tailwind-merge": "^3.5.0",
     "tar": "^7.5.0",
     "uiohook-napi": "^1.5.5",
+    "use-intl": "^4.12.0",
     "virtua": "^0.49.1",
     "zod": "^4.4.3",
     "zustand": "^5.0.13"

@@ -1,9 +1,9 @@
 ---
 title: Frontend Architecture
-description: Electron + Next.js with Feature-Sliced Design
+description: Electron + Vite multi-page React with Feature-Sliced Design
 ---
 
-The WinSTT frontend is an Electron application with a Next.js 16 renderer. The renderer is built as a static export and loaded directly by Electron. All server communication happens in the Electron main process -- the renderer has zero WebSocket code.
+The WinSTT frontend is an Electron application with a Vite multi-page React 19 renderer. Each Electron BrowserWindow loads its own HTML entry directly via `file://` -- there is no router and no dev server in production. All server communication happens in the Electron main process; the renderer has zero WebSocket code.
 
 ## Process Architecture
 
@@ -35,18 +35,20 @@ Key files:
 
 ### Renderer
 
-The renderer is a Next.js 16 app with `output: "export"` (static HTML). It uses Feature-Sliced Design for code organization.
+The renderer is a Vite 7 multi-page app. Each Electron BrowserWindow loads its own HTML entry from `windows/<page>.html` (with `index.html` for the main window). One React tree per entry under `src/entries/<page>.tsx`. It uses Feature-Sliced Design for code organization.
 
 ## Feature-Sliced Design Layers
 
 ```
 src/
   app/        Bootstrap, providers, global styles
-  views/      Route-mapped pages (renamed from pages/ to avoid Next.js conflict)
+  views/      One slice per BrowserWindow (main, settings, overlay, tray-menu,
+              model-picker, device-picker, onboarding, history)
   widgets/    Composite blocks combining features and entities
   features/   Reusable user interactions
   entities/   Business domain objects
   shared/     Foundation utilities, UI primitives, config
+  entries/    One .tsx per HTML window (createRoot + render <View />)
 ```
 
 ### Import Contract
@@ -66,17 +68,21 @@ Each layer may only import from layers below it. Never sideways.
 
 | Tool | Purpose |
 |------|---------|
-| Zustand | Client state (UI state, local stores) |
-| TanStack Query | Server state (settings sync, model catalog) |
+| Zustand | Renderer client state (settings, model catalog, transcription) |
+| IPC | Server-of-truth data layer (no HTTP, no TanStack Query, no Redux) |
 
 ## Technology Stack
 
 | Concern | Choice |
 |---------|--------|
 | Package manager | Bun |
+| Build tool | Vite 7 (renderer) + tsup (electron-main) |
 | Linter/formatter | Biome 2.x + ultracite |
-| Type checker | TypeScript strict |
-| Test runner | Bun test |
-| UI components | Base UI (baseui) + Styletron |
-| Styling (layout) | Tailwind v4 |
+| Type checker | tsgo (TypeScript native preview) |
+| Test runner | Bun test + Playwright (e2e + visual) + Stryker (mutation) |
+| UI components | @base-ui/react (Base UI by MUI) |
+| Styling | Tailwind CSS v4 + clsx + tailwind-merge + class-variance-authority |
 | Icons | @hugeicons/react + @hugeicons/core-free-icons |
+| Forms | react-hook-form + @hookform/resolvers + Zod |
+| i18n | use-intl (locales: ar, en, es, fr, hi, zh) |
+| AI SDKs | Vercel AI SDK (`ai`, `@ai-sdk/openai`, `@ai-sdk/elevenlabs`, `@openrouter/ai-sdk-provider`) |

@@ -217,6 +217,15 @@ export const sttCallMethod = (method: AllowedMethod, args?: unknown[]) =>
 export const sttAbortOperation = () => send(IPC.STT_ABORT_OPERATION);
 
 /**
+ * Subscribe to the "user-initiated cancel just landed" event broadcast by
+ * `handleAbortOperation` in main. Lets renderer hooks (usePushToTalk's toggle
+ * mirror) reset their local "session is active" state so the next hotkey press
+ * starts a fresh recording instead of toggling off a session the server has
+ * already aborted.
+ */
+export const onSttSessionAborted = (cb: () => void) => on(IPC.STT_SESSION_ABORTED, () => cb());
+
+/**
  * Toggle whether the overlay BrowserWindow accepts mouse events. The window is
  * click-through by default; the renderer flips this to `false` while the cursor
  * is over the X cancel button so the click lands instead of falling through.

@@ -46,7 +46,6 @@ RESOLVER_REPOS: dict[str, str] = {
     "moonshine-base-ja": "onnx-community/moonshine-base-ja-ONNX",
     "moonshine-base-ko": "onnx-community/moonshine-base-ko-ONNX",
     "cohere-transcribe": "onnx-community/cohere-transcribe-03-2026-ONNX",
-    "granite-4.0-1b-speech": "onnx-community/granite-4.0-1b-speech-ONNX",
     "whisper-base": "istupakov/whisper-base-onnx",
 }
 
@@ -138,7 +137,6 @@ NEMO_CONFORMER_RNNT_FILES = ["encoder-model.onnx", "decoder_joint-model.onnx"]
 NEMO_CONFORMER_TDT_FILES = ["encoder-model.onnx", "decoder_joint-model.onnx"]
 NEMO_CONFORMER_AED_FILES = ["encoder-model.onnx", "decoder-model.onnx"]
 MOONSHINE_FILES = ["encoder_model.onnx", "decoder_model.onnx"]
-GRANITE_FILES = ["audio_encoder.onnx", "embed_tokens.onnx", "decoder_model_merged.onnx"]
 GIGAAM_V3_E2E_CTC_FILES = ["v3_e2e_ctc.onnx"]
 GIGAAM_V3_E2E_RNNT_FILES = ["v3_e2e_rnnt_encoder.onnx", "v3_e2e_rnnt_decoder.onnx", "v3_e2e_rnnt_joint.onnx"]
 VOSK_FILES = ["encoder.onnx", "decoder.onnx", "joiner.onnx"]
@@ -185,8 +183,6 @@ def _files_for(model_id: str) -> list[str] | None:
         return WHISPER_HF_FILES
     if model_id.startswith("moonshine-"):
         return MOONSHINE_FILES
-    if model_id.startswith("granite-"):
-        return GRANITE_FILES
     if model_id == "nemo-parakeet-ctc-0.6b":
         return NEMO_CONFORMER_CTC_FILES
     if model_id == "nemo-parakeet-rnnt-0.6b":

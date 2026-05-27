@@ -131,12 +131,6 @@
     "approximate": true,
     "note": "Cohere Transcribe model card (2B params)"
   },
-  "granite-4.0-1b-speech": {
-    "params": 1243916628,
-    "source": "measured",
-    "approximate": true,
-    "note": "from q4 graph excluding QDQ scales (audio_encoder + embed_tokens + decoder_model_merged)"
-  },
   "lite-whisper-large-v3-turbo": {
     "params": 534359083,
     "source": "measured",

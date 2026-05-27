@@ -603,15 +603,18 @@ describe("spawnServer argv builder", () => {
 	});
 
 	test("buildServerArgs: number values are stringified and pushed as flag+value", () => {
-		sharedStoreMock.store.set("model.beamSize", 7);
+		// Covers the same int-stringification path the removed beam_size
+		// test used to lock down; webrtcSensitivity is a stable numeric
+		// CLI mapping.
+		sharedStoreMock.store.set("audio.webrtcSensitivity", 2);
 		try {
 			sttProcess.tryAutoSpawnServer();
 			const args = spawnLog[0]?.args ?? [];
-			const idx = args.indexOf("--beam_size");
+			const idx = args.indexOf("--webrtc_sensitivity");
 			expect(idx).toBeGreaterThanOrEqual(0);
-			expect(args[idx + 1]).toBe("7");
+			expect(args[idx + 1]).toBe("2");
 		} finally {
-			sharedStoreMock.store.set("model.beamSize", 5);
+			sharedStoreMock.store.set("audio.webrtcSensitivity", 3);
 		}
 	});
 
@@ -713,8 +716,6 @@ describe("spawnServer argv builder", () => {
 		["model.device", "--device", "cuda"],
 		["model.backend", "--backend", "ctranslate2"],
 		["model.onnxQuantization", "--onnx_quantization", "int8"],
-		["model.beamSize", "--beam_size", 9],
-		["model.beamSizeRealtime", "--beam_size_realtime", 11],
 		["model.initialPrompt", "--initial_prompt", "tag-prompt"],
 		["model.initialPromptRealtime", "--initial_prompt_realtime", "tag-rt-prompt"],
 		["audio.inputDeviceIndex", "--input-device", 3],
@@ -724,8 +725,6 @@ describe("spawnServer argv builder", () => {
 		["quality.realtimeProcessingPause", "--realtime_processing_pause", 0.05],
 		["quality.earlyTranscriptionOnSilence", "--early_transcription_on_silence", 0.2],
 		["quality.initRealtimeAfterSeconds", "--init_realtime_after_seconds", 1.5],
-		["quality.batchSize", "--batch", 16],
-		["quality.realtimeBatchSize", "--realtime_batch_size", 32],
 	];
 
 	for (const [storePath, cliFlag, value] of SETTINGS_TO_CLI_PAIRS) {
@@ -821,7 +820,10 @@ describe("applyWakeWordFlags (via spawnServer argv builder)", () => {
 // ─── attachProcessHandlers — stdout / stderr / exit / error ───────────
 
 describe("process handler wiring", () => {
-	test("stdout 'Recorder initialized' transitions status from 'starting' to 'running'", async () => {
+	test("markServerRunning() transitions status from 'starting' to 'running'", async () => {
+		// Post-Option-C: ready signal is the structured `server_ready` WS
+		// event, dispatched via SttClient → main.ts → markServerRunning().
+		// The stdout-grep on "Recorder initialized" is gone.
 		const child = makeFakeChild("uv", 1010);
 		spawnQueue.push(() => child);
 		ipcHandlers.clear();
@@ -830,11 +832,15 @@ describe("process handler wiring", () => {
 		const statusHandler = ipcHandlers.get("stt-server:status");
 		await spawnHandler!(undefined);
 		expect(await statusHandler!(undefined)).toBe("starting");
-		child.stdout!.emit("data", Buffer.from("Recorder initialized OK\n"));
+		sttProcess.markServerRunning();
 		expect(await statusHandler!(undefined)).toBe("running");
 	});
 
-	test("stdout that does NOT contain the marker leaves status as 'starting'", async () => {
+	test("stdout data alone does NOT flip status (no more stdout grep)", async () => {
+		// Locks in the architecture decision: the only path from "starting"
+		// → "running" is markServerRunning(). Any stdout regression that
+		// resurrects the old grep would let this case slip back to "running"
+		// and fail this test.
 		const child = makeFakeChild("uv", 2020);
 		spawnQueue.push(() => child);
 		ipcHandlers.clear();
@@ -842,7 +848,7 @@ describe("process handler wiring", () => {
 		const spawnHandler = ipcHandlers.get("stt-server:spawn");
 		const statusHandler = ipcHandlers.get("stt-server:status");
 		await spawnHandler!(undefined);
-		child.stdout!.emit("data", Buffer.from("Loading model..."));
+		child.stdout!.emit("data", Buffer.from("Recorder initialized OK\n"));
 		expect(await statusHandler!(undefined)).toBe("starting");
 	});
 
@@ -925,8 +931,11 @@ describe("process handler wiring", () => {
 		expect(sttProcess.isSttProcessRunning()).toBe(true);
 	});
 
-	test("stdout 'Recorder initialized' from a STALE process does NOT flip status", async () => {
-		// Locks in L140 `sttProcess === proc` guard inside stdout handler.
+	test("markServerRunning() against a STALE-then-replaced state still flips current owner", async () => {
+		// Post-Option-C: markServerRunning is keyed on whichever child is
+		// the current owning process. A restart followed by markServerRunning
+		// applies to the NEW process. The legacy stale-stdout-grep test is
+		// gone with the grep itself.
 		const first = makeFakeChild("uv", 1111);
 		spawnQueue.push(() => first);
 		ipcHandlers.clear();
@@ -937,10 +946,12 @@ describe("process handler wiring", () => {
 		const second = makeFakeChild("uv", 2222);
 		spawnQueue.push(() => second);
 		sttProcess.restartSttProcess();
-		// Now emit the marker on the FIRST (stale).
-		first.stdout!.emit("data", Buffer.from("Recorder initialized"));
-		// Status must remain "starting" — the second process hasn't initialized.
+		// After restart, status resets to "starting" for the new owner.
 		expect(await statusHandler!(undefined)).toBe("starting");
+		// Once the new process's WS server_ready fires, markServerRunning
+		// flips the current owner.
+		sttProcess.markServerRunning();
+		expect(await statusHandler!(undefined)).toBe("running");
 	});
 
 	test("attaches stdout listener to 'data' event (StringLiteral L139)", () => {
@@ -1069,8 +1080,6 @@ const STORE_MAPPINGS: Mapping[] = [
 		cliFlag: "--onnx_quantization",
 		value: "fp16",
 	},
-	{ storePath: "model.beamSize", cliFlag: "--beam_size", value: 13 },
-	{ storePath: "model.beamSizeRealtime", cliFlag: "--beam_size_realtime", value: 17 },
 	{ storePath: "model.initialPrompt", cliFlag: "--initial_prompt", value: "hello" },
 	{
 		storePath: "model.initialPromptRealtime",
@@ -1099,12 +1108,6 @@ const STORE_MAPPINGS: Mapping[] = [
 		storePath: "quality.initRealtimeAfterSeconds",
 		cliFlag: "--init_realtime_after_seconds",
 		value: 0.41,
-	},
-	{ storePath: "quality.batchSize", cliFlag: "--batch", value: 32 },
-	{
-		storePath: "quality.realtimeBatchSize",
-		cliFlag: "--realtime_batch_size",
-		value: 8,
 	},
 ];
 

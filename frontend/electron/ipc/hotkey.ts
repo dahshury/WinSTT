@@ -131,6 +131,11 @@ export function setupHotkeyHandlers(
 ): () => void {
 	let targetKeyCodes: Set<number> | null = null;
 	let targetAccelerator = "";
+	// Sticky — survives handleUnregister so React 19 StrictMode's mount → cleanup
+	// → remount cycle (which fires unregister between two identical registers)
+	// doesn't double-log "Registered:". The targetAccelerator absorber below only
+	// catches mount → remount with no intervening unregister.
+	let lastRegisteredAccelerator = "";
 	const pressedKeys = new Set<number>();
 	// Stryker disable next-line BooleanLiteral: closure init — setIsActive() always overwrites before observation in tests
 	let isActive = false;
@@ -471,6 +476,18 @@ export function setupHotkeyHandlers(
 			dbg("hotkey", "Register FAILED — invalid payload");
 			return false;
 		}
+		// Renderer-side double-fire absorber. The usePushToTalk effect runs
+		// twice on cold boot (once for the localStorage-hydrated default,
+		// once for the IPC-loaded persisted snapshot — both produce the
+		// same accelerator string in practice), so a settings round-trip
+		// would otherwise spam the log AND clear `pressedKeys` / reset
+		// `comboFullyReleased` mid-hold if the user happened to PTT-press
+		// during boot. Short-circuit when the incoming accelerator matches
+		// the live one. Any genuine change (user re-binds the hotkey) still
+		// falls through to the reset path below.
+		if (accelerator === targetAccelerator) {
+			return true;
+		}
 		const codes = parseAccelerator(accelerator);
 		if (!codes) {
 			// Stryker disable next-line StringLiteral: dbg() message is informational only
@@ -482,8 +499,14 @@ export function setupHotkeyHandlers(
 		pressedKeys.clear();
 		setIsActive(false);
 		comboFullyReleased = true;
-		// Stryker disable next-line StringLiteral,ArrayDeclaration: dbg() message and spread are informational only
-		dbg("hotkey", `Registered: "${accelerator}" → keycodes:`, JSON.stringify([...codes]));
+		// Suppress the log when StrictMode (or any unregister→register dance)
+		// re-registers an accelerator we previously logged. A genuine re-bind
+		// passes a different string and still logs.
+		if (accelerator !== lastRegisteredAccelerator) {
+			// Stryker disable next-line StringLiteral,ArrayDeclaration: dbg() message and spread are informational only
+			dbg("hotkey", `Registered: "${accelerator}" → keycodes:`, JSON.stringify([...codes]));
+			lastRegisteredAccelerator = accelerator;
+		}
 		return true;
 	};
 

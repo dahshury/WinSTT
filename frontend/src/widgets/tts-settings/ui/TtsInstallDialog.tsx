@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import type { TtsDownloadEstimatePayload } from "@/shared/api/ipc-client";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";

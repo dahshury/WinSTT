@@ -1,7 +1,7 @@
 import { Cancel01Icon, Tick01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import { onLlmLearnedProperNouns } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 

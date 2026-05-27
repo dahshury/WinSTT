@@ -575,15 +575,22 @@ components:
       type: string
       description: |
         User-facing GPU acceleration preference. `auto` walks the per-OS
-        priority list (Windows: DirectML > CUDA > CPU; Linux: CUDA > ROCm >
-        CPU; macOS: CoreML > CPU). Explicit values pin a specific ONNX
-        Runtime execution provider; the server falls back to CPU with a
-        log line if the chosen EP isn't registered (e.g. `cuda` selected
-        on a DirectML-only build).
+        priority list (Windows: OpenVINO > DirectML > CUDA > CPU;
+        Linux: OpenVINO > CUDA > ROCm > CPU; macOS: CoreML > CPU).
+        Explicit values pin a specific ONNX Runtime execution provider;
+        the server falls back to CPU with a log line if the chosen EP
+        isn't registered (e.g. `cuda` selected on a DirectML-only build).
+
+        `openvino` is the Intel-optimised path for Intel ARC dGPUs and
+        recent Iris Xe / Arc iGPUs — install the `server[openvino]` extra
+        and ship the matching `WinSTT-OpenVINO-Portable-<v>.exe` flavor.
+        Override the OpenVINO device target via the `OPENVINO_DEVICE`
+        env var (`AUTO` / `GPU` / `GPU.0` / `CPU`; default `AUTO`).
       enum:
         - auto
         - cuda
         - directml
+        - openvino
         - rocm
         - coreml
         - cpu
@@ -612,6 +619,8 @@ components:
         - gigaam
         - kaldi
         - t-one
+        - moonshine
+        - cohere
         - custom
 
     ModelInfo:
@@ -666,6 +675,22 @@ components:
           description: |
             Absolute path to the user-provided model folder for custom
             entries; `null` for shipped catalog rows.
+        speedScore:
+          type: number
+          description: |
+            Normalized 0..1 speed score derived from the model's published
+            RTFx (log-scaled — the catalog spans ~100×–2000× so a linear
+            map would crush every Whisper variant). `0.5` is the "unknown"
+            sentinel; the picker hides the speed bar in that case.
+          default: 0.5
+        accuracyScore:
+          type: number
+          description: |
+            Normalized 0..1 accuracy score derived from the model's
+            published WER (HF Open ASR Leaderboard for shipped rows,
+            upstream model-card claims for non-leaderboard families).
+            `0.5` is the "unknown" sentinel and hides the bar.
+          default: 0.5
 
     LoopbackDevice:
       type: object

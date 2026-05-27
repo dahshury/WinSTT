@@ -86,6 +86,78 @@ const validEventArbitraries: Record<SupportedEventType, PayloadGen> = {
 		enabled: fc.boolean(),
 		reason: fc.string(),
 	}),
+	start_turn_detection: fc.record({
+		type: fc.constant("start_turn_detection"),
+	}),
+	stop_turn_detection: fc.record({
+		type: fc.constant("stop_turn_detection"),
+	}),
+	transcription_start: fc.record({
+		type: fc.constant("transcription_start"),
+	}),
+	no_audio_detected: fc.record({
+		type: fc.constant("no_audio_detected"),
+	}),
+	vad_sensitivity_adapted: fc.record({
+		type: fc.constant("vad_sensitivity_adapted"),
+		new_sensitivity: fc.double({ min: 0, max: 1, noNaN: true }),
+		noise_floor_rms: fc.double({ min: 0, max: 1, noNaN: true }),
+		speech_peak_rms: fc.double({ min: 0, max: 1, noNaN: true }),
+	}),
+	device_switch_failed: fc.record({
+		type: fc.constant("device_switch_failed"),
+		requested_index: fc.integer({ min: 0, max: 16 }),
+		error_message: fc.string(),
+		fallback_index: fc.option(fc.integer({ min: 0, max: 16 }), { nil: null }),
+	}),
+	device_became_available: fc.record({
+		type: fc.constant("device_became_available"),
+		device_index: fc.integer({ min: 0, max: 16 }),
+		device_name: fc.string(),
+	}),
+	model_download_start: fc.record({
+		type: fc.constant("model_download_start"),
+		model: fc.string(),
+	}),
+	model_download_complete: fc.record({
+		type: fc.constant("model_download_complete"),
+		model: fc.string(),
+		cancelled: fc.boolean(),
+	}),
+	speaker_segments: fc.record({
+		type: fc.constant("speaker_segments"),
+		segments: fc.array(
+			fc.record({
+				speaker: fc.string(),
+				start: fc.double({ min: 0, max: 60, noNaN: true }),
+				end: fc.double({ min: 0, max: 60, noNaN: true }),
+			})
+		),
+	}),
+	loopback_started: fc.record({
+		type: fc.constant("loopback_started"),
+		deviceName: fc.string(),
+	}),
+	loopback_stopped: fc.record({
+		type: fc.constant("loopback_stopped"),
+	}),
+	file_transcription_progress: fc.record({
+		type: fc.constant("file_transcription_progress"),
+		progress: fc.double({ min: 0, max: 1, noNaN: true }),
+	}),
+	file_transcription_complete: fc.record({
+		type: fc.constant("file_transcription_complete"),
+	}),
+	file_transcription_error: fc.record({
+		type: fc.constant("file_transcription_error"),
+		error: fc.string(),
+	}),
+	wakeword_detection_start: fc.record({
+		type: fc.constant("wakeword_detection_start"),
+	}),
+	wakeword_detection_end: fc.record({
+		type: fc.constant("wakeword_detection_end"),
+	}),
 };
 
 const anyValidEvent: fc.Arbitrary<Record<string, unknown>> = fc.oneof(

@@ -1,4 +1,5 @@
 import {
+	DashboardCircleIcon,
 	EyeIcon,
 	FileScriptIcon,
 	SparklesIcon,
@@ -7,8 +8,8 @@ import {
 	Txt01Icon,
 	VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
-import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,
@@ -377,6 +378,12 @@ export function QualitySettingsPanel() {
 
 	const transcriptionFormat = general?.fileTranscriptionFormat ?? "txt";
 	const contextAwarenessEnabled = general?.contextAwareness ?? false;
+	const autoSubmit = general?.autoSubmit ?? false;
+	const autoSubmitKey = general?.autoSubmitKey ?? "enter";
+	const autoSubmitKeyOptions: SwitcherOption<"enter" | "ctrl_enter">[] = [
+		{ value: "enter", label: tg("autoSubmitKeyEnter") },
+		{ value: "ctrl_enter", label: tg("autoSubmitKeyCtrlEnter") },
+	];
 	const [contextDialogOpen, setContextDialogOpen] = useState(false);
 
 	// Toggle ON ⇒ show the opt-in dialog and DON'T persist yet; the dialog's
@@ -492,6 +499,38 @@ export function QualitySettingsPanel() {
 							/>
 						</ElevatedSurface>
 					</FormControl>
+				</div>
+			</SettingSection>
+
+			{/* ── Paste Behavior ─────────────────────────────── */}
+			<SettingSection icon={DashboardCircleIcon} title={tg("pasteBehaviorTitle")}>
+				<div className="flex flex-col divide-y divide-surface-1">
+					<FormControl
+						caption={tg("autoSubmitCaption")}
+						label={tg("autoSubmit")}
+						labelAddon={
+							<Toggle
+								checked={autoSubmit}
+								onCheckedChange={(v) => updateGeneral({ autoSubmit: v })}
+							/>
+						}
+						tooltip={tg("autoSubmitTooltip")}
+					/>
+					{autoSubmit ? (
+						<FormControl
+							caption={tg("autoSubmitKeyCaption")}
+							label={tg("autoSubmitKey")}
+							tooltip={tg("autoSubmitKeyTooltip")}
+						>
+							<ElevatedSurface>
+								<Switcher
+									onChange={(v) => updateGeneral({ autoSubmitKey: v })}
+									options={autoSubmitKeyOptions}
+									value={autoSubmitKey}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+					) : null}
 				</div>
 			</SettingSection>
 		</div>

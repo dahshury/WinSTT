@@ -2,9 +2,9 @@ import { Form } from "@base-ui/react/form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { useTranslations } from "use-intl";
 import {
 	type AddDictionaryEntry,
 	addDictionaryEntrySchema,

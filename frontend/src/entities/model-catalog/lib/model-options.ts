@@ -4,10 +4,13 @@ import type { ModelInfo } from "../model/catalog-store";
 
 const FAMILY_LABELS: Record<string, string> = {
 	whisper: "Whisper",
+	"lite-whisper": "Lite-Whisper",
 	nemo: "NeMo",
 	gigaam: "GigaAM",
 	kaldi: "Kaldi",
 	"t-one": "T-One",
+	moonshine: "Moonshine",
+	cohere: "Cohere",
 };
 
 function getFamilyLabel(family: string): string {

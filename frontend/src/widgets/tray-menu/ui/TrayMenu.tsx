@@ -1,8 +1,8 @@
 import { Separator } from "@base-ui/react/separator";
 import { ArrowRight01Icon, Bug01Icon, Folder01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useEffect, useReducer, useRef } from "react";
+import { useTranslations } from "use-intl";
 import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import {

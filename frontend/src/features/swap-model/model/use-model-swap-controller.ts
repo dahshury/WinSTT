@@ -288,9 +288,9 @@ export function useModelSwapController(
 	useEffect(
 		() =>
 			onModelSwapFailed((event) =>
-				handleSwapFailedEvent(event.kind, prevMainModelRef, prevRealtimeModelRef, update)
+				handleSwapFailedEvent(event.kind, prevMainModelRef, prevRealtimeModelRef, update, getModel)
 			),
-		[update]
+		[update, getModel]
 	);
 
 	return {
@@ -320,16 +320,12 @@ function isQuantizationChanging(
 
 function buildMainSwapPatch(
 	value: string,
-	info: ReturnType<GetModelFn>,
+	info: NonNullable<ReturnType<GetModelFn>>,
 	quantization: OnnxQuantization | undefined,
 	quantizationChanging: boolean
 ): UpdatePatch {
-	const patch = baseMainPatch(value, info);
+	const patch: UpdatePatch = { model: value, backend: info.backend };
 	return applyQuantOverride(patch, quantization, quantizationChanging);
-}
-
-function baseMainPatch(value: string, info: ReturnType<GetModelFn>): UpdatePatch {
-	return info ? { model: value, backend: info.backend } : { model: value };
 }
 
 function buildRealtimeSwapPatch(
@@ -352,6 +348,13 @@ function applyQuantOverride(
 
 function applyMainSwap(args: IssueSwapArgs, quantizationChanging: boolean): void {
 	const info = args.getModel(args.value);
+	// The picker only surfaces models that are in the catalog, so ``info``
+	// is always defined in production. Bail rather than write an inconsistent
+	// ``{ model, backend? }`` pair — the typed ``ModelPatch`` would reject
+	// that anyway, but the explicit guard makes the invariant readable.
+	if (!info) {
+		return;
+	}
 	args.prevMainModelRef.current = args.previous;
 	// Synchronously open the swap-in-flight guard BEFORE settings.model
 	// changes. ``useSyncActiveModel`` short-circuits on ``activeMain !==
@@ -618,10 +621,11 @@ function handleSwapFailedEvent(
 	kind: "main" | "realtime",
 	prevMainModelRef: React.MutableRefObject<string | null>,
 	prevRealtimeModelRef: React.MutableRefObject<string | null>,
-	update: UpdateModelFn
+	update: UpdateModelFn,
+	getModel: GetModelFn
 ): void {
 	const handlers: Record<"main" | "realtime", () => void> = {
-		main: () => rollbackMain(prevMainModelRef, update),
+		main: () => rollbackMain(prevMainModelRef, update, getModel),
 		realtime: () => rollbackRealtime(prevRealtimeModelRef, update),
 	};
 	handlers[kind]();
@@ -629,11 +633,20 @@ function handleSwapFailedEvent(
 
 function rollbackMain(
 	prevMainModelRef: React.MutableRefObject<string | null>,
-	update: UpdateModelFn
+	update: UpdateModelFn,
+	getModel: GetModelFn
 ): void {
 	const prev = prevMainModelRef.current;
-	const patches = prev === null ? [] : [{ model: prev }];
-	patches.forEach(update);
+	if (prev === null) {
+		return;
+	}
+	// Resolve backend so the rollback patch is well-formed under the typed
+	// ``ModelPatch`` — writing ``{ model: prev }`` alone is the same drift
+	// pattern that produced model/backend mismatches on disk.
+	const info = getModel(prev);
+	if (info?.backend) {
+		update({ model: prev, backend: info.backend });
+	}
 }
 
 function rollbackRealtime(
@@ -653,7 +666,6 @@ function rollbackRealtime(
 export const __testables = {
 	applyPureQuantSwap,
 	applyQuantOverride,
-	baseMainPatch,
 	buildMainSwapPatch,
 	buildRealtimeSwapPatch,
 	clearIfMatches,

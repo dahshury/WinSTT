@@ -26,10 +26,12 @@ from hypothesis import strategies as st
 
 from src.recorder.domain.events import DownloadProgress
 from src.recorder.infrastructure.onnxasr_transcriber import (
+    _build_sess_options,
     _extract_fp16_whisper_decoder_path,
     _is_external_data_missing_error,
     _make_progress_adapter,
     _peak_normalize,
+    _pick_intra_op_threads,
     _snapshot_providers,
     _vad_cache_key,
 )
@@ -140,27 +142,37 @@ def test_external_data_classifier_never_crashes(text: str) -> None:
 
 
 # ── _vad_cache_key ──────────────────────────────────────────────────────
+#
+# Post-Option-C the cache key collapses to a constant CPU sentinel — Silero
+# VAD is unconditionally loaded on CPU regardless of the parent transcriber's
+# providers (the GPU-side load deadlocked against the CUDA default stream
+# when paired with ``do_copy_in_default_stream=1``). These tests pin that
+# invariant so any regression that re-introduces per-provider keying — and
+# with it the deadlock risk — fails loudly here first.
 
 
-def test_vad_cache_key_for_none_is_sentinel() -> None:
-    assert _vad_cache_key(None) == ("__default__",)
+def test_vad_cache_key_for_none_returns_cpu_sentinel() -> None:
+    assert _vad_cache_key(None) == ("CPUExecutionProvider",)
 
 
-def test_vad_cache_key_round_trips_tuple() -> None:
-    providers = ("CPUExecutionProvider",)
-    assert _vad_cache_key(providers) == providers
+def test_vad_cache_key_ignores_cpu_providers_input() -> None:
+    """Passing the same CPU tuple still returns the canonical sentinel."""
+    assert _vad_cache_key(("CPUExecutionProvider",)) == ("CPUExecutionProvider",)
 
 
-def test_vad_cache_key_different_tuples_are_distinct() -> None:
-    """Two distinct provider sets MUST hash to distinct cache keys —
-    otherwise CPU and GPU VAD sessions would collide."""
+def test_vad_cache_key_ignores_gpu_providers_input() -> None:
+    """GPU providers are silently ignored — Silero ALWAYS loads on CPU.
+    This is the architectural invariant that fixes the deadlock; if a
+    future change leaks GPU providers through, we want a test failure,
+    not a silent renderer hang."""
     cpu_key = _vad_cache_key(("CPUExecutionProvider",))
     cuda_key = _vad_cache_key(("CUDAExecutionProvider", "CPUExecutionProvider"))
-    assert cpu_key != cuda_key
-    # Both keys must be hashable (they're used as dict keys).
-    _round_trip = {cpu_key: 1, cuda_key: 2}
+    # Both inputs collapse to the same CPU sentinel — single cache slot,
+    # one Silero instance for the entire process.
+    assert cpu_key == cuda_key == ("CPUExecutionProvider",)
+    # Key still hashable (used as a dict key).
+    _round_trip = {cpu_key: 1}
     assert _round_trip[cpu_key] == 1
-    assert _round_trip[cuda_key] == 2
 
 
 # ── _make_progress_adapter ──────────────────────────────────────────────
@@ -281,3 +293,61 @@ def test_snapshot_providers_walks_attributes_when_named_sessions_missing() -> No
 
     providers = _snapshot_providers(fake)
     assert "AzureExecutionProvider" in providers
+
+
+# ── _pick_intra_op_threads / _build_sess_options ───────────────────────
+
+
+def test_pick_intra_op_threads_gpu_provider_returns_two() -> None:
+    """GPU EPs only need ~2 host threads; over-provisioning hurts (-49 %
+    measured on Canary-180M / CUDA). Verify every GPU-class provider is
+    classified."""
+    for gpu_provider in (
+        "CUDAExecutionProvider",
+        "DmlExecutionProvider",
+        "ROCMExecutionProvider",
+        "CoreMLExecutionProvider",
+    ):
+        assert _pick_intra_op_threads((gpu_provider,)) == 2
+
+
+def test_pick_intra_op_threads_gpu_with_options_tuple() -> None:
+    """ORT lets providers be ``(name, options_dict)`` tuples — must still
+    be classified as GPU."""
+    providers = (("CUDAExecutionProvider", {"device_id": "0"}),)
+    assert _pick_intra_op_threads(providers) == 2
+
+
+def test_pick_intra_op_threads_cpu_caps_at_eight() -> None:
+    """CPU EP on the actual host: never exceed 8, to dodge E-core
+    collapse on hybrid CPUs (measured 10x worse at intra=10 on Alder Lake)."""
+    threads = _pick_intra_op_threads(("CPUExecutionProvider",))
+    assert 2 <= threads <= 8
+
+
+def test_build_sess_options_sets_intra_threads_for_cpu() -> None:
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=False)
+    assert 2 <= opts.intra_op_num_threads <= 8
+
+
+def test_build_sess_options_sets_intra_threads_for_gpu() -> None:
+    opts = _build_sess_options(("CUDAExecutionProvider",), fp16=False)
+    assert opts.intra_op_num_threads == 2
+
+
+def test_build_sess_options_fp16_lowers_graph_optimization() -> None:
+    """fp16 path keeps ``ORT_ENABLE_EXTENDED`` (workaround for Whisper
+    fp16 encoder fusion bug) — see :func:`_build_sess_options` docstring."""
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=True)
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+
+
+def test_build_sess_options_non_fp16_keeps_default_graph_level() -> None:
+    """Non-fp16 path leaves graph_optimization_level at ORT default
+    (ORT_ENABLE_ALL), to keep every fusion the export can survive."""
+    import onnxruntime as rt
+
+    opts = _build_sess_options(("CPUExecutionProvider",), fp16=False)
+    assert opts.graph_optimization_level == rt.GraphOptimizationLevel.ORT_ENABLE_ALL

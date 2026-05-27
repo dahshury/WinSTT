@@ -119,6 +119,15 @@ interface PerfBarsProps {
 	speedScore: number;
 }
 
+// Map a 0..1 score to a hue: 0 = red (bad), 1 = blue (good). The midpoint
+// lands in green — intuitive for "neutral / average". Saturation and
+// lightness are tuned to read well on both light and dark surfaces.
+function scoreColor(score: number): string {
+	const clamped = Math.max(0, Math.min(1, score));
+	const hue = clamped * 220;
+	return `hsl(${hue}, 72%, 52%)`;
+}
+
 /**
  * Two stacked progress bars showing relative speed and accuracy. Hidden
  * when the catalog reports the unknown-default 0.5/0.5 — drawing two
@@ -139,7 +148,10 @@ function PerfBars({ speedScore, accuracyScore }: PerfBarsProps) {
 						Accuracy
 					</span>
 					<div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-secondary">
-						<div className="h-full rounded-full bg-accent" style={{ width: `${accPct}%` }} />
+						<div
+							className="h-full rounded-full"
+							style={{ backgroundColor: scoreColor(accuracyScore), width: `${accPct}%` }}
+						/>
 					</div>
 				</div>
 			</Tooltip>
@@ -149,7 +161,10 @@ function PerfBars({ speedScore, accuracyScore }: PerfBarsProps) {
 						Speed
 					</span>
 					<div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-secondary">
-						<div className="h-full rounded-full bg-accent" style={{ width: `${speedPct}%` }} />
+						<div
+							className="h-full rounded-full"
+							style={{ backgroundColor: scoreColor(speedScore), width: `${speedPct}%` }}
+						/>
 					</div>
 				</div>
 			</Tooltip>
@@ -179,12 +194,11 @@ function PrecisionGroup({
 	return (
 		<div className="flex items-center gap-2">
 			<Tooltip
-				content="Weight precision (lower = faster, smaller, slightly less accurate)"
+				content="Precision — the numeric format of the model's weights. Lower precision (q4 / int8) makes the model load and run faster and take less disk/RAM, at the cost of a small drop in transcription accuracy. Higher precision (fp32 / fp16) is the most accurate but slowest."
 				side="top"
 			>
-				<span className="inline-flex shrink-0 items-center gap-1 font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
+				<span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
 					<HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
-					Precision
 				</span>
 			</Tooltip>
 			<ButtonGroup
@@ -238,6 +252,14 @@ export interface SttModelCardProps {
 	 */
 	actions?: import("react").ReactNode;
 	currentQuantization: OnnxQuantization;
+	/**
+	 * Set on a bundle primary card whose currently-selected model is one of
+	 * its hidden siblings (e.g. a ``.en`` or lite-whisper variant). Renders
+	 * a softer "indirect" highlight so the user can spot the family at a
+	 * glance without it competing visually with the actually-selected
+	 * sibling card below.
+	 */
+	hasSelectedVariant?: boolean;
 	model: ModelInfo;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	selectedId: string | undefined;
@@ -252,6 +274,10 @@ const CARD_BASE = cn(
 	"data-[highlighted]:border-border-hover data-[highlighted]:bg-surface-hover/50"
 );
 const CARD_SELECTED = "border-accent/50 bg-accent/[0.08] ring-1 ring-accent/25";
+/** Softer variant: the primary's bundle owns the selected variant but the
+ *  primary itself isn't the active id. Lighter than ``CARD_SELECTED`` so the
+ *  actually-selected sibling still wins the eye. */
+const CARD_SELECTED_VARIANT = "border-accent/30 bg-accent/[0.04]";
 
 /** Class fragment that desaturates a broken custom-model card without
  *  changing the dimensions — keeps the picker layout stable while making
@@ -266,8 +292,10 @@ export function SttModelCard({
 	currentQuantization,
 	onSelect,
 	actions,
+	hasSelectedVariant = false,
 }: SttModelCardProps) {
 	const isSelected = model.id === selectedId;
+	const isIndirectlySelected = !isSelected && hasSelectedVariant;
 	const isUnavailable = model.available === false;
 	const bytes = formatBytes(state?.estimated_bytes ?? 0);
 	const segments = buildAttributeSegments(model, state, systemInfo);
@@ -278,16 +306,27 @@ export function SttModelCard({
 		isUnavailable && model.errorMessage ? `Unavailable: ${model.errorMessage}` : undefined;
 	return (
 		<Combobox.Item
-			className={cn(CARD_BASE, isSelected && CARD_SELECTED, isUnavailable && CARD_UNAVAILABLE)}
+			className={cn(
+				CARD_BASE,
+				isSelected && CARD_SELECTED,
+				isIndirectlySelected && CARD_SELECTED_VARIANT,
+				isUnavailable && CARD_UNAVAILABLE
+			)}
+			data-model-id={model.id}
 			disabled={isUnavailable}
 			title={title}
 			value={model}
 		>
 			<div className="flex items-center justify-between gap-2.5">
 				<div className="flex min-w-0 items-center gap-2">
-					{isSelected ? (
-						<HugeiconsIcon className="size-3.5 shrink-0 text-accent" icon={CheckmarkCircle02Icon} />
-					) : null}
+					{/* Combobox.ItemIndicator renders only when the Item's value
+					    matches the root's selected value (resolved via
+					    isItemEqualToValue) — no manual `isSelected` guard
+					    needed, and it automatically picks up the canonical
+					    `data-selected` state Base UI maintains. */}
+					<Combobox.ItemIndicator className="flex shrink-0 items-center">
+						<HugeiconsIcon className="size-3.5 text-accent" icon={CheckmarkCircle02Icon} />
+					</Combobox.ItemIndicator>
 					<span className="truncate font-semibold text-body-sm leading-tight">
 						{variantLabel(model)}
 					</span>

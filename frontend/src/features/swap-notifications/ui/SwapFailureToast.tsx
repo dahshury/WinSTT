@@ -10,8 +10,8 @@ import {
 	WifiDisconnectedIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useEffect } from "react";
+import { useTranslations } from "use-intl";
 import {
 	type ModelSwapFailedCategory,
 	onModelSwapFailed,

@@ -9,8 +9,15 @@
     "cli",
     "dictionary",
     "transcription-history",
+    "---",
+    "troubleshooting",
+    "debug-mode",
+    "manual-model-install",
+    "faq",
     "verify-releases",
     "---",
-    "architecture"
+    "architecture",
+    "---",
+    "acknowledgments"
   ]
 }

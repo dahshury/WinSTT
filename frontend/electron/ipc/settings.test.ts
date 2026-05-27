@@ -296,9 +296,9 @@ describe("settings:save listener", () => {
 		setupSettingsHandlers();
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { quality: { batchSize: 32 } },
+			settings: { quality: { realtimeProcessingPause: 0.07 } },
 		});
-		expect((storeData.quality as Record<string, unknown>).batchSize).toBe(32);
+		expect((storeData.quality as Record<string, unknown>).realtimeProcessingPause).toBe(0.07);
 	});
 
 	test("saves the 'hotkey' section to the store", () => {

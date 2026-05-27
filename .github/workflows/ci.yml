@@ -61,6 +61,15 @@ jobs:
         working-directory: frontend
         run: bun run check:fsd
 
+      # i18n key parity across all 20 locale baselines. Default mode
+      # (no --strict) does NOT fail on English-equal values, so newly
+      # seeded community baselines (de/ja/ko/pt/ru/it/pl/tr/sv/cs/bg/he/
+      # uk/vi) that still mirror en.json pass — only missing keys fail.
+      # When translation coverage catches up, swap to `check:i18n:strict`.
+      - name: i18n parity check
+        working-directory: frontend
+        run: bun run check:i18n
+
       # Tests. The electron-mock harness has historically failed locally
       # (see memory/project_relay_test_preexisting_fail.md) but passes on
       # CI runners. We capture output and gate on a regression floor: if

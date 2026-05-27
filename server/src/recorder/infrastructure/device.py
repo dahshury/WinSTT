@@ -1,12 +1,13 @@
 """Shared device-resolution utility for ML-based infrastructure adapters.
 
 Decides which ONNX Runtime execution provider chain to use based on the
-caller's intent (``"auto"`` / ``"cuda"`` / ``"directml"`` / ``"rocm"`` /
-``"cpu"``) and the EPs actually registered with the ORT install:
+caller's intent (``"auto"`` / ``"cuda"`` / ``"directml"`` / ``"openvino"`` /
+``"rocm"`` / ``"coreml"`` / ``"cpu"``) and the EPs actually registered with
+the ORT install:
 
 1. Checks the available providers list (``rt.get_available_providers()``)
    to know what the bundled ORT wheel ships — CPU-only / DirectML /
-   ``onnxruntime-gpu`` (CUDA+TRT) / ROCm.
+   ``onnxruntime-gpu`` (CUDA+TRT) / OpenVINO / ROCm.
 2. For CUDA: patches the Python DLL search path on Windows so the
    bundled NVIDIA pip wheels (``nvidia-cublas-cu12``, ``nvidia-cudnn-cu12``,
    ``nvidia-cuda-runtime-cu12`` …) are loadable from inside the venv —
@@ -17,8 +18,15 @@ caller's intent (``"auto"`` / ``"cuda"`` / ``"directml"`` / ``"rocm"`` /
    repeated "Error 126" spam users saw before this hardening landed).
 4. DirectML needs no DLL prep — ``onnxruntime-directml`` ships
    ``DirectML.dll`` inline and the Windows D3D12 stack is system-managed.
-5. ``"auto"`` picks the priority order per-OS: Windows = DirectML > CUDA
-   > CPU; Linux = CUDA > ROCm > CPU; macOS = CoreML > CPU.
+5. OpenVINO ships its own runtime DLLs inside the
+   ``onnxruntime-openvino`` wheel. Default device target is ``AUTO`` so
+   the runtime picks Intel ARC dGPU > Iris Xe iGPU > CPU per the host;
+   advanced users can override via ``OPENVINO_DEVICE`` env var.
+6. ``"auto"`` picks the priority order per-OS: Windows = OpenVINO >
+   DirectML > CUDA > CPU; Linux = OpenVINO > CUDA > ROCm > CPU;
+   macOS = CoreML > CPU. OpenVINO is at the head when present because
+   it's the Intel-tuned path — on systems without Intel acceleration,
+   the EP simply isn't registered and we fall through to the next entry.
 
 Caches the CUDA probe result for the process lifetime — DLL discovery is
 permanent, no point re-probing.
@@ -54,6 +62,7 @@ GPU_PROVIDERS: frozenset[str] = frozenset(
         "DmlExecutionProvider",
         "ROCMExecutionProvider",
         "CoreMLExecutionProvider",
+        "OpenVINOExecutionProvider",
     }
 )
 
@@ -64,22 +73,32 @@ GPU_PROVIDERS: frozenset[str] = frozenset(
 _ACCELERATOR_PROVIDER: dict[str, str] = {
     "cuda": "CUDAExecutionProvider",
     "directml": "DmlExecutionProvider",
+    "openvino": "OpenVINOExecutionProvider",
     "rocm": "ROCMExecutionProvider",
     "coreml": "CoreMLExecutionProvider",
     "cpu": "CPUExecutionProvider",
 }
 
 # Per-OS priority order used when the user picks ``accelerator="auto"``.
-# - Windows: DirectML first because (a) it's the default install per the
-#   pyproject ``[directml]`` extra, (b) it works on AMD/Intel/NVIDIA, and
-#   (c) benchmarks (whisper-tiny q4 on RTX 3080 Ti) show it matches CUDA's
-#   mean latency with 5-10x lower stdev. CUDA is the fallback for the
-#   legacy ``[gpu]`` flavor that ships NVIDIA wheels.
-# - Linux: CUDA is the standard datacenter GPU EP; ROCm is the AMD fallback.
+# - Windows: OpenVINO first when present (Intel ARC + recent iGPUs get a
+#   real ~10-30 % uplift over DirectML's generic D3D12 path on Intel
+#   silicon — Intel-published benchmarks). DirectML second because (a)
+#   it's the default install per the pyproject ``[directml]`` extra,
+#   (b) it works on AMD/Intel/NVIDIA, and (c) benchmarks (whisper-tiny
+#   q4 on RTX 3080 Ti) show it matches CUDA's mean latency with 5-10x
+#   lower stdev. CUDA is the fallback for the legacy ``[gpu]`` flavor
+#   that ships NVIDIA wheels.
+# - Linux: OpenVINO first (Intel datacenter); CUDA second (the standard
+#   datacenter GPU EP); ROCm is the AMD fallback.
 # - macOS: CoreML covers Apple Silicon NPU + AMD/Intel iGPUs natively.
+#   (OpenVINO is unavailable on macOS upstream as of 1.18.)
+#
+# Entries whose EP isn't registered are skipped at resolution time, so a
+# DirectML-only install behaves exactly as before — the OpenVINO entry
+# just doesn't match and we fall through to ``directml``.
 _AUTO_PRIORITY: dict[str, tuple[str, ...]] = {
-    "win32": ("directml", "cuda", "cpu"),
-    "linux": ("cuda", "rocm", "cpu"),
+    "win32": ("openvino", "directml", "cuda", "cpu"),
+    "linux": ("openvino", "cuda", "rocm", "cpu"),
     "darwin": ("coreml", "cpu"),
 }
 
@@ -249,16 +268,17 @@ def _probe_cuda_session() -> bool:
     return True
 
 
-# Module-load side effect: inject NVIDIA DLLs the first time this module
-# is imported. ``device.py`` is imported transitively by bootstrap.py
-# BEFORE any code that touches ``onnxruntime`` (the imports in
-# ``OnnxAsrTranscriber`` and ``SileroVAD`` are lazy / inside class init).
-# Running the injection at module load is the cleanest way to guarantee
-# the DLLs are in the process's module table before ORT's CUDA EP DLL
-# resolves its implicit dependencies — which is what makes onnxruntime-gpu
-# usable on a torch-free Windows install. Idempotent and free on installs
-# without the nvidia namespace (e.g. CPU / DirectML flavors).
-_inject_cuda_dlls()
+# NB: NVIDIA DLL injection is intentionally NOT done at module load — it
+# would fire even on installs where the resolved accelerator is DirectML
+# (dev venvs that happen to have ``[gpu]`` installed alongside
+# ``[directml]``) and burn startup time + RSS preloading hundreds of MB of
+# CUDA DLLs that ORT will never touch. Injection now happens lazily inside
+# :func:`_probe_cuda_session`, which is the only path that can decide to
+# create a CUDA EP session. The call chain
+# ``resolve_accelerator → _probe_cuda_session → _inject_cuda_dlls`` keeps
+# the original ordering invariant (DLLs in the process table BEFORE ORT's
+# CUDA EP DLL resolves its implicit deps) without paying the cost on the
+# DirectML / CPU / non-Windows paths.
 
 
 def _available_providers() -> list[str]:
@@ -366,7 +386,42 @@ def resolve_device(requested: str) -> str:
 # Other knobs left at default too: ``enable_cuda_graph`` requires zero
 # Memcpy nodes in the graph (microsoft/onnxruntime#15490) which we can't
 # guarantee without a custom fp16 conversion of the export.
-_CUDA_EP_OPTIONS: dict[str, str] = {}
+#
+# ``do_copy_in_default_stream`` is the one knob we DO touch. With the
+# default (kept implicit), ORT issues host↔device Memcpys on auxiliary
+# streams, which forces extra cudaStreamSynchronize calls before the
+# next kernel can read the data. Routing copies through the same stream
+# the kernels run on lets cudaMemcpyAsync overlap with the launch queue
+# and skips the sync. Measured speedups on RTX 3080 Ti + intra=2,
+# byte-identical transcripts across every (model, duration) cell:
+#
+#   whisper-tiny       6 s → -59 % (66 ms → 27 ms)
+#   whisper-base.en    6 s → -66 % (106 ms → 36 ms)
+#   moonshine-base    12 s → -77 % (73 ms → 17 ms)
+#   canary-180m        6 s → -76 % (64 ms → 16 ms)
+#
+# See ``server/scripts/bench_matrix.py`` for the full matrix.
+_CUDA_EP_OPTIONS: dict[str, str] = {
+    "do_copy_in_default_stream": "1",
+}
+
+
+# OpenVINO EP provider options. ``device_type`` decides which Intel
+# accelerator the runtime targets:
+#   * ``AUTO``  — OpenVINO's auto-device plugin picks the best available
+#                 backend (GPU dGPU > GPU iGPU > CPU). Recommended default.
+#   * ``GPU``   — Force any Intel GPU (Iris Xe, Arc).
+#   * ``GPU.0`` — Force a specific device by ID (useful for multi-GPU rigs).
+#   * ``CPU``   — Force the Intel-vectorized CPU path (mostly diagnostic).
+#
+# Override at runtime via the ``OPENVINO_DEVICE`` env var; defaults to AUTO
+# so a fresh install Just Works on Intel silicon. We pass ``cache_dir``
+# so the EP can serialize compiled blobs across runs (~5-15s saved on
+# subsequent boots after the first model load) — kept under the user's
+# data dir so portable installs stay portable.
+_OPENVINO_EP_OPTIONS: dict[str, str] = {
+    "device_type": os.environ.get("OPENVINO_DEVICE", "AUTO").strip() or "AUTO",
+}
 
 
 # Provider-list entry as accepted by onnxruntime.InferenceSession: either a
@@ -400,8 +455,23 @@ def providers_for_accelerator(accelerator: str) -> list[ProviderEntry] | None:
         # caller hands us a freshly-monkeypatched provider list mid-test
         # we'd rather degrade gracefully than crash the session creation.
         return ["CPUExecutionProvider"]
-    entry: ProviderEntry = (ep_name, dict(_CUDA_EP_OPTIONS)) if chosen == "cuda" and _CUDA_EP_OPTIONS else ep_name
+    entry = _provider_entry_with_options(chosen, ep_name)
     return [entry, "CPUExecutionProvider"]
+
+
+def _provider_entry_with_options(accelerator: str, ep_name: str) -> ProviderEntry:
+    """Pick the right (provider, options) tuple for an EP that supports tuning.
+
+    Centralised so :func:`providers_for_accelerator` and
+    :func:`providers_for_device` apply identical knobs. Plain string entries
+    (no options) are returned when an EP has no provider-specific options
+    to set — onnxruntime accepts both forms in the providers list.
+    """
+    if accelerator == "cuda" and _CUDA_EP_OPTIONS:
+        return (ep_name, dict(_CUDA_EP_OPTIONS))
+    if accelerator == "openvino" and _OPENVINO_EP_OPTIONS:
+        return (ep_name, dict(_OPENVINO_EP_OPTIONS))
+    return ep_name
 
 
 def providers_for_settings(device: str, accelerator: str) -> list[ProviderEntry] | None:
@@ -469,6 +539,8 @@ def providers_for_device(device: str) -> list[ProviderEntry] | None:
     for p in gpu_providers:
         if p == "CUDAExecutionProvider" and _CUDA_EP_OPTIONS:
             entries.append((p, dict(_CUDA_EP_OPTIONS)))
+        elif p == "OpenVINOExecutionProvider" and _OPENVINO_EP_OPTIONS:
+            entries.append((p, dict(_OPENVINO_EP_OPTIONS)))
         else:
             entries.append(p)
     entries.append("CPUExecutionProvider")

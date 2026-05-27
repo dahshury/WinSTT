@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { TranscriberBackend } from "@/shared/api/schema.zod";
 import { type AppSettingsOutput, appSettingsSchema } from "@/shared/config/settings-schema";
 
 const DEFAULTS: AppSettingsOutput = appSettingsSchema.parse({});
@@ -9,6 +10,32 @@ interface IntegrationPatch {
 	elevenlabs?: Partial<Integrations["elevenlabs"]>;
 	openai?: Partial<Integrations["openai"]>;
 }
+
+type ModelSection = AppSettingsOutput["model"];
+type ModelPatchSansCouple = Partial<Omit<ModelSection, "model" | "backend">>;
+
+/**
+ * Patch shape for ``updateModelSettings``.
+ *
+ * Encodes the runtime invariant that the main ``model`` and its
+ * ``backend`` must always be written together. Every catalog entry pins
+ * exactly one backend per model id, so writing ``model`` alone leaves
+ * ``backend`` pointing at the previous model's engine — the exact drift
+ * that produced ``model = nemo-canary-180m-flash, backend = faster_whisper``
+ * on disk and forced the in-flight ``adoptRuntime`` workaround.
+ *
+ * The discriminated union below makes that invariant a compile error:
+ *
+ *   - Patches without ``model``: any other field is freely settable.
+ *   - Patches with ``model``: ``backend`` is required.
+ *
+ * Authoring tip: when changing the main model, look up the catalog entry
+ * (``useCatalogStore.getState().models.find(...)``) and patch both fields
+ * together. ``setMainModelById`` below does this in one step.
+ */
+export type ModelPatch =
+	| (ModelPatchSansCouple & { backend?: TranscriberBackend; model?: undefined })
+	| (ModelPatchSansCouple & { backend: TranscriberBackend; model: string });
 
 /**
  * Shallow-merge each provider patch into the current integrations record.
@@ -56,7 +83,7 @@ interface SettingsState {
 		patch: Partial<Omit<AppSettingsOutput["llm"], "dictation" | "transforms">>
 	) => void;
 	updateLlmTransforms: (patch: Partial<AppSettingsOutput["llm"]["transforms"]>) => void;
-	updateModelSettings: (patch: Partial<AppSettingsOutput["model"]>) => void;
+	updateModelSettings: (patch: ModelPatch) => void;
 	updateQualitySettings: (patch: Partial<AppSettingsOutput["quality"]>) => void;
 	updateSnippets: (snippets: AppSettingsOutput["snippets"]) => void;
 	updateTtsSettings: (patch: Partial<AppSettingsOutput["tts"]>) => void;
@@ -71,13 +98,20 @@ export const useSettingsStore = create<SettingsState>()(
 			// at module init, so the initial value is never observable in tests.
 			isLoaded: false,
 			setSettings: (settings) => set({ settings, isLoaded: true }),
-			updateModelSettings: (patch) =>
+			updateModelSettings: (patch) => {
+				// Discriminated-union narrowing breaks Zustand's set() inference
+				// (the spread of a union-typed object produces an unsatisfiable
+				// shape). Erase to a plain partial here — the type guard at the
+				// public ``updateModelSettings`` signature is what enforces the
+				// model/backend coupling.
+				const patchAsPartial = patch as Partial<ModelSection>;
 				set((state) => ({
 					settings: {
 						...state.settings,
-						model: { ...state.settings.model, ...patch },
+						model: { ...state.settings.model, ...patchAsPartial },
 					},
-				})),
+				}));
+			},
 			updateQualitySettings: (patch) =>
 				set((state) => ({
 					settings: {

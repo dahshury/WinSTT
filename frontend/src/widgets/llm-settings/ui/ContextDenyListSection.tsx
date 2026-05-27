@@ -1,7 +1,7 @@
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { Button } from "@/shared/ui/button";
 import { FormControl } from "@/shared/ui/form-control";
@@ -37,10 +37,21 @@ import { Tooltip } from "@/shared/ui/tooltip";
  */
 export function ContextDenyListSection() {
 	const general = useSettingsStore((s) => s.settings.general);
+	const dictation = useSettingsStore((s) => s.settings.llm.dictation);
+	const openrouterApiKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("general");
 	const denyList = general?.contextDenyList ?? [];
 	const [draft, setDraft] = useState("");
+
+	// Hidden in lockstep with ContextAwarenessSection — the deny-list only
+	// gates the capture pipeline, which never runs when the dictation LLM
+	// isn't configured. Same gate as relay.ts `isLlmConfigured()`.
+	const hasDictationModel =
+		dictation.provider === "openrouter" ? openrouterApiKey.length > 0 : dictation.model.length > 0;
+	if (!(dictation.enabled && hasDictationModel)) {
+		return null;
+	}
 
 	const trimmed = draft.trim().toLowerCase();
 	const isDuplicate = denyList.some((entry) => entry.toLowerCase() === trimmed);

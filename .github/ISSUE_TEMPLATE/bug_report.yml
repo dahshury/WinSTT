@@ -1,0 +1,104 @@
+name: 🐛 Bug Report
+description: Something is broken or behaves unexpectedly. Please attach a diagnostic bundle.
+title: "[bug] "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the bug report! Before filing:
+        1. Search [open](https://github.com/dahshury/WinSTT/issues) and [closed](https://github.com/dahshury/WinSTT/issues?q=is%3Aissue+is%3Aclosed) issues.
+        2. Try the latest release — your bug may already be fixed.
+        3. Reproduce with `--debug` to surface verbose logs (see [Debug Mode](https://winstt.dahshury.com/docs/debug-mode)).
+        4. Generate a diagnostic bundle via **Settings → Advanced → Save Diagnostic Bundle…** and attach it below.
+
+        For feature requests use [Discussions → Ideas](https://github.com/dahshury/WinSTT/discussions/categories/ideas).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What did you do, what did you expect, what happened instead?
+      placeholder: |
+        Steps:
+        1. Press the PTT hotkey
+        2. Speak a sentence
+        3. Release
+
+        Expected: transcription is pasted into the focused window
+        Actual: pill appears, no paste, error in debug.log line 412
+    validations:
+      required: true
+
+  - type: input
+    id: winstt-version
+    attributes:
+      label: WinSTT version
+      description: Settings → About → Version
+      placeholder: v0.X.Y
+    validations:
+      required: true
+
+  - type: dropdown
+    id: flavor
+    attributes:
+      label: Installer flavor
+      options:
+        - DirectML (default, ~200 MB)
+        - CPU (~150 MB)
+        - OpenVINO (Intel ARC / Iris Xe, ~250 MB)
+        - From source (uv sync …)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS + build
+      placeholder: "Windows 11 Pro 24H2 26100.x"
+    validations:
+      required: true
+
+  - type: input
+    id: hw
+    attributes:
+      label: CPU + GPU (+ driver version)
+      placeholder: "Intel i7-12700K · NVIDIA RTX 3080 Ti · 552.22"
+    validations:
+      required: true
+
+  - type: input
+    id: stt-model
+    attributes:
+      label: Active STT model + quantization
+      placeholder: "whisper-tiny.en · q4"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: recording-mode
+    attributes:
+      label: Recording mode
+      options:
+        - PTT (push-to-talk)
+        - Toggle
+        - Listen (loopback)
+        - Wake word
+    validations:
+      required: true
+
+  - type: textarea
+    id: diag-bundle
+    attributes:
+      label: Diagnostic bundle
+      description: Drag and drop the `.zip` from **Settings → Advanced → Save Diagnostic Bundle…** here. Contains `debug.log`, `stt-server.log`, redacted settings, and system info.
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, screen recordings, related issues — anything that helps narrow it down.

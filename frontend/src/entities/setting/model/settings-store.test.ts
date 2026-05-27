@@ -19,7 +19,7 @@ describe("useSettingsStore mutators", () => {
 	test("updateModelSettings merges patch into existing model branch", () => {
 		useSettingsStore.getState().updateModelSettings({ language: "fr" });
 		expect(useSettingsStore.getState().settings.model.language).toBe("fr");
-		expect(useSettingsStore.getState().settings.model.model).toBe("large-v2"); // default preserved
+		expect(useSettingsStore.getState().settings.model.model).toBe("tiny"); // default preserved
 	});
 
 	test("updateQualitySettings merges patch", () => {

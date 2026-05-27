@@ -4,6 +4,7 @@ import {
 	onModelSwapCompleted,
 	onModelSwapFailed,
 	onModelSwapStarted,
+	onRuntimeInfo,
 } from "@/shared/api/ipc-client";
 
 /**
@@ -42,19 +43,23 @@ export const useModelSwapStore = create<ModelSwapStore>()((set, get) => ({
 	activeRealtime: null,
 	fromMain: null,
 	fromRealtime: null,
-	beginSwap: (kind, from, to) =>
+	beginSwap: (kind, from, to) => {
 		set(
 			kind === "main"
 				? { activeMain: to, fromMain: from }
 				: { activeRealtime: to, fromRealtime: from }
-		),
-	setActive: (kind, name) => set(kind === "main" ? { activeMain: name } : { activeRealtime: name }),
-	clear: (kind) =>
+		);
+	},
+	setActive: (kind, name) => {
+		set(kind === "main" ? { activeMain: name } : { activeRealtime: name });
+	},
+	clear: (kind) => {
 		set(
 			kind === "main"
 				? { activeMain: null, fromMain: null }
 				: { activeRealtime: null, fromRealtime: null }
-		),
+		);
+	},
 	isSwapping: (kind) =>
 		kind === "main" ? get().activeMain !== null : get().activeRealtime !== null,
 }));
@@ -73,10 +78,32 @@ export function initModelSwapStore(): () => void {
 	const unsubFailed = onModelSwapFailed(({ kind }) => {
 		useModelSwapStore.getState().clear(kind);
 	});
+	// Restart-based swaps (STARTUP_ONLY key changes like
+	// `model.onnxQuantization`) don't emit `model_swap_completed`: the
+	// server tears down, respawns with the new args, and announces itself
+	// via `server_ready` + `runtime_info` instead. So when an in-flight
+	// swap's target matches the freshly-reported runtime model, treat it
+	// as completed and drop the spinner. The hot-swap path also emits
+	// `runtime_info` (callbacks.py pushes it before `model_swap_completed`
+	// per the load-bearing emission order), so this branch fires
+	// idempotently next to the dedicated handlers — no harm.
+	const unsubRuntime = onRuntimeInfo((info) => {
+		if (info === null) {
+			return;
+		}
+		const state = useModelSwapStore.getState();
+		if (state.activeMain !== null && info.model === state.activeMain) {
+			state.clear("main");
+		}
+		if (state.activeRealtime !== null && info.realtime_model === state.activeRealtime) {
+			state.clear("realtime");
+		}
+	});
 	return () => {
 		unsubStarted();
 		unsubCompleted();
 		unsubFailed();
+		unsubRuntime();
 	};
 }
 

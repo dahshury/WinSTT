@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { useLocaleStore } from "@/shared/i18n";
 import { IntlProvider } from "./IntlProvider";
 

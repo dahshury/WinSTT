@@ -2,6 +2,7 @@ import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ChangeEvent, type CSSProperties, type ReactNode, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
+import { surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { type CalendarSystem, type CalendarSystemId, getCalendarSystem } from "./calendar-system";
 
@@ -548,11 +549,18 @@ function TimeField({
 		}
 		onChange(setTimePartOf(value, parsed[0], parsed[1]));
 	};
+	// Lift one step above the surrounding substrate so the input reads as
+	// elevated against deeper containers (popups, dialogs).
+	const substrate = useSurface();
+	const inputLevel = Math.min(substrate + 1, 8);
 	return (
 		<label className="flex flex-col gap-1 text-foreground-muted text-xs" htmlFor={id}>
 			{label}
 			<input
-				className="rounded-md border border-border bg-surface-tertiary px-2 py-1 font-mono text-foreground text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+				className={cn(
+					"rounded-md px-2 py-1 font-mono text-foreground text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50",
+					surfaceClasses(inputLevel)
+				)}
 				disabled={!value}
 				id={id}
 				onChange={commitTime}

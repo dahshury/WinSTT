@@ -5,8 +5,9 @@ setlocal enabledelayedexpansion
 ::  WinSTT — Dev Environment Setup (Windows)
 ::
 ::  Usage:
-::    setup-dev.bat                       Auto-detect: any GPU → DirectML, else CPU
+::    setup-dev.bat                       Default: DirectML (any GPU via DX12; auto-falls-back to CPU)
 ::    setup-dev.bat --flavor directml     Force DirectML runtime (AMD/Intel/NVIDIA via DX12)
+::    setup-dev.bat --flavor openvino     Force OpenVINO runtime (Intel ARC / Iris Xe / Arc iGPU)
 ::    setup-dev.bat --flavor cpu          Force CPU-only runtime
 ::
 ::  Prereqs handled automatically:
@@ -39,7 +40,7 @@ if /i "%~1"=="--flavor" (
     goto parse_args
 )
 echo  [ERROR] Unknown argument: %~1
-echo  Usage: setup-dev.bat [--flavor cpu^|directml]
+echo  Usage: setup-dev.bat [--flavor cpu^|directml^|openvino]
 exit /b 1
 :args_done
 
@@ -61,8 +62,8 @@ if not defined FLAVOR (
     set "FLAVOR=directml"
     echo  Defaulting to DirectML runtime ^(AMD/Intel/NVIDIA via DX12; falls back to CPU automatically^).
 ) else (
-    if /i not "%FLAVOR%"=="cpu" if /i not "%FLAVOR%"=="directml" (
-        echo  [ERROR] --flavor must be 'cpu' or 'directml', got '%FLAVOR%'
+    if /i not "%FLAVOR%"=="cpu" if /i not "%FLAVOR%"=="directml" if /i not "%FLAVOR%"=="openvino" (
+        echo  [ERROR] --flavor must be 'cpu', 'directml', or 'openvino', got '%FLAVOR%'
         exit /b 1
     )
     echo  Manual flavor override: %FLAVOR%

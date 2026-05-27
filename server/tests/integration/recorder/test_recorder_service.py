@@ -8,8 +8,10 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
+from typing_extensions import override
 
 from src.building_blocks.clock import Clock
+from src.building_blocks.types import AudioArray
 from src.building_blocks.event_bus import EventBus
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
@@ -544,6 +546,61 @@ class TestRecorderService:
         assert service.state != RecorderState.RECORDING
         service.shutdown()
 
+    def test_set_microphone_off_defers_pause_when_tail_buffer_configured(self) -> None:
+        """``extra_recording_buffer_ms`` keeps the mic capturing past PTT release.
+
+        Mirrors Handy's ``extra_recording_buffer_ms`` semantics: when the
+        user releases PTT mid-syllable, the trailing audio is captured
+        for the configured window before the pause + stop sequence runs.
+        Until the window elapses the audio source must NOT be paused and
+        the state must remain RECORDING.
+        """
+        service, _, _, audio_source = self._make_service()
+        service._config.audio.extra_recording_buffer_ms = 120
+        service.listen()
+        service.start()
+        assert service.state == RecorderState.RECORDING
+        assert audio_source._pause_count == 0
+
+        service.set_microphone(False)
+        # Tail window: pause is still deferred, recording is still active.
+        time.sleep(0.03)
+        assert audio_source._pause_count == 0
+        assert service.state == RecorderState.RECORDING
+
+        # After the window elapses the daemon fires pause + stop.
+        time.sleep(0.25)
+        assert audio_source._pause_count == 1
+        assert service.state != RecorderState.RECORDING
+        service.shutdown()
+
+    def test_set_microphone_off_skips_tail_buffer_when_not_recording(self) -> None:
+        """No tail when there's nothing to extend (listening but no audio yet)."""
+        service, _, _, audio_source = self._make_service()
+        service._config.audio.extra_recording_buffer_ms = 200
+        service.listen()
+        assert service.state == RecorderState.LISTENING
+
+        service.set_microphone(False)
+        # Immediate pause — the deferral guard only fires while RECORDING.
+        assert audio_source._pause_count == 1
+        service.shutdown()
+
+    def test_set_microphone_off_skips_tail_buffer_in_wake_word_mode(self) -> None:
+        """Wake-word backends keep capturing anyway, so the tail is implicit."""
+        wake_word = FakeWakeWordDetector()
+        service, _, _, audio_source = self._make_service(wake_word_detector=wake_word)
+        service._config.audio.extra_recording_buffer_ms = 200
+        service.listen()
+        service.start()
+
+        service.set_microphone(False)
+        # Wake-word mode never pauses the hardware in the first place
+        # (the detector needs continuous capture), so the deferral is
+        # bypassed and the off-sequence runs synchronously.
+        assert audio_source._pause_count == 0
+        service.shutdown()
+
     def test_use_microphone_initial(self) -> None:
         """use_microphone reflects config at construction time."""
         service, _, _, _ = self._make_service(use_microphone=False)
@@ -859,10 +916,16 @@ class TestRecorderService:
         service.shutdown()
 
     def test_warmup_runs_realtime_transcriber(self) -> None:
-        """warmup() also warms up the realtime transcriber when present."""
+        """warmup() also warms up the realtime transcriber when present.
+
+        Realtime warmup is deferred to a background daemon thread so the
+        critical path can publish ``server_ready`` ~1.5 s sooner; tests
+        wait on :meth:`wait_for_background_warmup` to assert it deterministically.
+        """
         rt_transcriber = FakeTranscriber()
         service, transcriber, _, _ = self._make_service(realtime_transcriber=rt_transcriber)
         service.warmup()
+        assert service.wait_for_background_warmup(timeout=5.0)
         assert transcriber.call_count == 1
         assert rt_transcriber.call_count == 1
         service.shutdown()
@@ -876,11 +939,17 @@ class TestRecorderService:
 
     def test_warmup_loads_diarizer_when_present(self) -> None:
         """warmup() also eagerly loads the diarizer so the first diarized
-        utterance (and the renderer's warming spinner) doesn't stall."""
+        utterance (and the renderer's warming spinner) doesn't stall.
+
+        Diarizer warmup is deferred to the same background thread that
+        warms the realtime transcriber. Wait on the warmup-complete event
+        before asserting the call count.
+        """
         diarizer = FakeDiarizer(segments=(SpeakerSegment(start=0.0, end=1.0, speaker=0),))
         service, transcriber, _, _ = self._make_service(diarizer=diarizer)
         assert diarizer.diarize_calls == 0
         service.warmup()
+        assert service.wait_for_background_warmup(timeout=5.0)
         assert transcriber.call_count == 1
         assert diarizer.diarize_calls == 1
         service.shutdown()
@@ -1822,6 +1891,56 @@ class TestRecorderService:
         assert text == ""
         service.shutdown()
 
+    def test_safe_transcribe_swallows_model_runtime_exception(self) -> None:
+        """Regression: model runtime exceptions must NOT propagate.
+
+        The DML EP crashed mid-decode on a Canary-180M-int8 graph
+        (Reshape kernel exception in production). Before this guard,
+        the ``onnxruntime_pybind11_state.RuntimeException`` propagated
+        up through ``text()`` and killed the entire ``_recorder_thread``
+        in ``stt_server.server`` — the user then had to restart the
+        server to dictate again. The catch routes the failure through
+        the same ``None`` path as a swap-in-flight skip so the recorder
+        loop survives the next utterance.
+        """
+
+        class _CrashingTranscriber(FakeTranscriber):
+            @override
+            def transcribe(
+                self,
+                audio: AudioArray,
+                language: str = "",
+                use_prompt: bool = True,
+            ) -> TranscriptionResult:
+                raise RuntimeError("simulated ONNXRuntime DML kernel exception")
+
+        service, _, _, _ = self._make_service()
+        service._transcriber = _CrashingTranscriber()
+        audio = np.zeros(16000, dtype=np.float32)
+        result = service._safe_transcribe(service._transcriber, audio, "en")
+        assert result is None
+        service.shutdown()
+
+    def test_run_full_transcription_returns_empty_when_transcriber_raises(self) -> None:
+        """End-to-end: a raising transcriber yields empty text, not a crash."""
+
+        class _CrashingTranscriber(FakeTranscriber):
+            @override
+            def transcribe(
+                self,
+                audio: AudioArray,
+                language: str = "",
+                use_prompt: bool = True,
+            ) -> TranscriptionResult:
+                raise RuntimeError("simulated ONNXRuntime DML kernel exception")
+
+        service, _, _, _ = self._make_service()
+        service._transcriber = _CrashingTranscriber()
+        audio = np.zeros(16000, dtype=np.float32)
+        text = service._run_full_transcription(audio, frame_count=10, audio_seconds=0.5)
+        assert text == ""
+        service.shutdown()
+
     def test_attempt_restore_returns_no_previous_when_name_empty(self) -> None:
         """Edge case: first install (no prior model). ``_attempt_restore``
         is a no-op and the benchmark line tags the swap accordingly."""
@@ -2119,4 +2238,198 @@ class TestRecorderService:
         self._wait_for(lambda: service._diarizer is second_diarizer)
         assert any(f.category == "unknown" for f in failed)
         service.shutdown()
+        service.shutdown()
+
+    # ---- Idle-unload daemon (Handy ModelUnloadTimeout port) ----
+
+    def test_unload_daemon_disabled_when_timeout_none(self) -> None:
+        """``model_unload_timeout_seconds=None`` skips the daemon entirely.
+
+        Checking the thread stays ``None`` covers the boot-time gate; no
+        need to wait out a poll cycle.
+        """
+        config = RecorderConfig.from_kwargs(
+            use_microphone=False,
+            speech_onset_consecutive_chunks=1,
+            model_unload_timeout_seconds=None,
+        )
+        transcriber = FakeTranscriber(
+            result=TranscriptionResult(text="hi", language="en", language_probability=0.99, duration_seconds=1.0)
+        )
+        service = RecorderService(
+            audio_source=FakeAudioSource(),
+            vad=FakeVAD(speech_pattern=[True] + [False] * 20),
+            transcriber=transcriber,
+            config=config,
+            event_bus=EventBus(),
+            clock=Clock.system_clock(),
+        )
+        assert service._unload_check_thread is None
+        service.shutdown()
+
+    def test_unload_daemon_thread_starts_when_timeout_positive(self) -> None:
+        """A positive timeout spawns the poller thread; ``shutdown()``
+        signals it to exit."""
+        config = RecorderConfig.from_kwargs(
+            use_microphone=False,
+            speech_onset_consecutive_chunks=1,
+            model_unload_timeout_seconds=60,
+        )
+        transcriber = FakeTranscriber(
+            result=TranscriptionResult(text="hi", language="en", language_probability=0.99, duration_seconds=1.0)
+        )
+        service = RecorderService(
+            audio_source=FakeAudioSource(),
+            vad=FakeVAD(speech_pattern=[True] + [False] * 20),
+            transcriber=transcriber,
+            config=config,
+            event_bus=EventBus(),
+            clock=Clock.system_clock(),
+        )
+        assert service._unload_check_thread is not None
+        assert service._unload_check_thread.is_alive()
+        service.shutdown()
+        service._unload_check_thread.join(timeout=2.0)
+        assert not service._unload_check_thread.is_alive()
+
+    def test_maybe_unload_for_idle_nulls_both_slots(self) -> None:
+        """When the idle window has elapsed, ``_maybe_unload_for_idle``
+        tears down main + realtime and calls ``shutdown()`` on each
+        held instance."""
+        service, transcriber, _, _ = self._make_service()
+        rt = FakeTranscriber()
+        service._realtime_transcriber = rt
+        service._unload_timeout_seconds = 1
+        # Push the last activity into the past so the timer condition
+        # evaluates as "idle long enough".
+        service._last_activity_at = service._clock.get_current_time() - 10.0
+
+        service._maybe_unload_for_idle()
+
+        assert service._transcriber is None
+        assert service._realtime_transcriber is None
+        assert transcriber.shutdown_called is True
+        assert rt.shutdown_called is True
+        service.shutdown()
+
+    def test_maybe_unload_for_idle_skips_during_swap(self) -> None:
+        """A swap-in-flight blocks the unload (swap owns the slots)."""
+        import threading as _threading
+
+        service, transcriber, _, _ = self._make_service()
+        service._unload_timeout_seconds = 1
+        service._last_activity_at = service._clock.get_current_time() - 10.0
+        service._swap_threads["main"] = _threading.Thread(target=lambda: None)
+
+        service._maybe_unload_for_idle()
+
+        # Slot untouched — swap worker would race with us.
+        assert service._transcriber is transcriber
+        service.shutdown()
+
+    def test_unload_daemon_skipped_when_timeout_zero(self) -> None:
+        """``model_unload_timeout_seconds=0`` is Handy's ``Immediately``
+        mode — the poller thread must NOT start (tear-down happens
+        synchronously from ``_maybe_unload_immediately`` after every
+        transcription, not on a 30 s tick)."""
+        config = RecorderConfig.from_kwargs(
+            use_microphone=False,
+            speech_onset_consecutive_chunks=1,
+            model_unload_timeout_seconds=0,
+        )
+        transcriber = FakeTranscriber(
+            result=TranscriptionResult(text="hi", language="en", language_probability=0.99, duration_seconds=1.0)
+        )
+        service = RecorderService(
+            audio_source=FakeAudioSource(),
+            vad=FakeVAD(speech_pattern=[True] + [False] * 20),
+            transcriber=transcriber,
+            config=config,
+            event_bus=EventBus(),
+            clock=Clock.system_clock(),
+        )
+        assert service._unload_check_thread is None
+        service.shutdown()
+
+    def test_maybe_unload_immediately_nulls_both_slots(self) -> None:
+        """``timeout==0`` plus a loaded transcriber → instant tear-down."""
+        service, transcriber, _, _ = self._make_service()
+        rt = FakeTranscriber()
+        service._realtime_transcriber = rt
+        service._unload_timeout_seconds = 0
+
+        service._maybe_unload_immediately()
+
+        assert service._transcriber is None
+        assert service._realtime_transcriber is None
+        assert transcriber.shutdown_called is True
+        assert rt.shutdown_called is True
+        service.shutdown()
+
+    def test_maybe_unload_immediately_noop_when_timeout_not_zero(self) -> None:
+        """Non-zero timeouts (None / positive int / negative) leave the
+        immediate hook as a no-op — the daemon (or nothing) owns
+        lifecycle in those modes."""
+        service, transcriber, _, _ = self._make_service()
+        for timeout in (None, 60, -1):
+            service._unload_timeout_seconds = timeout  # type: ignore[assignment]
+            service._maybe_unload_immediately()
+            assert service._transcriber is transcriber, f"unexpected unload for timeout={timeout!r}"
+        service.shutdown()
+
+    def test_maybe_unload_immediately_skips_during_swap(self) -> None:
+        """An in-flight swap owns the slots — immediate-mode must wait."""
+        import threading as _threading
+
+        service, transcriber, _, _ = self._make_service()
+        service._unload_timeout_seconds = 0
+        service._swap_threads["main"] = _threading.Thread(target=lambda: None)
+
+        service._maybe_unload_immediately()
+
+        assert service._transcriber is transcriber
+        service.shutdown()
+
+    def test_maybe_unload_immediately_noop_when_slots_empty(self) -> None:
+        """Empty slots → no shutdown call, no log spam."""
+        service, transcriber, _, _ = self._make_service()
+        service._unload_timeout_seconds = 0
+        with service._main_transcriber_lock:
+            service._transcriber = None  # type: ignore[assignment]
+        with service._realtime_transcriber_lock:
+            service._realtime_transcriber = None
+
+        service._maybe_unload_immediately()  # must not raise
+
+        assert transcriber.shutdown_called is False
+        service.shutdown()
+
+    def test_ensure_main_transcriber_reload_after_unload(self) -> None:
+        """After a tear-down, ``_ensure_main_transcriber_loaded`` rebuilds
+        the slot via ``_load_transcriber`` synchronously."""
+        service, _, _, _ = self._make_service()
+        service._saved_main_model_name = "test-model"
+        rebuilt = FakeTranscriber(
+            result=TranscriptionResult(text="rebuilt", language="en", language_probability=0.99, duration_seconds=1.0)
+        )
+        service._load_transcriber = lambda name, on_progress: rebuilt  # type: ignore[method-assign]
+
+        with service._main_transcriber_lock:
+            service._transcriber = None  # type: ignore[assignment]
+        service._ensure_main_transcriber_loaded()
+
+        assert service._transcriber is rebuilt
+        service.shutdown()
+
+    def test_install_transcriber_updates_saved_name(self) -> None:
+        """A successful swap updates the saved-name field so a future
+        unload's lazy-reload rebuilds the user's CURRENT model, not
+        whatever was loaded at boot."""
+        service, _, _, _ = self._make_service()
+        assert service._saved_main_model_name != "after-swap"
+        new_t = FakeTranscriber()
+
+        service._install_transcriber("main", "after-swap", new_t)
+
+        assert service._saved_main_model_name == "after-swap"
         service.shutdown()

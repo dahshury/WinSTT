@@ -6,6 +6,7 @@ import {
 	onHotkeyPressed,
 	onHotkeyReleased,
 	onRecordingStop,
+	onSttSessionAborted,
 	sttCallMethod,
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
@@ -131,6 +132,21 @@ export function usePushToTalk(): void {
 			// no-op
 		});
 	}, []);
+
+	// User-initiated cancel (overlay X button, hotkey+Backspace). The server
+	// already aborted the recorder + released the mic; mirror that into the
+	// renderer's toggle state so the next hotkey press starts a fresh
+	// recording instead of toggling off a session the server's already
+	// killed (toggle mode's "press twice to restart" UX bug).
+	useEffect(
+		() =>
+			onSttSessionAborted(() => {
+				isActiveRef.current = false;
+				setActive(false);
+				setPressed(false);
+			}),
+		[setActive, setPressed]
+	);
 
 	// Reset toggle state on unmount.
 	useEffect(

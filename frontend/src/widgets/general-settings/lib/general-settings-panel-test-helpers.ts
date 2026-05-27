@@ -10,7 +10,7 @@ import {
 	VoiceIcon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import type { useTranslations } from "next-intl";
+import type { useTranslations } from "use-intl";
 import type { useSettingsStore } from "@/entities/setting";
 import { isVisualizerType } from "@/features/audio-visualizer";
 import { RECORDING_MODE_COLOR_HEX } from "@/shared/config/recording-mode-color";
@@ -223,19 +223,22 @@ export function pickLocale(value: string, setLocale: (locale: Locale) => void): 
 	}
 }
 
-export const REDUCTION_STEPS = [20, 40, 60, 80, 100] as const;
+export const REDUCTION_STEPS = [0, 20, 40, 60, 80, 100] as const;
 export const DEFAULT_REDUCTION = 100;
 
 export function reductionToIndex(pct: number): number {
 	const idx = REDUCTION_STEPS.indexOf(pct as (typeof REDUCTION_STEPS)[number]);
-	return idx === -1 ? REDUCTION_STEPS.length - 1 : idx;
+	return idx === -1 ? 0 : idx;
 }
 
 export function indexToReduction(index: number): number {
-	return REDUCTION_STEPS[index] ?? DEFAULT_REDUCTION;
+	return REDUCTION_STEPS[index] ?? 0;
 }
 
 export function reductionStepLabel(pct: number, t: GeneralT): string {
+	if (pct <= 0) {
+		return t("systemAudioReductionOff");
+	}
 	return pct >= 100 ? t("systemAudioReductionMute") : `${pct}%`;
 }
 
@@ -343,6 +346,40 @@ export function overlayTogglePatch(
 	return enabled ? overlayEnablePatch() : overlayDisablePatchForLive(currentLiveDisplay(general));
 }
 
+// Combined "Off + sizes" overlay slider. Index 0 is Off (turns the overlay
+// off and reverts overlay-only live transcription choices to in-app via the
+// shared overlayTogglePatch). Indices 1..N map to VISUALIZER_SIZE_PRESETS.
+export function overlaySliderToIndex(general: GeneralSettings | undefined): number {
+	const showOverlay = general?.showRecordingOverlay ?? true;
+	if (!showOverlay) {
+		return 0;
+	}
+	const size = general?.visualizerSize ?? "xs";
+	return visualizerSizeToIndex(size) + 1;
+}
+
+export function overlaySliderMax(): number {
+	return VISUALIZER_SIZE_PRESETS.length;
+}
+
+export function overlaySliderPatch(
+	index: number,
+	general: GeneralSettings | undefined
+): Partial<GeneralSettings> {
+	if (index <= 0) {
+		return overlayTogglePatch(false, general);
+	}
+	const preset = visualizerSizeFromIndex(index - 1);
+	return { showRecordingOverlay: true, visualizerSize: preset };
+}
+
+export function overlaySliderLabel(index: number, t: GeneralT): string {
+	if (index <= 0) {
+		return t("overlaySizeOff");
+	}
+	return VISUALIZER_SIZE_LABELS[visualizerSizeFromIndex(index - 1)];
+}
+
 export function checkedOrFalseIfDisabled(disabled: boolean, value: boolean): boolean {
 	return disabled ? false : value;
 }
@@ -425,6 +462,10 @@ export const __general_settings_panel_test_helpers__ = {
 	needsOverlay,
 	effectiveLiveDisplay,
 	overlayTogglePatch,
+	overlaySliderToIndex,
+	overlaySliderMax,
+	overlaySliderPatch,
+	overlaySliderLabel,
 	buildLiveTranscriptionDisplayOptions,
 	isLiveTranscriptionDisplayValue,
 	checkedOrFalseIfDisabled,

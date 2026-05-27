@@ -6,8 +6,8 @@ import {
 	RefreshIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import {
 	type AboutAppInfo,

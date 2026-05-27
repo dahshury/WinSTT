@@ -91,13 +91,14 @@ describe("GeneralSettingsPanel helpers — muteEnabled", () => {
 });
 
 describe("GeneralSettingsPanel helpers — reduction slider mapping", () => {
-	// Slider stops, left → right, monotonically increasing: 20, 40, 60, 80, Mute(100).
+	// Slider stops, left → right, monotonically increasing: Off(0), 20, 40, 60, 80, Mute(100).
 	const stops: [number, number][] = [
-		[0, 20],
-		[1, 40],
-		[2, 60],
-		[3, 80],
-		[4, 100],
+		[0, 0],
+		[1, 20],
+		[2, 40],
+		[3, 60],
+		[4, 80],
+		[5, 100],
 	];
 
 	test.each(stops)("index %s ↔ reduction %s", (index, pct) => {
@@ -105,17 +106,17 @@ describe("GeneralSettingsPanel helpers — reduction slider mapping", () => {
 		expect(helpers.reductionToIndex(pct)).toBe(index);
 	});
 
-	test("reductionToIndex falls back to the top stop (Mute) for an unknown percent", () => {
-		expect(helpers.reductionToIndex(37)).toBe(4);
-		expect(helpers.reductionToIndex(0)).toBe(4);
+	test("reductionToIndex falls back to the Off stop for an unknown percent", () => {
+		expect(helpers.reductionToIndex(37)).toBe(0);
 	});
 
-	test("indexToReduction falls back to the default (100) for an out-of-range index", () => {
-		expect(helpers.indexToReduction(99)).toBe(100);
-		expect(helpers.indexToReduction(-1)).toBe(100);
+	test("indexToReduction falls back to 0 (Off) for an out-of-range index", () => {
+		expect(helpers.indexToReduction(99)).toBe(0);
+		expect(helpers.indexToReduction(-1)).toBe(0);
 	});
 
-	test("reductionStepLabel: 100 → Mute, else N%", () => {
+	test("reductionStepLabel: 0 → Off, 100 → Mute, else N%", () => {
+		expect(helpers.reductionStepLabel(0, tStub)).toBe("systemAudioReductionOff");
 		expect(helpers.reductionStepLabel(100, tStub)).toBe("systemAudioReductionMute");
 		expect(helpers.reductionStepLabel(80, tStub)).toBe("80%");
 		expect(helpers.reductionStepLabel(20, tStub)).toBe("20%");

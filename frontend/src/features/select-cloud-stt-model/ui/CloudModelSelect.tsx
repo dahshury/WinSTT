@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { CLOUD_CATALOG, CLOUD_PROVIDERS, providerDisplayName } from "@/entities/cloud-stt-provider";
 import { useSettingsStore } from "@/entities/setting";
 import { windowOpenSettings } from "@/shared/api/ipc-client";

@@ -38,8 +38,6 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
 	["model.device", "--device"],
 	["model.backend", "--backend"],
 	["model.onnxQuantization", "--onnx_quantization"],
-	["model.beamSize", "--beam_size"],
-	["model.beamSizeRealtime", "--beam_size_realtime"],
 	// `model.initialPrompt` / `model.initialPromptRealtime` are NOT in this
 	// table — they're composed at spawn time by `applyInitialPromptFlags`
 	// which folds the user's static prefix together with the dictionary's
@@ -50,12 +48,11 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
 	["audio.sileroSensitivity", "--silero_sensitivity"],
 	["audio.webrtcSensitivity", "--webrtc_sensitivity"],
 	["audio.minLengthOfRecording", "--min_length_of_recording"],
+	["audio.extraRecordingBufferMs", "--extra_recording_buffer_ms"],
 	["quality.useMainModelForRealtime", "--use_main_model_for_realtime"],
 	["quality.realtimeProcessingPause", "--realtime_processing_pause"],
 	["quality.earlyTranscriptionOnSilence", "--early_transcription_on_silence"],
 	["quality.initRealtimeAfterSeconds", "--init_realtime_after_seconds"],
-	["quality.batchSize", "--batch"],
-	["quality.realtimeBatchSize", "--realtime_batch_size"],
 ];
 
 /**
@@ -65,14 +62,54 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
  */
 const STORE_TRUE_CLI: [storePath: string, cliFlag: string][] = [
 	["general.speakerDiarization", "--enable_diarization"],
-	// Handy-style on-demand mic. The CLI defaults to off on the server
-	// side too (release-on-idle), so omitting the flag matches the
-	// frontend default. Only emit the flag when the user has opted into
-	// always-on (paid the OS mic-indicator cost in exchange for
-	// microseconds-fast PTT).
-	["audio.alwaysOnMicrophone", "--always_on_microphone"],
-	["audio.lazyStreamClose", "--lazy_stream_close"],
+	// Whisper task=translate. Server defaults to off; omitting the flag
+	// keeps standard transcribe-only behavior.
+	["model.translateToEnglish", "--translate_to_english"],
 ];
+
+/**
+ * Translate the consolidated ``audio.microphoneRelease`` enum to the
+ * three server-side CLI knobs (``--always_on_microphone``,
+ * ``--lazy_stream_close``, ``--lazy_close_timeout_seconds``). The
+ * server's PyAudioSource still consumes the two booleans + the
+ * timeout from Handy's original design — the renderer just hides that
+ * shape behind a single picker so the user picks one bucket instead
+ * of a "toggle + dependent toggle" pair.
+ *
+ * Mapping:
+ *   "always"    → --always_on_microphone (lazy flags skipped)
+ *   "immediate" → neither flag (lazy=false, default behavior)
+ *   "sec30"     → --lazy_stream_close --lazy_close_timeout_seconds 30
+ *   "min1"      → --lazy_stream_close --lazy_close_timeout_seconds 60
+ *   "min5"      → --lazy_stream_close --lazy_close_timeout_seconds 300
+ *
+ * Unknown / corrupt values fall through to "immediate" via the schema
+ * `.catch("immediate")`, so this function never sees them.
+ */
+const MIC_RELEASE_LAZY_SECONDS: Record<string, number> = {
+	sec30: 30,
+	min1: 60,
+	min5: 300,
+};
+
+/**
+ * Map the enum-valued ``modelUnloadTimeout`` setting to the seconds the
+ * server CLI expects. ``never`` becomes -1, which the server treats as
+ * "disable" (kept resident forever). ``immediately`` becomes 0, which
+ * the server treats as "tear down right after each transcription"
+ * (event-driven, no idle poller). The remaining buckets line up with
+ * Handy's :class:`ModelUnloadTimeout.to_seconds` mapping so behavior is
+ * directly comparable across the two products.
+ */
+const MODEL_UNLOAD_TIMEOUT_SECONDS: Record<string, number> = {
+	immediately: 0,
+	never: -1,
+	min2: 2 * 60,
+	min5: 5 * 60,
+	min10: 10 * 60,
+	min15: 15 * 60,
+	hour1: 60 * 60,
+};
 
 function isEmptyStoreValue(value: unknown): boolean {
 	return value == null || value === "";
@@ -322,6 +359,41 @@ function applyStoreTrueCliFlags(args: string[]): void {
 	}
 }
 
+function applyMicrophoneReleaseFlag(args: string[]): void {
+	// Pull the enum verbatim; the schema's `.catch("immediate")`
+	// already normalized corrupt values, but defensively coerce to
+	// string so an unexpected boolean / number from a stale legacy
+	// install doesn't blow up.
+	const raw = String(getStoreRaw("audio.microphoneRelease") ?? "immediate");
+	if (raw === "always") {
+		args.push("--always_on_microphone");
+		return;
+	}
+	if (raw === "immediate") {
+		// Server's default — emit nothing. PyAudioSource boots in
+		// on-demand mode and pause() releases the stream synchronously.
+		return;
+	}
+	const seconds = MIC_RELEASE_LAZY_SECONDS[raw];
+	if (seconds === undefined) {
+		// Unknown enum value (post-migration corrupt persist). Schema
+		// catches this on load; this branch keeps the spawn-arg
+		// builder defensive in case the value somehow bypasses Zod.
+		return;
+	}
+	args.push("--lazy_stream_close");
+	args.push("--lazy_close_timeout_seconds", String(seconds));
+}
+
+function applyModelUnloadTimeoutFlag(args: string[]): void {
+	// Translate the enum to the seconds value the server CLI expects.
+	// Unknown / corrupt persisted values fall through to the default
+	// (5 min) so the resulting boot still picks a sensible behavior.
+	const raw = String(getStoreRaw("model.modelUnloadTimeout") ?? "min5");
+	const seconds = MODEL_UNLOAD_TIMEOUT_SECONDS[raw] ?? MODEL_UNLOAD_TIMEOUT_SECONDS.min5;
+	args.push("--model_unload_timeout_seconds", String(seconds));
+}
+
 function applyDerivedFlags(args: string[]): void {
 	applyRealtimeFlag(args);
 	applySileroDeactivityFlag(args);
@@ -329,6 +401,8 @@ function applyDerivedFlags(args: string[]): void {
 	applyInitialPromptFlags(args);
 	applyLogDirFlag(args);
 	applyCustomModelsDirFlag(args);
+	applyModelUnloadTimeoutFlag(args);
+	applyMicrophoneReleaseFlag(args);
 }
 
 /** Read all relevant settings from electron-store and convert to CLI args */
@@ -387,21 +461,27 @@ function isOwningProcess(proc: ChildProcess): boolean {
 	return sttProcess === proc;
 }
 
-function maybeMarkRunning(proc: ChildProcess, text: string): void {
-	// Match the server's backend-agnostic ready marker (see
-	// server/src/stt_server/server.py "Recorder initialized"). Must stay
-	// in sync with the server-side string. This only flips the spawned-
-	// process status — the renderer's "ready" check goes through the
-	// server_ready WebSocket message instead.
-	if (text.includes("Recorder initialized") && isOwningProcess(proc)) {
+/**
+ * Flip the spawned-process status to "running" if the WS server has
+ * signaled ready and the request came from the current owning process.
+ *
+ * Replaces the legacy stdout-grep for "Recorder initialized" — the server
+ * now broadcasts a structured `server_ready` WS event (the canonical
+ * signal). Main wires this function as a listener on `sttClient`'s
+ * `"server-ready"` event so spawned-process status mirrors the WS signal
+ * race-free.
+ */
+export function markServerRunning(): void {
+	if (sttProcess !== null && isOwningProcess(sttProcess)) {
 		status = "running";
 	}
 }
 
-function handleStdoutData(proc: ChildProcess, data: Buffer): void {
+function handleStdoutData(_proc: ChildProcess, data: Buffer): void {
 	const text = data.toString();
 	console.log("[stt-server]", text.trimEnd());
-	maybeMarkRunning(proc, text);
+	// No stdout grep — `markServerRunning` is now driven by the
+	// structured `server_ready` WS event (see main.ts wiring).
 }
 
 function handleStderrData(data: Buffer): void {

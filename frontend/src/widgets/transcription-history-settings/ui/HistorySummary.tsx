@@ -6,7 +6,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { type AggregateStats, formatDuration, formatWpm } from "../lib/word-stats";
 
 interface HistorySummaryProps {

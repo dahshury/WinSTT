@@ -6,8 +6,8 @@ import {
 	Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
+import { useTranslations } from "use-intl";
 import { useShallow } from "zustand/react/shallow";
 import { RECOMMENDED_OLLAMA_MODELS, useLlmCatalogStore } from "@/entities/llm-catalog";
 import type { OllamaModel, OllamaPullProgress, RecommendedOllamaModel } from "@/shared/api/models";

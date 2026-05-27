@@ -109,9 +109,11 @@ describe("useVisualizerStore", () => {
 		expect(useVisualizerStore.getState().isRecording).toBe(true);
 	});
 
-	// ─── recordingStopped contract: clears two booleans atomically ───
-	test("recordingStopped clears BOTH isRecording AND isSpeaking", () => {
-		// Pre-seed both to true and verify both go to false.
+	// ─── recordingStopped contract: clears flags AND zeros level/pulse atomically ───
+	// This is the truth-at-data-layer invariant — hidden windows must show
+	// audioLevel=0 on next paint without depending on an rAF fade that pauses
+	// while the renderer is backgrounded.
+	test("recordingStopped clears flags AND zeros audioLevel + sentencePulse", () => {
 		useVisualizerStore.setState({
 			isRecording: true,
 			isSpeaking: true,
@@ -122,13 +124,11 @@ describe("useVisualizerStore", () => {
 		const state = useVisualizerStore.getState();
 		expect(state.isRecording).toBe(false);
 		expect(state.isSpeaking).toBe(false);
-		// audioLevel/sentencePulse are NOT cleared — proves the reducer
-		// only touches the two boolean fields.
-		expect(state.audioLevel).toBe(0.5);
-		expect(state.sentencePulse).toBe(0.5);
+		expect(state.audioLevel).toBe(0);
+		expect(state.sentencePulse).toBe(0);
 	});
 
-	test("recordingStopped is a no-op for already-cleared flags", () => {
+	test("recordingStopped is a no-op for already-cleared state", () => {
 		useVisualizerStore.setState({
 			isRecording: false,
 			isSpeaking: false,
@@ -139,18 +139,23 @@ describe("useVisualizerStore", () => {
 		const state = useVisualizerStore.getState();
 		expect(state.isRecording).toBe(false);
 		expect(state.isSpeaking).toBe(false);
+		expect(state.audioLevel).toBe(0);
+		expect(state.sentencePulse).toBe(0);
 	});
 
 	// ─── Round-trip: started → stopped sequence ───
-	test("started → stopped leaves isRecording=false and isSpeaking=false", () => {
+	test("started → stopped leaves all visualizer state at ground truth (zero)", () => {
 		const s = useVisualizerStore.getState();
 		s.recordingStarted();
 		s.setSpeaking(true);
 		s.setAudioLevel(0.9);
+		s.setSentencePulse(0.6);
 		s.recordingStopped();
 		const final = useVisualizerStore.getState();
 		expect(final.isRecording).toBe(false);
 		expect(final.isSpeaking).toBe(false);
+		expect(final.audioLevel).toBe(0);
+		expect(final.sentencePulse).toBe(0);
 	});
 
 	// ─── setRecording / setSpeaking explicit boolean tests ───

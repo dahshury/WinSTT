@@ -11,12 +11,20 @@ import { useVisualizerStore } from "../model/visualizer-store";
 
 /** Sentence pulse decay per frame. */
 const PULSE_DECAY = 0.03;
-/** How quickly audio level decays each frame while fading out (~300-500ms at 60fps). */
-const FADE_DECAY = 0.06;
 
 /**
  * Subscribes to recording / VAD / audio-level IPC events and drives the
  * visualizer store with real RMS audio levels from the server.
+ *
+ * The rAF loop only runs while a recording is in progress. On
+ * `recording_stop`, the store is committed to zero synchronously via
+ * `recordingStopped()` — there is deliberately no post-stop fade-out tween.
+ * A fade driven by rAF would pause along with the rest of the renderer
+ * while the main window is hidden, leaving the last frame's audioLevel
+ * frozen in the store and flashing the visualizer on next show. Snapping
+ * to zero at the data layer is what makes hidden→shown paint correctly
+ * from the first frame; visual smoothness, if needed, belongs to the
+ * rendering layer (e.g. CSS transitions on bar height).
  */
 export function useVisualizerSync(): void {
 	const recordingStarted = useVisualizerStore((s) => s.recordingStarted);
@@ -27,7 +35,6 @@ export function useVisualizerSync(): void {
 
 	const rafRef = useRef(0);
 	const activeRef = useRef(false);
-	const fadingRef = useRef(false);
 
 	// Mutable accumulators updated from IPC callbacks, read in rAF loop.
 	const rawLevelRef = useRef(0);
@@ -44,25 +51,6 @@ export function useVisualizerSync(): void {
 		// noop placeholder, replaced on every render below
 	});
 	animateRef.current = () => {
-		if (fadingRef.current) {
-			rawLevelRef.current = Math.max(0, rawLevelRef.current - FADE_DECAY);
-			setAudioLevel(rawLevelRef.current);
-
-			const decayedPulse = Math.max(0, pulseRef.current - PULSE_DECAY);
-			pulseRef.current = decayedPulse;
-			setSentencePulse(decayedPulse);
-
-			if (rawLevelRef.current < 0.001) {
-				fadingRef.current = false;
-				activeRef.current = false;
-				setAudioLevel(0);
-				setSentencePulse(0);
-				return;
-			}
-			rafRef.current = requestAnimationFrame(() => animateRef.current());
-			return;
-		}
-
 		if (!activeRef.current) {
 			return;
 		}
@@ -84,15 +72,13 @@ export function useVisualizerSync(): void {
 
 	useEffect(() => {
 		// Cancel any in-flight frame before scheduling a new one. Without
-		// this, rapid PTT cycles (recording_stop → fade in progress →
-		// recording_start) leak an extra rAF callback each cycle. The
-		// callbacks each call requestAnimationFrame(animate) again, so the
+		// this, rapid PTT cycles leak an extra rAF callback each cycle —
+		// each callback calls requestAnimationFrame(animate) again, so the
 		// scheduled-frame count grows exponentially and the renderer drowns
-		// — which keeps the overlay BrowserWindow too busy to process its
-		// hide() IPC, leaving the pill stuck on screen.
+		// (which keeps the overlay BrowserWindow too busy to process its
+		// hide() IPC, leaving the pill stuck on screen).
 		return onRecordingStart(() => {
 			cancelAnimationFrame(rafRef.current);
-			fadingRef.current = false;
 			activeRef.current = true;
 			rawLevelRef.current = 0;
 			pulseRef.current = 0;
@@ -107,13 +93,14 @@ export function useVisualizerSync(): void {
 	useEffect(
 		() =>
 			onRecordingStop(() => {
+				cancelAnimationFrame(rafRef.current);
+				activeRef.current = false;
+				rawLevelRef.current = 0;
+				pulseRef.current = 0;
+				sentenceFiredRef.current = false;
+				// Store committed to zero atomically — see `recordingStopped`
+				// docstring for why this beats an rAF fade for hidden windows.
 				recordingStopped();
-				fadingRef.current = true;
-				if (!activeRef.current) {
-					cancelAnimationFrame(rafRef.current);
-					activeRef.current = true;
-					rafRef.current = requestAnimationFrame(() => animateRef.current());
-				}
 			}),
 		[recordingStopped]
 	);
@@ -143,7 +130,6 @@ export function useVisualizerSync(): void {
 	useEffect(
 		() => () => {
 			activeRef.current = false;
-			fadingRef.current = false;
 			cancelAnimationFrame(rafRef.current);
 		},
 		[]

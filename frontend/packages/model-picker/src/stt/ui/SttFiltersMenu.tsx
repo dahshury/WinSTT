@@ -113,17 +113,27 @@ function TriggerButton({
 	return (
 		<button
 			{...buttonProps}
-			aria-label="Filters"
+			aria-label={count > 0 ? `Filters (${count} active)` : "Filters"}
 			className={cn(
-				"inline-flex h-7 items-center gap-1 rounded-sm border px-2 text-[11px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
+				"relative inline-flex size-7 items-center justify-center rounded-sm border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
 				isActive
 					? "border-accent/40 bg-accent/10 text-accent hover:bg-accent/15"
 					: "border-transparent bg-transparent text-foreground-secondary hover:bg-surface-hover"
 			)}
+			title={count > 0 ? `Filters (${count} active)` : "Filters"}
 			type="button"
 		>
-			<HugeiconsIcon className="size-3.5" icon={FilterIcon} />
-			{count > 0 ? <span className="tabular-nums">{count}</span> : "Filter"}
+			<HugeiconsIcon className="size-4" icon={FilterIcon} />
+			{count > 0 ? (
+				<span
+					className={cn(
+						"absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full",
+						"border border-divider bg-accent px-1 font-semibold text-[9px] text-white tabular-nums leading-none"
+					)}
+				>
+					{count}
+				</span>
+			) : null}
 		</button>
 	);
 }

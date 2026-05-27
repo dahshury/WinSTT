@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { type AppSettingsOutput, appSettingsSchema } from "@/shared/config/settings-schema";
 import { resolveHotkeyTriple } from "@/shared/lib/hotkey-conflict";
 
@@ -51,14 +52,43 @@ function normalizeHotkeys(parsed: AppSettingsOutput): AppSettingsOutput {
 	};
 }
 
+/**
+ * Per-section recovery: when ``appSettingsSchema.safeParse`` rejects the
+ * payload because ONE section (e.g. ``integrations``) is corrupt, parse
+ * every other section independently so a single bad field can't drag the
+ * whole settings tree down to defaults.
+ *
+ * Regression context: a main-process bug serialized
+ * ``integrations.openai = ""`` (string) into the broadcast payload. The
+ * old "fail → return parse({})" path silently reset ``model.model`` to the
+ * schema default (``"tiny"``), producing the "switching never reaches the
+ * main window" symptom because every other window's broadcast was being
+ * clobbered with defaults. Per-section parsing here means even if a future
+ * upstream bug corrupts ``integrations`` again, ``model`` survives.
+ */
+function payloadAsRecord(payload: unknown): Record<string, unknown> {
+	return typeof payload === "object" && payload !== null
+		? (payload as Record<string, unknown>)
+		: {};
+}
+
+function partialDecodeBySections(payload: unknown): AppSettingsOutput {
+	const defaults = appSettingsSchema.parse({});
+	const payloadRecord = payloadAsRecord(payload);
+	const result: Record<string, unknown> = { ...defaults };
+	for (const [key, sectionSchema] of Object.entries(appSettingsSchema.shape)) {
+		const sectionParsed = (sectionSchema as z.ZodType).safeParse(payloadRecord[key]);
+		if (sectionParsed.success) {
+			result[key] = sectionParsed.data;
+		}
+	}
+	return result as AppSettingsOutput;
+}
+
 export function decodeSettingsPayload(payload: unknown): AppSettingsOutput {
 	const parsed = appSettingsSchema.safeParse(payload);
 	if (parsed.success) {
 		return normalizeHotkeys(parsed.data);
 	}
-	// Fall back to schema defaults. `parse({})` throws if the schema can't
-	// produce defaults — that's a programming error in the schema, not a
-	// runtime concern, so propagating the throw is correct. The defaults are
-	// definitionally non-conflicting, so no normalization pass is needed.
-	return appSettingsSchema.parse({});
+	return normalizeHotkeys(partialDecodeBySections(payload));
 }

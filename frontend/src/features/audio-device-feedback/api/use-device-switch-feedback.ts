@@ -1,5 +1,5 @@
-import { useTranslations } from "next-intl";
 import { useEffect } from "react";
+import { useTranslations } from "use-intl";
 import { useInputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";

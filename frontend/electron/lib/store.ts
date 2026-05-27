@@ -1,6 +1,7 @@
 import { setMaxListeners } from "node:events";
 import Store from "electron-store";
 import { z } from "zod";
+import { type AppSettingsOutput, appSettingsSchema } from "../../src/shared/config/settings-schema";
 import { normalizePersistedHotkeys } from "./normalize-hotkeys";
 import {
 	decryptSecret,
@@ -9,6 +10,20 @@ import {
 	isSecretDotPath,
 	SECRET_DOT_PATHS,
 } from "./secret-storage";
+
+/**
+ * Single source of truth for default values. Derived from the renderer's
+ * Zod schema so adding a field with ``.default(...)`` automatically seeds
+ * electron-store too — no second list to keep in sync.
+ *
+ * This kills the recurring restart-misfire class: ``modelUnloadTimeout``,
+ * ``alwaysOnMicrophone``, ``lazyStreamClose`` all triggered ``Startup-only
+ * key changed: <key> (undefined → <value>)`` because the field existed in
+ * the renderer schema but was missing from the literal that used to live
+ * here. ``snapshotSettings`` then read ``undefined`` for the missing key
+ * and the 500 ms restart timer fired on every fresh launch.
+ */
+const SCHEMA_DEFAULTS: AppSettingsOutput = appSettingsSchema.parse({});
 
 // ── Zod schemas for individual store values (dot-path access) ────────
 // These validate the raw `unknown` return of store.get("section.key").
@@ -114,7 +129,7 @@ const storeValueSchemas = {
 	"quality.useMainModelForRealtime": z.boolean().catch(false),
 	"quality.ensureSentenceEndsWithPeriod": z.boolean().catch(true),
 	// audio
-	"audio.sileroSensitivity": z.number().catch(0.4),
+	"audio.sileroSensitivity": z.number().catch(0.7),
 	"audio.sileroDeactivityDetection": z.boolean().catch(true),
 	"audio.inputDeviceIndex": z.number().int().nullable().catch(null),
 	// PyAudio index of the alternate mic activated when the laptop lid
@@ -302,184 +317,18 @@ export function getStoreRaw(key: string): string | number | boolean | undefined 
 export const store = new Store({
 	// Stryker disable next-line StringLiteral: equivalent — the store name is opaque configuration; the underlying file path differs but produced behavior in tests doesn't depend on the literal
 	name: "winstt-settings",
+	// Defaults are derived from ``appSettingsSchema`` (see SCHEMA_DEFAULTS
+	// above) so the renderer Zod and electron-store can't drift. The handful
+	// of main-process-only fields below (``windowBounds``) are spread on top.
 	// Stryker disable next-line ObjectLiteral: equivalent — emptying the
 	// `defaults` object means electron-store falls back to `undefined` for every
 	// key. The migration block (settings-migrations.ts → migrate()) and the
 	// renderer's settings-codec layer both fill missing fields with their own
 	// defaults before any test inspects the result, so the literal is unobserved.
 	defaults: {
+		...SCHEMA_DEFAULTS,
 		// Stryker disable next-line ObjectLiteral: equivalent — same as parent;
 		// migration + codec defaults overwrite missing keys.
-		model: {
-			// See settings-schema.ts: "tiny" is the bundled offline base
-			// and matches the renderer-side default. "large-v2" was the
-			// pre-offline-base default and is no longer in any picker.
-			model: "tiny",
-			realtimeModel: "tiny",
-			language: "en",
-			computeType: "default",
-			device: "auto",
-			backend: "faster_whisper",
-			onnxQuantization: "",
-			beamSize: 5,
-			beamSizeRealtime: 3,
-			initialPrompt: "",
-			initialPromptRealtime: "",
-			translateToEnglish: false,
-			// Idle-timeout for unloading the ONNX session. Must be declared
-			// here so snapshotSettings("model").modelUnloadTimeout has a
-			// concrete value on disks that predate the field. Without it
-			// `checkForRestartNeeded` sees the renderer-schema default
-			// `"min5"` vs the store's `undefined` and fires a 500 ms
-			// restart timer on every fresh launch (kills the just-spawned
-			// server and respawns — visible as "Restarting Electron-managed
-			// STT server" right after `stt-server READY`). Matches the
-			// renderer's `modelSettingsSchema.modelUnloadTimeout` default.
-			modelUnloadTimeout: "min5",
-		},
-		quality: {
-			// Stryker disable next-line BooleanLiteral: equivalent — the migration block at L171 forces this to false regardless of the initial default
-			useMainModelForRealtime: false,
-			realtimeProcessingPause: 0.02,
-			initRealtimeAfterSeconds: 0.2,
-			earlyTranscriptionOnSilence: 0.2,
-			batchSize: 16,
-			realtimeBatchSize: 16,
-			ensureSentenceStartingUppercase: true,
-			ensureSentenceEndsWithPeriod: true,
-			smartEndpoint: false,
-			smartEndpointSpeed: 1.5,
-		},
-		audio: {
-			inputDeviceIndex: null,
-			sampleRate: 16_000,
-			bufferSize: 512,
-			sileroSensitivity: 0.4,
-			sileroUseOnnx: false,
-			sileroDeactivityDetection: true,
-			webrtcSensitivity: 3,
-			postSpeechSilenceDuration: 0.7,
-			minLengthOfRecording: 1.1,
-			minGapBetweenRecordings: 0,
-			preRecordingBufferDuration: 1.0,
-			sileroSensitivityByDeviceName: {},
-			clamshellMicrophone: null,
-			// Boot-time mic policy. Must appear here AND in the dotted
-			// schema above (else snapshotSettings reads undefined and
-			// checkForRestartNeeded triggers a spurious restart on the
-			// first save of every fresh launch — model picker reverts
-			// were the visible symptom).
-			alwaysOnMicrophone: false,
-			lazyStreamClose: false,
-			keepMicOpen: false,
-		},
-		general: {
-			autoStart: false,
-			minimizeToTray: true,
-			startMinimized: false,
-			systemAudioReductionWhileDictating: 0,
-			recordingSound: true,
-			recordingSoundPath: "",
-			recordingSoundLibrary: [] as Array<{ id: string; name: string; path: string }>,
-			fileTranscriptionFormat: "txt",
-			fileTranscriptionSaveLocation: "auto" as const,
-			recordingMode: "ptt",
-			repasteHotkey: "LCtrl+LShift+V",
-			loopbackDeviceIndex: null,
-			wakeWord: "alexa",
-			wakeWordSensitivity: 0.6,
-			wakeWordTimeout: 5,
-			showRecordingOverlay: true,
-			overlayMode: "floating-bottom" as "floating-bottom" | "dynamic-island",
-			// `auto` resolves to platform default in `resolveOverlayPosition`:
-			// Linux → `"none"` (focus-stealing risk on some compositors),
-			// macOS / Windows → `"bottom"`.
-			overlayPosition: "auto" as "auto" | "none" | "top" | "bottom",
-			visualizerSize: "xs" as const,
-			liveTranscriptionDisplay: "both" as const,
-			visualizerType: "bar",
-			visualizerBarCount: 9,
-			visualizerColor: "#58a6ff",
-			contextAwareness: false,
-			// Sentry crash-report opt-out: defaults to true (reporting on).
-			// Toggling requires app restart — `initSentryMain` reads it once
-			// synchronously at startup; runtime live-reconfigure isn't safe.
-			sendCrashReports: true,
-			// Pre-release auto-update opt-in. Defaults to false; main.ts forces
-			// it effectively-on for alpha builds so they self-update. Stable
-			// users must opt in to receive alphas/betas. See main.ts.
-			receivePrereleaseUpdates: false,
-			// First-run onboarding gate. Defaults to false so net-new installs
-			// see the wizard; flipped to true once the user finishes or skips.
-			onboarded: false,
-			onboardedAt: null as number | null,
-			onboardedTrack: "" as "" | "local" | "cloud",
-			// Output device routing (TTS + recording chimes) — empty = system default.
-			outputDeviceId: "",
-			// Auto-press a "submit" key after each dictation paste lands.
-			autoSubmit: false,
-			autoSubmitKey: "enter" as "enter" | "ctrl_enter",
-			// Persisted history cap (10-10000) + auto-delete retention policy.
-			historyMaxEntries: 1000,
-			recordingRetention: "cap" as "never" | "cap" | "days3" | "weeks2" | "months3",
-		},
-		hotkey: {
-			pushToTalkKey: "LCtrl+LMeta",
-		},
-		dictionary: [],
-		snippets: [],
-		llm: {
-			endpoint: "http://localhost:11434",
-			openrouterApiKey: "",
-			timeout: 5000,
-			dictation: {
-				enabled: false,
-				provider: "ollama" as const,
-				model: "",
-				openrouterModel: "",
-				openrouterFallbackModel: "",
-				presets: [{ key: "neutral" as const }],
-			},
-			transforms: {
-				enabled: false,
-				provider: "ollama" as const,
-				model: "",
-				openrouterModel: "",
-				openrouterFallbackModel: "",
-				prompts: [] as Array<{
-					id: string;
-					name: string;
-					prompt: string;
-					hotkey: string;
-					builtin: boolean;
-				}>,
-			},
-		},
-		tts: {
-			enabled: false,
-			voice: "af_heart",
-			lang: "en-us",
-			speed: 1.0,
-			// Must match the renderer-side schema default — keeping these in sync
-			// matters for first-run + conflict-detection invariants: a non-empty
-			// hotkey is required so the recorder UI always has something to render
-			// and the conflict checker has a value to compare against. The feature
-			// stays gated by `tts.enabled`, not by the hotkey string.
-			hotkey: "LMeta+LShift+E",
-			device: "auto" as const,
-		},
-		integrations: {
-			openai: {
-				apiKey: "",
-				verified: null as boolean | null,
-				lastVerifiedAt: null as number | null,
-			},
-			elevenlabs: {
-				apiKey: "",
-				verified: null as boolean | null,
-				lastVerifiedAt: null as number | null,
-			},
-		},
 		windowBounds: null as { x: number; y: number; width: number; height: number } | null,
 	},
 });
@@ -496,7 +345,7 @@ setMaxListeners(50, store.events);
 // ── One-time migration for stale persisted values ────────────────────
 // electron-store defaults only apply when a key is missing. If old defaults
 // were persisted via settings:save, they override new defaults silently.
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both";
 
@@ -680,6 +529,45 @@ function migrateDictionaryToFuzzy(write: StoreWrite): void {
 }
 
 /**
+ * Legacy fix (always-on, not version-gated): the very first builds shipped
+ * with `audio.sileroSensitivity = 0.05`, which inverted under the
+ * `1 - sensitivity` trip-threshold math made the VAD reject almost
+ * everything. We coerce 0.05 → 0.4 here so the chained v11 migration
+ * (which only rewrites the EXACT 0.4 default) then sees the bumpable
+ * value. Newer installs that already have 0.4+ flow through unchanged.
+ */
+function migrateLegacySileroFloor(
+	write: StoreWrite,
+	read: <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>
+): void {
+	if (read("audio.sileroSensitivity") === 0.05) {
+		write("audio.sileroSensitivity", 0.4);
+	}
+}
+
+/**
+ * v11: rewrite the legacy Silero sensitivity default (0.4) to the new
+ * Handy-matching default (0.7). The Silero VAD trips when probability
+ * exceeds `1 - sensitivity`, so 0.4 was tripping only above 0.6 — well
+ * above the 0.3–0.5 band where quiet / distant speech routinely lands,
+ * silently dropping those utterances. Handy hardcodes the equivalent
+ * of 0.7 (trip > 0.3); matching that recovers the quiet-voice case.
+ *
+ * We only rewrite the exact prior default (0.4) so users who customized
+ * the value keep their choice. Anything else (including the legacy 0.05
+ * default, which v<2 migration already coerced to 0.4 here) flows
+ * through unchanged.
+ */
+function migrateSileroSensitivityToHandyDefault(
+	write: StoreWrite,
+	read: <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>
+): void {
+	if (read("audio.sileroSensitivity") === 0.4) {
+		write("audio.sileroSensitivity", 0.7);
+	}
+}
+
+/**
  * Pure migration step: given a current schema version and accessors, mutates
  * the store to reflect the desired post-migration shape. Extracted so the
  * branchy version-gated logic can be exhaustively unit-tested without
@@ -700,11 +588,7 @@ export function applyStoreMigration(
 		if (read("quality.useMainModelForRealtime") !== false) {
 			write("quality.useMainModelForRealtime", false);
 		}
-		// Fix silero sensitivity that was incorrectly defaulting to 0.05
-		const silero = read("audio.sileroSensitivity");
-		if (silero === 0.05) {
-			write("audio.sileroSensitivity", 0.4);
-		}
+		migrateLegacySileroFloor(write, read);
 		// Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent — outer guard `current < SCHEMA_VERSION` (=4) requires current ≤ 3 here, so `current < 4` and `current <= 4` are observably identical, and `if (true)` matches the only reachable input
 		if (current < 4) {
 			// v4: stale audio.inputDeviceIndex carried a Windows MMDevice index, but
@@ -730,6 +614,9 @@ export function applyStoreMigration(
 		}
 		if (current < 10) {
 			migrateDictionaryToFuzzy(write);
+		}
+		if (current < 11) {
+			migrateSileroSensitivityToHandyDefault(write, read);
 		}
 		log("[store] Migration applied: _schemaVersion", current, SCHEMA_VERSION);
 		write("_schemaVersion", SCHEMA_VERSION);

@@ -1,6 +1,6 @@
-import type { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 import { useState } from "react";
+import type { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";

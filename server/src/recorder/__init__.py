@@ -30,12 +30,15 @@ if TYPE_CHECKING:
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
 
-# Belt-and-suspenders: ensure ``device.py``'s module-level
-# ``_inject_cuda_dlls()`` runs before any onnxruntime import anywhere in
-# the process. ``SileroVAD`` also imports it for the same reason, but the
-# facade is the public entry point — pulling it in here makes the
-# guarantee independent of which infrastructure adapter happens to be
-# constructed first.
+# Import ``device`` early so :func:`resolve_accelerator` /
+# :func:`_probe_cuda_session` are resolvable from anywhere in the facade
+# init chain. NVIDIA wheel DLL injection used to run as a module-load
+# side effect here; it's now lazy inside ``_probe_cuda_session`` so the
+# DirectML / CPU paths don't pay for preloading hundreds of MB of CUDA
+# DLLs they'll never use. Every call site that can produce a CUDA EP
+# session routes through ``resolve_accelerator`` (recorder side) or calls
+# ``_probe_cuda_session`` directly (synthesizer side), so the injection
+# still happens before ORT's CUDA EP DLL is loaded.
 from src.recorder.infrastructure import device as _device  # noqa: F401
 from src.recorder.infrastructure.file_source import FileAudioSource
 
@@ -95,9 +98,25 @@ class AudioToTextRecorder:
         ensure_sentence_starting_uppercase: bool = True,
         ensure_sentence_ends_with_period: bool = True,
         use_microphone: bool = True,
+        # See ``AudioConfig.always_on_microphone`` — default False means the
+        # OS mic stream isn't allocated until the first PTT press, and is
+        # released on PTT idle so the mic-in-use indicator clears.
+        always_on_microphone: bool = False,
+        # See ``AudioConfig.lazy_stream_close`` — only meaningful when
+        # ``always_on_microphone`` is False. Delays the on-release close
+        # by ``lazy_close_timeout_seconds`` so back-to-back PTT presses
+        # don't re-pay the open cost.
+        lazy_stream_close: bool = False,
+        # Seconds before the lazy-close timer fires. Only consulted when
+        # ``lazy_stream_close`` is True. Default 30 s matches Handy.
+        lazy_close_timeout_seconds: float = 30.0,
+        # See ``AudioConfig.extra_recording_buffer_ms`` — tail-of-recording
+        # capture window in ms applied to set_microphone(False) stops (PTT
+        # release, toggle off). 0 (default) preserves the current snap-stop
+        # behaviour.
+        extra_recording_buffer_ms: int = 0,
         spinner: bool = True,
         level: int = logging.WARNING,
-        batch_size: int = 16,
         # Realtime transcription parameters
         enable_realtime_transcription: bool = False,
         use_main_model_for_realtime: bool = False,
@@ -106,9 +125,11 @@ class AudioToTextRecorder:
         init_realtime_after_seconds: float = 0.2,
         on_realtime_transcription_update: TextCallback | None = None,
         on_realtime_transcription_stabilized: TextCallback | None = None,
-        realtime_batch_size: int = 16,
-        # Voice activation parameters
-        silero_sensitivity: float = 0.4,
+        # Voice activation parameters. See :class:`VADConfig` for the
+        # silero_sensitivity default rationale — 0.7 (Silero trip > 0.3)
+        # matches Handy; the previous 0.4 (trip > 0.6) silently rejected
+        # quiet / distant speech.
+        silero_sensitivity: float = 0.7,
         silero_use_onnx: bool = False,
         silero_deactivity_detection: bool = False,
         webrtc_sensitivity: int = 3,
@@ -162,19 +183,15 @@ class AudioToTextRecorder:
         on_speaker_segments_detected: Callable[[Any], None] | None = None,
         debug_mode: bool = False,
         handle_buffer_overflow: bool = True,
-        beam_size: int = 5,
-        beam_size_realtime: int = 3,
         buffer_size: int = 512,
         sample_rate: int = 16000,
         initial_prompt: str | Iterable[int] | None = None,
         initial_prompt_realtime: str | Iterable[int] | None = None,
-        suppress_tokens: list[int] | None = None,
         print_transcription_time: bool = False,
         early_transcription_on_silence: float = 0,
         allowed_latency_limit: int = 100,
         no_log_file: bool = False,
         use_extended_logging: bool = False,
-        faster_whisper_vad_filter: bool = True,
         normalize_audio: bool = True,
         start_callback_in_new_thread: bool = False,
         # Model download callbacks
@@ -187,6 +204,11 @@ class AudioToTextRecorder:
         # Backend selection
         backend: str = "",
         onnx_quantization: str = "",
+        # See ``TranscriptionConfig.translate_to_english`` — Whisper task=translate.
+        translate_to_english: bool = False,
+        # See ``TranscriptionConfig.model_unload_timeout_seconds`` — idle
+        # tear-down of ONNX sessions to reclaim memory.
+        model_unload_timeout_seconds: int | None = 300,
         # Diarization — see :class:`DiarizationConfig`. Off by default; first
         # ``enable_diarization=True`` build downloads ~32 MB of ONNX models.
         enable_diarization: bool = False,
@@ -198,14 +220,19 @@ class AudioToTextRecorder:
         # already-corrected text.
         custom_words: list[str] | None = None,
         word_correction_threshold: float = 0.18,
+        # Locale-aware filler-word strip + 3+ stutter collapse. See
+        # :class:`TextCorrectionConfig.filter_fillers` /
+        # ``custom_filler_words``. Ported from Handy's
+        # ``filter_transcription_output``.
+        filter_fillers: bool = True,
+        custom_filler_words: list[str] | None = None,
     ) -> None:
-        if suppress_tokens is None:
-            suppress_tokens = [-1]
-
         # ``list`` defaults are mutable — accept ``None`` and normalise here
         # so the kwarg's identity isn't shared across instances.
         if custom_words is None:
             custom_words = []
+        if custom_filler_words is None:
+            custom_filler_words = []
 
         # Build config from all kwargs
         self._config = RecorderConfig.from_kwargs(
@@ -214,6 +241,10 @@ class AudioToTextRecorder:
             sample_rate=sample_rate,
             buffer_size=buffer_size,
             use_microphone=use_microphone,
+            always_on_microphone=always_on_microphone,
+            lazy_stream_close=lazy_stream_close,
+            lazy_close_timeout_seconds=lazy_close_timeout_seconds,
+            extra_recording_buffer_ms=extra_recording_buffer_ms,
             handle_buffer_overflow=handle_buffer_overflow,
             # VAD
             silero_sensitivity=silero_sensitivity,
@@ -231,25 +262,21 @@ class AudioToTextRecorder:
             compute_type=compute_type,
             gpu_device_index=gpu_device_index,
             device=device,
-            beam_size=beam_size,
             initial_prompt=initial_prompt,
-            suppress_tokens=suppress_tokens,
-            batch_size=batch_size,
-            faster_whisper_vad_filter=faster_whisper_vad_filter,
             normalize_audio=normalize_audio,
             print_transcription_time=print_transcription_time,
             early_transcription_on_silence=early_transcription_on_silence,
             allowed_latency_limit=allowed_latency_limit,
             backend=backend,
             onnx_quantization=onnx_quantization,
+            translate_to_english=translate_to_english,
+            model_unload_timeout_seconds=model_unload_timeout_seconds,
             # Realtime
             enable_realtime_transcription=enable_realtime_transcription,
             use_main_model_for_realtime=use_main_model_for_realtime,
             realtime_model_type=realtime_model_type,
             realtime_processing_pause=realtime_processing_pause,
             init_realtime_after_seconds=init_realtime_after_seconds,
-            beam_size_realtime=beam_size_realtime,
-            realtime_batch_size=realtime_batch_size,
             initial_prompt_realtime=initial_prompt_realtime,
             # Wake word
             wakeword_backend=wakeword_backend,
@@ -281,6 +308,8 @@ class AudioToTextRecorder:
             # config-space is the bare numeric value.
             custom_words=custom_words,
             threshold=word_correction_threshold,
+            filter_fillers=filter_fillers,
+            custom_filler_words=custom_filler_words,
         )
 
         # Collect callbacks
@@ -387,6 +416,9 @@ class AudioToTextRecorder:
                     buffer_size=BufferSize(self._config.audio.buffer_size),
                     on_device_switch_failed=_on_device_switch_failed,
                     on_device_became_available=_on_device_became_available,
+                    always_on_microphone=self._config.audio.always_on_microphone,
+                    lazy_stream_close=self._config.audio.lazy_stream_close,
+                    lazy_close_timeout_seconds=self._config.audio.lazy_close_timeout_seconds,
                 )
             else:
                 audio_source = FileAudioSource(
@@ -432,8 +464,16 @@ class AudioToTextRecorder:
                 on_cancelled=self._on_dl_cancelled,
                 cancel_check=self._cancel_download_check,
             )
+            # Build main transcriber first, then realtime. We tried
+            # parallelizing these via ThreadPoolExecutor (saving ~1 s of cold
+            # start when they're distinct models), but it caused the recorder
+            # warmup to silently hang on real CUDA hardware — the renderer
+            # then sees "Connecting" forever because ``Recorder initialized``
+            # never prints. The root cause looks like ORT CUDA session-create
+            # interleaving with the Silero VAD load on the same default
+            # stream; the Python-side locks are clean but the C++ side races.
+            # Reverted to serial until we have a reliable repro + fix.
             transcriber = build_transcriber(self._config.transcription.model, self._config, download_callbacks=dl_cbs)
-
             realtime_transcriber = None
             if self._config.realtime.enable_realtime_transcription:
                 if self._config.realtime.use_main_model_for_realtime:
@@ -542,6 +582,23 @@ class AudioToTextRecorder:
         instance.use_microphone = _BoolFlag(config.audio.use_microphone)
         instance._sigint_reinstall = None
         return instance
+
+    def construct(self) -> None:  # pragma: no cover
+        """Eagerly build the recorder service without warming any kernels.
+
+        Splitting construction from :meth:`warmup` lets the WS server
+        install ``state.recorder`` *before* the (slow, CUDA-kernel-JIT)
+        warmup runs — so even if warmup hangs or raises later, the
+        renderer can dispatch ``set_microphone`` / ``text()`` to a real
+        live recorder and merely pay the JIT cost on the first call,
+        instead of silently soft-bricking with "Recorder does not have
+        method set_microphone" (the failure mode that triggered the
+        Option C architecture).
+
+        Idempotent: subsequent calls hit ``_ensure_service``'s
+        double-checked lock and return immediately.
+        """
+        self._ensure_service()
 
     def warmup(self) -> None:  # pragma: no cover
         """Eagerly load all models and warm up CUDA kernels."""
@@ -688,6 +745,56 @@ class AudioToTextRecorder:
         return self._config.realtime.enable_realtime_transcription
 
     @property
+    def initial_prompt(self) -> str | list[int] | None:
+        """Whisper-style decode-bias prompt for the main transcriber.
+
+        Persisted on :class:`TranscriptionConfig` so a model swap (which
+        rebuilds the transcriber via :func:`build_transcriber`) picks up the
+        latest value. Wired to the WebSocket ``set_parameter`` path so the
+        renderer's dictionary→prompt pipe can push live updates. Runtime
+        propagation into the active onnx-asr engine is currently
+        config-only — the engine reads it on next build/swap. The post-ASR
+        ``custom_words`` corrector covers the live-correction case in the
+        meantime; see ``initial-prompt-sync.ts`` on the Electron side.
+        """
+        return self._config.transcription.initial_prompt
+
+    @initial_prompt.setter
+    def initial_prompt(self, value: str | list[int] | None) -> None:
+        # Coerce empty string to None — server CLI passes "" for the
+        # "no prompt" case (the renderer's IPC envelope always sends a
+        # string), and we want config-equality to treat them as the same.
+        normalized: str | list[int] | None
+        if isinstance(value, str) and value == "":
+            normalized = None
+        elif isinstance(value, list):
+            normalized = list(value)
+        else:
+            normalized = value
+        self._config.transcription.initial_prompt = normalized
+
+    @property
+    def initial_prompt_realtime(self) -> str | list[int] | None:
+        """Realtime-engine variant of :attr:`initial_prompt`.
+
+        Persisted on :class:`RealtimeConfig`. Same semantics as the main
+        prompt: stored in config, picked up by the realtime transcriber on
+        next build.
+        """
+        return self._config.realtime.initial_prompt_realtime
+
+    @initial_prompt_realtime.setter
+    def initial_prompt_realtime(self, value: str | list[int] | None) -> None:
+        normalized: str | list[int] | None
+        if isinstance(value, str) and value == "":
+            normalized = None
+        elif isinstance(value, list):
+            normalized = list(value)
+        else:
+            normalized = value
+        self._config.realtime.initial_prompt_realtime = normalized
+
+    @property
     def event_bus(self) -> EventBus:
         """Public handle on the facade's domain event bus.
 
@@ -765,6 +872,34 @@ class AudioToTextRecorder:
     @word_correction_threshold.setter
     def word_correction_threshold(self, value: float) -> None:
         self._config.text_correction.threshold = float(value)
+
+    @property
+    def filter_fillers(self) -> bool:
+        """Locale-aware filler-word strip + stutter-collapse master switch.
+
+        Mirrors :attr:`TextCorrectionConfig.filter_fillers`. Wired
+        through the ``set_parameter`` WS path so the renderer can
+        toggle the cleanup live without restarting the server.
+        """
+        return self._config.text_correction.filter_fillers
+
+    @filter_fillers.setter
+    def filter_fillers(self, value: bool) -> None:
+        self._config.text_correction.filter_fillers = bool(value)
+
+    @property
+    def custom_filler_words(self) -> list[str]:
+        """Optional per-user filler-word override list.
+
+        Empty means "use the language-specific defaults from
+        :data:`filler_filter.FILLERS_BY_LANG`". Same defensive-copy
+        semantics as :attr:`custom_words`.
+        """
+        return list(self._config.text_correction.custom_filler_words)
+
+    @custom_filler_words.setter
+    def custom_filler_words(self, value: list[str]) -> None:
+        self._config.text_correction.custom_filler_words = list(value or [])
 
     @property
     def wake_word_activation_delay(self) -> float:

@@ -20,9 +20,12 @@ function makeModel(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [""],
+		sizeBytesByQuantization: {},
 		available: true,
 		errorMessage: "",
 		localPath: "/userData/models/custom/my-whisper",
+		speedScore: 0.5,
+		accuracyScore: 0.5,
 		...overrides,
 	};
 }

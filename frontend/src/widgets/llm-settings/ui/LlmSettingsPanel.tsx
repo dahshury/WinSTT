@@ -12,8 +12,8 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { computeModelExclusionConfig, OllamaModelSelector, OpenRouterModelSelector } from "@picker";
-import { useTranslations } from "next-intl";
 import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { useShallow } from "zustand/react/shallow";
 import {
 	assessOllamaFit,
@@ -38,6 +38,7 @@ import {
 } from "@/entities/setting";
 import { HotkeyRecorder } from "@/features/record-hotkey";
 import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
+import type { OpenRouterModel } from "@/shared/api/models";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
@@ -382,7 +383,7 @@ interface OpenRouterSectionProps {
 	openrouterError: string | null;
 	openrouterFallbackModel: string;
 	openrouterModel: string;
-	openrouterModels: readonly unknown[] | undefined;
+	openrouterModels: readonly OpenRouterModel[] | undefined;
 	openrouterScanning: boolean;
 	reasoningEffort: ReasoningEffort;
 	scanOpenRouter: () => void;
@@ -424,7 +425,7 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						disabled={apiKeyMissing}
 						isLoading={openrouterScanning}
 						maxOutputTokens={maxOutputTokens}
-						models={openrouterModels as never}
+						models={openrouterModels ? [...openrouterModels] : []}
 						onChange={setModel}
 						onMaxOutputTokensChange={onMaxOutputTokensChange}
 						onOpen={scanOpenRouter}
@@ -448,7 +449,7 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 						exclusionConfig={fallbackExclusion}
 						fallback={true}
 						isLoading={openrouterScanning}
-						models={openrouterModels as never}
+						models={openrouterModels ? [...openrouterModels] : []}
 						onChange={setFallbackModel}
 						onOpen={scanOpenRouter}
 						placeholder={t("openrouterFallbackModelPlaceholder")}
@@ -882,7 +883,7 @@ interface OpenRouterCatalogState {
 	error: string | null;
 	isLoaded: boolean;
 	isScanning: boolean;
-	models: readonly unknown[];
+	models: readonly OpenRouterModel[];
 	scanModels: () => void;
 }
 
@@ -1270,7 +1271,7 @@ function useLlmSettingsPanel() {
 		error: openrouterError,
 		isLoaded: openrouterLoaded,
 		isScanning: openrouterScanning,
-		models: openrouterModels as readonly unknown[],
+		models: openrouterModels,
 		scanModels: scanOpenRouter,
 	};
 

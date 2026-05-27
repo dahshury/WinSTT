@@ -58,6 +58,11 @@ export const IPC = {
 	// `handleAbortOperation` which markSessionAborted + abort active Ollama
 	// chats + recorder.abort + clear_audio_queue + hide overlay.
 	STT_ABORT_OPERATION: "stt:abort-operation",
+	// Main → renderer: a user-initiated cancel just landed. Lets the renderer
+	// reset local "session is active" state (the toggle-mode `isActiveRef` in
+	// usePushToTalk) so the next hotkey press starts a fresh recording instead
+	// of toggling off a session the server already aborted.
+	STT_SESSION_ABORTED: "stt:session-aborted",
 	// Toggle whether the overlay BrowserWindow accepts mouse events. The overlay
 	// is click-through by default (`setIgnoreMouseEvents(true, { forward: true })`);
 	// the renderer flips it off while the cursor is over the X cancel button so
@@ -387,6 +392,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_CALL_METHOD]: ["send"],
 	[IPC.STT_IS_CONNECTED]: ["invoke"],
 	[IPC.STT_ABORT_OPERATION]: ["send"],
+	[IPC.STT_SESSION_ABORTED]: ["on"],
 	[IPC.OVERLAY_SET_IGNORE_MOUSE]: ["send"],
 	[IPC.STT_GET_MODEL_CATALOG]: ["invoke"],
 	[IPC.STT_GET_RUNTIME_INFO]: ["invoke"],
@@ -398,8 +404,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_GET_LIVE_RESOURCES]: ["invoke"],
 	[IPC.STT_ASSESS_DICTATION_FIT]: ["invoke"],
 	[IPC.STT_ASSESS_OLLAMA_FIT]: ["invoke"],
-	[IPC.STT_ABORT_OPERATION]: ["send"],
-	[IPC.OVERLAY_SET_IGNORE_MOUSE]: ["send"],
 
 	// Hotkey
 	[IPC.HOTKEY_PRESSED]: ["on"],

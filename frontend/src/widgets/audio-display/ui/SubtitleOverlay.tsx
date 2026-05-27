@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useReducer, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	colorForSpeaker,
@@ -137,13 +137,40 @@ export const SubtitleOverlay = memo(function SubtitleOverlay() {
 	const showInApp = liveDisplay === "in-app" || liveDisplay === "both";
 	const liveText = showInApp ? currentRealtime : "";
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const [now, setNow] = useState(Date.now);
 
-	// Tick every 250ms so time-based fading (incl. shorter ephemeral fade) stays smooth.
+	// Time-based fading depends on a re-render trigger. `Date.now()` is read
+	// fresh in render below; this reducer just forces re-renders.
+	//
+	// Two trigger sources:
+	//   1. A 250ms interval while there is content to fade (items / ephemeral).
+	//      No interval when there's nothing on screen — saves a 4Hz wakeup.
+	//   2. `visibilitychange` -> visible. Chromium throttles setInterval to
+	//      ~1/minute when the renderer is backgrounded, so a window that's
+	//      been hidden a while paints the previous `now` from when the timer
+	//      was last allowed to run — making items appear "young" and showing
+	//      the previous transcription's text for ~250ms after re-show. The
+	//      visibility-driven force-tick runs before the first post-show
+	//      paint, so items past their fade window collapse to opacity 0
+	//      immediately and there is no stale flash.
+	const [, forceTick] = useReducer((n: number) => n + 1, 0);
+	const hasFadingContent = items.length > 0 || ephemeral !== null;
 	useEffect(() => {
-		const id = setInterval(() => setNow(Date.now()), 250);
+		if (!hasFadingContent) {
+			return;
+		}
+		const id = setInterval(forceTick, 250);
 		return () => clearInterval(id);
+	}, [hasFadingContent]);
+	useEffect(() => {
+		const onVisible = () => {
+			if (document.visibilityState === "visible") {
+				forceTick();
+			}
+		};
+		document.addEventListener("visibilitychange", onVisible);
+		return () => document.removeEventListener("visibilitychange", onVisible);
 	}, []);
+	const now = Date.now();
 
 	const ephemeralOpacity = ephemeral
 		? fadeBetween(ephemeral.timestamp, now, EPHEMERAL_FADE_AFTER_MS, EPHEMERAL_GONE_AFTER_MS)

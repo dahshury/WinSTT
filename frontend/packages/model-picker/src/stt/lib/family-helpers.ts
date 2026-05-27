@@ -58,6 +58,19 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
 		logoSrc: "/provider-icons/t-tech.png",
 	},
+	moonshine: {
+		icon: FlashIcon,
+		label: "Moonshine",
+		chip: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
+		// No brand logo bundled — Useful Sensors doesn't ship one in
+		// provider-icons/, so we fall back to the HugeIcon.
+	},
+	cohere: {
+		icon: AiChipIcon,
+		label: "Cohere",
+		chip: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
+		logoSrc: "/provider-icons/cohere.png",
+	},
 	custom: {
 		icon: FolderLibraryIcon,
 		label: "Custom",
@@ -78,6 +91,8 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	gigaam: "Sber Salute",
 	kaldi: "Alpha Cephei",
 	"t-one": "T-Tech",
+	moonshine: "Useful Sensors",
+	cohere: "Cohere",
 	custom: "Your Models",
 };
 
@@ -97,6 +112,8 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 	gigaam: ["sber", "salute", "sberbank", "sberdevices", "salutedevices"],
 	kaldi: ["alpha cephei", "alphacephei", "vosk"],
 	"t-one": ["t-tech", "t tech", "t-bank", "tinkoff", "tbank"],
+	moonshine: ["useful sensors", "useful-sensors", "moon", "streaming"],
+	cohere: ["cohere ai", "command", "transcribe"],
 	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 
@@ -275,7 +292,7 @@ function findArchPrefix(id: string): string | null {
  *
  * Idempotent - anything that's already a base id passes through unchanged.
  */
-function getBaseId(id: string): string {
+export function getBaseId(id: string): string {
 	// Architecture prefixes (NeMo Canary, Parakeet, FastConformer; Moonshine
 	// tiny/base; GigaAM v2/v3/v3-e2e) bundle by family name with size /
 	// decoder / language suffixes as siblings. Checked first because their

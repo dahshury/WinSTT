@@ -75,25 +75,25 @@ uv --version
 The server depends on `onnx-asr` via a [WinSTT-side fork](https://github.com/dahshury/onnx-asr) pinned to a specific commit in `server/pyproject.toml` (`[tool.uv.sources]`). `uv sync` fetches it automatically — no separate clone step is needed.
 
 The transcription stack is **ONNX-only** (no PyTorch in core deps). You must
-pick exactly one ONNX runtime extra — `cpu` and `gpu` conflict:
+pick exactly one ONNX runtime extra — `cpu`, `directml`, `openvino`, and `gpu`
+are mutually exclusive (they share the `onnxruntime/` package directory):
 
 ```bash
 cd server
-uv sync --extra cpu
+uv sync --extra cpu          # CPU-only — smallest install
+uv sync --extra directml     # DirectX 12 — works on any modern Windows GPU (recommended default)
+uv sync --extra openvino     # Intel ARC dGPU or recent Iris Xe / Arc iGPU
+uv sync --extra gpu          # NVIDIA CUDA — ~2 GB (Linux NVIDIA build path)
 ```
 
-For GPU-accelerated inference, use the `gpu` extra instead (`onnxruntime-gpu`
-plus the full set of NVIDIA CUDA wheels, ~2 GB — auto-falls back to CPU at
-runtime if CUDA isn't viable):
-
-```bash
-uv sync --extra gpu
-```
+Each GPU extra auto-falls back to CPU at runtime if its EP isn't viable on the
+host. The runtime priority order lives in
+`server/src/recorder/infrastructure/device.py::_AUTO_PRIORITY`.
 
 Optionally add feature extras:
 
 ```bash
-uv sync --extra cpu --extra tts --extra sentence-classifier
+uv sync --extra directml --extra tts --extra sentence-classifier
 ```
 
 - `tts` — Kokoro-82M text-to-speech (`kokoro-onnx`, torch-free)
@@ -105,8 +105,8 @@ This will:
 - Install all selected packages
 
 <Callout title="An extra is required" type="warn">
-  Plain `uv sync` with no extra installs neither ONNX runtime variant. Always
-  pass `--extra cpu` or `--extra gpu`.
+  Plain `uv sync` with no extra installs no ONNX runtime variant. Always
+  pass `--extra cpu`, `--extra directml`, `--extra openvino`, or `--extra gpu`.
 </Callout>
 
 Verify the install:
@@ -201,13 +201,14 @@ This compiles the Electron main/preload scripts and launches the app. The render
 
 ## Packaging
 
-WinSTT ships **two NSIS installers per release**. Both wrap the same Electron
+WinSTT ships **three portable installers per release**. All three wrap the same Electron
 app; only the bundled `stt-server.exe` differs:
 
 | Installer | Size | Contents |
 |-----------|------|----------|
-| `WinSTT-CPU-Setup-<version>.exe` | ~150 MB | `onnxruntime` (CPU) |
-| `WinSTT-Setup-<version>.exe` (DirectML, default) | ~200 MB | `onnxruntime-directml` — DirectX 12 GPU acceleration on AMD / Intel / NVIDIA; auto-falls-back to CPU on hosts without a D3D12-capable GPU |
+| `WinSTT-CPU-Portable-<version>.exe` | ~150 MB | `onnxruntime` (CPU-only) |
+| `WinSTT-Portable-<version>.exe` (DirectML, default) | ~200 MB | `onnxruntime-directml` — DirectX 12 GPU acceleration on AMD / Intel / NVIDIA; auto-falls-back to CPU on hosts without a D3D12-capable GPU |
+| `WinSTT-OpenVINO-Portable-<version>.exe` | ~250 MB | `onnxruntime-openvino` — Intel ARC dGPU / Iris Xe / Arc iGPU; auto-picked ahead of DirectML on Intel silicon when the EP is registered |
 
 The legacy CUDA-bundle build (`onnxruntime-gpu` + 8 NVIDIA cu12 wheels, ~2 GB) was retired for Windows because DirectML is faster on our workload, more consistent in tail latency, and ~10× smaller. CUDA EP detection is preserved in `server/src/recorder/infrastructure/device.py` for the eventual Linux NVIDIA build.
 
@@ -218,9 +219,11 @@ packaging/
 ├── electron-builder.yml
 ├── electron-builder.cpu.yml
 ├── electron-builder.directml.yml
+├── electron-builder.openvino.yml
 └── stt-server-dist/
     ├── cpu/
-    └── directml/
+    ├── directml/
+    └── openvino/
 ```
 
 The final installer lands at `<repo>/dist/`.

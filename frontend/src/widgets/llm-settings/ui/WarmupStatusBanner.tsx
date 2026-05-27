@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import type { LlmWarmupStatus } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import { findModelStatus } from "../lib/warmup-banner-test-helpers";

@@ -24,14 +24,16 @@ from typing_extensions import override
 from src.building_blocks.types import AudioChunk
 from src.recorder.domain.ports.vad import IVoiceActivityDetector, VADResult
 
-# Import ``device`` BEFORE ``onnx_asr``/``onnxruntime`` are touched anywhere
-# in this process. ``device.py`` runs ``_inject_cuda_dlls()`` at module load
-# so the bundled nvidia-cu12 wheel DLLs are on the Windows DLL search path
-# before ORT tries to load ``onnxruntime_providers_cuda.dll``. The facade
-# constructs ``SileroVAD`` before any transcriber, so without this import
-# the first ``onnx_asr`` import (inside this adapter's ``__init__``) drags
-# in ORT, which scans CUDA providers and logs "cublasLt64_12.dll missing"
-# every boot. Keep this import unconditional and at top level.
+# Pulled in so :func:`providers_for_device` is resolvable at module level
+# (used in the docstring example below). NVIDIA wheel DLL injection used
+# to run as a module-load side effect of ``device`` and the original
+# motivation for this early import was to fire it before ``onnx_asr``
+# pulled in ORT; injection is now lazy inside ``_probe_cuda_session`` so
+# this import is no longer load-bearing for DLL ordering. Silero is also
+# CPU-pinned (see ``memory/project_silero_vad_cpu_pin_invariant.md``) so
+# it never asks for CUDA in the first place — keeping the import only to
+# avoid silently re-introducing a transitive ordering bug if a future
+# refactor lets Silero pick a non-CPU EP.
 from src.recorder.infrastructure import device as _device  # noqa: F401
 
 if TYPE_CHECKING:

@@ -21,6 +21,7 @@ import { markIpcLoadResolved, recentIpcLoadAt } from "@/shared/lib/ipc-load-timi
 // the recurring "disk gets stale tiny" → "switching to tiny" loop).
 // Matches the guard in `useSyncActiveModel`.
 const SAVE_IPC_LOAD_GUARD_MS = 500;
+
 import { type SyncDeps, syncToServer } from "../lib/sync-actions";
 import {
 	advanceSkipRefs,
@@ -58,22 +59,10 @@ export function useSyncSettings(): void {
 	// Reconcile with electron-store (source of truth) after localStorage hydration.
 	// localStorage hydration already set isLoaded, so this just patches any drift.
 	useEffect(() => {
-		// region agent log — H-S-A
-		// eslint-disable-next-line no-console
-		console.warn(
-			`[diag-tiny] settingsLoad.start initialLocal=${useSettingsStore.getState().settings?.model?.model ?? "(none)"} ts=${Date.now()}`
-		);
-		// endregion
 		settingsLoad().then((loaded) => {
 			fromIpcLoadRef.current = true;
 			lastSavedRef.current = loaded;
 			markIpcLoadResolved();
-			// region agent log — H-S-A
-			// eslint-disable-next-line no-console
-			console.warn(
-				`[diag-tiny] settingsLoad.resolved diskModel=${loaded?.model?.model ?? "(none)"} ts=${Date.now()}`
-			);
-			// endregion
 			setSettings(loaded);
 		});
 	}, [setSettings]);
@@ -90,12 +79,24 @@ export function useSyncSettings(): void {
 	// pending save, silently dropping the change.
 	useEffect(() => {
 		const applyBroadcast = (incoming: AppSettings): void => {
+			const current = useSettingsStore.getState().settings;
 			const { merged, nextFromBroadcast } = deriveBroadcastUpdate(
 				incoming,
-				useSettingsStore.getState().settings,
+				current,
 				lastSavedRef.current,
 				fromBroadcastRef.current
 			);
+			// The broadcast IS the persisted disk state (the sender just wrote it).
+			// Advance our baseline so a subsequent legitimate broadcast against an
+			// already-cleanly-applied state isn't misclassified as "user-dirty".
+			// Without this, applying broadcast A leaves lastSavedRef pointing at
+			// the pre-A baseline (the save-effect's update path is skipped via
+			// fromBroadcastRef so it never re-stamps lastSavedRef), so a later
+			// broadcast B sees `current = A, lastSaved = pre-A` → divergence →
+			// `keep local`, and B silently drops. This was the second-order cause
+			// of the "switching never reaches the main window" symptom after the
+			// secrets-walker fix.
+			lastSavedRef.current = incoming;
 			fromBroadcastRef.current = nextFromBroadcast;
 			setSettings(merged);
 		};
@@ -110,12 +111,6 @@ export function useSyncSettings(): void {
 	// without the IPC gate, the first sync after connect re-asserts the cache via
 	// `sttSetParameter("model", stale)` and the server swaps to the wrong model.
 	useEffect(() => {
-		// region agent log — H-S-B
-		// eslint-disable-next-line no-console
-		console.warn(
-			`[diag-tiny] sync-effect serverStatus=${serverStatus} isLoaded=${isLoaded} fromIpcLoad=${fromIpcLoadRef.current} alreadySynced=${hasSyncedOnConnect.current} latestModel=${latestSettingsRef.current?.model?.model ?? "(none)"} ts=${Date.now()}`
-		);
-		// endregion
 		if (
 			shouldSyncOnConnect(
 				serverStatus,
@@ -124,12 +119,6 @@ export function useSyncSettings(): void {
 				fromIpcLoadRef.current
 			)
 		) {
-			// region agent log — H-S-B
-			// eslint-disable-next-line no-console
-			console.warn(
-				`[diag-tiny] syncToServer.fire model=${latestSettingsRef.current?.model?.model ?? "(none)"} ts=${Date.now()}`
-			);
-			// endregion
 			hasSyncedOnConnect.current = true;
 			syncToServer(DEPS, latestSettingsRef.current);
 		}
@@ -192,24 +181,38 @@ export function useSyncSettings(): void {
 			settings,
 			isModeChanged(settings, prev),
 			debounceRef,
-			(s) => {
+			(_captured) => {
 				const sinceIpcLoad = Date.now() - recentIpcLoadAt();
+				// Read the LATEST store snapshot at fire time, not the value
+				// captured at schedule time. A broadcast arriving inside the
+				// debounce window already updated the store; firing with the
+				// stale capture would broadcast an outdated section back and
+				// race with the originator's save (the dynamic-island
+				// overlay-mode snap-back: VAD-triggered save in the main
+				// window captured general=floating-bottom at T+10, the user
+				// clicked dynamic-island in the settings window which saved
+				// at T+300, then the main window's T+310 save fired with the
+				// captured stale general and broadcast floating-bottom back —
+				// the settings window's merge saw current==lastSaved
+				// post-save and accepted the stale broadcast, reverting the
+				// Switcher).
+				const s = latestSettingsRef.current;
 				if (sinceIpcLoad < SAVE_IPC_LOAD_GUARD_MS) {
-					// region agent log — H-S-A/H-S-B
-					// eslint-disable-next-line no-console
-					console.warn(
-						`[diag-tiny] scheduleSave.skip ipcLoadGuard sinceIpcLoad=${sinceIpcLoad}ms model=${s.model?.model ?? "(none)"} ts=${Date.now()}`
-					);
-					// endregion
 					return;
 				}
-				// region agent log — H-S-A/H-S-B
-				// eslint-disable-next-line no-console
-				console.warn(
-					`[diag-tiny] scheduleSave.fire model=${s.model?.model ?? "(none)"} backend=${s.model?.backend ?? "(none)"} ts=${Date.now()}`
-				);
-				// endregion
-				settingsSave(s);
+				// Only send sections that actually differ from the last-saved
+				// baseline. This window may hold a stale snapshot of a
+				// section another window owns (e.g. main holds floating-bottom
+				// for general while the settings window just persisted
+				// dynamic-island); without the diff we'd echo that stale
+				// section back into electron-store and clobber the live
+				// value. Same partial-save contract callers like
+				// useVadCalibration already use — see `settingsSave` JSDoc.
+				const patch = diffAgainstLastSaved(s, lastSavedRef.current);
+				if (!hasAnyKey(patch)) {
+					return;
+				}
+				settingsSave(patch);
 				lastSavedRef.current = s;
 			},
 			300
@@ -228,6 +231,31 @@ function cancelPendingSave(debounceRef: { current: ReturnType<typeof setTimeout>
 }
 
 /**
+ * Build a partial settings patch containing only the top-level sections that
+ * differ from `lastSaved`. When `lastSaved` is undefined (first save in the
+ * session), send everything so the canonical disk snapshot is established.
+ */
+function diffAgainstLastSaved(
+	current: AppSettings,
+	lastSaved: AppSettings | undefined
+): Partial<AppSettings> {
+	if (!lastSaved) {
+		return current;
+	}
+	const patch: Record<string, unknown> = {};
+	for (const key of Object.keys(current) as Array<keyof AppSettings>) {
+		if (JSON.stringify(current[key]) !== JSON.stringify(lastSaved[key])) {
+			patch[key] = current[key];
+		}
+	}
+	return patch as Partial<AppSettings>;
+}
+
+function hasAnyKey(obj: Partial<AppSettings>): boolean {
+	return Object.keys(obj).length > 0;
+}
+
+/**
  * Cancel any pending debounced save AND immediately flush the latest settings
  * to electron-store. Used on window close / unmount so a fast-close doesn't
  * lose changes that hadn't been written yet (CC 2). Also advances
@@ -243,7 +271,11 @@ function flushPendingSave(
 		clearTimeout(debounceRef.current);
 		debounceRef.current = null;
 		const latest = latestSettingsRef.current;
-		settingsSave(latest);
+		const patch = diffAgainstLastSaved(latest, lastSavedRef.current);
+		if (!hasAnyKey(patch)) {
+			return;
+		}
+		settingsSave(patch);
 		lastSavedRef.current = latest;
 	}
 }

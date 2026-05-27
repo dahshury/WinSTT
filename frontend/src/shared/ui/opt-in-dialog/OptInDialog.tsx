@@ -1,7 +1,7 @@
-import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { ReactNode } from "react";
+import { surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
-import { dialogAnimation } from "@/shared/ui/dialog-animation";
+import { DialogShell } from "@/shared/ui/dialog-shell";
 
 export interface OptInDialogProps {
 	body: ReactNode;
@@ -15,7 +15,7 @@ export interface OptInDialogProps {
 }
 
 /**
- * One-shot opt-in confirmation dialog. Differs from ConfirmDialog in two
+ * One-shot opt-in confirmation dialog. Differs from ConfirmDialog in three
  * ways:
  *   - The body accepts multi-line ReactNode (warning text usually wraps
  *     across multiple paragraphs).
@@ -45,8 +45,16 @@ export function OptInDialog({
 		onOpenChange(false);
 	};
 
+	// Match ConfirmDialog's cancel-button substrate lift so the two dialogs
+	// look identical from the same parent substrate.
+	const substrate = useSurface();
+	const popupLevel = Math.min(substrate + 4, 8);
+	const buttonLevel = Math.min(popupLevel + 1, 8);
+	const buttonHover = Math.min(popupLevel + 2, 8);
+
 	return (
-		<AlertDialog.Root
+		<DialogShell
+			description={body}
 			onOpenChange={(next) => {
 				if (next) {
 					onOpenChange(true);
@@ -55,39 +63,21 @@ export function OptInDialog({
 				}
 			}}
 			open={open}
+			title={title}
+			width={460}
 		>
-			<AlertDialog.Portal>
-				<AlertDialog.Backdrop
-					className={`${dialogAnimation.backdrop} fixed inset-0 z-confirm-backdrop bg-black/60 backdrop-blur-sm`}
-				/>
-				<AlertDialog.Popup
-					className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-confirm flex w-[460px] max-w-[90vw] flex-col gap-4 rounded-xl border border-border bg-surface-secondary p-6 outline-none`}
-				>
-					<AlertDialog.Title className="m-0 font-sans font-semibold text-[15px] text-foreground">
-						{title}
-					</AlertDialog.Title>
-					<AlertDialog.Description
-						className="m-0 whitespace-pre-line font-sans text-body text-foreground-muted leading-relaxed"
-						render={<div />}
-					>
-						{body}
-					</AlertDialog.Description>
-					<div className="mt-1 flex justify-end gap-2">
-						<Button
-							className="h-8 rounded-md border border-border bg-surface-tertiary px-4 font-medium text-body text-foreground-secondary transition-colors duration-150 hover:bg-surface-elevated"
-							onClick={handleCancel}
-						>
-							{cancelLabel}
-						</Button>
-						<Button
-							className="h-8 rounded-md bg-accent px-4 font-medium text-body text-white transition-colors duration-150 hover:bg-accent-dim"
-							onClick={handleConfirm}
-						>
-							{confirmLabel}
-						</Button>
-					</div>
-				</AlertDialog.Popup>
-			</AlertDialog.Portal>
-		</AlertDialog.Root>
+			<Button
+				className={`h-8 rounded-md ${surfaceClasses(buttonLevel)} px-4 font-medium text-body text-foreground-secondary transition-colors duration-150 ${surfaceHoverBg(buttonHover)}`}
+				onClick={handleCancel}
+			>
+				{cancelLabel}
+			</Button>
+			<Button
+				className="h-8 rounded-md bg-accent px-4 font-medium text-body text-white transition-colors duration-150 hover:bg-accent-dim"
+				onClick={handleConfirm}
+			>
+				{confirmLabel}
+			</Button>
+		</DialogShell>
 	);
 }

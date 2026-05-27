@@ -9,5 +9,6 @@ rulebook's "domain → ports → application" import direction).
 from __future__ import annotations
 
 from src.recorder.text.dictionary import apply_custom_words
+from src.recorder.text.filler_filter import filter_transcription_output
 
-__all__ = ["apply_custom_words"]
+__all__ = ["apply_custom_words", "filter_transcription_output"]

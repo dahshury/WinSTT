@@ -1,7 +1,7 @@
 import { Tabs } from "@base-ui/react/tabs";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 
@@ -60,8 +60,32 @@ const EXPANDED_WIDTH = 196;
 const ROW_HEIGHT = 40;
 const SPRING = "cubic-bezier(0.16, 1, 0.3, 1)";
 
+/**
+ * On touch devices the hover-to-expand affordance never fires (no mouseenter
+ * before the tap), so the sidebar would stay collapsed forever and the user
+ * would have to guess which icon is which. Detect any coarse pointer and
+ * keep the rail open so labels are always readable on tap-driven hardware.
+ */
+function useCoarsePointer(): boolean {
+	const [coarse, setCoarse] = useState(false);
+	useEffect(() => {
+		if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+			return;
+		}
+		const mql = window.matchMedia("(any-pointer: coarse)");
+		setCoarse(mql.matches);
+		const handler = (e: MediaQueryListEvent) => setCoarse(e.matches);
+		mql.addEventListener("change", handler);
+		return () => mql.removeEventListener("change", handler);
+	}, []);
+	return coarse;
+}
+
 export function SettingsSidebar({ links }: SettingsSidebarProps) {
-	const [expanded, setExpanded] = useState(false);
+	const isCoarsePointer = useCoarsePointer();
+	const [hoverExpanded, setHoverExpanded] = useState(false);
+	const expanded = isCoarsePointer || hoverExpanded;
+	const setExpanded = setHoverExpanded;
 
 	// Substrate is the page (surface-1). The rail lifts +1 to mirror the
 	// content viewport.
@@ -83,8 +107,15 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 			    content viewport never reflows when the rail expands. The rail
 			    itself is absolutely positioned and overlays the content on
 			    hover/focus, so a wide control (e.g. the recording-mode
-			    Switcher) is never squeezed/clipped by a transient hover. */}
-			<div className="relative h-full shrink-0" style={{ width: COLLAPSED_WIDTH }}>
+			    Switcher) is never squeezed/clipped by a transient hover.
+			    On touch devices the rail is permanently expanded (no hover to
+			    trigger it), so the spacer matches expanded width — otherwise
+			    the rail would float over the content and obscure the first
+			    136px of every panel. */}
+			<div
+				className="relative h-full shrink-0"
+				style={{ width: isCoarsePointer ? EXPANDED_WIDTH : COLLAPSED_WIDTH }}
+			>
 				{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
 				<div

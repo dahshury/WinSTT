@@ -1,9 +1,11 @@
 appId: com.winstt.app
 productName: WinSTT
 # afterPack hook trims unused Chromium locale .pak files (saves ~30 MB).
-# All relative paths resolve against projectDir = frontend (set via the
-# `--projectDir frontend` CLI flag); `../` reaches back up to repo root.
-afterPack: ./scripts/electron-builder-after-pack.cjs
+# Note: afterPack is resolved from the repo root (electron-builder's
+# launch CWD), not from projectDir — so the path reaches into frontend/
+# explicitly. extraResources.from below uses paths relative to projectDir
+# (frontend); ``../`` there reaches back up to the repo root.
+afterPack: ./frontend/scripts/electron-builder-after-pack.cjs
 asar: true
 compression: maximum
 asarUnpack:
@@ -50,6 +52,15 @@ extraResources:
     to: LICENSE
   - from: ../THIRD_PARTY_NOTICES.md
     to: THIRD_PARTY_NOTICES.md
+  # Minisign verification pubkey. Bundled so the auto-updater can verify
+  # the .minisig sidecar of any downloaded artifact at install time
+  # (parallel offline-verifiable trust layer alongside Authenticode).
+  # Missing on builds cut before the maintainer has generated the
+  # keypair — the auto-updater hook fails-open with a warning.
+  - from: ../docs/winstt.pub
+    to: winstt.pub
+    filter:
+      - "winstt.pub"
 win:
   target:
     - portable
@@ -66,11 +77,50 @@ win:
 # process.resourcesPath. Gated on the `mac` target so Windows CI builds
 # don't choke on a missing binary.
 mac:
+  category: public.app-category.utilities
+  # Ship both DMG (drag-to-Applications, what most users expect) and ZIP
+  # (electron-updater's macOS delta format). Only built when the runner
+  # is macOS — the Windows CI matrix never trips this section.
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  icon: build/icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # Notarization is opt-in via env vars on the macOS runner. Set in
+  # .github/workflows/electron-release.yml when the maintainer wires up
+  # APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID secrets.
+  # Without them, electron-builder still ships an ad-hoc-signed DMG that
+  # macOS Gatekeeper will refuse on first launch — see BUILD.md for the
+  # right-click → Open workaround until notarization is in place.
+  entitlements: ../../tools/apple-intelligence-cli/Entitlements.plist
+  entitlementsInherit: ../../tools/apple-intelligence-cli/Entitlements.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: "WinSTT needs microphone access to transcribe your speech locally on this Mac."
+    NSAppleEventsUsageDescription: "WinSTT uses Apple Events to deliver dictated text to the focused application."
+    LSUIElement: false
   extraResources:
     - from: electron/resources/macos/
       to: macos
       filter:
         - "winstt-apple-llm"
+dmg:
+  # Reverse-DNS notarization-friendly name; the user-facing label stays
+  # `productName` from above (WinSTT).
+  artifactName: ${productName}-CPU-${version}-${arch}.${ext}
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
 portable:
   artifactName: ${productName}-CPU-Portable-${version}.${ext}
   # Stable extraction folder under %LOCALAPPDATA% — see electron-builder.gpu.yml

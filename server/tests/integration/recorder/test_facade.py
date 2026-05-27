@@ -69,7 +69,6 @@ class TestAudioToTextRecorderFacade:
             use_microphone=False,
             spinner=False,
             level=30,
-            batch_size=16,
             enable_realtime_transcription=False,
             use_main_model_for_realtime=False,
             realtime_model_type="tiny",
@@ -77,7 +76,6 @@ class TestAudioToTextRecorderFacade:
             init_realtime_after_seconds=0.2,
             on_realtime_transcription_update=None,
             on_realtime_transcription_stabilized=None,
-            realtime_batch_size=16,
             silero_sensitivity=0.4,
             silero_use_onnx=False,
             silero_deactivity_detection=False,
@@ -107,19 +105,15 @@ class TestAudioToTextRecorderFacade:
             on_recorded_chunk=None,
             debug_mode=False,
             handle_buffer_overflow=True,
-            beam_size=5,
-            beam_size_realtime=3,
             buffer_size=512,
             sample_rate=16000,
             initial_prompt=None,
             initial_prompt_realtime=None,
-            suppress_tokens=[-1],
             print_transcription_time=False,
             early_transcription_on_silence=0,
             allowed_latency_limit=100,
             no_log_file=False,
             use_extended_logging=False,
-            faster_whisper_vad_filter=True,
             normalize_audio=False,
             start_callback_in_new_thread=False,
         )
@@ -325,9 +319,13 @@ class TestAudioToTextRecorderFacade:
         facade.shutdown()
 
     def test_silero_sensitivity_getter(self) -> None:
-        """Facade.silero_sensitivity reads from config."""
+        """Facade.silero_sensitivity reads from config.
+
+        Default is now 0.7 (Silero trip threshold 0.3) to match Handy;
+        see :class:`VADConfig` docstring for the rationale.
+        """
         facade = _make_facade_with_fakes()
-        assert facade.silero_sensitivity == 0.4
+        assert facade.silero_sensitivity == 0.7
         facade.shutdown()
 
     def test_silero_sensitivity_setter(self) -> None:
@@ -349,6 +347,45 @@ class TestAudioToTextRecorderFacade:
         facade._silero_vad = mock_vad
         facade.silero_sensitivity = 0.7
         assert mock_vad.sensitivity == 0.7
+        facade.shutdown()
+
+    def test_initial_prompt_setter_persists_on_config(self) -> None:
+        """Facade.initial_prompt writes through to transcription config.
+
+        Wired so the WebSocket ``set_parameter`` path can push live
+        dictionary-derived prompts; otherwise the renderer's
+        ``installInitialPromptSync`` round-trip would be rejected by the
+        ``ALLOWED_PARAMETERS`` allowlist and spam debug.log on every
+        server-ready event.
+        """
+        facade = _make_facade_with_fakes()
+        facade.initial_prompt = "vocabulary: Manuel Acme Corp"
+        assert facade.initial_prompt == "vocabulary: Manuel Acme Corp"
+        assert facade._config.transcription.initial_prompt == "vocabulary: Manuel Acme Corp"
+        facade.shutdown()
+
+    def test_initial_prompt_setter_normalizes_empty_string_to_none(self) -> None:
+        """An empty-string push (the renderer's "clear" payload) becomes None."""
+        facade = _make_facade_with_fakes()
+        facade.initial_prompt = "non-empty"
+        facade.initial_prompt = ""
+        assert facade.initial_prompt is None
+        assert facade._config.transcription.initial_prompt is None
+        facade.shutdown()
+
+    def test_initial_prompt_realtime_setter_persists_on_config(self) -> None:
+        """Facade.initial_prompt_realtime writes through to realtime config."""
+        facade = _make_facade_with_fakes()
+        facade.initial_prompt_realtime = "rt prompt"
+        assert facade.initial_prompt_realtime == "rt prompt"
+        assert facade._config.realtime.initial_prompt_realtime == "rt prompt"
+        facade.shutdown()
+
+    def test_initial_prompt_realtime_setter_normalizes_empty_string_to_none(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade.initial_prompt_realtime = "x"
+        facade.initial_prompt_realtime = ""
+        assert facade.initial_prompt_realtime is None
         facade.shutdown()
 
     def test_model_getter(self) -> None:

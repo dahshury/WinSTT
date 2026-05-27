@@ -428,12 +428,20 @@ def build_transcriber(
         config.transcription.device,
         info.param_count if info else 0,
         info.available_quantizations if info else None,
+        family=info.family if info else "",
+        accelerator=config.transcription.accelerator,
     )
     from src.recorder.infrastructure.device import providers_for_settings
 
     providers = providers_for_settings(
         config.transcription.device,
         config.transcription.accelerator,
+    )
+    providers = _override_dml_to_cpu_for_incompatible_family(
+        providers,
+        family=info.family if info else "",
+        accelerator=config.transcription.accelerator,
+        device=config.transcription.device,
     )
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
@@ -445,6 +453,7 @@ def build_transcriber(
         on_download_progress=progress_handler,
         normalize_audio=config.transcription.normalize_audio,
         local_path=local_path,
+        translate_to_english=config.transcription.translate_to_english,
     )
 
 
@@ -463,11 +472,72 @@ def build_transcriber(
 _FP16_AUTO_PARAM_THRESHOLD: int = 500_000_000
 
 
+#: Model families that prefer int8 over fp32 on non-CUDA accelerators
+#: (and CPU). NeMo / Cohere / GigaAM / Kaldi / T-One ONNX graphs are
+#: shipped by their authors primarily as int8 — Handy's transcribe-rs
+#: loads them with ``Quantization::Int8`` for every backend (CPU,
+#: DirectML, Vulkan) and we mirror that. fp32 still works but trades
+#: ~3-4x memory + 2x latency for no accuracy gain on these well-trained
+#: encoders. Whisper / Moonshine ship working fp32 graphs across every EP
+#: and are excluded so the existing fp32/fp16 auto-promotion still wins.
+_INT8_PREFERRED_FAMILIES: frozenset[str] = frozenset({"nemo", "cohere", "gigaam", "kaldi", "t-one"})
+
+
+def _override_dml_to_cpu_for_incompatible_family(
+    providers: list[Any] | None,
+    *,
+    family: str,
+    accelerator: str,
+    device: str,
+) -> list[Any] | None:
+    """Force CPU EP for NeMo-family models on DirectML / ROCm / CoreML.
+
+    Background — verified locally on 2026-05-27:
+
+    * istupakov's ``encoder-model.int8.onnx`` for Canary 180M (byte-identical
+      to the one Handy ships at ``blob.handy.computer/canary-180m-flash.tar.gz``)
+      crashes with ``Non-zero status code returned while running Reshape
+      node 'node_view'`` (``MLOperatorAuthorImpl.cpp(2597)``,
+      ``ERROR_FATAL_APP_EXIT``) on any DirectML provider list, with or
+      without graph optimizations.
+    * The SAME file runs cleanly on ``CPUExecutionProvider``.
+    * Handy "supports" Canary on Windows DML because their ``transcribe-rs``
+      stack ends up using CPU EP for these families regardless of the
+      ``ort-directml`` Cargo feature — same end result we get here.
+
+    So: when the user's selected accelerator is DML / ROCm / CoreML and
+    the model family is in :data:`model_registry._DML_INCOMPATIBLE_FAMILIES`,
+    swap any non-CPU EP for ``CPUExecutionProvider``. Whisper / Moonshine
+    keep the GPU EP they got. Callers that already resolved to plain CPU
+    (or a real CUDA EP) pass through unchanged.
+    """
+    if not family:
+        return providers
+    from src.recorder.domain.model_registry import _DML_INCOMPATIBLE_FAMILIES
+    from src.recorder.infrastructure.device import resolve_accelerator
+
+    if family not in _DML_INCOMPATIBLE_FAMILIES:
+        return providers
+    resolved_acc = resolve_accelerator(accelerator or device)
+    if resolved_acc in {"cuda", "cpu"}:
+        return providers
+    logger.info(
+        "Routing %r-family model through CPUExecutionProvider — its ONNX "
+        "encoder is known-broken on %s's MLOperatorAuthorImpl reshape "
+        "kernel. Same fallback Handy's transcribe-rs uses for these families.",
+        family,
+        resolved_acc,
+    )
+    return ["CPUExecutionProvider"]
+
+
 def _resolve_quantization(
     requested: str,
     device: str,
     param_count: int = 0,
     available: list[str] | None = None,
+    family: str = "",
+    accelerator: str = "auto",
 ) -> str | None:
     """Resolve ``onnx_quantization`` to what onnx-asr should load.
 
@@ -513,9 +583,15 @@ def _resolve_quantization(
       harmful.
     """
     from src.recorder.domain.model_registry import _GPU_COMPATIBLE_QUANTIZATIONS
-    from src.recorder.infrastructure.device import resolve_device
+    from src.recorder.infrastructure.device import resolve_accelerator, resolve_device
 
     resolved_dev = resolve_device(device)
+    # `resolve_device` collapses every non-CPU accelerator into the legacy
+    # "cuda" bucket; we need the real EP name to tell DirectML / ROCm apart
+    # from actual CUDA for the int8-on-DML heuristic below. Fall back to the
+    # legacy `device` field when `accelerator` was left at its default — the
+    # priority walk in `resolve_accelerator` produces the same picks.
+    resolved_acc = resolve_accelerator(accelerator or device)
     quant = (requested or "").strip()
     # Permissive when ``available`` is unknown (off-catalog repo): we can't
     # enumerate its variants, so preserve the historical assume-it-exists
@@ -527,6 +603,8 @@ def _resolve_quantization(
     if quant in {"auto", ""}:
         if resolved_dev == "cuda" and param_count >= _FP16_AUTO_PARAM_THRESHOLD and _publishes("fp16"):
             return "fp16"
+        if resolved_acc != "cuda" and family in _INT8_PREFERRED_FAMILIES and _publishes("int8"):
+            return "int8"
         return None
 
     if not _publishes(quant):
@@ -538,7 +616,7 @@ def _resolve_quantization(
         )
         return None
 
-    if resolved_dev == "cuda" and quant not in _GPU_COMPATIBLE_QUANTIZATIONS:
+    if resolved_acc == "cuda" and quant not in _GPU_COMPATIBLE_QUANTIZATIONS:
         logger.warning(
             "onnx_quantization=%r requested but not GPU-compatible on "
             "CUDAExecutionProvider (it would fall back to fp32 compute and "
@@ -581,12 +659,20 @@ def build_realtime_transcriber(
         config.transcription.device,
         info.param_count if info else 0,
         info.available_quantizations if info else None,
+        family=info.family if info else "",
+        accelerator=config.transcription.accelerator,
     )
     from src.recorder.infrastructure.device import providers_for_settings
 
     providers = providers_for_settings(
         config.transcription.device,
         config.transcription.accelerator,
+    )
+    providers = _override_dml_to_cpu_for_incompatible_family(
+        providers,
+        family=info.family if info else "",
+        accelerator=config.transcription.accelerator,
+        device=config.transcription.device,
     )
 
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
@@ -604,6 +690,9 @@ def build_realtime_transcriber(
         local_path=local_path,
         segment_with_vad=False,
         normalize_audio=config.transcription.normalize_audio,
+        # Realtime worker translates too if the user opted in — keeps
+        # the live-preview language consistent with the main result.
+        translate_to_english=config.transcription.translate_to_english,
     )
 
 
@@ -779,6 +868,8 @@ def bootstrap_di(
             buffer_size=BufferSize(config.audio.buffer_size),
             on_device_switch_failed=_on_device_switch_failed,
             always_on_microphone=config.audio.always_on_microphone,
+            lazy_stream_close=config.audio.lazy_stream_close,
+            lazy_close_timeout_seconds=config.audio.lazy_close_timeout_seconds,
         )
     else:
         from src.building_blocks.types import BufferSize, SampleRate

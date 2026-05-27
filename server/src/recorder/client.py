@@ -93,7 +93,6 @@ class AudioToTextRecorderClient:
         use_microphone: bool = True,
         spinner: bool = True,
         level: int = logging.WARNING,
-        batch_size: int = 16,
         # Realtime transcription parameters
         enable_realtime_transcription: bool = False,
         use_main_model_for_realtime: bool = False,
@@ -102,7 +101,6 @@ class AudioToTextRecorderClient:
         init_realtime_after_seconds: float = INIT_REALTIME_INITIAL_PAUSE,
         on_realtime_transcription_update: TextCallback | None = None,
         on_realtime_transcription_stabilized: TextCallback | None = None,
-        realtime_batch_size: int = 16,
         # Voice activation parameters
         silero_sensitivity: float = INIT_SILERO_SENSITIVITY,
         silero_use_onnx: bool = False,
@@ -134,13 +132,10 @@ class AudioToTextRecorderClient:
         on_recorded_chunk: ChunkCallback | None = None,
         debug_mode: bool = False,
         handle_buffer_overflow: bool = INIT_HANDLE_BUFFER_OVERFLOW,
-        beam_size: int = 5,
-        beam_size_realtime: int = 3,
         buffer_size: int = BUFFER_SIZE,
         sample_rate: int = SAMPLE_RATE,
         initial_prompt: str | Iterable[int] | None = None,
         initial_prompt_realtime: str | Iterable[int] | None = None,
-        suppress_tokens: list[int] | None = None,
         print_transcription_time: bool = False,
         early_transcription_on_silence: float = 0,
         allowed_latency_limit: int = ALLOWED_LATENCY_LIMIT,
@@ -151,11 +146,7 @@ class AudioToTextRecorderClient:
         data_url: str = DEFAULT_DATA_URL,
         autostart_server: bool = True,
         output_wav_file: str | None = None,
-        faster_whisper_vad_filter: bool = False,
     ) -> None:
-        if suppress_tokens is None:
-            suppress_tokens = [-1]
-
         # Set instance variables from constructor parameters
         self.model = model
         self.language = language
@@ -171,9 +162,7 @@ class AudioToTextRecorderClient:
         self.use_microphone = use_microphone
         self.spinner = spinner
         self.level = level
-        self.batch_size = batch_size
         self.init_realtime_after_seconds = init_realtime_after_seconds
-        self.realtime_batch_size = realtime_batch_size
 
         # Real-time transcription parameters
         self.enable_realtime_transcription = enable_realtime_transcription
@@ -217,19 +206,15 @@ class AudioToTextRecorderClient:
         self.on_recorded_chunk = on_recorded_chunk
         self.debug_mode = debug_mode
         self.handle_buffer_overflow = handle_buffer_overflow
-        self.beam_size = beam_size
-        self.beam_size_realtime = beam_size_realtime
         self.buffer_size = buffer_size
         self.sample_rate = sample_rate
         self.initial_prompt = initial_prompt
         self.initial_prompt_realtime = initial_prompt_realtime
-        self.suppress_tokens = suppress_tokens
         self.print_transcription_time = print_transcription_time
         self.early_transcription_on_silence = early_transcription_on_silence
         self.allowed_latency_limit = allowed_latency_limit
         self.no_log_file = no_log_file
         self.use_extended_logging = use_extended_logging
-        self.faster_whisper_vad_filter = faster_whisper_vad_filter
 
         # Server URLs
         self.control_url = control_url
@@ -418,8 +403,6 @@ class AudioToTextRecorderClient:
         ("model", "--model", False),
         ("realtime_model_type", "--realtime_model_type", False),
         ("download_root", "--root", False),
-        ("batch_size", "--batch", False),
-        ("realtime_batch_size", "--realtime_batch_size", False),
         ("init_realtime_after_seconds", "--init_realtime_after_seconds", False),
         ("debug_mode", "--debug", True),
         ("language", "--language", False),
@@ -431,8 +414,6 @@ class AudioToTextRecorderClient:
         ("realtime_processing_pause", "--realtime_processing_pause", False),
         ("early_transcription_on_silence", "--early_transcription_on_silence", False),
         ("silero_deactivity_detection", "--silero_deactivity_detection", True),
-        ("beam_size", "--beam_size", False),
-        ("beam_size_realtime", "--beam_size_realtime", False),
         ("wake_words", "--wake_words", False),
         ("wake_words_sensitivity", "--wake_words_sensitivity", False),
         ("wake_word_timeout", "--wake_word_timeout", False),

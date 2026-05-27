@@ -11,6 +11,10 @@ function isEnoent(err: unknown): boolean {
 	);
 }
 
+import {
+	isRealtimeEnabled,
+	type LiveTranscriptionDisplay,
+} from "../../src/shared/lib/realtime-enabled";
 import { clearSessionAborted, isSessionAborted } from "../lib/abort-state";
 import { readWindowContextTree } from "../lib/context-reader";
 import { installCustomWordsSync } from "../lib/custom-words-sync";
@@ -948,7 +952,20 @@ function handleRecordingStop(
 type SimpleHandler = (event: Record<string, unknown>, safeSend: SafeSend) => void;
 
 const SIMPLE_RELAY_HANDLERS: Record<string, SimpleHandler> = {
-	no_audio_detected: (_e, send) => send(IPC.STT_NO_AUDIO_DETECTED),
+	// HARD GATE: a user-initiated cancel races the server's
+	// `set_microphone(false)` epilogue — after `abort()` flips the state
+	// machine to INACTIVE, the next `set_microphone(false)` we send hits the
+	// "off-without-recording" branch in recorder_service and publishes
+	// NoAudioDetected. Without this gate the renderer would announce "no
+	// audio detected" to a user who just explicitly discarded their
+	// recording. `isSessionAborted` clears on the next recording_start, so
+	// legitimate no-audio events from later sessions still flow through.
+	no_audio_detected: (_e, send) => {
+		if (isSessionAborted()) {
+			return;
+		}
+		send(IPC.STT_NO_AUDIO_DETECTED);
+	},
 	vad_detect_start: (_e, send) => send(IPC.STT_VAD_START),
 	vad_detect_stop: (_e, send) => send(IPC.STT_VAD_STOP),
 	transcription_start: (e, send) =>
@@ -1197,22 +1214,33 @@ function broadcastToAll(channel: string, ...args: unknown[]): void {
 	}
 }
 
+function userIntendedRealtimeOn(): boolean {
+	const liveTranscriptionDisplay = (store.get("general.liveTranscriptionDisplay") ??
+		"both") as LiveTranscriptionDisplay;
+	const showRecordingOverlay = store.get("general.showRecordingOverlay") !== false;
+	return isRealtimeEnabled({ showRecordingOverlay, liveTranscriptionDisplay });
+}
+
 function logServerRealtimeWarning(val: unknown): void {
 	// Stryker disable next-line StringLiteral: dbgVerbose() label is informational only
 	dbgVerbose("relay", "SERVER reports enable_realtime_transcription=", val);
-	// Stryker disable next-line ConditionalExpression,BooleanLiteral,BlockStatement: warning branch only logs — gate is informational only
-	if (!val) {
-		// Stryker disable next-line StringLiteral: dbg() warning text is informational only — multi-line string concatenation
-		dbg(
-			"relay",
-			// Stryker disable next-line StringLiteral: warning text part 1 — informational only
-			"WARNING: Server has realtime transcription DISABLED. " +
-				// Stryker disable next-line StringLiteral: warning text part 2 — informational only
-				"Pass --enable_realtime_transcription when starting the server, " +
-				// Stryker disable next-line StringLiteral: warning text part 3 — informational only
-				"or restart via the Electron app."
-		);
+	// Only warn on an actual mismatch: the user expected realtime ON but the
+	// server is OFF. When the user picked liveTranscriptionDisplay="none" or
+	// "in-pill" without the overlay, the server being OFF is the intended
+	// state — not a misconfiguration to surface.
+	if (val || !userIntendedRealtimeOn()) {
+		return;
 	}
+	// Stryker disable next-line StringLiteral: dbg() warning text is informational only — multi-line string concatenation
+	dbg(
+		"relay",
+		// Stryker disable next-line StringLiteral: warning text part 1 — informational only
+		"WARNING: Server has realtime transcription DISABLED. " +
+			// Stryker disable next-line StringLiteral: warning text part 2 — informational only
+			"Pass --enable_realtime_transcription when starting the server, " +
+			// Stryker disable next-line StringLiteral: warning text part 3 — informational only
+			"or restart via the Electron app."
+	);
 }
 
 function logServerRealtimeError(err: unknown): void {
@@ -1727,17 +1755,21 @@ export function setupRelay(
 	};
 
 	const onDisconnected = () => {
-		// Stryker disable next-line StringLiteral: dbg() message is informational only
-		dbg("relay", "STT server DISCONNECTED");
 		serverIsReady = false;
 		skewWarned = false;
 		onRecordingStop();
 		if (!hasEverConnected) {
-			// Cold-start: server still binding. Keep the renderer chip in its
-			// initial "connecting" state — the next connect attempt is already
-			// scheduled by stt-client's reconnect loop.
+			// Cold-start: server still binding (Python is importing torch /
+			// onnxruntime on a fresh boot — takes 5-15 s, during which the
+			// 250 ms-cadence reconnect loop produces a stream of
+			// "disconnect" events). Silently keep the renderer chip in its
+			// initial "connecting" state; the chip flips green when the
+			// first connect actually succeeds. Logging "DISCONNECTED" here
+			// would read as a hard failure when it's normal boot behavior.
 			return;
 		}
+		// Stryker disable next-line StringLiteral: dbg() message is informational only
+		dbg("relay", "STT server DISCONNECTED");
 		broadcastConnectionChange(false);
 	};
 

@@ -1,7 +1,7 @@
 import { PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useReducer } from "react";
+import { useTranslations } from "use-intl";
 import { runLlmPreview } from "@/shared/api/ipc-client";
 import { surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";

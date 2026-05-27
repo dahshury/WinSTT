@@ -11,6 +11,10 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+# Isolated build-only venvs created by server/packaging/build.ps1 so a
+# release build never touches the dev .venv (which is held open by the
+# live stt-server.exe whenever bun electron:dev is running).
+.venv-build-*/
 .coverage
 *.egg-info/
 dist/

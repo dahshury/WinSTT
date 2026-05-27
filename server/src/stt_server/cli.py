@@ -224,18 +224,6 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "-b",
-        "--batch",
-        "--batch_size",
-        type=int,
-        default=16,
-        help=(
-            "Batch size for inference. This parameter controls the number of audio "
-            "chunks processed in parallel during transcription. Default is 16."
-        ),
-    )
-
-    parser.add_argument(
         "--root",
         "--download_root",
         type=str,
@@ -268,17 +256,6 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--realtime_batch_size",
-        type=int,
-        default=16,
-        help=(
-            "Batch size for the real-time transcription model. This parameter controls "
-            "the number of audio chunks processed in parallel during real-time "
-            "transcription. Default is 16."
-        ),
-    )
-
-    parser.add_argument(
         "--initial_prompt_realtime",
         type=str,
         default="",
@@ -291,11 +268,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--silero_sensitivity",
         type=float,
-        default=0.05,
+        default=0.7,
         help=(
-            "Sensitivity level for Silero Voice Activity Detection (VAD), with a range "
-            "from 0 to 1. Lower values make the model less sensitive, useful for noisy "
-            "environments. Default is 0.05."
+            "Sensitivity for Silero VAD. Trip threshold = 1 - sensitivity, so "
+            "0.7 (the default) trips at probability > 0.3 — matches Handy and "
+            "captures quiet / distant voices that the previous 0.4 default (trip "
+            "> 0.6) was silently dropping. Lower this only if a specific mic is "
+            "over-triggering on background noise; the renderer's per-device "
+            "adaptive calibration handles per-device tuning automatically."
         ),
     )
 
@@ -380,26 +360,6 @@ def parse_arguments() -> argparse.Namespace:
             "useful when you want to trigger transcription mid-speech when there is a "
             "brief pause. Should be lower than post_speech_silence_duration. Set to 0 "
             "to disable. Default is 0.2 seconds."
-        ),
-    )
-
-    parser.add_argument(
-        "--beam_size",
-        type=int,
-        default=5,
-        help=(
-            "Beam size for the main transcription model. Larger values may improve "
-            "transcription accuracy but increase the processing time. Default is 5."
-        ),
-    )
-
-    parser.add_argument(
-        "--beam_size_realtime",
-        type=int,
-        default=3,
-        help=(
-            "Beam size for the real-time transcription model. A smaller beam size "
-            "allows for faster real-time processing but may reduce accuracy. Default is 3."
         ),
     )
 
@@ -585,8 +545,64 @@ def parse_arguments() -> argparse.Namespace:
         help=(
             "Only meaningful when --always_on_microphone is off. When set, "
             "PTT release stops the audio engine but defers closing the "
-            "stream by 30 s so back-to-back presses skip the open cost. "
-            "Off by default — release closes immediately."
+            "stream by --lazy_close_timeout_seconds so back-to-back "
+            "presses skip the open cost. Off by default — release closes "
+            "immediately."
+        ),
+    )
+
+    parser.add_argument(
+        "--lazy_close_timeout_seconds",
+        type=float,
+        default=30.0,
+        help=(
+            "Seconds before the lazy-close timer fires (only consulted "
+            "when --lazy_stream_close is set). The renderer's "
+            "consolidated 'Microphone Release' picker maps its enum "
+            "values to this number. Default 30 s matches Handy."
+        ),
+    )
+
+    parser.add_argument(
+        "--extra_recording_buffer_ms",
+        type=int,
+        default=0,
+        help=(
+            "Keep capturing audio for this many ms after the user "
+            "releases PTT / toggles dictation off, before tearing the "
+            "mic down and running transcription. Catches trailing "
+            "syllables that escape just after the key-up. 0 (default) "
+            "preserves the snap-stop behaviour; capped at 2000 ms. "
+            "Mirrors Handy's extra_recording_buffer_ms."
+        ),
+    )
+
+    parser.add_argument(
+        "--translate_to_english",
+        action="store_true",
+        default=False,
+        help=(
+            "Whisper-native task=translate. When set AND the chosen "
+            "--model is a multilingual Whisper export, the decoder "
+            "translates non-English audio to English in a single pass "
+            "(no LLM round-trip). Silently ignored on *.en variants and "
+            "non-Whisper families (NeMo, GigaAM, Moonshine)."
+        ),
+    )
+
+    parser.add_argument(
+        "--model_unload_timeout_seconds",
+        type=int,
+        default=300,
+        help=(
+            "Idle seconds before the loaded ONNX session(s) get torn "
+            "down to free RAM/VRAM. The next transcription after a "
+            "tear-down synchronously reloads the saved model — first "
+            "PTT pays the load cost, subsequent presses are free. "
+            "Pass ``0`` to tear down immediately after every "
+            "transcription (Handy's 'Immediately'), or a negative "
+            "value to disable (keep model resident forever, Handy's "
+            "'Never'). Default 300 (5 min)."
         ),
     )
 
@@ -610,9 +626,9 @@ def parse_arguments() -> argparse.Namespace:
         default="auto",
         help=(
             'Device tier for ONNX inference: "auto" (default — walks per-OS '
-            'priority: Windows DirectML > CUDA > CPU; Linux CUDA > ROCm > CPU; '
+            "priority: Windows DirectML > CUDA > CPU; Linux CUDA > ROCm > CPU; "
             'macOS CoreML > CPU), "cuda", "directml", "rocm", "coreml", or "cpu". '
-            'Unrecognised values fall back to CPU with a log line. See '
+            "Unrecognised values fall back to CPU with a log line. See "
             "``recorder.infrastructure.device.resolve_accelerator``."
         ),
     )
@@ -624,24 +640,10 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--suppress_tokens",
-        type=int,
-        default=[-1],
-        nargs="*",
-        help="Suppress tokens during transcription. Default is [-1].",
-    )
-
-    parser.add_argument(
         "--allowed_latency_limit",
         type=int,
         default=100,
         help="Maximal amount of chunks that can be unprocessed in queue before discarding chunks. Default is 100.",
-    )
-
-    parser.add_argument(
-        "--faster_whisper_vad_filter",
-        action="store_true",
-        help="Enable VAD filter for Faster Whisper. Default is False.",
     )
 
     parser.add_argument(

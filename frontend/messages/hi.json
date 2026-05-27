@@ -124,7 +124,19 @@
     "clearButton": "इतिहास साफ़ करें",
     "clearTitle": "क्या सभी ट्रांसक्रिप्शन इतिहास साफ़ करें?",
     "clearDescription": "सभी रिकॉर्ड किए गए ट्रांसक्रिप्शन, शब्द, और गतिविधि डेटा हटा दिए जाएँगे। यह क्रिया पूर्ववत नहीं की जा सकती।",
-    "clearConfirm": "साफ़ करें"
+    "clearConfirm": "साफ़ करें",
+    "limitsTitle": "Limits & Retention",
+    "historyMaxEntries": "Max History Entries",
+    "historyMaxEntriesCaption": "Cap on saved transcriptions (10–10,000)",
+    "historyMaxEntriesTooltip": "WinSTT trims the history list whenever it exceeds this number, oldest first. Larger caps slow the settings panel and increase disk use; lower caps free space sooner. Changes apply immediately — the next save trims down to the new limit.",
+    "retention": "Recording Retention",
+    "retentionCaption": "Auto-delete saved WAVs by this policy",
+    "retentionTooltip": "Controls when saved recordings (one .wav per transcription) get cleaned up. 'Keep forever' preserves everything; 'When over limit' trims when the history-entries cap is hit; the time-based options delete recordings older than the chosen age regardless of the cap. Cleanup runs at app launch and whenever this setting changes.",
+    "retentionNever": "Keep forever",
+    "retentionCap": "When over limit",
+    "retentionDays3": "After 3 days",
+    "retentionWeeks2": "After 2 weeks",
+    "retentionMonths3": "After 3 months"
   },
   "general": {
     "recording": "रिकॉर्डिंग",
@@ -150,6 +162,8 @@
     "muteSystemAudioCaption": "डिक्टेशन के दौरान स्पीकर कम करें या म्यूट करें",
     "muteSystemAudioTooltip": "डिक्टेशन के दौरान आपके सिस्टम स्पीकर की आवाज़ कम (या पूरी तरह म्यूट) करता है, और रुकने पर वॉल्यूम बहाल कर देता है। फीडबैक लूप को रोकता है और ट्रांसक्रिप्शन को साफ रखता है यदि आप हेडफ़ोन के बजाय स्पीकर का उपयोग करते हैं।",
     "systemAudioReductionMute": "म्यूट",
+    "systemAudioReductionOff": "बंद",
+    "overlaySizeOff": "बंद",
     "recordingSound": "रिकॉर्डिंग ध्वनि",
     "recordingSoundCaption": "हॉटकी दबाने पर ध्वनि बजाएं",
     "soundFile": "ध्वनि फ़ाइल",
@@ -164,7 +178,7 @@
     "soundLibraryDefaultName": "अंतर्निहित ध्वनि",
     "soundLibraryActive": "सक्रिय",
     "soundLibraryDefault": "डिफ़ॉल्ट",
-    "soundLibraryEmptyTitle": "अभी कोई ध्वनि अपलोड नहीं की गई",
+    "soundLibraryEmptyTitle": "एक कस्टम ध्वनि जोड़ें",
     "soundLibraryEmptyDescription": "यहाँ .wav या .mp3 फ़ाइल छोड़ें, या ब्राउज़ करने के लिए «ध्वनि जोड़ें» पर क्लिक करें।",
     "soundLibraryAddSound": "ध्वनि जोड़ें",
     "soundLibraryRename": "नाम बदलें",
@@ -254,7 +268,20 @@
     "wakeWordSensitivityTooltip": "0 = सबसे सख्त (कम झूठे सकारात्मक, हल्के उच्चारण छूट सकते हैं)। 1 = सबसे उदार (बुदबुदाते ट्रिगर पकड़ता है पर अधिक यादृच्छिक शोर भी ट्रिगर होते हैं)। डिफ़ॉल्ट 0.6 अधिकांश आवाज़ों के लिए ठीक है। झूठे ट्रिगर मिलें तो 0.5 आज़माएँ, इंजन आपको चूके तो 0.7।",
     "wakeWordTimeout": "अनुवर्ती समय-समाप्ति",
     "wakeWordTimeoutCaption": "जागृति शब्द के बाद रिकॉर्डर तैयार रहने के सेकंड",
-    "wakeWordTimeoutTooltip": "जागृति शब्द ट्रिगर होने के बाद, रिकॉर्डर इतनी देर तक आपका बोलना शुरू करने का इंतज़ार करता है। यदि आप नहीं बोलते, तो गेट बंद हो जाता है और आपको फिर से जागृति शब्द कहना होगा। मिनटों बाद यादृच्छिक शोर से आकस्मिक रिकॉर्डिंग को रोकता है।"
+    "wakeWordTimeoutTooltip": "जागृति शब्द ट्रिगर होने के बाद, रिकॉर्डर इतनी देर तक आपका बोलना शुरू करने का इंतज़ार करता है। यदि आप नहीं बोलते, तो गेट बंद हो जाता है और आपको फिर से जागृति शब्द कहना होगा। मिनटों बाद यादृच्छिक शोर से आकस्मिक रिकॉर्डिंग को रोकता है।",
+    "outputDevice": "Output Device",
+    "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
+    "outputDeviceTooltip": "Selects the audio output device used for recording chimes and Text-to-Speech playback. System Default follows whatever Windows / your OS routes to. Only available when at least one playback source is enabled (recording sound or TTS).",
+    "systemDefault": "System Default",
+    "pasteBehaviorTitle": "Paste Behavior",
+    "autoSubmit": "Auto-Submit After Paste",
+    "autoSubmitCaption": "Send an Enter key after each dictation pastes",
+    "autoSubmitTooltip": "When on, WinSTT injects a key combo after each successful paste — ships chat messages without a separate Enter press. Off by default to preserve the historical 'paste and let the user review' behavior.",
+    "autoSubmitKey": "Submit Key",
+    "autoSubmitKeyCaption": "Which combo to inject",
+    "autoSubmitKeyTooltip": "Enter works for most chat boxes and forms. Ctrl+Enter is the IDE / chat-app convention (Cursor, ChatGPT desktop, etc.) where plain Enter inserts a newline.",
+    "autoSubmitKeyEnter": "Enter",
+    "autoSubmitKeyCtrlEnter": "Ctrl+Enter"
   },
   "model": {
     "resourceWarning": {
@@ -294,9 +321,6 @@
     "device": "डिवाइस",
     "deviceCaptionGpu": "ऑटो उपलब्ध होने पर GPU का उपयोग करता है",
     "deviceCaptionNoGpu": "कोई GPU नहीं मिला",
-    "beamSize": "बीम साइज़",
-    "beamSizeCaption": "मुख्य मॉडल के लिए खोज चौड़ाई",
-    "beamSizeTooltip": "एक साथ मूल्यांकन किए जाने वाले उम्मीदवार ट्रांसक्रिप्शन की संख्या। उच्च मान सटीकता में सुधार करते हैं लेकिन प्रोसेसिंग समय बढ़ाते हैं। 5 का डिफ़ॉल्ट अधिकांश उपयोग मामलों के लिए अच्छा संतुलन है।",
     "earlyTranscription": "प्रारंभिक ट्रांसक्रिप्शन",
     "earlyTranscriptionCaption": "जल्दी शुरू करने के लिए मौन के सेकंड",
     "earlyTranscriptionTooltip": "पूरी तरह बोलना बंद करने से पहले ट्रांसक्राइब करना शुरू करें, इतने सेकंड के मौन के बाद ट्रिगर होता है। बोलने और अंतिम टेक्स्ट देखने के बीच की देरी को कम करता है। अक्षम करने के लिए 0 सेट करें।",
@@ -304,9 +328,6 @@
     "realtimeModelSection": "रियलटाइम मॉडल",
     "realtimeModelCaption": "लाइव पूर्वावलोकन के लिए छोटा मॉडल",
     "realtimeModelTooltip": "बोलते समय लाइव पूर्वावलोकन के लिए उपयोग किया जाने वाला एक अलग, छोटा मॉडल। अंतिम ट्रांसक्रिप्शन गुणवत्ता को प्रभावित किए बिना तुरंत प्रतिक्रिया प्रदान करने के लिए मुख्य मॉडल के साथ समानांतर में चलता है।",
-    "realtimeBeamSize": "रियलटाइम बीम साइज़",
-    "realtimeBeamSizeCaption": "रियलटाइम के लिए खोज चौड़ाई",
-    "realtimeBeamSizeTooltip": "रियलटाइम पूर्वावलोकन मॉडल के लिए बीम साइज़। कम मान कुछ सटीकता की कीमत पर तेज़ लाइव प्रतिक्रिया देते हैं। यह केवल लाइव पूर्वावलोकन को प्रभावित करता है, अंतिम ट्रांसक्रिप्शन को नहीं।",
     "useMainModel": "मुख्य मॉडल का उपयोग करें",
     "useMainModelCaption": "उच्च गुणवत्ता लेकिन धीमा",
     "useMainModelTooltip": "छोटे रियलटाइम मॉडल के बजाय लाइव पूर्वावलोकन के लिए बड़े, अधिक सटीक मुख्य मॉडल का उपयोग करें। बेहतर लाइव टेक्स्ट देता है लेकिन CPU/GPU उपयोग में काफ़ी वृद्धि करता है और धीमे हार्डवेयर पर लैग हो सकता है।",
@@ -317,7 +338,20 @@
     "computeDefaultLabel": "डिफ़ॉल्ट (मॉडल की मूल सटीकता)",
     "computeAutoLabel": "ऑटो (आपके हार्डवेयर के लिए सर्वोत्तम)",
     "deviceAutoLabel": "ऑटो",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "translateToEnglish": "Translate to English",
+    "translateToEnglishCaption": "Whisper-native task=translate (multilingual → English)",
+    "translateToEnglishTooltip": "When on, multilingual Whisper exports translate non-English audio to English in a single decoder pass — no LLM round-trip and no extra latency. English-only Whispers (the *.en variants) and non-Whisper backends (NeMo, GigaAM, Moonshine) silently fall through to normal transcription. For language-pair translation that isn't 'anything → English', use the LLM Translate modifier on the LLM tab instead.",
+    "modelUnloadTimeout": "Model Unload Timeout",
+    "modelUnloadTimeoutCaption": "Free RAM/VRAM after this idle window",
+    "modelUnloadTimeoutTooltip": "Idle-tear-down policy for the loaded ONNX session(s). After this much inactivity (no transcription requests), the server unloads the model and the OS reclaims its memory. The next PTT press transparently reloads — first press pays the cold-load cost, subsequent presses are free again. Set 'Never' to keep the model resident at all times for the lowest possible latency. Default is 5 minutes.",
+    "modelUnloadImmediately": "Immediately after each transcription",
+    "modelUnloadNever": "Never",
+    "modelUnloadMin2": "After 2 minutes",
+    "modelUnloadMin5": "After 5 minutes",
+    "modelUnloadMin10": "After 10 minutes",
+    "modelUnloadMin15": "After 15 minutes",
+    "modelUnloadHour1": "After 1 hour"
   },
   "audio": {
     "inputDevice": "इनपुट डिवाइस",
@@ -341,7 +375,23 @@
     "minRecordingLength": "न्यूनतम रिकॉर्डिंग लंबाई",
     "minRecordingLengthCaption": "मान्य रिकॉर्डिंग के लिए न्यूनतम सेकंड",
     "minRecordingLengthTooltip": "इससे छोटी रिकॉर्डिंग शोर के रूप में त्याग दी जाती हैं। खांसी, क्लिक या संक्षिप्त ध्वनियों जैसे आकस्मिक ट्रिगर को ट्रांसक्राइब होने से रोकता है।",
-    "deviceSwitchFailed": "इनपुट डिवाइस नहीं खोला जा सका — {reason}"
+    "deviceSwitchFailed": "इनपुट डिवाइस नहीं खोला जा सका — {reason}",
+    "outputDevice": "Output Device",
+    "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
+    "outputDeviceTooltip": "Selects the audio output device used for recording chimes and Text-to-Speech playback. System Default follows whatever Windows / your OS routes to. Only available when at least one playback source is enabled (recording sound or TTS).",
+    "clamshellLabel": "Clamshell microphone",
+    "clamshellCaption": "Auto-swap to this mic when the lid is closed",
+    "clamshellTooltip": "On macOS and Linux, WinSTT polls the laptop lid state every 5 seconds. When the lid closes, recording switches to the mic selected here (e.g. an external USB mic on a dock); when the lid reopens, it switches back to the primary microphone. Leave on 'None (disabled)' to skip lid polling entirely. Windows is not yet supported.",
+    "clamshellDisabled": "None (disabled)",
+    "advancedTitle": "Advanced",
+    "microphoneRelease": "Release Microphone",
+    "microphoneReleaseCaption": "When to close the OS audio stream after a recording",
+    "microphoneReleaseTooltip": "Picks when the OS microphone stream is released — the trade-off is mic-in-use indicator visibility versus PTT response latency. 'Always' keeps the stream open the whole time WinSTT is running for microseconds-fast PTT (indicator stays lit). 'Off' (default) closes immediately on every key-up so the indicator clears decisively. The duration options stop the engine on key-up but defer the actual close so back-to-back presses inside the window skip the ~10-50 ms reopen cost. Changing this requires a server restart.",
+    "microphoneReleaseAlways": "Always (never released)",
+    "microphoneReleaseImmediate": "Off (release on key-up)",
+    "microphoneReleaseSec30": "After 30 seconds",
+    "microphoneReleaseMin1": "After 1 minute",
+    "microphoneReleaseMin5": "After 5 minutes"
   },
   "quality": {
     "enableRealtime": "रियलटाइम सक्षम करें",
@@ -401,7 +451,11 @@
     "shortcutTtsStop": "पढ़ना रोकें",
     "repasteKey": "फिर से चिपकाने की कुंजी",
     "repasteKeyCaption": "रिकॉर्ड पर क्लिक करें, अपना कुंजी संयोजन दबाएँ, फिर रोकें पर क्लिक करें",
-    "repasteKeyTooltip": "वह कीबोर्ड शॉर्टकट जो आपके सबसे हालिया ट्रांसक्रिप्शन को फिर से चिपकाता है। रिकॉर्ड पर क्लिक करें, अपना इच्छित कुंजी संयोजन दबाएँ, फिर रोकें पर क्लिक करें।"
+    "repasteKeyTooltip": "वह कीबोर्ड शॉर्टकट जो आपके सबसे हालिया ट्रांसक्रिप्शन को फिर से चिपकाता है। रिकॉर्ड पर क्लिक करें, अपना इच्छित कुंजी संयोजन दबाएँ, फिर रोकें पर क्लिक करें।",
+    "conflictError": "Conflicts with {other} ({combo}) — pick a different combination",
+    "conflictOtherPushToTalk": "Push-to-Talk",
+    "conflictOtherRepaste": "Re-paste",
+    "conflictOtherTts": "Text-to-speech"
   },
   "dictionary": {
     "title": "शब्दकोश",
@@ -417,7 +471,10 @@
     "autoAddDecline": "खारिज करें",
     "emptyState": "अभी तक कोई शब्दकोश प्रविष्टि नहीं",
     "clearTitle": "सभी शब्दकोश प्रविष्टियां हटाएं?",
-    "clearDescription": "सभी शब्दकोश प्रविष्टियां स्थायी रूप से हटा दी जाएंगी। यह पूर्ववत नहीं किया जा सकता।"
+    "clearDescription": "सभी शब्दकोश प्रविष्टियां स्थायी रूप से हटा दी जाएंगी। यह पूर्ववत नहीं किया जा सकता।",
+    "thresholdLabel": "Correction strictness",
+    "thresholdCaption": "Maximum fuzzy-match score the server-side corrector will accept. Lower = stricter (fewer false replacements).",
+    "thresholdTooltip": "The deterministic corrector runs on the server right after transcription and BEFORE the LLM cleanup. Anything it misses still gets a second pass through the LLM modifiers."
   },
   "swapFailure": {
     "headline": "{model} लोड नहीं हो सका",
@@ -798,6 +855,12 @@
     "toastRateLimitedRetry": "{seconds} सेकंड में पुनः प्रयास करें",
     "toastProviderError": "{provider} STT त्रुटि: {message}",
     "openIntegrations": "एकीकरण खोलें",
-    "keyRemovedMidSession": "{provider} के लिए कुंजी हटाई गई — मॉडल बदलें या कुंजी पुनर्स्थापित करें"
+    "keyRemovedMidSession": "{provider} के लिए कुंजी हटाई गई — मॉडल बदलें या कुंजी पुनर्स्थापित करें",
+    "sourceLabel": "Source",
+    "sourceCaption": "Run transcription locally or via a cloud provider",
+    "sourceTooltip": "Local runs the chosen Whisper / ONNX model on this machine. Cloud routes audio to a configured provider (OpenAI / ElevenLabs) — requires an API key set in Integrations.",
+    "sourceLocal": "Local",
+    "sourceCloud": "Cloud",
+    "cloudDisabledHint": "Add an API key in the Integrations tab to enable Cloud."
   }
 }

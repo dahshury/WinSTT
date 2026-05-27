@@ -127,7 +127,15 @@ class _FakePyAudio:
         input_channels: int,
         input_format: int,
     ) -> bool:
-        del input_channels, input_format
+        del input_channels
+        # PortAudio raises ValueError for an unsupported (rate, format)
+        # combination — the production probe uses that to fall back from
+        # paFloat32 to paInt16. The hotplug-shape tests don't exercise the
+        # f32 path (the fake stream always emits int16-shaped payloads),
+        # so we report only paInt16 as supported here. The dedicated
+        # negotiate-format test below covers the paFloat32 happy path.
+        if input_format != _FakePyAudioModule.paInt16:
+            raise ValueError(f"format {input_format} not supported", -9994)
         dev = self.devices.get(input_device, {})
         return rate in (16000, int(dev.get("defaultSampleRate", 0)))
 
@@ -155,6 +163,7 @@ class _FakePyAudioModule:
     """Minimal substitute for the ``pyaudio`` module."""
 
     paInt16 = 8  # numeric value is irrelevant — only identity matters
+    paFloat32 = 1  # ditto. Production negotiates f32 first and falls back.
 
     def __init__(self, pa: _FakePyAudio) -> None:
         self._pa = pa
@@ -175,7 +184,12 @@ class TestBootWithoutMicrophone:
         pa = _FakePyAudio(devices={}, default_index=None)
         _install_fake_pyaudio(monkeypatch, pa)
 
-        source = PyAudioSource(input_device_index=None)
+        # ``always_on_microphone=True`` is the legacy boot policy these tests
+        # cover — open the stream at setup, fall back to waiting-for-device
+        # when no input is present. The new default (on-demand) deliberately
+        # skips the open and so doesn't enter waiting state from setup; its
+        # hotplug coverage lives in ``TestAlwaysOnMicrophoneMode`` below.
+        source = PyAudioSource(input_device_index=None, always_on_microphone=True)
         source.setup()  # used to raise DeviceError; now enters waiting state
 
         assert source.is_active() is True
@@ -189,6 +203,7 @@ class TestBootWithoutMicrophone:
         source = PyAudioSource(
             input_device_index=None,
             device_probe_every_n_chunks=10**6,  # disable polling for this test
+            always_on_microphone=True,
         )
         source.setup()
 
@@ -210,6 +225,7 @@ class TestHotplugDetection:
             input_device_index=None,
             on_device_became_available=attaches.append,
             device_probe_every_n_chunks=1,
+            always_on_microphone=True,
         )
         source.setup()
 
@@ -246,6 +262,7 @@ class TestHotplugDetection:
         source = PyAudioSource(
             input_device_index=None,
             device_probe_every_n_chunks=10**6,  # polling off — only explicit switch attaches
+            always_on_microphone=True,
         )
         source.setup()
         assert source.is_waiting_for_device is True
@@ -271,6 +288,7 @@ class TestMidRunUnplug:
         source = PyAudioSource(
             input_device_index=None,
             device_probe_every_n_chunks=10**6,  # polling off during unplug phase
+            always_on_microphone=True,
         )
         source.setup()
         source.resume()
@@ -305,6 +323,7 @@ class TestMidRunUnplug:
             input_device_index=None,
             on_device_became_available=attaches.append,
             device_probe_every_n_chunks=1,
+            always_on_microphone=True,
         )
         source.setup()
         source.resume()
@@ -330,3 +349,248 @@ class TestMidRunUnplug:
         assert source.read_chunk() == _REAL_FRAME
         assert attaches == [1]
         assert source.is_waiting_for_device is False
+
+
+class TestAlwaysOnMicrophoneMode:
+    """Boot-time policy from ``always_on_microphone``.
+
+    Default ``False`` mirrors Handy's ``OnDemand`` mode: the stream is
+    NOT allocated at setup; the first resume() opens one. ``True`` keeps
+    the legacy behavior — open at setup, stop_stream()/resume() between.
+    """
+
+    def test_setup_skips_open_when_always_on_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=False)
+        source.setup()
+
+        assert pa.open_calls == 0
+        assert source.is_active() is True
+        # No "waiting for device" — the device is available; we just
+        # haven't opened it yet because the policy is on-demand.
+        assert source.is_waiting_for_device is False
+        # Silence flows through read_chunk until first resume.
+        assert source.read_chunk() == _SILENCE
+        assert pa.open_calls == 0
+
+    def test_setup_opens_when_always_on_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+
+        # Legacy path: open at boot, immediately paused so the indicator
+        # stays off until first resume.
+        assert pa.open_calls == 1
+        assert pa.streams[0].stop_called == 1
+
+    def test_resume_lazily_opens_on_demand(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=False)
+        source.setup()
+        assert pa.open_calls == 0
+
+        source.resume()
+
+        assert pa.open_calls == 1
+        assert source.read_chunk() == _REAL_FRAME
+
+    def test_pause_releases_device_when_always_on_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """pause() in on-demand mode must fully close — that's the whole
+        point of the setting (OS mic indicator clears decisively)."""
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=False)
+        source.setup()
+        source.resume()
+        opened_stream = pa.streams[-1]
+
+        source.pause()
+
+        assert opened_stream.close_called == 1
+        # Subsequent resume opens a brand-new stream rather than reusing
+        # the closed one.
+        source.resume()
+        assert pa.open_calls == 2
+
+    def test_pause_keeps_stream_when_always_on_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """always_on=True keeps the stream object alive (only stop_stream)."""
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+        source.resume()
+        opened_stream = pa.streams[-1]
+
+        source.pause()
+
+        # stop_stream gets called (1 from the post-setup pause, 1 from this
+        # explicit pause); close stays at 0 — the object lives on.
+        assert opened_stream.stop_called >= 1
+        assert opened_stream.close_called == 0
+
+    def test_lazy_stream_close_defers_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When ``lazy_stream_close=True``, pause() only stops the engine —
+        the stream is closed by a deferred timer thread."""
+        import time
+
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        source = PyAudioSource(
+            input_device_index=1,
+            always_on_microphone=False,
+            lazy_stream_close=True,
+            lazy_close_timeout_seconds=0.05,
+        )
+        source.setup()
+        source.resume()
+        opened_stream = pa.streams[-1]
+
+        source.pause()
+
+        # Right after pause: engine stopped, stream object alive.
+        assert opened_stream.stop_called >= 1
+        assert opened_stream.close_called == 0
+
+        # Wait past the timer.
+        time.sleep(0.2)
+        assert opened_stream.close_called == 1
+
+    def test_lazy_stream_close_cancelled_by_resume(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A resume() before the timer fires must cancel the pending close."""
+        import time
+
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        source = PyAudioSource(
+            input_device_index=1,
+            always_on_microphone=False,
+            lazy_stream_close=True,
+            lazy_close_timeout_seconds=0.2,
+        )
+        source.setup()
+        source.resume()
+        opened_stream = pa.streams[-1]
+
+        source.pause()
+        # Beat the timer with a resume that bumps the generation counter.
+        source.resume()
+        time.sleep(0.3)
+
+        # The deferred close from the previous pause must have NOT fired
+        # against the still-alive stream (the resume opened a new one,
+        # but the original was already closed by resume's close+reopen
+        # path — the assertion here is that we didn't double-close).
+        # Specifically: close_called from the timer should NOT have run
+        # — the close that DID happen came from resume's own close+reopen.
+        # Since both routes close exactly once, the safest check is that
+        # the OS still has only the new stream open.
+        assert pa.open_calls == 2
+        # Old stream got closed by resume's close+reopen path; new one
+        # is alive and ready.
+        assert opened_stream.close_called == 1
+        new_stream = pa.streams[-1]
+        assert new_stream.close_called == 0
+
+
+class TestFormatNegotiation:
+    """``_open_stream`` should prefer paFloat32 and fall back to paInt16.
+
+    Mirrors Handy's ``get_preferred_config`` (F32 > I16 > I32 priority).
+    The benefit: on WASAPI shared mode the Audio Engine pumps f32
+    internally, so asking for f32 hands us the engine buffer directly
+    instead of forcing an in-engine i16 quantize step we don't control.
+    Tests use a custom fake that opts into f32 to verify the chosen
+    format flows through to ``pa.open`` and the read path's f32→i16
+    conversion runs cleanly without changing the int16-shaped output.
+    """
+
+    class _F32CapablePyAudio(_FakePyAudio):
+        """Fake whose ``is_format_supported`` accepts both paInt16 AND paFloat32."""
+
+        def is_format_supported(
+            self,
+            rate: int,
+            *,
+            input_device: int,
+            input_channels: int,
+            input_format: int,
+        ) -> bool:
+            del input_channels, input_format
+            dev = self.devices.get(input_device, {})
+            return rate in (16000, int(dev.get("defaultSampleRate", 0)))
+
+    def test_opens_with_paFloat32_when_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        pa = self._F32CapablePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+        # Intercept open() so we can inspect the format argument.
+        formats_opened: list[int] = []
+        original_open = pa.open
+
+        def capture_open(**kwargs: int | bool) -> _FakeStream:
+            formats_opened.append(int(kwargs["format"]))
+            return original_open(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(pa, "open", capture_open)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+
+        assert formats_opened == [_FakePyAudioModule.paFloat32]
+
+    def test_falls_back_to_paInt16_when_f32_unsupported(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Default fake only advertises paInt16 — verifies the production
+        # ValueError-swallowing fallback selects int16.
+        pa = _FakePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+        formats_opened: list[int] = []
+        original_open = pa.open
+
+        def capture_open(**kwargs: int | bool) -> _FakeStream:
+            formats_opened.append(int(kwargs["format"]))
+            return original_open(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(pa, "open", capture_open)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+
+        assert formats_opened == [_FakePyAudioModule.paInt16]
+
+    def test_read_chunk_converts_f32_payload_to_int16(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When the stream is f32, ``read_chunk`` returns int16 bytes downstream."""
+        import struct
+
+        pa = self._F32CapablePyAudio(devices={1: _USB_MIC}, default_index=1)
+        _install_fake_pyaudio(monkeypatch, pa)
+
+        # Replace the stream's read payload with a known f32 buffer: 512
+        # samples of +0.5 → fold to int16 16384 (``np.rint`` is round-
+        # half-to-even, so 16383.5 → 16384, not 16383).
+        f32_payload = struct.pack("<512f", *[0.5] * 512)
+
+        source = PyAudioSource(input_device_index=1, always_on_microphone=True)
+        source.setup()
+        # Stream opened in paused state — start capturing so read_chunk
+        # exercises the conversion branch rather than returning silence.
+        source.resume()
+        # Patch the actively-bound stream's payload.
+        pa.streams[-1].read_payload = f32_payload
+
+        chunk = source.read_chunk()
+        # 512 f32 samples → 512 int16 samples = 1024 bytes.
+        assert len(chunk) == 512 * 2
+        samples = struct.unpack("<512h", chunk)
+        assert all(s == 16384 for s in samples)

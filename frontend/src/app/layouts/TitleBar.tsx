@@ -1,7 +1,7 @@
 import { Separator } from "@base-ui/react/separator";
 import { Cancel01Icon, MinusSignIcon, Settings05Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
+import { useTranslations } from "use-intl";
 import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";

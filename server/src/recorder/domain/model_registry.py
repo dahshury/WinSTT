@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -55,6 +56,14 @@ class ModelInfo:
     #: most other repos ship only the default graph. Empty list → the model
     #: takes no quantization (faster-whisper-style), picker hides the row.
     available_quantizations: list[str] = field(default_factory=lambda: [""])
+    #: Total on-HF bytes per quantization variant, baked in by
+    #: ``scripts/refresh_catalog.py`` from the HuggingFace metadata. Drives
+    #: the download-confirmation dialog so it can show the exact byte count
+    #: the moment it opens — replaces the legacy "Size: unknown until
+    #: headers fetched" placeholder. Empty for custom-model entries and
+    #: catalog rows the refresh hasn't covered yet; consumers fall back to
+    #: ``size_label`` (the param-derived human label) in that case.
+    size_bytes_by_quantization: dict[str, int] = field(default_factory=dict)
     #: ``True`` for every shipped catalog entry. User-provided custom-model
     #: bundles that fail the validation contract (missing encoder / decoder /
     #: tokenizer / config) surface as ``available=False`` so the UI can grey
@@ -75,6 +84,47 @@ class ModelInfo:
     #: covered yet. Used by the model cache to detect corrupted downloads
     #: without having to re-fetch the entire weights file from HF.
     sha256: str | None = None
+    #: Published word-error-rate (%, lower is better). Sourced from HF Open
+    #: ASR Leaderboard or upstream model-card claims — see ``catalog.json``
+    #: for the per-row numbers. ``0.0`` (default) means "unknown"; the picker
+    #: hides the accuracy bar in that case. The renderer normalizes this
+    #: into a 0..1 accuracy_score via :func:`_accuracy_score`.
+    wer: float = 0.0
+    #: Published real-time factor (RTFx — higher = faster; 1.0 = realtime).
+    #: Sourced from HF Open ASR Leaderboard or model-card claims. ``0.0``
+    #: (default) means "unknown" -- bar hidden. Normalized into 0..1
+    #: speed_score via :func:`_speed_score` (log-scaled so the 1x/2000x
+    #: dynamic range fits a single bar).
+    rtfx: float = 0.0
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _accuracy_score(wer: float) -> float:
+    """Normalize a published WER into the picker's 0..1 accuracy bar.
+
+    ``wer <= 0`` is the "unknown" sentinel and maps to the renderer's
+    ``0.5`` hide-bar value. Otherwise we use a linear ramp anchored at the
+    catalog's worst-case (~30 % WER on Whisper-tiny) so the smallest model
+    still earns a visible non-zero bar.
+    """
+    if wer <= 0:
+        return 0.5
+    return round(_clamp(1.0 - wer / 30.0, 0.05, 0.99), 3)
+
+
+def _speed_score(rtfx: float) -> float:
+    """Normalize a published RTFx into the picker's 0..1 speed bar.
+
+    Log-scaled because the catalog's speed range spans 100x-2000x - a
+    linear map would crush every Whisper variant into the bottom of the
+    bar. ``rtfx <= 0`` maps to the renderer's ``0.5`` hide-bar sentinel.
+    """
+    if rtfx <= 0:
+        return 0.5
+    return round(_clamp(math.log10(rtfx + 1.0) / math.log10(2001.0), 0.05, 0.99), 3)
 
 
 #: Quantization suffixes ORT's CUDAExecutionProvider can actually accelerate.
@@ -88,6 +138,23 @@ class ModelInfo:
 #: Only fp32 ("") and fp16 are real CUDA wins, so the UI shouldn't tempt
 #: users with the others on a GPU install.
 _GPU_COMPATIBLE_QUANTIZATIONS: frozenset[str] = frozenset({"", "fp16"})
+
+
+#: Model families whose ONNX encoder graph crashes on non-CUDA GPU EPs
+#: (DirectML / ROCm / CoreML) at every quantization — the reshape patterns
+#: trip ``MLOperatorAuthorImpl`` with ``ERROR_FATAL_APP_EXIT`` even with
+#: graph optimizations disabled and even on int8. Verified by running
+#: istupakov's ``encoder-model.int8.onnx`` for Canary 180M on bare ORT-DML
+#: and observing the same crash that Handy's "blob.handy.computer" tarball
+#: produces (the encoder file is byte-identical between the two; Handy
+#: works because their Rust ``transcribe-rs`` ends up routing these models
+#: through CPU EP, not because their export is different).
+#:
+#: :func:`bootstrap.build_transcriber` consults this set to override the
+#: provider list to CPU-only for these models when the user's selected
+#: accelerator is DML / ROCm / CoreML. Whisper / Moonshine / custom ship
+#: working fp32 DML graphs and are not in the set.
+_DML_INCOMPATIBLE_FAMILIES: frozenset[str] = frozenset({"nemo", "cohere", "gigaam", "kaldi", "t-one"})
 
 
 def gpu_filter_quantizations(quants: list[str]) -> list[str]:
@@ -143,6 +210,17 @@ def _str_list(raw: object, *, default: list[str]) -> list[str]:
     return [str(item) for item in raw]
 
 
+def _float_or_zero(value: object) -> float:
+    """Best-effort float coercion for optional JSON numeric fields.
+
+    Returns ``0.0`` for ``None`` / missing / non-numeric -- that's the
+    "unknown" sentinel both ``wer`` and ``rtfx`` use to mean "no bar".
+    """
+    if not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
 def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
     """Build a :class:`ModelInfo` from one JSON entry.
 
@@ -169,8 +247,29 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
         description=str(entry.get("description", "")),
         param_count=params,
         available_quantizations=quants,
+        size_bytes_by_quantization=_size_bytes_map(entry.get("size_bytes_by_quantization")),
         sha256=sha256,
+        wer=_float_or_zero(entry.get("wer")),
+        rtfx=_float_or_zero(entry.get("rtfx")),
     )
+
+
+def _size_bytes_map(raw: object) -> dict[str, int]:
+    """Coerce the catalog's ``size_bytes_by_quantization`` blob into a dict.
+
+    Drops keys whose values aren't positive integers — the refresh script
+    persists zero/missing entries by omission, so anything non-positive in
+    the on-disk JSON is treated as "unknown" rather than "0 bytes".
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            continue
+        if isinstance(value, int) and value > 0:
+            out[key] = value
+    return out
 
 
 def _load_catalog_entries() -> list[ModelInfo]:
@@ -236,10 +335,13 @@ def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> Model
         description=info.description,
         param_count=info.param_count,
         available_quantizations=info.available_quantizations,
+        size_bytes_by_quantization=info.size_bytes_by_quantization,
         available=info.available,
         error_message=info.error_message,
         local_path=info.local_path,
         sha256=info.sha256,
+        wer=info.wer,
+        rtfx=info.rtfx,
     )
 
 
@@ -428,24 +530,35 @@ class ModelCatalog:
         info = self._models[model_id]
         return language in info.languages
 
-    def to_dicts(self, *, device: str | None = None) -> list[dict[str, object]]:
+    def to_dicts(
+        self,
+        *,
+        device: str | None = None,
+        accelerator: str | None = None,
+    ) -> list[dict[str, object]]:
         """Serialize the catalog for the frontend.
 
-        When ``device == "cuda"``, ``available_quantizations`` is filtered
-        to those CUDAExecutionProvider can actually accelerate (only fp32
-        and fp16) — sub-fp16 quants either silently fall back to fp32 or
-        hallucinate on CUDA (see :data:`_GPU_COMPATIBLE_QUANTIZATIONS`).
-        Hiding them in the picker stops users picking a "faster"
-        quantization that is in fact slower AND less accurate.
+        When ``device == "cuda"`` or ``accelerator == "cuda"``,
+        ``available_quantizations`` is filtered to those CUDA-EP can
+        actually accelerate (only fp32 and fp16) — sub-fp16 quants either
+        silently fall back to fp32 or hallucinate on CUDA (see
+        :data:`_GPU_COMPATIBLE_QUANTIZATIONS`). Hiding them in the picker
+        stops users picking a "faster" quantization that is in fact slower
+        AND less accurate.
+
+        DirectML / ROCm / CoreML do NOT filter the per-quant list —
+        :data:`_DML_INCOMPATIBLE_FAMILIES` models are routed to CPU EP by
+        the bootstrap regardless of accelerator setting, so every published
+        quant remains valid (it runs on CPU). Whisper / Moonshine families
+        run on DML directly with the full quant list.
         """
-        filter_quants = device == "cuda"
+        is_cuda = device == "cuda" or accelerator == "cuda"
         result: list[dict[str, object]] = []
         for m in self._models.values():
-            quants = (
-                gpu_filter_quantizations(m.available_quantizations)
-                if filter_quants
-                else list(m.available_quantizations)
-            )
+            quants = gpu_filter_quantizations(m.available_quantizations) if is_cuda else list(m.available_quantizations)
+            # Mirror the quant filter into the size map so the renderer
+            # only sees bytes for quants it'll actually show.
+            sizes = {quant: byte_count for quant, byte_count in m.size_bytes_by_quantization.items() if quant in quants}
             result.append(
                 {
                     "id": m.id,
@@ -460,10 +573,15 @@ class ModelCatalog:
                     "description": m.description,
                     "param_count": m.param_count,
                     "available_quantizations": quants,
+                    "size_bytes_by_quantization": sizes,
                     "available": m.available,
                     "error_message": m.error_message,
                     "local_path": m.local_path,
                     "sha256": m.sha256,
+                    "wer": m.wer,
+                    "rtfx": m.rtfx,
+                    "accuracy_score": _accuracy_score(m.wer),
+                    "speed_score": _speed_score(m.rtfx),
                 }
             )
         return result

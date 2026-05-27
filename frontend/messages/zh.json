@@ -124,7 +124,19 @@
     "clearButton": "清除历史",
     "clearTitle": "清除所有转录历史?",
     "clearDescription": "将删除所有已记录的转录、字数和活动数据。此操作无法撤销。",
-    "clearConfirm": "清除"
+    "clearConfirm": "清除",
+    "limitsTitle": "Limits & Retention",
+    "historyMaxEntries": "Max History Entries",
+    "historyMaxEntriesCaption": "Cap on saved transcriptions (10–10,000)",
+    "historyMaxEntriesTooltip": "WinSTT trims the history list whenever it exceeds this number, oldest first. Larger caps slow the settings panel and increase disk use; lower caps free space sooner. Changes apply immediately — the next save trims down to the new limit.",
+    "retention": "Recording Retention",
+    "retentionCaption": "Auto-delete saved WAVs by this policy",
+    "retentionTooltip": "Controls when saved recordings (one .wav per transcription) get cleaned up. 'Keep forever' preserves everything; 'When over limit' trims when the history-entries cap is hit; the time-based options delete recordings older than the chosen age regardless of the cap. Cleanup runs at app launch and whenever this setting changes.",
+    "retentionNever": "Keep forever",
+    "retentionCap": "When over limit",
+    "retentionDays3": "After 3 days",
+    "retentionWeeks2": "After 2 weeks",
+    "retentionMonths3": "After 3 months"
   },
   "general": {
     "recording": "录音",
@@ -150,6 +162,8 @@
     "muteSystemAudioCaption": "听写时降低或静音扬声器",
     "muteSystemAudioTooltip": "在听写时降低（或完全静音）系统扬声器，并在停止后恢复音量。防止反馈回路，如果您使用扬声器而非耳机，可保持转录结果清晰。",
     "systemAudioReductionMute": "静音",
+    "systemAudioReductionOff": "关闭",
+    "overlaySizeOff": "关闭",
     "recordingSound": "录音提示音",
     "recordingSoundCaption": "按下快捷键时播放提示音",
     "soundFile": "声音文件",
@@ -164,7 +178,7 @@
     "soundLibraryDefaultName": "内置提示音",
     "soundLibraryActive": "已激活",
     "soundLibraryDefault": "默认",
-    "soundLibraryEmptyTitle": "尚未上传任何声音",
+    "soundLibraryEmptyTitle": "添加自定义声音",
     "soundLibraryEmptyDescription": "将 .wav 或 .mp3 文件拖到此处，或点击「添加声音」浏览。",
     "soundLibraryAddSound": "添加声音",
     "soundLibraryRename": "重命名",
@@ -254,7 +268,20 @@
     "wakeWordSensitivityTooltip": "0 = 最严格（误报较少，可能错过轻柔发音）。1 = 最宽松（捕捉含糊触发，但也会触发更多随机噪声）。默认 0.6 适合大多数声音。如有误触可尝试 0.5，如引擎错过你可尝试 0.7。",
     "wakeWordTimeout": "后续超时",
     "wakeWordTimeoutCaption": "唤醒词后录音机保持武装状态的秒数",
-    "wakeWordTimeoutTooltip": "唤醒词触发后，录音机会等待你开始说话这么长时间。如果不说，门会关闭，你必须再次说出唤醒词。防止几分钟后的随机噪声触发意外录音。"
+    "wakeWordTimeoutTooltip": "唤醒词触发后，录音机会等待你开始说话这么长时间。如果不说，门会关闭，你必须再次说出唤醒词。防止几分钟后的随机噪声触发意外录音。",
+    "outputDevice": "Output Device",
+    "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
+    "outputDeviceTooltip": "Selects the audio output device used for recording chimes and Text-to-Speech playback. System Default follows whatever Windows / your OS routes to. Only available when at least one playback source is enabled (recording sound or TTS).",
+    "systemDefault": "System Default",
+    "pasteBehaviorTitle": "Paste Behavior",
+    "autoSubmit": "Auto-Submit After Paste",
+    "autoSubmitCaption": "Send an Enter key after each dictation pastes",
+    "autoSubmitTooltip": "When on, WinSTT injects a key combo after each successful paste — ships chat messages without a separate Enter press. Off by default to preserve the historical 'paste and let the user review' behavior.",
+    "autoSubmitKey": "Submit Key",
+    "autoSubmitKeyCaption": "Which combo to inject",
+    "autoSubmitKeyTooltip": "Enter works for most chat boxes and forms. Ctrl+Enter is the IDE / chat-app convention (Cursor, ChatGPT desktop, etc.) where plain Enter inserts a newline.",
+    "autoSubmitKeyEnter": "Enter",
+    "autoSubmitKeyCtrlEnter": "Ctrl+Enter"
   },
   "model": {
     "resourceWarning": {
@@ -294,9 +321,6 @@
     "device": "设备",
     "deviceCaptionGpu": "自动模式在可用时使用 GPU",
     "deviceCaptionNoGpu": "未检测到 GPU",
-    "beamSize": "束搜索宽度",
-    "beamSizeCaption": "主模型的搜索宽度",
-    "beamSizeTooltip": "同时评估的候选转录数量。较高的值可提高准确度，但会增加处理时间。默认值 5 适合大多数使用场景。",
     "earlyTranscription": "提前转录",
     "earlyTranscriptionCaption": "触发提前转录的静音秒数",
     "earlyTranscriptionTooltip": "在您完全停止说话之前开始转录，在静音达到此秒数后触发。减少说话和看到最终文本之间的延迟。设为 0 以禁用。",
@@ -304,9 +328,6 @@
     "realtimeModelSection": "实时模型",
     "realtimeModelCaption": "用于实时预览的较小模型",
     "realtimeModelTooltip": "一个独立的较小模型，在您说话时提供实时预览。与主模型并行运行，提供即时反馈而不影响最终转录质量。",
-    "realtimeBeamSize": "实时束搜索宽度",
-    "realtimeBeamSizeCaption": "实时模型的搜索宽度",
-    "realtimeBeamSizeTooltip": "实时预览模型的束搜索宽度。较低的值可提供更快的实时反馈，但会牺牲一些准确度。这只影响实时预览，不影响最终转录。",
     "useMainModel": "使用主模型",
     "useMainModelCaption": "质量更高但速度较慢",
     "useMainModelTooltip": "使用更大、更准确的主模型进行实时预览，而不是较小的实时模型。实时文本质量更好，但会显著增加 CPU/GPU 使用率，在较慢的硬件上可能会导致卡顿。",
@@ -317,7 +338,20 @@
     "computeDefaultLabel": "默认(模型原生精度)",
     "computeAutoLabel": "自动(适合您的硬件)",
     "deviceAutoLabel": "自动",
-    "deviceCpuLabel": "CPU"
+    "deviceCpuLabel": "CPU",
+    "translateToEnglish": "Translate to English",
+    "translateToEnglishCaption": "Whisper-native task=translate (multilingual → English)",
+    "translateToEnglishTooltip": "When on, multilingual Whisper exports translate non-English audio to English in a single decoder pass — no LLM round-trip and no extra latency. English-only Whispers (the *.en variants) and non-Whisper backends (NeMo, GigaAM, Moonshine) silently fall through to normal transcription. For language-pair translation that isn't 'anything → English', use the LLM Translate modifier on the LLM tab instead.",
+    "modelUnloadTimeout": "Model Unload Timeout",
+    "modelUnloadTimeoutCaption": "Free RAM/VRAM after this idle window",
+    "modelUnloadTimeoutTooltip": "Idle-tear-down policy for the loaded ONNX session(s). After this much inactivity (no transcription requests), the server unloads the model and the OS reclaims its memory. The next PTT press transparently reloads — first press pays the cold-load cost, subsequent presses are free again. Set 'Never' to keep the model resident at all times for the lowest possible latency. Default is 5 minutes.",
+    "modelUnloadImmediately": "Immediately after each transcription",
+    "modelUnloadNever": "Never",
+    "modelUnloadMin2": "After 2 minutes",
+    "modelUnloadMin5": "After 5 minutes",
+    "modelUnloadMin10": "After 10 minutes",
+    "modelUnloadMin15": "After 15 minutes",
+    "modelUnloadHour1": "After 1 hour"
   },
   "audio": {
     "inputDevice": "输入设备",
@@ -341,7 +375,23 @@
     "minRecordingLength": "最短录音时长",
     "minRecordingLengthCaption": "有效录音的最短秒数",
     "minRecordingLengthTooltip": "短于此时长的录音将被视为噪音而丢弃。防止咳嗽、点击声或短暂声音等意外触发被转录。",
-    "deviceSwitchFailed": "无法打开输入设备 — {reason}"
+    "deviceSwitchFailed": "无法打开输入设备 — {reason}",
+    "outputDevice": "Output Device",
+    "outputDeviceCaption": "Speaker / headphones for chimes and TTS playback",
+    "outputDeviceTooltip": "Selects the audio output device used for recording chimes and Text-to-Speech playback. System Default follows whatever Windows / your OS routes to. Only available when at least one playback source is enabled (recording sound or TTS).",
+    "clamshellLabel": "Clamshell microphone",
+    "clamshellCaption": "Auto-swap to this mic when the lid is closed",
+    "clamshellTooltip": "On macOS and Linux, WinSTT polls the laptop lid state every 5 seconds. When the lid closes, recording switches to the mic selected here (e.g. an external USB mic on a dock); when the lid reopens, it switches back to the primary microphone. Leave on 'None (disabled)' to skip lid polling entirely. Windows is not yet supported.",
+    "clamshellDisabled": "None (disabled)",
+    "advancedTitle": "Advanced",
+    "microphoneRelease": "Release Microphone",
+    "microphoneReleaseCaption": "When to close the OS audio stream after a recording",
+    "microphoneReleaseTooltip": "Picks when the OS microphone stream is released — the trade-off is mic-in-use indicator visibility versus PTT response latency. 'Always' keeps the stream open the whole time WinSTT is running for microseconds-fast PTT (indicator stays lit). 'Off' (default) closes immediately on every key-up so the indicator clears decisively. The duration options stop the engine on key-up but defer the actual close so back-to-back presses inside the window skip the ~10-50 ms reopen cost. Changing this requires a server restart.",
+    "microphoneReleaseAlways": "Always (never released)",
+    "microphoneReleaseImmediate": "Off (release on key-up)",
+    "microphoneReleaseSec30": "After 30 seconds",
+    "microphoneReleaseMin1": "After 1 minute",
+    "microphoneReleaseMin5": "After 5 minutes"
   },
   "quality": {
     "enableRealtime": "启用实时转录",
@@ -401,7 +451,11 @@
     "shortcutTtsStop": "停止朗读",
     "repasteKey": "重新粘贴按键",
     "repasteKeyCaption": "点击“录制”，按下你的按键组合，然后点击“停止”",
-    "repasteKeyTooltip": "用于重新粘贴最近一次转写结果的键盘快捷键。点击“录制”，按下你想要的按键组合，然后点击“停止”。"
+    "repasteKeyTooltip": "用于重新粘贴最近一次转写结果的键盘快捷键。点击“录制”，按下你想要的按键组合，然后点击“停止”。",
+    "conflictError": "Conflicts with {other} ({combo}) — pick a different combination",
+    "conflictOtherPushToTalk": "Push-to-Talk",
+    "conflictOtherRepaste": "Re-paste",
+    "conflictOtherTts": "Text-to-speech"
   },
   "dictionary": {
     "title": "词典",
@@ -417,7 +471,10 @@
     "autoAddDecline": "忽略",
     "emptyState": "暂无词典条目",
     "clearTitle": "删除所有词典条目？",
-    "clearDescription": "所有词典条目将被永久删除。此操作无法撤销。"
+    "clearDescription": "所有词典条目将被永久删除。此操作无法撤销。",
+    "thresholdLabel": "Correction strictness",
+    "thresholdCaption": "Maximum fuzzy-match score the server-side corrector will accept. Lower = stricter (fewer false replacements).",
+    "thresholdTooltip": "The deterministic corrector runs on the server right after transcription and BEFORE the LLM cleanup. Anything it misses still gets a second pass through the LLM modifiers."
   },
   "swapFailure": {
     "headline": "无法加载 {model}",
@@ -798,6 +855,12 @@
     "toastRateLimitedRetry": "请在 {seconds} 秒后重试",
     "toastProviderError": "{provider} STT 错误：{message}",
     "openIntegrations": "打开集成",
-    "keyRemovedMidSession": "{provider} 的密钥已删除 — 切换模型或恢复密钥"
+    "keyRemovedMidSession": "{provider} 的密钥已删除 — 切换模型或恢复密钥",
+    "sourceLabel": "Source",
+    "sourceCaption": "Run transcription locally or via a cloud provider",
+    "sourceTooltip": "Local runs the chosen Whisper / ONNX model on this machine. Cloud routes audio to a configured provider (OpenAI / ElevenLabs) — requires an API key set in Integrations.",
+    "sourceLocal": "Local",
+    "sourceCloud": "Cloud",
+    "cloudDisabledHint": "Add an API key in the Integrations tab to enable Cloud."
   }
 }

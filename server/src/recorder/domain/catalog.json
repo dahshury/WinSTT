@@ -110,12 +110,20 @@
       "onnx_model_name": "onnx-community/whisper-tiny",
       "description": "OpenAI Whisper tiny (38M params)",
       "param_count": 37760640,
+      "wer": 24.5,
+      "rtfx": 750,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 149273068,
+        "fp16": 59593896,
+        "q4": 86713702,
+        "bnb4": 86124414
+      }
     },
     {
       "id": "base",
@@ -227,12 +235,20 @@
       "onnx_model_name": "onnx-community/whisper-base",
       "description": "OpenAI Whisper base (73M params)",
       "param_count": 72593920,
+      "wer": 18.0,
+      "rtfx": 510,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 262214843,
+        "fp16": 104727818,
+        "q4": 123602419,
+        "bnb4": 122030467
+      }
     },
     {
       "id": "small",
@@ -344,12 +360,20 @@
       "onnx_model_name": "onnx-community/whisper-small",
       "description": "OpenAI Whisper small (242M params)",
       "param_count": 241734912,
+      "wer": 13.0,
+      "rtfx": 330,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 772075146,
+        "fp16": 308583076,
+        "q4": 233149327,
+        "bnb4": 226073167
+      }
     },
     {
       "id": "medium",
@@ -461,12 +485,20 @@
       "onnx_model_name": "Xenova/whisper-medium",
       "description": "OpenAI Whisper medium (769M params)",
       "param_count": 769000000,
+      "wer": 9.5,
+      "rtfx": 200,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 2291389871,
+        "fp16": 916186656,
+        "q4": 469835828,
+        "bnb4": 444673676
+      }
     },
     {
       "id": "large-v3",
@@ -578,9 +610,14 @@
       "onnx_model_name": "Xenova/whisper-large-v3",
       "description": "OpenAI Whisper large-v3 (1.55B params)",
       "param_count": 1550000000,
+      "wer": 7.4,
+      "rtfx": 145,
       "available_quantizations": [
         ""
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 4544298282
+      }
     },
     {
       "id": "large-v3-turbo",
@@ -692,12 +729,20 @@
       "onnx_model_name": "onnx-community/whisper-large-v3-turbo",
       "description": "OpenAI Whisper large-v3-turbo (796M params)",
       "param_count": 795766657,
+      "wer": 7.8,
+      "rtfx": 250,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 1127967979,
+        "fp16": 344227339,
+        "q4": 334147222,
+        "bnb4": 327594234
+      }
     },
     {
       "id": "tiny.en",
@@ -711,12 +756,20 @@
       "onnx_model_name": "onnx-community/whisper-tiny.en",
       "description": "OpenAI Whisper tiny.en (38M params, English only)",
       "param_count": 37760256,
+      "wer": 22.5,
+      "rtfx": 750,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 149271149,
+        "fp16": 59589240,
+        "q4": 86712166,
+        "bnb4": 86122878
+      }
     },
     {
       "id": "base.en",
@@ -730,12 +783,20 @@
       "onnx_model_name": "onnx-community/whisper-base.en",
       "description": "OpenAI Whisper base.en (74M params, English only)",
       "param_count": 74000000,
+      "wer": 15.5,
+      "rtfx": 510,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 262212283,
+        "fp16": 104721330,
+        "q4": 123600371,
+        "bnb4": 122028419
+      }
     },
     {
       "id": "small.en",
@@ -749,12 +810,20 @@
       "onnx_model_name": "onnx-community/whisper-small.en",
       "description": "OpenAI Whisper small.en (244M params, English only)",
       "param_count": 244000000,
+      "wer": 11.5,
+      "rtfx": 330,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 772071305,
+        "fp16": 308571252,
+        "q4": 233146255,
+        "bnb4": 226070095
+      }
     },
     {
       "id": "medium.en",
@@ -768,19 +837,124 @@
       "onnx_model_name": "Xenova/whisper-medium.en",
       "description": "OpenAI Whisper medium.en (769M params, English only)",
       "param_count": 769000000,
+      "wer": 8.8,
+      "rtfx": 200,
       "available_quantizations": [
         "",
         "fp16",
         "q4",
         "bnb4"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 4330381743,
+        "fp16": 916184608,
+        "q4": 469831732,
+        "bnb4": 444669580
+      }
     },
     {
       "id": "breeze-asr-25",
       "display_name": "Breeze ASR 25",
       "family": "whisper",
       "languages": [
+        "af",
+        "am",
+        "ar",
+        "as",
+        "az",
+        "ba",
+        "be",
+        "bg",
+        "bn",
+        "bo",
+        "br",
+        "bs",
+        "ca",
+        "cs",
+        "cy",
+        "da",
+        "de",
+        "el",
         "en",
+        "es",
+        "et",
+        "eu",
+        "fa",
+        "fi",
+        "fo",
+        "fr",
+        "gl",
+        "gu",
+        "ha",
+        "haw",
+        "he",
+        "hi",
+        "hr",
+        "ht",
+        "hu",
+        "hy",
+        "id",
+        "is",
+        "it",
+        "ja",
+        "jw",
+        "ka",
+        "kk",
+        "km",
+        "kn",
+        "ko",
+        "la",
+        "lb",
+        "ln",
+        "lo",
+        "lt",
+        "lv",
+        "mg",
+        "mi",
+        "mk",
+        "ml",
+        "mn",
+        "mr",
+        "ms",
+        "mt",
+        "my",
+        "ne",
+        "nl",
+        "nn",
+        "no",
+        "oc",
+        "pa",
+        "pl",
+        "ps",
+        "pt",
+        "ro",
+        "ru",
+        "sa",
+        "sd",
+        "si",
+        "sk",
+        "sl",
+        "sn",
+        "so",
+        "sq",
+        "sr",
+        "su",
+        "sv",
+        "sw",
+        "ta",
+        "te",
+        "tg",
+        "th",
+        "tk",
+        "tl",
+        "tr",
+        "tt",
+        "uk",
+        "ur",
+        "uz",
+        "vi",
+        "yi",
+        "yo",
         "zh"
       ],
       "supports_language_detection": true,
@@ -788,9 +962,14 @@
       "onnx_model_name": "xeonchen/Breeze-ASR-25-ONNX",
       "description": "MediaTek Breeze ASR 25 — Whisper-large-v2 fine-tune for Mandarin/English code-switching",
       "param_count": 1545107214,
+      "wer": 8.0,
+      "rtfx": 150,
       "available_quantizations": [
         ""
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 913815769
+      }
     },
     {
       "id": "lite-whisper-large-v3-turbo",
@@ -902,10 +1081,16 @@
       "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-ONNX",
       "description": "Compressed Whisper Large v3 Turbo (Efficient-Speech, balanced rank)",
       "param_count": 534359083,
+      "wer": 8.5,
+      "rtfx": 380,
       "available_quantizations": [
         "",
         "fp16"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 1126112643,
+        "fp16": 344140718
+      }
     },
     {
       "id": "lite-whisper-large-v3-turbo-acc",
@@ -1017,10 +1202,16 @@
       "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX",
       "description": "Compressed Whisper Large v3 Turbo (Efficient-Speech, accelerated)",
       "param_count": 581299243,
+      "wer": 8.0,
+      "rtfx": 320,
       "available_quantizations": [
         "",
         "fp16"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 1126112643,
+        "fp16": 344140718
+      }
     },
     {
       "id": "lite-whisper-large-v3-turbo-fast",
@@ -1132,10 +1323,16 @@
       "onnx_model_name": "onnx-community/lite-whisper-large-v3-turbo-fast-ONNX",
       "description": "Compressed Whisper Large v3 Turbo (Efficient-Speech, most aggressive compression)",
       "param_count": 473840689,
+      "wer": 9.5,
+      "rtfx": 500,
       "available_quantizations": [
         "",
         "fp16"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 1126112643,
+        "fp16": 344140718
+      }
     },
     {
       "id": "moonshine-tiny",
@@ -1149,9 +1346,26 @@
       "onnx_model_name": "moonshine-tiny",
       "description": "Useful Sensors Moonshine tiny — raw-audio encoder, ~5.8x faster than Whisper tiny",
       "param_count": 27092835,
+      "wer": 12.5,
+      "rtfx": 1800,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 327617721,
+        "fp16": 167896848,
+        "q4": 143348155,
+        "bnb4": 141172921,
+        "int8": 66661585,
+        "uint8": 66661694,
+        "q4f16": 104981560
+      }
     },
     {
       "id": "moonshine-base",
@@ -1165,9 +1379,26 @@
       "onnx_model_name": "moonshine-base",
       "description": "Useful Sensors Moonshine base — raw-audio encoder, low-latency English ASR",
       "param_count": 61514019,
+      "wer": 8.5,
+      "rtfx": 990,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 711448374,
+        "fp16": 361729459,
+        "q4": 240425489,
+        "bnb4": 234370823,
+        "int8": 143900514,
+        "uint8": 143900678,
+        "q4f16": 186649023
+      }
     },
     {
       "id": "moonshine-tiny-zh",
@@ -1181,9 +1412,26 @@
       "onnx_model_name": "moonshine-tiny-zh",
       "description": "Useful Sensors Moonshine tiny — Mandarin Chinese fine-tune",
       "param_count": 27092835,
+      "wer": 15.0,
+      "rtfx": 1800,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 136824276,
+        "fp16": 54645568,
+        "q4": 55096586,
+        "bnb4": 54102020,
+        "int8": 27994170,
+        "uint8": 27994170,
+        "q4f16": 31767228
+      }
     },
     {
       "id": "moonshine-tiny-ja",
@@ -1197,9 +1445,26 @@
       "onnx_model_name": "moonshine-tiny-ja",
       "description": "Useful Sensors Moonshine tiny — Japanese fine-tune",
       "param_count": 27092835,
+      "wer": 15.0,
+      "rtfx": 1800,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 136824277,
+        "fp16": 54645568,
+        "q4": 55096586,
+        "bnb4": 54102020,
+        "int8": 27994171,
+        "uint8": 27994171,
+        "q4f16": 31767228
+      }
     },
     {
       "id": "moonshine-tiny-ko",
@@ -1213,9 +1478,26 @@
       "onnx_model_name": "moonshine-tiny-ko",
       "description": "Useful Sensors Moonshine tiny — Korean fine-tune",
       "param_count": 27092835,
+      "wer": 15.0,
+      "rtfx": 1800,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 328254328,
+        "fp16": 131165240,
+        "q4": 143451922,
+        "bnb4": 141276688,
+        "int8": 67266025,
+        "uint8": 67266025,
+        "q4f16": 81124575
+      }
     },
     {
       "id": "moonshine-tiny-ar",
@@ -1229,9 +1511,26 @@
       "onnx_model_name": "moonshine-tiny-ar",
       "description": "Useful Sensors Moonshine tiny — Arabic fine-tune",
       "param_count": 27092835,
+      "wer": 15.0,
+      "rtfx": 1800,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 328254331,
+        "fp16": 131165240,
+        "q4": 143451922,
+        "bnb4": 141276688,
+        "int8": 67266028,
+        "uint8": 67266028,
+        "q4f16": 81124575
+      }
     },
     {
       "id": "moonshine-tiny-vi",
@@ -1245,9 +1544,26 @@
       "onnx_model_name": "moonshine-tiny-vi",
       "description": "Useful Sensors Moonshine tiny — Vietnamese fine-tune",
       "param_count": 27092835,
+      "wer": 15.0,
+      "rtfx": 1800,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 557988941,
+        "fp16": 189315222,
+        "q4": 161910319,
+        "bnb4": 161910319,
+        "int8": 182991743,
+        "uint8": 182991817,
+        "q4f16": 98381948
+      }
     },
     {
       "id": "moonshine-base-zh",
@@ -1261,9 +1577,26 @@
       "onnx_model_name": "moonshine-base-zh",
       "description": "Useful Sensors Moonshine base — Mandarin Chinese fine-tune",
       "param_count": 61514019,
+      "wer": 10.5,
+      "rtfx": 990,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 712558936,
+        "fp16": 284662526,
+        "q4": 240546440,
+        "bnb4": 234491774,
+        "int8": 144985996,
+        "uint8": 144985996,
+        "q4f16": 145401448
+      }
     },
     {
       "id": "moonshine-base-ja",
@@ -1277,9 +1610,26 @@
       "onnx_model_name": "moonshine-base-ja",
       "description": "Useful Sensors Moonshine base — Japanese fine-tune",
       "param_count": 61514019,
+      "wer": 10.5,
+      "rtfx": 990,
       "available_quantizations": [
-        ""
-      ]
+        "",
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 712558936,
+        "fp16": 284662526,
+        "q4": 240546440,
+        "bnb4": 234491774,
+        "int8": 144985996,
+        "uint8": 144985996,
+        "q4f16": 145401448
+      }
     },
     {
       "id": "moonshine-base-ko",
@@ -1293,31 +1643,26 @@
       "onnx_model_name": "moonshine-base-ko",
       "description": "Useful Sensors Moonshine base — Korean fine-tune",
       "param_count": 61514019,
-      "available_quantizations": [
-        ""
-      ]
-    },
-    {
-      "id": "granite-4.0-1b-speech",
-      "display_name": "Granite Speech 4.0 1B",
-      "family": "granite",
-      "languages": [
-        "de",
-        "en",
-        "es",
-        "fr",
-        "ja",
-        "pt"
-      ],
-      "supports_language_detection": true,
-      "supports_realtime": true,
-      "onnx_model_name": "granite-4.0-1b-speech",
-      "description": "IBM Granite Speech 4.0 — Conformer + Q-Former + Granite 1B LLM decoder",
-      "param_count": 1243916628,
+      "wer": 10.5,
+      "rtfx": 990,
       "available_quantizations": [
         "",
-        "q4"
-      ]
+        "fp16",
+        "q4",
+        "bnb4",
+        "int8",
+        "uint8",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 712559424,
+        "fp16": 284662526,
+        "q4": 240810600,
+        "bnb4": 242632184,
+        "int8": 159273161,
+        "uint8": 145477449,
+        "q4f16": 145839310
+      }
     },
     {
       "id": "cohere-transcribe",
@@ -1344,10 +1689,20 @@
       "onnx_model_name": "cohere-transcribe",
       "description": "Cohere Transcribe — 2B Conformer + lightweight Transformer decoder, 14 languages (#1 on HF Open ASR Leaderboard)",
       "param_count": 2000000000,
+      "wer": 5.1,
+      "rtfx": 270,
       "available_quantizations": [
         "",
-        "q4"
-      ]
+        "fp16",
+        "q4",
+        "q4f16"
+      ],
+      "size_bytes_by_quantization": {
+        "": 5066516727,
+        "fp16": 2433508136,
+        "q4": 2126516259,
+        "q4f16": 1535058724
+      }
     },
     {
       "id": "nemo-parakeet-ctc-0.6b",
@@ -1361,10 +1716,16 @@
       "onnx_model_name": "nemo-parakeet-ctc-0.6b",
       "description": "NVIDIA Parakeet CTC model",
       "param_count": 600000000,
+      "wer": 7.5,
+      "rtfx": 1200,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 2476840101,
+        "int8": 653436437
+      }
     },
     {
       "id": "nemo-parakeet-rnnt-0.6b",
@@ -1378,10 +1739,16 @@
       "onnx_model_name": "nemo-parakeet-rnnt-0.6b",
       "description": "NVIDIA Parakeet RNNT model",
       "param_count": 600000000,
+      "wer": 6.5,
+      "rtfx": 850,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 2508413672,
+        "int8": 661364445
+      }
     },
     {
       "id": "nemo-parakeet-tdt-0.6b-v3",
@@ -1419,10 +1786,16 @@
       "onnx_model_name": "nemo-parakeet-tdt-0.6b-v3",
       "description": "NVIDIA Parakeet TDT v3 (multilingual)",
       "param_count": 626983558,
+      "wer": 5.9,
+      "rtfx": 1100,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 2549851683,
+        "int8": 670386003
+      }
     },
     {
       "id": "nemo-canary-1b-v2",
@@ -1460,10 +1833,16 @@
       "onnx_model_name": "nemo-canary-1b-v2",
       "description": "NVIDIA Canary 1B v2 (multilingual, language detection)",
       "param_count": 978000000,
+      "wer": 5.6,
+      "rtfx": 430,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 3965706828,
+        "int8": 1029118512
+      }
     },
     {
       "id": "nemo-canary-180m-flash",
@@ -1480,10 +1859,16 @@
       "onnx_model_name": "istupakov/canary-180m-flash-onnx",
       "description": "NVIDIA Canary 180M Flash (en/de/fr/es, >1200 RTFx)",
       "param_count": 194168492,
+      "wer": 7.5,
+      "rtfx": 1300,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 779453711,
+        "int8": 213231107
+      }
     },
     {
       "id": "nemo-fastconformer-ru-ctc",
@@ -1497,10 +1882,16 @@
       "onnx_model_name": "nemo-fastconformer-ru-ctc",
       "description": "NVIDIA FastConformer Russian CTC",
       "param_count": 109270705,
+      "wer": 10.0,
+      "rtfx": 700,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 935419840,
+        "int8": 267949905
+      }
     },
     {
       "id": "nemo-fastconformer-ru-rnnt",
@@ -1514,10 +1905,16 @@
       "onnx_model_name": "nemo-fastconformer-ru-rnnt",
       "description": "NVIDIA FastConformer Russian RNNT",
       "param_count": 114078382,
+      "wer": 9.0,
+      "rtfx": 550,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 935419840,
+        "int8": 267949905
+      }
     },
     {
       "id": "gigaam-v3-e2e-ctc",
@@ -1531,10 +1928,16 @@
       "onnx_model_name": "gigaam-v3-e2e-ctc",
       "description": "GigaAM gigaam-v3-e2e-ctc (Russian)",
       "param_count": 243000000,
+      "wer": 5.5,
+      "rtfx": 600,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 3553467958,
+        "int8": 901811185
+      }
     },
     {
       "id": "gigaam-v3-e2e-rnnt",
@@ -1548,10 +1951,16 @@
       "onnx_model_name": "gigaam-v3-e2e-rnnt",
       "description": "GigaAM gigaam-v3-e2e-rnnt (Russian)",
       "param_count": 243000000,
+      "wer": 5.0,
+      "rtfx": 450,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 3553467958,
+        "int8": 901811185
+      }
     },
     {
       "id": "alphacep/vosk-model-ru",
@@ -1565,10 +1974,16 @@
       "onnx_model_name": "alphacep/vosk-model-ru",
       "description": "Kaldi/Vosk Russian model",
       "param_count": 65016922,
+      "wer": 13.0,
+      "rtfx": 350,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 264177668,
+        "int8": 72462345
+      }
     },
     {
       "id": "alphacep/vosk-model-small-ru",
@@ -1582,10 +1997,16 @@
       "onnx_model_name": "alphacep/vosk-model-small-ru",
       "description": "Kaldi/Vosk Russian small model",
       "param_count": 22986644,
+      "wer": 18.0,
+      "rtfx": 800,
       "available_quantizations": [
         "",
         "int8"
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 93370202,
+        "int8": 26658486
+      }
     },
     {
       "id": "t-tech/t-one",
@@ -1599,9 +2020,14 @@
       "onnx_model_name": "t-tech/t-one",
       "description": "T-Tech T-One Russian ASR",
       "param_count": 71697827,
+      "wer": 10.0,
+      "rtfx": 500,
       "available_quantizations": [
         ""
-      ]
+      ],
+      "size_bytes_by_quantization": {
+        "": 144193371
+      }
     }
   ]
 }

@@ -17,18 +17,12 @@ import {
 describe("modelSettingsSchema defaults", () => {
 	test("produces all defaults from empty input", () => {
 		const out = modelSettingsSchema.parse({});
-		expect(out.model).toBe("large-v2");
+		expect(out.model).toBe("tiny");
 		expect(out.realtimeModel).toBe("tiny");
 		expect(out.language).toBe("en");
 		expect(out.computeType).toBe("default");
 		expect(out.device).toBe("auto");
 		expect(out.backend).toBe("faster_whisper");
-		expect(out.beamSize).toBe(5);
-		expect(out.beamSizeRealtime).toBe(3);
-	});
-
-	test("rejects beamSize less than 1", () => {
-		expect(() => modelSettingsSchema.parse({ beamSize: 0 })).toThrow();
 	});
 
 	test("rejects unknown computeType", () => {
@@ -73,15 +67,6 @@ describe("modelSettingsSchema defaults", () => {
 		const out = modelSettingsSchema.parse({});
 		expect(out.initialPrompt).toBe("");
 		expect(out.initialPromptRealtime).toBe("");
-	});
-
-	test("beamSize enforces min(1) — zero is rejected, one is accepted", () => {
-		// Locks `.min(1)` against `.max(1)` mutation. With max(1), 5 would
-		// fail; with min(1), 0 fails and 5 passes. Cover both directions.
-		expect(modelSettingsSchema.parse({ beamSize: 1 }).beamSize).toBe(1);
-		expect(modelSettingsSchema.parse({ beamSize: 5 }).beamSize).toBe(5);
-		expect(() => modelSettingsSchema.parse({ beamSize: 0 })).toThrow();
-		expect(() => modelSettingsSchema.parse({ beamSize: -1 })).toThrow();
 	});
 });
 
@@ -263,12 +248,6 @@ describe("qualitySettingsSchema defaults (lock-down)", () => {
 		expect(qualitySettingsSchema.parse({}).earlyTranscriptionOnSilence).toBe(0.2);
 	});
 
-	test("batchSize and realtimeBatchSize default to 16", () => {
-		const out = qualitySettingsSchema.parse({});
-		expect(out.batchSize).toBe(16);
-		expect(out.realtimeBatchSize).toBe(16);
-	});
-
 	test("smartEndpointSpeed defaults to 2.0 (matches RealtimeSTT reference)", () => {
 		expect(qualitySettingsSchema.parse({}).smartEndpointSpeed).toBe(2.0);
 	});
@@ -283,8 +262,8 @@ describe("audioSettingsSchema defaults (lock-down)", () => {
 		expect(audioSettingsSchema.parse({}).bufferSize).toBe(512);
 	});
 
-	test("sileroSensitivity defaults to 0.4", () => {
-		expect(audioSettingsSchema.parse({}).sileroSensitivity).toBe(0.4);
+	test("sileroSensitivity defaults to 0.7 (Handy-matching trip threshold 0.3)", () => {
+		expect(audioSettingsSchema.parse({}).sileroSensitivity).toBe(0.7);
 	});
 
 	test("sileroUseOnnx defaults to false", () => {
@@ -677,15 +656,6 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 });
 
 describe("explicit parse-time validation (kills `.default()` mutations that bypass enum validation)", () => {
-	test("beamSizeRealtime enforces min(1) — explicit value 3 accepted, 0 rejected", () => {
-		// Locks `.min(1)` against `.max(1)` mutation on L15. With max(1), 3 would
-		// fail; with min(1), 0 fails and 3 passes.
-		expect(modelSettingsSchema.parse({ beamSizeRealtime: 1 }).beamSizeRealtime).toBe(1);
-		expect(modelSettingsSchema.parse({ beamSizeRealtime: 3 }).beamSizeRealtime).toBe(3);
-		expect(() => modelSettingsSchema.parse({ beamSizeRealtime: 0 })).toThrow();
-		expect(() => modelSettingsSchema.parse({ beamSizeRealtime: -1 })).toThrow();
-	});
-
 	test("fileTranscriptionFormat default('txt') is exactly 'txt' (not '')", () => {
 		// Locks `.default("txt")` on L55. Zod's `.default()` does NOT validate
 		// the default against the enum, so a mutation to `.default("")` would
@@ -739,7 +709,7 @@ describe("appSettingsSchema (composed)", () => {
 	test("empty object resolves to a fully-defaulted object", () => {
 		const out = appSettingsSchema.parse({});
 		expect(out.general.recordingMode).toBe("ptt");
-		expect(out.model.model).toBe("large-v2");
+		expect(out.model.model).toBe("tiny");
 		expect(out.audio.sampleRate).toBe(16_000);
 		expect(out.dictionary).toEqual([]);
 		expect(out.snippets).toEqual([]);

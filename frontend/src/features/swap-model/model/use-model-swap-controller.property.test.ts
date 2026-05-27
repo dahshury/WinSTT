@@ -158,38 +158,11 @@ describe("toPresentList (property)", () => {
 	});
 });
 
-// baseMainPatch -------------------------------------------------------------
-
-describe("baseMainPatch (property)", () => {
-	test("`model` field is always the input value (identity)", () => {
-		fc.assert(
-			fc.property(
-				fc.string({ minLength: 1, maxLength: 50 }),
-				fc.option(fc.record({ backend: fc.string() }), { nil: undefined }),
-				(value, info) => {
-					const patch = t.baseMainPatch(value, info as never);
-					return patch.model === value;
-				}
-			),
-			{ numRuns: 200 }
-		);
-	});
-
-	test("backend appears in patch iff info is defined", () => {
-		fc.assert(
-			fc.property(
-				fc.string({ minLength: 1, maxLength: 20 }),
-				fc.option(fc.record({ backend: fc.string({ minLength: 1 }) }), { nil: undefined }),
-				(value, info) => {
-					const patch = t.baseMainPatch(value, info as never);
-					const expectsBackend = info !== undefined;
-					return "backend" in patch === expectsBackend;
-				}
-			),
-			{ numRuns: 200 }
-		);
-	});
-});
+// baseMainPatch was removed alongside the typed ModelPatch change: a bare
+// ``{ model }`` patch is no longer representable. The catalog-miss path is
+// now handled by an early return in ``applyMainSwap`` (covered by the swap
+// controller integration tests). Property tests for the patch itself are
+// folded into ``buildMainSwapPatch`` below.
 
 // resolveCandidateName ------------------------------------------------------
 

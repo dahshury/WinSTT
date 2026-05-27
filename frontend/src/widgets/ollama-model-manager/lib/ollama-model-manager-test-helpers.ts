@@ -1,4 +1,4 @@
-import type { useTranslations } from "next-intl";
+import type { useTranslations } from "use-intl";
 
 type TranslateFn = ReturnType<typeof useTranslations>;
 type Tab = "installed" | "recommended";

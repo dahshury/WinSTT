@@ -1,6 +1,7 @@
 import { Progress } from "@base-ui/react/progress";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 
 /** "active" pulses the accent color; "paused" freezes a warning-tinted bar so
  *  a static fill can't be mistaken for an idle / finished one. */
@@ -40,10 +41,15 @@ export function DownloadProgressBar({
 	trackClassName,
 }: DownloadProgressBarProps): ReactNode {
 	const hasCaption = !!(label || statsLabel);
+	// Substrate-aware default: track lifts one step above the surrounding
+	// container so the bar reads as inset rather than blending in. Callers
+	// can still override via `trackClassName` for special placements.
+	const substrate = useSurface();
+	const trackLevel = Math.min(substrate + 1, 8);
 	return (
 		<Progress.Root className="flex flex-col gap-1.5" value={percent}>
 			<Progress.Track
-				className={cn("h-2 overflow-hidden rounded-full", trackClassName ?? "bg-surface-tertiary")}
+				className={cn("h-2 overflow-hidden rounded-full", trackClassName ?? surfaceBg(trackLevel))}
 			>
 				<Progress.Indicator className={FILL_CLASS[variant]} />
 			</Progress.Track>

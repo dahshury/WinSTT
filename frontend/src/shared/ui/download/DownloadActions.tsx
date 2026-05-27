@@ -2,6 +2,7 @@ import { Cancel01Icon, CloudDownloadIcon, PauseIcon, PlayIcon } from "@hugeicons
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
 
@@ -38,8 +39,11 @@ const SIZE_CLASS: Record<NonNullable<DownloadActionsProps["size"]>, string> = {
 	md: "h-8 px-3 text-sm",
 };
 
-const NEUTRAL_BASE =
-	"inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-secondary text-foreground-secondary transition-colors hover:bg-surface-hover";
+// Static part of the neutral button shell. The substrate-aware bg + hover-bg
+// are composed in at render time via `useSurface()` so the button lifts
+// correctly inside ElevatedSurface / nested containers.
+const NEUTRAL_STATIC =
+	"inline-flex items-center gap-1.5 rounded-md border border-border text-foreground-secondary transition-colors";
 const ACCENT_BASE =
 	"inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent font-medium text-white transition-colors hover:bg-accent-dim";
 
@@ -63,9 +67,13 @@ export function DownloadActions({
 }: DownloadActionsProps): ReactNode {
 	const sizeCls = SIZE_CLASS[size];
 	const iconSize = actionIconSize(size);
+	const substrate = useSurface();
+	const buttonLevel = Math.min(substrate + 1, 8);
+	const buttonHover = Math.min(substrate + 2, 8);
+	const neutralCls = cn(NEUTRAL_STATIC, surfaceBg(buttonLevel), surfaceHoverBg(buttonHover));
 	if (phase === "active") {
 		return (
-			<Button className={cn(NEUTRAL_BASE, sizeCls)} onClick={onStop}>
+			<Button className={cn(neutralCls, sizeCls)} onClick={onStop}>
 				<HugeiconsIcon icon={PauseIcon} size={iconSize} />
 				<span>{labels.stop}</span>
 			</Button>
@@ -73,7 +81,7 @@ export function DownloadActions({
 	}
 	if (phase === "paused") {
 		const discardButton = (
-			<Button className={cn(NEUTRAL_BASE, sizeCls)} onClick={onDiscard}>
+			<Button className={cn(neutralCls, sizeCls)} onClick={onDiscard}>
 				<HugeiconsIcon icon={Cancel01Icon} size={iconSize} />
 				<span>{labels.discard}</span>
 			</Button>

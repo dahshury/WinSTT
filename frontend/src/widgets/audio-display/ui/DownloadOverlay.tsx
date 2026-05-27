@@ -1,6 +1,6 @@
 import { Progress } from "@base-ui/react/progress";
-import { useTranslations } from "next-intl";
 import { memo, useCallback } from "react";
+import { useTranslations } from "use-intl";
 import { useShallow } from "zustand/react/shallow";
 import { useDownloadStore } from "@/features/model-download";
 import { formatBytes } from "@/shared/lib/format-bytes";

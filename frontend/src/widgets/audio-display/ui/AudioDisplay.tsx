@@ -1,5 +1,5 @@
-import { useTranslations } from "next-intl";
 import { type DragEvent, useCallback, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";

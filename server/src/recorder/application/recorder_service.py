@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
 
@@ -86,6 +86,15 @@ class _RealtimeLoopState:
 
     last_transcription: float
     recording_seen_at: float | None = None
+    # Last frame_count we actually transcribed. The realtime worker skips
+    # iterations where the audio buffer hasn't grown since this value —
+    # otherwise a stuck recording state (the pipeline never transitions
+    # to TRANSCRIBING after PTT release for some reason) would spin the
+    # worker tight-looping on the same stale audio, burning CPU/GPU and
+    # republishing the same preview text endlessly. Reset to -1 each
+    # time recording transitions inactive → active so the first real
+    # iteration of a new utterance always proceeds.
+    last_processed_frame_count: int = -1
 
 
 class _SwapProgress:
@@ -184,6 +193,16 @@ class RecorderService:
         # serialised against itself).
         self._main_transcriber_lock = threading.Lock()
         self._realtime_transcriber_lock: threading.Lock = self._pick_realtime_lock(transcriber, realtime_transcriber)
+        # Canonical "fully warm" gate. Flipped to True at the end of
+        # :meth:`warmup` once main + realtime + diarizer have all run a
+        # dummy inference. The WS server consults :attr:`is_warm` when
+        # building the structured ``server_ready`` payload, and the
+        # renderer's connection chip greens only when this is true.
+        # ``_background_warmup_event`` is the threading primitive the
+        # event wraps so callers (tests, runtime-info builders) can
+        # ``wait_for_background_warmup(timeout=…)`` without polling.
+        self._is_warm = False
+        self._background_warmup_event = threading.Event()
         # Realtime stable-text accumulator state — owned and reset by the
         # realtime worker thread.
         self._realtime_committed_text: str = ""
@@ -221,6 +240,47 @@ class RecorderService:
         # read is impossible — this lock just serialises the toggle
         # worker against itself + any future concurrent updaters.
         self._diarizer_lock = threading.Lock()
+        # Idle-unload bookkeeping. ``_last_activity_at`` is bumped on
+        # every ``transcribe()`` completion and on ``listen()`` so a
+        # waiting-for-PTT session counts as "active" and never trips the
+        # timer mid-conversation. The timer thread polls every 30 s and
+        # tears down the main + realtime transcribers if the configured
+        # timeout has elapsed. Next ``transcribe()`` synchronously
+        # reloads via :meth:`_ensure_models_loaded` so the first PTT
+        # after a tear-down pays the cold-load cost but subsequent
+        # presses are free.
+        #
+        # Three modes, mirroring Handy's :class:`ModelUnloadTimeout`:
+        #   * ``None``          — never unload (Handy's ``Never``)
+        #   * ``0``             — unload right after every transcription
+        #                         (Handy's ``Immediately``). The poller
+        #                         thread is NOT started in this mode;
+        #                         tear-down happens synchronously from
+        #                         the end of ``text()`` / ``transcribe()``.
+        #   * positive ``int``  — idle seconds; poller wakes every 30 s.
+        self._unload_timeout_seconds: int | None = config.transcription.model_unload_timeout_seconds
+        self._last_activity_at: float = self._clock.get_current_time()
+        self._unload_check_thread: threading.Thread | None = None
+        self._unload_stop_event = threading.Event()
+        # Remember the names we loaded with so a lazy-reload after
+        # tear-down rebuilds the SAME models the user had configured at
+        # boot. A model_swap between unload events also updates these
+        # via the install-transcriber path. Empty string for realtime
+        # when the worker is disabled.
+        self._saved_main_model_name: str = config.transcription.model
+        self._saved_realtime_model_name: str = (
+            config.realtime.realtime_model_type if config.realtime.enable_realtime_transcription else ""
+        )
+        # Lock for serializing lazy-reload attempts so two concurrent
+        # transcribe paths (e.g. main text() and the realtime worker)
+        # don't both try to rebuild the same model at the same time.
+        # The transcriber lock alone isn't sufficient because the load
+        # itself happens *outside* the slot lock (long-running) — we
+        # need a separate gate that says "someone is already reloading,
+        # wait for them."
+        self._lazy_reload_lock = threading.Lock()
+        if self._unload_timeout_seconds is not None and self._unload_timeout_seconds > 0:
+            self._start_unload_check_thread()
 
     def _pick_realtime_lock(
         self,
@@ -296,6 +356,12 @@ class RecorderService:
         return any("DmlExecutionProvider" in str(p) for p in iterator)
 
     def text(self, on_transcription_finished: TextCallback | None = None) -> str:
+        # Idle-unload daemon (Handy parity) tears the transcribers down
+        # after N minutes of inactivity. Rebuild lazily on first use so
+        # the user's PTT after a long idle works transparently — pay the
+        # cold-load cost once on this press, then back to fast.
+        self._mark_activity()
+        self._ensure_main_transcriber_loaded()
         self.listen()
         if not self.wait_audio():
             self._audio_buffer.clear()
@@ -337,6 +403,7 @@ class RecorderService:
         self._maybe_emit_speaker_segments(audio, text)
         self._finalize_transcription_state()
         self._dispatch_transcription_callback(on_transcription_finished, text)
+        self._maybe_unload_immediately()
         return text
 
     def _maybe_save_wav(self, raw_audio: bytes) -> str:
@@ -422,45 +489,34 @@ class RecorderService:
         """
         if lock is None:
             lock = self._main_transcriber_lock
-        # region agent log — H-A/H-B/H-C
-        # Trace: lock identity, thread, transcriber identity. Confirms whether
-        # main and realtime actually share the same lock object on DirectML
-        # (H-A), and which thread is holding it at what wall-clock time so we
-        # can correlate with pyaudio.close races (H-C) and crash stacks (H-B).
-        _lock_id = id(lock)
-        _thread_id = threading.get_ident()
-        _transcriber_id = id(transcriber)
-        logger.warning(
-            "[debug-instrumentation] _safe_transcribe.acquire lock=%d thread=%d tx=%d audio_samples=%d",
-            _lock_id,
-            _thread_id,
-            _transcriber_id,
-            len(audio) if audio is not None else -1,
-        )
-        # endregion
         with lock:
-            # region agent log — H-A/H-B/H-C
-            logger.warning(
-                "[debug-instrumentation] _safe_transcribe.entered lock=%d thread=%d tx=%d",
-                _lock_id,
-                _thread_id,
-                _transcriber_id,
-            )
-            # endregion
             if not self._transcriber_ready(transcriber):
                 return None
             assert transcriber is not None  # narrowed by _transcriber_ready
             try:
                 return transcriber.transcribe(audio, language)
-            finally:
-                # region agent log — H-A/H-B/H-D
-                logger.warning(
-                    "[debug-instrumentation] _safe_transcribe.released lock=%d thread=%d tx=%d",
-                    _lock_id,
-                    _thread_id,
-                    _transcriber_id,
-                )
-                # endregion
+            except Exception:
+                # Catch-all because the failure modes here are dominated by
+                # backend-specific exceptions we can't import without taking
+                # a hard dep on every provider's pybind module:
+                #   * ``onnxruntime.capi.onnxruntime_pybind11_state.RuntimeException``
+                #     — kernel exception in the EP (e.g. DML's ``node_view``
+                #     Reshape crashing on Canary-180M-int8, seen in the wild).
+                #   * ``onnxruntime.capi.onnxruntime_pybind11_state.Fail``
+                #     — session-level dispatch failure.
+                #   * CUDA OOM surfacing through CuPy/torch on the
+                #     sentence-classifier path.
+                # Without this guard the exception propagates up through
+                # ``text()`` → ``_recorder_thread`` (see ``server.py``) and
+                # kills the worker thread silently — the user then has to
+                # restart the server to dictate again. Returning ``None``
+                # routes through the same caller path as a swap-in-flight
+                # skip, which produces an empty TranscriptionCompleted and
+                # keeps the recorder alive for the next utterance.
+                # ``logger.exception`` preserves the full traceback so the
+                # underlying kernel error stays diagnosable in stt-server.log.
+                logger.exception("[transcribe] transcriber raised; treating as skipped (returning None)")
+                return None
 
     @staticmethod
     def _transcriber_ready(transcriber: ITranscriber | None) -> bool:
@@ -499,7 +555,7 @@ class RecorderService:
             # to {model}..." so the user understands why.
             logger.warning("[main-transcribe] skipped — model swap in progress")
             return ""
-        text = self._preprocess_output(result.text)
+        text = self._preprocess_output(result.text, language=result.language)
         logger.warning(
             "[main-transcribe] done in %.2fs — text length=%d chars",
             time.time() - transcribe_start,
@@ -624,8 +680,20 @@ class RecorderService:
         the hotword. In that case pause()/resume() are skipped — the
         ``_microphone_enabled`` flag still gates feed_audio so the
         pipeline state machine still sees the on/off transition.
+
+        When ``microphone_on=False`` AND
+        ``AudioConfig.extra_recording_buffer_ms > 0`` AND a recording is
+        in progress, the pause + stop sequence is deferred to a daemon
+        thread that sleeps the configured ms first. The mic keeps
+        capturing during the sleep so trailing syllables that escape
+        just after the PTT key-up still land in the buffer. Mirrors
+        Handy's ``extra_recording_buffer_ms`` (see
+        ``examples/Handy/src-tauri/src/managers/audio.rs``).
         """
         self._microphone_enabled = microphone_on
+        if not microphone_on and self._should_defer_microphone_off():
+            self._spawn_tail_buffer_thread()
+            return
         # Wake-word backends require always-on capture so the detector
         # can listen for the trigger word; for everything else we toggle
         # the hardware stream so the OS mic indicator follows user intent.
@@ -634,31 +702,50 @@ class RecorderService:
         if not microphone_on:
             self._handle_microphone_off()
 
+    def _should_defer_microphone_off(self) -> bool:
+        """Whether to delay the off-sequence to capture a recording tail.
+
+        Only meaningful when (a) a tail window is configured, (b) we're
+        actively recording so there's something to extend, and (c) the
+        wake-word backend isn't in play (those keep capturing anyway, so
+        the tail buffer is already implicit in their always-on capture).
+        Returning False here falls through to the immediate flow.
+        """
+        return (
+            self._config.audio.extra_recording_buffer_ms > 0
+            and self._state_machine.is_recording
+            and self._wake_word_detector is None
+        )
+
+    def _spawn_tail_buffer_thread(self) -> None:
+        """Run the off-sequence after the configured tail window.
+
+        Daemon thread so server shutdown doesn't have to join. Single
+        daemon per call — a second ``set_microphone(False)`` arriving
+        during the sleep would spawn its own thread, but the state-
+        machine guards in ``_handle_microphone_off`` make the duplicate
+        call a no-op (recording is no longer in progress by then).
+        """
+        threading.Thread(
+            target=self._run_delayed_microphone_off,
+            daemon=True,
+            name="extra-recording-buffer",
+        ).start()
+
+    def _run_delayed_microphone_off(self) -> None:
+        """Sleep the tail window, then run the normal off sequence."""
+        sleep_seconds = self._config.audio.extra_recording_buffer_ms / 1000.0
+        time.sleep(sleep_seconds)
+        if self._wake_word_detector is None:
+            self._toggle_hardware_capture(False)
+        self._handle_microphone_off()
+
     def _toggle_hardware_capture(self, microphone_on: bool) -> None:
         action = self._audio_source.resume if microphone_on else self._audio_source.pause
-        # region agent log — H-C
-        # Heap corruption hypothesis: pyaudio.close() in the asyncio thread
-        # races with the realtime worker's run_with_iobinding call. This log
-        # times the start of the pyaudio teardown so we can correlate it
-        # against _safe_transcribe acquire/release windows on the realtime
-        # thread.
-        logger.warning(
-            "[debug-instrumentation] _toggle_hardware_capture microphone_on=%s thread=%d",
-            microphone_on,
-            threading.get_ident(),
-        )
-        # endregion
         try:
             action()
         except Exception:
             logger.exception("audio_source capture toggle raised (microphone_on=%s)", microphone_on)
-        # region agent log — H-C
-        logger.warning(
-            "[debug-instrumentation] _toggle_hardware_capture.done microphone_on=%s thread=%d",
-            microphone_on,
-            threading.get_ident(),
-        )
-        # endregion
 
     def _handle_microphone_off(self) -> None:
         if self._state_machine.is_recording:
@@ -703,6 +790,9 @@ class RecorderService:
         are released even if individual steps fail.
         """
         self._is_running = False
+        # Signal the unload-check daemon to exit before we tear down the
+        # transcribers it might race against.
+        self._unload_stop_event.set()
         # Stop pipeline first to halt audio processing.
         self._safe_step("stopping pipeline", lambda: self._pipeline.stop(timeout=2.0))
         self._safe_step("cleaning up audio source", self._audio_source.cleanup)
@@ -710,6 +800,164 @@ class RecorderService:
         self._shutdown_transcribers()
         self._shutdown_wake_word_detector()
         self._safe_step("aborting state machine", self._state_machine.abort)
+
+    # ── Idle-unload daemon ──────────────────────────────────────────────
+    #
+    # Ports Handy's ``model_unload_timeout`` lifecycle. A daemon thread
+    # polls every 30 s; if no transcription has happened in the
+    # configured idle window AND models are still loaded, it tears them
+    # down so the OS reclaims their RAM/VRAM. The next
+    # ``text()`` / ``transcribe()`` call detects the empty slot and
+    # synchronously rebuilds via ``_load_transcriber`` — first PTT after
+    # a tear-down pays the cold-load cost, subsequent presses are fast
+    # again (the saved model name is what we rebuild with, so the user
+    # keeps whatever they were on).
+    #
+    # The check cadence is 30 s rather than tied to the timeout itself
+    # because (a) timer accuracy isn't critical, (b) checking more
+    # frequently means catching the edge soon after it crosses, and
+    # (c) timeouts of "after 2 min" still trip within ~30 s of the
+    # exact mark, which is well within human "did it forget about me?"
+    # tolerance.
+
+    _UNLOAD_CHECK_INTERVAL_SECONDS: ClassVar[float] = 30.0
+
+    def _start_unload_check_thread(self) -> None:
+        """Spin up the daemon poller iff a positive timeout was configured."""
+        worker = threading.Thread(
+            target=self._unload_check_loop,
+            name="model-unload-check",
+            daemon=True,
+        )
+        self._unload_check_thread = worker
+        worker.start()
+
+    def _unload_check_loop(self) -> None:
+        """Poll for idleness; fire :meth:`_unload_models_for_idle` when due."""
+        while not self._unload_stop_event.is_set():
+            # Sleep first so a fresh boot doesn't trip the timer on the
+            # initial activity timestamp; the user just opened the app,
+            # they shouldn't see "unloading" log spam before they've
+            # done anything. Event-based wait so shutdown() wakes us
+            # immediately rather than waiting out the interval.
+            woken = self._unload_stop_event.wait(timeout=self._UNLOAD_CHECK_INTERVAL_SECONDS)
+            if woken:
+                return
+            self._maybe_unload_for_idle()
+
+    def _maybe_unload_immediately(self) -> None:
+        """Tear models down right after a transcription if the user
+        picked Handy's ``Immediately`` mode (``timeout == 0``).
+
+        Called from the end of :meth:`text` / :meth:`transcribe` so the
+        ORT sessions are released the moment the result is dispatched —
+        no need to wait for the idle poller's next 30 s tick. Skips when
+        a swap is in flight (the swap pipeline owns the slots) and when
+        both slots are already empty.
+        """
+        if self._unload_timeout_seconds != 0:
+            return
+        if self._swap_threads:
+            return
+        if self._transcriber is None and self._realtime_transcriber is None:
+            return
+        logger.info("[unload] immediate-mode tear-down after transcription")
+        self._unload_models()
+
+    def _maybe_unload_for_idle(self) -> None:
+        """Tear models down iff the idle window has elapsed.
+
+        Reads ``_last_activity_at`` (atomically updated on every
+        transcription event). Skips when models are already gone, when
+        a swap is in flight (the swap pipeline owns the slots), or when
+        the timeout is non-positive (disabled — ``0`` is the
+        Immediately mode handled by :meth:`_maybe_unload_immediately`).
+        """
+        timeout = self._unload_timeout_seconds
+        if timeout is None or timeout <= 0:
+            return
+        idle = self._clock.get_current_time() - self._last_activity_at
+        if idle < timeout:
+            return
+        # Active swap? The swap worker is mid-rebuild; don't fight it.
+        if self._swap_threads:
+            return
+        # Already unloaded — nothing to do.
+        if self._transcriber is None and self._realtime_transcriber is None:
+            return
+        logger.warning(
+            "[unload] idle for %.0fs (>= %ss) — releasing transcribers",
+            idle,
+            timeout,
+        )
+        self._unload_models()
+
+    def _unload_models(self) -> None:
+        """Null both transcriber slots and shut down the held instances.
+
+        Releases ORT sessions + their CUDA / DML resources back to the
+        OS. The slot writes happen under the per-slot locks; shutdowns
+        run outside the locks so a concurrent transcribe waiter doesn't
+        block on the ORT cleanup walk (mirrors the swap worker's
+        unload-first pattern).
+        """
+        old_main: ITranscriber | None
+        old_rt: ITranscriber | None
+        with self._main_transcriber_lock:
+            old_main = self._transcriber
+            self._transcriber = None  # type: ignore[assignment]
+        with self._realtime_transcriber_lock:
+            old_rt = self._realtime_transcriber
+            self._realtime_transcriber = None
+        if old_main is not None:
+            try:
+                old_main.shutdown()
+            except Exception:
+                logger.exception("[unload] main transcriber shutdown raised")
+        # Realtime might have been the same instance as main when
+        # use_main_model_for_realtime is on — skip the second shutdown
+        # in that case so we don't double-close the same ORT session.
+        if old_rt is not None and old_rt is not old_main:
+            try:
+                old_rt.shutdown()
+            except Exception:
+                logger.exception("[unload] realtime transcriber shutdown raised")
+        gc.collect()
+
+    def _ensure_main_transcriber_loaded(self) -> None:
+        """Synchronously rebuild ``self._transcriber`` if it was unloaded.
+
+        Called from the top of ``text()`` / ``transcribe()`` so the
+        first call after an idle tear-down transparently reloads. Holds
+        a coarse lock (``_lazy_reload_lock``) so two concurrent paths
+        don't both try to rebuild — the second waits and then sees the
+        slot populated by the first.
+        """
+        if self._transcriber is not None:
+            return
+        with self._lazy_reload_lock:
+            if self._transcriber is not None:
+                return
+            logger.warning("[unload] lazy-reload of main transcriber: %s", self._saved_main_model_name)
+            try:
+                new = self._load_transcriber(self._saved_main_model_name, None)
+            except Exception:
+                logger.exception("[unload] lazy-reload failed; transcribe will return empty")
+                return
+            if new is None:
+                return
+            with self._main_transcriber_lock:
+                self._transcriber = new
+            # If the realtime slot was supposed to mirror main, restore
+            # that linkage. Otherwise the next realtime tick will lazy-
+            # reload its own dedicated instance via the worker path.
+            if self._config.realtime.use_main_model_for_realtime:
+                with self._realtime_transcriber_lock:
+                    self._realtime_transcriber = new
+
+    def _mark_activity(self) -> None:
+        """Bump the idle timestamp. Cheap; called from hot paths."""
+        self._last_activity_at = self._clock.get_current_time()
 
     @staticmethod
     def _safe_step(what: str, action: Callable[[], object]) -> None:
@@ -767,24 +1015,63 @@ class RecorderService:
     def warmup(self) -> None:
         """Run a dummy inference to eagerly compile CUDA kernels.
 
-        Call once after construction so the first real transcription
-        doesn't pay the JIT-compilation cost.
+        Sequential across slots — main, then realtime (if distinct),
+        then diarizer (if present). All warmups must complete before
+        we mark the recorder warm; this matches the renderer's
+        "everything hot before chip greens" contract for ``server_ready``.
+
+        History note — we tried both parallel warmup via
+        ``ThreadPoolExecutor`` and "deferred" realtime/diarizer warmup
+        in a daemon thread. The parallel path silently deadlocked on
+        real CUDA hardware (two transcribers issuing inference on the
+        shared default stream); the deferred path conflicted with the
+        chosen ready threshold (renderer wants all-hot before green).
+        The genuine root-cause fix that unblocked sequential warmup
+        was pinning Silero VAD to CPU at the cache layer (see
+        ``onnxasr_transcriber._get_or_load_silero_vad``), which removes
+        the stream contention without giving up parallelism we don't
+        actually need.
         """
         dummy = np.zeros(16000, dtype=np.float32)  # 1 s silence @ 16 kHz
         lang = self._config.transcription.language
-        # Warmup runs immediately after construction (before any swap is
-        # possible) but the slots are typed as Optional via the swap
-        # bookkeeping — guard for type safety / defensive code.
         self._warm_transcriber(self._transcriber, dummy, lang)
-        self._warm_transcriber(self._realtime_transcriber, dummy, lang)
+        # De-dup when realtime aliases the main slot (use_main_model_for_realtime).
+        if self._realtime_transcriber is not None and self._realtime_transcriber is not self._transcriber:
+            self._warm_transcriber(self._realtime_transcriber, dummy, lang)
         # Eagerly load the diarizer's ORT sessions (pyannote-segmentation +
-        # wespeaker, ~32 MB first-run download) the same way we warm the
-        # transcribers. Without this the first diarized utterance pays the
-        # download+JIT tax mid-recording; with it, `server_ready` (and the
-        # renderer's diarization "warming" spinner) only clears once the
-        # diarizer is actually hot. Fail-soft via _safe_diarize.
+        # wespeaker, ~32 MB first-run download). Fail-soft via _safe_diarize.
         if self._diarizer is not None:
             self._safe_diarize(dummy)
+        self._is_warm = True
+        # Keep the event API alive — callers (tests, runtime-info builders)
+        # use it as the canonical "fully warm" gate. Set unconditionally
+        # at the end of a successful warmup.
+        self._background_warmup_event.set()
+
+    @property
+    def is_warm(self) -> bool:
+        """True after :meth:`warmup` has run to completion successfully.
+
+        The structured ``server_ready`` payload broadcast by the WS layer
+        consults this; the renderer chip greens only when this is true
+        (per the all-hot-before-green threshold the user picked).
+
+        Returns ``False`` between construction and the end of warmup,
+        and stays ``False`` if warmup raises. A warmup failure does NOT
+        block PTT — the recorder is still callable (state.recorder is
+        non-None); the first real call just pays the JIT cost.
+        """
+        return self._is_warm
+
+    def wait_for_background_warmup(self, timeout: float | None = None) -> bool:
+        """Block until :meth:`warmup` finishes (timeout in seconds).
+
+        Pre-Option-C this gated on a separate daemon-thread warmup;
+        post-Option-C the event is set by :meth:`warmup` itself once it
+        returns. Kept as a public API so tests + the runtime-info
+        builder don't need to know whether warmup is sync or async.
+        """
+        return self._background_warmup_event.wait(timeout=timeout)
 
     def abort(self) -> None:
         self._pipeline.request_abort()
@@ -852,12 +1139,16 @@ class RecorderService:
         self._audio_buffer.clear()
 
     def transcribe(self) -> str:
+        self._mark_activity()
+        self._ensure_main_transcriber_loaded()
         audio = self._audio_buffer.get_audio_array()
         result = self._safe_transcribe(self._transcriber, audio, self._config.transcription.language)
         if result is None:
             logger.warning("transcribe() skipped — model swap in progress")
             return ""
-        return self._preprocess_output(result.text)
+        text = self._preprocess_output(result.text, language=result.language)
+        self._maybe_unload_immediately()
+        return text
 
     def swap_transcriber(self, new: ITranscriber) -> None:
         with self._main_transcriber_lock:
@@ -1248,12 +1539,23 @@ class RecorderService:
         bench.sample_memory("after_unload")
 
         # ── Phase 2: load new ──────────────────────────────────────
-        new_transcriber, load_outcome = self._load_new_for_swap(kind, name, cancel_event, bench)
+        new_transcriber, load_outcome, failure_info = self._load_new_for_swap(kind, name, cancel_event, bench)
         bench.sample_memory("after_load")
 
         if self._swap_aborted(new_transcriber, cancel_event):
             load_outcome = self._handle_aborted_swap(kind, name, new_transcriber, cancel_event, load_outcome)
             restore_outcome = self._attempt_restore(kind, previous_name, bench)
+            # Emit failure AFTER restore so the on_model_swap_failed
+            # callback can push a fresh ``runtime_info`` reflecting the
+            # restored slot. The renderer's reconciler reads
+            # ``runtimeInfo.model`` to decide whether the rollback
+            # transition matches the server's actual state; emitting before
+            # restore leaves it stale and triggers a redundant secondary
+            # swap (status-bar stuck on "Switching..."). The superseded
+            # case in ``_handle_aborted_swap`` already published — we only
+            # need to fire here for genuine load failures.
+            if failure_info is not None:
+                self._publish_swap_failed(kind, name, failure_info)
             bench.log(f"{load_outcome}_{restore_outcome}")
             return
 
@@ -1338,12 +1640,18 @@ class RecorderService:
         name: str,
         cancel_event: threading.Event,
         bench: SwapBenchmark,
-    ) -> tuple[ITranscriber | None, str]:
+    ) -> tuple[ITranscriber | None, str, SwapErrorInfo | None]:
         """Load the new transcriber inside the bench's ``load`` phase.
 
-        Returns ``(transcriber_or_None, outcome_tag)``. On failure also
-        emits ``ModelSwapFailed`` on the event bus so the UI's revert
-        path fires before the (optional) restore attempt runs.
+        Returns ``(transcriber_or_None, outcome_tag, failure_info_or_None)``.
+        Failure info is returned (not published here) so the caller can run
+        ``_attempt_restore`` BEFORE emitting the event — the renderer relies
+        on ``runtime_info`` being post-restore when the failure handler
+        fires (mirrors :func:`on_model_swap_completed`'s "load-bearing
+        emission order" requirement). Without this ordering, the renderer's
+        ``useSyncActiveModel`` reconciler sees a stale runtime model after
+        rollback and fires a redundant second swap, leaving the status-bar
+        chip stuck in "Switching..." indefinitely.
         """
         with bench.phase("load"):
             try:
@@ -1367,9 +1675,8 @@ class RecorderService:
                         info.category.value,
                         info.technical_detail,
                     )
-                self._publish_swap_failed(kind, name, info)
-                return None, info.category.value
-        return new, "completed"
+                return None, info.category.value, info
+        return new, "completed", None
 
     def _attempt_restore(self, kind: str, previous_name: str, bench: SwapBenchmark) -> str:
         """Rebuild the previously-loaded model after a failed/cancelled swap.
@@ -1407,18 +1714,44 @@ class RecorderService:
         # Late import to keep the application layer free of infrastructure imports
         # at module load time. The hexagonal rulebook keeps bootstrap as the only
         # composition root; swaps are a tactical exception scoped to this method.
+        # Both helpers below are the same ones :func:`bootstrap.build_transcriber`
+        # uses, so the swap path picks up the auto-int8 quant promotion (NeMo /
+        # Cohere etc. on non-CUDA) AND the family-based CPU EP override (NeMo
+        # encoders crash DML — see :func:`_override_dml_to_cpu_for_incompatible_family`).
+        # Without this, the swap path silently bypasses both fixes and reproduces
+        # the original ``ModelFileNotFoundError`` (quant the model doesn't publish)
+        # / DML reshape crash on swap.
+        from src.recorder.bootstrap import (
+            _override_dml_to_cpu_for_incompatible_family,
+            _resolve_quantization,
+        )
         from src.recorder.domain.model_registry import ModelCatalog
         from src.recorder.infrastructure.device import providers_for_settings
         from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
         info = ModelCatalog().get(name)
+        quantization = _resolve_quantization(
+            self._config.transcription.onnx_quantization,
+            self._config.transcription.device,
+            info.param_count if info else 0,
+            info.available_quantizations if info else None,
+            family=info.family if info else "",
+            accelerator=self._config.transcription.accelerator,
+        )
+        providers = providers_for_settings(
+            self._config.transcription.device,
+            self._config.transcription.accelerator,
+        )
+        providers = _override_dml_to_cpu_for_incompatible_family(
+            providers,
+            family=info.family if info else "",
+            accelerator=self._config.transcription.accelerator,
+            device=self._config.transcription.device,
+        )
         return OnnxAsrTranscriber(
             model_name=self._resolve_onnx_name(info, name),
-            quantization=self._config.transcription.onnx_quantization or None,
-            providers=providers_for_settings(
-                self._config.transcription.device,
-                self._config.transcription.accelerator,
-            ),
+            quantization=quantization,
+            providers=providers,
             on_download_progress=on_progress,
             normalize_audio=self._config.transcription.normalize_audio,
         )
@@ -1456,13 +1789,20 @@ class RecorderService:
             self._relink_realtime_to_main(new_main, name)
 
     def _assign_transcriber_slot(self, is_main: bool, name: str, new_transcriber: ITranscriber) -> None:
-        """Point the chosen slot at ``new_transcriber`` and persist its name."""
+        """Point the chosen slot at ``new_transcriber`` and persist its name.
+
+        Also bumps the idle-unload daemon's saved-name fields so that a
+        future tear-down's lazy reload rebuilds the model the user just
+        switched to, not the original boot-time model.
+        """
         if is_main:
             self._transcriber = new_transcriber
             self._config.transcription.model = name
+            self._saved_main_model_name = name
             return
         self._realtime_transcriber = new_transcriber
         self._config.realtime.realtime_model_type = name
+        self._saved_realtime_model_name = name
 
     def _realtime_slaved_to_main(self) -> bool:
         """True iff configuration says the realtime slot must mirror main."""
@@ -1606,7 +1946,11 @@ class RecorderService:
         rt_enabled = self._config.realtime.enable_realtime_transcription
         rt_has_transcriber = self._realtime_transcriber is not None
         if not (rt_enabled and rt_has_transcriber):
-            logger.warning(
+            # INFO when realtime is intentionally disabled by config; only escalate
+            # to WARNING on the surprising case where the user asked for it
+            # (rt_enabled=True) but the transcriber failed to build.
+            log_fn = logger.warning if (rt_enabled and not rt_has_transcriber) else logger.info
+            log_fn(
                 "Realtime worker NOT started (enabled=%s, has_transcriber=%s)",
                 rt_enabled,
                 rt_has_transcriber,
@@ -1614,7 +1958,7 @@ class RecorderService:
             return
         self._realtime_thread = threading.Thread(target=self._realtime_worker, daemon=True)
         self._realtime_thread.start()
-        logger.warning("Realtime worker STARTED (model=%s)", self._config.realtime.realtime_model_type)
+        logger.info("Realtime worker STARTED (model=%s)", self._config.realtime.realtime_model_type)
 
     def _realtime_worker(self) -> None:
         """Periodically transcribe accumulated audio for live display.
@@ -1656,25 +2000,30 @@ class RecorderService:
         if not self._state_machine.is_recording:
             self._reset_realtime_accumulator(clear_last=False)
             state.recording_seen_at = None
+            state.last_processed_frame_count = -1
             time.sleep(0.01)
             return
         self._realtime_mark_recording_start(state)
         if not self._realtime_ready(state):
             return
+        # ── Stale-audio guard ─────────────────────────────────────────
+        # If the audio buffer hasn't grown since our last transcribe, the
+        # recording has effectively stopped feeding frames even though the
+        # state machine still says is_recording=True. Re-transcribing the
+        # same content is pure waste — we'd publish the same preview text
+        # at every iteration, hammer the GPU, and (with the post-Option C
+        # CUDA-thread tuning making transcribe ~17 ms on Canary) spin a
+        # ~30 ms-per-iteration tight loop. Back off to a 50 ms sleep
+        # instead and try again next tick. The frame_count counter
+        # advances monotonically as the audio reader feeds new chunks,
+        # so we resume normal cadence as soon as fresh audio actually
+        # arrives. Loses zero responsiveness on the happy path.
+        current_frame_count = self._audio_buffer.frame_count
+        if current_frame_count == state.last_processed_frame_count:
+            time.sleep(0.05)
+            return
+        state.last_processed_frame_count = current_frame_count
         state.last_transcription = time.time()
-        # region agent log — H-B/H-D
-        # Per-tick beacon so we can count successful realtime inferences
-        # before the crash (H-D: accumulated heap damage) and confirm the
-        # crash is from a realtime tick specifically (H-B). Also exposes
-        # the frame_count which feeds the slice size — a sudden change in
-        # frame_count near the crash would hint at audio-buffer races.
-        logger.warning(
-            "[debug-instrumentation] _realtime_step.tick frame_count=%d committed=%d thread=%d",
-            self._audio_buffer.frame_count,
-            self._realtime_committed_frames,
-            threading.get_ident(),
-        )
-        # endregion
         self._realtime_process_once()
 
     def _realtime_mark_recording_start(self, state: _RealtimeLoopState) -> None:
@@ -1762,7 +2111,7 @@ class RecorderService:
         )
         if result is None:
             return None
-        return self._preprocess_output(result.text)
+        return self._preprocess_output(result.text, language=result.language)
 
     def _append_committed_text(self, commit_text: str) -> None:
         if self._realtime_committed_text:
@@ -1902,11 +2251,33 @@ class RecorderService:
         # events. PTT-release end-of-recording is handled by set_microphone
         # calling request_stop() directly, not by VAD-on-injected-silence.
 
-    def _preprocess_output(self, text: str) -> str:
+    def _preprocess_output(self, text: str, language: str = "") -> str:
         text = re.sub(r"\s+", " ", text.strip())
         text = self._apply_custom_words(text)
+        text = self._apply_filler_filter(text, language)
         text = self._apply_starting_uppercase(text)
         return self._apply_trailing_period(text)
+
+    def _apply_filler_filter(self, text: str, language: str) -> str:
+        """Locale-aware filler-word strip + stutter collapse.
+
+        Runs AFTER the fuzzy dictionary so user-defined brand names
+        (which may legitimately overlap with disfluency tokens in some
+        weird edge case) get a chance to anchor first. ``language`` is
+        the detected language from the transcriber; we fall back to
+        the configured Whisper language if detection came back empty,
+        and the filter itself falls back to a conservative cross-lang
+        list when the resolved code is unknown. Empty input
+        short-circuits cleanly inside :func:`filter_transcription_output`.
+        """
+        cfg = self._config.text_correction
+        if not cfg.filter_fillers or not text:
+            return text
+        from src.recorder.text.filler_filter import filter_transcription_output
+
+        lang = language or self._config.transcription.language
+        custom = cfg.custom_filler_words if cfg.custom_filler_words else None
+        return filter_transcription_output(text, lang, custom)
 
     def _apply_custom_words(self, text: str) -> str:
         """Deterministic fuzzy correction against the user's word list.

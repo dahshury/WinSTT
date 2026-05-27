@@ -42,37 +42,70 @@ except ImportError:
 _VAD_CACHE: dict[tuple[Any, ...], Any] = {}
 _VAD_CACHE_LOCK = threading.Lock()
 
+# Silero VAD is unconditionally loaded on CPU regardless of the parent
+# transcriber's execution provider. Two reasons, in this order:
+#
+# 1. **Deadlock avoidance.** When the main transcriber session is created
+#    on CUDA with ``do_copy_in_default_stream=1`` (see
+#    ``device._CUDA_EP_OPTIONS``), routing Silero's load through the same
+#    CUDA EP forces its weight-upload Memcpy onto the *same default
+#    stream* the main session is still holding work on. ORT's session
+#    create then waits for a memcpy that cannot dispatch — silent hang,
+#    no exception, ``Recorder initialized`` never prints, the renderer
+#    is pinned to "Reconnecting" forever. This was the live regression
+#    triaged via the architect-mode investigation.
+#
+# 2. **Pure performance.** Silero v5's ONNX graph has at least one node
+#    (the stateful LSTM tail) with no CUDA kernel; ORT inserts a
+#    host↔device Memcpy to fall back. For a ~2 MB model running once per
+#    32 ms hop, the PCIe round trip costs more than the entire forward
+#    pass would on CPU. The facade's CompositeVAD Silero instance has
+#    been pinned to CPU for this exact reason since the hexagonal rewrite
+#    (recorder/__init__.py:443-448). We now unify the policy so both load
+#    paths obey the same invariant — single source of truth.
+#
+# The cache is keyed by a constant sentinel since there is only ever one
+# CPU-bound Silero instance per process. Tests that need a clean slate
+# between cases call ``_close_cached_vads``.
+_SILERO_CPU_PROVIDERS: tuple[str, ...] = ("CPUExecutionProvider",)
+_SILERO_CACHE_KEY: tuple[str, ...] = _SILERO_CPU_PROVIDERS
+
 
 def _vad_cache_key(providers_tuple: tuple[Any, ...] | None) -> tuple[Any, ...]:
-    """Stable cache key for a providers tuple (or the default when None)."""
-    if providers_tuple is None:
-        return ("__default__",)
-    return providers_tuple
+    """Stable cache key for the Silero VAD. The argument is accepted for
+    backwards-compat with call sites that pass the parent transcriber's
+    providers, but is *ignored* — we always return the CPU key per the
+    pinning rationale on :data:`_SILERO_CACHE_KEY`.
+    """
+    del providers_tuple  # intentionally unused; see module-level note
+    return _SILERO_CACHE_KEY
 
 
 def _get_or_load_silero_vad(providers_tuple: tuple[Any, ...] | None) -> Any:  # noqa: ANN401
-    """Return the singleton Silero VAD for these providers, loading on first miss.
+    """Return the singleton CPU-bound Silero VAD, loading on first miss.
+
+    The ``providers_tuple`` argument is accepted for backwards-compat with
+    legacy call sites that thread the parent transcriber's providers
+    through, but it is **ignored** — Silero is always loaded on
+    ``CPUExecutionProvider`` regardless (see :data:`_SILERO_CACHE_KEY`).
 
     Concurrency: ``_VAD_CACHE_LOCK`` is held across the cache lookup +
     the load itself, so two transcribers constructed simultaneously
     can't double-load. The lock blocks for the full ``onnx_asr.load_vad``
     duration on a miss (100-400ms) — acceptable because the alternative
-    is racy double-allocation in VRAM.
+    is racy double-allocation in RAM.
     """
+    del providers_tuple  # intentionally unused; Silero is always CPU
     assert onnx_asr is not None  # narrowing — caller has already checked
-    key = _vad_cache_key(providers_tuple)
     with _VAD_CACHE_LOCK:
-        cached = _VAD_CACHE.get(key)
+        cached = _VAD_CACHE.get(_SILERO_CACHE_KEY)
         if cached is not None:
-            logger.info("Silero VAD cache hit (providers=%s)", key)
+            logger.info("Silero VAD cache hit (CPU)")
             return cached
-        vad_kwargs: dict[str, Any] = {}
-        if providers_tuple is not None:
-            vad_kwargs["providers"] = providers_tuple
-        logger.info("Silero VAD cache miss — loading for providers=%s", key)
-        vad = onnx_asr.load_vad("silero", **vad_kwargs)
-        _VAD_CACHE[key] = vad
-        logger.info("Silero VAD loaded + cached")
+        logger.info("Silero VAD cache miss — loading on CPU")
+        vad = onnx_asr.load_vad("silero", providers=_SILERO_CPU_PROVIDERS)
+        _VAD_CACHE[_SILERO_CACHE_KEY] = vad
+        logger.info("Silero VAD loaded + cached (CPU)")
         return vad
 
 
@@ -166,23 +199,91 @@ def _refetch_hf_snapshot(model_name: str) -> bool:
     return True
 
 
-def _build_fp16_sess_options() -> Any:  # noqa: ANN401 — onnxruntime.SessionOptions
-    """SessionOptions tuned to load onnx-community Whisper fp16 exports.
+def _pick_intra_op_threads(providers_tuple: tuple[Any, ...] | None) -> int:
+    """Pick ``intra_op_num_threads`` based on whether the EP is GPU or CPU.
 
-    Drops to ``ORT_ENABLE_EXTENDED``: the default ``ORT_ENABLE_ALL`` runs
-    LAYOUT-level fusions including ``SimplifiedLayerNormFusion``, which
-    crashes on the fp16 encoder export with ``Attempting to get index by
-    a name which does not exist: InsertedPrecisionFreeCast_…``. The
-    lower level is benign for our other (non-fp16) sessions when they
-    happen to share this SessionOptions instance — the missing fusions
-    are encoder-shape-specific and don't materially affect throughput on
-    the small/mid Whisper variants.
+    ORT's default of 0 means "use all logical cores", which on consumer
+    machines causes two failure modes:
+
+    * **CPU EP** — on hybrid CPUs (Intel 12th gen+, Apple M-series, AMD
+      with X3D V-Cache, …) all-logical-cores spreads inference across
+      P-cores AND E-cores. The E-cores have very different SIMD/latency
+      characteristics so they stall the join and turn what should be a
+      120 ms run into a 1300 ms one (measured, Alder Lake i9-12900KF:
+      intra=0 → 430 ms, intra=8 → 132 ms, intra=10+ → 1200 ms).
+    * **GPU EP** — most compute is on device, with only small CPU-side
+      ops (preprocessing, beam search). Many CPU threads adds scheduling
+      overhead without parallel work to fill them. 2 threads is enough
+      for the small CPU pieces and minimizes context-switch tax
+      (measured, RTX 3080 Ti + Canary-180M: intra=0 → 33 ms,
+      intra=2 → 17 ms, intra=8 → 62 ms).
+
+    The output is byte-identical across all choices — only the host
+    scheduler / thread pool changes. Property verified via
+    :file:`scripts/bench_sess_opts.py` across Whisper / Moonshine /
+    Canary, CPU and CUDA EPs.
+    """
+    provider_names: list[str] = []
+    if providers_tuple:
+        for entry in providers_tuple:
+            if isinstance(entry, str):
+                provider_names.append(entry)
+            elif isinstance(entry, tuple) and entry:
+                provider_names.append(str(entry[0]))
+    if not provider_names:
+        # No explicit selection — fall back to ORT's available providers.
+        # On packaged Windows builds this is DirectML or CUDA when present,
+        # else CPU. Make a sensible guess so the user still benefits.
+        try:
+            import onnxruntime as rt
+
+            provider_names = list(rt.get_available_providers())
+        except Exception:  # pragma: no cover — defensive
+            return 2  # safe middle ground
+
+    is_gpu = any(p in GPU_PROVIDERS for p in provider_names)
+    if is_gpu:
+        return 2
+
+    # CPU EP — cap at 8 to dodge E-core collapse on hybrid CPUs.
+    # Floor at 2 so dual-core hosts still oversubscribe slightly.
+    import os
+
+    cpu_count = os.cpu_count() or 4
+    if cpu_count <= 4:
+        return cpu_count
+    if cpu_count <= 8:
+        return cpu_count
+    return 8
+
+
+def _build_sess_options(providers_tuple: tuple[Any, ...] | None, *, fp16: bool = False) -> Any:  # noqa: ANN401 — onnxruntime.SessionOptions
+    """SessionOptions tuned for the chosen execution provider.
+
+    Always pinned ``intra_op_num_threads`` (see :func:`_pick_intra_op_threads`
+    for the rationale and measurements). ``fp16=True`` additionally lowers
+    the graph optimization level to dodge an ORT
+    ``SimplifiedLayerNormFusion`` bug on Whisper fp16 encoder exports —
+    see the original ``_build_fp16_sess_options`` rationale below.
+
+    The fp16-related drop to ``ORT_ENABLE_EXTENDED`` is benign for our
+    other (non-fp16) sessions when they happen to share this
+    SessionOptions instance — the missing fusions are encoder-shape-
+    specific and don't materially affect throughput on small/mid
+    Whisper variants.
     """
     import onnxruntime as rt
 
     opts = rt.SessionOptions()
-    opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    if fp16:
+        opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    opts.intra_op_num_threads = _pick_intra_op_threads(providers_tuple)
     return opts
+
+
+def _build_fp16_sess_options() -> Any:  # noqa: ANN401 — onnxruntime.SessionOptions
+    """Backwards-compat shim — see :func:`_build_sess_options`."""
+    return _build_sess_options(None, fp16=True)
 
 
 def _make_progress_adapter(model_name: str, sink: Callable[[DownloadProgress], None]) -> Callable[[Any], None]:
@@ -345,6 +446,7 @@ class OnnxAsrTranscriber(ITranscriber):
         local_path: str | None = None,
         segment_with_vad: bool = True,
         normalize_audio: bool = True,
+        translate_to_english: bool = False,
     ) -> None:
         if onnx_asr is None:
             msg = "onnx_asr is not installed"
@@ -364,16 +466,16 @@ class OnnxAsrTranscriber(ITranscriber):
         # local-only — no network calls, no cache entries created.
         if local_path is not None:
             kwargs["path"] = local_path
-        # Explicit fp16 selection on Whisper-family ONNX needs two
-        # accommodations for the onnx-community export defects: lowered
-        # session optimization to dodge an ORT SimplifiedLayerNormFusion
-        # bug on the encoder, and a reactive in-cache patch of the merged
-        # decoder (subgraph output names + dtype annotations). The patch
-        # path fires only when the first load actually fails with the
-        # specific subgraph-output error — fp16 exports of other model
-        # families (or already-patched files) skip straight through.
-        if quantization == "fp16":
-            kwargs["sess_options"] = _build_fp16_sess_options()
+        # SessionOptions are always provided so every load picks an
+        # EP-tuned ``intra_op_num_threads`` (see
+        # :func:`_pick_intra_op_threads`). Default ORT (intra=0 = "use
+        # all logical cores") is benchmarked-worst by a wide margin on
+        # both consumer CPUs (E-core collapse on Alder Lake) and GPUs
+        # (over-subscribed CPU threads stall small device-fallback ops).
+        # The fp16 flag additionally lowers the graph optimization level
+        # to dodge a SimplifiedLayerNormFusion bug on Whisper fp16
+        # encoder exports; orthogonal to threading.
+        kwargs["sess_options"] = _build_sess_options(providers_tuple, fp16=(quantization == "fp16"))
 
         logger.info("Loading onnx-asr model %s (quantization=%s)", model_name, quantization)
         self._model: Any = self._load_model_with_fp16_repair(model_name, kwargs)
@@ -403,10 +505,132 @@ class OnnxAsrTranscriber(ITranscriber):
         self._normalize_audio = normalize_audio
         self._segment_with_vad = segment_with_vad
         self._vad: Any = None
+        # Adapter cache for the VAD-segmented recognize path. Lazily filled
+        # on the first call per ``merge`` flag (see _recognize_vad_segments).
+        self._vad_adapter_merge: Any = None
+        self._vad_adapter_no_merge: Any = None
         if segment_with_vad:
             self._vad = _get_or_load_silero_vad(providers_tuple)
         else:
             logger.info("Silero VAD skipped (segment_with_vad=False — bounded-short caller)")
+
+        # Translation request flows through two distinct engine APIs in
+        # onnx_asr depending on the model family — Handy makes the same
+        # distinction (managers/transcription.rs:545 vs :607):
+        #
+        # * **Whisper family** — translation is baked into the decoder
+        #   prompt at load time (``<|translate|>`` token replaces
+        #   ``<|transcribe|>``). onnx_asr exposes no runtime
+        #   ``target_language`` for Whisper, so we mutate the prompt
+        #   arrays after load via :meth:`_patch_translate_prompt`.
+        # * **NeMo Canary family** — ``_decoding`` consumes a
+        #   ``target_language`` kwarg natively (see
+        #   ``.venv/.../onnx_asr/models/nemo.py:236-238``). We inject it
+        #   on every recognize call — :data:`_translate_target_language`
+        #   is the value to pass.
+        # * Other families (GigaAM, Moonshine, Kaldi, Cohere) don't
+        #   support translation; the flag is a silent no-op for them.
+        self._translate_to_english = translate_to_english
+        self._translate_target_language: str | None = None
+        if translate_to_english:
+            if self._is_canary_engine():
+                # Canary's native English-target sentinel matches Handy
+                # exactly. Future work: surface the full Canary language
+                # matrix (en/es/de/fr/zh/ja/ru/…) so users can pick the
+                # destination instead of being pinned to English.
+                self._translate_target_language = "en"
+                logger.info(
+                    "Translate-to-English enabled on Canary model %s — using target_language='en'",
+                    model_name,
+                )
+            else:
+                self._patch_translate_prompt()
+
+    def _is_canary_engine(self) -> bool:
+        """Heuristic: detect a NeMo Canary engine without importing nemo."""
+        engine = self._model
+        for candidate in (engine, getattr(engine, "model", None)):
+            if candidate is None:
+                continue
+            cls_name = type(candidate).__name__
+            # onnx_asr's Canary classes are ``_Canary``, ``Canary``,
+            # ``Canary1B``, etc. — the substring is the family marker.
+            if "Canary" in cls_name or "canary" in cls_name.lower():
+                return True
+        # Fallback: model name string. Catalog ids start with "nemo-canary-"
+        # and the HF repo paths contain "canary".
+        name = (self._model_name or "").lower()
+        return "canary" in name
+
+    def _patch_translate_prompt(self) -> None:
+        """Swap ``<|transcribe|>`` for ``<|translate|>`` in the prompt arrays.
+
+        No-op on engines that aren't Whisper (no ``_tokens`` attribute),
+        on English-only variants (``_is_multilingual=False``), or on
+        engines whose vocab is missing the ``<|translate|>`` token. The
+        guard is purpose-built to be invisible when the request can't be
+        honored, so the user-facing toggle quietly falls through to
+        normal transcription rather than crashing — and the catalog
+        already gates the toggle to multilingual Whisper anyway.
+        """
+        engine = self._model
+        # onnx_asr wraps the engine in TextResultsAsrAdapter; the actual
+        # model with prompt arrays is on ``engine.model`` for adapters
+        # or directly on the engine for raw models. Walk both.
+        candidates = [engine, getattr(engine, "model", None)]
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            tokens = getattr(candidate, "_tokens", None)
+            if not isinstance(tokens, dict):
+                continue
+            translate_id = tokens.get("<|translate|>")
+            transcribe_id = tokens.get("<|transcribe|>")
+            if translate_id is None or transcribe_id is None:
+                logger.warning(
+                    "Translate-to-English requested but model %s lacks the <|translate|> token; "
+                    "falling back to transcribe.",
+                    self._model_name,
+                )
+                return
+            if getattr(candidate, "_is_multilingual", True) is False:
+                logger.warning(
+                    "Translate-to-English requested on English-only model %s — no-op.",
+                    self._model_name,
+                )
+                return
+            self._replace_prompt_token(candidate, transcribe_id, translate_id)
+            logger.info("Patched Whisper prompts for task=translate on %s", self._model_name)
+            return
+        logger.warning(
+            "Translate-to-English requested on non-Whisper engine %s — no-op.",
+            self._model_name,
+        )
+
+    @staticmethod
+    def _replace_prompt_token(engine: Any, old_id: int, new_id: int) -> None:  # noqa: ANN401
+        """Substitute one token id in every static prompt array on the engine.
+
+        onnx_asr caches the static decoder prompts as numpy arrays on the
+        engine instance (``_transcribe_input`` and
+        ``_transcribe_input_with_timestamps``). Both are 2-D int64 arrays
+        with shape ``(1, n)``. We mutate in place rather than reassign so
+        any held references (the autoregressive loop reads the array on
+        every step) stay valid.
+        """
+        for attr in ("_transcribe_input", "_transcribe_input_with_timestamps"):
+            arr = getattr(engine, attr, None)
+            if arr is None:
+                continue
+            try:
+                # arr[arr == old_id] = new_id — but use numpy ops without
+                # importing numpy at module top (already imported elsewhere
+                # in this file via dependencies). The engine arrays are
+                # known numpy arrays; ``__setitem__`` on a boolean mask
+                # mutates in place.
+                arr[arr == old_id] = new_id
+            except Exception:
+                logger.exception("Prompt-array patch failed on %s.%s", type(engine).__name__, attr)
 
     @staticmethod
     def _load_model_with_fp16_repair(model_name: str, kwargs: dict[str, Any]) -> Any:  # noqa: ANN401
@@ -488,10 +712,16 @@ class OnnxAsrTranscriber(ITranscriber):
         recognize_kwargs: dict[str, Any] = {"sample_rate": 16_000}
         if lang_arg is not None:
             recognize_kwargs["language"] = lang_arg
+        if self._translate_target_language is not None:
+            recognize_kwargs["target_language"] = self._translate_target_language
         try:
             text = self._model.recognize(audio, **recognize_kwargs)
         except TypeError:
+            # Engines that don't accept one of our kwargs (older
+            # onnx_asr builds, custom adapters) — strip the optional
+            # ones and retry with just the sample_rate baseline.
             recognize_kwargs.pop("language", None)
+            recognize_kwargs.pop("target_language", None)
             text = self._model.recognize(audio, **recognize_kwargs)
         return [(0.0, 0.0, text or "")]
 
@@ -524,19 +754,40 @@ class OnnxAsrTranscriber(ITranscriber):
         Returns ``(start_s, end_s, text)`` with *global* offsets (the VAD
         adapter maps segment-local times to absolute file time).
         """
-        vad_kwargs: dict[str, Any] = {"max_speech_duration_s": self._VAD_MAX_SPEECH_DURATION_S}
-        if merge:
-            vad_kwargs["min_silence_duration_ms"] = self._VAD_MIN_SILENCE_MS
-        adapter = self._model.with_vad(self._vad, **vad_kwargs)
+        # Cache the with_vad adapter per ``merge`` flag — both possible
+        # vad_kwargs dicts are constant for the lifetime of the transcriber,
+        # so the adapter object itself is reusable. ``with_vad`` wraps the
+        # base engine without rebinding ORT sessions, but it still creates
+        # a fresh Python adapter on each call (with its own internal
+        # bookkeeping arrays); reusing it skips that per-call construction
+        # — a small but real win on the long-audio path, which fires the
+        # adapter once per recording for `transcribe_segments` (SRT) and
+        # once per utterance for the normal merged-VAD `transcribe`.
+        adapter = self._vad_adapter_merge if merge else self._vad_adapter_no_merge
+        if adapter is None:
+            vad_kwargs: dict[str, Any] = {"max_speech_duration_s": self._VAD_MAX_SPEECH_DURATION_S}
+            if merge:
+                vad_kwargs["min_silence_duration_ms"] = self._VAD_MIN_SILENCE_MS
+            adapter = self._model.with_vad(self._vad, **vad_kwargs)
+            if merge:
+                self._vad_adapter_merge = adapter
+            else:
+                self._vad_adapter_no_merge = adapter
         recognize_kwargs: dict[str, Any] = {"sample_rate": 16_000}
         if lang_arg is not None:
             recognize_kwargs["language"] = lang_arg
+        if self._translate_target_language is not None:
+            recognize_kwargs["target_language"] = self._translate_target_language
 
         try:
             segments_iter = adapter.recognize(audio, **recognize_kwargs)
         except TypeError:
-            # Some models don't accept the language kwarg through with_vad.
+            # Some models don't accept the language kwarg through with_vad,
+            # and ``target_language`` is even more selective (Canary only).
+            # Strip both and retry with the bare baseline so unrelated
+            # engines still transcribe rather than erroring out.
             recognize_kwargs.pop("language", None)
+            recognize_kwargs.pop("target_language", None)
             segments_iter = adapter.recognize(audio, **recognize_kwargs)
 
         return [(float(s.start), float(s.end), s.text) for s in segments_iter]
@@ -617,5 +868,8 @@ class OnnxAsrTranscriber(ITranscriber):
         self._model = None
         # Drop our reference to the shared VAD — cache keeps the canonical one.
         self._vad = None
+        # Drop the with_vad adapter cache — the model it wraps is going away.
+        self._vad_adapter_merge = None
+        self._vad_adapter_no_merge = None
         if model is not None and hasattr(model, "close"):
             model.close()

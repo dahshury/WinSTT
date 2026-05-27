@@ -9,8 +9,8 @@ import {
 	WifiDisconnectedIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcOn, windowOpenSettings } from "@/shared/api/ipc-client";
 import type { CloudSttProvider } from "@/shared/api/models";

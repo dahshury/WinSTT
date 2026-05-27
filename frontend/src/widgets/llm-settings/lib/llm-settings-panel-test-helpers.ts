@@ -6,7 +6,7 @@ import {
 	WavingHand01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
-import type { useTranslations } from "next-intl";
+import type { useTranslations } from "use-intl";
 import {
 	type BuiltinPresetEntry,
 	type CustomModifier,

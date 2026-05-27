@@ -36,16 +36,10 @@ describe("isQuantizationChanging", () => {
 	});
 });
 
-describe("baseMainPatch", () => {
-	test("includes backend when model info is provided", () => {
-		const info = { backend: "onnx_asr" } as never;
-		expect(t.baseMainPatch("m", info)).toEqual({ model: "m", backend: "onnx_asr" });
-	});
-
-	test("falls back to bare model when info is undefined", () => {
-		expect(t.baseMainPatch("m", undefined)).toEqual({ model: "m" });
-	});
-});
+// ``baseMainPatch`` was removed alongside the typed ``ModelPatch`` change —
+// a bare ``{ model }`` patch is no longer representable, and the catalog-
+// miss path is now handled by an early return in ``applyMainSwap``. See
+// the new ``buildMainSwapPatch`` tests below.
 
 describe("toQuantPatch / definedQuantPatches", () => {
 	test("toQuantPatch wraps a quantization", () => {
@@ -63,18 +57,18 @@ describe("toQuantPatch / definedQuantPatches", () => {
 
 describe("applyQuantOverride", () => {
 	test("merges the quant override when changing", () => {
-		const out = t.applyQuantOverride({ model: "m" }, "fp16", true);
-		expect(out).toEqual({ model: "m", onnxQuantization: "fp16" });
+		const out = t.applyQuantOverride({ model: "m", backend: "onnx_asr" }, "fp16", true);
+		expect(out).toEqual({ model: "m", backend: "onnx_asr", onnxQuantization: "fp16" });
 	});
 
 	test("leaves patch untouched when not changing", () => {
-		const out = t.applyQuantOverride({ model: "m" }, undefined, false);
-		expect(out).toEqual({ model: "m" });
+		const out = t.applyQuantOverride({ model: "m", backend: "onnx_asr" }, undefined, false);
+		expect(out).toEqual({ model: "m", backend: "onnx_asr" });
 	});
 
 	test("leaves patch untouched when changing flag set but value undefined", () => {
-		const out = t.applyQuantOverride({ model: "m" }, undefined, true);
-		expect(out).toEqual({ model: "m" });
+		const out = t.applyQuantOverride({ model: "m", backend: "onnx_asr" }, undefined, true);
+		expect(out).toEqual({ model: "m", backend: "onnx_asr" });
 	});
 });
 
@@ -338,7 +332,31 @@ describe("runHandleMainChange / runHandleRealtimeChange", () => {
 });
 
 describe("runIssueSwap", () => {
-	test("main: updates settings with the new model", () => {
+	test("main: updates settings with the new model AND backend from the catalog", () => {
+		const update = mock(() => undefined);
+		const refMain = { current: null as string | null };
+		const refRt = { current: null as string | null };
+		t.runIssueSwap({
+			currentQuantization: "int8",
+			getModel: ((id: string) =>
+				id === "next" ? ({ backend: "onnx_asr" } as never) : undefined) as never,
+			kind: "main",
+			previous: "prev",
+			prevMainModelRef: refMain as never,
+			prevRealtimeModelRef: refRt as never,
+			quantization: undefined,
+			update: update as never,
+			value: "next",
+		});
+		expect(update).toHaveBeenCalledWith({ model: "next", backend: "onnx_asr" });
+		expect(refMain.current).toBe("prev");
+	});
+
+	test("main: short-circuits when catalog does not know the target model", () => {
+		// Regression guard: writing { model: x } without a paired backend was the
+		// drift that produced model=canary, backend=faster_whisper on disk. The
+		// typed ModelPatch now forbids it; applyMainSwap must early-return so we
+		// never write an inconsistent pair.
 		const update = mock(() => undefined);
 		const refMain = { current: null as string | null };
 		const refRt = { current: null as string | null };
@@ -351,10 +369,10 @@ describe("runIssueSwap", () => {
 			prevRealtimeModelRef: refRt as never,
 			quantization: undefined,
 			update: update as never,
-			value: "next",
+			value: "missing-from-catalog",
 		});
-		expect(update).toHaveBeenCalledWith({ model: "next" });
-		expect(refMain.current).toBe("prev");
+		expect(update).not.toHaveBeenCalled();
+		expect(refMain.current).toBeNull();
 	});
 
 	test("realtime: updates realtime model", () => {
@@ -546,25 +564,43 @@ describe("handleDownloadCompleteEvent / closePendingDownloadFor / clearIfMatches
 });
 
 describe("handleSwapFailedEvent / rollbackMain / rollbackRealtime", () => {
-	test("main rollback uses the captured main ref", () => {
+	const fakeGetModel = (id: string) =>
+		id === "prev-main" ? ({ backend: "onnx_asr" } as never) : undefined;
+
+	test("main rollback uses the captured main ref and resolves backend from the catalog", () => {
 		const update = mock(() => undefined);
 		const refMain = { current: "prev-main" };
 		const refRt = { current: null as string | null };
-		t.handleSwapFailedEvent("main", refMain as never, refRt as never, update as never);
-		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({ model: "prev-main" });
+		t.handleSwapFailedEvent(
+			"main",
+			refMain as never,
+			refRt as never,
+			update as never,
+			fakeGetModel as never
+		);
+		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({
+			model: "prev-main",
+			backend: "onnx_asr",
+		});
 	});
 
 	test("realtime rollback uses the captured realtime ref", () => {
 		const update = mock(() => undefined);
 		const refMain = { current: null as string | null };
 		const refRt = { current: "prev-rt" };
-		t.handleSwapFailedEvent("realtime", refMain as never, refRt as never, update as never);
+		t.handleSwapFailedEvent(
+			"realtime",
+			refMain as never,
+			refRt as never,
+			update as never,
+			fakeGetModel as never
+		);
 		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({ realtimeModel: "prev-rt" });
 	});
 
 	test("rollbackMain is a no-op when no previous is captured", () => {
 		const update = mock(() => undefined);
-		t.rollbackMain({ current: null } as never, update as never);
+		t.rollbackMain({ current: null } as never, update as never, fakeGetModel as never);
 		expect(update).not.toHaveBeenCalled();
 	});
 
