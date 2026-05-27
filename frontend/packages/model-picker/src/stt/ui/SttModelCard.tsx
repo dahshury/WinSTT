@@ -5,12 +5,16 @@ import { Slider } from "@base-ui/react/slider";
 import {
 	AlertCircleIcon,
 	BinaryCodeIcon,
+	CancelCircleIcon,
 	CheckmarkCircle02Icon,
+	CloudDownloadIcon,
 	Delete02Icon,
 	GlobeIcon,
 	HardDriveDownloadIcon,
 	LiveStreaming02Icon,
 	NeuralNetworkIcon,
+	PauseIcon,
+	PlayIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
@@ -23,9 +27,10 @@ import { Tooltip } from "@/shared/ui/tooltip";
 import { resolveQuantCache } from "../lib/cache-helpers";
 import { getFamilyConfig } from "../lib/family-helpers";
 import { isUncomfortable } from "../lib/hardware-fit";
+import { quantCacheStatus } from "../lib/pill-helpers";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
-import { QuantCacheDot, quantCacheStatus } from "./pills";
+import { QuantCacheDot } from "./pills";
 
 /** "Whisper Large v3" → "Large v3" (the group header already says Whisper). */
 function variantLabel(model: ModelInfo): string {
@@ -207,10 +212,36 @@ function PerfBars({ speedScore, accuracyScore }: PerfBarsProps) {
 	);
 }
 
+/** Per-(modelId, quant) live download snapshot the badge reads to flip
+ *  into "downloading" / "paused" chrome. Lives in the renderer's
+ *  download store (see ``features/model-download/model/download-store.ts``)
+ *  but the picker is self-contained so the consumer hands it in. ``null``
+ *  means no active download for this badge. */
+export interface QuantDownloadSnapshot {
+	downloadedBytes: number;
+	paused: boolean;
+	progress: number | null;
+	totalBytes: number;
+}
+
+export type QuantDownloadAction = "start" | "pause" | "resume" | "cancel";
+
 interface PrecisionGroupProps {
 	currentQuantization: OnnxQuantization;
+	/** Lookup ``(modelId, quantization) -> snapshot`` for the active
+	 *  download (if any) on this card's variants. Empty / missing entry
+	 *  means the badge renders its idle state. */
+	getDownloadSnapshot?:
+		| ((modelId: string, quantization: OnnxQuantization) => QuantDownloadSnapshot | undefined)
+		| undefined;
 	isSelectedModel: boolean;
 	model: ModelInfo;
+	/** Single dispatch for the four download actions. Selector wires
+	 *  this to ``useDownloadStore.{predownloadQuant,pauseQuantDownload,
+	 *  resumeQuantDownload,cancelQuantDownload}``. */
+	onDownloadAction?:
+		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
+		| undefined;
 	onRequestDeleteQuant?:
 		| ((
 				modelId: string,
@@ -223,6 +254,51 @@ interface PrecisionGroupProps {
 	state: ModelStateEntry | undefined;
 }
 
+/** Inline icon button used for every per-badge download-control action
+ *  (Download, Pause, Resume, Cancel, Delete). Same height + border-l
+ *  treatment as the trash icon so the four controls compose into a
+ *  single ButtonGroup chip. */
+function BadgeIconButton({
+	ariaLabel,
+	icon,
+	onClick,
+	tone = "neutral",
+	tooltip,
+}: {
+	ariaLabel: string;
+	icon: IconSvgElement;
+	onClick: () => void;
+	tone?: "neutral" | "danger" | "primary";
+	tooltip: string;
+}) {
+	const toneClass =
+		tone === "danger"
+			? "bg-surface-secondary/40 text-foreground-muted hover:bg-error/15 hover:text-error"
+			: tone === "primary"
+				? "bg-surface-secondary/40 text-accent hover:bg-accent/20"
+				: "bg-surface-secondary/40 text-foreground-muted hover:bg-surface-hover hover:text-foreground";
+	return (
+		<Tooltip content={tooltip} side="top">
+			<button
+				aria-label={ariaLabel}
+				className={cn(
+					"inline-flex h-6 cursor-pointer items-center justify-center border-border border-l px-1.5 leading-none transition-colors",
+					"last:rounded-r-[5px]",
+					toneClass
+				)}
+				onClick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onClick();
+				}}
+				type="button"
+			>
+				<HugeiconsIcon className="size-3" icon={icon} />
+			</button>
+		</Tooltip>
+	);
+}
+
 function PrecisionGroup({
 	model,
 	state,
@@ -230,6 +306,8 @@ function PrecisionGroup({
 	isSelectedModel,
 	onSelect,
 	onRequestDeleteQuant,
+	getDownloadSnapshot,
+	onDownloadAction,
 }: PrecisionGroupProps) {
 	const options = getQuantizationOptions(model);
 	if (options.length === 0) {
@@ -248,15 +326,23 @@ function PrecisionGroup({
 			{options.map((opt) => {
 				const isActive = isSelectedModel && opt.value === currentQuantization;
 				const cache = resolveQuantCache(state, opt.value);
+				const download = getDownloadSnapshot?.(model.id, opt.value);
+				const isDownloading = download !== undefined;
 				const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
+				const isPartial = cache?.state === "partial" && !isDownloading;
 				const canDelete = onRequestDeleteQuant !== undefined && isOnDisk;
-				// Per-quant button + optional trash icon, joined into a single
-				// ButtonGroup so they read as one control. Trash is only
-				// rendered when the variant actually has bytes on disk —
-				// matching the user's spec: "All model quantizations that
-				// are partially downloaded should have their badge as
-				// resume or delete. All models that are already downloaded
-				// should have delete as a button group beside their badge."
+				const canDownload = onDownloadAction !== undefined;
+
+				// Per-badge button-group composition:
+				//   * Always: the precision label button itself.
+				//   * Active download: progress label + Pause/Resume + Cancel.
+				//   * Partial, idle: Resume + Delete.
+				//   * Cached, idle: Delete.
+				//   * Not cached, idle: Download.
+				// Matches the user spec: "All model quantizations that are
+				// partially downloaded should have their badge as resume
+				// or delete. All models that are already downloaded should
+				// have delete as a button group beside their badge."
 				return (
 					<ButtonGroup
 						aria-label={`Precision ${opt.label} for ${model.displayName}`}
@@ -271,7 +357,6 @@ function PrecisionGroup({
 								className={cn(
 									"inline-flex h-6 cursor-pointer items-center gap-1.5 px-2 font-medium text-[10.5px] leading-none transition-colors",
 									"rounded-l-[5px]",
-									!canDelete && "rounded-r-[5px]",
 									isActive
 										? "bg-accent/20 text-accent"
 										: "bg-surface-secondary/40 text-foreground-secondary hover:bg-surface-hover"
@@ -285,35 +370,73 @@ function PrecisionGroup({
 							>
 								<QuantCacheDot cache={cache} />
 								{opt.label}
+								{isDownloading ? (
+									<span className="ms-1 font-mono text-[9.5px] text-foreground-muted tabular-nums">
+										{download.progress === null ? "…" : `${download.progress}%`}
+									</span>
+								) : null}
 							</button>
 						</Tooltip>
-						{canDelete ? (
-							<Tooltip
-								content={
+						{/* Active download → Pause/Resume + Cancel. */}
+						{isDownloading && canDownload && download.paused ? (
+							<BadgeIconButton
+								ariaLabel={`Resume ${opt.label} download`}
+								icon={PlayIcon}
+								onClick={() => onDownloadAction("resume", model.id, opt.value)}
+								tone="primary"
+								tooltip="Resume download"
+							/>
+						) : null}
+						{isDownloading && canDownload && !download.paused ? (
+							<BadgeIconButton
+								ariaLabel={`Pause ${opt.label} download`}
+								icon={PauseIcon}
+								onClick={() => onDownloadAction("pause", model.id, opt.value)}
+								tooltip="Pause download (resumable mid-file)"
+							/>
+						) : null}
+						{isDownloading && canDownload ? (
+							<BadgeIconButton
+								ariaLabel={`Cancel ${opt.label} download`}
+								icon={CancelCircleIcon}
+								onClick={() => onDownloadAction("cancel", model.id, opt.value)}
+								tone="danger"
+								tooltip="Cancel download"
+							/>
+						) : null}
+						{/* Idle + partial → Resume button to restart. */}
+						{!isDownloading && isPartial && canDownload ? (
+							<BadgeIconButton
+								ariaLabel={`Resume ${opt.label} download`}
+								icon={PlayIcon}
+								onClick={() => onDownloadAction("start", model.id, opt.value)}
+								tone="primary"
+								tooltip="Resume partial download from where it stopped"
+							/>
+						) : null}
+						{/* Idle + not cached → start download from the badge. */}
+						{!(isDownloading || isOnDisk) && canDownload ? (
+							<BadgeIconButton
+								ariaLabel={`Download ${opt.label} weights`}
+								icon={CloudDownloadIcon}
+								onClick={() => onDownloadAction("start", model.id, opt.value)}
+								tooltip="Download (resumable mid-file)"
+							/>
+						) : null}
+						{canDelete && !isDownloading ? (
+							<BadgeIconButton
+								ariaLabel={`Delete ${opt.label} weights for ${model.displayName}`}
+								icon={Delete02Icon}
+								onClick={() =>
+									onRequestDeleteQuant(model.id, opt.value, model.displayName, opt.label)
+								}
+								tone="danger"
+								tooltip={
 									cache?.state === "partial"
 										? `Delete partial ${opt.label} download`
 										: `Delete cached ${opt.label} weights`
 								}
-								side="top"
-							>
-								<button
-									aria-label={`Delete ${opt.label} weights for ${model.displayName}`}
-									className={cn(
-										"inline-flex h-6 cursor-pointer items-center justify-center border-border border-l px-1.5 leading-none transition-colors",
-										"rounded-r-[5px]",
-										"bg-surface-secondary/40 text-foreground-muted",
-										"hover:bg-error/15 hover:text-error"
-									)}
-									onClick={(e) => {
-										e.preventDefault();
-										e.stopPropagation();
-										onRequestDeleteQuant(model.id, opt.value, model.displayName, opt.label);
-									}}
-									type="button"
-								>
-									<HugeiconsIcon className="size-3" icon={Delete02Icon} />
-								</button>
-							</Tooltip>
+							/>
 						) : null}
 					</ButtonGroup>
 				);
@@ -333,6 +456,12 @@ export interface SttModelCardProps {
 	 */
 	actions?: import("react").ReactNode;
 	currentQuantization: OnnxQuantization;
+	/** Lookup for the active download snapshot per (modelId, quant). The
+	 *  picker is self-contained so the consumer wires it; ``undefined``
+	 *  return = no active download for that variant. */
+	getDownloadSnapshot?:
+		| ((modelId: string, quantization: OnnxQuantization) => QuantDownloadSnapshot | undefined)
+		| undefined;
 	/**
 	 * Set on a bundle primary card whose currently-selected model is one of
 	 * its hidden siblings (e.g. a ``.en`` or lite-whisper variant). Renders
@@ -342,6 +471,11 @@ export interface SttModelCardProps {
 	 */
 	hasSelectedVariant?: boolean;
 	model: ModelInfo;
+	/** Single dispatch for the four download actions emitted by the
+	 *  badge controls (Download / Pause / Resume / Cancel). */
+	onDownloadAction?:
+		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
+		| undefined;
 	/**
 	 * Optional handler invoked when the user clicks the trash icon next
 	 * to a cached/partial quant badge. Receives `(modelId, quantization,
@@ -388,6 +522,8 @@ export function SttModelCard({
 	currentQuantization,
 	onSelect,
 	onRequestDeleteQuant,
+	getDownloadSnapshot,
+	onDownloadAction,
 	actions,
 	hasSelectedVariant = false,
 }: SttModelCardProps) {
@@ -461,8 +597,10 @@ export function SttModelCard({
 			{isUnavailable ? null : (
 				<PrecisionGroup
 					currentQuantization={currentQuantization}
+					getDownloadSnapshot={getDownloadSnapshot}
 					isSelectedModel={isSelected}
 					model={model}
+					onDownloadAction={onDownloadAction}
 					onRequestDeleteQuant={onRequestDeleteQuant}
 					onSelect={onSelect}
 					state={state}

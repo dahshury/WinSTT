@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
-import { type RefObject, useRef } from "react";
+import { type RefObject, useLayoutEffect, useState } from "react";
 import { useProximityHover } from "./use-proximity-hover";
 
 // happy-dom ships no ResizeObserver. The hook only needs observe/disconnect to
@@ -65,11 +65,18 @@ function elWithRect(box: {
 /**
  * Test harness: owns a container ref so the hook has a real (stubbed) element
  * to measure against, and exposes the hook API plus the container element.
+ *
+ * The ref object is created once via `useState`'s lazy initializer so it
+ * stays stable across re-renders; a `useLayoutEffect` syncs the latest
+ * `container` argument into `ref.current` without touching the ref during
+ * render (which `react-hooks-js/refs` flags).
  */
 function useHarness(container: HTMLElement | null) {
-	const ref = useRef<HTMLElement | null>(container);
-	ref.current = container;
-	return useProximityHover(ref as RefObject<HTMLElement | null>);
+	const [ref] = useState<RefObject<HTMLElement | null>>(() => ({ current: container }));
+	useLayoutEffect(() => {
+		ref.current = container;
+	}, [container, ref]);
+	return useProximityHover(ref);
 }
 
 beforeEach(() => {

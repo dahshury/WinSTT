@@ -1,5 +1,5 @@
 import { AnimatePresence, type HTMLMotionProps, m } from "motion/react";
-import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
+import { createContext, type ReactNode, use, useEffect, useReducer, useState } from "react";
 
 /**
  * DynamicIsland — composable, animated capsule primitives for adaptive
@@ -69,6 +69,10 @@ export interface AnimationStep {
 	size: SizePresets;
 }
 
+// Module-level constant so the default `initialAnimation` prop doesn't allocate
+// a fresh array on every render of `DynamicIslandProvider`.
+const EMPTY_ANIMATION_STEPS: AnimationStep[] = [];
+
 interface State {
 	animationQueue: AnimationStep[];
 	isAnimating: boolean;
@@ -121,7 +125,7 @@ export interface DynamicIslandProviderProps {
 export function DynamicIslandProvider({
 	children,
 	initialSize = "default",
-	initialAnimation = [],
+	initialAnimation = EMPTY_ANIMATION_STEPS,
 }: DynamicIslandProviderProps) {
 	const [state, dispatch] = useReducer(reducer, {
 		size: initialSize,
@@ -162,7 +166,7 @@ export function DynamicIslandProvider({
 }
 
 export function useDynamicIslandSize(): ContextValue {
-	const ctx = useContext(DynamicIslandContext);
+	const ctx = use(DynamicIslandContext);
 	if (!ctx) {
 		throw new Error("useDynamicIslandSize must be used within a DynamicIslandProvider");
 	}
@@ -235,11 +239,17 @@ export function DynamicIsland({
 	// the empty (0×0) preset would spring its width/height up to the new
 	// preset while opacity is still ramping, recreating the "expand from
 	// the middle" feel the panel-slide reveal is meant to replace.
-	const lastVisiblePresetRef = useRef<Preset>(p.default);
-	if (isVisible) {
-		lastVisiblePresetRef.current = preset;
+	//
+	// State (not a ref) holds the snapshot so reads aren't done during render
+	// on a mutable container. A layout effect captures the latest preset
+	// whenever the island is visible; when the next render flips `isVisible`
+	// to false, the state still holds the preset from the previous visible
+	// render and the closing tween animates at that final size.
+	const [lastVisiblePreset, setLastVisiblePreset] = useState<Preset | null>(null);
+	if (isVisible && lastVisiblePreset !== preset) {
+		setLastVisiblePreset(preset);
 	}
-	const sizingPreset = isVisible ? preset : lastVisiblePresetRef.current;
+	const sizingPreset = isVisible ? preset : (lastVisiblePreset ?? p.default);
 
 	const baseClasses = [
 		"relative overflow-hidden bg-black text-white",

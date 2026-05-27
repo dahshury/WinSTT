@@ -190,15 +190,28 @@ describe("tray state machine", () => {
 		expect(tray.contextMenus.length).toBe(1);
 	});
 
-	test("setTrayState swaps the icon (no native menu rebuild on Windows)", () => {
+	test("setTrayState updates state but does NOT paint a static icon for recording/transcribing (the live indicator owns the icon)", () => {
 		const tray = makeTray();
 		attachTray(tray as unknown as Electron.Tray, noopActions());
 		const baseImg = tray.imageCount;
 		const baseMenu = tray.contextMenus.length;
 		setTrayState("recording");
 		expect(getTrayState()).toBe("recording");
-		expect(tray.imageCount).toBe(baseImg + 1);
+		// applyTrayImage is gated on state === "idle" — recording's static PNG
+		// is suppressed so it can't race the indicator's bar animation and
+		// flash before the first frame paints.
+		expect(tray.imageCount).toBe(baseImg);
 		expect(tray.contextMenus.length).toBe(baseMenu);
+	});
+
+	test("setTrayState transitioning back to idle DOES paint the idle PNG", () => {
+		const tray = makeTray();
+		attachTray(tray as unknown as Electron.Tray, noopActions());
+		setTrayState("recording");
+		const beforeIdle = tray.imageCount;
+		setTrayState("idle");
+		expect(getTrayState()).toBe("idle");
+		expect(tray.imageCount).toBe(beforeIdle + 1);
 	});
 
 	test("setTrayState rebuilds the native menu on Linux", () => {

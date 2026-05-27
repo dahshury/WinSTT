@@ -1,12 +1,10 @@
 import { Form } from "@base-ui/react/form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { components } from "@spec/schema";
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { type FormEvent, useState } from "react";
 import { useTranslations } from "use-intl";
-import { type AddSnippetEntry, addSnippetEntrySchema } from "@/shared/config/settings-schema";
+import { addSnippetEntrySchema } from "@/shared/config/settings-schema";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { FormControl } from "@/shared/ui/form-control";
@@ -31,58 +29,80 @@ export interface SnippetsTableProps {
 	onRemove: (id: string) => void;
 }
 
+interface FieldErrors {
+	expansion?: string;
+	trigger?: string;
+}
+
 export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: SnippetsTableProps) {
 	const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+	const [trigger, setTrigger] = useState("");
+	const [expansion, setExpansion] = useState("");
+	const [errors, setErrors] = useState<FieldErrors>({});
 	const t = useTranslations("snippets");
 	const tc = useTranslations("common");
-	const {
-		register,
-		handleSubmit,
-		reset,
-		watch,
-		formState: { errors },
-	} = useForm<AddSnippetEntry>({
-		resolver: zodResolver(addSnippetEntrySchema),
-		defaultValues: { trigger: "", expansion: "" },
-	});
 
-	const triggerValue = watch("trigger");
-	const expansionValue = watch("expansion");
-
-	const onSubmit = (data: AddSnippetEntry) => {
+	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		const result = addSnippetEntrySchema.safeParse({ trigger, expansion });
+		if (!result.success) {
+			const fieldErrors: FieldErrors = {};
+			for (const issue of result.error.issues) {
+				const key = issue.path[0];
+				if ((key === "trigger" || key === "expansion") && !fieldErrors[key]) {
+					fieldErrors[key] = issue.message;
+				}
+			}
+			setErrors(fieldErrors);
+			return;
+		}
 		// Zod schema applies .trim() during validation, no manual trimming needed
-		onAdd(data);
-		reset();
+		onAdd(result.data);
+		setTrigger("");
+		setExpansion("");
+		setErrors({});
 	};
 
-	const triggerReg = register("trigger");
-	const expansionReg = register("expansion");
-	const isAddDisabled = !(triggerValue?.trim() && expansionValue?.trim());
+	const isAddDisabled = !(trigger.trim() && expansion.trim());
 
 	return (
 		<div className="flex flex-col gap-3">
-			<Form className="flex items-end gap-2" onSubmit={handleSubmit(onSubmit)}>
+			<Form className="flex items-end gap-2" onSubmit={handleSubmit}>
 				<div className="w-1/3">
-					<FormControl error={errors.trigger?.message} label={t("trigger")}>
+					<FormControl error={errors.trigger} label={t("trigger")}>
 						<TextField
 							error={!!errors.trigger}
-							name={triggerReg.name}
-							onBlur={triggerReg.onBlur}
-							onChange={triggerReg.onChange}
+							name="trigger"
+							onChange={(event) => {
+								setTrigger(event.target.value);
+								if (errors.trigger) {
+									setErrors((prev) => {
+										const { trigger: _trigger, ...rest } = prev;
+										return rest;
+									});
+								}
+							}}
 							placeholder={t("triggerPlaceholder")}
-							ref={triggerReg.ref}
+							value={trigger}
 						/>
 					</FormControl>
 				</div>
 				<div className="flex-1">
-					<FormControl error={errors.expansion?.message} label={t("expansion")}>
+					<FormControl error={errors.expansion} label={t("expansion")}>
 						<TextField
 							error={!!errors.expansion}
-							name={expansionReg.name}
-							onBlur={expansionReg.onBlur}
-							onChange={expansionReg.onChange}
+							name="expansion"
+							onChange={(event) => {
+								setExpansion(event.target.value);
+								if (errors.expansion) {
+									setErrors((prev) => {
+										const { expansion: _expansion, ...rest } = prev;
+										return rest;
+									});
+								}
+							}}
 							placeholder={t("expansionPlaceholder")}
-							ref={expansionReg.ref}
+							value={expansion}
 						/>
 					</FormControl>
 				</div>

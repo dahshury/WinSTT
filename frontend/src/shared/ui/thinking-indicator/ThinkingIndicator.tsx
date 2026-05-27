@@ -1,5 +1,5 @@
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
-import { type ComponentPropsWithoutRef, useEffect, useRef, useState } from "react";
+import { type ComponentPropsWithoutRef, useEffect, useReducer, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 
 const CIRCLE_A =
@@ -231,7 +231,7 @@ function tailOf(text: string, max: number): string {
 	return text.slice(-max);
 }
 
-export interface ThinkingIndicatorProps extends ComponentPropsWithoutRef<"div"> {
+export interface ThinkingIndicatorProps extends ComponentPropsWithoutRef<"output"> {
 	/**
 	 * Live-streamed reasoning text from the model's `message.thinking`
 	 * channel. Empty for non-reasoning models — the band collapses to
@@ -294,17 +294,40 @@ export function ThinkingIndicator({
 	}, [words]);
 
 	// Tick the elapsed-time display ~10 Hz so the counter feels live
-	// without churning React too aggressively. Pinned to a ref-driven
-	// state so we don't re-mount the parent on every tick.
-	const [now, setNow] = useState<number>(() => Date.now());
+	// without churning React too aggressively.
+	//
+	// `trackedStart` + `now` live in one reducer so a new pass (startedAt
+	// changes) resets both in a single dispatch — no cascading setState
+	// inside the effect, and no setState-in-effect just to mirror the prop.
+	// `setStart` dispatches during render (React-documented "store info
+	// from previous renders") to capture the prop change without a useEffect.
+	const [timer, dispatchTimer] = useReducer(
+		(
+			s: { now: number; trackedStart: number | null },
+			a: { type: "tick"; now: number } | { type: "sync"; start: number | null }
+		): { now: number; trackedStart: number | null } => {
+			if (a.type === "sync") {
+				if (a.start === s.trackedStart) {
+					return s;
+				}
+				return { trackedStart: a.start, now: a.start ?? Date.now() };
+			}
+			return s.now === a.now ? s : { ...s, now: a.now };
+		},
+		startedAt,
+		(start: number | null) => ({ now: start ?? Date.now(), trackedStart: start })
+	);
+	if (timer.trackedStart !== startedAt) {
+		dispatchTimer({ type: "sync", start: startedAt });
+	}
 	useEffect(() => {
 		if (startedAt === null) {
 			return;
 		}
-		setNow(Date.now());
-		const id = setInterval(() => setNow(Date.now()), 100);
+		const id = setInterval(() => dispatchTimer({ type: "tick", now: Date.now() }), 100);
 		return () => clearInterval(id);
 	}, [startedAt]);
+	const now = timer.now;
 
 	const current = words[index] ?? "";
 	const widestWord = longestWord(words);
@@ -327,10 +350,9 @@ export function ThinkingIndicator({
 
 	return (
 		<LazyMotion features={domAnimation} strict>
-			<div
+			<output
 				aria-live="polite"
 				className={cn("inline-flex flex-col items-stretch gap-1.5 px-3 py-1.5", className)}
-				role="status"
 				{...rest}
 			>
 				{/* HEADLINE REGISTER — unchanged from the original indicator.
@@ -434,7 +456,7 @@ export function ThinkingIndicator({
 								ref={scrollRef}
 								style={{
 									fontFamily: MONO_STACK,
-									fontSize: "10.5px",
+									fontSize: "12px",
 									letterSpacing: "-0.005em",
 									lineHeight: 1.45,
 									WebkitMaskImage:
@@ -465,7 +487,7 @@ export function ThinkingIndicator({
 						</m.div>
 					)}
 				</AnimatePresence>
-			</div>
+			</output>
 		</LazyMotion>
 	);
 }

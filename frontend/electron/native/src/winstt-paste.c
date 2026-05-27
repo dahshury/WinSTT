@@ -3,11 +3,17 @@
  *
  * Modes:
  *   (default)    SendInput Ctrl+V (or Ctrl+Shift+V in terminals) — pastes
- *                whatever is currently on the system clipboard.
+ *                whatever is currently on the system clipboard. This is the
+ *                PRIMARY path WinSTT uses to deliver transcripts: the parent
+ *                process snapshots the clipboard, writes the transcript,
+ *                spawns this binary (no args), then restores the snapshot.
+ *                One synthetic keystroke = one atomic paste in the target.
  *   --type       Read UTF-8 from stdin and inject each UTF-16 code unit via
  *                SendInput KEYEVENTF_UNICODE. The clipboard is never touched.
- *                This is the default path WinSTT uses to deliver transcripts
- *                so the user's clipboard stays intact.
+ *                Used by the parent as the FALLBACK path when Ctrl+V fails
+ *                (e.g. Vim normal mode, some IMEs, DirectInput games).
+ *                Per-char so visibly progressive — kept as a covering
+ *                fallback rather than the default.
  *   --copy       SendInput Ctrl+C (or Ctrl+Shift+C in terminals) — used by
  *                the selection-capture trick when UIA can't read the focused
  *                control.
@@ -18,16 +24,6 @@
  *  - Each fresh `.ps1` written to %TEMP% is re-scanned by AV.
  *  - SendInput from `winstt-paste.exe` doesn't trip AV's
  *    "paste-from-script" heuristic the same way as PowerShell does.
- *
- * Why KEYEVENTF_UNICODE for the typing mode:
- *  - Lets us deliver the transcript without writing to the clipboard. Each
- *    UTF-16 code unit becomes one keydown+keyup with `wVk=0, wScan=unit,
- *    dwFlags=KEYEVENTF_UNICODE`. Surrogate pairs are sent as two consecutive
- *    units in the same SendInput call so Windows recombines them.
- *  - Works in nearly every GUI app (browsers, Electron, chat apps, IDEs).
- *  - Known limits: a few games and remote-desktop sessions ignore
- *    KEYEVENTF_UNICODE; for those the parent process falls back to clipboard
- *    + Ctrl+V (with restore).
  *
  * Why SendInput Ctrl+V (and not WM_PASTE) in the clipboard-paste mode:
  *  - Modern Electron / browser / chat apps (Cursor, VS Code, Slack,
@@ -40,17 +36,26 @@
  *    keyboard hook stalls the input queue; we mitigate at the
  *    JS-side layer with a circuit-breaker cooldown after a timeout.
  *
- * Why only ONE paste shape (Ctrl+V via VK), not a user-selectable enum:
+ * Why KEYEVENTF_UNICODE for the typing fallback:
+ *  - Covers targets that don't bind Ctrl+V to paste (Vim/Neovim normal
+ *    mode, some IMEs). Each UTF-16 code unit becomes one keydown+keyup
+ *    with `wVk=0, wScan=unit, dwFlags=KEYEVENTF_UNICODE`. Surrogate pairs
+ *    are sent as two consecutive units in the same SendInput call so
+ *    Windows recombines them.
+ *  - Known limits: a few games and remote-desktop sessions ignore
+ *    KEYEVENTF_UNICODE; if both primary and fallback fail, the parent
+ *    trips a cooldown and drops the paste silently.
+ *
+ * Why only TWO modes, not a user-selectable PasteMethod enum:
  *  - Reference projects (e.g. Handy/Tauri) ship a `PasteMethod` enum
  *    with six choices (None / Direct / CtrlV / CtrlShiftV / ShiftInsert
  *    / ExternalScript). We deliberately don't. The clipboard-paste mode
  *    auto-picks Ctrl+Shift+V for the small set of terminal hosts that
  *    require it (see TERMINAL_CLASSES / TERMINAL_EXES below); the
- *    universal-typing mode (`--type`) covers every other dictation
- *    target. Exposing more knobs to the user shifts a tuning problem
- *    onto them with no upside. If a future target genuinely needs
- *    ShiftInsert, add it to the terminal-detection branch — don't
- *    surface a method picker.
+ *    --type fallback covers anything that ignores Ctrl+V. Exposing more
+ *    knobs to the user shifts a tuning problem onto them with no upside.
+ *    If a future target genuinely needs ShiftInsert, add it to the
+ *    terminal-detection branch — don't surface a method picker.
  *
  * Build: cl /O2 winstt-paste.c /Fe:winstt-paste.exe user32.lib
  *  - or: gcc -O2 winstt-paste.c -o winstt-paste.exe -luser32

@@ -1,7 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render, screen } from "@testing-library/react";
-import { ActiveFiltersBar, getVariantLabel, hasActiveFilters } from "./ActiveFiltersBar";
+import { ActiveFiltersBar } from "./ActiveFiltersBar";
+import { getVariantLabel, hasActiveFilters } from "./active-filters-bar-helpers";
 
 function renderBar(props: Partial<Parameters<typeof ActiveFiltersBar>[0]>) {
 	const onMakerToggle = mock(() => undefined);

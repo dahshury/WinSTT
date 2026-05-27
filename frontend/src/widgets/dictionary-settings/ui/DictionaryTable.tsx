@@ -1,15 +1,9 @@
 import { Form } from "@base-ui/react/form";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { type FormEvent, useState } from "react";
 import { useTranslations } from "use-intl";
-import {
-	type AddDictionaryEntry,
-	addDictionaryEntrySchema,
-	type DictionaryEntry,
-} from "@/shared/config/settings-schema";
+import { addDictionaryEntrySchema, type DictionaryEntry } from "@/shared/config/settings-schema";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { FormControl } from "@/shared/ui/form-control";
@@ -34,41 +28,41 @@ export interface DictionaryTableProps {
 
 export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: DictionaryTableProps) {
 	const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+	const [term, setTerm] = useState("");
+	const [termError, setTermError] = useState<string | undefined>(undefined);
 	const t = useTranslations("dictionary");
 	const tc = useTranslations("common");
-	const {
-		register,
-		handleSubmit,
-		reset,
-		watch,
-		formState: { errors },
-	} = useForm<AddDictionaryEntry>({
-		resolver: zodResolver(addDictionaryEntrySchema),
-		defaultValues: { term: "" },
-	});
 
-	const termValue = watch("term");
-
-	const onSubmit = (data: AddDictionaryEntry) => {
-		onAdd({ term: data.term.trim() });
-		reset();
+	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		const result = addDictionaryEntrySchema.safeParse({ term });
+		if (!result.success) {
+			setTermError(result.error.issues[0]?.message ?? "Required");
+			return;
+		}
+		onAdd({ term: result.data.term });
+		setTerm("");
+		setTermError(undefined);
 	};
 
-	const termReg = register("term");
-	const isAddDisabled = !termValue?.trim();
+	const isAddDisabled = !term.trim();
 
 	return (
 		<div className="flex flex-col gap-3">
-			<Form className="flex items-end gap-2" onSubmit={handleSubmit(onSubmit)}>
+			<Form className="flex items-end gap-2" onSubmit={handleSubmit}>
 				<div className="flex-1">
-					<FormControl error={errors.term?.message} label={t("term")}>
+					<FormControl error={termError} label={t("term")}>
 						<TextField
-							error={!!errors.term}
-							name={termReg.name}
-							onBlur={termReg.onBlur}
-							onChange={termReg.onChange}
+							error={!!termError}
+							name="term"
+							onChange={(event) => {
+								setTerm(event.target.value);
+								if (termError) {
+									setTermError(undefined);
+								}
+							}}
 							placeholder={t("termPlaceholder")}
-							ref={termReg.ref}
+							value={term}
 						/>
 					</FormControl>
 				</div>

@@ -145,6 +145,10 @@ export function SubtitleOverlay() {
 	// Two trigger sources:
 	//   1. A 250ms interval while there is content to fade (items / ephemeral).
 	//      No interval when there's nothing on screen — saves a 4Hz wakeup.
+	//      The interval ALSO double-duties as the fully-faded-ephemeral
+	//      eviction trigger: when it ticks, it recomputes ephemeral opacity
+	//      inline and calls `clearEphemeral()` if the entry has fully faded,
+	//      so there's no separate "watcher" effect that mirrors derived state.
 	//   2. `visibilitychange` -> visible. Chromium throttles setInterval to
 	//      ~1/minute when the renderer is backgrounded, so a window that's
 	//      been hidden a while paints the previous `now` from when the timer
@@ -159,9 +163,27 @@ export function SubtitleOverlay() {
 		if (!hasFadingContent) {
 			return;
 		}
-		const id = setInterval(() => setNow(Date.now()), 250);
+		const id = setInterval(() => {
+			const tickNow = Date.now();
+			setNow(tickNow);
+			// Read the live ephemeral straight from the store so the eviction
+			// decision uses the latest value — closing over the render-time
+			// `ephemeral` would lag a tick behind cross-window updates.
+			const liveEphemeral = useTranscriptionStore.getState().ephemeral;
+			if (liveEphemeral) {
+				const op = fadeBetween(
+					liveEphemeral.timestamp,
+					tickNow,
+					EPHEMERAL_FADE_AFTER_MS,
+					EPHEMERAL_GONE_AFTER_MS
+				);
+				if (op <= 0) {
+					clearEphemeral();
+				}
+			}
+		}, 250);
 		return () => clearInterval(id);
-	}, [hasFadingContent]);
+	}, [hasFadingContent, clearEphemeral]);
 	useEffect(() => {
 		const onVisible = () => {
 			if (document.visibilityState === "visible") {
@@ -175,13 +197,6 @@ export function SubtitleOverlay() {
 	const ephemeralOpacity = ephemeral
 		? fadeBetween(ephemeral.timestamp, now, EPHEMERAL_FADE_AFTER_MS, EPHEMERAL_GONE_AFTER_MS)
 		: 0;
-
-	// Drop ephemeral from store once fully faded so it doesn't re-show on remount.
-	useEffect(() => {
-		if (ephemeral && ephemeralOpacity <= 0) {
-			clearEphemeral();
-		}
-	}, [ephemeral, ephemeralOpacity, clearEphemeral]);
 
 	// Auto-scroll to bottom in listen mode when content changes.
 	// items.length and liveText are intentional triggers (not used in the body).

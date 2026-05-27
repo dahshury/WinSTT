@@ -1,5 +1,5 @@
 import { cva } from "class-variance-authority";
-import { type ComponentProps, useEffect, useRef } from "react";
+import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { VisualizerSize } from "../lib/audio-visualizer";
 import { DEFAULT_VISUALIZER_COLOR as DEFAULT_COLOR, hexToRgb } from "../lib/hex-to-rgb";
@@ -154,6 +154,11 @@ export function AudioVisualizerWave({
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
 	useWaveAnimator(state, uniformsRef);
 
+	// Stable thunk that reads the live uniforms ref each frame — passed to
+	// ReactShaderToy as a function so we never read `uniformsRef.current` during
+	// render (the engine calls the thunk inside its rAF loop instead).
+	const [getUniforms] = useState(() => () => uniformsRef.current);
+
 	return (
 		<div
 			className={cn(
@@ -170,8 +175,7 @@ export function AudioVisualizerWave({
 				onError={(error) => console.error("Shader error:", error)}
 				onWarning={(warning) => console.warn("Shader warning:", warning)}
 				style={{ width: "100%", height: "100%" }}
-				// react-doctor-disable-next-line react-hooks-js/refs -- intentional: ReactShaderToy reads this mutable container on each frame
-				uniforms={uniformsRef.current}
+				uniforms={getUniforms}
 			/>
 		</div>
 	);

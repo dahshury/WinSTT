@@ -1109,62 +1109,59 @@ class OnnxAsrTranscriber(ITranscriber):
             logger.exception("Failed to clear Whisper initial-prompt attribute")
 
     def _install_initial_prompt_text(self, text: str) -> bool:
-        """Push a free-form prior-text prompt onto whichever engine is live.
+        """Push a free-form prior-text prompt onto the engine, if supported.
 
-        Dispatches by engine class:
-          * ``WhisperHf`` → byte-BPE encode + ``<|startofprev|>`` prefix
-            (``onnx_decoder_patches.encode_whisper_prompt``).
-          * ``NemoConformerAED`` → SentencePiece encode, spliced between
-            ``<|startofcontext|>`` and ``<|startoftranscript|>`` by the
-            patched ``_canary_aed_decoding`` (the slot Canary's training
-            recipe documents as the prior-context anchor).
-          * ``CohereAsr`` → same mechanism as Canary; same SOC/SOT slot.
+        Currently dispatches ONLY to ``WhisperHf`` via the classic
+        ``<|startofprev|>`` mechanism (encode via byte-BPE, prepend to
+        the decoder input).
+
+        Canary AED and Cohere are deliberately NOT wired here even
+        though their vocabularies expose a ``<|startofcontext|>`` slot.
+        Benchmarking against the released checkpoints (NeMo
+        Canary-180M-flash, Canary-1B-v2, Cohere-transcribe q4) showed
+        the slot is reserved-but-untrained: filling it either
+          * Canary 180M: causes the decoder to emit EOS on the first
+            generation step → empty transcript (hard regression);
+          * Canary 1B: is silently ignored (byte-identical output);
+          * Cohere: truncates ("Now, I want to.") or hallucinates novel
+            content unrelated to the audio for ANY sentence-shaped
+            prompt; single-word prompts are ignored.
+
+        The slot was added to the vocab for a future context-conditioned
+        training run that hasn't shipped; until NeMo / Cohere release a
+        checkpoint with active context-slot training, attempting to use
+        it is a transcription regression risk. The
+        ``_canary_aed_decoding_patched`` / ``_cohere_decoding_patched``
+        patches in :mod:`onnx_decoder_patches` still respect
+        ``_winstt_initial_prompt_ids`` if anything sets it (e.g. a
+        future revival via direct attribute write or by re-enabling
+        the dispatcher branches), but no production codepath does. See
+        ``memory/project_canary_cohere_prompt_slot_untrained.md`` for
+        the per-prompt-shape failure data.
 
         Returns ``True`` when the prompt was installed; the caller must
         then invoke :meth:`_uninstall_initial_prompt_text` in a finally.
-        Returns ``False`` for non-supported engines (Moonshine, Sense
-        Voice, CTC/RNN-T families) and for empty text.
+        Returns ``False`` for non-supported engines (Canary, Cohere,
+        Moonshine, SenseVoice, CTC/RNN-T families) and for empty text.
         """
         stripped = text.strip() if isinstance(text, str) else ""
         if not stripped:
             return False
         # Whisper path — reuses the existing ``<|startofprev|>`` helper.
         whisper = self._resolve_whisper_engine()
-        if whisper is not None:
-            tokens_dict = getattr(whisper, "_tokens", None)
-            if isinstance(tokens_dict, dict):
-                sop = tokens_dict.get("<|startofprev|>")
-                if sop is None:
-                    return False
-                encoded = onnx_decoder_patches.encode_whisper_prompt(stripped, tokens_dict)
-                if not encoded:
-                    return False
-                whisper._winstt_initial_prompt_ids = [int(sop), *encoded]
-                return True
+        if whisper is None:
             return False
-        # Canary AED path.
-        canary = self._resolve_canary_aed_engine()
-        if canary is not None:
-            tokens_dict = getattr(canary, "_tokens", None)
-            if not isinstance(tokens_dict, dict):
-                return False
-            prompt_ids = onnx_decoder_patches.canary_initial_prompt_tokens(stripped, tokens_dict)
-            if not prompt_ids:
-                return False
-            canary._winstt_initial_prompt_ids = prompt_ids
-            return True
-        # Cohere path.
-        cohere = self._resolve_cohere_engine()
-        if cohere is not None:
-            tokens_dict = getattr(cohere, "_token_to_id", None)
-            if not isinstance(tokens_dict, dict):
-                return False
-            prompt_ids = onnx_decoder_patches.canary_initial_prompt_tokens(stripped, tokens_dict)
-            if not prompt_ids:
-                return False
-            cohere._winstt_initial_prompt_ids = prompt_ids
-            return True
-        return False
+        tokens_dict = getattr(whisper, "_tokens", None)
+        if not isinstance(tokens_dict, dict):
+            return False
+        sop = tokens_dict.get("<|startofprev|>")
+        if sop is None:
+            return False
+        encoded = onnx_decoder_patches.encode_whisper_prompt(stripped, tokens_dict)
+        if not encoded:
+            return False
+        whisper._winstt_initial_prompt_ids = [int(sop), *encoded]
+        return True
 
     def _uninstall_initial_prompt_text(self) -> None:
         """Clear ``_winstt_initial_prompt_ids`` on whichever engine is live.

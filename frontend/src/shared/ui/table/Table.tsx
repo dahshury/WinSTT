@@ -8,6 +8,7 @@ import {
 	use,
 	useEffect,
 	useRef,
+	useState,
 } from "react";
 import { cn } from "@/shared/lib/cn";
 import { fontWeights } from "@/shared/lib/font-weight";
@@ -28,25 +29,38 @@ export interface TableProps extends ComponentPropsWithoutRef<"table"> {
 
 export function Table({ children, className, containerClassName, ref, ...props }: TableProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
-	const { activeIndex, handlers, itemRects, registerItem, sessionRef, measureItems } =
-		useProximityHover(containerRef as RefObject<HTMLElement | null>);
+	const { activeIndex, handlers, itemRects, registerItem, measureItems } = useProximityHover(
+		containerRef as RefObject<HTMLElement | null>
+	);
 
-	// Re-measure when children identity changes (rows added/removed). measureItems
-	// is freshly created on every useProximityHover render but reads from stable
-	// refs, so re-invocation is safe.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional re-measure on children change
+	// Re-measure on children identity change (rows added/removed). `measureItems`
+	// is exposed as a stable function reference by `useProximityHover` (pinned
+	// once via useRef inside the hook), so including it in deps is cheap and
+	// won't thrash the effect.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `children` is the trigger we want — biome only sees it as unused because the body calls measureItems(), not children directly
 	useEffect(() => {
 		measureItems();
-	}, [children]);
+	}, [children, measureItems]);
+
+	// `session` is bumped each time the cursor re-enters the container so the
+	// hover backdrop gets a fresh AnimatePresence key (preventing it from
+	// tweening across an unrelated re-entry). Kept as state — not a ref — so
+	// the JSX can read it during render without tripping the refs rule.
+	const [session, setSession] = useState(0);
 
 	const activeRect = activeIndex === null ? null : itemRects[activeIndex];
 
+	const contextValue: TableContextValue = { activeIndex, registerItem };
+
 	return (
-		<TableContext.Provider value={{ activeIndex, registerItem }}>
+		<TableContext.Provider value={contextValue}>
 			{/* biome-ignore lint/a11y/noStaticElementInteractions: visual hover wrapper; semantic table is rendered inside */}
 			<div
 				className={cn("relative", containerClassName)}
-				onMouseEnter={handlers.onMouseEnter}
+				onMouseEnter={() => {
+					setSession((prev) => prev + 1);
+					handlers.onMouseEnter();
+				}}
 				onMouseLeave={handlers.onMouseLeave}
 				onMouseMove={handlers.onMouseMove}
 				ref={containerRef}
@@ -71,7 +85,7 @@ export function Table({ children, className, containerClassName, ref, ...props }
 								top: activeRect.top,
 								width: activeRect.width,
 							}}
-							key={sessionRef.current}
+							key={session}
 							transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
 						/>
 					) : null}

@@ -112,6 +112,10 @@ docs/.output/
 
 # Scratch
 frontend/scripts/wip.txt
+frontend/.rd-*.txt
+frontend/.react-doctor-*.txt
+.rd-*.txt
+.claude/scheduled_tasks.lock
 
 # Minisign keys — used to sign release artifacts (see docs/RELEASE_SIGNING.md).
 # Secret keys (.key) MUST NEVER be committed. Public keys (.pub) are safe to

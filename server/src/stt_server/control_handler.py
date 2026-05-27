@@ -9,7 +9,7 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import websockets
 from websockets.asyncio.server import ServerConnection
@@ -19,6 +19,11 @@ from src.building_blocks.terminal import debug_print, format_now_hms_ms
 from src.stt_server.cli import persist_setting
 from src.stt_server.file_transcribe import handle_transcribe_file
 from src.stt_server.state import ServerState
+
+if TYPE_CHECKING:
+    import pyaudio
+
+    from src.recorder.infrastructure.streaming_downloader import StreamingDownloadRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -892,7 +897,7 @@ def _probe_input_device(device_index: int) -> str | None:
 
 
 def _device_can_open(
-    audio: Any,  # noqa: ANN401
+    audio: pyaudio.PyAudio,
     device_index: int,
     *,
     preferred_channels: int,
@@ -1231,6 +1236,202 @@ async def _handle_delete_model_cache(ws: ServerConnection, state: ServerState, d
     cache_message = json.dumps({"type": "model_cache_changed", "model_id": model_id})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
     await ws.send(json.dumps({"status": "success", "message": f"cache deleted: {model_id}", "removed": removed}))
+
+
+def _enqueue_streaming_event(state: ServerState, payload: dict[str, Any]) -> None:
+    """Push a streaming-download event onto the data queue from a worker thread.
+
+    Threading: the streaming downloader runs on a daemon thread, so we
+    can't ``await audio_queue.put()`` directly. ``run_coroutine_threadsafe``
+    schedules the put on the asyncio event loop that owns the queue.
+    Best-effort — if the loop is gone (e.g. shutdown in flight) the
+    exception is logged and the worker thread continues.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        asyncio.run_coroutine_threadsafe(state.audio_queue.put(json.dumps(payload)), loop)
+    except Exception:
+        logger.exception("Failed to enqueue streaming download event: %s", payload.get("type"))
+
+
+def _ensure_streaming_registry(state: ServerState) -> StreamingDownloadRegistry:
+    """Lazily construct + return the per-quant download registry.
+
+    Kept lazy so the import of :mod:`streaming_downloader` only happens
+    for users who actually trigger a download — boot stays fast for the
+    bundled offline base. Registry persists across pauses so the same
+    DownloadController (and its events) survive multiple pause/resume
+    cycles within one session.
+    """
+    from src.recorder.infrastructure.streaming_downloader import StreamingDownloadRegistry
+
+    if state.streaming_downloads is None:
+        state.streaming_downloads = StreamingDownloadRegistry()
+    # ``state.streaming_downloads`` is typed as ``object | None`` on the
+    # dataclass to avoid importing ``StreamingDownloadRegistry`` at
+    # state-module load time (keeps the lazy-import policy intact). The
+    # branch above guarantees the value is the right type.
+    assert isinstance(state.streaming_downloads, StreamingDownloadRegistry)
+    return state.streaming_downloads
+
+
+def _streaming_progress_sink(state: ServerState) -> Callable[[str, str, int, int, float], None]:
+    """Return the per-chunk progress callback wired into the audio queue.
+
+    Mirrors the legacy ``model_download_progress`` payload shape so the
+    renderer's existing listener (electron/ws/contract.ts) accepts it
+    without schema changes. ``quantization`` is an addition that the
+    renderer reads to route the bytes to the correct badge — older
+    clients ignore unknown keys.
+    """
+
+    def _on_progress(model: str, quant: str, downloaded: int, total: int, speed: float) -> None:
+        progress = (downloaded / total) if total > 0 else 0.0
+        _enqueue_streaming_event(
+            state,
+            {
+                "type": "model_download_progress",
+                "model": model,
+                "quantization": quant,
+                "progress": progress,
+                "downloaded_bytes": downloaded,
+                "total_bytes": total,
+                "speed_bps": speed,
+            },
+        )
+
+    return _on_progress
+
+
+def _streaming_completion_sink(state: ServerState) -> Callable[[str, str, str], None]:
+    """Return the per-download completion callback. ``outcome`` is one of
+    ``"completed"`` / ``"paused"`` / ``"cancelled"`` / ``"error"`` — the
+    renderer auto-closes its dialog only on ``"completed"``."""
+
+    def _on_done(model: str, quant: str, outcome: str) -> None:
+        _enqueue_streaming_event(
+            state,
+            {
+                "type": "model_download_complete",
+                "model": model,
+                "quantization": quant,
+                "outcome": outcome,
+                # Legacy field kept for the older renderer listener path.
+                "cancelled": outcome == "cancelled",
+            },
+        )
+        # Tell the picker to refresh per-quant cache dots — completion
+        # may have promoted "partial" → "cached" or wiped a partial on cancel.
+        _enqueue_streaming_event(state, {"type": "model_cache_changed", "model_id": model})
+
+    return _on_done
+
+
+@register_command("predownload_model_quant", pre_ready=True)
+async def _handle_predownload_model_quant(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Kick off a byte-level pause/resume capable download for one (model, quant).
+
+    Distinct from the legacy "swap model" flow which restarts the server
+    with new CLI args and lets ``onnx_asr.load_model()`` download as a
+    side effect of model load. This command downloads into the HF cache
+    WITHOUT changing the currently-loaded model — so the WS connection
+    stays alive and the user can pause / resume / cancel mid-stream.
+
+    Once the download completes, the renderer issues the normal
+    ``set_parameter("model", ...)`` to actually swap — which is a fast
+    no-network restart because the files are already cached.
+    """
+    from src.recorder.domain.model_registry import ModelCatalog
+    from src.recorder.infrastructure.model_cache import resolve_hf_repo
+    from src.recorder.infrastructure.streaming_downloader import start_streaming_download
+
+    model_id = data.get("model_id") or data.get("model")
+    if not isinstance(model_id, str) or not model_id:
+        await ws.send(json.dumps({"status": "error", "message": "missing or invalid 'model_id' field"}))
+        return
+    quantization_raw = data.get("quantization", "")
+    if not isinstance(quantization_raw, str):
+        await ws.send(json.dumps({"status": "error", "message": "invalid 'quantization' field"}))
+        return
+
+    info = ModelCatalog().get(model_id)
+    hf_repo = resolve_hf_repo(info.onnx_model_name if info else None)
+    if info is None or hf_repo is None:
+        await ws.send(json.dumps({"status": "error", "message": f"no HF repo for model '{model_id}'"}))
+        return
+
+    registry = _ensure_streaming_registry(state)
+    _enqueue_streaming_event(
+        state,
+        {"type": "model_download_start", "model": model_id, "quantization": quantization_raw},
+    )
+    controller = start_streaming_download(
+        registry,
+        hf_repo,
+        model_id,
+        quantization_raw,
+        _streaming_progress_sink(state),
+        _streaming_completion_sink(state),
+    )
+    if controller is None:
+        await ws.send(json.dumps({"status": "error", "message": "failed to resolve download metadata"}))
+        return
+    await ws.send(
+        json.dumps(
+            {
+                "status": "success",
+                "message": f"download started: {model_id}@{quantization_raw or 'default'}",
+            }
+        )
+    )
+
+
+@register_command("download_pause", pre_ready=True)
+async def _handle_download_pause(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Pause an in-flight per-quant download. .partial files are preserved
+    on disk and a subsequent ``download_resume`` picks up from the current
+    byte offset via HTTP Range."""
+    model_id = data.get("model_id") or data.get("model")
+    quantization = data.get("quantization", "")
+    if not isinstance(model_id, str) or not isinstance(quantization, str):
+        await ws.send(json.dumps({"status": "error", "message": "invalid pause payload"}))
+        return
+    registry = _ensure_streaming_registry(state)
+    controller = registry.get(model_id, quantization)
+    if controller is None:
+        await ws.send(json.dumps({"status": "error", "message": "no active download for that quant"}))
+        return
+    controller.request_pause()
+    await ws.send(json.dumps({"status": "success", "message": "download paused"}))
+
+
+@register_command("download_resume", pre_ready=True)
+async def _handle_download_resume(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Resume a paused per-quant download. Same dispatch as the predownload
+    handler — start_streaming_download is idempotent for the not-running
+    case and resolves from on-disk .partial offsets."""
+    await _handle_predownload_model_quant(ws, state, data)
+
+
+@register_command("download_cancel_quant", pre_ready=True)
+async def _handle_download_cancel_quant(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Cancel an in-flight per-quant download. The worker thread sees the
+    cancel flag, the inner ``download_with_progress`` primitive unlinks
+    the .partial of the file currently streaming, and the controller's
+    completion event fires with outcome=``"cancelled"``. To also clear
+    previously-completed files, follow with ``delete_model_quantization``."""
+    model_id = data.get("model_id") or data.get("model")
+    quantization = data.get("quantization", "")
+    if not isinstance(model_id, str) or not isinstance(quantization, str):
+        await ws.send(json.dumps({"status": "error", "message": "invalid cancel payload"}))
+        return
+    registry = _ensure_streaming_registry(state)
+    controller = registry.get(model_id, quantization)
+    if controller is None:
+        await ws.send(json.dumps({"status": "error", "message": "no active download for that quant"}))
+        return
+    controller.request_cancel()
+    await ws.send(json.dumps({"status": "success", "message": "download cancel requested"}))
 
 
 @register_command("delete_model_quantization", pre_ready=True)

@@ -175,6 +175,15 @@ function applyTrayImage(): void {
 	if (!model.tray || model.tray.isDestroyed()) {
 		return;
 	}
+	// Only the idle state owns the static PNG. Recording and transcribing are
+	// driven by the recording-indicator's live animation (bars / topology
+	// morph); painting the static "recording" or "transcribing" icons here
+	// would race the indicator and flash a red dot before the bars come up.
+	// The context-menu label still tracks all three states for the right-click
+	// menu — only the icon paint is gated.
+	if (model.state !== "idle") {
+		return;
+	}
 	const theme = getCurrentTrayTheme();
 	const img = loadIcon(model.state, theme);
 	model.tray.setImage(img);
@@ -232,6 +241,16 @@ export function detachTray(): void {
 		model.themeListener();
 		model.themeListener = null;
 	}
+}
+
+/** Re-apply the current state's tray PNG without changing logical state. The
+ *  recording-indicator's topology animation overwrites the tray icon every
+ *  frame while transcribing/thinking; when that animation ends it needs to
+ *  put the theme-appropriate static icon back. This is the public hook for
+ *  doing that — main.ts holds the only reference to the live tray, but the
+ *  indicator imports this when it transitions back to idle. */
+export function reapplyTrayImage(): void {
+	applyTrayImage();
 }
 
 /** Transition the tray into a new state. No-op if the state is unchanged. */

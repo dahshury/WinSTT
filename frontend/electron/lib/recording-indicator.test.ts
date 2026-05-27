@@ -21,7 +21,7 @@ mock.module("electron", () => {
 			lastPngBuffers.push(buf);
 			return {
 				isEmpty: () => false,
-				getSize: () => ({ width: 32, height: 32 }),
+				getSize: () => ({ width: 48, height: 48 }),
 				toPNG: () => buf,
 			};
 		},
@@ -37,10 +37,20 @@ const {
 	onRecordingStart,
 	onRecordingStop,
 	onAudioLevel,
+	onTranscribingStart,
+	onTranscribingStop,
+	onLlmThinkingStart,
+	onLlmThinkingStop,
+	setReapplyTrayImage,
 	cleanupRecordingIndicator,
 	computeAmplified,
 	computeBandValue,
 	renderBarsIcon,
+	renderTopologyIcon,
+	parsePath,
+	lerpPath,
+	easeInOutSine,
+	interpolateTopology,
 	__recording_indicator_test_helpers__: helpers,
 } = await import("./recording-indicator");
 
@@ -127,7 +137,6 @@ describe("recording-indicator public API", () => {
 		);
 		onRecordingStart();
 		expect(() => cleanupRecordingIndicator()).not.toThrow();
-		// After cleanup, audio levels should not throw either.
 		expect(() => onAudioLevel(0.3)).not.toThrow();
 	});
 
@@ -165,14 +174,12 @@ describe("computeAmplified (ported from pill)", () => {
 	});
 
 	test("peak decays from prevPeak when level is below floor", () => {
-		// prev=0.5, decay=0.99 → 0.495; level=0 → max(0.1, 0, 0.495) = 0.495
 		const { peak } = computeAmplified(0, 0.5);
 		expect(peak).toBeCloseTo(0.495, 4);
 	});
 
 	test("amplified is sqrt(level/peak), clamped to [0,1]", () => {
 		const { amplified } = computeAmplified(0.5, 0.5);
-		// level=peak=0.5 → 1.0
 		expect(amplified).toBeCloseTo(1, 6);
 	});
 
@@ -195,7 +202,6 @@ describe("computeAmplified (ported from pill)", () => {
 
 describe("computeBandValue (ported from pill)", () => {
 	test("returns value in [0.05, 1]", () => {
-		// Sweep time, band, amplified across a wide grid.
 		for (let amp = 0; amp <= 1; amp += 0.25) {
 			for (let t = 0; t < 2; t += 0.13) {
 				for (let i = 0; i < 5; i++) {
@@ -212,8 +218,7 @@ describe("computeBandValue (ported from pill)", () => {
 		expect(computeBandValue(2, 5, 1.23, 0)).toBe(0.05);
 	});
 
-	test("amplified=1 with v1+v2+v3=0 (pick any t) stays ≤ 0.8 ish on average", () => {
-		// Sanity: average band value over a band span isn't pegged to 1.
+	test("amplified=1 stays below saturation on average", () => {
 		let sum = 0;
 		const N = 100;
 		for (let i = 0; i < N; i++) {
@@ -228,7 +233,6 @@ describe("computeBandValue (ported from pill)", () => {
 		const v0 = computeBandValue(0, 5, 1.7, 1);
 		const v1 = computeBandValue(1, 5, 1.7, 1);
 		const v2 = computeBandValue(2, 5, 1.7, 1);
-		// At least one pair differs.
 		expect([v0, v1, v2].every((x) => x === v0)).toBe(false);
 	});
 });
@@ -249,7 +253,6 @@ describe("renderBarsIcon", () => {
 		lastPngBuffers.length = 0;
 		renderBarsIcon([0.1, 0.1, 0.1, 0.1, 0.1], TEST_TINT);
 		const png = decodePng(lastPngBuffers[0]!);
-		// Top-left corner is outside any bar geometry.
 		expect(png.data[3]).toBe(0);
 	});
 
@@ -257,7 +260,6 @@ describe("renderBarsIcon", () => {
 		lastPngBuffers.length = 0;
 		renderBarsIcon([1, 1, 1, 1, 1], TEST_TINT);
 		const png = decodePng(lastPngBuffers[0]!);
-		// Center column of the icon should land inside the middle bar.
 		const cx = Math.floor(png.width / 2);
 		const cy = Math.floor(png.height / 2);
 		const idx = (cy * png.width + cx) * 4;
@@ -269,10 +271,8 @@ describe("renderBarsIcon", () => {
 
 	test("higher band value → taller painted region in that bar's column", () => {
 		lastPngBuffers.length = 0;
-		// All bands tiny except the middle bar at full height.
 		renderBarsIcon([0.05, 0.05, 1, 0.05, 0.05], TEST_TINT);
 		const png = decodePng(lastPngBuffers[0]!);
-		// Count opaque pixels in the middle column.
 		const cx = Math.floor(png.width / 2);
 		let tallCount = 0;
 		for (let y = 0; y < png.height; y++) {
@@ -315,8 +315,6 @@ describe("renderBarsIcon", () => {
 	});
 
 	test("alpha at the cap edge is feathered (not a binary 0/255 step)", () => {
-		// Render a tall bar so its rounded caps are well-defined, then scan a
-		// horizontal cap row for a non-{0,255} alpha pixel.
 		lastPngBuffers.length = 0;
 		renderBarsIcon([1, 1, 1, 1, 1], TEST_TINT);
 		const png = decodePng(lastPngBuffers[0]!);
@@ -340,7 +338,6 @@ describe("renderBarsIcon", () => {
 		lastPngBuffers.length = 0;
 		renderBarsIcon([0, -1, Number.NaN, 0, 0], TEST_TINT);
 		const png = decodePng(lastPngBuffers[0]!);
-		// At least some pixel should be opaque (bars never fully vanish).
 		const hasAnyOpaque = png.data.some((_, i) => i % 4 === 3 && (png.data[i] ?? 0) > 0);
 		expect(hasAnyOpaque).toBe(true);
 	});
@@ -395,7 +392,289 @@ describe("recording-indicator helpers", () => {
 
 	test("module constants match pill icon-size geometry", () => {
 		expect(helpers.BAR_COUNT).toBe(5);
-		expect(helpers.TARGET_SIZE).toBe(32);
-		expect(helpers.TICK_MS).toBe(50);
+		expect(helpers.TARGET_SIZE).toBe(48);
+	});
+});
+
+describe("topology path parsing", () => {
+	test("parsePath reads M + 4×C tokens", () => {
+		const p = parsePath(
+			"M 12 8 C 14.21 8 16 9.79 16 12 C 16 14.21 14.21 16 12 16 C 9.79 16 8 14.21 8 12 C 8 9.79 9.79 8 12 8 Z"
+		);
+		expect(p.start).toEqual([12, 8]);
+		expect(p.segments.length).toBe(4);
+		expect(p.segments[0]!.c1).toEqual([14.21, 8]);
+		expect(p.segments[0]!.c2).toEqual([16, 9.79]);
+		expect(p.segments[0]!.end).toEqual([16, 12]);
+	});
+
+	test("parsePath tolerates commas and extra whitespace", () => {
+		const p = parsePath("M 0,0 C 1, 1  2, 2  3,3 Z");
+		expect(p.start).toEqual([0, 0]);
+		expect(p.segments).toHaveLength(1);
+		expect(p.segments[0]!.end).toEqual([3, 3]);
+	});
+
+	test("parsePath rejects unsupported commands", () => {
+		expect(() => parsePath("M 0 0 L 1 1")).toThrow();
+	});
+
+	test("parsePath rejects path without M", () => {
+		expect(() => parsePath("C 1 1 2 2 3 3")).toThrow();
+	});
+
+	test("all three thinking-indicator paths have identical topology", () => {
+		const frames = helpers.TOPOLOGY_KEYFRAMES;
+		expect(frames.length).toBe(5);
+		const segCount = frames[0]!.segments.length;
+		for (const f of frames) {
+			expect(f.segments.length).toBe(segCount);
+		}
+	});
+});
+
+describe("topology interpolation", () => {
+	test("easeInOutSine matches its analytic endpoints and midpoint", () => {
+		expect(easeInOutSine(0)).toBe(0);
+		expect(easeInOutSine(1)).toBeCloseTo(1, 10);
+		expect(easeInOutSine(0.5)).toBeCloseTo(0.5, 10);
+	});
+
+	test("easeInOutSine is monotonic across [0,1]", () => {
+		let prev = -Number.MAX_VALUE;
+		for (let i = 0; i <= 20; i++) {
+			const v = easeInOutSine(i / 20);
+			expect(v).toBeGreaterThanOrEqual(prev);
+			prev = v;
+		}
+	});
+
+	test("easeInOutSine clamps outside [0,1]", () => {
+		expect(easeInOutSine(-1)).toBe(0);
+		expect(easeInOutSine(2)).toBeCloseTo(1, 10);
+	});
+
+	test("lerpPath at t=0 returns the first keyframe", () => {
+		const a = parsePath("M 0 0 C 1 1 2 2 3 3 Z");
+		const b = parsePath("M 10 10 C 11 11 12 12 13 13 Z");
+		const out = lerpPath(a, b, 0);
+		expect(out.start).toEqual([0, 0]);
+		expect(out.segments[0]!.end).toEqual([3, 3]);
+	});
+
+	test("lerpPath at t=1 returns the second keyframe", () => {
+		const a = parsePath("M 0 0 C 1 1 2 2 3 3 Z");
+		const b = parsePath("M 10 10 C 11 11 12 12 13 13 Z");
+		const out = lerpPath(a, b, 1);
+		expect(out.start).toEqual([10, 10]);
+		expect(out.segments[0]!.end).toEqual([13, 13]);
+	});
+
+	test("lerpPath at t=0.5 returns the midpoint", () => {
+		const a = parsePath("M 0 0 C 2 2 4 4 6 6 Z");
+		const b = parsePath("M 10 10 C 12 12 14 14 16 16 Z");
+		const out = lerpPath(a, b, 0.5);
+		expect(out.start).toEqual([5, 5]);
+		expect(out.segments[0]!.c1).toEqual([7, 7]);
+		expect(out.segments[0]!.end).toEqual([11, 11]);
+	});
+
+	test("lerpPath rejects mismatched topologies", () => {
+		const a = parsePath("M 0 0 C 1 1 2 2 3 3 Z");
+		const b = parsePath("M 0 0 C 1 1 2 2 3 3 C 4 4 5 5 6 6 Z");
+		expect(() => lerpPath(a, b, 0.5)).toThrow();
+	});
+
+	test("interpolateTopology at integer-keyframe times returns the keyframes", () => {
+		const k0 = interpolateTopology(0);
+		const k1 = interpolateTopology(0.25);
+		const k2 = interpolateTopology(0.5);
+		const k3 = interpolateTopology(0.75);
+		expect(k0.start).toEqual([12, 8]);
+		expect(k1.start[0]).toBeCloseTo(12, 6);
+		expect(k1.start[1]).toBeCloseTo(12, 6);
+		expect(k2.start[0]).toBeCloseTo(12, 6);
+		expect(k2.start[1]).toBeCloseTo(16, 6);
+		expect(k3.start[0]).toBeCloseTo(12, 6);
+		expect(k3.start[1]).toBeCloseTo(12, 6);
+	});
+
+	test("interpolateTopology(1) wraps back to keyframe 0", () => {
+		const k0 = interpolateTopology(0);
+		const kWrap = interpolateTopology(1);
+		expect(kWrap.start).toEqual(k0.start);
+	});
+
+	test("interpolateTopology between keyframes returns a path with same segment count", () => {
+		const path = interpolateTopology(0.13);
+		expect(path.segments.length).toBe(helpers.TOPOLOGY_KEYFRAMES[0]!.segments.length);
+	});
+
+	test("topology animation duration is 6000 ms", () => {
+		expect(helpers.TOPOLOGY_DURATION_MS).toBe(6000);
+	});
+});
+
+describe("renderTopologyIcon", () => {
+	test("produces a TARGET_SIZE×TARGET_SIZE PNG with painted stroke pixels and transparent corners", () => {
+		lastPngBuffers.length = 0;
+		const path = interpolateTopology(0);
+		const img = renderTopologyIcon(path, [240, 240, 240]);
+		expect(img).toBeDefined();
+		const png = PNG.sync.read(lastPngBuffers[0]!);
+		expect(png.width).toBe(helpers.TARGET_SIZE);
+		expect(png.height).toBe(helpers.TARGET_SIZE);
+		let painted = 0;
+		for (let i = 3; i < png.data.length; i += 4) {
+			if ((png.data[i] ?? 0) > 0) {
+				painted++;
+			}
+		}
+		expect(painted).toBeGreaterThan(0);
+		expect(png.data[3]).toBe(0);
+	});
+
+	test("painted pixels use the requested stroke color", () => {
+		lastPngBuffers.length = 0;
+		const path = interpolateTopology(0);
+		const STROKE: [number, number, number] = [100, 150, 200];
+		renderTopologyIcon(path, STROKE);
+		const png = PNG.sync.read(lastPngBuffers[0]!);
+		// Disc stamping with SRC_OVER blending of constant-color discs always
+		// yields the stroke color verbatim (only alpha varies). Verify on the
+		// first opaque pixel encountered, which is enough to catch color
+		// regressions without coupling to discCoverage's exact alpha curve.
+		let foundMatch = false;
+		for (let i = 0; i < png.data.length; i += 4) {
+			const a = png.data[i + 3] ?? 0;
+			if (a > 0) {
+				expect(png.data[i]).toBe(STROKE[0]);
+				expect(png.data[i + 1]).toBe(STROKE[1]);
+				expect(png.data[i + 2]).toBe(STROKE[2]);
+				foundMatch = true;
+				break;
+			}
+		}
+		expect(foundMatch).toBe(true);
+	});
+
+	test("CIRCLE_A and CIRCLE_B render the same pixels (mirrored direction, same outline)", () => {
+		lastPngBuffers.length = 0;
+		renderTopologyIcon(interpolateTopology(0), [255, 255, 255]);
+		const pngA = PNG.sync.read(lastPngBuffers[0]!);
+		lastPngBuffers.length = 0;
+		renderTopologyIcon(interpolateTopology(0.5), [255, 255, 255]);
+		const pngB = PNG.sync.read(lastPngBuffers[0]!);
+		let diff = 0;
+		for (let i = 3; i < pngA.data.length; i += 4) {
+			const a = pngA.data[i] ?? 0;
+			const b = pngB.data[i] ?? 0;
+			if (Math.abs(a - b) > 8) {
+				diff++;
+			}
+		}
+		expect(diff).toBeLessThan(20);
+	});
+});
+
+describe("indicator state machine", () => {
+	function bootstrap(): void {
+		cleanupRecordingIndicator();
+		const tray = makeTray();
+		const win = makeWin();
+		initRecordingIndicator(
+			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
+			win as unknown as Parameters<typeof initRecordingIndicator>[1],
+			"/fake/icon.png"
+		);
+	}
+
+	test("starts in idle", () => {
+		bootstrap();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+
+	test("recording → thinking → idle progression", () => {
+		bootstrap();
+		onRecordingStart();
+		expect(helpers.getCurrentView()).toBe("recording");
+		onRecordingStop();
+		expect(helpers.getCurrentView()).toBe("idle");
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		onTranscribingStop();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+
+	test("LLM thinking keeps the topology animation alive after transcribing ends", () => {
+		bootstrap();
+		onTranscribingStart();
+		onLlmThinkingStart();
+		onTranscribingStop();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		onLlmThinkingStop();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+
+	test("starting recording while thinking flips to recording view", () => {
+		bootstrap();
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		onRecordingStart();
+		expect(helpers.getCurrentView()).toBe("recording");
+		onRecordingStop();
+		// transcribing flag is still set → returns to thinking
+		expect(helpers.getCurrentView()).toBe("thinking");
+		cleanupRecordingIndicator();
+	});
+
+	test("redundant on*Start calls are no-ops (idempotent)", () => {
+		bootstrap();
+		onTranscribingStart();
+		onTranscribingStart();
+		onLlmThinkingStart();
+		onLlmThinkingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		onTranscribingStop();
+		onLlmThinkingStop();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+
+	test("redundant on*Stop calls before start are no-ops", () => {
+		bootstrap();
+		expect(() => onTranscribingStop()).not.toThrow();
+		expect(() => onLlmThinkingStop()).not.toThrow();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+
+	test("setReapplyTrayImage is called when thinking ends", () => {
+		bootstrap();
+		let called = 0;
+		setReapplyTrayImage(() => {
+			called += 1;
+		});
+		onTranscribingStart();
+		onTranscribingStop();
+		expect(called).toBe(1);
+		setReapplyTrayImage(null);
+		cleanupRecordingIndicator();
+	});
+
+	test("setReapplyTrayImage is NOT called for recording → idle (revertIcons handles it)", () => {
+		bootstrap();
+		let called = 0;
+		setReapplyTrayImage(() => {
+			called += 1;
+		});
+		onRecordingStart();
+		onRecordingStop();
+		expect(called).toBe(0);
+		setReapplyTrayImage(null);
+		cleanupRecordingIndicator();
 	});
 });

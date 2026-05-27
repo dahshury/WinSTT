@@ -2,11 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
-import {
-	ConnectionIndicator,
-	resolveConnectionChip,
-	resolveGpuChipConfig,
-} from "./ConnectionIndicator";
+import { resolveConnectionChip, resolveGpuChipConfig } from "../lib/connection-indicator-helpers";
+import { ConnectionIndicator } from "./ConnectionIndicator";
 
 const initial = useConnectionStore.getState();
 

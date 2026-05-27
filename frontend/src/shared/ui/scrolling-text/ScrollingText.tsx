@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 
 export interface ScrollingTextProps {
@@ -20,17 +20,34 @@ export function ScrollingText({
 	fadeColor = "rgba(8, 8, 12, 0.92)",
 }: ScrollingTextProps) {
 	const viewportRef = useRef<HTMLDivElement>(null);
+	// Overflow is purely a function of the viewport's DOM measurements — it
+	// can't be derived during render (no DOM access), so a ResizeObserver
+	// fires `setIsOverflowing` whenever the viewport (or its children) reflow.
+	// Triggering on observed resize instead of on the `text` prop avoids the
+	// "adjust state on prop change" anti-pattern: the effect listens to the
+	// real signal (layout) rather than guessing from a stand-in prop.
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `text` is the trigger for the re-measure + scroll; the body reads viewportRef instead of text directly.
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const el = viewportRef.current;
-		if (!el) {
+		if (el === null) {
 			return;
 		}
-		setIsOverflowing(el.scrollHeight > el.clientHeight + 1);
-		el.scrollTop = el.scrollHeight;
-	}, [text]);
+		const measure = () => {
+			setIsOverflowing(el.scrollHeight > el.clientHeight + 1);
+			el.scrollTop = el.scrollHeight;
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		// Also watch the inner paragraph — `<p>` height grows with text
+		// content, and ResizeObserver fires only for the boxes it observes.
+		const child = el.firstElementChild;
+		if (child) {
+			observer.observe(child);
+		}
+		return () => observer.disconnect();
+	}, []);
 
 	// Top fade obscures lines scrolling off the top — meant to overlap
 	// outgoing text. Bottom fade sits in `paddingBottom` space *below* the

@@ -65,15 +65,25 @@ const SPRING = "cubic-bezier(0.16, 1, 0.3, 1)";
  * before the tap), so the sidebar would stay collapsed forever and the user
  * would have to guess which icon is which. Detect any coarse pointer and
  * keep the rail open so labels are always readable on tap-driven hardware.
+ *
+ * Initial value comes from the matchMedia probe via lazy initializer so
+ * the very first render already reflects the current device's input mode
+ * — no setState-in-effect mount-time waterfall.
  */
+function probeCoarsePointer(): boolean {
+	if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+		return false;
+	}
+	return window.matchMedia("(any-pointer: coarse)").matches;
+}
+
 function useCoarsePointer(): boolean {
-	const [coarse, setCoarse] = useState(false);
+	const [coarse, setCoarse] = useState(probeCoarsePointer);
 	useEffect(() => {
 		if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
 			return;
 		}
 		const mql = window.matchMedia("(any-pointer: coarse)");
-		setCoarse(mql.matches);
 		const handler = (e: MediaQueryListEvent) => setCoarse(e.matches);
 		mql.addEventListener("change", handler);
 		return () => mql.removeEventListener("change", handler);

@@ -13,6 +13,7 @@ import {
 	type RefObject,
 	useEffect,
 	useRef,
+	useState,
 } from "react";
 
 /** GLSL identifier tokenizer — used to collect every name referenced in a shader source. */
@@ -138,6 +139,14 @@ const insertStringAtIndex = (currentString: string, string: string, index: numbe
 type Uniform = { type: string; value: number[] | number };
 export type Uniforms = Record<string, Uniform>;
 
+/**
+ * `uniforms` accepts either a plain object (snapshot semantics — read each
+ * frame) or a thunk `() => Uniforms | undefined` (live-mutation channel — the
+ * engine calls the thunk each frame, so callers can return a stable ref's
+ * current value without ever reading the ref during render).
+ */
+export type UniformsProp = Uniforms | (() => Uniforms | undefined);
+
 export interface ReactShaderToyProps {
 	animateWhenNotVisible?: boolean;
 	clearColor?: [number, number, number, number];
@@ -148,7 +157,7 @@ export interface ReactShaderToyProps {
 	onWarning?: (warning: string) => void;
 	precision?: "highp" | "lowp" | "mediump";
 	style?: CSSProperties;
-	uniforms?: Uniforms;
+	uniforms?: UniformsProp;
 	vs?: string;
 }
 
@@ -179,7 +188,7 @@ function useShaderToyEngine(
 			| "animateWhenNotVisible"
 		>
 	> & {
-		uniforms: Uniforms | undefined;
+		uniforms: UniformsProp | undefined;
 	}
 ): void {
 	const glRef = useRef<WebGLRenderingContext | null>(null);
@@ -204,7 +213,18 @@ function useShaderToyEngine(
 		[UNIFORM_FRAME]: { type: "int", isNeeded: false, value: 0 },
 		[UNIFORM_DEVICEORIENTATION]: { type: "vec4", isNeeded: false, value: [0, 0, 0, 0] },
 	});
-	const propsUniformsRef = useRef<Uniforms | undefined>(propUniforms);
+	// Normalize the union prop: keep a snapshot OR a thunk. Either way, the
+	// engine reads through `readPropUniforms()` which never reads `.current`
+	// during render.
+	const propsUniformsRef = useRef<Uniforms | undefined>(
+		typeof propUniforms === "function" ? undefined : propUniforms
+	);
+	const getUniformsFnRef = useRef<(() => Uniforms | undefined) | null>(
+		typeof propUniforms === "function" ? propUniforms : null
+	);
+	function readPropUniforms(): Uniforms | undefined {
+		return getUniformsFnRef.current ? getUniformsFnRef.current() : propsUniformsRef.current;
+	}
 
 	const initWebGL = () => {
 		if (!canvasRef.current) {
@@ -295,11 +315,12 @@ function useShaderToyEngine(
 	};
 
 	const processCustomUniforms = () => {
-		if (!propUniforms) {
+		const current = readPropUniforms();
+		if (!current) {
 			return;
 		}
-		for (const name of Object.keys(propUniforms)) {
-			const uniform = propUniforms[name];
+		for (const name of Object.keys(current)) {
+			const uniform = current[name];
 			if (!uniform) {
 				continue;
 			}
@@ -349,7 +370,7 @@ function useShaderToyEngine(
 		}
 		const delta = lastTimeRef.current ? (timestamp - lastTimeRef.current) / 1000 : 0;
 		lastTimeRef.current = timestamp;
-		const pu = propsUniformsRef.current;
+		const pu = readPropUniforms();
 		if (pu) {
 			for (const name of Object.keys(pu)) {
 				const currentUniform = pu[name];
@@ -406,19 +427,43 @@ function useShaderToyEngine(
 	};
 
 	useEffect(() => {
-		propsUniformsRef.current = propUniforms;
+		if (typeof propUniforms === "function") {
+			getUniformsFnRef.current = propUniforms;
+			propsUniformsRef.current = undefined;
+		} else {
+			getUniformsFnRef.current = null;
+			propsUniformsRef.current = propUniforms;
+		}
 	}, [propUniforms]);
 
-	// Sync animateWhenNotVisible prop into the latest-ref consumed by the long-running
-	// rAF loop (drawScene) — drawScene was created during the mount-only init effect
-	// below and cannot be re-created without tearing down the WebGL context.
+	// Mirror animateWhenNotVisible prop into a latest-ref consumed by the
+	// long-running rAF loop (drawScene). Pure prop→ref sync — no side effects
+	// inside the effect body.
 	useEffect(() => {
-		// react-doctor-disable-next-line react-doctor/no-event-handler -- latest-ref pattern for the persistent rAF loop; no parent handler exists
 		animateWhenNotVisibleRef.current = animateWhenNotVisible;
-		if (animateWhenNotVisible) {
-			isVisibleRef.current = true;
-		}
 	}, [animateWhenNotVisible]);
+
+	// Seed isVisibleRef on every toggle: when the prop is true the IO observer
+	// effect short-circuits, so the rAF loop needs an explicit "visible" hint.
+	// Doing the seed here (its own narrow effect) keeps both the prop-sync and
+	// the IO setup effects free of conditional side-effects.
+	useEffect(() => {
+		isVisibleRef.current = animateWhenNotVisible;
+	}, [animateWhenNotVisible]);
+
+	// Pin handlers/setup to stable per-mount references so the deps array can
+	// honestly list everything the effects close over, without re-triggering
+	// the mount-only WebGL bringup on each render.
+	const [pinnedHandlers] = useState(() => ({
+		initWebGL,
+		initBuffers,
+		initShaders,
+		processCustomUniforms,
+		preProcessFragment,
+		drawScene,
+		onResize,
+	}));
+	const [pinnedInitOpts] = useState(() => ({ fs, vs, clearColor }));
 
 	useEffect(() => {
 		if (animateWhenNotVisible || !canvasRef.current) {
@@ -430,7 +475,7 @@ function useShaderToyEngine(
 				for (const entry of entries) {
 					isVisibleRef.current = entry.isIntersecting;
 					if (entry.isIntersecting) {
-						requestAnimationFrame(drawScene);
+						requestAnimationFrame(pinnedHandlers.drawScene);
 					}
 				}
 			},
@@ -438,59 +483,59 @@ function useShaderToyEngine(
 		);
 		observer.observe(canvas);
 		return () => observer.disconnect();
-		// drawScene closes over refs only and is functionally stable; adding it to deps
-		// would loop because it's recreated each render and never compared by identity.
-		// react-doctor-disable-next-line react-doctor/exhaustive-deps
-	}, [animateWhenNotVisible]);
+	}, [animateWhenNotVisible, pinnedHandlers, canvasRef]);
 
 	useEffect(() => {
-		function init() {
-			initWebGL();
-			const gl = glRef.current;
-			if (gl && canvasRef.current) {
-				gl.clearColor(...clearColor);
-				gl.clearDepth(1.0);
-				gl.enable(gl.DEPTH_TEST);
-				gl.depthFunc(gl.LEQUAL);
-				gl.viewport(0, 0, canvasRef.current.width, canvasRef.current.height);
-				canvasRef.current.height = canvasRef.current.clientHeight;
-				canvasRef.current.width = canvasRef.current.clientWidth;
-				processCustomUniforms();
-				initShaders(preProcessFragment(fs || BASIC_FS), vs || BASIC_VS);
-				initBuffers();
-				requestAnimationFrame(drawScene);
-				if (canvasRef.current) {
-					resizeObserverRef.current = new ResizeObserver(onResize);
-					resizeObserverRef.current.observe(canvasRef.current);
-					window.addEventListener("resize", onResize, { passive: true });
-				}
-				onResize();
-			}
+		// Synchronous WebGL init: capture `gl` to a local so the cleanup uses
+		// the captured local instead of `glRef.current` (which would be stale
+		// if the ref had been reassigned between effect and unmount). Only the
+		// per-frame draw loop is deferred to rAF — context creation happens
+		// inline so we can capture cleanly.
+		pinnedHandlers.initWebGL();
+		const gl = glRef.current;
+		const canvasNode = canvasRef.current;
+		const resizeHandler = pinnedHandlers.onResize;
+		let observer: ResizeObserver | null = null;
+		if (gl && canvasNode) {
+			const [r, g, b, a] = pinnedInitOpts.clearColor;
+			gl.clearColor(r, g, b, a);
+			gl.clearDepth(1.0);
+			gl.enable(gl.DEPTH_TEST);
+			gl.depthFunc(gl.LEQUAL);
+			gl.viewport(0, 0, canvasNode.width, canvasNode.height);
+			canvasNode.height = canvasNode.clientHeight;
+			canvasNode.width = canvasNode.clientWidth;
+			pinnedHandlers.processCustomUniforms();
+			pinnedHandlers.initShaders(
+				pinnedHandlers.preProcessFragment(pinnedInitOpts.fs || BASIC_FS),
+				pinnedInitOpts.vs || BASIC_VS
+			);
+			pinnedHandlers.initBuffers();
+			initFrameIdRef.current = requestAnimationFrame(pinnedHandlers.drawScene);
+			observer = new ResizeObserver(resizeHandler);
+			observer.observe(canvasNode);
+			resizeObserverRef.current = observer;
+			window.addEventListener("resize", resizeHandler, { passive: true });
+			resizeHandler();
 		}
 
-		initFrameIdRef.current = requestAnimationFrame(init);
-
+		const capturedShaderProgram = shaderProgramRef.current;
+		const capturedInitFrameId = initFrameIdRef.current;
+		const capturedAnimFrameId = animFrameIdRef.current;
 		return () => {
-			const gl = glRef.current;
 			if (gl) {
 				gl.getExtension("WEBGL_lose_context")?.loseContext();
 				gl.useProgram(null);
-				gl.deleteProgram(shaderProgramRef.current ?? null);
-				shaderProgramRef.current = null;
+				gl.deleteProgram(capturedShaderProgram ?? null);
 			}
-			if (resizeObserverRef.current) {
-				resizeObserverRef.current.disconnect();
-				window.removeEventListener("resize", onResize);
+			if (observer) {
+				observer.disconnect();
+				window.removeEventListener("resize", resizeHandler);
 			}
-			cancelAnimationFrame(initFrameIdRef.current ?? 0);
-			cancelAnimationFrame(animFrameIdRef.current ?? 0);
+			cancelAnimationFrame(capturedInitFrameId ?? 0);
+			cancelAnimationFrame(capturedAnimFrameId ?? 0);
 		};
-		// Mount-only WebGL setup. fs/vs/clearColor/etc. are intentionally read once
-		// at mount; re-running this effect would tear down and rebuild the entire
-		// WebGL context every render. propUniforms is mirrored via a separate effect
-		// (line 408) so live shader updates flow through propsUniformsRef.
-		// react-doctor-disable-next-line react-doctor/exhaustive-deps
-	}, []);
+	}, [pinnedHandlers, pinnedInitOpts, canvasRef]);
 }
 
 export function ReactShaderToy({

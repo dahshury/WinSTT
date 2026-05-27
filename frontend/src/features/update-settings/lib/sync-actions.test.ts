@@ -40,12 +40,18 @@ beforeEach(() => {
 });
 
 describe("AUDIO_PARAM_MAP", () => {
-	test("includes the four canonical audio params", () => {
+	test("includes the canonical audio params plus hot-swap additions", () => {
 		expect(AUDIO_PARAM_MAP).toEqual({
 			sileroSensitivity: "silero_sensitivity",
 			postSpeechSilenceDuration: "post_speech_silence_duration",
 			wakeWordActivationDelay: "wake_word_activation_delay",
 			inputDeviceIndex: "input_device_index",
+			// webrtc + silero-deactivity moved off STARTUP_ONLY_KEYS_LIST —
+			// they're now pushed via set_parameter on every change so the
+			// recorder retunes its VAD (or persists the value) without a
+			// process kill. See sync-actions.ts and recorder/__init__.py.
+			webrtcSensitivity: "webrtc_sensitivity",
+			sileroDeactivityDetection: "silero_deactivity_detection",
 		});
 	});
 });

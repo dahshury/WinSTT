@@ -6,7 +6,7 @@ import {
 	PlayIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type KeyboardEvent, type ReactNode, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { TextField } from "@/shared/ui/text-field";
@@ -217,92 +217,100 @@ export function SoundLibraryRow({
 	const [editing, setEditing] = useState(false);
 	const canRename = !item.isDefault && Boolean(onRename);
 	const canDelete = !item.isDefault && Boolean(onDelete);
+	const radioId = useId();
 
 	return (
-		// biome-ignore lint/a11y/useSemanticElements: row is a custom radio-style picker with nested action buttons; an <input type=radio> doesn't accept the layout
 		<div
-			aria-checked={active}
-			aria-label={item.name}
 			className={cn(
-				"group relative flex items-center gap-3 px-3 py-2.5 transition-colors duration-150",
+				"group relative flex items-center gap-3 transition-colors duration-150",
 				active
 					? "bg-gradient-to-r from-accent/8 via-accent/3 to-transparent"
 					: "hover:bg-surface-3/60"
 			)}
-			onClick={() => onSelect(item)}
-			onKeyDown={(e) => {
-				if (e.key === " " || e.key === "Enter") {
-					e.preventDefault();
-					onSelect(item);
-				}
-			}}
-			role="radio"
-			tabIndex={0}
 		>
-			{active ? (
-				<span
-					aria-hidden="true"
-					className="absolute top-1/2 left-0 h-7 w-[2px] -translate-y-1/2 rounded-r-full bg-accent shadow-[0_0_8px] shadow-accent/60"
-				/>
-			) : null}
-			<RowRadio active={active} />
-			<PlayButton
-				isPlaying={isPlaying}
-				labels={{ play: labels.play, pause: labels.pause }}
-				onClick={() => onTogglePreview(item)}
+			<input
+				aria-label={item.name}
+				checked={active}
+				className="peer sr-only focus-visible:outline-none"
+				id={radioId}
+				name="sound-library-row"
+				onChange={() => onSelect(item)}
+				type="radio"
 			/>
-			<RowMeta
-				active={active}
-				editing={editing}
-				item={item}
-				labels={{ active: labels.active, default: labels.default }}
-				onCommit={(next) => onRename?.(item, next)}
-				onEditingChange={setEditing}
-			/>
-			<div
-				className={cn(
-					"flex shrink-0 items-center gap-0.5 transition-opacity duration-150",
-					active
-						? "opacity-100"
-						: "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
-				)}
+			<label
+				className="absolute inset-0 cursor-pointer rounded-md peer-focus-visible:ring-2 peer-focus-visible:ring-accent"
+				htmlFor={radioId}
 			>
-				{canRename ? (
-					<Tooltip content={renameLabel}>
-						<Button
-							aria-label={renameLabel}
-							className="flex size-7 items-center justify-center rounded-md text-foreground-dim transition-colors duration-150 hover:bg-surface-4 hover:text-foreground"
-							onClick={(e) => {
-								e.stopPropagation();
-								setEditing(true);
-							}}
-						>
-							<HugeiconsIcon icon={PencilEdit01Icon} size={13} />
-						</Button>
-					</Tooltip>
-				) : null}
-				{canDelete ? (
-					<Tooltip content={deleteLabel}>
-						<Button
-							aria-label={deleteLabel}
-							className="flex size-7 items-center justify-center rounded-md text-foreground-dim transition-colors duration-150 hover:bg-error/15 hover:text-error"
-							onClick={(e) => {
-								e.stopPropagation();
-								onDelete?.(item);
-							}}
-						>
-							<HugeiconsIcon icon={Delete02Icon} size={13} />
-						</Button>
-					</Tooltip>
-				) : null}
-				{item.isDefault && active ? (
-					<HugeiconsIcon
+				<span className="sr-only">{item.name}</span>
+			</label>
+			<div className="pointer-events-none relative flex w-full items-center gap-3 px-3 py-2.5">
+				{active ? (
+					<span
 						aria-hidden="true"
-						className="mr-1 text-accent"
-						icon={CheckmarkCircle02Icon}
-						size={14}
+						className="absolute top-1/2 left-0 h-7 w-[2px] -translate-y-1/2 rounded-r-full bg-accent shadow-[0_0_8px] shadow-accent/60"
 					/>
 				) : null}
+				<RowRadio active={active} />
+				<div className="pointer-events-auto">
+					<PlayButton
+						isPlaying={isPlaying}
+						labels={{ play: labels.play, pause: labels.pause }}
+						onClick={() => onTogglePreview(item)}
+					/>
+				</div>
+				<RowMeta
+					active={active}
+					editing={editing}
+					item={item}
+					labels={{ active: labels.active, default: labels.default }}
+					onCommit={(next) => onRename?.(item, next)}
+					onEditingChange={setEditing}
+				/>
+				<div
+					className={cn(
+						"pointer-events-auto flex shrink-0 items-center gap-0.5 transition-opacity duration-150",
+						active
+							? "opacity-100"
+							: "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+					)}
+				>
+					{canRename ? (
+						<Tooltip content={renameLabel}>
+							<Button
+								aria-label={renameLabel}
+								className="flex size-7 items-center justify-center rounded-md text-foreground-dim transition-colors duration-150 hover:bg-surface-4 hover:text-foreground"
+								onClick={(e) => {
+									e.stopPropagation();
+									setEditing(true);
+								}}
+							>
+								<HugeiconsIcon icon={PencilEdit01Icon} size={13} />
+							</Button>
+						</Tooltip>
+					) : null}
+					{canDelete ? (
+						<Tooltip content={deleteLabel}>
+							<Button
+								aria-label={deleteLabel}
+								className="flex size-7 items-center justify-center rounded-md text-foreground-dim transition-colors duration-150 hover:bg-error/15 hover:text-error"
+								onClick={(e) => {
+									e.stopPropagation();
+									onDelete?.(item);
+								}}
+							>
+								<HugeiconsIcon icon={Delete02Icon} size={13} />
+							</Button>
+						</Tooltip>
+					) : null}
+					{item.isDefault && active ? (
+						<HugeiconsIcon
+							aria-hidden="true"
+							className="mr-1 text-accent"
+							icon={CheckmarkCircle02Icon}
+							size={14}
+						/>
+					) : null}
+				</div>
 			</div>
 		</div>
 	);

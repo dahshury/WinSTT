@@ -14,13 +14,22 @@ import {
 	getAuthorLabel,
 	getFamilyConfig,
 } from "../lib/family-helpers";
+import type { QuantDownloadAction, QuantDownloadSnapshot } from "./SttModelCard";
 import { SttVariantBundle } from "./SttVariantBundle";
 
 export interface SttModelListProps {
 	currentQuantization: OnnxQuantization;
 	/** Bundle base ids the user has currently expanded — owned by the selector. */
 	expandedBundles: ReadonlySet<string>;
+	/** Forwarded all the way down to ``PrecisionGroup``. */
+	getDownloadSnapshot?:
+		| ((modelId: string, quantization: OnnxQuantization) => QuantDownloadSnapshot | undefined)
+		| undefined;
 	hasActiveFilters: boolean;
+	/** Forwarded all the way down to ``PrecisionGroup``. */
+	onDownloadAction?:
+		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
+		| undefined;
 	/** Forwarded down to the per-quant trash icon in each ``SttModelCard``. */
 	onRequestDeleteQuant?:
 		| ((
@@ -123,6 +132,8 @@ export function SttModelList({
 	currentQuantization,
 	onSelect,
 	onRequestDeleteQuant,
+	getDownloadSnapshot,
+	onDownloadAction,
 	hasActiveFilters,
 	expandedBundles,
 	onToggleExpanded,
@@ -156,7 +167,9 @@ export function SttModelList({
 									bundle={bundle}
 									currentQuantization={currentQuantization}
 									expanded={expandedBundles.has(bundle.baseId)}
+									getDownloadSnapshot={getDownloadSnapshot}
 									key={bundle.baseId}
+									onDownloadAction={onDownloadAction}
 									onRequestDeleteQuant={onRequestDeleteQuant}
 									onSelect={onSelect}
 									onToggleExpanded={onToggleExpanded}

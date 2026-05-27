@@ -47,8 +47,6 @@ export function ModelListContentVirtualized({
 
 	const virtualItems = buildVirtualItems(groupedModels, expandedModels);
 
-	const onActiveMakerChangeRef = useRef(onActiveMakerChange);
-	onActiveMakerChangeRef.current = onActiveMakerChange;
 	const lastNotifiedMakerRef = useRef<string | null>(null);
 	const handleVirtualScroll = (offset: number) => {
 		lastNotifiedMakerRef.current = applyVirtualScrollMakerUpdate(
@@ -56,7 +54,7 @@ export function ModelListContentVirtualized({
 			virtualItems,
 			offset,
 			lastNotifiedMakerRef.current,
-			onActiveMakerChangeRef.current
+			onActiveMakerChange
 		);
 	};
 

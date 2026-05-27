@@ -86,6 +86,7 @@ import {
 	onTrayIdle,
 	onTrayRecordingStart,
 	onTrayTranscriptionStart,
+	reapplyTrayImage,
 } from "./ipc/tray-state";
 import { setupTts } from "./ipc/tts";
 import { setupTtsHotkey } from "./ipc/tts-hotkey";
@@ -98,7 +99,13 @@ import { registerWindowTelemetry } from "./ipc/window-telemetry";
 import { dbg } from "./lib/debug-log";
 import { verifyDownloadedUpdate } from "./lib/minisign-verify";
 import { shutdownPsHost } from "./lib/ps-host";
-import { cleanupRecordingIndicator, initRecordingIndicator } from "./lib/recording-indicator";
+import {
+	cleanupRecordingIndicator,
+	initRecordingIndicator,
+	onTranscribingStart,
+	onTranscribingStop,
+	setReapplyTrayImage,
+} from "./lib/recording-indicator";
 import { isAllowedRendererUrl, loadRendererPage } from "./lib/renderer-url";
 import { captureMainException, initSentryMain } from "./lib/sentry-main";
 import { cleanupSound, initSound } from "./lib/sound";
@@ -267,10 +274,12 @@ function dispatchTrayStateFromEvent(type: string): void {
 	queueMicrotask(() => {
 		if (type === "transcription_start") {
 			onTrayTranscriptionStart();
+			onTranscribingStart();
 			return;
 		}
 		if (type === "recording_stop" || type === "fullSentence" || type === "no_audio_detected") {
 			onTrayIdle();
+			onTranscribingStop();
 		}
 	});
 }
@@ -907,7 +916,16 @@ if (gotTheLock) {
 			// `general.onboarded` to true on disk; the override only suppresses
 			// the *read* of that flag for this run.
 			const forceOnboarding = process.env.WINSTT_FORCE_ONBOARDING === "1";
-			const isOnboarded = !forceOnboarding && getStoreValue("general.onboarded") === true;
+			// WINSTT_E2E=1 launches a clean Electron user-data dir (Playwright
+			// uses the default `Electron` profile, not the production
+			// `winstt` profile) where `general.onboarded` is undefined →
+			// would otherwise pop the wizard and block all the windows the
+			// e2e tests need (overlay, main, tray-menu). Treat the E2E gate
+			// as implicitly onboarded so tests skip straight to the main
+			// boot path. Never enabled in production.
+			const isE2E = process.env.WINSTT_E2E === "1";
+			const isOnboarded =
+				!forceOnboarding && (isE2E || getStoreValue("general.onboarded") === true);
 			if (forceOnboarding) {
 				phase("WINSTT_FORCE_ONBOARDING=1 — forcing wizard regardless of stored flag");
 			}
@@ -1804,6 +1822,10 @@ function createWindow() {
 	if (iconPath) {
 		initRecordingIndicator(newTray, mainWindow, iconPath);
 	}
+	// Hand the indicator a way to repaint the theme-aware tray PNG when the
+	// thinking topology animation winds down, so the static idle icon isn't
+	// left behind as the last morph frame.
+	setReapplyTrayImage(reapplyTrayImage);
 
 	// Toggle window resizable when recording mode changes to/from listen
 	applyListenModeWindow(mainWindow);
@@ -1865,6 +1887,15 @@ function createWindow() {
 				// (see overlay.ts `applyFocusPassThroughFlags`).
 				isOverlayFocusable: () => boolean;
 				isOverlayAlwaysOnTop: () => boolean;
+				// User-initiated cancel hook. Drives the same `handleAbortOperation`
+				// the overlay X button + hotkey+Backspace combo trigger, so the
+				// Playwright suite can assert (a) sessionAborted flips true,
+				// (b) the overlay window hides, (c) the renderer-state reset
+				// broadcast (STT_SESSION_ABORTED) reaches every window — all
+				// without spinning up the STT server.
+				triggerAbort: () => void;
+				isSessionAborted: () => boolean;
+				clearSessionAborted: () => void;
 			};
 		};
 		// Lazy-import to avoid pulling these into the production bundle
@@ -1872,6 +1903,10 @@ function createWindow() {
 		const { notifyHotkeyPressed, notifyRecordingStop } = require("./lib/recording-state") as {
 			notifyHotkeyPressed: () => void;
 			notifyRecordingStop: () => void;
+		};
+		const abortState = require("./lib/abort-state") as {
+			isSessionAborted: () => boolean;
+			clearSessionAborted: () => void;
 		};
 		e2e.__winsttE2E__ = {
 			showOverlay,
@@ -1885,6 +1920,9 @@ function createWindow() {
 			simulateRecordingStop: () => notifyRecordingStop(),
 			isOverlayFocusable: () => overlayWindow?.isFocusable() ?? true,
 			isOverlayAlwaysOnTop: () => overlayWindow?.isAlwaysOnTop() ?? false,
+			triggerAbort: () => handleAbortOperation(sttClient),
+			isSessionAborted: () => abortState.isSessionAborted(),
+			clearSessionAborted: () => abortState.clearSessionAborted(),
 		};
 	}
 }

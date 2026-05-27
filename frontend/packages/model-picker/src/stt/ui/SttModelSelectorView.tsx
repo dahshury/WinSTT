@@ -8,6 +8,7 @@ import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
 import { ModelPicker } from "../../core/ModelPicker";
 import type { SttFilterState } from "../lib/filter-state";
 import { SttFiltersMenu } from "./SttFiltersMenu";
+import type { QuantDownloadAction, QuantDownloadSnapshot } from "./SttModelCard";
 import { SttModelList } from "./SttModelList";
 import { SttModelSelectorTrigger } from "./SttModelSelectorTrigger";
 
@@ -32,6 +33,12 @@ export interface SttModelSelectorViewProps {
 	isLoading: boolean;
 	kind: "main" | "realtime";
 	menuFilteredModels: readonly ModelInfo[];
+	onDownloadAction?:
+		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
+		| undefined;
+	onDownloadSnapshot?:
+		| ((modelId: string, quantization: OnnxQuantization) => QuantDownloadSnapshot | undefined)
+		| undefined;
 	onFiltersChange: (next: SttFilterState) => void;
 	onRequestDelete?:
 		| ((
@@ -81,6 +88,8 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 		isLoading,
 		kind,
 		menuFilteredModels,
+		onDownloadAction,
+		onDownloadSnapshot,
 		onFiltersChange,
 		onRequestDelete,
 		onToggleExpanded,
@@ -120,7 +129,9 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 				<SttModelList
 					currentQuantization={currentQuantization}
 					expandedBundles={expandedBundles}
+					getDownloadSnapshot={onDownloadSnapshot}
 					hasActiveFilters={filtersActive}
+					onDownloadAction={onDownloadAction}
 					onRequestDeleteQuant={onRequestDelete}
 					onSelect={handleSelect}
 					onToggleExpanded={onToggleExpanded}

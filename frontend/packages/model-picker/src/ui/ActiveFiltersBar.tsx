@@ -3,13 +3,14 @@
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
 import { cn } from "@/shared/lib/cn";
 import { formatMaker } from "../lib/model-selector-utils";
-import { MODEL_VARIANT_INFO, type ModelVariant } from "../lib/model-variant-utils";
+import type { ModelVariant } from "../lib/model-variant-utils";
 import {
 	type FilterableParameter,
 	formatProviderName,
 	PARAMETER_INFO,
 } from "../lib/openrouter-provider-utils";
 import { ActiveFilterBadge } from "./ActiveFilterBadge";
+import { getVariantLabel, hasActiveFilters } from "./active-filters-bar-helpers";
 
 export interface ActiveFiltersBarProps {
 	className?: string;
@@ -26,24 +27,6 @@ export interface ActiveFiltersBarProps {
 
 const FADE_TRANSITION = { duration: 0.15, ease: "easeOut" } as const;
 const FADE_EXIT = { opacity: 0, transition: { duration: 0.3, ease: "easeIn" } } as const;
-
-export function getVariantLabel(variant: ModelVariant | "none"): string {
-	return variant === "none" ? "Standard" : (MODEL_VARIANT_INFO[variant]?.label ?? variant);
-}
-
-export function hasActiveFilters(
-	selectedMakers: string[],
-	selectedVariant: ModelVariant | "none" | null,
-	selectedEndpointProvider: string | null,
-	selectedParameters: FilterableParameter[]
-): boolean {
-	return (
-		selectedMakers.length > 0 ||
-		selectedVariant !== null ||
-		selectedEndpointProvider !== null ||
-		selectedParameters.length > 0
-	);
-}
 
 function AnimatedBadge({ children, id }: { children: React.ReactNode; id: string }) {
 	return (

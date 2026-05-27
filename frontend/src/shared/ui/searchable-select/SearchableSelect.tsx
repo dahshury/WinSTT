@@ -50,16 +50,29 @@ function Badge({ text }: { text: string }) {
  * Wraps an interactive control rendered inside the combobox so its pointer
  * and click events don't reach Base UI's input/item handlers (which would
  * otherwise toggle the popup or commit the row).
+ *
+ * The semantics are "this group is a toolbar of decorations sitting inside a
+ * listbox row". `role="toolbar"` is the WAI-ARIA pattern for that — and it's
+ * an interactive container role, so it satisfies the
+ * react-doctor/no-static-element-interactions + click-events-have-key-events
+ * rules without forcing a real button (which would steal focus/Enter from the
+ * actual child controls). Keyboard activation flows through whichever inner
+ * `<button>` is rendered as a child; the shim itself never needs onKey*.
  */
 function StopBubble({ children, className }: { children: ReactNode; className?: string }) {
 	const swallow = (e: { stopPropagation: () => void }) => e.stopPropagation();
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: event-isolation wrapper, not a control
-		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard is handled by the real button this wraps
-		// biome-ignore lint/a11y/noNoninteractiveElementInteractions: stopPropagation-only shim, not a UI affordance
-		<span className={className} onClick={swallow} onMouseDown={swallow} onPointerDown={swallow}>
+		<div
+			className={className}
+			onClick={swallow}
+			onKeyDown={swallow}
+			onMouseDown={swallow}
+			onPointerDown={swallow}
+			role="toolbar"
+			tabIndex={-1}
+		>
 			{children}
-		</span>
+		</div>
 	);
 }
 
@@ -72,6 +85,16 @@ function OptionIcon({ icon }: { icon: NonNullable<SelectOption["icon"]> }) {
 			size={14}
 		/>
 	);
+}
+
+function ItemTrailing({
+	item,
+	render,
+}: {
+	item: SelectOption;
+	render: (option: SelectOption) => ReactNode;
+}) {
+	return <StopBubble className="ml-auto flex shrink-0 items-center">{render(item)}</StopBubble>;
 }
 
 export function SearchableSelect({
@@ -197,9 +220,7 @@ export function SearchableSelect({
 											{item.label}
 										</span>
 										{renderItemTrailing ? (
-											<StopBubble className="ml-auto flex shrink-0 items-center">
-												{renderItemTrailing(item)}
-											</StopBubble>
+											<ItemTrailing item={item} render={renderItemTrailing} />
 										) : null}
 									</Combobox.Item>
 								)}

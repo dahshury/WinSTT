@@ -64,17 +64,13 @@ export function ProviderIntegrationSection({
 	const t = useTranslations("integrations");
 
 	const [dialogOpen, setDialogOpen] = useState(false);
-	// Local typed value. Mirrors the persisted key on mount and whenever the
-	// store changes externally (e.g. cross-window sync, Remove confirmed).
-	// Stays in lock-step with the persisted value while typing because
-	// handleChange writes through on every keystroke.
-	const [localKey, setLocalKey] = useState(persistedApiKey);
+	// The persisted key is the single source of truth — every keystroke
+	// writes through to the zustand store via `updateIntegrations`, so
+	// reading `persistedApiKey` directly during render is equivalent to a
+	// mirrored local state but without the setState-in-effect waterfall.
+	const localKey = persistedApiKey;
 	const debounceRef = useRef<number | null>(null);
 	const reqIdRef = useRef(0);
-
-	useEffect(() => {
-		setLocalKey(persistedApiKey);
-	}, [persistedApiKey]);
 
 	useEffect(
 		() => () => {
@@ -113,7 +109,7 @@ export function ProviderIntegrationSection({
 			const message = err instanceof Error ? err.message : String(err);
 			// IPC transport failure — same semantics as `code: "network"`:
 			// the key may be valid, we just couldn't reach the provider. The
-			// key is already persisted (handleChange wrote through on
+			// key is already persisted (handleApiKeyType wrote through on
 			// keystroke); just surface the "could not verify" pill.
 			credStore.setStatus(provider, { status: "offline", lastError: message });
 			return;
@@ -146,8 +142,7 @@ export function ProviderIntegrationSection({
 		credStore.setStatus(provider, { status: "invalid", lastError: response.message });
 	};
 
-	const handleChange = (value: string) => {
-		setLocalKey(value);
+	const handleApiKeyType = (value: string) => {
 		// Persist on every keystroke. The verify probe scheduled below only
 		// drives the status pill (and verified/lastVerifiedAt metadata) — it
 		// never gates persistence, so a quick tab switch can't lose the key.
@@ -165,21 +160,19 @@ export function ProviderIntegrationSection({
 		}, VERIFY_DEBOUNCE_MS);
 	};
 
-	const handleRemoveClick = () => {
+	const requestRemoveApiKey = () => {
 		const isActiveCloud = providerOf(activeModel) === provider;
 		if (isActiveCloud) {
 			setDialogOpen(true);
 			return;
 		}
-		setLocalKey("");
 		updateIntegrations({
 			[provider]: { apiKey: "", verified: null, lastVerifiedAt: null },
 		});
 		useCredentialStatusStore.getState().setStatus(provider, { status: "idle" });
 	};
 
-	const handleRemoveConfirm = () => {
-		setLocalKey("");
+	const confirmRemoveApiKey = () => {
 		updateIntegrations({
 			[provider]: { apiKey: "", verified: null, lastVerifiedAt: null },
 		});
@@ -214,7 +207,7 @@ export function ProviderIntegrationSection({
 					<ElevatedSurface inline>
 						<PasswordField
 							hideLabel={tc("hidePassword")}
-							onChange={(e) => handleChange(e.target.value)}
+							onChange={(e) => handleApiKeyType(e.target.value)}
 							placeholder={placeholder}
 							revealLabel={tc("showPassword")}
 							value={localKey}
@@ -224,7 +217,7 @@ export function ProviderIntegrationSection({
 						<div className="flex items-center justify-end gap-2">
 							<button
 								className="rounded border border-border bg-surface-tertiary px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated"
-								onClick={handleRemoveClick}
+								onClick={requestRemoveApiKey}
 								type="button"
 							>
 								{t("removeKey")}
@@ -237,7 +230,7 @@ export function ProviderIntegrationSection({
 				cancelLabel={t("cancel")}
 				confirmLabel={t("remove")}
 				description={t("removeKeyConfirmCloud")}
-				onConfirm={handleRemoveConfirm}
+				onConfirm={confirmRemoveApiKey}
 				onOpenChange={setDialogOpen}
 				open={dialogOpen}
 				title={t("removeKeyTitle", { provider: providerDisplayName(provider) })}

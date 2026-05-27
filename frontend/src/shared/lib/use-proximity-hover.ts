@@ -55,7 +55,12 @@ export function useProximityHover(containerRef: RefObject<HTMLElement | null>): 
 
 	rectsRef.current = itemRects;
 
-	function measureItems() {
+	// `measureItems` is exposed as a *stable* function reference (memoized once
+	// via `useRef` at mount) so consumers can depend on it in `useEffect` deps
+	// without triggering an effect-thrash loop. The stable wrapper reads
+	// `containerRef` and `itemsRef` (both refs, stable) on each invocation —
+	// no captured closure value goes stale.
+	const measureItemsRef = useRef<() => void>(() => {
 		const container = containerRef.current;
 		if (!container) {
 			return;
@@ -66,7 +71,8 @@ export function useProximityHover(containerRef: RefObject<HTMLElement | null>): 
 			next[idx] = rectFromElement(el, containerRect);
 		}
 		setItemRects(next);
-	}
+	});
+	const measureItems = measureItemsRef.current;
 
 	function registerItem(index: number, element: HTMLElement | null) {
 		if (element) {

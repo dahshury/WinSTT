@@ -1,14 +1,12 @@
-import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import type { IconSvgElement } from "@hugeicons/react";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
-import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
-import { fontWeights } from "@/shared/lib/font-weight";
 import { springs } from "@/shared/lib/springs";
 import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
-import { Tooltip } from "@/shared/ui/tooltip";
+import { SwitcherBadge } from "./SwitcherBadge";
+import { SwitcherOptionToggle } from "./SwitcherOptionToggle";
 
 export interface SwitcherOption<T extends string = string> {
 	/** Optional small icon rendered as a corner badge over the option (e.g. a
@@ -60,8 +58,6 @@ function rectFromElement(el: HTMLElement, containerRect: DOMRect): SegmentRect {
 	};
 }
 
-type SwitcherCssVars = CSSProperties & { "--switcher-color"?: string | undefined };
-
 export function Switcher<T extends string = string>({
 	options,
 	value,
@@ -79,15 +75,19 @@ export function Switcher<T extends string = string>({
 
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const itemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+	const observerRef = useRef<ResizeObserver | null>(null);
 	const [rects, setRects] = useState<Record<number, SegmentRect>>({});
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
 
 	const selectedIndex = options.findIndex((o) => o.value === value);
 	const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined;
-	const optionsKey = options.map((o) => o.value).join("|");
 
-	const measure = (): void => {
+	// `measure` is a stable function reference (pinned via useRef once at
+	// mount). It reads `containerRef` and `itemRefs` — both refs, both stable
+	// — on each call, so no captured closure value goes stale even though
+	// it's never re-instantiated.
+	const measureRef = useRef<() => void>(() => {
 		const container = containerRef.current;
 		if (!container) {
 			return;
@@ -98,26 +98,32 @@ export function Switcher<T extends string = string>({
 			next[idx] = rectFromElement(el, containerRect);
 		}
 		setRects(next);
-	};
+	});
+	const measure = measureRef.current;
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when option set changes
-	useLayoutEffect(() => {
-		measure();
-	}, [optionsKey]);
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: re-observe items when option set changes
-	useEffect(() => {
-		const container = containerRef.current;
-		if (!container) {
+	// Callback ref on the container: runs after the DOM node is attached (so
+	// `getBoundingClientRect()` is meaningful) and again with `null` on
+	// unmount. Setting up the ResizeObserver here — instead of in a
+	// `useEffect(…, [optionsKey])` — avoids the no-adjust-state-on-prop-change
+	// pattern: state-driving observations are wired to actual DOM lifecycle,
+	// not to a prop-derived dep list.
+	const setContainerRef = (node: HTMLDivElement | null) => {
+		containerRef.current = node;
+		const existing = observerRef.current;
+		if (existing) {
+			existing.disconnect();
+			observerRef.current = null;
+		}
+		if (!node) {
 			return;
 		}
 		const ro = new ResizeObserver(() => measure());
-		ro.observe(container);
+		observerRef.current = ro;
+		ro.observe(node);
 		for (const el of itemRefs.current.values()) {
 			ro.observe(el);
 		}
-		return () => ro.disconnect();
-	}, [optionsKey]);
+	};
 
 	const selectedRect = selectedIndex >= 0 ? rects[selectedIndex] : undefined;
 	const hoverRect = hoveredIndex === null ? undefined : rects[hoveredIndex];
@@ -127,11 +133,20 @@ export function Switcher<T extends string = string>({
 	const usesColor = selectedOption?.color !== undefined;
 
 	const setItemRef = (index: number) => (node: HTMLButtonElement | null) => {
+		const observer = observerRef.current;
+		const prev = itemRefs.current.get(index);
+		if (prev && prev !== node) {
+			observer?.unobserve(prev);
+		}
 		if (node) {
 			itemRefs.current.set(index, node);
+			observer?.observe(node);
 		} else {
 			itemRefs.current.delete(index);
 		}
+		// Schedule a measurement after layout — the ResizeObserver fires
+		// for size changes, but not for additions/removals alone.
+		queueMicrotask(measure);
 	};
 
 	return (
@@ -144,7 +159,7 @@ export function Switcher<T extends string = string>({
 						onChange(next);
 					}
 				}}
-				ref={containerRef}
+				ref={setContainerRef}
 				value={[value]}
 			>
 				<AnimatePresence>
@@ -213,141 +228,43 @@ export function Switcher<T extends string = string>({
 					) : null}
 				</AnimatePresence>
 
-				{options.map((opt, index) => {
-					const isSelected = opt.value === value;
-					const isHovered = hoveredIndex === index && !opt.disabled;
-					const colored = opt.color !== undefined;
-					const style: SwitcherCssVars | undefined = colored
-						? { "--switcher-color": opt.color }
-						: undefined;
-					const textClass = (() => {
-						if (colored && isSelected) {
-							return "text-surface-1";
-						}
-						if (colored) {
-							return "text-[var(--switcher-color)]";
-						}
-						if (isSelected || isHovered) {
-							return "text-foreground";
-						}
-						// foreground-dim (oklch 38%) is barely legible against
-						// the elevated switcher substrate; -muted (55%) keeps the
-						// unselected options clearly readable while still ranking
-						// visually below the selected/hovered label.
-						return "text-foreground-muted";
-					})();
-					return (
-						<Toggle
-							className={cn(
-								"relative z-raised inline-flex items-center justify-center gap-1.5 bg-transparent px-3 py-1 font-medium text-body-sm outline-none transition-colors focus-visible:outline-none",
-								textClass,
-								opt.disabled && "cursor-not-allowed opacity-40",
-								fullWidth && "flex-1"
-							)}
-							disabled={opt.disabled}
-							key={opt.value}
-							onBlur={(e) => {
-								const nextTarget = e.relatedTarget as Node | null;
-								if (nextTarget && containerRef.current?.contains(nextTarget)) {
-									return;
-								}
-								setFocusedIndex(null);
-								setHoveredIndex((current) => (current === index ? null : current));
-							}}
-							onFocus={(e) => {
+				{options.map((opt, index) => (
+					<SwitcherOptionToggle
+						fullWidth={fullWidth}
+						isHovered={hoveredIndex === index && !opt.disabled}
+						isSelected={opt.value === value}
+						key={opt.value}
+						onBlur={(e) => {
+							const nextTarget = e.relatedTarget as Node | null;
+							if (nextTarget && containerRef.current?.contains(nextTarget)) {
+								return;
+							}
+							setFocusedIndex(null);
+							setHoveredIndex((current) => (current === index ? null : current));
+						}}
+						onFocus={(e) => {
+							setHoveredIndex(index);
+							setFocusedIndex(e.currentTarget.matches(":focus-visible") ? index : null);
+						}}
+						onMouseEnter={() => {
+							if (!opt.disabled) {
 								setHoveredIndex(index);
-								setFocusedIndex(e.currentTarget.matches(":focus-visible") ? index : null);
-							}}
-							onMouseEnter={() => {
-								if (!opt.disabled) {
-									setHoveredIndex(index);
-								}
-							}}
-							onMouseLeave={() => {
-								setHoveredIndex((current) => (current === index ? null : current));
-							}}
-							ref={setItemRef(index)}
-							style={style}
-							value={opt.value}
-						>
-							{opt.icon ? (
-								<HugeiconsIcon aria-hidden="true" className="shrink-0" icon={opt.icon} size={13} />
-							) : null}
-							<span className="inline-grid whitespace-nowrap">
-								<span
-									aria-hidden="true"
-									className="invisible col-start-1 row-start-1"
-									style={{ fontVariationSettings: fontWeights.semibold }}
-								>
-									{opt.label}
-								</span>
-								<span
-									className="col-start-1 row-start-1 transition-[font-variation-settings] duration-100"
-									style={{
-										fontVariationSettings: isSelected ? fontWeights.semibold : fontWeights.normal,
-									}}
-								>
-									{opt.label}
-								</span>
-							</span>
-						</Toggle>
-					);
-				})}
+							}
+						}}
+						onMouseLeave={() => {
+							setHoveredIndex((current) => (current === index ? null : current));
+						}}
+						option={opt}
+						setRef={setItemRef(index)}
+					/>
+				))}
 
 				{options.map((opt, index) => {
-					if (!opt.badgeIcon) {
-						return null;
-					}
 					const rect = rects[index];
-					if (!rect) {
+					if (!(opt.badgeIcon && rect)) {
 						return null;
 					}
-					const interactive = opt.badgeTooltip !== undefined || opt.onBadgeClick !== undefined;
-					const badgeClass = cn(
-						"absolute z-overlay inline-flex size-4 items-center justify-center rounded-full border bg-surface-elevated shadow-sm transition-colors duration-150",
-						interactive
-							? "cursor-pointer border-warning/40 text-warning/80 hover:border-warning hover:bg-warning/10 hover:text-warning"
-							: "pointer-events-none border-border text-foreground-muted"
-					);
-					const badgeStyle = {
-						top: rect.top - 6,
-						left: rect.left + rect.width - 10,
-					};
-					const badgeIcon = (
-						<HugeiconsIcon aria-hidden="true" className="shrink-0" icon={opt.badgeIcon} size={10} />
-					);
-					if (!interactive) {
-						return (
-							<span
-								aria-hidden="true"
-								className={badgeClass}
-								key={`${opt.value}-badge`}
-								style={badgeStyle}
-							>
-								{badgeIcon}
-							</span>
-						);
-					}
-					const badgeButton = (
-						<button
-							aria-label={opt.badgeTooltip ?? opt.label}
-							className={badgeClass}
-							key={`${opt.value}-badge`}
-							onClick={opt.onBadgeClick}
-							style={badgeStyle}
-							type="button"
-						>
-							{badgeIcon}
-						</button>
-					);
-					if (opt.badgeTooltip === undefined) {
-						return badgeButton;
-					}
-					return (
-						<Tooltip content={opt.badgeTooltip} key={`${opt.value}-badge`} side="top">
-							{badgeButton}
-						</Tooltip>
-					);
+					return <SwitcherBadge key={`${opt.value}-badge`} option={opt} rect={rect} />;
 				})}
 			</ToggleGroup>
 		</LazyMotion>

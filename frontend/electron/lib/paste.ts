@@ -10,21 +10,34 @@ import { dbg } from "./debug-log";
  * Paste the transcribed text into the focused window via the bundled
  * `winstt-paste.exe` native helper.
  *
- * Primary path: `--type` mode (per-char SendInput KEYEVENTF_UNICODE). The
- * user's clipboard is NEVER touched in the success path. This is more
- * universal than Ctrl+V because targets that don't bind Ctrl+V to paste
- * (Vim/Neovim normal+insert, certain IMEs, some terminals) still accept
- * raw WM_CHAR. The per-event cost is real but mitigated by the paste-guard
- * short-circuit in both uiohook listeners (`hotkey.ts` + `transform-hotkeys.ts`).
+ * Primary path: clipboard-sandwich + SendInput Ctrl+V (one synthetic
+ * keystroke = one atomic edit in the target app). The whole transcript
+ * appears in a single paste event, which is what every other dictation
+ * app on Windows defaults to (Handy, Whispering, voicetypr, openwhispr)
+ * and what users universally expect from a "paste" action.
+ *   1. snapshot the user's clipboard (text + html + rtf + image)
+ *   2. write the transcript to the clipboard
+ *   3. wait CLIPBOARD_SETTLE_DELAY_MS so the clipboard write fully
+ *      propagates before Ctrl+V races it (matches Handy's 60ms default)
+ *   4. spawn `winstt-paste.exe` (no args) — it sends Ctrl+V (or
+ *      Ctrl+Shift+V if the foreground window is a terminal class)
+ *   5. wait CLIPBOARD_RESTORE_DELAY_MS for the target app to consume
+ *   6. restore the captured clipboard snapshot
  *
- * Layout-independence: when the fallback (or re-paste) path resorts to
- * Ctrl+V, the native helper drives it with `SendInput { wVk = 0x56 }` —
- * the virtual key code for the V key (`VK_V`). Windows resolves VK codes
- * against the foreground thread's keyboard layout, so AZERTY, ЙЦУКЕН,
- * Dvorak, Colemak users get Ctrl+V on whatever physical key produces V
- * for them. The `--type` path doesn't use Ctrl+V at all — it emits raw
- * UTF-16 via `KEYEVENTF_UNICODE`, which is also layout-agnostic. See
- * `electron/native/src/winstt-paste.c::set_key` for the full contract.
+ * Fallback path: `--type` mode (per-char SendInput KEYEVENTF_UNICODE).
+ * Used only when the clipboard path fails — e.g. clipboard.writeText
+ * threw, or Ctrl+V doesn't bind to paste in the target (Vim/Neovim
+ * normal mode, some IMEs, DirectInput games). Per-char typing is visibly
+ * progressive and confuses the user about when the paste is "done", so
+ * we keep it as a covering fallback rather than the default.
+ *
+ * Layout-independence: the native helper drives Ctrl+V with
+ * `SendInput { wVk = 0x56 }` — the virtual key code for the V key
+ * (`VK_V`). Windows resolves VK codes against the foreground thread's
+ * keyboard layout, so AZERTY, ЙЦУКЕН, Dvorak, Colemak users get Ctrl+V
+ * on whatever physical key produces V for them. The `--type` fallback
+ * doesn't use Ctrl+V at all — it emits raw UTF-16 via `KEYEVENTF_UNICODE`,
+ * which is also layout-agnostic. See `electron/native/src/winstt-paste.c::set_key`.
  *
  * Why a compiled C binary instead of PowerShell:
  *   - Cold-start: <50ms vs PowerShell's 2-8s under Defender scanning.
@@ -34,22 +47,12 @@ import { dbg } from "./debug-log";
  *   - The binary handles modifier-release, terminal detection
  *     (Ctrl+Shift+V for terminals), and exits in a known short window.
  *
- * Lifecycle (primary path — clipboard untouched):
- *   1. setPasteGuard(true) — uiohook ignores the synthetic key events
- *      from the binary so they can't be misread as a user releasing
- *      the PTT hotkey.
- *   2. spawn `winstt-paste.exe --type`, write UTF-8 text to its stdin.
- *      The binary types each character via KEYEVENTF_UNICODE.
- *   3. setPasteGuard(false) in finally — guaranteed to lift, otherwise
- *      the hotkey handler stays blocked and the app appears frozen.
- *
- * Fallback (only when `--type` reports failure — e.g. SendInput refused
- * by a DirectInput-only target, RDP session, or sandboxed app):
- *   1. snapshot the user's clipboard (text + html + rtf + image)
- *   2. write the transcript to the clipboard
- *   3. send Ctrl+V via the regular paste binary
- *   4. wait CLIPBOARD_RESTORE_DELAY_MS for the target app to consume
- *   5. restore the captured clipboard snapshot
+ * Guard lifecycle (both paths):
+ *   - setPasteGuard(true) — uiohook ignores synthetic key events from
+ *     the binary so they can't be misread as a user releasing the PTT
+ *     hotkey.
+ *   - setPasteGuard(false) in finally — guaranteed to lift, otherwise
+ *     the hotkey handler stays blocked and the app appears frozen.
  *
  * In cooldown (after both paths fail), pastes are dropped silently — we
  * don't touch the clipboard and don't risk another SendInput stall. The
@@ -97,12 +100,20 @@ const PASTE_COOLDOWN_MS = 30_000;
  */
 const PASTE_MIN_GAP_MS = 350;
 /**
- * After the clipboard fallback's Ctrl+V is dispatched, hold the transcript
- * on the clipboard this long before restoring the user's previous value.
- * Target apps consume Ctrl+V well within this window in practice. If the
- * user copies something fresh during the paste window, that fresh copy
- * gets clobbered by the restore — this is the inherent trade-off of the
- * fallback path, opted into explicitly.
+ * After writing the transcript to the clipboard, wait this long before
+ * dispatching Ctrl+V. Without it, on a small number of targets the
+ * synthetic Ctrl+V arrives before the clipboard write has fully propagated
+ * to the global clipboard manager and the app pastes the user's previous
+ * value (or nothing). 60ms is the same default Handy ships.
+ */
+const CLIPBOARD_SETTLE_DELAY_MS = 60;
+/**
+ * After Ctrl+V is dispatched, hold the transcript on the clipboard this
+ * long before restoring the user's previous value. Target apps consume
+ * Ctrl+V well within this window in practice. If the user copies
+ * something fresh during the paste window, that fresh copy gets
+ * clobbered by the restore — inherent trade-off of any clipboard-paste
+ * dictation tool.
  */
 const CLIPBOARD_RESTORE_DELAY_MS = 120;
 
@@ -450,15 +461,15 @@ async function runPasteOnce(text: string, enqueuedAt: number): Promise<void> {
 }
 
 /**
- * Try the typing path first (no clipboard); fall back to a clipboard-paste
- * with restore only when the typing path failed. The guard wraps both
+ * Try the clipboard + Ctrl+V path first (atomic paste); fall back to the
+ * per-char `--type` path only when Ctrl+V fails. The guard wraps both
  * attempts so uiohook stays muted for the whole synthetic-input window.
  */
 async function spawnPasteWithGuard(binPath: string, text: string, waitedMs: number): Promise<void> {
 	setPasteGuard(true);
 	const t0 = Date.now();
 	try {
-		const result = await tryTypeThenFallback(binPath, text);
+		const result = await tryClipboardThenTyping(binPath, text);
 		handleBinaryResult(result, Date.now() - t0, waitedMs);
 	} finally {
 		// CRITICAL: must always lift the guard. Hold for a tail window so
@@ -474,62 +485,67 @@ async function spawnPasteWithGuard(binPath: string, text: string, waitedMs: numb
 
 /**
  * Format the combined "both paths failed" reason string. Extracted so
- * tryTypeThenFallback can stay CC = 3.
+ * tryClipboardThenTyping can stay CC = 3.
+ *
+ * Order mirrors the dispatch order: clip first (primary), type second
+ * (fallback).
  *
  * CC = 3 (two `??` short-circuits, both feeding the same template).
  */
 export function formatCombinedFailureReason(
-	typeReason: string | undefined,
-	clipReason: string | undefined
+	clipReason: string | undefined,
+	typeReason: string | undefined
 ): string {
-	return `type:${typeReason ?? "unknown"};clip:${clipReason ?? "unknown"}`;
+	return `clip:${clipReason ?? "unknown"};type:${typeReason ?? "unknown"}`;
 }
 
 /**
- * Log the "type failed, trying clipboard" diagnostic. Extracted so the
- * `?? "unknown"` short-circuit doesn't add a branch to `tryTypeThenFallback`.
+ * Log the "clipboard paste failed, trying typing" diagnostic. Extracted so the
+ * `?? "unknown"` short-circuit doesn't add a branch to `tryClipboardThenTyping`.
  *
  * CC = 2.
  */
-export function logTypeFailure(typeReason: string | undefined): void {
-	dbg("paste", `--type failed (${typeReason ?? "unknown"}), trying clipboard fallback`);
+export function logClipFailure(clipReason: string | undefined): void {
+	dbg("paste", `clipboard+Ctrl+V failed (${clipReason ?? "unknown"}), trying --type fallback`);
 }
 
-export async function tryTypeThenFallback(
+export async function tryClipboardThenTyping(
 	binPath: string,
 	text: string
 ): Promise<{ ok: boolean; reason?: string }> {
+	const clipResult = await runClipboardPaste(binPath, text);
+	if (clipResult.ok) {
+		return clipResult;
+	}
+	logClipFailure(clipResult.reason);
 	const typeResult = await runTypeBinary(binPath, text);
 	if (typeResult.ok) {
 		return typeResult;
 	}
-	logTypeFailure(typeResult.reason);
-	const fallbackResult = await runClipboardFallback(binPath, text);
-	if (fallbackResult.ok) {
-		return fallbackResult;
-	}
 	return {
 		ok: false,
-		reason: formatCombinedFailureReason(typeResult.reason, fallbackResult.reason),
+		reason: formatCombinedFailureReason(clipResult.reason, typeResult.reason),
 	};
 }
 
 /**
- * Last-resort path: snapshot the user's clipboard (text + html + rtf + image),
- * drop the transcript on it, send Ctrl+V via the binary, restore the captured
- * snapshot. The restore runs in `finally` so a binary timeout / non-zero exit
- * can't leave the user's clipboard polluted.
+ * Primary path: snapshot the user's clipboard (text + html + rtf + image),
+ * drop the transcript on it, wait CLIPBOARD_SETTLE_DELAY_MS so the write
+ * propagates, send Ctrl+V via the binary, restore the captured snapshot.
+ * The restore runs in `finally` so a binary timeout / non-zero exit can't
+ * leave the user's clipboard polluted.
  */
-export async function runClipboardFallback(
+export async function runClipboardPaste(
 	binPath: string,
 	text: string
 ): Promise<{ ok: boolean; reason?: string }> {
 	const snapshot = captureClipboardSnapshot();
 	if (!writeClipboard(text)) {
-		return { ok: false, reason: "fallback clipboard write failed" };
+		return { ok: false, reason: "clipboard write failed" };
 	}
 	let result: { ok: boolean; reason?: string };
 	try {
+		await new Promise<void>((r) => setTimeout(r, CLIPBOARD_SETTLE_DELAY_MS));
 		result = await runBinary(binPath);
 	} finally {
 		await new Promise<void>((r) => setTimeout(r, CLIPBOARD_RESTORE_DELAY_MS));

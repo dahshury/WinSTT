@@ -141,14 +141,16 @@ export function OnboardingLlmSetupStep() {
 					>
 						<span className="flex min-w-0 flex-1 items-center gap-2">
 							{selectedModel ? (
-								<span
-									aria-label={isInstalled ? "Installed" : "Not installed"}
-									className={cn(
-										"size-1.5 shrink-0 rounded-full",
-										isInstalled ? "bg-teal" : "bg-warning"
-									)}
-									role="img"
-								/>
+								<>
+									<span className="sr-only">{isInstalled ? "Installed" : "Not installed"}</span>
+									<span
+										aria-hidden="true"
+										className={cn(
+											"size-1.5 shrink-0 rounded-full",
+											isInstalled ? "bg-teal" : "bg-warning"
+										)}
+									/>
+								</>
 							) : null}
 							<span
 								className={cn(

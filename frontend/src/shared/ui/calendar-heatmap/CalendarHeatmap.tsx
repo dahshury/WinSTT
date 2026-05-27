@@ -1,6 +1,6 @@
 import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type ChangeEvent, type CSSProperties, type ReactNode, useRef, useState } from "react";
+import { type ChangeEvent, type CSSProperties, type ReactNode, useReducer } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -285,7 +285,13 @@ function DayCell({
 	const inMonth = system.isSameDisplayMonth(cellDate, monthDate);
 	const widthClass = fillWidth ? "w-full" : "w-(--cell-size)";
 	if (!(inMonth || showOutsideDays)) {
-		return <td className={cn("h-(--cell-size) p-0", widthClass)} key={cellDate.toISOString()} />;
+		return (
+			<td
+				aria-label="empty"
+				className={cn("h-(--cell-size) p-0", widthClass)}
+				key={cellDate.toISOString()}
+			/>
+		);
 	}
 	const key = startOfDay(cellDate).getTime();
 	const variantClass = classMap.get(key);
@@ -557,6 +563,7 @@ function TimeField({
 		<label className="flex flex-col gap-1 text-foreground-muted text-xs" htmlFor={id}>
 			{label}
 			<input
+				aria-label={label}
 				className={cn(
 					"rounded-md px-2 py-1 font-mono text-foreground text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50",
 					surfaceClasses(inputLevel)
@@ -606,6 +613,67 @@ function applyRangeClick(prev: Date | DateRange | null, date: Date): DateRange {
 	return normalizeRange(prev.from, date);
 }
 
+interface CalendarState {
+	anchors: Date[];
+	hovered: Date | null;
+	internalSelected: Date | DateRange | null;
+	// Records the externally-supplied `month` prop timestamp we've already
+	// synced anchors to. Storing this in state (instead of a ref) and comparing
+	// during render lets us implement the React-canonical "adjusting some state
+	// when a prop changes" pattern without a useEffect or a ref-read-in-render.
+	// When WE initiate a change via updateAnchor, we pre-record the new
+	// timestamp so the inevitable parent re-emit of `month` doesn't clobber
+	// independent navigation of the right calendar.
+	syncedMonthTs: number | undefined;
+	viewModes: ViewMode[];
+}
+
+type CalendarAction =
+	| { type: "selected/set"; value: Date | DateRange | null }
+	| { type: "hovered/set"; value: Date | null }
+	| { type: "anchors/set"; value: Date[] }
+	| { type: "anchors/updateOne"; index: number; value: Date }
+	| { type: "viewMode/setOne"; index: number; value: ViewMode }
+	| {
+			type: "monthProp/sync";
+			incomingTs: number | undefined;
+			anchorsOverride: Date[] | null;
+	  };
+
+function calendarReducer(state: CalendarState, action: CalendarAction): CalendarState {
+	switch (action.type) {
+		case "selected/set":
+			return { ...state, internalSelected: action.value };
+		case "hovered/set":
+			return state.hovered === action.value ? state : { ...state, hovered: action.value };
+		case "anchors/set":
+			return { ...state, anchors: action.value, syncedMonthTs: action.value[0]?.getTime() };
+		case "anchors/updateOne": {
+			const next = [...state.anchors];
+			next[action.index] = action.value;
+			const patch: Partial<CalendarState> =
+				action.index === 0 ? { syncedMonthTs: action.value.getTime() } : {};
+			return { ...state, anchors: next, ...patch };
+		}
+		case "viewMode/setOne": {
+			const next = [...state.viewModes];
+			next[action.index] = action.value;
+			return { ...state, viewModes: next };
+		}
+		case "monthProp/sync":
+			if (action.anchorsOverride) {
+				return {
+					...state,
+					anchors: action.anchorsOverride,
+					syncedMonthTs: action.incomingTs,
+				};
+			}
+			return { ...state, syncedMonthTs: action.incomingTs };
+		default:
+			return state;
+	}
+}
+
 export function CalendarHeatmap({
 	className,
 	numberOfMonths = 1,
@@ -638,71 +706,60 @@ export function CalendarHeatmap({
 	const classMap = buildDateClassMap(classnames, resolvedVariants);
 	const weightMap = buildWeightMap(weightedDates);
 
-	const [internalSelected, setInternalSelected] = useState<Date | DateRange | null>(null);
+	const monthCount = Math.max(1, numberOfMonths);
+	const [state, dispatch] = useReducer(calendarReducer, undefined, () => {
+		const base = system.startOfDisplayMonth(month ?? defaultMonth ?? new Date());
+		return {
+			anchors: Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i)),
+			hovered: null,
+			internalSelected: null,
+			syncedMonthTs: month ? system.startOfDisplayMonth(month).getTime() : undefined,
+			viewModes: Array.from({ length: monthCount }, () => "days" as ViewMode),
+		};
+	});
+	const { internalSelected, hovered, anchors, viewModes, syncedMonthTs } = state;
+
+	// React-canonical "adjust state when a prop changes" pattern (see
+	// https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
+	// Compare the incoming controlled `month` timestamp against the one we've
+	// already synced to; on mismatch, rebuild anchors AND record the new
+	// timestamp in the same dispatch so the next render is steady-state.
+	const incomingMonthTs = month ? system.startOfDisplayMonth(month).getTime() : undefined;
+	if (incomingMonthTs !== syncedMonthTs) {
+		const base = month ? system.startOfDisplayMonth(month) : null;
+		const shouldRebuild = base !== null && anchors[0]?.getTime() !== base.getTime();
+		dispatch({
+			type: "monthProp/sync",
+			incomingTs: incomingMonthTs,
+			anchorsOverride: shouldRebuild
+				? Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i))
+				: null,
+		});
+	}
+
 	const currentSelected = resolveSelected(selected, internalSelected);
 
 	const setSelected = (next: Date | DateRange | null) => {
 		if (selected === undefined) {
-			setInternalSelected(next);
+			dispatch({ type: "selected/set", value: next });
 		}
 		onSelect?.(next);
 	};
 
-	const [hovered, setHovered] = useState<Date | null>(null);
-	const monthCount = Math.max(1, numberOfMonths);
-	const [internalAnchors, setInternalAnchors] = useState<Date[]>(() => {
-		const base = system.startOfDisplayMonth(month ?? defaultMonth ?? new Date());
-		return Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i));
-	});
-	const [viewModes, setViewModes] = useState<ViewMode[]>(() =>
-		Array.from({ length: monthCount }, () => "days" as ViewMode)
-	);
-	// Skip the next controlled-`month` resync when WE caused the change via
-	// internal nav of the first calendar. Without this, parent re-emitting the
-	// same anchor would clobber any independent navigation of the right
-	// calendar.
-	const skipNextMonthSyncRef = useRef(false);
-	// React's "sync prop to state" pattern: compare during render instead of
-	// useEffect, so we don't have to list `system.*` (rebuilt each render) in
-	// a dep array.
-	const [prevMonthTs, setPrevMonthTs] = useState<number | undefined>(() => month?.getTime());
-	const currentMonthTs = month?.getTime();
-	if (currentMonthTs !== prevMonthTs) {
-		setPrevMonthTs(currentMonthTs);
-		if (month && !skipNextMonthSyncRef.current) {
-			const base = system.startOfDisplayMonth(month);
-			setInternalAnchors((prev) => {
-				if (prev[0] && prev[0].getTime() === base.getTime()) {
-					return prev;
-				}
-				return Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i));
-			});
-		}
-		skipNextMonthSyncRef.current = false;
-	}
+	const setHovered = (value: Date | null) => dispatch({ type: "hovered/set", value });
 
-	const anchors = internalAnchors;
 	const today = startOfDay(new Date());
 
 	const updateAnchor = (i: number, next: Date) => {
 		const start = system.startOfDisplayMonth(next);
-		setInternalAnchors((prev) => {
-			const arr = [...prev];
-			arr[i] = start;
-			return arr;
-		});
+		dispatch({ type: "anchors/updateOne", index: i, value: start });
 		if (i === 0) {
-			skipNextMonthSyncRef.current = true;
 			onMonthChange?.(start);
 		}
 	};
 
 	const updateViewMode = (i: number, v: ViewMode) => {
-		setViewModes((prev) => {
-			const arr = [...prev];
-			arr[i] = v;
-			return arr;
-		});
+		dispatch({ type: "viewMode/setOne", index: i, value: v });
 	};
 
 	const handleDayClick = (date: Date) => {
@@ -722,8 +779,10 @@ export function CalendarHeatmap({
 		setSelected({ from: preset.range.from, to: preset.range.to });
 		if (preset.range.from) {
 			const base = system.startOfDisplayMonth(preset.range.from);
-			setInternalAnchors(Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i)));
-			skipNextMonthSyncRef.current = true;
+			dispatch({
+				type: "anchors/set",
+				value: Array.from({ length: monthCount }, (_, i) => system.addMonths(base, i)),
+			});
 			onMonthChange?.(base);
 		}
 	};
@@ -820,7 +879,10 @@ export function CalendarHeatmap({
 		}
 
 		return (
-			<div className={cn("flex flex-col gap-1", fillWidth && "min-w-0 flex-1")} key={`month-${i}`}>
+			<div
+				className={cn("flex flex-col gap-1", fillWidth && "min-w-0 flex-1")}
+				key={anchorDate.getTime()}
+			>
 				<CalendarHeader
 					nextLabel={nextMonthLabel}
 					onNext={() => stepView(i, 1)}

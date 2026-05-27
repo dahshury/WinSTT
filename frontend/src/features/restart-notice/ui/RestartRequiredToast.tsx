@@ -41,10 +41,9 @@ export function RestartRequiredToast() {
 	}
 
 	return (
-		<div
+		<output
 			aria-live="polite"
 			className="fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw] rounded-md border border-warning/40 bg-surface-secondary p-3 shadow-lg"
-			role="status"
 		>
 			<div className="flex items-start gap-2">
 				<HugeiconsIcon
@@ -84,6 +83,6 @@ export function RestartRequiredToast() {
 					<HugeiconsIcon icon={Cancel01Icon} size={12} />
 				</Button>
 			</div>
-		</div>
+		</output>
 	);
 }

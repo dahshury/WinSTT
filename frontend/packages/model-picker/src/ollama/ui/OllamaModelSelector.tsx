@@ -1730,13 +1730,13 @@ export function OllamaModelSelector({
 	// changes. Stored as state so user clicks (``handleRailClick``) and
 	// scroll-spy events can override it independently — but tracked via
 	// the "previous-prop snapshot" pattern instead of a sync ``useEffect``.
+	// ``lastSelectedPublisher`` is a bookkeeping ref (never read in JSX), so
+	// it stays out of render-state per react-doctor/rerender-state-only-in-handlers.
 	const selectedPublisher = selected ? getOllamaPublisher(getOllamaFamily(selected)).slug : null;
 	const [activeRailId, setActiveRailId] = useState<string | null>(selectedPublisher);
-	const [lastSelectedPublisher, setLastSelectedPublisher] = useState<string | null>(
-		selectedPublisher
-	);
-	if (lastSelectedPublisher !== selectedPublisher) {
-		setLastSelectedPublisher(selectedPublisher);
+	const lastSelectedPublisherRef = useRef<string | null>(selectedPublisher);
+	if (lastSelectedPublisherRef.current !== selectedPublisher) {
+		lastSelectedPublisherRef.current = selectedPublisher;
 		setActiveRailId(selectedPublisher);
 	}
 

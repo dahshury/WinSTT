@@ -47,8 +47,11 @@ function getRendererRoot(): string {
 	}
 	// Local dev (vite build) drops the static output here; in `bun dev` the
 	// Vite dev server is what we actually load from, this path is only used
-	// if someone runs the compiled main against a packaged-style build dir.
-	return path.join(import.meta.dirname, "..", "..", "dist-renderer");
+	// if someone runs the compiled main against a packaged-style build dir
+	// (e.g. the Playwright e2e suite). `import.meta.dirname` resolves to
+	// `frontend/dist-electron/` so one `..` lands at `frontend/`, where
+	// `dist-renderer/` actually lives.
+	return path.join(import.meta.dirname, "..", "dist-renderer");
 }
 
 /** Returns the dev-server URL for a page, e.g. http://localhost:3000/windows/settings.html.
@@ -69,9 +72,14 @@ export function getPackagedPagePath(page: RendererPage): string {
  * Loads the requested renderer page into a window. Picks dev vs prod
  * transparently via `app.isPackaged`. Errors propagate via the returned
  * promise so callers decide how to handle a load failure.
+ *
+ * E2E special case: `WINSTT_E2E=1` runs the compiled main.js directly
+ * (so `app.isPackaged` is false) but the Playwright suite doesn't spin
+ * up `bun dev`'s Vite server. Force file:// loading against the local
+ * `dist-renderer/` so the tests don't depend on a live HTTP server.
  */
 export function loadRendererPage(win: BrowserWindow, page: RendererPage): Promise<void> {
-	if (app.isPackaged) {
+	if (app.isPackaged || process.env.WINSTT_E2E === "1") {
 		return win.loadFile(getPackagedPagePath(page));
 	}
 	return win.loadURL(getDevPageUrl(page));
@@ -124,7 +132,13 @@ export function isAllowedRendererUrl(url: string): boolean {
 	if (parsed === null) {
 		return false;
 	}
-	return app.isPackaged ? isAllowedPackagedFileUrl(parsed) : isAllowedDevUrl(parsed);
+	// Same E2E override as `loadRendererPage`: file:// loading is the only
+	// way to drive the renderer when there's no Vite server, so the
+	// navigation guard must accept it under WINSTT_E2E=1 too.
+	if (app.isPackaged || process.env.WINSTT_E2E === "1") {
+		return isAllowedPackagedFileUrl(parsed);
+	}
+	return isAllowedDevUrl(parsed);
 }
 
 /** Used by the navigation-guard's same-origin check inside detached windows. */

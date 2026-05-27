@@ -84,6 +84,12 @@ class ServerState:
     # ─── Download state ──────────────────────────────────────────────
     download_state: str | None = None
     cancel_download_requested: bool = False
+    # Per-(model, quantization) streaming-download controllers. Lives on
+    # state so the WS handlers can address an in-flight download by id
+    # without a global singleton; field is None when no per-quant
+    # download has ever been started this session (the registry is
+    # constructed lazily by the predownload command handler).
+    streaming_downloads: object | None = None
 
     # ─── WebSocket connections & queues ──────────────────────────────
     control_connections: set[ServerConnection] = field(default_factory=set)

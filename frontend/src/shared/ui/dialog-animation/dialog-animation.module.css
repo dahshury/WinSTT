@@ -1,21 +1,40 @@
+/* Base UI bridge for the global `.t-modal` / `.is-open` / `.is-closing`
+   contract — see app/styles/globals.css. Base UI toggles `data-starting-style`
+   on mount and `data-ending-style` on close instead of swapping CSS classes,
+   so this module maps those attributes onto the same --modal-* tokens. */
+
 .backdrop {
-	transition: opacity 150ms ease;
+	opacity: 1;
+	transition: opacity var(--modal-open-dur) var(--modal-ease);
 }
 
-.backdrop[data-starting-style],
+.backdrop[data-starting-style] {
+	opacity: 0;
+}
+
 .backdrop[data-ending-style] {
 	opacity: 0;
+	transition: opacity var(--modal-close-dur) var(--modal-ease);
 }
 
 .popup {
+	opacity: 1;
 	transform: translate(-50%, -50%) scale(1);
 	transition:
-		opacity 150ms ease,
-		transform 150ms ease;
+		opacity var(--modal-open-dur) var(--modal-ease),
+		transform var(--modal-open-dur) var(--modal-ease);
+	will-change: transform, opacity;
 }
 
-.popup[data-starting-style],
+.popup[data-starting-style] {
+	opacity: 0;
+	transform: translate(-50%, -50%) scale(var(--modal-scale));
+}
+
 .popup[data-ending-style] {
 	opacity: 0;
-	transform: translate(-50%, -50%) scale(0.96);
+	transform: translate(-50%, -50%) scale(var(--modal-scale-close));
+	transition:
+		opacity var(--modal-close-dur) var(--modal-ease),
+		transform var(--modal-close-dur) var(--modal-ease);
 }

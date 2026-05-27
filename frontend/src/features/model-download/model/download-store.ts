@@ -44,11 +44,11 @@ export function quantKey(modelId: string, quantization: string): string {
 
 interface DownloadState {
 	cancelDownload: () => void;
+	cancelled: boolean;
 	/** Per-quant cancel — drops the in-flight download for one variant
 	 *  WITHOUT touching others. Leaves previously-completed files cached;
 	 *  follow with discardQuantCache to wipe them too. */
 	cancelQuantDownload: (modelId: string, quantization: string) => void;
-	cancelled: boolean;
 	discardCache: (modelId: string) => void;
 	/** Per-quant delete — only removes the weight files matching
 	 *  ``quantization``, leaving every other quant of ``modelId`` intact.
@@ -61,7 +61,6 @@ interface DownloadState {
 	/** Pause the in-flight per-quant download. .partial files are
 	 *  preserved on disk; resume picks up via HTTP Range. */
 	pauseQuantDownload: (modelId: string, quantization: string) => void;
-	progress: number | null; // 0–100, null = indeterminate
 	/** Mark a quant entry as paused locally (for instant UI feedback —
 	 *  the server confirms via the next download event). */
 	pauseQuantEntry: (modelId: string, quantization: string) => void;
@@ -71,6 +70,7 @@ interface DownloadState {
 	 *  cache without changing the loaded model so the user can keep
 	 *  using the current model while their download runs. */
 	predownloadQuant: (modelId: string, quantization: string) => void;
+	progress: number | null; // 0–100, null = indeterminate
 	/** Per-quant download snapshots, keyed by ``quantKey()``. Cards read
 	 *  this map to render their own progress / paused / cancelled chrome
 	 *  on the badge without subscribing to the legacy ``modelName`` /

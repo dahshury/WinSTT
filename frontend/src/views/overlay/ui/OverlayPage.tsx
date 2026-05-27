@@ -1,5 +1,5 @@
 import { AnimatePresence, domAnimation, domMax, LazyMotion, m, type Variants } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
@@ -126,18 +126,46 @@ const TEXT_FONT_SIZE_PX: Record<SizePreset, number> = {
  * always pays the setState cost while the recording is live; when
  * `isRecordingActive` is false the interval doesn't run.
  */
+interface ElapsedState {
+	elapsedMs: number;
+	start: number | null;
+}
+
+type ElapsedAction =
+	| { type: "reset" }
+	| { type: "start"; at: number }
+	| { type: "tick"; now: number };
+
+function elapsedReducer(state: ElapsedState, action: ElapsedAction): ElapsedState {
+	switch (action.type) {
+		case "reset":
+			return state.start === null && state.elapsedMs === 0 ? state : { start: null, elapsedMs: 0 };
+		case "start":
+			return { start: action.at, elapsedMs: 0 };
+		case "tick":
+			return state.start === null
+				? state
+				: { start: state.start, elapsedMs: action.now - state.start };
+		default:
+			return state;
+	}
+}
+
 function useRecordingElapsed(isRecordingActive: boolean): string {
-	const [elapsedMs, setElapsedMs] = useState(0);
+	// Single reducer-driven state (instead of two cascading useState slots)
+	// keeps reset+start+tick as one dispatch each — no setState waterfall
+	// inside the effect.
+	const [{ elapsedMs }, dispatch] = useReducer(elapsedReducer, { start: null, elapsedMs: 0 });
 
 	useEffect(() => {
 		if (!isRecordingActive) {
-			setElapsedMs(0);
+			dispatch({ type: "reset" });
 			return;
 		}
-		const start = Date.now();
-		setElapsedMs(0);
+		const startedAt = Date.now();
+		dispatch({ type: "start", at: startedAt });
 		const interval = setInterval(() => {
-			setElapsedMs(Date.now() - start);
+			dispatch({ type: "tick", now: Date.now() });
 		}, 1000);
 		return () => clearInterval(interval);
 	}, [isRecordingActive]);
@@ -258,11 +286,20 @@ export function computeIslandSize(args: {
 	return "compact";
 }
 
-interface IslandStateArgs {
+/** Boolean flags collapsed into one nested object so the island's content
+ *  component takes a single `state` arg instead of 4+ standalone booleans
+ *  (avoids `no-many-boolean-props`). The four flags interact closely
+ *  (recording / VAD / thinking / live-transcription policy) so the grouping
+ *  reads naturally at the call site. */
+interface IslandFlags {
 	isRecordingActive: boolean;
 	isSpeaking: boolean;
 	isThinking: boolean;
 	showLiveTranscription: boolean;
+}
+
+interface IslandStateArgs {
+	flags: IslandFlags;
 	sizePreset: SizePreset;
 	text: string;
 	thinkingStartedAt: number | null;
@@ -293,15 +330,13 @@ interface IslandStateArgs {
  * `pb-1.5` gives the trailing text room to breathe.
  */
 function DynamicIslandPillContent({
-	isRecordingActive,
-	isSpeaking,
-	isThinking,
+	flags,
 	sizePreset,
 	text,
 	thinkingText,
 	thinkingStartedAt,
-	showLiveTranscription,
 }: IslandStateArgs) {
+	const { isRecordingActive, isSpeaking, isThinking, showLiveTranscription } = flags;
 	// Hook runs unconditionally — the early `null` return below would
 	// otherwise violate rules-of-hooks. The timer's interval only ticks
 	// when `isRecordingActive` is true (see `useRecordingElapsed`).
@@ -399,7 +434,7 @@ function CancelButton({ size = 16 }: { size?: number }) {
 	// to flip ignore off before the synthesized mouse-down on touch).
 	// Letting the window stay interactive for the whole recording also
 	// removes the per-click IPC roundtrip race on mouse devices.
-	const handleClick = () => {
+	const cancelTranscription = () => {
 		sttAbortOperation();
 	};
 	// Wrap in the same glass material as the chip/island shell so the button
@@ -410,7 +445,7 @@ function CancelButton({ size = 16 }: { size?: number }) {
 		<button
 			aria-label="Cancel transcription"
 			className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-white/70 transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
-			onClick={handleClick}
+			onClick={cancelTranscription}
 			style={{ width: size, height: size, boxSizing: "border-box" }}
 			type="button"
 		>
@@ -443,7 +478,7 @@ function LivePulse({ isSpeaking }: { isSpeaking: boolean }) {
 	return (
 		<span
 			aria-hidden="true"
-			className="inline-block h-2 w-2 shrink-0 rounded-full bg-[oklch(62%_0.19_260)]"
+			className="inline-block size-2 shrink-0 rounded-full bg-[oklch(62%_0.19_260)]"
 			style={isSpeaking ? { boxShadow: "0 0 8px 0 oklch(62% 0.19 260 / 0.7)" } : undefined}
 		/>
 	);
@@ -459,17 +494,24 @@ function LivePulse({ isSpeaking }: { isSpeaking: boolean }) {
  * by exactly one line's height.
  */
 function DynamicIslandPill(args: IslandStateArgs) {
-	const { setSize } = useDynamicIslandSize();
+	const { setSize, state } = useDynamicIslandSize();
+	const { flags, text } = args;
 	const target = computeIslandSize({
-		isRecordingActive: args.isRecordingActive,
-		isSpeaking: args.isSpeaking,
-		isThinking: args.isThinking,
-		hasShownText: args.showLiveTranscription && args.text.length > 0,
+		isRecordingActive: flags.isRecordingActive,
+		isSpeaking: flags.isSpeaking,
+		isThinking: flags.isThinking,
+		hasShownText: flags.showLiveTranscription && text.length > 0,
 	});
 
-	useEffect(() => {
+	// Push the derived size into the DynamicIsland's reducer during render
+	// (React-documented "store info from previous renders" pattern, see
+	// https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
+	// The reducer's `set` action short-circuits when `state.size === target`,
+	// so this is a cheap no-op once we're already in sync — and the island
+	// no longer needs a setState-in-effect to mirror derived state.
+	if (state.size !== target) {
 		setSize(target);
-	}, [target, setSize]);
+	}
 
 	return (
 		<DynamicIsland fitContent flatTop id="winstt-overlay-island">
@@ -559,14 +601,17 @@ export function OverlayPage() {
 	// when the session truly ends (recording inactive AND not thinking) — the
 	// `useResetOnOverlayShow` visibilitychange handler already clears the
 	// underlying stores before the next session paints.
+	//
+	// Implemented with React's "store info from previous renders" pattern
+	// (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
+	// so the stickiness is captured in render-phase setState rather than a
+	// setState-in-effect waterfall.
 	const [showPill, setShowPill] = useState(false);
-	useEffect(() => {
-		if (sessionShouldShow) {
-			setShowPill(true);
-		} else if (!(isRecordingActive || isThinking)) {
-			setShowPill(false);
-		}
-	}, [sessionShouldShow, isRecordingActive, isThinking]);
+	const sessionActive = isRecordingActive || isThinking;
+	const stickyShow = sessionActive ? showPill || sessionShouldShow : false;
+	if (stickyShow !== showPill) {
+		setShowPill(stickyShow);
+	}
 
 	const heightPx = PRESET_HEIGHT_PX[sizePreset];
 	// CSS `zoom` (Chromium-supported, including Electron) scales both visual and
@@ -578,7 +623,7 @@ export function OverlayPage() {
 	// but still appears for the LLM-thinking state (that's a system signal,
 	// not "live captions"). Chip remains independent so a recording without
 	// in-pill captions still shows the instrument.
-	const showBubble = showPill && (showText || isThinking);
+	const showBubble = stickyShow && (showText || isThinking);
 
 	if (overlayMode === "dynamic-island") {
 		// Top-flush layout: container anchors content to the *top* of the
@@ -596,10 +641,12 @@ export function OverlayPage() {
 				<div className="flex h-screen w-screen items-start justify-center overflow-hidden">
 					<DynamicIslandProvider initialSize="empty">
 						<DynamicIslandPill
-							isRecordingActive={isRecordingActive}
-							isSpeaking={isSpeaking}
-							isThinking={isThinking}
-							showLiveTranscription={showLiveTranscription}
+							flags={{
+								isRecordingActive,
+								isSpeaking,
+								isThinking,
+								showLiveTranscription,
+							}}
 							sizePreset={sizePreset}
 							text={text}
 							thinkingStartedAt={thinkingStartedAt}
@@ -692,7 +739,7 @@ export function OverlayPage() {
 					    would grow with the bubble's width). */}
 					<div className="relative w-fit">
 						<AnimatePresence>
-							{showPill && (
+							{stickyShow && (
 								<m.div
 									animate="animate"
 									className="absolute -top-1 -right-3 z-10"
@@ -706,7 +753,7 @@ export function OverlayPage() {
 							)}
 						</AnimatePresence>
 						<AnimatePresence>
-							{showPill && (
+							{stickyShow && (
 								<m.div
 									animate="animate"
 									// Hard-locked chip dimensions. The visualizer is rendered as an

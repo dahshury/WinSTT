@@ -1,1 +1,2 @@
-export { type ForbiddenCombo, HotkeyRecorder } from "./ui/HotkeyRecorder";
+export type { ForbiddenCombo } from "./lib/hotkey-recorder-helpers";
+export { HotkeyRecorder } from "./ui/HotkeyRecorder";

@@ -10,6 +10,7 @@ import { Button } from "@/shared/ui/button";
 import { Spinner } from "@/shared/ui/spinner";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
 import { getProviderIconWithFallback } from "../lib/provider-icons";
+import { getTriggerDataState, isMissingModelId } from "./model-selector-trigger-helpers";
 import { TruncatedText } from "./TruncatedText";
 
 // Glass-card trigger — shares the exact material vocabulary with the
@@ -27,10 +28,6 @@ export interface ModelSelectorTriggerProps {
 	parsedModelId: string | undefined;
 	placeholder: string;
 	selectedModel: OpenRouterModel | undefined;
-}
-
-export function isMissingModelId(parsedModelId: string | undefined): boolean {
-	return parsedModelId === undefined || parsedModelId === "";
 }
 
 function MakerBadge({ maker }: { maker: string | undefined }) {
@@ -102,10 +99,6 @@ function renderSelectedContent({
 
 interface TriggerButtonProps extends ModelSelectorTriggerProps {
 	buttonProps: ComponentPropsWithoutRef<"button">;
-}
-
-function getTriggerDataState(open: boolean): "open" | "closed" {
-	return open ? "open" : "closed";
 }
 
 export function TriggerButton({

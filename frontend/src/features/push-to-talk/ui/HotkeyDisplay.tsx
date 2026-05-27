@@ -2,29 +2,11 @@ import { useTranslations } from "use-intl";
 import { formatKeyName } from "@/shared/lib/format-key-name";
 import type { InputGroupTone } from "@/shared/ui/input-group";
 import { Tooltip } from "@/shared/ui/tooltip";
+import { FOOTER_TOOLTIP_DELAY, resolveTone, TONE_TEXT } from "../lib/hotkey-display-helpers";
 import { useHotkeyStore } from "../model/hotkey-store";
 
 interface HotkeyDisplayProps {
 	isConnected: boolean;
-}
-
-const FOOTER_TOOLTIP_DELAY = 1500;
-
-const TONE_TEXT: Record<InputGroupTone, string> = {
-	default: "text-foreground",
-	active: "text-foreground",
-	danger: "text-error",
-	muted: "text-foreground-dim opacity-70",
-};
-
-export function resolveTone(isConnected: boolean, isPressed: boolean): InputGroupTone {
-	if (!isConnected) {
-		return "muted";
-	}
-	if (isPressed) {
-		return "active";
-	}
-	return "default";
 }
 
 export function HotkeyDisplay({ isConnected }: HotkeyDisplayProps) {
@@ -40,40 +22,36 @@ export function HotkeyDisplay({ isConnected }: HotkeyDisplayProps) {
 	return (
 		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<div className="inline-flex cursor-help">
-				{/* biome-ignore lint/a11y/useSemanticElements: keeps the chip flat — a <fieldset> would add native form styling/inset border that re-introduces the embossed look the footer is trying to avoid */}
-				<div
+				<kbd
 					aria-label={tooltipContent}
-					className={`inline-flex items-center gap-1 bg-transparent px-1 py-[1px] text-2xs leading-none ${TONE_TEXT[tone]}`}
+					className={`inline-flex items-center gap-1 bg-transparent px-1 py-[1px] font-mono text-2xs leading-none ${TONE_TEXT[tone]}`}
 					data-disconnected={!isConnected || undefined}
 					data-pressed={showPulse || undefined}
 					data-tone={tone}
-					role="group"
 				>
-					<kbd className="inline-flex items-center gap-1 font-mono text-2xs leading-none">
-						{keys.map((key, i) => (
-							<span className="flex items-center gap-1" key={key}>
-								{i > 0 && (
-									<span aria-hidden className="text-[8px] text-foreground-dim">
-										＋
-									</span>
-								)}
-								<span
-									className={`rounded-[4px] bg-surface-1/60 px-1 py-px ring-1 ring-divider/60 ${
-										isConnected ? "" : "line-through"
-									}`}
-								>
-									{key}
+					{keys.map((key, i) => (
+						<span className="flex items-center gap-1" key={key}>
+							{i > 0 && (
+								<span aria-hidden className="text-[8px] text-foreground-dim">
+									＋
 								</span>
-							</span>
-						))}
-					</kbd>
+							)}
+							<kbd
+								className={`rounded-[4px] bg-surface-1/60 px-1 py-px ring-1 ring-divider/60 ${
+									isConnected ? "" : "line-through"
+								}`}
+							>
+								{key}
+							</kbd>
+						</span>
+					))}
 					{showPulse && (
 						<span
 							aria-hidden
 							className="ml-0.5 inline-block size-1.5 animate-recording-pulse rounded-full bg-accent shadow-[0_0_6px_1px_var(--color-accent-glow-strong)]"
 						/>
 					)}
-				</div>
+				</kbd>
 			</div>
 		</Tooltip>
 	);

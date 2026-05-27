@@ -6,7 +6,7 @@ import {
 	Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { useShallow } from "zustand/react/shallow";
 import { RECOMMENDED_OLLAMA_MODELS, useLlmCatalogStore } from "@/entities/llm-catalog";
@@ -55,10 +55,9 @@ function PullProgressBar({ progress, t }: { progress: OllamaPullProgress; t: Tra
 	return (
 		<div className="mt-2 flex flex-col gap-1">
 			<div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-tertiary">
-				<div
+				<output
 					aria-label={label}
-					className="h-full bg-accent transition-all duration-150"
-					role="progressbar"
+					className="block h-full bg-accent transition-all duration-150"
 					style={{ width: `${percent}%` }}
 				/>
 			</div>
@@ -442,13 +441,10 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 	const [state, actions] = useDialogState();
 	const { tab, query, deletingName, pendingDelete } = state;
 
-	const installed = useMemo(() => filterInstalledModels(models, query), [models, query]);
-	const installedNames = useMemo(() => new Set(models.map((m) => m.name)), [models]);
-	const recommended = useMemo(
-		() => filterRecommendedModels(RECOMMENDED_OLLAMA_MODELS, installedNames, query),
-		[installedNames, query]
-	);
-	const pullProgress = useMemo(() => buildPullsMap(pulls), [pulls]);
+	const installed = filterInstalledModels(models, query);
+	const installedNames = new Set(models.map((m) => m.name));
+	const recommended = filterRecommendedModels(RECOMMENDED_OLLAMA_MODELS, installedNames, query);
+	const pullProgress = buildPullsMap(pulls);
 
 	const handlePull = createHandlePull(pullModel, onModelInstalled);
 
@@ -459,10 +455,17 @@ export function OllamaModelManagerDialog(props: OllamaModelManagerDialogProps) {
 		const target = pendingDelete;
 		actions.setPendingDelete(null);
 		actions.setDeletingName(target);
+		// React Compiler can't lower try/finally without a catch
+		// (BuildHIR::lowerStatement TODO), so we capture and rethrow.
+		let caught: unknown;
 		try {
 			await deleteModel(target);
-		} finally {
-			actions.setDeletingName(null);
+		} catch (err) {
+			caught = err;
+		}
+		actions.setDeletingName(null);
+		if (caught !== undefined) {
+			throw caught;
 		}
 	};
 

@@ -12,7 +12,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { computeModelExclusionConfig, OllamaModelSelector, OpenRouterModelSelector } from "@picker";
-import { type ReactNode, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { type ReactNode, useEffect, useReducer, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -260,6 +260,7 @@ function OllamaThinkingEffortToggle({
 						key={option.value}
 					>
 						<input
+							aria-label={option.label}
 							checked={isSelected}
 							className="sr-only"
 							name="ollama-thinking-effort"
@@ -567,20 +568,13 @@ interface ModifierDialogProps {
  *  existing row (Edit); `id` and the persisted `enabled`/`level` flow
  *  straight back through on Save. */
 function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: ModifierDialogProps) {
+	// Seeded once from the initial modifier prop; the parent remounts the
+	// dialog with a fresh key when switching rows (Add vs Edit), so re-syncing
+	// state from props inside a useEffect would be both redundant and a
+	// no-derived-state / cascading-set-state pattern react-doctor flags.
 	const [name, setName] = useState(modifier?.name ?? "");
 	const [prompt, setPrompt] = useState(modifier?.prompt ?? "");
 	const [levelsEnabled, setLevelsEnabled] = useState(modifier?.levelsEnabled ?? false);
-
-	// Reseed the form whenever a different modifier is opened (Add vs Edit,
-	// or switching between rows) — the dialog instance is reused.
-	useEffect(() => {
-		if (!(isOpen && modifier)) {
-			return;
-		}
-		setName(modifier.name);
-		setPrompt(modifier.prompt);
-		setLevelsEnabled(modifier.levelsEnabled);
-	}, [isOpen, modifier]);
 
 	// A modifier needs both a name (its row label) and a prompt body before
 	// it can be saved.
@@ -617,6 +611,7 @@ function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: Mo
 				<label className="flex flex-col gap-1.5" htmlFor="modifier-prompt-input">
 					<span className="text-foreground-secondary text-sm">{t("modifierPrompt")}</span>
 					<textarea
+						aria-label={t("modifierPrompt")}
 						className="min-h-[120px] w-full resize-y rounded-sm bg-surface-1 p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1"
 						id="modifier-prompt-input"
 						onChange={(e) => setPrompt(e.target.value)}
@@ -709,38 +704,20 @@ function IndependentPresetList({
 	};
 	// Remember each preset's last-known level locally so toggling off then on
 	// restores the user's previous choice instead of snapping back to medium.
-	// Initialized from whatever's persisted; updated whenever the user touches
-	// the switcher OR the persisted level changes from underneath us.
+	// Seeded once from whatever's persisted; updated via the row's switcher
+	// event handler. We intentionally don't re-sync from `presets` in an
+	// effect: every legitimate update flows through `handleLevel` below
+	// (which writes both the cache AND the persisted store), so a separate
+	// effect that mirrors `presets → cache` would just round-trip the same
+	// value and trips no-derived-state / cascading-set-state.
 	const [levelCache, setLevelCache] = useState<Record<IndependentKeyT, PresetLevel>>(() =>
 		seedLevelCache(presets)
 	);
 
-	useEffect(() => {
-		setLevelCache((prev) => {
-			const levelByKey = indexPresetLevels(presets);
-			let changed = false;
-			const next = { ...prev };
-			for (const key of INDEPENDENT_PRESETS) {
-				const stored = levelByKey.get(key);
-				if (stored !== undefined && stored !== prev[key]) {
-					next[key] = stored;
-					changed = true;
-				}
-			}
-			return changed ? next : prev;
-		});
-	}, [presets]);
-
 	// Same toggle-off-then-on memory as `levelCache`, but for the translate
 	// row's target language (a single value — only one translate entry can
-	// exist). Re-seeds when the persisted choice changes underneath us.
+	// exist). Seeded once; updated via `handleLang` below.
 	const [langCache, setLangCache] = useState<string>(() => getTargetLang(presets));
-	useEffect(() => {
-		const stored = presets.find((p) => p.key === "translate")?.targetLang;
-		if (stored !== undefined) {
-			setLangCache((prev) => (prev === stored ? prev : stored));
-		}
-	}, [presets]);
 
 	const builtinCount = INDEPENDENT_PRESETS.length;
 	const checkedIndices = new Set<number>();
@@ -861,6 +838,7 @@ function IndependentPresetList({
 			<ModifierDialog
 				isEdit={isEditingExisting}
 				isOpen={dialogModifier !== null}
+				key={dialogModifier?.id ?? "closed"}
 				modifier={dialogModifier}
 				onClose={closeDialog}
 				onSave={handleSave}
@@ -924,39 +902,35 @@ function useFeatureToggleHandler(
 	props: FeatureBlockProps,
 	checkOllamaReachable: () => Promise<boolean>
 ) {
-	return useCallback(
-		async (next: boolean) => {
-			await performFeatureToggle(next, {
-				provider: props.featureSnapshot.provider,
-				openrouterApiKey: props.openrouterApiKey,
-				ollamaLoaded: props.ollamaCatalog.isLoaded,
-				ollamaModels: props.ollamaCatalog.models,
-				openrouterLoaded: props.openrouterCatalog.isLoaded,
-				currentOllamaModel: props.featureSnapshot.model,
-				currentOpenRouterModel: props.featureSnapshot.openrouterModel,
-				checkOllamaReachable,
-				scanOllama: props.ollamaCatalog.scanModels,
-				scanOpenRouter: props.openrouterCatalog.scanModels,
-				apply: (patch) => {
-					(props.update as (p: Partial<LlmFeatureDraft>) => void)(patch);
-					if (patch.enabled === true && props.onEnabled) {
-						props.onEnabled();
-					}
-				},
-				setShowOllamaDialog: props.setShowOllamaDialog,
-				setShowApiKeyDialog: props.setShowApiKeyDialog,
-			});
-		},
-		[props, checkOllamaReachable]
-	);
+	return async (next: boolean) => {
+		await performFeatureToggle(next, {
+			provider: props.featureSnapshot.provider,
+			openrouterApiKey: props.openrouterApiKey,
+			ollamaLoaded: props.ollamaCatalog.isLoaded,
+			ollamaModels: props.ollamaCatalog.models,
+			openrouterLoaded: props.openrouterCatalog.isLoaded,
+			currentOllamaModel: props.featureSnapshot.model,
+			currentOpenRouterModel: props.featureSnapshot.openrouterModel,
+			checkOllamaReachable,
+			scanOllama: props.ollamaCatalog.scanModels,
+			scanOpenRouter: props.openrouterCatalog.scanModels,
+			apply: (patch) => {
+				(props.update as (p: Partial<LlmFeatureDraft>) => void)(patch);
+				if (patch.enabled === true && props.onEnabled) {
+					props.onEnabled();
+				}
+			},
+			setShowOllamaDialog: props.setShowOllamaDialog,
+			setShowApiKeyDialog: props.setShowApiKeyDialog,
+		});
+	};
 }
 
 /**
  * Owns every store subscription, derived snapshot, effect and handler the
  * panel needs. Extracted out of `LlmSettingsPanel` so the component stays a
  * thin composition root. Behavior is a verbatim move — React Compiler handles
- * memoization, so nothing is wrapped in `useMemo`/`useCallback` beyond what
- * was already there.
+ * memoization, so nothing is wrapped in `useMemo`/`useCallback`.
  */
 function useLlmSettingsPanel() {
 	const llm = useSettingsStore((s) => s.settings.llm);
@@ -969,9 +943,9 @@ function useLlmSettingsPanel() {
 	// must turn Smart Endpoint off. The reverse direction lives in
 	// QualitySettingsPanel. Defined once so every dictation-enable path
 	// (toggle, post-Ollama dialog, post-API-key dialog) goes through it.
-	const disableSmartEndpoint = useCallback(() => {
+	const disableSmartEndpoint = () => {
 		updateQuality({ smartEndpoint: false });
-	}, [updateQuality]);
+	};
 	const t = useTranslations("llm");
 	const tc = useTranslations("common");
 
@@ -1091,28 +1065,40 @@ function useLlmSettingsPanel() {
 	);
 
 	// Reachability hint shown inline when any feature is on + uses Ollama.
+	// This is synchronization with an external system (the Ollama daemon's
+	// HTTP endpoint) — the value only exists because we asked the daemon,
+	// and the setState below lives in the async resolution callback (not the
+	// effect body), which is the pattern react-hooks-js/set-state-in-effect
+	// explicitly allows. The toggle handlers also call `checkOllamaReachable`
+	// imperatively when the user enables a feature, so the state needs to be
+	// a proper React state — not a ref — for the inline banners to react.
 	const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
 
-	const checkOllamaReachable = useCallback(async () => {
+	const checkOllamaReachable = async () => {
 		const result = await fetchOllamaModels();
 		setOllamaReachable(result.reachable);
 		return result.reachable;
-	}, []);
+	};
 
+	const anyOllamaEnabled =
+		(dictation.enabled && dictation.provider === "ollama") ||
+		(transforms.enabled && transforms.provider === "ollama");
 	useEffect(() => {
-		const anyOllamaEnabled =
-			(dictation.enabled && dictation.provider === "ollama") ||
-			(transforms.enabled && transforms.provider === "ollama");
-		if (anyOllamaEnabled) {
-			checkOllamaReachable().catch(() => undefined);
+		if (!anyOllamaEnabled) {
+			return;
 		}
-	}, [
-		dictation.enabled,
-		dictation.provider,
-		transforms.enabled,
-		transforms.provider,
-		checkOllamaReachable,
-	]);
+		let cancelled = false;
+		fetchOllamaModels()
+			.then((result) => {
+				if (!cancelled) {
+					setOllamaReachable(result.reachable);
+				}
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [anyOllamaEnabled]);
 
 	useEffect(() => {
 		if (usesOllama && !ollamaLoaded) {
@@ -1153,34 +1139,30 @@ function useLlmSettingsPanel() {
 
 	// Build the same "enable with a resolved model" patch the toggle uses,
 	// so the post-dialog enable path can't slip past the no-model guard.
-	const resolveOllamaEnablePatch = useCallback(
-		(currentModel: string): Partial<LlmFeatureDraft> => {
-			const currentValid =
-				currentModel.length > 0 && ollamaModels.some((m) => m.name === currentModel);
-			if (currentValid) {
-				return { enabled: true };
-			}
-			const smallest = pickSmallestInstalledOllama(ollamaModels);
-			if (smallest) {
-				return { model: smallest, enabled: true };
-			}
-			// No installed models yet — leave the feature disabled. The user just
-			// closed the Ollama dialog; the install/manage UI will surface the
-			// next step (pull a model) and they can re-toggle once it's there.
-			return {};
-		},
-		[ollamaModels]
-	);
+	const resolveOllamaEnablePatch = (currentModel: string): Partial<LlmFeatureDraft> => {
+		const currentValid =
+			currentModel.length > 0 && ollamaModels.some((m) => m.name === currentModel);
+		if (currentValid) {
+			return { enabled: true };
+		}
+		const smallest = pickSmallestInstalledOllama(ollamaModels);
+		if (smallest) {
+			return { model: smallest, enabled: true };
+		}
+		// No installed models yet — leave the feature disabled. The user just
+		// closed the Ollama dialog; the install/manage UI will surface the
+		// next step (pull a model) and they can re-toggle once it's there.
+		return {};
+	};
 
-	const resolveOpenRouterEnablePatch = useCallback(
-		(currentOpenRouterModel: string): Partial<LlmFeatureDraft> =>
-			currentOpenRouterModel.length > 0
-				? { enabled: true }
-				: { openrouterModel: DEFAULT_OPENROUTER_MODEL, enabled: true },
-		[]
-	);
+	const resolveOpenRouterEnablePatch = (
+		currentOpenRouterModel: string
+	): Partial<LlmFeatureDraft> =>
+		currentOpenRouterModel.length > 0
+			? { enabled: true }
+			: { openrouterModel: DEFAULT_OPENROUTER_MODEL, enabled: true };
 
-	const handleOllamaStarted = useCallback(() => {
+	const handleOllamaStarted = () => {
 		setShowOllamaDialog(false);
 		scanOllama();
 		if (pendingFeature === "dictation") {
@@ -1196,61 +1178,33 @@ function useLlmSettingsPanel() {
 			}
 		}
 		setPendingFeature(null);
-	}, [
-		scanOllama,
-		pendingFeature,
-		updateDictation,
-		updateTransforms,
-		disableSmartEndpoint,
-		resolveOllamaEnablePatch,
-		dictation.model,
-		transforms.model,
-	]);
+	};
 
-	const handleApiKeySaved = useCallback(
-		(key: string) => {
-			updateShared({ openrouterApiKey: key });
-			setShowApiKeyDialog(false);
-			scanOpenRouter();
-			if (pendingFeature === "dictation") {
-				updateDictation(resolveOpenRouterEnablePatch(dictation.openrouterModel));
-				disableSmartEndpoint();
-			} else if (pendingFeature === "transforms") {
-				updateTransforms(resolveOpenRouterEnablePatch(transforms.openrouterModel));
-			}
-			setPendingFeature(null);
-		},
-		[
-			updateShared,
-			scanOpenRouter,
-			pendingFeature,
-			updateDictation,
-			updateTransforms,
-			disableSmartEndpoint,
-			resolveOpenRouterEnablePatch,
-			dictation.openrouterModel,
-			transforms.openrouterModel,
-		]
-	);
+	const handleApiKeySaved = (key: string) => {
+		updateShared({ openrouterApiKey: key });
+		setShowApiKeyDialog(false);
+		scanOpenRouter();
+		if (pendingFeature === "dictation") {
+			updateDictation(resolveOpenRouterEnablePatch(dictation.openrouterModel));
+			disableSmartEndpoint();
+		} else if (pendingFeature === "transforms") {
+			updateTransforms(resolveOpenRouterEnablePatch(transforms.openrouterModel));
+		}
+		setPendingFeature(null);
+	};
 
-	const setShowOllamaDialogFor = useCallback(
-		(feature: "dictation" | "transforms") => (v: boolean) => {
-			setShowOllamaDialog(v);
-			if (v) {
-				setPendingFeature(feature);
-			}
-		},
-		[]
-	);
-	const setShowApiKeyDialogFor = useCallback(
-		(feature: "dictation" | "transforms") => (v: boolean) => {
-			setShowApiKeyDialog(v);
-			if (v) {
-				setPendingFeature(feature);
-			}
-		},
-		[]
-	);
+	const setShowOllamaDialogFor = (feature: "dictation" | "transforms") => (v: boolean) => {
+		setShowOllamaDialog(v);
+		if (v) {
+			setPendingFeature(feature);
+		}
+	};
+	const setShowApiKeyDialogFor = (feature: "dictation" | "transforms") => (v: boolean) => {
+		setShowApiKeyDialog(v);
+		if (v) {
+			setPendingFeature(feature);
+		}
+	};
 
 	const toneOpts = buildToneOpts(t);
 	const levelOpts = buildLevelOpts(t);
@@ -1629,6 +1583,65 @@ export function LlmSettingsPanel() {
  *  uses. Skipping the lifecycle entirely when the feature is disabled keeps
  *  the trigger calm during configuration — no warmup runs then.
  */
+interface PendingOllamaSwap {
+	fromName: string | null;
+	startedAtTimestamp: number;
+	toName: string;
+}
+
+/**
+ * Pure resolver: given a pending swap intent (or none) and the latest warmup
+ * broadcast, decide whether the picker should currently render the
+ * "switching" view. Returning `null` means the swap has resolved (or never
+ * started). Provider switch / feature disable / terminal-warmup-outcome all
+ * fold into this function so we don't need an effect that watches
+ * `warmupStatus` and `setState`s.
+ */
+function resolvePendingSwap(
+	pending: PendingOllamaSwap | null,
+	provider: LlmProvider,
+	enabled: boolean,
+	warmupStatus: import("@/shared/api/ipc-client").LlmWarmupStatus | null
+): { fromName: string | null; toName: string } | null {
+	if (!pending) {
+		return null;
+	}
+	// Provider switched away or feature disabled → swap is moot.
+	if (provider !== "ollama" || !enabled) {
+		return null;
+	}
+	if (warmupStatus && warmupStatus.timestamp > pending.startedAtTimestamp) {
+		// A warmup broadcast covers the target model with a TERMINAL outcome
+		// (ok / unreachable / model-not-found / load-failed / skipped).
+		// "loading" means the warmup pass just started — keep the spinner up
+		// so the user sees continuous progress instead of a premature
+		// dismissal followed by a delayed final result.
+		const entry = warmupStatus.models.find((m) => m.model === pending.toName);
+		if (entry && entry.outcome !== "loading") {
+			return null;
+		}
+	}
+	return { fromName: pending.fromName, toName: pending.toName };
+}
+
+/** Tracks an in-flight Ollama model switch for a single feature
+ *  (dictation/transforms). There's no IPC-driven "swap started/completed"
+ *  pair for Ollama the way there is for the STT server — we synthesize the
+ *  lifecycle from two side-effects of the user's pick:
+ *
+ *    1. Setting changes immediately and the debounced warmup loop fires for
+ *       the new model.
+ *    2. A fresh `LlmWarmupStatus` broadcast arrives whose `timestamp` is
+ *       newer than the moment we captured at pick time and whose `models[]`
+ *       includes our target.
+ *
+ *  `pendingSwap` is set ONLY from the event handler (`beginSwap`); the
+ *  derived `swap` is computed at render time from `warmupStatus` so we
+ *  don't need an effect that watches the IPC broadcast and chains state
+ *  updates. The 180 s safety-timeout effect clears `pendingSwap` after the
+ *  deadline; that setState is in the timer's callback (not the effect
+ *  body), which is the pattern set-state-in-effect explicitly allows.
+ */
 function useOllamaSwapTracker(opts: {
 	currentModel: string;
 	enabled: boolean;
@@ -1639,65 +1652,38 @@ function useOllamaSwapTracker(opts: {
 	swap: { fromName: string | null; toName: string } | null;
 } {
 	const { currentModel, enabled, provider, warmupStatus } = opts;
-	const [swap, setSwap] = useState<{ fromName: string | null; toName: string } | null>(null);
-	const startedAtTimestamp = useRef<number>(0);
+	const [pendingSwap, setPendingSwap] = useState<PendingOllamaSwap | null>(null);
 
-	const beginSwap = useCallback(
-		(toName: string) => {
-			if (!enabled || provider !== "ollama") {
-				return;
-			}
-			if (!toName || toName === currentModel) {
-				return;
-			}
-			startedAtTimestamp.current = warmupStatus?.timestamp ?? 0;
-			setSwap({ fromName: currentModel || null, toName });
-		},
-		[currentModel, enabled, provider, warmupStatus]
-	);
-
-	// Clear on:
-	//   - provider switched away from Ollama (the swap is moot)
-	//   - a warmup broadcast covers the target model with a TERMINAL outcome
-	//     (ok / unreachable / model-not-found / load-failed / skipped).
-	//     A "loading" outcome means the warmup pass just started — we keep
-	//     the spinner up so the user sees continuous progress instead of a
-	//     premature dismissal followed by a delayed final result.
-	useEffect(() => {
-		if (!swap) {
+	const beginSwap = (toName: string) => {
+		if (!(enabled && provider === "ollama")) {
 			return;
 		}
-		if (provider !== "ollama" || !enabled) {
-			setSwap(null);
+		if (!toName || toName === currentModel) {
 			return;
 		}
-		if (!warmupStatus) {
-			return;
-		}
-		if (warmupStatus.timestamp <= startedAtTimestamp.current) {
-			return;
-		}
-		const entry = warmupStatus.models.find((m) => m.model === swap.toName);
-		if (entry && entry.outcome !== "loading") {
-			setSwap(null);
-		}
-	}, [swap, warmupStatus, provider, enabled]);
+		setPendingSwap({
+			fromName: currentModel || null,
+			toName,
+			startedAtTimestamp: warmupStatus?.timestamp ?? 0,
+		});
+	};
 
 	// Safety: bound the switching display to 180 s even if no terminal
 	// warmup outcome arrives. Big reasoning-model swaps on a single GPU
 	// (evict 14B → load 7B) can legitimately take 60–120 s; the previous
-	// 60 s ceiling pre-empted those legitimate loads and made successful
-	// swaps look broken. The leading "loading" broadcast keeps the user
-	// informed in the meantime.
+	// 60 s ceiling pre-empted those legitimate loads.
 	useEffect(() => {
-		if (!swap) {
+		if (!pendingSwap) {
 			return;
 		}
-		const id = window.setTimeout(() => setSwap(null), 180_000);
+		const id = window.setTimeout(() => setPendingSwap(null), 180_000);
 		return () => window.clearTimeout(id);
-	}, [swap]);
+	}, [pendingSwap]);
 
-	return { swap, beginSwap };
+	return {
+		swap: resolvePendingSwap(pendingSwap, provider, enabled, warmupStatus),
+		beginSwap,
+	};
 }
 
 /**
@@ -1731,7 +1717,7 @@ interface ProviderSectionArgs {
 	updateAny: (p: Partial<LlmFeatureDraft>) => void;
 }
 
-function renderProviderSection(args: ProviderSectionArgs): ReactNode {
+function ProviderSection(args: ProviderSectionArgs) {
 	const { featureSnapshot, t } = args;
 	if (featureSnapshot.provider === "apple-intelligence") {
 		return <AppleIntelligenceSection t={t} />;
@@ -1874,21 +1860,21 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 						</ElevatedSurface>
 					</FormControl>
 				</div>
-				{renderProviderSection({
-					featureSnapshot,
-					librarySearch,
-					ollamaCatalog,
-					ollamaPullBundle,
-					ollamaReachable,
-					ollamaSwap,
-					beginOllamaSwap,
-					openrouterApiKey,
-					openrouterCatalog,
-					fallbackExclusion,
-					updateAny,
-					t,
-					tc,
-				})}
+				<ProviderSection
+					beginOllamaSwap={beginOllamaSwap}
+					fallbackExclusion={fallbackExclusion}
+					featureSnapshot={featureSnapshot}
+					librarySearch={librarySearch}
+					ollamaCatalog={ollamaCatalog}
+					ollamaPullBundle={ollamaPullBundle}
+					ollamaReachable={ollamaReachable}
+					ollamaSwap={ollamaSwap}
+					openrouterApiKey={openrouterApiKey}
+					openrouterCatalog={openrouterCatalog}
+					t={t}
+					tc={tc}
+					updateAny={updateAny}
+				/>
 				{featureSnapshot.enabled ? (
 					<WarmupStatusBanner
 						feature={feature}

@@ -8,17 +8,11 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { isRealtimeViable, SttModelSelector } from "@picker";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
-import {
-	needsModelFallback,
-	pickDefaultSttModel,
-	useCatalogStore,
-	useModelStateStore,
-	useModelSwapStore,
-} from "@/entities/model-catalog";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,
@@ -43,6 +37,10 @@ import type { SelectOption } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip } from "@/shared/ui/tooltip";
+import { useLockRealtimeToMain } from "../model/use-lock-realtime-to-main";
+import { useQuantDownloads } from "../model/use-quant-downloads";
+import { useStaleModelFallback } from "../model/use-stale-model-fallback";
+import { useSwapProgress } from "../model/use-swap-progress";
 
 export interface ModelSettingsPanelProps {
 	llmSlot?: ReactNode;
@@ -79,6 +77,17 @@ interface MainModelSectionProps {
 	langOpts: SelectOption[];
 	/** Per-quant delete handler (after the picker's AlertDialog confirms). */
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
+	/** Per-quant download action — start / pause / resume / cancel. */
+	onDownloadAction: (
+		action: "start" | "pause" | "resume" | "cancel",
+		modelId: string,
+		quantization: OnnxQuantization
+	) => void;
+	/** Per-quant live download snapshot lookup. */
+	onDownloadSnapshot: (
+		modelId: string,
+		quantization: OnnxQuantization
+	) => import("@/features/model-download").QuantDownloadState | undefined;
 	selectedModel: string;
 	settings: ModelSettings | undefined;
 	statesById: StatesById;
@@ -90,6 +99,133 @@ interface MainModelSectionProps {
 	 *  Kaldi/Vosk, Cohere, ``.en`` Whispers — so the UI doesn't lie. */
 	translateSupported: boolean;
 	update: UpdateModelFn;
+}
+
+interface SourceAreaProps {
+	catalogLoaded: boolean;
+	catalogModels: CatalogModels;
+	currentQuantization: OnnxQuantization;
+	downloadProgress: { modelId: string; percent: number | null } | null;
+	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
+	hasAnyCloudKey: boolean;
+	initialSourceIsCloud: boolean;
+	isCloud: boolean;
+	isSwapping: boolean;
+	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
+	onDownloadAction: (
+		action: "start" | "pause" | "resume" | "cancel",
+		modelId: string,
+		quantization: OnnxQuantization
+	) => void;
+	onDownloadSnapshot: (
+		modelId: string,
+		quantization: OnnxQuantization
+	) => import("@/features/model-download").QuantDownloadState | undefined;
+	selectedModel: string;
+	statesById: StatesById;
+	systemInfo: SystemInfo;
+	t: TFn;
+	tIntegrations: TFn;
+}
+
+/**
+ * Owns the local "which picker is on screen" UI state. The parent re-mounts
+ * this component (via `key={effectiveSourceIsCloud}`) whenever the persisted
+ * model's source changes or API-key availability flips, so React naturally
+ * resets `source` to the correct initial value WITHOUT a derived-state effect.
+ *
+ * Toggling the source does NOT touch persisted settings — the persisted
+ * model only changes when the user picks a row from the visible picker.
+ */
+function SourceArea({
+	catalogLoaded,
+	catalogModels,
+	currentQuantization,
+	downloadProgress,
+	handleModelChange,
+	hasAnyCloudKey,
+	initialSourceIsCloud,
+	isCloud,
+	isSwapping,
+	onDeleteQuant,
+	onDownloadAction,
+	onDownloadSnapshot,
+	selectedModel,
+	statesById,
+	systemInfo,
+	t,
+	tIntegrations,
+}: SourceAreaProps): ReactNode {
+	const [source, setSource] = useState<"local" | "cloud">(initialSourceIsCloud ? "cloud" : "local");
+	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
+	const sourceOpts: SwitcherOption<"local" | "cloud">[] = [
+		{ value: "local", label: tIntegrations("sourceLocal"), icon: CpuIcon },
+		{
+			value: "cloud",
+			label: tIntegrations("sourceCloud"),
+			icon: AiCloud01Icon,
+			disabled: !hasAnyCloudKey,
+			...(hasAnyCloudKey
+				? {}
+				: {
+						badgeIcon: LockIcon,
+						badgeTooltip: tIntegrations("cloudDisabledHint"),
+						onBadgeClick: () => goToIntegrations("integrations"),
+					}),
+		},
+	];
+	return (
+		<>
+			<div className="col-span-2">
+				<FormControl
+					caption={tIntegrations("sourceCaption")}
+					label={tIntegrations("sourceLabel")}
+					tooltip={tIntegrations("sourceTooltip")}
+				>
+					<div className="flex flex-col gap-1.5">
+						<ElevatedSurface>
+							<Switcher onChange={(v) => setSource(v)} options={sourceOpts} value={source} />
+						</ElevatedSurface>
+						{hasAnyCloudKey ? null : (
+							<button
+								className="inline-flex w-fit cursor-pointer items-center gap-1 bg-transparent text-2xs text-foreground-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
+								onClick={() => goToIntegrations("integrations")}
+								type="button"
+							>
+								<HugeiconsIcon aria-hidden="true" className="shrink-0" icon={LockIcon} size={10} />
+								{tIntegrations("cloudDisabledHint")}
+							</button>
+						)}
+					</div>
+				</FormControl>
+			</div>
+			<div className="col-span-2">
+				<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
+					{source === "cloud" ? (
+						<CloudModelSelect
+							onSelect={(id) => handleModelChange(id)}
+							selectedId={isCloud ? selectedModel : ""}
+						/>
+					) : (
+						<SttModelSelector
+							currentQuantization={currentQuantization}
+							downloadProgress={downloadProgress}
+							isLoading={!catalogLoaded || isSwapping}
+							kind="main"
+							models={catalogModels}
+							onChange={handleModelChange}
+							onDeleteQuant={onDeleteQuant}
+							onDownloadAction={onDownloadAction}
+							onDownloadSnapshot={onDownloadSnapshot}
+							statesById={statesById}
+							systemInfo={systemInfo}
+							value={isCloud ? "" : selectedModel}
+						/>
+					)}
+				</FormControl>
+			</div>
+		</>
+	);
 }
 
 function MainModelSection({
@@ -108,6 +244,8 @@ function MainModelSection({
 	isSwapping,
 	langOpts,
 	onDeleteQuant,
+	onDownloadAction,
+	onDownloadSnapshot,
 	selectedModel,
 	handleModelChange,
 	translateSupported,
@@ -124,92 +262,32 @@ function MainModelSection({
 	// user what's broken.
 	const effectiveSourceIsCloud = isCloud && hasAnyCloudKey;
 
-	// Local-only UI state for which picker is on screen. Initialised from the
-	// persisted model (cloud `provider:*` id → "cloud", otherwise "local") so
-	// the user lands on the picker that matches what's currently selected.
-	// Toggling the source does NOT touch persisted settings — the persisted
-	// model only changes when the user picks a row from the visible picker.
-	const [source, setSource] = useState<"local" | "cloud">(
-		effectiveSourceIsCloud ? "cloud" : "local"
-	);
-	// Re-sync if the persisted model changes underneath us (e.g. another
-	// window picked a model) or the API-key availability flips.
-	useEffect(() => {
-		setSource(effectiveSourceIsCloud ? "cloud" : "local");
-	}, [effectiveSourceIsCloud]);
-
-	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
-	const sourceOpts: SwitcherOption<"local" | "cloud">[] = [
-		{ value: "local", label: tIntegrations("sourceLocal"), icon: CpuIcon },
-		{
-			value: "cloud",
-			label: tIntegrations("sourceCloud"),
-			icon: AiCloud01Icon,
-			disabled: !hasAnyCloudKey,
-			...(hasAnyCloudKey
-				? {}
-				: {
-						badgeIcon: LockIcon,
-						badgeTooltip: tIntegrations("cloudDisabledHint"),
-						onBadgeClick: () => goToIntegrations("integrations"),
-					}),
-		},
-	];
-
 	return (
 		<SettingSection icon={SpeechToTextIcon} title={t("mainModel")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<div className="col-span-2">
-					<FormControl
-						caption={tIntegrations("sourceCaption")}
-						label={tIntegrations("sourceLabel")}
-						tooltip={tIntegrations("sourceTooltip")}
-					>
-						<div className="flex flex-col gap-1.5">
-							<ElevatedSurface>
-								<Switcher onChange={(v) => setSource(v)} options={sourceOpts} value={source} />
-							</ElevatedSurface>
-							{hasAnyCloudKey ? null : (
-								<button
-									className="inline-flex w-fit cursor-pointer items-center gap-1 bg-transparent text-2xs text-foreground-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
-									onClick={() => goToIntegrations("integrations")}
-									type="button"
-								>
-									<HugeiconsIcon
-										aria-hidden="true"
-										className="shrink-0"
-										icon={LockIcon}
-										size={10}
-									/>
-									{tIntegrations("cloudDisabledHint")}
-								</button>
-							)}
-						</div>
-					</FormControl>
-				</div>
-				<div className="col-span-2">
-					<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
-						{source === "cloud" ? (
-							<CloudModelSelect
-								onSelect={(id) => handleModelChange(id)}
-								selectedId={isCloud ? selectedModel : ""}
-							/>
-						) : (
-							<SttModelSelector
-								currentQuantization={currentQuantization}
-								downloadProgress={downloadProgress}
-								isLoading={!catalogLoaded || isSwapping}
-								kind="main"
-								models={catalogModels}
-								onChange={handleModelChange}
-								onDeleteQuant={onDeleteQuant}
-								statesById={statesById}
-								systemInfo={systemInfo}
-								value={isCloud ? "" : selectedModel}
-							/>
-						)}
-					</FormControl>
-				</div>
+				{/* `key` resets the local `source` state inside SourceArea whenever
+				 *  the persisted model's source changes or API-key availability
+				 *  flips — no derived-state effect needed. */}
+				<SourceArea
+					catalogLoaded={catalogLoaded}
+					catalogModels={catalogModels}
+					currentQuantization={currentQuantization}
+					downloadProgress={downloadProgress}
+					handleModelChange={handleModelChange}
+					hasAnyCloudKey={hasAnyCloudKey}
+					initialSourceIsCloud={effectiveSourceIsCloud}
+					isCloud={isCloud}
+					isSwapping={isSwapping}
+					key={effectiveSourceIsCloud ? "cloud" : "local"}
+					onDeleteQuant={onDeleteQuant}
+					onDownloadAction={onDownloadAction}
+					onDownloadSnapshot={onDownloadSnapshot}
+					selectedModel={selectedModel}
+					statesById={statesById}
+					systemInfo={systemInfo}
+					t={t}
+					tIntegrations={tIntegrations}
+				/>
 				<FormControl caption={t("languageCaption")} label={t("language")}>
 					<ElevatedSurface inline>
 						<SearchableSelect
@@ -310,6 +388,17 @@ interface RealtimeModelSectionProps {
 	mainModelId: string;
 	/** Forwarded to the picker — same handler the main picker uses. */
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
+	/** Forwarded to the picker — per-quant download action. */
+	onDownloadAction: (
+		action: "start" | "pause" | "resume" | "cancel",
+		modelId: string,
+		quantization: OnnxQuantization
+	) => void;
+	/** Forwarded to the picker — per-quant download snapshot lookup. */
+	onDownloadSnapshot: (
+		modelId: string,
+		quantization: OnnxQuantization
+	) => import("@/features/model-download").QuantDownloadState | undefined;
 	onUseMainModel: () => void;
 	quality: QualitySettings | undefined;
 	settings: ModelSettings | undefined;
@@ -339,6 +428,8 @@ function RealtimeModelSection({
 	handleRealtimeModelChange,
 	mainModelId,
 	onDeleteQuant,
+	onDownloadAction,
+	onDownloadSnapshot,
 	onUseMainModel,
 	lockedToMainModel,
 }: RealtimeModelSectionProps): ReactNode {
@@ -387,6 +478,8 @@ function RealtimeModelSection({
 							models={catalogModels}
 							onChange={handleRealtimeModelChange}
 							onDeleteQuant={onDeleteQuant}
+							onDownloadAction={onDownloadAction}
+							onDownloadSnapshot={onDownloadSnapshot}
 							prefilter={isRealtimeViable}
 							statesById={statesById}
 							systemInfo={systemInfo}
@@ -529,7 +622,7 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const gpuAvailable = gpuInfo?.available ?? true;
 	const t = useTranslations("model");
-	const deviceOpts = useMemo(() => buildDeviceOpts(t, gpuAvailable), [t, gpuAvailable]);
+	const deviceOpts = buildDeviceOpts(t, gpuAvailable);
 	const deviceValue: DeviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
 
 	const catalogModels = useCatalogStore((s) => s.models);
@@ -543,30 +636,9 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 	const statesById = useModelStateStore((s) => s.statesById);
 	const systemInfo = useModelStateStore((s) => s.systemInfo);
 	const refreshModelState = useModelStateStore((s) => s.refresh);
-	const mainSwapTarget = useModelSwapStore((s) => s.activeMain);
-	const realtimeSwapTarget = useModelSwapStore((s) => s.activeRealtime);
-	// Live snapshot of any in-flight model download. We split "downloading
-	// bytes" (the user can still pick another already-cached model) from
-	// "loading weights" (server is restarting / mid-load; the picker must
-	// freeze until it settles). The two states are different sub-phases
-	// of a swap and the old `activeMain !== null` gate conflated them,
-	// which is why selecting Cohere locked the picker into "Switching
-	// to Cohere" for the entire 4 GB transfer.
-	const downloadingModelName = useDownloadStore((s) => s.modelName);
-	const downloadingIsActive = useDownloadStore((s) => s.isDownloading);
-	const downloadingPercent = useDownloadStore((s) => s.progress);
-	const downloadProgress: { modelId: string; percent: number | null } | null =
-		downloadingIsActive && downloadingModelName !== null
-			? { modelId: downloadingModelName, percent: downloadingPercent }
-			: null;
-	// "Switching" — true only when the server is actually loading the
-	// model (no bytes left to fetch). The trigger uses this same logic
-	// to flip between "Downloading" and "Switching" chrome.
-	const mainSwapping =
-		mainSwapTarget !== null && !(downloadProgress && downloadProgress.modelId === mainSwapTarget);
-	const realtimeSwapping =
-		realtimeSwapTarget !== null &&
-		!(downloadProgress && downloadProgress.modelId === realtimeSwapTarget);
+	// Live download + swap snapshot lives in its own hook so the panel stays
+	// at a reasonable cognitive-complexity score.
+	const { downloadProgress, mainSwapping, realtimeSwapping } = useSwapProgress();
 
 	// Live host resource snapshot (RAM available, free VRAM, CPU%) for the
 	// resource-aware warning modal. Refreshed when the panel mounts.
@@ -577,54 +649,15 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		refreshLive();
 	}, [refreshModelState, refreshLive]);
 
-	// Guard: STT is the always-on core capability — the selector must never
-	// be in a "no model" state. If the saved id is empty (corrupted settings)
-	// or refers to a model that's no longer in the catalog (catalog change),
-	// auto-pick the smallest cached model so the user always lands on
-	// something usable. Skips while the catalog is still loading so we don't
-	// false-positive every model as missing during the boot race. Also skips
-	// when the active model is a cloud `provider:*` id — those are never in
-	// the local catalog by design and should not trigger a fallback.
-	useEffect(() => {
-		if (!catalogLoaded) {
-			return;
-		}
-		if (providerOf(settings?.model ?? "") !== null) {
-			return;
-		}
-		if (!needsModelFallback(settings?.model, catalogModels)) {
-			return;
-		}
-		const next = pickDefaultSttModel(catalogModels, statesById);
-		if (next && next !== settings?.model) {
-			// Look up the picked model's catalog entry so we can patch
-			// ``model`` and ``backend`` together — ``updateModelSettings``
-			// rejects a model-only patch (see the typed ``ModelPatch``).
-			// This was the original drift site: the fallback used to write
-			// ``{ model: "tiny" }`` while leaving ``backend`` at whatever
-			// the previous model used. Disk saved a mismatched pair, every
-			// subsequent boot loaded the wrong engine for the right model.
-			const fallbackEntry = catalogModels.find((m) => m.id === next);
-			if (fallbackEntry?.backend) {
-				update({ model: next, backend: fallbackEntry.backend });
-			}
-		}
-	}, [catalogLoaded, catalogModels, statesById, settings?.model, update]);
-
-	// Same guard for the realtime model, narrowed to realtime-viable entries.
-	useEffect(() => {
-		if (!catalogLoaded) {
-			return;
-		}
-		const realtimeViable = catalogModels.filter((m) => m.supportsRealtime);
-		if (!needsModelFallback(settings?.realtimeModel, realtimeViable)) {
-			return;
-		}
-		const next = pickDefaultSttModel(catalogModels, statesById, (m) => m.supportsRealtime);
-		if (next && next !== settings?.realtimeModel) {
-			update({ realtimeModel: next });
-		}
-	}, [catalogLoaded, catalogModels, statesById, settings?.realtimeModel, update]);
+	// Stale-model fallback for both slots lives in its own hook.
+	useStaleModelFallback(
+		catalogLoaded,
+		catalogModels,
+		statesById,
+		settings?.model,
+		settings?.realtimeModel,
+		update
+	);
 
 	// Fallback matches the bundled offline base seeded into the HF cache by
 	// PyInstaller (see `seed_models.py` + `project_offline_base_and_tts_pack`
@@ -649,13 +682,11 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 			selectedInfo.family === "nemo");
 	const currentQuantization = (settings?.onnxQuantization ?? "") as OnnxQuantization;
 
-	const langOpts = useMemo(() => {
-		const supported = selectedInfo?.languages;
-		if (!supported || supported.length === 0) {
-			return ALL_LANG_OPTS;
-		}
-		return ALL_LANG_OPTS.filter((l) => l.id === "" || supported.includes(l.id));
-	}, [selectedInfo?.languages]);
+	const supportedLanguages = selectedInfo?.languages;
+	const langOpts =
+		!supportedLanguages || supportedLanguages.length === 0
+			? ALL_LANG_OPTS
+			: ALL_LANG_OPTS.filter((l) => l.id === "" || supportedLanguages.includes(l.id));
 
 	const controller = useModelSwapController(
 		settings,
@@ -696,33 +727,24 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		discardQuantCache(modelId, quantization);
 	};
 
+	// Per-quant byte-level pause/resume wiring lives in its own hook so the
+	// panel stays at a reasonable size (see no-giant-component).
+	const { handleDownloadAction, handleDownloadSnapshot } = useQuantDownloads();
+
 	// When the active main model is itself small enough to drive the live
 	// preview, the dedicated realtime slot has no job — a second small model
-	// would just duplicate work without improving quality. Force the realtime
-	// slot to mirror the main model and flip the server flag so the realtime
-	// worker reuses the already-loaded main transcriber.
+	// would just duplicate work without improving quality.
 	const mainIsRealtimeViable =
 		!selectedIsCloud && selectedInfo !== undefined && isRealtimeViable(selectedInfo);
 	const lockRealtimeToMain = realtimeEnabled && mainIsRealtimeViable;
-	const realtimeChange = controller.handleRealtimeModelChange;
-	useEffect(() => {
-		if (!lockRealtimeToMain) {
-			return;
-		}
-		if (settings?.realtimeModel !== selectedModel) {
-			realtimeChange(selectedModel);
-		}
-		if (!useMainModelFlag) {
-			updateQuality({ useMainModelForRealtime: true });
-		}
-	}, [
+	useLockRealtimeToMain(
 		lockRealtimeToMain,
 		selectedModel,
 		settings?.realtimeModel,
 		useMainModelFlag,
-		realtimeChange,
-		updateQuality,
-	]);
+		controller.handleRealtimeModelChange,
+		updateQuality
+	);
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -739,6 +761,8 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					isSwapping={mainSwapping}
 					langOpts={langOpts}
 					onDeleteQuant={handleDeleteQuant}
+					onDownloadAction={handleDownloadAction}
+					onDownloadSnapshot={handleDownloadSnapshot}
 					selectedModel={selectedModel}
 					settings={settings}
 					statesById={statesById}
@@ -759,6 +783,8 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					lockedToMainModel={lockRealtimeToMain}
 					mainModelId={selectedModel}
 					onDeleteQuant={handleDeleteQuant}
+					onDownloadAction={handleDownloadAction}
+					onDownloadSnapshot={handleDownloadSnapshot}
 					onUseMainModel={handleUseMainModel}
 					quality={quality}
 					settings={settings}

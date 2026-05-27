@@ -167,7 +167,7 @@ const {
 	wireTypeStdin,
 	startTypeBinaryRun,
 	formatCombinedFailureReason,
-	logTypeFailure,
+	logClipFailure,
 	readClipboardFormat,
 	coerceClipboardText,
 	normalizeClipboardImage,
@@ -183,8 +183,8 @@ const {
 	restoreClipboardSnapshot,
 	recordPasteCall,
 	enqueuePaste,
-	tryTypeThenFallback,
-	runClipboardFallback,
+	tryClipboardThenTyping,
+	runClipboardPaste,
 } = await import("./paste");
 
 import { beforeEach } from "bun:test";
@@ -217,7 +217,7 @@ describe("pasteText", () => {
 		expect(spawnLog.length).toBe(beforeSpawns);
 	});
 
-	test("on win32: skips clipboard, toggles guard, spawns winstt-paste.exe --type with text on stdin", async () => {
+	test("on win32: writes clipboard, toggles guard, spawns winstt-paste.exe (Ctrl+V), then restores", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
@@ -229,13 +229,15 @@ describe("pasteText", () => {
 		spawnStub.emitError = undefined;
 		pasteText("hello world");
 		await flushPastePending();
-		// CRITICAL: the user's clipboard must NOT be touched in the success path.
+		// Clipboard is touched DURING the paste (we write the transcript onto
+		// it, send Ctrl+V, then restore) — final state must be the user's
+		// original content.
 		expect(lastClipboard).toBe("user-prior-content");
 		expect(guardLog).toEqual([true, false]);
 		expect(spawnLog.length).toBe(1);
 		expect(spawnLog[0]?.cmd).toContain("winstt-paste.exe");
-		expect(spawnLog[0]?.args).toEqual(["--type"]);
-		expect(spawnLog[0]?.stdin).toBe("hello world");
+		// Ctrl+V binary takes no args (the C helper auto-detects terminal class).
+		expect(spawnLog[0]?.args).toEqual([]);
 	});
 
 	test("paste guard is cleared even when the binary fails", async () => {
@@ -263,42 +265,44 @@ describe("pasteText", () => {
 		await flushPastePending();
 	});
 
-	test("on win32: serial pastes never touch the clipboard and guard cleanly toggles", async () => {
+	test("on win32: serial pastes round-trip the clipboard and guard cleanly toggles", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		guardLog.length = 0;
 		spawnLog.length = 0;
-		lastClipboard = "";
+		lastClipboard = "user-original";
 		spawnStub.exitCode = 0;
 		pasteText("alpha");
 		pasteText("beta");
 		pasteText("gamma");
 		await flushPastePending();
 		expect(guardLog).toEqual([true, false, true, false, true, false]);
-		// Each spawn used --type mode, so clipboard never received the text.
-		expect(lastClipboard).toBe("");
+		// Each paste writes onto the clipboard then restores in `finally` —
+		// the user's original content survives the burst.
+		expect(lastClipboard).toBe("user-original");
 		expect(spawnLog.length).toBe(3);
-		expect(spawnLog.map((s) => s.stdin)).toEqual(["alpha", "beta", "gamma"]);
+		// All three spawns are the Ctrl+V binary (no args), not --type.
+		expect(spawnLog.map((s) => s.args)).toEqual([[], [], []]);
 	});
 
-	test("on win32: --type failure falls back to clipboard + Ctrl+V and restores", async () => {
+	test("on win32: Ctrl+V failure falls back to --type with the transcript on stdin", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		spawnLog.length = 0;
 		lastClipboard = "original-clipboard";
-		// First spawn (--type) fails, second spawn (Ctrl+V fallback) succeeds.
+		// First spawn (Ctrl+V) fails, second spawn (--type fallback) succeeds.
 		spawnStub.exitCodeSequence = [1, 0];
 		pasteText("transcript");
 		await flushPastePending();
-		// Two spawns: one --type, one Ctrl+V (no args).
+		// Two spawns: one Ctrl+V (no args) then one --type with stdin.
 		expect(spawnLog.length).toBe(2);
-		expect(spawnLog[0]?.args).toEqual(["--type"]);
-		expect(spawnLog[0]?.stdin).toBe("transcript");
-		expect(spawnLog[1]?.args).toEqual([]);
-		// The fallback writes the transcript onto the clipboard then restores
-		// the user's original value. Final state: original is back.
+		expect(spawnLog[0]?.args).toEqual([]);
+		expect(spawnLog[1]?.args).toEqual(["--type"]);
+		expect(spawnLog[1]?.stdin).toBe("transcript");
+		// The clipboard sandwich restored the user's original value in `finally`
+		// even though Ctrl+V exited non-zero.
 		expect(lastClipboard).toBe("original-clipboard");
 	});
 
@@ -308,12 +312,14 @@ describe("pasteText", () => {
 		}
 		spawnLog.length = 0;
 		lastClipboard = "user-content";
-		// First paste: BOTH --type and the clipboard fallback fail. Cooldown trips.
+		// First paste: BOTH the Ctrl+V primary AND the --type fallback fail. Cooldown trips.
 		spawnStub.exitCodeSequence = [1, 1];
 		pasteText("first");
 		await flushPastePending();
-		// 2 spawns (type + fallback). Clipboard restored to original.
+		// 2 spawns (Ctrl+V then --type). Clipboard restored to original.
 		expect(spawnLog.length).toBe(2);
+		expect(spawnLog[0]?.args).toEqual([]);
+		expect(spawnLog[1]?.args).toEqual(["--type"]);
 		expect(lastClipboard).toBe("user-content");
 
 		// Second paste arrives within cooldown — we drop it entirely.
@@ -952,29 +958,30 @@ describe("startTypeBinaryRun", () => {
 
 describe("formatCombinedFailureReason", () => {
 	test("renders both reasons when present", () => {
-		expect(formatCombinedFailureReason("a", "b")).toBe("type:a;clip:b");
-	});
-
-	test("uses 'unknown' for undefined type reason", () => {
-		expect(formatCombinedFailureReason(undefined, "b")).toBe("type:unknown;clip:b");
+		// New order matches the dispatch order: clip first (primary), type second (fallback).
+		expect(formatCombinedFailureReason("a", "b")).toBe("clip:a;type:b");
 	});
 
 	test("uses 'unknown' for undefined clip reason", () => {
-		expect(formatCombinedFailureReason("a", undefined)).toBe("type:a;clip:unknown");
+		expect(formatCombinedFailureReason(undefined, "b")).toBe("clip:unknown;type:b");
+	});
+
+	test("uses 'unknown' for undefined type reason", () => {
+		expect(formatCombinedFailureReason("a", undefined)).toBe("clip:a;type:unknown");
 	});
 
 	test("uses 'unknown' for both undefined reasons", () => {
-		expect(formatCombinedFailureReason(undefined, undefined)).toBe("type:unknown;clip:unknown");
+		expect(formatCombinedFailureReason(undefined, undefined)).toBe("clip:unknown;type:unknown");
 	});
 });
 
-describe("logTypeFailure", () => {
+describe("logClipFailure", () => {
 	test("does not throw when reason is provided", () => {
-		expect(() => logTypeFailure("explained")).not.toThrow();
+		expect(() => logClipFailure("explained")).not.toThrow();
 	});
 
 	test("does not throw when reason is undefined", () => {
-		expect(() => logTypeFailure(undefined)).not.toThrow();
+		expect(() => logClipFailure(undefined)).not.toThrow();
 	});
 });
 
@@ -1221,14 +1228,14 @@ describe("enqueuePaste", () => {
 	});
 });
 
-describe("on win32: --type failure + clipboard fallback failure surfaces combined reason", () => {
+describe("on win32: Ctrl+V failure + --type failure surfaces combined reason", () => {
 	test("both paths failing trips cooldown with the combined reason in logs", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		spawnLog.length = 0;
 		__resetPasteForTesting__();
-		// Both spawns (type + Ctrl+V) exit non-zero — formatCombinedFailureReason is invoked.
+		// Both spawns (Ctrl+V then --type) exit non-zero — formatCombinedFailureReason is invoked.
 		spawnStub.exitCodeSequence = [1, 1];
 		pasteText("combined-failure");
 		await flushPastePending();
@@ -1238,29 +1245,31 @@ describe("on win32: --type failure + clipboard fallback failure surfaces combine
 	});
 });
 
-describe("tryTypeThenFallback (direct)", () => {
-	test("on win32: --type succeeds → returns the type result without invoking the fallback", async () => {
+describe("tryClipboardThenTyping (direct)", () => {
+	test("on win32: Ctrl+V succeeds → returns the clipboard result without invoking --type", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		spawnLog.length = 0;
 		spawnStub.exitCode = 0;
-		const result = await tryTypeThenFallback("C:/fake/binary.exe", "x");
+		const result = await tryClipboardThenTyping("C:/fake/binary.exe", "x");
 		expect(result.ok).toBe(true);
-		// Only ONE spawn — the --type one. No fallback.
+		// Only ONE spawn — the Ctrl+V one (no args). No --type fallback.
 		expect(spawnLog.length).toBe(1);
-		expect(spawnLog[0]?.args).toEqual(["--type"]);
+		expect(spawnLog[0]?.args).toEqual([]);
 	});
 
-	test("on win32: --type fails + fallback succeeds → returns the fallback result", async () => {
+	test("on win32: Ctrl+V fails + --type succeeds → returns the typing result", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		spawnLog.length = 0;
 		spawnStub.exitCodeSequence = [1, 0];
-		const result = await tryTypeThenFallback("C:/fake/binary.exe", "y");
+		const result = await tryClipboardThenTyping("C:/fake/binary.exe", "y");
 		expect(result.ok).toBe(true);
 		expect(spawnLog.length).toBe(2);
+		expect(spawnLog[0]?.args).toEqual([]);
+		expect(spawnLog[1]?.args).toEqual(["--type"]);
 	});
 
 	test("on win32: both paths fail → returns combined reason", async () => {
@@ -1269,14 +1278,14 @@ describe("tryTypeThenFallback (direct)", () => {
 		}
 		spawnLog.length = 0;
 		spawnStub.exitCodeSequence = [1, 1];
-		const result = await tryTypeThenFallback("C:/fake/binary.exe", "z");
+		const result = await tryClipboardThenTyping("C:/fake/binary.exe", "z");
 		expect(result.ok).toBe(false);
-		expect(result.reason).toContain("type:exit 1");
 		expect(result.reason).toContain("clip:exit 1");
+		expect(result.reason).toContain("type:exit 1");
 	});
 });
 
-describe("runClipboardFallback (direct)", () => {
+describe("runClipboardPaste (direct)", () => {
 	test("on win32: spawns Ctrl+V binary, restores user clipboard via finally", async () => {
 		if (process.platform !== "win32") {
 			return;
@@ -1284,7 +1293,7 @@ describe("runClipboardFallback (direct)", () => {
 		spawnLog.length = 0;
 		lastClipboard = "user-content";
 		spawnStub.exitCode = 0;
-		const result = await runClipboardFallback("C:/fake/binary.exe", "transcript");
+		const result = await runClipboardPaste("C:/fake/binary.exe", "transcript");
 		expect(result.ok).toBe(true);
 		expect(spawnLog.length).toBe(1);
 		// Ctrl+V binary takes no args.
@@ -1293,15 +1302,15 @@ describe("runClipboardFallback (direct)", () => {
 		expect(lastClipboard).toBe("user-content");
 	});
 
-	test("on win32: returns early with 'fallback clipboard write failed' when writeClipboard throws", async () => {
+	test("on win32: returns early with 'clipboard write failed' when writeClipboard throws", async () => {
 		if (process.platform !== "win32") {
 			return;
 		}
 		spawnLog.length = 0;
 		clipboardThrowOnNext = true;
-		const result = await runClipboardFallback("C:/fake/binary.exe", "doomed");
+		const result = await runClipboardPaste("C:/fake/binary.exe", "doomed");
 		expect(result.ok).toBe(false);
-		expect(result.reason).toBe("fallback clipboard write failed");
+		expect(result.reason).toBe("clipboard write failed");
 		// Never spawned because we bailed early.
 		expect(spawnLog.length).toBe(0);
 	});
@@ -1311,11 +1320,11 @@ describe("runClipboardFallback (direct)", () => {
 			return;
 		}
 		spawnLog.length = 0;
-		lastClipboard = "before-fallback";
+		lastClipboard = "before-paste";
 		spawnStub.exitCode = 1;
-		const result = await runClipboardFallback("C:/fake/binary.exe", "transcript");
+		const result = await runClipboardPaste("C:/fake/binary.exe", "transcript");
 		expect(result.ok).toBe(false);
 		// The finally block ran the restore — `lastClipboard` is back to the original.
-		expect(lastClipboard).toBe("before-fallback");
+		expect(lastClipboard).toBe("before-paste");
 	});
 });

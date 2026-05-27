@@ -3,7 +3,8 @@ import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
 import type { OpenRouterModel } from "@/shared/api/models";
-import { isMissingModelId, ModelSelectorTrigger, TriggerButton } from "./ModelSelectorTrigger";
+import { ModelSelectorTrigger, TriggerButton } from "./ModelSelectorTrigger";
+import { isMissingModelId } from "./model-selector-trigger-helpers";
 
 const sampleModel: OpenRouterModel = {
 	id: "openai/gpt-4o",

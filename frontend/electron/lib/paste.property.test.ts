@@ -1,13 +1,13 @@
 /**
  * Property tests for the pure decision helpers in paste.ts.
  *
- * Targets the helpers that the bigger `tryTypeThenFallback` (CRAP 12) relies
+ * Targets the helpers that the bigger `tryClipboardThenTyping` (CRAP 12) relies
  * on. The full path is example-tested in paste.test.ts; this file pins down
  * invariants on the pure helpers — these survive mutation testing on the
  * fallback-reason / cooldown / pacing logic without spinning up the spawn
  * harness.
  *
- *   - formatCombinedFailureReason: total, deterministic, type:_;clip:_ shape.
+ *   - formatCombinedFailureReason: total, deterministic, clip:_;type:_ shape.
  *   - isSlowPaste: monotone in both args; boundary at 250ms / 300ms.
  *   - computePaceWait: bounded by [0, 250]; monotone non-increasing in `now`.
  *   - coerceClipboardText: total, returns a string for every input.
@@ -90,14 +90,14 @@ afterAll(() => {
 // formatCombinedFailureReason -----------------------------------------------
 
 describe("formatCombinedFailureReason (property)", () => {
-	test("output always starts with 'type:' and contains ';clip:'", () => {
+	test("output always starts with 'clip:' and contains ';type:'", () => {
 		fc.assert(
 			fc.property(
 				fc.option(fc.string({ maxLength: 100 }), { nil: undefined }),
 				fc.option(fc.string({ maxLength: 100 }), { nil: undefined }),
-				(typeReason, clipReason) => {
-					const out = formatCombinedFailureReason(typeReason, clipReason);
-					return out.startsWith("type:") && out.includes(";clip:");
+				(clipReason, typeReason) => {
+					const out = formatCombinedFailureReason(clipReason, typeReason);
+					return out.startsWith("clip:") && out.includes(";type:");
 				}
 			),
 			{ numRuns: 300 }
@@ -109,11 +109,11 @@ describe("formatCombinedFailureReason (property)", () => {
 			fc.property(
 				fc.option(fc.string({ maxLength: 50 }), { nil: undefined }),
 				fc.option(fc.string({ maxLength: 50 }), { nil: undefined }),
-				(typeReason, clipReason) => {
-					const out = formatCombinedFailureReason(typeReason, clipReason);
-					const t = typeReason ?? "unknown";
+				(clipReason, typeReason) => {
+					const out = formatCombinedFailureReason(clipReason, typeReason);
 					const c = clipReason ?? "unknown";
-					return out === `type:${t};clip:${c}`;
+					const t = typeReason ?? "unknown";
+					return out === `clip:${c};type:${t}`;
 				}
 			),
 			{ numRuns: 300 }
@@ -128,10 +128,10 @@ describe("formatCombinedFailureReason (property)", () => {
 				fc.option(fc.string({ maxLength: 50 }), { nil: undefined }),
 				fc.option(fc.string({ maxLength: 50 }), { nil: undefined }),
 				fc.integer({ min: 2, max: 5 }),
-				(t, c, n) => {
-					const first = formatCombinedFailureReason(t, c);
+				(c, t, n) => {
+					const first = formatCombinedFailureReason(c, t);
 					for (let i = 0; i < n; i++) {
-						if (formatCombinedFailureReason(t, c) !== first) {
+						if (formatCombinedFailureReason(c, t) !== first) {
 							return false;
 						}
 					}

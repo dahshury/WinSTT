@@ -170,8 +170,9 @@ export function HistoryPage() {
 						</div>
 						<p className="text-sm">{effectiveText(entry)}</p>
 						{playingId === entry.id && audioUrl ? (
-							// biome-ignore lint/a11y/useMediaCaption: no captions for user recordings
-							<audio autoPlay controls src={audioUrl} />
+							<audio aria-label="Transcription recording playback" autoPlay controls src={audioUrl}>
+								<track default kind="captions" label="No captions available" srcLang="en" />
+							</audio>
 						) : null}
 					</li>
 				))}

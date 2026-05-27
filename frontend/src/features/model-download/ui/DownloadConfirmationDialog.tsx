@@ -1,5 +1,5 @@
 import { resolveQuantCache } from "@picker";
-import { type ReactNode, useCallback } from "react";
+import type { ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
@@ -302,16 +302,16 @@ function DownloadConfirmationContent({
 	// (`243 MB`) — the precise byte count goes in the IdleInfoCard.
 	const sizeSuffix = info?.sizeLabel ? ` (${info.sizeLabel})` : "";
 
-	const handleStop = useCallback(() => {
+	const handleStop = (): void => {
 		live.cancelDownload();
-	}, [live]);
+	};
 
-	const handleDiscard = useCallback(() => {
+	const handleDiscard = (): void => {
 		if (!pending) {
 			return;
 		}
 		live.discardCache(pending.modelId);
-	}, [live, pending]);
+	};
 
 	const dismissButtonClass = `inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-foreground text-sm ${surfaceClasses(infoLevel)} ${surfaceHoverBg(buttonHover)}`;
 

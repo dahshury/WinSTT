@@ -51,6 +51,18 @@ export interface SttModelSelectorProps {
 	 *  When omitted, the trash icon is NOT rendered next to cached/partial
 	 *  quants (the selector becomes read-only with respect to deletion). */
 	onDeleteQuant?: (modelId: string, quantization: OnnxQuantization) => void;
+	/** Per-quant download action — start / pause / resume / cancel. The
+	 *  consumer wires these to ``useDownloadStore`` actions. */
+	onDownloadAction?: (
+		action: import("./SttModelCard").QuantDownloadAction,
+		modelId: string,
+		quantization: OnnxQuantization
+	) => void;
+	/** Per-quant download snapshot lookup (active downloads only). */
+	onDownloadSnapshot?: (
+		modelId: string,
+		quantization: OnnxQuantization
+	) => import("./SttModelCard").QuantDownloadSnapshot | undefined;
 	placeholder?: string;
 	/** Popup height class. Defaults to the roomy settings-panel height; the
 	 *  footer chip overrides this with a compact one to fit the status bar. */
@@ -132,6 +144,8 @@ export function SttModelSelector({
 	currentQuantization,
 	onChange,
 	onDeleteQuant,
+	onDownloadAction,
+	onDownloadSnapshot,
 	statesById,
 	systemInfo,
 	disabled = false,
@@ -292,6 +306,8 @@ export function SttModelSelector({
 				isLoading={isLoading}
 				kind={kind}
 				menuFilteredModels={menuFilteredModels}
+				onDownloadAction={onDownloadAction}
+				onDownloadSnapshot={onDownloadSnapshot}
 				onFiltersChange={(next) => dispatch({ type: "setFilters", filters: next })}
 				onRequestDelete={handleRequestDelete}
 				onToggleExpanded={handleToggleExpanded}

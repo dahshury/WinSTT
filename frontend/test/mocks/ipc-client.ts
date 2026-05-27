@@ -459,6 +459,14 @@ export function ipcClientMock(): Record<string, unknown> {
 				modelId,
 				quantization,
 			}),
+		predownloadModelQuant: (modelId: string, quantization: string) =>
+			invokeOrDefault<unknown>(IPC.STT_PREDOWNLOAD_QUANT, null, { modelId, quantization }),
+		pauseModelDownload: (modelId: string, quantization: string) =>
+			invokeOrDefault<unknown>(IPC.STT_DOWNLOAD_PAUSE, null, { modelId, quantization }),
+		resumeModelDownload: (modelId: string, quantization: string) =>
+			invokeOrDefault<unknown>(IPC.STT_DOWNLOAD_RESUME, null, { modelId, quantization }),
+		cancelModelDownloadQuant: (modelId: string, quantization: string) =>
+			invokeOrDefault<unknown>(IPC.STT_DOWNLOAD_CANCEL_QUANT, null, { modelId, quantization }),
 		fetchLiveResources: (forceRefresh = false) =>
 			invokeOrDefault<unknown>(IPC.STT_GET_LIVE_RESOURCES, null, { forceRefresh }),
 		assessDictationFit: (modelId: string, quantization = "", device: string | null = null) =>

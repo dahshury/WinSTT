@@ -354,13 +354,53 @@ describe("settings:save listener", () => {
 	test("changing a startup-only key while STT is running schedules a restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
+		storeData.model = { computeType: "default" };
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { model: { computeType: "int8" } },
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(1);
+	});
+
+	test("changing onnx_quantization does NOT trigger restart (hot-swapped via reload_main_model)", async () => {
+		// Regression: model.onnxQuantization used to be a startup-only key. It
+		// now flows through sttSetParameter("onnx_quantization") which updates
+		// the recorder config and triggers an in-place model reload; the swap
+		// worker's _load_transcriber re-resolves the quant from the live config.
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData.model = { onnxQuantization: "" };
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { model: { onnxQuantization: "int8" } },
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(0);
+	});
+
+	test("changing webrtcSensitivity does NOT trigger restart (hot-swapped via WebRTCVAD.set_sensitivity)", async () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
 		storeData.audio = { webrtcSensitivity: 1 };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
 			settings: { audio: { webrtcSensitivity: 2 } },
 		});
 		await new Promise((r) => setTimeout(r, 600));
-		expect(sttProcessState.restartCalled).toBe(1);
+		expect(sttProcessState.restartCalled).toBe(0);
+	});
+
+	test("changing microphoneRelease does NOT trigger restart (hot-swapped via PyAudioSource.reconfigure)", async () => {
+		setupSettingsHandlers();
+		sttProcessState.running = true;
+		storeData.audio = { microphoneRelease: "immediate" };
+		const win = createWindow(1, sentEvents);
+		fireEvent("settings:save", win.webContents, {
+			settings: { audio: { microphoneRelease: "min5" } },
+		});
+		await new Promise((r) => setTimeout(r, 600));
+		expect(sttProcessState.restartCalled).toBe(0);
 	});
 
 	test("startup-only key change does NOT restart when STT is not running and not connected", async () => {
@@ -377,16 +417,16 @@ describe("settings:save listener", () => {
 	test("rapid startup-only changes are debounced into a single restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.audio = { webrtcSensitivity: 0 };
+		storeData.model = { computeType: "default" };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { webrtcSensitivity: 1 } },
+			settings: { model: { computeType: "int8" } },
 		});
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { webrtcSensitivity: 2 } },
+			settings: { model: { computeType: "int16" } },
 		});
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { webrtcSensitivity: 3 } },
+			settings: { model: { computeType: "float16" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		expect(sttProcessState.restartCalled).toBe(1);
@@ -395,10 +435,10 @@ describe("settings:save listener", () => {
 	test("before-quit cancels a pending restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.audio = { webrtcSensitivity: 0 };
+		storeData.model = { computeType: "default" };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { webrtcSensitivity: 2 } },
+			settings: { model: { computeType: "int8" } },
 		});
 		// Fire before-quit immediately (sets isShuttingDown + clears timer)
 		for (const cb of appListeners.get("before-quit") ?? []) {
@@ -435,11 +475,11 @@ describe("settings:save listener", () => {
 	test("startup-only key with non-object section in old settings triggers restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		// Simulate old store where "audio" was undefined entirely
-		storeData = { general: {}, model: {}, audio: undefined, quality: {} };
+		// Simulate old store where "model" was undefined entirely
+		storeData = { general: {}, model: undefined, audio: {}, quality: {} };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { audio: { webrtcSensitivity: 1 } },
+			settings: { model: { computeType: "int8" } },
 		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(1);
@@ -458,10 +498,10 @@ describe("settings:save listener", () => {
 				typeof setupSettingsHandlers
 			>[0]);
 			sttProcessState.running = false;
-			storeData.audio = { webrtcSensitivity: 0 };
+			storeData.model = { computeType: "default" };
 			const win = createWindow(1, sentEvents);
 			fireEvent("settings:save", win.webContents, {
-				settings: { audio: { webrtcSensitivity: 1 } },
+				settings: { model: { computeType: "int8" } },
 			});
 			await new Promise((r) => setTimeout(r, 600));
 			expect(sttProcessState.restartCalled).toBe(0);
@@ -600,10 +640,10 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 		const aliveA = createWindow(10, events1);
 		const aliveB = createWindow(11, events2);
 		allWindows.push(aliveA, aliveB);
-		storeData.audio = { webrtcSensitivity: 0 };
+		storeData.model = { computeType: "default" };
 		const sender = createWindow(1, sentEvents);
 		fireEvent("settings:save", sender.webContents, {
-			settings: { audio: { webrtcSensitivity: 1 } },
+			settings: { model: { computeType: "int8" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		const restartEvents1 = events1.filter((e) => e.channel === "stt:restart-required");
@@ -622,10 +662,10 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 		const dead = createWindow(20, eventsDead, { destroyed: true });
 		const alive = createWindow(21, eventsAlive);
 		allWindows.push(dead, alive);
-		storeData.audio = { webrtcSensitivity: 0 };
+		storeData.model = { computeType: "default" };
 		const sender = createWindow(1, sentEvents);
 		fireEvent("settings:save", sender.webContents, {
-			settings: { audio: { webrtcSensitivity: 1 } },
+			settings: { model: { computeType: "int8" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		const restartDead = eventsDead.filter((e) => e.channel === "stt:restart-required");
@@ -644,10 +684,10 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 		const bad = createWindow(30, eventsBad, { throwOnSend: true });
 		const alive = createWindow(31, eventsAlive);
 		allWindows.push(bad, alive);
-		storeData.audio = { webrtcSensitivity: 0 };
+		storeData.model = { computeType: "default" };
 		const sender = createWindow(1, sentEvents);
 		fireEvent("settings:save", sender.webContents, {
-			settings: { audio: { webrtcSensitivity: 1 } },
+			settings: { model: { computeType: "int8" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		const restartAlive = eventsAlive.filter((e) => e.channel === "stt:restart-required");
@@ -683,8 +723,8 @@ describe("applyMainProcessSettingsPatch", () => {
 	test("triggers a restart when the patch changes a startup-only key", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.audio = { webrtcSensitivity: 0 };
-		applyMainProcessSettingsPatch({ "audio.webrtcSensitivity": 2 });
+		storeData.model = { computeType: "default" };
+		applyMainProcessSettingsPatch({ "model.computeType": "int8" });
 		await new Promise((r) => setTimeout(r, 700));
 		expect(sttProcessState.restartCalled).toBe(1);
 	});
@@ -804,16 +844,16 @@ describe("shouldScheduleRestart (helper)", () => {
 	test("returns false when relevant change exists but no server to restart", () => {
 		setupSettingsHandlers();
 		sttProcessState.running = false;
-		const old = { audio: { webrtcSensitivity: 1 } };
-		const next = { audio: { webrtcSensitivity: 2 } };
+		const old = { model: { computeType: "default" } };
+		const next = { model: { computeType: "int8" } };
 		expect(shouldScheduleRestart(old, next)).toBe(false);
 	});
 
 	test("returns true when startup key changed AND server is running", () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		const old = { audio: { webrtcSensitivity: 1 } };
-		const next = { audio: { webrtcSensitivity: 2 } };
+		const old = { model: { computeType: "default" } };
+		const next = { model: { computeType: "int8" } };
 		expect(shouldScheduleRestart(old, next)).toBe(true);
 	});
 
@@ -837,8 +877,8 @@ describe("shouldScheduleRestart (helper)", () => {
 		// Startup-only branch
 		expect(
 			hasRestartRelevantChange(
-				{ audio: { webrtcSensitivity: 1 } },
-				{ audio: { webrtcSensitivity: 2 } }
+				{ model: { computeType: "default" } },
+				{ model: { computeType: "int8" } }
 			)
 		).toBe(true);
 		// Wake-word branch

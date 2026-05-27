@@ -99,7 +99,7 @@
     "fast-check": "^4.8.0",
     "knip": "^6.12.1",
     "openapi-typescript": "^7.13.0",
-    "react-doctor": "^0.1.2",
+    "react-doctor": "^0.2.9",
     "tailwindcss": "^4.2.4",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",

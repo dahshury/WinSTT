@@ -110,7 +110,7 @@ export function ModelPickerWindow() {
 		wasSwappingRef.current = mainSwapping;
 	}, [mainSwapping]);
 
-	const handleChange = (modelId: string, quantization?: OnnxQuantization) => {
+	const selectModel = (modelId: string, quantization?: OnnxQuantization) => {
 		controller.handleModelChange(modelId, quantization);
 		// Re-selecting the loaded model is a no-op for the controller (no
 		// swap, no dialog) — dismiss the window so the click still does
@@ -173,14 +173,14 @@ export function ModelPickerWindow() {
 						height: panel.height,
 					}}
 				>
-					<CloudSttSection onSelect={(id) => handleChange(id)} selectedId={currentModel ?? ""} />
+					<CloudSttSection onSelect={(id) => selectModel(id)} selectedId={currentModel ?? ""} />
 					<SttModelSelector
 						currentQuantization={currentQuantization}
 						inline
 						isLoading={!catalogLoaded}
 						kind="main"
 						models={catalogModels}
-						onChange={handleChange}
+						onChange={selectModel}
 						popupHeightClass={PANEL_HEIGHT}
 						statesById={statesById}
 						systemInfo={systemInfo}

@@ -488,3 +488,53 @@
 		opacity: 0.015;
 	}
 }
+
+/* Transitions.dev — Modal open / close */
+
+/*
+  Usage:
+    <div class="t-modal" role="dialog">…</div>
+
+  State:
+    - Add `.is-open` to open (scales up from --modal-scale).
+    - On close, swap `.is-open` for `.is-closing`, then remove
+      `.is-closing` after --modal-close-dur.
+*/
+
+:root {
+	--modal-open-dur: 250ms;
+	--modal-close-dur: 150ms;
+	--modal-scale: 0.96;
+	--modal-scale-close: 0.96;
+	--modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.t-modal {
+	pointer-events: none;
+	opacity: 0;
+	transform: scale(var(--modal-scale));
+	transform-origin: center;
+	transition:
+		transform var(--modal-open-dur) var(--modal-ease),
+		opacity var(--modal-open-dur) var(--modal-ease);
+	will-change: transform, opacity;
+}
+.t-modal.is-open {
+	pointer-events: auto;
+	opacity: 1;
+	transform: scale(1);
+}
+.t-modal.is-closing {
+	pointer-events: none;
+	opacity: 0;
+	transform: scale(var(--modal-scale-close));
+	transition:
+		transform var(--modal-close-dur) var(--modal-ease),
+		opacity var(--modal-close-dur) var(--modal-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.t-modal {
+		transition: none !important;
+	}
+}

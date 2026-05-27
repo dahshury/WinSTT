@@ -10,6 +10,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
+import { useCatalogStore } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,
@@ -39,6 +40,102 @@ type QualitySettings = NonNullable<
 type AudioSettings = NonNullable<ReturnType<typeof useSettingsStore.getState>["settings"]["audio"]>;
 type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
 type UpdateAudioFn = (patch: Partial<AudioSettings>) => void;
+
+type GeneralT = ReturnType<typeof useTranslations<"general">>;
+
+interface PasteBehaviorSectionProps {
+	autoSubmit: boolean;
+	autoSubmitKey: "enter" | "ctrl_enter";
+	autoSubmitKeyOptions: SwitcherOption<"enter" | "ctrl_enter">[];
+	onChangeAutoSubmit: (next: boolean) => void;
+	onChangeAutoSubmitKey: (next: "enter" | "ctrl_enter") => void;
+	tg: GeneralT;
+}
+
+function PasteBehaviorSection({
+	autoSubmit,
+	autoSubmitKey,
+	autoSubmitKeyOptions,
+	onChangeAutoSubmit,
+	onChangeAutoSubmitKey,
+	tg,
+}: PasteBehaviorSectionProps) {
+	return (
+		<SettingSection icon={DashboardCircleIcon} title={tg("pasteBehaviorTitle")}>
+			<div className="flex flex-col divide-y divide-surface-1">
+				<FormControl
+					caption={tg("autoSubmitCaption")}
+					label={tg("autoSubmit")}
+					labelAddon={<Toggle checked={autoSubmit} onCheckedChange={onChangeAutoSubmit} />}
+					tooltip={tg("autoSubmitTooltip")}
+				/>
+				{autoSubmit ? (
+					<FormControl
+						caption={tg("autoSubmitKeyCaption")}
+						label={tg("autoSubmitKey")}
+						tooltip={tg("autoSubmitKeyTooltip")}
+					>
+						<ElevatedSurface>
+							<Switcher
+								onChange={onChangeAutoSubmitKey}
+								options={autoSubmitKeyOptions}
+								value={autoSubmitKey}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+				) : null}
+			</div>
+		</SettingSection>
+	);
+}
+
+interface ContextAwarenessSectionProps {
+	enabled: boolean;
+	onCancel: () => void;
+	onConfirm: () => void;
+	tg: GeneralT;
+}
+
+function ContextAwarenessSection({
+	enabled,
+	onCancel,
+	onConfirm,
+	tg,
+}: ContextAwarenessSectionProps) {
+	const [dialogOpen, setDialogOpen] = useState(false);
+	// Toggle ON ⇒ show the opt-in dialog and DON'T persist yet; the dialog's
+	// confirm path is what actually flips the stored value. Toggle OFF ⇒
+	// persist immediately (no consent needed to disable).
+	const handleToggle = (next: boolean): void => {
+		if (next) {
+			setDialogOpen(true);
+			return;
+		}
+		onCancel();
+	};
+	return (
+		<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
+			<div className="flex flex-col divide-y divide-surface-1">
+				<FormControl
+					caption={tg("contextAwarenessCaption")}
+					label={tg("contextAwareness")}
+					labelAddon={<Toggle checked={enabled} onCheckedChange={handleToggle} />}
+					tooltip={tg("contextAwarenessTooltip")}
+				/>
+			</div>
+			<OptInDialog
+				body={tg("contextAwarenessDialogBody")}
+				cancelLabel={tg("contextAwarenessDialogCancel")}
+				confirmLabel={tg("contextAwarenessDialogConfirm")}
+				onCancel={onCancel}
+				onConfirm={onConfirm}
+				onOpenChange={setDialogOpen}
+				open={dialogOpen}
+				title={tg("contextAwarenessDialogTitle")}
+			/>
+		</SettingSection>
+	);
+}
 
 interface SmartEndpointSectionProps {
 	onToggle: (next: boolean) => void;
@@ -323,6 +420,19 @@ export function QualitySettingsPanel() {
 	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const llmDictationEnabled = useSettingsStore((s) => s.settings.llm?.dictation?.enabled ?? false);
+	// Context awareness has two consumers (see relay-context-capture):
+	//   1. ASR-side: Whisper-only via `<|startofprev|>`. Canary / Cohere
+	//      have a `<|startofcontext|>` slot but the released checkpoints
+	//      aren't trained on it — empirical bench shows broken / truncated
+	//      / hallucinated outputs (see memory note `canary-cohere-prompt-
+	//      slot-untrained`). Moonshine / SenseVoice / CTC families have
+	//      no prompt mechanism at all.
+	//   2. LLM cleanup: any engine benefits when the dictation LLM runs.
+	// So the section is meaningful when EITHER condition is met; if
+	// neither is, the toggle does nothing — hide it.
+	const activeSttModelId = useSettingsStore((s) => s.settings.model?.model ?? "");
+	const activeSttFamily = useCatalogStore((s) => s.getModel(activeSttModelId)?.family);
+	const contextAwarenessUseful = activeSttFamily === "whisper" || llmDictationEnabled;
 	const t = useTranslations("quality");
 	const tg = useTranslations("general");
 	const ta = useTranslations("audio");
@@ -357,52 +467,29 @@ export function QualitySettingsPanel() {
 		{ value: "enter", label: tg("autoSubmitKeyEnter") },
 		{ value: "ctrl_enter", label: tg("autoSubmitKeyCtrlEnter") },
 	];
-	const [contextDialogOpen, setContextDialogOpen] = useState(false);
-
-	// Toggle ON ⇒ show the opt-in dialog and DON'T persist yet; the dialog's
-	// confirm path is what actually flips the stored value. Toggle OFF ⇒
-	// persist immediately (no consent needed to disable).
-	const handleContextToggle = (next: boolean): void => {
-		if (next) {
-			setContextDialogOpen(true);
-			return;
-		}
-		updateGeneral({ contextAwareness: false });
-	};
 
 	return (
 		<div className="flex flex-col gap-2">
 			{/* ── Context Awareness ────────────────────────────
-				 Two consumers (relay.ts → relay-context-capture):
-				 1. Whisper `initial_prompt` augmentation — the caret-leading
-				    text biases the ASR decoder against mis-hearing what
-				    the user is replying to. Works with the LLM off.
-				 2. Dictation-LLM cleanup prompt — when LLM is enabled,
-				    the same snapshot feeds the cleanup pass for proper-noun
-				    spelling and reply-to-this-email composition.
-				 So the section stays visible regardless of LLM state. */}
-			<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
-				<div className="flex flex-col divide-y divide-surface-1">
-					<FormControl
-						caption={tg("contextAwarenessCaption")}
-						label={tg("contextAwareness")}
-						labelAddon={
-							<Toggle checked={contextAwarenessEnabled} onCheckedChange={handleContextToggle} />
-						}
-						tooltip={tg("contextAwarenessTooltip")}
-					/>
-				</div>
-				<OptInDialog
-					body={tg("contextAwarenessDialogBody")}
-					cancelLabel={tg("contextAwarenessDialogCancel")}
-					confirmLabel={tg("contextAwarenessDialogConfirm")}
+				 Shown only when at least one consumer can actually act on
+				 the captured snapshot:
+				   * ASR-side: active model is a Whisper variant (the only
+				     family whose released checkpoints accept and respond
+				     to prior-text prompts — see memory note
+				     `canary-cohere-prompt-slot-untrained` for the bench
+				     evidence on Canary / Cohere / Moonshine).
+				   * LLM-side: dictation LLM is enabled (the cleanup pass
+				     consumes context regardless of which ASR engine ran).
+				 With neither condition met the toggle does nothing, so we
+				 hide it instead of advertising a dead setting. */}
+			{contextAwarenessUseful && (
+				<ContextAwarenessSection
+					enabled={contextAwarenessEnabled}
 					onCancel={() => updateGeneral({ contextAwareness: false })}
 					onConfirm={() => updateGeneral({ contextAwareness: true })}
-					onOpenChange={setContextDialogOpen}
-					open={contextDialogOpen}
-					title={tg("contextAwarenessDialogTitle")}
+					tg={tg}
 				/>
-			</SettingSection>
+			)}
 
 			{/* ── Voice Activity Detection (only meaningful when VAD drives endpoints) */}
 			{(recordingMode === "listen" || recordingMode === "wakeword") && (
@@ -485,36 +572,14 @@ export function QualitySettingsPanel() {
 			</SettingSection>
 
 			{/* ── Paste Behavior ─────────────────────────────── */}
-			<SettingSection icon={DashboardCircleIcon} title={tg("pasteBehaviorTitle")}>
-				<div className="flex flex-col divide-y divide-surface-1">
-					<FormControl
-						caption={tg("autoSubmitCaption")}
-						label={tg("autoSubmit")}
-						labelAddon={
-							<Toggle
-								checked={autoSubmit}
-								onCheckedChange={(v) => updateGeneral({ autoSubmit: v })}
-							/>
-						}
-						tooltip={tg("autoSubmitTooltip")}
-					/>
-					{autoSubmit ? (
-						<FormControl
-							caption={tg("autoSubmitKeyCaption")}
-							label={tg("autoSubmitKey")}
-							tooltip={tg("autoSubmitKeyTooltip")}
-						>
-							<ElevatedSurface>
-								<Switcher
-									onChange={(v) => updateGeneral({ autoSubmitKey: v })}
-									options={autoSubmitKeyOptions}
-									value={autoSubmitKey}
-								/>
-							</ElevatedSurface>
-						</FormControl>
-					) : null}
-				</div>
-			</SettingSection>
+			<PasteBehaviorSection
+				autoSubmit={autoSubmit}
+				autoSubmitKey={autoSubmitKey}
+				autoSubmitKeyOptions={autoSubmitKeyOptions}
+				onChangeAutoSubmit={(v) => updateGeneral({ autoSubmit: v })}
+				onChangeAutoSubmitKey={(v) => updateGeneral({ autoSubmitKey: v })}
+				tg={tg}
+			/>
 		</div>
 	);
 }

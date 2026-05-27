@@ -333,6 +333,11 @@ export interface DownloadProgressPayload {
 	etaSeconds?: number;
 	model: string;
 	progress: number;
+	/** Set by the per-quant streaming downloader (predownload_model_quant).
+	 *  Older snapshot-based downloads omit it — listeners should treat
+	 *  missing as "legacy whole-model download" and update the singleton
+	 *  ``modelName`` slot rather than the per-quant map. */
+	quantization?: string;
 	speedBps?: number;
 	totalBytes?: number;
 }
@@ -340,10 +345,12 @@ export interface DownloadProgressPayload {
 export const onModelDownloadProgress = (cb: (payload: DownloadProgressPayload) => void) =>
 	onCast(IPC.STT_MODEL_DOWNLOAD_PROGRESS, cb);
 
-export const onModelDownloadComplete = (cb: (model: string, cancelled: boolean) => void) =>
+export const onModelDownloadComplete = (
+	cb: (model: string, cancelled: boolean, quantization?: string) => void
+) =>
 	on(IPC.STT_MODEL_DOWNLOAD_COMPLETE, (data) => {
-		const d = data as { model: string; cancelled?: boolean };
-		cb(d.model, d.cancelled ?? false);
+		const d = data as { cancelled?: boolean; model: string; quantization?: string };
+		cb(d.model, d.cancelled ?? false, d.quantization);
 	});
 
 export const cancelDownload = () => invokeOrDefault<void>(IPC.STT_CANCEL_DOWNLOAD, undefined);
@@ -358,6 +365,33 @@ export const deleteModelCache = (modelId: string) =>
  *  actually use. Server broadcasts ``model_cache_changed`` on completion. */
 export const deleteModelQuantization = (modelId: string, quantization: string) =>
 	invokeOrDefault<void>(IPC.STT_DELETE_MODEL_QUANTIZATION, undefined, { modelId, quantization });
+
+/** Kick off a byte-level pause/resume capable download for one
+ *  ``(modelId, quantization)`` tuple. The server downloads into the HF
+ *  cache WITHOUT changing the currently-loaded model, so the WS
+ *  connection stays alive and the user can pause / resume / cancel
+ *  mid-stream from the badge controls. The renderer typically issues a
+ *  follow-up ``setModel`` once the download_complete event fires — at
+ *  which point the swap is fast because the files are already cached. */
+export const predownloadModelQuant = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.STT_PREDOWNLOAD_QUANT, undefined, { modelId, quantization });
+
+/** Pause an in-flight per-quant download. Worker thread exits at the
+ *  next chunk; .partial files survive on disk so the next resume picks
+ *  up from the current byte offset via HTTP Range. */
+export const pauseModelDownload = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.STT_DOWNLOAD_PAUSE, undefined, { modelId, quantization });
+
+/** Resume a paused per-quant download. Server re-runs the worker which
+ *  skips any files already in cache. */
+export const resumeModelDownload = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.STT_DOWNLOAD_RESUME, undefined, { modelId, quantization });
+
+/** Cancel an in-flight per-quant download. Current file's .partial is
+ *  unlinked; previously-completed files are kept (the user can
+ *  ``deleteModelQuantization`` separately to wipe everything). */
+export const cancelModelDownloadQuant = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.STT_DOWNLOAD_CANCEL_QUANT, undefined, { modelId, quantization });
 
 export const onModelCatalog = (cb: (models: unknown[]) => void) =>
 	onTyped(IPC.STT_MODEL_CATALOG, (d: { models: unknown[] }) => d.models, cb);

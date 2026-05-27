@@ -8,13 +8,21 @@ import { cn } from "@/shared/lib/cn";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { Collapsible } from "../../core/Collapsible";
 import type { VariantBundle } from "../lib/family-helpers";
-import { SttModelCard } from "./SttModelCard";
+import { type QuantDownloadAction, type QuantDownloadSnapshot, SttModelCard } from "./SttModelCard";
 
 export interface SttVariantBundleProps {
 	bundle: VariantBundle;
 	currentQuantization: OnnxQuantization;
 	/** Whether the bundle's nested variants are visible. */
 	expanded: boolean;
+	/** Forwarded to every card → its PrecisionGroup. */
+	getDownloadSnapshot?:
+		| ((modelId: string, quantization: OnnxQuantization) => QuantDownloadSnapshot | undefined)
+		| undefined;
+	/** Forwarded to every card → its PrecisionGroup. */
+	onDownloadAction?:
+		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
+		| undefined;
 	/** Forwarded to each card so the per-quant trash icon can call back
 	 *  into the selector-level confirm dialog. */
 	onRequestDeleteQuant?:
@@ -127,6 +135,8 @@ export function SttVariantBundle({
 	expanded,
 	onSelect,
 	onRequestDeleteQuant,
+	getDownloadSnapshot,
+	onDownloadAction,
 	onToggleExpanded,
 	selectedId,
 	statesById,
@@ -140,6 +150,8 @@ export function SttVariantBundle({
 		currentQuantization,
 		onSelect,
 		onRequestDeleteQuant,
+		getDownloadSnapshot,
+		onDownloadAction,
 		selectedId,
 		statesById,
 		systemInfo,

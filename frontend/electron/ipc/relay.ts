@@ -28,7 +28,13 @@ import {
 import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
 import { setLastTranscription } from "../lib/last-transcription";
 import { injectSubmitKey, pasteText } from "../lib/paste";
-import { onAudioLevel, onRecordingStart, onRecordingStop } from "../lib/recording-indicator";
+import {
+	onAudioLevel,
+	onLlmThinkingStart,
+	onLlmThinkingStop,
+	onRecordingStart,
+	onRecordingStop,
+} from "../lib/recording-indicator";
 import { consumeRecordingStart, notifyRecordingStop } from "../lib/recording-state";
 import { breadcrumb } from "../lib/sentry-main";
 import { createSerialQueue } from "../lib/serial-queue";
@@ -139,10 +145,15 @@ async function maybeRunLlm(
 	// so this re-shows it for the duration of the LLM call.
 	showOverlay();
 	safeSend?.(IPC.LLM_PROCESSING_START);
-	const attempt = await tryLlmProcess(text, context);
-	safeSend?.(IPC.LLM_PROCESSING_END);
-	hideOverlay();
-	return attempt;
+	onLlmThinkingStart();
+	try {
+		const attempt = await tryLlmProcess(text, context);
+		return attempt;
+	} finally {
+		safeSend?.(IPC.LLM_PROCESSING_END);
+		onLlmThinkingStop();
+		hideOverlay();
+	}
 }
 
 function notifyEmptyResult(mode: unknown, safeSend: SafeSend): void {
@@ -1402,6 +1413,34 @@ function handleDeleteModelQuantizationRequest(client: SttClient, payload: unknow
 	});
 }
 
+/** Generic relay for the four byte-level pause/resume commands. The
+ *  server-side handlers share the same ``(model_id, quantization)``
+ *  payload shape so we only need one validation site keyed on the
+ *  command name. Quant is allowed to be empty — catalog "default
+ *  precision" is a real variant id. */
+function handleStreamingDownloadCommand(
+	client: SttClient,
+	command:
+		| "predownload_model_quant"
+		| "download_pause"
+		| "download_resume"
+		| "download_cancel_quant",
+	payload: unknown
+): void {
+	if (payload === null || typeof payload !== "object") {
+		return;
+	}
+	const { modelId, quantization } = payload as { modelId?: unknown; quantization?: unknown };
+	if (!isValidModelId(modelId) || typeof quantization !== "string") {
+		return;
+	}
+	client.sendControl({
+		command,
+		model_id: modelId as string,
+		quantization,
+	});
+}
+
 const ROUTE_BY_TYPE: Record<string, "fullSentence" | "recordingState"> = {
 	fullSentence: "fullSentence",
 	// `speaker_segments` rides the fullSentence queue so it is dispatched
@@ -1722,6 +1761,24 @@ export function setupRelay(
 	ipcMain.handle("stt:delete-model-quantization", (_evt, payload: unknown) => {
 		handleDeleteModelQuantizationRequest(client, payload);
 	});
+	// Byte-level pause/resume control plane. The server's streaming
+	// downloader emits its own model_download_progress / model_download_start
+	// / model_download_complete events into the data queue (already wired
+	// through the existing renderer listener) — these channels are write-only
+	// from the renderer's side; everything inbound rides the existing event
+	// stream so no new IPC events are needed.
+	ipcMain.handle("stt:predownload-quant", (_evt, payload: unknown) => {
+		handleStreamingDownloadCommand(client, "predownload_model_quant", payload);
+	});
+	ipcMain.handle("stt:download-pause", (_evt, payload: unknown) => {
+		handleStreamingDownloadCommand(client, "download_pause", payload);
+	});
+	ipcMain.handle("stt:download-resume", (_evt, payload: unknown) => {
+		handleStreamingDownloadCommand(client, "download_resume", payload);
+	});
+	ipcMain.handle("stt:download-cancel-quant", (_evt, payload: unknown) => {
+		handleStreamingDownloadCommand(client, "download_cancel_quant", payload);
+	});
 	// Stryker disable next-line BooleanLiteral: closure init — only assigned via setMuted from recording_start handler before any read
 	let didMuteAudio = false;
 
@@ -1898,6 +1955,10 @@ export function setupRelay(
 		ipcMain.removeHandler(IPC.STT_CANCEL_DOWNLOAD);
 		ipcMain.removeHandler("stt:delete-model-cache");
 		ipcMain.removeHandler("stt:delete-model-quantization");
+		ipcMain.removeHandler("stt:predownload-quant");
+		ipcMain.removeHandler("stt:download-pause");
+		ipcMain.removeHandler("stt:download-resume");
+		ipcMain.removeHandler("stt:download-cancel-quant");
 		ipcMain.removeHandler(IPC.STT_GET_MODEL_CATALOG);
 		ipcMain.removeHandler(IPC.STT_GET_RUNTIME_INFO);
 		ipcMain.removeHandler(IPC.STT_GET_SERVER_READY);

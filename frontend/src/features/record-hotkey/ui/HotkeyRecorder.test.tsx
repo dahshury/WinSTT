@@ -6,9 +6,9 @@ import {
 	type ForbiddenCombo,
 	findConflict,
 	formatCombo,
-	HotkeyRecorder,
 	resolveDisplayText,
-} from "./HotkeyRecorder";
+} from "../lib/hotkey-recorder-helpers";
+import { HotkeyRecorder } from "./HotkeyRecorder";
 
 const startCalls: number[] = [];
 const stopCalls: number[] = [];

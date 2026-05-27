@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { resolveTone } from "../lib/hotkey-display-helpers";
 import { useHotkeyStore } from "../model/hotkey-store";
-import { HotkeyDisplay, resolveTone } from "./HotkeyDisplay";
+import { HotkeyDisplay } from "./HotkeyDisplay";
 
 beforeEach(() => {
 	useHotkeyStore.setState({
@@ -59,7 +60,7 @@ describe("HotkeyDisplay", () => {
 
 	test("group exposes the idle tone when connected and not pressed", () => {
 		const { container } = renderIt(true);
-		const group = container.querySelector('[role="group"]') as HTMLElement;
+		const group = container.querySelector("kbd[data-tone]") as HTMLElement;
 		expect(group).not.toBeNull();
 		expect(group.dataset.tone).toBe("default");
 		expect(group.dataset.disconnected).toBeUndefined();
@@ -68,7 +69,7 @@ describe("HotkeyDisplay", () => {
 
 	test("group exposes the muted tone when disconnected", () => {
 		const { container } = renderIt(false);
-		const group = container.querySelector('[role="group"]') as HTMLElement;
+		const group = container.querySelector("kbd[data-tone]") as HTMLElement;
 		expect(group.dataset.tone).toBe("muted");
 		expect(group.dataset.disconnected).toBe("true");
 	});

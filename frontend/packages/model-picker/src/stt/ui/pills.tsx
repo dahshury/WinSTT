@@ -14,13 +14,3 @@ export function QuantCacheDot({ cache }: { cache: ModelCacheInfo | undefined }) 
 	const state = cache?.state ?? "not_cached";
 	return <span className={cn("size-1.5 shrink-0 rounded-full", QUANT_DOT_CLASS[state])} />;
 }
-
-export function quantCacheStatus(cache: ModelCacheInfo | undefined): string {
-	if (cache?.state === "cached") {
-		return "Downloaded";
-	}
-	if (cache?.state === "partial") {
-		return `Partly downloaded (${Math.round((cache.progress ?? 0) * 100)}%)`;
-	}
-	return "Not downloaded";
-}

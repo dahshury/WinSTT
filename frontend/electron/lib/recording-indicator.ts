@@ -1,65 +1,91 @@
 import { type BrowserWindow, type NativeImage, nativeImage, type Tray } from "electron";
 import { PNG } from "pngjs";
-import {
-	RECORDING_MODE_COLOR_RGB,
-	type RecordingMode,
-} from "../../src/shared/config/recording-mode-color";
 import { dbg } from "./debug-log";
-import { getStoreValue } from "./store";
+
+/** The tray icon is intentionally monochrome white — it sits inside Windows'
+ *  system tray which has no fixed background, so a single neutral color is
+ *  more legible across themes than the per-mode accent the pill uses. The
+ *  pill itself stays colored. */
+const TRAY_INK: readonly [number, number, number] = [255, 255, 255];
+
+// Avoid a runtime import dependency on tray-state for the restore-after-thinking
+// case — main.ts wires it in via setReapplyTrayImage at boot.
+let reapplyTrayImageFn: (() => void) | null = null;
+
+export function setReapplyTrayImage(fn: (() => void) | null): void {
+	reapplyTrayImageFn = fn;
+}
 
 // ── Bar visualizer parameters ────────────────────────────────────────
 //
-// Mirrors the pill's bar visualizer (frontend/src/features/audio-visualizer
-// `size="icon"`): 5 bars, 4px wide, 2px gap, centered vertically, fully
+// "Recording" mirrors the pill's bar visualizer (frontend/src/features/
+// audio-visualizer `size="icon"`): 5 bars, centered vertically, fully
 // rounded ends. The pill math is ported below verbatim from
 // use-multiband-volume.ts so the tray icon undulates the same way.
 
-/** Output canvas size. Windows scales 32×32 down to 16×16 at 100% DPI. */
-const TARGET_SIZE = 32;
+/** Output canvas size. Windows downscales for the tray cell as needed; a
+ *  larger source keeps the icon sharp on HiDPI displays (150–200% scaling).
+ *  48 is the sweet spot — bigger sizes don't change the visual size on
+ *  screen, only sharpness, and 48 is still cheap to rasterize per frame. */
+const TARGET_SIZE = 48;
 
 /** Bar count — matches the pill's `size="icon"` default (resolveBarCount). */
 const BAR_COUNT = 5;
-
-/** Bar width in pixels (matches pill `w-[4px]`). */
-const BAR_WIDTH = 4;
-
-/** Gap between bars in pixels (matches pill `gap-[2px]`). */
-const BAR_GAP = 2;
-
-/** Vertical margin so the tallest bar doesn't touch the icon edge. */
+/** Bar/gap dimensions chosen so 5 bars + 4 gaps fill the canvas ~98%, with
+ *  the bar-to-gap ratio (≈ 2.3:1) staying within sight of the pill's 2:1. */
+const BAR_WIDTH = 7;
+const BAR_GAP = 3;
 const VERTICAL_MARGIN = 2;
 
-/** Update interval in ms — ~20 fps tick (pill uses rAF at ~60 fps; 20 fps is
- *  the highest rate Windows can visibly render a tray icon swap at). */
-const TICK_MS = 50;
+/** Update interval in ms — ~20 fps for bars, 30 fps for topology morph. */
+const BAR_TICK_MS = 50;
+const THINK_TICK_MS = 33;
 
-// Pill math constants — ported from
-// frontend/src/features/audio-visualizer/lib/use-multiband-volume.ts
 const PEAK_FLOOR = 0.1;
 const PEAK_DECAY = 0.99;
+
+// ── Topology (thinking) animation ────────────────────────────────────
+//
+// Ports the SVG path-morph from frontend/src/shared/ui/thinking-indicator/
+// ThinkingIndicator.tsx: a 6-second easeInOut loop morphing through
+// CIRCLE_A → INFINITY → CIRCLE_B → INFINITY → CIRCLE_A. Each path has
+// identical structure (1 MoveTo + 4 CubicBezier), so framer-motion's
+// number-by-number d-attribute interpolation translates cleanly to a
+// component-wise lerp of parsed control points.
+
+const TOPOLOGY_DURATION_MS = 6000;
+const TOPOLOGY_STROKE_WIDTH_SRC = 1.5;
+const TOPOLOGY_SUBDIVISIONS_PER_SEGMENT = 32;
+/** Padding around the content bbox in canvas pixels. Tighter than half the
+ *  stroke width would let the rounded caps clip at the edges. */
+const TOPOLOGY_PADDING = 2;
+
+const CIRCLE_A =
+	"M 12 8 C 14.21 8 16 9.79 16 12 C 16 14.21 14.21 16 12 16 C 9.79 16 8 14.21 8 12 C 8 9.79 9.79 8 12 8 Z";
+const INFINITY_PATH =
+	"M 12 12 C 14 8.5 19 8.5 19 12 C 19 15.5 14 15.5 12 12 C 10 8.5 5 8.5 5 12 C 5 15.5 10 15.5 12 12 Z";
+const CIRCLE_B =
+	"M 12 16 C 14.21 16 16 14.21 16 12 C 16 9.79 14.21 8 12 8 C 9.79 8 8 9.79 8 12 C 8 14.21 9.79 16 12 16 Z";
 
 // ── Module state ─────────────────────────────────────────────────────
 let trayRef: Tray | null = null;
 let winRef: BrowserWindow | null = null;
 let baseIcon: NativeImage | null = null;
 
-/** Mode active for the current recording session — captured at onRecordingStart so
- * mid-session mode toggles can't swap the bar color under us. */
-let activeMode: RecordingMode = "ptt";
+type IndicatorView = "idle" | "recording" | "thinking";
+let currentView: IndicatorView = "idle";
 
 let isRecording = false;
+let isTranscribing = false;
+let isLlmThinking = false;
 
-/** Latest raw audio level from onAudioLevel; read by the render tick. */
 let rawLevel = 0;
-
-/** Rolling peak for adaptive amplification (matches pill). */
 let peak = PEAK_FLOOR;
-
-/** Recording start timestamp; feeds the time-based sinusoidal phases. */
 let sessionStartMs = 0;
+let thinkingStartMs = 0;
 
-/** setInterval handle for the render tick. */
 let tickHandle: ReturnType<typeof setInterval> | null = null;
+let tickIntervalMs = BAR_TICK_MS;
 
 // ── Pill math (ported 1:1) ───────────────────────────────────────────
 
@@ -95,35 +121,19 @@ export function initRecordingIndicator(tray: Tray, win: BrowserWindow, iconPath:
 	if (baseIcon.isEmpty()) {
 		dbg("indicator", "Base icon is empty — indicator will skip revert step");
 	}
-	dbg(
-		"indicator",
-		`Initialized: bars=${BAR_COUNT} target=${TARGET_SIZE}x${TARGET_SIZE} tick=${TICK_MS}ms`
-	);
-}
-
-function readRecordingMode(): RecordingMode {
-	try {
-		return getStoreValue("general.recordingMode");
-	} catch {
-		return "ptt";
-	}
+	dbg("indicator", `Initialized: bars=${BAR_COUNT} target=${TARGET_SIZE}x${TARGET_SIZE}`);
 }
 
 export function onRecordingStart(): void {
 	dbg("indicator", "Recording started");
-	activeMode = readRecordingMode();
 	isRecording = true;
 	rawLevel = 0;
 	peak = PEAK_FLOOR;
 	sessionStartMs = nowMs();
-	startTick();
-	renderFrame();
+	reconcileView();
 }
 
 export function onRecordingStop(): void {
-	// No-op when we weren't recording. Without this guard, every WebSocket
-	// disconnect (cold-start retry loop) would log "Recording stopped" and
-	// revertIcons() for a state we never showed.
 	if (!isRecording) {
 		return;
 	}
@@ -131,8 +141,7 @@ export function onRecordingStop(): void {
 	isRecording = false;
 	rawLevel = 0;
 	peak = PEAK_FLOOR;
-	stopTick();
-	revertIcons();
+	reconcileView();
 }
 
 export function onAudioLevel(level: number): void {
@@ -142,14 +151,110 @@ export function onAudioLevel(level: number): void {
 	rawLevel = Math.max(0, Math.min(1, level));
 }
 
+/** STT model began processing buffered audio. Shows the thinking-indicator
+ *  topology morph until onTranscribingStop or until the recording mode wins. */
+export function onTranscribingStart(): void {
+	if (isTranscribing) {
+		return;
+	}
+	dbg("indicator", "Transcribing started");
+	isTranscribing = true;
+	if (!(isLlmThinking || isRecording)) {
+		thinkingStartMs = nowMs();
+	}
+	reconcileView();
+}
+
+export function onTranscribingStop(): void {
+	if (!isTranscribing) {
+		return;
+	}
+	dbg("indicator", "Transcribing stopped");
+	isTranscribing = false;
+	reconcileView();
+}
+
+/** LLM post-processing began. Keeps (or starts) the thinking topology
+ *  morph. Shares a single timeline with the transcribing phase so the
+ *  morph doesn't reset between STT-done and LLM-start. */
+export function onLlmThinkingStart(): void {
+	if (isLlmThinking) {
+		return;
+	}
+	dbg("indicator", "LLM thinking started");
+	if (!(isTranscribing || isLlmThinking)) {
+		thinkingStartMs = nowMs();
+	}
+	isLlmThinking = true;
+	reconcileView();
+}
+
+export function onLlmThinkingStop(): void {
+	if (!isLlmThinking) {
+		return;
+	}
+	dbg("indicator", "LLM thinking stopped");
+	isLlmThinking = false;
+	reconcileView();
+}
+
 export function cleanupRecordingIndicator(): void {
 	stopTick();
 	trayRef = null;
 	winRef = null;
 	baseIcon = null;
 	isRecording = false;
+	isTranscribing = false;
+	isLlmThinking = false;
 	rawLevel = 0;
 	peak = PEAK_FLOOR;
+	currentView = "idle";
+}
+
+// ── View state machine ───────────────────────────────────────────────
+
+function deriveView(): IndicatorView {
+	if (isRecording) {
+		return "recording";
+	}
+	if (isTranscribing || isLlmThinking) {
+		return "thinking";
+	}
+	return "idle";
+}
+
+function reconcileView(): void {
+	const next = deriveView();
+	if (next === currentView) {
+		if (next !== "idle" && tickHandle === null) {
+			startTick();
+		}
+		return;
+	}
+	const previous = currentView;
+	currentView = next;
+
+	if (next === "idle") {
+		stopTick();
+		// Recording → idle has always reverted to the legacy base icon (tray-state
+		// then layers its themed PNG on top via a microtask). For thinking → idle,
+		// the static tray PNG is already current (fullSentence/llm-end already
+		// passed through tray-state), so we just re-apply that to wipe the
+		// morphing topology we last painted.
+		if (previous === "recording") {
+			revertIcons();
+		} else {
+			reapplyTrayImageFn?.();
+		}
+		return;
+	}
+
+	const wantedInterval = next === "thinking" ? THINK_TICK_MS : BAR_TICK_MS;
+	if (tickHandle !== null && tickIntervalMs !== wantedInterval) {
+		stopTick();
+	}
+	startTick(wantedInterval);
+	renderFrame();
 }
 
 // ── Render tick ──────────────────────────────────────────────────────
@@ -158,11 +263,12 @@ function nowMs(): number {
 	return Date.now();
 }
 
-function startTick(): void {
+function startTick(intervalMs?: number): void {
 	if (tickHandle !== null) {
 		return;
 	}
-	tickHandle = setInterval(renderFrame, TICK_MS);
+	tickIntervalMs = intervalMs ?? (currentView === "thinking" ? THINK_TICK_MS : BAR_TICK_MS);
+	tickHandle = setInterval(renderFrame, tickIntervalMs);
 }
 
 function stopTick(): void {
@@ -173,9 +279,16 @@ function stopTick(): void {
 }
 
 function renderFrame(): void {
-	if (!isRecording) {
+	if (currentView === "recording") {
+		renderRecordingFrame();
 		return;
 	}
+	if (currentView === "thinking") {
+		renderThinkingFrame();
+	}
+}
+
+function renderRecordingFrame(): void {
 	const next = computeAmplified(rawLevel, peak);
 	peak = next.peak;
 	const time = (nowMs() - sessionStartMs) / 1000;
@@ -183,22 +296,27 @@ function renderFrame(): void {
 	for (let i = 0; i < BAR_COUNT; i++) {
 		bands.push(computeBandValue(i, BAR_COUNT, time, next.amplified));
 	}
-	const icon = renderBarsIcon(bands, RECORDING_MODE_COLOR_RGB[activeMode]);
+	const icon = renderBarsIcon(bands, TRAY_INK);
 	setIconOnTray(icon);
 	setIconOnWin(icon);
 }
 
-// ── Bar rasterization (transparent PNG via pngjs) ────────────────────
+function renderThinkingFrame(): void {
+	const elapsed = (nowMs() - thinkingStartMs) % TOPOLOGY_DURATION_MS;
+	const tRaw = elapsed / TOPOLOGY_DURATION_MS;
+	const path = interpolateTopology(tRaw);
+	const icon = renderTopologyIcon(path, TRAY_INK);
+	setIconOnTray(icon);
+	setIconOnWin(icon);
+}
+
+// ── Bar rasterization ───────────────────────────────────────────────
 
 type RGB = readonly [number, number, number];
 
-/** Render a transparent PNG of the bar visualizer state. Bars grow from
- *  the vertical center outward (matches pill's `items-center`). Pixel
- *  coverage at the rounded caps is alpha-blended for visual smoothness
- *  at the tray icon's tiny scale. */
 export function renderBarsIcon(bands: readonly number[], tint: RGB): NativeImage {
 	const png = new PNG({ width: TARGET_SIZE, height: TARGET_SIZE });
-	png.data.fill(0); // fully transparent canvas
+	png.data.fill(0);
 
 	const totalWidth = BAR_COUNT * BAR_WIDTH + (BAR_COUNT - 1) * BAR_GAP;
 	const startX = Math.floor((TARGET_SIZE - totalWidth) / 2);
@@ -223,9 +341,6 @@ function clamp01(v: number): number {
 	return Math.max(0, Math.min(1, v));
 }
 
-/** Draws a vertically-centered rounded-cap bar with anti-aliased ends.
- *  Origin of the bar is (x0, cy - h/2). The bar is BAR_WIDTH px wide and
- *  `h` px tall, with semicircular caps of radius BAR_WIDTH/2. */
 function drawRoundedBar(
 	data: Buffer,
 	x0: number,
@@ -238,10 +353,7 @@ function drawRoundedBar(
 	const y0 = cy - h / 2;
 	const y1 = cy + h / 2;
 
-	// The bar runs from y0 to y1. Cap regions are the top r pixels (y0 .. y0+r)
-	// and the bottom r pixels (y1-r .. y1); the straight middle runs y0+r .. y1-r.
 	for (let py = 0; py < TARGET_SIZE; py++) {
-		// Quick reject: pixel must fall inside the bar's vertical extent.
 		if (py + 1 <= y0 || py >= y1) {
 			continue;
 		}
@@ -259,9 +371,6 @@ function drawRoundedBar(
 	}
 }
 
-/** Returns 0..255 coverage for a pixel given the bar's cap geometry. The
- *  middle (non-cap) region has full coverage; caps fade based on the
- *  signed distance from the cap circle's edge. */
 function capCoverage(
 	localX: number,
 	py: number,
@@ -275,25 +384,17 @@ function capCoverage(
 	const dx = localX + 0.5 - localCenterX;
 	const pyCenter = py + 0.5;
 
-	// In the straight middle section.
 	if (pyCenter >= y0 + r && pyCenter <= y1 - r) {
 		return 255;
 	}
-
-	// In the top cap.
 	if (pyCenter < y0 + r) {
 		const dy = pyCenter - (y0 + r);
-		const d = Math.hypot(dx, dy);
-		return discCoverage(d, r);
+		return discCoverage(Math.hypot(dx, dy), r);
 	}
-
-	// In the bottom cap.
 	const dy = pyCenter - (y1 - r);
-	const d = Math.hypot(dx, dy);
-	return discCoverage(d, r);
+	return discCoverage(Math.hypot(dx, dy), r);
 }
 
-/** Simple linear 1-pixel-wide anti-aliasing for a filled disc. */
 function discCoverage(d: number, r: number): number {
 	if (d <= r - 1) {
 		return 255;
@@ -304,10 +405,6 @@ function discCoverage(d: number, r: number): number {
 	return Math.round((r - d) * 255);
 }
 
-/** Premultiplied SRC_OVER blit. The canvas starts fully transparent, so
- *  this is effectively just "paint with given alpha" for any pixel a bar
- *  hasn't yet written; for cap pixels where two bars never overlap, the
- *  fast path also applies. */
 function blitPixel(data: Buffer, x: number, y: number, tint: RGB, alpha: number): void {
 	const idx = (y * TARGET_SIZE + x) * 4;
 	const dstA = data[idx + 3] ?? 0;
@@ -318,8 +415,6 @@ function blitPixel(data: Buffer, x: number, y: number, tint: RGB, alpha: number)
 		data[idx + 3] = alpha;
 		return;
 	}
-	// SRC_OVER for the rare overlap case (shouldn't happen with our layout
-	// but kept defensive for correctness if gap/width are ever changed).
 	const srcA = alpha / 255;
 	const outA = srcA + (dstA / 255) * (1 - srcA);
 	if (outA <= 0) {
@@ -333,6 +428,232 @@ function blitPixel(data: Buffer, x: number, y: number, tint: RGB, alpha: number)
 		(tint[2] * srcA + (data[idx + 2] ?? 0) * (dstA / 255) * (1 - srcA)) / outA
 	);
 	data[idx + 3] = Math.round(outA * 255);
+}
+
+// ── Topology path parsing + interpolation ────────────────────────────
+
+interface CubicSegment {
+	c1: [number, number];
+	c2: [number, number];
+	end: [number, number];
+}
+
+interface ParsedPath {
+	segments: CubicSegment[];
+	start: [number, number];
+}
+
+const PATH_COMMA_RE = /,/g;
+const PATH_WHITESPACE_RE = /\s+/;
+
+/** Parses the limited SVG path subset used by the thinking indicator
+ *  (`M x y (C x1 y1 x2 y2 x y)+ Z`). Tokens are space-delimited. */
+export function parsePath(d: string): ParsedPath {
+	const tokens = d
+		.replace(PATH_COMMA_RE, " ")
+		.split(PATH_WHITESPACE_RE)
+		.filter((t) => t.length > 0);
+	let i = 0;
+	const readNum = (): number => {
+		const v = Number.parseFloat(tokens[i++] ?? "");
+		if (Number.isNaN(v)) {
+			throw new Error(`parsePath: bad number at token ${i}`);
+		}
+		return v;
+	};
+	let start: [number, number] | null = null;
+	const segments: CubicSegment[] = [];
+	while (i < tokens.length) {
+		const tok = tokens[i++];
+		if (tok === "M") {
+			start = [readNum(), readNum()];
+			continue;
+		}
+		if (tok === "C") {
+			segments.push({
+				c1: [readNum(), readNum()],
+				c2: [readNum(), readNum()],
+				end: [readNum(), readNum()],
+			});
+			continue;
+		}
+		if (tok === "Z" || tok === "z") {
+			break;
+		}
+		throw new Error(`parsePath: unsupported command "${tok}"`);
+	}
+	if (!start) {
+		throw new Error("parsePath: missing M command");
+	}
+	return { start, segments };
+}
+
+const TOPOLOGY_KEYFRAMES: readonly ParsedPath[] = [
+	parsePath(CIRCLE_A),
+	parsePath(INFINITY_PATH),
+	parsePath(CIRCLE_B),
+	parsePath(INFINITY_PATH),
+	parsePath(CIRCLE_A),
+];
+
+/** easeInOutSine — visually equivalent to CSS `ease-in-out` for a 6 s
+ *  morph. Cheaper than evaluating cubic-bezier(0.42, 0, 0.58, 1) and
+ *  matches motion's default well enough at this scale. */
+export function easeInOutSine(t: number): number {
+	return 0.5 * (1 - Math.cos(Math.PI * Math.max(0, Math.min(1, t))));
+}
+
+export function lerpPath(a: ParsedPath, b: ParsedPath, t: number): ParsedPath {
+	if (a.segments.length !== b.segments.length) {
+		throw new Error("lerpPath: keyframes have different topology");
+	}
+	const lerp = (u: number, v: number): number => u + (v - u) * t;
+	const segments: CubicSegment[] = a.segments.map((seg, idx) => {
+		const other = b.segments[idx];
+		if (!other) {
+			throw new Error("lerpPath: missing segment");
+		}
+		return {
+			c1: [lerp(seg.c1[0], other.c1[0]), lerp(seg.c1[1], other.c1[1])],
+			c2: [lerp(seg.c2[0], other.c2[0]), lerp(seg.c2[1], other.c2[1])],
+			end: [lerp(seg.end[0], other.end[0]), lerp(seg.end[1], other.end[1])],
+		};
+	});
+	return {
+		start: [lerp(a.start[0], b.start[0]), lerp(a.start[1], b.start[1])],
+		segments,
+	};
+}
+
+export function interpolateTopology(tRaw: number): ParsedPath {
+	const N = TOPOLOGY_KEYFRAMES.length - 1; // 4 segments between 5 keyframes
+	const wrapped = ((tRaw % 1) + 1) % 1;
+	const scaled = wrapped * N;
+	const segIdx = Math.min(N - 1, Math.floor(scaled));
+	const segT = scaled - segIdx;
+	const a = TOPOLOGY_KEYFRAMES[segIdx];
+	const b = TOPOLOGY_KEYFRAMES[segIdx + 1];
+	if (!(a && b)) {
+		throw new Error("interpolateTopology: out-of-bounds keyframes");
+	}
+	return lerpPath(a, b, easeInOutSine(segT));
+}
+
+// ── Topology rasterization ───────────────────────────────────────────
+
+function evalCubic(
+	p0: [number, number],
+	p1: [number, number],
+	p2: [number, number],
+	p3: [number, number],
+	t: number
+): [number, number] {
+	const u = 1 - t;
+	const uu = u * u;
+	const tt = t * t;
+	const x = uu * u * p0[0] + 3 * uu * t * p1[0] + 3 * u * tt * p2[0] + tt * t * p3[0];
+	const y = uu * u * p0[1] + 3 * uu * t * p1[1] + 3 * u * tt * p2[1] + tt * t * p3[1];
+	return [x, y];
+}
+
+interface Bbox {
+	maxX: number;
+	maxY: number;
+	minX: number;
+	minY: number;
+}
+
+/** Compute the union bbox of every keyframe's actual curve geometry (not the
+ *  enclosing viewBox). The SVG paths only paint inside a small portion of
+ *  their 24×24 source — sampling the curves themselves lets us scale the
+ *  drawn shape to fill the tray icon, not the empty space around it. */
+function computeKeyframesBbox(frames: readonly ParsedPath[]): Bbox {
+	let minX = Number.POSITIVE_INFINITY;
+	let minY = Number.POSITIVE_INFINITY;
+	let maxX = Number.NEGATIVE_INFINITY;
+	let maxY = Number.NEGATIVE_INFINITY;
+	const visit = (p: readonly [number, number]): void => {
+		if (p[0] < minX) {
+			minX = p[0];
+		}
+		if (p[1] < minY) {
+			minY = p[1];
+		}
+		if (p[0] > maxX) {
+			maxX = p[0];
+		}
+		if (p[1] > maxY) {
+			maxY = p[1];
+		}
+	};
+	const SAMPLES = 32;
+	for (const frame of frames) {
+		visit(frame.start);
+		let cursor = frame.start;
+		for (const seg of frame.segments) {
+			for (let s = 1; s <= SAMPLES; s++) {
+				visit(evalCubic(cursor, seg.c1, seg.c2, seg.end, s / SAMPLES));
+			}
+			cursor = seg.end;
+		}
+	}
+	return { minX, minY, maxX, maxY };
+}
+
+const TOPOLOGY_BBOX = computeKeyframesBbox(TOPOLOGY_KEYFRAMES);
+
+export function renderTopologyIcon(path: ParsedPath, stroke: RGB): NativeImage {
+	const png = new PNG({ width: TARGET_SIZE, height: TARGET_SIZE });
+	png.data.fill(0);
+
+	const bbox = TOPOLOGY_BBOX;
+	const bboxWidth = bbox.maxX - bbox.minX;
+	const bboxHeight = bbox.maxY - bbox.minY;
+	const available = TARGET_SIZE - 2 * TOPOLOGY_PADDING;
+	const scale = Math.min(available / bboxWidth, available / bboxHeight);
+	const offsetX = (TARGET_SIZE - bboxWidth * scale) / 2 - bbox.minX * scale;
+	const offsetY = (TARGET_SIZE - bboxHeight * scale) / 2 - bbox.minY * scale;
+	const strokeRadius = (TOPOLOGY_STROKE_WIDTH_SRC * scale) / 2;
+	const toCanvas = (p: readonly [number, number]): [number, number] => [
+		p[0] * scale + offsetX,
+		p[1] * scale + offsetY,
+	];
+
+	let cursor = toCanvas(path.start);
+	stampDisc(png.data, cursor[0], cursor[1], strokeRadius, stroke);
+	for (const seg of path.segments) {
+		const p0 = cursor;
+		const p1 = toCanvas(seg.c1);
+		const p2 = toCanvas(seg.c2);
+		const p3 = toCanvas(seg.end);
+		for (let s = 1; s <= TOPOLOGY_SUBDIVISIONS_PER_SEGMENT; s++) {
+			const t = s / TOPOLOGY_SUBDIVISIONS_PER_SEGMENT;
+			const point = evalCubic(p0, p1, p2, p3, t);
+			stampDisc(png.data, point[0], point[1], strokeRadius, stroke);
+		}
+		cursor = p3;
+	}
+
+	const buf = PNG.sync.write(png);
+	return nativeImage.createFromBuffer(buf);
+}
+
+function stampDisc(data: Buffer, cx: number, cy: number, r: number, tint: RGB): void {
+	const minX = Math.max(0, Math.floor(cx - r - 1));
+	const maxX = Math.min(TARGET_SIZE - 1, Math.ceil(cx + r + 1));
+	const minY = Math.max(0, Math.floor(cy - r - 1));
+	const maxY = Math.min(TARGET_SIZE - 1, Math.ceil(cy + r + 1));
+	for (let py = minY; py <= maxY; py++) {
+		for (let px = minX; px <= maxX; px++) {
+			const dx = px + 0.5 - cx;
+			const dy = py + 0.5 - cy;
+			const d = Math.hypot(dx, dy);
+			const alpha = discCoverage(d, r);
+			if (alpha > 0) {
+				blitPixel(data, px, py, tint, alpha);
+			}
+		}
+	}
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -374,6 +695,13 @@ export const __recording_indicator_test_helpers__ = {
 	computeAmplified,
 	computeBandValue,
 	renderBarsIcon,
+	renderTopologyIcon,
+	parsePath,
+	lerpPath,
+	easeInOutSine,
+	interpolateTopology,
+	evalCubic,
+	stampDisc,
 	clamp01,
 	discCoverage,
 	capCoverage,
@@ -384,13 +712,17 @@ export const __recording_indicator_test_helpers__ = {
 	setIconOnTray,
 	setIconOnWin,
 	baseIconUsable,
+	getCurrentView: (): IndicatorView => currentView,
 	get BAR_COUNT() {
 		return BAR_COUNT;
 	},
 	get TARGET_SIZE() {
 		return TARGET_SIZE;
 	},
-	get TICK_MS() {
-		return TICK_MS;
+	get TOPOLOGY_KEYFRAMES() {
+		return TOPOLOGY_KEYFRAMES;
+	},
+	get TOPOLOGY_DURATION_MS() {
+		return TOPOLOGY_DURATION_MS;
 	},
 };

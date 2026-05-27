@@ -55,7 +55,10 @@ function providerLabel(provider: CloudSttProvider): string {
 	return provider === "openai" ? "OpenAI" : "ElevenLabs";
 }
 
-let nextToastId = 0;
+const nextToastId = (() => {
+	let n = 0;
+	return () => ++n;
+})();
 
 /**
  * Mounted once at the root layout. Subscribes to the five cloud-STT error
@@ -87,7 +90,7 @@ export function CloudSttErrorToasts() {
 				return [
 					...filtered,
 					{
-						id: ++nextToastId,
+						id: nextToastId(),
 						kind,
 						provider: payload.provider,
 						message,

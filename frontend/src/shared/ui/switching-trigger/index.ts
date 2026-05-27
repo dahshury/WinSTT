@@ -1,3 +1,4 @@
+export { buildSwitchingClassName } from "./build-switching-class-name";
 export { SwapSweepBar } from "./SwapSweepBar";
 export { SwitchingPill } from "./SwitchingPill";
-export { buildSwitchingClassName, SwitchingFromToRow } from "./SwitchingTrigger";
+export { SwitchingFromToRow } from "./SwitchingTrigger";

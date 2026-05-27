@@ -2,6 +2,7 @@
 
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { dialogAnimation } from "@/shared/ui/dialog-animation";
 
 export interface PendingDelete {
 	displayName: string;
@@ -37,8 +38,17 @@ export function DeleteQuantConfirmDialog({
 			open={open}
 		>
 			<AlertDialog.Portal>
-				<AlertDialog.Backdrop className="fixed inset-0 z-overlay bg-black/55 backdrop-blur-[1px] transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
-				<AlertDialog.Popup className="fixed top-1/2 left-1/2 z-modal w-[min(420px,90vw)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface-elevated p-4 text-foreground shadow-xl outline-none transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0">
+				{/* z-confirm-backdrop / z-confirm (1300/1301) — the dedicated
+				    destructive-confirm tier, intentionally above z-popover
+				    (1100) where the Combobox renders. The earlier
+				    z-overlay/z-modal pair (20/1001) put the dialog UNDER
+				    the open picker. See shared/config/z-index.ts. */}
+				<AlertDialog.Backdrop
+					className={`${dialogAnimation.backdrop} fixed inset-0 z-confirm-backdrop bg-black/55 backdrop-blur-[1px]`}
+				/>
+				<AlertDialog.Popup
+					className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-confirm w-[min(420px,90vw)] rounded-lg border border-border bg-surface-elevated p-4 text-foreground shadow-xl outline-none`}
+				>
 					<AlertDialog.Title className="font-semibold text-base">
 						Delete {pending?.quantLabel ?? "this"} weights?
 					</AlertDialog.Title>
