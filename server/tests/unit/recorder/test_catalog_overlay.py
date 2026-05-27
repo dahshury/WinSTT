@@ -88,7 +88,7 @@ class TestCatalogAppliesOverlay:
         assert "ar" not in info.languages
 
     def test_overlay_with_non_list_languages_is_ignored(self, isolated_overlay: Path) -> None:
-        catalog_overlay.save_overlay({"tiny": {"languages": "en"}})  # type: ignore[dict-item]
+        catalog_overlay.save_overlay({"tiny": {"languages": "en"}})
         catalog = ModelCatalog()
         info = catalog.get("tiny")
         assert info is not None

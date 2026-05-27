@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
@@ -22,6 +22,11 @@ from src.stt_server.control_handler import (
     _dispatch_command,
     is_pre_ready_command,
 )
+
+if TYPE_CHECKING:
+    from websockets.asyncio.server import ServerConnection
+
+    from src.stt_server.state import ServerState
 
 
 @dataclass
@@ -82,7 +87,7 @@ def _dispatch_safely(command: Any, payload: Any) -> tuple[bool, list[str]]:  # n
     ws = _FakeWebSocket()
     state = _MinimalState()
     try:
-        _run(_dispatch_command(ws, state, payload, command))  # type: ignore[arg-type]
+        _run(_dispatch_command(cast("ServerConnection", ws), cast("ServerState", state), payload, command))
         return False, ws.sent
     except Exception:
         return True, ws.sent

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, cast
+
 import pytest
 
 from src.building_blocks.errors import ConfigurationError
@@ -7,6 +9,9 @@ from src.building_blocks.event_bus import EventBus
 from src.recorder.bootstrap import CALLBACK_EVENT_MAP, _validate_language_against_model, wire_callback
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import RecordingStarted
+
+if TYPE_CHECKING:
+    from src.building_blocks.types import CallbackMap
 
 
 class TestBootstrap:
@@ -100,7 +105,7 @@ class TestBootstrap:
                 (enabled, reason, category, detail)
             ),
         }
-        wire_all_callbacks(event_bus, callbacks)  # type: ignore[arg-type]
+        wire_all_callbacks(event_bus, cast("CallbackMap", callbacks))
 
         event_bus.publish(DiarizationToggleStarted(timestamp=1.0, enabled=True))
         event_bus.publish(DiarizationToggleCompleted(timestamp=2.0, enabled=False))
@@ -254,15 +259,9 @@ class TestResolveQuantization:
         from src.recorder.bootstrap import _resolve_quantization
 
         # CPU / non-CUDA path with int8 available + sense_voice family ⇒ int8.
-        assert (
-            _resolve_quantization("auto", "cpu", 234_000_000, ["int8"], family="sense_voice")
-            == "int8"
-        )
+        assert _resolve_quantization("auto", "cpu", 234_000_000, ["int8"], family="sense_voice") == "int8"
         # Explicit int8 also passes through.
-        assert (
-            _resolve_quantization("int8", "cpu", 234_000_000, ["int8"], family="sense_voice")
-            == "int8"
-        )
+        assert _resolve_quantization("int8", "cpu", 234_000_000, ["int8"], family="sense_voice") == "int8"
 
     def test_sense_voice_dml_override_routes_to_cpu(self) -> None:
         """SenseVoice is in :data:`_DML_INCOMPATIBLE_FAMILIES` — the Conformer
@@ -400,8 +399,8 @@ _ORIGINAL_ENGINE_CLASSES: dict[str, object] = {}
 
 
 def _swap_engine_classes(
-    porcupine_module: object,
-    oww_module: object,
+    porcupine_module: Any,  # noqa: ANN401 — duck-typed live module reference
+    oww_module: Any,  # noqa: ANN401 — duck-typed live module reference
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     """Replace the engine constructors with sentinels, return their call logs."""
     porcupine_calls: list[dict[str, object]] = []
@@ -415,16 +414,16 @@ def _swap_engine_classes(
         def __init__(self, **kwargs: object) -> None:
             oww_calls.append(kwargs)
 
-    _ORIGINAL_ENGINE_CLASSES["porcupine"] = porcupine_module.PorcupineDetector  # type: ignore[attr-defined]
-    _ORIGINAL_ENGINE_CLASSES["oww"] = oww_module.OWWDetector  # type: ignore[attr-defined]
-    porcupine_module.PorcupineDetector = _PorcupineSentinel  # type: ignore[attr-defined]
-    oww_module.OWWDetector = _OwwSentinel  # type: ignore[attr-defined]
+    _ORIGINAL_ENGINE_CLASSES["porcupine"] = porcupine_module.PorcupineDetector
+    _ORIGINAL_ENGINE_CLASSES["oww"] = oww_module.OWWDetector
+    porcupine_module.PorcupineDetector = _PorcupineSentinel
+    oww_module.OWWDetector = _OwwSentinel
     return porcupine_calls, oww_calls
 
 
-def _restore_engine_classes(porcupine_module: object, oww_module: object) -> None:
-    porcupine_module.PorcupineDetector = _ORIGINAL_ENGINE_CLASSES["porcupine"]  # type: ignore[attr-defined]
-    oww_module.OWWDetector = _ORIGINAL_ENGINE_CLASSES["oww"]  # type: ignore[attr-defined]
+def _restore_engine_classes(porcupine_module: Any, oww_module: Any) -> None:  # noqa: ANN401
+    porcupine_module.PorcupineDetector = _ORIGINAL_ENGINE_CLASSES["porcupine"]
+    oww_module.OWWDetector = _ORIGINAL_ENGINE_CLASSES["oww"]
 
 
 class TestSenseVoiceHfProgress:

@@ -985,7 +985,7 @@ class TestRecorderService:
         """Defensive guard: a swap can leave the slot transiently ``None``,
         and an unlucky warmup re-call should not crash."""
         service, _, _, _ = self._make_service()
-        service._transcriber = None  # type: ignore[assignment]
+        service._transcriber = None
         service.warmup()  # must not raise
         service.shutdown()
 
@@ -993,7 +993,7 @@ class TestRecorderService:
         """First install (or post-failed-restore state): the old slot is
         ``None``, so ``swap_transcriber`` skips the shutdown call."""
         service, _, _, _ = self._make_service()
-        service._transcriber = None  # type: ignore[assignment]
+        service._transcriber = None
         new_transcriber = FakeTranscriber()
         service.swap_transcriber(new_transcriber)
         assert service._transcriber is new_transcriber
@@ -1221,7 +1221,10 @@ class TestRecorderService:
 
     def test_set_swap_progress_sink_installs_callback(self) -> None:
         service, _, _, _ = self._make_service()
-        sink = object()
+
+        def sink(_p: DownloadProgress) -> None:
+            return None
+
         service.set_swap_progress_sink(sink)
         assert service._swap_progress_sink is sink
         service.set_swap_progress_sink(None)
@@ -1257,7 +1260,7 @@ class TestRecorderService:
         service, transcriber, event_bus, _ = self._make_service()
         loaded: list[Any] = []
 
-        def fake_load(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+        def fake_load(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
             new = FakeTranscriber(
                 result=TranscriptionResult(
                     text=f"loaded {name}",
@@ -1268,16 +1271,17 @@ class TestRecorderService:
             )
             loaded.append(new)
             # Drive the progress callback once so the cancel checkpoint runs.
-            on_progress(
-                DownloadProgress(
-                    model=name,
-                    progress=0.5,
-                    downloaded_bytes=5,
-                    total_bytes=10,
-                    speed_bps=1.0,
-                    eta_seconds=1.0,
+            if on_progress is not None:
+                on_progress(
+                    DownloadProgress(
+                        model=name,
+                        progress=0.5,
+                        downloaded_bytes=5,
+                        total_bytes=10,
+                        speed_bps=1.0,
+                        eta_seconds=1.0,
+                    )
                 )
-            )
             return new
 
         service._load_transcriber = fake_load  # type: ignore[method-assign]
@@ -1416,7 +1420,7 @@ class TestRecorderService:
         rebuilt = FakeTranscriber()
         call_log: list[str] = []
 
-        def loader(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+        def loader(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
             call_log.append(name)
             if name == "x/y":
                 raise type("ConnectionError", (Exception,), {})("dns lookup failed")
@@ -1450,7 +1454,7 @@ class TestRecorderService:
 
         rebuilt = FakeTranscriber()
 
-        def loader(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+        def loader(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
             if name == "x/y":
                 raise DownloadCancelledError(name)
             return rebuilt
@@ -1474,7 +1478,7 @@ class TestRecorderService:
         failures: list[ModelSwapFailed] = []
         event_bus.subscribe(ModelSwapFailed, failures.append)
 
-        def always_boom(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+        def always_boom(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
             raise RuntimeError("CUDA out of memory")
 
         service._load_transcriber = always_boom  # type: ignore[method-assign]
@@ -1499,7 +1503,7 @@ class TestRecorderService:
         new_fake = FakeTranscriber()
         rebuilt = FakeTranscriber()
 
-        def loader(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+        def loader(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
             if name == "x/y":
                 # Simulate a newer swap arriving mid-load.
                 service._swap_cancel_events["main"].set()
@@ -1911,7 +1915,7 @@ class TestRecorderService:
     def test_run_full_transcription_returns_empty_when_main_transcriber_is_none(self) -> None:
         """Main transcribe path during the swap returns "" instead of crashing."""
         service, _, _, _ = self._make_service()
-        service._transcriber = None  # type: ignore[assignment]
+        service._transcriber = None
         audio = np.zeros(16000, dtype=np.float32)
         text = service._run_full_transcription(audio, frame_count=10, audio_seconds=0.5)
         assert text == ""
@@ -1989,7 +1993,7 @@ class TestRecorderService:
 
         service, _, _, _ = self._make_service()
 
-        def always_boom(name: str, on_progress: Callable[[DownloadProgress], None]) -> ITranscriber:
+        def always_boom(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
             raise RuntimeError("ENOSPC")
 
         service._load_transcriber = always_boom  # type: ignore[method-assign]
@@ -2402,7 +2406,7 @@ class TestRecorderService:
         lifecycle in those modes."""
         service, transcriber, _, _ = self._make_service()
         for timeout in (None, 60, -1):
-            service._unload_timeout_seconds = timeout  # type: ignore[assignment]
+            service._unload_timeout_seconds = timeout
             service._maybe_unload_immediately()
             assert service._transcriber is transcriber, f"unexpected unload for timeout={timeout!r}"
         service.shutdown()
@@ -2425,7 +2429,7 @@ class TestRecorderService:
         service, transcriber, _, _ = self._make_service()
         service._unload_timeout_seconds = 0
         with service._main_transcriber_lock:
-            service._transcriber = None  # type: ignore[assignment]
+            service._transcriber = None
         with service._realtime_transcriber_lock:
             service._realtime_transcriber = None
 
@@ -2445,7 +2449,7 @@ class TestRecorderService:
         service._load_transcriber = lambda name, on_progress: rebuilt  # type: ignore[method-assign]
 
         with service._main_transcriber_lock:
-            service._transcriber = None  # type: ignore[assignment]
+            service._transcriber = None
         service._ensure_main_transcriber_loaded()
 
         assert service._transcriber is rebuilt

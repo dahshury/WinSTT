@@ -65,7 +65,7 @@ class TestLanguageFetcher:
         assert catalog_refresh._fetch_card_languages("nvidia/canary-1b-v2") == ["en"]
 
     def test_fetch_card_languages_list_returns_strings_only(self, fake_hf: dict[str, Any]) -> None:
-        fake_hf["foo/bar"] = ["en", "de", 42, None]  # type: ignore[list-item]
+        fake_hf["foo/bar"] = ["en", "de", 42, None]
         assert catalog_refresh._fetch_card_languages("foo/bar") == ["en", "de"]
 
     def test_fetch_card_languages_none_yields_none(self, fake_hf: dict[str, Any]) -> None:

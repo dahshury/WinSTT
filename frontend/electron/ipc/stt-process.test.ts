@@ -338,7 +338,10 @@ describe("tryAutoSpawnServer", () => {
 		// Stryker mutates `err instanceof Error` etc; covering the String(err)
 		// branch ensures the catch handles non-Error throws too.
 		spawnQueue.push(() => {
-			throw "not an error" as any;
+			// Deliberate non-Error throw — TS allows any thrown expression;
+			// no cast needed.
+			// biome-ignore lint/style/useThrowOnlyError: testing non-Error throw path
+			throw "not an error";
 		});
 		expect(() => sttProcess.tryAutoSpawnServer()).not.toThrow();
 	});

@@ -877,7 +877,7 @@ class TestRecordingPipeline:
 
         pipeline._process_not_recording(_make_chunk())
         assert len(started) == 1
-        assert sm.state == RecorderState.RECORDING  # type: ignore[comparison-overlap]
+        assert sm.state == RecorderState.RECORDING
 
     def test_ptt_force_start_bypasses_onset_debounce(self) -> None:
         """PTT calls request_start() directly — the debounce never applies."""
@@ -891,7 +891,7 @@ class TestRecordingPipeline:
 
         pipeline.request_start()
         assert len(started) == 1
-        assert sm.state == RecorderState.RECORDING  # type: ignore[comparison-overlap]
+        assert sm.state == RecorderState.RECORDING
 
     def test_request_listen_with_wake_words_does_not_arm_vad_onset(self) -> None:
         """request_listen() with a wake-word backend must NOT arm VAD onset.

@@ -46,9 +46,7 @@ def _bounded_segment_strategy() -> st.SearchStrategy[SpeakerSegment]:
 
 @settings(max_examples=200)
 @given(st.lists(_bounded_segment_strategy(), min_size=1, max_size=20), _BOUNDED_TIME, _BOUNDED_TIME)
-def test_dominant_speaker_matches_brute_force_oracle(
-    segments: list[SpeakerSegment], a: float, b: float
-) -> None:
+def test_dominant_speaker_matches_brute_force_oracle(segments: list[SpeakerSegment], a: float, b: float) -> None:
     start, end = sorted((a, b))
     assume(end > start)
     tl = SpeakerTimeline()
@@ -105,9 +103,7 @@ def test_non_positive_duration_returns_empty(segments: list[SpeakerSegment]) -> 
     st.lists(_bounded_segment_strategy(), min_size=1, max_size=10),
     st.floats(min_value=0.0, max_value=200.0, allow_nan=False, allow_infinity=False),
 )
-def test_window_shift_preserves_relative_ordering(
-    segments: list[SpeakerSegment], window_start: float
-) -> None:
+def test_window_shift_preserves_relative_ordering(segments: list[SpeakerSegment], window_start: float) -> None:
     tl = SpeakerTimeline()
     tl.merge(tuple(segments), window_start_seconds=window_start)
     # Apply the prune semantics to the oracle too: if any single merged

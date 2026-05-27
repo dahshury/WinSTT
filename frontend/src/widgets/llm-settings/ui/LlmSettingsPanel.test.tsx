@@ -1,8 +1,18 @@
 import { describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
+import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
-import { __llm_settings_panel_test_helpers__ as helpers } from "../lib/llm-settings-panel-test-helpers";
+import {
+	type FeatureToggleDeps,
+	__llm_settings_panel_test_helpers__ as helpers,
+} from "../lib/llm-settings-panel-test-helpers";
 import { LlmSettingsPanel } from "./LlmSettingsPanel";
+
+type TranslateFn = ReturnType<typeof useTranslations>;
+// `readLlmSnapshot` accepts a forgiving partial input at runtime (it re-defaults
+// missing fields), but its TS signature is the strict shape. Derive the param
+// type to feed partial fixtures via a Partial<> cast at the boundary.
+type LlmSettings = NonNullable<Parameters<typeof helpers.readLlmSnapshot>[0]>;
 
 describe("LlmSettingsPanel", () => {
 	test("renders without crashing", () => {
@@ -16,7 +26,7 @@ describe("LlmSettingsPanel", () => {
 });
 
 const tStub = ((key: string, vars?: Record<string, unknown>) =>
-	vars ? `${key}:${JSON.stringify(vars)}` : key) as any;
+	vars ? `${key}:${JSON.stringify(vars)}` : key) as unknown as TranslateFn;
 
 describe("LlmSettingsPanel helpers — readLlmSnapshot", () => {
 	test("returns DEFAULT_LLM when input is null", () => {
@@ -29,8 +39,11 @@ describe("LlmSettingsPanel helpers — readLlmSnapshot", () => {
 		// shape — cast for the test fixture to exercise the partial-merge logic.
 		const snap = helpers.readLlmSnapshot({
 			openrouterApiKey: "sk-test",
-			dictation: { provider: "openrouter" } as any,
-		});
+			// Partial feature blob — `readLlmSnapshot` re-defaults each missing
+			// field at runtime; the TS signature reflects the strict shape so
+			// the test fixture casts through the per-feature shape.
+			dictation: { provider: "openrouter" } as LlmSettings["dictation"],
+		} as Partial<LlmSettings>);
 		expect(snap.dictation.provider).toBe("openrouter");
 		expect(snap.openrouterApiKey).toBe("sk-test");
 		expect(snap.endpoint).toBe(helpers.DEFAULT_LLM.endpoint);
@@ -222,21 +235,18 @@ describe("LlmSettingsPanel helpers — shouldScanOpenRouter", () => {
 	});
 });
 
-interface ToggleDepsForTest {
+// Tests assert on the `mock(...)`-returned spies; the helper signature accepts
+// regular functions. Intersect the spy types onto the strict deps shape so
+// individual call-sites are properly typed without loosening the helper
+// contract.
+type ToggleDepsForTest = FeatureToggleDeps & {
 	apply: ReturnType<typeof mock>;
 	checkOllamaReachable: ReturnType<typeof mock>;
-	currentOllamaModel: string;
-	currentOpenRouterModel: string;
-	ollamaLoaded: boolean;
-	ollamaModels: ReadonlyArray<{ name: string; size?: number }>;
-	openrouterApiKey: string;
-	openrouterLoaded: boolean;
-	provider: string;
 	scanOllama: ReturnType<typeof mock>;
 	scanOpenRouter: ReturnType<typeof mock>;
 	setShowApiKeyDialog: ReturnType<typeof mock>;
 	setShowOllamaDialog: ReturnType<typeof mock>;
-}
+};
 
 function makeDeps(overrides: Partial<ToggleDepsForTest> = {}): ToggleDepsForTest {
 	return {
@@ -285,14 +295,14 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 		const deps = makeDeps({
 			checkOllamaReachable: mock(() => Promise.resolve(false)),
 		});
-		await helpers.tryEnableOllamaForFeature(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps);
 		expect(deps.setShowOllamaDialog).toHaveBeenCalledWith(true);
 		expect(deps.apply).not.toHaveBeenCalled();
 	});
 
 	test("opens install dialog when reachable but no models installed", async () => {
 		const deps = makeDeps({ ollamaLoaded: true });
-		await helpers.tryEnableOllamaForFeature(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps);
 		// No model to pick — must NOT silently enable with model: "".
 		expect(deps.apply).not.toHaveBeenCalled();
 		expect(deps.setShowOllamaDialog).toHaveBeenCalledWith(true);
@@ -307,7 +317,7 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 				{ name: "tiny", size: 270_000_000 },
 			],
 		});
-		await helpers.tryEnableOllamaForFeature(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps);
 		expect(deps.apply).toHaveBeenCalledWith({ model: "tiny", enabled: true });
 	});
 
@@ -320,7 +330,7 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 				{ name: "tiny", size: 270_000_000 },
 			],
 		});
-		await helpers.tryEnableOllamaForFeature(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps);
 		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
 	});
 
@@ -330,7 +340,7 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 			currentOllamaModel: "deleted-model",
 			ollamaModels: [{ name: "tiny", size: 270_000_000 }],
 		});
-		await helpers.tryEnableOllamaForFeature(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps);
 		expect(deps.apply).toHaveBeenCalledWith({ model: "tiny", enabled: true });
 	});
 
@@ -339,7 +349,7 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 			currentOllamaModel: "tiny",
 			ollamaModels: [{ name: "tiny", size: 270_000_000 }],
 		});
-		await helpers.tryEnableOllamaForFeature(deps as any);
+		await helpers.tryEnableOllamaForFeature(deps);
 		expect(deps.scanOllama).toHaveBeenCalledTimes(1);
 		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
 	});
@@ -348,7 +358,7 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 	test("opens api key dialog when key missing", () => {
 		const deps = makeDeps({ provider: "openrouter" });
-		helpers.tryEnableOpenRouterForFeature(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps);
 		expect(deps.setShowApiKeyDialog).toHaveBeenCalledWith(true);
 		expect(deps.apply).not.toHaveBeenCalled();
 	});
@@ -360,7 +370,7 @@ describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 			openrouterLoaded: true,
 			currentOpenRouterModel: "",
 		});
-		helpers.tryEnableOpenRouterForFeature(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps);
 		expect(deps.apply).toHaveBeenCalledWith({
 			openrouterModel: helpers.DEFAULT_OPENROUTER_MODEL,
 			enabled: true,
@@ -374,13 +384,13 @@ describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 			openrouterLoaded: true,
 			currentOpenRouterModel: "anthropic/claude-3.5-sonnet",
 		});
-		helpers.tryEnableOpenRouterForFeature(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps);
 		expect(deps.apply).toHaveBeenCalledWith({ enabled: true });
 	});
 
 	test("scans when key present and not loaded", () => {
 		const deps = makeDeps({ provider: "openrouter", openrouterApiKey: "k" });
-		helpers.tryEnableOpenRouterForFeature(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps);
 		expect(deps.scanOpenRouter).toHaveBeenCalled();
 		expect(deps.apply).toHaveBeenCalled();
 	});
@@ -391,7 +401,7 @@ describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 			openrouterApiKey: "k",
 			openrouterLoaded: true,
 		});
-		helpers.tryEnableOpenRouterForFeature(deps as any);
+		helpers.tryEnableOpenRouterForFeature(deps);
 		expect(deps.scanOpenRouter).not.toHaveBeenCalled();
 		expect(deps.apply).toHaveBeenCalled();
 	});
@@ -400,20 +410,20 @@ describe("LlmSettingsPanel helpers — tryEnableOpenRouterForFeature", () => {
 describe("LlmSettingsPanel helpers — performFeatureToggle", () => {
 	test("disables without provider checks when next is false", async () => {
 		const deps = makeDeps();
-		await helpers.performFeatureToggle(false, deps as any);
+		await helpers.performFeatureToggle(false, deps);
 		expect(deps.apply).toHaveBeenCalledWith({ enabled: false });
 		expect(deps.checkOllamaReachable).not.toHaveBeenCalled();
 	});
 
 	test("delegates to ollama enable path when provider=ollama", async () => {
 		const deps = makeDeps({ provider: "ollama" });
-		await helpers.performFeatureToggle(true, deps as any);
+		await helpers.performFeatureToggle(true, deps);
 		expect(deps.checkOllamaReachable).toHaveBeenCalled();
 	});
 
 	test("delegates to openrouter enable path when provider=openrouter", async () => {
 		const deps = makeDeps({ provider: "openrouter" });
-		await helpers.performFeatureToggle(true, deps as any);
+		await helpers.performFeatureToggle(true, deps);
 		expect(deps.setShowApiKeyDialog).toHaveBeenCalledWith(true);
 	});
 });

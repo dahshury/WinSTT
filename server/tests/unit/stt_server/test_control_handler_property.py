@@ -27,7 +27,7 @@ import asyncio
 import json
 import string
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -37,6 +37,11 @@ from src.stt_server.control_handler import (
     _dispatch_command,
     is_pre_ready_command,
 )
+
+if TYPE_CHECKING:
+    from websockets.asyncio.server import ServerConnection
+
+    from src.stt_server.state import ServerState
 
 # ─── Test doubles ────────────────────────────────────────────────────────
 
@@ -148,7 +153,7 @@ def test_unknown_command_returns_error_response(name: str) -> None:
     state = _MinimalState()
     payload = {"command": name}
 
-    _run(_dispatch_command(ws, state, payload, name))  # type: ignore[arg-type]
+    _run(_dispatch_command(cast("ServerConnection", ws), cast("ServerState", state), payload, name))
 
     assert len(ws.sent) == 1
     response = json.loads(ws.sent[0])
@@ -162,7 +167,7 @@ def test_none_command_dispatches_to_unknown_branch() -> None:
     the dispatcher must treat this as unknown (not raise)."""
     ws = _FakeWebSocket()
     state = _MinimalState()
-    _run(_dispatch_command(ws, state, {}, None))  # type: ignore[arg-type]
+    _run(_dispatch_command(cast("ServerConnection", ws), cast("ServerState", state), {}, None))
     assert len(ws.sent) == 1
     response = json.loads(ws.sent[0])
     assert response["status"] == "error"
@@ -192,7 +197,7 @@ def test_unknown_command_with_arbitrary_garbage_payload_does_not_raise(
     ws = _FakeWebSocket()
     state = _MinimalState()
     payload: dict[str, Any] = {**extra_keys, "command": name}
-    _run(_dispatch_command(ws, state, payload, name))  # type: ignore[arg-type]
+    _run(_dispatch_command(cast("ServerConnection", ws), cast("ServerState", state), payload, name))
     assert len(ws.sent) == 1
     assert json.loads(ws.sent[0])["status"] == "error"
 
@@ -216,8 +221,8 @@ def test_unknown_command_response_is_deterministic(name: str) -> None:
     state = _MinimalState()
     payload = {"command": name}
 
-    _run(_dispatch_command(ws_a, state, payload, name))  # type: ignore[arg-type]
-    _run(_dispatch_command(ws_b, state, payload, name))  # type: ignore[arg-type]
+    _run(_dispatch_command(cast("ServerConnection", ws_a), cast("ServerState", state), payload, name))
+    _run(_dispatch_command(cast("ServerConnection", ws_b), cast("ServerState", state), payload, name))
 
     assert ws_a.sent == ws_b.sent
 

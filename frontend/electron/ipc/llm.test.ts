@@ -58,6 +58,14 @@ const {
 } = await import("./llm");
 const { ConnectionError, ValidationError } = await import("../../src/shared/lib/errors");
 
+// Derive strict parameter types from the exported helpers so partial test
+// fixtures cast through real shapes rather than `any`.
+type CustomModifierEntry = Parameters<typeof helpers.describeCustomPreset>[0];
+type PresetEntry = Parameters<typeof helpers.describeTranslatePreset>[0];
+type OpenRouterScanModel = Parameters<typeof helpers.applyEndpointDetailToModel>[0];
+type EndpointsDetail = Parameters<typeof helpers.buildEndpointsResult>[0];
+type EndpointRecord = NonNullable<EndpointsDetail["endpoints"]>[number];
+
 const ENDPOINT = "http://localhost:65535";
 
 describe("scanOllamaModels — connection failure handling", () => {
@@ -850,39 +858,39 @@ describe("classifyPullStatus", () => {
 
 describe("matchPullStatusPrefix", () => {
 	test("returns 'success' for exact 'success'", () => {
-		expect((helpers as any).matchPullStatusPrefix("success")).toBe("success");
+		expect(helpers.matchPullStatusPrefix("success")).toBe("success");
 	});
 
 	test("returns 'pulling' for 'pulling manifest' prefix", () => {
-		expect((helpers as any).matchPullStatusPrefix("pulling manifest for model")).toBe("pulling");
+		expect(helpers.matchPullStatusPrefix("pulling manifest for model")).toBe("pulling");
 	});
 
 	test("returns 'pulling' for 'retrieving' prefix", () => {
-		expect((helpers as any).matchPullStatusPrefix("retrieving model info")).toBe("pulling");
+		expect(helpers.matchPullStatusPrefix("retrieving model info")).toBe("pulling");
 	});
 
 	test("returns 'downloading' for 'pulling ' prefix (space matters)", () => {
-		expect((helpers as any).matchPullStatusPrefix("pulling sha256:abc123")).toBe("downloading");
+		expect(helpers.matchPullStatusPrefix("pulling sha256:abc123")).toBe("downloading");
 	});
 
 	test("returns 'downloading' for 'downloading' prefix", () => {
-		expect((helpers as any).matchPullStatusPrefix("downloading layer")).toBe("downloading");
+		expect(helpers.matchPullStatusPrefix("downloading layer")).toBe("downloading");
 	});
 
 	test("returns 'verifying' for 'verifying' prefix", () => {
-		expect((helpers as any).matchPullStatusPrefix("verifying sha256")).toBe("verifying");
+		expect(helpers.matchPullStatusPrefix("verifying sha256")).toBe("verifying");
 	});
 
 	test("returns 'writing' for 'writing' prefix", () => {
-		expect((helpers as any).matchPullStatusPrefix("writing manifest")).toBe("writing");
+		expect(helpers.matchPullStatusPrefix("writing manifest")).toBe("writing");
 	});
 
 	test("returns 'writing' for 'removing' prefix", () => {
-		expect((helpers as any).matchPullStatusPrefix("removing unused layers")).toBe("writing");
+		expect(helpers.matchPullStatusPrefix("removing unused layers")).toBe("writing");
 	});
 
 	test("returns undefined for unknown prefix", () => {
-		expect((helpers as any).matchPullStatusPrefix("unknown status")).toBeUndefined();
+		expect(helpers.matchPullStatusPrefix("unknown status")).toBeUndefined();
 	});
 });
 
@@ -1512,12 +1520,12 @@ describe("handleProcessTextSafe", () => {
 
 describe("pullResultFromStreamOutcome", () => {
 	test("returns success=true payload when result.success is true", () => {
-		const result = (helpers as any).pullResultFromStreamOutcome("llama3", { success: true });
+		const result = helpers.pullResultFromStreamOutcome("llama3", { success: true });
 		expect(result).toEqual({ success: true, model: "llama3" });
 	});
 
 	test("returns success=false with result.error when provided", () => {
-		const result = (helpers as any).pullResultFromStreamOutcome("llama3", {
+		const result = helpers.pullResultFromStreamOutcome("llama3", {
 			success: false,
 			error: "disk full",
 		});
@@ -1526,7 +1534,7 @@ describe("pullResultFromStreamOutcome", () => {
 	});
 
 	test("returns success=false with fallback message when no error", () => {
-		const result = (helpers as any).pullResultFromStreamOutcome("llama3", { success: false });
+		const result = helpers.pullResultFromStreamOutcome("llama3", { success: false });
 		expect(result.success).toBe(false);
 		expect(result.error).toBe("Pull did not complete successfully");
 	});
@@ -1538,21 +1546,21 @@ describe("applyPullLine", () => {
 	test("sets final.success=true when progress status is 'success'", () => {
 		const final = { success: false };
 		const parsed = { status: "success" };
-		(helpers as any).applyPullLine(final, "llama3", parsed);
+		helpers.applyPullLine(final, "llama3", parsed);
 		expect(final.success).toBe(true);
 	});
 
 	test("sets final.error when parsed has error field", () => {
 		const final: { success: boolean; error?: string } = { success: false };
 		const parsed = { status: "error", error: "something went wrong" };
-		(helpers as any).applyPullLine(final, "llama3", parsed);
+		helpers.applyPullLine(final, "llama3", parsed);
 		expect(final.error).toBe("something went wrong");
 	});
 
 	test("does not set final.success for non-success status", () => {
 		const final = { success: false };
 		const parsed = { status: "pulling manifest" };
-		(helpers as any).applyPullLine(final, "llama3", parsed);
+		helpers.applyPullLine(final, "llama3", parsed);
 		expect(final.success).toBe(false);
 	});
 });
@@ -2086,22 +2094,34 @@ describe("warmup status broadcast", () => {
 
 describe("describeCustomPreset", () => {
 	test("formats custom modifier with level", () => {
+		// describeCustomPreset only reads `id` and `level`; the runtime shape
+		// requires `key`/`name`/`prompt` too. Cast through unknown to feed a
+		// minimal entry without restating them.
 		const out = helpers.describeCustomPreset({
 			id: "fancy",
 			label: "Fancy",
 			level: "high",
-		} as any);
+		} as unknown as CustomModifierEntry);
 		expect(out).toBe("custom:fancy:high");
 	});
 
 	test("formats custom modifier without level", () => {
-		const out = helpers.describeCustomPreset({ id: "calm", label: "Calm" } as any);
+		const out = helpers.describeCustomPreset({
+			id: "calm",
+			label: "Calm",
+		} as unknown as CustomModifierEntry);
 		expect(out).toBe("custom:calm");
 	});
 
 	test("integrates into describePresets output (mixed presets)", () => {
 		const out = helpers.describePresets([
-			{ id: "edgy", key: "__custom__", name: "Edgy", prompt: "p", level: "low" } as any,
+			{
+				id: "edgy",
+				key: "__custom__",
+				name: "Edgy",
+				prompt: "p",
+				level: "low",
+			} as unknown as CustomModifierEntry,
 			{ key: "neutral" },
 		]);
 		expect(out).toBe("custom:edgy:low,neutral");
@@ -2110,12 +2130,17 @@ describe("describeCustomPreset", () => {
 
 describe("describeTranslatePreset", () => {
 	test("uses targetLang when present", () => {
-		const out = helpers.describeTranslatePreset({ key: "translate", targetLang: "es" } as any);
+		// `targetLang` lives on the builtin `translate` preset entry; the
+		// helper reads it via `(p as { targetLang?: string }).targetLang`.
+		const out = helpers.describeTranslatePreset({
+			key: "translate",
+			targetLang: "es",
+		} as unknown as PresetEntry);
 		expect(out).toBe("translate:es");
 	});
 
 	test("defaults to English when targetLang missing", () => {
-		const out = helpers.describeTranslatePreset({ key: "translate" } as any);
+		const out = helpers.describeTranslatePreset({ key: "translate" } as unknown as PresetEntry);
 		expect(out).toBe("translate:English");
 	});
 });
@@ -2454,22 +2479,25 @@ describe("pickLongerDescription", () => {
 
 describe("buildEndpointsResult", () => {
 	test("returns endpoints + description when description present", () => {
+		// Partial endpoint shape — the schema requires many more fields, but
+		// buildEndpointsResult is pass-through (it doesn't inspect endpoint
+		// internals). Cast through unknown for the test fixture.
 		const out = helpers.buildEndpointsResult({
 			description: "model details",
-			endpoints: [{ name: "ep1" } as any],
-		} as any);
+			endpoints: [{ name: "ep1" } as unknown as EndpointRecord],
+		});
 		expect(out.description).toBe("model details");
 		expect(out.endpoints).toHaveLength(1);
 	});
 
 	test("omits description when undefined", () => {
-		const out = helpers.buildEndpointsResult({ endpoints: [] } as any);
+		const out = helpers.buildEndpointsResult({ endpoints: [] });
 		expect(out.description).toBeUndefined();
 		expect(out.endpoints).toEqual([]);
 	});
 
 	test("defaults endpoints to [] when not provided", () => {
-		const out = helpers.buildEndpointsResult({ description: "x" } as any);
+		const out = helpers.buildEndpointsResult({ description: "x" });
 		expect(out.endpoints).toEqual([]);
 		expect(out.description).toBe("x");
 	});
@@ -2483,14 +2511,14 @@ describe("getCachedCapabilities", () => {
 	});
 
 	test("returns cached caps on a fresh hit (within TTL)", () => {
-		(helpers as any).cacheCapabilities("http://ep-fresh:11434", "m-fresh", ["completion"]);
+		helpers.cacheCapabilities("http://ep-fresh:11434", "m-fresh", ["completion"]);
 		expect(helpers.getCachedCapabilities("http://ep-fresh:11434", "m-fresh")).toEqual([
 			"completion",
 		]);
 	});
 
 	test("returns null after TTL expiry (>5 min) by stubbing Date.now", () => {
-		(helpers as any).cacheCapabilities("http://ep-stale:11434", "m-stale", ["tools"]);
+		helpers.cacheCapabilities("http://ep-stale:11434", "m-stale", ["tools"]);
 		const realNow = Date.now;
 		Date.now = () => realNow() + 6 * 60 * 1000; // 6 minutes in the future
 		try {
@@ -2505,10 +2533,12 @@ describe("getCachedCapabilities", () => {
 
 describe("applyEndpointDetailToModel", () => {
 	test("merges endpoints and prefers the longer description (detail wins when longer)", () => {
-		const model = { id: "m1", name: "M", description: "short" } as any;
+		// OpenRouterScanModel requires only `id` + `name`; the rest are
+		// optional. Endpoint records are passed through (not inspected).
+		const model: OpenRouterScanModel = { id: "m1", name: "M", description: "short" };
 		const detail = {
 			description: "this is a much longer description payload",
-			endpoints: [{ name: "ep" } as any],
+			endpoints: [{ name: "ep" } as unknown as EndpointRecord],
 		};
 		const out = helpers.applyEndpointDetailToModel(model, detail);
 		expect(out.description).toBe(detail.description);
@@ -2516,18 +2546,18 @@ describe("applyEndpointDetailToModel", () => {
 	});
 
 	test("returns model with endpoints only when description undefined", () => {
-		const model = { id: "m2", name: "M" } as any;
+		const model: OpenRouterScanModel = { id: "m2", name: "M" };
 		const out = helpers.applyEndpointDetailToModel(model, { endpoints: [] });
 		expect(out.description).toBeUndefined();
 		expect(out.endpoints).toEqual([]);
 	});
 
 	test("keeps listing description when it's longer", () => {
-		const model = {
+		const model: OpenRouterScanModel = {
 			id: "m3",
 			name: "M",
 			description: "long full description from listing",
-		} as any;
+		};
 		const detail = { description: "short", endpoints: [] };
 		const out = helpers.applyEndpointDetailToModel(model, detail);
 		expect(out.description).toBe("long full description from listing");

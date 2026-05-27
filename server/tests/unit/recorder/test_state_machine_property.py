@@ -55,7 +55,7 @@ def test_invalid_transition_always_raises(from_state: RecorderState, to_state: R
     sm = RecorderStateMachine()
     # Force the machine into ``from_state`` by overriding the internal field;
     # abort() then would reset, so we go through the (legal) abort + private set.
-    sm._state = from_state  # type: ignore[attr-defined]
+    sm._state = from_state
     if to_state in _VALID_TRANSITIONS[from_state]:
         old = sm.transition(to_state)
         assert old == from_state
@@ -74,8 +74,8 @@ def test_valid_transitions_are_deterministic(from_state: RecorderState, to_state
         return
     sm_a = RecorderStateMachine()
     sm_b = RecorderStateMachine()
-    sm_a._state = from_state  # type: ignore[attr-defined]
-    sm_b._state = from_state  # type: ignore[attr-defined]
+    sm_a._state = from_state
+    sm_b._state = from_state
     old_a = sm_a.transition(to_state)
     old_b = sm_b.transition(to_state)
     assert old_a == old_b == from_state

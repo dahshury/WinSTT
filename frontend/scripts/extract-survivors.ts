@@ -16,9 +16,9 @@ const html = await Bun.file("reports/mutation/mutation.html").text();
 // Walk through every `{"id":"...","mutatorName":` start.
 const startRe = /\{"id":"[^"]+","mutatorName":"/g;
 const startPositions: number[] = [];
-let m: RegExpExecArray | null;
-// biome-ignore lint/suspicious/noAssignInExpressions: regex loop
-while ((m = startRe.exec(html)) !== null) startPositions.push(m.index);
+for (let m = startRe.exec(html); m !== null; m = startRe.exec(html)) {
+	startPositions.push(m.index);
+}
 
 interface Mutant {
 	id: string;
@@ -61,9 +61,7 @@ function readMutant(start: number): { obj: Mutant; end: number } | null {
 // Find file path positions: `"<...>.ts":{"language":` markers anchor each file.
 const pathRe = /"((?:src|electron)\/[^"]+\.ts)":\{"language":/g;
 const filePositions: Array<{ path: string; index: number }> = [];
-let p: RegExpExecArray | null;
-// biome-ignore lint/suspicious/noAssignInExpressions: regex loop
-while ((p = pathRe.exec(html)) !== null) {
+for (let p = pathRe.exec(html); p !== null; p = pathRe.exec(html)) {
 	filePositions.push({ path: p[1] as string, index: p.index });
 }
 

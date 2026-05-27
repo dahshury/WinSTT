@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pytest
@@ -17,6 +17,9 @@ import pytest
 pyaudiowpatch = pytest.importorskip("pyaudiowpatch", reason="pyaudiowpatch not installed")
 
 from src.stt_server.loopback import LoopbackCapture  # noqa: E402
+
+if TYPE_CHECKING:
+    from src.recorder import AudioToTextRecorder
 
 # ---------------------------------------------------------------------------
 # Lightweight recorder stub — implements only the interface LoopbackCapture
@@ -72,10 +75,13 @@ def _find_loopback_device() -> int | None:
     return int(devices[0]["index"])
 
 
-DEVICE_INDEX = _find_loopback_device()
+_DETECTED_DEVICE = _find_loopback_device()
+# After the skipif gate, the index is guaranteed to be non-None; declare it
+# as ``int`` so the cast-once-here keeps every call site type-clean.
+DEVICE_INDEX: int = _DETECTED_DEVICE if _DETECTED_DEVICE is not None else -1
 
 skip_no_device = pytest.mark.skipif(
-    DEVICE_INDEX is None,
+    _DETECTED_DEVICE is None,
     reason="No WASAPI loopback device available",
 )
 
@@ -94,7 +100,7 @@ class TestLoopbackCapture:
         lc = LoopbackCapture()
         stub = RecorderStub()
 
-        info = lc.start(stub, DEVICE_INDEX)  # type: ignore[arg-type]
+        info = lc.start(cast("AudioToTextRecorder", stub), DEVICE_INDEX)
         assert info["index"] == DEVICE_INDEX
         assert lc.is_active
 
@@ -103,7 +109,7 @@ class TestLoopbackCapture:
         # only captures what goes through the speakers).
         time.sleep(0.3)
 
-        lc.stop(stub)  # type: ignore[arg-type]
+        lc.stop(cast("AudioToTextRecorder", stub))
         assert not lc.is_active
         # Listen mode leaves the mic PAUSED so PTT/Toggle reach idle with
         # the OS mic stream closed (they re-open it on the next hotkey).
@@ -121,11 +127,11 @@ class TestLoopbackCapture:
         stub = RecorderStub()
 
         for i in range(10):
-            lc.start(stub, DEVICE_INDEX)  # type: ignore[arg-type]
+            lc.start(cast("AudioToTextRecorder", stub), DEVICE_INDEX)
             assert lc.is_active, f"Cycle {i}: should be active after start"
             # Minimal delay — the bug occurred with near-zero gaps
             time.sleep(0.05)
-            lc.stop(stub)  # type: ignore[arg-type]
+            lc.stop(cast("AudioToTextRecorder", stub))
             assert not lc.is_active, f"Cycle {i}: should be inactive after stop"
 
         # Final state is clean
@@ -150,7 +156,7 @@ class TestLoopbackCapture:
             try:
                 barrier.wait(timeout=5)
                 for _ in range(5):
-                    lc.start(stub, DEVICE_INDEX)  # type: ignore[arg-type]
+                    lc.start(cast("AudioToTextRecorder", stub), DEVICE_INDEX)
                     time.sleep(0.02)
             except Exception as e:
                 errors.append(e)
@@ -159,7 +165,7 @@ class TestLoopbackCapture:
             try:
                 barrier.wait(timeout=5)
                 for _ in range(5):
-                    lc.stop(stub)  # type: ignore[arg-type]
+                    lc.stop(cast("AudioToTextRecorder", stub))
                     time.sleep(0.02)
             except Exception as e:
                 errors.append(e)
@@ -174,7 +180,7 @@ class TestLoopbackCapture:
         assert not errors, f"Concurrent start/stop raised: {errors}"
 
         # Clean up: ensure stopped
-        lc.stop(stub)  # type: ignore[arg-type]
+        lc.stop(cast("AudioToTextRecorder", stub))
         assert not lc.is_active
 
     def test_start_while_active_stops_previous(self) -> None:
@@ -183,16 +189,16 @@ class TestLoopbackCapture:
         lc = LoopbackCapture()
         stub = RecorderStub()
 
-        lc.start(stub, DEVICE_INDEX)  # type: ignore[arg-type]
+        lc.start(cast("AudioToTextRecorder", stub), DEVICE_INDEX)
         assert lc.is_active
         time.sleep(0.1)
 
         # Start again without explicit stop — should internally stop first
-        lc.start(stub, DEVICE_INDEX)  # type: ignore[arg-type]
+        lc.start(cast("AudioToTextRecorder", stub), DEVICE_INDEX)
         assert lc.is_active
         time.sleep(0.1)
 
-        lc.stop(stub)  # type: ignore[arg-type]
+        lc.stop(cast("AudioToTextRecorder", stub))
         assert not lc.is_active
 
     def test_stop_when_not_active_is_safe(self) -> None:
@@ -201,8 +207,8 @@ class TestLoopbackCapture:
         stub = RecorderStub()
 
         # Should not raise
-        lc.stop(stub)  # type: ignore[arg-type]
-        lc.stop(stub)  # type: ignore[arg-type]
+        lc.stop(cast("AudioToTextRecorder", stub))
+        lc.stop(cast("AudioToTextRecorder", stub))
         assert not lc.is_active
 
     def test_recorder_state_restored_after_crash_recovery(self) -> None:
@@ -212,11 +218,11 @@ class TestLoopbackCapture:
         lc = LoopbackCapture()
 
         # Start — should override silence duration to 2.0
-        lc.start(stub, DEVICE_INDEX)  # type: ignore[arg-type]
+        lc.start(cast("AudioToTextRecorder", stub), DEVICE_INDEX)
         assert stub.post_speech_silence_duration == 2.0
 
         # Stop — should restore to original 0.42
-        lc.stop(stub)  # type: ignore[arg-type]
+        lc.stop(cast("AudioToTextRecorder", stub))
         assert stub.post_speech_silence_duration == 0.42
         assert stub._mic_on is False
         assert stub._external is False

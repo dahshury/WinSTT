@@ -13,6 +13,8 @@ import os
 import wave
 from pathlib import Path
 
+import pytest
+
 from src.recorder.application.wav_writer import make_wav_filename, write_pcm_wav
 
 
@@ -25,13 +27,11 @@ def test_make_wav_filename_uses_explicit_timestamp() -> None:
     assert make_wav_filename(1_700_000_000) == "winstt-1700000000.wav"
 
 
-def test_make_wav_filename_defaults_to_now(monkeypatch: object) -> None:
-    # Pin time.time so the file name is deterministic. The signature uses
-    # `monkeypatch` typed loosely because pytest's MonkeyPatch class isn't a
-    # public alias on the version pin we target.
+def test_make_wav_filename_defaults_to_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pin time.time so the file name is deterministic.
     import time
 
-    monkeypatch.setattr(time, "time", lambda: 42)  # type: ignore[attr-defined]
+    monkeypatch.setattr(time, "time", lambda: 42)
     assert make_wav_filename() == "winstt-42.wav"
 
 
@@ -71,9 +71,9 @@ def test_write_pcm_wav_creates_recordings_dir(tmp_path: Path) -> None:
     assert os.path.basename(out) == "winstt-99.wav"
 
 
-def test_write_pcm_wav_swallows_write_errors(tmp_path: Path, monkeypatch: object) -> None:
+def test_write_pcm_wav_swallows_write_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A disk error must never bubble — return "" and log instead."""
-    monkeypatch.setattr(  # type: ignore[attr-defined]
+    monkeypatch.setattr(
         wave,
         "open",
         lambda *_args, **_kw: (_ for _ in ()).throw(OSError("disk full")),
@@ -82,9 +82,9 @@ def test_write_pcm_wav_swallows_write_errors(tmp_path: Path, monkeypatch: object
     assert out == ""
 
 
-def test_write_pcm_wav_swallows_mkdir_errors(tmp_path: Path, monkeypatch: object) -> None:
+def test_write_pcm_wav_swallows_mkdir_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If we can't create the recordings dir we still don't raise."""
-    monkeypatch.setattr(  # type: ignore[attr-defined]
+    monkeypatch.setattr(
         Path,
         "mkdir",
         lambda *_a, **_kw: (_ for _ in ()).throw(OSError("EACCES")),

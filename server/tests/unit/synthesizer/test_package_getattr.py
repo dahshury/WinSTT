@@ -18,7 +18,7 @@ import src.synthesizer as synth_pkg
 
 def test_unknown_attribute_raises_attribute_error() -> None:
     with pytest.raises(AttributeError, match="definitely_not_a_real_symbol"):
-        _ = synth_pkg.definitely_not_a_real_symbol  # type: ignore[attr-defined]
+        _ = synth_pkg.definitely_not_a_real_symbol
 
 
 def test_kokoro_synthesizer_lazy_path_is_exercised() -> None:

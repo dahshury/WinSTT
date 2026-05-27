@@ -79,9 +79,7 @@ def test_load_non_dict_root_returns_empty(isolated_overlay: Path, payload: objec
 
 @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(st.dictionaries(st.text(max_size=20), st.text(max_size=20) | st.integers(), max_size=5))
-def test_coercion_drops_non_dict_field_values(
-    isolated_overlay: Path, mixed: dict[str, str | int]
-) -> None:
+def test_coercion_drops_non_dict_field_values(isolated_overlay: Path, mixed: dict[str, str | int]) -> None:
     # Every value here is NOT a dict; the coercion must drop all of them
     # since only ``(str, dict)`` pairs survive ``_str_dict_pairs``.
     isolated_overlay.parent.mkdir(parents=True, exist_ok=True)

@@ -484,9 +484,7 @@ class TestNoiseRepetitionBreak:
         assert recorder.stopped == 0
         assert recorder.cleared == 0
 
-    def test_suppressed_when_silence_endpoint_disabled(
-        self, loop_fixture: asyncio.AbstractEventLoop
-    ) -> None:
+    def test_suppressed_when_silence_endpoint_disabled(self, loop_fixture: asyncio.AbstractEventLoop) -> None:
         """PTT / toggle+manualToggleStop: ``silence_endpoint_enabled=False``
         means only the user's hotkey release ends the recording, so the
         noise-break MUST NOT fire ``recorder.stop`` even when Whisper

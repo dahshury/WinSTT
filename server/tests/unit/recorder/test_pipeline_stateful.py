@@ -360,9 +360,7 @@ class PipelineModel(RuleBasedStateMachine):
         with self.pipeline.transcription_queue.mutex:
             items = list(self.pipeline.transcription_queue.queue)
         for item in items:
-            assert item is None or (
-                isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], bool)
-            )
+            assert item is None or (isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], bool))
 
     @invariant()
     def setter_round_trip(self) -> None:

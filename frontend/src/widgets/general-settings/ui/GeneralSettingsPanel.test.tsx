@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
+import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import {
 	DEFAULT_WAKE_WORD,
@@ -7,6 +8,12 @@ import {
 	__general_settings_panel_test_helpers__ as helpers,
 } from "../lib/general-settings-panel-test-helpers";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+
+// `computeDisplayFlags`, `isBarVisualizer`, and `readStartupFlags` all accept
+// the same `GeneralSettings | undefined` shape. Derive the real type from one
+// of their signatures so partial fixtures use a proper boundary cast.
+type GeneralSettings = NonNullable<Parameters<typeof helpers.computeDisplayFlags>[1]>;
+type TranslateFn = ReturnType<typeof useTranslations>;
 
 describe("GeneralSettingsPanel", () => {
 	test("renders without crashing", () => {
@@ -20,7 +27,7 @@ describe("GeneralSettingsPanel", () => {
 });
 
 const tStub = ((key: string, vars?: Record<string, unknown>) =>
-	vars ? `${key}:${JSON.stringify(vars)}` : key) as any;
+	vars ? `${key}:${JSON.stringify(vars)}` : key) as unknown as TranslateFn;
 
 describe("GeneralSettingsPanel helpers — buildVisualizerTypeOptions", () => {
 	test("returns 5 entries with stable ids", () => {
@@ -125,7 +132,9 @@ describe("GeneralSettingsPanel helpers — reduction slider mapping", () => {
 
 describe("GeneralSettingsPanel helpers — computeDisplayFlags", () => {
 	test("overlay enabled when shown and not listen mode", () => {
-		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: true } as any);
+		const flags = helpers.computeDisplayFlags(false, {
+			showRecordingOverlay: true,
+		} as unknown as GeneralSettings);
 		expect(flags).toEqual({
 			overlayEnabled: true,
 			subDisabled: false,
@@ -136,13 +145,17 @@ describe("GeneralSettingsPanel helpers — computeDisplayFlags", () => {
 		// The combined live-transcription picker is always visible — it IS the
 		// realtime on/off switch now (see realtime-enabled.ts) — so this only
 		// gates the overlay-dependent visualizer controls.
-		const flags = helpers.computeDisplayFlags(true, { showRecordingOverlay: true } as any);
+		const flags = helpers.computeDisplayFlags(true, {
+			showRecordingOverlay: true,
+		} as unknown as GeneralSettings);
 		expect(flags.overlayEnabled).toBe(false);
 		expect(flags.subDisabled).toBe(true);
 	});
 
 	test("overlay hidden disables overlay-dependent sub-controls", () => {
-		const flags = helpers.computeDisplayFlags(false, { showRecordingOverlay: false } as any);
+		const flags = helpers.computeDisplayFlags(false, {
+			showRecordingOverlay: false,
+		} as unknown as GeneralSettings);
 		expect(flags.overlayEnabled).toBe(false);
 		expect(flags.subDisabled).toBe(true);
 	});
@@ -256,7 +269,9 @@ describe("GeneralSettingsPanel helpers — isBarVisualizer", () => {
 	});
 
 	test("false for non-bar types", () => {
-		expect(helpers.isBarVisualizer({ visualizerType: "wave" } as any)).toBe(false);
+		expect(helpers.isBarVisualizer({ visualizerType: "wave" } as unknown as GeneralSettings)).toBe(
+			false
+		);
 	});
 });
 
@@ -288,7 +303,7 @@ describe("GeneralSettingsPanel helpers — readStartupFlags", () => {
 			startMinimized: true,
 			minimizeToTray: false,
 			sendCrashReports: false,
-		} as any);
+		} as unknown as GeneralSettings);
 		expect(flags).toEqual({
 			autoStart: true,
 			startMinimized: true,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import struct
 import threading
 import time
+from typing import cast
 
 from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
@@ -203,7 +204,9 @@ class TestAudioToTextRecorderFacade:
         facade = _make_facade_with_fakes()
         facade.listen()
         # Pre-populate transcription queue so wait_audio returns immediately
-        facade._service._pipeline.transcription_queue.put((True, 0.0))  # type: ignore[union-attr]
+        service = facade._service
+        assert service is not None
+        service._pipeline.transcription_queue.put((True, 0.0))
         facade.wait_audio()
         facade.shutdown()
 
@@ -468,7 +471,9 @@ class TestAudioToTextRecorderFacade:
         # Service is built — setter calls service.set_input_device, which
         # is a non-blocking attribute write on PyAudioSource.  For
         # FakeAudioSource it's a direct list append.
-        audio_source = facade._service._audio_source  # type: ignore[union-attr]
+        service = facade._service
+        assert service is not None
+        audio_source = service._audio_source
         assert isinstance(audio_source, FakeAudioSource)
         facade.input_device_index = 9
         assert audio_source.switched_to == [9]
@@ -493,10 +498,11 @@ class TestAudioToTextRecorderFacade:
     def test_custom_words_setter_normalises_none(self) -> None:
         # The control handler delivers ``None`` only via a malformed payload,
         # but tests exercise the boundary so the setter's defensive ``value or []``
-        # guard doesn't atrophy.
+        # guard doesn't atrophy. Cast to bypass the str-list annotation since
+        # this test deliberately probes the None branch.
         facade = _make_facade_with_fakes()
         facade.custom_words = ["Foo"]
-        facade.custom_words = None  # type: ignore[assignment]
+        facade.custom_words = cast("list[str]", None)
         assert facade.custom_words == []
         facade.shutdown()
 

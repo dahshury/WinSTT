@@ -537,9 +537,9 @@ class TestFormatNegotiation:
         formats_opened: list[int] = []
         original_open = pa.open
 
-        def capture_open(**kwargs: int | bool) -> _FakeStream:
+        def capture_open(**kwargs: Any) -> _FakeStream:  # noqa: ANN401 — wraps third-party pa.open's heterogenous kwargs
             formats_opened.append(int(kwargs["format"]))
-            return original_open(**kwargs)  # type: ignore[arg-type]
+            return original_open(**kwargs)
 
         monkeypatch.setattr(pa, "open", capture_open)
 
@@ -559,9 +559,9 @@ class TestFormatNegotiation:
         formats_opened: list[int] = []
         original_open = pa.open
 
-        def capture_open(**kwargs: int | bool) -> _FakeStream:
+        def capture_open(**kwargs: Any) -> _FakeStream:  # noqa: ANN401 — wraps third-party pa.open's heterogenous kwargs
             formats_opened.append(int(kwargs["format"]))
-            return original_open(**kwargs)  # type: ignore[arg-type]
+            return original_open(**kwargs)
 
         monkeypatch.setattr(pa, "open", capture_open)
 
@@ -629,9 +629,9 @@ class TestFormatPriorityPrefersInt16OverInt24:
         formats_opened: list[int] = []
         original_open = pa.open
 
-        def capture_open(**kwargs: int | bool) -> _FakeStream:
+        def capture_open(**kwargs: Any) -> _FakeStream:  # noqa: ANN401 — wraps third-party pa.open's heterogenous kwargs
             formats_opened.append(int(kwargs["format"]))
-            return original_open(**kwargs)  # type: ignore[arg-type]
+            return original_open(**kwargs)
 
         monkeypatch.setattr(pa, "open", capture_open)
 
@@ -670,9 +670,9 @@ class TestFormatPriorityFallsBackToInt24:
         formats_opened: list[int] = []
         original_open = pa.open
 
-        def capture_open(**kwargs: int | bool) -> _FakeStream:
+        def capture_open(**kwargs: Any) -> _FakeStream:  # noqa: ANN401 — wraps third-party pa.open's heterogenous kwargs
             formats_opened.append(int(kwargs["format"]))
-            return original_open(**kwargs)  # type: ignore[arg-type]
+            return original_open(**kwargs)
 
         monkeypatch.setattr(pa, "open", capture_open)
 
@@ -749,9 +749,9 @@ class TestSampleRatePrefersDeviceDefault:
         opened_rates: list[int] = []
         original_open = pa.open
 
-        def capture_open(**kwargs: int | bool) -> _FakeStream:
+        def capture_open(**kwargs: Any) -> _FakeStream:  # noqa: ANN401 — wraps third-party pa.open's heterogenous kwargs
             opened_rates.append(int(kwargs["rate"]))
-            return original_open(**kwargs)  # type: ignore[arg-type]
+            return original_open(**kwargs)
 
         monkeypatch.setattr(pa, "open", capture_open)
 
@@ -772,9 +772,9 @@ class TestSampleRatePrefersDeviceDefault:
         opened_rates: list[int] = []
         original_open = pa.open
 
-        def capture_open(**kwargs: int | bool) -> _FakeStream:
+        def capture_open(**kwargs: Any) -> _FakeStream:  # noqa: ANN401 — wraps third-party pa.open's heterogenous kwargs
             opened_rates.append(int(kwargs["rate"]))
-            return original_open(**kwargs)  # type: ignore[arg-type]
+            return original_open(**kwargs)
 
         monkeypatch.setattr(pa, "open", capture_open)
 

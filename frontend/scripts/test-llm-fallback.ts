@@ -17,6 +17,11 @@ import { computeModelExclusionConfig, filterModelsForFallback, isFallbackExclude
 import { generateObject } from "ai";
 import { z } from "zod";
 
+// `filterModelsForFallback` takes the full OpenRouterModel record; derive the
+// param type so the smoke-test fixture can present minimal `{id,name}` entries
+// via a single `as unknown as` boundary cast.
+type ModelInput = Parameters<typeof filterModelsForFallback>[0][number];
+
 const apiKey = process.env.OPENROUTER_API_KEY;
 if (!apiKey) {
 	console.error("OPENROUTER_API_KEY env var is required");
@@ -47,9 +52,8 @@ if (!apiKey) {
 		{ id: "openai/gpt-4o-mini", name: "x" },
 		{ id: "openai/gpt-4o", name: "y" },
 		{ id: "anthropic/claude-sonnet-4", name: "z" },
-	] as Array<{ id: string; name: string }>;
-	// biome-ignore lint/suspicious/noExplicitAny: minimal typing for the smoke test
-	const filtered = filterModelsForFallback(models as any, cfg);
+	] as unknown as ModelInput[];
+	const filtered = filterModelsForFallback(models, cfg);
 	const ok = filtered.length === 2 && !filtered.some((m) => m.id === "openai/gpt-4o-mini");
 	console.log(`[exclusion] ${ok ? "✓" : "✗"} filterModelsForFallback removes the primary`);
 	if (!ok) process.exit(1);

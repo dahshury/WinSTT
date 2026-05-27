@@ -329,9 +329,7 @@ class RecorderServiceModel(RuleBasedStateMachine):
 
     @invariant()
     def is_recording_consistent_with_state(self) -> None:
-        assert self.service.is_recording == (
-            self.service.state == RecorderState.RECORDING
-        )
+        assert self.service.is_recording == (self.service.state == RecorderState.RECORDING)
 
     @invariant()
     def post_speech_silence_is_nonneg(self) -> None:

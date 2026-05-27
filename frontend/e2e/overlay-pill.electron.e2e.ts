@@ -30,10 +30,6 @@ interface E2EHooks {
 	simulateRecordingStop: () => void;
 }
 
-declare global {
-	var __winsttE2E__: E2EHooks | undefined;
-}
-
 const PROJECT_ROOT = path.resolve(HERE, "..");
 const MAIN_JS = path.join(PROJECT_ROOT, "dist-electron", "main.js");
 

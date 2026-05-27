@@ -1,8 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
+import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { __audio_display_test_helpers__ as helpers } from "../lib/audio-display-test-helpers";
 import { AudioDisplay } from "./AudioDisplay";
+
+// The helpers accept the use-intl translate function. We only need its
+// callable shape for the tests, so cast through unknown rather than build a
+// full IntlProvider-backed t.
+type TranslateFn = ReturnType<typeof useTranslations>;
 
 describe("AudioDisplay", () => {
 	test("renders without crashing", () => {
@@ -16,7 +22,7 @@ describe("AudioDisplay", () => {
 });
 
 const tStub = ((key: string, vars?: Record<string, unknown>) =>
-	vars ? `${key}:${JSON.stringify(vars)}` : key) as any;
+	vars ? `${key}:${JSON.stringify(vars)}` : key) as unknown as TranslateFn;
 
 describe("AudioDisplay helpers — getExtension", () => {
 	const cases: [string, string][] = [

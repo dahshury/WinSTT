@@ -51,8 +51,9 @@ declare global {
  */
 async function installIpcMock(page: Page): Promise<void> {
 	await page.addInitScript(() => {
-		// biome-ignore lint/suspicious/noExplicitAny: minimal test bridge — type elision keeps the shim small.
-		type Listener = (data: any) => void;
+		// IPC payloads are opaque at the test boundary — the renderer's IPC
+		// layer types them at the call sites we exercise, not here.
+		type Listener = (...args: unknown[]) => void;
 		const listeners = new Map<string, Set<Listener>>();
 		const fakeApi = {
 			on(channel: string, cb: Listener) {
@@ -72,10 +73,11 @@ async function installIpcMock(page: Page): Promise<void> {
 				return Promise.resolve(undefined);
 			},
 		};
-		// biome-ignore lint/suspicious/noExplicitAny: window.electronAPI shape is owned by the preload bridge; the test shim only fills the methods the renderer actually calls.
-		(window as any).electronAPI = fakeApi;
-		// biome-ignore lint/suspicious/noExplicitAny: test handle pinned on window; the global Window augmentation at module top declares the typed shape consumers see.
-		(window as any).__mockApi = {
+		// `window.electronAPI` is owned by the preload bridge; the test shim
+		// only fills the methods the renderer actually calls. Cast through
+		// unknown to stay honest about not implementing every ElectronAPI field.
+		(window as unknown as { electronAPI: typeof fakeApi }).electronAPI = fakeApi;
+		window.__mockApi = {
 			__fireIpc(channel: string, data: unknown) {
 				const set = listeners.get(channel);
 				if (set === undefined) {

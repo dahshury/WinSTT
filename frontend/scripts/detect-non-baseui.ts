@@ -56,9 +56,7 @@ for (const file of walk(SRC_DIR)) {
 
 	for (const { regex, element, replacement } of PATTERNS) {
 		regex.lastIndex = 0;
-		let match: RegExpExecArray | null;
-		// biome-ignore lint/suspicious/noAssignInExpressions: simple regex scan
-		while ((match = regex.exec(content)) !== null) {
+		for (let match = regex.exec(content); match !== null; match = regex.exec(content)) {
 			const lineNum = content.slice(0, match.index).split("\n").length;
 			const lineText = lines[lineNum - 1]?.trim() ?? "";
 			violations.push({

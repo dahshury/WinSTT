@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from src.recorder.domain.model_registry import ModelCatalog
@@ -202,7 +204,9 @@ class TestAssessDictationFit:
         # so before subtracting "other_loaded", budget is exactly
         # small_bytes/0.8 - 1 + other_loaded.
         # Let other_loaded = small_bytes // 2.
-        other_loaded_estimate = estimate_runtime_bytes(catalog.get("base"), "")  # type: ignore[arg-type]
+        base_info = catalog.get("base")
+        assert base_info is not None
+        other_loaded_estimate = estimate_runtime_bytes(base_info, "")
         target_budget = int(small_bytes / WARNING_THRESHOLD) - 1
         ram_avail_needed = target_budget + other_loaded_estimate
         # Use a system with enough total RAM; live_available is what matters
@@ -248,7 +252,7 @@ class TestAssessDictationFit:
 
         a = assess_dictation_fit(
             "ufp",
-            catalog=Stub(),  # type: ignore[arg-type]
+            catalog=cast("ModelCatalog", Stub()),
             live=_live(),
         )
         assert a.severity == FitSeverity.OK
