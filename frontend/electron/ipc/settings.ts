@@ -538,29 +538,61 @@ function applyTransformIfPresent(
  * to reject the whole broadcast and the codec to fall back to ALL schema
  * defaults — which is how every model pick was silently reverting to "tiny".
  */
+interface SecretLeafTarget {
+	leafKey: string;
+	parent: Record<string, unknown>;
+}
+
+function splitSecretPath(dotPath: string): { parentSegments: string[]; leafKey: string } | null {
+	const segments = dotPath.split(".");
+	if (segments.length < 2) {
+		return null;
+	}
+	const leafKey = segments.at(-1);
+	return leafKey ? { parentSegments: segments.slice(0, -1), leafKey } : null;
+}
+
+function stepSecretParent(
+	parent: Record<string, unknown>,
+	segment: string
+): Record<string, unknown> | null {
+	return segment ? resolveSecretSection(parent, segment) : null;
+}
+
+function traverseSecretParents(
+	root: Record<string, unknown>,
+	segments: string[]
+): Record<string, unknown> | null {
+	let parent: Record<string, unknown> | null = root;
+	for (const segment of segments) {
+		if (!parent) {
+			break;
+		}
+		parent = stepSecretParent(parent, segment);
+	}
+	return parent;
+}
+
+function resolveSecretLeafTarget(
+	settings: Record<string, unknown>,
+	dotPath: string
+): SecretLeafTarget | null {
+	const parts = splitSecretPath(dotPath);
+	if (!parts) {
+		return null;
+	}
+	const parent = traverseSecretParents(settings, parts.parentSegments);
+	return parent ? { parent, leafKey: parts.leafKey } : null;
+}
+
 function walkSecretField(
 	settings: Record<string, unknown>,
 	dotPath: string,
 	transform: (v: unknown) => unknown
 ): void {
-	const segments = dotPath.split(".");
-	if (segments.length < 2) {
-		return;
-	}
-	const leafKey = segments.at(-1);
-	if (!leafKey) {
-		return;
-	}
-	let parent: Record<string, unknown> | null = settings;
-	for (let i = 0; i < segments.length - 1; i++) {
-		const segment = segments[i];
-		if (!(parent && segment)) {
-			return;
-		}
-		parent = resolveSecretSection(parent, segment);
-	}
-	if (parent) {
-		applyTransformIfPresent(parent, leafKey, transform);
+	const target = resolveSecretLeafTarget(settings, dotPath);
+	if (target) {
+		applyTransformIfPresent(target.parent, target.leafKey, transform);
 	}
 }
 

@@ -223,13 +223,17 @@ export function getRecordingMode(settings: AppSettings): string {
  * agree it adds at most a few milliseconds; on the divergent case it
  * prevents the spurious model-revert loop entirely.
  */
+export function isLiveServerReady(serverStatus: string, isLoaded: boolean): boolean {
+	return serverStatus === "running" && isLoaded;
+}
+
 export function shouldSyncOnConnect(
 	serverStatus: string,
 	isLoaded: boolean,
 	alreadySynced: boolean,
 	fromIpcLoad: boolean
 ): boolean {
-	return serverStatus === "running" && isLoaded && fromIpcLoad && !alreadySynced;
+	return isLiveServerReady(serverStatus, isLoaded) && fromIpcLoad && !alreadySynced;
 }
 
 /**

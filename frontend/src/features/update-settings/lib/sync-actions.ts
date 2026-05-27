@@ -61,28 +61,29 @@ export const AUDIO_PARAM_MAP: Record<string, AllowedParameter> = {
  * Unknown / corrupt values fall through to "immediate" (matches the
  * schema's `.catch("immediate")` normalization).
  */
-const MIC_RELEASE_LAZY_SECONDS: Record<string, number> = {
-	sec30: 30,
-	min1: 60,
-	min5: 300,
-};
-
 interface MicReleasePolicy {
 	alwaysOn: boolean;
 	lazyClose: boolean;
 	timeoutSeconds: number;
 }
 
+const IMMEDIATE_POLICY: MicReleasePolicy = {
+	alwaysOn: false,
+	lazyClose: false,
+	timeoutSeconds: 0,
+};
+
+const MIC_RELEASE_POLICIES: Record<string, MicReleasePolicy> = {
+	always: { alwaysOn: true, lazyClose: false, timeoutSeconds: 0 },
+	immediate: IMMEDIATE_POLICY,
+	sec30: { alwaysOn: false, lazyClose: true, timeoutSeconds: 30 },
+	min1: { alwaysOn: false, lazyClose: true, timeoutSeconds: 60 },
+	min5: { alwaysOn: false, lazyClose: true, timeoutSeconds: 300 },
+};
+
 export function resolveMicReleasePolicy(value: unknown): MicReleasePolicy {
-	const raw = typeof value === "string" ? value : "immediate";
-	if (raw === "always") {
-		return { alwaysOn: true, lazyClose: false, timeoutSeconds: 0 };
-	}
-	const seconds = MIC_RELEASE_LAZY_SECONDS[raw];
-	if (seconds === undefined) {
-		return { alwaysOn: false, lazyClose: false, timeoutSeconds: 0 };
-	}
-	return { alwaysOn: false, lazyClose: true, timeoutSeconds: seconds };
+	const key = typeof value === "string" ? value : "immediate";
+	return MIC_RELEASE_POLICIES[key] ?? IMMEDIATE_POLICY;
 }
 
 /**
@@ -163,6 +164,17 @@ export function syncAudioParams(
  * are pushed atomically so a server that only got two of the three
  * updates can't sit in a half-applied state.
  */
+export function micReleaseNeedsPush(
+	current: unknown,
+	previous: unknown,
+	isInitial: boolean
+): boolean {
+	if (current == null) {
+		return false;
+	}
+	return isInitial || current !== previous;
+}
+
 function syncMicrophoneRelease(
 	deps: SyncDeps,
 	audio: NonNullable<AppSettings["audio"]>,
@@ -170,11 +182,7 @@ function syncMicrophoneRelease(
 	isInitial: boolean
 ): void {
 	const current = audio.microphoneRelease;
-	const previous = prevAudio?.microphoneRelease;
-	if (!isInitial && current === previous) {
-		return;
-	}
-	if (current == null) {
+	if (!micReleaseNeedsPush(current, prevAudio?.microphoneRelease, isInitial)) {
 		return;
 	}
 	const policy = resolveMicReleasePolicy(current);
@@ -256,6 +264,17 @@ function syncInitialPromptStatics(
  * we want the comparison to operate on the seconds the server actually
  * sees so a no-op enum migration doesn't churn a hot-swap.
  */
+export function modelUnloadTimeoutNeedsPush(
+	current: unknown,
+	previous: unknown,
+	isInitial: boolean
+): boolean {
+	if (current == null) {
+		return false;
+	}
+	return isInitial || current !== previous;
+}
+
 function syncModelUnloadTimeout(
 	deps: SyncDeps,
 	model: AppSettings["model"] | undefined,
@@ -263,15 +282,10 @@ function syncModelUnloadTimeout(
 	isInitial: boolean
 ): void {
 	const current = model?.modelUnloadTimeout;
-	if (current == null) {
+	if (!modelUnloadTimeoutNeedsPush(current, prevModel?.modelUnloadTimeout, isInitial)) {
 		return;
 	}
-	const previous = prevModel?.modelUnloadTimeout;
-	if (!isInitial && current === previous) {
-		return;
-	}
-	const seconds = resolveModelUnloadTimeoutSeconds(current);
-	deps.sttSetParameter("model_unload_timeout_seconds", seconds);
+	deps.sttSetParameter("model_unload_timeout_seconds", resolveModelUnloadTimeoutSeconds(current));
 }
 
 /** Mapping of quality keys → AllowedParameter names. */

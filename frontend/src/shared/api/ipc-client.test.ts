@@ -517,14 +517,18 @@ describe("typed event subscriptions", () => {
 		expect(cb).toHaveBeenCalledWith({ model: "tiny", progress: 0.5 });
 	});
 
-	test("onModelDownloadComplete passes (model, cancelled) — defaulting cancelled to false", () => {
+	test("onModelDownloadComplete passes (model, cancelled, quantization) — defaulting cancelled to false", () => {
 		const api = installMockApi();
 		const cb = mock(() => undefined);
 		ipc.onModelDownloadComplete(cb);
 		fire(api, IPC.STT_MODEL_DOWNLOAD_COMPLETE, { model: "tiny" });
-		expect(cb).toHaveBeenCalledWith("tiny", false);
-		fire(api, IPC.STT_MODEL_DOWNLOAD_COMPLETE, { model: "base", cancelled: true });
-		expect(cb).toHaveBeenCalledWith("base", true);
+		expect(cb).toHaveBeenCalledWith("tiny", false, undefined);
+		fire(api, IPC.STT_MODEL_DOWNLOAD_COMPLETE, {
+			model: "base",
+			cancelled: true,
+			quantization: "q4",
+		});
+		expect(cb).toHaveBeenCalledWith("base", true, "q4");
 	});
 
 	test("onModelCatalog and fetchModelCatalog handle models list", async () => {

@@ -91,6 +91,10 @@ yarn-error.log*
 trace.err
 trace.out
 .profile/
+# stt-server.exe stdout/stderr capture files (created when the server is
+# launched with redirected stdio outside of Electron — e.g. manual debug runs).
+stt.err
+stt.out
 
 # Local analysis & mutation testing artifacts
 crap-*.json

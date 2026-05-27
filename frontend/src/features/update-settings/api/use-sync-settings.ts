@@ -181,40 +181,7 @@ export function useSyncSettings(): void {
 			settings,
 			isModeChanged(settings, prev),
 			debounceRef,
-			(_captured) => {
-				const sinceIpcLoad = Date.now() - recentIpcLoadAt();
-				// Read the LATEST store snapshot at fire time, not the value
-				// captured at schedule time. A broadcast arriving inside the
-				// debounce window already updated the store; firing with the
-				// stale capture would broadcast an outdated section back and
-				// race with the originator's save (the dynamic-island
-				// overlay-mode snap-back: VAD-triggered save in the main
-				// window captured general=floating-bottom at T+10, the user
-				// clicked dynamic-island in the settings window which saved
-				// at T+300, then the main window's T+310 save fired with the
-				// captured stale general and broadcast floating-bottom back —
-				// the settings window's merge saw current==lastSaved
-				// post-save and accepted the stale broadcast, reverting the
-				// Switcher).
-				const s = latestSettingsRef.current;
-				if (sinceIpcLoad < SAVE_IPC_LOAD_GUARD_MS) {
-					return;
-				}
-				// Only send sections that actually differ from the last-saved
-				// baseline. This window may hold a stale snapshot of a
-				// section another window owns (e.g. main holds floating-bottom
-				// for general while the settings window just persisted
-				// dynamic-island); without the diff we'd echo that stale
-				// section back into electron-store and clobber the live
-				// value. Same partial-save contract callers like
-				// useVadCalibration already use — see `settingsSave` JSDoc.
-				const patch = diffAgainstLastSaved(s, lastSavedRef.current);
-				if (!hasAnyKey(patch)) {
-					return;
-				}
-				settingsSave(patch);
-				lastSavedRef.current = s;
-			},
+			() => performScheduledSave(latestSettingsRef, lastSavedRef),
 			300
 		);
 
@@ -235,24 +202,59 @@ function cancelPendingSave(debounceRef: { current: ReturnType<typeof setTimeout>
  * differ from `lastSaved`. When `lastSaved` is undefined (first save in the
  * session), send everything so the canonical disk snapshot is established.
  */
-function diffAgainstLastSaved(
+export function sectionsDiffer(a: unknown, b: unknown): boolean {
+	return JSON.stringify(a) !== JSON.stringify(b);
+}
+
+export function collectChangedSections(
 	current: AppSettings,
-	lastSaved: AppSettings | undefined
+	lastSaved: AppSettings
 ): Partial<AppSettings> {
-	if (!lastSaved) {
-		return current;
-	}
 	const patch: Record<string, unknown> = {};
 	for (const key of Object.keys(current) as Array<keyof AppSettings>) {
-		if (JSON.stringify(current[key]) !== JSON.stringify(lastSaved[key])) {
+		if (sectionsDiffer(current[key], lastSaved[key])) {
 			patch[key] = current[key];
 		}
 	}
 	return patch as Partial<AppSettings>;
 }
 
+function diffAgainstLastSaved(
+	current: AppSettings,
+	lastSaved: AppSettings | undefined
+): Partial<AppSettings> {
+	return lastSaved ? collectChangedSections(current, lastSaved) : current;
+}
+
 function hasAnyKey(obj: Partial<AppSettings>): boolean {
 	return Object.keys(obj).length > 0;
+}
+
+/**
+ * Body of the debounced scheduleSave callback, extracted so the IPC-load
+ * guard, the diff-vs-baseline check, and the lastSavedRef advance are
+ * unit-testable without standing up the whole hook.
+ *
+ * - Suppresses saves inside the IPC-load reconciliation window (a transient
+ *   revert from `setSettings(loaded)` would otherwise be persisted, the
+ *   original 'switching to tiny' death-spiral cause).
+ * - Only sends sections that differ from the last-saved baseline, so a
+ *   stale-snapshot window can't clobber values another window just persisted.
+ */
+export function performScheduledSave(
+	latestSettingsRef: { current: AppSettings },
+	lastSavedRef: { current: AppSettings | undefined }
+): void {
+	if (Date.now() - recentIpcLoadAt() < SAVE_IPC_LOAD_GUARD_MS) {
+		return;
+	}
+	const s = latestSettingsRef.current;
+	const patch = diffAgainstLastSaved(s, lastSavedRef.current);
+	if (!hasAnyKey(patch)) {
+		return;
+	}
+	settingsSave(patch);
+	lastSavedRef.current = s;
 }
 
 /**

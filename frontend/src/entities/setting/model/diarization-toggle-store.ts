@@ -40,7 +40,7 @@ export const useDiarizationToggleStore = create<DiarizationToggleStore>()((set) 
  * Subscribe to diarization-toggle lifecycle pushes. Called once on module
  * load in Electron windows; exported so tests can wire it manually.
  */
-function initDiarizationToggleStore(): () => void {
+export function initDiarizationToggleStore(): () => void {
 	const unsubStarted = onDiarizationToggleStarted(() => {
 		useDiarizationToggleStore.getState().begin();
 	});

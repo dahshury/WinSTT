@@ -35,3 +35,13 @@ export function markIpcLoadResolved(): void {
 export function recentIpcLoadAt(): number {
 	return lastResolvedAt;
 }
+
+/**
+ * Test-only: reset the module-level timestamp to 0 so the next consumer
+ * sees "no recent IPC load" (guard inactive). Used by unit tests that
+ * exercise `performScheduledSave` / `useSyncActiveModel` without standing
+ * up the real boot reconciliation cycle.
+ */
+export function _resetIpcLoadTimingForTests(): void {
+	lastResolvedAt = 0;
+}

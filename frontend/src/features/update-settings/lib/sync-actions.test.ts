@@ -4,7 +4,11 @@ import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-
 import {
 	AUDIO_PARAM_MAP,
 	diarizationNeedsPush,
+	micReleaseNeedsPush,
+	modelUnloadTimeoutNeedsPush,
 	readDiarizationEnabled,
+	resolveMicReleasePolicy,
+	resolveModelUnloadTimeoutSeconds,
 	type SyncDeps,
 	sendIfChanged,
 	shouldSendParam,
@@ -330,5 +334,123 @@ describe("syncToServer", () => {
 		expect(kinds).toContain("sttRequestDiarizationToggle");
 		// autostart is skipped on initial connect (matches existing behavior).
 		expect(kinds).not.toContain("autostartSet");
+	});
+});
+
+describe("resolveMicReleasePolicy", () => {
+	test("maps 'always' to alwaysOn with timeout 0", () => {
+		expect(resolveMicReleasePolicy("always")).toEqual({
+			alwaysOn: true,
+			lazyClose: false,
+			timeoutSeconds: 0,
+		});
+	});
+
+	test("maps 'immediate' to no-lazy-close with timeout 0", () => {
+		expect(resolveMicReleasePolicy("immediate")).toEqual({
+			alwaysOn: false,
+			lazyClose: false,
+			timeoutSeconds: 0,
+		});
+	});
+
+	test.each([
+		["sec30", 30],
+		["min1", 60],
+		["min5", 300],
+	])("maps '%s' to lazyClose with %d seconds", (key, seconds) => {
+		expect(resolveMicReleasePolicy(key)).toEqual({
+			alwaysOn: false,
+			lazyClose: true,
+			timeoutSeconds: seconds,
+		});
+	});
+
+	test("falls back to immediate for unknown strings", () => {
+		expect(resolveMicReleasePolicy("garbage")).toEqual({
+			alwaysOn: false,
+			lazyClose: false,
+			timeoutSeconds: 0,
+		});
+	});
+
+	test("falls back to immediate for non-string inputs", () => {
+		expect(resolveMicReleasePolicy(null)).toEqual({
+			alwaysOn: false,
+			lazyClose: false,
+			timeoutSeconds: 0,
+		});
+		expect(resolveMicReleasePolicy(undefined)).toEqual({
+			alwaysOn: false,
+			lazyClose: false,
+			timeoutSeconds: 0,
+		});
+		expect(resolveMicReleasePolicy(123)).toEqual({
+			alwaysOn: false,
+			lazyClose: false,
+			timeoutSeconds: 0,
+		});
+	});
+});
+
+describe("resolveModelUnloadTimeoutSeconds", () => {
+	test.each([
+		["immediately", 0],
+		["never", -1],
+		["min2", 120],
+		["min5", 300],
+		["min10", 600],
+		["min15", 900],
+		["hour1", 3600],
+	])("maps '%s' to %d seconds", (key, seconds) => {
+		expect(resolveModelUnloadTimeoutSeconds(key)).toBe(seconds);
+	});
+
+	test("falls back to 300s default on unknown string", () => {
+		expect(resolveModelUnloadTimeoutSeconds("totally-bogus")).toBe(300);
+	});
+
+	test("falls back to 300s default on non-string input", () => {
+		expect(resolveModelUnloadTimeoutSeconds(null)).toBe(300);
+		expect(resolveModelUnloadTimeoutSeconds(undefined)).toBe(300);
+		expect(resolveModelUnloadTimeoutSeconds(42)).toBe(300);
+	});
+});
+
+describe("micReleaseNeedsPush", () => {
+	test("false when current is null/undefined", () => {
+		expect(micReleaseNeedsPush(null, "immediate", false)).toBe(false);
+		expect(micReleaseNeedsPush(undefined, "immediate", true)).toBe(false);
+	});
+
+	test("true on initial when current is set", () => {
+		expect(micReleaseNeedsPush("always", undefined, true)).toBe(true);
+	});
+
+	test("true on incremental when current differs from previous", () => {
+		expect(micReleaseNeedsPush("always", "immediate", false)).toBe(true);
+	});
+
+	test("false on incremental when current === previous", () => {
+		expect(micReleaseNeedsPush("immediate", "immediate", false)).toBe(false);
+	});
+});
+
+describe("modelUnloadTimeoutNeedsPush", () => {
+	test("false when current is null/undefined", () => {
+		expect(modelUnloadTimeoutNeedsPush(null, "min5", false)).toBe(false);
+		expect(modelUnloadTimeoutNeedsPush(undefined, "min5", true)).toBe(false);
+	});
+
+	test("true on initial when current is set", () => {
+		expect(modelUnloadTimeoutNeedsPush("min5", undefined, true)).toBe(true);
+	});
+
+	test("true on incremental when current differs from previous", () => {
+		expect(modelUnloadTimeoutNeedsPush("never", "min5", false)).toBe(true);
+	});
+
+	test("false on incremental when current === previous", () => {
+		expect(modelUnloadTimeoutNeedsPush("min5", "min5", false)).toBe(false);
 	});
 });
