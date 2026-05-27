@@ -9,11 +9,7 @@ import {
 } from "@/features/audio-visualizer";
 import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useLlmProcessingFeed, useLlmProcessingStore } from "@/features/llm-processing";
-import {
-	onSettingsChanged,
-	overlaySetIgnoreMouse,
-	sttAbortOperation,
-} from "@/shared/api/ipc-client";
+import { onSettingsChanged, sttAbortOperation } from "@/shared/api/ipc-client";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
 import {
 	DynamicIsland,
@@ -561,22 +557,14 @@ export function OverlayPage() {
 		return unsub;
 	}, [setSettings]);
 
-	// While the X cancel button is visible (a recording or LLM-thinking pass
-	// is in flight), make the whole overlay window interactive so taps land.
-	// The default is click-through (set in electron/main.ts createOverlayWindow
-	// and re-asserted by overlay.ts) so the empty pill never blocks clicks to
-	// the app underneath. The hover-based flip in CancelButton works for mouse
-	// users (mouseenter → ignore=false → click) but FAILS on touch: a touch
-	// device emits no preceding mousemove the renderer can react to in time —
-	// the synthesized mouse-down arrives at the OS before the renderer's
-	// `overlaySetIgnoreMouse(false)` IPC roundtrip completes, so the click
-	// falls through to the app underneath and the X is unreachable.
-	// Proactively disabling click-through during the active window is the
-	// only way to make the X tappable on touch.
-	useEffect(() => {
-		const interactive = isRecordingActive || isThinking;
-		overlaySetIgnoreMouse(!interactive);
-	}, [isRecordingActive, isThinking]);
+	// Click-through is driven by main-process applyShow / applyHide in
+	// overlay.ts so the flag flips on the SAME tick as window visibility,
+	// no IPC roundtrip race between renderer state and OS pointer dispatch.
+	// The previous effect-based flip raced the click itself ("press X
+	// while talking → nothing happens" regression), because
+	// `isRecordingActive` is a renderer-side mirror that lags the actual
+	// window-shown event by however long the IPC + React reconcile takes.
+	// `overlaySetIgnoreMouse` is intentionally not called from here.
 
 	const text = realtime.trim() || ephemeral?.text || "";
 	const hasText = text.length > 0;

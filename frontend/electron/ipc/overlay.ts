@@ -225,6 +225,11 @@ function applyHide(): void {
 	if (!win) {
 		return;
 	}
+	// Restore click-through the instant we start hiding. While hidden the
+	// flag is observably moot (the window catches no input either way), but
+	// keeping it true matches the pre-show baseline so a future show that
+	// races a renderer-side flip starts from the safe default.
+	safeCall(() => win.setIgnoreMouseEvents(true, { forward: true }));
 	// Order matters: opacity first so DWM stops compositing this surface
 	// immediately. Move offscreen as backup. Hide last so the canonical
 	// state is consistent.
@@ -249,6 +254,21 @@ function applyShow(x: number, y: number): void {
 	if (!win) {
 		return;
 	}
+	// Disable click-through for the lifetime of this show. The X cancel
+	// button MUST receive both mouse clicks and touch taps; a per-tick
+	// renderer-side effect that flips `setIgnoreMouseEvents(false)` after
+	// the OS has already dispatched the click is the source of the
+	// "X button does nothing while talking" regression — it races the
+	// IPC roundtrip and the OS pointer dispatch every time. Driving the
+	// flag at the same place that drives visibility (here) closes that
+	// window: the moment the window is on screen, it catches input;
+	// the moment it's hidden (applyHide), it goes click-through again.
+	// Trade-off: the 720×240 overlay rect blocks click-through to the app
+	// underneath while shown, but it's only shown DURING a recording /
+	// LLM-thinking pass, when the user isn't clicking through anyway,
+	// and the window's `focusable: false` flag still prevents activation
+	// stealing (paste pipeline + main app focus stay intact).
+	safeCall(() => win.setIgnoreMouseEvents(false));
 	// Position first so the user never sees a flash at the offscreen
 	// coordinates.
 	safeCall(() => win.setPosition(x, y));
