@@ -12,13 +12,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import FuseConstructor, { type default as Fuse, type IFuseOptions } from "fuse.js";
-import {
-	type ComponentPropsWithoutRef,
-	type ReactNode,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useRef, useState } from "react";
 import type { SystemInfoEntry } from "@/shared/api/ipc-client";
 import type {
 	OllamaLibraryHit,

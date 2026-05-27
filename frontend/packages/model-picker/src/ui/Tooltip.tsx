@@ -15,8 +15,8 @@ import type { ReactNode } from "react";
  * keep working via `import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip"`.
  */
 
-export { TooltipTrigger } from "./TooltipTrigger";
 export { TooltipContent, type TooltipContentProps } from "./TooltipContent";
+export { TooltipTrigger } from "./TooltipTrigger";
 
 export interface TooltipProps {
 	children: ReactNode;

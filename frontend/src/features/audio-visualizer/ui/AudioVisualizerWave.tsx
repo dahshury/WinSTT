@@ -121,10 +121,10 @@ export function AudioVisualizerWave({
 	const state = useAgentState();
 
 	let _lineWidth: number;
-	if (lineWidth !== undefined) {
-		_lineWidth = lineWidth;
-	} else {
+	if (lineWidth === undefined) {
 		_lineWidth = size === "icon" || size === "sm" ? 2 : 1;
+	} else {
+		_lineWidth = lineWidth;
 	}
 
 	const rgbColor = hexToRgb(color ?? DEFAULT_COLOR);

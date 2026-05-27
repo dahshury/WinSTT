@@ -83,6 +83,7 @@ export function Playground({ feature }: PlaygroundProps) {
 					{t("playgroundSample")}
 				</span>
 				<textarea
+					aria-label={t("playgroundSample")}
 					className={`min-h-[140px] w-full resize-y rounded ${surfaceClasses(inputLevel)} p-2 text-body text-foreground outline-none transition-colors focus:border-accent`}
 					onChange={(e) => dispatch({ type: "set-sample", value: e.target.value })}
 					placeholder={t("playgroundSamplePlaceholder")}
@@ -105,6 +106,7 @@ export function Playground({ feature }: PlaygroundProps) {
 					{t("playgroundOutput")}
 				</span>
 				<textarea
+					aria-label={t("playgroundOutput")}
 					className={`min-h-[120px] w-full resize-y rounded ${surfaceClasses(inputLevel)} p-2 text-body text-foreground outline-none`}
 					readOnly={true}
 					value={output}

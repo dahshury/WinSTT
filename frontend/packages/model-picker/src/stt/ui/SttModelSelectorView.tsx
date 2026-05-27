@@ -6,10 +6,10 @@ import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
 import { ModelPicker } from "../../core/ModelPicker";
+import type { SttFilterState } from "../lib/filter-state";
 import { SttFiltersMenu } from "./SttFiltersMenu";
 import { SttModelList } from "./SttModelList";
 import { SttModelSelectorTrigger } from "./SttModelSelectorTrigger";
-import type { SttFilterState } from "../lib/filter-state";
 
 type SttModelChange = (modelId: string, quantization?: OnnxQuantization) => void;
 
@@ -21,9 +21,9 @@ export interface SttModelSelectorViewProps {
 	disabled: boolean;
 	downloadProgress: { modelId: string; percent: number | null } | null;
 	expandedBundles: Set<string>;
+	filter: (model: ModelInfo, query: string) => boolean;
 	filters: SttFilterState;
 	filtersActive: boolean;
-	filter: (model: ModelInfo, query: string) => boolean;
 	groups: readonly { value: string; items: readonly ModelInfo[] }[];
 	handleOpenChange: (next: boolean, eventDetails?: unknown) => void;
 	handleRailClick: (id: string) => void;
@@ -39,7 +39,7 @@ export interface SttModelSelectorViewProps {
 				quantization: OnnxQuantization,
 				displayName: string,
 				quantLabel: string
-			) => void)
+		  ) => void)
 		| undefined;
 	onToggleExpanded: (baseId: string) => void;
 	open: boolean;

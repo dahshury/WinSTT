@@ -22,17 +22,10 @@ import {
 	getFamilyConfig,
 	groupModelsByAuthor,
 } from "../lib/family-helpers";
-import {
-	collectFilterableLanguages,
-	filterSttModels,
-	hasActiveFilters,
-} from "../lib/filter-state";
+import { collectFilterableLanguages, filterSttModels, hasActiveFilters } from "../lib/filter-state";
 import { DeleteQuantConfirmDialog, type PendingDelete } from "./DeleteQuantConfirmDialog";
 import { SttModelSelectorView } from "./SttModelSelectorView";
-import {
-	createInitialUiState,
-	sttSelectorUiReducer,
-} from "./stt-selector-ui-state";
+import { createInitialUiState, sttSelectorUiReducer } from "./stt-selector-ui-state";
 
 type SttModelChange = (modelId: string, quantization?: OnnxQuantization) => void;
 
@@ -97,9 +90,7 @@ function matchesQuery(model: ModelInfo, query: string): boolean {
 	return buildModelSearchCorpus(model).includes(q);
 }
 
-function buildRailItems(
-	groups: ReturnType<typeof groupModelsByAuthor>
-): GroupRailItem[] {
+function buildRailItems(groups: ReturnType<typeof groupModelsByAuthor>): GroupRailItem[] {
 	return groups.map((group) => {
 		const cfg = getFamilyConfig(group.value);
 		return {
@@ -184,10 +175,8 @@ export function SttModelSelector({
 	// Consolidated UI/nav state — collapses the 4 separate `useState`s for
 	// filters / activeRailId / expandedBundles / open into one reducer to
 	// stay under the `react-doctor/prefer-useReducer` threshold.
-	const [uiState, dispatch] = useReducer(
-		sttSelectorUiReducer,
-		undefined,
-		() => createInitialUiState(selectedFamily, selectedBaseId)
+	const [uiState, dispatch] = useReducer(sttSelectorUiReducer, undefined, () =>
+		createInitialUiState(selectedFamily, selectedBaseId)
 	);
 	const { filters, activeRailId, expandedBundles, open } = uiState;
 

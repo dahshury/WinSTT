@@ -1,8 +1,5 @@
-import {
-	EMPTY_FILTER_STATE,
-	type SttFilterState,
-} from "../lib/filter-state";
 import type { FamilyKey } from "../lib/family-helpers";
+import { EMPTY_FILTER_STATE, type SttFilterState } from "../lib/filter-state";
 
 /**
  * Consolidated UI / navigation state for `SttModelSelector`. The renderer

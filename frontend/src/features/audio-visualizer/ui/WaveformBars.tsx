@@ -23,8 +23,7 @@ export function WaveformBars() {
 		// @crap-exclude rAF callback — Canvas2D draw path; pure helpers (computeRenderParams, drawFrame) are unit tested
 		const renderFrame = (metrics: CanvasMetrics) => {
 			const { ctx, w, h, dpr } = metrics;
-			const { isRecording, isSpeaking, audioLevel, sentencePulse } =
-				useVisualizerStore.getState();
+			const { isRecording, isSpeaking, audioLevel, sentencePulse } = useVisualizerStore.getState();
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 			ctx.clearRect(0, 0, w, h);
 
