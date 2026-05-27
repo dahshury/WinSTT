@@ -202,7 +202,6 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 	setQuantDownloadProgress: (modelId, quantization, payload) => {
 		set((s) => {
 			const key = quantKey(modelId, quantization);
-			const existing = s.quantDownloads[key];
 			const merged = { ...PROGRESS_PAYLOAD_DEFAULTS, ...payload };
 			return {
 				quantDownloads: {
@@ -216,7 +215,7 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 						speedBps: merged.speedBps,
 						// Receiving a progress chunk implicitly clears the paused
 						// flag — bytes only flow when the worker isn't paused.
-						paused: existing?.paused === true ? false : false,
+						paused: false,
 					},
 				},
 			};

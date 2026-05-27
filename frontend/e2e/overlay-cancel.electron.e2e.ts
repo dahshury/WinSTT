@@ -75,7 +75,7 @@ async function isAborted(app: ElectronApplication): Promise<boolean> {
 	});
 }
 
-async function show(app: ElectronApplication): Promise<void> {
+async function _show(app: ElectronApplication): Promise<void> {
 	await app.evaluate(() => {
 		(globalThis as { __winsttE2E__?: E2EHooks }).__winsttE2E__?.showOverlay();
 	});
