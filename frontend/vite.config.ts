@@ -59,8 +59,6 @@ export default defineConfig(({ command }) => {
 				"motion/react",
 				"virtua",
 				"zod",
-				"react-hook-form",
-				"@hookform/resolvers/zod",
 				"tailwind-merge",
 				"clsx",
 				"class-variance-authority",

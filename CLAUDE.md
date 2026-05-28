@@ -156,7 +156,7 @@ The FSD layer is named `views/` (not `pages/`) so the codebase reads as "FSD-fir
 | UI components | — | `@base-ui/react` (Base UI by MUI) + Tailwind CSS 4 |
 | Icons | — | `@hugeicons/react` + `@hugeicons/core-free-icons` |
 | i18n | — | `use-intl` (migrated off `next-intl`); locales: `ar`, `en`, `es`, `fr`, `hi`, `zh` |
-| Forms | — | `react-hook-form` + `@hookform/resolvers` + Zod |
+| Forms | — | native `<form>` + `useState` + Zod `safeParse` (no form library) |
 | AI SDKs | — | Vercel AI SDK (`ai` v6, `@ai-sdk/openai`, `@ai-sdk/elevenlabs`, `@openrouter/ai-sdk-provider`) |
 
 ## Critical Conventions

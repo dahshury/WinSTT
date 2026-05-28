@@ -9,7 +9,7 @@
 - **Architecture audit:** `bun check:fsd` — custom 123-rule auditor. (No Steiger.)
 - **Styling:** Tailwind CSS v4 (`@tailwindcss/vite`) + UI primitives from `@base-ui/react`.
 - **State:** Zustand. **No TanStack Query, no Redux** — IPC is the data layer.
-- **Forms:** `react-hook-form` + `@hookform/resolvers` + Zod.
+- **Forms:** native `<form>` + `useState` + Zod `safeParse` (no form library).
 - **i18n:** `use-intl` (migrated off `next-intl`). Locales: `ar`, `en`, `es`, `fr`, `hi`, `zh`.
 
 ## Commands
@@ -474,38 +474,59 @@ export const CurrentUser = createContext<User | null>(null);
 
 ## 11. Validation & Forms
 
-Stack: **`react-hook-form` + `@hookform/resolvers` + Zod**. Schemas often come from the generated bundle (`bun generate` → schemas paired with the OpenAPI TS types), then refined where needed.
+Stack: **native `<form>` + local `useState` + Zod `safeParse`** — no form library. The
+input surfaces here are all small "add-an-entry" controls (deny-list, dictionary,
+snippets), so there is no `react-hook-form` dependency. Validate on submit with a
+Zod schema and surface per-field messages through `shared/ui/form-control`'s
+`FormControl error={…}` slot. Schemas live in the slice's `model/` (or come from
+the generated bundle via `bun generate`, then refined).
 
 ```typescript
-// views/settings/model/api-key-schema.ts
+// widgets/snippets-settings/model/snippet-schema.ts
 import { z } from "zod";
 
-export const apiKeySchema = z.object({
-  provider: z.enum(["openai", "elevenlabs", "openrouter"]),
-  key: z.string().min(1, "API key required"),
+export const addSnippetEntrySchema = z.object({
+  trigger: z.string().trim().min(1, "Trigger required"),
+  expansion: z.string().trim().min(1, "Expansion required"),
 });
-
-export type ApiKeyInput = z.infer<typeof apiKeySchema>;
 ```
 
-```typescript
-// features/connect-server/ui/ApiKeyForm.tsx
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { apiKeySchema, type ApiKeyInput } from "../../views/settings/model/api-key-schema";
+```tsx
+// widgets/snippets-settings/ui/SnippetsTable.tsx (shape)
+const [trigger, setTrigger] = useState("");
+const [expansion, setExpansion] = useState("");
+const [errors, setErrors] = useState<FieldErrors>({});
 
-export function ApiKeyForm({ onSave }: { onSave: (input: ApiKeyInput) => void }) {
-  const { register, handleSubmit, formState: { errors } } = useForm<ApiKeyInput>({
-    resolver: zodResolver(apiKeySchema),
-  });
-  return (
-    <form onSubmit={handleSubmit(onSave)}>
-      <input {...register("key")} />
-      {errors.key && <p className="text-red-500">{errors.key.message}</p>}
-    </form>
-  );
-}
+const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  event.preventDefault();
+  const result = addSnippetEntrySchema.safeParse({ trigger, expansion });
+  if (!result.success) {
+    const fieldErrors: FieldErrors = {};
+    for (const issue of result.error.issues) {
+      const key = issue.path[0];
+      if ((key === "trigger" || key === "expansion") && !fieldErrors[key]) {
+        fieldErrors[key] = issue.message;
+      }
+    }
+    setErrors(fieldErrors);
+    return;
+  }
+  onAdd(result.data); // Zod .trim() already applied
+  setTrigger("");
+  setExpansion("");
+  setErrors({});
+};
+
+// <Form onSubmit={handleSubmit}>
+//   <FormControl error={errors.trigger} label={t("trigger")}>
+//     <TextField value={trigger} onChange={(e) => setTrigger(e.target.value)} />
+//   </FormControl>
+//   …
 ```
+
+> If a genuinely multi-field form with dirty-tracking / reset / async validation
+> ever lands, reach for `react-hook-form` then — it was removed (2026-05) once the
+> audit showed every form was a single/double-field append control.
 
 ---
 
@@ -657,7 +678,7 @@ IMPORTS: Only from layers below. @x for entity cross-refs. No sideways.
 PUBLIC API: One index.ts, named exports, no wildcards.
 STYLING: Tailwind v4 + @base-ui/react. Globals in app/styles/.
 NAVIGATION: No router. Each view = one BrowserWindow + one HTML entry.
-FORMS: react-hook-form + Zod (resolver). Validation in model/, UI errors in ui/.
+FORMS: native <form> + useState + Zod safeParse. Schema in model/, UI errors via FormControl in ui/.
 STATE: Zustand (renderer client state) + IPC (data layer). No TanStack Query, no Redux.
 COMPILER: React Compiler in build only. Never write useMemo / useCallback.
 ```
