@@ -325,8 +325,11 @@ export const onSettingsSaveError = (cb: (error: string) => void) =>
 export const onAudioLevel = (cb: (level: number) => void) =>
 	onTyped(IPC.STT_AUDIO_LEVEL, (d: { level: number }) => d.level, cb);
 
-export const onModelDownloadStart = (cb: (model: string) => void) =>
-	onTyped(IPC.STT_MODEL_DOWNLOAD_START, (d: { model: string }) => d.model, cb);
+export const onModelDownloadStart = (cb: (model: string, quantization?: string) => void) =>
+	on(IPC.STT_MODEL_DOWNLOAD_START, (data) => {
+		const d = data as { model: string; quantization?: string };
+		cb(d.model, d.quantization);
+	});
 
 export interface DownloadProgressPayload {
 	downloadedBytes?: number;

@@ -1244,11 +1244,27 @@ def _enqueue_streaming_event(state: ServerState, payload: dict[str, Any]) -> Non
     Threading: the streaming downloader runs on a daemon thread, so we
     can't ``await audio_queue.put()`` directly. ``run_coroutine_threadsafe``
     schedules the put on the asyncio event loop that owns the queue.
-    Best-effort — if the loop is gone (e.g. shutdown in flight) the
-    exception is logged and the worker thread continues.
+
+    Loop resolution: prefer the loop stashed on ``state.main_loop`` at
+    server startup. Python 3.12 made ``asyncio.get_event_loop()`` raise
+    from any thread that doesn't already own a running loop, so the
+    legacy "just ask asyncio" path is unsafe from this worker. Fall back
+    to ``get_running_loop`` when this helper is invoked from inside an
+    async handler (e.g. the initial ``model_download_start`` enqueue from
+    ``_handle_predownload_model_quant``), and log + skip if neither is
+    available (shutdown in flight).
     """
+    loop = state.main_loop
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(
+                "Dropping streaming download event %s: no asyncio loop available",
+                payload.get("type"),
+            )
+            return
     try:
-        loop = asyncio.get_event_loop()
         asyncio.run_coroutine_threadsafe(state.audio_queue.put(json.dumps(payload)), loop)
     except Exception:
         logger.exception("Failed to enqueue streaming download event: %s", payload.get("type"))
@@ -1464,12 +1480,31 @@ async def _handle_delete_model_quantization(ws: ServerConnection, state: ServerS
     if info is None or hf_repo is None:
         await ws.send(json.dumps({"status": "error", "message": f"no HF repo for model '{model_id}'"}))
         return
+    # Trip cancel on any in-flight download for the same (model, quant) so
+    # the worker stops streaming bytes that we're about to delete. Without
+    # this the user can hit the trash icon mid-download, the .partial
+    # appears wiped, then the worker re-writes it on its next chunk and
+    # the badge flips back to "cached" before the user even sees the
+    # delete confirmation. The cancel side-effect also makes
+    # ``model_download_complete`` fire (outcome=cancelled) so the renderer
+    # clears its local snapshot.
+    #
+    # Local import keeps the lazy-load policy intact — the streaming
+    # downloader module is heavy and only relevant when a download
+    # actually fired.
+    from src.recorder.infrastructure.streaming_downloader import StreamingDownloadRegistry
+
+    if isinstance(state.streaming_downloads, StreamingDownloadRegistry):
+        controller = state.streaming_downloads.get(model_id, quantization_raw)
+        if controller is not None:
+            controller.cancel_event.set()
+            state.streaming_downloads.drop(model_id, quantization_raw)
     removed = delete_cache_by_quantization(hf_repo, quantization_raw)
     print(
         f"{bcolors.WARNING}[cache] per-quant delete requested for "
         f"{model_id}@{quantization_raw or 'default'} (removed={removed}){bcolors.ENDC}"
     )
-    loop = asyncio.get_event_loop()
+    loop = state.main_loop or asyncio.get_running_loop()
     cache_message = json.dumps({"type": "model_cache_changed", "model_id": model_id})
     asyncio.run_coroutine_threadsafe(state.audio_queue.put(cache_message), loop)
     await ws.send(

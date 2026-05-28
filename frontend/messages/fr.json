@@ -506,7 +506,9 @@
     "switchingModel": "Basculement vers {model}...",
     "switchingModelTooltip": "Chargement de {model}. L'application peut se figer brièvement pendant le chargement des nouveaux poids.",
     "loopbackActiveTooltip": "Écoute de l'audio système à partir de ce périphérique en boucle. Modifiez-le dans Paramètres → Général → Périphérique en boucle.",
-    "loopbackIdleTooltip": "Le mode Écoute est configuré mais aucun audio n'est encore capturé."
+    "loopbackIdleTooltip": "Le mode Écoute est configuré mais aucun audio n'est encore capturé.",
+    "downloadingTooltip": "Downloading {model}. Click to open the picker for per-quant detail.",
+    "downloadingMultiTooltip": "{count} downloads in progress (showing leader: {model}). Click to open the picker."
   },
   "transcription": {
     "waiting": "En attente de parole...",

@@ -161,10 +161,40 @@ def _extract_fp16_whisper_decoder_path(exc: BaseException) -> Path | None:
 #: minor wording changes in future ORT releases don't break the recovery.
 _EXTERNAL_DATA_MISSING_MARKER = "External data path does not exist"
 
+#: A path that looks like an ONNX external-data sidecar — base form
+#: (``.onnx.data`` / ``.onnx_data``) or a >2 GB sharded form
+#: (``.onnx_data_1``, ``.onnx.data_2``, …). The shard suffix is what bit
+#: cohere-transcribe fp16: its encoder spills across two sidecars but only
+#: the first downloaded, so ORT failed to stat ``encoder_model_fp16.onnx_data_1``.
+_ONNX_EXTERNAL_DATA_PATH_RE = re.compile(r"\.onnx[._]data(_\d+)?\b", re.IGNORECASE)
+
+#: File-not-found phrasings ORT bubbles up per platform when a referenced
+#: external-data file is absent. The Win32 / ENOENT variants don't contain
+#: ``_EXTERNAL_DATA_MISSING_MARKER`` — they surface as a failed ``file_size``
+#: call instead — so we match them separately to keep the auto-refetch firing.
+_FILE_NOT_FOUND_MARKERS = (
+    "The system cannot find the file specified",  # Win32 GetLastError 2 (ERROR_FILE_NOT_FOUND)
+    "No such file or directory",  # POSIX ENOENT
+    "file_size:",  # ORT's failing call site on a missing sidecar
+)
+
 
 def _is_external_data_missing_error(exc: BaseException) -> bool:
-    """True when ``exc`` is the ORT error for a missing external-data sidecar."""
-    return _EXTERNAL_DATA_MISSING_MARKER in str(exc)
+    """True when ``exc`` is the ORT error for a missing external-data sidecar.
+
+    Covers two phrasings:
+
+    1. ORT's own ``External data path does not exist`` (its validation path).
+    2. A platform file-not-found (``file_size: The system cannot find the
+       file specified`` on Windows, ``No such file or directory`` on POSIX)
+       *on a path that is an ONNX external-data sidecar*. ORT raises this
+       second form when a sharded ``.onnx_data_N`` weights file is missing
+       — the case the original marker-only check silently skipped.
+    """
+    msg = str(exc)
+    if _EXTERNAL_DATA_MISSING_MARKER in msg:
+        return True
+    return bool(_ONNX_EXTERNAL_DATA_PATH_RE.search(msg)) and any(marker in msg for marker in _FILE_NOT_FOUND_MARKERS)
 
 
 def _refetch_hf_snapshot(model_name: str) -> bool:
@@ -197,13 +227,23 @@ def _refetch_hf_snapshot(model_name: str) -> bool:
         model_name,
         repo,
     )
-    # Match onnx-asr's allow_patterns at examples/onnx-asr/.../resolver.py:110-115
-    # so we pull exactly the files the resolver expects (no surprise extras).
-    # ``*.onnx?data`` covers both istupakov ``.onnx.data`` and onnx-community
-    # ``.onnx_data`` conventions in a single pattern.
+    # Mirror onnx-asr's resolver allow_patterns (resolver.py:_download_model)
+    # so we pull the files the resolver expects — PLUS the sharded sidecars
+    # it misses. ``*.onnx?data`` covers both istupakov ``.onnx.data`` and
+    # onnx-community ``.onnx_data`` single-sidecar conventions; ``*.onnx?data_*``
+    # adds the >2 GB sharded form (``.onnx_data_1`` / ``.onnx.data_2`` / …).
+    # Upstream's pattern stops at the base sidecar, which is exactly why
+    # cohere-transcribe fp16's second encoder shard never downloaded and the
+    # load died on a missing ``encoder_model_fp16.onnx_data_1``.
     snapshot_download(
         repo,
-        allow_patterns=["*.onnx", "*.onnx?data", "config.json", "config.yaml"],
+        allow_patterns=[
+            "*.onnx",
+            "*.onnx?data",
+            "*.onnx?data_*",
+            "config.json",
+            "config.yaml",
+        ],
     )
     return True
 

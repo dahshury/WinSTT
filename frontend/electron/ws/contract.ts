@@ -63,6 +63,11 @@ const modelDownloadProgressSchema = z.object({
 	total_bytes: z.number().int().optional(),
 	speed_bps: z.number().optional(),
 	eta_seconds: z.number().optional(),
+	// Streaming-downloader marker — present only for per-quant downloads
+	// (the new ``predownload_model_quant`` flow). Absent for legacy
+	// whole-model swap downloads, which let the renderer route to the
+	// singleton store vs. the per-quant map.
+	quantization: z.string().optional(),
 });
 
 const wakewordDetectedSchema = z.object({
@@ -203,12 +208,23 @@ const deviceBecameAvailableSchema = z.object({
 const modelDownloadStartSchema = z.object({
 	type: z.literal("model_download_start"),
 	model: z.string(),
+	// See ``modelDownloadProgressSchema`` for the rationale — per-quant
+	// streaming downloads include the quantization so the renderer can
+	// surface progress on the matching badge instead of the whole-model
+	// overlay.
+	quantization: z.string().optional(),
 });
 
 const modelDownloadCompleteSchema = z.object({
 	type: z.literal("model_download_complete"),
 	model: z.string(),
 	cancelled: z.boolean(),
+	quantization: z.string().optional(),
+	// Outcome from the streaming downloader — "completed" / "paused" /
+	// "cancelled" / "error". The renderer keeps the simpler ``cancelled``
+	// flag for backwards compat; ``outcome`` is forwarded too for
+	// diagnostics and future use.
+	outcome: z.string().optional(),
 });
 
 // Real-time diarized subtitles — per-utterance speaker segments produced

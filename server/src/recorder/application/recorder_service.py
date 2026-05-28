@@ -1043,11 +1043,23 @@ class RecorderService:
         a coarse lock (``_lazy_reload_lock``) so two concurrent paths
         don't both try to rebuild — the second waits and then sees the
         slot populated by the first.
+
+        Defers to an in-flight main swap: the swap-worker has nulled
+        the slot in its Phase 1 unload and will repopulate it on Phase 3
+        commit; firing a lazy-reload here would race the worker, rebuild
+        the previous model from a stale ``_saved_main_model_name``, and
+        leak the resulting ORT session when the swap committed on top.
         """
         if self._transcriber is not None:
             return
+        if self._is_swap_in_flight("main"):
+            return
         with self._lazy_reload_lock:
             if self._transcriber is not None:
+                return
+            # Re-check under the lock — a swap could have started between
+            # the unlocked probe and acquiring the lazy-reload mutex.
+            if self._is_swap_in_flight("main"):
                 return
             logger.warning("[unload] lazy-reload of main transcriber: %s", self._saved_main_model_name)
             try:
@@ -1418,6 +1430,24 @@ class RecorderService:
         if prior_cancel is not None:
             prior_cancel.set()
 
+    def _is_swap_in_flight(self, kind: str) -> bool:
+        """True iff a swap-worker thread for ``kind`` is still alive.
+
+        Used by :meth:`_ensure_main_transcriber_loaded` to defer to the
+        swap pipeline instead of racing it. The swap-worker briefly nulls
+        the transcriber slot in Phase 1 (unload-first ordering) and
+        repopulates it at the end of Phase 3 (commit). If the recorder
+        thread's text() loop calls ``_ensure_main_transcriber_loaded``
+        while the slot is transiently null, it would otherwise see
+        ``None``, take the lazy-reload path, and rebuild the OLD model
+        from ``_saved_main_model_name`` (which the swap-worker only
+        rewrites at commit time). That wasted ~5 seconds reloading the
+        previous model AND leaked its ORT session when the swap-worker
+        finally committed on top.
+        """
+        thread = self._swap_threads.get(kind)
+        return thread is not None and thread.is_alive()
+
     # ── Runtime diarization toggle ──────────────────────────────────────
     #
     # ``request_diarization_toggle(enabled)`` lets the renderer flip
@@ -1639,7 +1669,34 @@ class RecorderService:
         per-phase timings, RSS deltas, and CPU% — that's the only place
         these numbers are exposed; nothing on the event bus has the
         diagnostic payload.
+
+        Cleans up its registry slot on exit so :meth:`_is_swap_in_flight`
+        keeps reading accurately across multiple swaps. The lazy-reload
+        path in :meth:`_ensure_main_transcriber_loaded` reads that
+        signal to know whether it's safe to rebuild from the saved
+        model name.
         """
+        try:
+            self._run_swap_worker(kind, name, cancel_event)
+        finally:
+            self._swap_registry_pop(kind, cancel_event)
+
+    def _swap_registry_pop(self, kind: str, cancel_event: threading.Event) -> None:
+        """Remove our thread + cancel-event from the registry if still ours.
+
+        Compare-and-clear: if the user kicked off a newer swap, that
+        request_model_swap call has already overwritten our slots with
+        the new worker's handles. We mustn't pop those — only the entry
+        we registered ourselves.
+        """
+        if self._swap_threads.get(kind) is threading.current_thread():
+            self._swap_threads.pop(kind, None)
+        if self._swap_cancel_events.get(kind) is cancel_event:
+            self._swap_cancel_events.pop(kind, None)
+
+    def _run_swap_worker(self, kind: str, name: str, cancel_event: threading.Event) -> None:
+        """Phase-by-phase swap pipeline. Extracted from :meth:`_swap_worker`
+        so the registry-cleanup ``try/finally`` stays a tiny wrapper."""
         from src.recorder.application.swap_benchmark import SwapBenchmark
 
         bench = SwapBenchmark(kind, name)

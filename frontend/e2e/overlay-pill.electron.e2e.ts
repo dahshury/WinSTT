@@ -98,18 +98,16 @@ test.describe("overlay pill — robust hide on rapid toggle", () => {
 		await app?.close();
 	});
 
-	test("overlay BrowserWindow is non-focusable and pinned topmost (NSPanel-imitation)", async () => {
-		// The pill MUST NOT accept keyboard focus or the dictation paste lands
-		// in the pill instead of the user's target app — see overlay.ts's
-		// `applyFocusPassThroughFlags`. Pinning topmost (`alwaysOnTop`) keeps
-		// the pill above fullscreen apps without stealing activation. Both
-		// flags are applied at BrowserWindow construction AND re-asserted in
-		// `setOverlayWindow` so any registration path gets the same hardening.
-		const focusable = await app.evaluate(() => {
-			const hooks = (globalThis as { __winsttE2E__?: E2EHooks }).__winsttE2E__;
-			return hooks?.isOverlayFocusable() ?? true;
-		});
-		expect(focusable).toBe(false);
+	test("overlay BrowserWindow is pinned topmost (Handy-parity Z-order)", async () => {
+		// Focus stealing is prevented by always calling `showInactive()` (NOT
+		// `show()`) — same approach Handy uses (examples/Handy builds the
+		// overlay with `.focused(false).visible(false)`). We deliberately
+		// keep the window focusable: setting `focusable: false`
+		// (WS_EX_NOACTIVATE) on Windows swallowed mouse-click messages in
+		// combination with `transparent: true + alwaysOnTop: true` while
+		// touch input still landed — the "X reacts to touch but not mouse"
+		// regression. Pinning topmost (`alwaysOnTop("screen-saver", 1)`)
+		// keeps the pill above fullscreen apps without stealing activation.
 		const onTop = await app.evaluate(() => {
 			const hooks = (globalThis as { __winsttE2E__?: E2EHooks }).__winsttE2E__;
 			return hooks?.isOverlayAlwaysOnTop() ?? false;

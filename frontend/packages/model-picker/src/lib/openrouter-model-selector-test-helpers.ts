@@ -8,7 +8,17 @@ import {
 	type ModelExclusionConfig,
 } from "./model-exclusion";
 
-const POPUP_ROLES: ReadonlySet<string> = new Set(["menu", "menuitem", "tooltip"]);
+const POPUP_ROLES: ReadonlySet<string> = new Set([
+	"menu",
+	"menuitem",
+	"tooltip",
+	// AlertDialog / Dialog popups portaled out of the combobox (e.g. the
+	// STT picker's "Delete quantization" confirmation). Without these,
+	// clicking the dialog's confirm button dismisses the whole picker via
+	// Base UI's outside-press detection.
+	"alertdialog",
+	"dialog",
+]);
 /**
  * Union of every picker's filter-menu Popover.Popup ``data-slot`` value.
  * The literal union prevents typos at the producer side — any new picker

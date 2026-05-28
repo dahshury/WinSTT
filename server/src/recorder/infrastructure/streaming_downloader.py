@@ -63,6 +63,40 @@ logger = logging.getLogger(__name__)
 # conventions in one pattern.
 _ONNX_PATTERNS: tuple[str, ...] = ("*.onnx", "*.onnx_data", "*.onnx.data")
 _CONFIG_FILES: tuple[str, ...] = ("config.json", "config.yaml")
+# Sidecars onnx-asr's per-family loaders declare in ``_get_model_files``
+# but that aren't ``*.onnx`` weights — without these the streaming
+# downloader would happily report "completed" while the matching
+# ``onnx_asr.load_model()`` call later errors with a missing-vocab tag.
+# Sources (kept in sync with the installed ``onnx_asr`` package):
+#
+#   - Kaldi (Vosk):   ``*/tokens.txt``
+#   - Cohere ASR:     ``tokenizer.json``, ``tokenizer_config.json``
+#   - Moonshine:      ``tokenizer.json``, ``tokenizer_config.json``
+#   - Granite Speech: ``tokenizer.json``, ``tokenizer_config.json``
+#   - NeMo:           ``vocab.txt``
+#   - Whisper:        ``vocab.json``, ``added_tokens.json``
+#   - GigaAM v2/v3:   ``v?_vocab.txt`` / ``v3_e2e_{ctc,rnnt}_vocab.txt``
+#
+# Match by basename so the optional ``lang/`` / ``am/`` / version-prefix
+# subdirectories don't matter. The ``*_vocab.txt`` suffix covers the
+# GigaAM family's versioned vocab filenames without enumerating each one.
+_SIDECAR_FILES: frozenset[str] = frozenset({
+    "tokens.txt",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.txt",
+    "vocab.json",
+    "added_tokens.json",
+})
+_SIDECAR_SUFFIXES: tuple[str, ...] = ("_vocab.txt",)
+# Quantization label separator inside a weight filename. ``onnx-community``
+# exports use ``_`` (``encoder_model_int8.onnx``); alphacep / Vosk exports
+# use ``.`` (``encoder.int8.onnx``). Without the period branch, default-quant
+# downloads silently doubled up by also pulling every ``.int8.onnx`` file
+# (filter fell through to ``quantization == ""``) AND int8-quant downloads
+# picked zero files at all — see the regression test in
+# ``tests/unit/recorder/infrastructure/test_streaming_selection.py``.
+_QUANT_SEPARATORS: tuple[str, ...] = ("_", ".")
 
 
 @dataclass
@@ -141,6 +175,14 @@ def _matches_quantization(filename: str, quantization: str) -> bool:
     a filename + a target quant, return whether it belongs to that quant.
     The default precision is encoded as empty string and matches files
     with no quantization suffix (``encoder_model.onnx``).
+
+    Accepts either separator between the stem and the quant label:
+    ``encoder_model_int8.onnx`` (onnx-community convention) AND
+    ``encoder.int8.onnx`` (alphacep / Vosk convention). The legacy
+    ``_``-only check silently misclassified the alphacep layout — Vosk's
+    int8 files looked like default precision, so a default-quant download
+    grabbed both precisions (roughly 2x the bytes) and an int8 request
+    matched nothing at all.
     """
     # Strip whichever external-data suffix the producer uses so the quant
     # suffix is at the end of the stripped name.
@@ -151,23 +193,54 @@ def _matches_quantization(filename: str, quantization: str) -> bool:
             break
     suffixes = ("q4f16", "bnb4", "int8", "fp16", "uint8", "q4")
     for suffix in suffixes:
-        if stem.endswith("_" + suffix):
+        if any(stem.endswith(sep + suffix) for sep in _QUANT_SEPARATORS):
             return quantization == suffix
     return quantization == ""
+
+
+def _is_sidecar_file(filename: str) -> bool:
+    """True when ``filename`` is a non-onnx vocab / tokenizer sidecar that
+    every onnx-asr loader needs regardless of which quant is being pulled.
+
+    Matches by basename so the file may live under any subfolder
+    (``lang/tokens.txt`` for Vosk, ``v3_e2e_ctc_vocab.txt`` at the repo
+    root for GigaAM, etc.).
+    """
+    basename = filename.rsplit("/", 1)[-1]
+    if basename in _SIDECAR_FILES:
+        return True
+    return any(basename.endswith(suffix) for suffix in _SIDECAR_SUFFIXES)
+
+
+def _is_config_file(filename: str) -> bool:
+    """True for top-level / nested ``config.{json,yaml}`` — shared across quants."""
+    if filename in _CONFIG_FILES:
+        return True
+    return filename.endswith("/config.json") or filename.endswith("/config.yaml")
 
 
 def _select_files_for_quant(all_files: list[str], quantization: str) -> list[str]:
     """Pick the repo files we actually need for this quant.
 
-    The selection matches onnx-asr's ``_refetch_hf_snapshot`` allow-patterns:
-    every weights file matching the quant + the config sidecars (which are
-    NOT quant-specific and are shared across all variants).
+    Mirrors what onnx-asr's per-family ``_get_model_files`` would request
+    via ``snapshot_download``'s ``allow_patterns``:
+
+    1. ``.onnx`` weights (and any external-data ``.onnx_data`` /
+       ``.onnx.data`` sidecars) whose quant suffix matches.
+    2. The shared ``config.{json,yaml}`` if present.
+    3. Tokenizer / vocab sidecars (``tokens.txt``, ``tokenizer.json``,
+       ``*_vocab.txt``, …) — these aren't quant-specific but the loader
+       errors without them. Skipping them used to be invisible because
+       the downloader reported "completed" even with the vocab missing;
+       the swap that ran afterwards was what actually failed.
     """
     selected: list[str] = []
     for filename in all_files:
         is_onnx = any(filename.endswith(ext.lstrip("*")) for ext in _ONNX_PATTERNS)
-        is_config = filename in _CONFIG_FILES or filename.endswith("/config.json") or filename.endswith("/config.yaml")
-        if (is_onnx and _matches_quantization(filename, quantization)) or is_config:
+        if is_onnx and _matches_quantization(filename, quantization):
+            selected.append(filename)
+            continue
+        if _is_config_file(filename) or _is_sidecar_file(filename):
             selected.append(filename)
     return selected
 

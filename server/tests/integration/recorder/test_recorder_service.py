@@ -2455,6 +2455,119 @@ class TestRecorderService:
         assert service._transcriber is rebuilt
         service.shutdown()
 
+    def test_ensure_main_transcriber_defers_when_swap_in_flight(self) -> None:
+        """Regression: the lazy-reload path must NOT rebuild from
+        ``_saved_main_model_name`` while a swap-worker is mid-load.
+
+        Symptom this guards against: during a swap the slot is briefly
+        ``None`` (Phase 1 unload-first ordering). The recorder thread's
+        ``text()`` loop calls ``_ensure_main_transcriber_loaded`` between
+        VAD ticks; without this guard it sees the None and rebuilds the
+        OLD model (because ``_saved_main_model_name`` is only rewritten
+        at Phase 3 commit). The user then watches the swap chip spin
+        while their previous model loads in parallel with the new one,
+        and the swap-worker eventually clobbers it on commit — leaking
+        the wasted ORT session and confusing the renderer event order.
+        """
+
+        # Fake a live swap-worker thread so ``_is_swap_in_flight("main")``
+        # returns True. The thread just waits on a release event so we can
+        # control exactly when "the swap completes" for the test.
+        release = threading.Event()
+
+        def _fake_worker() -> None:
+            release.wait(timeout=2.0)
+
+        service, _, _, _ = self._make_service()
+        service._saved_main_model_name = "should-not-load"
+        loads: list[str] = []
+        def _record_and_build(name: str, on_progress: object) -> FakeTranscriber:
+            loads.append(name)
+            return FakeTranscriber()
+
+        service._load_transcriber = _record_and_build  # type: ignore[method-assign]
+
+        worker = threading.Thread(target=_fake_worker, daemon=True)
+        worker.start()
+        try:
+            service._swap_threads["main"] = worker
+            with service._main_transcriber_lock:
+                service._transcriber = None
+
+            service._ensure_main_transcriber_loaded()
+
+            # Critical: nothing was loaded — we deferred to the swap-worker.
+            assert loads == []
+            assert service._transcriber is None
+            # The swap-in-flight signal accurately reflects the alive worker.
+            assert service._is_swap_in_flight("main") is True
+        finally:
+            release.set()
+            worker.join(timeout=2.0)
+            service.shutdown()
+
+    def test_is_swap_in_flight_false_after_worker_exits(self) -> None:
+        """After the swap-worker thread exits, ``_is_swap_in_flight`` must
+        flip back to False so subsequent lazy-reloads can actually run.
+
+        Belt-and-suspenders for the ``_swap_registry_pop`` cleanup that
+        the swap-worker's ``try/finally`` performs. Without that cleanup
+        the registry would grow forever and every future lazy-reload
+        would erroneously skip itself.
+
+        The compare-and-clear pop in production runs from inside the
+        worker thread (``threading.current_thread() is service._swap_threads[kind]``)
+        — re-create that condition here so the test exercises the same
+        path the real ``_swap_worker``'s ``try/finally`` does.
+        """
+        service, _, _, _ = self._make_service()
+        cancel_event = threading.Event()
+
+        def _fake_worker() -> None:
+            service._swap_registry_pop("main", cancel_event)
+
+        worker = threading.Thread(target=_fake_worker, daemon=True)
+        service._swap_threads["main"] = worker
+        service._swap_cancel_events["main"] = cancel_event
+        worker.start()
+        worker.join(timeout=2.0)
+
+        assert service._is_swap_in_flight("main") is False
+        assert "main" not in service._swap_threads
+        assert "main" not in service._swap_cancel_events
+        service.shutdown()
+
+    def test_swap_registry_pop_skips_newer_overwrite(self) -> None:
+        """If a NEWER swap has overwritten the registry slot while the
+        previous worker was still cleaning up, the pop must NOT touch
+        the new entry — that's the compare-and-clear invariant.
+        """
+        service, _, _, _ = self._make_service()
+        old_cancel = threading.Event()
+        new_cancel = threading.Event()
+        newer_worker = threading.Thread(target=lambda: None, daemon=True)
+        observed: list[bool] = []
+
+        def _stale_worker() -> None:
+            # Pretend we were registered first…
+            service._swap_threads["main"] = threading.current_thread()
+            service._swap_cancel_events["main"] = old_cancel
+            # …then ``request_model_swap`` ran again and replaced both
+            # slots with newer handles BEFORE we got to our cleanup.
+            service._swap_threads["main"] = newer_worker
+            service._swap_cancel_events["main"] = new_cancel
+            service._swap_registry_pop("main", old_cancel)
+            # The pop must have left the newer handles in place.
+            observed.append(service._swap_threads.get("main") is newer_worker)
+            observed.append(service._swap_cancel_events.get("main") is new_cancel)
+
+        thread = threading.Thread(target=_stale_worker, daemon=True)
+        thread.start()
+        thread.join(timeout=2.0)
+
+        assert observed == [True, True]
+        service.shutdown()
+
     def test_install_transcriber_updates_saved_name(self) -> None:
         """A successful swap updates the saved-name field so a future
         unload's lazy-reload rebuilds the user's CURRENT model, not

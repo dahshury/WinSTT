@@ -506,7 +506,9 @@
     "switchingModel": "{model} पर स्विच कर रहा है...",
     "switchingModelTooltip": "{model} लोड हो रहा है। नए वज़न लोड होने के दौरान ऐप थोड़ी देर के लिए रुक सकता है।",
     "loopbackActiveTooltip": "इस लूपबैक डिवाइस से सिस्टम ऑडियो सुन रहा है। सेटिंग्स → सामान्य → लूपबैक डिवाइस में बदलें।",
-    "loopbackIdleTooltip": "लिसन मोड कॉन्फ़िगर किया गया है लेकिन अभी तक कोई ऑडियो कैप्चर नहीं हो रहा है।"
+    "loopbackIdleTooltip": "लिसन मोड कॉन्फ़िगर किया गया है लेकिन अभी तक कोई ऑडियो कैप्चर नहीं हो रहा है।",
+    "downloadingTooltip": "Downloading {model}. Click to open the picker for per-quant detail.",
+    "downloadingMultiTooltip": "{count} downloads in progress (showing leader: {model}). Click to open the picker."
   },
   "transcription": {
     "waiting": "बोली की प्रतीक्षा...",

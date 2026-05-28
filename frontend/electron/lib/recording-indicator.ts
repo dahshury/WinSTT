@@ -1,11 +1,15 @@
-import { type BrowserWindow, type NativeImage, nativeImage, type Tray } from "electron";
+import { type NativeImage, nativeImage, type Tray } from "electron";
 import { PNG } from "pngjs";
 import { dbg } from "./debug-log";
 
 /** The tray icon is intentionally monochrome white — it sits inside Windows'
  *  system tray which has no fixed background, so a single neutral color is
  *  more legible across themes than the per-mode accent the pill uses. The
- *  pill itself stays colored. */
+ *  pill itself stays colored.
+ *
+ *  Scope: tray ONLY. The BrowserWindow / taskbar icon is intentionally left
+ *  untouched — the static app icon set at window creation stays put through
+ *  recording and thinking states (only the tray animates). */
 const TRAY_INK: readonly [number, number, number] = [255, 255, 255];
 
 // Avoid a runtime import dependency on tray-state for the restore-after-thinking
@@ -69,7 +73,6 @@ const CIRCLE_B =
 
 // ── Module state ─────────────────────────────────────────────────────
 let trayRef: Tray | null = null;
-let winRef: BrowserWindow | null = null;
 let baseIcon: NativeImage | null = null;
 
 type IndicatorView = "idle" | "recording" | "thinking";
@@ -113,9 +116,8 @@ export function computeBandValue(
 
 // ── Public API ───────────────────────────────────────────────────────
 
-export function initRecordingIndicator(tray: Tray, win: BrowserWindow, iconPath: string): void {
+export function initRecordingIndicator(tray: Tray, iconPath: string): void {
 	trayRef = tray;
-	winRef = win;
 	baseIcon = nativeImage.createFromPath(iconPath);
 
 	if (baseIcon.isEmpty()) {
@@ -201,7 +203,6 @@ export function onLlmThinkingStop(): void {
 export function cleanupRecordingIndicator(): void {
 	stopTick();
 	trayRef = null;
-	winRef = null;
 	baseIcon = null;
 	isRecording = false;
 	isTranscribing = false;
@@ -298,7 +299,6 @@ function renderRecordingFrame(): void {
 	}
 	const icon = renderBarsIcon(bands, TRAY_INK);
 	setIconOnTray(icon);
-	setIconOnWin(icon);
 }
 
 function renderThinkingFrame(): void {
@@ -307,7 +307,6 @@ function renderThinkingFrame(): void {
 	const path = interpolateTopology(tRaw);
 	const icon = renderTopologyIcon(path, TRAY_INK);
 	setIconOnTray(icon);
-	setIconOnWin(icon);
 }
 
 // ── Bar rasterization ───────────────────────────────────────────────
@@ -662,19 +661,9 @@ function trayIsLive(): boolean {
 	return trayRef !== null && !trayRef.isDestroyed();
 }
 
-function winIsLive(): boolean {
-	return winRef !== null && !winRef.isDestroyed();
-}
-
 function setIconOnTray(icon: NativeImage): void {
 	if (trayIsLive()) {
 		trayRef?.setImage(icon);
-	}
-}
-
-function setIconOnWin(icon: NativeImage): void {
-	if (winIsLive()) {
-		winRef?.setIcon(icon);
 	}
 }
 
@@ -686,9 +675,7 @@ function revertIcons(): void {
 	if (!baseIconUsable()) {
 		return;
 	}
-	const icon = baseIcon as NativeImage;
-	setIconOnTray(icon);
-	setIconOnWin(icon);
+	setIconOnTray(baseIcon as NativeImage);
 }
 
 export const __recording_indicator_test_helpers__ = {
@@ -708,9 +695,7 @@ export const __recording_indicator_test_helpers__ = {
 	drawRoundedBar,
 	blitPixel,
 	trayIsLive,
-	winIsLive,
 	setIconOnTray,
-	setIconOnWin,
 	baseIconUsable,
 	getCurrentView: (): IndicatorView => currentView,
 	get BAR_COUNT() {

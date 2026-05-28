@@ -10,6 +10,7 @@ import {
 	PlugSocketIcon,
 	SlidersHorizontalIcon,
 	TextIcon,
+	Wrench01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
@@ -133,9 +134,11 @@ export function SettingsPage() {
 						className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
 					/>
 					<div className="flex items-center gap-2 pl-3">
-						<span
+						<HugeiconsIcon
 							aria-hidden="true"
-							className="size-1.5 rounded-full bg-accent shadow-[0_0_6px_var(--color-accent-glow-strong)]"
+							className="text-accent [filter:drop-shadow(0_0_6px_var(--color-accent-glow-strong))]"
+							icon={Wrench01Icon}
+							size={12}
 						/>
 						<span className="font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]">
 							{t("title")}

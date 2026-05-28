@@ -1,7 +1,7 @@
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import type { IconSvgElement } from "@hugeicons/react";
 import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
 import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
@@ -58,6 +58,30 @@ function rectFromElement(el: HTMLElement, containerRect: DOMRect): SegmentRect {
 	};
 }
 
+function rectsEqual(a: Record<number, SegmentRect>, b: Record<number, SegmentRect>): boolean {
+	const aKeys = Object.keys(a);
+	const bKeys = Object.keys(b);
+	if (aKeys.length !== bKeys.length) {
+		return false;
+	}
+	for (const k of aKeys) {
+		const ra = a[k as unknown as number];
+		const rb = b[k as unknown as number];
+		if (!rb) {
+			return false;
+		}
+		if (
+			ra?.top !== rb.top ||
+			ra.left !== rb.left ||
+			ra.width !== rb.width ||
+			ra.height !== rb.height
+		) {
+			return false;
+		}
+	}
+	return true;
+}
+
 export function Switcher<T extends string = string>({
 	options,
 	value,
@@ -74,8 +98,6 @@ export function Switcher<T extends string = string>({
 	const indicatorShadowClass = surfaceShadow(indicatorLevel);
 
 	const containerRef = useRef<HTMLDivElement | null>(null);
-	const itemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
-	const observerRef = useRef<ResizeObserver | null>(null);
 	const [rects, setRects] = useState<Record<number, SegmentRect>>({});
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
@@ -83,47 +105,47 @@ export function Switcher<T extends string = string>({
 	const selectedIndex = options.findIndex((o) => o.value === value);
 	const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined;
 
-	// `measure` is a stable function reference (pinned via useRef once at
-	// mount). It reads `containerRef` and `itemRefs` — both refs, both stable
-	// — on each call, so no captured closure value goes stale even though
-	// it's never re-instantiated.
-	const measureRef = useRef<() => void>(() => {
+	// One-shot key that changes only when the option set changes — drives the
+	// observer setup + initial measurement below.
+	const optionsKey = options.map((o) => o.value).join("|");
+
+	// Single ResizeObserver per option-set change. Items are discovered via
+	// `[data-switcher-index]` (stamped by `SwitcherOptionToggle`) so we never
+	// touch React's callback-ref machinery for the per-option buttons. That
+	// avoids the failure mode the prior design had: inline callback refs
+	// created a new identity per render, so React called cleanup+setup on
+	// EVERY render, which re-created the ResizeObserver, which fired measure,
+	// which called setRects with a new object reference, which scheduled
+	// another render — a tight microtask cycle that hung the settings window
+	// on the first extra interaction. setRects also short-circuits when the
+	// next rect map is value-equal so an idle resize tick can't trigger a
+	// no-op re-render.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: optionsKey is the intentional cache key — biome can't see that the queried `[data-switcher-index]` items change when options change, so it thinks the dep is unused; removing it would leave the observer stuck on the original option set
+	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) {
 			return;
 		}
-		const containerRect = container.getBoundingClientRect();
-		const next: Record<number, SegmentRect> = {};
-		for (const [idx, el] of itemRefs.current.entries()) {
-			next[idx] = rectFromElement(el, containerRect);
-		}
-		setRects(next);
-	});
-	const measure = measureRef.current;
-
-	// Callback ref on the container: runs after the DOM node is attached (so
-	// `getBoundingClientRect()` is meaningful) and again with `null` on
-	// unmount. Setting up the ResizeObserver here — instead of in a
-	// `useEffect(…, [optionsKey])` — avoids the no-adjust-state-on-prop-change
-	// pattern: state-driving observations are wired to actual DOM lifecycle,
-	// not to a prop-derived dep list.
-	const setContainerRef = (node: HTMLDivElement | null) => {
-		containerRef.current = node;
-		const existing = observerRef.current;
-		if (existing) {
-			existing.disconnect();
-			observerRef.current = null;
-		}
-		if (!node) {
-			return;
-		}
-		const ro = new ResizeObserver(() => measure());
-		observerRef.current = ro;
-		ro.observe(node);
-		for (const el of itemRefs.current.values()) {
+		const items = Array.from(container.querySelectorAll<HTMLElement>("[data-switcher-index]"));
+		const measure = () => {
+			const containerRect = container.getBoundingClientRect();
+			const next: Record<number, SegmentRect> = {};
+			for (const el of items) {
+				const idx = Number(el.dataset.switcherIndex);
+				if (!Number.isNaN(idx)) {
+					next[idx] = rectFromElement(el, containerRect);
+				}
+			}
+			setRects((prev) => (rectsEqual(prev, next) ? prev : next));
+		};
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(container);
+		for (const el of items) {
 			ro.observe(el);
 		}
-	};
+		return () => ro.disconnect();
+	}, [optionsKey]);
 
 	const selectedRect = selectedIndex >= 0 ? rects[selectedIndex] : undefined;
 	const hoverRect = hoveredIndex === null ? undefined : rects[hoveredIndex];
@@ -131,23 +153,6 @@ export function Switcher<T extends string = string>({
 	const isHoveringSelected = hoveredIndex === selectedIndex;
 	const isHoveringOther = hoveredIndex !== null && !isHoveringSelected;
 	const usesColor = selectedOption?.color !== undefined;
-
-	const setItemRef = (index: number) => (node: HTMLButtonElement | null) => {
-		const observer = observerRef.current;
-		const prev = itemRefs.current.get(index);
-		if (prev && prev !== node) {
-			observer?.unobserve(prev);
-		}
-		if (node) {
-			itemRefs.current.set(index, node);
-			observer?.observe(node);
-		} else {
-			itemRefs.current.delete(index);
-		}
-		// Schedule a measurement after layout — the ResizeObserver fires
-		// for size changes, but not for additions/removals alone.
-		queueMicrotask(measure);
-	};
 
 	return (
 		<LazyMotion features={domAnimation} strict={true}>
@@ -159,7 +164,7 @@ export function Switcher<T extends string = string>({
 						onChange(next);
 					}
 				}}
-				ref={setContainerRef}
+				ref={containerRef}
 				value={[value]}
 			>
 				<AnimatePresence>
@@ -230,6 +235,7 @@ export function Switcher<T extends string = string>({
 
 				{options.map((opt, index) => (
 					<SwitcherOptionToggle
+						dataIndex={index}
 						fullWidth={fullWidth}
 						isHovered={hoveredIndex === index && !opt.disabled}
 						isSelected={opt.value === value}
@@ -255,7 +261,6 @@ export function Switcher<T extends string = string>({
 							setHoveredIndex((current) => (current === index ? null : current));
 						}}
 						option={opt}
-						setRef={setItemRef(index)}
 					/>
 				))}
 

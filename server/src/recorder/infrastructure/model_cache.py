@@ -58,17 +58,25 @@ class ModelCacheState:
 #: Known onnx quantization suffixes onnx-community/optimum emit. Longest-match
 #: first so ``_q4f16`` isn't mis-parsed as ``_q4``.
 _QUANT_SUFFIXES: tuple[str, ...] = ("q4f16", "bnb4", "int8", "fp16", "uint8", "q4")
-_QUANT_RE = re.compile(r"_(" + "|".join(_QUANT_SUFFIXES) + r")$")
+# Accept either ``_`` or ``.`` as the separator between the stem and the
+# quant label. ``onnx-community`` exports use ``_`` (``encoder_model_int8.onnx``);
+# alphacep / Vosk exports use ``.`` (``encoder.int8.onnx``). The `_`-only
+# regex used to misclassify Vosk's int8 files as default precision, which
+# made the per-quant cache probe paint a "downloaded" badge on a quant
+# whose bytes weren't actually on disk.
+_QUANT_RE = re.compile(r"[._](" + "|".join(_QUANT_SUFFIXES) + r")$")
 
 
 def _file_quantization(weight_file: Path) -> str:
     """Return the quantization suffix encoded in an onnx weight filename.
 
-    ``encoder_model_int8.onnx`` → ``"int8"``; ``encoder_model.onnx`` → ``""``
-    (the default, un-suffixed export). External-data sidecars use either
-    ``.onnx_data`` (onnx-community convention) or ``.onnx.data`` (istupakov
-    NeMo convention); both are stripped so the same stem-based quant lookup
-    applies. ``model.onnx.data`` → ``""``, ``model.int8.onnx.data`` → ``"int8"``.
+    ``encoder_model_int8.onnx`` → ``"int8"``; ``encoder.int8.onnx`` →
+    ``"int8"`` (alphacep / Vosk uses ``.`` as separator);
+    ``encoder_model.onnx`` → ``""`` (the default, un-suffixed export).
+    External-data sidecars use either ``.onnx_data`` (onnx-community
+    convention) or ``.onnx.data`` (istupakov NeMo convention); both are
+    stripped so the same stem-based quant lookup applies.
+    ``model.onnx.data`` → ``""``, ``model.int8.onnx.data`` → ``"int8"``.
     """
     name = weight_file.name
     if name.endswith(".onnx.data"):
@@ -237,6 +245,18 @@ def delete_cache_by_quantization(hf_repo_id: str, quantization: str) -> bool:
     (so the UI can broadcast cache invalidation); False when there was
     nothing matching on disk. Never raises — like :func:`delete_cache`,
     OS errors are swallowed and the next cache probe surfaces residue.
+
+    Orphan-blob GC: on Windows without developer-mode the streaming
+    downloader's :func:`_link_snapshot_to_blob` falls back from symlink
+    to ``shutil.copy2``. That leaves the snapshot file unable to point
+    back at its source blob, so :func:`_remove_weight_and_blob` can only
+    delete the snapshot copy — the blob is left behind. Next re-download
+    sees ``blob.exists()`` and short-circuits to ``"completed"``, which
+    is what makes the picker badge flip green instantly with no progress.
+    To prevent that, after the per-file removal we sweep ``blobs/`` and
+    delete any entry not still referenced by a remaining snapshot
+    symlink. On copy-fallback platforms that referenced set is empty —
+    so every blob is reclaimed and the next download starts fresh.
     """
     resolved = _latest_snapshot(hf_repo_id)
     if resolved is None:
@@ -248,11 +268,66 @@ def delete_cache_by_quantization(hf_repo_id: str, quantization: str) -> bool:
         if _file_quantization(weight_file) == quantization
     ]
     if not matching:
+        # Still attempt the orphan sweep — a previous delete on a
+        # copy-fallback host may have left blobs behind even when no
+        # weight files remain for this quant.
+        _gc_orphan_blobs(snapshot.parent, blobs_dir)
         return False
     removed_any = False
     for weight_file in matching:
         removed_any |= _remove_weight_and_blob(weight_file, blobs_dir)
+    _gc_orphan_blobs(snapshot.parent, blobs_dir)
     return removed_any
+
+
+def _gc_orphan_blobs(snapshots_root: Path, blobs_dir: Path) -> None:
+    """Delete blobs not referenced by any remaining snapshot symlink.
+
+    A snapshot file references its blob via a relative symlink (real
+    symlink on POSIX / dev-mode Windows). Walk every snapshot, collect
+    each readable symlink target's basename, and unlink any blob whose
+    name isn't in that set. Skips ``.partial`` / ``.incomplete`` markers
+    so concurrent in-flight downloads aren't disturbed.
+
+    On copy-fallback hosts no snapshot is a symlink, so the referenced
+    set is empty and every blob is GC'd — which is the correct outcome
+    there because the copy is the authoritative file and the blob is a
+    pure duplicate wasting disk + tricking the next re-download into a
+    no-op "completed".
+    """
+    if not blobs_dir.exists():
+        return
+    referenced: set[str] = set()
+    if snapshots_root.exists():
+        try:
+            snap_dirs = [d for d in snapshots_root.iterdir() if d.is_dir()]
+        except OSError:
+            snap_dirs = []
+        for snap_dir in snap_dirs:
+            for snap_file in snap_dir.rglob("*"):
+                if not snap_file.is_symlink():
+                    continue
+                try:
+                    target = snap_file.readlink()
+                    resolved_target = (
+                        target if target.is_absolute() else (snap_file.parent / target).resolve()
+                    )
+                    referenced.add(resolved_target.name)
+                except OSError:
+                    continue
+    try:
+        entries = list(blobs_dir.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.is_file():
+            continue
+        if entry.name.startswith(".") or entry.name.endswith((".partial", ".incomplete")):
+            continue
+        if entry.name in referenced:
+            continue
+        with contextlib.suppress(OSError):
+            entry.unlink()
 
 
 def _remove_weight_and_blob(weight_file: Path, blobs_dir: Path) -> bool:

@@ -8,6 +8,12 @@ import type { SwitcherOption } from "./Switcher";
 type SwitcherCssVars = CSSProperties & { "--switcher-color"?: string | undefined };
 
 export interface SwitcherOptionToggleProps<T extends string> {
+	/** Stamped on the toggle's `data-switcher-index` attribute so the parent
+	 *  Switcher can find every option button via a single `querySelectorAll`
+	 *  call inside its measurement effect — avoiding per-option callback refs
+	 *  (and the stable-identity gymnastics they need to not retrigger every
+	 *  render). */
+	dataIndex: number;
 	fullWidth: boolean | undefined;
 	isHovered: boolean;
 	isSelected: boolean;
@@ -16,10 +22,10 @@ export interface SwitcherOptionToggleProps<T extends string> {
 	onMouseEnter: () => void;
 	onMouseLeave: () => void;
 	option: SwitcherOption<T>;
-	setRef: (node: HTMLButtonElement | null) => void;
 }
 
 export function SwitcherOptionToggle<T extends string>({
+	dataIndex,
 	option,
 	isSelected,
 	isHovered,
@@ -28,7 +34,6 @@ export function SwitcherOptionToggle<T extends string>({
 	onFocus,
 	onMouseEnter,
 	onMouseLeave,
-	setRef,
 }: SwitcherOptionToggleProps<T>) {
 	const colored = option.color !== undefined;
 	const style: SwitcherCssVars | undefined = colored
@@ -58,12 +63,12 @@ export function SwitcherOptionToggle<T extends string>({
 				option.disabled && "cursor-not-allowed opacity-40",
 				fullWidth && "flex-1"
 			)}
+			data-switcher-index={dataIndex}
 			disabled={option.disabled}
 			onBlur={onBlur}
 			onFocus={onFocus}
 			onMouseEnter={onMouseEnter}
 			onMouseLeave={onMouseLeave}
-			ref={setRef}
 			style={style}
 			value={option.value}
 		>

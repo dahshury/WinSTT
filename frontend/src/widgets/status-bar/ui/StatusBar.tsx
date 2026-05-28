@@ -1,17 +1,27 @@
 import { Menu } from "@base-ui/react/menu";
 import { Separator } from "@base-ui/react/separator";
-import { AiAudioIcon, AiCloud01Icon, ArrowDown01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
+import {
+	AiAudioIcon,
+	AiCloud01Icon,
+	ArrowDown01Icon,
+	CloudDownloadIcon,
+	Mic01Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import { useInputDevices } from "@/entities/audio-device";
 import { providerDisplayName, providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
-import { useModelSwapStore } from "@/entities/model-catalog";
+import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { ConnectionIndicator } from "@/features/connect-server";
 import { useListenStore } from "@/features/listen-mode";
-import { useDownloadStore } from "@/features/model-download";
+import {
+	type DownloadAggregate,
+	useDownloadAggregate,
+	useDownloadStore,
+} from "@/features/model-download";
 import { HotkeyDisplay } from "@/features/push-to-talk";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
@@ -224,6 +234,96 @@ function ModelSwapChip({ label, tooltip }: ModelSwapChipProps): ReactNode {
 	);
 }
 
+interface FooterDownloadChipProps {
+	aggregate: DownloadAggregate;
+	ariaLabel: string;
+	primaryModelName: string;
+	tooltip: string;
+}
+
+/** Footer chip variant rendered while at least one per-quant or whole-model
+ *  download is streaming. Same clickable shape as ``FooterModelChip`` (so
+ *  the user can pop the picker open to inspect per-quant detail) but with
+ *  a pulsing download dot, the active model's name (or "N downloads" when
+ *  parallel), and a tabular percent on the right.
+ *
+ *  Parallel-download UX: each badge inside the picker keeps its own
+ *  progress fill; this chip is the at-a-glance summary for users who've
+ *  dismissed the picker and want to see "how close are we" without
+ *  re-opening it. ``aggregate.averagePercent`` is the mean across every
+ *  known-percent download so a long-tail download doesn't drag the chip's
+ *  reported progress backwards every time a new (small) download starts.
+ *
+ *  Clicking still routes through ``FooterModelChip`` semantics — sends the
+ *  bounding rect to main, which positions the detached picker window
+ *  above the chip. */
+function FooterDownloadChip({
+	aggregate,
+	ariaLabel,
+	primaryModelName,
+	tooltip,
+}: FooterDownloadChipProps): ReactNode {
+	const substrate = useSurface();
+	const hoverLevel = Math.min(substrate + 2, 8);
+	const openRef = useRef(false);
+	const open = (e: MouseEvent<HTMLButtonElement>) => {
+		const r = e.currentTarget.getBoundingClientRect();
+		ipcSend(IPC.MODEL_PICKER_OPEN, {
+			x: r.x,
+			y: r.y,
+			width: r.width,
+			height: r.height,
+		});
+		openRef.current = true;
+	};
+	useEffect(() => {
+		const onPointerDown = (e: PointerEvent) => {
+			const target = e.target as HTMLElement | null;
+			if (target?.closest('[data-slot="stt-model-selector-trigger"]')) {
+				return;
+			}
+			if (openRef.current) {
+				openRef.current = false;
+				ipcSend(IPC.MODEL_PICKER_CLOSE);
+			}
+		};
+		window.addEventListener("pointerdown", onPointerDown, true);
+		return () => window.removeEventListener("pointerdown", onPointerDown, true);
+	}, []);
+	const multi = aggregate.count >= 2;
+	const label = multi ? `${aggregate.count} downloads` : primaryModelName;
+	const reportedPercent = multi ? aggregate.averagePercent : aggregate.primary.percent;
+	return (
+		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
+			<button
+				aria-label={ariaLabel}
+				aria-live="polite"
+				className={`flex max-w-[180px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+				data-slot="stt-model-selector-trigger"
+				onClick={open}
+				type="button"
+			>
+				<span className="relative inline-flex size-2.5 items-center justify-center">
+					<HugeiconsIcon
+						aria-hidden="true"
+						className="text-accent"
+						icon={CloudDownloadIcon}
+						size={11}
+					/>
+					<span
+						aria-hidden="true"
+						className="absolute inset-0 animate-ping rounded-full bg-accent/40 motion-reduce:animate-none"
+					/>
+				</span>
+				<span className="min-w-0 truncate">{label}</span>
+				<span className="shrink-0 font-mono tabular-nums">
+					{reportedPercent === null ? "…" : `${reportedPercent}%`}
+				</span>
+			</button>
+		</Tooltip>
+	);
+}
+
 interface ActiveModelChipProps {
 	currentModel: string;
 	tIntegrations: ReturnType<typeof useTranslations>;
@@ -282,6 +382,12 @@ export function StatusBar() {
 	const isListening = useListenStore((s) => s.isListening);
 	const listenDeviceName = useListenStore((s) => s.deviceName);
 	const isDownloading = useDownloadStore((s) => s.isDownloading);
+	// Per-quant + whole-model aggregate so the footer chip can preempt the
+	// idle model chip with a "↓ Model X%" / "↓ N downloads · X%" view
+	// whenever bytes are streaming — visible even with the detached picker
+	// dismissed, so the user can monitor progress from the main window.
+	const downloadAggregate = useDownloadAggregate();
+	const getCatalogModel = useCatalogStore((s) => s.getModel);
 	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
 	const swappingMain = useModelSwapStore((s) => s.activeMain);
 	const mainSwapping = swappingMain !== null;
@@ -360,19 +466,43 @@ export function StatusBar() {
 				{currentModel && (
 					<>
 						<Separator className="h-3 w-px bg-border" orientation="vertical" />
-						{mainSwapping ? (
-							<ModelSwapChip
-								label={t("switchingModel", { model: swappingMain })}
-								tooltip={t("switchingModelTooltip", { model: swappingMain })}
-							/>
-						) : (
-							<ActiveModelChip
-								currentModel={currentModel}
-								tIntegrations={tIntegrations}
-								tModel={tModel}
-								tStatus={t}
-							/>
-						)}
+						{(() => {
+							if (mainSwapping) {
+								return (
+									<ModelSwapChip
+										label={t("switchingModel", { model: swappingMain })}
+										tooltip={t("switchingModelTooltip", { model: swappingMain })}
+									/>
+								);
+							}
+							if (downloadAggregate) {
+								const primaryName =
+									getCatalogModel(downloadAggregate.primary.modelId)?.displayName ??
+									downloadAggregate.primary.modelId;
+								const tooltipKey =
+									downloadAggregate.count >= 2 ? "downloadingMultiTooltip" : "downloadingTooltip";
+								const tooltip = t(tooltipKey, {
+									count: downloadAggregate.count,
+									model: primaryName,
+								});
+								return (
+									<FooterDownloadChip
+										aggregate={downloadAggregate}
+										ariaLabel={tModel("model")}
+										primaryModelName={primaryName}
+										tooltip={tooltip}
+									/>
+								);
+							}
+							return (
+								<ActiveModelChip
+									currentModel={currentModel}
+									tIntegrations={tIntegrations}
+									tModel={tModel}
+									tStatus={t}
+								/>
+							);
+						})()}
 					</>
 				)}
 			</div>

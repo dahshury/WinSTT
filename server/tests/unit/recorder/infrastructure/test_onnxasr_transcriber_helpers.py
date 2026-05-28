@@ -131,6 +131,31 @@ def test_is_external_data_missing_error_positive() -> None:
     assert _is_external_data_missing_error(exc) is True
 
 
+def test_is_external_data_missing_error_windows_missing_shard() -> None:
+    """Windows ORT phrases a missing sharded sidecar as a failed ``file_size``
+    call, not as ``External data path does not exist`` — the auto-refetch must
+    still fire. This is the exact cohere-transcribe fp16 failure."""
+    exc = RuntimeError(
+        "Exception during initialization: file_size: The system cannot find the "
+        'file specified.: "C:\\Users\\x\\.cache\\huggingface\\hub\\models--onnx-'
+        "community--cohere-transcribe-03-2026-ONNX\\snapshots\\abc\\onnx\\"
+        'encoder_model_fp16.onnx_data_1"'
+    )
+    assert _is_external_data_missing_error(exc) is True
+
+
+def test_is_external_data_missing_error_posix_missing_sidecar() -> None:
+    exc = FileNotFoundError("No such file or directory: '/cache/onnx/encoder_model.onnx.data'")
+    assert _is_external_data_missing_error(exc) is True
+
+
+def test_is_external_data_missing_error_filenotfound_unrelated_path_negative() -> None:
+    """A file-not-found that is *not* about an ONNX sidecar must not trigger a
+    refetch — guards against firing on, say, a missing config or tokenizer."""
+    exc = RuntimeError("The system cannot find the file specified.: 'tokenizer.json'")
+    assert _is_external_data_missing_error(exc) is False
+
+
 def test_is_external_data_missing_error_negative() -> None:
     exc = RuntimeError("Some unrelated ORT failure")
     assert _is_external_data_missing_error(exc) is False

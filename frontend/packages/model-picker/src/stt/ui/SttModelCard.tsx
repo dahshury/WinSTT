@@ -11,14 +11,13 @@ import {
 	Delete02Icon,
 	GlobeIcon,
 	HardDriveDownloadIcon,
-	LiveStreaming02Icon,
 	NeuralNetworkIcon,
 	PauseIcon,
 	PlayIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
-import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import type { ModelCacheInfo, ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
@@ -30,7 +29,6 @@ import { isUncomfortable } from "../lib/hardware-fit";
 import { quantCacheStatus } from "../lib/pill-helpers";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
-import { QuantCacheDot } from "./pills";
 
 /** "Whisper Large v3" → "Large v3" (the group header already says Whisper). */
 function variantLabel(model: ModelInfo): string {
@@ -51,7 +49,7 @@ function buildAttributeSegments(
 	state: ModelStateEntry | undefined,
 	systemInfo: SystemInfoEntry | null
 ): AttributeSegment[] {
-	const { multilingual, englishOnly, realtime } = variantMeta(model);
+	const { multilingual, englishOnly } = variantMeta(model);
 	const segments: AttributeSegment[] = [];
 	if (multilingual) {
 		segments.push({
@@ -71,14 +69,6 @@ function buildAttributeSegments(
 			label: model.languages.map((l) => l.toUpperCase()).join("/"),
 			className: "text-foreground-secondary",
 			tooltip: `Supports: ${model.languages.map((l) => l.toUpperCase()).join(", ")}`,
-		});
-	}
-	if (realtime) {
-		segments.push({
-			label: "Realtime",
-			icon: LiveStreaming02Icon,
-			className: "text-violet-600 dark:text-violet-400",
-			tooltip: "Light enough to drive the live-preview (realtime) transcription",
 		});
 	}
 	if (isUncomfortable(state, systemInfo)) {
@@ -343,7 +333,6 @@ function QuantActionButtons({
 }: QuantActionButtonsProps) {
 	const isDownloading = download !== undefined;
 	const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
-	const isPartial = cache?.state === "partial" && !isDownloading;
 	const canDelete = onRequestDeleteQuant !== undefined && isOnDisk;
 	const canDownload = onDownloadAction !== undefined;
 	const deleteTooltip =
@@ -379,16 +368,6 @@ function QuantActionButtons({
 					tooltip="Cancel download"
 				/>
 			) : null}
-			{/* Idle + partial → Resume button to restart. */}
-			{!isDownloading && isPartial && canDownload ? (
-				<BadgeIconButton
-					ariaLabel={`Resume ${opt.label} download`}
-					icon={PlayIcon}
-					onClick={() => onDownloadAction("start", model.id, opt.value)}
-					tone="primary"
-					tooltip="Resume partial download from where it stopped"
-				/>
-			) : null}
 			{/* Idle + not cached → start download from the badge. */}
 			{!(isDownloading || isOnDisk) && canDownload ? (
 				<BadgeIconButton
@@ -409,6 +388,42 @@ function QuantActionButtons({
 			) : null}
 		</>
 	);
+}
+
+/** Idle (non-selected) precision-badge tint, by on-disk state.
+ *  Matches the emerald / amber / neutral palette used by the other
+ *  cache pills (see ``cache-helpers.ts``) so downloaded quantizations
+ *  now read at a glance from the badge fill itself — the old leading
+ *  status dot is gone. */
+function badgeToneForCache(state: "cached" | "partial" | "not_cached" | undefined): string {
+	if (state === "cached") {
+		return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25";
+	}
+	if (state === "partial") {
+		return "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25";
+	}
+	return "bg-surface-secondary/40 text-foreground-secondary hover:bg-surface-hover";
+}
+
+/** Percentage [0..100] to amber-fill the badge background for an
+ *  in-progress / partly-cached quantization, or ``null`` to skip the
+ *  overlay. Active downloads win over the on-disk snapshot so the bar
+ *  ticks live; partial-cache progress is the float in [0..1] saved by
+ *  the IPC layer.  ``ModelCacheInfo`` types ``progress`` as ``number``,
+ *  but historical payloads have occasionally arrived undefined — coerce
+ *  defensively so a missing field doesn't paint a 0%-NaN bar. */
+function resolveProgressFillPct(
+	cache: ModelCacheInfo | undefined,
+	download: QuantDownloadSnapshot | undefined
+): number | null {
+	if (download && typeof download.progress === "number") {
+		return Math.max(0, Math.min(100, download.progress));
+	}
+	if (cache?.state === "partial") {
+		const raw = (cache.progress ?? 0) * 100;
+		return Math.max(0, Math.min(100, Math.round(raw)));
+	}
+	return null;
 }
 
 interface QuantOptionButtonProps {
@@ -441,14 +456,11 @@ interface QuantOptionButtonProps {
  *  Per-badge button-group composition:
  *    - Always: the precision label button itself.
  *    - Active download: progress label + Pause/Resume + Cancel.
- *    - Partial, idle: Resume + Delete.
+ *    - Partial, idle: Delete only. Clicking the badge re-selects the
+ *      quant which the parent's swap controller turns back into a
+ *      resumable download — no explicit Resume affordance needed.
  *    - Cached, idle: Delete.
- *    - Not cached, idle: Download.
- *
- *  Matches the user spec: "All model quantizations that are partially
- *  downloaded should have their badge as resume or delete. All models that
- *  are already downloaded should have delete as a button group beside their
- *  badge." */
+ *    - Not cached, idle: Download. */
 function QuantOptionButton({
 	opt,
 	model,
@@ -464,6 +476,8 @@ function QuantOptionButton({
 	const cache = resolveQuantCache(state, opt.value);
 	const download = getDownloadSnapshot?.(model.id, opt.value);
 	const isDownloading = download !== undefined;
+	const cacheToneClass = badgeToneForCache(cache?.state);
+	const progressFillPct = resolveProgressFillPct(cache, download);
 	return (
 		<ButtonGroup
 			aria-label={`Precision ${opt.label} for ${model.displayName}`}
@@ -472,11 +486,9 @@ function QuantOptionButton({
 			<Tooltip content={`${opt.label} — ${quantCacheStatus(cache)}. ${opt.tooltip}`} side="top">
 				<button
 					className={cn(
-						"inline-flex h-6 cursor-pointer items-center gap-1.5 px-2 font-medium text-[10.5px] leading-none transition-colors",
+						"relative inline-flex h-6 cursor-pointer items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
 						"rounded-l-[5px]",
-						isActive
-							? "bg-accent/20 text-accent"
-							: "bg-surface-secondary/40 text-foreground-secondary hover:bg-surface-hover"
+						isActive ? "bg-accent/20 text-accent" : cacheToneClass
 					)}
 					onClick={(e) => {
 						e.preventDefault();
@@ -485,13 +497,21 @@ function QuantOptionButton({
 					}}
 					type="button"
 				>
-					<QuantCacheDot cache={cache} />
-					{opt.label}
-					{isDownloading ? (
-						<span className="ms-1 font-mono text-[9.5px] text-foreground-muted tabular-nums">
-							{download.progress === null ? "…" : `${download.progress}%`}
-						</span>
+					{progressFillPct !== null && !isActive ? (
+						<span
+							aria-hidden="true"
+							className="pointer-events-none absolute inset-y-0 left-0 bg-amber-500/30 transition-[width] duration-200 ease-out motion-reduce:transition-none"
+							style={{ width: `${progressFillPct}%` }}
+						/>
 					) : null}
+					<span className="relative inline-flex items-center gap-1.5">
+						{opt.label}
+						{isDownloading ? (
+							<span className="ms-1 font-mono text-[9.5px] text-foreground-muted tabular-nums">
+								{download.progress === null ? "…" : `${download.progress}%`}
+							</span>
+						) : null}
+					</span>
 				</button>
 			</Tooltip>
 			<QuantActionButtons
@@ -552,10 +572,9 @@ export interface SttModelCardProps {
 	/**
 	 * Optional content rendered in the card's header right column, after
 	 * the read-only attribute group. Used by ``SttVariantBundle`` to slot
-	 * in the expand/collapse chevron without overlapping the "Realtime" /
-	 * "Multilingual" badges (the chevron used to be absolutely positioned
-	 * and would collide with the right-edge AttributeGroup when both were
-	 * present).
+	 * in the expand/collapse chevron without overlapping the "Multilingual"
+	 * badge (the chevron used to be absolutely positioned and would collide
+	 * with the right-edge AttributeGroup when present).
 	 */
 	actions?: import("react").ReactNode;
 	currentQuantization: OnnxQuantization;

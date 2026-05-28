@@ -738,6 +738,9 @@ async def main_async() -> None:
         # Set up shutdown signal handling
         state.shutdown_event = asyncio.Event()
         loop = asyncio.get_running_loop()
+        # Stash the running loop so worker threads (streaming downloader,
+        # TTS install) can dispatch back to it via ``run_coroutine_threadsafe``.
+        state.main_loop = loop
         _shutdown_count = 0
 
         def _request_shutdown() -> None:

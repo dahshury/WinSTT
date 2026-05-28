@@ -506,7 +506,9 @@
     "switchingModel": "正在切换到 {model}...",
     "switchingModelTooltip": "正在加载 {model}。加载新模型权重时应用可能会短暂停顿。",
     "loopbackActiveTooltip": "正在监听来自此环回设备的系统音频。在「设置 → 通用 → 环回设备」中更改。",
-    "loopbackIdleTooltip": "已配置「监听」模式，但尚未捕获音频。"
+    "loopbackIdleTooltip": "已配置「监听」模式，但尚未捕获音频。",
+    "downloadingTooltip": "Downloading {model}. Click to open the picker for per-quant detail.",
+    "downloadingMultiTooltip": "{count} downloads in progress (showing leader: {model}). Click to open the picker."
   },
   "transcription": {
     "waiting": "等待语音输入...",

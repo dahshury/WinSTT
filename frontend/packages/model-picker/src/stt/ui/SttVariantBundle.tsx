@@ -51,9 +51,8 @@ function siblingChip(siblingCount: number): string {
  *
  * Why a slot rather than absolute positioning: the previous chevron sat
  * ``absolute top-2 right-3`` and overlapped the right-edge AttributeGroup
- * whenever the model had a "Realtime" or "Multilingual" badge. Living
- * inside the card's flex layout makes that collision impossible by
- * construction.
+ * whenever the model had a "Multilingual" badge. Living inside the card's
+ * flex layout makes that collision impossible by construction.
  *
  * 12-principles applied (paired with the {@link Collapsible} below):
  *

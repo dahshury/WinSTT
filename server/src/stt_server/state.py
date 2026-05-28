@@ -81,6 +81,15 @@ class ServerState:
     shutdown_event: asyncio.Event | None = None
     shutdown_requested_at: float | None = None
 
+    # ─── Main asyncio loop ───────────────────────────────────────────
+    # Captured at server start so worker threads (streaming downloader,
+    # TTS install, etc.) can call ``run_coroutine_threadsafe`` to push
+    # WS events back onto the data queue. Python 3.12 made
+    # ``asyncio.get_event_loop()`` raise from non-loop threads, so a
+    # stashed reference is the only safe way to address the loop from
+    # a daemon thread.
+    main_loop: asyncio.AbstractEventLoop | None = None
+
     # ─── Download state ──────────────────────────────────────────────
     download_state: str | None = None
     cancel_download_requested: bool = False

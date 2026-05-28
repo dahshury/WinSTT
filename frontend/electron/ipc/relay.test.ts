@@ -1509,8 +1509,12 @@ describe("setupRelay onServerReady caches state", () => {
 });
 
 describe("handleModelDownloadProgress payload completeness", () => {
-	test("payload includes ALL six mapped fields, not an empty object", () => {
+	test("payload includes ALL mapped fields, not an empty object", () => {
 		// Reaffirms ObjectLiteral resilience for handleModelDownloadProgress.
+		// ``quantization`` is the streaming-downloader marker forwarded as of
+		// the per-quant download UX — its presence on the IPC payload is what
+		// lets the renderer fan out to the per-badge progress map instead of
+		// the removed singleton overlay slot.
 		const calls: Array<{ ch: string; args: unknown[] }> = [];
 		const safeSend = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
 		helpers.handleModelDownloadProgress(
@@ -1521,13 +1525,23 @@ describe("handleModelDownloadProgress payload completeness", () => {
 				total_bytes: 200,
 				speed_bps: 50,
 				eta_seconds: 2,
+				quantization: "q4",
 			},
 			safeSend
 		);
 		const payload = calls[0]?.args[0] as Record<string, unknown>;
 		expect(Object.keys(payload).sort()).toEqual(
-			["downloadedBytes", "etaSeconds", "model", "progress", "speedBps", "totalBytes"].sort()
+			[
+				"downloadedBytes",
+				"etaSeconds",
+				"model",
+				"progress",
+				"quantization",
+				"speedBps",
+				"totalBytes",
+			].sort()
 		);
+		expect(payload.quantization).toBe("q4");
 	});
 });
 

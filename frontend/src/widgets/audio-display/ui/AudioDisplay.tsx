@@ -10,7 +10,6 @@ import {
 	runTranscription,
 	validateDroppedFile,
 } from "../lib/audio-display-test-helpers";
-import { DownloadOverlay } from "./DownloadOverlay";
 import { FileOverlay } from "./FileOverlay";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { TranscriptionThinking } from "./TranscriptionThinking";
@@ -126,7 +125,6 @@ export function AudioDisplay() {
 
 			<DropZoneOverlay label={t("dropToTranscribe")} visible={isDragOver} />
 
-			<DownloadOverlay />
 			<FileOverlay />
 			<SubtitleOverlay />
 			<TranscriptionThinking />

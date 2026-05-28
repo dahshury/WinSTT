@@ -506,7 +506,9 @@
     "switchingModel": "جارٍ التبديل إلى {model}...",
     "switchingModelTooltip": "جارٍ تحميل {model}. قد يتوقف التطبيق للحظات أثناء تحميل النموذج الجديد.",
     "loopbackActiveTooltip": "يستمع إلى صوت النظام من جهاز الاسترجاع هذا. غيّره من الإعدادات ← عام ← جهاز الاسترجاع.",
-    "loopbackIdleTooltip": "تم تكوين وضع الاستماع، ولكن لم يتم التقاط أي صوت بعد."
+    "loopbackIdleTooltip": "تم تكوين وضع الاستماع، ولكن لم يتم التقاط أي صوت بعد.",
+    "downloadingTooltip": "Downloading {model}. Click to open the picker for per-quant detail.",
+    "downloadingMultiTooltip": "{count} downloads in progress (showing leader: {model}). Click to open the picker."
   },
   "transcription": {
     "waiting": "في انتظار الكلام...",

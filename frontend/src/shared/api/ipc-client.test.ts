@@ -501,12 +501,14 @@ describe("typed event subscriptions", () => {
 		expect(cb).toHaveBeenCalledWith(0.5);
 	});
 
-	test("onModelDownloadStart extracts model id", () => {
+	test("onModelDownloadStart extracts (model, quantization) — quantization undefined for legacy events", () => {
 		const api = installMockApi();
 		const cb = mock(() => undefined);
 		ipc.onModelDownloadStart(cb);
 		fire(api, IPC.STT_MODEL_DOWNLOAD_START, { model: "tiny" });
-		expect(cb).toHaveBeenCalledWith("tiny");
+		expect(cb).toHaveBeenCalledWith("tiny", undefined);
+		fire(api, IPC.STT_MODEL_DOWNLOAD_START, { model: "tiny", quantization: "q4" });
+		expect(cb).toHaveBeenCalledWith("tiny", "q4");
 	});
 
 	test("onModelDownloadProgress passes the full payload", () => {

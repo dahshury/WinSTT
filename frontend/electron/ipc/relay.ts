@@ -729,6 +729,10 @@ function handleModelDownloadProgress(event: Record<string, unknown>, safeSend: S
 		totalBytes: event.total_bytes,
 		speedBps: event.speed_bps,
 		etaSeconds: event.eta_seconds,
+		// Forward the streaming-downloader marker so the renderer can
+		// fan out into the per-quant ``quantDownloads`` map instead of
+		// the singleton overlay slot.
+		quantization: event.quantization,
 	});
 }
 
@@ -989,11 +993,14 @@ const SIMPLE_RELAY_HANDLERS: Record<string, SimpleHandler> = {
 	wakeword_detected: (_e, send) => send(IPC.STT_WAKEWORD_DETECTED),
 	wakeword_detection_start: (_e, send) => send(IPC.STT_WAKEWORD_DETECTION_START),
 	wakeword_detection_end: (_e, send) => send(IPC.STT_WAKEWORD_DETECTION_END),
-	model_download_start: (e, send) => send(IPC.STT_MODEL_DOWNLOAD_START, { model: e.model }),
+	model_download_start: (e, send) =>
+		send(IPC.STT_MODEL_DOWNLOAD_START, { model: e.model, quantization: e.quantization }),
 	model_download_complete: (e, send) =>
 		send(IPC.STT_MODEL_DOWNLOAD_COMPLETE, {
 			model: e.model,
 			cancelled: e.cancelled ?? false,
+			quantization: e.quantization,
+			outcome: e.outcome,
 		}),
 	loopback_started: (e, send) => send(IPC.STT_LOOPBACK_STARTED, { deviceName: e.deviceName }),
 	loopback_stopped: (_e, send) => send(IPC.STT_LOOPBACK_STOPPED),

@@ -67,7 +67,11 @@ function makeTray(): { setImage: (icon: unknown) => void; isDestroyed: () => boo
 	} as unknown as { setImage: (icon: unknown) => void; isDestroyed: () => boolean };
 }
 
-function makeWin(): { setIcon: (icon: unknown) => void; isDestroyed: () => boolean } {
+/** Spy used to verify the indicator NEVER touches the BrowserWindow icon —
+ *  the taskbar/window icon must stay static across recording/thinking states.
+ *  We hand it to anyone who used to receive `win` so call-sites barely change,
+ *  but `setIcon` here would only ever fire if the indicator regressed. */
+function makeWinSpy(): { setIcon: (icon: unknown) => void; isDestroyed: () => boolean } {
 	let count = 0;
 	return {
 		setIcon: () => {
@@ -95,11 +99,9 @@ describe("recording-indicator public API", () => {
 
 	test("initRecordingIndicator with empty base icon does not throw", () => {
 		const tray = makeTray();
-		const win = makeWin();
 		expect(() =>
 			initRecordingIndicator(
 				tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-				win as unknown as Parameters<typeof initRecordingIndicator>[1],
 				"/fake/icon.png"
 			)
 		).not.toThrow();
@@ -108,10 +110,8 @@ describe("recording-indicator public API", () => {
 
 	test("onRecordingStart / onAudioLevel / onRecordingStop do not throw", () => {
 		const tray = makeTray();
-		const win = makeWin();
 		initRecordingIndicator(
 			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			win as unknown as Parameters<typeof initRecordingIndicator>[1],
 			"/fake/icon.png"
 		);
 		expect(() => onRecordingStart()).not.toThrow();
@@ -129,10 +129,8 @@ describe("recording-indicator public API", () => {
 
 	test("cleanupRecordingIndicator clears state safely", () => {
 		const tray = makeTray();
-		const win = makeWin();
 		initRecordingIndicator(
 			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			win as unknown as Parameters<typeof initRecordingIndicator>[1],
 			"/fake/icon.png"
 		);
 		onRecordingStart();
@@ -145,18 +143,20 @@ describe("recording-indicator public API", () => {
 		expect(() => onRecordingStop()).not.toThrow();
 	});
 
-	test("onRecordingStart triggers an immediate icon swap (does not wait for tick)", () => {
+	test("onRecordingStart triggers an immediate tray icon swap (does not wait for tick) but leaves the BrowserWindow icon alone", () => {
 		const tray = makeTray() as ReturnType<typeof makeTray> & { count: number };
-		const win = makeWin() as ReturnType<typeof makeWin> & { count: number };
+		const winSpy = makeWinSpy() as ReturnType<typeof makeWinSpy> & { count: number };
 		initRecordingIndicator(
 			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			win as unknown as Parameters<typeof initRecordingIndicator>[1],
 			"/fake/icon.png"
 		);
 		const before = tray.count;
 		onRecordingStart();
 		expect(tray.count).toBeGreaterThan(before);
-		expect(win.count).toBeGreaterThan(0);
+		// The window icon must NEVER be touched by the indicator — the
+		// BrowserWindow's base icon (and therefore the taskbar icon) stays
+		// static through recording / thinking states. Only the tray animates.
+		expect(winSpy.count).toBe(0);
 		onRecordingStop();
 		cleanupRecordingIndicator();
 	});
@@ -349,11 +349,6 @@ describe("recording-indicator helpers", () => {
 		expect(helpers.trayIsLive()).toBe(false);
 	});
 
-	test("winIsLive false after cleanup", () => {
-		cleanupRecordingIndicator();
-		expect(helpers.winIsLive()).toBe(false);
-	});
-
 	test("baseIconUsable false after cleanup (no base icon set)", () => {
 		cleanupRecordingIndicator();
 		expect(helpers.baseIconUsable()).toBe(false);
@@ -363,13 +358,6 @@ describe("recording-indicator helpers", () => {
 		cleanupRecordingIndicator();
 		expect(() =>
 			helpers.setIconOnTray({} as unknown as Parameters<typeof helpers.setIconOnTray>[0])
-		).not.toThrow();
-	});
-
-	test("setIconOnWin no-op when win is dead/null (no throw)", () => {
-		cleanupRecordingIndicator();
-		expect(() =>
-			helpers.setIconOnWin({} as unknown as Parameters<typeof helpers.setIconOnWin>[0])
 		).not.toThrow();
 	});
 
@@ -581,10 +569,8 @@ describe("indicator state machine", () => {
 	function bootstrap(): void {
 		cleanupRecordingIndicator();
 		const tray = makeTray();
-		const win = makeWin();
 		initRecordingIndicator(
 			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			win as unknown as Parameters<typeof initRecordingIndicator>[1],
 			"/fake/icon.png"
 		);
 	}

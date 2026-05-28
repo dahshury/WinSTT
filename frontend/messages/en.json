@@ -505,6 +505,8 @@
     "modelTooltip": "Active speech-to-text model: {model}. Change it in Settings → Model.",
     "switchingModel": "Switching to {model}...",
     "switchingModelTooltip": "Loading {model}. The app may briefly pause while the new weights are loaded.",
+    "downloadingTooltip": "Downloading {model}. Click to open the picker for per-quant detail.",
+    "downloadingMultiTooltip": "{count} downloads in progress (showing leader: {model}). Click to open the picker.",
     "loopbackActiveTooltip": "Listening to system audio from this loopback device. Change it in Settings → General → Loopback Device.",
     "loopbackIdleTooltip": "Listen mode is configured but no audio is being captured yet."
   },

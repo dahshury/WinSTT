@@ -506,7 +506,9 @@
     "switchingModel": "Cambiando a {model}...",
     "switchingModelTooltip": "Cargando {model}. La aplicación puede pausarse brevemente mientras se cargan los nuevos pesos.",
     "loopbackActiveTooltip": "Escuchando el audio del sistema desde este dispositivo de loopback. Cámbialo en Ajustes → General → Dispositivo de loopback.",
-    "loopbackIdleTooltip": "El modo Escuchar está configurado pero aún no se está capturando audio."
+    "loopbackIdleTooltip": "El modo Escuchar está configurado pero aún no se está capturando audio.",
+    "downloadingTooltip": "Downloading {model}. Click to open the picker for per-quant detail.",
+    "downloadingMultiTooltip": "{count} downloads in progress (showing leader: {model}). Click to open the picker."
   },
   "transcription": {
     "waiting": "Esperando voz...",

@@ -28,12 +28,24 @@ import { getStoreValue, store } from "../lib/store";
  * Windows but throws on some Electron builds for some signatures).
  */
 function applyFocusPassThroughFlags(win: BrowserWindow): void {
-	// `setIgnoreMouseEvents` was already applied in `createOverlayWindow` for
-	// the initial paint; re-apply here so a test that registers a window
-	// directly through `setOverlayWindow` (bypassing `createOverlayWindow`)
-	// still gets click-through. Idempotent.
-	safeCall(() => win.setIgnoreMouseEvents(true, { forward: true }));
-	safeCall(() => win.setFocusable(false));
+	// Mirror examples/Handy/src-tauri/src/overlay.rs: the overlay is a
+	// regular interactive window that simply doesn't STEAL focus on show.
+	// Handy proved this is enough — they build with `.focused(false)` and
+	// intentionally do NOT call any "ignore mouse" API or set
+	// WS_EX_NOACTIVATE permanently. We tried both `setIgnoreMouseEvents`
+	// (raced the click) and `setFocusable(false)` (touch landed, mouse
+	// was swallowed by the transparent+alwaysOnTop+NOACTIVATE combination
+	// on Windows). Dropping both is the only reliable fix for "mouse
+	// click on X does nothing".
+	//
+	// Focus stealing is prevented by ALWAYS using `showInactive()` (in
+	// applyShow below) which displays the window without activating it.
+	// A user-initiated click momentarily focuses the overlay so React
+	// can run the click handler — abortOperation immediately hides the
+	// window, returning focus to the user's target app within a frame.
+	//
+	// `setAlwaysOnTop` + `setVisibleOnAllWorkspaces` give the pill the
+	// screen-saver Z-order Handy uses on macOS / Windows.
 	safeCall(() => win.setAlwaysOnTop(true, "screen-saver", 1));
 	safeCall(() =>
 		win.setVisibleOnAllWorkspaces(true, {
@@ -225,11 +237,10 @@ function applyHide(): void {
 	if (!win) {
 		return;
 	}
-	// Restore click-through the instant we start hiding. While hidden the
-	// flag is observably moot (the window catches no input either way), but
-	// keeping it true matches the pre-show baseline so a future show that
-	// races a renderer-side flip starts from the safe default.
-	safeCall(() => win.setIgnoreMouseEvents(true, { forward: true }));
+	// No setIgnoreMouseEvents call — the overlay window is now always
+	// interactive (Handy parity, see applyFocusPassThroughFlags). Hide
+	// just suppresses visibility / DWM compositing.
+	//
 	// Order matters: opacity first so DWM stops compositing this surface
 	// immediately. Move offscreen as backup. Hide last so the canonical
 	// state is consistent.
@@ -254,21 +265,16 @@ function applyShow(x: number, y: number): void {
 	if (!win) {
 		return;
 	}
-	// Disable click-through for the lifetime of this show. The X cancel
-	// button MUST receive both mouse clicks and touch taps; a per-tick
-	// renderer-side effect that flips `setIgnoreMouseEvents(false)` after
-	// the OS has already dispatched the click is the source of the
-	// "X button does nothing while talking" regression — it races the
-	// IPC roundtrip and the OS pointer dispatch every time. Driving the
-	// flag at the same place that drives visibility (here) closes that
-	// window: the moment the window is on screen, it catches input;
-	// the moment it's hidden (applyHide), it goes click-through again.
-	// Trade-off: the 720×240 overlay rect blocks click-through to the app
-	// underneath while shown, but it's only shown DURING a recording /
-	// LLM-thinking pass, when the user isn't clicking through anyway,
-	// and the window's `focusable: false` flag still prevents activation
-	// stealing (paste pipeline + main app focus stay intact).
-	safeCall(() => win.setIgnoreMouseEvents(false));
+	// No setIgnoreMouseEvents call — the overlay window is always
+	// interactive (Handy parity). The X cancel button receives clicks
+	// directly because the window simply catches them. Focus stealing is
+	// prevented by `showInactive()` below (NOT `show()`), which puts the
+	// pill on screen without activating it — the user's target app stays
+	// the keyboard sink. Trade-off: clicks anywhere in the overlay
+	// window's rect don't pass through to the app underneath while the
+	// pill is shown, but the rect is only on screen DURING a recording /
+	// LLM-thinking pass when the user isn't reaching for the app behind
+	// it anyway.
 	// Position first so the user never sees a flash at the offscreen
 	// coordinates.
 	safeCall(() => win.setPosition(x, y));

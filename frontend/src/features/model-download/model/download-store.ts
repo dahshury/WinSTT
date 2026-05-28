@@ -147,6 +147,18 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		ipcDeleteModelCache(modelId);
 	},
 	discardQuantCache: (modelId: string, quantization: string) => {
+		// Drop the local snapshot synchronously so the badge's
+		// pause/resume/cancel chrome disappears the moment the user
+		// confirms delete — without this the seeded entry survives the
+		// IPC round-trip and the server's ``model_download_complete``
+		// (outcome=cancelled), and the user sees a green "cached" badge
+		// with stale stop/pause buttons because the cache state and
+		// download snapshot disagree.
+		set((s) => {
+			const next = { ...s.quantDownloads };
+			delete next[quantKey(modelId, quantization)];
+			return { quantDownloads: next };
+		});
 		ipcDeleteModelQuantization(modelId, quantization);
 	},
 	predownloadQuant: (modelId: string, quantization: string) => {

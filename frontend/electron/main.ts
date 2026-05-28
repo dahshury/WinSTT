@@ -1578,14 +1578,21 @@ function createOverlayWindow() {
 		alwaysOnTop: true,
 		skipTaskbar: true,
 		show: false,
-		// Critical for the dictation-paste pipeline: the pill MUST NOT accept
-		// keyboard focus, or `showInactive()` lands focus on the overlay
-		// BrowserWindow on some compositors and the paste goes to the pill
-		// instead of the user's target app. Set at construction so the very
-		// first paint of the pre-created hidden window already has the flag;
-		// `setOverlayWindow` re-asserts this + the screen-saver z-order +
-		// all-workspaces visibility at runtime (see overlay.ts).
-		focusable: false,
+		// Keep this window FOCUSABLE on Windows. We previously set
+		// `focusable: false` (WS_EX_NOACTIVATE) thinking it was needed to
+		// prevent focus stealing, but it has a known interaction with
+		// `transparent: true + alwaysOnTop: true` on Windows that *swallows
+		// mouse-click messages while still delivering touch input* — the
+		// "X reacts to touch but not mouse" symptom. The dictation paste
+		// pipeline is protected by always calling `showInactive()` (NOT
+		// `show()`), which displays the window without activating it —
+		// same approach Handy uses (examples/Handy/src-tauri/src/overlay.rs
+		// builds with `.focused(false).visible(false)` and then `.show()`,
+		// the Tauri equivalent of `showInactive`). A user-initiated click
+		// on the X SHOULD focus the overlay momentarily — that's how the
+		// click event reaches the React handler — and the abort flow
+		// immediately hides the window so focus returns to the user's
+		// target app within a frame.
 		// On macOS, `type: "panel"` makes the BrowserWindow act like an
 		// NSPanel (the primitive `tauri-nspanel` wraps in Handy's overlay.rs):
 		// non-activating, stays above standard windows, doesn't show in
@@ -1618,13 +1625,15 @@ function createOverlayWindow() {
 		overlayWindow = null;
 	});
 
-	// Click-through by default so dictation doesn't intercept clicks meant for
-	// the app underneath. `forward: true` still delivers mousemove events to
-	// the renderer (without consuming them) so hover-based hit detection on
-	// the X cancel button works; the renderer flips ignore off via
-	// `overlay:set-ignore-mouse` while the cursor sits over the button so the
-	// click lands instead of falling through.
-	overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+	// No setIgnoreMouseEvents call — the overlay is now a normal interactive
+	// window. Focus stealing is prevented by always calling `showInactive()`
+	// instead of `show()` in overlay.ts's applyShow. This matches Handy's
+	// overlay topology (examples/Handy/src-tauri/src/overlay.rs builds with
+	// `.focused(false).visible(false)` and then `.show()`). Removing the
+	// click-through entirely is the only reliable fix for the
+	// X-button-does-nothing regression on both touch AND mouse — the
+	// previous per-tick renderer-side `setIgnoreMouseEvents(false)` flip
+	// raced the OS pointer dispatch on every click.
 
 	// Hide instead of destroy on close — window is reused for instant re-show
 	overlayWindow.on("close", (event) => {
@@ -1818,9 +1827,10 @@ function createWindow() {
 		runtimeInfo: lastRuntimeInfo,
 	});
 
-	// Initialize recording indicator (tray + taskbar overlay icons)
+	// Initialize recording indicator (tray icon only — the BrowserWindow /
+	// taskbar icon intentionally stays static across recording / thinking states).
 	if (iconPath) {
-		initRecordingIndicator(newTray, mainWindow, iconPath);
+		initRecordingIndicator(newTray, iconPath);
 	}
 	// Hand the indicator a way to repaint the theme-aware tray PNG when the
 	// thinking topology animation winds down, so the static idle icon isn't

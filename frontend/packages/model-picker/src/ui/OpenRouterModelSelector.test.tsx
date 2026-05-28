@@ -69,7 +69,10 @@ describe("OpenRouterModelSelector helpers", () => {
 			["menu", true],
 			["menuitem", true],
 			["tooltip", true],
-			["dialog", false],
+			// Dialog / AlertDialog popups portaled out of the combobox count
+			// as friendly so confirm clicks inside them don't dismiss the picker.
+			["dialog", true],
+			["alertdialog", true],
 			["", false],
 		])("role=%p → %p", (role, expected) => {
 			const node = makeElement("div", role ? { role } : {});
