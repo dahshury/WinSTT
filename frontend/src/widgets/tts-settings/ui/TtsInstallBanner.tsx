@@ -4,13 +4,7 @@ import type { useTranslations } from "use-intl";
 import { ttsInstallPause, ttsInstallResume } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import { DownloadProgressBar } from "@/shared/ui/download";
-
-export interface TtsDownloadProgress {
-	active: boolean;
-	label: string;
-	paused: boolean;
-	percent: number;
-}
+import type { TtsDownloadProgress } from "../model/use-tts-download-progress";
 
 export interface TtsInstallBannerProps {
 	downloadProgress: TtsDownloadProgress;
