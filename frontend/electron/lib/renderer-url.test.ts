@@ -15,11 +15,18 @@ const {
 	loadRendererPage,
 } = mod;
 
+// Contained boundary cast: the mocked Electron `app` is readonly-typed, but the
+// test flips `isPackaged` to drive the dev/packaged branches.
+const asMutableApp = (a: typeof electronBase.app) => a as unknown as { isPackaged: boolean };
+// Contained boundary cast: `process.resourcesPath` is only present in packaged
+// Electron; the test stubs it to exercise the packaged path-resolution branch.
+const asMutableProcess = (p: typeof process) => p as unknown as { resourcesPath: string };
+
 function setPackaged(value: boolean): void {
-	(electronBase.app as unknown as { isPackaged: boolean }).isPackaged = value;
+	asMutableApp(electronBase.app).isPackaged = value;
 }
 
-const originalResourcesPath = (process as unknown as { resourcesPath: string }).resourcesPath;
+const originalResourcesPath = asMutableProcess(process).resourcesPath;
 
 beforeAll(() => {
 	setPackaged(false);
@@ -27,7 +34,7 @@ beforeAll(() => {
 
 afterAll(() => {
 	setPackaged(false);
-	(process as unknown as { resourcesPath: string }).resourcesPath = originalResourcesPath;
+	asMutableProcess(process).resourcesPath = originalResourcesPath;
 });
 
 describe("getDevPageUrl", () => {
@@ -55,8 +62,7 @@ describe("getPackagedPagePath", () => {
 
 	test("packaged mode resolves under process.resourcesPath/renderer", () => {
 		setPackaged(true);
-		(process as unknown as { resourcesPath: string }).resourcesPath =
-			path.normalize("C:\\fake\\res");
+		asMutableProcess(process).resourcesPath = path.normalize("C:\\fake\\res");
 		const p = getPackagedPagePath("main");
 		expect(p).toBe(path.join("C:\\fake\\res", "renderer", "index.html"));
 		setPackaged(false);
@@ -64,6 +70,14 @@ describe("getPackagedPagePath", () => {
 });
 
 describe("loadRendererPage", () => {
+	interface FakeWin {
+		loadFile: (f: string) => Promise<void>;
+		loadURL: (u: string) => Promise<void>;
+	}
+	// Contained boundary cast: FakeWin implements only the BrowserWindow surface
+	// loadRendererPage touches (loadURL / loadFile); the runtime object is unchanged.
+	const asWindow = (w: FakeWin) => w as unknown as Parameters<typeof loadRendererPage>[0];
+
 	test("dev mode delegates to win.loadURL with the dev URL", async () => {
 		setPackaged(false);
 		const calls: { kind: string; arg: string }[] = [];
@@ -77,14 +91,13 @@ describe("loadRendererPage", () => {
 				return Promise.resolve();
 			},
 		};
-		await loadRendererPage(fakeWin as unknown as Parameters<typeof loadRendererPage>[0], "main");
+		await loadRendererPage(asWindow(fakeWin), "main");
 		expect(calls).toEqual([{ kind: "url", arg: "http://localhost:3000/" }]);
 	});
 
 	test("packaged mode delegates to win.loadFile with the packaged path", async () => {
 		setPackaged(true);
-		(process as unknown as { resourcesPath: string }).resourcesPath =
-			path.normalize("C:\\fake\\res");
+		asMutableProcess(process).resourcesPath = path.normalize("C:\\fake\\res");
 		const calls: { kind: string; arg: string }[] = [];
 		const fakeWin = {
 			loadURL: (u: string) => {
@@ -96,10 +109,7 @@ describe("loadRendererPage", () => {
 				return Promise.resolve();
 			},
 		};
-		await loadRendererPage(
-			fakeWin as unknown as Parameters<typeof loadRendererPage>[0],
-			"settings"
-		);
+		await loadRendererPage(asWindow(fakeWin), "settings");
 		expect(calls).toEqual([
 			{
 				kind: "file",
@@ -130,8 +140,7 @@ describe("isAllowedRendererUrl", () => {
 
 	test("packaged mode rejects non-file: protocols", () => {
 		setPackaged(true);
-		(process as unknown as { resourcesPath: string }).resourcesPath =
-			path.normalize("C:\\fake\\res");
+		asMutableProcess(process).resourcesPath = path.normalize("C:\\fake\\res");
 		expect(isAllowedRendererUrl("https://example.com/")).toBe(false);
 		expect(isAllowedRendererUrl("http://localhost:3000/")).toBe(false);
 		setPackaged(false);
@@ -139,8 +148,7 @@ describe("isAllowedRendererUrl", () => {
 
 	test("packaged mode accepts file: URLs inside renderer root", () => {
 		setPackaged(true);
-		(process as unknown as { resourcesPath: string }).resourcesPath =
-			path.normalize("C:\\fake\\res");
+		asMutableProcess(process).resourcesPath = path.normalize("C:\\fake\\res");
 		expect(isAllowedRendererUrl("file:///C:/fake/res/renderer/index.html")).toBe(true);
 		expect(isAllowedRendererUrl("file:///C:/fake/res/renderer/sub/page.html")).toBe(true);
 		setPackaged(false);
@@ -148,8 +156,7 @@ describe("isAllowedRendererUrl", () => {
 
 	test("packaged mode rejects file: URLs outside the renderer root", () => {
 		setPackaged(true);
-		(process as unknown as { resourcesPath: string }).resourcesPath =
-			path.normalize("C:\\fake\\res");
+		asMutableProcess(process).resourcesPath = path.normalize("C:\\fake\\res");
 		expect(isAllowedRendererUrl("file:///C:/Windows/System32/cmd.exe")).toBe(false);
 		expect(isAllowedRendererUrl("file:///C:/fake/other/page.html")).toBe(false);
 		setPackaged(false);

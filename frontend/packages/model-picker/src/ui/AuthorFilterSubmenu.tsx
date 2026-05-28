@@ -4,6 +4,8 @@ import { Combobox } from "@base-ui/react/combobox";
 import { SparklesIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
 	filterByQuery,
 	type ItemContext,
@@ -32,6 +34,7 @@ export function AuthorFilterSubmenu({
 	onToggleFavorite,
 }: AuthorFilterSubmenuProps) {
 	const [search, setSearch] = useState("");
+	const level = Math.min(useSurface() + 1, 8);
 
 	const favoritesSet = new Set(favoriteProviders);
 	const selectedSet = new Set(selectedMakers);
@@ -66,7 +69,10 @@ export function AuthorFilterSubmenu({
 					<div className="flex h-full flex-col">
 						<div className="p-2">
 							<Combobox.Input
-								className="h-8 w-full rounded-sm border border-border bg-surface-tertiary px-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
+								className={cn(
+									"h-8 w-full rounded-sm border border-border px-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
+									surfaceBg(level)
+								)}
 								placeholder="Search authors"
 							/>
 						</div>

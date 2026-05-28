@@ -15,6 +15,13 @@ import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 type GeneralSettings = NonNullable<Parameters<typeof helpers.computeDisplayFlags>[1]>;
 type TranslateFn = ReturnType<typeof useTranslations>;
 
+// Contained boundary casts. The runtime values are returned unchanged — only
+// the static type is asserted so partial fixtures / stub callables satisfy the
+// real signatures the helpers expect.
+const asSettings = (s: Partial<GeneralSettings>) => s as unknown as GeneralSettings;
+const asTranslate = (fn: (key: string, vars?: Record<string, unknown>) => string) =>
+	fn as unknown as TranslateFn;
+
 describe("GeneralSettingsPanel", () => {
 	test("renders without crashing", () => {
 		const { container } = render(
@@ -26,8 +33,9 @@ describe("GeneralSettingsPanel", () => {
 	});
 });
 
-const tStub = ((key: string, vars?: Record<string, unknown>) =>
-	vars ? `${key}:${JSON.stringify(vars)}` : key) as unknown as TranslateFn;
+const tStub = asTranslate((key: string, vars?: Record<string, unknown>) =>
+	vars ? `${key}:${JSON.stringify(vars)}` : key
+);
 
 describe("GeneralSettingsPanel helpers — buildVisualizerTypeOptions", () => {
 	test("returns 5 entries with stable ids", () => {
@@ -132,9 +140,7 @@ describe("GeneralSettingsPanel helpers — reduction slider mapping", () => {
 
 describe("GeneralSettingsPanel helpers — computeDisplayFlags", () => {
 	test("overlay enabled when shown and not listen mode", () => {
-		const flags = helpers.computeDisplayFlags(false, {
-			showRecordingOverlay: true,
-		} as unknown as GeneralSettings);
+		const flags = helpers.computeDisplayFlags(false, asSettings({ showRecordingOverlay: true }));
 		expect(flags).toEqual({
 			overlayEnabled: true,
 			subDisabled: false,
@@ -145,17 +151,13 @@ describe("GeneralSettingsPanel helpers — computeDisplayFlags", () => {
 		// The combined live-transcription picker is always visible — it IS the
 		// realtime on/off switch now (see realtime-enabled.ts) — so this only
 		// gates the overlay-dependent visualizer controls.
-		const flags = helpers.computeDisplayFlags(true, {
-			showRecordingOverlay: true,
-		} as unknown as GeneralSettings);
+		const flags = helpers.computeDisplayFlags(true, asSettings({ showRecordingOverlay: true }));
 		expect(flags.overlayEnabled).toBe(false);
 		expect(flags.subDisabled).toBe(true);
 	});
 
 	test("overlay hidden disables overlay-dependent sub-controls", () => {
-		const flags = helpers.computeDisplayFlags(false, {
-			showRecordingOverlay: false,
-		} as unknown as GeneralSettings);
+		const flags = helpers.computeDisplayFlags(false, asSettings({ showRecordingOverlay: false }));
 		expect(flags.overlayEnabled).toBe(false);
 		expect(flags.subDisabled).toBe(true);
 	});
@@ -269,9 +271,7 @@ describe("GeneralSettingsPanel helpers — isBarVisualizer", () => {
 	});
 
 	test("false for non-bar types", () => {
-		expect(helpers.isBarVisualizer({ visualizerType: "wave" } as unknown as GeneralSettings)).toBe(
-			false
-		);
+		expect(helpers.isBarVisualizer(asSettings({ visualizerType: "wave" }))).toBe(false);
 	});
 });
 
@@ -298,12 +298,14 @@ describe("GeneralSettingsPanel helpers — readStartupFlags", () => {
 	});
 
 	test("respects explicit values", () => {
-		const flags = helpers.readStartupFlags({
-			autoStart: true,
-			startMinimized: true,
-			minimizeToTray: false,
-			sendCrashReports: false,
-		} as unknown as GeneralSettings);
+		const flags = helpers.readStartupFlags(
+			asSettings({
+				autoStart: true,
+				startMinimized: true,
+				minimizeToTray: false,
+				sendCrashReports: false,
+			})
+		);
 		expect(flags).toEqual({
 			autoStart: true,
 			startMinimized: true,

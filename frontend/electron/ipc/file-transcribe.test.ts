@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as realFs from "node:fs";
+import { asInvalid } from "@test/lib/cast";
 import { electronMock } from "@test/mocks/electron";
 import type { BrowserWindow } from "electron";
 import type { SttClient } from "../ws/stt-client";
@@ -121,31 +122,40 @@ function makeClient(connected = true): MockClient {
 	};
 }
 
-const fakeWin = {
+// Contained boundary cast — MockClient implements only the SttClient surface
+// (on/off/sendControl/isConnected) the file-transcribe paths actually touch.
+const asClient = (c: MockClient) => c as unknown as SttClient;
+
+// Contained boundary cast — the fake window literals implement only the
+// BrowserWindow surface (isDestroyed / webContents.send) this module reads.
+const asWindow = (w: { isDestroyed: () => boolean; webContents: unknown }) =>
+	w as unknown as BrowserWindow;
+
+const fakeWin = asWindow({
 	isDestroyed: () => false,
 	webContents: {
 		isDestroyed: () => false,
 		send: (channel: string, payload: unknown) => winSent.push({ channel, payload }),
 		id: 1,
 	},
-} as unknown as BrowserWindow;
+});
 
 describe("transcribeFile (validation)", () => {
 	test("rejects non-string filePath with ValidationError", async () => {
 		await expect(
-			transcribeFile(makeClient(true) as unknown as SttClient, "" as unknown as string, new Map())
+			transcribeFile(asClient(makeClient(true)), asInvalid<string>(""), new Map())
 		).rejects.toThrow(/File path/);
 	});
 
 	test("rejects unsupported file extensions", async () => {
 		await expect(
-			transcribeFile(makeClient(true) as unknown as SttClient, "C:\\test.exe", new Map())
+			transcribeFile(asClient(makeClient(true)), "C:\\test.exe", new Map())
 		).rejects.toThrow(/Unsupported file format/);
 	});
 
 	test("rejects nonexistent files (NotFoundError)", async () => {
 		await expect(
-			transcribeFile(makeClient(true) as unknown as SttClient, "C:\\does-not-exist.wav", new Map())
+			transcribeFile(asClient(makeClient(true)), "C:\\does-not-exist.wav", new Map())
 		).rejects.toThrow();
 	});
 
@@ -153,7 +163,7 @@ describe("transcribeFile (validation)", () => {
 		fsState.accessShouldSucceed = true;
 		try {
 			await expect(
-				transcribeFile(makeClient(false) as unknown as SttClient, "C:\\fake.wav", new Map())
+				transcribeFile(asClient(makeClient(false)), "C:\\fake.wav", new Map())
 			).rejects.toThrow(/not connected/);
 		} finally {
 			fsState.accessShouldSucceed = false;
@@ -168,7 +178,7 @@ describe("transcribeFile (validation)", () => {
 		storeValueOverrides.set("general.fileTranscriptionFormat", "srt");
 		try {
 			const client = makeClient(true);
-			await transcribeFile(client as unknown as SttClient, "C:\\fake.wav", new Map());
+			await transcribeFile(asClient(client), "C:\\fake.wav", new Map());
 			const call = client.calls[0] as { format?: unknown };
 			expect(call.format).toBe("srt");
 		} finally {
@@ -187,11 +197,7 @@ describe("transcribeFile (validation)", () => {
 		dialogState.filePath = undefined;
 		try {
 			const client = makeClient(true);
-			const result = await transcribeFile(
-				client as unknown as SttClient,
-				"C:\\fake.wav",
-				new Map()
-			);
+			const result = await transcribeFile(asClient(client), "C:\\fake.wav", new Map());
 			expect(result.requestId).toBe("");
 		} finally {
 			fsState.accessShouldSucceed = false;
@@ -209,7 +215,7 @@ describe("transcribeFile (validation)", () => {
 		try {
 			const map = new Map();
 			const client = makeClient(true);
-			await transcribeFile(client as unknown as SttClient, "C:\\fake.wav", map);
+			await transcribeFile(asClient(client), "C:\\fake.wav", map);
 			// The call control payload must have format = "txt" (from the ?? fallback).
 			const call = client.calls[0] as { format?: unknown };
 			expect(call.format).toBe("txt");
@@ -229,7 +235,7 @@ describe("transcribeFile (validation)", () => {
 		try {
 			const map = new Map();
 			const client = makeClient(true);
-			const result = await transcribeFile(client as unknown as SttClient, "C:\\fake.wav", map);
+			const result = await transcribeFile(asClient(client), "C:\\fake.wav", map);
 			// genuine: saveLocation === "auto" → skip dialog → got requestId.
 			// mutant: saveLocation === undefined → resolveOutputPath returns
 			// undefined→null path → outputPath===null → empty requestId.
@@ -253,11 +259,7 @@ describe("transcribeFile (validation)", () => {
 		try {
 			// This tests the auto path — saveLocation will be "txt" (from mock), not "ask"
 			const map = new Map();
-			const result = await transcribeFile(
-				makeClient(true) as unknown as SttClient,
-				"C:\\fake.wav",
-				map
-			);
+			const result = await transcribeFile(asClient(makeClient(true)), "C:\\fake.wav", map);
 			expect(result.requestId).toBeTruthy();
 			expect(map.size).toBe(1);
 		} finally {
@@ -281,7 +283,7 @@ describe("setupFileTranscribeHandlers", () => {
 		winSent.length = 0;
 		fsState.writeShouldThrow = false;
 		client = makeClient(true);
-		const setup = setupFileTranscribeHandlers(fakeWin, client as unknown as SttClient);
+		const setup = setupFileTranscribeHandlers(fakeWin, asClient(client));
 		cleanup = setup.cleanup;
 		pendingRequests = setup.pendingRequests;
 	});
@@ -825,7 +827,7 @@ describe("file-transcribe ValidationError shape (mutation guards)", () => {
 		// A non-string truthy value would short-circuit `!filePath` (truthy → false
 		// → not entering the `||` left side), so the typeof !== "string" branch is
 		// the only thing protecting us. If that's mutated to `false`, no throw.
-		expect(() => helpers.assertValidFilePath(42 as unknown as string)).toThrow(ValidationError);
+		expect(() => helpers.assertValidFilePath(asInvalid<string>(42))).toThrow(ValidationError);
 	});
 
 	test("assertFileAccessible NotFoundError uses resource='File' (kills L246 StringLiteral '' mutant)", async () => {
@@ -858,7 +860,7 @@ describe("transcribeFile ConnectionError shape (mutation guards)", () => {
 		try {
 			await helpers.assertFileAccessible("C:\\fake.wav");
 			try {
-				await transcribeFile(makeClient(false) as unknown as SttClient, "C:\\fake.wav", new Map());
+				await transcribeFile(asClient(makeClient(false)), "C:\\fake.wav", new Map());
 				throw new Error("expected to throw");
 			} catch (err) {
 				expect(err).toBeInstanceOf(ConnectionError);
@@ -877,7 +879,7 @@ describe("transcribeFile sendControl payload (mutation guards)", () => {
 		try {
 			const client = makeClient(true);
 			const map = new Map();
-			const result = await transcribeFile(client as unknown as SttClient, "C:\\song.wav", map);
+			const result = await transcribeFile(asClient(client), "C:\\song.wav", map);
 			expect(client.calls.length).toBe(1);
 			const sent = client.calls[0] as Record<string, unknown>;
 			// L286 "transcribe_file" → "" mutant: command must be exact.
@@ -896,11 +898,7 @@ describe("transcribeFile sendControl payload (mutation guards)", () => {
 		try {
 			const client = makeClient(true);
 			const map = new Map<string, { filePath: string; outputPath?: string }>();
-			const { requestId } = await transcribeFile(
-				client as unknown as SttClient,
-				"C:\\song.wav",
-				map
-			);
+			const { requestId } = await transcribeFile(asClient(client), "C:\\song.wav", map);
 			const entry = map.get(requestId);
 			expect(entry).toBeDefined();
 			// L283 `{ filePath, outputPath }` → `{}` would store an empty record.
@@ -918,11 +916,7 @@ describe("transcribeFile sendControl payload (mutation guards)", () => {
 		try {
 			const client = makeClient(true);
 			const map = new Map<string, { filePath: string; outputPath?: string }>();
-			const { requestId } = await transcribeFile(
-				client as unknown as SttClient,
-				"C:\\song.wav",
-				map
-			);
+			const { requestId } = await transcribeFile(asClient(client), "C:\\song.wav", map);
 			const entry = map.get(requestId);
 			// L324 `outputPath || undefined`:
 			//   - genuine: "C:\\custom-out.txt" (truthy) → passed through
@@ -945,11 +939,7 @@ describe("transcribeFile sendControl payload (mutation guards)", () => {
 		storeValueOverrides.set("general.fileTranscriptionSaveLocation", "ask");
 		try {
 			const client = makeClient(true);
-			const result = await transcribeFile(
-				client as unknown as SttClient,
-				"C:\\song.wav",
-				new Map()
-			);
+			const result = await transcribeFile(asClient(client), "C:\\song.wav", new Map());
 			// L318 requestId: "" → "Stryker was here!" — exact match required.
 			expect(result.requestId).toBe("");
 			// L316 mutated `false` would skip the early return and call enqueue.
@@ -965,16 +955,16 @@ describe("transcribeFile sendControl payload (mutation guards)", () => {
 describe("setupFileTranscribeHandlers — extra mutation guards (standalone)", () => {
 	test("complete event with unknown requestId does NOT crash (kills L214 OptionalChaining mutant)", async () => {
 		const sent: Array<{ channel: string; payload: unknown }> = [];
-		const localFakeWin = {
+		const localFakeWin = asWindow({
 			isDestroyed: () => false,
 			webContents: {
 				isDestroyed: () => false,
 				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
 				id: 1,
 			},
-		} as unknown as BrowserWindow;
+		});
 		const client2 = makeClient(true);
-		const setup = setupFileTranscribeHandlers(localFakeWin, client2 as unknown as SttClient);
+		const setup = setupFileTranscribeHandlers(localFakeWin, asClient(client2));
 		try {
 			await client2.emit("data-event", {
 				type: "file_transcription_complete",
@@ -995,14 +985,14 @@ describe("setupFileTranscribeHandlers — extra mutation guards (standalone)", (
 		// would not call the handler — the existing tests would break, but this
 		// is an explicit assertion that a 'data-event' listener was added.
 		const observer = makeClient(true);
-		const localFakeWin = {
+		const localFakeWin = asWindow({
 			isDestroyed: () => false,
 			webContents: {
 				isDestroyed: () => false,
 				send: () => undefined,
 				id: 1,
 			},
-		} as unknown as BrowserWindow;
+		});
 		const eventNames: string[] = [];
 		const proxy = {
 			...observer,
@@ -1011,7 +1001,7 @@ describe("setupFileTranscribeHandlers — extra mutation guards (standalone)", (
 				observer.on(event, cb);
 			},
 		};
-		const setup = setupFileTranscribeHandlers(localFakeWin, proxy as unknown as SttClient);
+		const setup = setupFileTranscribeHandlers(localFakeWin, asClient(proxy));
 		try {
 			expect(eventNames).toContain("data-event");
 		} finally {
@@ -1021,18 +1011,18 @@ describe("setupFileTranscribeHandlers — extra mutation guards (standalone)", (
 
 	test("registers 'file:transcribe' IPC handler — invoking actually transcribes (kills L394 StringLiteral '' mutant)", async () => {
 		const sent: Array<{ channel: string; payload: unknown }> = [];
-		const localFakeWin = {
+		const localFakeWin = asWindow({
 			isDestroyed: () => false,
 			webContents: {
 				isDestroyed: () => false,
 				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
 				id: 1,
 			},
-		} as unknown as BrowserWindow;
+		});
 		const client2 = makeClient(true);
 		handlers.clear();
 		fsState.accessShouldSucceed = true;
-		const setup = setupFileTranscribeHandlers(localFakeWin, client2 as unknown as SttClient);
+		const setup = setupFileTranscribeHandlers(localFakeWin, asClient(client2));
 		try {
 			// Direct registration assertion
 			expect(handlers.has("file:transcribe")).toBe(true);
@@ -1055,17 +1045,17 @@ describe("setupFileTranscribeHandlers — extra mutation guards (standalone)", (
 
 	test("write failure produces a FileSystemError-shaped error in the error event message (kills L99 template literal mutant)", async () => {
 		const sent: Array<{ channel: string; payload: unknown }> = [];
-		const localFakeWin = {
+		const localFakeWin = asWindow({
 			isDestroyed: () => false,
 			webContents: {
 				isDestroyed: () => false,
 				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
 				id: 1,
 			},
-		} as unknown as BrowserWindow;
+		});
 		const client2 = makeClient(true);
 		fsState.writeShouldThrow = true;
-		const setup = setupFileTranscribeHandlers(localFakeWin, client2 as unknown as SttClient);
+		const setup = setupFileTranscribeHandlers(localFakeWin, asClient(client2));
 		try {
 			setup.pendingRequests.set("req-shape", { filePath: "C:\\fake.wav" });
 			await client2.emit("data-event", {
@@ -1088,16 +1078,16 @@ describe("setupFileTranscribeHandlers — extra mutation guards (standalone)", (
 
 	test("cleanup removes the 'data-event' listener (kills L449 client.off StringLiteral mutant)", async () => {
 		const sent: Array<{ channel: string; payload: unknown }> = [];
-		const localFakeWin = {
+		const localFakeWin = asWindow({
 			isDestroyed: () => false,
 			webContents: {
 				isDestroyed: () => false,
 				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
 				id: 1,
 			},
-		} as unknown as BrowserWindow;
+		});
 		const client2 = makeClient(true);
-		const setup = setupFileTranscribeHandlers(localFakeWin, client2 as unknown as SttClient);
+		const setup = setupFileTranscribeHandlers(localFakeWin, asClient(client2));
 		// Confirm listener is active first
 		await client2.emit("data-event", {
 			type: "file_transcription_progress",
@@ -1119,16 +1109,16 @@ describe("setupFileTranscribeHandlers — extra mutation guards (standalone)", (
 
 	test("unknown data-event type is ignored (kills L381 OptionalChaining-related no-op behavior)", async () => {
 		const sent: Array<{ channel: string; payload: unknown }> = [];
-		const localFakeWin = {
+		const localFakeWin = asWindow({
 			isDestroyed: () => false,
 			webContents: {
 				isDestroyed: () => false,
 				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
 				id: 1,
 			},
-		} as unknown as BrowserWindow;
+		});
 		const client2 = makeClient(true);
-		const setup = setupFileTranscribeHandlers(localFakeWin, client2 as unknown as SttClient);
+		const setup = setupFileTranscribeHandlers(localFakeWin, asClient(client2));
 		try {
 			await client2.emit("data-event", { type: "totally_unknown_type_zz" });
 			expect(sent.length).toBe(0);

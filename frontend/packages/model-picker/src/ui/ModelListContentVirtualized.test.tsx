@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { BookOpen02Icon } from "@hugeicons/core-free-icons";
+import { asInvalid } from "@test/lib/cast";
 import { render, renderHook } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import {
@@ -80,7 +81,7 @@ describe("hasModelEndpoints", () => {
 	});
 
 	test("false when endpoints missing", () => {
-		expect(helpers.hasModelEndpoints(makeModel({ endpoints: undefined as unknown as never }))).toBe(
+		expect(helpers.hasModelEndpoints(makeModel({ endpoints: asInvalid<never>(undefined) }))).toBe(
 			false
 		);
 	});
@@ -176,7 +177,7 @@ describe("computeModelEndpoints / getCachedUniqueEndpoints", () => {
 	});
 
 	test("getCachedUniqueEndpoints with missing endpoints returns []", () => {
-		const m = makeModel({ endpoints: undefined as unknown as never });
+		const m = makeModel({ endpoints: asInvalid<never>(undefined) });
 		expect(helpers.getCachedUniqueEndpoints(m)).toEqual([]);
 	});
 });
@@ -1113,7 +1114,7 @@ describe("InlineModelMeta", () => {
 	const { InlineModelMeta } = helpers;
 
 	test("returns null when no context, pricing, or endpoint", () => {
-		const m = makeModel({ context_length: null as unknown as never, endpoints: [] });
+		const m = makeModel({ context_length: asInvalid<never>(null), endpoints: [] });
 		const { container } = render(
 			<TooltipProvider.Provider>
 				<InlineModelMeta

@@ -9,13 +9,11 @@
 import { IPC } from "@/shared/api/ipc-channels";
 import type { PaginatedHistory } from "../model/transcription-history";
 
-interface ElectronApiLike {
-	invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-}
-
-function getApi(): ElectronApiLike | null {
-	const w = window as unknown as { electronAPI?: ElectronApiLike };
-	return w.electronAPI ?? null;
+function getApi(): Window["electronAPI"] | null {
+	// `window.electronAPI` is injected by the preload bridge and typed globally
+	// in src/electron.d.ts. It's absent in non-Electron contexts (tests / plain
+	// browser), so guard for that even though the ambient type marks it present.
+	return window.electronAPI ?? null;
 }
 
 export async function listHistoryPage(options: {

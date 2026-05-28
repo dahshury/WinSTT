@@ -40,16 +40,16 @@ function isSoundPath(p: unknown): boolean {
 	return SOUND_PATH_MARKERS.some((ext) => lower.endsWith(ext));
 }
 let readFileImpl: (p: string) => Buffer = (_p) => Buffer.from("fake-wav-bytes");
+// Contained boundary cast — our wrapper stands in for fs.readFileSync.
+const asReadFileSync = (
+	fn: (p: string, ...rest: unknown[]) => unknown
+): typeof realFs.readFileSync => fn as unknown as typeof realFs.readFileSync;
 // Wrap readFileSync once so the same function is exposed both as a named
 // export and on the `default` export. sound.ts uses `import fs from "node:fs"`
 // (default), so `fs.readFileSync` must resolve to our wrapped impl too.
-const wrappedReadFileSync = ((p: string, ...rest: unknown[]) =>
-	isSoundPath(p)
-		? readFileImpl(p)
-		: (realReadFileSync as (...a: unknown[]) => unknown)(
-				p,
-				...rest
-			)) as unknown as typeof realFs.readFileSync;
+const wrappedReadFileSync = asReadFileSync((p: string, ...rest: unknown[]) =>
+	isSoundPath(p) ? readFileImpl(p) : (realReadFileSync as (...a: unknown[]) => unknown)(p, ...rest)
+);
 mock.module("node:fs", () => ({
 	...realFsSnapshot,
 	default: { ...realFsSnapshot, readFileSync: wrappedReadFileSync },

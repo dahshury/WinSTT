@@ -12,19 +12,18 @@ import {
 	useHistoryViewStore,
 } from "@/entities/transcription-history";
 import { IPC } from "@/shared/api/ipc-channels";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
-
-interface ElectronApiLike {
-	on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
-}
 
 function subscribeBroadcasts(callbacks: {
 	onAdded: (entry: HistoryEntry) => void;
 	onDeleted: (id: number) => void;
 	onToggled: (id: number, saved: boolean) => void;
 }): () => void {
-	const w = window as unknown as { electronAPI?: ElectronApiLike };
-	const api = w.electronAPI;
+	// `window.electronAPI` is typed globally (src/electron.d.ts) and injected by
+	// the preload bridge; guard for non-Electron contexts (tests) at runtime.
+	const api = window.electronAPI;
 	if (!api) {
 		return () => undefined;
 	}
@@ -65,6 +64,7 @@ export function HistoryPage() {
 
 	const [playingId, setPlayingId] = useState<number | null>(null);
 	const [audioUrl, setAudioUrl] = useState<string | null>(null);
+	const entryLevel = Math.min(useSurface() + 1, 8);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -137,7 +137,10 @@ export function HistoryPage() {
 			<ul className="flex flex-1 flex-col gap-2 overflow-y-auto">
 				{entries.map((entry) => (
 					<li
-						className="flex flex-col gap-1 rounded-md border border-border bg-surface-elevated p-2"
+						className={cn(
+							"flex flex-col gap-1 rounded-md border border-border p-2",
+							surfaceBg(entryLevel)
+						)}
 						key={entry.id}
 					>
 						<div className="flex items-center justify-between text-xs">

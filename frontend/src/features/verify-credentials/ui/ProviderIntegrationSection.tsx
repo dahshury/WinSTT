@@ -8,6 +8,8 @@ import { useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcInvoke } from "@/shared/api/ipc-client";
 import type { CloudSttErrorCode, CloudSttProvider } from "@/shared/api/models";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -62,6 +64,7 @@ export function ProviderIntegrationSection({
 	const status = useCredentialStatus(provider);
 	const tc = useTranslations("common");
 	const t = useTranslations("integrations");
+	const chipLevel = Math.min(useSurface() + 1, 8);
 
 	const [dialogOpen, setDialogOpen] = useState(false);
 	// The persisted key is the single source of truth — every keystroke
@@ -180,7 +183,7 @@ export function ProviderIntegrationSection({
 	};
 
 	const hasLocalKey = localKey.trim().length > 0;
-	const pill = renderStatusPill({ apiKey: localKey, status, t });
+	const pill = renderStatusPill({ apiKey: localKey, chipLevel, status, t });
 	const apiKeyUrl = getApiKeyUrl(provider);
 
 	return (
@@ -216,7 +219,10 @@ export function ProviderIntegrationSection({
 					{hasLocalKey && (
 						<div className="flex items-center justify-end gap-2">
 							<button
-								className="rounded border border-border bg-surface-tertiary px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated"
+								className={cn(
+									"rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
+									surfaceBg(chipLevel)
+								)}
 								onClick={requestRemoveApiKey}
 								type="button"
 							>
@@ -241,16 +247,23 @@ export function ProviderIntegrationSection({
 
 function renderStatusPill({
 	apiKey,
+	chipLevel,
 	status,
 	t,
 }: {
 	apiKey: string;
+	chipLevel: number;
 	status: { lastError?: string | undefined; status: string };
 	t: ReturnType<typeof useTranslations>;
 }) {
 	if (status.status === "verifying") {
 		return (
-			<span className="inline-flex items-center gap-1 rounded-sm bg-surface-tertiary px-1.5 py-0.5 text-2xs text-foreground-muted">
+			<span
+				className={cn(
+					"inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-2xs text-foreground-muted",
+					surfaceBg(chipLevel)
+				)}
+			>
 				<Spinner className="size-2.5 border" />
 				{t("verifying")}
 			</span>

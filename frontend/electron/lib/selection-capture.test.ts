@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { electronMock } from "../../test/mocks/electron";
 
 let clipboardText = "";
@@ -13,7 +14,7 @@ mock.module("electron", () => {
 				throw new Error("read boom");
 			}
 			if (clipboardReadReturnsNullish) {
-				return undefined as unknown as string;
+				return asInvalid<string>(undefined);
 			}
 			return clipboardText;
 		},

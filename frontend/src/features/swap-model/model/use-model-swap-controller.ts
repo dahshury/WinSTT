@@ -384,15 +384,39 @@ function applySwapByKind(args: IssueSwapArgs, quantizationChanging: boolean): vo
 	handlers[args.kind]();
 }
 
+/** Whether to fire the in-place ``reload_*_model`` for a hot swap.
+ *  Skips ONLY a pure same-model quant change — that reload is driven by the
+ *  ``set_parameter("onnx_quantization")`` push instead. See the call site
+ *  for the full rationale + regression history. */
+function shouldReloadForHotSwap(quantizationChanging: boolean, modelChanging: boolean): boolean {
+	return modelChanging || !quantizationChanging;
+}
+
 function maybeHotReload(
 	kind: "main" | "realtime",
 	value: string,
-	quantizationChanging: boolean
+	quantizationChanging: boolean,
+	modelChanging: boolean
 ): void {
-	// model.onnxQuantization is a STARTUP_ONLY key — touching it triggers a
-	// full server restart that boots with the new quantization (and the new
-	// model field). Skip the hot-swap call to avoid racing the restart.
-	const reloads = quantizationChanging ? [] : [() => sttReloadModel(kind, value)];
+	// Decide whether to fire the in-place model reload (``reload_main_model``
+	// / ``reload_realtime_model``), which loads ``value`` at the server's
+	// CURRENT onnx_quantization config.
+	//
+	// - Model changed → ALWAYS reload, even if the quant is also changing.
+	//   ``onnxQuantization`` is no longer a STARTUP_ONLY key (it's hot-applied
+	//   via ``set_parameter("onnx_quantization")`` from sync-actions.ts), so
+	//   the old "skip the reload, a restart will load the new model" assumption
+	//   is dead — there is no restart. Skipping the reload on a cross-model
+	//   pick left the OLD model loaded (only the quant set_parameter fired,
+	//   which reloads whatever model is current) → the user's new model never
+	//   loaded and the swap chip spun forever.
+	// - Only the quant changed (same model) → skip the reload here; the
+	//   ``set_parameter("onnx_quantization")`` push already triggers a reload
+	//   of the current model at the new precision. Firing reload_main_model
+	//   too would just be a redundant superseding swap.
+	const reloads = shouldReloadForHotSwap(quantizationChanging, modelChanging)
+		? [() => sttReloadModel(kind, value)]
+		: [];
 	reloads.forEach(invokeReload);
 }
 
@@ -402,16 +426,30 @@ function invokeReload(fn: () => void): void {
 
 function runIssueSwap(args: IssueSwapArgs): void {
 	const quantizationChanging = isQuantizationChanging(args.quantization, args.currentQuantization);
+	const modelChanging = args.value !== args.previous;
 	applySwapByKind(args, quantizationChanging);
-	maybeHotReload(args.kind, args.value, quantizationChanging);
+	maybeHotReload(args.kind, args.value, quantizationChanging, modelChanging);
 }
 
 function needsDownloadPrompt(
 	state: ModelState | undefined,
 	targetQuant: OnnxQuantization
-): state is ModelState {
+): boolean {
+	// Unknown state → fail SAFE to "prompt for download". ``state`` is
+	// ``undefined`` when the model-state map hasn't loaded yet (e.g. the
+	// startup ``list_models_with_state`` IPC timed out, which the logs show
+	// happening on a slow server-ready). The old ``Boolean(state) && …``
+	// guard failed OPEN: with no state it returned false and the caller
+	// issued a silent swap that assumed the weights were already on disk —
+	// so clicking a not-downloaded quant badge kicked off a swap (spinner
+	// on) instead of a download, and nothing ever loaded. We can't prove
+	// the quant is cached without state, and the badge is rendering its
+	// not-cached style anyway, so prompting is the correct, honest default.
+	if (state === undefined) {
+		return true;
+	}
 	const targetCache = resolveTargetCache(state, targetQuant);
-	return Boolean(state) && targetCache?.state !== "cached";
+	return targetCache?.state !== "cached";
 }
 
 function resolveTargetCache(
@@ -709,6 +747,7 @@ export const __testables = {
 	runHandleRealtimeChange,
 	runIssueSwap,
 	runProceedWithSelection,
+	shouldReloadForHotSwap,
 	surfaceFitWarning,
 	toIssueSwapInvoker,
 	toPresentList,

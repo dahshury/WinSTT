@@ -27,7 +27,7 @@ const CACHE_PILL_CONFIG: Record<CacheState, CachePillConfig> = {
 	not_cached: {
 		icon: CloudDownloadIcon,
 		label: () => "Not downloaded",
-		className: "bg-surface-secondary text-foreground-muted border-border",
+		className: "bg-surface-4 text-foreground-muted border-border",
 	},
 };
 

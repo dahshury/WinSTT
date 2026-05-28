@@ -2,6 +2,8 @@ import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
 import { onServerRestartRequired } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { useRestartNotice } from "../model/restart-notice-store";
 
@@ -22,6 +24,7 @@ export function RestartRequiredToast() {
 	const current = useRestartNotice((s) => s.current);
 	const show = useRestartNotice((s) => s.show);
 	const clear = useRestartNotice((s) => s.clear);
+	const level = Math.min(useSurface() + 3, 8);
 
 	useEffect(
 		() => onServerRestartRequired(({ setting, kind }) => show(setting, kind ?? "unmanaged")),
@@ -43,7 +46,10 @@ export function RestartRequiredToast() {
 	return (
 		<output
 			aria-live="polite"
-			className="fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw] rounded-md border border-warning/40 bg-surface-secondary p-3 shadow-lg"
+			className={cn(
+				"fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw] rounded-md border border-warning/40 p-3 shadow-lg",
+				surfaceBg(level)
+			)}
 		>
 			<div className="flex items-start gap-2">
 				<HugeiconsIcon

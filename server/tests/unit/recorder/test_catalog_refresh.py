@@ -177,3 +177,31 @@ class TestFetchLanguageOverlay:
 
     def test_empty_input_yields_empty_overlay(self) -> None:
         assert catalog_refresh.fetch_language_overlay([]) == {}
+
+    def test_shared_reference_repo_fetched_once(
+        self, monkeypatch: pytest.MonkeyPatch, fake_resolver: dict[str, str]
+    ) -> None:
+        # Every Whisper variant routes through openai/whisper-tiny. The
+        # overlay build must hit HF once for that repo, not once per entry.
+        calls: list[str] = []
+
+        class CountingApi:
+            def model_info(self, repo_id: str) -> SimpleNamespace:
+                calls.append(repo_id)
+                return SimpleNamespace(card_data=SimpleNamespace(language=["en", "ar"]))
+
+        fake_hub = MagicMock()
+        fake_hub.HfApi = CountingApi
+        monkeypatch.setitem(__import__("sys").modules, "huggingface_hub", fake_hub)
+        models = [
+            _info("tiny", family="whisper", onnx="onnx-community/whisper-tiny"),
+            _info("base", family="whisper", onnx="onnx-community/whisper-base"),
+            _info("small", family="whisper", onnx="onnx-community/whisper-small"),
+        ]
+        overlay = catalog_refresh.fetch_language_overlay(models)
+        assert calls == ["openai/whisper-tiny"]
+        assert overlay == {
+            "tiny": {"languages": ["ar", "en"]},
+            "base": {"languages": ["ar", "en"]},
+            "small": {"languages": ["ar", "en"]},
+        }

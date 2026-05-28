@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { act, renderHook } from "@testing-library/react";
 import { useRef } from "react";
 import { useVisualizerStore } from "../model/visualizer-store";
@@ -106,7 +107,7 @@ describe("useAuraAnimator", () => {
 		const { result } = renderHook(() => {
 			const ref = useRef<Uniforms>(createUniforms());
 			// Cast to AgentState — the switch's `default` branch handles unmapped values.
-			useAuraAnimator("unknown" as unknown as AgentState, ref);
+			useAuraAnimator(asInvalid<AgentState>("unknown"), ref);
 			return ref;
 		});
 		expect(getUniformValue(result.current, "uSpeed")).toBe(0);
@@ -116,7 +117,7 @@ describe("useAuraAnimator", () => {
 		// Empty uniforms object — `uniformsRef.current?.uSpeed` is undefined,
 		// the guarded write is skipped, and no error is raised.
 		const { result } = renderHook(() => {
-			const ref = useRef<Uniforms>({} as unknown as Uniforms);
+			const ref = useRef<Uniforms>(asInvalid<Uniforms>({}));
 			useAuraAnimator("speaking", ref);
 			return ref;
 		});

@@ -21,8 +21,14 @@ describe("AudioDisplay", () => {
 	});
 });
 
-const tStub = ((key: string, vars?: Record<string, unknown>) =>
-	vars ? `${key}:${JSON.stringify(vars)}` : key) as unknown as TranslateFn;
+// Contains the single boundary cast from the callable stub to the real
+// use-intl translate type — the function passed in is returned unchanged.
+type StubTranslateFn = (key: string, vars?: Record<string, unknown>) => string;
+const asTranslateFn = (fn: StubTranslateFn) => fn as unknown as TranslateFn;
+
+const tStub = asTranslateFn((key: string, vars?: Record<string, unknown>) =>
+	vars ? `${key}:${JSON.stringify(vars)}` : key
+);
 
 describe("AudioDisplay helpers — getExtension", () => {
 	const cases: [string, string][] = [

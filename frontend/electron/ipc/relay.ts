@@ -190,7 +190,8 @@ interface HistoryCapture {
 		text: string,
 		originalText?: string,
 		llmRan?: boolean,
-		llmModel?: string
+		llmModel?: string,
+		wavPath?: string
 	): TranscriptionHistoryEntry | null;
 	notifyStarted(): void;
 	notifyStopped(): void;
@@ -332,13 +333,14 @@ function finalizeDictationFullSentence(
 	originalForHistory: string,
 	mode: unknown,
 	safeSend: SafeSend,
-	history?: HistoryCapture
+	history?: HistoryCapture,
+	wavPath?: string
 ): void {
 	breadcrumb("recording", "transcription completed", { text_length: processed.length }, "info");
 	// Stryker disable next-line StringLiteral: dbg() message is informational only
 	dbg("relay", `fullSentence: text=${JSON.stringify(processed)} mode=${mode}`);
 	safeSend(IPC.STT_FULL_SENTENCE, { text: processed });
-	history?.capture(processed, originalForHistory, isLlmConfigured(), dictationLlmModel());
+	history?.capture(processed, originalForHistory, isLlmConfigured(), dictationLlmModel(), wavPath);
 	pasteIfDictating(mode, processed);
 }
 
@@ -437,10 +439,11 @@ function commitDictationLlmResult(
 	rawText: string,
 	mode: unknown,
 	safeSend: SafeSend,
-	history?: HistoryCapture
+	history?: HistoryCapture,
+	wavPath?: string
 ): void {
 	const { processed, originalForHistory } = resolveProcessedTexts(attempt, rawText);
-	finalizeDictationFullSentence(processed, originalForHistory, mode, safeSend, history);
+	finalizeDictationFullSentence(processed, originalForHistory, mode, safeSend, history, wavPath);
 }
 
 type DictationCommit = (
@@ -448,7 +451,8 @@ type DictationCommit = (
 	rawText: string,
 	mode: unknown,
 	safeSend: SafeSend,
-	history: HistoryCapture | undefined
+	history: HistoryCapture | undefined,
+	wavPath: string | undefined
 ) => void;
 
 const noopDictationCommit: DictationCommit = () => {
@@ -471,7 +475,8 @@ async function runDictationLlmAndCommit(
 	mode: unknown,
 	safeSend: SafeSend,
 	history?: HistoryCapture,
-	contextCapture?: ContextCapture
+	contextCapture?: ContextCapture,
+	wavPath?: string
 ): Promise<void> {
 	const context = await resolveLlmContext(contextCapture);
 	// When dictation LLM is on, fold the user's dictionary + snippets into its
@@ -490,7 +495,7 @@ async function runDictationLlmAndCommit(
 	// effect lands.
 	const aborted = abortFullSentenceIfCancelled(contextCapture);
 	const key = String(aborted) as "true" | "false";
-	POST_LLM_COMMIT_DISPATCH[key](attempt, rawText, mode, safeSend, history);
+	POST_LLM_COMMIT_DISPATCH[key](attempt, rawText, mode, safeSend, history, wavPath);
 }
 
 type FullSentenceContinuation = (
@@ -498,7 +503,8 @@ type FullSentenceContinuation = (
 	mode: unknown,
 	safeSend: SafeSend,
 	history: HistoryCapture | undefined,
-	contextCapture: ContextCapture | undefined
+	contextCapture: ContextCapture | undefined,
+	wavPath: string | undefined
 ) => Promise<void>;
 
 const noopFullSentenceContinuation: FullSentenceContinuation = async () => {
@@ -524,9 +530,13 @@ async function handleFullSentence(
 	const rawText = extractEventText(event);
 	const mode = getStoreValue("general.recordingMode");
 	maybePersistSqliteRow(event, rawText, mode);
+	// The server attaches an absolute WAV path here when save_wav is on (the
+	// renderer enables it by default); thread it to the legacy history capture
+	// so the settings-tab entry gets an audioFilePath → play button.
+	const wavPath = typeof event.wav_path === "string" ? event.wav_path : undefined;
 	const handled = handlePreLlmFullSentenceBranch(rawText, mode, safeSend, contextCapture);
 	const key = String(handled) as "true" | "false";
-	await POST_PRE_LLM_DISPATCH[key](rawText, mode, safeSend, history, contextCapture);
+	await POST_PRE_LLM_DISPATCH[key](rawText, mode, safeSend, history, contextCapture, wavPath);
 }
 
 /**
@@ -1098,9 +1108,17 @@ function enqueueIfRouted(
 	return true;
 }
 
+// Data-event types too high-frequency to log on every arrival. `audio_level`
+// fires ~once per 20ms of audio; `model_download_progress` fires once per HTTP
+// chunk (~55/sec) — a single whisper-tiny download wrote ~13k lines to
+// debug.log, which is 5 MB-rotated, so a couple of downloads evict every other
+// diagnostic. These still dispatch/broadcast normally below; only the verbose
+// arrival log is suppressed.
+const HIGH_FREQUENCY_DATA_EVENTS = new Set(["audio_level", "model_download_progress"]);
+
 function logDataEventArrival(type: string): void {
-	// Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: gate around dbgVerbose only — observable behavior unchanged
-	if (type !== "audio_level") {
+	// Stryker disable next-line ConditionalExpression,BlockStatement: gate around dbgVerbose only — observable behavior unchanged
+	if (!HIGH_FREQUENCY_DATA_EVENTS.has(type)) {
 		// Stryker disable next-line StringLiteral: dbgVerbose() message is informational only
 		dbgVerbose("relay", `data-event: ${type}`);
 	}
@@ -1663,13 +1681,13 @@ export function setupRelay(
 		notifyStopped: () => {
 			lastRecordingStopMs = Date.now();
 		},
-		capture: (text, originalText, llmRan, llmModel) => {
+		capture: (text, originalText, llmRan, llmModel, wavPath) => {
 			const duration = computeRecordingDurationMs(
 				lastRecordingStartMs,
 				lastRecordingStopMs,
 				Date.now()
 			);
-			const entry = historyStore.record(text, duration, originalText, llmRan, llmModel);
+			const entry = historyStore.record(text, duration, originalText, llmRan, llmModel, wavPath);
 			broadcastHistoryEntry(entry);
 			lastRecordingStartMs = 0;
 			lastRecordingStopMs = 0;

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
 import {
 	authHeadersFor,
 	classifyHttpStatus,
@@ -7,6 +7,11 @@ import {
 	probeUrlFor,
 	verifyCredential,
 } from "./credentials";
+
+// Contained boundary cast: a Bun mock fn stands in for the real global `fetch`.
+// The runtime value is returned unchanged — only the static type is widened.
+const asFetch = <T extends (...args: never[]) => unknown>(m: Mock<T>) =>
+	m as unknown as typeof fetch;
 
 describe("isVerifyPayload", () => {
 	test("accepts openai with a string apiKey", () => {
@@ -105,7 +110,7 @@ describe("verifyCredential", () => {
 
 	test("empty apiKey short-circuits to auth error (no network call)", async () => {
 		const fetchMock = mock(() => Promise.reject(new Error("should not fire")));
-		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		globalThis.fetch = asFetch(fetchMock);
 		const result = await verifyCredential("openai", "");
 		expect(result).toEqual({ ok: false, code: "auth", message: "API key is empty" });
 		expect(fetchMock).toHaveBeenCalledTimes(0);
@@ -113,29 +118,31 @@ describe("verifyCredential", () => {
 
 	test("trims whitespace before deciding empty", async () => {
 		const fetchMock = mock(() => Promise.reject(new Error("should not fire")));
-		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		globalThis.fetch = asFetch(fetchMock);
 		const result = await verifyCredential("openai", "   ");
 		expect(result.ok).toBe(false);
 		expect(fetchMock).toHaveBeenCalledTimes(0);
 	});
 
 	test("200 response → ok", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(JSON.stringify({ data: [] }), {
-					status: 200,
-					headers: { "content-type": "application/json" },
-				})
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(JSON.stringify({ data: [] }), {
+						status: 200,
+						headers: { "content-type": "application/json" },
+					})
+				)
 			)
-		) as unknown as typeof fetch;
+		);
 		const result = await verifyCredential("openai", "sk-good");
 		expect(result).toEqual({ ok: true });
 	});
 
 	test("401 → auth error", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("Invalid Authentication", { status: 401 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response("Invalid Authentication", { status: 401 })))
+		);
 		const result = await verifyCredential("openai", "sk-bad");
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
@@ -144,9 +151,9 @@ describe("verifyCredential", () => {
 	});
 
 	test("429 → rate_limit", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("Too Many", { status: 429 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response("Too Many", { status: 429 })))
+		);
 		const result = await verifyCredential("elevenlabs", "el-key");
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
@@ -155,9 +162,7 @@ describe("verifyCredential", () => {
 	});
 
 	test("fetch rejection → network error", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("ENETUNREACH"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("ENETUNREACH"))));
 		const result = await verifyCredential("openai", "sk-anything");
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
@@ -193,9 +198,7 @@ describe("handleVerifyInvocation", () => {
 	});
 
 	test("delegates to verifyCredential when payload is valid", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("ok", { status: 200 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.resolve(new Response("ok", { status: 200 }))));
 		const result = await handleVerifyInvocation({
 			provider: "openai",
 			apiKey: "sk-good",

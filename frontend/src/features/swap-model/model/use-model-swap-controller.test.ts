@@ -91,18 +91,56 @@ describe("buildMainSwapPatch / buildRealtimeSwapPatch", () => {
 });
 
 describe("maybeHotReload", () => {
-	test("does nothing when quantization is changing (server restart owns the swap)", () => {
-		t.maybeHotReload("main", "m", true);
+	// These exercise the four (quantizationChanging, modelChanging) branches.
+	// ``sttReloadModel`` is a fire-and-forget IPC send; in the hermetic test
+	// env it no-ops, so we only assert the call doesn't throw and rely on
+	// ``shouldReloadForHotSwap`` below for the branch logic.
+	test("same model, quant changing → skips reload (set_parameter owns it)", () => {
+		t.maybeHotReload("main", "m", true, false);
 	});
 
-	test("issues a reload when quantization is unchanged", () => {
-		t.maybeHotReload("realtime", "m", false);
+	test("model changing AND quant changing → still reloads the new model", () => {
+		t.maybeHotReload("main", "new", true, true);
+	});
+
+	test("model changing, quant unchanged → reloads", () => {
+		t.maybeHotReload("main", "new", false, true);
+	});
+
+	test("same model, quant unchanged → reloads (idempotent re-pick)", () => {
+		t.maybeHotReload("realtime", "m", false, false);
+	});
+});
+
+describe("shouldReloadForHotSwap", () => {
+	// Pure predicate behind maybeHotReload's branch — see the regression note
+	// in the implementation. The only case that skips the model reload is a
+	// pure same-model quant change (the onnx_quantization set_parameter push
+	// triggers that reload instead).
+	test("skips ONLY when quant changes and model is unchanged", () => {
+		expect(t.shouldReloadForHotSwap(true, false)).toBe(false);
+	});
+
+	test("reloads when the model changes even if quant also changes", () => {
+		expect(t.shouldReloadForHotSwap(true, true)).toBe(true);
+	});
+
+	test("reloads when only the model changes", () => {
+		expect(t.shouldReloadForHotSwap(false, true)).toBe(true);
+	});
+
+	test("reloads on an idempotent same-model re-pick (nothing changing)", () => {
+		expect(t.shouldReloadForHotSwap(false, false)).toBe(true);
 	});
 });
 
 describe("needsDownloadPrompt", () => {
-	test("false when state is undefined", () => {
-		expect(t.needsDownloadPrompt(undefined, "int8")).toBe(false);
+	test("true when state is undefined (fail-safe: prompt download)", () => {
+		// Regression: previously returned false, which made the caller issue a
+		// silent swap for a model whose cache state was unknown (e.g. the
+		// startup list_models_with_state IPC timed out). A not-downloaded quant
+		// badge then spun the swap chip instead of downloading.
+		expect(t.needsDownloadPrompt(undefined, "int8")).toBe(true);
 	});
 
 	test("false when cache state is cached", () => {

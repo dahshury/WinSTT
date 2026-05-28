@@ -38,17 +38,22 @@ function makeWindow(opts: { destroyed: boolean } = { destroyed: false }): MockBr
 	};
 }
 
+// MockBrowserWindow implements only the BrowserWindow surface createSafeSender
+// reads (isDestroyed / webContents.send). The single boundary cast lives here
+// instead of being repeated at every call site — the runtime object is unchanged.
+const asWindow = (w: MockBrowserWindow) => w as unknown as Parameters<typeof createSafeSender>[0];
+
 describe("createSafeSender", () => {
 	test("forwards channel and args to webContents.send when window is alive", () => {
 		const win = makeWindow();
-		const send = createSafeSender(win as unknown as Parameters<typeof createSafeSender>[0]);
+		const send = createSafeSender(asWindow(win));
 		send("ch", 1, "two", { a: 3 });
 		expect(win.webContents.send).toHaveBeenCalledWith("ch", 1, "two", { a: 3 });
 	});
 
 	test("does not invoke send when window is destroyed", () => {
 		const win = makeWindow({ destroyed: true });
-		const send = createSafeSender(win as unknown as Parameters<typeof createSafeSender>[0]);
+		const send = createSafeSender(asWindow(win));
 		send("ch", 1);
 		expect(win.webContents.send).not.toHaveBeenCalled();
 	});
@@ -64,7 +69,7 @@ describe("createSafeSender", () => {
 			},
 			webContents: { send: mock(() => undefined) },
 		};
-		const send = createSafeSender(win as unknown as Parameters<typeof createSafeSender>[0]);
+		const send = createSafeSender(asWindow(win));
 		send("a");
 		send("b");
 		send("c"); // window destroyed → should not send

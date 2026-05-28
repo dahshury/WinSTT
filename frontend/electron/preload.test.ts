@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 
 // ── Capture the API exposed via contextBridge so we can exercise it ───
 let exposed: Record<string, unknown> = {};
@@ -130,7 +131,7 @@ describe("preload (contextBridge surface)", () => {
 	test("secureInvoke rejects disallowed channels without making any IPC call", async () => {
 		await expect(
 			(exposed.secureInvoke as (channel: string, payload?: unknown) => Promise<unknown>)(
-				"not-a-secure-channel" as unknown as never
+				asInvalid<never>("not-a-secure-channel")
 			)
 		).rejects.toThrow(/Blocked secure invoke/);
 	});

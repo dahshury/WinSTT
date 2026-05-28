@@ -57,8 +57,14 @@ class TestRecorderStateMachine:
 
     def test_invalid_transition_raises(self) -> None:
         sm = RecorderStateMachine()
-        with pytest.raises(InvalidStateTransition):
+        with pytest.raises(InvalidStateTransition) as exc_info:
             sm.transition(RecorderState.RECORDING)
+        # Assert the EXACT diagnostic, not just that *some* InvalidStateTransition
+        # fired: the message names both the source and target state and is the
+        # contract surfaced in logs. A bare ``pytest.raises`` lets a corrupted
+        # message slip through — mutation testing (mutmut) flagged exactly this
+        # gap by garbling the f-string and having every test still pass.
+        assert str(exc_info.value) == "Cannot transition from INACTIVE to RECORDING"
 
     def test_invalid_transition_from_recording_to_listening(self) -> None:
         sm = RecorderStateMachine()

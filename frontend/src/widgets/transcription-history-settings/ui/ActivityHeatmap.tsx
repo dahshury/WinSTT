@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
 	buildDefaultCalendarPresets,
 	CalendarHeatmap,
@@ -91,6 +92,11 @@ export function ActivityHeatmap({ entries, onRangeChange, selectedRange }: Activ
 	const [metric, setMetric] = useState<Metric>("transcriptions");
 	const [calendarSystem, setCalendarSystem] = useState<CalendarSystemId>("gregorian");
 	const [month, setMonth] = useState<Date>(() => new Date());
+	// Lift interactive chrome (preset chips, range panel) above the section it
+	// sits in (surfaces system) so it reads as its own surface, not the bg.
+	const level = Math.min(useSurface() + 1, 8);
+	const panelBg = surfaceBg(level);
+	const insetBg = surfaceBg(Math.min(level + 1, 8));
 
 	const dayStats = buildDayStats(entries);
 	const buckets = buildHeatmap(entries);
@@ -232,7 +238,10 @@ export function ActivityHeatmap({ entries, onRangeChange, selectedRange }: Activ
 									"inline-flex h-7 items-center justify-center rounded-md border px-2.5 font-medium text-xs-tight transition-colors",
 									active
 										? "border-teal/60 bg-teal/15 text-foreground shadow-surface-1"
-										: "border-border bg-surface-elevated text-foreground-secondary hover:border-foreground-muted/40 hover:bg-surface-hover hover:text-foreground"
+										: cn(
+												"border-border text-foreground-secondary hover:border-foreground-muted/40 hover:bg-surface-hover hover:text-foreground",
+												panelBg
+											)
 								)}
 								key={preset.label}
 								onClick={() => {
@@ -260,12 +269,20 @@ export function ActivityHeatmap({ entries, onRangeChange, selectedRange }: Activ
 			</div>
 
 			{hasRange && selectedRange?.from && selectedRange.to ? (
-				<div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-surface-elevated px-3 py-2 text-foreground-muted text-xs-tight">
+				<div
+					className={cn(
+						"flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-foreground-muted text-xs-tight",
+						panelBg
+					)}
+				>
 					<span className="font-mono text-foreground-secondary">
 						{`${formatRangeDate(selectedRange.from)} — ${formatRangeDate(selectedRange.to)}`}
 					</span>
 					<button
-						className="rounded-md border border-border bg-surface-tertiary px-2 py-0.5 text-foreground-secondary text-xs-tight transition-colors hover:bg-surface-hover hover:text-foreground"
+						className={cn(
+							"rounded-md border border-border px-2 py-0.5 text-foreground-secondary text-xs-tight transition-colors hover:bg-surface-hover hover:text-foreground",
+							insetBg
+						)}
 						onClick={() => onRangeChange(null)}
 						type="button"
 					>

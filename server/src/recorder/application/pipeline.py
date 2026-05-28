@@ -123,7 +123,12 @@ class RecordingPipeline(Worker):
         sample_rate = max(1, config.audio.sample_rate)
         buffer_size = max(1, config.audio.buffer_size)
         chunk_ms = (buffer_size * 1000.0) / sample_rate
-        if chunk_ms <= 0:
+        # Unreachable today: sample_rate and buffer_size are both clamped to
+        # >= 1 just above, so (buffer_size * 1000.0) / sample_rate is always
+        # strictly positive. Kept as a defensive guard against a future
+        # refactor that drops those clamps — hence excluded from coverage
+        # rather than covered by a test that cannot construct the input.
+        if chunk_ms <= 0:  # pragma: no cover
             return 0
         # math.ceil without importing math — int(x) + (1 if x % 1 else 0)
         ratio = prefill_ms / chunk_ms

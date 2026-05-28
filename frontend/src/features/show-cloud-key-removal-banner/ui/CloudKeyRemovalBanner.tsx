@@ -4,6 +4,8 @@ import { AlertCircleIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import { providerDisplayName } from "@/entities/cloud-stt-provider";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { useCloudKeyRemovalGuard } from "./use-cloud-key-removal-guard";
 
 /**
@@ -17,6 +19,7 @@ import { useCloudKeyRemovalGuard } from "./use-cloud-key-removal-guard";
 export function CloudKeyRemovalBanner() {
 	const notice = useCloudKeyRemovalGuard();
 	const t = useTranslations("integrations");
+	const level = Math.min(useSurface() + 3, 8);
 
 	if (!notice) {
 		return null;
@@ -25,7 +28,10 @@ export function CloudKeyRemovalBanner() {
 	return (
 		<div
 			aria-live="assertive"
-			className="pointer-events-auto fixed top-12 left-1/2 z-toast w-[460px] max-w-[90vw] -translate-x-1/2 rounded-md border border-error/40 bg-surface-secondary p-3 shadow-lg"
+			className={cn(
+				"pointer-events-auto fixed top-12 left-1/2 z-toast w-[460px] max-w-[90vw] -translate-x-1/2 rounded-md border border-error/40 p-3 shadow-lg",
+				surfaceBg(level)
+			)}
 			role="alert"
 		>
 			<div className="flex items-start gap-2">

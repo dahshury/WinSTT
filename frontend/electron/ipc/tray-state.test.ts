@@ -39,6 +39,11 @@ function makeTray(): MockTray {
 	return t;
 }
 
+// MockTray implements only the Electron.Tray surface tray-state.ts touches. The
+// single boundary cast lives here instead of being repeated at every attachTray
+// call site — the runtime object is unchanged.
+const asTray = (t: MockTray) => t as unknown as Electron.Tray;
+
 // Pluggable theme controller — flipped per test before calling the SUT.
 const themeController = {
 	shouldUseDarkColors: true,
@@ -174,7 +179,7 @@ describe("tray state machine", () => {
 
 	test("attaches a tray and renders idle by default (no native menu on Windows)", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		expect(getTrayState()).toBe("idle");
 		expect(tray.imageCount).toBe(1);
 		// Windows/macOS use the custom BrowserWindow-based menu shown by the
@@ -186,13 +191,13 @@ describe("tray state machine", () => {
 	test("Linux gets a native context menu on attach", () => {
 		setPlatform("linux");
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		expect(tray.contextMenus.length).toBe(1);
 	});
 
 	test("setTrayState updates state but does NOT paint a static icon for recording/transcribing (the live indicator owns the icon)", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		const baseImg = tray.imageCount;
 		const baseMenu = tray.contextMenus.length;
 		setTrayState("recording");
@@ -206,7 +211,7 @@ describe("tray state machine", () => {
 
 	test("setTrayState transitioning back to idle DOES paint the idle PNG", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		setTrayState("recording");
 		const beforeIdle = tray.imageCount;
 		setTrayState("idle");
@@ -217,7 +222,7 @@ describe("tray state machine", () => {
 	test("setTrayState rebuilds the native menu on Linux", () => {
 		setPlatform("linux");
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		const baseMenu = tray.contextMenus.length;
 		setTrayState("recording");
 		expect(tray.contextMenus.length).toBe(baseMenu + 1);
@@ -225,7 +230,7 @@ describe("tray state machine", () => {
 
 	test("setTrayState is a no-op when state is unchanged", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		setTrayState("recording");
 		const after = tray.imageCount;
 		setTrayState("recording");
@@ -234,7 +239,7 @@ describe("tray state machine", () => {
 
 	test("onTrayRecordingStart → onTrayTranscriptionStart → onTrayIdle cycle", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		onTrayRecordingStart();
 		expect(getTrayState()).toBe("recording");
 		onTrayTranscriptionStart();
@@ -245,7 +250,7 @@ describe("tray state machine", () => {
 
 	test("native theme 'updated' listener refreshes the icon", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		expect(themeController.listeners.length).toBe(1);
 		const before = tray.imageCount;
 		themeController.shouldUseDarkColors = false;
@@ -258,7 +263,7 @@ describe("tray state machine", () => {
 
 	test("detachTray removes the theme listener and clears the ref", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		detachTray();
 		expect(themeController.listeners.length).toBe(0);
 		const before = tray.imageCount;
@@ -269,7 +274,7 @@ describe("tray state machine", () => {
 
 	test("destroyed tray short-circuits image/menu writes", () => {
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, noopActions());
+		attachTray(asTray(tray), noopActions());
 		const before = tray.imageCount;
 		tray.destroyed = true;
 		setTrayState("recording");
@@ -339,7 +344,7 @@ describe("menu items", () => {
 		let openCount = 0;
 		let settingsCount = 0;
 		const tray = makeTray();
-		attachTray(tray as unknown as Electron.Tray, {
+		attachTray(asTray(tray), {
 			onOpenMainWindow: () => {
 				openCount += 1;
 			},

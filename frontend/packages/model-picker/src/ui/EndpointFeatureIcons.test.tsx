@@ -23,6 +23,11 @@ function renderIt(endpoint: OpenRouterEndpoint) {
 	);
 }
 
+// `getQuantizationLabel` only reads `endpoint.quantization`, so the tests pass a
+// minimal `{ quantization }` stub. This helper holds the single boundary cast to
+// the full endpoint type; the runtime object is returned unchanged.
+const asEndpoint = (stub: { quantization: string | null }) => stub as unknown as OpenRouterEndpoint;
+
 describe("getChipSizeClass", () => {
 	test("showLabel=true, small → px-1 py-0.5", () => {
 		expect(helpers.getChipSizeClass({ flat: false, isSmall: true, shouldShowLabel: true })).toBe(
@@ -126,27 +131,19 @@ describe("appendSupportedParams", () => {
 
 describe("getQuantizationLabel", () => {
 	test("returns undefined when quantization is null", () => {
-		expect(
-			helpers.getQuantizationLabel({ quantization: null } as unknown as OpenRouterEndpoint)
-		).toBeUndefined();
+		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: null }))).toBeUndefined();
 	});
 
 	test("returns undefined for 'unknown' quantization", () => {
-		expect(
-			helpers.getQuantizationLabel({ quantization: "unknown" } as unknown as OpenRouterEndpoint)
-		).toBeUndefined();
+		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: "unknown" }))).toBeUndefined();
 	});
 
 	test("returns label for known quantization", () => {
-		expect(
-			helpers.getQuantizationLabel({ quantization: "fp16" } as unknown as OpenRouterEndpoint)
-		).toBe("FP16");
+		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: "fp16" }))).toBe("FP16");
 	});
 
 	test("returns label case-insensitively", () => {
-		expect(
-			helpers.getQuantizationLabel({ quantization: "INT4" } as unknown as OpenRouterEndpoint)
-		).toBe("INT4");
+		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: "INT4" }))).toBe("INT4");
 	});
 });
 

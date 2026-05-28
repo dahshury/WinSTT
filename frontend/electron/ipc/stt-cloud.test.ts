@@ -58,6 +58,20 @@ const {
 	spreadOptional,
 } = sttCloud;
 
+// A partial fake STT client — covers every mock shape these tests inject
+// (sendControl always; on/off only where the suite registers listeners).
+interface MockSttClient {
+	off?: (...args: never[]) => unknown;
+	on?: (...args: never[]) => unknown;
+	sendControl: (...args: never[]) => unknown;
+}
+
+// Contained boundary cast — the fake client implements only the SttClient
+// surface these handlers touch. The single injection cast lives here instead of
+// being repeated at every call site; the runtime object is unchanged.
+const asSttClient = (c: MockSttClient) =>
+	c as unknown as Parameters<typeof handleTranscribeFailure>[0];
+
 beforeEach(() => {
 	storeStub.values = {};
 });
@@ -537,11 +551,11 @@ describe("maybeNotifyRenderer", () => {
 });
 
 describe("handleTranscribeFailure", () => {
-	const fakeClient = {
+	const fakeClient = asSttClient({
 		sendControl: (_payload: Record<string, unknown>) => undefined,
 		on: () => undefined,
 		off: () => undefined,
-	} as unknown as Parameters<typeof handleTranscribeFailure>[0];
+	});
 
 	const request = {
 		command: "stt_cloud_transcribe_request" as const,
@@ -554,11 +568,11 @@ describe("handleTranscribeFailure", () => {
 
 	test("routes a KEY_MISSING sentinel via the sentinel arm", () => {
 		let payload: Record<string, unknown> | null = null;
-		const client = {
+		const client = asSttClient({
 			sendControl: (p: Record<string, unknown>) => {
 				payload = p;
 			},
-		} as unknown as Parameters<typeof handleTranscribeFailure>[0];
+		});
 		handleTranscribeFailure(client, request, new Error("KEY_MISSING"));
 		expect(payload).not.toBeNull();
 		expect((payload as unknown as { error_code: string }).error_code).toBe("key_missing");
@@ -566,11 +580,11 @@ describe("handleTranscribeFailure", () => {
 
 	test("routes a classified error via the classified arm", () => {
 		let payload: Record<string, unknown> | null = null;
-		const client = {
+		const client = asSttClient({
 			sendControl: (p: Record<string, unknown>) => {
 				payload = p;
 			},
-		} as unknown as Parameters<typeof handleTranscribeFailure>[0];
+		});
 		handleTranscribeFailure(client, request, new TypeError("fetch failed"));
 		expect(payload).not.toBeNull();
 		expect((payload as unknown as { error_code: string }).error_code).toBe("network");
@@ -578,11 +592,11 @@ describe("handleTranscribeFailure", () => {
 
 	test("routes an AUDIO_TOO_LARGE sentinel via the sentinel arm", () => {
 		let payload: Record<string, unknown> | null = null;
-		const client = {
+		const client = asSttClient({
 			sendControl: (p: Record<string, unknown>) => {
 				payload = p;
 			},
-		} as unknown as Parameters<typeof handleTranscribeFailure>[0];
+		});
 		handleTranscribeFailure(client, request, new Error("AUDIO_TOO_LARGE"));
 		expect(payload).not.toBeNull();
 		expect((payload as unknown as { error_code: string }).error_code).toBe("audio_too_large");
@@ -603,11 +617,11 @@ describe("abortAllCloudTranscribes", () => {
 		// Drive one transcribe attempt that throws immediately (no api key) so
 		// the inFlight map is touched, then teardown via abort to ensure the
 		// loop body is exercised even if the entry is already gone.
-		const client = {
+		const client = asSttClient({
 			sendControl: () => undefined,
 			on: () => undefined,
 			off: () => undefined,
-		} as unknown as Parameters<typeof setupCloudStt>[0];
+		});
 		const cleanup = setupCloudStt(client);
 		// cleanup invokes abortAllCloudTranscribes("setupCloudStt teardown")
 		// which in turn drives abortAllInFlight over the (empty) map.
@@ -619,9 +633,9 @@ describe("abortAllCloudTranscribes", () => {
 
 describe("runProtectedTranscribe", () => {
 	test("clears the timer / untracks even when the inner call throws", async () => {
-		const client = {
+		const client = asSttClient({
 			sendControl: () => undefined,
-		} as unknown as Parameters<typeof runProtectedTranscribe>[0];
+		});
 		const request = {
 			command: "stt_cloud_transcribe_request" as const,
 			request_id: "req-protected",

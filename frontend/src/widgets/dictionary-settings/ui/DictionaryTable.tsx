@@ -74,7 +74,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 					{tc("add")}
 				</Button>
 			</Form>
-			<Table containerClassName="rounded border border-border bg-surface-tertiary overflow-hidden">
+			<Table containerClassName="rounded border border-border overflow-hidden">
 				<TableHeader>
 					<TableRow>
 						<TableHead>{t("term")}</TableHead>

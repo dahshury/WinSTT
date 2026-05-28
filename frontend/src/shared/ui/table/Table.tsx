@@ -13,6 +13,7 @@ import {
 import { cn } from "@/shared/lib/cn";
 import { fontWeights } from "@/shared/lib/font-weight";
 import { springs } from "@/shared/lib/springs";
+import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 import { useProximityHover } from "@/shared/lib/use-proximity-hover";
 
 interface TableContextValue {
@@ -28,6 +29,10 @@ export interface TableProps extends ComponentPropsWithoutRef<"table"> {
 }
 
 export function Table({ children, className, containerClassName, ref, ...props }: TableProps) {
+	// Lift the table one step above its substrate so it reads as its own
+	// surface against the section it sits in, and re-provide the level so any
+	// nested control elevates from here (surfaces system — no flat tokens).
+	const level = Math.min(useSurface() + 1, 8);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const { activeIndex, handlers, itemRects, registerItem, measureItems } = useProximityHover(
 		containerRef as RefObject<HTMLElement | null>
@@ -53,48 +58,50 @@ export function Table({ children, className, containerClassName, ref, ...props }
 	const contextValue: TableContextValue = { activeIndex, registerItem };
 
 	return (
-		<TableContext.Provider value={contextValue}>
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: visual hover wrapper; semantic table is rendered inside */}
-			<div
-				className={cn("relative", containerClassName)}
-				onMouseEnter={() => {
-					setSession((prev) => prev + 1);
-					handlers.onMouseEnter();
-				}}
-				onMouseLeave={handlers.onMouseLeave}
-				onMouseMove={handlers.onMouseMove}
-				ref={containerRef}
-				role="presentation"
-			>
-				<AnimatePresence>
-					{activeRect ? (
-						<motion.div
-							animate={{
-								height: activeRect.height,
-								left: activeRect.left,
-								opacity: 1,
-								top: activeRect.top,
-								width: activeRect.width,
-							}}
-							className="pointer-events-none absolute bg-surface-hover"
-							exit={{ opacity: 0, transition: { duration: 0.06 } }}
-							initial={{
-								height: activeRect.height,
-								left: activeRect.left,
-								opacity: 0,
-								top: activeRect.top,
-								width: activeRect.width,
-							}}
-							key={session}
-							transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
-						/>
-					) : null}
-				</AnimatePresence>
-				<table className={cn("w-full border-collapse text-body", className)} ref={ref} {...props}>
-					{children}
-				</table>
-			</div>
-		</TableContext.Provider>
+		<SurfaceProvider value={level}>
+			<TableContext.Provider value={contextValue}>
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: visual hover wrapper; semantic table is rendered inside */}
+				<div
+					className={cn("relative", surfaceBg(level), containerClassName)}
+					onMouseEnter={() => {
+						setSession((prev) => prev + 1);
+						handlers.onMouseEnter();
+					}}
+					onMouseLeave={handlers.onMouseLeave}
+					onMouseMove={handlers.onMouseMove}
+					ref={containerRef}
+					role="presentation"
+				>
+					<AnimatePresence>
+						{activeRect ? (
+							<motion.div
+								animate={{
+									height: activeRect.height,
+									left: activeRect.left,
+									opacity: 1,
+									top: activeRect.top,
+									width: activeRect.width,
+								}}
+								className="pointer-events-none absolute bg-surface-hover"
+								exit={{ opacity: 0, transition: { duration: 0.06 } }}
+								initial={{
+									height: activeRect.height,
+									left: activeRect.left,
+									opacity: 0,
+									top: activeRect.top,
+									width: activeRect.width,
+								}}
+								key={session}
+								transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+							/>
+						) : null}
+					</AnimatePresence>
+					<table className={cn("w-full border-collapse text-body", className)} ref={ref} {...props}>
+						{children}
+					</table>
+				</div>
+			</TableContext.Provider>
+		</SurfaceProvider>
 	);
 }
 

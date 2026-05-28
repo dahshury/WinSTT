@@ -28,9 +28,13 @@ const { _testHandleDataMessage, _testResetContractMismatchCache } = await import
 // the validator's.
 const originalWarn = console.warn;
 
+// Contained boundary cast — the bun mock spy stands in for console.warn.
+const asConsoleWarn = (spy: ReturnType<typeof mock>): typeof console.warn =>
+	spy as unknown as typeof console.warn;
+
 function installWarnSpy(): ReturnType<typeof mock> {
 	const spy = mock(() => undefined);
-	console.warn = spy as unknown as typeof console.warn;
+	console.warn = asConsoleWarn(spy);
 	return spy;
 }
 

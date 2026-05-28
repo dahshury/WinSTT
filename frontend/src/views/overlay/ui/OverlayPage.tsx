@@ -516,7 +516,7 @@ function DynamicIslandPill(args: IslandStateArgs) {
 			    in both the recording state (alongside the timer) and the LLM-
 			    thinking state (which hides the header row entirely). The 8px
 			    top inset matches the island's `pt-1` content padding. */}
-			<div className="pointer-events-auto absolute top-2 right-3 z-10">
+			<div className="pointer-events-auto absolute top-2 right-3 z-raised">
 				<CancelButton size={14} />
 			</div>
 			<DynamicIslandPillContent {...args} />
@@ -730,7 +730,7 @@ export function OverlayPage() {
 							{stickyShow && (
 								<m.div
 									animate="animate"
-									className="absolute -top-1 -right-3 z-10"
+									className="absolute -top-1 -right-3 z-raised"
 									exit="exit"
 									initial="initial"
 									key="cancel-button"

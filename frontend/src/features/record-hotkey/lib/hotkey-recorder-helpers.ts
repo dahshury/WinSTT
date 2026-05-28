@@ -13,7 +13,15 @@ export interface ForbiddenCombo {
 }
 
 export function formatCombo(combo: string): string {
-	return combo.split("+").map(formatKeyName).join(" + ");
+	// Drop empty/whitespace-only segments so a partial or malformed accelerator
+	// ("", "Ctrl+", "Ctrl+ ") renders cleanly ("", "Ctrl") instead of leaking a
+	// dangling " + " or formatting an empty token. ("+" is the delimiter, so it
+	// is never itself a key segment in this scheme.)
+	return combo
+		.split("+")
+		.filter((token) => token.trim().length > 0)
+		.map(formatKeyName)
+		.join(" + ");
 }
 
 /**

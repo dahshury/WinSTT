@@ -1,4 +1,5 @@
 import { AlertDialog } from "@base-ui/react/alert-dialog";
+import type { ReactNode } from "react";
 import { surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { DialogShell } from "@/shared/ui/dialog-shell";
@@ -6,7 +7,9 @@ import { DialogShell } from "@/shared/ui/dialog-shell";
 export interface ConfirmDialogProps {
 	cancelLabel?: string;
 	confirmLabel?: string;
-	description: string;
+	/** Body copy. ReactNode (not just string) so callers can emphasize names
+	 *  inline — e.g. the model-picker delete confirm bolds the model + quant. */
+	description: ReactNode;
 	onConfirm: () => void;
 	onOpenChange: (open: boolean) => void;
 	open: boolean;

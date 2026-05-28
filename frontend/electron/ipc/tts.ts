@@ -19,6 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 import { BrowserWindow, ipcMain } from "electron";
+import { z } from "zod";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { getErrorMessage, ValidationError } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
@@ -44,10 +45,16 @@ interface BinaryChunkPayload {
 	pcm: Buffer;
 }
 
-interface ListVoicesResult {
-	languages: Array<{ code: string; label: string }>;
-	voices: Array<{ id: string; label: string; language: string; gender: string }>;
-}
+// `listTtsVoices()` crosses the WS-RPC trust boundary from the Python server,
+// so its result is validated with Zod (parse at the boundary; the schema is the
+// single source of truth and `ListVoicesResult` is inferred from it).
+const ListVoicesResultSchema = z.object({
+	languages: z.array(z.object({ code: z.string(), label: z.string() })),
+	voices: z.array(
+		z.object({ id: z.string(), label: z.string(), language: z.string(), gender: z.string() })
+	),
+});
+type ListVoicesResult = z.infer<typeof ListVoicesResultSchema>;
 
 interface TtsDownloadEstimate {
 	/** True when nothing needs downloading (everything already on disk). */
@@ -446,13 +453,9 @@ function setupTtsImpl(sttClient: SttClient) {
 			return voiceCatalog;
 		}
 		try {
-			const raw = (await sttClient.listTtsVoices()) as unknown;
-			if (
-				isPlainObject(raw) &&
-				Array.isArray((raw as { voices?: unknown }).voices) &&
-				Array.isArray((raw as { languages?: unknown }).languages)
-			) {
-				voiceCatalog = raw as unknown as ListVoicesResult;
+			const parsed = ListVoicesResultSchema.safeParse(await sttClient.listTtsVoices());
+			if (parsed.success) {
+				voiceCatalog = parsed.data;
 				return voiceCatalog;
 			}
 		} catch (err) {

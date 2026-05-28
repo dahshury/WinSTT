@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { type ContextMenuTemplateItem, convertContextMenuTemplate } from "./context-menu-template";
 
 describe("convertContextMenuTemplate", () => {
@@ -116,12 +117,12 @@ describe("convertContextMenuTemplate", () => {
 		// `label` field (and click handler from `id`) would be present.
 		const converted = convertContextMenuTemplate(
 			[
-				{
+				asInvalid<ContextMenuTemplateItem>({
 					type: "separator",
 					label: "should-be-stripped",
 					id: "should-not-create-click",
 					enabled: true,
-				} as unknown as ContextMenuTemplateItem,
+				}),
 			],
 			() => undefined
 		);

@@ -53,6 +53,31 @@ class _Harness:
         self.bus.publish(TranscriptionCompleted(timestamp=self.clock.get_current_time(), text=text))
 
 
+class TestChunkBytesHelper:
+    def test_returns_chunk_for_audio_chunk_event(self) -> None:
+        # Matching event type → returns the carried PCM bytes (line 100).
+        payload = _chunk_at_amplitude(1234, samples=8)
+        event = AudioChunkRecorded(timestamp=12345.0, chunk=payload)
+        assert VADCalibrator._chunk_bytes(event) == payload
+
+    def test_returns_empty_for_non_chunk_event(self) -> None:
+        # Non-AudioChunkRecorded event → defensive fall-through (line 101).
+        event = RecordingStarted(timestamp=12345.0)
+        assert VADCalibrator._chunk_bytes(event) == b""
+
+
+class TestTranscribedTextHelper:
+    def test_returns_text_for_transcription_event(self) -> None:
+        # Matching event type → returns the carried text (line 125).
+        event = TranscriptionCompleted(timestamp=12345.0, text="hello world")
+        assert VADCalibrator._transcribed_text(event) == "hello world"
+
+    def test_returns_empty_for_non_transcription_event(self) -> None:
+        # Non-TranscriptionCompleted event → defensive fall-through (line 126).
+        event = RecordingStopped(timestamp=12345.0)
+        assert VADCalibrator._transcribed_text(event) == ""
+
+
 class TestTargetFromSNR:
     def test_returns_min_for_invalid_inputs(self) -> None:
         f = VADCalibrator._target_from_snr

@@ -58,8 +58,10 @@ const maybeEllipsisStringArb = fc.oneof(
 // Restored after the suite finishes so coverage-mode runs don't leak the
 // captured fetch reference between files.
 const originalFetch = globalThis.fetch;
+// Contained boundary cast — the stub stands in for the global fetch.
+const asFetch = (fn: () => Promise<Response>): typeof fetch => fn as unknown as typeof fetch;
 beforeAll(() => {
-	globalThis.fetch = (async () => new Response("[]", { status: 200 })) as unknown as typeof fetch;
+	globalThis.fetch = asFetch(async () => new Response("[]", { status: 200 }));
 });
 afterAll(() => {
 	globalThis.fetch = originalFetch;

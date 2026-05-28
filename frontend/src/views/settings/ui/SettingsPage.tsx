@@ -136,7 +136,7 @@ export function SettingsPage() {
 					<div className="flex items-center gap-2 pl-3">
 						<HugeiconsIcon
 							aria-hidden="true"
-							className="text-accent [filter:drop-shadow(0_0_6px_var(--color-accent-glow-strong))]"
+							className="text-foreground-secondary"
 							icon={Wrench01Icon}
 							size={12}
 						/>

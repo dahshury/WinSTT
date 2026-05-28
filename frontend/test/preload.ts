@@ -84,6 +84,42 @@ if (typeof Node !== "undefined") {
 	};
 }
 
+// happy-dom does not implement the HTML spec rule (§4.10.4) that a <label>'s
+// implicit activation behaviour is a NO-OP for clicks targeted at interactive
+// content inside it (buttons, links, form controls — including the labeled
+// control's own wrapper). happy-dom's HTMLLabelElement.dispatchEvent forwards
+// EVERY non-control click to the control, so clicking an interactive child
+// (e.g. a trailing toggle) or the control button itself spuriously RE-fires the
+// control — surfacing as phantom double onChange/onToggle calls that never
+// happen in Chromium. Suppress the forwarding when the click landed on
+// interactive content so label-wrapped controls behave as they do in a real
+// browser. (Clicking non-interactive label content — the text/row — still
+// forwards to the control, the genuinely-correct label behaviour.)
+if (typeof HTMLLabelElement !== "undefined") {
+	const INTERACTIVE_SELECTOR =
+		"a[href],button,input,select,textarea,[role='button'],[role='checkbox'],[role='switch'],[role='radio'],[role='menuitemcheckbox'],[role='menuitemradio'],[contenteditable='true']";
+	const labelProto = HTMLLabelElement.prototype;
+	const forwardingDispatch = labelProto.dispatchEvent;
+	const baseDispatch = Object.getPrototypeOf(labelProto).dispatchEvent as (
+		this: EventTarget,
+		event: Event
+	) => boolean;
+	labelProto.dispatchEvent = function specCompliantLabelDispatch(event: Event): boolean {
+		const target = event.target as Element | null;
+		if (
+			event.type === "click" &&
+			target &&
+			typeof target.closest === "function" &&
+			target.closest(INTERACTIVE_SELECTOR)
+		) {
+			// Interactive target → label activation is a no-op; dispatch via the
+			// base path WITHOUT happy-dom's spurious control-forwarding.
+			return baseDispatch.call(this, event);
+		}
+		return forwardingDispatch.call(this, event);
+	};
+}
+
 // @testing-library/react does not auto-cleanup under bun:test, and importing
 // `cleanup` from @testing-library/react in this preload tears down the
 // happy-dom global document between tests. Strip mounted React roots manually

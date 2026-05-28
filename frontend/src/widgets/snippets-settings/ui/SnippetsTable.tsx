@@ -114,7 +114,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 					{tc("add")}
 				</Button>
 			</Form>
-			<Table containerClassName="rounded border border-border bg-surface-tertiary overflow-hidden">
+			<Table containerClassName="rounded border border-border overflow-hidden">
 				<TableHeader>
 					<TableRow>
 						<TableHead className="w-1/3">{t("trigger")}</TableHead>

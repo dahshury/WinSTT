@@ -106,6 +106,11 @@ function makeWindow(): MockWin {
 	return win;
 }
 
+// MockWin implements only the BrowserWindow surface overlay.ts actually touches.
+// The single unavoidable boundary cast lives in these two helpers instead of
+// being repeated at every injection call site — the runtime object is unchanged.
+const asOverlayWin = (w: MockWin) => w as unknown as Parameters<typeof setOverlayWindow>[0];
+
 beforeEach(() => {
 	for (const k of Object.keys(storeData)) {
 		delete storeData[k];
@@ -134,7 +139,7 @@ describe("overlay handlers", () => {
 
 	test("showOverlay reveals the window at opacity 0 first, then ramps to 1 after a frame", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		showOverlay();
 		// Synchronously: position → opacity 0 → show. We open invisible so
 		// DWM's cached composited surface from the *previous* session can't
@@ -149,7 +154,7 @@ describe("overlay handlers", () => {
 
 	test("showOverlay on an ALREADY-visible window keeps opacity 1 (no fade-out for LLM-thinking re-shows)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		// Make the window already visible BEFORE the showOverlay call —
 		// matches the `maybeRunLlm` re-show path where the pill must stay
 		// continuously visible.
@@ -161,7 +166,7 @@ describe("overlay handlers", () => {
 
 	test("hide that lands inside the opacity-ramp window cancels the pending opacity:1", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		showOverlay();
 		// Mid-ramp: hide. The pending setTimeout that would have flipped
 		// opacity to 1 must be a no-op (defended by both clearPendingTimers
@@ -177,7 +182,7 @@ describe("overlay handlers", () => {
 
 	test("showOverlay centers horizontally using (workWidth - winWidth) / 2 (kills * 2 / + mutants)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		showOverlay();
 		// Confirm the exact x coordinate. Mutating - to + would yield 2720;
 		// mutating / 2 to * 2 would yield 2240.
@@ -186,7 +191,7 @@ describe("overlay handlers", () => {
 
 	test("showOverlay positions y as (workHeight - winHeight - 60) (kills + 60 / + height mutants)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		showOverlay();
 		// 1080 - 120 - 60 = 900. Mutating - 60 to + 60 → 1020;
 		// mutating - winHeight to + winHeight → 1140.
@@ -195,7 +200,7 @@ describe("overlay handlers", () => {
 
 	test("dynamic-island mode docks flush to the primary display's TOP bezel (y = bounds.y)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		// Switch to the new mode for this test only.
 		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
 		showOverlay();
@@ -206,7 +211,7 @@ describe("overlay handlers", () => {
 
 	test("dynamic-island ignores work-area inset (no `- 60` margin like floating-bottom)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
 		showOverlay();
 		// A `+ 60` mutant on the dynamic-island y branch would produce y=60,
@@ -216,7 +221,7 @@ describe("overlay handlers", () => {
 
 	test("overlayMode change repositions a visible pill without a hide/show cycle", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		const dispose = setupOverlayHandlers();
 		showOverlay();
 		// Drain the opacity ramp so subsequent setPosition calls show up
@@ -241,7 +246,7 @@ describe("overlay handlers", () => {
 
 	test("overlayMode change while hidden is a no-op (next showOverlay reads the new mode)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		const dispose = setupOverlayHandlers();
 		// Pill never shown — visible flag stays false.
 		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
@@ -255,7 +260,7 @@ describe("overlay handlers", () => {
 
 	test("showOverlay does NOT show when overlay is disabled in settings", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		(storeData.general as Record<string, unknown>).showRecordingOverlay = false;
 		showOverlay();
 		expect(win.calls).toEqual([]);
@@ -263,7 +268,7 @@ describe("overlay handlers", () => {
 
 	test("showOverlay does NOT show in listen recording mode", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		(storeData.general as Record<string, unknown>).recordingMode = "listen";
 		showOverlay();
 		expect(win.calls).toEqual([]);
@@ -271,7 +276,7 @@ describe("overlay handlers", () => {
 
 	test("hideOverlay applies all three hide mechanisms synchronously", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// Immediate — no debounce. All three mechanisms fire so the pill
 		// can't get stuck visible under DWM compositing edge cases.
@@ -280,7 +285,7 @@ describe("overlay handlers", () => {
 
 	test("applyHide moves window to NEGATIVE offscreen coordinates (kills + sign mutant on -10_000)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// Offscreen coordinates must be negative — a mutant that flips the sign
 		// would move to (10000, 10000) which is within work area on a wide multi-monitor
@@ -293,7 +298,7 @@ describe("overlay handlers", () => {
 
 	test("rapid stop → start sequence: pill ends up visible (show after hide)", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		showOverlay();
 		// opacity:1 now lands AFTER the ramp delay rather than synchronously
@@ -321,7 +326,7 @@ describe("overlay handlers", () => {
 
 	test("disabling the overlay setting hides the window via the change handler", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		setupOverlayHandlers();
 		const handler = storeChangeHandlers.get("general.showRecordingOverlay")?.[0];
 		expect(handler).toBeDefined();
@@ -333,7 +338,7 @@ describe("overlay handlers", () => {
 
 	test("switching to listen recording mode hides the window immediately", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		setupOverlayHandlers();
 		const handler = storeChangeHandlers.get("general.recordingMode")?.[0];
 		expect(handler).toBeDefined();
@@ -343,7 +348,7 @@ describe("overlay handlers", () => {
 
 	test("hideOverlay re-applies hide passes to defeat DWM compositor caching", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		const initialHideCount = win.calls.filter((c) => c === "hide").length;
 		expect(initialHideCount).toBe(1);
@@ -357,7 +362,7 @@ describe("overlay handlers", () => {
 
 	test("a show during the hide-reapply window cancels the pending re-applies", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// Capture hide count immediately after the synchronous first pass.
 		const hideAfterImmediate = win.calls.filter((c) => c === "hide").length;
@@ -376,7 +381,7 @@ describe("overlay handlers", () => {
 
 	test("reconciler re-hides the window if it sneaks visible after hideOverlay", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// Wait until past the static re-applies (400ms) so we know the
 		// reconciler is the one running.
@@ -392,7 +397,7 @@ describe("overlay handlers", () => {
 
 	test("reconciler stops once desired transitions to 'shown' (kills `desired !== \"hidden\"` mutant)", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// Reconciler is now ticking. Switch to shown.
 		showOverlay();
@@ -409,7 +414,7 @@ describe("overlay handlers", () => {
 
 	test("reconciler stops after RECONCILE_MAX_DURATION_MS (~2s) elapses", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// Wait past 2 seconds + reconciler tick interval (~200ms).
 		await new Promise<void>((r) => setTimeout(r, 2300));
@@ -427,7 +432,7 @@ describe("overlay handlers", () => {
 
 	test("reconciler skips applyHide when window is NOT visible (kills `?.isVisible` truthy mutant)", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// At this point window is not visible. Wait through several reconciler ticks.
 		const hidesAfterFirstPass = win.calls.filter((c) => c === "hide").length;
@@ -447,7 +452,7 @@ describe("overlay handlers", () => {
 
 	test("static re-apply skips when desired switched to 'shown' before timer fires (kills L163 desired check)", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// First synchronous hide is in. Show before any timer.
 		showOverlay();
@@ -463,7 +468,7 @@ describe("overlay handlers", () => {
 
 	test("__resetOverlayForTesting__ clears desired state to 'hidden' so subsequent reconciler ticks treat it as hidden", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		showOverlay();
 		// Reset module state.
 		__resetOverlayForTesting__();
@@ -477,7 +482,7 @@ describe("overlay handlers", () => {
 
 	test("setupOverlayHandlers ignores newValue=true on showRecordingOverlay (kills `if (!newValue)` true-branch mutant)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		setupOverlayHandlers();
 		const handler = storeChangeHandlers.get("general.showRecordingOverlay")?.[0];
 		// Firing with truthy value → should NOT hide.
@@ -487,7 +492,7 @@ describe("overlay handlers", () => {
 
 	test('setupOverlayHandlers ignores recordingMode change to non-listen mode (kills `=== "listen"` strict equality mutants)', () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		setupOverlayHandlers();
 		const handler = storeChangeHandlers.get("general.recordingMode")?.[0];
 		// Switching to ptt or toggle should NOT hide (only "listen" hides).
@@ -499,7 +504,7 @@ describe("overlay handlers", () => {
 
 	test("setupOverlayHandlers cleanup also clears pending timers and stops reconciler", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		const dispose = setupOverlayHandlers();
 		hideOverlay();
 		const hidesAfterFirstPass = win.calls.filter((c) => c === "hide").length;
@@ -514,7 +519,7 @@ describe("overlay handlers", () => {
 
 	test("showOverlay is gated by both `enabled` AND `recordingMode` (covers the `||` short-circuit branches in isOverlaySuppressedBySettings)", () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		// Branch A: enabled=false → left of `||` is true, right not evaluated.
 		(storeData.general as Record<string, unknown>).showRecordingOverlay = false;
 		(storeData.general as Record<string, unknown>).recordingMode = "ptt";
@@ -540,7 +545,7 @@ describe("overlay handlers", () => {
 
 		test('overlayPosition="none" suppresses showOverlay even when showRecordingOverlay=true', () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			(storeData.general as Record<string, unknown>).overlayPosition = "none";
 			showOverlay();
 			expect(win.calls).toEqual([]);
@@ -548,7 +553,7 @@ describe("overlay handlers", () => {
 
 		test('overlayPosition="bottom" → pill renders at the bottom-edge work-area Y', () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			(storeData.general as Record<string, unknown>).overlayPosition = "bottom";
 			showOverlay();
 			// Same math as the default floating-bottom layout.
@@ -557,7 +562,7 @@ describe("overlay handlers", () => {
 
 		test('overlayPosition="top" → pill docks at the top bezel (y=0) even with overlayMode=floating-bottom', () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			// `overlayMode` is still floating-bottom (visual layout style), but
 			// the user wants the top edge — `overlayPosition` overrides.
 			(storeData.general as Record<string, unknown>).overlayPosition = "top";
@@ -567,7 +572,7 @@ describe("overlay handlers", () => {
 
 		test("flipping overlayPosition to 'none' while pill is visible hides it (live store-change)", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			const dispose = setupOverlayHandlers();
 			showOverlay();
 			expect(win.isVisible()).toBe(true);
@@ -582,7 +587,7 @@ describe("overlay handlers", () => {
 
 		test("flipping overlayPosition from 'bottom' to 'top' while visible repositions in place (no hide)", async () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			const dispose = setupOverlayHandlers();
 			(storeData.general as Record<string, unknown>).overlayPosition = "bottom";
 			showOverlay();
@@ -611,7 +616,7 @@ describe("overlay handlers", () => {
 
 		test("returns true only when session wants pill AND window registered AND not suppressed", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(true);
 			// Default settings (showRecordingOverlay=true, recordingMode=ptt) → not suppressed.
 			expect(canShowAfterMainBlur()).toBe(true);
@@ -619,7 +624,7 @@ describe("overlay handlers", () => {
 
 		test("returns false when sessionWantsOverlay is false (kills first `&&` short-circuit)", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(false);
 			expect(canShowAfterMainBlur()).toBe(false);
 		});
@@ -632,7 +637,7 @@ describe("overlay handlers", () => {
 
 		test("returns false when suppressed by `showRecordingOverlay=false`", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(true);
 			(storeData.general as Record<string, unknown>).showRecordingOverlay = false;
 			expect(canShowAfterMainBlur()).toBe(false);
@@ -640,7 +645,7 @@ describe("overlay handlers", () => {
 
 		test("returns false when suppressed by `recordingMode=listen`", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(true);
 			(storeData.general as Record<string, unknown>).recordingMode = "listen";
 			expect(canShowAfterMainBlur()).toBe(false);
@@ -670,14 +675,18 @@ describe("overlay handlers", () => {
 			return m;
 		}
 
+		// Contained boundary cast — MockMain implements only the BrowserWindow
+		// surface the main-blur path reads (isDestroyed / isFocused).
+		const asMainWin = (m: MockMain) => m as unknown as Parameters<typeof setMainWindow>[0];
+
 		test("main focused → hides the pill (performHide synchronous pass)", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			// Get the pill on-screen first so the hide call has something to hide.
 			__setSessionWantsOverlayForTesting__(true);
 			win.visible = true;
 			const main = makeMainWindow({ focused: true });
-			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			setMainWindow(asMainWin(main));
 			syncOverlayToMainWindow();
 			// All three hide mechanisms from `applyHide`.
 			expect(win.calls).toContain("opacity:0");
@@ -687,10 +696,10 @@ describe("overlay handlers", () => {
 
 		test("main blurred AND canShowAfterMainBlur=true → shows the pill at the computed position", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(true);
 			const main = makeMainWindow({ focused: false });
-			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			setMainWindow(asMainWin(main));
 			syncOverlayToMainWindow();
 			// Same position math as a normal showOverlay (floating-bottom default).
 			expect(win.calls).toContain("setPosition:560,900");
@@ -699,11 +708,11 @@ describe("overlay handlers", () => {
 
 		test("main blurred AND sessionWantsOverlay=false → no-op (no show, no hide)", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			// Session is OVER — nothing wants the pill.
 			__setSessionWantsOverlayForTesting__(false);
 			const main = makeMainWindow({ focused: false });
-			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			setMainWindow(asMainWin(main));
 			syncOverlayToMainWindow();
 			// Neither branch fires.
 			expect(win.calls).toEqual([]);
@@ -711,23 +720,23 @@ describe("overlay handlers", () => {
 
 		test("main blurred but suppressed by settings → no-op (canShowAfterMainBlur false branch)", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(true);
 			(storeData.general as Record<string, unknown>).showRecordingOverlay = false;
 			const main = makeMainWindow({ focused: false });
-			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			setMainWindow(asMainWin(main));
 			syncOverlayToMainWindow();
 			expect(win.calls).toEqual([]);
 		});
 
 		test("destroyed main window is treated as NOT focused → falls through to show branch", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(true);
 			// Destroyed main — `isMainWindowFocused` returns false because of the
 			// `!mainWindow.isDestroyed()` guard, NOT because isFocused() returns false.
 			const main = makeMainWindow({ focused: true, destroyed: true });
-			setMainWindow(main as unknown as Parameters<typeof setMainWindow>[0]);
+			setMainWindow(asMainWin(main));
 			syncOverlayToMainWindow();
 			// Falls into the "main not focused + canShow" branch → show fires.
 			expect(win.calls).toContain("show");
@@ -735,7 +744,7 @@ describe("overlay handlers", () => {
 
 		test("null main window is treated as NOT focused → show branch (when canShow holds)", () => {
 			const win = makeWindow();
-			setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+			setOverlayWindow(asOverlayWin(win));
 			__setSessionWantsOverlayForTesting__(true);
 			// Main never registered (or cleared via setMainWindow(null)).
 			setMainWindow(null);
@@ -746,7 +755,7 @@ describe("overlay handlers", () => {
 
 	test("reconciler tick re-hides sneak-visible window while still in the hidden + time-budget window (kills both `||` branches of shouldStopReconciler)", async () => {
 		const win = makeWindow();
-		setOverlayWindow(win as unknown as Parameters<typeof setOverlayWindow>[0]);
+		setOverlayWindow(asOverlayWin(win));
 		hideOverlay();
 		// Wait past the static re-applies (50, 150, 400ms) so any later hide
 		// can only come from the reconciler. Window is not visible at this point.

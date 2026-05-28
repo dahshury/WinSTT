@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { electronMock } from "@test/mocks/electron";
 import type { SttClient } from "../ws/stt-client";
 
@@ -117,8 +118,13 @@ function makeClient(connected = true): MockSttClient {
 	return client;
 }
 
+// MockSttClient implements only the SttClient surface these handlers touch.
+// The single boundary cast lives here instead of being repeated at every
+// injection call site — the runtime object is unchanged.
+const asClient = (m: MockSttClient) => m as unknown as SttClient;
+
 const client = makeClient(true);
-setupSttCommandHandlers(client as unknown as SttClient);
+setupSttCommandHandlers(asClient(client));
 
 function fireListener(channel: string, payload?: unknown) {
 	for (const cb of listeners.get(channel) ?? []) {
@@ -201,7 +207,7 @@ describe("setupSttCommandHandlers — disconnected client", () => {
 		// Re-register handlers with the offline client (overwrites previous ipcMain.on listeners)
 		handlers.clear();
 		listeners.clear();
-		setupSttCommandHandlers(offline as unknown as SttClient);
+		setupSttCommandHandlers(asClient(offline));
 		fireListener("stt:set-parameter", { parameter: "model", value: "tiny" });
 		expect(offline.calls).toEqual([]);
 	});
@@ -319,7 +325,7 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleGetAudioDevices returns [] when the STT client is disconnected", async () => {
 		const offline = makeClient(false);
-		const devices = await helpers.handleGetAudioDevices(offline as unknown as SttClient);
+		const devices = await helpers.handleGetAudioDevices(asClient(offline));
 		expect(devices).toEqual([]);
 		expect(offline.calls).toEqual([]);
 	});
@@ -327,7 +333,7 @@ describe("stt-commands pure helpers", () => {
 	test("handleGetAudioDevices proxies to listInputDevices when connected", async () => {
 		const online = makeClient(true);
 		online.listInputDevicesResult = [{ index: 3, name: "USB Mic", isDefault: false }];
-		const devices = await helpers.handleGetAudioDevices(online as unknown as SttClient);
+		const devices = await helpers.handleGetAudioDevices(asClient(online));
 		expect(devices).toEqual([{ index: 3, name: "USB Mic", isDefault: false }]);
 		expect(online.calls).toEqual([{ kind: "listInputDevices", args: [] }]);
 	});
@@ -396,6 +402,33 @@ describe("stt-commands pure helpers", () => {
 		expect(reasons.every((r) => r === null)).toBe(true);
 	});
 
+	test("hot-swap knobs from sync-actions.ts are allowlisted (regression: onnx_quantization)", () => {
+		// These are all pushed via sttSetParameter from
+		// features/update-settings/lib/sync-actions.ts and are present in BOTH
+		// spec/openapi.yaml (AllowedParameter) and the server allowlist. They
+		// were missing here, so every push was rejected client-side — most
+		// visibly onnx_quantization, which made a quant-badge click spin the
+		// swap chip forever (settings updated + beginSwap fired, but the
+		// server never saw the change so it never reloaded).
+		const fakeClient = { isConnected: true };
+		const hotSwapParams = [
+			"initial_prompt",
+			"initial_prompt_realtime",
+			"onnx_quantization",
+			"translate_to_english",
+			"model_unload_timeout_seconds",
+			"webrtc_sensitivity",
+			"silero_deactivity_detection",
+			"always_on_microphone",
+			"lazy_stream_close",
+			"lazy_close_timeout_seconds",
+		];
+		const reasons = hotSwapParams.map((p) =>
+			helpers.validateParameterPayload({ parameter: p }, fakeClient)
+		);
+		expect(reasons.every((r) => r === null)).toBe(true);
+	});
+
 	test("disallowed-method mutation guard: mutating any allowlist string would trip this test", () => {
 		const fakeClient = { isConnected: true };
 		const reasons = [
@@ -412,7 +445,7 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleSetParameter forwards parameter+value when valid (and dbg log fires)", () => {
 		const online = makeClient(true);
-		helpers.handleSetParameter(online as unknown as SttClient, {
+		helpers.handleSetParameter(asClient(online), {
 			parameter: "model",
 			value: "tiny",
 		});
@@ -421,10 +454,10 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleSetParameter does not call setParameter when payload is invalid", () => {
 		const online = makeClient(true);
-		helpers.handleSetParameter(online as unknown as SttClient, {
+		helpers.handleSetParameter(asClient(online), {
 			// Missing/wrong parameter: cast through unknown so TS allows the test of
 			// runtime invalid input.
-			parameter: 42 as unknown as string,
+			parameter: asInvalid<string>(42),
 			value: "x",
 		});
 		expect(online.calls).toEqual([]);
@@ -432,7 +465,7 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleSetParameter does not call setParameter when disallowed", () => {
 		const online = makeClient(true);
-		helpers.handleSetParameter(online as unknown as SttClient, {
+		helpers.handleSetParameter(asClient(online), {
 			parameter: "evil",
 			value: "x",
 		});
@@ -441,7 +474,7 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleSetParameter does not call setParameter when offline", () => {
 		const offline = makeClient(false);
-		helpers.handleSetParameter(offline as unknown as SttClient, {
+		helpers.handleSetParameter(asClient(offline), {
 			parameter: "model",
 			value: "tiny",
 		});
@@ -450,7 +483,7 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleGetParameter forwards parameter and returns value", async () => {
 		const online = makeClient(true);
-		const result = await helpers.handleGetParameter(online as unknown as SttClient, {
+		const result = await helpers.handleGetParameter(asClient(online), {
 			parameter: "model",
 		});
 		expect(result).toBe("value");
@@ -460,8 +493,8 @@ describe("stt-commands pure helpers", () => {
 	test("handleGetParameter rejects invalid payload with exact error message", async () => {
 		const online = makeClient(true);
 		await expect(
-			helpers.handleGetParameter(online as unknown as SttClient, {
-				parameter: 42 as unknown as string,
+			helpers.handleGetParameter(asClient(online), {
+				parameter: asInvalid<string>(42),
 			})
 		).rejects.toThrow("Invalid payload: parameter must be a string");
 	});
@@ -469,20 +502,20 @@ describe("stt-commands pure helpers", () => {
 	test("handleGetParameter rejects disallowed param with exact error message including name", async () => {
 		const online = makeClient(true);
 		await expect(
-			helpers.handleGetParameter(online as unknown as SttClient, { parameter: "evil" })
+			helpers.handleGetParameter(asClient(online), { parameter: "evil" })
 		).rejects.toThrow("Disallowed parameter: evil");
 	});
 
 	test("handleGetParameter rejects when disconnected with exact error message", async () => {
 		const offline = makeClient(false);
 		await expect(
-			helpers.handleGetParameter(offline as unknown as SttClient, { parameter: "model" })
+			helpers.handleGetParameter(asClient(offline), { parameter: "model" })
 		).rejects.toThrow("STT client is not connected");
 	});
 
 	test("handleCallMethod forwards method+args when valid", () => {
 		const online = makeClient(true);
-		helpers.handleCallMethod(online as unknown as SttClient, {
+		helpers.handleCallMethod(asClient(online), {
 			method: "set_microphone",
 			args: [true],
 		});
@@ -494,35 +527,35 @@ describe("stt-commands pure helpers", () => {
 		// log JSON would be different but the underlying call still happens with
 		// args=undefined. This exercises the no-args path.
 		const online = makeClient(true);
-		helpers.handleCallMethod(online as unknown as SttClient, { method: "stop" });
+		helpers.handleCallMethod(asClient(online), { method: "stop" });
 		expect(online.calls).toEqual([{ kind: "call", args: ["stop", undefined] }]);
 	});
 
 	test("handleCallMethod drops disallowed methods silently", () => {
 		const online = makeClient(true);
-		helpers.handleCallMethod(online as unknown as SttClient, { method: "evil" });
+		helpers.handleCallMethod(asClient(online), { method: "evil" });
 		expect(online.calls).toEqual([]);
 	});
 
 	test("handleCallMethod drops calls when disconnected", () => {
 		const offline = makeClient(false);
-		helpers.handleCallMethod(offline as unknown as SttClient, { method: "stop" });
+		helpers.handleCallMethod(asClient(offline), { method: "stop" });
 		expect(offline.calls).toEqual([]);
 	});
 
 	test("handleCallMethod drops invalid payload (method not a string)", () => {
 		const online = makeClient(true);
-		helpers.handleCallMethod(online as unknown as SttClient, {
-			method: 42 as unknown as string,
+		helpers.handleCallMethod(asClient(online), {
+			method: asInvalid<string>(42),
 		});
 		expect(online.calls).toEqual([]);
 	});
 
 	test("handleCallMethod drops bad-args (args not array)", () => {
 		const online = makeClient(true);
-		helpers.handleCallMethod(online as unknown as SttClient, {
+		helpers.handleCallMethod(asClient(online), {
 			method: "set_microphone",
-			args: "nope" as unknown as unknown[],
+			args: asInvalid<unknown[]>("nope"),
 		});
 		expect(online.calls).toEqual([]);
 	});
@@ -532,7 +565,7 @@ describe("stt-commands pure helpers", () => {
 		online.listInputDevices = async () => {
 			throw new Error("server crashed");
 		};
-		const devices = await helpers.handleGetAudioDevices(online as unknown as SttClient);
+		const devices = await helpers.handleGetAudioDevices(asClient(online));
 		expect(devices).toEqual([]);
 	});
 
@@ -623,7 +656,7 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleReloadModel forwards main → reload_main_model with model name", () => {
 		const online = makeClient(true);
-		helpers.handleReloadModel(online as unknown as SttClient, { kind: "main", name: "tiny" });
+		helpers.handleReloadModel(asClient(online), { kind: "main", name: "tiny" });
 		expect(online.calls).toEqual([
 			{ kind: "sendControl", args: [{ command: "reload_main_model", model: "tiny" }] },
 		]);
@@ -631,7 +664,7 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleReloadModel forwards realtime → reload_realtime_model with model name", () => {
 		const online = makeClient(true);
-		helpers.handleReloadModel(online as unknown as SttClient, {
+		helpers.handleReloadModel(asClient(online), {
 			kind: "realtime",
 			name: "base",
 		});
@@ -642,10 +675,10 @@ describe("stt-commands pure helpers", () => {
 
 	test("handleReloadModel drops invalid payloads silently (no sendControl call)", () => {
 		const online = makeClient(true);
-		helpers.handleReloadModel(online as unknown as SttClient, null);
-		helpers.handleReloadModel(online as unknown as SttClient, { kind: "evil", name: "x" });
-		helpers.handleReloadModel(online as unknown as SttClient, { kind: "main", name: "" });
-		helpers.handleReloadModel(online as unknown as SttClient, "string-payload");
+		helpers.handleReloadModel(asClient(online), null);
+		helpers.handleReloadModel(asClient(online), { kind: "evil", name: "x" });
+		helpers.handleReloadModel(asClient(online), { kind: "main", name: "" });
+		helpers.handleReloadModel(asClient(online), "string-payload");
 		expect(online.calls).toEqual([]);
 	});
 
@@ -653,7 +686,7 @@ describe("stt-commands pure helpers", () => {
 		const online = makeClient(true);
 		handlers.clear();
 		listeners.clear();
-		setupSttCommandHandlers(online as unknown as SttClient);
+		setupSttCommandHandlers(asClient(online));
 		fireListener("stt:reload-model", { kind: "realtime", name: "base" });
 		expect(online.calls).toEqual([
 			{ kind: "sendControl", args: [{ command: "reload_realtime_model", model: "base" }] },
@@ -664,7 +697,7 @@ describe("stt-commands pure helpers", () => {
 		const online = makeClient(true);
 		handlers.clear();
 		listeners.clear();
-		setupSttCommandHandlers(online as unknown as SttClient);
+		setupSttCommandHandlers(asClient(online));
 		fireListener("stt:reload-model", { kind: "main", name: "" });
 		fireListener("stt:reload-model", null);
 		expect(online.calls).toEqual([]);
@@ -674,7 +707,7 @@ describe("stt-commands pure helpers", () => {
 		const online = makeClient(true);
 		const payload = [{ name: "tiny", available: true }];
 		online.listModelsWithStateResult = payload;
-		const result = await helpers.handleListModelsWithState(online as unknown as SttClient);
+		const result = await helpers.handleListModelsWithState(asClient(online));
 		expect(result).toEqual(payload);
 		expect(online.calls).toEqual([{ kind: "listModelsWithState", args: [] }]);
 	});
@@ -684,7 +717,7 @@ describe("stt-commands pure helpers", () => {
 		online.listModelsWithState = async () => {
 			throw new Error("server crashed");
 		};
-		const result = await helpers.handleListModelsWithState(online as unknown as SttClient);
+		const result = await helpers.handleListModelsWithState(asClient(online));
 		expect(result).toBeNull();
 	});
 
@@ -693,7 +726,7 @@ describe("stt-commands pure helpers", () => {
 		online.listModelsWithStateResult = { models: [] };
 		handlers.clear();
 		listeners.clear();
-		setupSttCommandHandlers(online as unknown as SttClient);
+		setupSttCommandHandlers(asClient(online));
 		const handler = handlers.get("stt:list-models-with-state");
 		const result = await handler!(undefined);
 		expect(result).toEqual({ models: [] });
@@ -704,7 +737,7 @@ describe("handleGetLiveResources", () => {
 	test("forwards forceRefresh=true when payload sets it", async () => {
 		const online = makeClient(true);
 		online.getLiveResourcesResult = { cpu: 0.5 };
-		const result = await helpers.handleGetLiveResources(online as unknown as SttClient, {
+		const result = await helpers.handleGetLiveResources(asClient(online), {
 			forceRefresh: true,
 		});
 		expect(result).toEqual({ cpu: 0.5 });
@@ -713,15 +746,15 @@ describe("handleGetLiveResources", () => {
 
 	test("defaults forceRefresh to false when payload is missing the field", async () => {
 		const online = makeClient(true);
-		await helpers.handleGetLiveResources(online as unknown as SttClient, {});
+		await helpers.handleGetLiveResources(asClient(online), {});
 		expect(online.calls).toEqual([{ kind: "getLiveResources", args: [false] }]);
 	});
 
 	test("defaults forceRefresh to false when payload is not a record", async () => {
 		const online = makeClient(true);
-		await helpers.handleGetLiveResources(online as unknown as SttClient, null);
-		await helpers.handleGetLiveResources(online as unknown as SttClient, "nope");
-		await helpers.handleGetLiveResources(online as unknown as SttClient, 42);
+		await helpers.handleGetLiveResources(asClient(online), null);
+		await helpers.handleGetLiveResources(asClient(online), "nope");
+		await helpers.handleGetLiveResources(asClient(online), 42);
 		expect(online.calls).toEqual([
 			{ kind: "getLiveResources", args: [false] },
 			{ kind: "getLiveResources", args: [false] },
@@ -734,7 +767,7 @@ describe("handleGetLiveResources", () => {
 		online.getLiveResources = async () => {
 			throw new Error("server crashed");
 		};
-		const result = await helpers.handleGetLiveResources(online as unknown as SttClient, {});
+		const result = await helpers.handleGetLiveResources(asClient(online), {});
 		expect(result).toBeNull();
 	});
 });
@@ -781,17 +814,15 @@ describe("parseAssessDictationFitPayload", () => {
 describe("handleAssessDictationFit", () => {
 	test("returns null when the payload is invalid", async () => {
 		const online = makeClient(true);
-		expect(await helpers.handleAssessDictationFit(online as unknown as SttClient, null)).toBeNull();
-		expect(
-			await helpers.handleAssessDictationFit(online as unknown as SttClient, { modelId: "" })
-		).toBeNull();
+		expect(await helpers.handleAssessDictationFit(asClient(online), null)).toBeNull();
+		expect(await helpers.handleAssessDictationFit(asClient(online), { modelId: "" })).toBeNull();
 		expect(online.calls).toEqual([]);
 	});
 
 	test("forwards modelId + quantization + device when valid", async () => {
 		const online = makeClient(true);
 		online.assessDictationFitResult = { fits: true };
-		const result = await helpers.handleAssessDictationFit(online as unknown as SttClient, {
+		const result = await helpers.handleAssessDictationFit(asClient(online), {
 			modelId: "tiny",
 			quantization: "int8",
 			device: "cuda",
@@ -805,7 +836,7 @@ describe("handleAssessDictationFit", () => {
 		online.assessDictationFit = async () => {
 			throw new Error("server crashed");
 		};
-		const result = await helpers.handleAssessDictationFit(online as unknown as SttClient, {
+		const result = await helpers.handleAssessDictationFit(asClient(online), {
 			modelId: "tiny",
 		});
 		expect(result).toBeNull();
@@ -816,7 +847,7 @@ describe("safeAssessDictationFit (direct)", () => {
 	test("success path: forwards all three fields verbatim and returns the client's result", async () => {
 		const online = makeClient(true);
 		online.assessDictationFitResult = { fits: true, eta: 2.5 };
-		const result = await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+		const result = await helpers.safeAssessDictationFit(asClient(online), {
 			modelId: "base.en",
 			quantization: "fp16",
 			device: "cuda",
@@ -834,7 +865,7 @@ describe("safeAssessDictationFit (direct)", () => {
 		// any fallback of its own.
 		const online = makeClient(true);
 		online.assessDictationFitResult = null;
-		await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+		await helpers.safeAssessDictationFit(asClient(online), {
 			modelId: "tiny",
 			quantization: "",
 			device: null,
@@ -853,7 +884,7 @@ describe("safeAssessDictationFit (direct)", () => {
 			online.assessDictationFit = async () => {
 				throw new Error("server-side OOM");
 			};
-			const result = await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+			const result = await helpers.safeAssessDictationFit(asClient(online), {
 				modelId: "large-v3",
 				quantization: "int8",
 				device: null,
@@ -874,9 +905,9 @@ describe("safeAssessDictationFit (direct)", () => {
 		try {
 			const online = makeClient(true);
 			online.assessDictationFit = async () => {
-				throw "raw-string-error" as unknown as Error;
+				throw asInvalid<Error>("raw-string-error");
 			};
-			const result = await helpers.safeAssessDictationFit(online as unknown as SttClient, {
+			const result = await helpers.safeAssessDictationFit(asClient(online), {
 				modelId: "tiny",
 				quantization: "",
 				device: null,
@@ -891,22 +922,18 @@ describe("safeAssessDictationFit (direct)", () => {
 describe("handleAssessOllamaFit", () => {
 	test("returns null when payload is not a record", async () => {
 		const online = makeClient(true);
-		expect(await helpers.handleAssessOllamaFit(online as unknown as SttClient, null)).toBeNull();
-		expect(await helpers.handleAssessOllamaFit(online as unknown as SttClient, "nope")).toBeNull();
+		expect(await helpers.handleAssessOllamaFit(asClient(online), null)).toBeNull();
+		expect(await helpers.handleAssessOllamaFit(asClient(online), "nope")).toBeNull();
 		expect(online.calls).toEqual([]);
 	});
 
 	test("returns null when sizeBytes is missing or invalid", async () => {
 		const online = makeClient(true);
-		expect(await helpers.handleAssessOllamaFit(online as unknown as SttClient, {})).toBeNull();
+		expect(await helpers.handleAssessOllamaFit(asClient(online), {})).toBeNull();
+		expect(await helpers.handleAssessOllamaFit(asClient(online), { sizeBytes: "nope" })).toBeNull();
+		expect(await helpers.handleAssessOllamaFit(asClient(online), { sizeBytes: -1 })).toBeNull();
 		expect(
-			await helpers.handleAssessOllamaFit(online as unknown as SttClient, { sizeBytes: "nope" })
-		).toBeNull();
-		expect(
-			await helpers.handleAssessOllamaFit(online as unknown as SttClient, { sizeBytes: -1 })
-		).toBeNull();
-		expect(
-			await helpers.handleAssessOllamaFit(online as unknown as SttClient, {
+			await helpers.handleAssessOllamaFit(asClient(online), {
 				sizeBytes: Number.POSITIVE_INFINITY,
 			})
 		).toBeNull();
@@ -916,7 +943,7 @@ describe("handleAssessOllamaFit", () => {
 	test("floors sizeBytes and forwards it when valid", async () => {
 		const online = makeClient(true);
 		online.assessOllamaFitResult = { fits: false };
-		const result = await helpers.handleAssessOllamaFit(online as unknown as SttClient, {
+		const result = await helpers.handleAssessOllamaFit(asClient(online), {
 			sizeBytes: 12_345.9,
 		});
 		expect(result).toEqual({ fits: false });
@@ -925,7 +952,7 @@ describe("handleAssessOllamaFit", () => {
 
 	test("accepts a zero size (locks in the >= 0 guard, not > 0)", async () => {
 		const online = makeClient(true);
-		await helpers.handleAssessOllamaFit(online as unknown as SttClient, { sizeBytes: 0 });
+		await helpers.handleAssessOllamaFit(asClient(online), { sizeBytes: 0 });
 		expect(online.calls).toEqual([{ kind: "assessOllamaFit", args: [0] }]);
 	});
 
@@ -934,7 +961,7 @@ describe("handleAssessOllamaFit", () => {
 		online.assessOllamaFit = async () => {
 			throw new Error("server crashed");
 		};
-		const result = await helpers.handleAssessOllamaFit(online as unknown as SttClient, {
+		const result = await helpers.handleAssessOllamaFit(asClient(online), {
 			sizeBytes: 100,
 		});
 		expect(result).toBeNull();
@@ -952,7 +979,7 @@ describe("handleAbortOperation", () => {
 	test("marks the session aborted, cancels Ollama, calls server abort+clear, and hides overlay", () => {
 		resetAbortMocks();
 		const online = makeClient(true);
-		helpers.handleAbortOperation(online as unknown as SttClient);
+		helpers.handleAbortOperation(asClient(online));
 		expect(abortStateLog).toEqual(["mark"]);
 		expect(ollamaAbortLog).toEqual(["user-cancelled-from-hotkey"]);
 		expect(online.calls).toEqual([
@@ -965,7 +992,7 @@ describe("handleAbortOperation", () => {
 	test("skips the server abort/clear calls when the client is disconnected", () => {
 		resetAbortMocks();
 		const offline = makeClient(false);
-		helpers.handleAbortOperation(offline as unknown as SttClient);
+		helpers.handleAbortOperation(asClient(offline));
 		expect(abortStateLog).toEqual(["mark"]);
 		expect(ollamaAbortLog).toEqual(["user-cancelled-from-hotkey"]);
 		expect(offline.calls).toEqual([]);
@@ -976,7 +1003,7 @@ describe("handleAbortOperation", () => {
 		resetAbortMocks();
 		overlayState.throwOnHide = true;
 		const online = makeClient(true);
-		expect(() => helpers.handleAbortOperation(online as unknown as SttClient)).not.toThrow();
+		expect(() => helpers.handleAbortOperation(asClient(online))).not.toThrow();
 		expect(abortStateLog).toEqual(["mark"]);
 	});
 });

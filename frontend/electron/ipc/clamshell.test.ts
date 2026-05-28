@@ -399,11 +399,19 @@ describe("setupClamshellHandlers", () => {
 		// setupClamshellHandlers clears it.
 	});
 
+	// Contained boundary cast — the fake client implements only the SttClient
+	// surface setupClamshellHandlers reads.
+	const asClamshellClient = (c: {
+		isConnected: boolean;
+		setParameter: () => void;
+	}): Parameters<typeof setupClamshellHandlers>[0] =>
+		c as unknown as Parameters<typeof setupClamshellHandlers>[0];
+
 	test("setup returns a callable dispose that does not throw on repeat invocations", () => {
-		const fakeClient = {
+		const fakeClient = asClamshellClient({
 			isConnected: false,
 			setParameter: () => undefined,
-		} as unknown as Parameters<typeof setupClamshellHandlers>[0];
+		});
 		const dispose = setupClamshellHandlers(fakeClient);
 		expect(typeof dispose).toBe("function");
 		expect(() => dispose()).not.toThrow();

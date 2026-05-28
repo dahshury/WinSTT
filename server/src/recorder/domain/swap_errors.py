@@ -101,6 +101,9 @@ _TYPE_NAME_RULES: tuple[tuple[frozenset[str], SwapErrorCategory, str], ...] = (
     (
         frozenset(
             {
+                # requests / urllib3 / urllib names (still reachable —
+                # ``requests`` stays in the venv for openwakeword + the TTS
+                # asset downloader's urllib path).
                 "ConnectionError",
                 "ConnectTimeout",
                 "ReadTimeout",
@@ -111,6 +114,21 @@ _TYPE_NAME_RULES: tuple[tuple[frozenset[str], SwapErrorCategory, str], ...] = (
                 "HfHubHTTPError",
                 "URLError",
                 "HTTPError",
+                # httpx names — huggingface_hub 1.x switched its HTTP backend
+                # from ``requests`` to ``httpx``, so a transport-level failure
+                # mid-download now surfaces with these class names instead of
+                # the requests ones above. ``HfHubHTTPError`` still wraps most
+                # status errors, but a raw connection drop / DNS failure / read
+                # timeout escapes as the bare httpx type — bucket them NETWORK.
+                "ConnectError",
+                "TimeoutException",
+                "WriteTimeout",
+                "PoolTimeout",
+                "NetworkError",
+                "ReadError",
+                "WriteError",
+                "ProxyError",
+                "RemoteProtocolError",
             }
         ),
         SwapErrorCategory.NETWORK,
@@ -154,7 +172,7 @@ def _classify_by_message(name: str, text: str, exc: BaseException) -> SwapErrorI
 
 def _classify_by_type_name(name: str, exc: BaseException) -> SwapErrorInfo | None:
     """First-pass matcher: exception class name is enough to bucket
-    most huggingface_hub / onnxruntime / requests failures."""
+    most huggingface_hub / onnxruntime / httpx / requests failures."""
     for names, category, message in _TYPE_NAME_RULES:
         if name in names:
             return SwapErrorInfo(category, message, f"{name}: {exc}")

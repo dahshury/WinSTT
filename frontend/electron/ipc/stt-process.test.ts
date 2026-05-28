@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { asInvalid } from "@test/lib/cast";
 import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
 import { storeMock } from "@test/mocks/store";
@@ -120,6 +121,11 @@ const ipcHandlers = new Map<string, (event: unknown, ...args: unknown[]) => unkn
 const sttProcess = await import("../ipc/stt-process");
 
 // ─── Test helpers ─────────────────────────────────────────────────────
+
+// Electron injects `resourcesPath` onto `process` at runtime; the Node typings
+// don't carry it. This helper contains the boundary cast that exposes the field
+// for read/write in packaged-mode tests — the runtime object is unchanged.
+const asProcWithResources = (p: NodeJS.Process) => p as unknown as { resourcesPath: string };
 
 function getElectronApp(): { isPackaged: boolean } {
 	const electron = require("electron") as { app: { isPackaged: boolean } };
@@ -486,14 +492,17 @@ describe("killSttProcess", () => {
 // ─── Spawn argv builder + isPackaged branches ─────────────────────────
 
 describe("spawnServer argv builder", () => {
-	test("dev mode: command is 'uv' with args ['run', 'stt-server', ...]", () => {
+	test("dev mode: command is 'uv' with args ['run', '--no-sync', 'stt-server', ...]", () => {
 		setIsPackaged(false);
 		process.env.STT_SERVER_DIR = "/dev/server";
 		sttProcess.tryAutoSpawnServer();
 		const call = spawnLog[0];
 		expect(call?.command).toBe("uv");
 		expect(call?.args[0]).toBe("run");
-		expect(call?.args[1]).toBe("stt-server");
+		// `--no-sync` skips uv's per-spawn venv sync so it never races a
+		// leftover server for the `.venv/Scripts/stt-server.exe` launcher.
+		expect(call?.args[1]).toBe("--no-sync");
+		expect(call?.args[2]).toBe("stt-server");
 		expect(call?.options.cwd).toBe("/dev/server");
 		expect(call?.options.shell).toBe(false);
 	});
@@ -504,8 +513,8 @@ describe("spawnServer argv builder", () => {
 		}
 		delete process.env.STT_SERVER_DIR;
 		setIsPackaged(true);
-		const original = (process as unknown as { resourcesPath: string }).resourcesPath;
-		(process as unknown as { resourcesPath: string }).resourcesPath = "C:/mock/resources";
+		const original = asProcWithResources(process).resourcesPath;
+		asProcWithResources(process).resourcesPath = "C:/mock/resources";
 		try {
 			sttProcess.tryAutoSpawnServer();
 			const call = spawnLog[0];
@@ -520,7 +529,7 @@ describe("spawnServer argv builder", () => {
 			// the args would carry that sentinel.
 			expect(call?.args).not.toContain("Stryker was here");
 		} finally {
-			(process as unknown as { resourcesPath: string }).resourcesPath = original;
+			asProcWithResources(process).resourcesPath = original;
 			setIsPackaged(false);
 		}
 	});
@@ -540,15 +549,15 @@ describe("spawnServer argv builder", () => {
 		}
 		delete process.env.STT_SERVER_DIR;
 		setIsPackaged(true);
-		const original = (process as unknown as { resourcesPath: string }).resourcesPath;
-		(process as unknown as { resourcesPath: string }).resourcesPath = "/opt/app/resources";
+		const original = asProcWithResources(process).resourcesPath;
+		asProcWithResources(process).resourcesPath = "/opt/app/resources";
 		try {
 			sttProcess.tryAutoSpawnServer();
 			const call = spawnLog[0];
 			expect(call?.command.endsWith("stt-server")).toBe(true);
 			expect(call?.command.endsWith(".exe")).toBe(false);
 		} finally {
-			(process as unknown as { resourcesPath: string }).resourcesPath = original;
+			asProcWithResources(process).resourcesPath = original;
 			setIsPackaged(false);
 		}
 	});
@@ -1151,8 +1160,8 @@ describe("packaged mode branches", () => {
 		}
 		delete process.env.STT_SERVER_DIR;
 		setIsPackaged(true);
-		const original = (process as unknown as { resourcesPath: string }).resourcesPath;
-		(process as unknown as { resourcesPath: string }).resourcesPath = "/opt/app/resources";
+		const original = asProcWithResources(process).resourcesPath;
+		asProcWithResources(process).resourcesPath = "/opt/app/resources";
 		try {
 			sttProcess.tryAutoSpawnServer();
 			const call = spawnLog[0];
@@ -1165,7 +1174,7 @@ describe("packaged mode branches", () => {
 			expect(call?.args).not.toContain("Stryker was here");
 			expect(call?.args[0]).not.toBe("run");
 		} finally {
-			(process as unknown as { resourcesPath: string }).resourcesPath = original;
+			asProcWithResources(process).resourcesPath = original;
 			setIsPackaged(false);
 		}
 	});
@@ -1173,8 +1182,8 @@ describe("packaged mode branches", () => {
 	test("packaged mode appends 'stt-server' subdir to resourcesPath (L107 StringLiteral)", () => {
 		delete process.env.STT_SERVER_DIR;
 		setIsPackaged(true);
-		const original = (process as unknown as { resourcesPath: string }).resourcesPath;
-		(process as unknown as { resourcesPath: string }).resourcesPath = "/opt/RES";
+		const original = asProcWithResources(process).resourcesPath;
+		asProcWithResources(process).resourcesPath = "/opt/RES";
 		try {
 			sttProcess.tryAutoSpawnServer();
 			const cwd = (spawnLog[0]?.options.cwd ?? "").replace(/\\/g, "/");
@@ -1183,7 +1192,7 @@ describe("packaged mode branches", () => {
 			expect(cwd).toContain("stt-server");
 			expect(cwd).toContain("/opt/RES");
 		} finally {
-			(process as unknown as { resourcesPath: string }).resourcesPath = original;
+			asProcWithResources(process).resourcesPath = original;
 			setIsPackaged(false);
 		}
 	});
@@ -1680,7 +1689,7 @@ describe("formatAutoSpawnError branch coverage", () => {
 		// Force spawn to throw a string. The factory throws (caught by SUT),
 		// then formatAutoSpawnError takes the String(err) path.
 		spawnQueue.push(() => {
-			throw "raw-string-error" as unknown as Error;
+			throw asInvalid<Error>("raw-string-error");
 		});
 		dbgCalls.length = 0;
 		sttProcess.tryAutoSpawnServer();
@@ -1773,7 +1782,7 @@ describe("readActiveWakeWord", () => {
 		// when truthy. This is rare in practice but guards the String(word)
 		// coercion against StringLiteral / ConditionalExpression mutants.
 		sharedStoreMock.store.set("general.recordingMode", "wakeword");
-		sharedStoreMock.store.set("general.wakeWord", 42 as unknown as string);
+		sharedStoreMock.store.set("general.wakeWord", asInvalid<string>(42));
 		try {
 			expect(processHelpers.readActiveWakeWord()).toBe("42");
 		} finally {

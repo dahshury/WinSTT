@@ -12,6 +12,13 @@ import {
 	useSyncSettings,
 } from "./use-sync-settings";
 
+// Contained boundary cast. The inline snapshots below are deliberately partial /
+// divergent AppSettings stand-ins shaped only enough to drive the diff helpers;
+// this wrapper holds the single unavoidable cast to the real AppSettings type.
+// Generic over the actual literal so each snapshot's shape is still type-checked
+// at the call site, and it returns the exact same object it was given.
+const asSettings = <T extends object>(s: T): AppSettings => s as unknown as AppSettings;
+
 const originalApi = window.electronAPI;
 const initialSettings = useSettingsStore.getState().settings;
 const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
@@ -70,29 +77,29 @@ describe("sectionsDiffer", () => {
 
 describe("collectChangedSections", () => {
 	test("returns only sections whose JSON serialization differs", () => {
-		const current = {
+		const current = asSettings({
 			a: { v: 1 },
 			b: { v: 2 },
 			c: { v: 3 },
-		} as unknown as AppSettings;
-		const lastSaved = {
+		});
+		const lastSaved = asSettings({
 			a: { v: 1 },
 			b: { v: 99 },
 			c: { v: 3 },
-		} as unknown as AppSettings;
+		});
 		const patch = collectChangedSections(current, lastSaved);
 		expect(Object.keys(patch)).toEqual(["b"]);
 		expect((patch as { b: { v: number } }).b.v).toBe(2);
 	});
 
 	test("returns an empty patch when nothing changed", () => {
-		const same = { a: { v: 1 } } as unknown as AppSettings;
+		const same = asSettings({ a: { v: 1 } });
 		expect(Object.keys(collectChangedSections(same, same))).toEqual([]);
 	});
 
 	test("flags every key when every section changed", () => {
-		const current = { a: { v: 1 }, b: { v: 2 } } as unknown as AppSettings;
-		const lastSaved = { a: { v: 9 }, b: { v: 9 } } as unknown as AppSettings;
+		const current = asSettings({ a: { v: 1 }, b: { v: 2 } });
+		const lastSaved = asSettings({ a: { v: 9 }, b: { v: 9 } });
 		expect(Object.keys(collectChangedSections(current, lastSaved)).sort()).toEqual(["a", "b"]);
 	});
 });
@@ -122,8 +129,8 @@ describe("performScheduledSave", () => {
 		// Build two clearly-divergent settings snapshots so diffAgainstLastSaved
 		// returns a non-empty patch regardless of how the default schema is
 		// shaped at the moment.
-		const baseline = { audio: { sileroSensitivity: 0.4 } } as unknown as AppSettings;
-		const changed = { audio: { sileroSensitivity: 0.7 } } as unknown as AppSettings;
+		const baseline = asSettings({ audio: { sileroSensitivity: 0.4 } });
+		const changed = asSettings({ audio: { sileroSensitivity: 0.7 } });
 		const latestSettingsRef = { current: changed };
 		const lastSavedRef: { current: AppSettings | undefined } = { current: baseline };
 		performScheduledSave(latestSettingsRef, lastSavedRef);

@@ -4,6 +4,11 @@ import { electronMock } from "../../test/mocks/electron";
 const electronBase = electronMock();
 mock.module("electron", () => electronBase);
 
+// The mock `app` lacks the writable `isPackaged` flag the SUT reads; this helper
+// holds the single boundary cast so each test can flip it without repeating the
+// cast. The runtime object is returned unchanged.
+const asPackagedApp = (app: typeof electronBase.app) => app as unknown as { isPackaged: boolean };
+
 // Toggle for the mocked `existsSync` so tests can simulate "binary missing".
 const fsStub: { exists: boolean } = { exists: true };
 
@@ -59,7 +64,7 @@ function setPlatform(value: NodeJS.Platform): void {
 }
 
 beforeAll(() => {
-	(electronBase.app as unknown as { isPackaged: boolean }).isPackaged = false;
+	asPackagedApp(electronBase.app).isPackaged = false;
 	setPlatform("win32");
 });
 
@@ -72,7 +77,7 @@ function reset(): void {
 	execStub.stdout = "";
 	execStub.emitError = undefined;
 	fsStub.exists = true;
-	(electronBase.app as unknown as { isPackaged: boolean }).isPackaged = false;
+	asPackagedApp(electronBase.app).isPackaged = false;
 	setPlatform("win32");
 	__resetContextReaderForTesting__();
 }
@@ -160,7 +165,7 @@ describe("readWindowContext", () => {
 
 	test("uses the packaged resources path when app.isPackaged is true", async () => {
 		reset();
-		(electronBase.app as unknown as { isPackaged: boolean }).isPackaged = true;
+		asPackagedApp(electronBase.app).isPackaged = true;
 		(process as unknown as { resourcesPath: string }).resourcesPath = "C:\\fake\\res";
 		__resetContextReaderForTesting__();
 		execStub.stdout = '{"windowTitle":"Pkg","elementName":"","focusedText":""}';

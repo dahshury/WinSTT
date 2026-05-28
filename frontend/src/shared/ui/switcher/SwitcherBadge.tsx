@@ -1,5 +1,6 @@
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 import type { SwitcherOption } from "./switcher-option";
 
@@ -18,7 +19,8 @@ export interface SwitcherBadgeProps<T extends string> {
 export function SwitcherBadge<T extends string>({ option, rect }: SwitcherBadgeProps<T>) {
 	const interactive = option.badgeTooltip !== undefined || option.onBadgeClick !== undefined;
 	const badgeClass = cn(
-		"absolute z-overlay inline-flex size-4 items-center justify-center rounded-full border bg-surface-elevated shadow-sm transition-colors duration-150",
+		"absolute z-overlay inline-flex size-4 items-center justify-center rounded-full border shadow-sm transition-colors duration-150",
+		surfaceBg(Math.min(useSurface() + 1, 8)),
 		interactive
 			? "cursor-pointer border-warning/40 text-warning/80 hover:border-warning hover:bg-warning/10 hover:text-warning"
 			: "pointer-events-none border-border text-foreground-muted"

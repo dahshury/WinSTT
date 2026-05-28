@@ -393,6 +393,27 @@ function applyModelUnloadTimeoutFlag(args: string[]): void {
 	args.push("--model_unload_timeout_seconds", String(seconds));
 }
 
+/**
+ * Wire history WAV persistence. The server writes each transcript's PCM to a
+ * WAV under `--recordings_dir` and reports the path on the fullSentence event;
+ * the relay attaches it to the history entry so the UI shows a play button.
+ *
+ * Saving is on by default — `recordingRetention` governs *cleanup*, not whether
+ * to save: "Keep forever" preserves every WAV, while "When over limit" and the
+ * time-based options prune via the hourly retention sweep. There is no "don't
+ * save" branch here (that would need the opt-out toggle we didn't add).
+ * `recordings_dir` mirrors the folder `history.ts` creates and reads back
+ * (`userData/recordings`).
+ */
+function applyRecordingsFlags(args: string[]): void {
+	try {
+		const recordingsDir = path.join(app.getPath("userData"), "recordings");
+		args.push("--recordings_dir", recordingsDir, "--save_wav");
+	} catch {
+		// userData unavailable pre-app-ready — no recordings this run.
+	}
+}
+
 function applyDerivedFlags(args: string[]): void {
 	applyRealtimeFlag(args);
 	applySileroDeactivityFlag(args);
@@ -402,6 +423,7 @@ function applyDerivedFlags(args: string[]): void {
 	applyCustomModelsDirFlag(args);
 	applyModelUnloadTimeoutFlag(args);
 	applyMicrophoneReleaseFlag(args);
+	applyRecordingsFlags(args);
 }
 
 /** Read all relevant settings from electron-store and convert to CLI args */
@@ -447,8 +469,16 @@ function resolveSpawnArgs(serverDir: string): { command: string; args: string[] 
 		const exe = process.platform === "win32" ? "stt-server.exe" : "stt-server";
 		return { command: path.join(serverDir, exe), args: [] };
 	}
-	// In development, use uv to run from source
-	return { command: "uv", args: ["run", "stt-server"] };
+	// In development, use uv to run from source. `--no-sync` skips uv's
+	// pre-run venv sync. Without it, uv reinstalls the editable `winstt-server`
+	// package on (re)spawn and rewrites `.venv/Scripts/stt-server.exe`; when a
+	// leftover server from a prior dev session still holds that launcher open,
+	// the rewrite's delete step fails with "os error 32 (being used by another
+	// process)" and uv aborts before the server ever starts. The dev venv is
+	// pre-synced once (`cd server && uv sync --extra directml`; see CLAUDE.md),
+	// so skipping the per-spawn sync is safe — source changes still hot-apply via
+	// the editable install; only dependency changes need a manual `uv sync`.
+	return { command: "uv", args: ["run", "--no-sync", "stt-server"] };
 }
 
 /**
@@ -569,6 +599,43 @@ function buildServerEnv(): NodeJS.ProcessEnv {
 }
 
 /**
+ * Synchronously block the current thread for `ms` without busy-spinning the
+ * CPU. Only ever called during startup orphan reclamation — before any window
+ * is interactive — so blocking the event loop briefly is acceptable (the
+ * existing `spawnSync(taskkill)` already blocks here). `Atomics.wait` on a
+ * throwaway SharedArrayBuffer is the standard dependency-free synchronous sleep
+ * and is permitted on Node's main thread (unlike in browsers).
+ */
+function sleepSync(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Block (bounded) until no `stt-server.exe` remains in the Windows task table.
+ * `tasklist` prints an "INFO: No tasks ..." line — with no image name — when
+ * none match, so a missing "stt-server.exe" substring means the orphan is gone
+ * and its file handle / port bindings have been released by the kernel.
+ *
+ * Caps at `maxMs` so a process we can't observe leaving (e.g. tasklist blocked
+ * by AV) never wedges startup; the subsequent spawn surfaces its own error if
+ * the orphan somehow survives.
+ */
+function waitForOrphanExit(maxMs = 2000): void {
+	const stepMs = 50;
+	for (let waited = 0; waited < maxMs; waited += stepMs) {
+		const probe = spawnSync("tasklist", ["/FI", "IMAGENAME eq stt-server.exe", "/NH"], {
+			encoding: "utf8",
+			windowsHide: true,
+			timeout: 2000,
+		});
+		if (!(probe.stdout ?? "").toLowerCase().includes("stt-server.exe")) {
+			return;
+		}
+		sleepSync(stepMs);
+	}
+}
+
+/**
  * Reclaim ports held by orphan stt-server processes from prior dev sessions.
  *
  * Windows does NOT propagate parent-death to child processes the way Unix
@@ -610,6 +677,15 @@ function reclaimOrphanStttServers(): void {
 		// next `spawn` either binds cleanly or surfaces its own error.
 		if (result.status === 0) {
 			dbg("stt-process", "reclaimOrphanStttServers: killed leftover stt-server.exe");
+			// `taskkill /F` only *requests* SIGKILL and returns immediately, but
+			// the kernel releases the dead process's open handle on
+			// `.venv/Scripts/stt-server.exe` a few ms later. The spawn below runs
+			// `uv run`, whose venv work touches that launcher and races the
+			// release → "os error 32 (being used by another process)". It also
+			// keeps 8011/8012 bound until teardown. Block until the image is fully
+			// gone (bounded) so the spawn neither wins that race nor reconnects to
+			// a stale orphan.
+			waitForOrphanExit();
 		}
 	} catch (err) {
 		// Defensive — taskkill being missing/unhittable shouldn't block

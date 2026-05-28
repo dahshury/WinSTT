@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { generateId } from "./generate-id";
 
 describe("generateId", () => {
@@ -68,7 +69,7 @@ describe("generateId fallback (crypto.randomUUID unavailable)", () => {
 
 	test("falls back when crypto.randomUUID is present but not a function", () => {
 		(globalThis as { crypto: unknown }).crypto = {
-			randomUUID: "not-a-function" as unknown as Crypto["randomUUID"],
+			randomUUID: asInvalid<Crypto["randomUUID"]>("not-a-function"),
 		} as Crypto;
 		const id = generateId();
 		expect(id.startsWith("id-")).toBe(true);

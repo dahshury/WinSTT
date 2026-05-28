@@ -6,12 +6,21 @@ import type { OpenRouterModel } from "@/shared/api/models";
 import { ModelSelectorTrigger, TriggerButton } from "./ModelSelectorTrigger";
 import { isMissingModelId } from "./model-selector-trigger-helpers";
 
-const sampleModel: OpenRouterModel = {
+// The fixture only fills the fields the trigger reads; the boundary cast to
+// the full OpenRouterModel is contained in this single helper.
+const asOpenRouterModel = (m: {
+	id: string;
+	name: string;
+	maker: string;
+	endpoints: never[];
+}): OpenRouterModel => m as unknown as OpenRouterModel;
+
+const sampleModel: OpenRouterModel = asOpenRouterModel({
 	id: "openai/gpt-4o",
 	name: "GPT-4o",
 	maker: "openai",
 	endpoints: [],
-} as unknown as OpenRouterModel;
+});
 
 describe("isMissingModelId", () => {
 	test("returns true for undefined", () => {

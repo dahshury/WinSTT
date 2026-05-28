@@ -588,19 +588,24 @@ export function coerceClipboardText(value: string | null | undefined): string {
 	return value ?? "";
 }
 
+// Electron types `readText`/`readHTML`/`readRTF` as `string`, but at runtime
+// they can return an empty string (and historically `null` on some platforms).
+// `coerceClipboardText`'s `?? ""` handles that defensively — passing the typed
+// `string` straight through needs no cast.
+
 /** Read plain text from the clipboard, coerced to a guaranteed string. CC = 1. */
 function readPlainText(): string {
-	return coerceClipboardText(clipboard.readText() as unknown as string | null | undefined);
+	return coerceClipboardText(clipboard.readText());
 }
 
 /** Read HTML from the clipboard, coerced to a guaranteed string. CC = 1. */
 function readPlainHtml(): string {
-	return coerceClipboardText(clipboard.readHTML() as unknown as string | null | undefined);
+	return coerceClipboardText(clipboard.readHTML());
 }
 
 /** Read RTF from the clipboard, coerced to a guaranteed string. CC = 1. */
 function readPlainRtf(): string {
-	return coerceClipboardText(clipboard.readRTF() as unknown as string | null | undefined);
+	return coerceClipboardText(clipboard.readRTF());
 }
 
 /** Strict image read. CC = 1. */

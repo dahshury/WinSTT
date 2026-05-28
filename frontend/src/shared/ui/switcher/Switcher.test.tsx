@@ -1,6 +1,11 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, type Mock, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Switcher, type SwitcherOption } from "./Switcher";
+
+// Contains the single boundary cast that reads bun's spy `.mock.calls` record
+// off a typed callback mock — the mock object itself is returned untouched.
+const recordedCalls = (m: Mock<(...args: never[]) => unknown>) =>
+	(m as unknown as { mock: { calls: unknown[][] } }).mock.calls;
 
 const options: SwitcherOption<"a" | "b" | "c">[] = [
 	{ label: "Alpha", value: "a" },
@@ -36,7 +41,7 @@ describe("Switcher", () => {
 		fireEvent.click(beta!);
 		expect(onChange).toHaveBeenCalled();
 		// First call argument should be the new value
-		const firstCall = (onChange as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+		const firstCall = recordedCalls(onChange)[0];
 		expect(firstCall?.[0]).toBe("b");
 	});
 });

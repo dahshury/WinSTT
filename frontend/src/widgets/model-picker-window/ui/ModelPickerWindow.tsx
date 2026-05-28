@@ -7,7 +7,11 @@ import { useCatalogStore, useModelStateStore, useModelSwapStore } from "@/entiti
 import { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
 import { useConnectionListener } from "@/features/connect-server";
-import { DownloadConfirmationDialog, useDownloadListener } from "@/features/model-download";
+import {
+	DownloadConfirmationDialog,
+	useDownloadListener,
+	useQuantActions,
+} from "@/features/model-download";
 import { CloudSttSection } from "@/features/select-cloud-stt-model";
 import { useModelSwapController } from "@/features/swap-model";
 import { useSyncSettings } from "@/features/update-settings";
@@ -110,6 +114,13 @@ export function ModelPickerWindow() {
 		wasSwappingRef.current = mainSwapping;
 	}, [mainSwapping]);
 
+	// Same per-quant badge handlers the settings panel wires in — without
+	// these props SttModelSelector renders the variants read-only (no
+	// delete / download / pause controls). useDownloadListener (above) keeps
+	// this window's download store hydrated, and the IPC delete/download sends
+	// reach the main process regardless of which window fired them.
+	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
+
 	const selectModel = (modelId: string, quantization?: OnnxQuantization) => {
 		controller.handleModelChange(modelId, quantization);
 		// Re-selecting the loaded model is a no-op for the controller (no
@@ -181,6 +192,9 @@ export function ModelPickerWindow() {
 						kind="main"
 						models={catalogModels}
 						onChange={selectModel}
+						onDeleteQuant={handleDeleteQuant}
+						onDownloadAction={handleDownloadAction}
+						onDownloadSnapshot={handleDownloadSnapshot}
 						popupHeightClass={PANEL_HEIGHT}
 						statesById={statesById}
 						systemInfo={systemInfo}

@@ -97,7 +97,10 @@ def _fetch_card_languages(repo_id: str) -> list[str] | None:
     return _normalize_language(_model_card_language(repo_id))
 
 
-def _languages_for(info: ModelInfo) -> list[str] | None:
+def _languages_for(
+    info: ModelInfo,
+    cache: dict[str, list[str] | None] | None = None,
+) -> list[str] | None:
     """Authoritative language whitelist for ``info``, or ``None`` to skip.
 
     ``.en`` Whisper variants are pinned to ``["en"]`` since the mirror
@@ -105,13 +108,24 @@ def _languages_for(info: ModelInfo) -> list[str] | None:
     Whisper-family entries route through the openai reference repo
     (mirrors don't propagate the field). Everything else uses the
     resolved repo's own model-card data.
+
+    ``cache`` memoizes the per-repo HF fetch within a single refresh:
+    many catalog entries share one reference repo (every Whisper variant
+    resolves to ``openai/whisper-tiny``), so without it the same
+    ``model_info`` GET fires once per entry. Passing a shared dict
+    collapses those to a single network call. A cached ``None`` (failed
+    or empty card) is honoured too, so a flaky repo isn't re-hit mid-run.
     """
     if _is_english_only_whisper(info):
         return ["en"]
     repo = _reference_repo_for(info)
     if repo is None:
         return None
-    return _fetch_card_languages(repo)
+    if cache is None:
+        return _fetch_card_languages(repo)
+    if repo not in cache:
+        cache[repo] = _fetch_card_languages(repo)
+    return cache[repo]
 
 
 def _reference_repo_for(info: ModelInfo) -> str | None:
@@ -132,8 +146,9 @@ def fetch_language_overlay(models: list[ModelInfo]) -> dict[str, dict[str, list[
     :class:`ModelCatalog`.
     """
     overlay: dict[str, dict[str, list[str]]] = {}
+    repo_cache: dict[str, list[str] | None] = {}
     for info in models:
-        langs = _languages_for(info)
+        langs = _languages_for(info, repo_cache)
         if not langs:
             continue
         overlay[info.id] = {"languages": sorted(set(langs))}

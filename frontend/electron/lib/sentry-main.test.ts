@@ -23,6 +23,13 @@ const {
 	tryRun,
 } = sentryMain;
 
+// Contained boundary cast — each fake sentry module below implements only the
+// subset of the real module ABI (addBreadcrumb / captureException / withScope)
+// that the SUT touches, so the single unavoidable cast to the injected-module
+// type lives here instead of at every `__setSentryModuleForTests` call site.
+const asSentryModule = (m: Record<string, unknown>) =>
+	m as unknown as Parameters<typeof __setSentryModuleForTests>[0];
+
 // Reset module state between tests so DSN env / initialized flag don't leak.
 // `delete process.env.X` is the only way to actually clear an env var —
 // setting it to `undefined` coerces to the string "undefined" in Node.js.
@@ -299,14 +306,20 @@ describe("scrubBreadcrumbs", () => {
 // ─── beforeSend ──────────────────────────────────────────────────────────
 
 describe("beforeSend", () => {
+	// Contained boundary cast — these event literals are partial Sentry event
+	// shapes; the single unavoidable cast to the real beforeSend parameter type
+	// lives here instead of at each call site. The runtime object is unchanged.
+	const asSentryEvent = (e: Record<string, unknown>) =>
+		e as unknown as Parameters<typeof I.beforeSend>[0];
+
 	test("scrubs extra / contexts / breadcrumbs / user / message fields", () => {
-		const event = {
+		const event = asSentryEvent({
 			extra: { transcript: "x" },
 			contexts: { app: { transcript: "y" } },
 			breadcrumbs: [{ message: "hi", data: { transcript: "z" } }],
 			user: { id: "u1", ip_address: "1.2.3.4", email: "a@b" },
 			message: "hello",
-		} as unknown as Parameters<typeof I.beforeSend>[0];
+		});
 		const out = I.beforeSend(event);
 		expect(out).toBe(event);
 		expect((event.extra as Record<string, unknown>).transcript).toBe("[scrubbed]");
@@ -326,15 +339,15 @@ describe("beforeSend", () => {
 	});
 
 	test("deletes user when only redacted keys were present", () => {
-		const event = {
+		const event = asSentryEvent({
 			user: { ip_address: "1.2.3.4", email: "a@b" },
-		} as unknown as Parameters<typeof I.beforeSend>[0];
+		});
 		I.beforeSend(event);
 		expect(event.user).toBeUndefined();
 	});
 
 	test("deletes contexts when the field was undefined-friendly", () => {
-		const event = {} as unknown as Parameters<typeof I.beforeSend>[0];
+		const event = asSentryEvent({});
 		expect(() => I.beforeSend(event)).not.toThrow();
 	});
 });
@@ -451,11 +464,11 @@ describe("breadcrumb", () => {
 
 	test("forwards to addBreadcrumb when sentry module is loaded", () => {
 		const calls: Record<string, unknown>[] = [];
-		const fakeMod = {
+		const fakeMod = asSentryModule({
 			addBreadcrumb: (payload: Record<string, unknown>) => {
 				calls.push(payload);
 			},
-		} as unknown as Parameters<typeof __setSentryModuleForTests>[0];
+		});
 		__setSentryModuleForTests(fakeMod);
 		breadcrumb("cat", "msg", { x: 1 }, "warning");
 		expect(calls).toHaveLength(1);
@@ -468,11 +481,11 @@ describe("breadcrumb", () => {
 	});
 
 	test("swallows errors raised by addBreadcrumb", () => {
-		const fakeMod = {
+		const fakeMod = asSentryModule({
 			addBreadcrumb: () => {
 				throw new Error("nope");
 			},
-		} as unknown as Parameters<typeof __setSentryModuleForTests>[0];
+		});
 		__setSentryModuleForTests(fakeMod);
 		expect(() => breadcrumb("cat", "msg")).not.toThrow();
 	});
@@ -486,12 +499,12 @@ describe("captureMainException", () => {
 
 	test("forwards to captureException when sentry module is loaded (no context)", () => {
 		const errors: unknown[] = [];
-		const fakeMod = {
+		const fakeMod = asSentryModule({
 			captureException: (err: unknown) => {
 				errors.push(err);
 			},
 			withScope: () => undefined,
-		} as unknown as Parameters<typeof __setSentryModuleForTests>[0];
+		});
 		__setSentryModuleForTests(fakeMod);
 		const e = new Error("boom");
 		captureMainException(e);
@@ -500,7 +513,7 @@ describe("captureMainException", () => {
 
 	test("uses withScope + setExtras when a context is supplied", () => {
 		const calls: Array<{ extras?: Record<string, unknown>; error?: unknown }> = [];
-		const fakeMod = {
+		const fakeMod = asSentryModule({
 			captureException: (err: unknown) => {
 				calls.push({ error: err });
 			},
@@ -509,7 +522,7 @@ describe("captureMainException", () => {
 					setExtras: (extras: Record<string, unknown>) => calls.push({ extras }),
 				});
 			},
-		} as unknown as Parameters<typeof __setSentryModuleForTests>[0];
+		});
 		__setSentryModuleForTests(fakeMod);
 		captureMainException(new Error("x"), { transcript: "secret", safe: "ok" });
 		const extras = calls.find((c) => c.extras)?.extras as Record<string, unknown>;
@@ -518,7 +531,7 @@ describe("captureMainException", () => {
 	});
 
 	test("swallows errors raised by captureException / withScope", () => {
-		const fakeMod = {
+		const fakeMod = asSentryModule({
 			captureException: () => {
 				throw new Error("inner");
 			},
@@ -529,7 +542,7 @@ describe("captureMainException", () => {
 					},
 				});
 			},
-		} as unknown as Parameters<typeof __setSentryModuleForTests>[0];
+		});
 		__setSentryModuleForTests(fakeMod);
 		expect(() => captureMainException(new Error("x"))).not.toThrow();
 		expect(() => captureMainException(new Error("x"), { foo: "bar" })).not.toThrow();

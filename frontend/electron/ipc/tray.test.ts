@@ -120,6 +120,12 @@ function makeWin(): { show: () => void; showCount: number } {
 	return win;
 }
 
+// The mock window exposes only the `show()` surface `setupTray` touches; this
+// helper contains the single boundary cast so it isn't repeated per call site.
+// The runtime object is returned unchanged.
+const asBrowserWin = (w: { show: () => void; showCount: number }) =>
+	w as unknown as Electron.BrowserWindow;
+
 describe("setupTray", () => {
 	afterEach(() => {
 		// Reset the tray-state singleton between tests so each setupTray
@@ -136,7 +142,7 @@ describe("setupTray", () => {
 		existsSyncReturn = true;
 		createFromPathEmpty = false;
 		const win = makeWin();
-		const tray = setupTray(win as unknown as Electron.BrowserWindow);
+		const tray = setupTray(asBrowserWin(win));
 		expect(tray).toBeDefined();
 		const instance = trayInstances.at(-1);
 		expect(instance?.tooltips).toEqual(["WinSTT - Speech to Text"]);
@@ -148,7 +154,7 @@ describe("setupTray", () => {
 		existsSyncReturn = true;
 		createFromPathEmpty = false;
 		const win = makeWin();
-		setupTray(win as unknown as Electron.BrowserWindow);
+		setupTray(asBrowserWin(win));
 		const instance = trayInstances.at(-1);
 		const click = instance?.handlers.get("click");
 		click?.();
@@ -160,7 +166,7 @@ describe("setupTray", () => {
 		createFromPathEmpty = false;
 		const before = showTrayMenuCalls.length;
 		const win = makeWin();
-		setupTray(win as unknown as Electron.BrowserWindow);
+		setupTray(asBrowserWin(win));
 		const instance = trayInstances.at(-1);
 		const rightClick = instance?.handlers.get("right-click");
 		rightClick?.({}, { x: 10, y: 20, width: 4, height: 6 });
@@ -172,7 +178,7 @@ describe("setupTray", () => {
 		existsSyncReturn = false;
 		createFromPathEmpty = false;
 		const win = makeWin();
-		const tray = setupTray(win as unknown as Electron.BrowserWindow);
+		const tray = setupTray(asBrowserWin(win));
 		expect(tray).toBeDefined();
 	});
 
@@ -180,7 +186,7 @@ describe("setupTray", () => {
 		existsSyncReturn = true;
 		createFromPathEmpty = true;
 		const win = makeWin();
-		const tray = setupTray(win as unknown as Electron.BrowserWindow);
+		const tray = setupTray(asBrowserWin(win));
 		expect(tray).toBeDefined();
 	});
 });

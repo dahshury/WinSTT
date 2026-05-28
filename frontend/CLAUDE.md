@@ -2,7 +2,7 @@
 
 ## Project at a glance
 
-- **Renderer:** Vite 7 multi-page React 19 app — **no router, no Next.js**. 8 HTML entries (`index.html` + `windows/*.html`), one `BrowserWindow` per entry.
+- **Renderer:** Vite 8 multi-page React 19 app — **no router, no Next.js**. 8 HTML entries (`index.html` + `windows/*.html`), one `BrowserWindow` per entry.
 - **Main process:** Electron 42 bundled by tsup → `dist-electron/main.js`.
 - **Type checker:** `tsgo` (TypeScript native preview). Fall back to `bun typecheck:tsc` for stock `tsc`.
 - **Linter / formatter:** Biome 2.x + `ultracite`. (No ESLint, no Prettier, no Stylelint.)
@@ -645,6 +645,7 @@ bun knip              # find unused exports
 | Importing `electron` from the renderer                             | Only `electron/preload.ts` may import `electron`     |
 | Splitting React from `@base-ui` in `manualChunks`                  | Circular ESM crash in packaged builds (`memory/project_vite_chunk_circular_react.md`) |
 | Running model loads / downloads inline in async IPC handlers       | Freezes the WS pump (`memory/project_ws_request_response_value_envelope.md`) |
+| Scattered `as unknown as` casts (esp. in tests)                    | Centralize the boundary cast in a contained helper (`const asThing = (m: MockThing) => m as unknown as RealThing`) so call sites are cast-free, or use `asInvalid<T>()` from `test/lib/cast.ts` for deliberately-wrong test inputs. Gated by `bun check:casts` (budget in `scripts/cast-budget.json`) |
 
 **Structure comparison:**
 

@@ -4,7 +4,12 @@ import type { RuntimeInfo } from "@/entities/connection";
 import { useConnectionStore } from "@/entities/connection";
 import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
-import { useSyncActiveModel } from "./use-sync-active-model";
+import { _resetSwapFailureTimingForTests } from "@/shared/lib/swap-failure-timing";
+import {
+	type ImplicitSwapInputs,
+	shouldOpenImplicitSwap,
+	useSyncActiveModel,
+} from "./use-sync-active-model";
 
 // adoptRuntime now requires a catalog entry so it can pair the model with its
 // backend (the typed ModelPatch refuses model-only patches). Seed the catalog
@@ -104,6 +109,7 @@ beforeEach(() => {
 		settings: { ...DEFAULT_SETTINGS, model: { ...DEFAULT_SETTINGS.model, model: "tiny" } },
 		isLoaded: true,
 	});
+	_resetSwapFailureTimingForTests();
 	seedCatalog();
 });
 
@@ -264,7 +270,7 @@ describe("useSyncActiveModel", () => {
 		});
 	});
 
-	test("reconciles after swap completes when runtime_info refreshes to the new model", async () => {
+	test("reconciles after swap completes when runtime_info refreshes to the new model (full lifecycle)", async () => {
 		// Full lifecycle: user picks new model, server swaps, runtime_info
 		// refreshes, swap clears — reconciler sees match and no-ops.
 		useConnectionStore.setState({ runtimeInfo: withModel("tiny") });
@@ -283,5 +289,55 @@ describe("useSyncActiveModel", () => {
 		await waitFor(() => {
 			expect(useSettingsStore.getState().settings.model.model).toBe("large-v3-turbo");
 		});
+	});
+});
+
+describe("shouldOpenImplicitSwap", () => {
+	const base: ImplicitSwapInputs = {
+		previousModel: "A",
+		settingsModel: "B",
+		runtimeModel: "A",
+		now: 100_000,
+		lastIpcLoadAt: 0,
+		lastSwapFailedAt: 0,
+	};
+
+	test("opens for a genuine cross-window pick (A→B, B not yet loaded)", () => {
+		expect(shouldOpenImplicitSwap(base)).toBe(true);
+	});
+
+	test("skips the first observation (no previous model yet)", () => {
+		expect(shouldOpenImplicitSwap({ ...base, previousModel: undefined })).toBe(false);
+	});
+
+	test("skips a no-op transition (from === to)", () => {
+		expect(shouldOpenImplicitSwap({ ...base, previousModel: "B" })).toBe(false);
+	});
+
+	test("skips when the target already equals the runtime model", () => {
+		expect(shouldOpenImplicitSwap({ ...base, runtimeModel: "B" })).toBe(false);
+	});
+
+	test("skips a settingsLoad-induced revert (within the ipc-load guard window)", () => {
+		expect(shouldOpenImplicitSwap({ ...base, lastIpcLoadAt: base.now - 200 })).toBe(false);
+	});
+
+	test("REVERSAL GUARD: skips a failure-induced rollback within the swap-failure window", () => {
+		// The reversed "B→A spins forever" bug: after a failed swap, settings
+		// roll back B→A while runtimeInfo is still the stale B. Without the
+		// guard this returns true and opens a reversed never-completing swap.
+		const rollback: ImplicitSwapInputs = {
+			previousModel: "B",
+			settingsModel: "A",
+			runtimeModel: "B", // stale — failure rollback hasn't refreshed runtime yet
+			now: 100_000,
+			lastIpcLoadAt: 0,
+			lastSwapFailedAt: 100_000 - 50, // failure 50ms ago → guard active
+		};
+		expect(shouldOpenImplicitSwap(rollback)).toBe(false);
+	});
+
+	test("re-opens normally once the swap-failure guard window has elapsed", () => {
+		expect(shouldOpenImplicitSwap({ ...base, lastSwapFailedAt: base.now - 5000 })).toBe(true);
 	});
 });

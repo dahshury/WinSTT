@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 
@@ -134,7 +135,7 @@ describe("useModelStateStore.refresh", () => {
 		resetStore();
 		// Intentionally malformed: states must be an array but it's a string.
 		ipcOverrides.payload = {
-			states: "not-an-array" as unknown as ModelStateEntry[],
+			states: asInvalid<ModelStateEntry[]>("not-an-array"),
 			system_info: SYSTEM_INFO,
 		};
 		await useModelStateStore.getState().refresh();

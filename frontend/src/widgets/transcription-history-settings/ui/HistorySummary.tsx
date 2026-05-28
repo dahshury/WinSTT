@@ -7,6 +7,7 @@ import {
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { type AggregateStats, formatDuration, formatWpm } from "../lib/word-stats";
 
 interface HistorySummaryProps {
@@ -71,6 +72,8 @@ export function HistorySummary({ stats }: HistorySummaryProps) {
 	const t = useTranslations("history");
 	const wpm = formatWpm(stats.wpm);
 	const hasWpm = wpm !== "—";
+	// Lift the stat tiles above the section they sit in (surfaces system).
+	const tileBg = surfaceBg(Math.min(useSurface() + 1, 8));
 
 	const tiles: Tile[] = [
 		{
@@ -106,7 +109,7 @@ export function HistorySummary({ stats }: HistorySummaryProps) {
 				const a = ACCENT_STYLES[tile.accent];
 				return (
 					<div
-						className={`group relative overflow-hidden rounded-md border border-border bg-surface-primary opacity-0 shadow-surface-3 transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-px hover:shadow-md ${a.hoverBorder}`}
+						className={`group relative overflow-hidden rounded-md border border-border ${tileBg} opacity-0 shadow-surface-3 transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-px hover:shadow-md ${a.hoverBorder}`}
 						key={tile.label}
 						style={{ animation: `fade-in 320ms ease-out ${i * 70}ms forwards` }}
 					>

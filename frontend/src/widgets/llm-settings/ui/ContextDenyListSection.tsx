@@ -98,7 +98,7 @@ export function ContextDenyListSection() {
 						{t("contextDenyListAdd")}
 					</Button>
 				</form>
-				<Table containerClassName="rounded border border-border bg-surface-tertiary overflow-hidden">
+				<Table containerClassName="rounded border border-border overflow-hidden">
 					<TableHeader>
 						<TableRow>
 							<TableHead>{t("contextDenyListColumnEntry")}</TableHead>

@@ -147,7 +147,7 @@ The FSD layer is named `views/` (not `pages/`) so the codebase reads as "FSD-fir
 | Concern | Server | Frontend |
 |---|---|---|
 | Package manager | uv | Bun |
-| Build tool | hatchling (wheel) + PyInstaller (exe) | Vite 7 (renderer) + tsup (electron-main) |
+| Build tool | hatchling (wheel) + PyInstaller (exe) | Vite 8 (renderer; Rolldown/Oxc) + tsup (electron-main) |
 | Linter/formatter | ruff | Biome 2.x + ultracite |
 | Type checker | mypy --strict | tsgo (default) / TypeScript strict |
 | Test framework | pytest (100% server-domain coverage; infra/server/client `omit`-ted) | Bun test (unit + property via fast-check) + Playwright (e2e + visual) + Stryker (mutation) |

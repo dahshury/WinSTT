@@ -3,6 +3,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { onLlmLearnedProperNouns } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 
 export interface AutoAddSuggestionsProps {
@@ -35,6 +37,9 @@ export interface AutoAddSuggestionsProps {
 export function AutoAddSuggestions({ existingTerms, onAccept }: AutoAddSuggestionsProps) {
 	const t = useTranslations("dictionary");
 	const [pending, setPending] = useState<readonly string[]>([]);
+	const surface = useSurface();
+	const level = Math.min(surface + 1, 8);
+	const pillLevel = Math.min(surface + 2, 8);
 
 	useEffect(() => {
 		const off = onLlmLearnedProperNouns(({ nouns }) => {
@@ -77,7 +82,7 @@ export function AutoAddSuggestions({ existingTerms, onAccept }: AutoAddSuggestio
 	}
 
 	return (
-		<div className="flex flex-col gap-2 rounded border border-border bg-surface-tertiary p-3">
+		<div className={cn("flex flex-col gap-2 rounded border border-border p-3", surfaceBg(level))}>
 			<div className="flex items-center gap-2">
 				<span aria-hidden="true">✨</span>
 				<p className="font-medium text-body-sm text-foreground">{t("autoAddTitle")}</p>
@@ -86,7 +91,10 @@ export function AutoAddSuggestions({ existingTerms, onAccept }: AutoAddSuggestio
 			<div className="flex flex-wrap gap-2">
 				{pending.map((term) => (
 					<div
-						className="flex items-center gap-1 rounded-full border border-border bg-surface-secondary px-2 py-1"
+						className={cn(
+							"flex items-center gap-1 rounded-full border border-border px-2 py-1",
+							surfaceBg(pillLevel)
+						)}
 						key={term}
 					>
 						<span className="text-body-sm text-foreground">{term}</span>

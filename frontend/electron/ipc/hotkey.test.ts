@@ -84,14 +84,28 @@ const { __resetRecordingStateForTesting__ } = await import("../lib/recording-sta
 const sentEvents: Array<{ channel: string; args: unknown[] }> = [];
 const winSent: Array<{ channel: string; args: unknown[] }> = [];
 
-const fakeWindow = {
+interface FakeWindow {
+	isDestroyed: () => boolean;
+	webContents: {
+		isDestroyed: () => boolean;
+		send: (channel: string, ...args: unknown[]) => number;
+		id: number;
+	};
+}
+
+// Contained boundary cast — FakeWindow implements only the BrowserWindow
+// surface the hotkey handlers touch.
+const asBrowserWindow = (w: FakeWindow): Electron.BrowserWindow =>
+	w as unknown as Electron.BrowserWindow;
+
+const fakeWindow = asBrowserWindow({
 	isDestroyed: () => false,
 	webContents: {
 		isDestroyed: () => false,
 		send: (channel: string, ...args: unknown[]) => winSent.push({ channel, args }),
 		id: 1,
 	},
-} as unknown as Electron.BrowserWindow;
+});
 
 const fakeSttClient = {
 	get isConnected() {

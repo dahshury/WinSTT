@@ -225,6 +225,13 @@ class AudioToTextRecorder:
         # ``filter_transcription_output``.
         filter_fillers: bool = True,
         custom_filler_words: list[str] | None = None,
+        # History WAV persistence — see :class:`HistoryConfig`. Off by default;
+        # the WS server flips these on (``recordings_dir`` + ``save_wav``) when
+        # the renderer opts in, so the recorder dumps each transcript's PCM to
+        # a WAV and surfaces the path on ``TranscriptionCompleted.wav_path`` for
+        # the IPC relay to attach to the history row.
+        save_wav: bool = False,
+        recordings_dir: str = "",
     ) -> None:
         # ``list`` defaults are mutable — accept ``None`` and normalise here
         # so the kwarg's identity isn't shared across instances.
@@ -308,6 +315,9 @@ class AudioToTextRecorder:
             threshold=word_correction_threshold,
             filter_fillers=filter_fillers,
             custom_filler_words=custom_filler_words,
+            # History — route to HistoryConfig (unique field names).
+            save_wav=save_wav,
+            recordings_dir=recordings_dir,
         )
 
         # Collect callbacks

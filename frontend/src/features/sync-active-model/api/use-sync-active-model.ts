@@ -4,6 +4,7 @@ import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import type { TranscriberBackend } from "@/shared/api/schema.zod";
 import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
+import { recentSwapFailedAt } from "@/shared/lib/swap-failure-timing";
 
 // How long after an IPC settingsLoad we consider a settings.model transition
 // as "load-induced" (not a user pick). Crash + state-revert investigation
@@ -17,6 +18,18 @@ import { recentIpcLoadAt } from "@/shared/lib/ipc-load-timing";
 // double-mount; longer than typical user-pick reaction time so no real
 // user action gets skipped.
 const IPC_LOAD_GUARD_WINDOW_MS = 500;
+
+// How long after a `model_swap_failed` we treat the next settings.model
+// transition as a failure-induced ROLLBACK (revert to the previous model)
+// rather than a user pick. The rollback flips settings B → A while
+// runtimeInfo.model can still be the stale B, which would otherwise make the
+// transition guard fire `beginSwap("main", B, A)` — a reversed, never-
+// completing "switch to the already-loaded model" that strands the chip on
+// "B → A" forever (the user-reported "first click spins backwards" bug). No
+// real reload is in flight for a rollback, so the implicit beginSwap must be
+// skipped. Same generous window as the IPC-load guard — covers the failure →
+// restore → runtime_info → rollback-setSettings re-render chain.
+const SWAP_FAILURE_GUARD_WINDOW_MS = 500;
 
 /**
  * Reconcile the locally-persisted ``settings.model.model`` with the server's
@@ -101,6 +114,51 @@ function shouldAdoptRuntimeModel(
 	return reconciliationWouldChangeSettings(runtimeModel, settingsModel, activeMain);
 }
 
+export interface ImplicitSwapInputs {
+	/** Timestamps from the two timing guards (``recentIpcLoadAt`` /
+	 *  ``recentSwapFailedAt``). */
+	lastIpcLoadAt: number;
+	lastSwapFailedAt: number;
+	/** ``Date.now()`` at decision time. */
+	now: number;
+	/** ``settings.model`` observed on the previous effect run (the ``from`` leg).
+	 *  ``undefined`` on the very first run — no transition to interpret yet. */
+	previousModel: string | null | undefined;
+	/** Server's actually-loaded model. A transition whose target already
+	 *  equals this isn't a real swap. */
+	runtimeModel: string | null;
+	/** Current ``settings.model`` (the candidate ``to`` leg). */
+	settingsModel: string | null;
+}
+
+/**
+ * Whether a ``settings.model`` transition should be treated as a *real* user
+ * swap and open the in-flight chip via ``beginSwap``. Pure so it can be unit
+ * tested without standing up the render + IPC machinery.
+ *
+ * Suppressed when the transition is:
+ *   - the first observation (no ``from`` yet),
+ *   - a no-op (``from === to``),
+ *   - load-induced (a ``settingsLoad`` revert — see ipc-load-timing),
+ *   - rollback-induced (a ``model_swap_failed`` revert — see
+ *     swap-failure-timing; this is the fix for the reversed "B → A" chip that
+ *     spun forever after a failed first swap),
+ *   - or a transition to the already-loaded runtime model (not a swap).
+ */
+export function shouldOpenImplicitSwap(inputs: ImplicitSwapInputs): boolean {
+	const { previousModel, settingsModel, runtimeModel, now } = inputs;
+	if (previousModel === undefined || previousModel === settingsModel || !settingsModel) {
+		return false;
+	}
+	if (now - inputs.lastIpcLoadAt < IPC_LOAD_GUARD_WINDOW_MS) {
+		return false;
+	}
+	if (now - inputs.lastSwapFailedAt < SWAP_FAILURE_GUARD_WINDOW_MS) {
+		return false;
+	}
+	return settingsModel !== runtimeModel;
+}
+
 export function useSyncActiveModel(): void {
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
@@ -139,12 +197,17 @@ export function useSyncActiveModel(): void {
 		// documents.
 		const previousModel = prevSettingsModelRef.current;
 		const activeMain = useModelSwapStore.getState().activeMain;
-		if (previousModel !== undefined && previousModel !== settingsModel) {
-			const sinceIpcLoad = Date.now() - recentIpcLoadAt();
-			const ipcLoadInducedTransition = sinceIpcLoad < IPC_LOAD_GUARD_WINDOW_MS;
-			if (!ipcLoadInducedTransition && settingsModel && settingsModel !== runtimeModel) {
-				useModelSwapStore.getState().beginSwap("main", previousModel ?? "", settingsModel);
-			}
+		if (
+			shouldOpenImplicitSwap({
+				previousModel,
+				settingsModel,
+				runtimeModel,
+				now: Date.now(),
+				lastIpcLoadAt: recentIpcLoadAt(),
+				lastSwapFailedAt: recentSwapFailedAt(),
+			})
+		) {
+			useModelSwapStore.getState().beginSwap("main", previousModel ?? "", settingsModel ?? "");
 		}
 		prevSettingsModelRef.current = settingsModel;
 

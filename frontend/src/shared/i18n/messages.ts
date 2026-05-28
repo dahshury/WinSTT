@@ -22,37 +22,42 @@ import type { Locale } from "./config";
 
 type Messages = typeof en;
 
-// Typed as Record<Locale, Messages> WITH a deferred cast: non-en locales are
-// allowed to lag in key coverage (use-intl falls back to en at runtime).
-// scripts/verify-i18n.ts is the runtime/CI check for missing translations.
-// The cast is constrained to `unknown as` so we still catch shape divergence
-// when a new locale is added without a bundle, but we don't fail the build
-// every time English adds a key before the translators catch up.
+// `messages` is typed as Record<Locale, Messages> WITH a deferred per-locale
+// cast: non-en bundles are allowed to lag in key coverage (use-intl falls back
+// to en at runtime); scripts/verify-i18n.ts is the runtime/CI parity check.
+//
+// `en` stays un-cast so it remains the type-checked source of truth (it IS
+// `Messages`). Every other bundle goes through the single `asMessages` helper —
+// centralising the "shape divergence allowed" decision in one auditable place.
+// A missing bundle (new locale added without its JSON) is still a compile error;
+// English adding a key before translators catch up is not.
 //
 // Newly seeded baselines (de/ja/ko/pt/ru/it/pl/tr/sv/cs/bg/he/uk/vi) are
 // English copies and need community translation passes — the parity gate
 // passes today, the `--strict` mode does NOT, and that's intentional: it
 // flags the residual translation work so a future strict CI flip is one
 // configuration line, not a separate sweep.
+const asMessages = (bundle: unknown): Messages => bundle as Messages;
+
 export const messages: Record<Locale, Messages> = {
 	en,
-	ar: ar as unknown as Messages,
-	bg: bg as unknown as Messages,
-	cs: cs as unknown as Messages,
-	de: de as unknown as Messages,
-	es: es as unknown as Messages,
-	fr: fr as unknown as Messages,
-	he: he as unknown as Messages,
-	hi: hi as unknown as Messages,
-	it: it as unknown as Messages,
-	ja: ja as unknown as Messages,
-	ko: ko as unknown as Messages,
-	pl: pl as unknown as Messages,
-	pt: pt as unknown as Messages,
-	ru: ru as unknown as Messages,
-	sv: sv as unknown as Messages,
-	tr: tr as unknown as Messages,
-	uk: uk as unknown as Messages,
-	vi: vi as unknown as Messages,
-	zh: zh as unknown as Messages,
+	ar: asMessages(ar),
+	bg: asMessages(bg),
+	cs: asMessages(cs),
+	de: asMessages(de),
+	es: asMessages(es),
+	fr: asMessages(fr),
+	he: asMessages(he),
+	hi: asMessages(hi),
+	it: asMessages(it),
+	ja: asMessages(ja),
+	ko: asMessages(ko),
+	pl: asMessages(pl),
+	pt: asMessages(pt),
+	ru: asMessages(ru),
+	sv: asMessages(sv),
+	tr: asMessages(tr),
+	uk: asMessages(uk),
+	vi: asMessages(vi),
+	zh: asMessages(zh),
 };

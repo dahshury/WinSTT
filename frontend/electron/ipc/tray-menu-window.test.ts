@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { electronMock } from "@test/mocks/electron";
 
 // Shared state for created BrowserWindow instances
@@ -101,13 +102,23 @@ class MockBrowserWindow {
 	}
 }
 
+// MockBrowserWindow implements only the BrowserWindow surface tray-menu-window.ts
+// touches. The unavoidable boundary casts live in these two helpers instead of
+// being repeated at every call site — each returns the exact same value it gets.
+// Constructor cast for the `mock.module("electron")` BrowserWindow stub.
+const asElectronBrowserWindow = (Ctor: typeof MockBrowserWindow) =>
+	Ctor as unknown as typeof import("electron").BrowserWindow;
+// Instance cast for the real `createTrayMenuWindow()` return value, which at
+// runtime IS a MockBrowserWindow under the module mock.
+const asMockWindow = (win: Electron.BrowserWindow) => win as unknown as MockBrowserWindow;
+
 // Track shell.openExternal calls so handleWindowOpen tests can verify
 // that http URLs are forwarded and other schemes are silently dropped.
 const shellOpenExternalCalls: string[] = [];
 
 mock.module("electron", () => ({
 	...electronMock(),
-	BrowserWindow: MockBrowserWindow as unknown as typeof import("electron").BrowserWindow,
+	BrowserWindow: asElectronBrowserWindow(MockBrowserWindow),
 	ipcMain: {
 		on: () => undefined,
 		off: () => undefined,
@@ -196,7 +207,7 @@ describe("tray-menu-window module", () => {
 	});
 
 	test("handleBlur is called when window emits blur event", async () => {
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		win._position = [100, 100]; // Not offscreen
 		// Trigger blur event
 		win.blur();
@@ -317,7 +328,7 @@ describe("tray-menu-window state helpers", () => {
 	});
 
 	test("handleResize calls applyResize on a live window", () => {
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		const fakeEvent = {} as Electron.IpcMainEvent;
 		helpers.handleResize(fakeEvent, { width: 400, height: 300 });
 		expect(win._size).toEqual([400, 300]);
@@ -579,7 +590,7 @@ describe("tray-menu-window pure helpers", () => {
 		// A mutant that changes the conditional to always-true would return true
 		// for null. The `null` test above hits this; this is a duplicate gate.
 		expect(
-			helpers.isWindowAlive(null as unknown as Parameters<typeof helpers.isWindowAlive>[0])
+			helpers.isWindowAlive(asInvalid<Parameters<typeof helpers.isWindowAlive>[0]>(null))
 		).toBe(false);
 	});
 });
@@ -588,7 +599,7 @@ describe("tray-menu-window deeper state", () => {
 	test("isMenuVisible returns FALSE when window's posY is the OFFSCREEN constant (kills equality / true mutants on L214)", () => {
 		// Build a fake live window positioned at the OFFSCREEN coordinate.
 		// We inject a custom getPosition while keeping isDestroyed=false.
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		// Mock has _position = [0, 0] initially; override to [-9999, -9999]:
 		win._position = [-9999, -9999];
 		// Reset module's internal state to ensure trayMenuWindow ref matches our win.
@@ -596,13 +607,13 @@ describe("tray-menu-window deeper state", () => {
 	});
 
 	test("isMenuVisible returns TRUE when window posY is anywhere ELSE (kills equality flip mutant)", () => {
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		win._position = [100, 200];
 		expect(helpers.isMenuVisible()).toBe(true);
 	});
 
 	test("hideTrayMenu sets lastShownAt to null (subsequent reanchorMenuIfVisible no-ops)", () => {
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		win._position = [100, 200]; // visible
 		// Trigger hideTrayMenu — should null out lastShownAt internally.
 		trayMenuWindow.hideTrayMenu();
@@ -631,7 +642,7 @@ describe("tray-menu-window deeper state", () => {
 		// The pre-create-window microtask fires did-finish-load → pageLoaded=true.
 		// To observe initial false, we need to call showTrayMenuAt BEFORE the
 		// microtask fires.
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		const focusBefore = win._focusCalls;
 		// Call IMMEDIATELY (no awaits) so did-finish-load microtask hasn't fired yet.
 		trayMenuWindow.showTrayMenuAt(100, 100);
@@ -642,7 +653,7 @@ describe("tray-menu-window deeper state", () => {
 
 	test("applyTrayMenuStyles inserts the EXACT body-flex CSS rules (kills L54-56 StringLiteral mutants)", async () => {
 		helpers.destroyTrayMenuWindow();
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		// Wait for the queueMicrotask did-finish-load to fire.
 		await new Promise((r) => setTimeout(r, 30));
 		// insertCSS must have been called at least once with the canonical CSS payload.
@@ -664,7 +675,7 @@ describe("tray-menu-window deeper state", () => {
 
 	test("applyTrayMenuStyles invokes showInactive after CSS injection (kills L59 OptionalChaining `win.showInactive` mutant)", async () => {
 		helpers.destroyTrayMenuWindow();
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		await new Promise((r) => setTimeout(r, 30));
 		// genuine code calls win?.showInactive() inside applyTrayMenuStyles.
 		expect(win._showInactiveCalls).toBeGreaterThan(0);
@@ -673,7 +684,7 @@ describe("tray-menu-window deeper state", () => {
 	test("isTrayMenuVisible reflects underlying isMenuVisible state", () => {
 		helpers.destroyTrayMenuWindow();
 		expect(trayMenuWindow.isTrayMenuVisible()).toBe(false);
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		win._position = [100, 200];
 		expect(trayMenuWindow.isTrayMenuVisible()).toBe(true);
 	});
@@ -685,7 +696,7 @@ describe("tray-menu-window deeper state", () => {
 
 	test("getTrayMenuBounds returns window bounds when menu is visible", () => {
 		helpers.destroyTrayMenuWindow();
-		const win = trayMenuWindow.createTrayMenuWindow() as unknown as MockBrowserWindow;
+		const win = asMockWindow(trayMenuWindow.createTrayMenuWindow());
 		win._position = [120, 240];
 		win._size = [260, 290];
 		const bounds = trayMenuWindow.getTrayMenuBounds();

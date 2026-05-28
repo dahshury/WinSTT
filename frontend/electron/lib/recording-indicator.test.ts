@@ -88,6 +88,13 @@ function decodePng(buf: Buffer): PNG {
 	return PNG.sync.read(buf);
 }
 
+// Contained boundary cast — the fake tray implements only the Tray surface the
+// indicator touches (setImage / isDestroyed). The single injection cast lives
+// here instead of being repeated at every initRecordingIndicator call site; the
+// runtime object is unchanged.
+const asTray = (t: ReturnType<typeof makeTray>) =>
+	t as unknown as Parameters<typeof initRecordingIndicator>[0];
+
 describe("recording-indicator public API", () => {
 	test("module exports are functions", () => {
 		expect(typeof initRecordingIndicator).toBe("function");
@@ -99,21 +106,13 @@ describe("recording-indicator public API", () => {
 
 	test("initRecordingIndicator with empty base icon does not throw", () => {
 		const tray = makeTray();
-		expect(() =>
-			initRecordingIndicator(
-				tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-				"/fake/icon.png"
-			)
-		).not.toThrow();
+		expect(() => initRecordingIndicator(asTray(tray), "/fake/icon.png")).not.toThrow();
 		cleanupRecordingIndicator();
 	});
 
 	test("onRecordingStart / onAudioLevel / onRecordingStop do not throw", () => {
 		const tray = makeTray();
-		initRecordingIndicator(
-			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			"/fake/icon.png"
-		);
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
 		expect(() => onRecordingStart()).not.toThrow();
 		expect(() => onAudioLevel(0.1)).not.toThrow();
 		expect(() => onAudioLevel(0.9)).not.toThrow();
@@ -129,10 +128,7 @@ describe("recording-indicator public API", () => {
 
 	test("cleanupRecordingIndicator clears state safely", () => {
 		const tray = makeTray();
-		initRecordingIndicator(
-			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			"/fake/icon.png"
-		);
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
 		onRecordingStart();
 		expect(() => cleanupRecordingIndicator()).not.toThrow();
 		expect(() => onAudioLevel(0.3)).not.toThrow();
@@ -146,10 +142,7 @@ describe("recording-indicator public API", () => {
 	test("onRecordingStart triggers an immediate tray icon swap (does not wait for tick) but leaves the BrowserWindow icon alone", () => {
 		const tray = makeTray() as ReturnType<typeof makeTray> & { count: number };
 		const winSpy = makeWinSpy() as ReturnType<typeof makeWinSpy> & { count: number };
-		initRecordingIndicator(
-			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			"/fake/icon.png"
-		);
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
 		const before = tray.count;
 		onRecordingStart();
 		expect(tray.count).toBeGreaterThan(before);
@@ -569,10 +562,7 @@ describe("indicator state machine", () => {
 	function bootstrap(): void {
 		cleanupRecordingIndicator();
 		const tray = makeTray();
-		initRecordingIndicator(
-			tray as unknown as Parameters<typeof initRecordingIndicator>[0],
-			"/fake/icon.png"
-		);
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
 	}
 
 	test("starts in idle", () => {

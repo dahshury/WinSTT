@@ -13,9 +13,9 @@ import {
 } from "./history-store";
 
 /**
- * In-memory fake of the better-sqlite3 surface our history module touches.
- * Implements just enough of the API to validate migrations, CRUD, list
- * pagination, and retention sweeps without booting the native binding.
+ * In-memory fake of the SQLite surface (DatabaseLike) our history module
+ * touches. Implements just enough of the API to validate migrations, CRUD,
+ * list pagination, and retention sweeps without booting any SQLite engine.
  */
 interface FakeRow {
 	file_name: string;

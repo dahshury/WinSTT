@@ -42,8 +42,10 @@ function rectsEqual(a: Record<number, SegmentRect>, b: Record<number, SegmentRec
 		return false;
 	}
 	for (const k of aKeys) {
-		const ra = a[k as unknown as number];
-		const rb = b[k as unknown as number];
+		// Object.keys() stringifies the numeric record keys; parse back to index.
+		const idx = Number(k);
+		const ra = a[idx];
+		const rb = b[idx];
 		if (!rb) {
 			return false;
 		}

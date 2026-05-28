@@ -6,6 +6,7 @@ import {
 	onModelSwapStarted,
 	onRuntimeInfo,
 } from "@/shared/api/ipc-client";
+import { markSwapFailed } from "@/shared/lib/swap-failure-timing";
 
 /**
  * Tracks in-flight `sttReloadModel` swaps per kind. The server emits
@@ -76,6 +77,12 @@ export function initModelSwapStore(): () => void {
 		useModelSwapStore.getState().clear(kind);
 	});
 	const unsubFailed = onModelSwapFailed(({ kind }) => {
+		// Stamp the failure BEFORE clearing so ``useSyncActiveModel`` can tell
+		// the imminent rollback (settings reverting to the previous model)
+		// apart from a real user pick — otherwise it opens a reversed, never-
+		// completing "swap to the already-loaded model". See
+		// `shared/lib/swap-failure-timing.ts`.
+		markSwapFailed();
 		useModelSwapStore.getState().clear(kind);
 	});
 	// Restart-based swaps (STARTUP_ONLY key changes like

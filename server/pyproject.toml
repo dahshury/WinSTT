@@ -33,6 +33,16 @@ dependencies = [
     "nvidia-ml-py>=12.0",
     "websockets>=16.0",
     "onnx-asr[hub]",
+    # Pulled transitively by ``onnx-asr[hub]`` (unconstrained there), but we
+    # pin the floor at 1.0 directly: 1.x switches the HTTP backend from
+    # ``requests`` to ``httpx`` and makes ``hf_xet`` the default transfer
+    # manager. Our streaming downloader (``streaming_downloader.py``) only
+    # uses the metadata resolvers (``get_hf_file_metadata`` / ``hf_hub_url`` /
+    # ``HfApi.list_repo_files``) and ``constants.HF_HUB_CACHE`` — all stable
+    # across the 0.x→1.x bump — so the bump is safe. ``swap_errors.py`` also
+    # learned the httpx exception class names so network failures still
+    # classify correctly. Don't drop below 1.0 without re-checking those.
+    "huggingface-hub>=1.0",
     # ``onnx`` is needed by ``recorder.infrastructure.onnx_patch`` to repair
     # malformed onnx-community whisper-*.en fp16 decoder exports in-place in
     # the HF cache (subgraph output names + dtype annotations). Lightweight
@@ -132,7 +142,16 @@ openvino = ["onnxruntime-openvino>=1.18.1"]
 # Optional sentence-finished classifier (DistilBERT via transformers).
 # Fail-soft: the adapter falls back to ``is_available() == False`` if these
 # aren't installed.
-sentence-classifier = ["torch>=2.0", "transformers>=4.30,<5"]
+#
+# transformers floor is ``>=5`` (not the old ``>=4.30,<5``) because the core
+# package now pins ``huggingface-hub>=1.0``: every transformers ``<5`` caps
+# ``huggingface-hub<1.0``, which is unsatisfiable against that floor. The
+# first transformers line that allows hub 1.x is the 5.x series
+# (``huggingface-hub>=1.5,<2``). ``DistilBertClassifier`` only touches the
+# stable ``from_pretrained`` / ``DistilBert*`` surface, which is unchanged
+# across the 4.x→5.x bump. This extra is opt-in and not installed in the
+# shipped builds, so the bump is invisible to default users.
+sentence-classifier = ["torch>=2.0", "transformers>=5,<6"]
 
 # Text-to-speech (Kokoro-82M ONNX). Bundled into the standalone exe but
 # disabled by default at runtime — the TTS feature is opt-in from the
@@ -160,6 +179,22 @@ dev = [
     # Only used by ``tests/integration/test_download_progress_e2e.py`` for
     # pretty progress output during dev. Not bundled into the standalone exe.
     "rich>=13.0",
+    # Hand-installed dev tooling that used to live only in the local ``.venv``
+    # (never declared), so every ``uv sync`` pruned it. Declared here now so it
+    # survives. None of these are imported by ``src/`` or bundled into the exe.
+    #
+    #   - ``mutmut``      — mutation testing (the Python counterpart to the
+    #                       frontend's Stryker). Pinned to the 2.x line: that's
+    #                       the version that was in the venv, and 3.x swaps its
+    #                       engine to libcst/textual while dropping the
+    #                       pony/parso/glob2/junit-xml machinery 2.x pulls.
+    #   - ``libcst``      — concrete-syntax-tree lib for ad-hoc codemods.
+    #   - ``textual``     — TUI toolkit (pulls the markdown-it/linkify chain).
+    #   - ``setproctitle``— set the process title for long-running dev scripts.
+    "mutmut>=2.5,<3",
+    "libcst>=1.8",
+    "textual>=8.0",
+    "setproctitle>=1.3",
 ]
 
 [tool.uv]

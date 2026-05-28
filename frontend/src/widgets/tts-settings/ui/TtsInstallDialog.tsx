@@ -1,6 +1,8 @@
 import { useTranslations } from "use-intl";
 import type { TtsDownloadEstimatePayload } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
 
 export interface TtsInstallDialogProps {
@@ -25,6 +27,9 @@ export function TtsInstallDialog({
 	onClose,
 }: TtsInstallDialogProps) {
 	const t = useTranslations("tts");
+	const surface = useSurface();
+	const level = Math.min(surface + 1, 8);
+	const headerLevel = Math.min(surface + 2, 8);
 	const offline = estimate?.unavailable === true;
 	const totalLabel = formatBytes(estimate?.totalBytes ?? 0) ?? "0 B";
 
@@ -35,7 +40,12 @@ export function TtsInstallDialog({
 	) : (
 		<div className="flex flex-col gap-3">
 			<span>{t("installIntro")}</span>
-			<div className="flex flex-col overflow-hidden rounded-lg border border-border bg-surface-tertiary">
+			<div
+				className={cn(
+					"flex flex-col overflow-hidden rounded-lg border border-border",
+					surfaceBg(level)
+				)}
+			>
 				{(estimate?.components ?? []).map((c) => (
 					<div
 						className="flex items-center justify-between border-surface-1 border-b px-3 py-2 text-body last:border-b-0"
@@ -51,7 +61,12 @@ export function TtsInstallDialog({
 						)}
 					</div>
 				))}
-				<div className="flex items-center justify-between bg-surface-elevated px-3 py-2 text-body">
+				<div
+					className={cn(
+						"flex items-center justify-between px-3 py-2 text-body",
+						surfaceBg(headerLevel)
+					)}
+				>
 					<span className="font-semibold text-foreground">{t("installTotalLabel")}</span>
 					<span className="font-semibold text-accent tabular-nums">{totalLabel}</span>
 				</div>

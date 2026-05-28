@@ -11,6 +11,8 @@ import { useTranslations } from "use-intl";
 import { useShallow } from "zustand/react/shallow";
 import { RECOMMENDED_OLLAMA_MODELS, useLlmCatalogStore } from "@/entities/llm-catalog";
 import type { OllamaModel, OllamaPullProgress, RecommendedOllamaModel } from "@/shared/api/models";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { Modal } from "@/shared/ui/modal";
@@ -47,6 +49,7 @@ function localizePullStatus(progress: OllamaPullProgress, t: TranslateFn): strin
 }
 
 function PullProgressBar({ progress, t }: { progress: OllamaPullProgress; t: TranslateFn }) {
+	const trackBg = surfaceBg(Math.min(useSurface() + 1, 8));
 	const percent = computePullPercent(progress);
 	const label = t("pullProgress", {
 		percent,
@@ -54,7 +57,7 @@ function PullProgressBar({ progress, t }: { progress: OllamaPullProgress; t: Tra
 	});
 	return (
 		<div className="mt-2 flex flex-col gap-1">
-			<div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-tertiary">
+			<div className={cn("h-1.5 w-full overflow-hidden rounded-full", trackBg)}>
 				<output
 					aria-label={label}
 					className="block h-full bg-accent transition-all duration-150"
@@ -83,9 +86,13 @@ interface DeleteButtonProps {
 }
 
 function DeleteButton({ deleting, modelName, onDelete, t }: DeleteButtonProps) {
+	const buttonBg = surfaceBg(Math.min(useSurface() + 2, 8));
 	return (
 		<Button
-			className="flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-secondary px-2.5 text-error text-xs transition-colors hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-40"
+			className={cn(
+				"flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-error text-xs transition-colors hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-40",
+				buttonBg
+			)}
 			disabled={deleting}
 			onClick={(e) => {
 				e.stopPropagation();
@@ -99,9 +106,13 @@ function DeleteButton({ deleting, modelName, onDelete, t }: DeleteButtonProps) {
 }
 
 function InstalledRow({ model, current, t, deleting, onSelect, onDelete }: InstalledRowProps) {
+	const rowBg = surfaceBg(Math.min(useSurface() + 1, 8));
 	return (
 		<button
-			className="flex w-full items-center gap-3 rounded-md border border-border bg-surface-tertiary px-3 py-2 text-left transition-colors hover:bg-surface-hover data-[current=true]:border-accent"
+			className={cn(
+				"flex w-full items-center gap-3 rounded-md border border-border px-3 py-2 text-left transition-colors hover:bg-surface-hover data-[current=true]:border-accent",
+				rowBg
+			)}
 			data-current={current}
 			onClick={() => onSelect(model.name)}
 			type="button"
@@ -134,8 +145,9 @@ function RecommendedRow({ model, t, pull, onPull, onCancel }: RecommendedRowProp
 	const isPulling = pull != null;
 	const sizeLabel = t("modelSizeLabel", { size: formatGigabytes(model.sizeBytes) });
 	const paramsLabel = t("paramSizeLabel", { size: model.paramSize });
+	const rowBg = surfaceBg(Math.min(useSurface() + 1, 8));
 	return (
-		<div className="rounded-md border border-border bg-surface-tertiary px-3 py-2.5">
+		<div className={cn("rounded-md border border-border px-3 py-2.5", rowBg)}>
 			<div className="flex items-start gap-3">
 				<div className="min-w-0 flex-1">
 					<div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -181,6 +193,7 @@ interface CustomPullRowProps {
 }
 
 function CustomPullRow({ t, query, pull, onPull, onCancel }: CustomPullRowProps) {
+	const cancelBg = surfaceBg(Math.min(useSurface() + 2, 8));
 	const trimmed = query.trim();
 	if (!isCustomModelQuery(trimmed)) {
 		return null;
@@ -198,7 +211,10 @@ function CustomPullRow({ t, query, pull, onPull, onCancel }: CustomPullRowProps)
 				</div>
 				{isPulling ? (
 					<Button
-						className="flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface-secondary px-2.5 text-foreground-secondary text-xs transition-colors hover:bg-surface-hover"
+						className={cn(
+							"flex h-7 items-center gap-1.5 rounded-md border border-border px-2.5 text-foreground-secondary text-xs transition-colors hover:bg-surface-hover",
+							cancelBg
+						)}
 						onClick={() => onCancel(trimmed)}
 					>
 						<HugeiconsIcon icon={Cancel01Icon} size={13} />
@@ -231,11 +247,10 @@ interface InstalledTabProps {
 
 function InstalledTab(props: InstalledTabProps) {
 	const { models, current, t, hasQuery, deletingName, onSelect, onAskDelete } = props;
+	const emptyBg = surfaceBg(Math.min(useSurface() + 1, 8));
 	if (models.length === 0) {
 		const key = hasQuery ? "noInstalledMatches" : "noInstalledModels";
-		return (
-			<p className="rounded-md bg-surface-tertiary p-3 text-foreground-muted text-sm">{t(key)}</p>
-		);
+		return <p className={cn("rounded-md p-3 text-foreground-muted text-sm", emptyBg)}>{t(key)}</p>;
 	}
 	return (
 		<div className="flex flex-col gap-2">
@@ -265,11 +280,12 @@ interface RecommendedTabProps {
 
 function RecommendedTab(props: RecommendedTabProps) {
 	const { models, pulls, query, t, onPull, onCancel } = props;
+	const emptyBg = surfaceBg(Math.min(useSurface() + 1, 8));
 	const customPullName = query.trim();
 	const customPull = customPullName ? pulls[customPullName] : undefined;
 	if (models.length === 0 && !isCustomModelQuery(customPullName)) {
 		return (
-			<p className="rounded-md bg-surface-tertiary p-3 text-foreground-muted text-sm">
+			<p className={cn("rounded-md p-3 text-foreground-muted text-sm", emptyBg)}>
 				{t("noRecommendedMatches")}
 			</p>
 		);
@@ -323,6 +339,7 @@ interface DialogHeaderProps {
 }
 
 function DialogHeader({ t, tc, onClose }: DialogHeaderProps) {
+	const closeBg = surfaceBg(Math.min(useSurface() + 2, 8));
 	return (
 		<div className="flex items-start justify-between gap-3">
 			<div className="min-w-0 flex-1">
@@ -331,7 +348,10 @@ function DialogHeader({ t, tc, onClose }: DialogHeaderProps) {
 			</div>
 			<Button
 				aria-label={tc("close")}
-				className="size-8 shrink-0 rounded-md border border-border bg-surface-tertiary text-foreground-secondary transition-colors hover:bg-surface-hover"
+				className={cn(
+					"size-8 shrink-0 rounded-md border border-border text-foreground-secondary transition-colors hover:bg-surface-hover",
+					closeBg
+				)}
 				onClick={onClose}
 			>
 				<HugeiconsIcon icon={Cancel01Icon} size={14} />

@@ -12,6 +12,8 @@ import {
 } from "@/entities/cloud-stt-provider";
 import { useSettingsStore } from "@/entities/setting";
 import type { CloudSttProvider } from "@/shared/api/models";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 
 /**
  * Cloud provider header — name and credential status dot. Only rendered for
@@ -50,6 +52,9 @@ interface CloudRowProps {
 
 function CloudRow({ provider, model, onSelect, selected }: CloudRowProps) {
 	const fullId = `${provider}:${model.id}`;
+	// The chip sits on an already-lifted row inside the lifted section container,
+	// so lift two steps above the substrate to stay legible on top of it.
+	const chipLevel = Math.min(useSurface() + 2, 8);
 	return (
 		<button
 			className={[
@@ -65,7 +70,12 @@ function CloudRow({ provider, model, onSelect, selected }: CloudRowProps) {
 					<span className="text-2xs text-foreground-muted">{model.description}</span>
 				) : null}
 			</div>
-			<span className="rounded-sm bg-surface-tertiary px-1.5 py-0.5 font-mono text-[10px] text-foreground-dim">
+			<span
+				className={cn(
+					"rounded-sm px-1.5 py-0.5 font-mono text-[10px] text-foreground-dim",
+					surfaceBg(chipLevel)
+				)}
+			>
 				{model.id}
 			</span>
 		</button>
@@ -91,12 +101,17 @@ export function CloudSttSection({ selectedId, onSelect }: CloudSttSectionProps) 
 		(provider) => integrations[provider].apiKey.trim().length > 0
 	);
 
+	// Lift the cloud-models panel above whatever surface hosts it (settings
+	// section or the detached picker window) — surfaces system, not a flat token.
+	// Computed before the early return so the hook order stays stable.
+	const level = Math.min(useSurface() + 1, 8);
+
 	if (visibleProviders.length === 0) {
 		return null;
 	}
 
 	return (
-		<div className="overflow-hidden rounded-md border border-border bg-surface-elevated">
+		<div className={cn("overflow-hidden rounded-md border border-border", surfaceBg(level))}>
 			<div className="flex items-center gap-2 bg-surface-2 px-3 py-1.5">
 				<HugeiconsIcon className="text-foreground-muted" icon={AiCloud01Icon} size={12} />
 				<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">

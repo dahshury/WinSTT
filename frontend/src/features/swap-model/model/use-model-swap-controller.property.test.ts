@@ -22,6 +22,11 @@ import { __testables } from "./use-model-swap-controller";
 
 const t = __testables;
 
+// `isCriticalAssessment` only reads `.severity`; this contains the single
+// boundary cast from the minimal `{ severity }` stub to the real entry type,
+// returning the same object it was given.
+const asAssessment = (a: { severity: string }) => a as unknown as FitAssessmentEntry;
+
 const quantArb: fc.Arbitrary<OnnxQuantization> = fc.constantFrom(
 	"int8",
 	"fp16",
@@ -118,7 +123,7 @@ describe("isCriticalAssessment (property)", () => {
 	test("true only when severity === 'critical'", () => {
 		fc.assert(
 			fc.property(severityArb, (sev) => {
-				const assessment = { severity: sev } as unknown as FitAssessmentEntry;
+				const assessment = asAssessment({ severity: sev });
 				return t.isCriticalAssessment(assessment) === (sev === "critical");
 			}),
 			{ numRuns: 100 }
@@ -237,9 +242,13 @@ describe("applyQuantOverride (property)", () => {
 // needsDownloadPrompt -------------------------------------------------------
 
 describe("needsDownloadPrompt (property)", () => {
-	test("false when state is undefined", () => {
+	// Unknown model-state must fail SAFE to "prompt for download" for EVERY
+	// quant: without state we can't prove the weights are cached, so silently
+	// issuing a swap (the old fail-OPEN behaviour) left nothing loaded. Mirrors
+	// the unit assertion in use-model-swap-controller.test.ts.
+	test("true for every quant when state is undefined (fail-safe to download)", () => {
 		fc.assert(
-			fc.property(quantArb, (q) => t.needsDownloadPrompt(undefined, q) === false),
+			fc.property(quantArb, (q) => t.needsDownloadPrompt(undefined, q) === true),
 			{ numRuns: 50 }
 		);
 	});

@@ -22,9 +22,19 @@ interface QueueCalls {
 	stop: number;
 }
 
+// The stub implements only the three queue methods the handlers call; this
+// contains the single boundary cast to the real queue type, returning the
+// exact stub object it was handed.
+interface StubQueue {
+	enqueue: (chunk: TtsChunkPayload) => void;
+	markComplete: (id: string) => void;
+	stop: () => void;
+}
+const asQueue = (q: StubQueue) => q as unknown as TtsPlaybackQueue;
+
 function makeStubQueue(): { queue: TtsPlaybackQueue; calls: QueueCalls } {
 	const calls: QueueCalls = { enqueue: [], markComplete: [], stop: 0 };
-	const queue = {
+	const queue = asQueue({
 		enqueue: (chunk: TtsChunkPayload) => {
 			calls.enqueue.push(chunk);
 		},
@@ -34,7 +44,7 @@ function makeStubQueue(): { queue: TtsPlaybackQueue; calls: QueueCalls } {
 		stop: () => {
 			calls.stop += 1;
 		},
-	} as unknown as TtsPlaybackQueue;
+	});
 	return { queue, calls };
 }
 

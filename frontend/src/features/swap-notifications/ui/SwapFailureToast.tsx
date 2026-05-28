@@ -17,6 +17,8 @@ import {
 	onModelSwapFailed,
 	sttReloadModel,
 } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { useSwapNotifications } from "../model/swap-notifications-store";
 
@@ -77,6 +79,9 @@ export function SwapFailureToast() {
 	const show = useSwapNotifications((s) => s.show);
 	const clear = useSwapNotifications((s) => s.clear);
 	const t = useTranslations("swapFailure");
+	const base = useSurface();
+	const level = Math.min(base + 3, 8);
+	const detailsLevel = Math.min(base + 4, 8);
 
 	useEffect(() => {
 		const offFailed = onModelSwapFailed((payload) => {
@@ -117,7 +122,10 @@ export function SwapFailureToast() {
 	return (
 		<div
 			aria-live="assertive"
-			className="fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw] rounded-md border border-error/40 bg-surface-secondary p-3 shadow-lg"
+			className={cn(
+				"fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw] rounded-md border border-error/40 p-3 shadow-lg",
+				surfaceBg(level)
+			)}
 			role="alert"
 		>
 			<div className="mb-1 flex items-start gap-2">
@@ -153,7 +161,10 @@ export function SwapFailureToast() {
 			) : null}
 			<div className="mt-2 flex justify-end gap-2">
 				<Button
-					className="flex items-center gap-1 rounded border border-border bg-surface-tertiary px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated"
+					className={cn(
+						"flex items-center gap-1 rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
+						surfaceBg(detailsLevel)
+					)}
 					onClick={handleRetry}
 				>
 					<HugeiconsIcon icon={RefreshIcon} size={11} />

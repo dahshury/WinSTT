@@ -5,8 +5,8 @@ import type { useCatalogStore, useModelStateStore } from "@/entities/model-catal
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import { DialogShell } from "@/shared/ui/dialog-shell";
 import { DownloadActions, type DownloadPhase, DownloadProgressBar } from "@/shared/ui/download";
-import { Modal } from "@/shared/ui/modal";
 import { useDownloadStore } from "../model/download-store";
 
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
@@ -63,16 +63,14 @@ export function DownloadConfirmationDialog({
 	systemInfo,
 }: DownloadConfirmationDialogProps): ReactNode {
 	return (
-		<Modal isOpen={pending !== null} onClose={onCancel}>
-			<DownloadConfirmationContent
-				getModel={getModel}
-				onCancel={onCancel}
-				onConfirm={onConfirm}
-				pending={pending}
-				statesById={statesById}
-				systemInfo={systemInfo}
-			/>
-		</Modal>
+		<DownloadConfirmationContent
+			getModel={getModel}
+			onCancel={onCancel}
+			onConfirm={onConfirm}
+			pending={pending}
+			statesById={statesById}
+			systemInfo={systemInfo}
+		/>
 	);
 }
 
@@ -240,9 +238,6 @@ function IdleInfoCard({
 			className={`flex flex-col gap-1 rounded-md p-3 text-foreground-secondary text-xs ${surfaceClasses(infoLevel)}`}
 		>
 			<div>
-				<span className="text-foreground">Status:</span> Not downloaded
-			</div>
-			<div>
 				<span className="text-foreground">{sizeLine}</span>
 			</div>
 			<div>
@@ -261,10 +256,14 @@ function DownloadConfirmationContent({
 	statesById,
 	systemInfo,
 }: DownloadConfirmationDialogProps): ReactNode {
-	// Modal raised the substrate by +4; inside the modal, info cards lift +1.
+	// DialogShell raises the substrate by +4 for the popup; mirror that math
+	// here (this component renders the shell, so its own useSurface() reads the
+	// OUTER level). Info cards lift +1 above the popup, button hover +2 — same
+	// scheme ConfirmDialog uses, so the footer button matches the other dialogs.
 	const substrate = useSurface();
-	const infoLevel = Math.min(substrate + 1, 8);
-	const buttonHover = Math.min(substrate + 2, 8);
+	const popupLevel = Math.min(substrate + 4, 8);
+	const infoLevel = Math.min(popupLevel + 1, 8);
+	const buttonHover = Math.min(popupLevel + 2, 8);
 	const state = pending ? statesById[pending.modelId] : undefined;
 	const info = pending ? getModel(pending.modelId) : undefined;
 	const targetQuant = pending?.quantization ?? "";
@@ -313,43 +312,53 @@ function DownloadConfirmationContent({
 		live.discardCache(pending.modelId);
 	};
 
-	const dismissButtonClass = `inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-foreground text-sm ${surfaceClasses(infoLevel)} ${surfaceHoverBg(buttonHover)}`;
+	// Footer cancel/dismiss button — same shape as ConfirmDialog / OptInDialog's
+	// cancel so every dialog's neutral button reads identically.
+	const dismissButtonClass = `inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-4 font-medium text-body text-foreground-secondary transition-colors duration-150 ${surfaceClasses(infoLevel)} ${surfaceHoverBg(buttonHover)}`;
 
 	return (
-		<div className="flex w-[440px] flex-col gap-3 p-4 text-foreground">
-			<h2 className="font-semibold text-base">{dialogTitle(phase)}</h2>
-			<p className="text-foreground-secondary text-sm">
-				{dialogSubtitle(phase, displayName, sizeSuffix, quantLabel)}
-			</p>
-			{phase === "active" && <ActiveProgress live={live} />}
-			{phase === "paused" && <PausedProgress targetCache={targetCache} />}
-			{phase === "idle" && (
-				<IdleInfoCard
-					catalogBytes={catalogBytes}
-					fitness={fitness}
-					infoLevel={infoLevel}
-					targetCache={targetCache}
-				/>
-			)}
-			{fitness.isUncomfortable && phase !== "active" && (
-				<div className="rounded-md border border-error/40 bg-error/10 p-3 text-error text-xs">
-					⚠ This model may not run comfortably on your hardware. Loading may fail or transcription
-					may be slow. You can continue at your own risk.
+		<DialogShell
+			body={
+				<div className="flex flex-col gap-3">
+					{phase === "active" && <ActiveProgress live={live} />}
+					{phase === "paused" && <PausedProgress targetCache={targetCache} />}
+					{phase === "idle" && (
+						<IdleInfoCard
+							catalogBytes={catalogBytes}
+							fitness={fitness}
+							infoLevel={infoLevel}
+							targetCache={targetCache}
+						/>
+					)}
+					{fitness.isUncomfortable && phase !== "active" && (
+						<div className="rounded-md border border-error/40 bg-error/10 p-3 text-error text-xs">
+							⚠ This model may not run comfortably on your hardware. Loading may fail or
+							transcription may be slow. You can continue at your own risk.
+						</div>
+					)}
 				</div>
-			)}
-			<div className="mt-1 flex items-center justify-end gap-2">
-				<button className={dismissButtonClass} onClick={onCancel} type="button">
-					{dismissLabel(phase)}
-				</button>
-				<DownloadActions
-					labels={DIALOG_ACTION_LABELS}
-					onDiscard={handleDiscard}
-					onDownload={onConfirm}
-					onResume={onConfirm}
-					onStop={handleStop}
-					phase={phase}
-				/>
-			</div>
-		</div>
+			}
+			description={dialogSubtitle(phase, displayName, sizeSuffix, quantLabel)}
+			onOpenChange={(next) => {
+				if (!next) {
+					onCancel();
+				}
+			}}
+			open={pending !== null}
+			title={dialogTitle(phase)}
+			width={440}
+		>
+			<button className={dismissButtonClass} onClick={onCancel} type="button">
+				{dismissLabel(phase)}
+			</button>
+			<DownloadActions
+				labels={DIALOG_ACTION_LABELS}
+				onDiscard={handleDiscard}
+				onDownload={onConfirm}
+				onResume={onConfirm}
+				onStop={handleStop}
+				phase={phase}
+			/>
+		</DialogShell>
 	);
 }

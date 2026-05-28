@@ -705,6 +705,36 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
 
+    # ─── Recordings (history WAV persistence) ───────────────────────────
+    # The Electron history relay surfaces a per-transcript play button only
+    # when the server writes the just-transcribed PCM to a WAV and reports
+    # its path on the fullSentence event. The renderer passes --save_wav by
+    # default; the recordingRetention setting governs cleanup of the saved
+    # files (sweep in electron-main), not whether they're written.
+    parser.add_argument(
+        "--save_wav",
+        "--save-wav",
+        action="store_true",
+        default=False,
+        help=(
+            "Persist each transcribed utterance's PCM to a WAV under "
+            "--recordings_dir and report the path on the fullSentence event so "
+            "the history UI can play it back. Default is False (opt-in)."
+        ),
+    )
+    parser.add_argument(
+        "--recordings_dir",
+        "--recordings-dir",
+        type=str,
+        default="",
+        help=(
+            "Directory the server writes history WAVs into when --save_wav is "
+            "set. The Electron main process passes %%APPDATA%%/winstt/recordings "
+            "so saved files line up with the history store that reads them. "
+            "Empty (the default) disables WAV writing even if --save_wav is set."
+        ),
+    )
+
     # ─── TTS ────────────────────────────────────────────────────────────
     parser.add_argument(
         "--tts-voice",

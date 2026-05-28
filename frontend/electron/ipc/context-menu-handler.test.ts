@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import {
 	type ContextMenuIpcRequest,
 	createContextMenuIpcHandler,
@@ -82,14 +83,14 @@ describe("createContextMenuIpcHandler", () => {
 		// guard but the mutant would let it through, then the popup adapter
 		// would receive an invalid x.
 		const handler = createContextMenuIpcHandler({ popup: () => undefined });
-		expect(handler({}, { template: [], x: "10" as unknown as number })).rejects.toThrow(
+		expect(handler({}, { template: [], x: asInvalid<number>("10") })).rejects.toThrow(
 			"x must be a finite number"
 		);
 	});
 
 	test("rejects non-numeric y coordinate (e.g., null)", () => {
 		const handler = createContextMenuIpcHandler({ popup: () => undefined });
-		expect(handler({}, { template: [], y: null as unknown as number })).rejects.toThrow(
+		expect(handler({}, { template: [], y: asInvalid<number>(null) })).rejects.toThrow(
 			"y must be a finite number"
 		);
 	});

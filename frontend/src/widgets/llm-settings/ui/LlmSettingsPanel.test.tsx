@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { render } from "@testing-library/react";
 import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
@@ -208,7 +209,7 @@ describe("LlmSettingsPanel helpers — pickReplacementOllamaModel", () => {
 		// undefined can still pass through (Zustand patches model: undefined).
 		// The implementation guards on falsy-current to cover both cases.
 		expect(
-			helpers.pickReplacementOllamaModel([{ name: "a" }], undefined as unknown as string)
+			helpers.pickReplacementOllamaModel([{ name: "a" }], asInvalid<string>(undefined))
 		).toBeNull();
 	});
 });

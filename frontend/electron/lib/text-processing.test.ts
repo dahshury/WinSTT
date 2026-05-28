@@ -46,6 +46,12 @@ mock.module("./store", () => ({
 const { applyPostProcessing, cleanupPostProcessing, getPostProcessingVocab, initPostProcessing } =
 	await import("./text-processing");
 
+// Contained boundary cast — `mockStore` implements only the electron-store
+// surface initPostProcessing reads (get / set / onDidChange). The runtime
+// object is passed through unchanged; only the type is widened to the real
+// store parameter shape.
+const asStore = (s: typeof mockStore) => s as unknown as Parameters<typeof initPostProcessing>[0];
+
 beforeEach(() => {
 	for (const k of Object.keys(storeData)) {
 		delete storeData[k];
@@ -54,7 +60,7 @@ beforeEach(() => {
 	storeData.dictionary = [];
 	storeData.snippets = [];
 	storeData.quality = { ensureSentenceEndsWithPeriod: false };
-	initPostProcessing(mockStore as unknown as Parameters<typeof initPostProcessing>[0]);
+	initPostProcessing(asStore(mockStore));
 });
 
 afterEach(() => {
@@ -169,7 +175,7 @@ describe("rebuild watchers", () => {
 		storeData.dictionary = [];
 		storeData.snippets = [];
 		storeData.quality = { ensureSentenceEndsWithPeriod: false };
-		initPostProcessing(mockStore as unknown as Parameters<typeof initPostProcessing>[0]);
+		initPostProcessing(asStore(mockStore));
 		expect(applyPostProcessing("kubernetees")).toBe("kubernetees");
 	});
 });

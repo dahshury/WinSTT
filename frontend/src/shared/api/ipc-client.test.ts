@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { IPC } from "./ipc-channels";
 import * as ipc from "./ipc-client";
 
@@ -12,6 +13,11 @@ interface MockApi {
 	secureInvoke: ReturnType<typeof mock>;
 	send: ReturnType<typeof mock>;
 }
+
+// MockApi implements only the ElectronAPI surface ipc-client.ts actually calls.
+// The single boundary cast (mock → real ElectronAPI) lives here instead of being
+// repeated at every injection site — the runtime object is returned unchanged.
+const asElectronApi = (m: MockApi) => m as unknown as typeof window.electronAPI;
 
 function installMockApi(opts?: {
 	invokeImpl?: (channel: string, ...args: unknown[]) => unknown;
@@ -46,7 +52,7 @@ function installMockApi(opts?: {
 		}),
 		getPathForFile: mock(() => "/mock/path"),
 	};
-	window.electronAPI = api as unknown as typeof window.electronAPI;
+	window.electronAPI = asElectronApi(api);
 	return api;
 }
 
@@ -75,7 +81,7 @@ describe("getFilePath", () => {
 
 	test("returns empty string when not in electron", () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			expect(ipc.getFilePath(new File([], "x.wav"))).toBe("");
 		} finally {
@@ -615,7 +621,7 @@ describe("typed event subscriptions", () => {
 
 	test("onLlmCatalog returns no-op when not in electron", () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			const cb = mock(() => undefined);
 			const unsub = ipc.onLlmCatalog(cb);
@@ -640,7 +646,7 @@ describe("typed event subscriptions", () => {
 
 	test("ipcOn returns a no-op unsubscribe when not in electron", () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			const unsub = ipc.ipcOn("foo", () => undefined);
 			expect(typeof unsub).toBe("function");
@@ -652,7 +658,7 @@ describe("typed event subscriptions", () => {
 
 	test("ipcSend is a no-op when not in electron", () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			expect(() => ipc.ipcSend("foo", 1, 2)).not.toThrow();
 		} finally {
@@ -662,7 +668,7 @@ describe("typed event subscriptions", () => {
 
 	test("ipcInvoke resolves to undefined when not in electron", async () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			expect(await ipc.ipcInvoke("foo")).toBeUndefined();
 		} finally {
@@ -672,7 +678,7 @@ describe("typed event subscriptions", () => {
 
 	test("clipboardReadText returns empty string when not in electron (secureInvoke fallback)", async () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			expect(await ipc.clipboardReadText()).toBe("");
 		} finally {
@@ -682,7 +688,7 @@ describe("typed event subscriptions", () => {
 
 	test("ipcSend on undefined electronAPI is a no-op and does not throw (kills L30 isElectron `true` mutant — would call .send on undefined)", () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			expect(() => ipc.ipcSend("settings:save")).not.toThrow();
 		} finally {
@@ -692,7 +698,7 @@ describe("typed event subscriptions", () => {
 
 	test("ipcInvoke on undefined electronAPI does not throw (kills L30 mutant where isElectron => true would call .invoke on undefined)", async () => {
 		const previous = window.electronAPI;
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		try {
 			await expect(ipc.ipcInvoke("settings:load")).resolves.toBeUndefined();
 		} finally {
@@ -715,7 +721,7 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("sttGetParameter falls back to null when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.sttGetParameter("model");
 		expect(result).toBeNull();
 	});
@@ -727,12 +733,12 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("hotkeyStartRecording falls back to false when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.hotkeyStartRecording()).toBe(false);
 	});
 
 	test("autostartGet falls back to false when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.autostartGet()).toBe(false);
 	});
 
@@ -745,7 +751,7 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("audioGetDevices falls back to [] when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.audioGetDevices()).toEqual([]);
 	});
 
@@ -757,17 +763,17 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("gpuGetInfo falls back to null when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.gpuGetInfo()).toBeNull();
 	});
 
 	test("sttIsConnected falls back to false when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.sttIsConnected()).toBe(false);
 	});
 
 	test("sttServerStatus falls back to 'idle' when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.sttServerStatus()).toBe("idle");
 	});
 
@@ -828,12 +834,12 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("fetchModelCatalog falls back to [] when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.fetchModelCatalog()).toEqual([]);
 	});
 
 	test("LLM fallback shapes: fetchOllamaModels returns reachable=false sentinel when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.fetchOllamaModels();
 		expect(result.reachable).toBe(false);
 		expect(result.models).toEqual([]);
@@ -841,20 +847,20 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("LLM fallback: detectOllama returns installed=false sentinel when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.detectOllama();
 		expect(result.installed).toBe(false);
 	});
 
 	test("LLM fallback: startOllama returns started=false sentinel when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.startOllama();
 		expect(result.started).toBe(false);
 		expect(result.error).toBe("IPC unavailable");
 	});
 
 	test("LLM fallback: fetchOpenRouterModels returns reachable=false sentinel when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.fetchOpenRouterModels();
 		expect(result.reachable).toBe(false);
 		expect(result.models).toEqual([]);
@@ -862,12 +868,12 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("LLM fallback: processWithLlm returns the original text when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.processWithLlm("hello")).toBe("hello");
 	});
 
 	test("LLM fallback: pullOllamaModel returns success=false sentinel when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.pullOllamaModel("llama3.2:1b");
 		expect(result.success).toBe(false);
 		expect(result.model).toBe("");
@@ -875,7 +881,7 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("LLM fallback: deleteOllamaModel returns success=false sentinel when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.deleteOllamaModel("llama3.2:1b");
 		expect(result.success).toBe(false);
 		expect(result.model).toBe("");
@@ -883,71 +889,71 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 	});
 
 	test("LLM fallback: cancelOllamaModelPull returns cancelled=false when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.cancelOllamaModelPull("llama3.2:1b");
 		expect(result.cancelled).toBe(false);
 	});
 
 	test("fileTranscribe falls back to { requestId: '' } when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.fileTranscribe("/some/file.wav");
 		expect(result.requestId).toBe("");
 	});
 
 	test("loopbackListDevices falls back to [] when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.loopbackListDevices()).toEqual([]);
 	});
 
 	test("dialogOpenFile falls back to null when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.dialogOpenFile()).toBeNull();
 	});
 
 	test("appMenuSetTemplate falls back to { applied: false, itemCount: 0 } when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.appMenuSetTemplate([]);
 		expect(result.applied).toBe(false);
 		expect(result.itemCount).toBe(0);
 	});
 
 	test("appMenuReset falls back to { applied: false } when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.appMenuReset();
 		expect(result.applied).toBe(false);
 	});
 
 	test("contextMenuShow falls back to { selectedId: null } when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.contextMenuShow([]);
 		expect(result.selectedId).toBeNull();
 	});
 
 	test("clipboardWriteText resolves to a writeText response (no throw, no electron)", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.clipboardWriteText("hello");
 		expect((result as { operation: string }).operation).toBe("writeText");
 	});
 
 	test("clipboardClear resolves to a clear response (no throw, no electron)", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.clipboardClear();
 		expect((result as { operation: string }).operation).toBe("clear");
 	});
 
 	test("updaterClearStatusHistory falls back to { cleared: true } when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const result = await ipc.updaterClearStatusHistory();
 		expect(result.cleared).toBe(true);
 	});
 
 	test("updaterGetStatusHistory falls back to [] when not in electron", async () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		expect(await ipc.updaterGetStatusHistory()).toEqual([]);
 	});
 
 	test("onLlmCatalog returns a noop unsubscribe when not in electron (kills L448 ConditionalExpression mutation)", () => {
-		(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
 		const unsub = ipc.onLlmCatalog(() => undefined);
 		expect(typeof unsub).toBe("function");
 		// Calling unsub should not throw.

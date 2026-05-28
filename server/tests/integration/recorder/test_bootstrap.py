@@ -213,9 +213,22 @@ class TestResolveQuantization:
         # documented fallback is fp32 (None) with a warning — honoring the
         # request would be actively harmful. bnb4 is broken upstream for
         # ONNX Whisper regardless; this must NOT be re-enabled.
-        assert self._resolve("bnb4", "cuda", 1_500_000_000) is None
-        assert self._resolve("q4", "cuda", 1_500_000_000) is None
-        assert self._resolve("int8", "cuda", 1_500_000_000) is None
+        #
+        # Hermetic: pin the resolved EP to CUDA so the assertion exercises the
+        # GPU-incompatible-quant branch on every host. Without this, a box with
+        # no CUDA runtime (this DirectML dev machine, CPU-only CI) resolves the
+        # accelerator to DirectML/CPU — where sub-fp16 quants legitimately pass
+        # through — and the test would flip purely on host hardware. Mirrors the
+        # patch pattern in test_sense_voice_dml_override_routes_to_cpu.
+        from unittest.mock import patch
+
+        with (
+            patch("src.recorder.infrastructure.device.resolve_accelerator", return_value="cuda"),
+            patch("src.recorder.infrastructure.device.resolve_device", return_value="cuda"),
+        ):
+            assert self._resolve("bnb4", "cuda", 1_500_000_000) is None
+            assert self._resolve("q4", "cuda", 1_500_000_000) is None
+            assert self._resolve("int8", "cuda", 1_500_000_000) is None
 
     def test_unknown_model_with_no_param_count_stays_fp32_on_auto(self) -> None:
         # An off-catalog repo (param_count defaults to 0) must not trigger

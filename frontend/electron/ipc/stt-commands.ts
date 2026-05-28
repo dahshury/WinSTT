@@ -132,6 +132,29 @@ const ALLOWED_PARAMETERS = new Set([
 	"end_of_sentence_detection_pause",
 	"mid_sentence_detection_pause",
 	"unknown_sentence_detection_pause",
+	// Live decoder-bias prompts pushed by installInitialPromptSync and the
+	// Settings static-prefix sync (sync-actions.ts::syncInitialPromptStatics).
+	"initial_prompt",
+	"initial_prompt_realtime",
+	// Hot-swappable knobs that sync-actions.ts pushes via sttSetParameter on
+	// settings change. These were missing from this allowlist while present
+	// in BOTH the OpenAPI spec (AllowedParameter) and the server's
+	// _ALLOWED_PARAMETERS — so every push was rejected client-side with
+	// "set-parameter REJECTED (disallowed)" before reaching the server.
+	// The user-visible symptom was a quantization-badge click that updated
+	// settings, fired beginSwap (spinner on), but never sent the
+	// onnx_quantization change — so the server never reloaded and the
+	// "Switching…" spinner spun forever. Keep in sync with
+	// `spec/openapi.yaml` → AllowedParameter and
+	// `server/src/stt_server/control_handler.py` → _ALLOWED_PARAMETERS.
+	"onnx_quantization",
+	"translate_to_english",
+	"model_unload_timeout_seconds",
+	"webrtc_sensitivity",
+	"silero_deactivity_detection",
+	"always_on_microphone",
+	"lazy_stream_close",
+	"lazy_close_timeout_seconds",
 	// Deterministic post-ASR fuzzy corrector. List[str] / float — the
 	// renderer pushes the live dictionary terms (no `replacement` set)
 	// here so the server can correct misrecognitions BEFORE the LLM

@@ -5,12 +5,19 @@ from pathlib import Path
 
 import pytest
 
+import src.recorder.domain.model_registry as model_registry
 from src.recorder.domain.custom_models import CustomModelEntry
 from src.recorder.domain.model_registry import (
     CUSTOM_MODEL_FAMILY,
     ModelCatalog,
     ModelInfo,
     TranscriberBackend,
+    _float_or_zero,
+    _get_default_scanner,
+    _load_catalog_entries,
+    _size_bytes_map,
+    _size_label,
+    _str_list,
     get_custom_models_dir,
     set_custom_models_dir,
 )
@@ -698,3 +705,144 @@ class TestModelInfoCustomFields:
         assert info.available is False
         assert info.error_message == "missing tokenizer.json in x"
         assert info.local_path == "/path/to/x"
+
+
+class TestSizeLabel:
+    """``_size_label`` derives the human label from an exact param count."""
+
+    def test_zero_or_negative_params_returns_empty_label(self) -> None:
+        # Line 179: the ``params <= 0`` guard returns "" (the "unknown size"
+        # sentinel custom-model rows rely on — they never know the budget).
+        assert _size_label(0) == ""
+        assert _size_label(-1) == ""
+
+    def test_sub_billion_params_round_to_nearest_million(self) -> None:
+        # The non-zero branch must still produce a label so the guard above
+        # is the only path to "".
+        assert _size_label(978_000_000) == "978M"
+
+    def test_billion_scale_params_use_billions_label(self) -> None:
+        assert _size_label(1_000_000_000) == "1B"
+
+
+class TestStrList:
+    """``_str_list`` coerces a JSON value into ``list[str]`` with a fallback."""
+
+    def test_non_list_falls_back_to_copy_of_default(self) -> None:
+        # Line 209: a non-list raw value (here a string) returns a *copy* of
+        # the supplied default, not the default object itself.
+        default = ["en"]
+        result = _str_list("not-a-list", default=default)
+        assert result == ["en"]
+        assert result is not default  # list(default) makes a fresh copy
+
+    def test_list_input_is_stringified_elementwise(self) -> None:
+        # The taken-list branch stringifies each element; this is the
+        # not-taken side of the line-208 guard.
+        assert _str_list([1, "en", True], default=[]) == ["1", "en", "True"]
+
+
+class TestFloatOrZero:
+    """``_float_or_zero`` best-effort coerces optional JSON numeric fields."""
+
+    def test_non_numeric_returns_zero_sentinel(self) -> None:
+        # Line 220: ``None`` / strings / lists are not int|float, so they map
+        # to the 0.0 "unknown / no bar" sentinel.
+        assert _float_or_zero(None) == 0.0
+        assert _float_or_zero("12.5") == 0.0
+        assert _float_or_zero([1.0]) == 0.0
+
+    def test_numeric_values_pass_through_as_float(self) -> None:
+        # Not-taken side of the line-219 guard: ints and floats coerce.
+        assert _float_or_zero(7) == 7.0
+        assert _float_or_zero(3.5) == 3.5
+
+
+class TestSizeBytesMap:
+    """``_size_bytes_map`` coerces the catalog's size blob, dropping junk."""
+
+    def test_non_dict_raw_returns_empty_map(self) -> None:
+        # Line 265: anything that isn't a dict (list / None / str) yields {}.
+        assert _size_bytes_map(["not", "a", "dict"]) == {}
+        assert _size_bytes_map(None) == {}
+
+    def test_non_string_key_is_skipped(self) -> None:
+        # Line 269: non-str keys are dropped via ``continue``; the valid
+        # sibling key still survives so we know the loop kept iterating.
+        result = _size_bytes_map({42: 100, "fp16": 200})
+        assert result == {"fp16": 200}
+
+    def test_non_positive_or_non_int_values_are_dropped(self) -> None:
+        # Branch 270->267 NOT-taken side: keys whose value is zero, negative,
+        # a float, or a bool fail ``isinstance(value, int) and value > 0`` and
+        # loop back to 267 without being added.
+        result = _size_bytes_map(
+            {
+                "zero": 0,
+                "negative": -5,
+                "float": 12.5,
+                "bool": True,  # bool is an int subclass but True == 1; included to prove >0 still applies
+                "valid": 4096,
+            }
+        )
+        # Only the positive-int entry survives. ``bool True`` is technically
+        # ``int(1) > 0`` so it is kept — assert that exact behaviour rather
+        # than guessing.
+        assert result == {"bool": 1, "valid": 4096}
+
+    def test_positive_int_value_is_kept(self) -> None:
+        # Branch 270->271 TAKEN side: a positive int is added to the map.
+        assert _size_bytes_map({"": 1024, "fp16": 512}) == {"": 1024, "fp16": 512}
+
+
+class TestLoadCatalogEntries:
+    """``_load_catalog_entries`` reads catalog.json and folds the overlay."""
+
+    def test_malformed_models_field_raises_value_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Lines 289-290: a ``models`` key that isn't a list is a corrupt
+        # catalog; the loader must raise rather than silently yield nothing.
+        bad_catalog = tmp_path / "catalog.json"
+        bad_catalog.write_text(json.dumps({"models": {"id": "tiny"}}), encoding="utf-8")
+        monkeypatch.setattr(model_registry, "_CATALOG_JSON", bad_catalog)
+        with pytest.raises(ValueError, match=r"'models' must be a list, got dict"):
+            _load_catalog_entries()
+
+    def test_well_formed_list_is_loaded(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        # Not-taken side of the line-288 guard: a list ``models`` value parses
+        # cleanly into ModelInfo rows.
+        good_catalog = tmp_path / "catalog.json"
+        good_catalog.write_text(
+            json.dumps({"models": [{"id": "fake-tiny", "family": "whisper"}]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(model_registry, "_CATALOG_JSON", good_catalog)
+        entries = _load_catalog_entries()
+        assert [e.id for e in entries] == ["fake-tiny"]
+        assert entries[0].family == "whisper"
+
+
+class TestGetDefaultScanner:
+    """``_get_default_scanner`` lazily resolves the infra scanner once."""
+
+    def test_returns_cached_scanner_without_reimport(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Branch 436->440 NOT-taken side: when ``_DEFAULT_SCANNER`` is already
+        # populated, the function returns it directly and never re-enters the
+        # lazy infrastructure import. Use a sentinel so we can assert identity.
+        def sentinel_scanner(_: Path | str | None) -> list[CustomModelEntry]:
+            return []
+
+        monkeypatch.setattr(model_registry, "_DEFAULT_SCANNER", sentinel_scanner)
+        assert _get_default_scanner() is sentinel_scanner
+
+    def test_resolves_infra_scanner_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Branch 436->437 TAKEN side: a ``None`` cache triggers the lazy
+        # import and caches the real infrastructure ``scan_custom_models``.
+        monkeypatch.setattr(model_registry, "_DEFAULT_SCANNER", None)
+        from src.recorder.infrastructure.custom_model_scanner import scan_custom_models
+
+        resolved = _get_default_scanner()
+        assert resolved is scan_custom_models
+        # And it is now cached on the module global.
+        assert model_registry._DEFAULT_SCANNER is scan_custom_models

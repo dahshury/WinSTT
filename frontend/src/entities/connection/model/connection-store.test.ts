@@ -23,10 +23,16 @@ describe("useConnectionStore", () => {
 	});
 
 	test("store factory's initial state has the documented literals (mutation guard)", () => {
-		// Mutating the literals in the source ("disconnected" → "" or "idle" → "")
+		// Mutating the literals in the source ("connecting" → "" or "idle" → "")
 		// is invisible if every test sets state in beforeEach. This assertion
 		// reads the snapshot captured at module-load time, before any setState.
-		expect(INITIAL_STATE.connectionStatus).toBe("disconnected");
+		// connectionStatus defaults to "connecting" (NOT "disconnected") on
+		// purpose: the cold-start chip must read "CONNECTING…" not "OFFLINE"
+		// while the stt-server binds its WS ports — see the rationale comment in
+		// connection-store.ts. The beforeEach above resets the *live* store to
+		// "disconnected" only as a per-test baseline; the factory initial here
+		// is the real, intentional default.
+		expect(INITIAL_STATE.connectionStatus).toBe("connecting");
 		expect(INITIAL_STATE.serverStatus).toBe("idle");
 		expect(INITIAL_STATE.gpuInfo).toBeNull();
 	});

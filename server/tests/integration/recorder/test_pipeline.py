@@ -932,3 +932,67 @@ class TestRecordingPipeline:
 
         assert pipeline._wakeword_detected is False
         assert pipeline._wakeword_detected_at == 0.0
+
+    # ------------------------------------------------------------------ #
+    # Silence-prefill maxlen rounding (math.ceil substitute)
+    # ------------------------------------------------------------------ #
+
+    def test_silence_prefill_maxlen_rounds_up_on_fractional_ratio(self) -> None:
+        """Branch 131->132: a non-integer ratio rounds UP (count += 1).
+
+        Default config (vad_prefill_ms=450, buffer_size=512, sample_rate=16000)
+        gives chunk_ms=32 and ratio=450/32=14.0625 — strictly greater than its
+        int(14), so the ceil-substitute bumps the count to 15. This is the
+        Handy-parity prefill_frames=15 invariant the docstring calls out.
+        """
+        cfg = RecorderConfig.from_kwargs()
+        # Sanity: this is the fractional-ratio scenario, not an exact divisor.
+        assert (cfg.audio.buffer_size * 1000.0 / cfg.audio.sample_rate) == 32.0
+        assert cfg.vad.vad_prefill_ms == 450
+
+        maxlen = RecordingPipeline._compute_silence_prefill_maxlen(cfg)
+
+        # ceil(450 / 32) = ceil(14.0625) = 15 (rounded UP, not truncated to 14).
+        assert maxlen == 15
+
+    def test_silence_prefill_maxlen_no_round_up_on_exact_ratio(self) -> None:
+        """Branch 131->133: an exact-integer ratio is NOT bumped.
+
+        With vad_prefill_ms=64 and chunk_ms=32 the ratio is exactly 2.0, so
+        ``ratio > count`` is False and the count returns as-is (2). Covers the
+        not-taken arm of the ceil-substitute that the default (fractional)
+        config never exercises.
+        """
+        cfg = RecorderConfig.from_kwargs(vad_prefill_ms=64)
+        # chunk_ms is 32, so 64/32 == 2.0 exactly (the exact-divisor case).
+        assert (cfg.audio.buffer_size * 1000.0 / cfg.audio.sample_rate) == 32.0
+
+        maxlen = RecordingPipeline._compute_silence_prefill_maxlen(cfg)
+
+        # int(2.0) == 2 and ratio is not > 2, so no +1: stays exactly 2.
+        assert maxlen == 2
+
+    def test_silence_prefill_maxlen_wires_through_to_deque(self) -> None:
+        """The computed maxlen is the live ``_silence_prefill`` deque cap.
+
+        Locks the exact-ratio path end-to-end: a pipeline built with
+        vad_prefill_ms=64 must cap its silence-prefill deque at 2 chunks, so
+        a third append drops the oldest entry.
+        """
+        clock = Clock.fixed_clock(1000.0)
+        cfg = RecorderConfig.from_kwargs(vad_prefill_ms=64)
+        pipeline, _event_bus, _sm, _buf, _vad = self._make_pipeline_with_clock(clock, config=cfg)
+
+        assert pipeline._silence_prefill.maxlen == 2
+
+        # Distinct payloads so eviction is observable by value.
+        first = struct.pack("<3h", 1, 1, 1)
+        second = struct.pack("<3h", 2, 2, 2)
+        third = struct.pack("<3h", 3, 3, 3)
+        pipeline._silence_prefill.append(first)
+        pipeline._silence_prefill.append(second)
+        pipeline._silence_prefill.append(third)
+
+        # Deque capped at 2: the third append evicted the first chunk.
+        assert len(pipeline._silence_prefill) == 2
+        assert list(pipeline._silence_prefill) == [second, third]

@@ -10,6 +10,8 @@ import {
 import { ProviderIntegrationSection } from "@/features/verify-credentials";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcInvoke } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
@@ -70,6 +72,7 @@ export function IntegrationsSettingsPanel() {
 	const t = useTranslations("integrations");
 	const tLlm = useTranslations("llm");
 	const tc = useTranslations("common");
+	const chipLevel = Math.min(useSurface() + 1, 8);
 
 	// Persisted key is read from the in-memory Zustand store, which `useSyncSettings`
 	// (mounted by SettingsPage) already reconciled with electron-store on window
@@ -148,6 +151,7 @@ export function IntegrationsSettingsPanel() {
 
 	const openrouterPill = renderOpenrouterPill({
 		apiKey: persistedOpenrouterKey,
+		chipLevel,
 		status: openrouterStatus,
 		t,
 	});
@@ -227,16 +231,23 @@ export function IntegrationsSettingsPanel() {
 
 function renderOpenrouterPill({
 	apiKey,
+	chipLevel,
 	status,
 	t,
 }: {
 	apiKey: string;
+	chipLevel: number;
 	status: { lastError?: string; status: OpenRouterStatus };
 	t: ReturnType<typeof useTranslations>;
 }) {
 	if (status.status === "verifying") {
 		return (
-			<span className="inline-flex items-center gap-1 rounded-sm bg-surface-tertiary px-1.5 py-0.5 text-2xs text-foreground-muted">
+			<span
+				className={cn(
+					"inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-2xs text-foreground-muted",
+					surfaceBg(chipLevel)
+				)}
+			>
 				<Spinner className="size-2.5 border" />
 				{t("verifying")}
 			</span>

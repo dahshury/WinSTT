@@ -21,7 +21,7 @@ import {
 	useSettingsTabStore,
 } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
-import { DownloadConfirmationDialog, useDownloadStore } from "@/features/model-download";
+import { DownloadConfirmationDialog, useQuantActions } from "@/features/model-download";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import { type SwapController, useModelSwapController } from "@/features/swap-model";
 import { LANGUAGES, type OnnxQuantization } from "@/shared/config/defaults";
@@ -38,7 +38,6 @@ import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { useLockRealtimeToMain } from "../model/use-lock-realtime-to-main";
-import { useQuantDownloads } from "../model/use-quant-downloads";
 import { useStaleModelFallback } from "../model/use-stale-model-fallback";
 import { useSwapProgress } from "../model/use-swap-progress";
 
@@ -718,18 +717,10 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		}
 	};
 
-	// Per-quant trash button → AlertDialog confirm (rendered inside the
-	// picker) → this callback → IPC delete. Server broadcasts
-	// model_cache_changed; the model-state store listener refreshes the
-	// per-quant cache dots automatically (no manual refetch needed).
-	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
-	const handleDeleteQuant = (modelId: string, quantization: OnnxQuantization) => {
-		discardQuantCache(modelId, quantization);
-	};
-
-	// Per-quant byte-level pause/resume wiring lives in its own hook so the
-	// panel stays at a reasonable size (see no-giant-component).
-	const { handleDownloadAction, handleDownloadSnapshot } = useQuantDownloads();
+	// Per-quant badge handlers (delete + byte-level pause/resume/cancel) live
+	// in one shared feature-layer hook so the settings panel and the detached
+	// footer picker wire the exact same controls into SttModelSelector.
+	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
 
 	// When the active main model is itself small enough to drive the live
 	// preview, the dedicated realtime slot has no job — a second small model

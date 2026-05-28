@@ -256,9 +256,18 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				</div>
 				{activeFiltersSlot}
 			</div>
-			<div className="flex min-h-0 flex-1">
+			<div className="flex min-h-0 min-w-0 flex-1">
 				{sidebarSlot}
-				<div className="flex min-h-0 flex-1 flex-col">{list}</div>
+				{/* `min-w-0` is load-bearing: a flex child defaults to
+				    `min-width: auto` (= its content's intrinsic min size), so
+				    without this the list column refuses to shrink below the
+				    widest card's non-shrinking right column (perf bars +
+				    attribute badges + variant chevron) and the cards spill past
+				    the fixed-width popup — most visible under the realtime
+				    filter, whose surviving cards all carry that wide right
+				    column. With `min-w-0` the column tracks the available width
+				    and each card's own `min-w-0` left region truncates instead. */}
+				<div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
 			</div>
 		</>
 	);

@@ -57,24 +57,21 @@ export function playBuffer(ctx: AudioContext, buf: AudioBuffer): void {
 	source.start();
 }
 
-type AudioContextWithSinkId = AudioContext & {
-	setSinkId?: (id: string | { type: "none" }) => Promise<void>;
-};
-
 /**
  * Construct an AudioContext routed to a specific output device, falling
  * back to the system default when `deviceId` is empty / the browser is
  * older than M114 (no `sinkId` constructor option). Pairs with
  * :func:`routeContextToSink` for runtime device switches.
+ *
+ * `sinkId` is declared on `AudioContextOptions` via `src/dom-augment.d.ts`
+ * (Chromium M114+), so no cast is needed here.
  */
 export function createOutputContext(deviceId: string): AudioContext {
 	if (!deviceId) {
 		return new AudioContext();
 	}
 	try {
-		// `sinkId` option lives on `AudioContextOptions` in Chromium M114+; the
-		// TS lib hasn't caught up everywhere, so cast at the call site.
-		return new AudioContext({ sinkId: deviceId } as unknown as AudioContextOptions);
+		return new AudioContext({ sinkId: deviceId });
 	} catch {
 		return new AudioContext();
 	}
@@ -84,14 +81,16 @@ export function createOutputContext(deviceId: string): AudioContext {
  * Switch a live AudioContext to a new output device. Best-effort: if the
  * runtime lacks `setSinkId` (older Chromium) or the device is unreachable,
  * the call is silently dropped — playback continues on the previous sink.
+ *
+ * `setSinkId` is declared as optional on `AudioContext` via
+ * `src/dom-augment.d.ts`, so the older-Chromium guard stays type-safe.
  */
 export async function routeContextToSink(ctx: AudioContext, deviceId: string): Promise<void> {
-	const withSinkId = ctx as AudioContextWithSinkId;
-	if (!withSinkId.setSinkId) {
+	if (!ctx.setSinkId) {
 		return;
 	}
 	try {
-		await withSinkId.setSinkId(deviceId || { type: "none" });
+		await ctx.setSinkId(deviceId || { type: "none" });
 	} catch {
 		// device unavailable — system default takes over
 	}

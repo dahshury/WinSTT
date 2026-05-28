@@ -84,6 +84,26 @@ describe("z-index discipline", () => {
 		expect(violations).toEqual([]);
 	});
 
+	test("no built-in numeric `z-N` Tailwind utilities (z-0/10/20/30/40/50)", () => {
+		// Built-in Tailwind z utilities map to fixed numbers (z-10 → z-index:10)
+		// and bypass the centralized scale just like raw `z-[N]` does. The
+		// canonical utilities are word-named (z-raised, z-overlay, z-modal, …);
+		// any `z-<digits>` token is off-scale. ``z-auto`` is allowed (it sets
+		// ``z-index: auto``, not a stacking number).
+		const pattern = /\bz-\d+\b/g;
+		const violations: string[] = [];
+		for (const file of SCAN_FILES) {
+			const content = readFileSync(file, "utf8");
+			// Strip the bracketed form so its inner digits aren't double-counted
+			// here — that case has its own dedicated test above.
+			const matches = content.replace(/\bz-\[\d+\]/g, "").match(pattern);
+			if (matches) {
+				violations.push(`${relativeNormalized(file)}: ${matches.join(", ")}`);
+			}
+		}
+		expect(violations).toEqual([]);
+	});
+
 	test("no inline `zIndex: <number>` style literals", () => {
 		const pattern = /zIndex\s*:\s*-?\d+/g;
 		const violations: string[] = [];

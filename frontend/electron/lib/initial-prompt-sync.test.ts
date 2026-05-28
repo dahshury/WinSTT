@@ -66,12 +66,18 @@ function makeFakeClient(connected = true): FakeClient {
 	};
 }
 
+// Contained boundary cast — FakeClient implements only the SttClient surface
+// the SUT touches (isConnected, setParameter, on, off). The full EventEmitter
+// ABI is irrelevant here, so the single unavoidable cast lives in this helper
+// instead of being repeated at every injection call site.
+const asClient = (c: FakeClient) => c as unknown as SttClient;
+
 function install(client: FakeClient): () => void {
 	// FakeClient implements only the SttClient surface the SUT touches —
 	// isConnected, setParameter, on, off. The full EventEmitter ABI is
 	// irrelevant here, so we cast at the call boundary instead of stubbing
 	// every method.
-	return installInitialPromptSync(client as unknown as SttClient);
+	return installInitialPromptSync(asClient(client));
 }
 
 function resetStore() {
@@ -234,14 +240,14 @@ describe("setVolatileContextTail / clearVolatileContextTail", () => {
 
 	test("an empty tail is a no-op (does NOT push)", () => {
 		const client = makeFakeClient(true);
-		setVolatileContextTail(client as unknown as SttClient, "");
+		setVolatileContextTail(asClient(client), "");
 		expect(client.calls).toHaveLength(0);
 	});
 
 	test("setting a tail re-pushes the composed prompt with the tail prepended", () => {
 		const client = makeFakeClient(true);
 		sharedStore.store.set("dictionary", [{ term: "Kubernetes" }]);
-		setVolatileContextTail(client as unknown as SttClient, "We were talking about the cluster.");
+		setVolatileContextTail(asClient(client), "We were talking about the cluster.");
 		const lastMain = client.calls.findLast((c) => c.key === "initial_prompt");
 		expect(lastMain?.value).toContain("We were talking about the cluster.");
 		expect(lastMain?.value).toContain("Glossary: Kubernetes.");
@@ -253,17 +259,17 @@ describe("setVolatileContextTail / clearVolatileContextTail", () => {
 
 	test("setting the same tail twice produces ONE additional push (idempotent)", () => {
 		const client = makeFakeClient(true);
-		setVolatileContextTail(client as unknown as SttClient, "Hi Bob.");
+		setVolatileContextTail(asClient(client), "Hi Bob.");
 		const after1 = client.calls.length;
-		setVolatileContextTail(client as unknown as SttClient, "Hi Bob.");
+		setVolatileContextTail(asClient(client), "Hi Bob.");
 		expect(client.calls.length).toBe(after1);
 	});
 
 	test("clear after set restores the base prompt (no tail)", () => {
 		const client = makeFakeClient(true);
 		sharedStore.store.set("dictionary", [{ term: "Kubernetes" }]);
-		setVolatileContextTail(client as unknown as SttClient, "Hi Bob.");
-		clearVolatileContextTail(client as unknown as SttClient);
+		setVolatileContextTail(asClient(client), "Hi Bob.");
+		clearVolatileContextTail(asClient(client));
 		const lastMain = client.calls.findLast((c) => c.key === "initial_prompt");
 		expect(lastMain?.value).not.toContain("Hi Bob.");
 		expect(lastMain?.value).toContain("Glossary: Kubernetes.");
@@ -271,13 +277,13 @@ describe("setVolatileContextTail / clearVolatileContextTail", () => {
 
 	test("clear with no volatile tail is a no-op (does NOT push)", () => {
 		const client = makeFakeClient(true);
-		clearVolatileContextTail(client as unknown as SttClient);
+		clearVolatileContextTail(asClient(client));
 		expect(client.calls).toHaveLength(0);
 	});
 
 	test("disconnected client + setTail = no-op", () => {
 		const client = makeFakeClient(false);
-		setVolatileContextTail(client as unknown as SttClient, "Should not push.");
+		setVolatileContextTail(asClient(client), "Should not push.");
 		expect(client.calls).toHaveLength(0);
 	});
 
@@ -288,10 +294,7 @@ describe("setVolatileContextTail / clearVolatileContextTail", () => {
 		const client = makeFakeClient(true);
 		sharedStore.store.set("dictionary", [{ term: "Kubernetes" }]);
 		const cleanup = install(client);
-		setVolatileContextTail(
-			client as unknown as SttClient,
-			"the cluster is on the new Kubernetes node"
-		);
+		setVolatileContextTail(asClient(client), "the cluster is on the new Kubernetes node");
 		const lastMain = client.calls.findLast((c) => c.key === "initial_prompt");
 		expect(lastMain?.value).toContain("the cluster is on the new Kubernetes node");
 		expect(lastMain?.value).toContain("Glossary: Kubernetes.");

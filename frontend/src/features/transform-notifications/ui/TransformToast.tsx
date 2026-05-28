@@ -2,6 +2,8 @@ import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
 import { applyTransform, onTransformApplied, onTransformFailed } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import {
 	type TransformNotification,
@@ -38,6 +40,9 @@ export function TransformToast() {
 	const current = useTransformNotifications((s) => s.current);
 	const show = useTransformNotifications((s) => s.show);
 	const clear = useTransformNotifications((s) => s.clear);
+	const base = useSurface();
+	const level = Math.min(base + 3, 8);
+	const detailsLevel = Math.min(base + 4, 8);
 
 	useEffect(() => {
 		const offApplied = onTransformApplied((payload) => {
@@ -81,7 +86,10 @@ export function TransformToast() {
 	return (
 		<output
 			aria-live="polite"
-			className="fixed right-4 bottom-4 z-toast w-[360px] max-w-[90vw] rounded-md border border-border bg-surface-secondary p-3 shadow-lg"
+			className={cn(
+				"fixed right-4 bottom-4 z-toast w-[360px] max-w-[90vw] rounded-md border border-border p-3 shadow-lg",
+				surfaceBg(level)
+			)}
 		>
 			<div className="mb-1 flex items-start gap-2">
 				<span
@@ -104,7 +112,10 @@ export function TransformToast() {
 			{isFailure ? (
 				<div className="mt-2 flex justify-end gap-2">
 					<Button
-						className="flex items-center gap-1 rounded border border-border bg-surface-tertiary px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated"
+						className={cn(
+							"flex items-center gap-1 rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
+							surfaceBg(detailsLevel)
+						)}
 						onClick={handleRetry}
 					>
 						<HugeiconsIcon icon={RefreshIcon} size={11} />

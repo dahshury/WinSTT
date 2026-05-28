@@ -555,7 +555,7 @@ def _resolve_release() -> str | None:
         return None
 
 
-def _apply_data_dir(arg_data_dir: str | None) -> None:
+def _apply_data_dir(arg_data_dir: str | None) -> Path | None:
     """Apply the Electron-supplied data dir BEFORE observability + recorder init.
 
     Honors ``--data-dir`` first, then ``$WINSTT_DATA_DIR``. When neither is
@@ -567,10 +567,19 @@ def _apply_data_dir(arg_data_dir: str | None) -> None:
     Creates the data-dir tree (``./``, ``./hf/``, ``./logs/``) so subsequent
     code that does ``Path(...).mkdir(parents=True, exist_ok=True)`` doesn't
     race on first launch under a portable install.
+
+    Returns the resolved (``~``-expanded) data-dir ``Path`` when one was
+    applied, else ``None`` — the caller discards it today, but returning it
+    keeps the side-effect observable and testable.
+
+    ``HUGGINGFACE_HUB_CACHE`` is routed to ``<data-dir>/hf/hub`` — the standard
+    huggingface_hub layout (``$HF_HOME/hub``). Pointing it at ``$HF_HOME``
+    itself would scatter model snapshots into the HF root instead of the
+    conventional ``hub/`` subdir.
     """
     raw = arg_data_dir or os.environ.get("WINSTT_DATA_DIR")
     if not raw:
-        return
+        return None
     data_dir = Path(raw).expanduser()
     hf_dir = data_dir / "hf"
     logs_dir = data_dir / "logs"
@@ -582,8 +591,9 @@ def _apply_data_dir(arg_data_dir: str | None) -> None:
             d.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("WINSTT_DATA_DIR", str(data_dir))
     os.environ.setdefault("HF_HOME", str(hf_dir))
-    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_dir))
+    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(hf_dir / "hub"))
     os.environ.setdefault("WINSTT_LOG_DIR", str(logs_dir))
+    return data_dir
 
 
 async def main_async() -> None:
@@ -688,6 +698,13 @@ async def main_async() -> None:
         "model_unload_timeout_seconds": (
             None if args.model_unload_timeout_seconds < 0 else args.model_unload_timeout_seconds
         ),
+        # History WAV persistence — route to HistoryConfig.save_wav /
+        # .recordings_dir. The renderer passes --save_wav by default + the
+        # userData/recordings dir so the fullSentence event carries a wav_path
+        # the IPC relay attaches to the history row (recordingRetention governs
+        # cleanup of the files, not whether they're written).
+        "save_wav": args.save_wav,
+        "recordings_dir": args.recordings_dir,
         "spinner": False,
         "use_microphone": True,
         # Wire dynamic-silence classification + WS broadcast off the

@@ -122,6 +122,12 @@ const {
 	__settings_test_helpers__,
 } = await import("./settings");
 
+// Contained boundary cast — the tests pass a minimal `{ isConnected }` stub for
+// the sttClient ref; this helper holds the single cast to the real argument
+// type and returns the exact same stub object it was given.
+const asSttClientArg = (stub: { isConnected: boolean }) =>
+	stub as unknown as Parameters<typeof setupSettingsHandlers>[0];
+
 function fireEvent(channel: string, sender: { id: number }, payload?: unknown): void {
 	const list = listeners.get(channel) ?? [];
 	for (const cb of list) {
@@ -494,9 +500,7 @@ describe("settings:save listener", () => {
 			logs.push(String(msg));
 		};
 		try {
-			setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
-				typeof setupSettingsHandlers
-			>[0]);
+			setupSettingsHandlers(asSttClientArg({ isConnected: true }));
 			sttProcessState.running = false;
 			storeData.model = { computeType: "default" };
 			const win = createWindow(1, sentEvents);
@@ -513,9 +517,7 @@ describe("settings:save listener", () => {
 
 	test("startup-only change with sttClient.isConnected=false and no managed server does not restart", async () => {
 		// Locks down the false-arm of hasServerToRestart() when sttClient is provided but disconnected.
-		setupSettingsHandlers({ isConnected: false } as unknown as Parameters<
-			typeof setupSettingsHandlers
-		>[0]);
+		setupSettingsHandlers(asSttClientArg({ isConnected: false }));
 		sttProcessState.running = false;
 		storeData.audio = { webrtcSensitivity: 0 };
 		const win = createWindow(1, sentEvents);
@@ -631,9 +633,7 @@ describe("wake-word config restart predicate", () => {
 
 describe("broadcastRestartRequired (unmanaged server hint)", () => {
 	test("sends STT_RESTART_REQUIRED to every alive window when restart fires unmanaged", async () => {
-		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
-			typeof setupSettingsHandlers
-		>[0]);
+		setupSettingsHandlers(asSttClientArg({ isConnected: true }));
 		sttProcessState.running = false;
 		const events1: Array<{ channel: string; payload: unknown }> = [];
 		const events2: Array<{ channel: string; payload: unknown }> = [];
@@ -653,9 +653,7 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 	});
 
 	test("skips destroyed windows so a hung renderer doesn't block others", async () => {
-		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
-			typeof setupSettingsHandlers
-		>[0]);
+		setupSettingsHandlers(asSttClientArg({ isConnected: true }));
 		sttProcessState.running = false;
 		const eventsDead: Array<{ channel: string; payload: unknown }> = [];
 		const eventsAlive: Array<{ channel: string; payload: unknown }> = [];
@@ -675,9 +673,7 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 	});
 
 	test("swallows a single throwing renderer so siblings still receive the event", async () => {
-		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
-			typeof setupSettingsHandlers
-		>[0]);
+		setupSettingsHandlers(asSttClientArg({ isConnected: true }));
 		sttProcessState.running = false;
 		const eventsBad: Array<{ channel: string; payload: unknown }> = [];
 		const eventsAlive: Array<{ channel: string; payload: unknown }> = [];
@@ -785,9 +781,7 @@ describe("performRestart (helper)", () => {
 	});
 
 	test("broadcasts STT_RESTART_REQUIRED to all windows when unmanaged", () => {
-		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
-			typeof setupSettingsHandlers
-		>[0]);
+		setupSettingsHandlers(asSttClientArg({ isConnected: true }));
 		sttProcessState.running = false;
 		const eventsA: Array<{ channel: string; payload: unknown }> = [];
 		const eventsB: Array<{ channel: string; payload: unknown }> = [];
@@ -802,9 +796,7 @@ describe("performRestart (helper)", () => {
 	});
 
 	test("falls back to 'a setting' when changedKey is null in unmanaged branch", () => {
-		setupSettingsHandlers({ isConnected: true } as unknown as Parameters<
-			typeof setupSettingsHandlers
-		>[0]);
+		setupSettingsHandlers(asSttClientArg({ isConnected: true }));
 		sttProcessState.running = false;
 		const events: Array<{ channel: string; payload: unknown }> = [];
 		allWindows.push(createWindow(610, events));

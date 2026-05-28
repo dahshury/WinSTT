@@ -5,6 +5,11 @@ import { render } from "@testing-library/react";
 import { __author_filter_submenu_test_helpers__ as helpers } from "../lib/author-filter-submenu-test-helpers";
 import { AuthorFilterSubmenu } from "./AuthorFilterSubmenu";
 
+// Contained boundary cast — the mock only implements `stopPropagation`, the one
+// MouseEvent member handleFavoriteButtonClick touches. The runtime object is
+// returned unchanged; only the type is widened to the real React.MouseEvent.
+const asMouseEvent = (e: { stopPropagation: () => void }) => e as unknown as React.MouseEvent;
+
 describe("AuthorFilterSubmenu", () => {
 	test("module exports the component (full render requires a parent Menu popup)", () => {
 		expect(typeof AuthorFilterSubmenu).toBe("function");
@@ -137,7 +142,7 @@ describe("AuthorFilterSubmenu helpers", () => {
 		test("stops event propagation and toggles favorite", () => {
 			const stopPropagation = mock(() => undefined);
 			const onToggleFavorite = mock(() => undefined);
-			const event = { stopPropagation } as unknown as React.MouseEvent;
+			const event = asMouseEvent({ stopPropagation });
 			helpers.handleFavoriteButtonClick(event, "openai", onToggleFavorite);
 			expect(stopPropagation).toHaveBeenCalledTimes(1);
 			expect(onToggleFavorite).toHaveBeenCalledWith("openai");
@@ -145,7 +150,7 @@ describe("AuthorFilterSubmenu helpers", () => {
 
 		test("forwards the provider name unchanged", () => {
 			const onToggleFavorite = mock(() => undefined);
-			const event = { stopPropagation: () => undefined } as unknown as React.MouseEvent;
+			const event = asMouseEvent({ stopPropagation: () => undefined });
 			helpers.handleFavoriteButtonClick(event, "anthropic", onToggleFavorite);
 			expect(onToggleFavorite).toHaveBeenCalledWith("anthropic");
 		});

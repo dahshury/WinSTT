@@ -5,6 +5,7 @@ import struct
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -13,7 +14,7 @@ from typing_extensions import override
 
 from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
-from src.building_blocks.types import AudioArray
+from src.building_blocks.types import AudioArray, AudioChunk
 from src.recorder.application.recorder_service import RecorderService
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
@@ -23,12 +24,59 @@ from src.recorder.domain.events import (
     SpeakerSegmentsDetected,
 )
 from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
-from src.recorder.domain.state_machine import RecorderState
+from src.recorder.domain.ports.vad import VADResult
+from src.recorder.domain.state_machine import RecorderState, RecorderStateMachine
 from tests.fakes.fake_audio_source import FakeAudioSource
 from tests.fakes.fake_diarizer import FakeDiarizer
 from tests.fakes.fake_transcriber import FakeTranscriber
 from tests.fakes.fake_vad import FakeVAD
 from tests.fakes.fake_wake_word import FakeWakeWordDetector
+
+
+class _ListeningGatedVAD(FakeVAD):
+    """FakeVAD that withholds its speech verdict — and does NOT advance its
+    positional pattern — until the pipeline is actually LISTENING/recording.
+
+    Models reality: a VAD only reports speech on real speech audio. The plain
+    positional FakeVAD advances on every ``detect()`` call, so the chunks the
+    reader thread floods into the pipeline during the INACTIVE startup window
+    (the gap between ``_start_pipeline`` launching the sleepless reader and
+    ``listen()`` arming onset) silently consume the single ``True`` verdict and
+    the recording never starts — a contention-only flake. A real microphone
+    feeds at ~32 ms cadence, so that window is a non-issue in production; this
+    gate makes ``test_audio_reader_feeds_pipeline`` deterministic on any host
+    without touching production code.
+    """
+
+    def __init__(self, speech_pattern: list[bool] | None = None) -> None:
+        super().__init__(speech_pattern)
+        self._sm: RecorderStateMachine | None = None
+
+    def bind(self, state_machine: RecorderStateMachine) -> None:
+        self._sm = state_machine
+
+    @override
+    def detect(self, chunk: AudioChunk) -> VADResult:
+        armed = self._sm is not None and (
+            self._sm.state == RecorderState.LISTENING or self._sm.is_recording
+        )
+        if not armed:
+            return VADResult(is_speech=False, confidence=0.0)
+        return super().detect(chunk)
+
+
+class _ProviderTranscriber(FakeTranscriber):
+    """FakeTranscriber that exposes an ``active_providers`` attribute so the
+    DirectML lock-selection branch in ``_pick_realtime_lock`` can be exercised.
+
+    ``providers`` may be a plain list (the production ``@property`` shape) or a
+    zero-arg callable (legacy/test fakes that expose it as a method) — both code
+    paths in ``_uses_directml`` need driving.
+    """
+
+    def __init__(self, providers: object) -> None:
+        super().__init__()
+        self.active_providers = providers  # type: ignore[attr-defined]
 
 
 class TestRecorderService:
@@ -44,6 +92,7 @@ class TestRecorderService:
         ensure_sentence_ends_with_period: bool = True,
         custom_words: list[str] | None = None,
         word_correction_threshold: float = 0.18,
+        vad: FakeVAD | None = None,
     ) -> tuple[RecorderService, FakeTranscriber, EventBus, FakeAudioSource]:
         config = RecorderConfig.from_kwargs(
             post_speech_silence_duration=0.05,
@@ -68,7 +117,7 @@ class TestRecorderService:
         audio_source = FakeAudioSource()
         service = RecorderService(
             audio_source=audio_source,
-            vad=FakeVAD(speech_pattern=speech_pattern or [True] + [False] * 20),
+            vad=vad or FakeVAD(speech_pattern=speech_pattern or [True] + [False] * 20),
             transcriber=transcriber,
             wake_word_detector=wake_word_detector,
             realtime_transcriber=realtime_transcriber,
@@ -695,8 +744,18 @@ class TestRecorderService:
         assert result_holder == ["Hello world."]
 
     def test_audio_reader_feeds_pipeline(self) -> None:
-        """When use_microphone=True, the reader thread feeds the pipeline."""
-        service, _, _, _ = self._make_service(use_microphone=True)
+        """When use_microphone=True, the reader thread feeds the pipeline.
+
+        Uses a listening-gated VAD so the single speech verdict can only be
+        consumed once the pipeline has actually armed onset detection. Without
+        it the sleepless FakeAudioSource floods chunks into the INACTIVE
+        startup window and the positional FakeVAD's lone ``True`` is eaten
+        before ``request_listen`` arms — a contention-only flake (see
+        ``_ListeningGatedVAD``).
+        """
+        vad = _ListeningGatedVAD([True] + [False] * 20)
+        service, _, _, _ = self._make_service(use_microphone=True, vad=vad)
+        vad.bind(service._pipeline._sm)
         result = service.text()
         service.shutdown()
         assert result == "Hello world."
@@ -2662,4 +2721,721 @@ class TestRecorderService:
         # The config's realtime model name is mirrored so a follow-up
         # lazy-reload rebuilds the same model the user is now on.
         assert service._config.realtime.realtime_model_type == "swapped-model"
+        service.shutdown()
+
+    # ---- _pick_realtime_lock / _uses_directml (DirectML serialisation) ----
+
+    def test_pick_realtime_lock_shares_main_lock_for_same_instance(self) -> None:
+        """Both slots holding the SAME transcriber → share the main lock so a
+        single ORT session never runs reentrantly against itself."""
+        service, transcriber, _, _ = self._make_service()
+        lock = service._pick_realtime_lock(transcriber, transcriber)
+        assert lock is service._main_transcriber_lock
+        service.shutdown()
+
+    def test_pick_realtime_lock_shares_main_lock_when_main_is_directml(self) -> None:
+        """A DirectML main transcriber forces the shared main lock (ORT-DML's
+        concurrent-session heap-corruption workaround) even when the realtime
+        slot is a distinct, non-DML instance."""
+        service, _, _, _ = self._make_service()
+        dml_main = _ProviderTranscriber(["DmlExecutionProvider", "CPUExecutionProvider"])
+        plain_rt = FakeTranscriber()
+        lock = service._pick_realtime_lock(dml_main, plain_rt)
+        assert lock is service._main_transcriber_lock
+        service.shutdown()
+
+    def test_pick_realtime_lock_shares_main_lock_when_realtime_is_directml(self) -> None:
+        """DML detected on the REALTIME slot also forces the shared lock."""
+        service, _, _, _ = self._make_service()
+        plain_main = FakeTranscriber()
+        dml_rt = _ProviderTranscriber(["DmlExecutionProvider"])
+        lock = service._pick_realtime_lock(plain_main, dml_rt)
+        assert lock is service._main_transcriber_lock
+        service.shutdown()
+
+    def test_pick_realtime_lock_independent_when_no_directml(self) -> None:
+        """Distinct non-DML instances keep independent locks (parallel fast
+        path on thread-safe EPs like CUDA / CPU)."""
+        service, _, _, _ = self._make_service()
+        main = _ProviderTranscriber(["CUDAExecutionProvider", "CPUExecutionProvider"])
+        rt = _ProviderTranscriber(["CPUExecutionProvider"])
+        lock = service._pick_realtime_lock(main, rt)
+        assert lock is not service._main_transcriber_lock
+        service.shutdown()
+
+    def test_uses_directml_invokes_callable_providers(self) -> None:
+        """``active_providers`` exposed as a zero-arg callable is invoked, and
+        a DML entry in the returned list is detected (covers the callable
+        branch in ``_uses_directml``)."""
+        service, _, _, _ = self._make_service()
+        dml_callable = _ProviderTranscriber(lambda: ["DmlExecutionProvider"])
+        assert service._uses_directml(dml_callable) is True
+        non_dml_callable = _ProviderTranscriber(lambda: ["CPUExecutionProvider"])
+        assert service._uses_directml(non_dml_callable) is False
+        service.shutdown()
+
+    def test_uses_directml_false_for_non_iterable_providers(self) -> None:
+        """A non-iterable ``active_providers`` value → False (defensive guard)."""
+        service, _, _, _ = self._make_service()
+        weird = _ProviderTranscriber(42)  # int is not Iterable
+        assert service._uses_directml(weird) is False
+        service.shutdown()
+
+    def test_uses_directml_false_for_none(self) -> None:
+        """A missing transcriber → False (cloud / absent realtime slot)."""
+        service, _, _, _ = self._make_service()
+        assert service._uses_directml(None) is False
+        service.shutdown()
+
+    # ---- _maybe_save_wav (HistoryConfig.save_wav opt-in) ----
+
+    def test_maybe_save_wav_writes_file_when_enabled(self, tmp_path: Path) -> None:
+        """``save_wav=True`` writes the PCM to a WAV under ``recordings_dir``
+        and returns the absolute path (covers the lazy-import + write branch)."""
+        service, _, _, _ = self._make_service()
+        recordings = tmp_path / "recordings"
+        service._config.history.save_wav = True
+        service._config.history.recordings_dir = str(recordings)
+        raw = struct.pack("<512h", *([100] * 512))
+
+        path = service._maybe_save_wav(raw)
+
+        assert path != ""
+        assert path.endswith(".wav")
+        assert Path(path).is_file()
+        assert Path(path).stat().st_size > 44  # header + samples
+        service.shutdown()
+
+    def test_maybe_save_wav_returns_empty_when_disabled(self) -> None:
+        """``save_wav=False`` (default) short-circuits before importing the
+        writer and returns ''."""
+        service, _, _, _ = self._make_service()
+        assert service._config.history.save_wav is False
+        assert service._maybe_save_wav(b"\x00\x01" * 256) == ""
+        service.shutdown()
+
+    # ---- _run_delayed_microphone_off (tail-buffer pause both branches) ----
+
+    def test_run_delayed_microphone_off_pauses_when_no_wake_word(self) -> None:
+        """No wake-word detector → the delayed off sequence pauses hardware
+        capture before running ``_handle_microphone_off`` (covers 777->779
+        taken branch)."""
+        service, _, _, audio_source = self._make_service()
+        service._config.audio.extra_recording_buffer_ms = 0  # no real sleep
+        assert service._wake_word_detector is None
+
+        service._run_delayed_microphone_off()
+
+        assert audio_source._pause_count == 1
+        service.shutdown()
+
+    def test_run_delayed_microphone_off_skips_pause_in_wake_word_mode(self) -> None:
+        """Wake-word mode keeps the mic hot — the delayed off sequence must
+        NOT pause capture (covers 777->779 not-taken branch)."""
+        wake_word = FakeWakeWordDetector()
+        service, _, _, audio_source = self._make_service(wake_word_detector=wake_word)
+        service._config.audio.extra_recording_buffer_ms = 0
+        assert service._wake_word_detector is not None
+
+        service._run_delayed_microphone_off()
+
+        assert audio_source._pause_count == 0
+        service.shutdown()
+
+    # ---- set_unload_timeout_seconds (runtime retune of the idle daemon) ----
+
+    def _make_service_no_poller(self) -> RecorderService:
+        """A service booted with ``model_unload_timeout_seconds=None`` so no
+        idle-unload poller is running at construction time."""
+        config = RecorderConfig.from_kwargs(
+            use_microphone=False,
+            speech_onset_consecutive_chunks=1,
+            model_unload_timeout_seconds=None,
+        )
+        return RecorderService(
+            audio_source=FakeAudioSource(),
+            vad=FakeVAD(speech_pattern=[True] + [False] * 20),
+            transcriber=FakeTranscriber(),
+            config=config,
+            event_bus=EventBus(),
+            clock=Clock.system_clock(),
+        )
+
+    def test_set_unload_timeout_positive_starts_poller(self) -> None:
+        """A positive timeout (re)starts the daemon, mirrors the config, and
+        resets the activity timestamp + stop event."""
+        service = self._make_service_no_poller()
+        assert service._unload_check_thread is None
+        service._unload_stop_event.set()  # simulate a prior shutdown-set event
+
+        service.set_unload_timeout_seconds(45)
+
+        assert service._unload_timeout_seconds == 45
+        assert service._config.transcription.model_unload_timeout_seconds == 45
+        assert service._unload_stop_event.is_set() is False
+        assert service._unload_check_thread is not None
+        assert service._unload_check_thread.is_alive()
+        service.shutdown()
+
+    def test_set_unload_timeout_none_stops_running_poller(self) -> None:
+        """``None`` (never unload) signals a live poller to exit and clears the
+        thread handle."""
+        config = RecorderConfig.from_kwargs(
+            use_microphone=False,
+            speech_onset_consecutive_chunks=1,
+            model_unload_timeout_seconds=60,
+        )
+        service = RecorderService(
+            audio_source=FakeAudioSource(),
+            vad=FakeVAD(speech_pattern=[True] + [False] * 20),
+            transcriber=FakeTranscriber(),
+            config=config,
+            event_bus=EventBus(),
+            clock=Clock.system_clock(),
+        )
+        poller = service._unload_check_thread
+        assert poller is not None and poller.is_alive()
+
+        service.set_unload_timeout_seconds(None)
+
+        assert service._unload_timeout_seconds is None
+        assert service._config.transcription.model_unload_timeout_seconds is None
+        assert service._unload_stop_event.is_set() is True
+        assert service._unload_check_thread is None
+        poller.join(timeout=2.0)
+        service.shutdown()
+
+    def test_set_unload_timeout_negative_normalises_to_none(self) -> None:
+        """A negative timeout normalises to ``None`` (never unload) and does
+        not spawn a poller when none was running."""
+        service = self._make_service_no_poller()
+        assert service._unload_check_thread is None
+
+        service.set_unload_timeout_seconds(-5)
+
+        assert service._unload_timeout_seconds is None
+        assert service._unload_check_thread is None
+        service.shutdown()
+
+    def test_set_unload_timeout_zero_does_not_start_poller(self) -> None:
+        """``0`` is Immediately-mode — handled synchronously, so the poller
+        stays absent (wants_poller is False)."""
+        service = self._make_service_no_poller()
+        assert service._unload_check_thread is None
+
+        service.set_unload_timeout_seconds(0)
+
+        assert service._unload_timeout_seconds == 0
+        assert service._unload_check_thread is None
+        service.shutdown()
+
+    def test_set_unload_timeout_positive_idempotent_when_already_running(self) -> None:
+        """A second positive retune while the poller is already alive updates
+        the value but reuses the existing thread (neither start nor stop
+        branch fires)."""
+        service = self._make_service_no_poller()
+        service.set_unload_timeout_seconds(45)
+        first = service._unload_check_thread
+        assert first is not None and first.is_alive()
+
+        service.set_unload_timeout_seconds(90)
+
+        assert service._unload_timeout_seconds == 90
+        assert service._unload_check_thread is first  # same thread, not respawned
+        service.shutdown()
+
+    # ---- reconfigure_audio_source (mic-release knob forwarding) ----
+
+    def test_reconfigure_audio_source_noop_without_reconfigure_method(self) -> None:
+        """``FakeAudioSource`` has no ``reconfigure`` → silent no-op, config
+        left untouched (duck-type guard)."""
+        service, _, _, audio_source = self._make_service()
+        assert not hasattr(audio_source, "reconfigure")
+        before = (
+            service._config.audio.always_on_microphone,
+            service._config.audio.lazy_stream_close,
+            service._config.audio.lazy_close_timeout_seconds,
+        )
+
+        service.reconfigure_audio_source(always_on_microphone=True, lazy_stream_close=True)
+
+        after = (
+            service._config.audio.always_on_microphone,
+            service._config.audio.lazy_stream_close,
+            service._config.audio.lazy_close_timeout_seconds,
+        )
+        assert after == before
+        service.shutdown()
+
+    def test_reconfigure_audio_source_forwards_and_mirrors_config(self) -> None:
+        """An audio source that exposes ``reconfigure`` gets the call forwarded
+        and the three knobs are mirrored into config."""
+        service, _, _, audio_source = self._make_service()
+        received: list[dict[str, bool | float | None]] = []
+
+        def fake_reconfigure(**kwargs: bool | float | None) -> None:
+            received.append(kwargs)
+
+        audio_source.reconfigure = fake_reconfigure  # type: ignore[attr-defined]
+
+        service.reconfigure_audio_source(
+            always_on_microphone=True,
+            lazy_stream_close=True,
+            lazy_close_timeout_seconds=3.5,
+        )
+
+        assert received == [
+            {
+                "always_on_microphone": True,
+                "lazy_stream_close": True,
+                "lazy_close_timeout_seconds": 3.5,
+            }
+        ]
+        assert service._config.audio.always_on_microphone is True
+        assert service._config.audio.lazy_stream_close is True
+        assert service._config.audio.lazy_close_timeout_seconds == 3.5
+        service.shutdown()
+
+    def test_reconfigure_audio_source_leaves_config_for_omitted_knobs(self) -> None:
+        """Passing ``None`` for ``always_on_microphone`` (the default) skips
+        mirroring it (covers 939->941 not-taken) while a set ``lazy_*`` knob
+        still lands."""
+        service, _, _, audio_source = self._make_service()
+        audio_source.reconfigure = lambda **_kw: None  # type: ignore[attr-defined]
+        original_always_on = service._config.audio.always_on_microphone
+
+        service.reconfigure_audio_source(
+            always_on_microphone=None,
+            lazy_stream_close=True,
+            lazy_close_timeout_seconds=7.0,
+        )
+
+        # always_on_microphone was None → unchanged.
+        assert service._config.audio.always_on_microphone == original_always_on
+        # The set knobs were mirrored.
+        assert service._config.audio.lazy_stream_close is True
+        assert service._config.audio.lazy_close_timeout_seconds == 7.0
+        service.shutdown()
+
+    def test_reconfigure_audio_source_skips_omitted_lazy_knobs(self) -> None:
+        """Only ``always_on_microphone`` is set → the two ``lazy_*`` mirror
+        branches are skipped (covers 941->943 and 943->exit not-taken)."""
+        service, _, _, audio_source = self._make_service()
+        audio_source.reconfigure = lambda **_kw: None  # type: ignore[attr-defined]
+        original_lazy_close = service._config.audio.lazy_stream_close
+        original_timeout = service._config.audio.lazy_close_timeout_seconds
+
+        service.reconfigure_audio_source(always_on_microphone=True)
+
+        # always_on_microphone mirrored (939 taken); lazy_* left untouched.
+        assert service._config.audio.always_on_microphone is True
+        assert service._config.audio.lazy_stream_close == original_lazy_close
+        assert service._config.audio.lazy_close_timeout_seconds == original_timeout
+        service.shutdown()
+
+    # ---- _maybe_unload_for_idle disabled-timeout guard (line 989) ----
+
+    def test_maybe_unload_for_idle_noop_when_timeout_none(self) -> None:
+        """``_unload_timeout_seconds is None`` short-circuits before reading the
+        clock — the loaded transcriber is left alone."""
+        service, transcriber, _, _ = self._make_service()
+        service._unload_timeout_seconds = None
+        service._last_activity_at = service._clock.get_current_time() - 10_000.0
+
+        service._maybe_unload_for_idle()
+
+        assert service._transcriber is transcriber
+        assert transcriber.shutdown_called is False
+        service.shutdown()
+
+    def test_maybe_unload_for_idle_noop_when_not_yet_idle(self) -> None:
+        """A positive timeout but a RECENT activity timestamp → not idle long
+        enough, slot untouched (covers the ``idle < timeout`` branch)."""
+        service, transcriber, _, _ = self._make_service()
+        service._unload_timeout_seconds = 600
+        service._last_activity_at = service._clock.get_current_time()  # just now
+
+        service._maybe_unload_for_idle()
+
+        assert service._transcriber is transcriber
+        assert transcriber.shutdown_called is False
+        service.shutdown()
+
+    # ---- _unload_models shutdown-exception + same-instance branches ----
+
+    def test_unload_models_swallows_main_shutdown_exception(self) -> None:
+        """A raising main ``shutdown()`` is logged + swallowed; the realtime
+        slot still shuts down (covers 1026-1027)."""
+        service, transcriber, _, _ = self._make_service()
+        rt = FakeTranscriber()
+        service._realtime_transcriber = rt
+
+        def boom() -> None:
+            raise RuntimeError("main shutdown failed")
+
+        transcriber.shutdown = boom  # type: ignore[method-assign]
+
+        service._unload_models()  # must not raise
+
+        assert service._transcriber is None
+        assert service._realtime_transcriber is None
+        assert rt.shutdown_called is True
+        service.shutdown()
+
+    def test_unload_models_swallows_realtime_shutdown_exception(self) -> None:
+        """A raising realtime ``shutdown()`` is logged + swallowed (1034-1035);
+        main still tore down cleanly."""
+        service, transcriber, _, _ = self._make_service()
+        rt = FakeTranscriber()
+        service._realtime_transcriber = rt
+
+        def boom() -> None:
+            raise RuntimeError("rt shutdown failed")
+
+        rt.shutdown = boom  # type: ignore[method-assign]
+
+        service._unload_models()  # must not raise
+
+        assert service._transcriber is None
+        assert service._realtime_transcriber is None
+        assert transcriber.shutdown_called is True
+        service.shutdown()
+
+    def test_unload_models_skips_double_shutdown_when_slots_aliased(self) -> None:
+        """When realtime aliases main (``use_main_model_for_realtime``), the
+        single shared instance is shut down exactly once (covers 1023->1031
+        not-taken: ``old_rt is old_main``)."""
+        service, transcriber, _, _ = self._make_service()
+        shutdown_calls = 0
+
+        def counting_shutdown() -> None:
+            nonlocal shutdown_calls
+            shutdown_calls += 1
+
+        transcriber.shutdown = counting_shutdown  # type: ignore[method-assign]
+        # Point the realtime slot at the SAME instance as main.
+        with service._realtime_transcriber_lock:
+            service._realtime_transcriber = transcriber
+
+        service._unload_models()
+
+        assert shutdown_calls == 1
+        assert service._transcriber is None
+        assert service._realtime_transcriber is None
+        service.shutdown()
+
+    def test_unload_models_noop_shutdowns_when_both_slots_empty(self) -> None:
+        """Both slots already None → no shutdown attempt (covers the
+        ``old_main is None`` / ``old_rt is None`` not-taken paths)."""
+        service, transcriber, _, _ = self._make_service()
+        with service._main_transcriber_lock:
+            service._transcriber = None
+        with service._realtime_transcriber_lock:
+            service._realtime_transcriber = None
+
+        service._unload_models()  # must not raise
+
+        assert transcriber.shutdown_called is False
+        service.shutdown()
+
+    # ---- _ensure_main_transcriber_loaded under-lock branches ----
+
+    def test_ensure_main_transcriber_relinks_realtime_when_slaved(self) -> None:
+        """After a lazy reload with ``use_main_model_for_realtime`` on, the
+        realtime slot is re-pointed at the freshly-rebuilt instance (covers
+        1078-1079)."""
+        service, _, _, _ = self._make_service()
+        service._config.realtime.use_main_model_for_realtime = True
+        service._saved_main_model_name = "test-model"
+        rebuilt = FakeTranscriber()
+        service._load_transcriber = lambda name, on_progress: rebuilt  # type: ignore[method-assign]
+        with service._main_transcriber_lock:
+            service._transcriber = None
+        with service._realtime_transcriber_lock:
+            service._realtime_transcriber = None
+
+        service._ensure_main_transcriber_loaded()
+
+        assert service._transcriber is rebuilt
+        assert service._realtime_transcriber is rebuilt
+        service.shutdown()
+
+    def test_ensure_main_transcriber_does_not_relink_when_unslaved(self) -> None:
+        """When the realtime slot is NOT slaved to main, a lazy reload of main
+        leaves the realtime slot alone (covers 1077 not-taken)."""
+        service, _, _, _ = self._make_service()
+        service._config.realtime.use_main_model_for_realtime = False
+        service._saved_main_model_name = "test-model"
+        rebuilt = FakeTranscriber()
+        service._load_transcriber = lambda name, on_progress: rebuilt  # type: ignore[method-assign]
+        with service._main_transcriber_lock:
+            service._transcriber = None
+        with service._realtime_transcriber_lock:
+            service._realtime_transcriber = None
+
+        service._ensure_main_transcriber_loaded()
+
+        assert service._transcriber is rebuilt
+        assert service._realtime_transcriber is None  # untouched
+        service.shutdown()
+
+    def test_ensure_main_transcriber_returns_when_load_yields_none(self) -> None:
+        """``_load_transcriber`` returning ``None`` (load gave up) leaves the
+        slot empty rather than installing ``None`` (covers 1071)."""
+        service, _, _, _ = self._make_service()
+        service._saved_main_model_name = "test-model"
+        service._load_transcriber = lambda name, on_progress: None  # type: ignore[method-assign]
+        with service._main_transcriber_lock:
+            service._transcriber = None
+
+        service._ensure_main_transcriber_loaded()  # must not raise
+
+        assert service._transcriber is None
+        service.shutdown()
+
+    def test_ensure_main_transcriber_noop_when_already_loaded(self) -> None:
+        """The unlocked fast-path early return fires when the slot is already
+        populated — no rebuild attempted."""
+        service, transcriber, _, _ = self._make_service()
+        loads: list[str] = []
+        service._load_transcriber = lambda name, on_progress: (loads.append(name), FakeTranscriber())[1]  # type: ignore[method-assign]
+
+        service._ensure_main_transcriber_loaded()
+
+        assert loads == []
+        assert service._transcriber is transcriber
+        service.shutdown()
+
+    def test_ensure_main_transcriber_under_lock_recheck_finds_slot_filled(self) -> None:
+        """Race window: the slot is None at the unlocked probe but another path
+        populates it before we acquire ``_lazy_reload_lock``. The under-lock
+        re-check (line 1059) must see the populated slot and bail without
+        rebuilding.
+
+        We model the race deterministically with a lock wrapper that fills the
+        slot inside ``__enter__`` — i.e. exactly between the unlocked probe and
+        the body of the ``with`` block.
+        """
+        service, _, _, _ = self._make_service()
+        service._saved_main_model_name = "test-model"
+        winner = FakeTranscriber()
+        loads: list[str] = []
+        service._load_transcriber = lambda name, on_progress: (loads.append(name), FakeTranscriber())[1]  # type: ignore[method-assign]
+
+        real_lock = service._lazy_reload_lock
+
+        class _FillOnEnter:
+            def __enter__(self_inner: Any) -> object:
+                real_lock.acquire()
+                # Simulate the competing reloader winning the race.
+                with service._main_transcriber_lock:
+                    service._transcriber = winner
+                return self_inner
+
+            def __exit__(self_inner: Any, *exc: object) -> None:
+                real_lock.release()
+
+        service._lazy_reload_lock = _FillOnEnter()  # type: ignore[assignment]
+        with service._main_transcriber_lock:
+            service._transcriber = None
+
+        service._ensure_main_transcriber_loaded()
+
+        # We deferred to the winner; no rebuild happened.
+        assert loads == []
+        assert service._transcriber is winner
+        service.shutdown()
+
+    def test_ensure_main_transcriber_under_lock_recheck_finds_swap_in_flight(self) -> None:
+        """Race window: no swap at the unlocked probe, but one starts before we
+        acquire ``_lazy_reload_lock``. The under-lock swap re-check (line 1063)
+        must bail rather than rebuild a stale model that the swap-worker would
+        clobber.
+        """
+        service, _, _, _ = self._make_service()
+        service._saved_main_model_name = "should-not-load"
+        loads: list[str] = []
+        service._load_transcriber = lambda name, on_progress: (loads.append(name), FakeTranscriber())[1]  # type: ignore[method-assign]
+
+        release = threading.Event()
+
+        def _fake_worker() -> None:
+            release.wait(timeout=2.0)
+
+        worker = threading.Thread(target=_fake_worker, daemon=True)
+        worker.start()
+        real_lock = service._lazy_reload_lock
+
+        class _StartSwapOnEnter:
+            def __enter__(self_inner: Any) -> object:
+                real_lock.acquire()
+                # A swap-worker appears between the unlocked probe and here.
+                service._swap_threads["main"] = worker
+                return self_inner
+
+            def __exit__(self_inner: Any, *exc: object) -> None:
+                real_lock.release()
+
+        service._lazy_reload_lock = _StartSwapOnEnter()  # type: ignore[assignment]
+        with service._main_transcriber_lock:
+            service._transcriber = None
+
+        try:
+            service._ensure_main_transcriber_loaded()
+            # Deferred to the swap-worker: nothing loaded, slot still empty.
+            assert loads == []
+            assert service._transcriber is None
+        finally:
+            release.set()
+            worker.join(timeout=2.0)
+            service.shutdown()
+
+    # ---- is_warm property (line 1187) ----
+
+    def test_is_warm_false_before_warmup_true_after(self) -> None:
+        """``is_warm`` reflects the warmup gate: False on construction, True
+        once ``warmup()`` completes."""
+        service, _, _, _ = self._make_service()
+        assert service.is_warm is False
+
+        service.warmup()
+
+        assert service.is_warm is True
+        service.shutdown()
+
+    # ---- _shutdown_diarizer_safely (port-optional shutdown) ----
+
+    def test_shutdown_diarizer_safely_noop_when_none(self) -> None:
+        """``None`` diarizer → no-op (covers line 1630)."""
+        # Static method — no service needed, but use one for symmetry/cleanup.
+        RecorderService._shutdown_diarizer_safely(None)  # must not raise
+
+    def test_shutdown_diarizer_safely_noop_when_no_shutdown_method(self) -> None:
+        """A diarizer without a callable ``shutdown`` is left alone (1633)."""
+
+        class _NoShutdownDiarizer:
+            shutdown = "not callable"
+
+        RecorderService._shutdown_diarizer_safely(_NoShutdownDiarizer())  # type: ignore[arg-type]
+
+    def test_shutdown_diarizer_safely_calls_shutdown(self) -> None:
+        """A diarizer exposing ``shutdown`` gets it invoked."""
+        diarizer = FakeDiarizer()
+        RecorderService._shutdown_diarizer_safely(diarizer)
+        assert diarizer.shutdown_calls == 1
+
+    def test_shutdown_diarizer_safely_swallows_exception(self) -> None:
+        """A raising ``shutdown()`` is logged + swallowed (covers 1636-1637)."""
+
+        class _BoomDiarizer(FakeDiarizer):
+            @override
+            def shutdown(self) -> None:
+                raise RuntimeError("diarizer shutdown failed")
+
+        RecorderService._shutdown_diarizer_safely(_BoomDiarizer())  # must not raise
+
+    # ---- _realtime_process_once exception path (2240-2241) ----
+
+    def test_realtime_process_once_swallows_commit_exception(self) -> None:
+        """A failure inside the commit/publish step is logged and swallowed —
+        realtime is non-critical and must never crash the worker."""
+        service, _, _ = self._make_realtime_service()
+        # Make the watermark check pass (there is fresh audio to process) by
+        # pretending the buffer has frames beyond the committed watermark.
+        service._realtime_committed_frames = 0
+
+        class _FakeBuffer:
+            frame_count = 100
+
+        service._audio_buffer = _FakeBuffer()  # type: ignore[assignment]
+
+        def boom() -> int:
+            raise RuntimeError("commit blew up")
+
+        service._realtime_commit_if_needed = boom  # type: ignore[method-assign]
+
+        # Must not raise — the except branch logs and continues.
+        service._realtime_process_once()
+        service.shutdown()
+
+    # ---- _realtime_step stale-audio guard (2205-2206) ----
+
+    def test_realtime_step_backs_off_when_frame_count_unchanged(self) -> None:
+        """Stale-audio guard: when the buffer frame_count hasn't advanced since
+        the last processed tick, the worker backs off (sleep + return) instead
+        of re-transcribing the same content (covers 2204->2205 taken)."""
+        from src.recorder.application.recorder_service import _RealtimeLoopState
+
+        service, rt_transcriber, _ = self._make_realtime_service()
+        # Force RECORDING via the PTT path so ``is_recording`` is True without
+        # depending on VAD/audio timing.
+        service.listen()
+        service.start()
+        assert service._state_machine.is_recording
+
+        # ``_realtime_ready`` must pass: recording_seen_at far enough back for
+        # the init delay (0.0) and last_transcription past the processing pause.
+        frames = service._audio_buffer.frame_count
+        state = _RealtimeLoopState(
+            last_transcription=time.time() - 10.0,
+            recording_seen_at=time.time() - 10.0,
+            last_processed_frame_count=frames,  # equal → stale
+        )
+
+        before = rt_transcriber.call_count
+        service._realtime_step(state)
+
+        # Guard fired: no transcription, watermark untouched.
+        assert rt_transcriber.call_count == before
+        assert state.last_processed_frame_count == frames
+        service.shutdown()
+
+    def test_realtime_step_processes_when_frame_count_advances(self) -> None:
+        """Complement of the stale-audio guard: when fresh frames have arrived
+        (frame_count advanced past the watermark), the worker proceeds to
+        process (covers 2204->2207 not-taken) and advances the watermark."""
+        from src.recorder.application.recorder_service import _RealtimeLoopState
+
+        service, _rt_transcriber, _ = self._make_realtime_service()
+        service.listen()
+        service.start()
+        assert service._state_machine.is_recording
+
+        frames = service._audio_buffer.frame_count
+        state = _RealtimeLoopState(
+            last_transcription=time.time() - 10.0,
+            recording_seen_at=time.time() - 10.0,
+            # One behind the live count → there IS fresh audio to process.
+            last_processed_frame_count=frames - 1,
+        )
+
+        service._realtime_step(state)
+
+        # Watermark advanced to the live frame count (process path taken).
+        assert state.last_processed_frame_count == frames
+        service.shutdown()
+
+    def test_realtime_process_once_noop_when_no_fresh_frames(self) -> None:
+        """When the buffer hasn't grown past the committed watermark, the
+        method returns before attempting any commit (covers the early-return
+        not-taken complement of the exception path)."""
+        service, _, _ = self._make_realtime_service()
+        service._realtime_committed_frames = 100
+
+        class _FakeBuffer:
+            frame_count = 100
+
+        service._audio_buffer = _FakeBuffer()  # type: ignore[assignment]
+        called = False
+
+        def _track() -> int:
+            nonlocal called
+            called = True
+            return 0
+
+        service._realtime_commit_if_needed = _track  # type: ignore[method-assign]
+
+        service._realtime_process_once()
+
+        assert called is False
         service.shutdown()

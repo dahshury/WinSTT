@@ -94,8 +94,9 @@ function ExpandTrigger({
 					expanded ? `Collapse ${primaryName} variants` : `Expand ${primaryName} variants`
 				}
 				className={cn(
-					"inline-flex h-5 shrink-0 items-center gap-1 rounded px-1.5",
-					"font-medium text-[10px] leading-none transition-colors",
+					"inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5",
+					"font-medium text-[10px] leading-none transition-[transform,background-color,color,box-shadow] duration-150 ease-out",
+					"active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100",
 					expanded
 						? "bg-accent/15 text-accent ring-1 ring-accent/30"
 						: "bg-surface-elevated/80 text-foreground-muted ring-1 ring-border hover:bg-surface-hover hover:text-foreground-secondary"
@@ -196,7 +197,13 @@ export function SttVariantBundle({
 					id={`bundle-siblings-${bundle.baseId}`}
 				>
 					{siblings.map((m) => (
-						<SttModelCard key={m.id} {...sharedCardProps} model={m} state={statesById[m.id]} />
+						<SttModelCard
+							key={m.id}
+							{...sharedCardProps}
+							model={m}
+							nested
+							state={statesById[m.id]}
+						/>
 					))}
 				</div>
 			</Collapsible>

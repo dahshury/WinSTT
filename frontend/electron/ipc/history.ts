@@ -2,7 +2,7 @@
  * SQLite-backed transcription history IPC wiring.
  *
  * Pure CRUD lives in `./history-store.ts`. This file is the electron-facing
- * shell: it opens the native `better-sqlite3` binding, owns the recordings
+ * shell: it opens the `node:sqlite` database, owns the recordings
  * directory under `{userData}/recordings/`, fires the retention sweeper on an
  * hourly timer, and registers every `history:*` ipcMain handler the renderer
  * (and the tray worktree's submenu) calls through.
@@ -34,11 +34,89 @@ import {
 	runMigrations,
 } from "./history-store";
 
-// `better-sqlite3` is a native CommonJS module — `import` would force a
-// top-level fetch even under `bun test` which doesn't load native bindings.
-// `createRequire` keeps the binding lazy + still lets knip see the dependency
-// (it scans `require()` arguments).
+// `node:sqlite` is Electron's bundled SQLite (Node 24 / ABI-stable — no native
+// addon to rebuild against each Electron bump, unlike `better-sqlite3` which
+// can't compile against Electron 42's V8 yet). `createRequire` keeps the lookup
+// lazy so `bun test` files that import this module's siblings don't try to
+// resolve `node:sqlite` under Bun's runtime (Bun ships `bun:sqlite`, not the
+// Node builtin). Only `defaultOpen` touches it, and tests inject a fake DB.
 const nodeRequire = createRequire(import.meta.url);
+
+/**
+ * Minimal slice of the `node:sqlite` surface we adapt to `DatabaseLike`. Kept
+ * local (rather than importing the `node:sqlite` types) so type-checking never
+ * depends on the running `@types/node` carrying this still-experimental module.
+ */
+interface NodeSqliteStatement {
+	all: (...params: unknown[]) => unknown[];
+	get: (...params: unknown[]) => unknown;
+	run: (...params: unknown[]) => { changes: number | bigint; lastInsertRowid: number | bigint };
+}
+interface NodeSqliteDatabase {
+	close: () => void;
+	exec: (sql: string) => void;
+	prepare: (sql: string) => NodeSqliteStatement;
+}
+interface NodeSqliteModule {
+	DatabaseSync: new (filename: string, options?: Record<string, unknown>) => NodeSqliteDatabase;
+}
+
+/**
+ * Wrap a raw `node:sqlite` `DatabaseSync` in the `DatabaseLike` shape the pure
+ * history store expects. `node:sqlite` has no `pragma()` or `transaction()`
+ * helpers (better-sqlite3 inventions), so we synthesize them: `pragma` routes
+ * write forms (`key = value`) through `exec` and read forms through a prepared
+ * `PRAGMA` query (returning the scalar when `simple`), and `transaction`
+ * brackets the callback with `BEGIN`/`COMMIT`, rolling back on throw.
+ */
+function adaptNodeSqlite(raw: NodeSqliteDatabase): DatabaseLike {
+	return {
+		close: () => raw.close(),
+		exec: (sql) => raw.exec(sql),
+		pragma: (text, options) => {
+			const body = text.trim();
+			if (body.includes("=")) {
+				raw.exec(`PRAGMA ${body}`);
+				return;
+			}
+			const row = raw.prepare(`PRAGMA ${body}`).get() as Record<string, unknown> | undefined;
+			if (options?.simple) {
+				if (!row) {
+					return;
+				}
+				for (const value of Object.values(row)) {
+					return value;
+				}
+				return;
+			}
+			return row;
+		},
+		prepare: (sql) => {
+			const stmt = raw.prepare(sql);
+			return {
+				all: (...params) => stmt.all(...params),
+				get: (...params) => stmt.get(...params),
+				run: (...params) => {
+					const result = stmt.run(...params);
+					return { changes: Number(result.changes), lastInsertRowid: result.lastInsertRowid };
+				},
+			};
+		},
+		transaction:
+			(fn) =>
+			(...args) => {
+				raw.exec("BEGIN");
+				try {
+					const result = fn(...args);
+					raw.exec("COMMIT");
+					return result;
+				} catch (err) {
+					raw.exec("ROLLBACK");
+					throw err;
+				}
+			},
+	};
+}
 
 export type { HistoryStore } from "./history-store";
 
@@ -91,13 +169,11 @@ function defaultBroadcast(channel: string, payload: unknown): void {
 }
 
 function defaultOpen(dbPath: string): DatabaseLike {
-	// Lazy require so `bun test` files that don't touch native code don't need
-	// to load the binding. The Electron main bundle resolves this synchronously.
-	const factory = nodeRequire("better-sqlite3") as (
-		path: string,
-		opts?: Record<string, unknown>
-	) => DatabaseLike;
-	const db = factory(dbPath);
+	// Lazy require so `bun test` files that pull in this module's siblings don't
+	// resolve `node:sqlite` under Bun. Electron's main bundle resolves the
+	// builtin synchronously.
+	const { DatabaseSync } = nodeRequire("node:sqlite") as NodeSqliteModule;
+	const db = adaptNodeSqlite(new DatabaseSync(dbPath));
 	db.pragma("journal_mode = WAL");
 	db.pragma("synchronous = NORMAL");
 	return db;

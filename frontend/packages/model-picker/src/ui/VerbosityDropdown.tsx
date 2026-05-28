@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { VERBOSITY_OPTIONS, type Verbosity } from "../config/model-selector-options";
 
 export interface VerbosityDropdownProps {
@@ -21,6 +22,7 @@ export function VerbosityDropdown({
 	onChange,
 	value,
 }: VerbosityDropdownProps) {
+	const level = Math.min(useSurface() + 1, 8);
 	return (
 		<div
 			aria-label="Verbosity"
@@ -41,7 +43,7 @@ export function VerbosityDropdown({
 						className={cn(
 							"relative flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-center truncate rounded-sm px-2 text-sm transition-[background-color,color,box-shadow] duration-200",
 							isSelected
-								? "bg-surface font-semibold text-foreground shadow-md ring-1 ring-border"
+								? cn("font-semibold text-foreground shadow-md ring-1 ring-border", surfaceBg(level))
 								: "bg-transparent font-medium text-foreground-muted hover:bg-surface/60 hover:text-foreground",
 							disabled && "pointer-events-none"
 						)}

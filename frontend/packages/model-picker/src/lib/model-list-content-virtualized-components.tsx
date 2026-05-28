@@ -13,6 +13,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Collapsible } from "../core/Collapsible";
 import { EndpointFeatureIcons } from "../ui/EndpointFeatureIcons";
 import { ModelModalityIcons } from "../ui/ModelModalityIcons";
@@ -322,12 +323,18 @@ function SelectionIndicator({
 }
 
 export function MakerIcon({ maker }: { maker: string | undefined }) {
+	const level = Math.min(useSurface() + 1, 8);
 	const providerIcon = resolveMakerIconSrc(maker);
 	if (!providerIcon) {
 		return null;
 	}
 	return (
-		<span className="flex size-4 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 bg-surface p-0.5">
+		<span
+			className={cn(
+				"flex size-4 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 p-0.5",
+				surfaceBg(level)
+			)}
+		>
 			<img
 				alt={`${formatMaker(maker)} icon`}
 				className="size-full object-contain"
@@ -726,9 +733,12 @@ export function VirtualizedRow({
 }
 
 export function EmptyState({ hasActiveFilters }: { hasActiveFilters: boolean }): ReactNode {
+	const level = Math.min(useSurface() + 1, 8);
 	return (
 		<div className="mx-auto flex w-full max-w-[280px] flex-col items-center gap-2 text-center">
-			<div className="flex size-10 items-center justify-center rounded-full bg-surface-secondary">
+			<div
+				className={cn("flex size-10 items-center justify-center rounded-full", surfaceBg(level))}
+			>
 				<HugeiconsIcon className="size-5 text-foreground-muted" icon={ServerStack01Icon} />
 			</div>
 			<p className="text-balance font-semibold text-body">{getEmptyStateLabel(hasActiveFilters)}</p>

@@ -76,9 +76,10 @@ export const MIGRATIONS: readonly string[] = [
 ];
 
 /**
- * Minimal subset of the `better-sqlite3` Database API we depend on. Defined as
- * an interface so the test suite can supply an in-memory fake without booting
- * the native binding (which Bun's loader can't load without electron-rebuild).
+ * Minimal subset of the SQLite Database API we depend on (a `pragma` +
+ * `transaction` superset of `node:sqlite`, synthesized by the adapter in
+ * `history.ts`). Defined as an interface so the test suite can supply an
+ * in-memory fake without booting any SQLite engine under Bun's runtime.
  */
 export interface DatabaseLike {
 	close: () => void;

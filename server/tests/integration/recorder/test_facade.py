@@ -536,3 +536,558 @@ class TestAudioToTextRecorderFacade:
             custom_words=None,
         )
         assert recorder._config.text_correction.custom_words == []
+
+    def test_constructor_custom_filler_words_provided_not_normalised(self) -> None:
+        # When the caller hands a non-None ``custom_filler_words`` the
+        # constructor must NOT clobber it with the empty default (covers
+        # the false branch of ``if custom_filler_words is None``).
+        recorder = AudioToTextRecorder(
+            model="tiny",
+            use_microphone=False,
+            custom_filler_words=["umm", "like"],
+        )
+        assert recorder._config.text_correction.custom_filler_words == ["umm", "like"]
+
+
+class _SwapRecordingService:
+    """Minimal stub standing in for RecorderService on the facade.
+
+    Records every hot-swap side-effect call so tests can assert exactly
+    which reload / retune fired (and which did not) when a setter runs.
+    The facade only ever calls these four methods from the runtime-knob
+    setters, so a duck-typed stub is enough — no real threads, no models.
+    """
+
+    def __init__(self) -> None:
+        self.swaps: list[tuple[str, str]] = []
+        self.unload_timeouts: list[int | None] = []
+        self.audio_reconfigs: list[dict[str, object]] = []
+
+    def request_model_swap(self, kind: str, name: str) -> None:
+        self.swaps.append((kind, name))
+
+    def set_unload_timeout_seconds(self, timeout: int | None) -> None:
+        self.unload_timeouts.append(timeout)
+
+    def reconfigure_audio_source(self, **kwargs: object) -> None:
+        self.audio_reconfigs.append(dict(kwargs))
+
+
+def _make_facade_with_stub_service(
+    stub: _SwapRecordingService,
+    **config_kwargs: object,
+) -> AudioToTextRecorder:
+    """Facade whose ``_service`` is the swap-recording stub.
+
+    Built through the real fakes factory first (so all the private
+    attributes ``_create_with_service`` installs are present), then the
+    service handle is swapped for the recording stub. Optional
+    ``config_kwargs`` override the realtime / transcription / audio
+    config so each setter's reload-eligibility branch can be exercised.
+    """
+    facade = _make_facade_with_fakes()
+    for dotted_key, value in config_kwargs.items():
+        section, attr = dotted_key.split(".", 1)
+        setattr(getattr(facade._config, section), attr, value)
+    facade._service = cast("RecorderService", stub)
+    return facade
+
+
+class TestFacadeReloadHelpers:
+    def test_maybe_reload_main_model_skips_when_service_none(self) -> None:
+        """No service => no swap (covers the early-return guard)."""
+        facade = AudioToTextRecorder(model="tiny", use_microphone=False)
+        assert facade._service is None
+        # Should be a silent no-op; we only assert it does not raise.
+        facade._maybe_reload_main_model("test")
+
+    def test_maybe_reload_main_model_skips_when_model_empty(self) -> None:
+        """Service present but no model configured => no swap."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(stub, **{"transcription.model": ""})
+        facade._maybe_reload_main_model("test")
+        assert stub.swaps == []
+
+    def test_maybe_reload_main_model_swaps_when_model_set(self) -> None:
+        """Service present + model set => main swap fires with live model."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(stub, **{"transcription.model": "base"})
+        facade._maybe_reload_main_model("test")
+        assert stub.swaps == [("main", "base")]
+
+    def test_maybe_reload_realtime_skips_when_service_none(self) -> None:
+        facade = AudioToTextRecorder(model="tiny", use_microphone=False)
+        assert facade._service is None
+        facade._maybe_reload_realtime_model("test")
+
+    def test_maybe_reload_realtime_skips_when_realtime_disabled(self) -> None:
+        """Realtime off => no realtime swap."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"realtime.enable_realtime_transcription": False},
+        )
+        facade._maybe_reload_realtime_model("test")
+        assert stub.swaps == []
+
+    def test_maybe_reload_realtime_skips_when_slaved_to_main(self) -> None:
+        """Realtime slaved to main => the next main swap covers it; no-op here."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": True,
+                "realtime.realtime_model_type": "tiny",
+            },
+        )
+        facade._maybe_reload_realtime_model("test")
+        assert stub.swaps == []
+
+    def test_maybe_reload_realtime_skips_when_model_empty(self) -> None:
+        """Realtime enabled + standalone but no model => no swap."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "",
+            },
+        )
+        facade._maybe_reload_realtime_model("test")
+        assert stub.swaps == []
+
+    def test_maybe_reload_realtime_swaps_when_eligible(self) -> None:
+        """Realtime enabled + standalone + model set => realtime swap fires."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "tiny",
+            },
+        )
+        facade._maybe_reload_realtime_model("test")
+        assert stub.swaps == [("realtime", "tiny")]
+
+
+class TestFacadeHotSwapSetters:
+    def test_initial_prompt_realtime_noop_when_unchanged(self) -> None:
+        """Re-assigning the same realtime prompt is an early-return no-op."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "tiny",
+                "realtime.initial_prompt_realtime": "same",
+            },
+        )
+        facade.initial_prompt_realtime = "same"
+        assert stub.swaps == []
+        assert facade._config.realtime.initial_prompt_realtime == "same"
+
+    def test_initial_prompt_realtime_change_triggers_realtime_reload(self) -> None:
+        """A changed realtime prompt reloads the realtime model."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "tiny",
+                "realtime.initial_prompt_realtime": "old",
+            },
+        )
+        facade.initial_prompt_realtime = "new"
+        assert facade._config.realtime.initial_prompt_realtime == "new"
+        assert stub.swaps == [("realtime", "tiny")]
+
+    def test_initial_prompt_realtime_list_value_copied(self) -> None:
+        """A list prompt is defensively copied onto config (list branch)."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "tiny",
+                "realtime.initial_prompt_realtime": None,
+            },
+        )
+        tokens = [1, 2, 3]
+        facade.initial_prompt_realtime = tokens
+        assert facade._config.realtime.initial_prompt_realtime == [1, 2, 3]
+        # Defensive copy: mutating the source list must not leak into config.
+        tokens.append(4)
+        assert facade._config.realtime.initial_prompt_realtime == [1, 2, 3]
+        assert stub.swaps == [("realtime", "tiny")]
+
+    def test_onnx_quantization_noop_when_unchanged(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"transcription.onnx_quantization": "int8"},
+        )
+        facade.onnx_quantization = "int8"
+        assert stub.swaps == []
+
+    def test_onnx_quantization_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.transcription.onnx_quantization = "q4"
+        assert facade.onnx_quantization == "q4"
+        facade.shutdown()
+
+    def test_onnx_quantization_change_reloads_both_slots(self) -> None:
+        """A quantization change reloads main and (when eligible) realtime."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "transcription.model": "base",
+                "transcription.onnx_quantization": "int8",
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "tiny",
+            },
+        )
+        facade.onnx_quantization = "q4"
+        assert facade._config.transcription.onnx_quantization == "q4"
+        assert ("main", "base") in stub.swaps
+        assert ("realtime", "tiny") in stub.swaps
+
+    def test_onnx_quantization_none_coerced_to_empty(self) -> None:
+        """A falsy push is coerced to '' (covers the ``value or ''`` branch)."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "transcription.model": "base",
+                "transcription.onnx_quantization": "int8",
+            },
+        )
+        facade.onnx_quantization = cast("str", None)
+        assert facade._config.transcription.onnx_quantization == ""
+        assert ("main", "base") in stub.swaps
+
+    def test_translate_to_english_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.transcription.translate_to_english = True
+        assert facade.translate_to_english is True
+        facade.shutdown()
+
+    def test_translate_to_english_noop_when_unchanged(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "transcription.model": "base",
+                "transcription.translate_to_english": False,
+            },
+        )
+        facade.translate_to_english = False
+        assert stub.swaps == []
+
+    def test_translate_to_english_change_reloads_main_only(self) -> None:
+        """Toggling translate rebuilds the main slot, never realtime."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "transcription.model": "base",
+                "transcription.translate_to_english": False,
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "tiny",
+            },
+        )
+        facade.translate_to_english = True
+        assert facade._config.transcription.translate_to_english is True
+        assert stub.swaps == [("main", "base")]
+
+    def test_model_unload_timeout_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.transcription.model_unload_timeout_seconds = 42
+        assert facade.model_unload_timeout_seconds == 42
+        facade.shutdown()
+
+    def test_model_unload_timeout_noop_when_unchanged(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"transcription.model_unload_timeout_seconds": 30},
+        )
+        facade.model_unload_timeout_seconds = 30
+        assert stub.unload_timeouts == []
+
+    def test_model_unload_timeout_change_retunes_daemon(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"transcription.model_unload_timeout_seconds": None},
+        )
+        facade.model_unload_timeout_seconds = 60
+        assert facade._config.transcription.model_unload_timeout_seconds == 60
+        assert stub.unload_timeouts == [60]
+
+    def test_model_unload_timeout_negative_sentinel_normalises_to_none(self) -> None:
+        """CLI's -1 'Never' sentinel becomes None and retunes the daemon."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"transcription.model_unload_timeout_seconds": 30},
+        )
+        facade.model_unload_timeout_seconds = -1
+        assert facade._config.transcription.model_unload_timeout_seconds is None
+        assert stub.unload_timeouts == [None]
+
+    def test_model_unload_timeout_explicit_none(self) -> None:
+        """An explicit None push (already None) is a no-op early-return."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"transcription.model_unload_timeout_seconds": None},
+        )
+        facade.model_unload_timeout_seconds = None
+        assert facade._config.transcription.model_unload_timeout_seconds is None
+        assert stub.unload_timeouts == []
+
+    def test_webrtc_sensitivity_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.vad.webrtc_sensitivity = 2
+        assert facade.webrtc_sensitivity == 2
+        facade.shutdown()
+
+    def test_webrtc_sensitivity_noop_when_unchanged(self) -> None:
+        """Same (clamped) value => no live-VAD reconfigure."""
+        facade = _make_facade_with_fakes()
+        facade._config.vad.webrtc_sensitivity = 2
+
+        class _MockWebRtcVad:
+            def __init__(self) -> None:
+                self.set_to: list[int] = []
+
+            def set_sensitivity(self, value: int) -> None:
+                self.set_to.append(value)
+
+        mock = _MockWebRtcVad()
+        facade._webrtc_vad = mock
+        facade.webrtc_sensitivity = 2
+        assert mock.set_to == []
+        facade.shutdown()
+
+    def test_webrtc_sensitivity_change_propagates_to_live_vad(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.vad.webrtc_sensitivity = 0
+
+        class _MockWebRtcVad:
+            def __init__(self) -> None:
+                self.set_to: list[int] = []
+
+            def set_sensitivity(self, value: int) -> None:
+                self.set_to.append(value)
+
+        mock = _MockWebRtcVad()
+        facade._webrtc_vad = mock
+        facade.webrtc_sensitivity = 3
+        assert facade._config.vad.webrtc_sensitivity == 3
+        assert mock.set_to == [3]
+        facade.shutdown()
+
+    def test_webrtc_sensitivity_clamped_to_range(self) -> None:
+        """Out-of-range input is clamped to 0..3."""
+        facade = _make_facade_with_fakes()
+        # The test factory doesn't install ``_webrtc_vad``; mirror the
+        # production default so the live-VAD guard sees None.
+        facade._webrtc_vad = None
+        facade._config.vad.webrtc_sensitivity = 0
+        facade.webrtc_sensitivity = 99
+        assert facade._config.vad.webrtc_sensitivity == 3
+        facade.shutdown()
+
+    def test_silero_deactivity_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.vad.silero_deactivity_detection = True
+        assert facade.silero_deactivity_detection is True
+        facade.shutdown()
+
+    def test_silero_deactivity_setter_persists_only(self) -> None:
+        """Setter persists to config; no runtime consumer side-effect today."""
+        facade = _make_facade_with_fakes()
+        assert facade._config.vad.silero_deactivity_detection is False
+        facade.silero_deactivity_detection = True
+        assert facade._config.vad.silero_deactivity_detection is True
+        facade.silero_deactivity_detection = False
+        assert facade._config.vad.silero_deactivity_detection is False
+        facade.shutdown()
+
+    def test_always_on_microphone_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.audio.always_on_microphone = True
+        assert facade.always_on_microphone is True
+        facade.shutdown()
+
+    def test_always_on_microphone_noop_when_unchanged(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"audio.always_on_microphone": False},
+        )
+        facade.always_on_microphone = False
+        assert stub.audio_reconfigs == []
+
+    def test_always_on_microphone_change_reconfigures_audio(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"audio.always_on_microphone": False},
+        )
+        facade.always_on_microphone = True
+        assert facade._config.audio.always_on_microphone is True
+        assert stub.audio_reconfigs == [{"always_on_microphone": True}]
+
+    def test_lazy_stream_close_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.audio.lazy_stream_close = True
+        assert facade.lazy_stream_close is True
+        facade.shutdown()
+
+    def test_lazy_stream_close_noop_when_unchanged(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"audio.lazy_stream_close": False},
+        )
+        facade.lazy_stream_close = False
+        assert stub.audio_reconfigs == []
+
+    def test_lazy_stream_close_change_reconfigures_audio(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"audio.lazy_stream_close": False},
+        )
+        facade.lazy_stream_close = True
+        assert facade._config.audio.lazy_stream_close is True
+        assert stub.audio_reconfigs == [{"lazy_stream_close": True}]
+
+    def test_lazy_close_timeout_getter(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade._config.audio.lazy_close_timeout_seconds = 7.5
+        assert facade.lazy_close_timeout_seconds == 7.5
+        facade.shutdown()
+
+    def test_lazy_close_timeout_noop_when_unchanged(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"audio.lazy_close_timeout_seconds": 3.0},
+        )
+        facade.lazy_close_timeout_seconds = 3.0
+        assert stub.audio_reconfigs == []
+
+    def test_lazy_close_timeout_change_reconfigures_audio(self) -> None:
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{"audio.lazy_close_timeout_seconds": 3.0},
+        )
+        facade.lazy_close_timeout_seconds = 9.0
+        assert facade._config.audio.lazy_close_timeout_seconds == 9.0
+        assert stub.audio_reconfigs == [{"lazy_close_timeout_seconds": 9.0}]
+
+    def test_event_bus_property(self) -> None:
+        """event_bus exposes the facade's own bus."""
+        facade = _make_facade_with_fakes()
+        assert facade.event_bus is facade._event_bus
+        facade.shutdown()
+
+    def test_filter_fillers_round_trip(self) -> None:
+        facade = _make_facade_with_fakes()
+        assert facade.filter_fillers is True
+        facade.filter_fillers = False
+        assert facade.filter_fillers is False
+        assert facade._config.text_correction.filter_fillers is False
+        facade.shutdown()
+
+    def test_custom_filler_words_round_trip(self) -> None:
+        facade = _make_facade_with_fakes()
+        assert facade.custom_filler_words == []
+        facade.custom_filler_words = ["umm", "uh"]
+        assert facade.custom_filler_words == ["umm", "uh"]
+        assert facade._config.text_correction.custom_filler_words == ["umm", "uh"]
+        # Defensive-copy invariant on the getter.
+        snapshot = facade.custom_filler_words
+        snapshot.append("leaked")
+        assert facade.custom_filler_words == ["umm", "uh"]
+        facade.shutdown()
+
+    def test_custom_filler_words_setter_normalises_none(self) -> None:
+        facade = _make_facade_with_fakes()
+        facade.custom_filler_words = ["umm"]
+        facade.custom_filler_words = cast("list[str]", None)
+        assert facade.custom_filler_words == []
+        facade.shutdown()
+
+    def test_initial_prompt_list_value_defensively_copied(self) -> None:
+        """A token-id list prompt is copied onto the main transcription config."""
+        facade = _make_facade_with_fakes()
+        tokens = [11, 22, 33]
+        facade.initial_prompt = tokens
+        assert facade._config.transcription.initial_prompt == [11, 22, 33]
+        # Defensive copy: mutating the source must not leak into config.
+        tokens.append(44)
+        assert facade._config.transcription.initial_prompt == [11, 22, 33]
+        facade.shutdown()
+
+
+class TestFacadeHotSwapSettersPreService:
+    """Hot-swap setters before the lazy service is built.
+
+    These cover the ``self._service is None`` not-taken branch on the
+    audio / unload setters: the config value must still update so the
+    next ``setup()`` reads it, but no live reconfigure/retune fires.
+    """
+
+    def test_model_unload_timeout_change_pre_service_skips_retune(self) -> None:
+        facade = AudioToTextRecorder(
+            use_microphone=False,
+            model_unload_timeout_seconds=30,
+        )
+        assert facade._service is None
+        facade.model_unload_timeout_seconds = 90
+        assert facade._config.transcription.model_unload_timeout_seconds == 90
+        assert facade._service is None
+
+    def test_always_on_microphone_change_pre_service_skips_reconfigure(self) -> None:
+        facade = AudioToTextRecorder(
+            use_microphone=False,
+            always_on_microphone=False,
+        )
+        assert facade._service is None
+        facade.always_on_microphone = True
+        assert facade._config.audio.always_on_microphone is True
+        assert facade._service is None
+
+    def test_lazy_stream_close_change_pre_service_skips_reconfigure(self) -> None:
+        facade = AudioToTextRecorder(
+            use_microphone=False,
+            lazy_stream_close=False,
+        )
+        assert facade._service is None
+        facade.lazy_stream_close = True
+        assert facade._config.audio.lazy_stream_close is True
+        assert facade._service is None
+
+    def test_lazy_close_timeout_change_pre_service_skips_reconfigure(self) -> None:
+        facade = AudioToTextRecorder(
+            use_microphone=False,
+            lazy_close_timeout_seconds=3.0,
+        )
+        assert facade._service is None
+        facade.lazy_close_timeout_seconds = 9.0
+        assert facade._config.audio.lazy_close_timeout_seconds == 9.0
+        assert facade._service is None

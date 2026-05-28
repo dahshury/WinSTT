@@ -149,6 +149,11 @@ function makeFakeWindow(initial: Partial<{ x: number; y: number }> = {}): FakeBr
 	});
 }
 
+// FakeBrowserWindow implements only the BrowserWindow surface the picker module
+// touches. The single boundary cast lives in this helper instead of being
+// repeated at every injection call site — the runtime object is unchanged.
+const asWin = (w: FakeBrowserWindow) => w as unknown as Electron.BrowserWindow;
+
 function resetModuleState(): void {
 	H.__setPickerWindow(null);
 	H.__setLastAnchor(null);
@@ -319,7 +324,7 @@ describe("resize helpers", () => {
 		resetModuleState();
 		H.reanchorIfVisible(); // null picker
 		const fw = makeFakeWindow({ x: -9999, y: -9999 });
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		H.reanchorIfVisible(); // alive but parked offscreen
 	});
 
@@ -329,7 +334,7 @@ describe("resize helpers", () => {
 		expect(H.isPickerVisible()).toBe(false);
 		expect(H.isPickerNullOrDestroyed()).toBe(true);
 		const fw = makeFakeWindow({ x: 0, y: -9999 });
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		expect(H.isPickerVisible()).toBe(false);
 		expect(H.isPickerNullOrDestroyed()).toBe(false);
 		fw.position = [10, 10];
@@ -402,10 +407,10 @@ describe("aliveness + fade timer", () => {
 		expect(H.isNonNullWindow(null)).toBe(false);
 		expect(H.isWindowAlive(null)).toBe(false);
 		const fw = makeFakeWindow();
-		expect(H.isNonNullWindow(fw as unknown as Electron.BrowserWindow)).toBe(true);
-		expect(H.isWindowAlive(fw as unknown as Electron.BrowserWindow)).toBe(true);
+		expect(H.isNonNullWindow(asWin(fw))).toBe(true);
+		expect(H.isWindowAlive(asWin(fw))).toBe(true);
 		fw.destroyed = true;
-		expect(H.isWindowAlive(fw as unknown as Electron.BrowserWindow)).toBe(false);
+		expect(H.isWindowAlive(asWin(fw))).toBe(false);
 	});
 
 	test("clearFadeTimer no-ops when null, clears when set", () => {
@@ -420,11 +425,11 @@ describe("aliveness + fade timer", () => {
 
 	test("moveOffscreen / isParkedOffscreen / getWindowY", () => {
 		const fw = makeFakeWindow({ x: 50, y: 50 });
-		expect(H.getWindowY(fw as unknown as Electron.BrowserWindow)).toBe(50);
-		expect(H.isParkedOffscreen(fw as unknown as Electron.BrowserWindow)).toBe(false);
-		H.moveOffscreen(fw as unknown as Electron.BrowserWindow);
+		expect(H.getWindowY(asWin(fw))).toBe(50);
+		expect(H.isParkedOffscreen(asWin(fw))).toBe(false);
+		H.moveOffscreen(asWin(fw));
 		expect(fw.position[1]).toBe(-9999);
-		expect(H.isParkedOffscreen(fw as unknown as Electron.BrowserWindow)).toBe(true);
+		expect(H.isParkedOffscreen(asWin(fw))).toBe(true);
 	});
 
 	test("markHidden / isInToggleDeadzone / isBlurSuppressed", () => {
@@ -445,22 +450,22 @@ describe("hide flow", () => {
 		H.hideAliveWindow(null);
 		const fw = makeFakeWindow();
 		fw.destroyed = true;
-		H.hideAliveWindow(fw as unknown as Electron.BrowserWindow);
+		H.hideAliveWindow(asWin(fw));
 	});
 
 	test("hideOnscreenWindow exits when parked, kicks fade when onscreen", () => {
 		resetModuleState();
 		const parked = makeFakeWindow({ x: -9999, y: -9999 });
-		H.hideOnscreenWindow(parked as unknown as Electron.BrowserWindow);
+		H.hideOnscreenWindow(asWin(parked));
 		const fw = makeFakeWindow({ x: 50, y: 50 });
-		H.hideOnscreenWindow(fw as unknown as Electron.BrowserWindow);
+		H.hideOnscreenWindow(asWin(fw));
 		H.clearFadeTimer();
 	});
 
 	test("hideAliveWindow on alive onscreen window starts a fade", () => {
 		resetModuleState();
 		const fw = makeFakeWindow({ x: 50, y: 50 });
-		H.hideAliveWindow(fw as unknown as Electron.BrowserWindow);
+		H.hideAliveWindow(asWin(fw));
 		H.clearFadeTimer();
 	});
 
@@ -470,7 +475,7 @@ describe("hide flow", () => {
 		H.handleBlur();
 		H.__setSuppressBlurUntil(0);
 		const fw = makeFakeWindow({ x: 50, y: 50 });
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		H.handleBlur();
 		H.clearFadeTimer();
 	});
@@ -481,14 +486,14 @@ describe("hide flow", () => {
 describe("picker styles", () => {
 	test("applyPickerStyles inserts CSS and showInactive", () => {
 		const fw = makeFakeWindow();
-		H.applyPickerStyles(fw as unknown as Electron.BrowserWindow);
+		H.applyPickerStyles(asWin(fw));
 	});
 
 	test("handleDidFinishLoad ignores when picker is missing then sets pageLoaded", () => {
 		resetModuleState();
 		H.handleDidFinishLoad();
 		const fw = makeFakeWindow();
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		H.handleDidFinishLoad();
 	});
 });
@@ -509,7 +514,7 @@ describe("opacity tween", () => {
 			onComplete: undefined,
 			start: Date.now(),
 			to: 1,
-			win: fw as unknown as Electron.BrowserWindow,
+			win: asWin(fw),
 		};
 		expect(H.interpolateOpacity(frame, 0)).toBe(0);
 		expect(H.interpolateOpacity(frame, 1)).toBe(1);
@@ -519,10 +524,10 @@ describe("opacity tween", () => {
 	test("snapOpacity sets and fires onComplete", () => {
 		const fw = makeFakeWindow();
 		let done = 0;
-		H.snapOpacity(fw as unknown as Electron.BrowserWindow, 1, () => done++);
+		H.snapOpacity(asWin(fw), 1, () => done++);
 		expect(fw.opacity).toBe(1);
 		expect(done).toBe(1);
-		H.snapOpacity(fw as unknown as Electron.BrowserWindow, 0);
+		H.snapOpacity(asWin(fw), 0);
 		expect(fw.opacity).toBe(0);
 	});
 
@@ -536,7 +541,7 @@ describe("opacity tween", () => {
 			onComplete: () => done++,
 			start: 0,
 			to: 1,
-			win: fw as unknown as Electron.BrowserWindow,
+			win: asWin(fw),
 		});
 		expect(fw.opacity).toBe(1);
 		expect(done).toBe(1);
@@ -546,7 +551,7 @@ describe("opacity tween", () => {
 			onComplete: undefined,
 			start: 0,
 			to: 0,
-			win: fw as unknown as Electron.BrowserWindow,
+			win: asWin(fw),
 		});
 	});
 
@@ -558,7 +563,7 @@ describe("opacity tween", () => {
 			onComplete: undefined,
 			start: Date.now() + 10_000,
 			to: 1,
-			win: fw as unknown as Electron.BrowserWindow,
+			win: asWin(fw),
 		});
 		H.tickTween({
 			easing: (t) => t,
@@ -566,17 +571,17 @@ describe("opacity tween", () => {
 			onComplete: undefined,
 			start: 0,
 			to: 1,
-			win: fw as unknown as Electron.BrowserWindow,
+			win: asWin(fw),
 		});
 	});
 
 	test("fadeIn / animateOpacity short-circuit when from==to", () => {
 		const fw = makeFakeWindow();
 		fw.opacity = 0;
-		H.fadeIn(fw as unknown as Electron.BrowserWindow);
+		H.fadeIn(asWin(fw));
 		H.clearFadeTimer();
 		fw.opacity = 1;
-		H.fadeIn(fw as unknown as Electron.BrowserWindow);
+		H.fadeIn(asWin(fw));
 	});
 });
 
@@ -586,13 +591,13 @@ describe("placement + show", () => {
 	test("placeAndShowPicker no-ops without a last anchor", () => {
 		resetModuleState();
 		const fw = makeFakeWindow();
-		H.placeAndShowPicker(fw as unknown as Electron.BrowserWindow);
+		H.placeAndShowPicker(asWin(fw));
 	});
 
 	test("renderPickerAt + showWindowAtWorkArea happy path", () => {
 		resetModuleState();
 		const fw = makeFakeWindow();
-		H.renderPickerAt(fw as unknown as Electron.BrowserWindow, {
+		H.renderPickerAt(asWin(fw), {
 			screenLeft: 0,
 			screenRight: 600,
 			screenTopY: 800,
@@ -605,11 +610,7 @@ describe("placement + show", () => {
 
 	test("sendAnchor relays renderer-local coords", () => {
 		const fw = makeFakeWindow();
-		H.sendAnchor(
-			fw as unknown as Electron.BrowserWindow,
-			{ x: 100, y: 200, width: 600, height: 560 },
-			{ x: 50, y: 100 }
-		);
+		H.sendAnchor(asWin(fw), { x: 100, y: 200, width: 600, height: 560 }, { x: 50, y: 100 });
 		expect(fw.sendCalls[0]?.[1]).toEqual({ x: 50, y: 100, width: 600, height: 560 });
 	});
 
@@ -617,7 +618,7 @@ describe("placement + show", () => {
 		resetModuleState();
 		H.__setLastAnchor({ screenLeft: 0, screenRight: 600, screenTopY: 800 });
 		const fw = makeFakeWindow();
-		H.placeAndShowPicker(fw as unknown as Electron.BrowserWindow);
+		H.placeAndShowPicker(asWin(fw));
 		expect(fw.showCalls).toBe(1);
 		H.clearFadeTimer();
 	});
@@ -625,10 +626,10 @@ describe("placement + show", () => {
 	test("deferShowUntilLoaded ignores re-entry, onDeferredLoadComplete clears flag", () => {
 		resetModuleState();
 		const fw = makeFakeWindow();
-		H.deferShowUntilLoaded(fw as unknown as Electron.BrowserWindow);
+		H.deferShowUntilLoaded(asWin(fw));
 		expect(H.__getPendingDeferredShow()).toBe(true);
-		H.deferShowUntilLoaded(fw as unknown as Electron.BrowserWindow);
-		H.onDeferredLoadComplete(fw as unknown as Electron.BrowserWindow);
+		H.deferShowUntilLoaded(asWin(fw));
+		H.onDeferredLoadComplete(asWin(fw));
 		expect(H.__getPendingDeferredShow()).toBe(false);
 	});
 
@@ -636,12 +637,12 @@ describe("placement + show", () => {
 		resetModuleState();
 		const fw = makeFakeWindow();
 		H.__setPageLoaded(false);
-		H.showWhenReady(fw as unknown as Electron.BrowserWindow);
+		H.showWhenReady(asWin(fw));
 		expect(H.__getPendingDeferredShow()).toBe(true);
 		H.__setPendingDeferredShow(false);
 		H.__setPageLoaded(true);
 		H.__setLastAnchor({ screenLeft: 0, screenRight: 600, screenTopY: 800 });
-		H.showWhenReady(fw as unknown as Electron.BrowserWindow);
+		H.showWhenReady(asWin(fw));
 		H.clearFadeTimer();
 	});
 
@@ -649,7 +650,7 @@ describe("placement + show", () => {
 		resetModuleState();
 		H.hideModelPicker();
 		const fw = makeFakeWindow();
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		H.__setPageLoaded(true);
 		H.showModelPickerAtAnchor({ screenLeft: 0, screenRight: 600, screenTopY: 800 });
 		expect(fw.showCalls).toBe(1);
@@ -675,7 +676,7 @@ describe("ipc handlers", () => {
 	test("consumeToggleIfOpen closes the open picker", () => {
 		resetModuleState();
 		const fw = makeFakeWindow({ x: 50, y: 50 });
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		expect(H.consumeToggleIfOpen()).toBe(true);
 		expect(H.consumeToggleIfOpen()).toBe(false);
 		H.clearFadeTimer();
@@ -684,7 +685,7 @@ describe("ipc handlers", () => {
 	test("processOpen toggle/deadzone branches", () => {
 		resetModuleState();
 		const fw = makeFakeWindow({ x: 50, y: 50 });
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		H.processOpen({} as Electron.IpcMainEvent, { x: 0, y: 0, width: 10, height: 10 });
 		H.clearFadeTimer();
 		H.__setPickerWindow(null);
@@ -696,7 +697,7 @@ describe("ipc handlers", () => {
 		const fw = makeFakeWindow();
 		fw.bounds = { x: 100, y: 200, width: 1, height: 1 };
 		expect(
-			H.anchorFromRect(fw as unknown as Electron.BrowserWindow, {
+			H.anchorFromRect(asWin(fw), {
 				x: 10,
 				y: 20,
 				width: 30,
@@ -723,7 +724,7 @@ describe("destroy / teardown", () => {
 		resetModuleState();
 		H.destroyAlivePickerWindow();
 		const fw = makeFakeWindow();
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		H.destroyAlivePickerWindow();
 		expect(fw.destroyCalls).toBe(1);
 	});
@@ -731,7 +732,7 @@ describe("destroy / teardown", () => {
 	test("destroyPickerWindow nulls + resets flags", () => {
 		resetModuleState();
 		const fw = makeFakeWindow();
-		H.__setPickerWindow(fw as unknown as Electron.BrowserWindow);
+		H.__setPickerWindow(asWin(fw));
 		H.__setPageLoaded(true);
 		H.__setPendingDeferredShow(true);
 		H.destroyPickerWindow();

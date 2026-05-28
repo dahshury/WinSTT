@@ -116,6 +116,14 @@ class FakeAudioContext {
 	}
 }
 
+// Contained boundary casts. The fakes implement only the Web Audio surface the
+// queue touches; these helpers hold the single unavoidable cast between the
+// fake and the real type (FakeAudioContext → AudioContext for injection, and
+// AudioBuffer → FakeBuffer to read back the recorded channel data). Each helper
+// returns the exact same object it was given.
+const asAudioContext = (ctx: FakeAudioContext) => ctx as unknown as AudioContext;
+const asFakeBuffer = (buffer: AudioBuffer) => buffer as unknown as FakeBuffer;
+
 function reset(): void {
 	createdSources = [];
 	createdBuffers = [];
@@ -186,10 +194,10 @@ describe("deinterleaveSamples", () => {
 describe("copyPlanesToBuffer", () => {
 	test("copies each plane into the matching channel", () => {
 		const planes = [new Float32Array([0.1, 0.2]), new Float32Array([0.3, 0.4])];
-		const ctx = new FakeAudioContext() as unknown as AudioContext;
+		const ctx = asAudioContext(new FakeAudioContext());
 		const buffer = ctx.createBuffer(2, 2, 24_000);
 		copyPlanesToBuffer(buffer, planes);
-		const fake = buffer as unknown as FakeBuffer;
+		const fake = asFakeBuffer(buffer);
 		expect(Array.from(fake.channelData[0] ?? [])).toEqual([
 			expect.closeTo(0.1, 6),
 			expect.closeTo(0.2, 6),
@@ -203,10 +211,10 @@ describe("copyPlanesToBuffer", () => {
 
 describe("fillAudioBuffer", () => {
 	test("mono path copies samples directly", () => {
-		const ctx = new FakeAudioContext() as unknown as AudioContext;
+		const ctx = asAudioContext(new FakeAudioContext());
 		const buffer = ctx.createBuffer(1, 3, 24_000);
 		fillAudioBuffer(buffer, new Float32Array([0.1, 0.2, 0.3]), 1, 3);
-		expect(Array.from((buffer as unknown as FakeBuffer).channelData[0] ?? [])).toEqual([
+		expect(Array.from(asFakeBuffer(buffer).channelData[0] ?? [])).toEqual([
 			expect.closeTo(0.1, 6),
 			expect.closeTo(0.2, 6),
 			expect.closeTo(0.3, 6),
@@ -214,10 +222,10 @@ describe("fillAudioBuffer", () => {
 	});
 
 	test("multi-channel path deinterleaves into matching channels", () => {
-		const ctx = new FakeAudioContext() as unknown as AudioContext;
+		const ctx = asAudioContext(new FakeAudioContext());
 		const buffer = ctx.createBuffer(2, 2, 24_000);
 		fillAudioBuffer(buffer, new Float32Array([1, 2, 3, 4]), 2, 2);
-		const fake = buffer as unknown as FakeBuffer;
+		const fake = asFakeBuffer(buffer);
 		expect(Array.from(fake.channelData[0] ?? [])).toEqual([1, 3]);
 		expect(Array.from(fake.channelData[1] ?? [])).toEqual([2, 4]);
 	});

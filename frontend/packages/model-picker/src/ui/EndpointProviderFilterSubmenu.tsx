@@ -4,6 +4,8 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
 	ALL_PROVIDERS_VALUE,
 	applyProviderChange,
@@ -28,6 +30,7 @@ export function EndpointProviderFilterSubmenu({
 	onEndpointProviderSelect,
 }: EndpointProviderFilterSubmenuProps) {
 	const [search, setSearch] = useState("");
+	const level = Math.min(useSurface() + 1, 8);
 	const queryLower = search.toLowerCase();
 	const filtered = filterEndpointProviders(endpointProviders, queryLower);
 	const items: string[] = [ALL_PROVIDERS_VALUE, ...filtered.map(([name]) => name)];
@@ -58,7 +61,10 @@ export function EndpointProviderFilterSubmenu({
 					<div className="flex h-full flex-col">
 						<div className="p-2">
 							<Combobox.Input
-								className="h-8 w-full rounded-sm border border-border bg-surface-tertiary px-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface"
+								className={cn(
+									"h-8 w-full rounded-sm border border-border px-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
+									surfaceBg(level)
+								)}
 								placeholder="Search providers"
 							/>
 						</div>

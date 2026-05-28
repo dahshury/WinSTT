@@ -1,6 +1,11 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, type Mock, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Toggle } from "./Toggle";
+
+// Contains the single boundary cast that reads bun's spy `.mock.calls` record
+// off a typed callback mock — the mock object itself is returned untouched.
+const recordedCalls = (m: Mock<(...args: never[]) => unknown>) =>
+	(m as unknown as { mock: { calls: unknown[][] } }).mock.calls;
 
 describe("Toggle", () => {
 	test("reflects the checked prop via aria-checked", () => {
@@ -18,7 +23,7 @@ describe("Toggle", () => {
 		render(<Toggle aria-label="dm" checked={false} onCheckedChange={onChange} />);
 		fireEvent.click(screen.getByRole("switch"));
 		expect(onChange).toHaveBeenCalledTimes(1);
-		expect((onChange as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0]).toBe(true);
+		expect(recordedCalls(onChange)[0]?.[0]).toBe(true);
 	});
 
 	test("does not invoke onCheckedChange when disabled", () => {

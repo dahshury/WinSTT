@@ -14,6 +14,8 @@ import { useTranslations } from "use-intl";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcOn, windowOpenSettings } from "@/shared/api/ipc-client";
 import type { CloudSttProvider } from "@/shared/api/models";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 
 const AUTO_DISMISS_MS = 8000;
@@ -73,6 +75,9 @@ const nextToastId = (() => {
 export function CloudSttErrorToasts() {
 	const [toasts, setToasts] = useState<CloudToast[]>([]);
 	const t = useTranslations("integrations");
+	const base = useSurface();
+	const level = Math.min(base + 3, 8);
+	const detailsLevel = Math.min(base + 4, 8);
 
 	useEffect(() => {
 		const push = (
@@ -169,7 +174,10 @@ export function CloudSttErrorToasts() {
 			{toasts.map((toast) => (
 				<div
 					aria-live="assertive"
-					className="pointer-events-auto rounded-md border border-error/40 bg-surface-secondary p-3 shadow-lg"
+					className={cn(
+						"pointer-events-auto rounded-md border border-error/40 p-3 shadow-lg",
+						surfaceBg(level)
+					)}
 					key={toast.id}
 					role="alert"
 				>
@@ -185,7 +193,10 @@ export function CloudSttErrorToasts() {
 							{toast.withOpenIntegrations ? (
 								<div className="mt-2 flex justify-end gap-2">
 									<Button
-										className="rounded border border-border bg-surface-tertiary px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated"
+										className={cn(
+											"rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
+											surfaceBg(detailsLevel)
+										)}
 										onClick={() => {
 											windowOpenSettings();
 											dismiss(toast.id);

@@ -2,7 +2,7 @@ import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ChangeEvent, type CSSProperties, type ReactNode, useReducer } from "react";
 import { cn } from "@/shared/lib/cn";
-import { surfaceClasses, useSurface } from "@/shared/lib/surface";
+import { surfaceBg, surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { type CalendarSystem, type CalendarSystemId, getCalendarSystem } from "./calendar-system";
 
@@ -282,6 +282,9 @@ function DayCell({
 	onDayHover: (date: Date | null) => void;
 	onDayClick: (date: Date) => void;
 }) {
+	// Lift the highlighted "today" cell one step above the calendar substrate so
+	// it reads as raised. Hook stays at the top, before any early return.
+	const todayLevel = Math.min(useSurface() + 1, 8);
 	const inMonth = system.isSameDisplayMonth(cellDate, monthDate);
 	const widthClass = fillWidth ? "w-full" : "w-(--cell-size)";
 	if (!(inMonth || showOutsideDays)) {
@@ -307,7 +310,7 @@ function DayCell({
 		useVariant ? variantClass : "",
 		!(useVariant || dayState || disabled) && "hover:bg-surface-hover",
 		!inMonth && "text-foreground-muted opacity-50",
-		isToday && !(useVariant || dayState) && "bg-surface-elevated text-foreground",
+		isToday && !(useVariant || dayState) && cn("text-foreground", surfaceBg(todayLevel)),
 		isToday && "ring-1 ring-border ring-inset",
 		stateClass,
 		disabled && "cursor-not-allowed text-foreground-muted opacity-30"

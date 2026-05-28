@@ -203,8 +203,10 @@ export class TtsPlaybackQueue {
 
 	private createOrReuseCtx(): AudioContext {
 		if (this.ctx == null || this.ctx.state === "closed") {
-			const opts = this.outputDeviceId
-				? ({ sinkId: this.outputDeviceId } as unknown as AudioContextOptions)
+			// `sinkId` is declared on `AudioContextOptions` via
+			// `src/dom-augment.d.ts` (Chromium M114+) — no cast needed.
+			const opts: AudioContextOptions | undefined = this.outputDeviceId
+				? { sinkId: this.outputDeviceId }
 				: undefined;
 			this.ctx = opts ? new AudioContext(opts) : new AudioContext();
 		}

@@ -1,6 +1,17 @@
 import { ContextMenu } from "@base-ui/react/context-menu";
-import { Delete02Icon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import {
+	Clock01Icon,
+	Copy01Icon,
+	CopyCheckIcon,
+	CpuIcon,
+	DashboardSpeed02Icon,
+	Delete02Icon,
+	PauseIcon,
+	PlayIcon,
+	StopWatchIcon,
+	TextFontIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { VList } from "virtua";
@@ -12,7 +23,15 @@ import {
 } from "@/shared/api/ipc-client";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
-import { SurfaceProvider, surfaceClasses, surfaceHighlightedBg } from "@/shared/lib/surface";
+import {
+	SurfaceProvider,
+	surfaceBg,
+	surfaceClasses,
+	surfaceHighlightedBg,
+	useSurface,
+} from "@/shared/lib/surface";
+import { ButtonGroup } from "@/shared/ui/button-group";
+import { Tooltip } from "@/shared/ui/tooltip";
 import { formatDuration, formatWpm, wordsPerMinute } from "../lib/word-stats";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
 
@@ -20,28 +39,26 @@ interface HistoryTableProps {
 	entries: TranscriptionHistoryEntry[];
 }
 
-// Hint only — virtua re-measures every mounted row.
-const ROW_HEIGHT_HINT_PX = 36;
-// Cap the visible body at ~10 rows; anything beyond scrolls.
-const VISIBLE_ROW_COUNT = 10;
-const MAX_BODY_HEIGHT_PX = VISIBLE_ROW_COUNT * ROW_HEIGHT_HINT_PX;
+// Initial size estimate only — virtua re-measures every mounted row, so rows
+// whose transcripts wrap to several lines self-correct. A short transcript +
+// divider + meta strip lands around this height.
+const ROW_HEIGHT_HINT_PX = 104;
+// Cap the visible body so the table doesn't crowd out the rest of the panel;
+// anything beyond this scrolls.
+const MAX_BODY_HEIGHT_PX = 460;
 // Below this row count, render directly (cheaper than VList's bookkeeping);
 // at/above it, virtualize so the ContextMenu.Root count stays bounded.
 const VIRTUALIZE_THRESHOLD = 50;
-// Each track is `minmax(min, max)` so columns shrink gracefully when the
-// settings sidebar expands. Without this, fixed widths summed to 534px and
-// squeezed the text column to ~0 inside the 700px settings window.
-const COLUMN_TEMPLATE =
-	"minmax(100px, 150px) minmax(40px, 56px) minmax(48px, 64px) minmax(40px, 56px) minmax(60px, 110px) minmax(100px, 1fr) 64px";
 const MENU_SURFACE_LEVEL = 6;
 const MENU_SHADOW_LEVEL = 7;
 
 function formatTimestamp(ms: number): string {
+	// Abbreviated on purpose — the year is dropped and the hour is non-padded so
+	// the whole meta strip fits one line in the ~500px-wide settings panel.
 	return new Date(ms).toLocaleString(undefined, {
-		year: "numeric",
 		month: "short",
 		day: "numeric",
-		hour: "2-digit",
+		hour: "numeric",
 		minute: "2-digit",
 	});
 }
@@ -134,13 +151,68 @@ function PlayButton({ entryId, outputDeviceId }: PlayButtonProps) {
 	return (
 		<button
 			aria-label={playing ? "Pause recording" : "Play recording"}
-			className="inline-flex size-6 items-center justify-center rounded-sm text-foreground-muted hover:bg-surface-hover hover:text-foreground disabled:opacity-50"
+			className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-accent transition-[color,background-color,transform] hover:bg-accent/15 active:scale-95 disabled:opacity-50"
 			disabled={loading}
 			onClick={togglePlay}
 			type="button"
 		>
-			<HugeiconsIcon className="size-3.5" icon={playing ? PauseIcon : PlayIcon} />
+			<HugeiconsIcon className="size-4" icon={playing ? PauseIcon : PlayIcon} />
 		</button>
+	);
+}
+
+function CopyButton({ label, text }: { label: string; text: string }) {
+	const [copied, setCopied] = useState(false);
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(
+		() => () => {
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+			}
+		},
+		[]
+	);
+
+	const handleCopy = () => {
+		copyEntryText(text);
+		setCopied(true);
+		if (timerRef.current) {
+			clearTimeout(timerRef.current);
+		}
+		// Hold the check just long enough to read as confirmation, then revert.
+		timerRef.current = setTimeout(() => setCopied(false), 1600);
+	};
+
+	// Both glyphs are stacked and cross-faded (scale + opacity) so the copy →
+	// check swap animates, matching fluidfunctionalism's input-copy "icon"
+	// variant. The Base UI Tooltip supplies the accessible label on hover.
+	return (
+		<Tooltip content={label}>
+			<button
+				aria-label={label}
+				className="relative inline-flex size-7 items-center justify-center text-foreground-muted transition-[color,background-color,transform] hover:bg-surface-hover hover:text-foreground active:scale-95"
+				onClick={handleCopy}
+				type="button"
+			>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"absolute size-3.5 transition-[opacity,transform] duration-200 ease-out",
+						copied ? "scale-50 opacity-0" : "scale-100 opacity-100"
+					)}
+					icon={Copy01Icon}
+				/>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"absolute size-3.5 text-success transition-[opacity,transform] duration-200 ease-out",
+						copied ? "scale-100 opacity-100" : "scale-50 opacity-0"
+					)}
+					icon={CopyCheckIcon}
+				/>
+			</button>
+		</Tooltip>
 	);
 }
 
@@ -148,7 +220,7 @@ function DeleteButton({ entryId }: { entryId: string }) {
 	return (
 		<button
 			aria-label="Delete entry"
-			className="inline-flex size-6 items-center justify-center rounded-sm text-foreground-muted hover:bg-error/15 hover:text-error"
+			className="inline-flex size-7 items-center justify-center text-foreground-muted transition-[color,background-color,transform] hover:bg-error/15 hover:text-error active:scale-95"
 			onClick={() => {
 				deleteTranscriptionHistoryEntry(entryId).catch(() => undefined);
 			}}
@@ -159,58 +231,104 @@ function DeleteButton({ entryId }: { entryId: string }) {
 	);
 }
 
-interface ActionsCellProps {
-	entry: TranscriptionHistoryEntry;
-	outputDeviceId: string;
-}
-
-function ActionsCell({ entry, outputDeviceId }: ActionsCellProps) {
-	return (
-		<span className="flex items-center justify-end gap-0.5 px-2">
-			{entry.audioFilePath ? (
-				<PlayButton entryId={entry.id} outputDeviceId={outputDeviceId} />
-			) : null}
-			<DeleteButton entryId={entry.id} />
-		</span>
-	);
+interface MetaLabels {
+	duration: string;
+	model: string;
+	time: string;
+	words: string;
+	wpm: string;
 }
 
 interface HistoryRowFullProps extends HistoryRowProps {
+	labels: MetaLabels;
 	outputDeviceId: string;
 }
 
-function HistoryRow({ entry, copyLabel, copyOriginalLabel, outputDeviceId }: HistoryRowFullProps) {
+function HistoryRow({
+	entry,
+	copyLabel,
+	copyOriginalLabel,
+	labels,
+	outputDeviceId,
+}: HistoryRowFullProps) {
 	const hasOriginal = entry.originalText !== undefined && entry.originalText.length > 0;
+	const wpm = wordsPerMinute(entry.wordCount, entry.durationMs);
+	// Icon + bare value, reusing the summary tiles' stat icons (words / duration
+	// / wpm) so a row reads as part of the same family. Dropping the inline text
+	// labels keeps the strip on ONE line; the icon + hover title carry meaning.
+	// Optional parts (wpm, model) drop out cleanly when absent.
+	const meta: {
+		icon: IconSvgElement;
+		key: string;
+		title: string;
+		truncate?: boolean;
+		value: string;
+	}[] = [
+		{ icon: Clock01Icon, key: "time", title: labels.time, value: formatTimestamp(entry.timestamp) },
+		{ icon: TextFontIcon, key: "words", title: labels.words, value: String(entry.wordCount) },
+		{
+			icon: StopWatchIcon,
+			key: "duration",
+			title: labels.duration,
+			value: formatDuration(entry.durationMs),
+		},
+	];
+	if (wpm > 0) {
+		meta.push({ icon: DashboardSpeed02Icon, key: "wpm", title: labels.wpm, value: formatWpm(wpm) });
+	}
+	if (entry.llmModel) {
+		// Title carries the full model id so truncation stays inspectable on hover.
+		meta.push({
+			icon: CpuIcon,
+			key: "model",
+			title: entry.llmModel,
+			truncate: true,
+			value: entry.llmModel,
+		});
+	}
 	return (
 		<ContextMenu.Root>
 			<ContextMenu.Trigger
 				render={
-					<div
-						className="grid items-center border-border border-b text-body text-foreground-muted transition-colors duration-100 hover:bg-surface-hover hover:text-foreground"
-						style={{ gridTemplateColumns: COLUMN_TEMPLATE }}
-					/>
+					<div className="border-border border-b px-3.5 py-3 transition-colors duration-100 hover:bg-surface-hover" />
 				}
 			>
-				<span className="whitespace-nowrap px-3 py-2 font-mono text-foreground-secondary text-xs-tight tabular-nums">
-					{formatTimestamp(entry.timestamp)}
-				</span>
-				<span className="px-3 py-2 text-right tabular-nums">{entry.wordCount}</span>
-				<span className="px-3 py-2 text-right tabular-nums">
-					{formatDuration(entry.durationMs)}
-				</span>
-				<span className="px-3 py-2 text-right tabular-nums">
-					{formatWpm(wordsPerMinute(entry.wordCount, entry.durationMs))}
-				</span>
-				<span
-					className="truncate px-3 py-2 font-mono text-foreground-secondary text-xs-tight"
-					title={entry.llmModel ?? ""}
-				>
-					{entry.llmModel ?? "—"}
-				</span>
-				<span className="truncate px-3 py-2 text-foreground" title={entry.text}>
-					{entry.text}
-				</span>
-				<ActionsCell entry={entry} outputDeviceId={outputDeviceId} />
+				<div className="flex items-start gap-3">
+					{entry.audioFilePath ? (
+						<PlayButton entryId={entry.id} outputDeviceId={outputDeviceId} />
+					) : null}
+					<p className="mt-0.5 min-w-0 flex-1 select-text whitespace-pre-wrap break-words text-body text-foreground leading-relaxed">
+						{entry.text}
+					</p>
+					<ButtonGroup
+						aria-label={copyLabel}
+						className="shrink-0 self-start"
+						connected
+						orientation="vertical"
+					>
+						<CopyButton label={copyLabel} text={entry.text} />
+						<DeleteButton entryId={entry.id} />
+					</ButtonGroup>
+				</div>
+				<div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-border/60 border-t pt-2 text-foreground-secondary text-xs-tight">
+					{meta.map((part) => (
+						<span
+							className="inline-flex min-w-0 items-center gap-1 tabular-nums"
+							key={part.key}
+							title={part.title}
+						>
+							<HugeiconsIcon
+								aria-hidden="true"
+								className="size-3.5 shrink-0 text-foreground-muted"
+								icon={part.icon}
+								strokeWidth={1.75}
+							/>
+							<span className={part.truncate ? "max-w-[10rem] truncate" : "whitespace-nowrap"}>
+								{part.value}
+							</span>
+						</span>
+					))}
+				</div>
 			</ContextMenu.Trigger>
 			<ContextMenu.Portal>
 				<SurfaceProvider value={MENU_SURFACE_LEVEL}>
@@ -255,10 +373,21 @@ function HistoryRow({ entry, copyLabel, copyOriginalLabel, outputDeviceId }: His
 export function HistoryTable({ entries }: HistoryTableProps) {
 	const t = useTranslations("history");
 	const outputDeviceId = useSettingsStore((s) => s.settings.general.outputDeviceId);
+	// Lift the table one surface step above the section it sits in so the card
+	// reads as its own surface, and re-provide that level so rows + the action
+	// button-group elevate from here (surfaces system — no flat tokens).
+	const level = Math.min(useSurface() + 1, 8);
 	// Most recent first; entries are stored chronologically by the main process.
 	const sorted = [...entries].reverse();
 	const copyLabel = t("copy");
 	const copyOriginalLabel = t("copyOriginal");
+	const labels: MetaLabels = {
+		duration: t("colDuration"),
+		model: t("colModel"),
+		time: t("colTime"),
+		wpm: t("colWpm"),
+		words: t("colWords"),
+	};
 
 	const rows = sorted.map((entry) => (
 		<HistoryRow
@@ -266,6 +395,7 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 			copyOriginalLabel={copyOriginalLabel}
 			entry={entry}
 			key={entry.id}
+			labels={labels}
 			outputDeviceId={outputDeviceId}
 		/>
 	));
@@ -297,20 +427,10 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 	}
 
 	return (
-		<div className="overflow-hidden rounded border border-border bg-surface-tertiary">
-			<div
-				className="grid border-border border-b font-medium text-body text-foreground"
-				style={{ gridTemplateColumns: COLUMN_TEMPLATE }}
-			>
-				<span className="whitespace-nowrap px-3 py-2 text-left">{t("colTime")}</span>
-				<span className="px-3 py-2 text-right">{t("colWords")}</span>
-				<span className="px-3 py-2 text-right">{t("colDuration")}</span>
-				<span className="px-3 py-2 text-right">{t("colWpm")}</span>
-				<span className="px-3 py-2 text-left">{t("colModel")}</span>
-				<span className="px-3 py-2 text-left">{t("colText")}</span>
-				<span className="px-3 py-2 text-right">{""}</span>
+		<SurfaceProvider value={level}>
+			<div className={cn("overflow-hidden rounded border border-border", surfaceBg(level))}>
+				{body}
 			</div>
-			{body}
-		</div>
+		</SurfaceProvider>
 	);
 }

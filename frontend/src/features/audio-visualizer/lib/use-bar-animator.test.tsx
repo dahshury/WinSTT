@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { renderHook } from "@testing-library/react";
 import type { AgentState } from "./audio-visualizer";
 import { useBarAnimator } from "./use-bar-animator";
@@ -71,7 +72,7 @@ describe("useBarAnimator", () => {
 
 	test("unknown state falls through to the empty sequence", () => {
 		const { result } = renderHook(() =>
-			useBarAnimator("not-a-real-state" as unknown as AgentState, 5, 1000)
+			useBarAnimator(asInvalid<AgentState>("not-a-real-state"), 5, 1000)
 		);
 		expect(result.current).toEqual([]);
 	});

@@ -1,7 +1,12 @@
-import { type QuantDownloadState, useDownloadStore } from "@/features/model-download";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { type QuantDownloadState, useDownloadStore } from "./download-store";
 
-export interface QuantDownloadActions {
+interface QuantActions {
+	/** Per-quant delete → AlertDialog confirm (rendered inside the picker) →
+	 *  this callback → IPC delete. Server broadcasts model_cache_changed; the
+	 *  model-state store listener refreshes the per-quant cache dots
+	 *  automatically (no manual refetch needed). */
+	handleDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	handleDownloadAction: (
 		action: "start" | "pause" | "resume" | "cancel",
 		modelId: string,
@@ -14,20 +19,30 @@ export interface QuantDownloadActions {
 }
 
 /**
- * Per-quant byte-level pause/resume wiring. The badge inside the picker
- * dispatches one of four actions; everything else (live progress events,
- * completion bookkeeping) is handled by useDownloadListener in app/providers.
- * The badge looks up its live snapshot via getDownloadSnapshot — quantDownloads
- * is the keyed map ``${modelId}@${quant}`` that the listener writes to on
- * every server progress event.
+ * Single source of truth for the per-quant badge handlers the STT picker
+ * exposes (delete + byte-level pause/resume/cancel). Both the settings panel
+ * and the detached footer picker wire these into the same `SttModelSelector`,
+ * so the controls stay identical across surfaces — the only thing that gated
+ * them apart was whether the consumer passed these props.
+ *
+ * Live progress events, completion bookkeeping, and cache-state refreshes are
+ * handled by useDownloadListener in app/providers. The badge looks up its live
+ * snapshot via handleDownloadSnapshot — quantDownloads is the keyed map
+ * ``${modelId}@${quant}`` that the listener writes to on every server progress
+ * event.
  */
-export function useQuantDownloads(): QuantDownloadActions {
+export function useQuantActions(): QuantActions {
 	const quantDownloads = useDownloadStore((s) => s.quantDownloads);
 	const predownloadQuant = useDownloadStore((s) => s.predownloadQuant);
 	const pauseQuantDownload = useDownloadStore((s) => s.pauseQuantDownload);
 	const pauseQuantEntry = useDownloadStore((s) => s.pauseQuantEntry);
 	const resumeQuantDownload = useDownloadStore((s) => s.resumeQuantDownload);
 	const cancelQuantDownload = useDownloadStore((s) => s.cancelQuantDownload);
+	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
+
+	const handleDeleteQuant = (modelId: string, quantization: OnnxQuantization): void => {
+		discardQuantCache(modelId, quantization);
+	};
 
 	const handleDownloadSnapshot = (
 		modelId: string,
@@ -59,5 +74,5 @@ export function useQuantDownloads(): QuantDownloadActions {
 		}
 	};
 
-	return { handleDownloadAction, handleDownloadSnapshot };
+	return { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot };
 }

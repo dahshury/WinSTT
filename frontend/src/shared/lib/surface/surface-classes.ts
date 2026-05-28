@@ -100,6 +100,14 @@ const SURFACE_POPUP_OPEN_BG: Record<Level, string> = {
 };
 
 function clamp(level: number): Level {
+	// Guard non-finite input: Math.round(NaN) is NaN and slips past min/max,
+	// and the `as Level` cast launders it into a map miss → `bg-undefined`
+	// (an unresolvable Tailwind class). A bad computed prop or
+	// Number(<non-numeric setting>) degrades gracefully to the base surface
+	// instead of emitting broken styling.
+	if (!Number.isFinite(level)) {
+		return 1;
+	}
 	return Math.max(1, Math.min(8, Math.round(level))) as Level;
 }
 

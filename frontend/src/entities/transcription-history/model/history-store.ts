@@ -58,7 +58,10 @@ export const useHistoryViewStore = create<HistoryViewState>()((set) => ({
 		set((state) => ({
 			entries: state.entries.map((e) => (e.id === id ? { ...e, saved } : e)),
 		})),
-	clear: () => set({ entries: [], hasMore: false }),
+	// Reset to a fully clean slate. Previously left `loading`/`error` stale,
+	// so a clear() during an in-flight load (or after an error) kept a phantom
+	// spinner / error banner. Mirrors replaceFirstPage's reset semantics.
+	clear: () => set({ entries: [], hasMore: false, loading: false, error: null }),
 	setLoading: (loading) => set({ loading }),
 	setError: (error) => set({ error }),
 }));

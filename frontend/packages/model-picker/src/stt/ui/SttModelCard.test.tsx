@@ -1,9 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ModelInfo } from "@/entities/model-catalog";
-import { SttModelCard } from "./SttModelCard";
+import { type QuantDownloadSnapshot, SttModelCard } from "./SttModelCard";
 
 /** Factory producing a fully-typed ModelInfo with sane defaults so each
  *  test only spells out the fields it actually cares about. */
@@ -106,5 +106,65 @@ describe("SttModelCard custom-model handling", () => {
 		// broken weights at a different precision wouldn't help anyway).
 		renderCard(makeModel({ available: false, errorMessage: "missing encoder.onnx" }));
 		expect(screen.queryByText("Precision")).toBeNull();
+	});
+});
+
+/** Render variant that wires the download dispatcher + snapshot lookup so the
+ *  precision-badge download behaviour can be exercised. */
+function renderDownloadCard(model: ModelInfo, snapshot?: QuantDownloadSnapshot | undefined) {
+	const onSelect = mock(() => undefined);
+	const onDownloadAction = mock(() => undefined);
+	const utils = render(
+		<TooltipProvider.Provider>
+			<Combobox.Root items={[model]}>
+				<Combobox.List>
+					{() => (
+						<SttModelCard
+							currentQuantization=""
+							getDownloadSnapshot={() => snapshot}
+							model={model}
+							onDownloadAction={onDownloadAction}
+							onSelect={onSelect}
+							selectedId={undefined}
+							state={undefined}
+							systemInfo={null}
+						/>
+					)}
+				</Combobox.List>
+			</Combobox.Root>
+		</TooltipProvider.Provider>
+	);
+	return { ...utils, onSelect, onDownloadAction };
+}
+
+describe("SttModelCard precision-badge download affordance", () => {
+	test("an uncached badge IS the download trigger — no separate download button", () => {
+		const { onSelect, onDownloadAction } = renderDownloadCard(makeModel());
+		// The default "Auto" ("") quant is uncached (state=undefined). Exactly
+		// one control carries the download label: the badge itself. The old
+		// standalone Download button beside it is gone.
+		const triggers = screen.getAllByLabelText("Download Auto weights");
+		expect(triggers.length).toBe(1);
+		fireEvent.click(triggers[0] as HTMLElement);
+		// Clicking the badge starts a background predownload, NOT a swap.
+		expect(onDownloadAction).toHaveBeenCalledWith("start", "custom-my-whisper", "");
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	test("a downloading badge shows progress + pause/cancel, and stops being a download trigger", () => {
+		const snapshot: QuantDownloadSnapshot = {
+			downloadedBytes: 5,
+			paused: false,
+			progress: 50,
+			totalBytes: 10,
+		};
+		renderDownloadCard(makeModel(), snapshot);
+		// Label is replaced by the live percentage.
+		expect(screen.getByText("50%")).toBeDefined();
+		// Pause + Cancel controls appear while bytes are flowing.
+		expect(screen.getByLabelText("Pause Auto download")).toBeDefined();
+		expect(screen.getByLabelText("Cancel Auto download")).toBeDefined();
+		// It no longer advertises "Download … weights" (it's already downloading).
+		expect(screen.queryByLabelText("Download Auto weights")).toBeNull();
 	});
 });

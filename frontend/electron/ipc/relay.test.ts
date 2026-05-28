@@ -966,13 +966,20 @@ describe("setupRelay", () => {
 		};
 	}
 
+	// Contained boundary casts — the mock window/client implement only the
+	// surface setupRelay touches; the single unavoidable cast lives in these
+	// helpers instead of every injection call site (runtime object unchanged).
+	const asRelayWin = (w: ReturnType<typeof makeMockWindow>) =>
+		w as unknown as Parameters<typeof relayModule.setupRelay>[0];
+	const asRelayClient = (c: ReturnType<typeof makeMockClient>) =>
+		c as unknown as Parameters<typeof relayModule.setupRelay>[1];
+	const asWindowEntry = (w: ReturnType<typeof makeMockWindow>) =>
+		w as unknown as (typeof mockWindows)[0];
+
 	test("setupRelay registers client event listeners and returns a cleanup function", () => {
 		const client = makeMockClient();
 		const win = makeMockWindow();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		expect(typeof cleanup).toBe("function");
 		expect(client.handlers.has("data-event")).toBe(true);
 		expect(client.handlers.has("connected")).toBe(true);
@@ -985,10 +992,7 @@ describe("setupRelay", () => {
 	test("cleanup removes all client listeners", () => {
 		const client = makeMockClient();
 		const win = makeMockWindow();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		cleanup();
 		// After cleanup, no handlers should remain for these events
 		expect((client.handlers.get("data-event") ?? []).length).toBe(0);
@@ -1001,11 +1005,8 @@ describe("setupRelay", () => {
 		const win = makeMockWindow();
 		const w = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(w as unknown as (typeof mockWindows)[0]);
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		mockWindows.push(asWindowEntry(w));
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		client.emit("connected");
 		cleanup();
 		expect(w.sent.some((s) => s.channel === "stt:connection-change")).toBe(true);
@@ -1017,11 +1018,8 @@ describe("setupRelay", () => {
 		const win = makeMockWindow();
 		const w = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(w as unknown as (typeof mockWindows)[0]);
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		mockWindows.push(asWindowEntry(w));
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		client.emit("disconnected");
 		cleanup();
 		const msg = w.sent.find((s) => s.channel === "stt:connection-change");
@@ -1035,11 +1033,8 @@ describe("setupRelay", () => {
 		const win = makeMockWindow();
 		const w = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(w as unknown as (typeof mockWindows)[0]);
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		mockWindows.push(asWindowEntry(w));
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		client.emit("model-catalog", [{ id: "tiny" }]);
 		cleanup();
 		expect(w.sent.some((s) => s.channel === "stt:model-catalog")).toBe(true);
@@ -1054,14 +1049,8 @@ describe("setupRelay", () => {
 		const mainWin = makeMockWindow();
 		const settingsWin = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(
-			mainWin as unknown as (typeof mockWindows)[0],
-			settingsWin as unknown as (typeof mockWindows)[0]
-		);
-		const cleanup = relayModule.setupRelay(
-			mainWin as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		mockWindows.push(asWindowEntry(mainWin), asWindowEntry(settingsWin));
+		const cleanup = relayModule.setupRelay(asRelayWin(mainWin), asRelayClient(client));
 		client.emit("server-ready");
 		cleanup();
 		expect(mainWin.sent.some((s) => s.channel === "stt:server-status")).toBe(true);
@@ -1075,11 +1064,8 @@ describe("setupRelay", () => {
 		const win = makeMockWindow();
 		const w = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(w as unknown as (typeof mockWindows)[0]);
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		mockWindows.push(asWindowEntry(w));
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		// fire a data-event — onDataEvent delegates to processDataEvent
 		client.emit("data-event", { type: "audio_level", level: 0.5 });
 		// Small wait to let any async handlers settle
@@ -1436,16 +1422,25 @@ describe("setupRelay onServerReady caches state", () => {
 		};
 	}
 
+	// Contained boundary casts — the lone unavoidable cast for these local
+	// mocks lives in these helpers (runtime object passed through unchanged).
+	const asRelayWin = (w: ReturnType<typeof makeMockWindow>) =>
+		w as unknown as Parameters<typeof relayModule.setupRelay>[0];
+	const asRelayClient = (c: ReturnType<typeof makeMockClient>) =>
+		c as unknown as Parameters<typeof relayModule.setupRelay>[1];
+	const asWindowEntry = (w: ReturnType<typeof makeMockWindow>) =>
+		w as unknown as (typeof mockWindows)[0];
+
 	test("server-status payload contains status='running'", () => {
 		// Targets the ObjectLiteral mutation on { status: 'running' } → {}.
 		resetState();
 		const client = makeMockClient();
 		const win = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(win as unknown as (typeof mockWindows)[0]);
+		mockWindows.push(asWindowEntry(win));
 		const cleanup = (relayModule as typeof import("./relay")).setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
+			asRelayWin(win),
+			asRelayClient(client)
 		);
 		client.emit("server-ready");
 		cleanup();
@@ -1463,10 +1458,10 @@ describe("setupRelay onServerReady caches state", () => {
 		const win = makeMockWindow();
 		const w = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(w as unknown as (typeof mockWindows)[0]);
+		mockWindows.push(asWindowEntry(w));
 		const cleanup = (relayModule as typeof import("./relay")).setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
+			asRelayWin(win),
+			asRelayClient(client)
 		);
 		client.emit("connected");
 		client.emit("disconnected");
@@ -1492,10 +1487,10 @@ describe("setupRelay onServerReady caches state", () => {
 		const win = makeMockWindow();
 		const w = makeMockWindow();
 		mockWindows.length = 0;
-		mockWindows.push(w as unknown as (typeof mockWindows)[0]);
+		mockWindows.push(asWindowEntry(w));
 		const cleanup = (relayModule as typeof import("./relay")).setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
+			asRelayWin(win),
+			asRelayClient(client)
 		);
 		client.emit("model-catalog", [{ id: "tiny" }, { id: "small" }]);
 		cleanup();
@@ -1846,14 +1841,18 @@ describe("setupRelay registers IPC handlers under exact channel names (kills L40
 		};
 	}
 
+	// Contained boundary casts — the sole unavoidable cast for these local
+	// mocks lives in these helpers (runtime object passed through unchanged).
+	const asRelayWin = (w: ReturnType<typeof makeMockWin>) =>
+		w as unknown as Parameters<typeof relayModule.setupRelay>[0];
+	const asRelayClient = (c: ReturnType<typeof makeMockClient>) =>
+		c as unknown as Parameters<typeof relayModule.setupRelay>[1];
+
 	test("registers stt:get-model-catalog, stt:get-server-ready, stt:cancel-download under exact names", () => {
 		resetState();
 		const client = makeMockClient();
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		expect(typeof ipcHandlers["stt:get-model-catalog"]).toBe("function");
 		expect(typeof ipcHandlers["stt:get-server-ready"]).toBe("function");
 		expect(typeof ipcHandlers["stt:cancel-download"]).toBe("function");
@@ -1866,10 +1865,7 @@ describe("setupRelay registers IPC handlers under exact channel names (kills L40
 		resetState();
 		const client = makeMockClient();
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		cleanup();
 		expect(ipcRemovedChannels).toContain("stt:cancel-download");
 		expect(ipcRemovedChannels).toContain("stt:get-model-catalog");
@@ -1882,10 +1878,7 @@ describe("setupRelay registers IPC handlers under exact channel names (kills L40
 		resetState();
 		const client = makeMockClient();
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		const handler = ipcHandlers["stt:get-model-catalog"];
 		expect(typeof handler).toBe("function");
 		// Initially the catalog is []
@@ -1902,10 +1895,7 @@ describe("setupRelay registers IPC handlers under exact channel names (kills L40
 		resetState();
 		const client = makeMockClient();
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		const handler = ipcHandlers["stt:get-server-ready"];
 		expect(typeof handler).toBe("function");
 		// Initial: false
@@ -1929,10 +1919,7 @@ describe("setupRelay registers IPC handlers under exact channel names (kills L40
 			sendControlCalls.push(args[0]);
 		};
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		const handler = ipcHandlers["stt:cancel-download"];
 		expect(typeof handler).toBe("function");
 		handler?.();
@@ -1979,14 +1966,18 @@ describe("setupRelay client-event listener correctness (kills L494/L495/L496 str
 		};
 	}
 
+	// Contained boundary casts — the sole unavoidable cast for these local
+	// mocks lives in these helpers (runtime object passed through unchanged).
+	const asRelayWin = (w: ReturnType<typeof makeMockWin>) =>
+		w as unknown as Parameters<typeof relayModule.setupRelay>[0];
+	const asRelayClient = (c: ReturnType<typeof makeMockClient>) =>
+		c as unknown as Parameters<typeof relayModule.setupRelay>[1];
+
 	test("cleanup removes EACH event listener under its exact name", () => {
 		resetState();
 		const client = makeMockClient();
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		// Pre-cleanup: each event has at least one listener
 		expect((client.handlers.get("data-event") ?? []).length).toBeGreaterThan(0);
 		expect((client.handlers.get("connected") ?? []).length).toBeGreaterThan(0);
@@ -2011,10 +2002,7 @@ describe("setupRelay client-event listener correctness (kills L494/L495/L496 str
 			return Promise.resolve(true);
 		};
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		client.emit("server-ready");
 		// Allow microtasks to settle
 		await Promise.resolve();
@@ -2060,6 +2048,13 @@ describe("setupRelay ctx getMuted/setMuted closures (kills L437/L438 mutations)"
 		};
 	}
 
+	// Contained boundary casts — the sole unavoidable cast for these local
+	// mocks lives in these helpers (runtime object passed through unchanged).
+	const asRelayWin = (w: ReturnType<typeof makeMockWin>) =>
+		w as unknown as Parameters<typeof relayModule.setupRelay>[0];
+	const asRelayClient = (c: ReturnType<typeof makeMockClient>) =>
+		c as unknown as Parameters<typeof relayModule.setupRelay>[1];
+
 	test("recording_stop dispatch invokes setMuted closure (kills L438 BlockStatement mutation)", async () => {
 		// L438 `setMuted: (value) => { didMuteAudio = value }` → `{}` makes
 		// the closure body a no-op. recording_stop ALWAYS calls
@@ -2072,10 +2067,7 @@ describe("setupRelay ctx getMuted/setMuted closures (kills L437/L438 mutations)"
 		storeValues["general.systemAudioReductionWhileDictating"] = 0;
 		const client = makeMockClient();
 		const win = makeMockWin();
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		// Just verify the round-trip doesn't throw; mute state is internal.
 		client.emit("data-event", { type: "recording_stop" });
 		await new Promise<void>((r) => setTimeout(r, 5));
@@ -2121,6 +2113,13 @@ describe("logDataEventArrival (extracted from processDataEvent to lower CC)", ()
 		expect(() => helpers.logDataEventArrival("audio_level")).not.toThrow();
 	});
 
+	test("does not throw for model_download_progress (log gate is OFF)", () => {
+		// model_download_progress fires per HTTP chunk (~55/sec); a single
+		// whisper-tiny download otherwise wrote ~13k lines to the 5 MB-rotated
+		// debug.log, evicting every other diagnostic. Gated like audio_level.
+		expect(() => helpers.logDataEventArrival("model_download_progress")).not.toThrow();
+	});
+
 	test("does not throw for non-audio_level types (log gate is ON)", () => {
 		// Every other type takes the dbgVerbose path. Just exercising both
 		// branches keeps the helper at 100% line coverage.
@@ -2132,27 +2131,37 @@ describe("logDataEventArrival (extracted from processDataEvent to lower CC)", ()
 });
 
 describe("sendToWindowSafely (extracted from broadcastToAll to lower CC)", () => {
+	// Minimal BrowserWindow surface sendToWindowSafely actually reads. The lone
+	// unavoidable boundary cast lives in this helper instead of every literal
+	// — the runtime object is passed through unchanged.
+	interface MockBrowserWindow {
+		isDestroyed: () => boolean;
+		webContents: { send: (channel: string, ...args: unknown[]) => unknown };
+	}
+	const asBrowserWindow = (w: MockBrowserWindow) =>
+		w as unknown as Parameters<typeof helpers.sendToWindowSafely>[0];
+
 	test("skips destroyed windows (no send call)", () => {
 		const sent: string[] = [];
-		const bw = {
+		const bw: MockBrowserWindow = {
 			isDestroyed: () => true,
 			webContents: {
 				send: (ch: string) => sent.push(ch),
 			},
-		} as unknown as Parameters<typeof helpers.sendToWindowSafely>[0];
-		helpers.sendToWindowSafely(bw, "test:channel", ["arg"]);
+		};
+		helpers.sendToWindowSafely(asBrowserWindow(bw), "test:channel", ["arg"]);
 		expect(sent.length).toBe(0);
 	});
 
 	test("forwards channel + args to non-destroyed window", () => {
 		const calls: Array<{ channel: string; args: unknown[] }> = [];
-		const bw = {
+		const bw: MockBrowserWindow = {
 			isDestroyed: () => false,
 			webContents: {
 				send: (channel: string, ...args: unknown[]) => calls.push({ channel, args }),
 			},
-		} as unknown as Parameters<typeof helpers.sendToWindowSafely>[0];
-		helpers.sendToWindowSafely(bw, "test:channel", ["a", { x: 1 }]);
+		};
+		helpers.sendToWindowSafely(asBrowserWindow(bw), "test:channel", ["a", { x: 1 }]);
 		expect(calls.length).toBe(1);
 		expect(calls[0]?.channel).toBe("test:channel");
 		expect(calls[0]?.args).toEqual(["a", { x: 1 }]);
@@ -2162,15 +2171,15 @@ describe("sendToWindowSafely (extracted from broadcastToAll to lower CC)", () =>
 		// This is the WHOLE reason broadcastToAll wraps each send in a try.
 		// If we didn't swallow, one stuck renderer would skip every later
 		// window AND the post-broadcast cleanup (hideOverlay, etc).
-		const bw = {
+		const bw: MockBrowserWindow = {
 			isDestroyed: () => false,
 			webContents: {
 				send: () => {
 					throw new Error("renderer stuck");
 				},
 			},
-		} as unknown as Parameters<typeof helpers.sendToWindowSafely>[0];
-		expect(() => helpers.sendToWindowSafely(bw, "test:channel", [])).not.toThrow();
+		};
+		expect(() => helpers.sendToWindowSafely(asBrowserWindow(bw), "test:channel", [])).not.toThrow();
 	});
 });
 
@@ -2283,6 +2292,15 @@ describe("setupRelay history capture flow exercises computeRecordingDurationMs +
 		};
 	}
 
+	// Contained boundary casts — the sole unavoidable cast for these local
+	// mocks lives in these helpers (runtime object passed through unchanged).
+	const asRelayWin = (w: ReturnType<typeof makeMockWin>) =>
+		w as unknown as Parameters<typeof relayModule.setupRelay>[0];
+	const asRelayClient = (c: ReturnType<typeof makeMockClient>) =>
+		c as unknown as Parameters<typeof relayModule.setupRelay>[1];
+	const asWindowEntry = (w: ReturnType<typeof makeMockWin>) =>
+		w as unknown as (typeof mockWindows)[0];
+
 	test("a fullSentence after recording_start records an entry and broadcasts HISTORY_ADDED", async () => {
 		// Exercises the full historyCapture.capture() arrow inside setupRelay:
 		// notifyStarted() seeds lastRecordingStartMs, then capture() computes
@@ -2295,11 +2313,8 @@ describe("setupRelay history capture flow exercises computeRecordingDurationMs +
 		const client = makeMockClient();
 		const win = makeMockWin();
 		mockWindows.length = 0;
-		mockWindows.push(win as unknown as (typeof mockWindows)[0]);
-		const cleanup = relayModule.setupRelay(
-			win as unknown as Parameters<typeof relayModule.setupRelay>[0],
-			client as unknown as Parameters<typeof relayModule.setupRelay>[1]
-		);
+		mockWindows.push(asWindowEntry(win));
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
 		// Simulate a hotkey press → recording_start → fullSentence flow.
 		client.emit("data-event", { type: "recording_start" });
 		// Give the recordingStateQueue a tick to drain the start handler so

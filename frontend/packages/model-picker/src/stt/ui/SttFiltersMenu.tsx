@@ -13,6 +13,7 @@ import type { ComponentPropsWithoutRef } from "react";
 import { LANGUAGES } from "@/shared/config/defaults";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Toggle } from "@/shared/ui/toggle";
 import {
 	activeFilterCount,
@@ -143,6 +144,7 @@ export function SttFiltersMenu({
 	onFiltersChange,
 	availableLanguages,
 }: SttFiltersMenuProps) {
+	const level = Math.min(useSurface() + 1, 8);
 	const count = activeFilterCount(filters);
 	const setFlag = (key: "cachedOnly" | "realtimeOnly" | "fitsHardwareOnly") => (next: boolean) =>
 		onFiltersChange({ ...filters, [key]: next });
@@ -165,7 +167,10 @@ export function SttFiltersMenu({
 			<Popover.Portal>
 				<Popover.Positioner align="end" sideOffset={6} style={{ zIndex: Z_INDEX.popover }}>
 					<Popover.Popup
-						className="select-popup w-[300px] origin-(--transform-origin) overflow-hidden rounded-md border border-border bg-surface-elevated p-1 font-sans text-body text-foreground shadow-md transition-[transform,opacity] duration-150 ease-out data-[ending-style]:ease-in"
+						className={cn(
+							"select-popup w-[300px] origin-(--transform-origin) overflow-hidden rounded-md border border-border p-1 font-sans text-body text-foreground shadow-md transition-[transform,opacity] duration-150 ease-out data-[ending-style]:ease-in",
+							surfaceBg(level)
+						)}
 						data-slot="stt-filters-menu-content"
 					>
 						<div className="flex items-center justify-between px-2 py-1.5">

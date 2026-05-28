@@ -1,8 +1,35 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { debugLogMock } from "@test/mocks/debug-log";
 import { electronMock } from "@test/mocks/electron";
+import type { BrowserWindow } from "electron";
 
 const noop = () => undefined;
+
+// ── Contained boundary casts ──────────────────────────────────────────
+// Each helper localizes one mock-injection cast so the unsafe step lives in one
+// auditable place instead of being repeated at every call site. All return the
+// exact same runtime object/value they're given.
+
+type ElectronBrowserWindow = InstanceType<typeof BrowserWindow>;
+
+// Minimal BrowserWindow surface the broadcast/stream helpers touch. `send` uses
+// method syntax (bivariant params) so each fake's narrower payload type fits.
+interface MockBrowserWindow {
+	isDestroyed(): boolean;
+	webContents: { send(channel: string, payload: never): void };
+}
+
+// Boundary cast: a hand-rolled fake window stands in for a real BrowserWindow.
+const asBrowserWindow = (w: MockBrowserWindow) => w as unknown as ElectronBrowserWindow;
+
+// Boundary cast: exposes a settable `getAllWindows` so tests can stub the
+// static method on the (mocked) BrowserWindow class.
+const asPatchableBrowserWindow = (bw: typeof BrowserWindow) =>
+	bw as unknown as { getAllWindows: () => unknown[] };
+
+// Boundary cast: a Bun mock function stands in for the global `fetch`.
+const asFetch = (m: ReturnType<typeof mock>) => m as unknown as typeof fetch;
 
 // Stub electron + electron-bound modules so importing llm.ts doesn't pull in
 // the real Electron runtime. Use the complete `electronMock()` factory so the
@@ -85,9 +112,7 @@ describe("scanOllamaModels — connection failure handling", () => {
 	});
 
 	test("returns reachable=false with error message when fetch rejects (Ollama not running)", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("fetch failed"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("fetch failed"))));
 
 		const result = await scanOllamaModels(ENDPOINT);
 
@@ -98,9 +123,9 @@ describe("scanOllamaModels — connection failure handling", () => {
 	});
 
 	test("returns reachable=true with error when Ollama answers with HTTP error", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("Service Unavailable", { status: 503 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response("Service Unavailable", { status: 503 })))
+		);
 
 		const result = await scanOllamaModels(ENDPOINT);
 
@@ -111,16 +136,18 @@ describe("scanOllamaModels — connection failure handling", () => {
 	});
 
 	test("returns reachable=true with parsed models on success", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(
-					JSON.stringify({
-						models: [{ name: "llama3", size: 4_000_000_000, modified_at: "2026-01-01" }],
-					}),
-					{ status: 200, headers: { "Content-Type": "application/json" } }
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(
+						JSON.stringify({
+							models: [{ name: "llama3", size: 4_000_000_000, modified_at: "2026-01-01" }],
+						}),
+						{ status: 200, headers: { "Content-Type": "application/json" } }
+					)
 				)
 			)
-		) as unknown as typeof fetch;
+		);
 
 		const result = await scanOllamaModels(ENDPOINT);
 
@@ -623,7 +650,7 @@ describe("llm pure helpers", () => {
 		const electron = await import("electron");
 		const origGetAll = electron.BrowserWindow.getAllWindows;
 		const deltas: string[] = [];
-		const fakeWindow = {
+		const fakeWindow = asBrowserWindow({
 			isDestroyed: () => false,
 			webContents: {
 				send: (_channel: string, payload: { delta?: string }) => {
@@ -632,9 +659,8 @@ describe("llm pure helpers", () => {
 					}
 				},
 			},
-		} as unknown as InstanceType<typeof electron.BrowserWindow>;
-		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-			() => [fakeWindow];
+		});
+		asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = () => [fakeWindow];
 		try {
 			const state = {
 				buffer: { value: "" },
@@ -651,8 +677,7 @@ describe("llm pure helpers", () => {
 			expect(visible).not.toContain("{");
 			expect(visible).not.toContain('"text"');
 		} finally {
-			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-				origGetAll;
+			asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = origGetAll;
 		}
 	});
 
@@ -660,7 +685,7 @@ describe("llm pure helpers", () => {
 		const electron = await import("electron");
 		const origGetAll = electron.BrowserWindow.getAllWindows;
 		const deltas: string[] = [];
-		const fakeWindow = {
+		const fakeWindow = asBrowserWindow({
 			isDestroyed: () => false,
 			webContents: {
 				send: (_channel: string, payload: { delta?: string }) => {
@@ -669,9 +694,8 @@ describe("llm pure helpers", () => {
 					}
 				},
 			},
-		} as unknown as InstanceType<typeof electron.BrowserWindow>;
-		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-			() => [fakeWindow];
+		});
+		asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = () => [fakeWindow];
 		try {
 			const state = {
 				buffer: { value: "" },
@@ -685,8 +709,7 @@ describe("llm pure helpers", () => {
 			}
 			expect(deltas.join("")).toBe("Plain prose answer");
 		} finally {
-			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-				origGetAll;
+			asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = origGetAll;
 		}
 	});
 
@@ -737,9 +760,9 @@ describe("readErrorText", () => {
 	});
 
 	test("returns 'Unknown error' when text() throws", async () => {
-		const badResponse = {
+		const badResponse = asInvalid<Response>({
 			text: () => Promise.reject(new Error("stream error")),
-		} as unknown as Response;
+		});
 		expect(await helpers.readErrorText(badResponse)).toBe("Unknown error");
 	});
 });
@@ -1242,9 +1265,7 @@ describe("scanOpenRouterModels", () => {
 	});
 
 	test("returns reachable=false when fetch rejects", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("network error"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("network error"))));
 		const result = await scanOpenRouterModels("test-key");
 		expect(result.reachable).toBe(false);
 		expect(result.error).toBeDefined();
@@ -1252,25 +1273,27 @@ describe("scanOpenRouterModels", () => {
 	});
 
 	test("returns reachable=true with error on HTTP error response", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("Unauthorized", { status: 401 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response("Unauthorized", { status: 401 })))
+		);
 		const result = await scanOpenRouterModels("bad-key");
 		expect(result.reachable).toBe(true);
 		expect(result.error).toContain("401");
 	});
 
 	test("returns parsed models on success", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(
-					JSON.stringify({
-						data: [{ id: "openai/gpt-4o", name: "GPT-4o", context_length: 128_000 }],
-					}),
-					{ status: 200, headers: { "Content-Type": "application/json" } }
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(
+						JSON.stringify({
+							data: [{ id: "openai/gpt-4o", name: "GPT-4o", context_length: 128_000 }],
+						}),
+						{ status: 200, headers: { "Content-Type": "application/json" } }
+					)
 				)
 			)
-		) as unknown as typeof fetch;
+		);
 		const result = await scanOpenRouterModels("valid-key");
 		expect(result.reachable).toBe(true);
 		expect(result.error).toBeUndefined();
@@ -1296,19 +1319,21 @@ describe("processText", () => {
 	test("returns transformed text via Ollama when provider is ollama", async () => {
 		// store mock returns "llm.dictation.provider" = "ollama" but model is ""
 		// by stubbing fetch to return a valid Ollama response
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(
-					JSON.stringify({
-						model: "llama3",
-						created_at: "now",
-						message: { role: "assistant", content: "corrected text" },
-						done: true,
-					}),
-					{ status: 200, headers: { "Content-Type": "application/json" } }
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(
+						JSON.stringify({
+							model: "llama3",
+							created_at: "now",
+							message: { role: "assistant", content: "corrected text" },
+							done: true,
+						}),
+						{ status: 200, headers: { "Content-Type": "application/json" } }
+					)
 				)
 			)
-		) as unknown as typeof fetch;
+		);
 		// The store mock returns "ollama" for "llm.dictation.provider" which causes runOllamaPath
 		// to be called. But model would be "" → ValidationError.
 		// So we test that it at least calls through properly.
@@ -1341,27 +1366,23 @@ describe("deleteOllamaModel", () => {
 	});
 
 	test("returns success=false with error when fetch rejects (unreachable)", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("network error"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("network error"))));
 		const result = await deleteOllamaModel("http://localhost:11434", "llama3");
 		expect(result.success).toBe(false);
 		expect(result.error).toBeDefined();
 	});
 
 	test("returns success=false on HTTP error", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("Not Found", { status: 404 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response("Not Found", { status: 404 })))
+		);
 		const result = await deleteOllamaModel("http://localhost:11434", "llama3");
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("404");
 	});
 
 	test("returns success=true on HTTP 200", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("", { status: 200 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.resolve(new Response("", { status: 200 }))));
 		const result = await deleteOllamaModel("http://localhost:11434", "llama3");
 		expect(result.success).toBe(true);
 		expect(result.model).toBe("llama3");
@@ -1389,18 +1410,16 @@ describe("pullOllamaModel and cancelOllamaModelPull", () => {
 	});
 
 	test("pullOllamaModel returns success=false on HTTP error", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("Not Found", { status: 404 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response("Not Found", { status: 404 })))
+		);
 		const result = await pullOllamaModel("http://localhost:11434", "llama3:latest");
 		expect(result.success).toBe(false);
 		expect(result.error).toContain("404");
 	});
 
 	test("pullOllamaModel returns success=false when body is null", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response(null, { status: 200 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.resolve(new Response(null, { status: 200 }))));
 		const result = await pullOllamaModel("http://localhost:11434", "llama3:latest");
 		expect(result.success).toBe(false);
 	});
@@ -1417,14 +1436,16 @@ describe("pullOllamaModel and cancelOllamaModelPull", () => {
 			JSON.stringify({ status: "success" }),
 		].join("\n")}\n`;
 
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(ndjson, {
-					status: 200,
-					headers: { "Content-Type": "application/x-ndjson" },
-				})
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(ndjson, {
+						status: 200,
+						headers: { "Content-Type": "application/x-ndjson" },
+					})
+				)
 			)
-		) as unknown as typeof fetch;
+		);
 
 		const result = await pullOllamaModel("http://localhost:11434", "llama3:latest");
 		expect(result.success).toBe(true);
@@ -1432,11 +1453,13 @@ describe("pullOllamaModel and cancelOllamaModelPull", () => {
 	});
 
 	test("pullOllamaModel returns cancelled=true when AbortError is thrown", async () => {
-		globalThis.fetch = mock(() => {
-			const err = new Error("aborted");
-			err.name = "AbortError";
-			return Promise.reject(err);
-		}) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => {
+				const err = new Error("aborted");
+				err.name = "AbortError";
+				return Promise.reject(err);
+			})
+		);
 
 		const result = await pullOllamaModel("http://localhost:11434", "llama3:tag");
 		expect(result.success).toBe(false);
@@ -1450,16 +1473,18 @@ describe("pullOllamaModel and cancelOllamaModelPull", () => {
 			resolveHold = res;
 		});
 
-		globalThis.fetch = mock(async (_url: string, init?: RequestInit) => {
-			// Wait until cancelled
-			await new Promise<void>((res) => {
-				init?.signal?.addEventListener("abort", () => res());
-				holdPromise.then(res);
-			});
-			const err = new Error("aborted");
-			err.name = "AbortError";
-			throw err;
-		}) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(async (_url: string, init?: RequestInit) => {
+				// Wait until cancelled
+				await new Promise<void>((res) => {
+					init?.signal?.addEventListener("abort", () => res());
+					holdPromise.then(res);
+				});
+				const err = new Error("aborted");
+				err.name = "AbortError";
+				throw err;
+			})
+		);
 
 		// Start the pull in background
 		const pullPromise = pullOllamaModel("http://localhost:11434", "phi3:mini");
@@ -1586,14 +1611,16 @@ describe("pullOllamaModel — stream that finishes without success status", () =
 			}),
 		].join("\n")}\n`;
 
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(ndjson, {
-					status: 200,
-					headers: { "Content-Type": "application/x-ndjson" },
-				})
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(ndjson, {
+						status: 200,
+						headers: { "Content-Type": "application/x-ndjson" },
+					})
+				)
 			)
-		) as unknown as typeof fetch;
+		);
 
 		const result = await pullOllamaModel("http://localhost:11434", "llama3:latest2");
 		expect(result.success).toBe(false);
@@ -1603,14 +1630,16 @@ describe("pullOllamaModel — stream that finishes without success status", () =
 	test("returns success=false when stream ends with error in ndjson", async () => {
 		const ndjson = `${JSON.stringify({ status: "error", error: "disk full" })}\n`;
 
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(ndjson, {
-					status: 200,
-					headers: { "Content-Type": "application/x-ndjson" },
-				})
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(ndjson, {
+						status: 200,
+						headers: { "Content-Type": "application/x-ndjson" },
+					})
+				)
 			)
-		) as unknown as typeof fetch;
+		);
 
 		const result = await pullOllamaModel("http://localhost:11434", "llama3:v2");
 		expect(result.success).toBe(false);
@@ -1828,26 +1857,27 @@ describe("broadcastPullProgress — covers the inner send branch", () => {
 		const sendSpy = mock(noop);
 		const electron = await import("electron");
 		const origGetAll = electron.BrowserWindow.getAllWindows;
-		const fakeWindow = {
+		const fakeWindow = asBrowserWindow({
 			isDestroyed: () => false,
 			webContents: { send: sendSpy },
-		} as unknown as InstanceType<typeof electron.BrowserWindow>;
-		const destroyedWindow = {
+		});
+		const destroyedWindow = asBrowserWindow({
 			isDestroyed: () => true,
 			webContents: {
 				send: mock(() => {
 					throw new Error("should not send");
 				}),
 			},
-		} as unknown as InstanceType<typeof electron.BrowserWindow>;
-		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-			() => [fakeWindow, destroyedWindow];
+		});
+		asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = () => [
+			fakeWindow,
+			destroyedWindow,
+		];
 		try {
 			helpers.broadcastPullProgress({ model: "x", status: "pulling" });
 			expect(sendSpy).toHaveBeenCalledTimes(1);
 		} finally {
-			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-				origGetAll;
+			asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = origGetAll;
 		}
 	});
 });
@@ -1871,15 +1901,11 @@ describe("setupLlm teardown", () => {
 // ── Warmup helpers ────────────────────────────────────────────────────
 
 describe("collectEnabledOllamaModels", () => {
-	const originalGetStoreValue = helpers as unknown as {
-		collectEnabledOllamaModels: () => string[];
-	};
-
 	test("returns empty when neither feature is enabled", () => {
 		// The shared mock leaves dictation/transforms disabled (catch defaults
 		// trigger because the underlying storeValues has no overrides for these
 		// keys in this test file).
-		expect(originalGetStoreValue.collectEnabledOllamaModels()).toEqual([]);
+		expect(helpers.collectEnabledOllamaModels()).toEqual([]);
 	});
 });
 
@@ -1890,19 +1916,11 @@ describe("warmupOllamaModel", () => {
 		globalThis.fetch = originalFetch;
 	});
 
-	type WarmupOutcome = "ok" | "unreachable" | "model-not-found" | "load-failed" | "skipped";
-	interface WarmupResult {
-		errorBody?: string;
-		model: string;
-		outcome: WarmupOutcome;
-	}
-	type WarmupFn = (endpoint: string, model: string) => Promise<WarmupResult>;
-
-	const warmup = (helpers as unknown as { warmupOllamaModel: WarmupFn }).warmupOllamaModel;
+	const warmup = helpers.warmupOllamaModel;
 
 	test('returns "skipped" when model is empty (no fetch)', async () => {
 		const fetchSpy = mock(() => Promise.resolve(new Response("{}")));
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		globalThis.fetch = asFetch(fetchSpy);
 		const out = await warmup(ENDPOINT, "");
 		expect(out.outcome).toBe("skipped");
 		expect(out.model).toBe("");
@@ -1913,7 +1931,7 @@ describe("warmupOllamaModel", () => {
 		const fetchSpy = mock(() =>
 			Promise.resolve(new Response(JSON.stringify({ response: "" }), { status: 200 }))
 		);
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		globalThis.fetch = asFetch(fetchSpy);
 		const out = await warmup(ENDPOINT, "gemma3:4b");
 		expect(out.outcome).toBe("ok");
 		expect(out.model).toBe("gemma3:4b");
@@ -1928,53 +1946,49 @@ describe("warmupOllamaModel", () => {
 	});
 
 	test('returns "unreachable" + errorBody when fetch rejects (Ollama not running)', async () => {
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("fetch failed"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("fetch failed"))));
 		const out = await warmup(ENDPOINT, "gemma3:4b");
 		expect(out.outcome).toBe("unreachable");
 		expect(out.errorBody).toContain("fetch failed");
 	});
 
 	test('returns "model-not-found" + errorBody on HTTP 404 (model not installed)', async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(JSON.stringify({ error: "model 'foo' not found, try pulling it first" }), {
-					status: 404,
-				})
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(JSON.stringify({ error: "model 'foo' not found, try pulling it first" }), {
+						status: 404,
+					})
+				)
 			)
-		) as unknown as typeof fetch;
+		);
 		const out = await warmup(ENDPOINT, "foo");
 		expect(out.outcome).toBe("model-not-found");
 		expect(out.errorBody).toContain("not found");
 	});
 
 	test('returns "load-failed" on HTTP 500 (corrupted or incompatible model file)', async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(
-				new Response(JSON.stringify({ error: "model runner crashed" }), { status: 500 })
+		globalThis.fetch = asFetch(
+			mock(() =>
+				Promise.resolve(
+					new Response(JSON.stringify({ error: "model runner crashed" }), { status: 500 })
+				)
 			)
-		) as unknown as typeof fetch;
+		);
 		const out = await warmup(ENDPOINT, "gemma3:4b");
 		expect(out.outcome).toBe("load-failed");
 		expect(out.errorBody).toContain("model runner crashed");
 	});
 
 	test('returns "load-failed" on other non-2xx (e.g. 503 service unavailable)', async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response("nope", { status: 503 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.resolve(new Response("nope", { status: 503 }))));
 		const out = await warmup(ENDPOINT, "gemma3:4b");
 		expect(out.outcome).toBe("load-failed");
 	});
 });
 
 describe("classifyWarmupResponse", () => {
-	type ClassifyFn = (
-		status: number
-	) => "ok" | "unreachable" | "model-not-found" | "load-failed" | "skipped";
-	const classify = (helpers as unknown as { classifyWarmupResponse: ClassifyFn })
-		.classifyWarmupResponse;
+	const classify = helpers.classifyWarmupResponse;
 
 	test("404 → model-not-found", () => {
 		expect(classify(404)).toBe("model-not-found");
@@ -1990,8 +2004,7 @@ describe("classifyWarmupResponse", () => {
 });
 
 describe("isLoopbackEndpoint", () => {
-	type LoopbackFn = (endpoint: string) => boolean;
-	const isLoopback = (helpers as unknown as { isLoopbackEndpoint: LoopbackFn }).isLoopbackEndpoint;
+	const isLoopback = helpers.isLoopbackEndpoint;
 
 	test("localhost variants are loopback", () => {
 		expect(isLoopback("http://localhost:11434")).toBe(true);
@@ -2016,20 +2029,17 @@ describe("ensureOllamaReachable", () => {
 		globalThis.fetch = originalFetch;
 	});
 
-	type EnsureFn = (endpoint: string) => Promise<boolean>;
-	const ensure = (helpers as unknown as { ensureOllamaReachable: EnsureFn }).ensureOllamaReachable;
+	const ensure = helpers.ensureOllamaReachable;
 
 	test("returns true immediately when /api/tags responds 200", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 })))
+		);
 		expect(await ensure(ENDPOINT)).toBe(true);
 	});
 
 	test("returns false for remote endpoints when unreachable (does not try to auto-start)", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("fetch failed"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("fetch failed"))));
 		expect(await ensure("http://remote.example.com:11434")).toBe(false);
 	});
 });
@@ -2042,18 +2052,12 @@ describe("buildOllamaChatBody includes keep_alive", () => {
 });
 
 describe("warmup status broadcast", () => {
-	interface WarmupStatus {
-		endpoint: string;
-		inProgress: boolean;
-		models: Array<{ model: string; outcome: string; errorBody?: string }>;
-		ollamaInstalled: boolean;
-		reachable: boolean | null;
-		timestamp: number;
-	}
-	const broadcast = (helpers as unknown as { broadcastWarmupStatus: (s: WarmupStatus) => void })
-		.broadcastWarmupStatus;
-	const getLast = (helpers as unknown as { getLastWarmupStatus: () => WarmupStatus | null })
-		.getLastWarmupStatus;
+	// Derive the payload shape from the real exported function so the test can
+	// never drift from the production type (the old hand-rolled interface typed
+	// `outcome` as a loose `string`, masking the real WarmupOutcome union).
+	type WarmupStatus = Parameters<typeof helpers.broadcastWarmupStatus>[0];
+	const broadcast = helpers.broadcastWarmupStatus;
+	const getLast = helpers.getLastWarmupStatus;
 
 	test("broadcastWarmupStatus stores the last payload so settings-window can pull it on mount", () => {
 		const payload: WarmupStatus = {
@@ -2097,31 +2101,35 @@ describe("describeCustomPreset", () => {
 		// describeCustomPreset only reads `id` and `level`; the runtime shape
 		// requires `key`/`name`/`prompt` too. Cast through unknown to feed a
 		// minimal entry without restating them.
-		const out = helpers.describeCustomPreset({
-			id: "fancy",
-			label: "Fancy",
-			level: "high",
-		} as unknown as CustomModifierEntry);
+		const out = helpers.describeCustomPreset(
+			asInvalid<CustomModifierEntry>({
+				id: "fancy",
+				label: "Fancy",
+				level: "high",
+			})
+		);
 		expect(out).toBe("custom:fancy:high");
 	});
 
 	test("formats custom modifier without level", () => {
-		const out = helpers.describeCustomPreset({
-			id: "calm",
-			label: "Calm",
-		} as unknown as CustomModifierEntry);
+		const out = helpers.describeCustomPreset(
+			asInvalid<CustomModifierEntry>({
+				id: "calm",
+				label: "Calm",
+			})
+		);
 		expect(out).toBe("custom:calm");
 	});
 
 	test("integrates into describePresets output (mixed presets)", () => {
 		const out = helpers.describePresets([
-			{
+			asInvalid<CustomModifierEntry>({
 				id: "edgy",
 				key: "__custom__",
 				name: "Edgy",
 				prompt: "p",
 				level: "low",
-			} as unknown as CustomModifierEntry,
+			}),
 			{ key: "neutral" },
 		]);
 		expect(out).toBe("custom:edgy:low,neutral");
@@ -2132,15 +2140,17 @@ describe("describeTranslatePreset", () => {
 	test("uses targetLang when present", () => {
 		// `targetLang` lives on the builtin `translate` preset entry; the
 		// helper reads it via `(p as { targetLang?: string }).targetLang`.
-		const out = helpers.describeTranslatePreset({
-			key: "translate",
-			targetLang: "es",
-		} as unknown as PresetEntry);
+		const out = helpers.describeTranslatePreset(
+			asInvalid<PresetEntry>({
+				key: "translate",
+				targetLang: "es",
+			})
+		);
 		expect(out).toBe("translate:es");
 	});
 
 	test("defaults to English when targetLang missing", () => {
-		const out = helpers.describeTranslatePreset({ key: "translate" } as unknown as PresetEntry);
+		const out = helpers.describeTranslatePreset(asInvalid<PresetEntry>({ key: "translate" }));
 		expect(out).toBe("translate:English");
 	});
 });
@@ -2155,18 +2165,17 @@ describe("tryAbortController", () => {
 	});
 
 	test("swallows errors thrown by abort()", () => {
-		const broken = {
+		const broken = asInvalid<AbortController>({
 			abort: () => {
 				throw new Error("synthetic");
 			},
-		} as unknown as AbortController;
+		});
 		expect(() => helpers.tryAbortController(broken, "x")).not.toThrow();
 	});
 });
 
 describe("abortActiveOllamaChats", () => {
-	const activeSet = (helpers as unknown as { activeChatControllers: Set<AbortController> })
-		.activeChatControllers;
+	const activeSet = helpers.activeChatControllers;
 
 	beforeEach(() => {
 		activeSet.clear();
@@ -2195,17 +2204,15 @@ describe("broadcastLearnedProperNouns", () => {
 		const electron = await import("electron");
 		const origGetAll = electron.BrowserWindow.getAllWindows;
 		let called = false;
-		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-			() => {
-				called = true;
-				return [];
-			};
+		asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = () => {
+			called = true;
+			return [];
+		};
 		try {
 			helpers.broadcastLearnedProperNouns([]);
 			expect(called).toBe(false);
 		} finally {
-			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-				origGetAll;
+			asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = origGetAll;
 		}
 	});
 
@@ -2213,18 +2220,16 @@ describe("broadcastLearnedProperNouns", () => {
 		const electron = await import("electron");
 		const origGetAll = electron.BrowserWindow.getAllWindows;
 		const sendSpy = mock(noop);
-		const fake = {
+		const fake = asBrowserWindow({
 			isDestroyed: () => false,
 			webContents: { send: sendSpy },
-		} as unknown as InstanceType<typeof electron.BrowserWindow>;
-		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-			() => [fake];
+		});
+		asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = () => [fake];
 		try {
 			helpers.broadcastLearnedProperNouns(["Anthropic", "Ollama"]);
 			expect(sendSpy).toHaveBeenCalledTimes(1);
 		} finally {
-			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-				origGetAll;
+			asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = origGetAll;
 		}
 	});
 
@@ -2232,26 +2237,24 @@ describe("broadcastLearnedProperNouns", () => {
 		const electron = await import("electron");
 		const origGetAll = electron.BrowserWindow.getAllWindows;
 		const sendSpy = mock(noop);
-		const destroyed = {
+		const destroyed = asBrowserWindow({
 			isDestroyed: () => true,
 			webContents: {
 				send: () => {
 					throw new Error("should not send");
 				},
 			},
-		} as unknown as InstanceType<typeof electron.BrowserWindow>;
-		const alive = {
+		});
+		const alive = asBrowserWindow({
 			isDestroyed: () => false,
 			webContents: { send: sendSpy },
-		} as unknown as InstanceType<typeof electron.BrowserWindow>;
-		(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-			() => [destroyed, alive];
+		});
+		asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = () => [destroyed, alive];
 		try {
 			helpers.broadcastLearnedProperNouns(["X"]);
 			expect(sendSpy).toHaveBeenCalledTimes(1);
 		} finally {
-			(electron.BrowserWindow as unknown as { getAllWindows: () => unknown[] }).getAllWindows =
-				origGetAll;
+			asPatchableBrowserWindow(electron.BrowserWindow).getAllWindows = origGetAll;
 		}
 	});
 });
@@ -2484,7 +2487,7 @@ describe("buildEndpointsResult", () => {
 		// internals). Cast through unknown for the test fixture.
 		const out = helpers.buildEndpointsResult({
 			description: "model details",
-			endpoints: [{ name: "ep1" } as unknown as EndpointRecord],
+			endpoints: [asInvalid<EndpointRecord>({ name: "ep1" })],
 		});
 		expect(out.description).toBe("model details");
 		expect(out.endpoints).toHaveLength(1);
@@ -2538,7 +2541,7 @@ describe("applyEndpointDetailToModel", () => {
 		const model: OpenRouterScanModel = { id: "m1", name: "M", description: "short" };
 		const detail = {
 			description: "this is a much longer description payload",
-			endpoints: [{ name: "ep" } as unknown as EndpointRecord],
+			endpoints: [asInvalid<EndpointRecord>({ name: "ep" })],
 		};
 		const out = helpers.applyEndpointDetailToModel(model, detail);
 		expect(out.description).toBe(detail.description);
@@ -2739,9 +2742,7 @@ describe("waitForOllamaOrLog", () => {
 		// eventually returns false. This naturally exercises both the ping
 		// failure path and the log-and-return branch.
 		const origFetch = globalThis.fetch;
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("connection refused"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("connection refused"))));
 		try {
 			// Use a short OLLAMA_BOOT_WAIT_MS surrogate — the function reads the
 			// constant directly, so we can't shorten it. Instead, rely on fetch
@@ -2852,9 +2853,9 @@ describe("tryAutoStartAndWait", () => {
 		// so it doesn't block the test, and Ollama refuses double-bind so
 		// nothing is actually duplicated on the host.
 		const origFetch = globalThis.fetch;
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 })))
+		);
 		try {
 			const result = await helpers.tryAutoStartAndWait("http://localhost:11434");
 			// Either:
@@ -2874,9 +2875,9 @@ describe("tryAutoStartAndWait", () => {
 describe("waitForOllama", () => {
 	test("returns true immediately when ping succeeds", async () => {
 		const origFetch = globalThis.fetch;
-		globalThis.fetch = mock(() =>
-			Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 })))
+		);
 		try {
 			const result = await helpers.waitForOllama("http://localhost:11434", 5000);
 			expect(result).toBe(true);
@@ -2887,9 +2888,7 @@ describe("waitForOllama", () => {
 
 	test("returns false when totalMs elapses without a successful ping", async () => {
 		const origFetch = globalThis.fetch;
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("connection refused"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("connection refused"))));
 		try {
 			// Short deadline so the test runs fast.
 			const result = await helpers.waitForOllama("http://localhost:1", 50);
@@ -2956,14 +2955,14 @@ describe("unloadOllamaModel", () => {
 
 	test("returns void when endpoint normalizes to empty", async () => {
 		const fetchSpy = mock(() => Promise.resolve(new Response("{}")));
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		globalThis.fetch = asFetch(fetchSpy);
 		await helpers.unloadOllamaModel("", "any-model");
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
 	test("POSTs /api/generate with keep_alive=0 to evict", async () => {
 		const fetchSpy = mock(() => Promise.resolve(new Response("{}", { status: 200 })));
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		globalThis.fetch = asFetch(fetchSpy);
 		await helpers.unloadOllamaModel("http://localhost:11434", "gemma3:4b");
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 		const args = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
@@ -2975,9 +2974,7 @@ describe("unloadOllamaModel", () => {
 	});
 
 	test("swallows fetch errors (eviction is best-effort)", async () => {
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("network down"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("network down"))));
 		await expect(
 			helpers.unloadOllamaModel("http://localhost:11434", "gemma3:4b")
 		).resolves.toBeUndefined();
@@ -3076,7 +3073,7 @@ describe("warmupEnabledModels", () => {
 
 	test("returns early when no enabled Ollama models (broadcasts empty status)", async () => {
 		const fetchSpy = mock(() => Promise.resolve(new Response("{}", { status: 200 })));
-		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		globalThis.fetch = asFetch(fetchSpy);
 		// With dictation+transforms both disabled (storeMock defaults), there
 		// are no models to warm — function broadcasts empty status and exits.
 		await helpers.warmupEnabledModels();
@@ -3092,12 +3089,14 @@ describe("warmupEnabledModels", () => {
 		// Two distinct fetch paths: /api/tags (ping for ensureOllamaReachable)
 		// and /api/generate (warmupOllamaModel). Both return 200, so the
 		// full end-to-end path runs (eviction Promise.all is a no-op).
-		globalThis.fetch = mock((url: string) => {
-			if (url.includes("/api/tags")) {
-				return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }));
-			}
-			return Promise.resolve(new Response(JSON.stringify({ response: "" }), { status: 200 }));
-		}) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(
+			mock((url: string) => {
+				if (url.includes("/api/tags")) {
+					return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }));
+				}
+				return Promise.resolve(new Response(JSON.stringify({ response: "" }), { status: 200 }));
+			})
+		);
 		await helpers.warmupEnabledModels();
 		expect(true).toBe(true);
 	});
@@ -3114,9 +3113,7 @@ describe("warmupEnabledModels", () => {
 		process.env.PATH = "Z:\\NoSuchDir";
 		process.env.LOCALAPPDATA = "Z:\\NoSuchDir";
 		process.env.ProgramFiles = "Z:\\NoSuchDir";
-		globalThis.fetch = mock(() =>
-			Promise.reject(new TypeError("connection refused"))
-		) as unknown as typeof fetch;
+		globalThis.fetch = asFetch(mock(() => Promise.reject(new TypeError("connection refused"))));
 		try {
 			await helpers.warmupEnabledModels();
 			expect(true).toBe(true);

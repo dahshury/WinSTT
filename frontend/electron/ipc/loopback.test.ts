@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { electronMock } from "@test/mocks/electron";
 import type { SttClient } from "../ws/stt-client";
 
@@ -50,11 +51,16 @@ function fire(channel: string, payload?: unknown) {
 	}
 }
 
+// MockClient implements only the SttClient surface loopback.ts touches. The
+// single boundary cast lives here instead of being repeated at every
+// injection call site — the runtime object is unchanged.
+const asClient = (c: MockClient) => c as unknown as SttClient;
+
 describe("setupLoopbackHandlers", () => {
 	test("list-devices returns [] when client is disconnected", async () => {
 		handlers.clear();
 		listeners.clear();
-		setupLoopbackHandlers(makeClient(false) as unknown as SttClient);
+		setupLoopbackHandlers(asClient(makeClient(false)));
 		const handler = handlers.get("loopback:list-devices");
 		expect(await handler!(undefined)).toEqual([]);
 	});
@@ -63,7 +69,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(true);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		const handler = handlers.get("loopback:list-devices");
 		expect(await handler!(undefined)).toEqual(client.devices);
 		expect(client.calls).toContain("list");
@@ -73,7 +79,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(true);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		fire("loopback:start", { deviceIndex: 3 });
 		expect(client.calls).toContain("start");
 	});
@@ -82,7 +88,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(true);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		fire("loopback:start", { deviceIndex: -1 });
 		fire("loopback:start", { deviceIndex: 1.5 });
 		expect(client.calls.includes("start")).toBe(false);
@@ -92,7 +98,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(false);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		fire("loopback:start", { deviceIndex: 0 });
 		expect(client.calls.includes("start")).toBe(false);
 	});
@@ -101,7 +107,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(true);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		fire("loopback:stop");
 		expect(client.calls).toContain("stop");
 	});
@@ -110,7 +116,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(false);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		fire("loopback:stop");
 		expect(client.calls.includes("stop")).toBe(false);
 	});
@@ -118,7 +124,7 @@ describe("setupLoopbackHandlers", () => {
 	test("list-devices returns empty array (not arbitrary content) when disconnected", async () => {
 		handlers.clear();
 		listeners.clear();
-		setupLoopbackHandlers(makeClient(false) as unknown as SttClient);
+		setupLoopbackHandlers(asClient(makeClient(false)));
 		const handler = handlers.get("loopback:list-devices");
 		const result = (await handler!(undefined)) as unknown[];
 		expect(Array.isArray(result)).toBe(true);
@@ -132,7 +138,7 @@ describe("setupLoopbackHandlers", () => {
 		client.listLoopbackDevices = async () => {
 			throw new Error("boom");
 		};
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		const handler = handlers.get("loopback:list-devices");
 		const result = (await handler!(undefined)) as unknown[];
 		expect(Array.isArray(result)).toBe(true);
@@ -145,7 +151,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(true);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		// payload is undefined; payload?.deviceIndex must short-circuit, not crash
 		expect(() => fire("loopback:start", undefined)).not.toThrow();
 		expect(client.calls.includes("start")).toBe(false);
@@ -155,7 +161,7 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(true);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		fire("loopback:start", { deviceIndex: 0 });
 		expect(client.calls).toContain("start");
 	});
@@ -164,10 +170,10 @@ describe("setupLoopbackHandlers", () => {
 		handlers.clear();
 		listeners.clear();
 		const client = makeClient(true);
-		setupLoopbackHandlers(client as unknown as SttClient);
+		setupLoopbackHandlers(asClient(client));
 		// Strings / null / NaN must not pass the typeof === "number" guard.
-		fire("loopback:start", { deviceIndex: "0" as unknown as number });
-		fire("loopback:start", { deviceIndex: null as unknown as number });
+		fire("loopback:start", { deviceIndex: asInvalid<number>("0") });
+		fire("loopback:start", { deviceIndex: asInvalid<number>(null) });
 		fire("loopback:start", { deviceIndex: Number.NaN });
 		expect(client.calls.includes("start")).toBe(false);
 	});

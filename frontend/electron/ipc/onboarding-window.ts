@@ -178,10 +178,22 @@ interface SetupOptions {
 
 export function setupOnboardingHandlers(options: SetupOptions): () => void {
 	onFinishCallback = options.onFinish;
+	// Idempotent re-arm: drop any prior registration before adding ours.
+	// `ipcMain.on` silently STACKS listeners, so re-running setup without an
+	// intervening teardown would otherwise fire `handleFinish` once per prior
+	// arm. `handleFinish` is a stable module-level reference, so off-then-on is
+	// a safe no-op when nothing was registered. Mirrors the
+	// removeHandler-before-handle discipline the rest of the IPC layer uses.
+	ipcMain.off(IPC.ONBOARDING_FINISH, handleFinish);
 	ipcMain.on(IPC.ONBOARDING_FINISH, handleFinish);
 	return () => {
 		ipcMain.off(IPC.ONBOARDING_FINISH, handleFinish);
 		onFinishCallback = null;
+		// Reset the one-shot guard so a future wizard armed via
+		// setupOnboardingHandlers (without a fresh createOnboardingWindow,
+		// which is the only other place this is cleared) can still record its
+		// finish instead of silently early-returning on a stale `true`.
+		finishedOnce = false;
 		if (isWindowAlive(onboardingWindow)) {
 			onboardingWindow.destroy();
 		}

@@ -426,6 +426,9 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 		general: { overlayMode: string };
 	}
 	const cast = <T>(v: T) => v as unknown as Parameters<typeof mergeBroadcastPreservingUserDirty>[0];
+	// Read-back boundary cast: the merge returns the real AppSettings type; we
+	// view it as the local Mini shape to assert on the handful of fields we set.
+	const asMini = (v: unknown) => v as unknown as Mini;
 
 	test("returns identity (use decoded) when there is no lastSaved baseline", () => {
 		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
@@ -466,8 +469,8 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 			cast(current),
 			cast(lastSaved)
 		);
-		expect((merged as unknown as Mini).general.overlayMode).toBe("dynamic-island");
-		expect((merged as unknown as Mini).audio.silero).toBe(0.5);
+		expect(asMini(merged).general.overlayMode).toBe("dynamic-island");
+		expect(asMini(merged).audio.silero).toBe(0.5);
 		expect(preserved).toBe(true);
 	});
 
@@ -482,8 +485,8 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 			cast(current),
 			cast(lastSaved)
 		);
-		expect((merged as unknown as Mini).general.overlayMode).toBe("floating-bottom");
-		expect((merged as unknown as Mini).audio.silero).toBe(0.5);
+		expect(asMini(merged).general.overlayMode).toBe("floating-bottom");
+		expect(asMini(merged).audio.silero).toBe(0.5);
 		expect(preserved).toBe(false);
 	});
 
@@ -496,8 +499,8 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 			cast(current),
 			cast(lastSaved)
 		);
-		expect((merged as unknown as Mini).general.overlayMode).toBe("dynamic-island");
-		expect((merged as unknown as Mini).audio.silero).toBe(0.7);
+		expect(asMini(merged).general.overlayMode).toBe("dynamic-island");
+		expect(asMini(merged).audio.silero).toBe(0.7);
 		expect(preserved).toBe(true);
 	});
 });
@@ -513,6 +516,10 @@ describe("deriveBroadcastUpdate", () => {
 		return {} as AnySettings;
 	}
 
+	// Boundary cast: expose the writable `audio` slice on the opaque AppSettings
+	// value so a test can hand-craft a user-dirty section.
+	const asAudioWritable = (s: AnySettings) => s as unknown as { audio: { silero: number } };
+
 	test("pure broadcast (no preserved dirt) flips nextFromBroadcast=true", () => {
 		const result = deriveBroadcastUpdate(freshDefaults(), freshDefaults(), undefined, false);
 		expect(result.nextFromBroadcast).toBe(true);
@@ -523,8 +530,8 @@ describe("deriveBroadcastUpdate", () => {
 		const lastSaved = freshDefaults();
 		// Hand-craft a user-dirty section so preserved=true. Override one key on
 		// current that doesn't match lastSaved.
-		(current as unknown as { audio: { silero: number } }).audio = { silero: 0.99 };
-		(lastSaved as unknown as { audio: { silero: number } }).audio = { silero: 0.5 };
+		asAudioWritable(current).audio = { silero: 0.99 };
+		asAudioWritable(lastSaved).audio = { silero: 0.5 };
 		const result = deriveBroadcastUpdate(freshDefaults(), current, lastSaved, false);
 		expect(result.nextFromBroadcast).toBe(false);
 	});
@@ -532,8 +539,8 @@ describe("deriveBroadcastUpdate", () => {
 	test("preserved dirt keeps a prior true at true (sticky)", () => {
 		const current = freshDefaults();
 		const lastSaved = freshDefaults();
-		(current as unknown as { audio: { silero: number } }).audio = { silero: 0.99 };
-		(lastSaved as unknown as { audio: { silero: number } }).audio = { silero: 0.5 };
+		asAudioWritable(current).audio = { silero: 0.99 };
+		asAudioWritable(lastSaved).audio = { silero: 0.5 };
 		const result = deriveBroadcastUpdate(freshDefaults(), current, lastSaved, true);
 		expect(result.nextFromBroadcast).toBe(true);
 	});

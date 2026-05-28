@@ -4,6 +4,10 @@ import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surfac
 import { dialogAnimation } from "@/shared/ui/dialog-animation";
 
 export interface DialogShellProps {
+	/** Optional rich body rendered BETWEEN the description and the footer —
+	 *  progress bars, info cards, warnings. Simple confirm/opt-in dialogs omit
+	 *  it; richer ones (the model-download dialog) slot their phase UI here. */
+	body?: ReactNode;
 	/** Footer row — typically two buttons. Caller owns wiring (close vs explicit handlers). */
 	children: ReactNode;
 	/** Dialog body. Strings render fine; ReactNode bodies render inside a <div> so block
@@ -18,13 +22,17 @@ export interface DialogShellProps {
 }
 
 /** Shared `AlertDialog` skeleton — backdrop + portal + surface-aware popup + title +
- *  description. Used by `ConfirmDialog` and `OptInDialog`; the two callers differ only
- *  in width, body type, button colors, and escape-key behavior — all kept caller-side. */
+ *  description (+ optional body) + footer. The single source of the app's confirm /
+ *  dialog look: `ConfirmDialog`, `OptInDialog`, the model-picker delete confirm, and
+ *  the model-download dialog all render through it so they share one surface, radius,
+ *  padding, typography, backdrop, and z-confirm stacking. Callers differ only in width,
+ *  body content, button colors, and escape-key behavior — all kept caller-side. */
 export function DialogShell({
 	open,
 	onOpenChange,
 	title,
 	description,
+	body,
 	children,
 	width = 360,
 }: DialogShellProps) {
@@ -51,6 +59,7 @@ export function DialogShell({
 						>
 							{description}
 						</AlertDialog.Description>
+						{body}
 						<div className="mt-1 flex justify-end gap-2">{children}</div>
 					</AlertDialog.Popup>
 				</SurfaceProvider>

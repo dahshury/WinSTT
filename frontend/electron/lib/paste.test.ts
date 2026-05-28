@@ -10,7 +10,23 @@ mock.module("../ipc/hotkey", () => ({
 
 let lastClipboard = "";
 let clipboardThrowOnNext = false;
-const emptyImage = { isEmpty: () => true } as unknown as Electron.NativeImage;
+// Contained boundary cast — the image mocks implement only `isEmpty()`, the one
+// NativeImage member paste.ts touches. The cast lives here instead of being
+// repeated at every injection site; the runtime object is returned unchanged.
+const asNativeImage = (m: { isEmpty: () => boolean }) => m as unknown as Electron.NativeImage;
+const emptyImage = asNativeImage({ isEmpty: () => true });
+
+// Contained boundary cast — the child-process mocks expose only `kill()`, the
+// one ChildProcess member killBinaryOnTimeout reaches for. The cast lives here
+// so it isn't repeated at each `run.child = …` site; the object is unchanged.
+const asChildProcess = (m: { kill: () => unknown }) =>
+	m as unknown as ReturnType<typeof __makeBinaryRunForTesting__>["child"];
+
+// Contained boundary cast — the stdin mocks expose only `on()` / `end()`, the
+// two WritableStream members wireTypeStdin touches. The cast lives here so the
+// `wireTypeStdin(run, stdin, …)` injection sites stay clean; object unchanged.
+const asWritableStream = (m: { on: (...a: never[]) => unknown; end: (...a: never[]) => unknown }) =>
+	m as unknown as NodeJS.WritableStream;
 mock.module("electron", () => {
 	const base = electronMock();
 	base.clipboard = {
@@ -604,12 +620,12 @@ describe("killBinaryOnTimeout", () => {
 		const run = __makeBinaryRunForTesting__((v) => {
 			resolutions.push(v);
 		});
-		run.child = {
+		run.child = asChildProcess({
 			kill: () => {
 				killed = true;
 				return true;
 			},
-		} as unknown as typeof run.child;
+		});
 		killBinaryOnTimeout(run);
 		expect(killed).toBe(true);
 		expect(resolutions.length).toBe(1);
@@ -622,11 +638,11 @@ describe("killBinaryOnTimeout", () => {
 		const run = __makeBinaryRunForTesting__((v) => {
 			resolutions.push(v);
 		});
-		run.child = {
+		run.child = asChildProcess({
 			kill: () => {
 				throw new Error("nope");
 			},
-		} as unknown as typeof run.child;
+		});
 		expect(() => killBinaryOnTimeout(run)).not.toThrow();
 		expect(resolutions.length).toBe(1);
 		expect(resolutions[0]?.ok).toBe(false);
@@ -874,12 +890,12 @@ describe("buildBinaryResolution", () => {
 describe("wireTypeStdin", () => {
 	test("writes the text via stdin.end and resolves nothing synchronously", () => {
 		const endedWith: { value: string | null } = { value: null };
-		const stdin = {
+		const stdin = asWritableStream({
 			on: (_ev: string, _fn: (...a: unknown[]) => void) => undefined,
 			end: (text: string) => {
 				endedWith.value = text;
 			},
-		} as unknown as NodeJS.WritableStream;
+		});
 		const calls: Array<{ ok: boolean; reason?: string }> = [];
 		const run = __makeBinaryRunForTesting__((v) => calls.push(v));
 		wireTypeStdin(run, stdin, "payload");
@@ -890,12 +906,12 @@ describe("wireTypeStdin", () => {
 
 	test("routes stdin 'error' events to finishBinaryRun with the error message", () => {
 		const handlers = new Map<string, (err: Error) => void>();
-		const stdin = {
+		const stdin = asWritableStream({
 			on: (ev: string, fn: (err: Error) => void) => {
 				handlers.set(ev, fn);
 			},
 			end: () => undefined,
-		} as unknown as NodeJS.WritableStream;
+		});
 		const calls: Array<{ ok: boolean; reason?: string }> = [];
 		const run = __makeBinaryRunForTesting__((v) => calls.push(v));
 		wireTypeStdin(run, stdin, "x");
@@ -907,12 +923,12 @@ describe("wireTypeStdin", () => {
 	});
 
 	test("catches synchronous throws from stdin.end and finishes the run", () => {
-		const stdin = {
+		const stdin = asWritableStream({
 			on: () => undefined,
 			end: () => {
 				throw new Error("EPIPE-sync");
 			},
-		} as unknown as NodeJS.WritableStream;
+		});
 		const calls: Array<{ ok: boolean; reason?: string }> = [];
 		const run = __makeBinaryRunForTesting__((v) => calls.push(v));
 		expect(() => wireTypeStdin(run, stdin, "x")).not.toThrow();
@@ -1039,12 +1055,12 @@ describe("normalizeClipboardImage", () => {
 	});
 
 	test("returns null when the image is empty", () => {
-		const empty = { isEmpty: () => true } as unknown as Electron.NativeImage;
+		const empty = asNativeImage({ isEmpty: () => true });
 		expect(normalizeClipboardImage(empty)).toBe(null);
 	});
 
 	test("returns the image when it is non-empty", () => {
-		const real = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		const real = asNativeImage({ isEmpty: () => false });
 		expect(normalizeClipboardImage(real)).toBe(real);
 	});
 });
@@ -1079,7 +1095,7 @@ describe("snapshotIsEmpty", () => {
 	});
 
 	test("returns false when image is present", () => {
-		const img = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		const img = asNativeImage({ isEmpty: () => false });
 		expect(snapshotIsEmpty({ text: "", html: "", rtf: "", image: img })).toBe(false);
 	});
 });
@@ -1113,7 +1129,7 @@ describe("addTextToPayload / addHtmlToPayload / addRtfToPayload / addImageToPayl
 	});
 
 	test("addImageToPayload writes non-null image and skips null", () => {
-		const img = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		const img = asNativeImage({ isEmpty: () => false });
 		const a: { image?: Electron.NativeImage } = {};
 		addImageToPayload(a, img);
 		expect(a.image).toBe(img);
@@ -1130,7 +1146,7 @@ describe("buildRestorePayload", () => {
 	});
 
 	test("includes every set field", () => {
-		const img = { isEmpty: () => false } as unknown as Electron.NativeImage;
+		const img = asNativeImage({ isEmpty: () => false });
 		const payload = buildRestorePayload({ text: "t", html: "h", rtf: "r", image: img });
 		expect(payload.text).toBe("t");
 		expect(payload.html).toBe("h");

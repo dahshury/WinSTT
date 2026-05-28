@@ -368,15 +368,9 @@ function QuantActionButtons({
 					tooltip="Cancel download"
 				/>
 			) : null}
-			{/* Idle + not cached → start download from the badge. */}
-			{!(isDownloading || isOnDisk) && canDownload ? (
-				<BadgeIconButton
-					ariaLabel={`Download ${opt.label} weights`}
-					icon={CloudDownloadIcon}
-					onClick={() => onDownloadAction("start", model.id, opt.value)}
-					tooltip="Download (resumable mid-file)"
-				/>
-			) : null}
+			{/* Idle + not cached has NO trailing button — the precision badge
+			    itself is the download affordance (click to start; hover swaps
+			    its label for the download glyph). See QuantBadgeLabel. */}
 			{canDelete && !isDownloading && onRequestDeleteQuant ? (
 				<BadgeIconButton
 					ariaLabel={`Delete ${opt.label} weights for ${model.displayName}`}
@@ -424,6 +418,53 @@ function resolveProgressFillPct(
 		return Math.max(0, Math.min(100, Math.round(raw)));
 	}
 	return null;
+}
+
+/** Inner content of the precision-label button. Three visual states:
+ *  - **downloading** — an animated download glyph + live percentage; the
+ *    label is dropped because the badge IS the progress indicator now.
+ *  - **idle + not cached** — the precision label, which crossfades to a
+ *    download glyph on hover to advertise the click-to-download affordance.
+ *    The glyph is overlaid on the label (kept as an opacity-0 width sizer)
+ *    so the badge doesn't reflow as the pointer enters/leaves.
+ *  - **cached / partial / active** — the bare precision label. */
+function QuantBadgeLabel({
+	opt,
+	isDownloading,
+	download,
+	canStartDownload,
+}: {
+	canStartDownload: boolean;
+	download: QuantDownloadSnapshot | undefined;
+	isDownloading: boolean;
+	opt: QuantOption;
+}) {
+	if (isDownloading) {
+		const progress = download?.progress ?? null;
+		return (
+			<span className="relative inline-flex items-center gap-1.5">
+				<HugeiconsIcon className="size-3 animate-pulse" icon={CloudDownloadIcon} />
+				<span className="font-mono text-[9.5px] tabular-nums">
+					{progress === null ? "…" : `${progress}%`}
+				</span>
+			</span>
+		);
+	}
+	if (canStartDownload) {
+		return (
+			<span className="relative inline-flex items-center justify-center">
+				<span className="transition-opacity duration-150 group-hover/badge:opacity-0 motion-reduce:transition-none">
+					{opt.label}
+				</span>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="absolute inset-0 m-auto size-3 opacity-0 transition-opacity duration-150 group-hover/badge:opacity-100 motion-reduce:transition-none"
+					icon={CloudDownloadIcon}
+				/>
+			</span>
+		);
+	}
+	return <span className="relative inline-flex items-center">{opt.label}</span>;
 }
 
 interface QuantOptionButtonProps {
@@ -476,24 +517,52 @@ function QuantOptionButton({
 	const cache = resolveQuantCache(state, opt.value);
 	const download = getDownloadSnapshot?.(model.id, opt.value);
 	const isDownloading = download !== undefined;
+	const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
 	const cacheToneClass = badgeToneForCache(cache?.state);
 	const progressFillPct = resolveProgressFillPct(cache, download);
+	// A not-cached, idle badge IS the download button: clicking it kicks off a
+	// background predownload (no swap) rather than selecting. Cached/partial
+	// badges keep their select-to-swap behaviour (partial resumes via the swap
+	// controller on select). Falls back to select if the consumer wired no
+	// download dispatcher.
+	const canStartDownload = !(isDownloading || isOnDisk) && onDownloadAction !== undefined;
+	// With the inline Download button gone, a not-cached idle badge has no
+	// trailing controls — round both ends so it doesn't show a square right
+	// edge inside the group ring. (Downloading → pause/cancel; on-disk → trash.)
+	const canDelete = onRequestDeleteQuant !== undefined && isOnDisk;
+	const hasTrailingActions =
+		(isDownloading && onDownloadAction !== undefined) || (canDelete && !isDownloading);
+	const statusHint = canStartDownload ? " Click to download." : "";
+	let badgeAriaLabel = `Select ${opt.label} precision`;
+	if (canStartDownload) {
+		badgeAriaLabel = `Download ${opt.label} weights`;
+	} else if (isDownloading) {
+		badgeAriaLabel = `${opt.label} downloading`;
+	}
 	return (
 		<ButtonGroup
 			aria-label={`Precision ${opt.label} for ${model.displayName}`}
 			className="rounded-md ring-1 ring-border ring-inset"
 		>
-			<Tooltip content={`${opt.label} — ${quantCacheStatus(cache)}. ${opt.tooltip}`} side="top">
+			<Tooltip
+				content={`${opt.label} — ${quantCacheStatus(cache)}.${statusHint} ${opt.tooltip}`}
+				side="top"
+			>
 				<button
+					aria-label={badgeAriaLabel}
 					className={cn(
-						"relative inline-flex h-6 cursor-pointer items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
-						"rounded-l-[5px]",
+						"group/badge relative inline-flex h-6 cursor-pointer items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
+						hasTrailingActions ? "rounded-l-[5px]" : "rounded-[5px]",
 						isActive ? "bg-accent/20 text-accent" : cacheToneClass
 					)}
 					onClick={(e) => {
 						e.preventDefault();
 						e.stopPropagation();
-						onSelect(model.id, opt.value);
+						if (canStartDownload) {
+							onDownloadAction?.("start", model.id, opt.value);
+						} else {
+							onSelect(model.id, opt.value);
+						}
 					}}
 					type="button"
 				>
@@ -504,14 +573,12 @@ function QuantOptionButton({
 							style={{ width: `${progressFillPct}%` }}
 						/>
 					) : null}
-					<span className="relative inline-flex items-center gap-1.5">
-						{opt.label}
-						{isDownloading ? (
-							<span className="ms-1 font-mono text-[9.5px] text-foreground-muted tabular-nums">
-								{download.progress === null ? "…" : `${download.progress}%`}
-							</span>
-						) : null}
-					</span>
+					<QuantBadgeLabel
+						canStartDownload={canStartDownload}
+						download={download}
+						isDownloading={isDownloading}
+						opt={opt}
+					/>
 				</button>
 			</Tooltip>
 			<QuantActionButtons
@@ -593,6 +660,12 @@ export interface SttModelCardProps {
 	 */
 	hasSelectedVariant?: boolean;
 	model: ModelInfo;
+	/**
+	 * Renders the recessed {@link CARD_NESTED} chrome — set by
+	 * ``SttVariantBundle`` for the sibling cards revealed under the chevron so
+	 * they read as subordinate to their primary.
+	 */
+	nested?: boolean;
 	/** Single dispatch for the four download actions emitted by the
 	 *  badge controls (Download / Pause / Resume / Cancel). */
 	onDownloadAction?:
@@ -619,22 +692,55 @@ export interface SttModelCardProps {
 	systemInfo: SystemInfoEntry | null;
 }
 
+// The list used to read as a "swimming pool" — identical translucent rows
+// melting into the popup and into each other. Each card is now a solid,
+// elevated *specimen*: a real surface step (surface-3 over the surface-2
+// popup) with a tinted depth shadow, so it reads as a discrete object. Hover
+// lifts it 1px and deepens the shadow; press settles it back with a subtle
+// scale (12-principles: transform/opacity only, ease-out ≤150ms, motion-reduce
+// guarded). The header/precision divider lives in the JSX below.
 const CARD_BASE = cn(
-	"mx-2 my-1 flex cursor-pointer flex-col gap-2 rounded-md border px-3 py-2.5 outline-none transition-colors",
-	"border-border bg-surface-secondary/50",
-	"hover:border-border-hover hover:bg-surface-hover/50",
-	"data-[highlighted]:border-border-hover data-[highlighted]:bg-surface-hover/50"
+	"relative mx-2 my-1.5 flex cursor-pointer flex-col gap-2 overflow-hidden rounded-lg px-3 py-2.5 outline-none",
+	"border border-border bg-surface-3 shadow-surface-2",
+	"transition-[transform,border-color,background-color,box-shadow] duration-150 ease-out",
+	"hover:-translate-y-px hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3",
+	"active:translate-y-0 active:scale-[0.99]",
+	"data-[highlighted]:border-border-hover data-[highlighted]:bg-surface-4 data-[highlighted]:shadow-surface-3",
+	"motion-reduce:transition-none motion-reduce:active:scale-100 motion-reduce:hover:translate-y-0"
 );
-const CARD_SELECTED = "border-accent/50 bg-accent/[0.08] ring-1 ring-accent/25";
+/** Active selection: the fill warms to a Docker-blue tint and gains a ring.
+ *  Hover/highlight keep the accent rather than falling back to the neutral
+ *  surface-4 of {@link CARD_BASE}. */
+const CARD_SELECTED = cn(
+	"border-accent/55 bg-accent/[0.09] shadow-surface-3 ring-1 ring-accent/25",
+	"hover:border-accent/70 hover:bg-accent/[0.12]",
+	"data-[highlighted]:border-accent/70 data-[highlighted]:bg-accent/[0.12]"
+);
 /** Softer variant: the primary's bundle owns the selected variant but the
  *  primary itself isn't the active id. Lighter than ``CARD_SELECTED`` so the
  *  actually-selected sibling still wins the eye. */
-const CARD_SELECTED_VARIANT = "border-accent/30 bg-accent/[0.04]";
+const CARD_SELECTED_VARIANT = cn(
+	"border-accent/30 bg-accent/[0.05]",
+	"hover:border-accent/45 hover:bg-accent/[0.08]",
+	"data-[highlighted]:border-accent/45 data-[highlighted]:bg-accent/[0.08]"
+);
+/** Bundle siblings (revealed under the chevron) recess to surface-2 so they
+ *  read as tucked *under* their surface-3 primary — depth reinforces the
+ *  indent rail instead of competing with it. */
+const CARD_NESTED = cn(
+	"bg-surface-2 shadow-surface-1",
+	"hover:bg-surface-3",
+	"data-[highlighted]:bg-surface-3"
+);
 
-/** Class fragment that desaturates a broken custom-model card without
- *  changing the dimensions — keeps the picker layout stable while making
- *  the unavailable state obvious. */
-const CARD_UNAVAILABLE = "cursor-not-allowed opacity-60 hover:bg-surface-secondary/50";
+/** Class fragment that desaturates a broken custom-model card and parks the
+ *  hover-lift (a non-selectable card shouldn't feel tactile) without changing
+ *  the dimensions — keeps the picker layout stable while making the
+ *  unavailable state obvious. */
+const CARD_UNAVAILABLE = cn(
+	"cursor-not-allowed opacity-55",
+	"hover:-translate-y-0 hover:border-border hover:bg-surface-3 hover:shadow-surface-2"
+);
 
 export function SttModelCard({
 	model,
@@ -648,6 +754,7 @@ export function SttModelCard({
 	onDownloadAction,
 	actions,
 	hasSelectedVariant = false,
+	nested = false,
 }: SttModelCardProps) {
 	const isSelected = model.id === selectedId;
 	const isIndirectlySelected = !isSelected && hasSelectedVariant;
@@ -663,6 +770,7 @@ export function SttModelCard({
 		<Combobox.Item
 			className={cn(
 				CARD_BASE,
+				nested && CARD_NESTED,
 				isSelected && CARD_SELECTED,
 				isIndirectlySelected && CARD_SELECTED_VARIANT,
 				isUnavailable && CARD_UNAVAILABLE
@@ -682,7 +790,7 @@ export function SttModelCard({
 					<Combobox.ItemIndicator className="flex shrink-0 items-center">
 						<HugeiconsIcon className="size-3.5 text-accent" icon={CheckmarkCircle02Icon} />
 					</Combobox.ItemIndicator>
-					<span className="truncate font-semibold text-body-sm leading-tight">
+					<span className="min-w-0 truncate font-semibold text-body-sm leading-tight">
 						{variantLabel(model)}
 					</span>
 					{model.sizeLabel ? (
@@ -717,16 +825,23 @@ export function SttModelCard({
 				</div>
 			</div>
 			{isUnavailable ? null : (
-				<PrecisionGroup
-					currentQuantization={currentQuantization}
-					getDownloadSnapshot={getDownloadSnapshot}
-					isSelectedModel={isSelected}
-					model={model}
-					onDownloadAction={onDownloadAction}
-					onRequestDeleteQuant={onRequestDeleteQuant}
-					onSelect={onSelect}
-					state={state}
-				/>
+				<>
+					{/* Full-bleed hairline that splits the identity header
+					    ("what it is") from the precision row ("how to get it").
+					    Negative margins cancel the card padding so the rule
+					    spans edge-to-edge. */}
+					<span aria-hidden="true" className="-mx-3 h-px bg-divider" />
+					<PrecisionGroup
+						currentQuantization={currentQuantization}
+						getDownloadSnapshot={getDownloadSnapshot}
+						isSelectedModel={isSelected}
+						model={model}
+						onDownloadAction={onDownloadAction}
+						onRequestDeleteQuant={onRequestDeleteQuant}
+						onSelect={onSelect}
+						state={state}
+					/>
+				</>
 			)}
 		</Combobox.Item>
 	);

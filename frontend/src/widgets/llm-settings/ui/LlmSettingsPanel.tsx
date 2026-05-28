@@ -41,7 +41,9 @@ import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-c
 import type { OpenRouterModel } from "@/shared/api/models";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
+import { cn } from "@/shared/lib/cn";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -241,6 +243,7 @@ function OllamaThinkingEffortToggle({
 	onChange: (value: OllamaThinkingEffort) => void;
 	value: OllamaThinkingEffort;
 }) {
+	const activeBg = surfaceBg(Math.min(useSurface() + 1, 8));
 	return (
 		<div
 			aria-label="Thinking effort"
@@ -251,11 +254,12 @@ function OllamaThinkingEffortToggle({
 				const isSelected = value === option.value;
 				return (
 					<label
-						className={`relative flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-center truncate rounded-sm px-2 text-sm transition-[background-color,color,box-shadow] duration-200 ${
+						className={cn(
+							"relative flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-center truncate rounded-sm px-2 text-sm transition-[background-color,color,box-shadow] duration-200",
 							isSelected
-								? "bg-surface font-semibold text-foreground shadow-md ring-1 ring-border"
+								? cn(activeBg, "font-semibold text-foreground shadow-md ring-1 ring-border")
 								: "bg-transparent font-medium text-foreground-muted hover:bg-surface/60 hover:text-foreground"
-						}`}
+						)}
 						data-state={isSelected ? "selected" : "idle"}
 						key={option.value}
 					>
@@ -575,6 +579,7 @@ function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: Mo
 	const [name, setName] = useState(modifier?.name ?? "");
 	const [prompt, setPrompt] = useState(modifier?.prompt ?? "");
 	const [levelsEnabled, setLevelsEnabled] = useState(modifier?.levelsEnabled ?? false);
+	const buttonBg = surfaceBg(Math.min(useSurface() + 2, 8));
 
 	// A modifier needs both a name (its row label) and a prompt body before
 	// it can be saved.
@@ -639,7 +644,10 @@ function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: Mo
 						{t("modifierSave")}
 					</Button>
 					<Button
-						className="rounded-md border border-border bg-surface-secondary px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover"
+						className={cn(
+							"rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
+							buttonBg
+						)}
 						onClick={onClose}
 					>
 						{tc("cancel")}
@@ -1981,6 +1989,7 @@ const INITIAL_OLLAMA_DIALOG_STATE: OllamaDialogState = {
 function OllamaDialog({ t, tc, isOpen, onClose, onStarted }: OllamaDialogProps) {
 	const [state, dispatch] = useReducer(ollamaDialogReducer, INITIAL_OLLAMA_DIALOG_STATE);
 	const { installed, starting, startError } = state;
+	const cancelBg = surfaceBg(Math.min(useSurface() + 2, 8));
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -2035,7 +2044,10 @@ function OllamaDialog({ t, tc, isOpen, onClose, onStarted }: OllamaDialogProps) 
 						t={t}
 					/>
 					<Button
-						className="flex-1 rounded-md border border-border bg-surface-secondary px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover"
+						className={cn(
+							"flex-1 rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
+							cancelBg
+						)}
 						disabled={starting}
 						onClick={onClose}
 					>
@@ -2057,6 +2069,7 @@ interface ApiKeyDialogProps extends DialogProps {
 function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDialogProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [hasValue, setHasValue] = useState(initialKey.trim().length > 0);
+	const buttonBg = surfaceBg(Math.min(useSurface() + 2, 8));
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -2103,13 +2116,19 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 						{t("saveAndEnable")}
 					</Button>
 					<Button
-						className="rounded-md border border-border bg-surface-secondary px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover"
+						className={cn(
+							"rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
+							buttonBg
+						)}
 						onClick={openSignup}
 					>
 						{t("getApiKey")}
 					</Button>
 					<Button
-						className="rounded-md border border-border bg-surface-secondary px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover"
+						className={cn(
+							"rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
+							buttonBg
+						)}
 						onClick={onClose}
 					>
 						{tc("cancel")}

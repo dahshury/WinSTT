@@ -13,6 +13,12 @@ function makeTranslator(): ReturnType<typeof translatorFactory> {
 	return translatorFactory();
 }
 
+// The local keyed-lookup `t` only implements the (key, values) overload the
+// helpers exercise; this contains the single boundary cast to the real
+// translator type — the returned function is the exact `t` passed in.
+type StubTranslator = (key: string, values?: Record<string, string>) => string;
+const asTranslator = (fn: StubTranslator) => fn as unknown as Parameters<typeof buildPhaseLabel>[0];
+
 function translatorFactory() {
 	const phrases: Record<string, string> = {
 		installPhaseEngine: "Installing TTS engine",
@@ -28,7 +34,7 @@ function translatorFactory() {
 		return Object.entries(values).reduce((acc, [k, v]) => `${acc}|${k}=${v}`, base);
 	}
 	// Mirrors the next-intl Translator overloads enough for the helpers we test.
-	return t as unknown as Parameters<typeof buildPhaseLabel>[0];
+	return asTranslator(t);
 }
 
 describe("buildPhaseLabel", () => {

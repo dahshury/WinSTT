@@ -5,6 +5,8 @@ import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Spinner } from "@/shared/ui/spinner";
@@ -31,6 +33,7 @@ export interface ModelSelectorTriggerProps {
 }
 
 function MakerBadge({ maker }: { maker: string | undefined }) {
+	const level = Math.min(useSurface() + 1, 8);
 	if (!maker) {
 		return null;
 	}
@@ -38,7 +41,12 @@ function MakerBadge({ maker }: { maker: string | undefined }) {
 	return (
 		<Badge className="shrink-0 gap-1.5 text-2xs" variant="secondary">
 			{providerIcon ? (
-				<span className="flex size-3 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 bg-surface p-0.5">
+				<span
+					className={cn(
+						"flex size-3 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 p-0.5",
+						surfaceBg(level)
+					)}
+				>
 					<img
 						alt=""
 						className="size-full object-contain"

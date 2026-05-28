@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import { renderHook } from "@testing-library/react";
 import { useRef } from "react";
 import { useFitSize } from "./use-fit-size";
@@ -12,9 +13,14 @@ class MockResizeObserver {
 	unobserve = mock(() => undefined);
 	disconnect = mock(() => undefined);
 	trigger() {
-		this.cb([] as unknown as ResizeObserverEntry[], this as unknown as ResizeObserver);
+		this.cb(asInvalid<ResizeObserverEntry[]>([]), asResizeObserver(this));
 	}
 }
+
+// Contained boundary cast — MockResizeObserver implements only the surface the
+// hook touches; this hands the mock back to the real ResizeObserverCallback as
+// the `observer` arg. The runtime object is unchanged.
+const asResizeObserver = (o: MockResizeObserver) => o as unknown as ResizeObserver;
 
 const originalRO = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver = MockResizeObserver;

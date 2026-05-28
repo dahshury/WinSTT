@@ -126,4 +126,59 @@ describe("composeInitialPrompt", () => {
 	test("empty context tail leaves the prefix-only path untouched", () => {
 		expect(composeInitialPrompt("just prefix", [], "")).toBe("just prefix");
 	});
+
+	test("strips terminal/TUI box-drawing + dingbat chrome from the context tail", () => {
+		// A captured terminal full of separator rules + symbols is what tipped
+		// whisper-tiny into "ñoñoño" charset-drift hallucination. The decorative
+		// glyphs must never reach Whisper's prompt.
+		const terminalJunk = "─────────── ✻ still thinking ● ▶ ⠋ done ───────────";
+		expect(composeInitialPrompt("", [], terminalJunk)).toBe("still thinking done");
+	});
+
+	test("a context tail that is ALL decorative noise collapses to empty (prefix-only path)", () => {
+		const allChrome = `${"─".repeat(40)}█▀▄●◆★✻✶⠋⠙⠹`;
+		expect(composeInitialPrompt("just prefix", [], allChrome)).toBe("just prefix");
+	});
+
+	test("noise between two words is replaced with a space, never fusing them", () => {
+		// "wordA●wordB" must become "wordA wordB", not "wordAwordB".
+		expect(composeInitialPrompt("", [], "wordA●wordB")).toBe("wordA wordB");
+	});
+
+	test("keeps real non-Latin scripts (ar/zh/hi dictation must retain its prior-text bias)", () => {
+		// Filter is by Unicode category, NOT "non-ASCII" — letters survive.
+		const arabic = "مرحبا بالعالم";
+		const chinese = "你好世界";
+		expect(composeInitialPrompt("", [], arabic)).toBe(arabic);
+		expect(composeInitialPrompt("", [], chinese)).toBe(chinese);
+	});
+
+	test("keeps ASCII code symbols (code-editor context is the feature's primary use case)", () => {
+		const code = "const x = (a + b) > 0 ? a & b : a | b; // ok";
+		expect(composeInitialPrompt("", [], code)).toBe(code);
+	});
+
+	test("keeps letter-adjacent punctuation (em-dash, ellipsis, apostrophe)", () => {
+		const prose = "It's done — finally… really.";
+		expect(composeInitialPrompt("", [], prose)).toBe(prose);
+	});
+
+	test("strips U+FFFC object-replacement chars (dominant web-app noise)", () => {
+		// Every image/icon/avatar in a browser a11y tree comes back as ￼.
+		// A YouTube search capture that was mostly ￼ made whisper-tiny emit
+		// a literal "￼" — these must be stripped (they're category So).
+		const ytSearch = "￼\n￼\n￼\nEG\nSkip navigation\n￼\nstephanie jeff nippard";
+		expect(composeInitialPrompt("", [], ytSearch)).toBe(
+			"EG Skip navigation stephanie jeff nippard"
+		);
+	});
+
+	test("strips bullet punctuation (•, ‣, ⁃) — leaked '•' into output", () => {
+		// Bullets are category Po (not So), so they need explicit removal.
+		expect(composeInitialPrompt("", [], "• first ‣ second ⁃ third")).toBe("first second third");
+	});
+
+	test("strips emoji including skin-tone modifiers but keeps surrounding words", () => {
+		expect(composeInitialPrompt("", [], "great work 👍🏽 thanks 🎉")).toBe("great work thanks");
+	});
 });

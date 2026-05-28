@@ -149,12 +149,45 @@ function fitComposedWithinCap(prefix: string, glossary: string, composed: string
 }
 
 /**
- * Collapse newlines/runs of whitespace into single spaces and clip to
+ * Characters that only ever appear as terminal/TUI/web-app decorative
+ * chrome. They carry no prior-text signal and, fed to Whisper in bulk,
+ * tip the smaller models into repetition / charset-drift hallucination
+ * — a captured terminal of box-drawing rules made whisper-tiny emit
+ * "✿✿✿…"/"ñoñoño…", and a YouTube search full of `￼` made it emit a
+ * literal "￼" (both reproduced offline by feeding real app captures as
+ * prompts against a known clip on whisper-tiny; see
+ * memory/project_context_prompt_poisons_whisper.md).
+ *
+ * Filtered by Unicode CATEGORY, NOT "non-ASCII": real scripts (Arabic,
+ * Chinese, Hindi, …) are letters (\p{L}) and survive, so non-English
+ * dictation keeps its prior-text bias. Removed:
+ *   - \p{C}            control / format / surrogate / private-use
+ *   - \p{So}           "other symbols" — the whole decorative-glyph
+ *                      class in one shot: box-drawing, block elements,
+ *                      geometric shapes, dingbats, arrows, most emoji,
+ *                      AND U+FFFC ￼ (object-replacement, the dominant
+ *                      web-app noise: every image/icon/avatar) + U+FFFD.
+ *   - U+2022/2023/2043 bullet punctuation (•, ‣, ⁃ — category Po, so
+ *                      not covered by \p{So}; leaked "•" into output).
+ *   - U+1F000–U+1FAFF  emoji incl. skin-tone modifiers (\p{Sk}, not So).
+ * KEPT on purpose: \p{Sm} math ops ( + = < > | ~ ), \p{Sc} currency,
+ * \p{Sk} ( ^ ` ), and all punctuation (— … ' " ` · / @ # %) — they carry
+ * real signal when dictating into a code editor / prose field, which is
+ * the feature's primary use case.
+ */
+const CONTEXT_NOISE_RE = /[\p{C}\p{So}•‣⁃\u{1F000}-\u{1FAFF}]/gu;
+
+/**
+ * Drop decorative/control noise (see {@link CONTEXT_NOISE_RE}), collapse
+ * newlines/runs of whitespace into single spaces, and clip to
  * {@link MAX_CONTEXT_TAIL_CHARS}, keeping the LAST n chars (the slice
- * closest to the caret is the most relevant prior-text signal).
+ * closest to the caret is the most relevant prior-text signal). Noise is
+ * replaced with a space (not elided) so stripping a glyph between two
+ * words can't fuse them into one token.
  */
 function sanitiseContextTail(rawTail: string): string {
-	const collapsed = rawTail.replace(/\s+/g, " ").trim();
+	const denoised = rawTail.replace(CONTEXT_NOISE_RE, " ");
+	const collapsed = denoised.replace(/\s+/g, " ").trim();
 	if (collapsed.length <= MAX_CONTEXT_TAIL_CHARS) {
 		return collapsed;
 	}
