@@ -41,6 +41,7 @@ import { setupDevicePickerHandlers } from "./ipc/device-picker-window";
 import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
+import { setupHistoryIpc } from "./ipc/history";
 import { type HotkeyComboAction, setupHotkeyHandlers } from "./ipc/hotkey";
 import {
 	decryptIpcPayload,
@@ -157,6 +158,7 @@ let cleanupDiagBundle: (() => void) | null = null;
 let cleanupAbout: (() => void) | null = null;
 let cleanupCustomModels: (() => void) | null = null;
 let cleanupSoundLibrary: (() => void) | null = null;
+let cleanupHistory: (() => void) | null = null;
 let cleanupClamshell: (() => void) | null = null;
 let autoUpdateCheckTimer: ReturnType<typeof setInterval> | null = null;
 const secureIpcKey = generateIpcPayloadKey();
@@ -1043,6 +1045,8 @@ if (gotTheLock) {
 		cleanupCustomModels = null;
 		cleanupSoundLibrary?.();
 		cleanupSoundLibrary = null;
+		cleanupHistory?.();
+		cleanupHistory = null;
 		cleanupClamshell?.();
 		cleanupClamshell = null;
 		disposeGeneralSettingsWatcher?.();
@@ -1110,6 +1114,38 @@ function setupGlobalIpcHandlers() {
 	cleanupAbout = setupAboutHandlers();
 	cleanupCustomModels = setupCustomModelsHandlers();
 	cleanupSoundLibrary = initSoundLibrary();
+	// SQLite-backed transcription history (history.db + recordings/ under
+	// userData). Honours the user's retention setting on an hourly sweeper
+	// + at startup. Disposed in app.before-quit so the WAL flushes cleanly.
+	cleanupHistory = setupHistoryIpc({
+		getRetention: () => {
+			const fromNewKey = getStoreValue("general.recordingRetentionPeriod");
+			const period =
+				typeof fromNewKey === "string" ? fromNewKey : getStoreValue("general.recordingRetention");
+			if (
+				period === "never" ||
+				period === "preserveLimit" ||
+				period === "cap" ||
+				period === "days3" ||
+				period === "weeks2" ||
+				period === "months3"
+			) {
+				return period;
+			}
+			return "preserveLimit";
+		},
+		getLimit: () => {
+			const fromNewKey = Number(getStoreValue("general.historyLimit"));
+			if (Number.isFinite(fromNewKey) && fromNewKey > 0) {
+				return Math.floor(fromNewKey);
+			}
+			const legacy = Number(getStoreValue("general.historyMaxEntries"));
+			if (Number.isFinite(legacy) && legacy > 0) {
+				return Math.floor(legacy);
+			}
+			return 5;
+		},
+	}).dispose;
 	// Clamshell-mic switching. Starts polling only when
 	// `audio.clamshellMicrophone` is configured; otherwise the setup call
 	// is cheap and registers nothing more than a settings-store watcher.
