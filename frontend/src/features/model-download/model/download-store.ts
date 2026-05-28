@@ -38,7 +38,7 @@ export interface QuantDownloadState {
 /** Composite key used in the ``quantDownloads`` map. Empty quant maps to
  *  ``modelId@`` — distinguishable from a non-existent entry by the empty
  *  trailing segment. */
-export function quantKey(modelId: string, quantization: string): string {
+function quantKey(modelId: string, quantization: string): string {
 	return `${modelId}@${quantization}`;
 }
 

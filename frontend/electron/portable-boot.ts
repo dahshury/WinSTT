@@ -40,13 +40,3 @@ const portableLogger = {
 
 /** State exported so main.ts can log + thread the data dir into other modules. */
 export const portableState = initPortableMode(app, portableLogger);
-
-/** Quick boolean check: is this launch running in portable mode? */
-export function isPortable(): boolean {
-	return portableState.isPortable;
-}
-
-/** Absolute path of the portable Data/ dir, or ``null`` if not portable. */
-export function portableDataDir(): string | null {
-	return portableState.isPortable ? portableState.dataDir : null;
-}

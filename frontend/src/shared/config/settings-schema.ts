@@ -408,7 +408,6 @@ export const addDictionaryEntrySchema = z.object({
 	term: z.string().trim().min(1, "Required"),
 	replacement: z.string().trim().optional(),
 });
-export type AddDictionaryEntry = z.infer<typeof addDictionaryEntrySchema>;
 
 export const snippetEntrySchema = z.object({
 	id: z.string().min(1),
@@ -420,7 +419,6 @@ export const addSnippetEntrySchema = z.object({
 	trigger: z.string().trim().min(1, "Required"),
 	expansion: z.string().trim().min(1, "Required"),
 });
-export type AddSnippetEntry = z.infer<typeof addSnippetEntrySchema>;
 
 const presetKeySchema = z.enum([
 	"neutral",
