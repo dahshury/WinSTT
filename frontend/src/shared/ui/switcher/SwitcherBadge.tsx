@@ -1,7 +1,7 @@
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
 import { Tooltip } from "@/shared/ui/tooltip";
-import type { SwitcherOption } from "./Switcher";
+import type { SwitcherOption } from "./switcher-option";
 
 interface SegmentRect {
 	height: number;

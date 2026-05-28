@@ -3,7 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { CSSProperties, FocusEvent as ReactFocusEvent } from "react";
 import { cn } from "@/shared/lib/cn";
 import { fontWeights } from "@/shared/lib/font-weight";
-import type { SwitcherOption } from "./Switcher";
+import type { SwitcherOption } from "./switcher-option";
 
 type SwitcherCssVars = CSSProperties & { "--switcher-color"?: string | undefined };
 

@@ -18,6 +18,8 @@
   "ignoreDependencies": [
     "tailwindcss",
     "@stryker-mutator/core",
-    "@stryker-mutator/command-runner"
-  ]
+    "@stryker-mutator/command-runner",
+    "babel-plugin-react-compiler"
+  ],
+  "ignore": ["src/shared/api/schema.zod.ts"]
 }
