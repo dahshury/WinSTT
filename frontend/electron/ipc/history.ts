@@ -24,6 +24,7 @@ import path from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { dbg } from "../lib/debug-log";
+import { isEnoent } from "../lib/is-enoent";
 import {
 	createHistoryStore,
 	type DatabaseLike,
@@ -157,10 +158,15 @@ const HOUR_MS = 60 * 60 * 1000;
 
 function defaultBroadcast(channel: string, payload: unknown): void {
 	for (const bw of BrowserWindow.getAllWindows()) {
-		if (bw.isDestroyed()) {
-			continue;
-		}
+		// Guard the whole isDestroyed/webContents access inside the try: a window
+		// returned by getAllWindows() can be torn down between that snapshot and
+		// this iteration, in which case even calling `bw.isDestroyed()` or reading
+		// `bw.webContents` throws ("Object has been destroyed"). Catching here
+		// means one dying window can't abort the broadcast to its healthy peers.
 		try {
+			if (bw.isDestroyed()) {
+				continue;
+			}
 			bw.webContents.send(channel, payload);
 		} catch (err) {
 			dbg("history", `broadcast ${channel} failed:`, String(err));
@@ -179,15 +185,6 @@ function defaultOpen(dbPath: string): DatabaseLike {
 	return db;
 }
 
-function isEnoent(err: unknown): boolean {
-	return (
-		typeof err === "object" &&
-		err !== null &&
-		"code" in err &&
-		(err as { code?: unknown }).code === "ENOENT"
-	);
-}
-
 /**
  * Wire up the SQLite history IPC handlers. Returns a cleanup function the
  * caller invokes on shutdown.
@@ -198,7 +195,16 @@ export function setupHistoryIpc(deps: HistoryIpcDeps = {}): HistoryIpcResult {
 	const dbPath = path.join(userDataDir, "history.db");
 
 	if (!existsSync(recordingsDir)) {
-		mkdirSync(recordingsDir, { recursive: true });
+		// Degrade gracefully: an EACCES/EPERM/ENOSPC here used to throw straight
+		// out of setupHistoryIpc, taking the ENTIRE history subsystem (DB open,
+		// every ipcMain handler, the retention sweeper) down with it at app boot.
+		// The DB/handlers don't need this dir to function — only the WAV save +
+		// playback paths do — so log and continue rather than hard-fail.
+		try {
+			mkdirSync(recordingsDir, { recursive: true });
+		} catch (err) {
+			dbg("history", `mkdir recordings dir ${recordingsDir} failed:`, String(err));
+		}
 	}
 
 	const broadcast = deps.broadcast ?? defaultBroadcast;
@@ -219,10 +225,15 @@ export function setupHistoryIpc(deps: HistoryIpcDeps = {}): HistoryIpcResult {
 			try {
 				await unlink(full);
 			} catch (err) {
+				// ENOENT = the WAV was already gone; the row delete still succeeded,
+				// so swallow it silently. Anything else (EPERM/EBUSY/EACCES/…) is a
+				// real cleanup failure: propagate it so it reaches the store's
+				// onSweepError sink instead of being absorbed here and resolving as
+				// if the unlink had worked.
 				if (isEnoent(err)) {
 					return;
 				}
-				dbg("history", `unlink ${fileName} raised:`, String(err));
+				throw err;
 			}
 		},
 	};

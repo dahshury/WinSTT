@@ -57,7 +57,6 @@ class SileroVAD(IVoiceActivityDetector):
         *,
         sensitivity: float = 0.4,
         sample_rate: int = 16000,
-        use_onnx: bool = True,
         providers: list[str] | None = None,
     ) -> None:
         """Load the Silero ONNX model via ``onnx_asr.load_vad("silero")``.
@@ -65,8 +64,6 @@ class SileroVAD(IVoiceActivityDetector):
         Args:
             sensitivity: Detection sensitivity in [0, 1]. Higher = trip more easily.
             sample_rate: 16000 or 8000.
-            use_onnx: Ignored. Kept in the signature so the bootstrap call
-                site keeps compiling unchanged; this adapter is always ONNX.
             providers: ORT execution provider list (e.g. from
                 :func:`device.providers_for_device`). When ``None``,
                 onnx-asr defaults to ``rt.get_available_providers()``,

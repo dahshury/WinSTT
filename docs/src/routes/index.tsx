@@ -2,6 +2,7 @@ import appIconUrl from "@app-icon";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { HomeLayout } from "fumadocs-ui/layouts/home";
 import { AppMock } from "@/components/app-mock";
+import { Screenshot } from "@/components/docs-ui";
 import { baseOptions } from "@/lib/layout.shared";
 
 export const Route = createFileRoute("/")({
@@ -54,9 +55,9 @@ const features = [
         <line x1="12" x2="12" y1="22.08" y2="12" />
       </svg>
     ),
-    title: "29 AI Models",
+    title: "40+ AI Models",
     description:
-      "OpenAI Whisper, NVIDIA NeMo, GigaAM, Kaldi, and more. Switch models with a single setting change.",
+      "OpenAI Whisper, NVIDIA NeMo (Parakeet & Canary), Moonshine, Cohere, GigaAM, Vosk. Switch models from the UI — no restart.",
     href: "/docs/models",
   },
   {
@@ -101,10 +102,10 @@ const features = [
         <path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" />
       </svg>
     ),
-    title: "CPU or GPU",
+    title: "CPU, DirectML, or OpenVINO",
     description:
-      "Ships as two installers. The GPU build bundles the full CUDA stack and falls back to CPU automatically if it's unavailable.",
-    href: "/docs/models/compute-types",
+      "Three portable installers. Each bundles its matching ONNX Runtime and falls back to CPU automatically when no accelerator is present.",
+    href: "/docs/install",
   },
   {
     icon: (
@@ -129,7 +130,7 @@ const features = [
     title: "File Transcription",
     description:
       "Drop audio files for batch transcription. Export as plain text or SRT subtitles with timestamps.",
-    href: "/docs/settings/general",
+    href: "/docs/file-transcription",
   },
   {
     icon: (
@@ -220,8 +221,8 @@ const features = [
     ),
     title: "Text-to-Speech",
     description:
-      "Read selected text aloud with the bundled Kokoro-82M ONNX voice model. Multiple voices and speeds.",
-    href: "/docs/settings/tts",
+      "Read selected text aloud with the bundled Kokoro-82M ONNX voice model — 54 voices across 9 languages.",
+    href: "/docs/text-to-speech",
   },
   {
     icon: (
@@ -417,7 +418,7 @@ function HomePage() {
             style={{ color: "oklch(94% 0.015 265 /0.55)" }}
           >
             Local speech-to-text for Windows. Real-time transcription powered by
-            Whisper, NeMo, and 29 AI models — completely offline, entirely on
+            Whisper, NeMo, and 40+ AI models — completely offline, entirely on
             your hardware. Free forever, source on GitHub.
           </p>
 
@@ -441,15 +442,43 @@ function HomePage() {
           </div>
 
           <div className="flex gap-3 mt-8">
-            <Link
-              to="/docs/$"
-              params={{ _splat: "" }}
+            <a
+              href="https://github.com/dahshury/WinSTT/releases"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-110"
               style={{
                 background: "var(--brand-accent)",
                 color: "var(--fg-strong)",
                 boxShadow:
                   "inset 0 1px 0 0 oklch(100% 0 0 / 0.12), 0 0 24px oklch(62% 0.19 260 / 0.25)",
+              }}
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" x2="12" y1="15" y2="3" />
+              </svg>
+              Download for Windows
+            </a>
+            <Link
+              to="/docs/$"
+              params={{ _splat: "" }}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all hover:brightness-125"
+              style={{
+                background: "oklch(94% 0.015 265 /0.05)",
+                border: "1px solid oklch(94% 0.015 265 /0.1)",
+                color: "oklch(94% 0.015 265 /0.7)",
               }}
             >
               Documentation
@@ -508,6 +537,50 @@ function HomePage() {
             The main window — 9-band audio visualizer with live hotkey, mic and
             model chips
           </p>
+        </section>
+
+        <section className="w-full max-w-5xl px-6 pb-16">
+          <div className="text-center mb-8">
+            <h2
+              className="text-2xl font-bold tracking-tight mb-2"
+              style={{ color: "oklch(94% 0.015 265 /0.9)" }}
+            >
+              A real desktop app, not a demo
+            </h2>
+            <p
+              className="text-sm"
+              style={{ color: "oklch(94% 0.015 265 /0.35)" }}
+            >
+              Every feature has a polished, native-feeling interface — here are
+              a few
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <Screenshot
+              src="settings-model"
+              alt="The Model settings tab: source toggle, searchable model selector, language, device, and unload timeout."
+              label="Settings — Model"
+              caption="Pick from 40+ models, set quantization and device."
+            />
+            <Screenshot
+              src="settings-history"
+              alt="The transcription history dashboard with stat tiles, an activity heatmap, and a searchable log."
+              label="Transcription history"
+              caption="Stats, an activity heatmap, and karaoke playback."
+            />
+            <Screenshot
+              src="model-dropdown"
+              alt="The open model picker showing models grouped by maker with accuracy/speed bars, sizes, and quantization badges."
+              label="Model picker"
+              caption="Download, resume, and compare models inline."
+            />
+            <Screenshot
+              src="onboarding"
+              alt="The first-run onboarding wizard choosing between local Whisper and a cloud provider."
+              label="Onboarding"
+              caption="A guided first run — local or cloud, mic test, done."
+            />
+          </div>
         </section>
 
         <section className="w-full max-w-3xl px-6 pb-16">

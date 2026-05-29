@@ -37,6 +37,7 @@ export const AllowedParameterSchema = z.enum([
 	"always_on_microphone",
 	"lazy_stream_close",
 	"lazy_close_timeout_seconds",
+	"filter_fillers",
 ]);
 export type AllowedParameter = z.infer<typeof AllowedParameterSchema>;
 
@@ -68,24 +69,18 @@ export const WhisperModelSchema = z.enum([
 ]);
 export type WhisperModel = z.infer<typeof WhisperModelSchema>;
 
-export const ComputeTypeSchema = z.enum([
-	"default",
-	"auto",
-	"int8",
-	"int8_float16",
-	"int8_float32",
-	"int8_bfloat16",
-	"int16",
-	"float16",
-	"float32",
-	"bfloat16",
-]);
-export type ComputeType = z.infer<typeof ComputeTypeSchema>;
-
 export const DeviceTypeSchema = z.enum(["auto", "cpu"]);
 export type DeviceType = z.infer<typeof DeviceTypeSchema>;
 
-export const AcceleratorTypeSchema = z.enum(["auto", "cuda", "directml", "rocm", "coreml", "cpu"]);
+export const AcceleratorTypeSchema = z.enum([
+	"auto",
+	"cuda",
+	"directml",
+	"openvino",
+	"rocm",
+	"coreml",
+	"cpu",
+]);
 export type AcceleratorType = z.infer<typeof AcceleratorTypeSchema>;
 
 export const RecorderStateSchema = z.enum([
@@ -110,6 +105,7 @@ export const ModelFamilySchema = z.enum([
 	"moonshine",
 	"cohere",
 	"sense_voice",
+	"dolphin",
 	"custom",
 ]);
 export type ModelFamily = z.infer<typeof ModelFamilySchema>;

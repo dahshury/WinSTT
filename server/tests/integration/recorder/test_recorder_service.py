@@ -22,6 +22,8 @@ from src.recorder.domain.events import (
     NoAudioDetected,
     SpeakerSegment,
     SpeakerSegmentsDetected,
+    TranscriptionCompleted,
+    TranscriptionFailed,
 )
 from src.recorder.domain.ports.transcriber import ITranscriber, TranscriptionResult
 from src.recorder.domain.ports.vad import VADResult
@@ -57,9 +59,7 @@ class _ListeningGatedVAD(FakeVAD):
 
     @override
     def detect(self, chunk: AudioChunk) -> VADResult:
-        armed = self._sm is not None and (
-            self._sm.state == RecorderState.LISTENING or self._sm.is_recording
-        )
+        armed = self._sm is not None and (self._sm.state == RecorderState.LISTENING or self._sm.is_recording)
         if not armed:
             return VADResult(is_speech=False, confidence=0.0)
         return super().detect(chunk)
@@ -1551,8 +1551,12 @@ class TestRecorderService:
 
     def test_model_swap_superseded_when_cancel_set_after_load(self) -> None:
         """If a newer swap supersedes us between load and commit, the
-        half-built new model is dropped, ``ModelSwapFailed("superseded")``
-        fires, and the previous model is rebuilt into the slot."""
+        half-built new model is dropped and ``ModelSwapFailed("superseded")``
+        fires — but the previous model is NOT rebuilt. The superseding swap
+        owns the slot; restoring here would clobber the model it just
+        committed (the "switch reverts to the old model" regression). The
+        rebuilt loader below MUST NOT be invoked.
+        """
         from src.recorder.domain.events import ModelSwapFailed
 
         service, old, event_bus, _ = self._make_service()
@@ -1560,14 +1564,17 @@ class TestRecorderService:
         failures: list[ModelSwapFailed] = []
         event_bus.subscribe(ModelSwapFailed, failures.append)
         new_fake = FakeTranscriber()
-        rebuilt = FakeTranscriber()
+        restore_calls: list[str] = []
 
         def loader(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
             if name == "x/y":
                 # Simulate a newer swap arriving mid-load.
                 service._swap_cancel_events["main"].set()
                 return new_fake
-            return rebuilt
+            # Any other name here would be a (forbidden) restore of the
+            # previous model — record it so the assertion can fail loudly.
+            restore_calls.append(name)
+            return FakeTranscriber()
 
         service._load_transcriber = loader  # type: ignore[method-assign]
         service.request_model_swap("main", "x/y")
@@ -1575,8 +1582,54 @@ class TestRecorderService:
         assert failures[0].category == "superseded"
         assert new_fake.shutdown_called  # half-built new is dropped
         assert old.shutdown_called  # old was already shut down on the unload phase
-        self._wait_for(lambda: service._transcriber is rebuilt)
+        # No restore: the slot is left for the superseding swap, and config
+        # is untouched by this aborted swap.
+        assert restore_calls == []
         assert service._config.transcription.model == original_name
+        service.shutdown()
+
+    def test_superseded_swap_does_not_clobber_committed_model(self) -> None:
+        """End-to-end repro of "switch reverts to the old model": a swap that
+        is superseded mid-load must not overwrite the model the superseding
+        swap committed. SWAP-A (to "old→A") is held in its load until SWAP-B
+        (to "B") has fully committed; SWAP-A then finishes, sees it was
+        superseded, and must leave B in place.
+        """
+        import threading as _threading
+
+        from src.recorder.domain.events import ModelSwapCompleted
+
+        service, _old, event_bus, _ = self._make_service()
+        b_committed = _threading.Event()
+        a_release = _threading.Event()
+        b_fake = FakeTranscriber()
+        a_fake = FakeTranscriber()
+        completed: list[ModelSwapCompleted] = []
+        event_bus.subscribe(ModelSwapCompleted, completed.append)
+
+        def loader(name: str, on_progress: Callable[[DownloadProgress], None] | None) -> ITranscriber:
+            if name == "A":
+                # SWAP-A: block until SWAP-B has committed, so A is guaranteed
+                # to finish loading AFTER B owns the slot.
+                a_release.wait(timeout=5.0)
+                return a_fake
+            # SWAP-B
+            return b_fake
+
+        service._load_transcriber = loader  # type: ignore[method-assign]
+
+        service.request_model_swap("main", "A")  # SWAP-A starts, blocks in load
+        # SWAP-B supersedes A and commits.
+        service.request_model_swap("main", "B")
+        self._wait_for(lambda: service._transcriber is b_fake)
+        b_committed.set()
+        # Let SWAP-A finish loading; it must observe supersession and NOT
+        # restore/clobber B.
+        a_release.set()
+        # Give SWAP-A's worker time to run its abort path.
+        time.sleep(0.2)
+        assert service._transcriber is b_fake, "superseded SWAP-A clobbered SWAP-B's committed model"
+        assert service._config.transcription.model == "B"
         service.shutdown()
 
     def test_request_model_swap_cancels_prior_inflight(self) -> None:
@@ -2012,8 +2065,40 @@ class TestRecorderService:
         assert result is None
         service.shutdown()
 
-    def test_run_full_transcription_returns_empty_when_transcriber_raises(self) -> None:
-        """End-to-end: a raising transcriber yields empty text, not a crash."""
+    def test_safe_transcribe_invokes_on_error_with_exception(self) -> None:
+        """``on_error`` (when given) receives the caught exception before the
+        ``None`` return — the hook the main-text path uses to tell a genuine
+        crash apart from a swap-in-flight skip (both return ``None``)."""
+
+        boom = RuntimeError("simulated ONNXRuntime DML kernel exception")
+
+        class _CrashingTranscriber(FakeTranscriber):
+            @override
+            def transcribe(
+                self,
+                audio: AudioArray,
+                language: str = "",
+                use_prompt: bool = True,
+                custom_words: list[str] | None = None,
+                initial_prompt_text: str | None = None,
+            ) -> TranscriptionResult:
+                raise boom
+
+        service, _, _, _ = self._make_service()
+        service._transcriber = _CrashingTranscriber()
+        audio = np.zeros(16000, dtype=np.float32)
+        captured: list[Exception] = []
+        result = service._safe_transcribe(service._transcriber, audio, "en", on_error=captured.append)
+        assert result is None
+        assert captured == [boom]
+        service.shutdown()
+
+    def test_run_full_transcription_returns_none_and_publishes_failed_when_transcriber_raises(
+        self,
+    ) -> None:
+        """A genuine transcriber crash returns ``None`` (so the caller skips the
+        empty TranscriptionCompleted) and publishes :class:`TranscriptionFailed`
+        carrying the concise detail — not the misleading no-audio / swap path."""
 
         class _CrashingTranscriber(FakeTranscriber):
             @override
@@ -2027,11 +2112,61 @@ class TestRecorderService:
             ) -> TranscriptionResult:
                 raise RuntimeError("simulated ONNXRuntime DML kernel exception")
 
-        service, _, _, _ = self._make_service()
+        service, _, event_bus, _ = self._make_service()
+        failures: list[TranscriptionFailed] = []
+        event_bus.subscribe(TranscriptionFailed, failures.append)
         service._transcriber = _CrashingTranscriber()
         audio = np.zeros(16000, dtype=np.float32)
-        text = service._run_full_transcription(audio, frame_count=10, audio_seconds=0.5)
-        assert text == ""
+        outcome = service._run_full_transcription(audio, frame_count=10, audio_seconds=0.5)
+        assert outcome is None
+        assert len(failures) == 1
+        assert failures[0].reason == "Transcription failed"
+        assert failures[0].category == "unknown"
+        assert "RuntimeError" in failures[0].detail
+        assert "simulated ONNXRuntime DML kernel exception" in failures[0].detail
+        service.shutdown()
+
+    def test_text_reports_failure_without_empty_completed_when_transcriber_raises(self) -> None:
+        """End-to-end through ``text()``: a raising transcriber publishes a
+        single :class:`TranscriptionFailed` and NO :class:`TranscriptionCompleted`
+        (the empty one the relay would mis-label "no audio detected"), and the
+        finished-callback never fires. ``text()`` still returns "" so the
+        recorder loop keeps polling."""
+
+        class _CrashingTranscriber(FakeTranscriber):
+            @override
+            def transcribe(
+                self,
+                audio: AudioArray,
+                language: str = "",
+                use_prompt: bool = True,
+                custom_words: list[str] | None = None,
+                initial_prompt_text: str | None = None,
+            ) -> TranscriptionResult:
+                raise RuntimeError("kernel boom")
+
+        service, _, event_bus, _ = self._make_service()
+        failures: list[TranscriptionFailed] = []
+        completed: list[TranscriptionCompleted] = []
+        event_bus.subscribe(TranscriptionFailed, failures.append)
+        event_bus.subscribe(TranscriptionCompleted, completed.append)
+        service._transcriber = _CrashingTranscriber()
+
+        # Drive text() the same way the existing text() branch tests do: prime
+        # the transcription queue so wait_audio() returns immediately, then let
+        # text() run the (crashing) transcribe path.
+        service.listen()
+        service._pipeline._transcription_queue.put((True, 0.0))
+        finished: list[str] = []
+        result = service.text(on_transcription_finished=finished.append)
+
+        assert result == ""
+        assert len(failures) == 1
+        assert completed == []
+        # finished-callback is dispatched on a daemon thread; give it a beat to
+        # prove it was NOT scheduled rather than just slow.
+        time.sleep(0.05)
+        assert finished == []
         service.shutdown()
 
     def test_attempt_restore_returns_no_previous_when_name_empty(self) -> None:
@@ -2059,6 +2194,40 @@ class TestRecorderService:
         bench = SwapBenchmark("main", "x/y")
         outcome = service._attempt_restore("main", "previous/model", bench)
         assert outcome == "lost"
+        service.shutdown()
+
+    def test_is_swap_in_flight_public_probe(self) -> None:
+        """Public ``is_swap_in_flight`` mirrors the private thread-alive check.
+        Consulted by the facade's config-knob setters to avoid superseding an
+        in-flight model swap with a redundant reload."""
+        service, _, _, _ = self._make_service()
+        assert service.is_swap_in_flight("main") is False
+        # A live worker thread for the kind flips it true.
+        worker = threading.Thread(target=lambda: time.sleep(0.2), daemon=True)
+        worker.start()
+        service._swap_threads["main"] = worker
+        try:
+            assert service.is_swap_in_flight("main") is True
+        finally:
+            worker.join(timeout=1.0)
+        service.shutdown()
+
+    def test_should_restore_after_abort_only_on_genuine_load_failure(self) -> None:
+        """A SUPERSEDED swap must NOT restore its previous model — the
+        superseding swap owns the slot, and restoring would clobber its
+        committed model (the "swap reverts to the old model" bug: a redundant
+        onnx_quantization-triggered reload of the OLD model raced the user's
+        model switch, got superseded, then restored the OLD model on top of
+        the just-committed NEW model). Restore is correct ONLY for a genuine
+        load failure, where no superseding swap is taking over.
+        """
+        service, _, _, _ = self._make_service()
+        superseded = threading.Event()
+        superseded.set()
+        # Superseded (cancel set) → do NOT restore.
+        assert service._should_restore_after_abort(superseded) is False
+        # Genuine load failure (cancel NOT set) → restore the previous model.
+        assert service._should_restore_after_abort(threading.Event()) is True
         service.shutdown()
 
     def test_commit_chunk_skips_append_when_text_blank(self) -> None:
@@ -2540,6 +2709,7 @@ class TestRecorderService:
         service, _, _, _ = self._make_service()
         service._saved_main_model_name = "should-not-load"
         loads: list[str] = []
+
         def _record_and_build(name: str, on_progress: object) -> FakeTranscriber:
             loads.append(name)
             return FakeTranscriber()

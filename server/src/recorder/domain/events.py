@@ -46,6 +46,28 @@ class NoAudioDetected(RecorderEvent):
 
 
 @dataclass(frozen=True)
+class TranscriptionFailed(RecorderEvent):
+    """A transcription attempt raised inside the transcriber and was caught.
+
+    Distinct from :class:`NoAudioDetected` (genuine silence) and from the
+    swap-in-flight skip (transcriber not ready): this fires only when the
+    active transcriber actually *raised* while decoding real audio — e.g. a
+    model whose ONNX export ships an incomplete vocab, an execution-provider
+    kernel crash, or an out-of-memory error. The WS server forwards it as a
+    ``transcription_failed`` event so the renderer reports the failure
+    honestly instead of mislabelling it as "no audio detected".
+
+    ``reason`` is a short user-facing summary; ``detail`` carries the raw
+    ``"<ExceptionType>: <message>"`` for diagnostics; ``category`` is a stable
+    bucket for future UI variants (mirrors :class:`ModelSwapFailed`).
+    """
+
+    reason: str = "Transcription failed"
+    category: str = "unknown"
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class VADStarted(RecorderEvent):
     pass
 

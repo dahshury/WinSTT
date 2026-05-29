@@ -322,6 +322,24 @@ class TestResolveQuantization:
 
         assert "sense_voice" in _INT8_PREFERRED_FAMILIES
 
+    def test_dolphin_is_in_dml_incompatible_set(self) -> None:
+        """Dolphin's sherpa-onnx int8 CTC graph segfaults DirectML's
+        MLOperatorAuthorImpl reshape kernel (empirically verified — exit 139),
+        exactly like SenseVoice / NeMo. It must route to CPU on DML / ROCm /
+        CoreML."""
+        from src.recorder.domain.model_registry import _DML_INCOMPATIBLE_FAMILIES
+
+        assert "dolphin" in _DML_INCOMPATIBLE_FAMILIES
+
+    def test_int8_preferred_families_all_route_to_cpu_on_dml(self) -> None:
+        """Invariant: every int8-preferred family ships an int8 graph that
+        crashes non-CUDA GPU EPs, so the two sets must stay in lock-step —
+        otherwise ``auto``→int8 picks a graph that then segfaults on DML."""
+        from src.recorder.bootstrap import _INT8_PREFERRED_FAMILIES
+        from src.recorder.domain.model_registry import _DML_INCOMPATIBLE_FAMILIES
+
+        assert _INT8_PREFERRED_FAMILIES == _DML_INCOMPATIBLE_FAMILIES
+
 
 class TestWakeWordBackendSelection:
     """Lock the registry invariant: each backend name routes to exactly ONE
@@ -437,55 +455,3 @@ def _swap_engine_classes(
 def _restore_engine_classes(porcupine_module: Any, oww_module: Any) -> None:  # noqa: ANN401
     porcupine_module.PorcupineDetector = _ORIGINAL_ENGINE_CLASSES["porcupine"]
     oww_module.OWWDetector = _ORIGINAL_ENGINE_CLASSES["oww"]
-
-
-class TestSenseVoiceHfProgress:
-    """``_build_hf_progress_tqdm_class`` wires HF download progress into our event sink."""
-
-    def test_emits_aggregated_progress_across_files(self) -> None:
-        from src.recorder.bootstrap import _build_hf_progress_tqdm_class
-        from src.recorder.domain.events import DownloadProgress
-
-        events: list[DownloadProgress] = []
-        tqdm_cls = _build_hf_progress_tqdm_class("acme/test-model", events.append)
-
-        # Two concurrent files, totals 100 + 400 bytes.
-        a = tqdm_cls(total=100, unit="B", desc="a")
-        b = tqdm_cls(total=400, unit="B", desc="b")
-        # 50 of A, 100 of B -> 150 / 500 = 0.30.
-        a.update(50)
-        b.update(100)
-        # Close A: pins it to (100, 100). Aggregate downloaded 200 / 500 = 0.40.
-        a.close()
-        # Finish B: 100 + 400 / 500 = 1.0.
-        b.update(300)
-        b.close()
-
-        assert events, "expected at least one progress emission"
-        last = events[-1]
-        assert last.model == "acme/test-model"
-        assert last.total_bytes == 500
-        assert last.downloaded_bytes == 500
-        assert last.progress == pytest.approx(1.0)
-
-    def test_handles_unknown_total(self) -> None:
-        """HF can produce tqdm instances with ``total=None`` (chunked streams).
-
-        We must not divide by zero — progress stays 0.0 and the
-        downloaded-bytes counter still tracks correctly.
-        """
-        from src.recorder.bootstrap import _build_hf_progress_tqdm_class
-        from src.recorder.domain.events import DownloadProgress
-
-        events: list[DownloadProgress] = []
-        tqdm_cls = _build_hf_progress_tqdm_class("acme/test-model", events.append)
-
-        bar = tqdm_cls(total=None, unit="B")
-        bar.update(42)
-        bar.close()
-
-        # No division-by-zero crash, downloaded tracked, progress is 0.0.
-        assert events
-        seen_downloaded = max(e.downloaded_bytes for e in events)
-        assert seen_downloaded >= 42
-        assert all(0.0 <= e.progress <= 1.0 for e in events)

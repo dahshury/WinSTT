@@ -359,7 +359,7 @@ def resolve_device(requested: str) -> str:
     Kept for backward compatibility with code paths that still think in
     terms of ``device == "cuda"``. Internally delegates to
     :func:`resolve_accelerator` and collapses every non-CPU accelerator to
-    ``"cuda"`` so older callers (e.g. compute_type selection in
+    ``"cuda"`` so callers (e.g. the fp16/quantization selection in
     ``bootstrap._resolve_quantization``) treat DirectML and ROCm the same
     way they used to treat CUDA: "we have a GPU, pick the fp16 path".
 

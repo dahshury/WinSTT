@@ -76,6 +76,20 @@ class _BoolFlag:
         return f"_BoolFlag({self._value})"
 
 
+def _normalize_prompt(value: str | list[int] | None) -> str | list[int] | None:
+    """Coerce a Whisper-style prompt to its canonical config form.
+
+    Empty string -> ``None`` (the server CLI passes ``""`` for "no prompt");
+    a list is defensively copied so the caller's identity can't leak into
+    config; everything else passes through unchanged.
+    """
+    if all([isinstance(value, str), value == ""]):
+        return None
+    if isinstance(value, list):
+        return list(value)
+    return value
+
+
 class AudioToTextRecorder:
     """Backward-compatible facade accepting ALL original constructor params.
 
@@ -87,9 +101,7 @@ class AudioToTextRecorder:
         model: str = "tiny",
         download_root: str | None = None,
         language: str = "",
-        compute_type: str = "default",
         input_device_index: int | None = None,
-        gpu_device_index: int | list[int] = 0,
         device: str = "cuda",
         on_recording_start: SimpleCallback | None = None,
         on_recording_stop: SimpleCallback | None = None,
@@ -108,7 +120,7 @@ class AudioToTextRecorder:
         # don't re-pay the open cost.
         lazy_stream_close: bool = False,
         # Seconds before the lazy-close timer fires. Only consulted when
-        # ``lazy_stream_close`` is True. Default 30 s matches Handy.
+        # ``lazy_stream_close`` is True. Default 30 s.
         lazy_close_timeout_seconds: float = 30.0,
         # See ``AudioConfig.extra_recording_buffer_ms`` — tail-of-recording
         # capture window in ms applied to set_microphone(False) stops (PTT
@@ -126,11 +138,10 @@ class AudioToTextRecorder:
         on_realtime_transcription_update: TextCallback | None = None,
         on_realtime_transcription_stabilized: TextCallback | None = None,
         # Voice activation parameters. See :class:`VADConfig` for the
-        # silero_sensitivity default rationale — 0.7 (Silero trip > 0.3)
-        # matches Handy; the previous 0.4 (trip > 0.6) silently rejected
+        # silero_sensitivity default rationale — 0.7 (Silero trip > 0.3);
+        # the previous 0.4 (trip > 0.6) silently rejected
         # quiet / distant speech.
         silero_sensitivity: float = 0.7,
-        silero_use_onnx: bool = False,
         silero_deactivity_detection: bool = False,
         webrtc_sensitivity: int = 3,
         post_speech_silence_duration: float = 0.6,
@@ -145,7 +156,6 @@ class AudioToTextRecorder:
         # Wake word parameters
         wakeword_backend: str = "",
         openwakeword_model_paths: str | None = None,
-        openwakeword_inference_framework: str = "onnx",
         wake_words: str = "",
         wake_words_sensitivity: float = 0.6,
         wake_word_activation_delay: float = 0.0,
@@ -181,14 +191,12 @@ class AudioToTextRecorder:
         #: the callback unwired; the recorder still runs without it.
         on_speaker_segments_detected: Callable[[Any], None] | None = None,
         debug_mode: bool = False,
-        handle_buffer_overflow: bool = True,
         buffer_size: int = 512,
         sample_rate: int = 16000,
         initial_prompt: str | Iterable[int] | None = None,
         initial_prompt_realtime: str | Iterable[int] | None = None,
         print_transcription_time: bool = False,
         early_transcription_on_silence: float = 0,
-        allowed_latency_limit: int = 100,
         no_log_file: bool = False,
         use_extended_logging: bool = False,
         normalize_audio: bool = True,
@@ -221,8 +229,8 @@ class AudioToTextRecorder:
         word_correction_threshold: float = 0.18,
         # Locale-aware filler-word strip + 3+ stutter collapse. See
         # :class:`TextCorrectionConfig.filter_fillers` /
-        # ``custom_filler_words``. Ported from Handy's
-        # ``filter_transcription_output``.
+        # ``custom_filler_words``. Implements the
+        # ``filter_transcription_output`` behaviour.
         filter_fillers: bool = True,
         custom_filler_words: list[str] | None = None,
         # History WAV persistence — see :class:`HistoryConfig`. Off by default;
@@ -251,10 +259,8 @@ class AudioToTextRecorder:
             lazy_stream_close=lazy_stream_close,
             lazy_close_timeout_seconds=lazy_close_timeout_seconds,
             extra_recording_buffer_ms=extra_recording_buffer_ms,
-            handle_buffer_overflow=handle_buffer_overflow,
             # VAD
             silero_sensitivity=silero_sensitivity,
-            silero_use_onnx=silero_use_onnx,
             silero_deactivity_detection=silero_deactivity_detection,
             webrtc_sensitivity=webrtc_sensitivity,
             post_speech_silence_duration=post_speech_silence_duration,
@@ -264,14 +270,11 @@ class AudioToTextRecorder:
             model=model,
             download_root=download_root,
             language=language,
-            compute_type=compute_type,
-            gpu_device_index=gpu_device_index,
             device=device,
             initial_prompt=initial_prompt,
             normalize_audio=normalize_audio,
             print_transcription_time=print_transcription_time,
             early_transcription_on_silence=early_transcription_on_silence,
-            allowed_latency_limit=allowed_latency_limit,
             backend=backend,
             onnx_quantization=onnx_quantization,
             translate_to_english=translate_to_english,
@@ -286,7 +289,6 @@ class AudioToTextRecorder:
             # Wake word
             wakeword_backend=wakeword_backend,
             openwakeword_model_paths=openwakeword_model_paths,
-            openwakeword_inference_framework=openwakeword_inference_framework,
             wake_words=wake_words,
             wake_words_sensitivity=wake_words_sensitivity,
             wake_word_activation_delay=wake_word_activation_delay,
@@ -458,7 +460,6 @@ class AudioToTextRecorder:
             # monolith likewise runs Silero on CPU.
             silero = SileroVAD(
                 sensitivity=self._config.vad.silero_sensitivity,
-                use_onnx=self._config.vad.silero_use_onnx,
                 sample_rate=self._config.audio.sample_rate,
                 providers=["CPUExecutionProvider"],
             )
@@ -774,14 +775,7 @@ class AudioToTextRecorder:
         # Coerce empty string to None — server CLI passes "" for the
         # "no prompt" case (the renderer's IPC envelope always sends a
         # string), and we want config-equality to treat them as the same.
-        normalized: str | list[int] | None
-        if isinstance(value, str) and value == "":
-            normalized = None
-        elif isinstance(value, list):
-            normalized = list(value)
-        else:
-            normalized = value
-        self._config.transcription.initial_prompt = normalized
+        self._config.transcription.initial_prompt = _normalize_prompt(value)
 
     @property
     def initial_prompt_realtime(self) -> str | list[int] | None:
@@ -800,13 +794,7 @@ class AudioToTextRecorder:
 
     @initial_prompt_realtime.setter
     def initial_prompt_realtime(self, value: str | list[int] | None) -> None:
-        normalized: str | list[int] | None
-        if isinstance(value, str) and value == "":
-            normalized = None
-        elif isinstance(value, list):
-            normalized = list(value)
-        else:
-            normalized = value
+        normalized = _normalize_prompt(value)
         if normalized == self._config.realtime.initial_prompt_realtime:
             return
         self._config.realtime.initial_prompt_realtime = normalized
@@ -824,6 +812,28 @@ class AudioToTextRecorder:
     # counterpart that stopped including these keys in
     # ``STARTUP_ONLY_KEYS_LIST``.
 
+    @staticmethod
+    def _trigger_model_reload(service: RecorderService, kind: str, current: str, reason: str) -> None:
+        """Shared tail for the per-slot reload helpers.
+
+        Skip when a swap of the same ``kind`` is already running — a
+        model+quant change fires BOTH the model reload AND this
+        config-knob-triggered reload of the CURRENT model. Requested
+        second, the latter would cancel the user's in-flight model swap
+        and commit the OLD model (the "switch silently reverts to the
+        previous model" bug). The in-flight swap re-reads the just-updated
+        config at load time, so the new value still takes effect without a
+        second swap.
+        """
+        if service.is_swap_in_flight(kind):
+            logger.info("Skipping %s-model reload (%s) — a %s swap is already in flight", kind, reason, kind)
+            return
+        logger.info("Triggering %s-model reload (%s)", kind, reason)
+        try:
+            service.request_model_swap(kind, current)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("request_model_swap(%r, %r) failed", kind, current)
+
     def _maybe_reload_main_model(self, reason: str) -> None:
         """Trigger an in-place main-model swap when the service is up.
 
@@ -837,11 +847,7 @@ class AudioToTextRecorder:
         current = self._config.transcription.model
         if not current:
             return
-        logger.info("Triggering main-model reload (%s)", reason)
-        try:
-            self._service.request_model_swap("main", current)
-        except Exception:  # pragma: no cover — defensive
-            logger.exception("request_model_swap('main', %r) failed", current)
+        self._trigger_model_reload(self._service, "main", current, reason)
 
     def _maybe_reload_realtime_model(self, reason: str) -> None:
         """Trigger an in-place realtime-model swap when eligible.
@@ -855,18 +861,16 @@ class AudioToTextRecorder:
         if self._service is None:
             return
         rt = self._config.realtime
-        if not rt.enable_realtime_transcription:
+        eligible = all(
+            [
+                rt.enable_realtime_transcription,
+                not rt.use_main_model_for_realtime,
+                bool(rt.realtime_model_type),
+            ]
+        )
+        if not eligible:
             return
-        if rt.use_main_model_for_realtime:
-            return
-        current = rt.realtime_model_type
-        if not current:
-            return
-        logger.info("Triggering realtime-model reload (%s)", reason)
-        try:
-            self._service.request_model_swap("realtime", current)
-        except Exception:  # pragma: no cover — defensive
-            logger.exception("request_model_swap('realtime', %r) failed", current)
+        self._trigger_model_reload(self._service, "realtime", rt.realtime_model_type, reason)
 
     @property
     def onnx_quantization(self) -> str:
@@ -902,21 +906,23 @@ class AudioToTextRecorder:
         # call translate, so we only swap the main slot.
         self._maybe_reload_main_model(f"translate_to_english → {new_value}")
 
+    @staticmethod
+    def _normalize_unload_timeout(value: int | None) -> int | None:
+        # CLI uses -1 as the "Never" sentinel; normalize to None so the
+        # daemon-state machine in RecorderService can use a single
+        # truthiness check (``timeout is None or timeout <= 0``).
+        if value is None:
+            return None
+        ivalue = int(value)
+        return None if ivalue < 0 else ivalue
+
     @property
     def model_unload_timeout_seconds(self) -> int | None:
         return self._config.transcription.model_unload_timeout_seconds
 
     @model_unload_timeout_seconds.setter
     def model_unload_timeout_seconds(self, value: int | None) -> None:
-        # CLI uses -1 as the "Never" sentinel; normalize to None so the
-        # daemon-state machine in RecorderService can use a single
-        # truthiness check (``timeout is None or timeout <= 0``).
-        normalized: int | None
-        if value is None:
-            normalized = None
-        else:
-            ivalue = int(value)
-            normalized = None if ivalue < 0 else ivalue
+        normalized = self._normalize_unload_timeout(value)
         if normalized == self._config.transcription.model_unload_timeout_seconds:
             return
         self._config.transcription.model_unload_timeout_seconds = normalized
@@ -942,8 +948,8 @@ class AudioToTextRecorder:
 
     @silero_deactivity_detection.setter
     def silero_deactivity_detection(self, value: bool) -> None:
-        # Stored in config and threaded through the CLI for parity with
-        # the Handy port, but no current consumer reads it at runtime —
+        # Stored in config and threaded through the CLI, but no current
+        # consumer reads it at runtime —
         # the pipeline's ``_stop_recording_on_voice_deactivity`` is
         # session-state, not config. Kept as a settable property so a
         # future runtime consumer can read the live value without a

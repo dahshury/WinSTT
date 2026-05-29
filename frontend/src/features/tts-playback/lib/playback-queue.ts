@@ -174,6 +174,11 @@ export class TtsPlaybackQueue {
 	 * Switch the user-selected output sink. Applied to a new AudioContext
 	 * on the next utterance; an in-flight context is also re-routed via
 	 * `setSinkId` so the change is heard immediately when supported.
+	 *
+	 * The playhead is intentionally NOT realigned here: `setSinkId` reroutes
+	 * the *same* context's output, so already-scheduled sources keep their
+	 * timeline and continue gap-free on the new sink — re-anchoring would
+	 * introduce an audible seam mid-utterance.
 	 */
 	setOutputDeviceId(deviceId: string): void {
 		this.outputDeviceId = deviceId;
@@ -183,7 +188,13 @@ export class TtsPlaybackQueue {
 			  })
 			| null;
 		if (ctx?.setSinkId) {
-			ctx.setSinkId(deviceId || { type: "none" }).catch(() => undefined);
+			// Observability: a rejected re-route (device unplugged / unreachable)
+			// is non-fatal — playback continues on the previous sink — but it was
+			// previously swallowed with no trace. Warn so a "device switch did
+			// nothing" report is diagnosable instead of silent.
+			ctx.setSinkId(deviceId || { type: "none" }).catch((err) => {
+				console.warn("[tts] setSinkId re-route failed; staying on the previous sink", err);
+			});
 		}
 	}
 
@@ -202,7 +213,7 @@ export class TtsPlaybackQueue {
 	}
 
 	private createOrReuseCtx(): AudioContext {
-		if (this.ctx == null || this.ctx.state === "closed") {
+		if (this.ctx == null || !isReusableState(this.ctx.state)) {
 			// `sinkId` is declared on `AudioContextOptions` via
 			// `src/dom-augment.d.ts` (Chromium M114+) — no cast needed.
 			const opts: AudioContextOptions | undefined = this.outputDeviceId
@@ -361,6 +372,19 @@ export class TtsPlaybackQueue {
 		this.endCallbacks = [];
 		this.startCallbacks = [];
 	}
+}
+
+/**
+ * True when an existing context can still be played through. Only `"running"`
+ * (ready) and `"suspended"` (recoverable via {@link maybeResume}) qualify.
+ * `"closed"` is dead, and Safari/iOS's non-standard `"interrupted"` state
+ * cannot schedule audio AND is never resumed by `maybeResume` (which only acts
+ * on `"suspended"`) — so both must trigger a rebuild rather than a silent reuse
+ * that would drop the utterance. `state` is typed as the standard union, so we
+ * compare against the string to also catch the off-union `"interrupted"`.
+ */
+function isReusableState(state: string): boolean {
+	return state === "running" || state === "suspended";
 }
 
 /**

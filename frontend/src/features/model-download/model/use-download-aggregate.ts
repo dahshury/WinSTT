@@ -1,4 +1,10 @@
+import type { QuantDownloadState } from "./download-store";
 import { useDownloadStore } from "./download-store";
+
+interface DownloadEntry {
+	modelId: string;
+	percent: number | null;
+}
 
 /**
  * Aggregate view of every in-flight download in ``quantDownloads`` plus the
@@ -42,10 +48,7 @@ export interface DownloadAggregate {
  * percent so the chip doesn't lock onto an indeterminate download when
  * one's already reporting bytes.
  */
-function pickPrimary(entries: { modelId: string; percent: number | null }[]): {
-	modelId: string;
-	percent: number | null;
-} {
+function pickPrimary(entries: DownloadEntry[]): DownloadEntry {
 	let best = entries[0];
 	if (best === undefined) {
 		throw new Error("pickPrimary called with no entries");
@@ -64,15 +67,19 @@ function pickPrimary(entries: { modelId: string; percent: number | null }[]): {
 	return best;
 }
 
-export function useDownloadAggregate(): DownloadAggregate | null {
-	const quantDownloads = useDownloadStore((s) => s.quantDownloads);
-	const singletonName = useDownloadStore((s) => s.modelName);
-	const singletonActive = useDownloadStore((s) => s.isDownloading);
-	const singletonPercent = useDownloadStore((s) => s.progress);
-
-	const entries: { modelId: string; percent: number | null }[] = [];
-	if (singletonActive && singletonName !== null) {
-		entries.push({ modelId: singletonName, percent: singletonPercent });
+/**
+ * Flatten the legacy singleton slot + the per-quant map into one list of
+ * ``{ modelId, percent }`` entries. Pure — extracted from the hook so the
+ * reactive body stays a flat "read selectors → collect → aggregate" shape
+ * and the branchy collection logic is independently testable.
+ */
+function collectEntries(
+	quantDownloads: Record<string, QuantDownloadState>,
+	singleton: { active: boolean; name: string | null; percent: number | null }
+): DownloadEntry[] {
+	const entries: DownloadEntry[] = [];
+	if (singleton.active && singleton.name !== null) {
+		entries.push({ modelId: singleton.name, percent: singleton.percent });
 	}
 	for (const key in quantDownloads) {
 		if (!Object.hasOwn(quantDownloads, key)) {
@@ -84,19 +91,41 @@ export function useDownloadAggregate(): DownloadAggregate | null {
 		}
 		entries.push({ modelId: entry.modelId, percent: entry.progress });
 	}
-	if (entries.length === 0) {
-		return null;
-	}
+	return entries;
+}
+
+/**
+ * Mean of every entry with a known (numeric) percent, rounded to a whole
+ * number. ``null`` when every entry is still indeterminate so the chip can
+ * suppress the percent readout. Pure — paired with ``collectEntries``.
+ */
+function averageKnownPercent(entries: DownloadEntry[]): number | null {
 	const numericPercents = entries
 		.map((e) => e.percent)
 		.filter((p): p is number => typeof p === "number");
-	const averagePercent =
-		numericPercents.length === 0
-			? null
-			: Math.round(numericPercents.reduce((a, b) => a + b, 0) / numericPercents.length);
+	if (numericPercents.length === 0) {
+		return null;
+	}
+	return Math.round(numericPercents.reduce((a, b) => a + b, 0) / numericPercents.length);
+}
+
+export function useDownloadAggregate(): DownloadAggregate | null {
+	const quantDownloads = useDownloadStore((s) => s.quantDownloads);
+	const singletonName = useDownloadStore((s) => s.modelName);
+	const singletonActive = useDownloadStore((s) => s.isDownloading);
+	const singletonPercent = useDownloadStore((s) => s.progress);
+
+	const entries = collectEntries(quantDownloads, {
+		active: singletonActive,
+		name: singletonName,
+		percent: singletonPercent,
+	});
+	if (entries.length === 0) {
+		return null;
+	}
 	return {
 		count: entries.length,
-		averagePercent,
+		averagePercent: averageKnownPercent(entries),
 		primary: pickPrimary(entries),
 	};
 }

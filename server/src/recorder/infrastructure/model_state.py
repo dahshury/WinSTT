@@ -30,6 +30,7 @@ from src.recorder.infrastructure.model_cache import (
     probe_cache_state,
     probe_cache_state_by_quantization,
     resolve_hf_repo,
+    would_download_on_load,
 )
 from src.recorder.infrastructure.system_info import SystemInfo, get_system_info
 
@@ -77,7 +78,12 @@ def is_comfortable_on_cpu(model: ModelInfo, sys_info: SystemInfo | None = None) 
     return si.total_ram_bytes >= needed * _CPU_HEADROOM
 
 
-def model_state_dict(model: ModelInfo, sys_info: SystemInfo | None = None) -> dict[str, Any]:
+def model_state_dict(
+    model: ModelInfo,
+    sys_info: SystemInfo | None = None,
+    *,
+    effective_quantization: str = "",
+) -> dict[str, Any]:
     """Bundle the catalog entry, cache state, and fitness for ``model``.
 
     Returned dict shape (consumed by the renderer's model picker):
@@ -87,16 +93,34 @@ def model_state_dict(model: ModelInfo, sys_info: SystemInfo | None = None) -> di
       - ``cache_by_quantization``: ``{quant: cache_dict}`` per precision;
         ``{}`` for legacy aliases without an HF repo
       - ``available_quantizations``: precisions the upstream repo ships
+      - ``effective_quantization``: the precision the server will ACTUALLY
+        load for this model given the current ``onnx_quantization`` setting.
+        The auto/default sentinel (``""``) is re-resolved per model — NeMo /
+        Cohere / GigaAM / Kaldi / SenseVoice families load as ``int8`` on
+        non-CUDA accelerators even on ``auto``. The picker keys its
+        "downloaded?" decision off THIS precision so a model whose default
+        export is cached but whose effective ``int8`` weights aren't no
+        longer paints a green badge and then silently re-downloads on swap.
+        Resolved by the caller (control_handler) via ``_resolve_quantization``
+        so this module stays free of the bootstrap dependency.
       - ``estimated_bytes``: resident-bytes estimate at int8
       - ``comfortable_on_gpu`` / ``comfortable_on_cpu``: bool
     """
     si = sys_info if sys_info is not None else get_system_info()
-    cache_state = _cache_state_for(model)
+    per_quant = _per_quant_states(model)
+    # "Downloaded" at the model level means "the precision that will actually
+    # load is ready" — i.e. the EFFECTIVE quant (auto→int8 for the int8-pre-
+    # ferred families). Falling back to the overall heuristic only when the
+    # effective precision has no entry (legacy aliases with no HF repo).
+    overall = per_quant.get(effective_quantization) or _verify_quant_cache(
+        model, effective_quantization, _cache_state_for(model)
+    )
     return {
         "id": model.id,
-        "cache": _cache_dict(cache_state),
-        "cache_by_quantization": _cache_by_quantization_for(model),
+        "cache": _cache_dict(overall),
+        "cache_by_quantization": {quant: _cache_dict(state) for quant, state in per_quant.items()},
         "available_quantizations": model.available_quantizations,
+        "effective_quantization": effective_quantization,
         "estimated_bytes": estimate_runtime_bytes(model),
         "comfortable_on_gpu": is_comfortable_on_gpu(model, si),
         "comfortable_on_cpu": is_comfortable_on_cpu(model, si),
@@ -112,17 +136,48 @@ def _cache_dict(state: ModelCacheState) -> dict[str, Any]:
     }
 
 
-def _cache_by_quantization_for(model: ModelInfo) -> dict[str, dict[str, Any]]:
-    """Per-precision cache map, keyed by quantization suffix (``""`` = default).
+def _per_quant_states(model: ModelInfo) -> dict[str, ModelCacheState]:
+    """Per-precision cache state, keyed by quantization suffix (``""`` = default).
 
-    Empty for catalog entries with no HF repo (legacy aliases) — the UI
-    falls back to the flat ``cache`` field there.
+    Each entry is the fast ``*.onnx`` glob heuristic, then VERIFIED against the
+    loader's own resolver (:func:`_verify_quant_cache`) so a "cached" verdict
+    can never hide a missing required file. Empty for catalog entries with no
+    HF repo (legacy aliases) — the UI falls back to the flat ``cache`` field.
     """
     hf_repo = resolve_hf_repo(model.onnx_model_name)
     if hf_repo is None:
         return {}
-    per_quant = probe_cache_state_by_quantization(hf_repo, model.available_quantizations)
-    return {quant: _cache_dict(state) for quant, state in per_quant.items()}
+    heuristic = probe_cache_state_by_quantization(hf_repo, model.available_quantizations)
+    return {quant: _verify_quant_cache(model, quant, state) for quant, state in heuristic.items()}
+
+
+def _verify_quant_cache(model: ModelInfo, quantization: str, state: ModelCacheState) -> ModelCacheState:
+    """Demote a heuristic ``"cached"`` verdict to ``"partial"`` when the loader
+    would still fetch files for this precision.
+
+    Only ``"cached"`` is verified: ``partial`` / ``not_cached`` already make the
+    picker prompt a download, so no SILENT background fetch is possible there —
+    and skipping them keeps the authoritative (resolver) check off the hot path
+    for everything not already on disk. When :func:`would_download_on_load`
+    confirms a load would download, we report ``"partial"`` (keeping the bytes
+    actually on disk) so the badge reads honestly and the swap gate prompts
+    instead of silently downloading. ``None`` (undeterminable) leaves the
+    heuristic verdict untouched.
+    """
+    if state.state != "cached":
+        return state
+    would_download = would_download_on_load(
+        model.onnx_model_name,
+        local_path=model.local_path,
+        quantization=quantization,
+    )
+    if would_download is True:
+        return ModelCacheState(
+            state="partial",
+            downloaded_bytes=state.downloaded_bytes,
+            total_bytes=max(state.total_bytes, state.downloaded_bytes + 1),
+        )
+    return state
 
 
 def _cache_state_for(model: ModelInfo) -> ModelCacheState:

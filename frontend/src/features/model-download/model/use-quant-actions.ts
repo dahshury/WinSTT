@@ -40,6 +40,13 @@ export function useQuantActions(): QuantActions {
 	const cancelQuantDownload = useDownloadStore((s) => s.cancelQuantDownload);
 	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
 
+	// Every store action below delegates to a fire-and-forget IPC wrapper
+	// (download-store → `invokeOrDefault` in ipc-client). That wrapper catches
+	// internally and resolves its fallback, so the returned promise NEVER
+	// rejects — there is no unhandled rejection to guard and intentionally no
+	// `.catch`/`await` here. A dropped command degrades silently to the
+	// fallback (consistent with all ~64 `invokeOrDefault` call sites); the
+	// server's broadcast events are the source of truth for the final UI state.
 	const handleDeleteQuant = (modelId: string, quantization: OnnxQuantization): void => {
 		discardQuantCache(modelId, quantization);
 	};

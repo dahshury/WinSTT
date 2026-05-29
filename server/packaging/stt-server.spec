@@ -149,6 +149,15 @@ _CATALOG_SRC = SERVER_ROOT_SPEC / "src" / "recorder" / "domain" / "catalog.json"
 if _CATALOG_SRC.is_file():
     datas.append((str(_CATALOG_SRC), "src/recorder/domain"))
 
+# Ship the canonical Whisper base-BPE vocab next to its loader. The
+# OnnxAsrTranscriber resolves it via ``Path(__file__).with_name(...)`` to repair
+# truncated model exports (e.g. CrisperWhisper-ONNX ships ~45k/51865 tokens and
+# would otherwise drop its verbatim fillers). Same loader-relative pattern as
+# catalog.json, so the destination mirrors the source layout.
+_WHISPER_VOCAB_SRC = SERVER_ROOT_SPEC / "src" / "recorder" / "infrastructure" / "whisper_base_vocab.json.gz"
+if _WHISPER_VOCAB_SRC.is_file():
+    datas.append((str(_WHISPER_VOCAB_SRC), "src/recorder/infrastructure"))
+
 # Ship the pre-downloaded offline base model (whisper-tiny q4) as a
 # verbatim HF cache tree. ``seed_models.py`` (run by build.ps1) vendors
 # it into ``packaging/seed-cache/`` and
@@ -173,6 +182,18 @@ hiddenimports.extend(
         "onnx_asr.models.gigaam",
         "onnx_asr.models.kaldi",
         "onnx_asr.models.tone",
+        # Fork-added + previously-unlisted families. Every catalog family now
+        # loads through onnx-asr's resolver (SenseVoice included), so each model
+        # module must survive tree-shaking. ``preprocessors/data/*`` is already
+        # collected by ``collect_all("onnx_asr")``.
+        "onnx_asr.models.sense_voice",
+        "onnx_asr.models.dolphin",
+        "onnx_asr.models.cohere_asr",
+        "onnx_asr.models.granite_speech",
+        "onnx_asr.models.moonshine",
+        "onnx_asr.models.wespeaker",
+        "onnx_asr.models.pyannote",
+        "onnx_asr.models.openwakeword",
     ]
 )
 

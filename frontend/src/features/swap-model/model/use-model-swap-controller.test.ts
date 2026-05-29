@@ -189,6 +189,18 @@ describe("resolveTargetQuant", () => {
 	test("falls back to current when override is undefined", () => {
 		expect(t.resolveTargetQuant(undefined, "int8")).toBe("int8");
 	});
+
+	test("re-resolves the auto/default sentinel to the server's effective precision", () => {
+		// canary on auto ("") loads int8 on the server; the cache check must
+		// target int8, not the (cached) default export.
+		const state = { id: "m", effective_quantization: "int8" } as never;
+		expect(t.resolveTargetQuant(undefined, "", state)).toBe("int8");
+	});
+
+	test("honors a concrete pick over the effective precision", () => {
+		const state = { id: "m", effective_quantization: "int8" } as never;
+		expect(t.resolveTargetQuant("fp16", "", state)).toBe("fp16");
+	});
 });
 
 describe("isCriticalAssessment", () => {
@@ -514,6 +526,38 @@ describe("runProceedWithSelection", () => {
 		expect(issueSwap).toHaveBeenCalled();
 		expect(setPending).not.toHaveBeenCalled();
 	});
+
+	test("prompts download when the effective precision is missing even though the default export is cached", () => {
+		// The canary-1b-flash repro: user on auto (""), default export ("") is
+		// on disk (cached), but the server loads int8 — which is NOT on disk.
+		// Pre-fix this issued a silent swap (no prompt) and the server
+		// background-downloaded int8. It must now prompt the download.
+		const setPending = mock(() => undefined);
+		const issueSwap = mock(() => undefined);
+		const states = {
+			m: {
+				id: "m",
+				effective_quantization: "int8",
+				cache: { state: "cached" },
+				cache_by_quantization: {
+					"": { state: "cached" },
+					int8: { state: "not_cached" },
+				},
+			},
+		} as never;
+		t.runProceedWithSelection({
+			currentQuantization: "",
+			issueSwap: issueSwap as never,
+			kind: "main",
+			previous: "prev",
+			quantization: undefined,
+			setPendingDownload: setPending as never,
+			statesById: states,
+			value: "m",
+		});
+		expect(setPending).toHaveBeenCalled();
+		expect(issueSwap).not.toHaveBeenCalled();
+	});
 });
 
 describe("promptDownload / surfaceFitWarning", () => {
@@ -551,6 +595,7 @@ describe("promptDownload / surfaceFitWarning", () => {
 				proceed: proceed as never,
 				quantization: undefined,
 				setPendingFitWarning: setFit as never,
+				statesById: {} as never,
 				value: "m",
 			},
 			{ severity: "critical" } as FitAssessmentEntry,
@@ -644,6 +689,7 @@ describe("handleSwapFailedEvent / rollbackMain / rollbackRealtime", () => {
 		const refRt = { current: null as string | null };
 		t.handleSwapFailedEvent(
 			"main",
+			"unknown",
 			refMain as never,
 			refRt as never,
 			update as never,
@@ -661,12 +707,41 @@ describe("handleSwapFailedEvent / rollbackMain / rollbackRealtime", () => {
 		const refRt = { current: "prev-rt" };
 		t.handleSwapFailedEvent(
 			"realtime",
+			"unknown",
 			refMain as never,
 			refRt as never,
 			update as never,
 			fakeGetModel as never
 		);
 		expect((update.mock.calls as unknown[][])[0]?.[0]).toEqual({ realtimeModel: "prev-rt" });
+	});
+
+	test("superseded failure does NOT roll back (the winning swap owns the model)", () => {
+		// Regression: a redundant onnx_quantization reload that got superseded
+		// must not revert the picker off the model the winning swap committed.
+		const update = mock(() => undefined);
+		t.handleSwapFailedEvent(
+			"main",
+			"superseded",
+			{ current: "prev-main" } as never,
+			{ current: null } as never,
+			update as never,
+			fakeGetModel as never
+		);
+		expect(update).not.toHaveBeenCalled();
+	});
+
+	test("cancelled failure does NOT roll back (user already owns the intent)", () => {
+		const update = mock(() => undefined);
+		t.handleSwapFailedEvent(
+			"main",
+			"cancelled",
+			{ current: "prev-main" } as never,
+			{ current: null } as never,
+			update as never,
+			fakeGetModel as never
+		);
+		expect(update).not.toHaveBeenCalled();
 	});
 
 	test("rollbackMain is a no-op when no previous is captured", () => {
@@ -704,6 +779,7 @@ describe("runGateWithAssessment", () => {
 			proceed: proceed as never,
 			quantization: undefined,
 			setPendingFitWarning: setFit as never,
+			statesById: {} as never,
 			value: "candidate",
 		});
 		expect(assess).toHaveBeenCalledWith("candidate", "int8", "auto");
@@ -731,6 +807,7 @@ describe("runGateWithAssessment", () => {
 			proceed: proceed as never,
 			quantization: "fp16",
 			setPendingFitWarning: setFit as never,
+			statesById: {} as never,
 			value: "next-rt",
 		});
 		// quantization override flows through to the assessor.
@@ -753,6 +830,7 @@ describe("runGateWithAssessment", () => {
 			proceed: proceed as never,
 			quantization: undefined,
 			setPendingFitWarning: setFit as never,
+			statesById: {} as never,
 			value: "m",
 		});
 		expect(setFit).not.toHaveBeenCalled();

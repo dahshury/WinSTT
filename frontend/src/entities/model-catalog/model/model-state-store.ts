@@ -44,6 +44,44 @@ function toMap(entries: ModelStateEntry[]): Record<string, ModelStateEntry> {
 // fresh result.
 let pendingRefresh: Promise<void> | null = null;
 
+// Retry-on-failure schedule, kept as belt-and-suspenders. ``list_models_with_state``
+// is now a ``pre_ready`` server command (it reads only the catalog + local HF-cache
+// probe + system info, none of which needs the loaded recorder), so the FIRST call
+// after launch is answered immediately even while the model is still loading — which
+// is what previously blew past the renderer's 10s timeout (model load can take >10s,
+// e.g. CrisperWhisper on DirectML ≈ 13.6s, and non-pre_ready commands were silently
+// dropped until ready). The retry remains for the genuine slow/transient cases (a
+// momentarily-saturated control channel, a dropped first frame): without it,
+// ``refresh()`` returned ``null`` once and gave up — leaving the picker showing NO
+// cached models until a ``model_cache_changed`` / ``model_swap_completed`` push
+// happened to re-trigger it. These capped-backoff delays keep retrying until the
+// server answers (≈39s of coverage), then stop on the first success. Push events
+// reset the counter so a later refresh gets a fresh budget.
+let RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 8000, 8000, 8000];
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryAttempt = 0;
+
+function cancelRetry(): void {
+	if (retryTimer !== null) {
+		clearTimeout(retryTimer);
+		retryTimer = null;
+	}
+}
+
+function scheduleRetry(): void {
+	// One pending retry at a time; give up once the backoff schedule is
+	// exhausted (push events / a later mount can still start a fresh cycle).
+	if (retryTimer !== null || retryAttempt >= RETRY_DELAYS_MS.length) {
+		return;
+	}
+	const delay = RETRY_DELAYS_MS[retryAttempt] ?? RETRY_DELAYS_MS.at(-1) ?? 8000;
+	retryAttempt += 1;
+	retryTimer = setTimeout(() => {
+		retryTimer = null;
+		useModelStateStore.getState().refresh();
+	}, delay);
+}
+
 export const useModelStateStore = create<ModelStateStore>()((set, get) => ({
 	statesById: {},
 	systemInfo: null,
@@ -61,7 +99,14 @@ export const useModelStateStore = create<ModelStateStore>()((set, get) => ({
 					systemInfo: payload.system_info,
 					isLoaded: true,
 				});
+				// Success — stop the retry cycle.
+				cancelRetry();
+				retryAttempt = 0;
+				return;
 			}
+			// Timed out / malformed — schedule a backed-off retry so the
+			// picker self-populates without needing a model switch.
+			scheduleRetry();
 		};
 		pendingRefresh = run().finally(() => {
 			pendingRefresh = null;
@@ -70,6 +115,27 @@ export const useModelStateStore = create<ModelStateStore>()((set, get) => ({
 	},
 	getState: (id) => get().statesById[id],
 }));
+
+/** Reset the retry cycle so a fresh trigger (cache-changed / swap) gets the
+ *  full backoff budget again. */
+function resetRetryCycle(): void {
+	cancelRetry();
+	retryAttempt = 0;
+}
+
+/** Test-only: cancel any pending retry timer + reset the attempt counter so a
+ *  leaked timer from one test can't fire during a sibling. */
+export function _resetModelStateRetryForTests(): void {
+	resetRetryCycle();
+	RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 8000, 8000, 8000];
+}
+
+/** Test-only: shrink the retry backoff so retry behavior is observable
+ *  without waiting the production delays. */
+export function _setModelStateRetryDelaysForTests(delays: readonly number[]): void {
+	RETRY_DELAYS_MS = delays;
+	retryAttempt = 0;
+}
 
 /**
  * Subscribe to push invalidations. Called once on module load alongside
@@ -80,11 +146,14 @@ export function initModelStateStore(): () => void {
 		// A model just finished downloading — re-fetch the full state map
 		// rather than trying to patch a single entry, because finishing
 		// the download also moves fitness from "estimated" to "verified"
-		// (we may include disk-size totals in the future, etc.).
+		// (we may include disk-size totals in the future, etc.). Fresh
+		// trigger → reset the retry budget so it can ride out a slow server.
+		resetRetryCycle();
 		useModelStateStore.getState().refresh();
 	});
 	const unsubSwap = onModelSwapCompleted(() => {
 		// A swap completing implies the new model is cached.
+		resetRetryCycle();
 		useModelStateStore.getState().refresh();
 	});
 	return () => {

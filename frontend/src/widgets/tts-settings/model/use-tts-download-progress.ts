@@ -62,12 +62,14 @@ export function buildPhaseLabel(t: Translator, installPhase: TtsInstallPhase | n
 }
 
 /**
- * Coalesce the first non-null candidate. Used in place of `value ?? fallback`
- * so each call site stays at CC 1 — the only branching here is the predicate
- * inside the nested arrow, which itself is CC 1.
+ * Coalesce the first non-null candidate, honestly typed. Used in place of
+ * `value ?? fallback`. `find()` returns `undefined` when no candidate is a
+ * string, so we coalesce onto `""` rather than casting `undefined` to `string`
+ * — the old `as string` was a lie that hid the no-match case at the type level.
+ * Stays at CC 1 (the only branching is the CC-1 predicate in the nested arrow).
  */
 export function firstString(...candidates: Array<string | null | undefined>): string {
-	return candidates.find((c): c is string => typeof c === "string") as string;
+	return candidates.find((c): c is string => typeof c === "string") ?? "";
 }
 
 /**
@@ -82,8 +84,11 @@ const PROGRESS_LABEL_BUILDERS: ReadonlyArray<(t: Translator, state: DownloadStat
 	(t, state) =>
 		t("downloadingProgress", {
 			percent: Math.round(state.progress * 100).toString(),
-			downloaded: firstString(formatBytes(state.downloadedBytes), "0 B"),
-			total: firstString(formatBytes(state.totalBytes), "0 B"),
+			// `minUnit: "B"` enables the full B→KB→MB→GB ladder. Without it the
+			// default `minUnit: "MB"` floors any sub-1 MB chunk to "0 MB", so the
+			// early bytes of a download read as "0 MB" until it crosses 1 MB.
+			downloaded: firstString(formatBytes(state.downloadedBytes, { minUnit: "B" }), "0 B"),
+			total: firstString(formatBytes(state.totalBytes, { minUnit: "B" }), "0 B"),
 		}),
 ];
 
@@ -108,9 +113,12 @@ function applyProgressEvent(
 	setDownload: (next: (prev: DownloadState) => DownloadState) => void,
 	payload: { downloadedBytes: number; progress: number; totalBytes: number }
 ): void {
-	// Use a functional update so a progress event arriving during the
-	// pause→resume round-trip clears `paused` automatically — the server
-	// only resumes streaming chunks once the worker is actively reading.
+	// INTENTIONAL: forcing `paused: false` on every progress chunk is the
+	// resume-detection mechanism, not a bug. A progress event can only arrive
+	// while the worker is actively reading the stream, so its presence proves
+	// the download has resumed — clearing `paused` here keeps the bar honest
+	// without waiting for a separate `tts_install_resumed` ping. Locked by the
+	// "progress event arriving while paused clears the paused flag" test.
 	setDownload((prev) => ({
 		...prev,
 		active: true,

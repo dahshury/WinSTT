@@ -396,10 +396,36 @@ export function syncDiarizationParams(
  * - If `prev` is undefined → initial connect: push all non-null settings.
  * - If `prev` is provided → incremental: push only changed keys.
  */
+/**
+ * Push deterministic text-correction toggles that live under `general.*` but
+ * are consumed by the recorder's post-decode pipeline.
+ *
+ * `filter_fillers` is routed HERE (renderer → sttSetParameter, reading the live
+ * settings store) rather than through electron-main's `custom-words-sync`. That
+ * path reads the persisted electron-store and was delivering a STALE value in
+ * the long-running main process (it pushed `filter_fillers=true` while disk
+ * held `false`), so toggling "Remove Filler Words" never reached the recorder.
+ * The renderer always holds the value the user just toggled, and this fires on
+ * every change AND on connect (`shouldSyncOnConnect`), so the recorder gets the
+ * right value with no restart.
+ */
+export function syncTextCorrectionParams(
+	deps: SyncDeps,
+	settings: AppSettings,
+	prev: AppSettings | undefined
+): void {
+	const general = settings.general;
+	if (!general) {
+		return;
+	}
+	sendIfChanged(deps, general.filterFillers, prev?.general?.filterFillers, "filter_fillers", !prev);
+}
+
 export function syncToServer(deps: SyncDeps, settings: AppSettings, prev?: AppSettings): void {
 	syncAudioParams(deps, settings, prev);
 	syncModelParams(deps, settings, prev);
 	syncQualityParams(deps, settings, prev);
 	syncDiarizationParams(deps, settings, prev);
 	syncSystemParams(deps, settings, prev);
+	syncTextCorrectionParams(deps, settings, prev);
 }

@@ -422,6 +422,7 @@ describe("stt-commands pure helpers", () => {
 			"always_on_microphone",
 			"lazy_stream_close",
 			"lazy_close_timeout_seconds",
+			"filter_fillers",
 		];
 		const reasons = hotSwapParams.map((p) =>
 			helpers.validateParameterPayload({ parameter: p }, fakeClient)

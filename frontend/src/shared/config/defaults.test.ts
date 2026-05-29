@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-	COMPUTE_TYPES,
 	DEFAULT_HOTKEY,
 	LANGUAGES,
 	STT_CONTROL_PORT,
@@ -24,19 +23,6 @@ describe("WHISPER_MODELS", () => {
 			expect(WHISPER_MODELS).toContain(base);
 			expect(WHISPER_MODELS).toContain(`${base}.en` as (typeof WHISPER_MODELS)[number]);
 		}
-	});
-});
-
-describe("COMPUTE_TYPES", () => {
-	test("includes default + auto + numeric precisions", () => {
-		expect(COMPUTE_TYPES).toContain("default");
-		expect(COMPUTE_TYPES).toContain("auto");
-		expect(COMPUTE_TYPES).toContain("float16");
-		expect(COMPUTE_TYPES).toContain("float32");
-	});
-
-	test("entries are unique", () => {
-		expect(new Set(COMPUTE_TYPES).size).toBe(COMPUTE_TYPES.length);
 	});
 });
 

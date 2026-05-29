@@ -93,6 +93,10 @@ function runPendingLiftHandler(): void {
 	if (!onPasteGuardLifted) {
 		return;
 	}
+	// Clear the handler ref BEFORE invoking it so a throw can't leave the
+	// combo pointing at a stale one-shot handler — state stays consistent
+	// regardless of whether fn() throws (the catch only logs; see test
+	// "runPendingLiftHandler swallows a throwing on-lift handler").
 	const fn = onPasteGuardLifted;
 	onPasteGuardLifted = null;
 	// Stryker disable BlockStatement,StringLiteral: catch body only logs via
@@ -335,11 +339,24 @@ export function setupHotkeyHandlers(
 	 *  function — at lift time we evaluate the FINAL combo state (held vs not)
 	 *  and fire hotkey:pressed and/or hotkey:released as needed. */
 	const evalOnLift = () => {
-		// First fire any deferred press: combo became held during the guard.
-		fireDeferredPressIfNeeded();
-		// Then fire any deferred release: combo was active and is now not held.
-		fireDeferredReleaseIfNeeded();
-		updateComboReleaseState();
+		// The three passes must ALL run even if the first throws (a throwing
+		// webContents.send inside the deferred press would otherwise skip the
+		// deferred release + re-arm, stranding the combo as stuck-active and
+		// un-re-armable). try/finally guarantees the release evaluation and the
+		// comboFullyReleased re-arm always run. The release/re-arm pass is itself
+		// wrapped so a throw there can't skip the re-arm either; any escaping
+		// throw still bubbles to runPendingLiftHandler's catch (logged, not fatal).
+		try {
+			// First fire any deferred press: combo became held during the guard.
+			fireDeferredPressIfNeeded();
+		} finally {
+			try {
+				// Then fire any deferred release: combo was active and is now not held.
+				fireDeferredReleaseIfNeeded();
+			} finally {
+				updateComboReleaseState();
+			}
+		}
 	};
 
 	const resolveComboActionIfArmed = (code: number): HotkeyComboAction | null => {

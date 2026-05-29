@@ -33,8 +33,8 @@ describe("TONE_TEXT", () => {
 		expect(TONE_TEXT.muted).toContain("opacity-70");
 	});
 
-	test("default and active both read as plain foreground", () => {
-		expect(TONE_TEXT.default).toBe("text-foreground");
+	test("default rests muted; active brightens to plain foreground", () => {
+		expect(TONE_TEXT.default).toBe("text-foreground-muted");
 		expect(TONE_TEXT.active).toBe("text-foreground");
 	});
 });

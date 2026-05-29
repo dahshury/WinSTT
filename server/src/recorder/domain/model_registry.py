@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from src.recorder.domain.custom_models import CustomModelEntry
 
 
@@ -145,16 +147,18 @@ _GPU_COMPATIBLE_QUANTIZATIONS: frozenset[str] = frozenset({"", "fp16"})
 #: trip ``MLOperatorAuthorImpl`` with ``ERROR_FATAL_APP_EXIT`` even with
 #: graph optimizations disabled and even on int8. Verified by running
 #: istupakov's ``encoder-model.int8.onnx`` for Canary 180M on bare ORT-DML
-#: and observing the same crash that Handy's "blob.handy.computer" tarball
-#: produces (the encoder file is byte-identical between the two; Handy
-#: works because their Rust ``transcribe-rs`` ends up routing these models
-#: through CPU EP, not because their export is different).
+#: and observing the crash. Implementations that run these models on the
+#: CPU EP avoid it not because their export differs (the encoder file is
+#: byte-identical) but because they never route the model through a
+#: non-CUDA GPU EP in the first place.
 #:
 #: :func:`bootstrap.build_transcriber` consults this set to override the
 #: provider list to CPU-only for these models when the user's selected
 #: accelerator is DML / ROCm / CoreML. Whisper / Moonshine / custom ship
 #: working fp32 DML graphs and are not in the set.
-_DML_INCOMPATIBLE_FAMILIES: frozenset[str] = frozenset({"nemo", "cohere", "gigaam", "kaldi", "t-one", "sense_voice"})
+_DML_INCOMPATIBLE_FAMILIES: frozenset[str] = frozenset(
+    {"nemo", "cohere", "gigaam", "kaldi", "t-one", "sense_voice", "dolphin"}
+)
 
 
 def gpu_filter_quantizations(quants: list[str]) -> list[str]:
@@ -254,6 +258,27 @@ def _model_from_json(entry: dict[str, Any]) -> ModelInfo:
     )
 
 
+def _coerce_size(value: object) -> int | None:
+    """A positive-int byte count, else ``None``.
+
+    Non-positive / non-int values are the catalog's "unknown" sentinel (the
+    refresh script omits them) and are dropped from the size map.
+    """
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
+
+
+def _str_keyed(raw: dict[Any, Any]) -> Iterator[tuple[str, object]]:
+    """Yield only the ``(key, value)`` pairs of ``raw`` with ``str`` keys."""
+    return ((key, value) for key, value in raw.items() if isinstance(key, str))
+
+
+def _build_size_map(raw: dict[Any, Any]) -> dict[str, int]:
+    """Keep ``str``-keyed entries whose value coerces to a positive byte count."""
+    return {key: count for key, value in _str_keyed(raw) if (count := _coerce_size(value)) is not None}
+
+
 def _size_bytes_map(raw: object) -> dict[str, int]:
     """Coerce the catalog's ``size_bytes_by_quantization`` blob into a dict.
 
@@ -263,24 +288,19 @@ def _size_bytes_map(raw: object) -> dict[str, int]:
     """
     if not isinstance(raw, dict):
         return {}
-    out: dict[str, int] = {}
-    for key, value in raw.items():
-        if not isinstance(key, str):
-            continue
-        if isinstance(value, int) and value > 0:
-            out[key] = value
-    return out
+    return _build_size_map(raw)
 
 
 def _load_catalog_entries() -> list[ModelInfo]:
     """Load every catalog entry from :data:`_CATALOG_JSON`.
 
     The JSON file is generated/refreshed by ``scripts/refresh_catalog.py``
-    and committed to the repo. Raising on a missing file is intentional —
-    a deployment without the catalog is broken; a silent empty catalog
-    would hide the breakage. The result is then folded with any per-user
-    overlay (see :mod:`catalog_overlay`) so a previous runtime refresh's
-    HF data survives across launches even when the next boot is offline.
+    at release time (it bakes ``languages`` / ``available_quantizations`` /
+    ``param_count`` straight from the HuggingFace model cards) and committed
+    to the repo — so the bundled snapshot is the single source of truth and
+    the running server never re-fetches editorial metadata. Raising on a
+    missing file is intentional: a deployment without the catalog is broken;
+    a silent empty catalog would hide the breakage.
     """
     with _CATALOG_JSON.open("r", encoding="utf-8") as f:
         payload = json.load(f)
@@ -288,61 +308,7 @@ def _load_catalog_entries() -> list[ModelInfo]:
     if not isinstance(raw_models, list):
         msg = f"catalog.json malformed: 'models' must be a list, got {type(raw_models).__name__}"
         raise ValueError(msg)
-    from src.recorder.domain.catalog_overlay import load_overlay
-
-    overlay = load_overlay()
-    return [_apply_overlay(_model_from_json(entry), overlay) for entry in raw_models]
-
-
-def _str_only(values: list[Any]) -> list[str]:
-    return [str(v) for v in values if isinstance(v, str)]
-
-
-def _overlay_languages(patch: dict[str, Any] | None) -> list[str]:
-    """Extract a normalized ``languages`` list from an overlay patch.
-
-    Empty list means "no usable override" — the caller keeps the bundled
-    value. Guards every shape the on-disk overlay could carry.
-    """
-    if not patch:
-        return []
-    languages = patch.get("languages")
-    if not isinstance(languages, list):
-        return []
-    return _str_only(languages)
-
-
-def _apply_overlay(info: ModelInfo, overlay: dict[str, dict[str, Any]]) -> ModelInfo:
-    """Return ``info`` with any matching overlay fields swapped in.
-
-    Today only ``languages`` is overlayable. The overlay's list is taken
-    verbatim — a runtime refresh that successfully fetched HF metadata is
-    by definition more authoritative than the bundled snapshot.
-    """
-    normalized = _overlay_languages(overlay.get(info.id))
-    if not normalized:
-        return info
-    return ModelInfo(
-        id=info.id,
-        display_name=info.display_name,
-        backend=info.backend,
-        family=info.family,
-        languages=normalized,
-        supports_language_detection=info.supports_language_detection,
-        size_label=info.size_label,
-        supports_realtime=info.supports_realtime,
-        onnx_model_name=info.onnx_model_name,
-        description=info.description,
-        param_count=info.param_count,
-        available_quantizations=info.available_quantizations,
-        size_bytes_by_quantization=info.size_bytes_by_quantization,
-        available=info.available,
-        error_message=info.error_message,
-        local_path=info.local_path,
-        sha256=info.sha256,
-        wer=info.wer,
-        rtfx=info.rtfx,
-    )
+    return [_model_from_json(entry) for entry in raw_models]
 
 
 def _custom_id(slug: str) -> str:
@@ -440,6 +406,23 @@ def _get_default_scanner() -> CustomModelScanner:
     return _DEFAULT_SCANNER
 
 
+def _resolve_custom_dir(custom_models_dir: Path | str | None) -> Path | str | None:
+    """Effective scan dir: the explicit kwarg when the caller passed one (a
+    test overriding the process default), else the module-level global.
+    ``None`` (from either) skips the scan entirely."""
+    if custom_models_dir is not None:
+        return custom_models_dir
+    return _DEFAULT_CUSTOM_MODELS_DIR
+
+
+def _resolve_scanner(custom_scanner: CustomModelScanner | None) -> CustomModelScanner:
+    """The injected scanner stub when supplied (tests), else the lazily
+    resolved infrastructure scanner."""
+    if custom_scanner is not None:
+        return custom_scanner
+    return _get_default_scanner()
+
+
 class ModelCatalog:
     """Registry of all known ASR models and their metadata.
 
@@ -457,22 +440,26 @@ class ModelCatalog:
         custom_scanner: CustomModelScanner | None = None,
     ) -> None:
         self._models: dict[str, ModelInfo] = {}
+        self._register_catalog()
+        effective_dir = _resolve_custom_dir(custom_models_dir)
+        if effective_dir is not None:
+            self._register_custom(effective_dir, _resolve_scanner(custom_scanner))
+
+    def _register_catalog(self) -> None:
+        """Load every shipped catalog entry into ``self._models``."""
         for model in _load_catalog_entries():
             self._models[model.id] = model
-        # Effective ``dir`` is the explicit kwarg when caller passed one (a
-        # test wanting to override the process default), else the global.
-        # ``None`` skips the scan entirely.
-        effective_dir = custom_models_dir if custom_models_dir is not None else _DEFAULT_CUSTOM_MODELS_DIR
-        if effective_dir is not None:
-            scanner = custom_scanner if custom_scanner is not None else _get_default_scanner()
-            for entry in scanner(effective_dir):
-                info = _model_from_custom_entry(entry)
-                # Custom slugs are user input — guard against a slug that
-                # collides with a shipped catalog id ("custom-tiny" can't
-                # exist today, but a sufficiently determined user could
-                # try). The shipped catalog wins; the custom-scan row is
-                # demoted to a unique fallback id so it still appears.
-                self._models[info.id] = info
+
+    def _register_custom(self, effective_dir: Path | str, scanner: CustomModelScanner) -> None:
+        """Scan ``effective_dir`` and register each discovered custom model."""
+        for entry in scanner(effective_dir):
+            info = _model_from_custom_entry(entry)
+            # Custom slugs are user input — guard against a slug that
+            # collides with a shipped catalog id ("custom-tiny" can't
+            # exist today, but a sufficiently determined user could
+            # try). The shipped catalog wins; the custom-scan row is
+            # demoted to a unique fallback id so it still appears.
+            self._models[info.id] = info
 
     def get(self, model_id: str) -> ModelInfo | None:
         return self._models.get(model_id)
@@ -530,6 +517,47 @@ class ModelCatalog:
         info = self._models[model_id]
         return language in info.languages
 
+    @staticmethod
+    def _quants_for(m: ModelInfo, is_cuda: bool) -> list[str]:
+        """The quantizations the picker should offer for ``m``.
+
+        On CUDA, sub-fp16 quants are dropped (CUDA-EP can't accelerate them);
+        every other EP keeps the full published list.
+        """
+        if is_cuda:
+            return gpu_filter_quantizations(m.available_quantizations)
+        return list(m.available_quantizations)
+
+    @staticmethod
+    def _serialize_model(m: ModelInfo, is_cuda: bool) -> dict[str, object]:
+        """Serialize one model row, mirroring the quant filter into the size
+        map so the renderer only sees bytes for quants it'll actually show."""
+        quants = ModelCatalog._quants_for(m, is_cuda)
+        sizes = {quant: byte_count for quant, byte_count in m.size_bytes_by_quantization.items() if quant in quants}
+        return {
+            "id": m.id,
+            "display_name": m.display_name,
+            "backend": m.backend.value,
+            "family": m.family,
+            "languages": m.languages,
+            "supports_language_detection": m.supports_language_detection,
+            "size_label": m.size_label,
+            "supports_realtime": m.supports_realtime,
+            "onnx_model_name": m.onnx_model_name,
+            "description": m.description,
+            "param_count": m.param_count,
+            "available_quantizations": quants,
+            "size_bytes_by_quantization": sizes,
+            "available": m.available,
+            "error_message": m.error_message,
+            "local_path": m.local_path,
+            "sha256": m.sha256,
+            "wer": m.wer,
+            "rtfx": m.rtfx,
+            "accuracy_score": _accuracy_score(m.wer),
+            "speed_score": _speed_score(m.rtfx),
+        }
+
     def to_dicts(
         self,
         *,
@@ -552,36 +580,5 @@ class ModelCatalog:
         quant remains valid (it runs on CPU). Whisper / Moonshine families
         run on DML directly with the full quant list.
         """
-        is_cuda = device == "cuda" or accelerator == "cuda"
-        result: list[dict[str, object]] = []
-        for m in self._models.values():
-            quants = gpu_filter_quantizations(m.available_quantizations) if is_cuda else list(m.available_quantizations)
-            # Mirror the quant filter into the size map so the renderer
-            # only sees bytes for quants it'll actually show.
-            sizes = {quant: byte_count for quant, byte_count in m.size_bytes_by_quantization.items() if quant in quants}
-            result.append(
-                {
-                    "id": m.id,
-                    "display_name": m.display_name,
-                    "backend": m.backend.value,
-                    "family": m.family,
-                    "languages": m.languages,
-                    "supports_language_detection": m.supports_language_detection,
-                    "size_label": m.size_label,
-                    "supports_realtime": m.supports_realtime,
-                    "onnx_model_name": m.onnx_model_name,
-                    "description": m.description,
-                    "param_count": m.param_count,
-                    "available_quantizations": quants,
-                    "size_bytes_by_quantization": sizes,
-                    "available": m.available,
-                    "error_message": m.error_message,
-                    "local_path": m.local_path,
-                    "sha256": m.sha256,
-                    "wer": m.wer,
-                    "rtfx": m.rtfx,
-                    "accuracy_score": _accuracy_score(m.wer),
-                    "speed_score": _speed_score(m.rtfx),
-                }
-            )
-        return result
+        is_cuda = any([device == "cuda", accelerator == "cuda"])
+        return [self._serialize_model(m, is_cuda) for m in self._models.values()]

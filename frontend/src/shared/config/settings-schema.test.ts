@@ -20,13 +20,8 @@ describe("modelSettingsSchema defaults", () => {
 		expect(out.model).toBe("tiny");
 		expect(out.realtimeModel).toBe("tiny");
 		expect(out.language).toBe("en");
-		expect(out.computeType).toBe("default");
 		expect(out.device).toBe("auto");
 		expect(out.backend).toBe("faster_whisper");
-	});
-
-	test("rejects unknown computeType", () => {
-		expect(() => modelSettingsSchema.parse({ computeType: "lol" })).toThrow();
 	});
 
 	test("rejects unknown backend", () => {
@@ -262,7 +257,7 @@ describe("audioSettingsSchema defaults (lock-down)", () => {
 		expect(audioSettingsSchema.parse({}).bufferSize).toBe(512);
 	});
 
-	test("sileroSensitivity defaults to 0.7 (Handy-matching trip threshold 0.3)", () => {
+	test("sileroSensitivity defaults to 0.7 (trip threshold 0.3)", () => {
 		expect(audioSettingsSchema.parse({}).sileroSensitivity).toBe(0.7);
 	});
 

@@ -15,19 +15,6 @@ export const WHISPER_MODELS = [
 	"large-v3-turbo",
 ] as const satisfies readonly components["schemas"]["WhisperModel"][];
 
-export const COMPUTE_TYPES = [
-	"default",
-	"auto",
-	"int8",
-	"int8_float16",
-	"int8_float32",
-	"int8_bfloat16",
-	"int16",
-	"float16",
-	"float32",
-	"bfloat16",
-] as const satisfies readonly components["schemas"]["ComputeType"][];
-
 // onnx-asr quantization tier — the suffix it adds to the model filename
 // when resolving HF assets (e.g. ``encoder_model_int8.onnx``). Different
 // models ship different variants; "" means "default file" (typically fp32)

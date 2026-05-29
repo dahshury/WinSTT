@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Wave-2/3 mutation expansion: the new pure-logic files added during the frontend coverage push. Same command-runner approach as stryker.conf.json (no Stryker-Bun runner exists). Each mutant runs ONLY these files' bun tests, so per-mutant time + memory stay bounded (avoids the whole-suite happy-dom OOM).",
+  "packageManager": "npm",
+  "reporters": ["progress", "clear-text", "json"],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation-wave.json"
+  },
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "bun test src/shared/ui/calendar-heatmap/calendar-system.test.ts src/shared/ui/calendar-heatmap/presets.test.ts src/shared/ui/switching-trigger/build-switching-class-name.test.ts src/entities/llm-catalog/lib/recommended-models.test.ts src/features/connect-server/lib/connection-indicator-helpers.test.ts src/features/push-to-talk/lib/hotkey-display-helpers.test.ts src/features/record-hotkey/lib/hotkey-recorder-helpers.test.ts src/shared/lib/surface/surface-classes.test.ts src/shared/lib/swap-failure-timing.test.ts src/shared/lib/ipc-load-timing.test.ts src/shared/lib/languages.test.ts"
+  },
+  "coverageAnalysis": "off",
+  "mutate": [
+    "src/shared/ui/calendar-heatmap/calendar-system.ts",
+    "src/shared/ui/calendar-heatmap/presets.ts",
+    "src/shared/ui/switching-trigger/build-switching-class-name.ts",
+    "src/entities/llm-catalog/lib/recommended-models.ts",
+    "src/features/connect-server/lib/connection-indicator-helpers.ts",
+    "src/features/push-to-talk/lib/hotkey-display-helpers.ts",
+    "src/features/record-hotkey/lib/hotkey-recorder-helpers.ts",
+    "src/shared/lib/surface/surface-classes.ts",
+    "src/shared/lib/swap-failure-timing.ts",
+    "src/shared/lib/ipc-load-timing.ts",
+    "src/shared/lib/languages.ts"
+  ],
+  "thresholds": {
+    "high": 90,
+    "low": 70,
+    "break": 0
+  },
+  "timeoutMS": 30000,
+  "concurrency": 2,
+  "htmlReporter": {
+    "fileName": "reports/mutation/mutation-wave.html"
+  }
+}

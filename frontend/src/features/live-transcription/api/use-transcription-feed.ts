@@ -8,6 +8,7 @@ import {
 	onRecordingStart,
 	onSpeakerSegments,
 	onSttSessionAborted,
+	onTranscriptionFailed,
 } from "@/shared/api/ipc-client";
 
 export function useTranscriptionFeed(): void {
@@ -47,6 +48,13 @@ export function useTranscriptionFeed(): void {
 			setRecordingActive(false);
 		});
 
+		// Genuine backend transcriber error — report it honestly in the same
+		// ephemeral pill slot instead of the misleading "(no audio detected)".
+		const unsubTranscriptionFailed = onTranscriptionFailed(() => {
+			showEphemeral(t("transcriptionFailed"));
+			setRecordingActive(false);
+		});
+
 		// User-initiated cancel. The relay's session-aborted gate drops the
 		// terminal events that would normally reset isRecordingActive
 		// (no_audio_detected during the abort epilogue, fullSentence from
@@ -73,6 +81,7 @@ export function useTranscriptionFeed(): void {
 			unsubRealtime();
 			unsubFinal();
 			unsubNoAudio();
+			unsubTranscriptionFailed();
 			unsubAborted();
 			unsubSpeakerSegments();
 		};

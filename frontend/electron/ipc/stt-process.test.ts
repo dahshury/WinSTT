@@ -54,6 +54,44 @@ function defaultChildFor(call: SpawnCall): FakeChild {
  */
 const spawnQueueAppliesToTaskkill = { value: false };
 
+// ─── spawnSync mock (orphan reclamation) ──────────────────────────────
+//
+// `reclaimOrphanStttServers` (win32 only) shells out to `taskkill` via
+// spawnSync, and `waitForOrphanExit` polls `tasklist` the same way. The
+// real subprocess would actually try to kill processes / list the task
+// table, so we mock spawnSync with a controllable handler.
+//
+// Default behavior keeps the ~130 existing tests fast and side-effect
+// free: every win32 spawn runs reclaimOrphanStttServers, so by default we
+// return exit status 128 ("no matching process") for taskkill — that's the
+// path that DOESN'T enter the waitForOrphanExit poll loop, so no test
+// incurs a synchronous sleep. Reclaim-focused tests opt into other shapes
+// via `spawnSyncHandler.value`.
+
+interface SpawnSyncCall {
+	args: readonly string[];
+	command: string;
+}
+
+interface SpawnSyncResultLike {
+	status?: number | null;
+	stdout?: string;
+}
+
+const spawnSyncLog: SpawnSyncCall[] = [];
+
+// Default: taskkill → "no orphan" (128); tasklist → empty table.
+function defaultSpawnSync(call: SpawnSyncCall): SpawnSyncResultLike {
+	if (call.command === "tasklist") {
+		return { stdout: "INFO: No tasks are running which match the specified criteria.\n" };
+	}
+	return { status: 128 };
+}
+
+const spawnSyncHandler: { value: (call: SpawnSyncCall) => SpawnSyncResultLike | Error } = {
+	value: defaultSpawnSync,
+};
+
 mock.module("node:child_process", () => ({
 	spawn: (command: string, args: readonly string[] = [], options: SpawnCall["options"] = {}) => {
 		const call: SpawnCall = { command, args, options };
@@ -63,6 +101,15 @@ mock.module("node:child_process", () => ({
 		}
 		const factory = spawnQueue.shift() ?? defaultChildFor;
 		const result = factory(call);
+		if (result instanceof Error) {
+			throw result;
+		}
+		return result;
+	},
+	spawnSync: (command: string, args: readonly string[] = []) => {
+		const call: SpawnSyncCall = { command, args };
+		spawnSyncLog.push(call);
+		const result = spawnSyncHandler.value(call);
 		if (result instanceof Error) {
 			throw result;
 		}
@@ -147,6 +194,8 @@ function resetSpawnState(): void {
 	spawnLog.length = 0;
 	spawnQueue.length = 0;
 	spawnQueueAppliesToTaskkill.value = false;
+	spawnSyncLog.length = 0;
+	spawnSyncHandler.value = defaultSpawnSync;
 }
 
 function resetEnv(): void {
@@ -630,6 +679,23 @@ describe("spawnServer argv builder", () => {
 		}
 	});
 
+	test("buildServerArgs: --tts-device mirrors model.device (TTS shares the STT compute device)", () => {
+		// There is no separate TTS device setting — the synthesizer runs on
+		// whatever device the main model uses. Set a NON-default value so the
+		// assertion proves the flag is sourced from model.device rather than a
+		// hardcoded "auto".
+		sharedStoreMock.store.set("model.device", "cpu");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			const idx = args.indexOf("--tts-device");
+			expect(idx).toBeGreaterThanOrEqual(0);
+			expect(args[idx + 1]).toBe("cpu");
+		} finally {
+			sharedStoreMock.store.set("model.device", "auto");
+		}
+	});
+
 	test("buildServerArgs: default display='both' pushes --enable_realtime_transcription", () => {
 		// Default mock state: overlay on, display="both" → at least one consumer
 		// (pill + in-app) → derived realtime ON.
@@ -724,7 +790,6 @@ describe("spawnServer argv builder", () => {
 		["model.model", "--model", "tiny.en"],
 		["model.realtimeModel", "--rt-model", "tiny.en"],
 		["model.language", "--lang", "fr"],
-		["model.computeType", "--compute_type", "float16"],
 		["model.device", "--device", "cuda"],
 		["model.backend", "--backend", "ctranslate2"],
 		["model.onnxQuantization", "--onnx_quantization", "int8"],
@@ -1083,7 +1148,6 @@ const STORE_MAPPINGS: Mapping[] = [
 	{ storePath: "model.model", cliFlag: "--model", value: "tiny" },
 	{ storePath: "model.realtimeModel", cliFlag: "--rt-model", value: "tiny.en" },
 	{ storePath: "model.language", cliFlag: "--lang", value: "fr" },
-	{ storePath: "model.computeType", cliFlag: "--compute_type", value: "int8" },
 	{ storePath: "model.device", cliFlag: "--device", value: "cuda" },
 	{ storePath: "model.backend", cliFlag: "--backend", value: "onnx" },
 	{
@@ -1866,5 +1930,367 @@ describe("resolveWakeWordContext", () => {
 			sharedStoreMock.store.set("general.recordingMode", "ptt");
 			sharedStoreMock.store.set("general.wakeWord", "");
 		}
+	});
+});
+
+// ─── applyMicrophoneReleaseFlag (via spawnServer argv builder) ────────
+//
+// CC 5: `always` → --always_on_microphone; `immediate`/default → no flag;
+// sec30/min1/min5 → --lazy_stream_close + --lazy_close_timeout_seconds N;
+// unknown enum → no flag (defensive, schema normally catches it). Only the
+// default ("immediate") branch is hit by the rest of the suite, so this
+// block drives the remaining four branches. Source lines 366-385.
+
+function spawnArgs(): readonly string[] {
+	return spawnLog[0]?.args ?? [];
+}
+
+describe("applyMicrophoneReleaseFlag (via spawnServer argv builder)", () => {
+	test("'always' pushes --always_on_microphone and NO lazy flags", () => {
+		sharedStoreMock.store.set("audio.microphoneRelease", "always");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnArgs();
+			expect(args).toContain("--always_on_microphone");
+			expect(args).not.toContain("--lazy_stream_close");
+			expect(args).not.toContain("--lazy_close_timeout_seconds");
+		} finally {
+			sharedStoreMock.store.set("audio.microphoneRelease", "immediate");
+		}
+	});
+
+	test("'immediate' emits no microphone-release flags at all", () => {
+		sharedStoreMock.store.set("audio.microphoneRelease", "immediate");
+		sttProcess.tryAutoSpawnServer();
+		const args = spawnArgs();
+		expect(args).not.toContain("--always_on_microphone");
+		expect(args).not.toContain("--lazy_stream_close");
+		expect(args).not.toContain("--lazy_close_timeout_seconds");
+	});
+
+	test("missing/undefined value defaults to 'immediate' (no flags)", () => {
+		// `audio.microphoneRelease` has no storeMock default → getStoreRaw
+		// returns undefined → String(undefined ?? "immediate") === "immediate".
+		// (No set call — relies on the absent key.)
+		sttProcess.tryAutoSpawnServer();
+		const args = spawnArgs();
+		expect(args).not.toContain("--always_on_microphone");
+		expect(args).not.toContain("--lazy_stream_close");
+	});
+
+	const LAZY_CASES: [bucket: string, seconds: string][] = [
+		["sec30", "30"],
+		["min1", "60"],
+		["min5", "300"],
+	];
+	for (const [bucket, seconds] of LAZY_CASES) {
+		test(`'${bucket}' pushes --lazy_stream_close + --lazy_close_timeout_seconds ${seconds}`, () => {
+			sharedStoreMock.store.set("audio.microphoneRelease", bucket);
+			try {
+				sttProcess.tryAutoSpawnServer();
+				const args = spawnArgs();
+				expect(args).toContain("--lazy_stream_close");
+				const idx = args.indexOf("--lazy_close_timeout_seconds");
+				expect(idx).toBeGreaterThanOrEqual(0);
+				expect(args[idx + 1]).toBe(seconds);
+				// 'always' must NOT also be emitted on the lazy path.
+				expect(args).not.toContain("--always_on_microphone");
+			} finally {
+				sharedStoreMock.store.set("audio.microphoneRelease", "immediate");
+			}
+		});
+	}
+
+	test("unknown enum value (corrupt persist) emits no flags (defensive branch)", () => {
+		// A value Zod would normally normalize via `.catch("immediate")`. The
+		// MIC_RELEASE_LAZY_SECONDS lookup misses → seconds === undefined → the
+		// early return fires WITHOUT pushing any flag.
+		sharedStoreMock.store.set("audio.microphoneRelease", "min42-bogus");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnArgs();
+			expect(args).not.toContain("--always_on_microphone");
+			expect(args).not.toContain("--lazy_stream_close");
+			expect(args).not.toContain("--lazy_close_timeout_seconds");
+		} finally {
+			sharedStoreMock.store.set("audio.microphoneRelease", "immediate");
+		}
+	});
+});
+
+// ─── pushOpenWakeWordModelPaths (via spawnServer argv builder) ────────
+//
+// L254 — the OWW-model-paths flag is required for composite + openwakeword
+// backends but NOT for pvporcupine. The jarvis test above (pvporcupine)
+// covers the omit branch; here we drive the include branch with cross-engine
+// + OWW-only keywords.
+
+describe("pushOpenWakeWordModelPaths (via spawnServer argv builder)", () => {
+	test("composite backend ('alexa') pushes --openwakeword_model_paths <word>", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "alexa");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnArgs();
+			const backendIdx = args.indexOf("--wakeword_backend");
+			expect(args[backendIdx + 1]).toBe("composite");
+			const idx = args.indexOf("--openwakeword_model_paths");
+			expect(idx).toBeGreaterThanOrEqual(0);
+			expect(args[idx + 1]).toBe("alexa");
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("openwakeword backend ('hey_jarvis') pushes --openwakeword_model_paths <word>", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "hey_jarvis");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnArgs();
+			const backendIdx = args.indexOf("--wakeword_backend");
+			expect(args[backendIdx + 1]).toBe("openwakeword");
+			const idx = args.indexOf("--openwakeword_model_paths");
+			expect(idx).toBeGreaterThanOrEqual(0);
+			expect(args[idx + 1]).toBe("hey_jarvis");
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+
+	test("pvporcupine backend ('jarvis') OMITS --openwakeword_model_paths", () => {
+		sharedStoreMock.store.set("general.recordingMode", "wakeword");
+		sharedStoreMock.store.set("general.wakeWord", "jarvis");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnArgs();
+			const backendIdx = args.indexOf("--wakeword_backend");
+			expect(args[backendIdx + 1]).toBe("pvporcupine");
+			expect(args).not.toContain("--openwakeword_model_paths");
+		} finally {
+			sharedStoreMock.store.set("general.recordingMode", "ptt");
+			sharedStoreMock.store.set("general.wakeWord", "");
+		}
+	});
+});
+
+// ─── pushStoreTrueFlagIfTrue / applyStoreTrueCliFlags (L350-351) ──────
+//
+// STORE_TRUE_CLI: general.speakerDiarization → --enable_diarization and
+// model.translateToEnglish → --translate_to_english. The flag is pushed
+// ONLY when the raw value is strictly `true`. Default suite never sets
+// these true, so the push branch (L351) was uncovered.
+
+describe("pushStoreTrueFlagIfTrue (via spawnServer argv builder)", () => {
+	test("speakerDiarization=true appends --enable_diarization", () => {
+		sharedStoreMock.store.set("general.speakerDiarization", true);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			expect(spawnArgs()).toContain("--enable_diarization");
+		} finally {
+			sharedStoreMock.store.set("general.speakerDiarization", false);
+		}
+	});
+
+	test("translateToEnglish=true appends --translate_to_english", () => {
+		sharedStoreMock.store.set("model.translateToEnglish", true);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			expect(spawnArgs()).toContain("--translate_to_english");
+		} finally {
+			sharedStoreMock.store.set("model.translateToEnglish", false);
+		}
+	});
+
+	test("a non-true truthy value (string 'true') does NOT push the flag (strict === true)", () => {
+		// L350 uses `=== true`, so a stringified "true" leaking from a corrupt
+		// store must NOT emit the flag. Locks the strict-equality guard.
+		sharedStoreMock.store.set("general.speakerDiarization", "true");
+		try {
+			sttProcess.tryAutoSpawnServer();
+			expect(spawnArgs()).not.toContain("--enable_diarization");
+		} finally {
+			sharedStoreMock.store.set("general.speakerDiarization", false);
+		}
+	});
+
+	test("false value omits both store_true flags", () => {
+		sharedStoreMock.store.set("general.speakerDiarization", false);
+		sharedStoreMock.store.set("model.translateToEnglish", false);
+		sttProcess.tryAutoSpawnServer();
+		const args = spawnArgs();
+		expect(args).not.toContain("--enable_diarization");
+		expect(args).not.toContain("--translate_to_english");
+	});
+});
+
+// ─── buildServerEnv (Sentry DSN forwarding) ───────────────────────────
+//
+// CC 3 — two branches plus the sendCrashReports ternary. The default suite
+// always hits the `!dsn` strip branch (no DSN in test env). Here we drive:
+//   1. sendCrashReports !== false AND a resolvable DSN → env carries SENTRY_DSN
+//   2. sendCrashReports === false → DSN forced undefined → SENTRY_DSN stripped
+// We read env off the recorded spawn options.
+
+function spawnedEnv(): NodeJS.ProcessEnv | undefined {
+	const opts = spawnLog[0]?.options as { env?: NodeJS.ProcessEnv } | undefined;
+	return opts?.env;
+}
+
+describe("buildServerEnv", () => {
+	test("forwards SENTRY_DSN to the child when crash reports are on and a DSN resolves", () => {
+		const previousDsn = process.env.SENTRY_DSN;
+		process.env.SENTRY_DSN = "https://abc123@o0.ingest.sentry.io/42";
+		sharedStoreMock.store.set("general.sendCrashReports", true);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const env = spawnedEnv();
+			expect(env).toBeDefined();
+			expect(env?.SENTRY_DSN).toBe("https://abc123@o0.ingest.sentry.io/42");
+		} finally {
+			if (previousDsn === undefined) {
+				delete process.env.SENTRY_DSN;
+			} else {
+				process.env.SENTRY_DSN = previousDsn;
+			}
+			sharedStoreMock.store.delete("general.sendCrashReports");
+		}
+	});
+
+	test("strips SENTRY_DSN when the user opted out (sendCrashReports === false)", () => {
+		const previousDsn = process.env.SENTRY_DSN;
+		// Even with a DSN present in the parent env, opting out forces dsn=undefined.
+		process.env.SENTRY_DSN = "https://abc123@o0.ingest.sentry.io/42";
+		sharedStoreMock.store.set("general.sendCrashReports", false);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const env = spawnedEnv();
+			expect(env).toBeDefined();
+			expect(env?.SENTRY_DSN).toBeUndefined();
+		} finally {
+			if (previousDsn === undefined) {
+				delete process.env.SENTRY_DSN;
+			} else {
+				process.env.SENTRY_DSN = previousDsn;
+			}
+			sharedStoreMock.store.delete("general.sendCrashReports");
+		}
+	});
+
+	test("strips SENTRY_DSN when crash reports are on but no DSN resolves", () => {
+		const previousDsn = process.env.SENTRY_DSN;
+		delete process.env.SENTRY_DSN;
+		sharedStoreMock.store.set("general.sendCrashReports", true);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const env = spawnedEnv();
+			expect(env).toBeDefined();
+			expect(env?.SENTRY_DSN).toBeUndefined();
+			// The parent PATH still propagates — env is the parent env minus DSN.
+			expect("PATH" in (env ?? {}) || "Path" in (env ?? {})).toBe(true);
+		} finally {
+			if (previousDsn !== undefined) {
+				process.env.SENTRY_DSN = previousDsn;
+			}
+			sharedStoreMock.store.delete("general.sendCrashReports");
+		}
+	});
+});
+
+// ─── reclaimOrphanStttServers + waitForOrphanExit + sleepSync ─────────
+//
+// win32-only orphan reclamation. Every spawn on win32 first runs
+// reclaimOrphanStttServers() → spawnSync("taskkill"). When taskkill exits 0
+// ("killed at least one"), it then polls tasklist via waitForOrphanExit
+// until the image disappears, sleeping (sleepSync) between probes. These
+// branches (source 664-696, 623-636, 609-611) are otherwise unreachable
+// because the default mock returns 128 ("no orphan").
+
+describe("reclaimOrphanStttServers (win32 orphan reclamation)", () => {
+	test("taskkill exit 0 then a clean tasklist returns immediately (no sleep)", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnSyncHandler.value = (call) => {
+			if (call.command === "tasklist") {
+				// Image already gone on the first probe → waitForOrphanExit returns.
+				return { stdout: "INFO: No tasks are running.\n" };
+			}
+			return { status: 0 };
+		};
+		resetDbgCalls();
+		sttProcess.tryAutoSpawnServer();
+		// taskkill ran, then exactly one tasklist probe.
+		expect(spawnSyncLog.some((c) => c.command === "taskkill")).toBe(true);
+		expect(spawnSyncLog.filter((c) => c.command === "tasklist").length).toBe(1);
+		// taskkill args lock the /F /T /IM stt-server.exe shape (L669).
+		const tk = spawnSyncLog.find((c) => c.command === "taskkill");
+		expect(tk?.args).toEqual(["/F", "/T", "/IM", "stt-server.exe"]);
+		// L679 dbg literal: "killed leftover stt-server.exe".
+		expect(dbgHas("stt-process", "killed leftover stt-server.exe")).toBe(true);
+	});
+
+	test("taskkill exit 0 then orphan still listed once → sleepSync then exits when gone", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		let tasklistCalls = 0;
+		spawnSyncHandler.value = (call) => {
+			if (call.command === "tasklist") {
+				tasklistCalls += 1;
+				// First probe: still present → triggers sleepSync(50). Second
+				// probe: gone → waitForOrphanExit returns.
+				return tasklistCalls === 1
+					? { stdout: "stt-server.exe   1234 Console   1   50,000 K\n" }
+					: { stdout: "INFO: No tasks.\n" };
+			}
+			return { status: 0 };
+		};
+		sttProcess.tryAutoSpawnServer();
+		// Two probes: one "still here", one "gone". Proves the loop iterated
+		// (and sleepSync was invoked between them without hanging the suite).
+		expect(tasklistCalls).toBe(2);
+	});
+
+	test("taskkill exit 128 (no orphan) SKIPS the tasklist poll entirely", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		// Default handler already returns 128 for taskkill.
+		sttProcess.tryAutoSpawnServer();
+		expect(spawnSyncLog.some((c) => c.command === "taskkill")).toBe(true);
+		// status !== 0 → waitForOrphanExit is never called → no tasklist probe.
+		expect(spawnSyncLog.some((c) => c.command === "tasklist")).toBe(false);
+	});
+
+	test("spawnSync throwing (taskkill missing/blocked) is swallowed and logged", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnSyncHandler.value = () => new Error("taskkill ENOENT");
+		resetDbgCalls();
+		// Must not block the spawn — reclaim's catch swallows the error.
+		expect(() => sttProcess.tryAutoSpawnServer()).not.toThrow();
+		expect(sttProcess.isSttProcessRunning()).toBe(true);
+		// L694 dbg literal: "reclaimOrphanStttServers: ignored:".
+		expect(dbgHas("stt-process", "reclaimOrphanStttServers: ignored:")).toBe(true);
+	});
+
+	test("a nullish tasklist stdout is treated as 'gone' (?? '' guard, L631)", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnSyncHandler.value = (call) => {
+			if (call.command === "tasklist") {
+				// stdout omitted → `(probe.stdout ?? "")` resolves to "" → the
+				// substring check is false → orphan considered gone.
+				return {};
+			}
+			return { status: 0 };
+		};
+		expect(() => sttProcess.tryAutoSpawnServer()).not.toThrow();
+		expect(spawnSyncLog.filter((c) => c.command === "tasklist").length).toBe(1);
 	});
 });

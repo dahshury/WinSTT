@@ -1,4 +1,14 @@
 {
   "title": "Settings",
-  "pages": ["index", "model", "audio", "quality", "general", "hotkey", "llm", "tts"]
+  "pages": [
+    "index",
+    "model",
+    "audio",
+    "quality",
+    "general",
+    "hotkey",
+    "llm",
+    "tts",
+    "integrations"
+  ]
 }

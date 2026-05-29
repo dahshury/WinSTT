@@ -146,9 +146,7 @@ def main() -> int:
                 print(f"  {model:<46} {dur:>5.1f}s  BASELINE FAILED: {type(e).__name__}: {str(e)[:50]}")
                 continue
             # Tuned = wrapper's intra-only tuning
-            tuned_med, _, _, tuned_text = time_one(
-                model, audio, tuned_opts(is_gpu=use_gpu), None, iters, use_gpu
-            )
+            tuned_med, _, _, tuned_text = time_one(model, audio, tuned_opts(is_gpu=use_gpu), None, iters, use_gpu)
             # Tuned + do_copy_in_default_stream (CUDA only — otherwise same as tuned)
             if use_gpu:
                 docopy_med, _, _, docopy_text = time_one(
@@ -161,10 +159,7 @@ def main() -> int:
             drift = (tuned_text != base_text) or (docopy_text != base_text)
             tuned_delta = (tuned_med - base_med) / base_med * 100
             docopy_delta = (docopy_med - base_med) / base_med * 100
-            best_label = (
-                "base" if best == base_med
-                else ("tuned" if best == tuned_med else "do_copy")
-            )
+            best_label = "base" if best == base_med else ("tuned" if best == tuned_med else "do_copy")
             print(
                 f"  {model:<46} {dur:>5.1f}s  {base_med:7.2f}ms  "
                 f"{tuned_med:7.2f}ms  {docopy_med:7.2f}ms  {best_label:>8}  "

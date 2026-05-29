@@ -80,14 +80,16 @@ _CONFIG_FILES: tuple[str, ...] = ("config.json", "config.yaml")
 # Match by basename so the optional ``lang/`` / ``am/`` / version-prefix
 # subdirectories don't matter. The ``*_vocab.txt`` suffix covers the
 # GigaAM family's versioned vocab filenames without enumerating each one.
-_SIDECAR_FILES: frozenset[str] = frozenset({
-    "tokens.txt",
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "vocab.txt",
-    "vocab.json",
-    "added_tokens.json",
-})
+_SIDECAR_FILES: frozenset[str] = frozenset(
+    {
+        "tokens.txt",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.txt",
+        "vocab.json",
+        "added_tokens.json",
+    }
+)
 _SIDECAR_SUFFIXES: tuple[str, ...] = ("_vocab.txt",)
 # Quantization label separator inside a weight filename. ``onnx-community``
 # exports use ``_`` (``encoder_model_int8.onnx``); alphacep / Vosk exports
@@ -220,19 +222,18 @@ def _is_config_file(filename: str) -> bool:
 
 
 def _select_files_for_quant(all_files: list[str], quantization: str) -> list[str]:
-    """Pick the repo files we actually need for this quant.
+    """Filename heuristic for the repo files needed at this quant.
 
-    Mirrors what onnx-asr's per-family ``_get_model_files`` would request
-    via ``snapshot_download``'s ``allow_patterns``:
+    Retained only as the OFF-CATALOG FALLBACK for
+    :func:`_select_files_via_resolver` (custom repos onnx-asr can't type).
+    The authoritative selection comes from onnx-asr's own ``_get_model_files``
+    — see :func:`_select_files_via_resolver`. This mirror picks:
 
-    1. ``.onnx`` weights (and any external-data ``.onnx_data`` /
-       ``.onnx.data`` sidecars) whose quant suffix matches.
+    1. ``.onnx`` weights (and external-data ``.onnx_data`` / ``.onnx.data``
+       sidecars) whose quant suffix matches.
     2. The shared ``config.{json,yaml}`` if present.
     3. Tokenizer / vocab sidecars (``tokens.txt``, ``tokenizer.json``,
-       ``*_vocab.txt``, …) — these aren't quant-specific but the loader
-       errors without them. Skipping them used to be invisible because
-       the downloader reported "completed" even with the vocab missing;
-       the swap that ran afterwards was what actually failed.
+       ``*_vocab.txt``, …) — loader-required regardless of quant.
     """
     selected: list[str] = []
     for filename in all_files:
@@ -243,6 +244,60 @@ def _select_files_for_quant(all_files: list[str], quantization: str) -> list[str
         if _is_config_file(filename) or _is_sidecar_file(filename):
             selected.append(filename)
     return selected
+
+
+def _onnx_asr_required_patterns(model_or_repo: str, quantization: str) -> list[str] | None:
+    """File patterns onnx-asr's resolver would download for ``(model, quant)``.
+
+    Mirrors :meth:`onnx_asr.resolver.Resolver._download_model` EXACTLY so the
+    streaming downloader fetches the same set the loader will later resolve —
+    onnx-asr's ``_get_model_files`` values, plus the root-level variant of each
+    ``**/`` pattern, plus ``config.{json,yaml}``, plus a ``.onnx?data``
+    external-data sidecar per ``.onnx``. Returns ``None`` when onnx-asr can't
+    resolve the model type (off-catalog repo) — caller falls back to the
+    filename heuristic. May fetch the tiny ``config.json`` over the network to
+    determine the model type for ``/``-style repos (we are about to download
+    the weights anyway).
+    """
+    try:
+        from pathlib import PurePosixPath
+
+        from onnx_asr.loader import create_asr_resolver
+    except Exception:  # pragma: no cover — onnx-asr is a hard dependency
+        return None
+    try:
+        resolver = create_asr_resolver(model=model_or_repo)
+        files = list(resolver.model_type._get_model_files(quantization or None).values())
+    except Exception:
+        logger.debug("onnx-asr could not resolve a file set for %s — using heuristic", model_or_repo, exc_info=True)
+        return None
+    files = [*files, *(f.removeprefix("**/") for f in files if f.startswith("**/"))]
+    return [
+        "config.json",
+        "config.yaml",
+        *files,
+        *(str(PurePosixPath(f).with_suffix(".onnx?data")) for f in files if PurePosixPath(f).suffix == ".onnx"),
+    ]
+
+
+def _select_files_via_resolver(repo_id: str, all_files: list[str], quantization: str) -> list[str]:
+    """Authoritative download-file selection: onnx-asr's resolver is the source
+    of truth; the filename heuristic is the off-catalog fallback.
+
+    Expands the resolver's patterns against the repo's actual file list with
+    ``fnmatch`` (same matcher HuggingFace's ``snapshot_download`` uses for
+    ``allow_patterns``). ``config.{json,yaml}`` patterns the repo doesn't ship
+    simply don't match — harmless.
+    """
+    patterns = _onnx_asr_required_patterns(repo_id, quantization)
+    if patterns is not None:
+        from fnmatch import fnmatch
+
+        selected = [f for f in all_files if any(fnmatch(f, pattern) for pattern in patterns)]
+        if selected:
+            return selected
+        logger.debug("onnx-asr patterns matched no files for %s — using heuristic", repo_id)
+    return _select_files_for_quant(all_files, quantization)
 
 
 def _resolve_file_metadata(repo_id: str, filename: str) -> HfFileMetadata | None:
@@ -279,7 +334,7 @@ def _resolve_download_files(repo_id: str, quantization: str) -> list[DownloadFil
     except Exception:
         logger.exception("Failed to list files for %s", repo_id)
         return None
-    needed = _select_files_for_quant(all_files, quantization)
+    needed = _select_files_via_resolver(repo_id, all_files, quantization)
     resolved: list[DownloadFile] = []
     for filename in needed:
         meta = _resolve_file_metadata(repo_id, filename)

@@ -72,4 +72,33 @@ describe("FormControl", () => {
 		const input = screen.getByTestId("i");
 		expect(input.parentElement?.className).toContain("pointer-events-none");
 	});
+
+	test("toggle-only control (labelAddon, no children) floats the toggle right of a centered header", () => {
+		const { container } = render(
+			<FormControl
+				caption="desc"
+				label="Enable X"
+				labelAddon={
+					<input aria-checked={false} aria-label="enable" role="switch" type="checkbox" />
+				}
+			/>
+		);
+		// The header row centers the toggle against the label+caption block …
+		expect(container.querySelector("div.flex.items-center")).not.toBeNull();
+		// … and the toggle lives in a trailing shrink-0 slot, not after the label text.
+		const sw = screen.getByRole("switch");
+		expect(sw.closest("div.shrink-0")).not.toBeNull();
+		expect(screen.getByText("Enable X")).toBeDefined();
+		expect(screen.getByText("desc")).toBeDefined();
+	});
+
+	test("stacked control with children keeps the two-row (flex-col) layout", () => {
+		const { container } = render(
+			<FormControl label="Name">
+				<input data-testid="i" type="text" />
+			</FormControl>
+		);
+		const root = container.firstElementChild as HTMLElement;
+		expect(root.className).toContain("flex-col");
+	});
 });

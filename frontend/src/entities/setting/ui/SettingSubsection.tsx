@@ -8,6 +8,8 @@ export interface SettingSubsectionProps {
 	/** One-line description rendered under the title. */
 	caption?: string;
 	children: ReactNode;
+	/** Action rendered on the trailing edge of the title row, before any toggle. */
+	headerAction?: ReactNode;
 	/** Optional leading icon shown before the title. */
 	icon?: IconSvgElement;
 	onToggle?: (checked: boolean) => void;
@@ -29,6 +31,7 @@ export function SettingSubsection({
 	title,
 	caption,
 	children,
+	headerAction,
 	icon,
 	toggled,
 	onToggle,
@@ -49,16 +52,19 @@ export function SettingSubsection({
 					</span>
 				)}
 				<h4 className="font-medium text-foreground text-subtitle">{title}</h4>
-				{hasToggle && (
-					<div className="ml-auto">
-						<Toggle
-							aria-label={`Toggle ${title}`}
-							checked={toggled ?? false}
-							disabled={toggleDisabled}
-							onCheckedChange={onToggle}
-						/>
+				{headerAction || hasToggle ? (
+					<div className="ml-auto flex items-center gap-1.5">
+						{headerAction}
+						{hasToggle && (
+							<Toggle
+								aria-label={`Toggle ${title}`}
+								checked={toggled ?? false}
+								disabled={toggleDisabled}
+								onCheckedChange={onToggle}
+							/>
+						)}
 					</div>
-				)}
+				) : null}
 			</div>
 			{caption ? (
 				<p className="-mt-1 mb-3 text-body-sm text-foreground-muted leading-snug">{caption}</p>

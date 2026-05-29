@@ -21,6 +21,7 @@ components:
           recording_start: "#/components/schemas/RecordingStartEvent"
           recording_stop: "#/components/schemas/RecordingStopEvent"
           no_audio_detected: "#/components/schemas/NoAudioDetectedEvent"
+          transcription_failed: "#/components/schemas/TranscriptionFailedEvent"
           loopback_started: "#/components/schemas/LoopbackStartedEvent"
           loopback_stopped: "#/components/schemas/LoopbackStoppedEvent"
           device_switch_failed: "#/components/schemas/DeviceSwitchFailedEvent"
@@ -49,6 +50,7 @@ components:
         - $ref: "#/components/schemas/RecordingStartEvent"
         - $ref: "#/components/schemas/RecordingStopEvent"
         - $ref: "#/components/schemas/NoAudioDetectedEvent"
+        - $ref: "#/components/schemas/TranscriptionFailedEvent"
         - $ref: "#/components/schemas/LoopbackStartedEvent"
         - $ref: "#/components/schemas/LoopbackStoppedEvent"
         - $ref: "#/components/schemas/DeviceSwitchFailedEvent"
@@ -190,6 +192,34 @@ components:
         type:
           type: string
           const: no_audio_detected
+
+    TranscriptionFailedEvent:
+      type: object
+      description: >
+        Emitted when the active transcriber *raised* while decoding real audio
+        (e.g. a model whose ONNX export ships an incomplete vocab, an
+        execution-provider kernel crash, or out-of-memory). Distinct from
+        ``no_audio_detected`` (genuine silence) and from a swap-in-flight skip
+        (transcriber not ready): the renderer surfaces this as an honest
+        "transcription failed" hint instead of mislabelling it "no audio
+        detected". The full traceback is in the server log; ``detail`` carries
+        a concise "<ExceptionType>: <message>" string for diagnostics.
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: transcription_failed
+        reason:
+          type: string
+          description: Short user-facing summary of the failure.
+        category:
+          type: string
+          description: >
+            Stable error bucket for future UI variants (mirrors
+            ``model_swap_failed``). Currently always "unknown".
+        detail:
+          type: string
+          description: 'Raw "<ExceptionType>: <message>" for diagnostics.'
 
     VadDetectStartEvent:
       type: object
@@ -542,6 +572,12 @@ components:
         - always_on_microphone
         - lazy_stream_close
         - lazy_close_timeout_seconds
+        # Locale-aware filler/disfluency stripping toggle ("uh"/"um"/...).
+        # Pushed from the renderer's syncToServer (live settings store) so a
+        # toggle reaches the recorder reliably — the electron-main
+        # custom-words-sync path read a stale value in the live process. Read
+        # live by RecorderService._apply_filler_filter on every transcription.
+        - filter_fillers
 
     AllowedMethod:
       type: string
@@ -570,20 +606,6 @@ components:
         - large-v2
         - large-v3
         - large-v3-turbo
-
-    ComputeType:
-      type: string
-      enum:
-        - default
-        - auto
-        - int8
-        - int8_float16
-        - int8_float32
-        - int8_bfloat16
-        - int16
-        - float16
-        - float32
-        - bfloat16
 
     DeviceType:
       type: string
@@ -642,6 +664,7 @@ components:
         - moonshine
         - cohere
         - sense_voice
+        - dolphin
         - custom
 
     ModelInfo:
@@ -815,8 +838,6 @@ components:
           type: string
         language:
           type: string
-        computeType:
-          $ref: "#/components/schemas/ComputeType"
         device:
           $ref: "#/components/schemas/DeviceType"
         accelerator:
@@ -1052,9 +1073,8 @@ components:
             custom-word fuzzy corrector that runs on the server
             immediately AFTER ASR and BEFORE the LLM modifier pipeline.
             Lower = stricter (fewer false positives, more genuine
-            near-misses left for the LLM to fix). 0.18 matches Handy's
-            reference value (see
-            `examples/Handy/src-tauri/src/audio_toolkit/text.rs`). The
+            near-misses left for the LLM to fix). 0.18 is the reference
+            default. The
             word list itself is derived from the existing `dictionary`
             array, using entries whose `replacement` field is empty as
             the canonical vocabulary.

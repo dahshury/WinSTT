@@ -3,6 +3,8 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { CSSProperties, FocusEvent as ReactFocusEvent } from "react";
 import { cn } from "@/shared/lib/cn";
 import { fontWeights } from "@/shared/lib/font-weight";
+import { DemoPreview } from "@/shared/ui/demo-preview";
+import { Tooltip } from "@/shared/ui/tooltip";
 import type { SwitcherOption } from "./switcher-option";
 
 type SwitcherCssVars = CSSProperties & { "--switcher-color"?: string | undefined };
@@ -55,7 +57,7 @@ export function SwitcherOptionToggle<T extends string>({
 		// selected/hovered label.
 		return "text-foreground-muted";
 	})();
-	return (
+	const toggleEl = (
 		<Toggle
 			className={cn(
 				"relative z-raised inline-flex items-center justify-center gap-1.5 bg-transparent px-3 py-1 font-medium text-body-sm outline-none transition-colors focus-visible:outline-none",
@@ -94,4 +96,25 @@ export function SwitcherOptionToggle<T extends string>({
 			</span>
 		</Toggle>
 	);
+	// A per-option preview reveals a short looping demo of this exact option on
+	// hover (one preview per button — not one for the whole group). Takes
+	// precedence over a text tooltip when both are set.
+	if (option.preview && !option.disabled) {
+		return (
+			<DemoPreview demo={option.preview} side="top">
+				{toggleEl}
+			</DemoPreview>
+		);
+	}
+	// A per-option tooltip (with optional footer hint) wraps the whole segment.
+	// Only used for non-disabled options — a disabled option renders a native
+	// disabled button which doesn't fire hover, so those rely on the badge.
+	if (option.tooltip) {
+		return (
+			<Tooltip content={option.tooltip} footer={option.tooltipFooter} side="top">
+				{toggleEl}
+			</Tooltip>
+		);
+	}
+	return toggleEl;
 }

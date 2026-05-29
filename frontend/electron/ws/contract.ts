@@ -167,6 +167,19 @@ const noAudioDetectedSchema = z.object({
 	type: z.literal("no_audio_detected"),
 });
 
+// Genuine transcriber crash (the transcriber *raised* while decoding real
+// audio — incomplete-vocab model, EP kernel crash, OOM). Emitted by the
+// recorder service via the `TranscriptionFailed` domain event so the renderer
+// reports the failure honestly instead of mislabelling it "no audio detected".
+// `reason`/`category`/`detail` are diagnostics; the inline pill only needs the
+// signal.
+const transcriptionFailedSchema = z.object({
+	type: z.literal("transcription_failed"),
+	reason: z.string().optional(),
+	category: z.string().optional(),
+	detail: z.string().optional(),
+});
+
 // Adaptive-VAD feedback: the server has recalibrated its silence threshold
 // from observed background noise vs. speech peaks. Emitted by
 // ``on_vad_sensitivity_adapted`` (see server/src/stt_server/callbacks.py)
@@ -365,6 +378,7 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	stopTurnDetectionSchema,
 	transcriptionStartSchema,
 	noAudioDetectedSchema,
+	transcriptionFailedSchema,
 	vadSensitivityAdaptedSchema,
 	deviceSwitchFailedSchema,
 	deviceBecameAvailableSchema,

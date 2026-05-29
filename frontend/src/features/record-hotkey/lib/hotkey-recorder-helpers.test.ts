@@ -21,14 +21,17 @@ describe("formatCombo", () => {
 		expect(formatCombo("LAlt+LMeta")).toBe("L Alt + L Win");
 	});
 
-	test("empty string yields empty (split('+') on '' gives ['']→formatted '')", () => {
-		// "".split("+") === [""], formatKeyName("") === "" (no label), join → "".
+	test("empty string yields empty (all segments filtered out)", () => {
+		// "".split("+") === [""]; the empty segment is dropped → "".
 		expect(formatCombo("")).toBe("");
 	});
 
-	test("a single trailing '+' produces an empty second token", () => {
-		// "Ctrl+".split("+") === ["Ctrl",""] → "Ctrl + ".
-		expect(formatCombo("Ctrl+")).toBe("Ctrl + ");
+	test("a trailing/leading/whitespace '+' segment is dropped, not rendered as a dangling token", () => {
+		// Regression guard: empty/whitespace-only segments are filtered, so a
+		// partial accelerator renders cleanly instead of leaking a " + " tail.
+		expect(formatCombo("Ctrl+")).toBe("Ctrl");
+		expect(formatCombo("+Ctrl")).toBe("Ctrl");
+		expect(formatCombo("Ctrl+ +V")).toBe("Ctrl + V");
 	});
 });
 

@@ -23,7 +23,7 @@ export function effectiveText(entry: HistoryEntry): string {
 /**
  * Format the entry's `timestamp` (epoch seconds) in the user's locale. We
  * use a format string compatible with Intl.DateTimeFormat so platform-local
- * conventions win — Handy hardcodes US-English; we honour the system locale.
+ * conventions win — we honour the system locale rather than hardcoding US-English.
  */
 export function formatEntryTimestamp(entry: HistoryEntry): string {
 	const date = new Date(entry.timestamp * 1000);

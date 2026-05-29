@@ -12,14 +12,16 @@ import {
 	TextFontIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { VList } from "virtua";
 import { useSettingsStore } from "@/entities/setting";
 import {
+	alignTranscriptionHistoryAudio,
 	clipboardWriteText,
 	deleteTranscriptionHistoryEntry,
 	loadTranscriptionHistoryAudio,
+	type WordTiming,
 } from "@/shared/api/ipc-client";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
@@ -31,6 +33,7 @@ import {
 	useSurface,
 } from "@/shared/lib/surface";
 import { ButtonGroup } from "@/shared/ui/button-group";
+import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { formatDuration, formatWpm, wordsPerMinute } from "../lib/word-stats";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
@@ -107,56 +110,161 @@ async function routeAudioToSink(el: HTMLAudioElement, deviceId: string): Promise
 	}
 }
 
-interface PlayButtonProps {
-	entryId: string;
-	outputDeviceId: string;
+interface PlaybackState {
+	activeIndex: number;
+	loading: boolean;
+	playing: boolean;
+	toggle: () => void;
+	words: WordTiming[] | null;
 }
 
-function PlayButton({ entryId, outputDeviceId }: PlayButtonProps) {
+/**
+ * Binary-search the last word whose start time has been reached, so silences
+ * and gaps keep the prior word lit. Returns -1 before the first word.
+ */
+function findActiveWordIndex(words: WordTiming[], t: number): number {
+	let lo = 0;
+	let hi = words.length - 1;
+	let ans = -1;
+	while (lo <= hi) {
+		const mid = Math.floor((lo + hi) / 2);
+		const word = words[mid];
+		if (word && word.start <= t) {
+			ans = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	return ans;
+}
+
+/**
+ * Owns a row's `<audio>` element. On first play it lazily fetches both the WAV
+ * and the per-word timestamps, then tracks playback position with a rAF loop —
+ * the word-highlight sweep doubles as the progress indicator. No-ops when the
+ * entry has no recording; called unconditionally per row (Rules of Hooks).
+ */
+function useHistoryPlayback(
+	entryId: string,
+	hasAudio: boolean,
+	outputDeviceId: string
+): PlaybackState {
 	const audioRef = useRef<HTMLAudioElement | null>(null);
+	const rafRef = useRef<number | null>(null);
 	const [playing, setPlaying] = useState(false);
 	const [loading, setLoading] = useState(false);
+	const [words, setWords] = useState<WordTiming[] | null>(null);
+	const [currentTime, setCurrentTime] = useState(0);
 
 	useEffect(
 		() => () => {
+			if (rafRef.current !== null) {
+				cancelAnimationFrame(rafRef.current);
+			}
 			audioRef.current?.pause();
 			audioRef.current = null;
 		},
 		[]
 	);
 
-	const togglePlay = async () => {
-		if (playing && audioRef.current) {
-			audioRef.current.pause();
-			setPlaying(false);
-			return;
+	const stopTicking = () => {
+		if (rafRef.current !== null) {
+			cancelAnimationFrame(rafRef.current);
+			rafRef.current = null;
 		}
-		// Lazy-load on first click — avoids fetching every WAV up front.
+	};
+
+	const tick = () => {
+		if (audioRef.current) {
+			setCurrentTime(audioRef.current.currentTime);
+		}
+		rafRef.current = requestAnimationFrame(tick);
+	};
+
+	const beginPlayback = async () => {
 		if (!audioRef.current) {
 			setLoading(true);
-			const dataUri = await loadTranscriptionHistoryAudio(entryId);
+			// Fetch WAV bytes + word timings together on first play.
+			const [dataUri, timings] = await Promise.all([
+				loadTranscriptionHistoryAudio(entryId),
+				alignTranscriptionHistoryAudio(entryId),
+			]);
 			setLoading(false);
 			if (!dataUri) {
 				return;
 			}
+			if (timings.length > 0) {
+				setWords(timings);
+			}
 			const el = new Audio(dataUri);
-			el.onended = () => setPlaying(false);
+			el.onended = () => {
+				setPlaying(false);
+				setCurrentTime(0);
+				stopTicking();
+			};
 			audioRef.current = el;
 		}
 		await routeAudioToSink(audioRef.current, outputDeviceId);
-		await audioRef.current.play().catch(() => undefined);
+		try {
+			await audioRef.current.play();
+		} catch (err) {
+			// Don't leave the button stuck in a fake "playing" state if the
+			// element can't start (decode/CSP/device) — surface it and bail.
+			console.error("[history] playback failed", err);
+			setPlaying(false);
+			return;
+		}
 		setPlaying(true);
+		stopTicking();
+		rafRef.current = requestAnimationFrame(tick);
 	};
 
+	const toggle = () => {
+		if (!hasAudio) {
+			return;
+		}
+		if (playing && audioRef.current) {
+			audioRef.current.pause();
+			setPlaying(false);
+			stopTicking();
+			return;
+		}
+		beginPlayback().catch(() => undefined);
+	};
+
+	const activeIndex = playing && words ? findActiveWordIndex(words, currentTime) : -1;
+	return { activeIndex, loading, playing, toggle, words };
+}
+
+function PlayButton({
+	loading,
+	onToggle,
+	playing,
+}: {
+	loading: boolean;
+	onToggle: () => void;
+	playing: boolean;
+}) {
+	let label = "Play recording";
+	if (loading) {
+		label = "Loading recording";
+	} else if (playing) {
+		label = "Pause recording";
+	}
 	return (
 		<button
-			aria-label={playing ? "Pause recording" : "Play recording"}
-			className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-accent transition-[color,background-color,transform] hover:bg-accent/15 active:scale-95 disabled:opacity-50"
+			aria-label={label}
+			className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-accent transition-[color,background-color,transform] hover:bg-accent/15 active:scale-95"
 			disabled={loading}
-			onClick={togglePlay}
+			onClick={onToggle}
 			type="button"
 		>
-			<HugeiconsIcon className="size-4" icon={playing ? PauseIcon : PlayIcon} />
+			{loading ? (
+				<Spinner className="size-3.5" />
+			) : (
+				<HugeiconsIcon className="size-4" icon={playing ? PauseIcon : PlayIcon} />
+			)}
 		</button>
 	);
 }
@@ -251,6 +359,7 @@ function HistoryRow({
 	labels,
 	outputDeviceId,
 }: HistoryRowFullProps) {
+	const playback = useHistoryPlayback(entry.id, Boolean(entry.audioFilePath), outputDeviceId);
 	const hasOriginal = entry.originalText !== undefined && entry.originalText.length > 0;
 	const wpm = wordsPerMinute(entry.wordCount, entry.durationMs);
 	// Icon + bare value, reusing the summary tiles' stat icons (words / duration
@@ -295,10 +404,29 @@ function HistoryRow({
 			>
 				<div className="flex items-start gap-3">
 					{entry.audioFilePath ? (
-						<PlayButton entryId={entry.id} outputDeviceId={outputDeviceId} />
+						<PlayButton
+							loading={playback.loading}
+							onToggle={playback.toggle}
+							playing={playback.playing}
+						/>
 					) : null}
 					<p className="mt-0.5 min-w-0 flex-1 select-text whitespace-pre-wrap break-words text-body text-foreground leading-relaxed">
-						{entry.text}
+						{playback.words
+							? playback.words.map((word, index) => (
+									<Fragment key={`${word.start}-${index}`}>
+										{index > 0 ? " " : null}
+										<span
+											className={
+												index === playback.activeIndex
+													? "rounded-[3px] bg-accent/25 text-foreground"
+													: undefined
+											}
+										>
+											{word.text}
+										</span>
+									</Fragment>
+								))
+							: entry.text}
 					</p>
 					<ButtonGroup
 						aria-label={copyLabel}
@@ -428,7 +556,7 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 
 	return (
 		<SurfaceProvider value={level}>
-			<div className={cn("overflow-hidden rounded border border-border", surfaceBg(level))}>
+			<div className={cn("overflow-hidden rounded-md border border-border", surfaceBg(level))}>
 				{body}
 			</div>
 		</SurfaceProvider>

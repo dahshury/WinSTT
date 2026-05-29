@@ -51,7 +51,12 @@
     "tabAbout": "About",
     "tabAboutTooltip": "Version, license, and third-party notices.",
     "minimize": "Minimize",
-    "close": "Close"
+    "close": "Close",
+    "searchPlaceholder": "設定を検索…",
+    "searchClear": "検索をクリア",
+    "searchNoResults": "一致する設定はありません",
+    "collapseSidebar": "サイドバーを折りたたむ",
+    "expandSidebar": "サイドバーを展開"
   },
   "about": {
     "loading": "Loading…",
@@ -350,8 +355,6 @@
     "updateIntervalCaption": "Seconds between realtime updates",
     "updateIntervalTooltip": "Minimum time between live transcription updates. Lower values give more frequent updates but use more processing power. Increase if you experience stuttering or high CPU usage during dictation.",
     "llm": "Large Language Model",
-    "computeDefaultLabel": "Default (model's native precision)",
-    "computeAutoLabel": "Auto (best for your hardware)",
     "deviceAutoLabel": "Auto",
     "deviceCpuLabel": "CPU"
   },
@@ -403,6 +406,8 @@
     "endWithPeriod": "End with Period",
     "endWithPeriodCaption": "Auto-add period to sentences",
     "endWithPeriodTooltip": "Append a period to transcribed sentences that don't already end with punctuation.",
+    "removeFillerWords": "Remove Filler Words",
+    "removeFillerWordsTooltip": "Strip disfluencies like \"uh\", \"um\", \"hmm\" from the transcript. Turn OFF to keep verbatim fillers (e.g. with CrisperWhisper).",
     "smartEndpoint": "Smart Endpoint",
     "smartEndpointLabel": "Smart Endpoint",
     "smartEndpointCaption": "AI-powered sentence detection",
@@ -513,7 +518,8 @@
   "transcription": {
     "waiting": "Waiting for speech...",
     "serverOffline": "Server offline",
-    "noAudioDetected": "(no audio detected)"
+    "noAudioDetected": "(no audio detected)",
+    "transcriptionFailed": "(transcription failed)"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -573,7 +579,7 @@
     "providerCaption": "Where to run text transformation",
     "providerTooltip": "Use a local Ollama server, or call OpenRouter through the AI SDK with structured output.",
     "providerOllama": "Ollama (local)",
-    "providerOpenRouter": "OpenRouter",
+    "providerOpenRouter": "OpenRouter (Cloud)",
     "providerAppleIntelligence": "Apple Intelligence",
     "providerAppleIntelligenceIntelTooltip": "Apple Intelligence requires an Apple Silicon Mac (M1 or later).",
     "appleIntelligenceDescription": "Runs Apple's on-device foundation model. No setup required — works offline on macOS 15+ Apple Silicon.",

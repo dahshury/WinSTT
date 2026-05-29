@@ -70,6 +70,25 @@ mock.module("../lib/store", () => {
 	};
 });
 
+// ── Apple Intelligence CLI stub ───────────────────────────────────────
+// The Apple Intelligence dispatch paths (runAppleIntelligencePath /
+// runAppleIntelligenceCustomPath) funnel through `callAppleIntelligenceCli`.
+// We replace ONLY that function with a mutable behaviour hook, while
+// re-exporting the REAL `AppleIntelligenceError` class so the source's
+// `err instanceof AppleIntelligenceError` soft-fail branch matches the
+// errors the stub rejects with. `appleCli.impl` is swapped per-test.
+const realAppleIntelligence = await import("./apple-intelligence");
+const appleCli: {
+	impl: (req: { system: string; user: string }) => Promise<string>;
+} = {
+	impl: () => Promise.resolve(""),
+};
+mock.module("./apple-intelligence", () => ({
+	...realAppleIntelligence,
+	callAppleIntelligenceCli: (req: { system: string; user: string }) => appleCli.impl(req),
+}));
+const { AppleIntelligenceError } = realAppleIntelligence;
+
 const {
 	scanOllamaModels,
 	scanOpenRouterModels,
@@ -3135,4 +3154,161 @@ describe("warmupEnabledModels", () => {
 			}
 		}
 	}, 20_000);
+});
+
+// ── Apple Intelligence dispatch (runAppleIntelligencePath) ────────────
+//
+// Reached via the exported `processText(..., "dictation")` when the stored
+// dictation provider is "apple-intelligence". `callAppleIntelligenceCli` is
+// stubbed (see top-of-file mock); `getPostProcessingVocab()` returns empty
+// caches by default so the trailing `applyReplacementPairs` is a no-op and
+// the assertions observe the raw Apple Intelligence return.
+describe("processText — Apple Intelligence dispatch (runAppleIntelligencePath)", () => {
+	let capturedReq: { system: string; user: string } | null;
+
+	beforeEach(() => {
+		STORE_OVERRIDES["llm.dictation.provider"] = "apple-intelligence";
+		STORE_OVERRIDES["llm.dictation.presets"] = [];
+		STORE_OVERRIDES["llm.dictation.customModifiers"] = [];
+		capturedReq = null;
+	});
+
+	afterEach(() => {
+		for (const key of Object.keys(STORE_OVERRIDES)) {
+			delete STORE_OVERRIDES[key];
+		}
+		appleCli.impl = () => Promise.resolve("");
+	});
+
+	test("returns the CLI-transformed text (trimmed) on success", async () => {
+		appleCli.impl = (req) => {
+			capturedReq = req;
+			return Promise.resolve("  Cleaned dictation.  ");
+		};
+
+		const result = await processText("raw dictation", "", "dictation");
+
+		expect(result).toBe("Cleaned dictation.");
+		// The user prompt must carry the source text + the strict instruction.
+		expect(capturedReq?.user).toContain("raw dictation");
+		expect(capturedReq?.user).toContain("Return ONLY the transformed text");
+		// The system prompt is the layered dictation prompt (non-empty).
+		expect(typeof capturedReq?.system).toBe("string");
+		expect(capturedReq?.system.length ?? 0).toBeGreaterThan(0);
+	});
+
+	test("falls back to the original text when the CLI returns blank output", async () => {
+		appleCli.impl = () => Promise.resolve("   \n  ");
+
+		const result = await processText("keep me", "", "dictation");
+
+		// `cleaned.trim() || text` → original text survives.
+		expect(result).toBe("keep me");
+	});
+
+	test("soft-fails to the original text on AppleIntelligenceError", async () => {
+		appleCli.impl = () =>
+			Promise.reject(new AppleIntelligenceError("model-unavailable", "model not ready"));
+
+		const result = await processText("untouched", "", "dictation");
+
+		expect(result).toBe("untouched");
+	});
+
+	test("non-Apple errors propagate out of the path but processText maps them to the original text", async () => {
+		// A generic Error is NOT an AppleIntelligenceError, so runAppleIntelligencePath
+		// re-throws. processText's catch maps the unexpected error back to the input.
+		appleCli.impl = () => Promise.reject(new Error("kernel panic"));
+
+		const result = await processText("survivor", "", "dictation");
+
+		expect(result).toBe("survivor");
+	});
+
+	test("threads UIA context into the system prompt", async () => {
+		appleCli.impl = (req) => {
+			capturedReq = req;
+			return Promise.resolve("ok");
+		};
+
+		await processText("hi", "WINDOW: terminal | caret at end", "dictation");
+
+		expect(capturedReq?.system).toContain("terminal");
+	});
+});
+
+// ── Apple Intelligence dispatch (runAppleIntelligenceCustomPath) ──────
+//
+// Reached via `processTextWithCustomPrompt(text, systemPrompt, context)` when
+// the stored transforms provider is "apple-intelligence". The custom path uses
+// the caller-supplied system prompt verbatim (after the context prefix) and a
+// "Return ONLY" user prompt.
+describe("processTextWithCustomPrompt — Apple Intelligence dispatch (runAppleIntelligenceCustomPath)", () => {
+	let capturedReq: { system: string; user: string } | null;
+
+	beforeEach(() => {
+		STORE_OVERRIDES["llm.transforms.provider"] = "apple-intelligence";
+		capturedReq = null;
+	});
+
+	afterEach(() => {
+		for (const key of Object.keys(STORE_OVERRIDES)) {
+			delete STORE_OVERRIDES[key];
+		}
+		appleCli.impl = () => Promise.resolve("");
+	});
+
+	test("returns the CLI-transformed text (trimmed) on success", async () => {
+		appleCli.impl = (req) => {
+			capturedReq = req;
+			return Promise.resolve("  TRANSFORMED  ");
+		};
+
+		const result = await processTextWithCustomPrompt("make it shout", "Uppercase everything.");
+
+		expect(result).toBe("TRANSFORMED");
+		// Custom path feeds the user's system prompt verbatim (no context here).
+		expect(capturedReq?.system).toContain("Uppercase everything.");
+		expect(capturedReq?.user).toContain("make it shout");
+		expect(capturedReq?.user).toContain("Return ONLY the transformed text");
+	});
+
+	test("falls back to the original text when the CLI returns blank output", async () => {
+		appleCli.impl = () => Promise.resolve("");
+
+		const result = await processTextWithCustomPrompt("keep me", "do nothing");
+
+		expect(result).toBe("keep me");
+	});
+
+	test("soft-fails to the original text on AppleIntelligenceError", async () => {
+		appleCli.impl = () =>
+			Promise.reject(new AppleIntelligenceError("binary-missing", "no binary on this OS"));
+
+		const result = await processTextWithCustomPrompt("survivor", "shorten");
+
+		expect(result).toBe("survivor");
+	});
+
+	test("non-Apple errors propagate but processTextWithCustomPrompt maps them to the original text", async () => {
+		appleCli.impl = () => Promise.reject(new Error("disk full"));
+
+		const result = await processTextWithCustomPrompt("intact", "shorten");
+
+		expect(result).toBe("intact");
+	});
+
+	test("prefixes the system prompt with UIA context when provided", async () => {
+		appleCli.impl = (req) => {
+			capturedReq = req;
+			return Promise.resolve("done");
+		};
+
+		await processTextWithCustomPrompt("body", "Rewrite formally.", "APP: editor");
+
+		// withContextPrefix folds the context snapshot into the system prompt while
+		// preserving the caller's instruction.
+		expect(capturedReq?.system).toContain("Rewrite formally.");
+		expect(capturedReq?.system).toContain("editor");
+	});
 });

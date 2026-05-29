@@ -27,6 +27,20 @@ describe("QualitySettingsPanel", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
+	test("Remove Filler Words toggle flips general.filterFillers (keep verbatim fillers)", () => {
+		// Default is ON (strip "uh"/"um"/...). Clicking it OFF is how a user
+		// keeps verbatim disfluencies from a model like CrisperWhisper — the
+		// gap this control closes (the setting was plumbed but had no UI).
+		const { getByRole } = render(
+			<IntlProvider>
+				<QualitySettingsPanel />
+			</IntlProvider>
+		);
+		expect(useSettingsStore.getState().settings.general?.filterFillers ?? true).toBe(true);
+		fireEvent.click(getByRole("switch", { name: /Remove Filler Words/i }));
+		expect(useSettingsStore.getState().settings.general?.filterFillers).toBe(false);
+	});
+
 	test("Smart Endpoint switch is hidden in PTT mode", () => {
 		useSettingsStore.getState().updateGeneralSettings({ recordingMode: "ptt" });
 		const { queryByRole } = render(

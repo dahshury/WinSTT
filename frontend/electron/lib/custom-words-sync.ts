@@ -26,6 +26,10 @@ function readCurrentCustomWords(): string[] {
 	}
 	const seen = new Set<string>();
 	const out: string[] = [];
+	// Kept as a single inline filter-and-dedupe loop on purpose: the three
+	// reject conditions (blank term / has a replacement / already seen) are a
+	// cohesive single concept ("is this a fresh vocab-bias term?"); extracting
+	// them into a predicate helper would add indirection without clarifying.
 	for (const entry of dictionary) {
 		const term = typeof entry.term === "string" ? entry.term.trim() : "";
 		const replacement = typeof entry.replacement === "string" ? entry.replacement.trim() : "";
@@ -46,14 +50,6 @@ function readCurrentThreshold(): number {
 	// behaviour stable across an upgrade that lands the schema entry but
 	// doesn't yet bump the persisted store version.
 	return typeof raw === "number" ? raw : 0.18;
-}
-
-function readFilterFillers(): boolean {
-	const raw = getStoreRaw("general.filterFillers");
-	// Mirrors `TextCorrectionConfig.filter_fillers` default. Same
-	// rationale as above — keep the on-the-wire behaviour stable when
-	// the persisted store doesn't yet have the key.
-	return typeof raw === "boolean" ? raw : true;
 }
 
 function readCustomFillerWords(): string[] {
@@ -92,22 +88,23 @@ function pushCustomWords(client: SttClient): void {
 	}
 	const words = readCurrentCustomWords();
 	const threshold = readCurrentThreshold();
-	const filterFillers = readFilterFillers();
 	const customFillerWords = readCustomFillerWords();
 	// Always push something — an emptied dictionary should clear the
 	// matcher rather than leave a stale word list active. Mirrors the
 	// initial-prompt sync's "always-push" semantics.
 	client.setParameter("custom_words", words);
 	client.setParameter("word_correction_threshold", threshold);
-	// Filler-filter toggle + override list (Handy port). Same always-
-	// push semantics so toggling either setting reaches the server
-	// immediately without a connection-drop race.
-	client.setParameter("filter_fillers", filterFillers);
+	// NOTE: `filter_fillers` is intentionally NOT pushed here. It now rides the
+	// renderer's `syncToServer` (sttSetParameter from the live settings store)
+	// because this electron-main path read a STALE electron-store value in the
+	// long-running process — it pushed `filter_fillers=true` while disk held
+	// `false`, so the "Remove Filler Words" toggle never reached the recorder.
+	// See `features/update-settings/lib/sync-actions.ts` → syncTextCorrectionParams.
 	client.setParameter("custom_filler_words", customFillerWords);
 	dbg(
 		"custom-words",
 		`pushed ${words.length} words (thr ${threshold.toFixed(2)}), ` +
-			`fillers=${filterFillers}, custom-fillers=${customFillerWords.length}`
+			`custom-fillers=${customFillerWords.length}`
 	);
 }
 
@@ -133,13 +130,13 @@ export function installCustomWordsSync(client: SttClient): () => void {
 	push();
 	const offDict = store.onDidChange("dictionary", push);
 	const offThreshold = store.onDidChange("general.wordCorrectionThreshold" as never, push);
-	const offFilterFillers = store.onDidChange("general.filterFillers" as never, push);
+	// `general.filterFillers` is watched/pushed by the renderer's syncToServer
+	// now (see pushCustomWords note) — not here.
 	const offCustomFillers = store.onDidChange("general.customFillerWords" as never, push);
 	client.on("server-ready", push);
 	return () => {
 		offDict();
 		offThreshold();
-		offFilterFillers();
 		offCustomFillers();
 		client.off("server-ready", push);
 	};

@@ -162,6 +162,25 @@ describe("parseMinisignSignature", () => {
 		].join("\n");
 		expect(() => parseMinisignSignature(text)).toThrow(/sidecar is corrupt/);
 	});
+
+	test("rejects sidecar missing the global signature line", () => {
+		// trusted-comment present but no following line -> globalSigLine undefined.
+		// This guard fires BEFORE the sig-blob length/algorithm checks.
+		const text = [
+			"untrusted comment: sig",
+			Buffer.from("x").toString("base64"),
+			"trusted comment: x",
+		].join("\n");
+		expect(() => parseMinisignSignature(text)).toThrow(/global signature line not found/);
+	});
+
+	test("rejects sidecar with wrong-length global signature", () => {
+		// Valid sig blob (passes length + 'Ed' algorithm), but a too-short global sig.
+		const valid = signArtifact(Buffer.from("hello"), GLOBAL_KEY.privKey, GLOBAL_KEY.keyId, "tc");
+		const lines = valid.split("\n");
+		lines[3] = Buffer.alloc(10).toString("base64");
+		expect(() => parseMinisignSignature(lines.join("\n"))).toThrow(/global signature: expected/);
+	});
 });
 
 // ─── verifyMinisignSignature ─────────────────────────────────────────────

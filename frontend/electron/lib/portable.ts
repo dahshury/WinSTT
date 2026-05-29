@@ -11,7 +11,7 @@
  *   - Corporate-locked-down machines that disallow AppData writes.
  *   - Self-contained dev builds that don't pollute the host's APPDATA.
  *
- * Marker file conventions (mirroring the Handy reference impl):
+ * Marker file conventions:
  *   - The marker's content MUST start with the magic string
  *     ``WinSTT Portable Mode`` (whitespace tolerated). Any other content
  *     does NOT enable portable mode by itself.

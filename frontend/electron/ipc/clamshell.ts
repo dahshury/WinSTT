@@ -12,7 +12,7 @@
  * Detection strategy (no native modules — shell-outs + file reads only):
  *   - macOS:   `ioreg -r -k AppleClamshellState -d 4` snapshots the
  *              IORegistry; the literal substring `"AppleClamshellState" = Yes`
- *              indicates the lid is closed. Mirrors Handy's helper.
+ *              indicates the lid is closed.
  *   - Linux:   /proc/acpi/button/lid/LID*\/state (legacy) or
  *              /proc/acpi/button/lid/LID0/state is a small text file that
  *              reads "closed" or "open". Some distros also expose it under
@@ -39,7 +39,7 @@ import { dbg } from "../lib/debug-log";
 import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 
-/** Default poll interval. Matched to Handy's clamshell helper cadence. */
+/** Default poll interval for the clamshell lid-state probe. */
 export const CLAMSHELL_POLL_INTERVAL_MS = 5000;
 
 /** Tag for promise-rejection swallowers attached to fire-and-forget calls. */
@@ -83,7 +83,12 @@ function probeMacOs(): Promise<LidState> {
 		execFile(
 			"ioreg",
 			["-r", "-k", "AppleClamshellState", "-d", "4"],
-			{ timeout: 2000 },
+			// `-d 4` snapshots four levels of the IORegistry; on some Macs that
+			// payload exceeds Node's default 1 MB stdout cap and execFile would
+			// error with ERR_CHILD_PROCESS_STDIO_MAXBUFFER (probe → "unknown",
+			// detector goes inert). Bump to 8 MB so a verbose registry still
+			// parses.
+			{ timeout: 2000, maxBuffer: 8 * 1024 * 1024 },
 			(err, stdout) => {
 				if (err) {
 					dbg("clamshell", `ioreg failed: ${err.message}`);
@@ -119,7 +124,14 @@ export function parseLinuxLidState(text: string): LidState {
 async function findLinuxLidPath(): Promise<string | null> {
 	try {
 		const entries = await readdir("/proc/acpi/button/lid");
-		const lidDir = entries.find((e) => e.toUpperCase().startsWith("LID"));
+		// Sort so the pick is deterministic when a machine exposes more than
+		// one LID node (e.g. LID0 + LID1) — readdir order is filesystem-
+		// dependent, so without sorting we could bind to a different lid
+		// across reboots. LID0 (the lowest-numbered) is the conventional
+		// primary lid.
+		const lidDir = entries
+			.filter((e) => e.toUpperCase().startsWith("LID"))
+			.sort((a, b) => a.localeCompare(b))[0];
 		return lidDir ? `/proc/acpi/button/lid/${lidDir}/state` : null;
 	} catch {
 		return null;

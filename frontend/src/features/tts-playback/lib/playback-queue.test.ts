@@ -36,6 +36,9 @@ interface FakeBuffer {
 
 let createdSources: FakeSource[] = [];
 let createdBuffers: FakeBuffer[] = [];
+let createdContexts: FakeAudioContext[] = [];
+let constructedSinkIds: Array<string | undefined> = [];
+let setSinkIdCalls: Array<string | { type: "none" }> = [];
 let resumeCalls = 0;
 let closeCalls = 0;
 let ctxState: "running" | "suspended" | "closed" = "running";
@@ -43,9 +46,25 @@ let ctxClosedAfterClose = true;
 let currentTime = 0;
 let resumeShouldReject = false;
 let closeShouldReject = false;
+let provideSetSinkId = true;
+let setSinkIdShouldReject = false;
 
 class FakeAudioContext {
 	state: "running" | "suspended" | "closed" = ctxState;
+	constructor(opts?: { sinkId?: string }) {
+		constructedSinkIds.push(opts?.sinkId);
+		createdContexts.push(this);
+		if (provideSetSinkId) {
+			(
+				this as unknown as { setSinkId: (id: string | { type: "none" }) => Promise<void> }
+			).setSinkId = (id) => {
+				setSinkIdCalls.push(id);
+				return setSinkIdShouldReject
+					? Promise.reject(new Error("setSinkId failed"))
+					: Promise.resolve();
+			};
+		}
+	}
 	get currentTime(): number {
 		return currentTime;
 	}
@@ -127,6 +146,9 @@ const asFakeBuffer = (buffer: AudioBuffer) => buffer as unknown as FakeBuffer;
 function reset(): void {
 	createdSources = [];
 	createdBuffers = [];
+	createdContexts = [];
+	constructedSinkIds = [];
+	setSinkIdCalls = [];
 	resumeCalls = 0;
 	closeCalls = 0;
 	ctxState = "running";
@@ -134,6 +156,8 @@ function reset(): void {
 	currentTime = 0;
 	resumeShouldReject = false;
 	closeShouldReject = false;
+	provideSetSinkId = true;
+	setSinkIdShouldReject = false;
 	(globalThis as { AudioContext?: unknown }).AudioContext = FakeAudioContext;
 }
 
@@ -485,5 +509,223 @@ describe("TtsPlaybackQueue.dispose", () => {
 		// New chunk → new context, new source.
 		queue.enqueue(makeF32leChunk("r2", [0.2]));
 		expect(createdSources).toHaveLength(2);
+	});
+});
+
+describe("TtsPlaybackQueue.setOutputDeviceId", () => {
+	test("no-op when no AudioContext exists yet (just stores the id)", () => {
+		const queue = new TtsPlaybackQueue();
+		// No ctx created yet — `ctx?.setSinkId` short-circuits, nothing thrown.
+		expect(() => queue.setOutputDeviceId("device-1")).not.toThrow();
+		expect(setSinkIdCalls).toHaveLength(0);
+		expect(createdContexts).toHaveLength(0);
+	});
+
+	test("constructs a NEW AudioContext with the stored sinkId on next enqueue", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.setOutputDeviceId("device-7");
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		// `createOrReuseCtx` took the `opts ? new AudioContext(opts)` branch.
+		expect(constructedSinkIds).toEqual(["device-7"]);
+	});
+
+	test("re-routes an in-flight AudioContext via setSinkId immediately", () => {
+		const queue = new TtsPlaybackQueue();
+		// Create a live context first.
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		expect(createdContexts).toHaveLength(1);
+		queue.setOutputDeviceId("device-live");
+		// `ctx?.setSinkId` truthy branch + `deviceId || {type:"none"}` truthy side.
+		expect(setSinkIdCalls).toEqual(["device-live"]);
+	});
+
+	test("passes the {type:'none'} sentinel when deviceId is empty (system default)", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		queue.setOutputDeviceId("");
+		// `deviceId || {type:"none"}` falls through to the sentinel object.
+		expect(setSinkIdCalls).toEqual([{ type: "none" }]);
+	});
+
+	test("does not call setSinkId when the platform lacks the API", () => {
+		provideSetSinkId = false;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		// `ctx?.setSinkId` is falsy → branch skipped, no throw.
+		expect(() => queue.setOutputDeviceId("device-x")).not.toThrow();
+		expect(setSinkIdCalls).toHaveLength(0);
+	});
+
+	test("swallows a rejected setSinkId() promise and warns (observability)", async () => {
+		setSinkIdShouldReject = true;
+		// Regression: the rejection was previously absorbed by `.catch(() =>
+		// undefined)` with NO log, so a failed device switch was invisible. It now
+		// warns while still absorbing the rejection (behaviour unchanged).
+		const originalWarn = console.warn;
+		const warnings: unknown[][] = [];
+		console.warn = (...args: unknown[]) => {
+			warnings.push(args);
+		};
+		try {
+			const queue = new TtsPlaybackQueue();
+			queue.enqueue(makeF32leChunk("r", [0.1]));
+			queue.setOutputDeviceId("device-bad");
+			// Let the rejected promise settle — the `.catch` must absorb it (no
+			// unhandled rejection).
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(setSinkIdCalls).toEqual(["device-bad"]);
+			expect(warnings.some((w) => String(w[0]).includes("setSinkId re-route failed"))).toBe(true);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	test("stored sinkId survives a dispose → re-enqueue cycle", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.setOutputDeviceId("device-persist");
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		queue.dispose();
+		// After dispose the ctx is null; next enqueue rebuilds with the same id.
+		queue.enqueue(makeF32leChunk("r2", [0.2]));
+		expect(constructedSinkIds).toEqual(["device-persist", "device-persist"]);
+	});
+});
+
+describe("TtsPlaybackQueue createOrReuseCtx", () => {
+	test("rebuilds the context when the existing one is closed", () => {
+		// A closed context must be discarded and a fresh one created.
+		ctxClosedAfterClose = true;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		expect(createdContexts).toHaveLength(1);
+		// Drive the live ctx to "closed" out-of-band (simulating browser teardown).
+		const live = createdContexts[0];
+		if (live) {
+			live.state = "closed";
+		}
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		// `this.ctx.state === "closed"` branch → a second context is built.
+		expect(createdContexts).toHaveLength(2);
+	});
+
+	test("reuses the same running context across enqueues (no sinkId set)", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		// `opts ? … : new AudioContext()` no-sink branch, and the ctx is reused.
+		expect(createdContexts).toHaveLength(1);
+		expect(constructedSinkIds).toEqual([undefined]);
+	});
+
+	test("REUSES (does not rebuild) a suspended context and resumes it", () => {
+		// `createOrReuseCtx` rebuilds only on `ctx == null || state === "closed"`.
+		// A *suspended* context must be reused — and `ensureCtx`→`maybeResume`
+		// must then resume it. This is the "suspended reuse" branch.
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		expect(createdContexts).toHaveLength(1);
+		const live = createdContexts[0];
+		// Drive the existing ctx to "suspended" out-of-band (e.g. tab backgrounded).
+		if (live) {
+			live.state = "suspended";
+		}
+		const resumeBefore = resumeCalls;
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		// No new context built — the suspended one was reused…
+		expect(createdContexts).toHaveLength(1);
+		// …and `maybeResume` called `.resume()` on it.
+		expect(resumeCalls).toBe(resumeBefore + 1);
+	});
+
+	test("REBUILDS an 'interrupted' context (Safari/iOS) instead of silently reusing it", () => {
+		// Regression: `createOrReuseCtx` rebuilt only on `null || "closed"`, so a
+		// context driven to the non-standard Safari/iOS "interrupted" state was
+		// reused — yet `maybeResume` only acts on "suspended", so it was never
+		// recovered and the utterance silently dropped. The fix treats any
+		// non-(running|suspended) state as non-reusable → rebuild.
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		expect(createdContexts).toHaveLength(1);
+		const live = createdContexts[0];
+		if (live) {
+			// "interrupted" is off the standard AudioContextState union; set it via
+			// a contained boundary cast to mimic the real Safari/iOS transition.
+			(live as unknown as { state: string }).state = "interrupted";
+		}
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		// A fresh context was built rather than reusing the interrupted one.
+		expect(createdContexts).toHaveLength(2);
+	});
+
+	test("does NOT resume an already-running context (maybeResume early return)", () => {
+		// `maybeResume` short-circuits when `state !== "suspended"`. A running
+		// context across two enqueues must never have `.resume()` called.
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		expect(resumeCalls).toBe(0);
+	});
+});
+
+describe("TtsPlaybackQueue reject-path arrows settle without crashing", () => {
+	test("maybeResume's rejected resume() is swallowed and the queue stays playing", async () => {
+		ctxState = "suspended";
+		resumeShouldReject = true;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		// The `.catch(() => {})` arrow body must run on the rejected microtask.
+		await Promise.resolve();
+		await Promise.resolve();
+		// Behaviour is preserved despite the rejected resume.
+		expect(resumeCalls).toBe(1);
+		expect(queue.isPlaying).toBe(true);
+		// Subsequent chunks for the same request still schedule.
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		expect(createdSources).toHaveLength(2);
+	});
+
+	test("dispose's rejected close() is swallowed and the ctx reference is cleared", async () => {
+		closeShouldReject = true;
+		ctxClosedAfterClose = false;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		queue.dispose();
+		// The `.catch(() => {})` arrow in dispose() must absorb the rejection.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(closeCalls).toBe(1);
+		// ctx was nulled by dispose() → a later enqueue rebuilds a fresh context.
+		queue.enqueue(makeF32leChunk("r2", [0.2]));
+		expect(createdContexts).toHaveLength(2);
+	});
+
+	test("setOutputDeviceId's rejected setSinkId() is swallowed (queue still usable)", async () => {
+		setSinkIdShouldReject = true;
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		queue.setOutputDeviceId("device-bad");
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(setSinkIdCalls).toEqual(["device-bad"]);
+		// Despite the rejected re-route, more audio still schedules.
+		queue.enqueue(makeF32leChunk("r", [0.2]));
+		expect(createdSources).toHaveLength(2);
+	});
+});
+
+describe("TtsPlaybackQueue.isPlaying false branch", () => {
+	test("is false on a brand-new queue (activeRequestId === null)", () => {
+		const queue = new TtsPlaybackQueue();
+		expect(queue.isPlaying).toBe(false);
+		expect(queue.currentRequestId).toBeNull();
+	});
+
+	test("flips false again once the active request finishes", () => {
+		const queue = new TtsPlaybackQueue();
+		queue.enqueue(makeF32leChunk("r", [0.1]));
+		expect(queue.isPlaying).toBe(true);
+		createdSources[0]?.onended?.();
+		expect(queue.isPlaying).toBe(false);
 	});
 });

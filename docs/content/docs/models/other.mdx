@@ -1,40 +1,161 @@
 ---
-title: Other Models
-description: GigaAM, Vosk/Kaldi, and T-One models
+title: Other Families
+description: Moonshine, Cohere, SenseVoice, GigaAM, Vosk/Kaldi, and T-One — the low-latency, multilingual, and Russian-focused models beyond Whisper and NeMo.
 ---
 
-WinSTT supports several additional model families on the ONNX engine. These are primarily focused on Russian language support. All support realtime transcription.
+Beyond Whisper and NeMo, WinSTT ships five more model families on the same ONNX engine — covering ultra-low-latency English dictation, a leaderboard-topping multilingual model, East-Asian languages, and three Russian-specialist engines. Pick by language coverage first, then by the accuracy/speed trade-off.
 
-## GigaAM Models
+Every model on this page runs through the single `onnx-asr` ONNX engine, supports the live realtime preview, and is hot-swappable from the [Model](/docs/settings/model) tab — no restart, no backend to choose. Precision is set per-model via `onnxQuantization`; see [Compute Types](/docs/models/compute-types).
 
-GigaAM is a family of Russian-language ASR models.
+## Moonshine
 
-| Model | Architecture | Notes |
-|-------|-------------|-------|
-| `gigaam-v3-e2e-ctc` | End-to-End CTC | Version 3, end-to-end CTC (faster decoding) |
-| `gigaam-v3-e2e-rnnt` | End-to-End RNN-T | Version 3, end-to-end transducer (higher accuracy) |
+Useful Sensors Moonshine is a raw-audio encoder built for **latency**, not raw accuracy. The tiny model is ~5.8× faster than Whisper tiny at the same scale, which makes it a strong realtime-preview and live-dictation pick. The base English models and the five language fine-tunes (Chinese, Japanese, Korean, Arabic, Vietnamese) round out the family — each fine-tune is single-language only, with no auto-detect.
 
-GigaAM models support `""` (default) and `int8` via `onnxQuantization`.
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Language"]}
+  numeric={[1, 2, 3]}
+  rows={[
+    ["Moonshine Tiny", "27M", "12.5", "1800", "English"],
+    ["Moonshine Base", "62M", "8.5", "990", "English"],
+    ["Moonshine Tiny (ZH)", "27M", "15.0", "1800", "Chinese"],
+    ["Moonshine Tiny (JA)", "27M", "15.0", "1800", "Japanese"],
+    ["Moonshine Tiny (KO)", "27M", "15.0", "1800", "Korean"],
+    ["Moonshine Tiny (AR)", "27M", "15.0", "1800", "Arabic"],
+    ["Moonshine Tiny (VI)", "27M", "15.0", "1800", "Vietnamese"],
+    ["Moonshine Base (ZH)", "62M", "10.5", "990", "Chinese"],
+    ["Moonshine Base (JA)", "62M", "10.5", "990", "Japanese"],
+    ["Moonshine Base (KO)", "62M", "10.5", "990", "Korean"],
+  ]}
+  caption="RTFx = real-time factor (higher is faster). WER is whichever benchmark the upstream repo reports — read it within a family, not across."
+/>
 
-## Kaldi/Vosk Models
+Moonshine exposes the widest quantization range of any family: `""` (default), `fp16`, `q4`, `bnb4`, `int8`, `uint8`, and `q4f16`. The `int8` / `uint8` graphs are the smallest downloads (the English tiny model drops from 327 MB to 67 MB) and are the best fit for CPU-only machines.
 
-Vosk provides offline speech recognition models based on the Kaldi toolkit. These are lightweight and run well on CPU.
-
-| Model | Description |
-|-------|-------------|
-| `alphacep/vosk-model-ru` | Full Russian model. Higher accuracy, larger download |
-| `alphacep/vosk-model-small-ru` | Lightweight Russian model. Faster loading, smaller footprint |
-
-Vosk/Kaldi models support `""` (default) and `int8` via `onnxQuantization`.
-
-## T-One Models
-
-T-One is a Russian ASR model from T-Tech.
-
-| Model | Description |
-|-------|-------------|
-| `t-tech/t-one` | Russian speech recognition. Default precision only (`""`) |
-
-<Callout title="Language support" type="info">
-  All models on this page are Russian-language only. For English or multilingual transcription, use Whisper or NeMo models.
+<Callout type="info" title="The fastest realtime model">
+  At 27M parameters and RTFx ~1800, Moonshine Tiny is the lightest model in the catalog
+  and an ideal **realtime preview** model. Pair it with a larger main model when you want
+  the live preview to feel instant without taxing the GPU.
 </Callout>
+
+## Cohere
+
+Cohere Transcribe is a 2B-parameter Conformer encoder with a lightweight Transformer decoder. It currently sits at **#1 on the Hugging Face Open ASR Leaderboard**, with the lowest word-error rate of any model WinSTT ships (5.1). It covers 14 languages with automatic language detection.
+
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Languages"]}
+  numeric={[1, 2, 3, 4]}
+  rows={[
+    ["Cohere Transcribe", "2B", "5.1", "270", "14"],
+  ]}
+  caption="Languages: Arabic, German, Greek, English, Spanish, French, Italian, Japanese, Korean, Dutch, Polish, Portuguese, Vietnamese, Chinese — with auto-detect."
+/>
+
+Quantizations: `""` (default), `fp16`, `q4`, and `q4f16`. The default fp32 graph is the largest single download in the catalog (~5 GB); on a GPU, the `fp16` (~2.4 GB) or `q4f16` (~1.5 GB) variants give you most of the accuracy for a fraction of the size and VRAM.
+
+<Callout type="warn" title="Plan for the download and VRAM">
+  Cohere is a 2B model. Even the smallest `q4f16` download is ~1.5 GB, and the default
+  precision needs roughly 5 GB of free VRAM to create the GPU session. If the session
+  can't fit, ONNX Runtime falls back to CPU — accurate, but slow at this size.
+</Callout>
+
+## SenseVoice
+
+FunAudioLLM SenseVoice Small is a 234M Conformer encoder focused on **East-Asian languages**: Chinese, English, Japanese, Korean, and Cantonese, with automatic language detection. It ships as a single-pass `int8` graph — there is no fp32 variant — so the download is a compact 159 MB and the only available precision is `int8`.
+
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Languages"]}
+  numeric={[1, 2, 3]}
+  rows={[
+    ["SenseVoice Small", "234M", "7.2", "850", "zh · en · ja · ko · yue"]
+  ]}
+  caption="yue = Cantonese. SenseVoice ships int8-only; the picker offers no other quantization."
+/>
+
+## Russian-specialist families
+
+Three families target Russian exclusively. They are the right pick when you dictate primarily in Russian and want accuracy that beats Whisper at a fraction of the size. (NVIDIA's Russian FastConformer models live in the [NeMo](/docs/models/nemo) family.)
+
+### GigaAM
+
+GigaAM v3 is a 243M Russian engine that posts the **lowest Russian WER** in the catalog. It ships in two end-to-end variants: a CTC graph (faster decoding) and an RNN-T graph (slightly higher accuracy).
+
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Architecture"]}
+  numeric={[1, 2, 3]}
+  rows={[
+    ["GigaAM v3 E2E CTC", "243M", "5.5", "600", "CTC — faster decoding"],
+    ["GigaAM v3 E2E RNNT", "243M", "5.0", "450", "RNN-T — higher accuracy"],
+  ]}
+  caption="Russian only. Both variants offer the default precision plus int8."
+/>
+
+GigaAM supports `""` (default) and `int8`. The default graph is a ~3.5 GB download; `int8` drops it to ~900 MB.
+
+### Vosk / Kaldi
+
+Vosk provides lightweight offline recognition built on the Kaldi toolkit. Both Russian models are small, load fast, and run comfortably on CPU — the small variant is the smallest Russian option in the catalog.
+
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Notes"]}
+  numeric={[1, 2, 3]}
+  rows={[
+    ["Vosk Russian", "65M", "13.0", "350", "Full model — higher accuracy"],
+    ["Vosk Russian (Small)", "23M", "18.0", "800", "Lightweight — faster, smaller download"],
+  ]}
+  caption="Russian only. Both offer the default precision plus int8."
+/>
+
+Vosk/Kaldi models support `""` (default) and `int8`. The full model is a 264 MB download (72 MB at `int8`); the small model is 93 MB (27 MB at `int8`).
+
+### T-One
+
+T-Tech's T-One is a 72M Russian engine that hits accuracy on par with the NeMo Russian FastConformer models at a much smaller footprint (144 MB).
+
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Notes"]}
+  numeric={[1, 2, 3]}
+  rows={[
+    ["T-One", "72M", "10.0", "500", "Default precision only"],
+  ]}
+  caption="Russian only. Ships in default precision — the picker offers no int8 variant."
+/>
+
+## Picking by language
+
+Use this to narrow the list before weighing accuracy and speed:
+
+<ModelTable
+  head={["You need…", "Best fit here"]}
+  rows={[
+    ["Fastest English realtime / dictation", "Moonshine Tiny or Base"],
+    ["Top accuracy, 14 languages", "Cohere Transcribe"],
+    ["Chinese / Japanese / Korean / Cantonese", "SenseVoice Small (or a Moonshine fine-tune)"],
+    ["Arabic or Vietnamese", "Moonshine Tiny (AR) / (VI)"],
+    ["Best Russian accuracy", "GigaAM v3 RNN-T"],
+    ["Smallest Russian, CPU-only", "Vosk Russian (Small) or T-One"],
+  ]}
+  caption="For broad multilingual coverage with auto-detect, also compare the Whisper and NeMo families."
+/>
+
+<Callout type="info" title="Single-language models hide the language picker">
+  The Moonshine fine-tunes and every Russian model are single-language — the **Language**
+  control in the Model tab disappears for them, since there is nothing to detect or pin.
+  Cohere and SenseVoice support auto-detect, so they keep it.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Whisper Models" href="/docs/models/whisper">
+    OpenAI Whisper and the compressed Lite-Whisper variants — multilingual and English-only.
+  </Card>
+  <Card title="NeMo Models" href="/docs/models/nemo">
+    NVIDIA Parakeet and Canary, plus the Russian FastConformer models.
+  </Card>
+  <Card title="Compute & quantization" href="/docs/models/compute-types">
+    What int8, fp16, q4, and q4f16 mean — and how to read the picker's download badges.
+  </Card>
+  <Card title="Choose a model" href="/docs/settings/model">
+    Set your main model, realtime model, language, and device in the Model tab.
+  </Card>
+</Cards>

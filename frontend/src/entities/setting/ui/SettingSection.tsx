@@ -2,22 +2,15 @@ import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
-import {
-	TextureCard,
-	TextureCardBody,
-	TextureCardFooter,
-	TextureCardHeader,
-	TextureSeparator,
-} from "@/shared/ui/texture-card";
+import { SurfaceProvider, useSurface } from "@/shared/lib/surface";
 import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSectionProps {
 	children?: ReactNode;
 	/**
-	 * Optional one-line description rendered in the *footer* of the card —
-	 * the brighter strip at the bottom — providing the contrast band the
-	 * texture-card aesthetic depends on. Falls back to omitting the footer
-	 * entirely if neither this nor `footer` is provided.
+	 * Optional one-line description rendered as muted supporting text beneath
+	 * the section. Falls back to omitting it entirely if neither this nor
+	 * `footer` is provided.
 	 */
 	description?: string;
 	/** Custom footer content (e.g. status, hint, action). Overrides `description`. */
@@ -34,16 +27,17 @@ export interface SettingSectionProps {
 }
 
 /**
- * Top-level grouping inside a settings panel. Now rendered as a texture-card:
- * an outer-ringed, surface-lifted container with a header (icon badge +
- * title + optional toggle), an embossed separator, the body of form rows,
- * and an optional brighter footer strip for description/status.
+ * Top-level grouping inside a settings panel. Rendered as a FLAT flowing
+ * section — a heading row (optional leading icon + title + optional trailing
+ * toggle/action), a full-width hairline divider, then the body of form rows
+ * flowing directly on the panel surface. No card box, no ring: adjacent
+ * sections read as one continuous page rather than stacked rectangles.
  *
- * Layered substrate: the page is surface-1, the panel viewport lifts to
- * surface-2, this card body lifts again to surface-3, and any
- * `ElevatedSurface` control inside lifts further to surface-5. The
- * separators are deliberately darker than the body so they read as etched
- * grooves rather than thin gray lines.
+ * Crucially it still re-provides a +1 surface step downward (matching the old
+ * card body level) WITHOUT painting that surface, so every nested
+ * `ElevatedSurface` control keeps the exact elevation it had inside the card
+ * (surface-5 on a surface-2 panel) and its contrast is unchanged — only the
+ * surrounding container chrome is gone.
  */
 export function SettingSection({
 	title,
@@ -56,54 +50,56 @@ export function SettingSection({
 	onToggle,
 	toggleDisabled,
 }: SettingSectionProps) {
+	const substrate = useSurface();
+	const contentLevel = Math.min(substrate + 1, 8);
+
 	const hasToggle = onToggle !== undefined;
 	const isDisabled = hasToggle && !toggled;
 	const renderedFooter = footer ?? (description ? <span>{description}</span> : null);
 	const hasBody = children !== undefined && children !== null && children !== false;
 
 	return (
-		<TextureCard offset={1}>
-			<TextureCardHeader>
-				{icon && (
-					<span
-						aria-hidden="true"
-						className="flex size-9 shrink-0 items-center justify-center rounded-md bg-accent/12 text-accent ring-1 ring-accent/30"
-					>
-						<HugeiconsIcon icon={icon} size={17} />
-					</span>
-				)}
-				<h3 className="min-w-0 flex-1 font-semibold text-foreground text-title">{title}</h3>
-				{headerAction ? <div className="shrink-0">{headerAction}</div> : null}
-				{hasToggle && (
-					<div className="shrink-0">
-						<Toggle
-							aria-label={`Toggle ${title}`}
-							checked={toggled ?? false}
-							disabled={toggleDisabled}
-							onCheckedChange={onToggle}
+		<SurfaceProvider value={contentLevel}>
+			<section className="pt-6 first:pt-1">
+				<header className="flex items-center gap-2.5">
+					{icon && (
+						<HugeiconsIcon
+							aria-hidden="true"
+							className="shrink-0 text-foreground-muted"
+							icon={icon}
+							size={15}
 						/>
-					</div>
-				)}
-			</TextureCardHeader>
-			{hasBody ? (
-				<>
-					<TextureSeparator />
-					<TextureCardBody
+					)}
+					<h3 className="min-w-0 flex-1 font-semibold text-foreground text-subtitle tracking-[-0.01em]">
+						{title}
+					</h3>
+					{headerAction ? <div className="shrink-0">{headerAction}</div> : null}
+					{hasToggle && (
+						<div className="shrink-0">
+							<Toggle
+								aria-label={`Toggle ${title}`}
+								checked={toggled ?? false}
+								disabled={toggleDisabled}
+								onCheckedChange={onToggle}
+							/>
+						</div>
+					)}
+				</header>
+				<div aria-hidden="true" className="mt-2.5 h-px w-full bg-[var(--color-divider-strong)]" />
+				{hasBody ? (
+					<div
 						className={cn(
-							"transition-opacity duration-200 ease-out",
+							"pt-1 transition-opacity duration-200 ease-out",
 							isDisabled && "pointer-events-none opacity-40"
 						)}
 					>
 						{children}
-					</TextureCardBody>
-				</>
-			) : null}
-			{renderedFooter ? (
-				<>
-					<TextureSeparator />
-					<TextureCardFooter>{renderedFooter}</TextureCardFooter>
-				</>
-			) : null}
-		</TextureCard>
+					</div>
+				) : null}
+				{renderedFooter ? (
+					<div className="pt-2 text-body-sm text-foreground-muted">{renderedFooter}</div>
+				) : null}
+			</section>
+		</SurfaceProvider>
 	);
 }

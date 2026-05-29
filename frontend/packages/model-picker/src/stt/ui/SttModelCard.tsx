@@ -24,18 +24,11 @@ import { formatBytes } from "@/shared/lib/format-bytes";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { resolveQuantCache } from "../lib/cache-helpers";
-import { getFamilyConfig } from "../lib/family-helpers";
+import { variantDisplayName } from "../lib/family-helpers";
 import { isUncomfortable } from "../lib/hardware-fit";
 import { quantCacheStatus } from "../lib/pill-helpers";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
-
-/** "Whisper Large v3" → "Large v3" (the group header already says Whisper). */
-function variantLabel(model: ModelInfo): string {
-	const familyLabel = getFamilyConfig(model.family).label;
-	const stripped = model.displayName.replace(new RegExp(`^${familyLabel}\\s+`), "");
-	return stripped.length > 0 ? stripped : model.displayName;
-}
 
 interface AttributeSegment {
 	className: string;
@@ -688,6 +681,12 @@ export interface SttModelCardProps {
 		| undefined;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	selectedId: string | undefined;
+	/**
+	 * Sibling variants in the same bundle. Passed so {@link variantDisplayName}
+	 * can keep the size token when two siblings would otherwise collide to the
+	 * same name (e.g. Canary 180M Flash vs Canary 1B Flash → both "Canary Flash").
+	 */
+	siblings?: readonly ModelInfo[] | undefined;
 	state: ModelStateEntry | undefined;
 	systemInfo: SystemInfoEntry | null;
 }
@@ -755,6 +754,7 @@ export function SttModelCard({
 	actions,
 	hasSelectedVariant = false,
 	nested = false,
+	siblings,
 }: SttModelCardProps) {
 	const isSelected = model.id === selectedId;
 	const isIndirectlySelected = !isSelected && hasSelectedVariant;
@@ -791,7 +791,7 @@ export function SttModelCard({
 						<HugeiconsIcon className="size-3.5 text-accent" icon={CheckmarkCircle02Icon} />
 					</Combobox.ItemIndicator>
 					<span className="min-w-0 truncate font-semibold text-body-sm leading-tight">
-						{variantLabel(model)}
+						{variantDisplayName(model, siblings)}
 					</span>
 					{model.sizeLabel ? (
 						<Tooltip content={`${model.sizeLabel} parameters`} side="top">

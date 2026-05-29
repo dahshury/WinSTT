@@ -1,67 +1,136 @@
 ---
-title: Available Models
-description: Overview of all supported speech recognition models
+title: Models
+description: Browse the full WinSTT speech-to-text catalog — 40+ on-device ONNX models across 8 families, with accuracy, speed, size, and language coverage so you can pick the right trade-off.
 ---
 
-WinSTT supports 30+ first-party speech recognition models across six families — **whisper**, **lite-whisper**, **nemo**, **gigaam**, **kaldi**, and **t-one** — plus user-provided **custom** ONNX bundles dropped into the dedicated `models/custom/` folder.
+WinSTT ships **40+ speech-to-text models** across eight families, all running on a single
+ONNX engine on your own hardware. Pick one in the [Model tab](/docs/settings/model) and the
+app downloads it in the background — nothing about your audio leaves the machine.
 
-## One ONNX Engine
+<Screenshot src="model-dropdown" alt="The open model picker showing a maker rail on the left and model rows with accuracy and speed bars, parameter size, language scope, and per-quantization download badges." label="Model picker" caption="Every model shows its accuracy and speed bars, size, language scope, and which quantizations you can download." />
 
-All models — including Whisper — run on a single inference engine: ONNX Runtime via the `onnx-asr` library. There is no separate backend to choose. The legacy `backend` setting (`faster_whisper` / `onnx_asr`) is vestigial: `faster_whisper` is now an alias that routes to the same ONNX engine.
+## One engine, many models
 
-CPU vs GPU is decided **at install time**, not in settings:
+Every model — Whisper included — runs through the same inference engine (ONNX Runtime via
+the `onnx-asr` library). There is no separate backend to choose: switching models is a
+download, not a re-install. Most swaps happen live without restarting the server.
 
-- **CPU build** — bundles `onnxruntime`. Runs on any machine.
-- **GPU build** — bundles `onnxruntime-gpu` plus the NVIDIA CUDA wheels. Uses the GPU when a working CUDA stack is present, and automatically falls back to CPU otherwise.
+Whether inference runs on the **GPU** or **CPU** is decided by the [installer you
+chose](/docs/install) and the **Device** setting, not by the model. Numerical precision is
+chosen per-download via [quantization](/docs/models/compute-types).
 
-The `device` setting accepts `auto` or `cpu` only. `auto` picks the GPU when the GPU build is installed with working CUDA.
+<StatGrid>
+  <Stat value="40+" label="models" />
+  <Stat value="8" label="families" />
+  <Stat value="99" label="languages (Whisper)" />
+  <Stat value="5.1" label="best WER (Cohere)" />
+</StatGrid>
 
-## Precision
+## The eight families
 
-Numerical precision is controlled by the `onnxQuantization` setting. An empty string (`""`) uses the model's default precision; other values (`fp16`, `q4`, `bnb4`, `int8`) are available per-model and surfaced by the model picker. See [Compute Types](/docs/models/compute-types).
+Each row sums up one family: how many models it offers, the typical on-disk size at default
+precision, the languages it covers, and where it fits best. Lower **WER** (word error rate)
+is more accurate; higher **RTFx** (real-time factor) is faster.
 
-## Model Families
+<ModelTable
+  head={["Family", "Models", "Typical size", "Languages", "Recommended for"]}
+  numeric={[1]}
+  rows={[
+    ["Whisper", "12", "149 MB – 4.5 GB", "99 (multilingual + EN-only)", "The all-rounder — accuracy at every size, broadest language reach"],
+    ["Lite-Whisper", "3", "~1.1 GB", "99", "Compressed Whisper Large v3 Turbo — large-model quality at smaller size"],
+    ["NeMo Parakeet", "3", "~2.5 GB", "English + 25-lang multilingual", "Fastest accurate English/European dictation (CTC / RNNT / TDT)"],
+    ["NeMo Canary", "3", "0.8 – 4 GB", "4 – 25 (en/de/es/fr +)", "High-accuracy multilingual with built-in language detection"],
+    ["Moonshine", "10", "0.1 – 0.7 GB", "EN + per-language fine-tunes", "Lowest-latency real-time on CPU; tiny footprint"],
+    ["Cohere", "1", "~5.1 GB", "14", "Maximum accuracy — #1 on the HF Open ASR leaderboard"],
+    ["SenseVoice", "1", "159 MB", "5 (zh/en/ja/ko/yue)", "Fast East-Asian multilingual in a tiny int8 graph"],
+    ["GigaAM", "2", "~3.5 GB", "Russian", "Best-in-class Russian (CTC / RNNT)"],
+    ["Kaldi / Vosk", "2", "93 – 264 MB", "Russian", "Lightweight Russian on low-end hardware"],
+    ["T-One", "1", "144 MB", "Russian", "Compact Russian streaming ASR"],
+  ]}
+  caption="Sizes are the default (fp32 / int8) download; smaller quantizations are usually available. Family count totals 38 catalog entries plus user-dropped custom models."
+/>
+
+## A few standouts
+
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Languages", "Default size"]}
+  numeric={[1, 2, 3]}
+  rows={[
+    ["Whisper Tiny", "38M", "24.5", "750", "99", "149 MB"],
+    ["Whisper Large v3 Turbo", "796M", "7.8", "250", "99", "1.1 GB"],
+    ["Moonshine Base", "62M", "8.5", "990", "EN", "711 MB"],
+    ["Parakeet TDT 0.6B v3", "627M", "5.9", "1100", "25", "2.5 GB"],
+    ["Canary 1B v2", "978M", "5.6", "430", "25", "4.0 GB"],
+    ["Cohere Transcribe", "2.0B", "5.1", "270", "14", "5.1 GB"],
+    ["SenseVoice Small", "234M", "7.2", "850", "5", "159 MB"],
+  ]}
+  caption="WER is an averaged reference figure across benchmark sets; your numbers vary with audio, language, and quantization. RTFx is throughput relative to real time on GPU."
+/>
+
+## How to pick
+
+There is no single best model — it's a trade-off between **accuracy**, **speed**, **size**,
+and **language**. Start from what matters most to you.
+
+<BentoGrid cols={2}>
+  <BentoCell icon="quality" title="Maximum accuracy">
+    **Cohere Transcribe** (WER 5.1) leads, followed by **Canary 1B v2** and **Parakeet TDT
+    0.6B v3** for European languages, or **Whisper Large v3** for the widest language reach.
+  </BentoCell>
+  <BentoCell icon="speed" title="Lowest latency">
+    **Moonshine** (up to 1800 RTFx) is built for real-time English on CPU. For accurate
+    English fast, **Parakeet** clears 1000 RTFx.
+  </BentoCell>
+  <BentoCell icon="cpu" title="Smallest footprint">
+    **Whisper Tiny** (149 MB), **SenseVoice Small** (159 MB), or **Moonshine Tiny** ship the
+    smallest defaults; q4 / int8 quantizations shrink them further.
+  </BentoCell>
+  <BentoCell icon="languages" title="Specific language">
+    **Whisper** covers 99 languages; **Cohere** 14; **Canary / Parakeet v3** 25 European
+    languages; **GigaAM / Vosk / T-One** are Russian; **Moonshine** has per-language fine-tunes.
+  </BentoCell>
+</BentoGrid>
+
+<Callout type="info" title="Good default">
+  If you're unsure, start with **Whisper Large v3 Turbo** (multilingual, WER 7.8, ~1.1 GB) or
+  **Parakeet TDT 0.6B v3** for fast, accurate English and European dictation. Small machines
+  can begin with **Whisper Tiny** or **Moonshine Base** and grow from there.
+</Callout>
+
+<Callout type="warn" title="Real-time preview needs a small model">
+  The [live preview](/docs/settings/quality) only runs models under ~700M parameters. Pair a
+  large main model with a small **realtime model** (Whisper Tiny, Moonshine, or Canary 180M
+  Flash) so words still stream as you speak.
+</Callout>
+
+## Quantizations and downloads
+
+Most models offer several **quantizations** — compressed weight formats (`fp16`, `int8`,
+`q4`, `q4f16`, `bnb4`) that trade a little accuracy for big wins in size and speed. The
+picker only shows the variants the upstream repo actually publishes, and you can download,
+pause, resume, or delete each one independently. See
+[Compute & quantization](/docs/models/compute-types) for the full breakdown.
+
+<Callout type="success" title="Everything stays local">
+  Models download once into your user data folder and run entirely on-device. Audio is
+  processed in memory and never uploaded — switching models never changes that. The only
+  exception is the optional [cloud STT providers](/docs/settings/integrations), which you opt
+  into explicitly with an API key.
+</Callout>
+
+## Related
 
 <Cards>
-  <Card title="Whisper Models" href="/docs/models/whisper">
-    OpenAI Whisper and the compressed Lite-Whisper variants. Multilingual and English-only.
+  <Card title="Whisper & Lite-Whisper" href="/docs/models/whisper">
+    OpenAI Whisper, the EN-only variants, and the compressed Lite-Whisper builds.
   </Card>
-  <Card title="NeMo Models" href="/docs/models/nemo">
-    NVIDIA NeMo Parakeet and Canary: high-accuracy models for English, multilingual, and Russian.
+  <Card title="NeMo Parakeet & Canary" href="/docs/models/nemo">
+    NVIDIA's high-accuracy Conformer models for English, multilingual, and Russian.
   </Card>
-  <Card title="Other Models" href="/docs/models/other">
-    GigaAM (Russian), Kaldi/Vosk (Russian), and T-One (Russian) models.
+  <Card title="Other models" href="/docs/models/other">
+    Moonshine, Cohere, SenseVoice, GigaAM, Vosk/Kaldi, and T-One.
   </Card>
-  <Card title="Compute Types" href="/docs/models/compute-types">
-    ONNX quantization options that trade quality for speed and memory savings.
+  <Card title="Compute & quantization" href="/docs/models/compute-types">
+    What fp16, int8, q4, and q4f16 mean — and how to read the picker's badges.
   </Card>
 </Cards>
-
-## Custom Models
-
-Drop a HuggingFace-style ONNX Whisper export into `{userData}/models/custom/{slug}/` and WinSTT will surface it in the picker on the next restart under the **Custom** group. The picker's "Open custom models folder" button takes you straight there — no need to hunt down the `%APPDATA%` path by hand.
-
-### Folder contract
-
-Each subfolder you drop becomes a single picker entry whose id is `custom-{slug}`. The slug is the folder name; we use the trailing path segment of `_name_or_path` from `config.json` for the display label when present, otherwise we title-case the slug.
-
-A folder is registered as **valid** when it contains all of the following:
-
-| File | Required | Notes |
-|---|---|---|
-| `encoder.onnx` **or** `encoder_model.onnx` | yes | Either filename is accepted (Optimum-style or onnx-community-style export). |
-| `decoder_model.onnx` **or** `decoder_model_merged.onnx` | yes | Merged-decoder graphs are preferred. |
-| `tokenizer.json` | yes | HuggingFace tokenizers JSON format. The legacy `vocab.json` + `merges.txt` pair is **not** accepted. |
-| `config.json` | yes | Must be a JSON object containing a non-empty `model_type` string. The optional `_name_or_path` drives the display label. |
-| `preprocessor_config.json` | no | Picked up automatically by onnx-asr if present. |
-| `generation_config.json` | no | Picked up automatically by onnx-asr if present. |
-
-### Broken drops
-
-Folders that fail the contract still appear in the picker, greyed out, with a tooltip explaining what's missing (e.g. `Unavailable: missing tokenizer.json in my-export`). This makes a partial download / wrong export layout obvious at a glance, instead of leaving you wondering why your folder didn't show up.
-
-### Caveats
-
-- WinSTT does not auto-quantize custom models. Use whatever precision you exported — the picker only offers the default (un-suffixed) graph for `custom-*` entries.
-- Custom models bypass the hardware-fit check because we don't know the parameter count without loading the weights. If your model exceeds the GPU's VRAM, ONNX Runtime will fail to create the session at load time.
-- Custom models are local-only — they do not appear in `list_models_with_state`'s download/cache metadata because they are already on disk.

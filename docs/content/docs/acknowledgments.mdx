@@ -1,21 +1,33 @@
 ---
 title: Acknowledgments
-description: Open-source projects, models, and tools that WinSTT relies on.
+description: The open-source models, runtimes, and tools WinSTT is built on — with links and licenses.
 ---
 
-WinSTT is built on a lot of generous open-source work. The full per-file license text is in [THIRD_PARTY_NOTICES.md](https://github.com/dahshury/WinSTT/blob/main/THIRD_PARTY_NOTICES.md); this page is the friendly summary of who to thank.
+WinSTT stands on a lot of generous open-source work. This page is the friendly summary of who to thank; the full per-file license text lives in [THIRD_PARTY_NOTICES.md](https://github.com/dahshury/WinSTT/blob/main/THIRD_PARTY_NOTICES.md).
+
+<Callout type="info" title="Check the model licenses for your use case">
+  WinSTT is MIT, but the **models** it can download carry their own terms. Most are Apache 2.0 or MIT, but a few (Cohere weights, NeMo weights) are CC BY-NC / CC BY — fine for personal use, but read the upstream license before shipping anything commercial.
+</Callout>
 
 ## Speech recognition models
 
-- **[OpenAI Whisper](https://github.com/openai/whisper)** — base, small, medium, large-v3-turbo, and the English-only `.en` variants. MIT.
-- **[Lite-Whisper](https://huggingface.co/efficient-speech)** — compressed Whisper variants (`-acc`, `-fast`). Apache 2.0 / MIT.
-- **[NVIDIA NeMo](https://github.com/NVIDIA/NeMo)** — Parakeet TDT (English + multilingual) and Canary. Apache 2.0; CC BY 4.0 on model weights.
-- **[Moonshine](https://github.com/usefulsensors/moonshine)** (Useful Sensors) — efficient ASR for edge devices. MIT.
-- **[Cohere](https://huggingface.co/CohereForAI)** — open-weight ASR for low-resource languages. CC BY-NC 4.0 on model weights — please check the license for your use case.
-- **[GigaAM](https://github.com/salute-developers/GigaAM)** — Russian ASR. Apache 2.0.
-- **[Vosk / Kaldi](https://github.com/alphacep/vosk-api)** — Russian small-footprint models. Apache 2.0.
-- **[T-One](https://github.com/t-tech/t-one)** — Russian ASR. Apache 2.0.
-- **[onnx-community / Xenova](https://huggingface.co/onnx-community)** — the heroes maintaining ONNX exports of every model above.
+Every model is loaded as ONNX through the engine below — WinSTT runs no PyTorch in the transcription path.
+
+<ModelTable
+  head={["Project", "What WinSTT uses", "License"]}
+  rows={[
+    [<a href="https://github.com/openai/whisper">OpenAI Whisper</a>, "base, small, medium, large-v3-turbo, and the English-only .en variants", "MIT"],
+    [<a href="https://huggingface.co/efficient-speech">Lite-Whisper</a>, "Compressed Whisper variants (-acc, -fast)", "Apache 2.0 / MIT"],
+    [<a href="https://github.com/NVIDIA/NeMo">NVIDIA NeMo</a>, "Parakeet TDT (English + multilingual) and Canary", "Apache 2.0 (code); CC BY 4.0 (weights)"],
+    [<a href="https://github.com/usefulsensors/moonshine">Moonshine</a>, "Efficient ASR for edge devices (Useful Sensors)", "MIT"],
+    [<a href="https://huggingface.co/CohereForAI">Cohere</a>, "Open-weight ASR for low-resource languages", "CC BY-NC 4.0 (weights)"],
+    [<a href="https://github.com/salute-developers/GigaAM">GigaAM</a>, "Russian ASR", "Apache 2.0"],
+    [<a href="https://github.com/alphacep/vosk-api">Vosk / Kaldi</a>, "Russian small-footprint models", "Apache 2.0"],
+    [<a href="https://github.com/t-tech/t-one">T-One</a>, "Russian ASR", "Apache 2.0"],
+    [<a href="https://huggingface.co/onnx-community">onnx-community / Xenova</a>, "The ONNX exports of every model above", "—"],
+  ]}
+  caption="The picker downloads only the quantizations each upstream repo actually publishes."
+/>
 
 ## Voice activity & wake word
 
@@ -26,26 +38,26 @@ WinSTT is built on a lot of generous open-source work. The full per-file license
 ## Text-to-speech
 
 - **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** — the bundled ONNX TTS voice model. Apache 2.0.
-- **[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)** — Python wrapper, torch-free. MIT.
+- **[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)** — torch-free Python wrapper. MIT.
 
 ## Inference & audio runtime
 
 - **[ONNX Runtime](https://onnxruntime.ai/)** — the single inference engine WinSTT ships. MIT.
-- **[DirectML](https://github.com/microsoft/DirectML)** — the EP that makes the default GPU build vendor-agnostic. MIT.
+- **[DirectML](https://github.com/microsoft/DirectML)** — the execution provider that makes the default GPU build vendor-agnostic (AMD / Intel / NVIDIA via DirectX 12). MIT.
+- **[OpenVINO](https://github.com/openvinotoolkit/openvino)** — the EP for the Intel-tuned build (ARC dGPU / Iris Xe). Apache 2.0.
 - **[PortAudio](http://www.portaudio.com/)** — cross-platform audio I/O. MIT-style.
-- **[onnx-asr](https://github.com/istupakov/onnx-asr)** — the ASR abstraction layer WinSTT depends on (we ship a [WinSTT-side fork](https://github.com/dahshury/onnx-asr) pinned by commit). MIT.
+- **[onnx-asr](https://github.com/istupakov/onnx-asr)** — the ASR abstraction layer. WinSTT ships a [pinned fork](https://github.com/dahshury/onnx-asr) adding the Moonshine / Cohere tokenizers and the Lite-Whisper FP16 patch. MIT.
 
 ## Frontend & desktop
 
 - **[Electron](https://www.electronjs.org/)** — desktop runtime. MIT.
 - **[Vite](https://vitejs.dev/)** — renderer build tool. MIT.
-- **[React](https://react.dev/)** + **[React Compiler](https://react.dev/learn/react-compiler)** — UI library + Babel plugin that frees us from `useMemo` / `useCallback`. MIT.
+- **[React](https://react.dev/)** + **[React Compiler](https://react.dev/learn/react-compiler)** — UI library + Babel plugin that frees the renderer from `useMemo` / `useCallback`. MIT.
 - **[Base UI](https://base-ui.com/)** — accessible unstyled component primitives. MIT.
 - **[Hugeicons](https://hugeicons.com/)** — icon set. Free icons under their free license.
 - **[Zustand](https://github.com/pmndrs/zustand)** — state stores. MIT.
-- **[TanStack Query](https://tanstack.com/query)** — server-state caching. MIT.
 - **[use-intl](https://www.npmjs.com/package/use-intl)** — i18n runtime. MIT.
-- **[uiohook-napi](https://github.com/SnosMe/uiohook-napi)** — global keyboard hook for PTT / Toggle. MIT.
+- **[uiohook-napi](https://github.com/SnosMe/uiohook-napi)** — global keyboard hook for Push-to-Talk / Toggle. MIT.
 
 ## Backend & build tooling
 
@@ -53,28 +65,41 @@ WinSTT is built on a lot of generous open-source work. The full per-file license
 - **[ruff](https://docs.astral.sh/ruff/)** (Astral) — Python linter and formatter. MIT.
 - **[mypy](https://github.com/python/mypy)** — strict type checker. MIT.
 - **[pytest](https://docs.pytest.org/)** — server test harness. MIT.
-- **[Kink](https://github.com/kodemore/kink)** — Python DI container. MIT.
 - **[Pydantic](https://docs.pydantic.dev/)** — config schemas. MIT.
 - **[huggingface_hub](https://github.com/huggingface/huggingface_hub)** — model download / cache layer. Apache 2.0.
 - **[Bun](https://bun.sh/)** — JavaScript runtime + package manager. MIT.
-- **[Biome](https://biomejs.dev/)** + **[ultracite](https://github.com/triglavia/ultracite)** — TypeScript linter/formatter. MIT.
+- **[Biome](https://biomejs.dev/)** + **[ultracite](https://github.com/triglavia/ultracite)** — TypeScript linter / formatter. MIT.
 - **[electron-builder](https://www.electron.build/)** — packaging. MIT.
-- **[PyInstaller](https://pyinstaller.org/)** — Python → exe. GPL with exception.
+- **[PyInstaller](https://pyinstaller.org/)** — Python → exe. GPL with linking exception.
 - **[Sentry](https://sentry.io/)** — opt-out crash reporting. BSL.
 
 ## Documentation
 
 - **[Fumadocs](https://fumadocs.vercel.app/)** — the framework powering this site. MIT.
-- **[TanStack Router](https://tanstack.com/router)** — routing for the docs app. MIT.
 
 ## Inspiration & adjacent projects
 
-- **[Handy](https://github.com/cjpais/Handy)** by CJ Pais — a Tauri-based local STT app whose docs structure inspired several sections of these pages. MIT.
-- **[RealtimeSTT](https://github.com/KoljaB/RealtimeSTT)** — the upstream Python monolith WinSTT's hexagonal refactor was derived from. MIT. Kept in-tree under `examples/RealtimeSTT/` as a reference for behavioral parity.
-- **[Whisper.cpp](https://github.com/ggerganov/whisper.cpp)** — the project that demonstrated Whisper could run efficiently on CPU. MIT.
+- **[Handy](https://github.com/cjpais/Handy)** by CJ Pais — a Tauri-based local STT app whose docs structure and several settings (mic-lifecycle, paste pipeline) shaped these pages. MIT.
+- **[RealtimeSTT](https://github.com/KoljaB/RealtimeSTT)** — the upstream Python monolith WinSTT's hexagonal refactor was derived from. Kept in-tree under `examples/RealtimeSTT/` for behavioral parity. MIT.
+- **[Whisper.cpp](https://github.com/ggerganov/whisper.cpp)** — the project that proved Whisper could run efficiently on CPU. MIT.
 
 ## And a personal thanks
 
-To everyone who has filed an issue, opened a PR, suggested a model, or asked a sharp question on Discussions. WinSTT is a side project; the community feedback is what keeps it focused.
+To everyone who has filed an issue, opened a PR, suggested a model, or asked a sharp question on Discussions. WinSTT is a side project; the community feedback is what keeps it focused. Want to contribute? Start with [CONTRIBUTING.md](https://github.com/dahshury/WinSTT/blob/main/CONTRIBUTING.md).
 
-Want to contribute? Start with [CONTRIBUTING.md](https://github.com/dahshury/WinSTT/blob/main/CONTRIBUTING.md).
+## Related
+
+<Cards>
+  <Card title="Browse the catalog" href="/docs/models">
+    All 40+ STT models across 8 families, with accuracy, speed, and language coverage.
+  </Card>
+  <Card title="Compute & quantization" href="/docs/models/compute-types">
+    What CPU, DirectML, and OpenVINO mean — and how to read the quantization labels.
+  </Card>
+  <Card title="Text-to-speech" href="/docs/text-to-speech">
+    Read selections aloud with the bundled Kokoro-82M voice model.
+  </Card>
+  <Card title="FAQ" href="/docs/faq">
+    Privacy, licensing, offline use, and the local-first guarantees.
+  </Card>
+</Cards>

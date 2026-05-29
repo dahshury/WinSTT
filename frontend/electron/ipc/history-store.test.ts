@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { asInvalid } from "@test/lib/cast";
 import {
 	__test__,
 	createHistoryStore,
@@ -8,6 +9,7 @@ import {
 	type PaginatedHistory,
 	parseAddInput,
 	parsePageArgs,
+	type RecordingRetentionPeriod,
 	runMigrations,
 	type StatementLike,
 } from "./history-store";
@@ -389,6 +391,152 @@ describe("createHistoryStore.sweep retention", () => {
 	});
 });
 
+describe("createHistoryStore.close", () => {
+	test("delegates to the underlying db.close()", () => {
+		const db = makeFakeDb();
+		runMigrations(db);
+		let closed = 0;
+		db.close = () => {
+			closed += 1;
+		};
+		const store = createHistoryStore({ db });
+		store.close();
+		expect(closed).toBe(1);
+	});
+});
+
+describe("createHistoryStore WAV-delete hook edge cases", () => {
+	test("no onWavDelete handler: delete still succeeds without throwing", () => {
+		const db = makeFakeDb();
+		runMigrations(db);
+		const deleted: number[] = [];
+		// Intentionally omit onWavDelete to exercise the `!options.onWavDelete`
+		// short-circuit in emitWavDelete (line 247 false-path).
+		const store = createHistoryStore({
+			db,
+			now: () => 1_700_000_000,
+			onDeleted: (id) => deleted.push(id),
+		});
+		const row = store.add({ fileName: "no-hook.wav", transcriptionText: "x" });
+		expect(store.deleteById(row.id)).toBe(true);
+		expect(deleted).toEqual([row.id]);
+	});
+
+	test("empty fileName short-circuits the WAV unlink (no hook fired)", () => {
+		const db = makeFakeDb();
+		runMigrations(db);
+		const unlinked: string[] = [];
+		const deleted: number[] = [];
+		const store = createHistoryStore({
+			db,
+			now: () => 1_700_000_000,
+			onDeleted: (id) => deleted.push(id),
+			onWavDelete: (fileName) => {
+				unlinked.push(fileName);
+			},
+		});
+		// fileName === "" hits the `fileName === ""` arm of the guard.
+		const row = store.add({ fileName: "", transcriptionText: "x" });
+		expect(store.deleteById(row.id)).toBe(true);
+		expect(deleted).toEqual([row.id]); // onDeleted still fires
+		expect(unlinked).toEqual([]); // but the WAV unlink is skipped
+	});
+
+	test("rejecting onWavDelete routes the error to onSweepError", async () => {
+		const db = makeFakeDb();
+		runMigrations(db);
+		const boom = new Error("unlink EPERM");
+		const swept: unknown[] = [];
+		const store = createHistoryStore({
+			db,
+			now: () => 1_700_000_000,
+			// Returns a rejected promise → exercises the `.catch` arrow (line 249).
+			onWavDelete: () => Promise.reject(boom),
+			onSweepError: (err) => swept.push(err),
+		});
+		const row = store.add({ fileName: "doomed.wav", transcriptionText: "x" });
+		expect(store.deleteById(row.id)).toBe(true);
+		// The catch handler runs on the microtask queue; flush it.
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(swept).toEqual([boom]);
+	});
+
+	test("rejecting onWavDelete without onSweepError logs a fallback warning (Bug #1)", async () => {
+		// Bug #1 regression: when onWavDelete rejects AND no onSweepError sink is
+		// wired, the rejection used to vanish into `options.onSweepError?.(err)` (a
+		// silent optional-chain no-op). It must now surface a console.warn fallback
+		// so an undeletable WAV is at least observable. Behavior is unchanged (still
+		// no throw / no unhandled rejection escapes) — only observability is added.
+		const db = makeFakeDb();
+		runMigrations(db);
+		const boom = new Error("nobody listening");
+		const warnCalls: unknown[][] = [];
+		const originalWarn = console.warn;
+		console.warn = (...args: unknown[]) => {
+			warnCalls.push(args);
+		};
+		try {
+			const store = createHistoryStore({
+				db,
+				now: () => 1_700_000_000,
+				onWavDelete: () => Promise.reject(boom),
+				// onSweepError omitted → fallback console.warn path fires.
+			});
+			const row = store.add({ fileName: "doomed2.wav", transcriptionText: "x" });
+			expect(store.deleteById(row.id)).toBe(true);
+			await Promise.resolve();
+			await Promise.resolve();
+			// The fallback logged the failing fileName + the rejection reason.
+			expect(warnCalls.length).toBe(1);
+			const [message, err] = warnCalls[0] as [string, unknown];
+			expect(message).toContain("doomed2.wav");
+			expect(message.toLowerCase()).toContain("history");
+			expect(err).toBe(boom);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+});
+
+describe("createHistoryStore.sweep no-op deletes", () => {
+	test("preserveLimit with nothing past the cap deletes 0 (empty-batch early return)", () => {
+		const { store, deleted, unlinked } = setupStore();
+		store.add({ fileName: "only.wav", transcriptionText: "x", timestamp: 1 });
+		// cap (3) >= row count (1) → stale list is empty → deleteEntries returns 0
+		// via its `rows.length === 0` guard (line 256).
+		expect(store.sweep("preserveLimit", 3)).toBe(0);
+		expect(deleted).toEqual([]);
+		expect(unlinked).toEqual([]);
+		expect(store.list({ offset: 0, limit: 100 }).entries.length).toBe(1);
+	});
+
+	test("time-window sweep with no stale rows deletes 0", () => {
+		const now = 10 * 24 * 60 * 60;
+		const { store, deleted } = setupStore(now);
+		// Only a fresh, in-window row exists → days3 finds nothing stale.
+		store.add({ fileName: "fresh.wav", transcriptionText: "x", timestamp: now - 60 });
+		expect(store.sweep("days3", 50)).toBe(0);
+		expect(deleted).toEqual([]);
+	});
+
+	test("unrecognised retention period hits the cutoff-null guard and deletes 0", () => {
+		// A value outside the RecordingRetentionPeriod union is not "never" and not
+		// "preserveLimit"/"cap", so it reaches computeCutoff() which returns null for
+		// any unknown period → the `if (cutoff === null) return 0;` defensive guard
+		// (history-store.ts:358-359) fires. No time-window query is run, so even
+		// stale + unsaved rows survive and no delete hooks fire.
+		const now = 100 * 24 * 60 * 60;
+		const { store, deleted, unlinked } = setupStore(now);
+		store.add({ fileName: "ancient.wav", transcriptionText: "x", timestamp: 0, saved: false });
+		const bogus = asInvalid<RecordingRetentionPeriod>("not-a-real-period");
+		expect(store.sweep(bogus, 1)).toBe(0);
+		expect(deleted).toEqual([]);
+		expect(unlinked).toEqual([]);
+		expect(store.list({ offset: 0, limit: 100 }).entries.length).toBe(1);
+	});
+});
+
 describe("__test__ helpers", () => {
 	test("computeCutoff matches the day-windowed retention math", () => {
 		expect(__test__.computeCutoff("days3", 100 * 86_400)).toBe(97 * 86_400);
@@ -454,5 +602,32 @@ describe("__test__ helpers", () => {
 		expect(__test__.isDbRow({})).toBe(false);
 		expect(__test__.isCountRow({ id: 1, file_name: "x" })).toBe(true);
 		expect(__test__.isCountRow({ id: "1" })).toBe(false);
+	});
+
+	test("isCountRow rejects null + non-object primitives via the early guard", () => {
+		// Exercises the `value === null || typeof value !== "object"` arm
+		// (history-store.ts:371-372) on BOTH of its sub-conditions: a literal null,
+		// then a string/number/undefined where `typeof !== "object"`.
+		expect(__test__.isCountRow(null)).toBe(false);
+		expect(__test__.isCountRow("nope")).toBe(false);
+		expect(__test__.isCountRow(42)).toBe(false);
+		expect(__test__.isCountRow(undefined)).toBe(false);
+	});
+
+	test("isCountRow accepts a bigint id (the OR's right operand)", () => {
+		// node:sqlite hands back PK values as bigint when they exceed 2^53; the
+		// `typeof r.id === "bigint"` alternative must accept them.
+		expect(__test__.isCountRow({ id: 9_007_199_254_740_993n, file_name: "huge.wav" })).toBe(true);
+		// bigint id but a non-string file_name still fails the second clause.
+		expect(__test__.isCountRow({ id: 1n, file_name: 123 })).toBe(false);
+	});
+
+	test("formatTimestampTitle covers both am and pm sides of the meridiem ternary", () => {
+		// Build epochs from explicit local Date components so the assertion is
+		// timezone-independent: getHours() < 12 → "am", else "pm".
+		const morning = Math.floor(new Date(2023, 0, 2, 9, 30, 0).getTime() / 1000);
+		const evening = Math.floor(new Date(2023, 0, 2, 21, 30, 0).getTime() / 1000);
+		expect(__test__.formatTimestampTitle(morning).toLowerCase()).toContain("am");
+		expect(__test__.formatTimestampTitle(evening).toLowerCase()).toContain("pm");
 	});
 });

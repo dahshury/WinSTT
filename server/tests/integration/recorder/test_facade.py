@@ -57,9 +57,7 @@ class TestAudioToTextRecorderFacade:
             model="tiny",
             download_root=None,
             language="en",
-            compute_type="default",
             input_device_index=None,
-            gpu_device_index=0,
             device="cuda",
             on_recording_start=lambda: None,
             on_recording_stop=lambda: None,
@@ -77,7 +75,6 @@ class TestAudioToTextRecorderFacade:
             on_realtime_transcription_update=None,
             on_realtime_transcription_stabilized=None,
             silero_sensitivity=0.4,
-            silero_use_onnx=False,
             silero_deactivity_detection=False,
             webrtc_sensitivity=3,
             post_speech_silence_duration=0.6,
@@ -91,7 +88,6 @@ class TestAudioToTextRecorderFacade:
             on_turn_detection_stop=None,
             wakeword_backend="",
             openwakeword_model_paths=None,
-            openwakeword_inference_framework="onnx",
             wake_words="",
             wake_words_sensitivity=0.6,
             wake_word_activation_delay=0.0,
@@ -103,14 +99,12 @@ class TestAudioToTextRecorderFacade:
             on_wakeword_detection_end=None,
             on_recorded_chunk=None,
             debug_mode=False,
-            handle_buffer_overflow=True,
             buffer_size=512,
             sample_rate=16000,
             initial_prompt=None,
             initial_prompt_realtime=None,
             print_transcription_time=False,
             early_transcription_on_silence=0,
-            allowed_latency_limit=100,
             no_log_file=False,
             use_extended_logging=False,
             normalize_audio=False,
@@ -562,6 +556,13 @@ class _SwapRecordingService:
         self.swaps: list[tuple[str, str]] = []
         self.unload_timeouts: list[int | None] = []
         self.audio_reconfigs: list[dict[str, object]] = []
+        # Controls the in-flight probe the config-knob setters consult before
+        # triggering their reload. Default False so existing setter tests still
+        # see the reload fire.
+        self.swap_in_flight: dict[str, bool] = {"main": False, "realtime": False}
+
+    def is_swap_in_flight(self, kind: str) -> bool:
+        return self.swap_in_flight.get(kind, False)
 
     def request_model_swap(self, kind: str, name: str) -> None:
         self.swaps.append((kind, name))
@@ -614,6 +615,37 @@ class TestFacadeReloadHelpers:
         facade = _make_facade_with_stub_service(stub, **{"transcription.model": "base"})
         facade._maybe_reload_main_model("test")
         assert stub.swaps == [("main", "base")]
+
+    def test_maybe_reload_main_model_skips_when_main_swap_in_flight(self) -> None:
+        """A main swap already running => the quant-knob reload is SKIPPED.
+
+        Regression for the "switch silently reverts to the previous model"
+        bug: picking a model at a new quant fires the model swap AND an
+        onnx_quantization-triggered reload of the CURRENT (old) model. The
+        latter is requested second, so it cancels the user's model swap and
+        commits the old model. The in-flight swap re-reads the updated quant
+        config at load time, so this reload is redundant — skip it.
+        """
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(stub, **{"transcription.model": "base"})
+        stub.swap_in_flight["main"] = True
+        facade._maybe_reload_main_model("test")
+        assert stub.swaps == []
+
+    def test_maybe_reload_realtime_skips_when_realtime_swap_in_flight(self) -> None:
+        """Same guard for the realtime slot."""
+        stub = _SwapRecordingService()
+        facade = _make_facade_with_stub_service(
+            stub,
+            **{
+                "realtime.enable_realtime_transcription": True,
+                "realtime.use_main_model_for_realtime": False,
+                "realtime.realtime_model_type": "tiny",
+            },
+        )
+        stub.swap_in_flight["realtime"] = True
+        facade._maybe_reload_realtime_model("test")
+        assert stub.swaps == []
 
     def test_maybe_reload_realtime_skips_when_service_none(self) -> None:
         facade = AudioToTextRecorder(model="tiny", use_microphone=False)

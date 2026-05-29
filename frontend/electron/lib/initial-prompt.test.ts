@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { collectDictionaryTerms, composeInitialPrompt } from "./initial-prompt";
+import {
+	buildInitialPromptPair,
+	collectDictionaryTerms,
+	composeInitialPrompt,
+} from "./initial-prompt";
 
 describe("collectDictionaryTerms", () => {
 	test("returns empty array on empty/undefined input", () => {
@@ -180,5 +184,157 @@ describe("composeInitialPrompt", () => {
 
 	test("strips emoji including skin-tone modifiers but keeps surrounding words", () => {
 		expect(composeInitialPrompt("", [], "great work 👍🏽 thanks 🎉")).toBe("great work thanks");
+	});
+
+	test("a tail-only prompt of exactly the per-tail cap (250) passes through the no-cap fast-path", () => {
+		// No prefix, no dictionary => body is empty. The tail is hard-capped to
+		// MAX_CONTEXT_TAIL_CHARS (250) by sanitiseContextTail, which is < the
+		// MAX_PROMPT_CHARS (600) final cap, so the no-cap fast-path returns it
+		// verbatim. This is precisely why the former `body.length === 0`
+		// last-resort branch was dead code (now removed): an empty body can
+		// never reach the cap-overflow path.
+		const tail = "c".repeat(250);
+		expect(composeInitialPrompt("", [], tail)).toBe(tail);
+	});
+
+	test("a tail-only prompt longer than the per-tail cap keeps only its LAST 250 chars", () => {
+		// A 700-char single token has no whitespace to collapse and no noise to
+		// strip, so sanitiseContextTail keeps only its LAST 250 chars (< 600).
+		const out = composeInitialPrompt("", [], "d".repeat(700));
+		expect(out).toBe("d".repeat(250));
+		expect(out.length).toBe(250);
+	});
+
+	test("roomForTail <= 0: a body that fills the entire budget drops the tail entirely", () => {
+		// Build a glossary body that occupies >= MAX_PROMPT_CHARS - 2 chars so
+		// there is no room left for the tail after the "\n\n" separator. The
+		// composer must return the body alone (glossary intact, tail dropped).
+		const terms = Array.from({ length: 300 }, (_, i) => `term${i}`);
+		const tail = "context that should be dropped";
+		const out = composeInitialPrompt("", terms, tail);
+		expect(out.length).toBeLessThanOrEqual(600);
+		expect(out.startsWith("Glossary: ")).toBe(true);
+		expect(out).not.toContain("context that should be dropped");
+		// And it must match the body-only composition (no tail leaked in).
+		expect(out).toBe(composeInitialPrompt("", terms, ""));
+	});
+
+	test("composed>600 with room for some tail: clips tail front, keeps body intact", () => {
+		// To force composed>600 with a non-empty body AND positive roomForTail,
+		// use a glossary of 424 chars (85 short terms) and a 250-char tail so
+		// composed = 250 + 2 + 424 = 676 > 600, and roomForTail = 600 - 424 - 2
+		// = 174 > 0. The body (glossary) is kept intact; the tail's FRONT is
+		// clipped to its trailing 174 chars.
+		const terms = Array.from({ length: 85 }, (_, i) => `t${i}`);
+		const glossary = `Glossary: ${terms.join(", ")}.`;
+		const tail = "k".repeat(250);
+		const out = composeInitialPrompt("", terms, tail);
+		expect(out.length).toBe(600);
+		// Body (the glossary) survives intact at the end.
+		expect(out.endsWith(glossary)).toBe(true);
+		// The tail was clipped from its front (only a suffix of k's remains).
+		const roomForTail = 600 - glossary.length - 2;
+		expect(out.startsWith("k".repeat(roomForTail))).toBe(true);
+		expect(out).toBe(`${"k".repeat(roomForTail)}\n\n${glossary}`);
+	});
+});
+
+describe("fitComposedWithinCap (via composeInitialPrompt prefix+glossary overflow)", () => {
+	test("prefix + glossary that overflows but glossary <= cap: clips the prefix's TAIL, keeps glossary", () => {
+		// A 600-char prefix plus a short glossary (29 chars) overflows 600
+		// (composed = 600 + 2 + 29 = 631), but the glossary alone is well under
+		// the cap, so the composer clips the prefix's TAIL to fit rather than
+		// clipping the glossary. This exercises the FALSE branch of
+		// `glossary.length > MAX_PROMPT_CHARS` (clipPrefixToFitGlossary).
+		const prefix = "p".repeat(600);
+		const out = composeInitialPrompt(prefix, ["Ollama", "Kubernetes"]);
+		expect(out.length).toBeLessThanOrEqual(600);
+		expect(out.endsWith("Glossary: Ollama, Kubernetes.")).toBe(true);
+		// Glossary kept intact (not clipped on a comma boundary).
+		expect(out).toContain("Glossary: Ollama, Kubernetes.");
+		// Prefix was clipped to make room; only a prefix-prefix of p's remains.
+		const glossary = "Glossary: Ollama, Kubernetes.";
+		const room = 600 - glossary.length - 2;
+		expect(out).toBe(`${"p".repeat(room)}\n\n${glossary}`);
+	});
+});
+
+describe("clipOversizedGlossary no-comma branch", () => {
+	test("a single term longer than the cap is hard-cut to 600 chars WITH a terminating period", () => {
+		// When one term alone overflows the cap there is no comma in the first
+		// 600 chars, so lastIndexOf(',') === -1. Regression: this branch used to
+		// return the raw slice with no terminating period, producing a malformed
+		// (unterminated) glossary sentence. It must now hard-cut at the cap and
+		// append a period so the prompt stays well-formed and within budget.
+		const oneHugeTerm = "x".repeat(700);
+		const out = composeInitialPrompt("", [oneHugeTerm]);
+		expect(out.length).toBe(600);
+		expect(out.startsWith("Glossary: ")).toBe(true);
+		expect(out.includes(",")).toBe(false);
+		// The no-comma branch now terminates the sentence with a period.
+		expect(out.endsWith(".")).toBe(true);
+	});
+});
+
+describe("buildInitialPromptPair", () => {
+	test("builds main + realtime prompts sharing the same dictionary glossary", () => {
+		const pair = buildInitialPromptPair({
+			mainPrefix: "Main prefix.",
+			realtimePrefix: "Realtime prefix.",
+			dictionary: [{ term: "Ollama" }, { term: "Kubernetes" }],
+		});
+		expect(pair.main).toBe("Main prefix.\n\nGlossary: Ollama, Kubernetes.");
+		expect(pair.realtime).toBe("Realtime prefix.\n\nGlossary: Ollama, Kubernetes.");
+	});
+
+	test("defaults contextTail to '' when omitted (byte-identical to two-tier shape)", () => {
+		const pair = buildInitialPromptPair({
+			mainPrefix: "Main.",
+			realtimePrefix: "RT.",
+			dictionary: [{ term: "Ollama" }],
+		});
+		expect(pair.main).toBe(composeInitialPrompt("Main.", ["Ollama"], ""));
+		expect(pair.realtime).toBe(composeInitialPrompt("RT.", ["Ollama"], ""));
+	});
+
+	test("threads an explicit contextTail into BOTH prompts", () => {
+		const pair = buildInitialPromptPair({
+			mainPrefix: "Main.",
+			realtimePrefix: "RT.",
+			dictionary: [{ term: "Ollama" }],
+			contextTail: "Hi Bob,",
+		});
+		expect(pair.main).toBe("Hi Bob,\n\nMain.\n\nGlossary: Ollama.");
+		expect(pair.realtime).toBe("Hi Bob,\n\nRT.\n\nGlossary: Ollama.");
+	});
+
+	test("handles an undefined dictionary (no glossary, prefixes verbatim)", () => {
+		const pair = buildInitialPromptPair({
+			mainPrefix: "Just main.",
+			realtimePrefix: "Just rt.",
+			dictionary: undefined,
+		});
+		expect(pair.main).toBe("Just main.");
+		expect(pair.realtime).toBe("Just rt.");
+	});
+
+	test("handles an empty dictionary array (no glossary)", () => {
+		const pair = buildInitialPromptPair({
+			mainPrefix: "Main.",
+			realtimePrefix: "RT.",
+			dictionary: [],
+		});
+		expect(pair.main).toBe("Main.");
+		expect(pair.realtime).toBe("RT.");
+	});
+
+	test("all-empty inputs yield two empty prompts", () => {
+		const pair = buildInitialPromptPair({
+			mainPrefix: "",
+			realtimePrefix: "",
+			dictionary: [],
+		});
+		expect(pair.main).toBe("");
+		expect(pair.realtime).toBe("");
 	});
 });

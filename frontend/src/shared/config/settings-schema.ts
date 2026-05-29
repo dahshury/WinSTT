@@ -1,8 +1,5 @@
 import { z } from "zod";
 import { DeviceTypeSchema, TranscriberBackendSchema } from "@/shared/api/schema.zod";
-import { COMPUTE_TYPES } from "./defaults";
-
-const computeTypeSchema = z.enum(COMPUTE_TYPES);
 
 export const modelSettingsSchema = z.object({
 	// Bundled offline base model — see `project_offline_base_and_tts_pack`
@@ -17,7 +14,6 @@ export const modelSettingsSchema = z.object({
 	model: z.string().default("tiny"),
 	realtimeModel: z.string().default("tiny"),
 	language: z.string().default("en"),
-	computeType: computeTypeSchema.default("default"),
 	device: DeviceTypeSchema.default("auto"),
 	backend: TranscriberBackendSchema.default("faster_whisper"),
 	onnxQuantization: z.string().default(""),
@@ -31,11 +27,11 @@ export const modelSettingsSchema = z.object({
 	// builds from wiping the whole model section on a corrupt persisted value.
 	translateToEnglish: z.boolean().default(false).catch(false),
 	// Idle-timeout that unloads the loaded ONNX session(s) so the OS can
-	// reclaim RAM/VRAM. Enum matches Handy's ``ModelUnloadTimeout`` — the
+	// reclaim RAM/VRAM. Enum lists the model-unload-timeout modes — the
 	// IPC layer normalizes ``never`` to a negative seconds value (server
 	// sentinel for "keep loaded forever") and ``immediately`` to ``0``
 	// (server tears down right after each transcription instead of
-	// polling for idleness). Default "min5" matches Handy's default.
+	// polling for idleness). Default "min5".
 	modelUnloadTimeout: z
 		.enum(["immediately", "never", "min2", "min5", "min10", "min15", "hour1"])
 		.default("min5")
@@ -76,7 +72,7 @@ export const audioSettingsSchema = z.object({
 	sampleRate: z.number().int().default(16_000),
 	bufferSize: z.number().int().default(512),
 	// Trip threshold = 1 - sileroSensitivity (see server SileroVad.detect).
-	// Default 0.7 → trip > 0.3, matching Handy. The previous default 0.4
+	// Default 0.7 → trip > 0.3, the reference threshold. The previous default 0.4
 	// (→ trip > 0.6) silently dropped quiet/distant voices — Silero's
 	// confidence on far-mic speech routinely lives in 0.3–0.6, and 0.4
 	// sits on the wrong side of that band. Per-device adaptive
@@ -112,7 +108,7 @@ export const audioSettingsSchema = z.object({
 	// `ioreg`; Linux reads `/proc/acpi/button/lid/`; Windows is a
 	// documented v1.1 deferral (no zero-cost equivalent probe).
 	clamshellMicrophone: z.number().int().nullable().default(null).catch(null),
-	// Consolidated mic-release policy. Replaces the original Handy pair
+	// Consolidated mic-release policy. Replaces the original pair
 	// (`always_on_microphone` + `lazy_stream_close`) — same five
 	// behaviors but one picker instead of "toggle + dependent toggle":
 	//
@@ -146,7 +142,7 @@ export const audioSettingsSchema = z.object({
 	// before the pause + stop sequence runs, so trailing syllables that
 	// escape just after the key-up still land in the buffer. 0 (default)
 	// preserves the historical snap-stop behaviour; capped at 2000 ms so
-	// a bad value can't lock the recorder. Mirrors Handy's
+	// a bad value can't lock the recorder. Mirrors the reference
 	// `extra_recording_buffer_ms`. `.catch(0)` keeps older builds (no
 	// key) from wiping the whole audio section on first read.
 	extraRecordingBufferMs: z.number().int().min(0).max(2000).default(0).catch(0),
@@ -234,8 +230,8 @@ export const generalSettingsSchema = z.object({
 		.enum(["floating-bottom", "dynamic-island"])
 		.default("floating-bottom")
 		.catch("floating-bottom"),
-	// Coarse-grained screen-edge gate, modeled after Handy's `OverlayPosition`
-	// (examples/Handy/src-tauri/src/overlay.rs). Distinct from `overlayMode`
+	// Coarse-grained screen-edge gate, modeled after a screen-edge
+	// `OverlayPosition` enum. Distinct from `overlayMode`
 	// (which picks the visual layout style): this controls WHETHER the pill
 	// is allowed to appear and on which screen edge.
 	//   - `"auto"` (default): platform-derived in `resolveOverlayPosition`.
@@ -355,13 +351,12 @@ export const generalSettingsSchema = z.object({
 	// Threshold for the server-side deterministic fuzzy corrector that
 	// runs BEFORE the LLM modifier pipeline. Lower = stricter (fewer
 	// false positives, more genuine near-misses left for the LLM to fix).
-	// 0.18 matches Handy's reference value (see
-	// `examples/Handy/src-tauri/src/audio_toolkit/text.rs`). `.catch(0.18)`
+	// 0.18 is the reference default. `.catch(0.18)`
 	// keeps an older persisted value (or a corrupt entry) from wiping the
 	// whole `general` section on upgrade.
 	wordCorrectionThreshold: z.number().min(0).max(1).default(0.18).catch(0.18),
-	// Locale-aware filler-word stripping + 3+ stutter collapse. Ported
-	// from Handy's `filter_transcription_output`. When `true` (default)
+	// Locale-aware filler-word stripping + 3+ stutter collapse, modeled
+	// on a `filter_transcription_output` pass. When `true` (default)
 	// the server post-processor consults `customFillerWords` first; an
 	// empty list falls back to a per-language table (e.g. English
 	// "uh"/"um"/"hmm" — see `filler_filter.FILLERS_BY_LANG`). Tokens
@@ -611,8 +606,9 @@ const integrationsSchema = z.object({
 // a multiplier clamped 0.5..2.0. `hotkey` is the global combo that
 // captures the active selection and reads it aloud; defaults to
 // LWin+LShift+E so the binding is always present when TTS is enabled
-// (users can rebind from settings). `device` mirrors the STT side's
-// "auto / cuda / cpu".
+// (users can rebind from settings). There is no per-TTS compute device:
+// the synthesizer shares the main STT model's device (`model.device`),
+// which the spawn layer mirrors onto the server's `--tts-device` flag.
 export const ttsSettingsSchema = z.object({
 	enabled: z.boolean().default(false),
 	voice: z.string().default("af_heart"),
@@ -622,7 +618,6 @@ export const ttsSettingsSchema = z.object({
 	// hotkey itself must always carry a valid combo so the conflict checker
 	// can compare against it and the recorder UI never renders an empty chip.
 	hotkey: z.string().min(1).default("LMeta+LShift+E").catch("LMeta+LShift+E"),
-	device: z.enum(["auto", "cuda", "cpu"]).default("auto"),
 });
 
 export const appSettingsSchema = z.object({

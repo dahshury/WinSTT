@@ -28,12 +28,15 @@ from src.recorder.domain.events import DownloadProgress
 from src.recorder.infrastructure.onnxasr_transcriber import (
     _build_sess_options,
     _extract_fp16_whisper_decoder_path,
+    _find_whisper_vocab_holder,
     _is_external_data_missing_error,
     _is_whisper_family,
+    _load_whisper_base_vocab,
     _make_progress_adapter,
     _optimized_model_path,
     _peak_normalize,
     _pick_intra_op_threads,
+    _repair_whisper_vocab,
     _slug_model_id,
     _snapshot_providers,
     _vad_cache_key,
@@ -577,3 +580,77 @@ def test_build_sess_options_optimize_to_disk_requires_model_name(
         optimize_to_disk=True,
     )
     assert not opts.optimized_model_filepath
+
+
+# ── whisper vocab repair (CrisperWhisper truncated-export fix) ───────────
+
+
+class _FakeWhisperHolder:
+    """Minimal stand-in for onnx_asr's WhisperHf — the repair finder keys on a
+    dict ``_vocab`` paired with a ``_byte_decoder``."""
+
+    def __init__(self, vocab: dict[int, str]) -> None:
+        self._vocab = vocab
+        self._byte_decoder = {"a": 1}
+
+
+class _FakeAdapter:
+    """Wraps the holder one level deep, like the TextResultsAsrAdapter onnx_asr
+    returns from load_model."""
+
+    def __init__(self, holder: object) -> None:
+        self._model = holder
+
+
+def test_load_whisper_base_vocab_is_complete_and_has_fillers() -> None:
+    """The bundled reference decodes the CrisperWhisper filler ids that its own
+    truncated vocab.json drops (35007 = ' uhm', 35481 = ' hm')."""
+    ref = _load_whisper_base_vocab()
+    assert len(ref) >= 50_000
+    assert ref.get(35007) == "Ġuhm"
+    assert ref.get(35481) == "Ġhm"
+
+
+def test_find_whisper_vocab_holder_walks_to_holder() -> None:
+    holder = _FakeWhisperHolder({0: "a"})
+    assert _find_whisper_vocab_holder(_FakeAdapter(holder)) is holder
+
+
+def test_find_whisper_vocab_holder_none_for_non_whisper() -> None:
+    """A dict ``_vocab`` WITHOUT a ``_byte_decoder`` is not a Whisper holder —
+    other families (CTC/RNN-T) must be skipped so the repair never touches them."""
+
+    class _NotWhisper:
+        def __init__(self) -> None:
+            self._vocab = {0: "a"}  # no _byte_decoder
+
+    assert _find_whisper_vocab_holder(_NotWhisper()) is None
+
+
+def test_repair_whisper_vocab_backfills_missing_ids() -> None:
+    """An incomplete Whisper vocab gets the missing base ids backfilled from the
+    bundled reference; existing entries are preserved."""
+    holder = _FakeWhisperHolder({0: "kept"})
+    _repair_whisper_vocab(_FakeAdapter(holder))
+    assert holder._vocab[0] == "kept"  # not clobbered
+    assert holder._vocab.get(35007) == "Ġuhm"
+    assert holder._vocab.get(35481) == "Ġhm"
+    assert len(holder._vocab) >= 50_000
+
+
+def test_repair_whisper_vocab_noop_when_complete() -> None:
+    """A vocab that already contains the reference ids is left byte-identical."""
+    ref = dict(_load_whisper_base_vocab())
+    holder = _FakeWhisperHolder(ref)
+    before = len(holder._vocab)
+    _repair_whisper_vocab(_FakeAdapter(holder))
+    assert len(holder._vocab) == before
+
+
+def test_repair_whisper_vocab_noop_for_non_whisper() -> None:
+    """Non-Whisper models (no holder) are a silent no-op — never raises."""
+
+    class _NotWhisper:
+        pass
+
+    _repair_whisper_vocab(_NotWhisper())  # must not raise

@@ -73,6 +73,8 @@ mock.module("node:fs", () => ({
 interface SpawnArgs {
 	args: string[];
 	cmd: string;
+	/** True once the spawned child's `kill(...)` was invoked. */
+	killed: boolean;
 	stdin: string;
 }
 const spawnLog: SpawnArgs[] = [];
@@ -84,13 +86,19 @@ const spawnStub: {
 	throwOnSpawn?: string | undefined;
 	/** When set, the Nth spawn uses this exit code instead of `exitCode`. */
 	exitCodeSequence?: number[] | undefined;
+	/**
+	 * When true, the spawned child emits a process-level `error` event INSTEAD of
+	 * `exit`/`close`. Used to exercise injectSubmitKey's `child.once("error")`
+	 * resolve path (powershell never launched / blocked).
+	 */
+	emitSpawnError?: boolean | undefined;
 } = {
 	exitCode: 0,
 	hangs: false,
 };
 mock.module("node:child_process", () => ({
 	spawn: (cmd: string, args: string[]) => {
-		const record: SpawnArgs = { cmd, args, stdin: "" };
+		const record: SpawnArgs = { cmd, args, stdin: "", killed: false };
 		spawnLog.push(record);
 		if (spawnStub.throwOnSpawn) {
 			const msg = spawnStub.throwOnSpawn;
@@ -127,7 +135,17 @@ mock.module("node:child_process", () => ({
 				list.push(fn);
 				handlers.set(ev, list);
 			},
-			kill: () => undefined,
+			// `injectSubmitKey` subscribes to `exit` / `error` via `once`; the
+			// runBinary path uses `on`. Route both into the same handler map so
+			// the microtask below can fan a fired event out to either subscriber.
+			once: (ev: string, fn: (...a: unknown[]) => void) => {
+				const list = handlers.get(ev) ?? [];
+				list.push(fn);
+				handlers.set(ev, list);
+			},
+			kill: () => {
+				record.killed = true;
+			},
 		};
 		const spawnIndex = spawnLog.length - 1;
 		// Fire the configured outcome on next microtask so the await in
@@ -141,12 +159,23 @@ mock.module("node:child_process", () => ({
 					fn(Buffer.from(spawnStub.stderr));
 				}
 			}
+			// injectSubmitKey error path: emit `error` and stop (no exit/close).
+			if (spawnStub.emitSpawnError) {
+				for (const fn of handlers.get("error") ?? []) {
+					fn(new Error("powershell launch blocked"));
+				}
+				return;
+			}
 			if (spawnStub.emitError) {
 				for (const fn of handlers.get("error") ?? []) {
 					fn(new Error(spawnStub.emitError));
 				}
 			}
 			const exit = spawnStub.exitCodeSequence?.[spawnIndex] ?? spawnStub.exitCode;
+			// injectSubmitKey resolves on `exit`; runBinary resolves on `close`.
+			for (const fn of handlers.get("exit") ?? []) {
+				fn(exit);
+			}
 			for (const fn of handlers.get("close") ?? []) {
 				fn(exit);
 			}
@@ -201,6 +230,10 @@ const {
 	enqueuePaste,
 	tryClipboardThenTyping,
 	runClipboardPaste,
+	injectSubmitKey,
+	startSubmitKeyRun,
+	__getPasteCallsForTesting__,
+	__resetPasteCallsForTesting__,
 } = await import("./paste");
 
 import { beforeEach } from "bun:test";
@@ -213,6 +246,7 @@ beforeEach(() => {
 	spawnStub.stderr = undefined;
 	spawnStub.throwOnSpawn = undefined;
 	spawnStub.exitCodeSequence = undefined;
+	spawnStub.emitSpawnError = undefined;
 	clipboardThrowOnNext = false;
 });
 
@@ -1212,6 +1246,15 @@ describe("restoreClipboardSnapshot", () => {
 });
 
 describe("recordPasteCall", () => {
+	test("appends the text and __getPasteCallsForTesting__ reflects it; reset clears", () => {
+		__resetPasteCallsForTesting__();
+		recordPasteCall("entry");
+		const calls = __getPasteCallsForTesting__();
+		expect(calls).toContain("entry");
+		__resetPasteCallsForTesting__();
+		expect(__getPasteCallsForTesting__().length).toBe(0);
+	});
+
 	test("appends the text without trimming when under the cap", () => {
 		// We can't read the log directly, but pasteText also calls recordPasteCall
 		// — so we exercise it indirectly to ensure no throw.
@@ -1342,5 +1385,177 @@ describe("runClipboardPaste (direct)", () => {
 		expect(result.ok).toBe(false);
 		// The finally block ran the restore — `lastClipboard` is back to the original.
 		expect(lastClipboard).toBe("before-paste");
+	});
+});
+
+describe("injectSubmitKey", () => {
+	test("'enter' spawns powershell with the bare {ENTER} SendKeys sequence", async () => {
+		spawnLog.length = 0;
+		injectSubmitKey("enter");
+		await flushPastePending();
+		expect(spawnLog.length).toBe(1);
+		const call = spawnLog[0];
+		expect(call?.cmd).toBe("powershell");
+		expect(call?.args).toContain("-NoProfile");
+		expect(call?.args).toContain("-NonInteractive");
+		expect(call?.args).toContain("-Command");
+		// The actual SendKeys script is the last arg.
+		const script = call?.args.at(-1) ?? "";
+		expect(script).toContain("System.Windows.Forms");
+		expect(script).toContain("SendWait('{ENTER}')");
+		// `enter` must NOT carry the Ctrl (^) modifier.
+		expect(script).not.toContain("^{ENTER}");
+	});
+
+	test("'ctrl_enter' spawns powershell with the ^{ENTER} (Ctrl+Enter) sequence", async () => {
+		spawnLog.length = 0;
+		injectSubmitKey("ctrl_enter");
+		await flushPastePending();
+		expect(spawnLog.length).toBe(1);
+		const script = spawnLog[0]?.args.at(-1) ?? "";
+		expect(script).toContain("SendWait('^{ENTER}')");
+	});
+
+	test("resolves cleanly when the powershell child emits 'exit'", async () => {
+		// Default stub fires `exit` (and `close`) on the next microtask. The
+		// promise inside injectSubmitKey resolves on `exit`; flushPastePending
+		// must settle without hanging or throwing.
+		spawnLog.length = 0;
+		spawnStub.exitCode = 0;
+		injectSubmitKey("enter");
+		await expect(flushPastePending()).resolves.toBeUndefined();
+		expect(spawnLog.length).toBe(1);
+	});
+
+	test("resolves (silently, no throw) when the powershell child emits 'error'", async () => {
+		// Auto-submit is opt-in; a blocked / failed powershell must NOT surface a
+		// user-facing rejection. The `error` branch of the once-handlers resolves
+		// the promise the same as `exit`.
+		spawnLog.length = 0;
+		spawnStub.emitSpawnError = true;
+		injectSubmitKey("ctrl_enter");
+		await expect(flushPastePending()).resolves.toBeUndefined();
+		expect(spawnLog.length).toBe(1);
+	});
+
+	test("fires AFTER the in-flight paste — the paste spawn precedes the submit spawn", async () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+		spawnLog.length = 0;
+		__resetPasteForTesting__();
+		spawnStub.exitCode = 0;
+		// Queue a real paste, then chain a submit-key onto the same tail.
+		pasteText("hello");
+		injectSubmitKey("enter");
+		await flushPastePending();
+		// First spawn is the paste binary (winstt-paste.exe), then powershell.
+		expect(spawnLog.length).toBe(2);
+		expect(spawnLog[0]?.cmd).toContain("winstt-paste.exe");
+		expect(spawnLog[1]?.cmd).toBe("powershell");
+	});
+
+	test("chains onto pasteInFlight (Promise.resolve seed) so flushPastePending awaits the submit", async () => {
+		// With no prior paste, the chain seeds off `pasteInFlight ?? Promise.resolve()`.
+		// flushPastePending must return a promise that only settles once the
+		// powershell child has fired its `exit`/`error` event — never before.
+		__resetPasteForTesting__();
+		spawnLog.length = 0;
+		spawnStub.exitCode = 0;
+		injectSubmitKey("enter");
+		const flush = flushPastePending();
+		// The flush handle is the live pasteInFlight tail, not a bare resolved promise.
+		expect(flush).toBeInstanceOf(Promise);
+		await flush;
+		// The spawn happened inside the awaited chain (it lives in the chained .then).
+		expect(spawnLog.length).toBe(1);
+		expect(spawnLog[0]?.cmd).toBe("powershell");
+	});
+
+	test("watchdog kills the child and resolves when powershell launches but never exits", async () => {
+		// Regression (Bug 4): injectSubmitKey previously had NO watchdog. A
+		// powershell that launched but never fired exit/error would leave the
+		// promise pending forever, pinning pasteInFlight and blocking every
+		// subsequent paste. The watchdog must kill the child and resolve.
+		const realSetTimeout = globalThis.setTimeout;
+		const timers: Array<{ fn: () => void; ms: number }> = [];
+		(globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout = ((
+			fn: () => void,
+			ms: number
+		) => {
+			timers.push({ fn, ms });
+			return 0 as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout;
+		try {
+			spawnLog.length = 0;
+			// The child hangs — emits neither `exit` nor `error`.
+			spawnStub.hangs = true;
+			let resolved = false;
+			startSubmitKeyRun(() => {
+				resolved = true;
+			}, "{ENTER}");
+			expect(spawnLog.length).toBe(1);
+			// Not resolved yet — the child hasn't exited and the watchdog is armed.
+			expect(resolved).toBe(false);
+			// Fire the watchdog (the 10_000ms timer).
+			const watchdog = timers.find((t) => t.ms === 10_000);
+			expect(watchdog).toBeDefined();
+			watchdog?.fn();
+			// The watchdog killed the child and resolved the promise.
+			expect(spawnLog[0]?.killed).toBe(true);
+			expect(resolved).toBe(true);
+		} finally {
+			(globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout = realSetTimeout;
+		}
+	});
+
+	test("watchdog is idempotent — a normal exit before the watchdog resolves exactly once", async () => {
+		// settle() guards against a double-resolve: when the child exits normally
+		// the watchdog timer is cleared and a later watchdog fire is a no-op.
+		const realSetTimeout = globalThis.setTimeout;
+		const realClearTimeout = globalThis.clearTimeout;
+		const timers: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
+		(globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout = ((
+			fn: () => void,
+			ms: number
+		) => {
+			// 1-based handle so the returned id is always truthy (settle() guards
+			// `if (watchdog) clearTimeout(watchdog)` — a 0 handle would be skipped).
+			const handle = timers.length + 1;
+			timers.push({ fn, ms, cleared: false });
+			return handle as unknown as ReturnType<typeof setTimeout>;
+		}) as typeof setTimeout;
+		(globalThis as unknown as { clearTimeout: typeof clearTimeout }).clearTimeout = ((
+			handle: number
+		) => {
+			const t = timers[handle - 1];
+			if (t) {
+				t.cleared = true;
+			}
+		}) as typeof clearTimeout;
+		try {
+			spawnLog.length = 0;
+			// Child exits on the next microtask (default stub behavior).
+			spawnStub.hangs = false;
+			spawnStub.exitCode = 0;
+			let resolveCount = 0;
+			startSubmitKeyRun(() => {
+				resolveCount += 1;
+			}, "{ENTER}");
+			// The default mock fires `exit` on the next microtask.
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(resolveCount).toBe(1);
+			// The watchdog timer was cleared by settle().
+			const watchdog = timers.find((t) => t.ms === 10_000);
+			expect(watchdog?.cleared).toBe(true);
+			// Even if a stale watchdog somehow fired now, settle() short-circuits.
+			watchdog?.fn();
+			expect(resolveCount).toBe(1);
+		} finally {
+			(globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout = realSetTimeout;
+			(globalThis as unknown as { clearTimeout: typeof clearTimeout }).clearTimeout =
+				realClearTimeout;
+		}
 	});
 });

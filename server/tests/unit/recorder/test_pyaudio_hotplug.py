@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from src.recorder.infrastructure.pyaudio_source import PyAudioSource
+from src.recorder.infrastructure.pyaudio_source import PyAudioSource, _StreamingResampler
 
 # Distinguishable non-silence payload. Real PyAudio gives us int16 PCM;
 # we don't care about the *values*, only that ``read_chunk()`` hands back
@@ -828,3 +828,62 @@ class TestResamplePreservesSineFrequency:
 
         # Sanity: struct unpacks the result without errors.
         struct.unpack(f"<{to_rate}h", resampled)
+
+
+class TestStreamingResampler:
+    """The live capture path resamples chunk-by-chunk. A *stateless*
+    ``resample_poly`` per chunk filtered each buffer in isolation, drifting the
+    sample count and adding a seam glitch at every chunk boundary — the cause of
+    history recordings sounding far worse than the same mic in Handy.
+    ``_StreamingResampler`` carries the polyphase overlap across chunks so the
+    streamed output is bit-identical to resampling the whole signal at once."""
+
+    @staticmethod
+    def _signal(from_rate: int, seconds: float = 2.0) -> Any:  # noqa: ANN401 - numpy int16 array
+        import numpy as np
+
+        n = int(from_rate * seconds)
+        t = np.arange(n) / from_rate
+        wav = (
+            0.5 * np.sin(2 * np.pi * 220 * t)
+            + 0.3 * np.sin(2 * np.pi * 880 * t)
+            + 0.2 * np.sin(2 * np.pi * (300 + 1500 * t) * t)
+            + 0.02 * np.random.RandomState(0).randn(n)
+        )
+        return ((wav / np.max(np.abs(wav)) * 0.9) * 32767).astype(np.int16)
+
+    @pytest.mark.parametrize("from_rate", [48000, 44100, 32000, 22050, 8000])
+    def test_streamed_output_matches_whole_signal_resample(self, from_rate: int) -> None:
+        """Per-chunk streaming is bit-exact vs one-shot resample, no drift."""
+        import numpy as np
+        from scipy.signal import resample_poly
+
+        to_rate, buf = 16000, 512
+        pcm = self._signal(from_rate)
+        truth = resample_poly(pcm.astype(np.float64), to_rate, from_rate)
+        truth = np.clip(truth, -32768.0, 32767.0).astype(np.int16)
+
+        rs = _StreamingResampler(from_rate, to_rate, buf)
+        streamed = np.frombuffer(
+            b"".join(rs.process(pcm[i : i + buf].tobytes()) for i in range(0, len(pcm), buf)),
+            dtype=np.int16,
+        )
+
+        # Streamed output trails the truth by a small constant hold-back only.
+        held_back = len(truth) - len(streamed)
+        assert 0 <= held_back <= to_rate // 20  # < 50 ms of trailing audio
+        # The overlapping prefix is identical — no seam artifacts, no drift.
+        assert np.array_equal(streamed, truth[: len(streamed)])
+
+    def test_reset_starts_a_fresh_utterance(self) -> None:
+        """After ``reset`` the next chunk is resampled as if from silence —
+        no overlap from the previous (paused) utterance bleeds in."""
+        rs = _StreamingResampler(48000, 16000, 512)
+        pcm = self._signal(48000, seconds=1.0)
+        for i in range(0, len(pcm), 512):
+            rs.process(pcm[i : i + 512].tobytes())
+
+        rs.reset()
+        fresh = _StreamingResampler(48000, 16000, 512)
+        nxt = pcm[:512].tobytes()
+        assert rs.process(nxt) == fresh.process(nxt)

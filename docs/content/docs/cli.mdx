@@ -1,112 +1,252 @@
 ---
-title: CLI & Signals
-description: Command-line flags and Unix signals for scripting WinSTT (Wayland, autostart, automation)
+title: Server CLI
+description: Every command-line flag for stt-server — the Python speech engine the Electron app spawns and that you can also run standalone for scripting, CI, or a headless box.
 ---
 
-WinSTT accepts a small set of command-line flags so window managers,
-autostart scripts, and shell pipelines can drive the app without going
-through the renderer UI. On Linux and macOS, two POSIX signals
-(`SIGUSR1`, `SIGUSR2`) cover the same use cases for scripts that talk
-to PIDs instead of binaries.
-
-> **Why this exists.** Wayland compositors (Sway, Hyprland, KDE Plasma)
-> own the global-hotkey registry — apps can't grab keys directly. The
-> Wayland convention is for the WM to bind a key to a shell command,
-> which is exactly what these flags are for.
-
-## Flags
-
-All flags are **runtime-only overrides** — they never modify your
-persisted settings file. Re-launch without the flag to restore the
-default behaviour.
-
-| Flag                     | Effect                                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------------------------- |
-| `--toggle-transcription` | Toggle recording on/off. If WinSTT is already running, the request is forwarded to that instance and the second process exits. |
-| `--cancel`               | Cancel the in-flight transcription / LLM pass on a running instance.                            |
-| `--start-hidden`         | Launch without showing the main window (the tray icon is still visible).                        |
-| `--no-tray`              | Launch without the system tray icon. Closing the main window quits the app.                     |
-| `--debug`                | Verbose terminal logging. The file log under `%APPDATA%/WinSTT/debug.log` is always verbose.    |
-| `-h`, `--help`           | Print help and exit.                                                                            |
-
-### Single-instance behaviour
-
-WinSTT enforces a single instance. Launching a second time:
-
-- **Without action flags:** raises the already-running window to the
-  foreground. (Useful as the `Exec=` line in a `.desktop` file.)
-- **With `--toggle-transcription` or `--cancel`:** the request is
-  forwarded to the running instance via Electron's
-  `app.requestSingleInstanceLock()`, then the second process exits
-  immediately. **No window is raised**, so the WM hotkey doesn't
-  shuffle your window stack.
-
-### `--start-hidden` + `--no-tray`
-
-When both flags are set, the main window would be hidden and there'd be
-no tray icon to bring it back — so the window is shown anyway.
-
-## Unix signals (Linux / macOS)
-
-Send these to the running PID. Skipped on Windows; signals are a POSIX
-concept that Win32 doesn't model.
-
-| Signal    | Effect                                          |
-| --------- | ----------------------------------------------- |
-| `SIGUSR2` | Toggle transcription (same as `--toggle-transcription`). |
-| `SIGUSR1` | Cancel the current operation (same as `--cancel`).       |
+`stt-server` is the Python speech engine that does the actual transcription; the Electron app spawns it and talks to it over two local WebSockets. You can also launch it by hand — for a headless box, CI, or to debug a setting in isolation.
 
 ```bash
-pkill -USR2 -n winstt   # toggle transcription
-pkill -USR1 -n winstt   # cancel current operation
+stt-server [OPTIONS]
 ```
 
-`pkill -n` picks the newest matching process — important if you have a
-detached debugger or a hung CI runner sharing the binary name.
+In a packaged install the same binary ships as `stt-server.exe` under the app's resources. From a source checkout, run it through the `server/` virtualenv:
 
-## Wayland window manager examples
-
-The use case the CLI flags were built for. Bind a hotkey in your WM to
-the `--toggle-transcription` command (or send `SIGUSR2`).
-
-### Sway / i3
-
-`~/.config/sway/config`:
-
-```sh
-bindsym $mod+grave exec winstt --toggle-transcription
-bindsym $mod+shift+grave exec winstt --cancel
+```bash
+# from the repo root
+uv run --project server stt-server -m tiny --debug
 ```
 
-### Hyprland
+## How it runs
 
-`~/.config/hypr/hyprland.conf`:
+The server opens two WebSockets and waits for the Electron app (or any client) to connect: a **control** channel for commands and a **data** channel for audio + live transcription. The Electron app sets almost every flag for you from the settings UI — you only need these directly when running `stt-server` standalone.
 
-```ini
-bind = SUPER, grave, exec, winstt --toggle-transcription
-bind = SUPER SHIFT, grave, exec, winstt --cancel
+<Callout type="info" title="Most flags accept two spellings">
+  Flags are registered with both a dashed and an underscored alias (for example `--rt-model` / `--realtime_model_type`, `--log-dir` / `--log_dir`). Either works; the tables below list the canonical form first.
+</Callout>
+
+<Callout type="warn" title="Only the model is persisted">
+  `stt-server` writes a `server-settings.json` next to your data dir, but it only persists the **model** choice. Every other flag is a per-launch value — pass it again next time. On startup, a saved model is used unless you override it with `-m` / `--model`.
+</Callout>
+
+## Common flags
+
+The handful you'll reach for most when running the server by hand.
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["-m, --model", "large-v3-turbo", "STT model id from the catalog (tiny, base, small, medium, large-v3, large-v3-turbo, lite-whisper-large-v3-turbo, nemo-canary-1b-v2, …) or any onnx-asr-resolvable HuggingFace ONNX repo."],
+    ["-l, --lang, --language", "(empty = auto)", "Language code to force; empty auto-detects from the audio."],
+    ["--device", "auto", "ONNX device tier: auto, cuda, directml, rocm, coreml, or cpu."],
+    ["--onnx_quantization", "(none)", "Quantization for onnx-asr models, e.g. int8, fp16."],
+    ["-i, --input-device", "1", "Audio input device index."],
+    ["-c, --control, --control_port", "8011", "Control WebSocket port."],
+    ["-d, --data, --data_port", "8012", "Data WebSocket port."],
+    ["-D, --debug", "off", "Verbose server logging."],
+    ["-h, --help", "—", "Print the full flag help and exit."],
+  ]}
+  numeric={[1]}
+  caption="Run stt-server --help to print every flag with its live help text."
+/>
+
+A typical standalone launch — small model on CPU, default microphone, verbose logs:
+
+```bash
+stt-server -m tiny --device cpu -i 1 --debug
 ```
 
-### KDE Plasma
+Force a non-default model + quantization on DirectML:
 
-KRunner → System Settings → Shortcuts → Custom Shortcuts → New
-Global Shortcut → Command/URL. Set the trigger to your chosen key and
-the command to `winstt --toggle-transcription`.
-
-### GNOME
-
-Settings → Keyboard → Custom Shortcuts → `+`. Set the command to
-`winstt --toggle-transcription` and bind your key.
-
-## Autostart with tray-only
-
-For users who want WinSTT to start with the desktop session but never
-flash the window:
-
-```sh
-winstt --start-hidden
+```bash
+stt-server -m large-v3-turbo --device directml --onnx_quantization fp16
 ```
 
-Drop that command into your DE's autostart entry (`.desktop` file's
-`Exec=` line, or your WM's `exec-once` directive). The tray icon
-appears immediately; the window is one click away.
+## Model & device
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["-m, --model", "large-v3-turbo", "Main transcription model id (catalog name or HuggingFace ONNX repo)."],
+    ["-r, --rt-model, --realtime_model_type", "tiny", "Model used for the realtime live-preview pass. Same options as --model."],
+    ["-l, --lang, --language", "(empty = auto)", "Language code; empty auto-detects."],
+    ["--backend", "(auto)", "Transcriber backend override: faster_whisper or onnx_asr. Defaults to auto-detect from the model."],
+    ["--onnx_quantization", "(none)", "Quantization level for onnx-asr models (e.g. int8, fp16)."],
+    ["--device", "auto", "Device tier: auto, cuda, directml, rocm, coreml, cpu. Auto walks a per-OS priority list and falls back to CPU."],
+    ["--root, --download_root", "(none)", "Root path where models are downloaded."],
+    ["--custom-models-dir, --custom_models_dir", "(env)", "Folder scanned at startup for user ONNX Whisper bundles; falls back to WINSTT_CUSTOM_MODELS_DIR."],
+    ["--model_unload_timeout_seconds", "300", "Idle seconds before the model is torn down to free RAM/VRAM. 0 = unload immediately; negative = never."],
+    ["--translate_to_english", "off", "Whisper-native task=translate. Only effective on multilingual Whisper models; ignored on *.en and non-Whisper families."],
+  ]}
+  numeric={[1]}
+/>
+
+<Callout type="warn" title="--translate_to_english is conditional">
+  It only does anything when `--model` is a multilingual Whisper export. It's silently ignored on `.en` variants and on NeMo, GigaAM, and Moonshine families.
+</Callout>
+
+## Audio & ports
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["-i, --input-device, --input-device-index", "1", "Audio input device index."],
+    ["-c, --control, --control_port", "8011", "Control WebSocket port (commands)."],
+    ["-d, --data, --data_port", "8012", "Data WebSocket port (audio + transcription updates)."],
+    ["--always_on_microphone", "off", "Keep the OS mic stream open for the whole session. Trades a permanently-lit mic indicator for ~10-50 ms faster PTT."],
+    ["--lazy_stream_close", "off", "Only when --always_on_microphone is off: PTT release stops the engine but defers closing the stream."],
+    ["--lazy_close_timeout_seconds", "30.0", "Seconds before the lazy-close timer fires (only with --lazy_stream_close)."],
+    ["--extra_recording_buffer_ms", "0", "Keep capturing this many ms after PTT release to catch trailing syllables. Capped at 2000 ms."],
+    ["--min_gap_between_recordings", "0", "Minimum seconds between consecutive recordings."],
+  ]}
+  numeric={[1]}
+/>
+
+## Realtime transcription
+
+These control the fast live-preview pass that streams words while you speak.
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["--enable_realtime_transcription", "on", "Continuous realtime transcription. Disable with --no-enable_realtime_transcription."],
+    ["--realtime_processing_pause", "0.02", "Seconds between processing audio chunks for the live preview. Lower = snappier, higher CPU."],
+    ["--init_realtime_after_seconds", "0.2", "Initial wait before realtime transcription starts (suppresses false positives at session start)."],
+    ["--initial_prompt_realtime", "(empty)", "Prompt that guides the realtime model's style/format."],
+    ["--use_main_model_for_realtime", "off", "Use the main model for realtime instead of a separate small one. Saves VRAM, costs latency."],
+  ]}
+  numeric={[1]}
+/>
+
+<Callout type="info" title="Toggling realtime off">
+  `--enable_realtime_transcription` uses argparse's boolean-optional form. Pass `--no-enable_realtime_transcription` to turn the live preview off.
+</Callout>
+
+## VAD & silence timing
+
+Voice-activity detection and the pause thresholds that decide when a sentence has ended.
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["--silero_sensitivity", "0.7", "Silero VAD sensitivity. Trip threshold = 1 - sensitivity, so 0.7 trips at probability > 0.3. Lower only if a mic over-triggers on noise."],
+    ["--silero_deactivity_detection", "on", "Use Silero for end-of-speech detection (more robust in noise, more GPU)."],
+    ["--webrtc_sensitivity", "3", "WebRTC VAD sensitivity, 0-3. Higher = less sensitive (cleaner rooms)."],
+    ["-s, --silence_timing", "off", "Dynamically adjust silence duration from sentence structure. The frontend enables this in Toggle mode."],
+    ["--early_transcription_on_silence", "0.2", "Start transcribing after this many seconds of silence. Should be below post-speech silence. 0 disables."],
+    ["--end_of_sentence_detection_pause", "0.45", "Silence (s) interpreted as the end of a sentence."],
+    ["--unknown_sentence_detection_pause", "1.3", "Pause (s) tolerated after speech with no clear terminator before recording ends."],
+    ["--mid_sentence_detection_pause", "2.0", "Pause (s) interpreted as a mid-sentence break."],
+    ["--initial_prompt", "(sentence-completion hint)", "Prompt that guides the main model's style. The default coaches ellipsis/sentence-completion handling. Use \\n for line breaks."],
+  ]}
+  numeric={[1]}
+/>
+
+## Smart endpoint
+
+DistilBERT-based sentence-completion detection for smarter silence handling.
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["--smart_endpoint", "off", "Enable DistilBERT sentence-completion detection. Requires the transformers library."],
+    ["--detection_speed", "2.0", "Pause multiplier: pause = (model_pause + whisper_pause) * detection_speed. Higher = more patient; lower commits faster."],
+  ]}
+  numeric={[1]}
+/>
+
+## Wake words
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["-w, --wake_words", "(empty)", "Wake word(s) that start listening, e.g. Jarvis."],
+    ["--wake_words_sensitivity", "0.5", "Wake-word sensitivity, 0 (most) to 1 (least)."],
+    ["--wakeword_backend", "none", "Backend for wake-word detection."],
+    ["--wake_word_timeout", "5.0", "Seconds to wait for a wake word before timing out."],
+    ["--wake_word_activation_delay", "0", "Delay (s) before wake-word detection activates after listening starts."],
+    ["--wake_word_buffer_duration", "1.0", "Seconds of audio buffered around a wake-word hit."],
+    ["--openwakeword_model_paths", "(none)", "One or more file paths to OpenWakeWord models."],
+  ]}
+  numeric={[1]}
+/>
+
+## Diarization
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["--enable_diarization", "off", "Per-utterance speaker diarization (pyannote-segmentation-3.0 + wespeaker-resnet34-LM via onnx-asr). Downloads ~32 MB of models on first use."],
+    ["--diarization_max_speakers", "8", "Max simultaneous global speakers tracked across a session."],
+  ]}
+  numeric={[1]}
+/>
+
+## History recordings
+
+The server can persist each transcribed utterance's audio so the history UI can play it back.
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["--save_wav, --save-wav", "off", "Persist each utterance's PCM to a WAV and report its path on the fullSentence event."],
+    ["--recordings_dir, --recordings-dir", "(empty)", "Directory the server writes history WAVs into. Empty disables WAV writing even with --save_wav set."],
+  ]}
+  numeric={[1]}
+/>
+
+<Callout type="info" title="Both are required together">
+  `--save_wav` writes nothing unless `--recordings_dir` is also set. The Electron app passes both, pointing the directory at `%APPDATA%/winstt/recordings` so saved files line up with the history store.
+</Callout>
+
+## Text-to-speech
+
+Defaults for the optional Kokoro synthesizer.
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["--tts-voice, --tts_voice", "af_heart", "Default Kokoro voice id (e.g. af_heart, af_nicole, am_michael)."],
+    ["--tts-lang, --tts_lang", "en-us", "Default Kokoro language (en-us, en-gb, ja, cmn, es, fr, hi, it, pt-br)."],
+    ["--tts-speed, --tts_speed", "1.0", "Default playback speed multiplier (0.5..2.0)."],
+    ["--tts-device, --tts_device", "auto", "TTS execution device: auto, cuda, cpu. Auto falls back to cpu when CUDA isn't viable."],
+    ["--tts-cache-dir, --tts_cache_dir", "(default)", "Override the Kokoro model/voicepack cache. Defaults to %LOCALAPPDATA%/winstt/tts/kokoro."],
+  ]}
+  numeric={[1]}
+/>
+
+## Paths, logging & data
+
+<ModelTable
+  head={["Flag", "Default", "What it does"]}
+  rows={[
+    ["--data-dir, --data_dir", "(none)", "Root for all per-user data (models, recordings, history db, logs). Takes precedence over %APPDATA%/winstt and is propagated to WINSTT_DATA_DIR / HF_HOME / WINSTT_LOG_DIR."],
+    ["--log-dir, --log_dir", "(stdout only)", "Directory for the rotating stt-server.log. Falls back to WINSTT_LOG_DIR; created if missing."],
+    ["-W, --write", "(none)", "Save received audio to a WAV file (debugging)."],
+    ["-D, --debug", "off", "Verbose server logging."],
+    ["--debug_websockets", "off", "Verbose websocket-library logging."],
+    ["--use_extended_logging", "off", "Extensive log messages from the audio recording worker."],
+    ["--logchunks", "off", "Log every incoming audio chunk (very noisy)."],
+  ]}
+  numeric={[1]}
+/>
+
+<Callout type="info" title="Portable data root">
+  When the Electron app runs in portable mode it passes `--data-dir` (and exports `WINSTT_DATA_DIR`) so every server-side artifact — `server-settings.json`, models, the log, recordings — lives under one tree instead of `~/.winstt` and the platform cache.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Choose a model" href="/docs/settings/model">
+    The same model, device, quantization, and realtime settings, set from the UI.
+  </Card>
+  <Card title="Which installer?" href="/docs/install">
+    DirectML, CPU, or OpenVINO — and the system requirements for each.
+  </Card>
+  <Card title="Audio & VAD" href="/docs/settings/audio">
+    Microphone, sensitivity, and silence-timing settings explained.
+  </Card>
+  <Card title="Text-to-speech" href="/docs/text-to-speech">
+    Kokoro voices, languages, and playback — the UI side of the TTS flags.
+  </Card>
+</Cards>

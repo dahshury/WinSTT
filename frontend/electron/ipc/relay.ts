@@ -1,16 +1,6 @@
 import { readFile as fsReadFile, unlink as fsUnlink } from "node:fs/promises";
 import { BrowserWindow, ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
-
-function isEnoent(err: unknown): boolean {
-	return (
-		typeof err === "object" &&
-		err !== null &&
-		"code" in err &&
-		(err as { code?: unknown }).code === "ENOENT"
-	);
-}
-
 import {
 	isRealtimeEnabled,
 	type LiveTranscriptionDisplay,
@@ -26,6 +16,7 @@ import {
 	setVolatileContextTail,
 } from "../lib/initial-prompt-sync";
 import { createSafeSender, type SafeSend } from "../lib/ipc-helpers";
+import { isEnoent } from "../lib/is-enoent";
 import { setLastTranscription } from "../lib/last-transcription";
 import { injectSubmitKey, pasteText } from "../lib/paste";
 import {
@@ -555,6 +546,10 @@ async function handleFullSentence(
 // allocate it per fullSentence).
 const WAV_PATH_SEP = /[/\\]/;
 
+// Flat guard-clause chain by design: each early-return is a distinct,
+// independent skip reason (listen mode, empty transcript, missing wav_path,
+// no live store). Folding them into a single predicate would hide the
+// linear flow without lowering real cognitive load, so it's left inline.
 function maybePersistSqliteRow(
 	event: Record<string, unknown>,
 	rawText: string,
@@ -585,6 +580,21 @@ function maybePersistSqliteRow(
 	} catch (err) {
 		dbg("relay", "sqlite history add failed:", String(err));
 	}
+}
+
+/**
+ * Pull the `words` array out of a raw `client.alignWords(...)` result. The
+ * server replies with `{ words: [...] }` on success; anything else (null,
+ * non-object, missing/non-array `words`) yields `[]`. Extracted from the
+ * HISTORY_ALIGN_AUDIO handler so the handler body has one concern (call +
+ * error-log) and this shape-validation is unit-testable on its own.
+ */
+function extractAlignedWords(result: unknown): unknown[] {
+	if (result !== null && typeof result === "object" && "words" in result) {
+		const { words } = result;
+		return Array.isArray(words) ? words : [];
+	}
+	return [];
 }
 
 /**
@@ -996,6 +1006,16 @@ const SIMPLE_RELAY_HANDLERS: Record<string, SimpleHandler> = {
 		}
 		send(IPC.STT_NO_AUDIO_DETECTED);
 	},
+	// A genuine backend transcriber crash (e.g. an incomplete-vocab model).
+	// Same session-aborted gate as no_audio_detected: a user-initiated cancel
+	// can race a still-in-flight transcribe, and we don't want to flash an
+	// error the user already chose to discard.
+	transcription_failed: (_e, send) => {
+		if (isSessionAborted()) {
+			return;
+		}
+		send(IPC.STT_TRANSCRIPTION_FAILED);
+	},
 	vad_detect_start: (_e, send) => send(IPC.STT_VAD_START),
 	vad_detect_stop: (_e, send) => send(IPC.STT_VAD_STOP),
 	transcription_start: (e, send) =>
@@ -1057,6 +1077,7 @@ function handleSimpleRelayEvent(
 // one, silently de-diarizing any other consumer.
 const OVERLAY_RELEVANT_SIMPLE_TYPES = new Set([
 	"no_audio_detected",
+	"transcription_failed",
 	"vad_detect_start",
 	"vad_detect_stop",
 	"model_download_start",
@@ -1749,6 +1770,28 @@ export function setupRelay(
 		}
 	});
 
+	ipcMain.removeHandler(IPC.HISTORY_ALIGN_AUDIO);
+	ipcMain.handle(IPC.HISTORY_ALIGN_AUDIO, async (_evt, id: unknown) => {
+		if (typeof id !== "string") {
+			return [];
+		}
+		const entry = historyStore.getHistory().find((e) => e.id === id);
+		if (!entry?.audioFilePath) {
+			return [];
+		}
+		try {
+			// Ask the running STT server to align the WAV → per-word timestamps
+			// (it runs a small timestamped-Whisper model off the control loop).
+			// Pass the stored transcript so the server relabels its timed words
+			// with ours — the highlight matches the exact text, no drift.
+			const result = await client.alignWords(entry.audioFilePath, entry.text);
+			return extractAlignedWords(result);
+		} catch (err) {
+			console.error("[history] word alignment failed", entry.audioFilePath, err);
+			return [];
+		}
+	});
+
 	// Allow any window (including settings) to request the cached catalog.
 	// Stryker disable next-line ArrowFunction: handler return is exercised when invoked via IPC — covered by setupRelay smoke test
 	ipcMain.handle(IPC.STT_GET_MODEL_CATALOG, () => cachedModelCatalog);
@@ -1833,7 +1876,14 @@ export function setupRelay(
 	const contextCapture = createContextCapture({
 		isEnabled: () => getStoreValue("general.contextAwareness"),
 		getDenyList: () => getStoreValue("general.contextDenyList"),
-		read: readWindowContextTree,
+		// OCR fallback runs only when UIA exposes no text; it screenshots the
+		// window, so it must respect the same deny-list (checked inside, before
+		// redaction). Gated by contextAwareness like the rest of the capture.
+		read: () =>
+			readWindowContextTree({
+				ocrFallback: true,
+				denyList: getStoreValue("general.contextDenyList"),
+			}),
 		onSnapshotReady: (snapshot) => {
 			const tail = extractAsrPromptTail(snapshot);
 			if (tail.length === 0) {
@@ -1843,6 +1893,9 @@ export function setupRelay(
 		},
 		onSnapshotCleared: () => {
 			clearVolatileContextTail(client);
+		},
+		onConsumerError: (err) => {
+			dbg("relay", "context-capture onSnapshotReady consumer threw:", String(err));
 		},
 	});
 
@@ -1989,6 +2042,9 @@ export function setupRelay(
 		ipcMain.removeHandler(IPC.STT_GET_SERVER_READY);
 		ipcMain.removeHandler(IPC.HISTORY_GET_ALL);
 		ipcMain.removeHandler(IPC.HISTORY_CLEAR);
+		ipcMain.removeHandler(IPC.HISTORY_DELETE);
+		ipcMain.removeHandler(IPC.HISTORY_LOAD_AUDIO);
+		ipcMain.removeHandler(IPC.HISTORY_ALIGN_AUDIO);
 		cleanupPostProcessing();
 	};
 }
@@ -2001,6 +2057,7 @@ export const __relay_test_helpers__ = {
 	DATA_EVENT_HANDLERS,
 	dictationDuckLevel,
 	dispatchDataEvent,
+	extractAlignedWords,
 	extractEventText,
 	handleAudioLevel,
 	handleFullSentence,

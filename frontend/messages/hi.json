@@ -51,7 +51,12 @@
     "tabIntegrations": "एकीकरण",
     "tabIntegrationsTooltip": "बाहरी LLM प्रदाताओं से साझा कनेक्शन — Ollama एंडपॉइंट और OpenRouter API कुंजी।",
     "tabAbout": "के बारे में",
-    "tabAboutTooltip": "संस्करण, लाइसेंस और तृतीय-पक्ष सूचनाएँ।"
+    "tabAboutTooltip": "संस्करण, लाइसेंस और तृतीय-पक्ष सूचनाएँ।",
+    "searchPlaceholder": "सेटिंग्स खोजें…",
+    "searchClear": "खोज साफ़ करें",
+    "searchNoResults": "कोई मिलती-जुलती सेटिंग नहीं",
+    "collapseSidebar": "साइडबार संक्षिप्त करें",
+    "expandSidebar": "साइडबार विस्तृत करें"
   },
   "about": {
     "loading": "लोड हो रहा है…",
@@ -240,7 +245,7 @@
     "visualizerColorTooltip": "ऑडियो विज़ुअलाइज़र एनिमेशन द्वारा उपयोग किया जाने वाला उच्चारण रंग।",
     "soundFileTooltip": "रिकॉर्डिंग शुरू होने पर चलाई जाने वाली कस्टम .wav या .mp3 फ़ाइल। फ़ाइल छोड़ें या ब्राउज़ करके चुनें।",
     "fileTranscriptionFormatTooltip": "ट्रांसक्राइब किए गए ऑडियो/वीडियो फ़ाइलों के लिए आउटपुट फ़ाइल फ़ॉर्मेट। TXT सादा टेक्स्ट है; SRT उपशीर्षकों के लिए टाइमस्टैम्प शामिल करता है।",
-    "startOnLoginTooltip": "जब भी आप Windows में साइन इन करते हैं तो स्वचालित रूप से WinSTT लॉन्च करें।",
+    "startOnLoginTooltip": "हर बार Windows में साइन इन करने पर WinSTT को सिस्टम ट्रे में छोटा करके स्वचालित रूप से लॉन्च करें।",
     "startMinimizedTooltip": "लॉन्च होने पर, मुख्य विंडो खोलने के बजाय सिस्टम ट्रे में छिपा हुआ शुरू करें।",
     "minimizeToTrayTooltip": "मुख्य विंडो बंद करने पर WinSTT को छोड़ने के बजाय सिस्टम ट्रे में चालू रखें।",
     "sendCrashReports": "अनाम क्रैश रिपोर्ट भेजें",
@@ -337,8 +342,6 @@
     "updateIntervalCaption": "रियलटाइम अपडेट के बीच सेकंड",
     "updateIntervalTooltip": "लाइव ट्रांसक्रिप्शन अपडेट के बीच न्यूनतम समय। कम मान अधिक बार अपडेट देते हैं लेकिन अधिक प्रोसेसिंग शक्ति का उपयोग करते हैं। यदि डिक्टेशन के दौरान रुकावट या उच्च CPU उपयोग का अनुभव हो तो बढ़ाएं।",
     "llm": "बड़ा भाषा मॉडल",
-    "computeDefaultLabel": "डिफ़ॉल्ट (मॉडल की मूल सटीकता)",
-    "computeAutoLabel": "ऑटो (आपके हार्डवेयर के लिए सर्वोत्तम)",
     "deviceAutoLabel": "ऑटो",
     "deviceCpuLabel": "CPU",
     "translateToEnglish": "Translate to English",
@@ -410,6 +413,8 @@
     "detectionSpeedTooltip": "नियंत्रित करता है कि वाक्य कितनी जल्दी पूर्ण होते हैं। उच्च मान का अर्थ है पूर्णता से पहले छोटे विराम। कम मान अधिक धैर्यवान हैं और वक्ता के जारी रखने की अधिक प्रतीक्षा करते हैं।",
     "uppercaseFirstTooltip": "प्रत्येक ट्रांसक्राइब वाक्य के पहले अक्षर को स्वचालित रूप से बड़ा करें।",
     "endWithPeriodTooltip": "ट्रांसक्राइब किए गए वाक्यों के अंत में पीरियड जोड़ें जो पहले से विराम चिह्न के साथ समाप्त नहीं होते हैं।",
+    "removeFillerWords": "फिलर शब्द हटाएं",
+    "removeFillerWordsTooltip": "ट्रांसक्रिप्ट से \"uh\", \"um\", \"hmm\" जैसी हिचकिचाहट हटाता है. शब्दशः फिलर रखने के लिए इसे बंद करें (जैसे CrisperWhisper के साथ).",
     "sentencePauses": "वाक्य विराम",
     "endOfSentencePause": "वाक्य के अंत का विराम (से)",
     "endOfSentencePauseCaption": "टर्मिनेटर (. ! ?) के बाद प्रतीक्षा",
@@ -513,7 +518,8 @@
   "transcription": {
     "waiting": "बोली की प्रतीक्षा...",
     "serverOffline": "सर्वर ऑफ़लाइन",
-    "noAudioDetected": "(कोई ऑडियो नहीं मिला)"
+    "noAudioDetected": "(कोई ऑडियो नहीं मिला)",
+    "transcriptionFailed": "(ट्रांसक्रिप्शन विफल)"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -543,7 +549,7 @@
     "providerCaption": "टेक्स्ट परिवर्तन कहाँ चलाएँ",
     "providerTooltip": "एक स्थानीय Ollama सर्वर का उपयोग करें, या संरचित आउटपुट के साथ AI SDK के माध्यम से OpenRouter को कॉल करें।",
     "providerOllama": "Ollama (स्थानीय)",
-    "providerOpenRouter": "OpenRouter",
+    "providerOpenRouter": "OpenRouter (Cloud)",
     "providerAppleIntelligence": "Apple Intelligence",
     "providerAppleIntelligenceIntelTooltip": "Apple Intelligence के लिए Apple Silicon Mac (M1 या उसके बाद का) आवश्यक है।",
     "appleIntelligenceDescription": "Apple के ऑन-डिवाइस फाउंडेशन मॉडल को चलाता है। कोई सेटअप आवश्यक नहीं — macOS 15+ Apple Silicon पर ऑफ़लाइन काम करता है।",
@@ -711,11 +717,6 @@
     "speedCaption": "प्लेबैक गति गुणक (1.0× सामान्य है)।",
     "hotkeyLabel": "टेक्स्ट-टू-स्पीच कुंजी",
     "hotkeyHint": "हाइलाइट किए गए टेक्स्ट को पढ़ने के लिए किसी भी ऐप से यह संयोजन दबाएं। केवल इन-ऐप स्पीक बटन का उपयोग करने के लिए खाली छोड़ें।",
-    "device": "डिवाइस",
-    "deviceCaption": "ऑटो CUDA उपलब्ध होने पर GPU चुनता है; अन्यथा CPU पर वापस आता है।",
-    "deviceAuto": "स्वचालित",
-    "deviceCuda": "GPU (CUDA)",
-    "deviceCpu": "CPU",
     "testVoice": "आवाज़ का परीक्षण करें",
     "previewVoice": "आवाज़ पूर्वावलोकन",
     "loadingVoice": "लोड हो रहा है…",

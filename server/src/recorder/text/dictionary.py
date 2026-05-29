@@ -1,12 +1,10 @@
 """Deterministic fuzzy-dictionary corrector.
 
-Port of Handy's ``apply_custom_words`` from
-``examples/Handy/src-tauri/src/audio_toolkit/text.rs``. Given a raw
-transcription and a list of canonical user-defined terms, this module
-walks 1-3-word n-grams through the input and rewrites any window that
-fuzz-matches a canonical term (Levenshtein normalized distance + Soundex
-phonetic boost). The output preserves case from the first matched word
-and any surrounding punctuation.
+Given a raw transcription and a list of canonical user-defined terms,
+this module walks 1-3-word n-grams through the input and rewrites any
+window that fuzz-matches a canonical term (Levenshtein normalized
+distance + Soundex phonetic boost). The output preserves case from the
+first matched word and any surrounding punctuation.
 
 Why bother with a deterministic layer when we already have an LLM
 modifier pipeline? Tokens are slow and expensive; for the common case
@@ -27,26 +25,25 @@ from rapidfuzz.distance import Levenshtein
 
 __all__ = ["apply_custom_words"]
 
-# Default similarity threshold. Matches Handy's reference value (text.rs
-# line 102). Lower thresholds reject more aggressively; raise this only
-# if the matcher produces too many false negatives in practice.
+# Default similarity threshold. Reference default 0.18. Lower thresholds
+# reject more aggressively; raise this only if the matcher produces too
+# many false negatives in practice.
 DEFAULT_THRESHOLD: float = 0.18
 
 # Phonetic boost factor — when Soundex codes match we multiply the
 # Levenshtein score by this constant so phonetically equivalent strings
-# clear the threshold even if their letter shapes diverge a lot. Mirrors
-# Handy's ``levenshtein_score * 0.3`` line.
+# clear the threshold even if their letter shapes diverge a lot
+# (``levenshtein_score * 0.3``).
 _PHONETIC_BOOST: float = 0.3
 
 # Maximum candidate length the matcher will consider. Anything longer is
 # almost certainly a multi-word stretch the n-gram windows have already
 # scanned past; running Levenshtein on 50+ char strings adds latency for
-# no payoff. Matches Handy's ``candidate.len() > 50`` guard.
+# no payoff (the ``candidate.len() > 50`` guard).
 _MAX_CANDIDATE_LEN: int = 50
 
-# N-gram width range. Handy uses 1..=3 reversed (longest first) so a
-# 3-word match wins over the 1-word fallback inside its window. We keep
-# the same width range for parity.
+# N-gram width range. Widths 1..3 are tried reversed (longest first) so a
+# 3-word match wins over the 1-word fallback inside its window.
 _MAX_NGRAM_WIDTH: int = 3
 
 
@@ -57,7 +54,7 @@ def apply_custom_words(
 ) -> str:
     """Replace n-gram matches in ``text`` with canonical custom words.
 
-    The algorithm mirrors Handy's Rust implementation 1:1:
+    The algorithm proceeds as follows:
 
     1. Pre-compute lowercase + space-stripped versions of each custom
        word once so the inner loop avoids reallocations.
@@ -85,27 +82,41 @@ def apply_custom_words(
         custom_words: Canonical spellings to bias toward. Empty list →
             ``text`` is returned unchanged.
         threshold: Maximum acceptable combined score. Lower = stricter.
-            Defaults to :data:`DEFAULT_THRESHOLD` (0.18, same as Handy).
+            Defaults to :data:`DEFAULT_THRESHOLD` (0.18).
 
     Returns:
         ``text`` with each matched n-gram rewritten in place.
     """
-    if not custom_words or not text:
-        return text
-
-    custom_words_lower = [w.lower() for w in custom_words]
-    custom_words_nospace = [w.replace(" ", "") for w in custom_words_lower]
-
     words = text.split()
-    if not words:
+    if any([not custom_words, not words]):
         return text
 
+    custom_words_nospace = [w.lower().replace(" ", "") for w in custom_words]
+    return _rewrite_words(words, custom_words, custom_words_nospace, threshold)
+
+
+def _rewrite_words(
+    words: list[str],
+    custom_words: list[str],
+    custom_words_nospace: list[str],
+    threshold: float,
+) -> str:
+    """Drive the n-gram cursor over ``words`` and join the rewritten output.
+
+    The cursor advances by the matched n-gram width on a hit and by a
+    single word on a miss (see :func:`_advance_step`).
+    """
     result: list[str] = []
     i = 0
     while i < len(words):
         match_width = _try_match_at(words, i, custom_words, custom_words_nospace, threshold, result)
-        i += match_width if match_width > 0 else 1
+        i += _advance_step(match_width)
     return " ".join(result)
+
+
+def _advance_step(match_width: int) -> int:
+    """Cursor delta for a given match width — the width on a hit, else 1."""
+    return match_width if match_width > 0 else 1
 
 
 def _try_match_at(
@@ -123,29 +134,47 @@ def _try_match_at(
     advances by 1.
     """
     for width in range(_MAX_NGRAM_WIDTH, 0, -1):
-        if start + width > len(words):
-            continue
-        ngram_words = words[start : start + width]
-        ngram = _build_ngram(ngram_words)
-        replacement = _find_best_match(ngram, custom_words, custom_words_nospace, threshold)
-        if replacement is None:
-            continue
-        prefix, _ = _extract_punctuation(ngram_words[0])
-        _, suffix = _extract_punctuation(ngram_words[width - 1])
-        corrected = _preserve_case_pattern(ngram_words[0], replacement)
-        result.append(f"{prefix}{corrected}{suffix}")
-        return width
+        formatted = _format_width_match(words, start, width, custom_words, custom_words_nospace, threshold)
+        if formatted is not None:
+            result.append(formatted)
+            return width
     result.append(words[start])
     return 0
+
+
+def _format_width_match(
+    words: list[str],
+    start: int,
+    width: int,
+    custom_words: list[str],
+    custom_words_nospace: list[str],
+    threshold: float,
+) -> str | None:
+    """Format the punctuation-wrapped replacement for one n-gram width.
+
+    Returns ``None`` when the window runs past the end of ``words`` or
+    when no custom word matches the candidate, signalling the caller to
+    try the next (narrower) width.
+    """
+    if start + width > len(words):
+        return None
+    ngram_words = words[start : start + width]
+    ngram = _build_ngram(ngram_words)
+    replacement = _find_best_match(ngram, custom_words, custom_words_nospace, threshold)
+    if replacement is None:
+        return None
+    prefix, _ = _extract_punctuation(ngram_words[0])
+    _, suffix = _extract_punctuation(ngram_words[width - 1])
+    corrected = _preserve_case_pattern(ngram_words[0], replacement)
+    return f"{prefix}{corrected}{suffix}"
 
 
 def _build_ngram(words: list[str]) -> str:
     """Strip punctuation, lowercase, concatenate without spaces.
 
-    This is the candidate string fed to the fuzzy matcher. Handy uses
-    ``trim_matches(|c: char| !c.is_alphanumeric())`` which strips
-    leading/trailing non-alphanumeric characters but keeps any
-    alphanumeric content in the middle.
+    This is the candidate string fed to the fuzzy matcher. Leading and
+    trailing non-alphanumeric characters are stripped, but any
+    alphanumeric content in the middle is kept.
     """
     cleaned: list[str] = []
     for word in words:
@@ -158,13 +187,32 @@ def _strip_non_alnum(word: str) -> str:
 
     Matches Rust's ``str::trim_matches(|c| !c.is_alphanumeric())``.
     """
-    start = 0
-    end = len(word)
-    while start < end and not word[start].isalnum():
-        start += 1
-    while end > start and not word[end - 1].isalnum():
-        end -= 1
+    start = _first_alnum_index(word, 0, len(word))
+    end = _last_alnum_boundary(word, start, len(word))
     return word[start:end]
+
+
+def _first_alnum_index(word: str, lo: int, hi: int) -> int:
+    """Index of the first alphanumeric char in ``word[lo:hi]`` (or ``hi``).
+
+    Scans forward from ``lo``, skipping non-alphanumeric characters, and
+    returns ``hi`` when the whole window is non-alphanumeric.
+    """
+    while lo < hi and not word[lo].isalnum():
+        lo += 1
+    return lo
+
+
+def _last_alnum_boundary(word: str, lo: int, hi: int) -> int:
+    """Exclusive end index past the last alphanumeric char in ``word[lo:hi]``.
+
+    Scans backward from ``hi``, skipping trailing non-alphanumeric
+    characters, and returns ``lo`` when the whole window is
+    non-alphanumeric.
+    """
+    while hi > lo and not word[hi - 1].isalnum():
+        hi -= 1
+    return hi
 
 
 def _find_best_match(
@@ -181,37 +229,59 @@ def _find_best_match(
     score is multiplied by 0.3 — so they out-rank purely typographic
     matches at equivalent edit distance.
     """
-    if not candidate or len(candidate) > _MAX_CANDIDATE_LEN:
+    if any([not candidate, len(candidate) > _MAX_CANDIDATE_LEN]):
         return None
+    return _scan_custom_words(candidate, custom_words, custom_words_nospace, threshold)
 
+
+def _scan_custom_words(
+    candidate: str,
+    custom_words: list[str],
+    custom_words_nospace: list[str],
+    threshold: float,
+) -> str | None:
+    """Pick the lowest-scoring custom word below ``threshold`` for ``candidate``.
+
+    Iterates the pre-stripped custom words, scores each (see
+    :func:`_score_candidate`), and keeps the best canonical spelling that
+    clears both ``threshold`` and the running best.
+    """
     best_match: str | None = None
     best_score = float("inf")
 
     candidate_soundex = soundex(candidate)
     for i, custom_word_nospace in enumerate(custom_words_nospace):
-        if not _length_compatible(candidate, custom_word_nospace):
-            continue
-
-        levenshtein_score = _normalized_levenshtein(candidate, custom_word_nospace)
-        combined_score = _combine_with_phonetics(
-            levenshtein_score,
-            candidate_soundex,
-            soundex(custom_word_nospace),
-        )
-
-        if combined_score < threshold and combined_score < best_score:
+        score = _score_candidate(candidate, candidate_soundex, custom_word_nospace)
+        if all([score < threshold, score < best_score]):
             best_match = custom_words[i]
-            best_score = combined_score
+            best_score = score
 
     return best_match
+
+
+def _score_candidate(candidate: str, candidate_soundex: str, custom_word_nospace: str) -> float:
+    """Combined fuzzy score for one custom word, or ``inf`` if incompatible.
+
+    Length-incompatible pairs short-circuit to ``inf`` so the caller's
+    ``score < threshold`` comparison rejects them without computing
+    Levenshtein or Soundex.
+    """
+    if not _length_compatible(candidate, custom_word_nospace):
+        return float("inf")
+
+    levenshtein_score = _normalized_levenshtein(candidate, custom_word_nospace)
+    return _combine_with_phonetics(
+        levenshtein_score,
+        candidate_soundex,
+        soundex(custom_word_nospace),
+    )
 
 
 def _length_compatible(candidate: str, custom_word_nospace: str) -> bool:
     """Reject pairs whose lengths differ by more than 25% (and ≥ 2 chars).
 
-    Matches Handy's optimization comment: "max 25% length difference
-    (prevents n-grams from matching significantly shorter custom words,
-    e.g. 'openaigpt' vs 'openai')".
+    A max 25% length difference prevents n-grams from matching
+    significantly shorter custom words, e.g. 'openaigpt' vs 'openai'.
     """
     len_diff = abs(len(candidate) - len(custom_word_nospace))
     max_len = max(len(candidate), len(custom_word_nospace))
@@ -236,10 +306,9 @@ def _combine_with_phonetics(levenshtein_score: float, code_a: str, code_b: str) 
 
     Returns ``score * 0.3`` on a phonetic hit, ``score`` otherwise.
     Empty Soundex codes (jellyfish returns ``""`` for unmappable input)
-    never overlap, matching how Handy's ``natural::phonetics::soundex``
-    behaves on similarly degenerate inputs.
+    never overlap, so degenerate inputs never trigger a phonetic boost.
     """
-    if code_a and code_b and code_a == code_b:
+    if all([code_a, code_b, code_a == code_b]):
         return levenshtein_score * _PHONETIC_BOOST
     return levenshtein_score
 
@@ -255,28 +324,31 @@ def _preserve_case_pattern(original: str, replacement: str) -> str:
     * Anything else → ``replacement`` verbatim (we trust the user's
       canonical spelling).
     """
-    if original and original.isupper():
+    if all([original, original.isupper()]):
         return replacement.upper()
-    if original and original[0].isupper():
-        if not replacement:
-            return replacement
-        return replacement[0].upper() + replacement[1:]
+    if _starts_uppercase(original):
+        return _apply_title_case(replacement)
     return replacement
+
+
+def _starts_uppercase(word: str) -> bool:
+    """True when ``word`` is non-empty and its first character is uppercase."""
+    return bool(word) and word[0].isupper()
+
+
+def _apply_title_case(replacement: str) -> str:
+    """Uppercase only the first character of ``replacement`` (empty → as-is)."""
+    if not replacement:
+        return replacement
+    return replacement[0].upper() + replacement[1:]
 
 
 def _extract_punctuation(word: str) -> tuple[str, str]:
     """Return the leading + trailing non-alphanumeric runs of ``word``.
 
-    Mirrors Handy's ``extract_punctuation`` so an input like
-    ``"hello,"`` keeps the trailing comma after replacement, and
-    ``"(foo)"`` keeps the surrounding parens.
+    An input like ``"hello,"`` keeps the trailing comma after
+    replacement, and ``"(foo)"`` keeps the surrounding parens.
     """
-    prefix_end = 0
-    while prefix_end < len(word) and not word[prefix_end].isalnum():
-        prefix_end += 1
-
-    suffix_start = len(word)
-    while suffix_start > prefix_end and not word[suffix_start - 1].isalnum():
-        suffix_start -= 1
-
+    prefix_end = _first_alnum_index(word, 0, len(word))
+    suffix_start = _last_alnum_boundary(word, prefix_end, len(word))
     return word[:prefix_end], word[suffix_start:]

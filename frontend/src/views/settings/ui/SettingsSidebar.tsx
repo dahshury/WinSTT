@@ -1,21 +1,29 @@
 import { Tabs } from "@base-ui/react/tabs";
+import {
+	Cancel01Icon,
+	PanelLeftCloseIcon,
+	PanelLeftOpenIcon,
+	Search01Icon,
+} from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useState } from "react";
-import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
+import { useState } from "react";
+import { useTranslations } from "use-intl";
+import { cn } from "@/shared/lib/cn";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip } from "@/shared/ui/tooltip";
+import { matchesSearchQuery } from "../lib/settings-search";
 
 /**
- * Rail-tuned divider. The card `TextureSeparator` stacks a dark
- * (`surface-1`) hairline that disappears on the dark rail, so this mirrors
- * the rail's own edge treatment instead: a `divider-strong` line lifted by
- * a faint top-light highlight — etched, and actually visible here.
+ * Hairline divider closing a logical tab group. Mirrors the rail's own edge
+ * treatment: a `divider-strong` line lifted by a faint top-light highlight so
+ * it reads as etched rather than a flat gray stroke.
  */
 function RailSeparator() {
 	return (
 		<div
 			aria-hidden="true"
-			className="relative h-px w-full bg-[var(--color-divider-strong)] shadow-[0_1px_0_0_oklch(100%_0_0_/_0.05)]"
+			className="my-1.5 h-px w-full bg-[var(--color-divider-strong)] shadow-[0_1px_0_0_oklch(100%_0_0_/_0.05)]"
 		/>
 	);
 }
@@ -25,216 +33,219 @@ export interface SidebarLink {
 	groupEnd?: boolean;
 	icon: IconSvgElement;
 	key: string;
+	/**
+	 * Section headings + key setting names this tab contains, fed into search so
+	 * a query surfaces the tab by its contents (e.g. "display" → General). See
+	 * `useSettingsSearchKeywords`.
+	 */
+	keywords?: string | undefined;
 	label: string;
-	/** Tooltip explaining what the tab configures */
+	/** Tooltip explaining what the tab configures — also fed into search */
 	tooltip?: string;
 }
 
 interface SettingsSidebarProps {
 	links: SidebarLink[];
+	/** Close the settings window (rendered as the leading × in the header). */
+	onClose: () => void;
 }
 
-/**
- * Internal spacing uses fixed px rather than rem because the root font-size
- * is 14px (not 16px), so em-based math would mis-center the icon column.
- *
- * SIDE_PAD      = 10px            → tab list horizontal padding
- * ICON_COL      = 40px            → icon column width (keeps the 28px badge
- *                                   optically centred in the 60px rail)
- * BADGE_SIZE    = 28px            → a quiet container, not a tile — small
- *                                   enough that it doesn't crowd the label
- * COLLAPSED     = 60px            → SIDE_PAD*2 + ICON_COL
- * EXPANDED      = 196px           → leaves ~136px for the label
- *
- * One easing curve (expo-out) drives width, label and badge so the rail
- * moves as a single object — the spring "settles" rather than several
- * elements arriving on different timelines. No glow / no coloured pill:
- * the active row is marked the same clean, embossed way SettingSection
- * marks itself (accent badge + faint wash + inset hairline).
- */
-const SIDE_PAD = 10;
-const ICON_COL = 40;
-const BADGE_SIZE = 28;
-const COLLAPSED_WIDTH = 60;
-const EXPANDED_WIDTH = 196;
-const ROW_HEIGHT = 40;
-const SPRING = "cubic-bezier(0.16, 1, 0.3, 1)";
+const SIDEBAR_WIDTH = 170;
+const COLLAPSED_WIDTH = 56;
+const TAB_HEIGHT = 36;
+const COLLAPSE_STORAGE_KEY = "winstt:settings-sidebar-collapsed";
 
-/**
- * On touch devices the hover-to-expand affordance never fires (no mouseenter
- * before the tap), so the sidebar would stay collapsed forever and the user
- * would have to guess which icon is which. Detect any coarse pointer and
- * keep the rail open so labels are always readable on tap-driven hardware.
- *
- * Initial value comes from the matchMedia probe via lazy initializer so
- * the very first render already reflects the current device's input mode
- * — no setState-in-effect mount-time waterfall.
- */
-function probeCoarsePointer(): boolean {
-	if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+// Persist the collapsed preference so it survives window reloads/reopens.
+function readCollapsed(): boolean {
+	try {
+		return window.localStorage.getItem(COLLAPSE_STORAGE_KEY) === "1";
+	} catch {
 		return false;
 	}
-	return window.matchMedia("(any-pointer: coarse)").matches;
+}
+function writeCollapsed(next: boolean): void {
+	try {
+		window.localStorage.setItem(COLLAPSE_STORAGE_KEY, next ? "1" : "0");
+	} catch {
+		// no-op: a denied localStorage just means the preference won't persist
+	}
 }
 
-function useCoarsePointer(): boolean {
-	const [coarse, setCoarse] = useState(probeCoarsePointer);
-	useEffect(() => {
-		if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-			return;
-		}
-		const mql = window.matchMedia("(any-pointer: coarse)");
-		const handler = (e: MediaQueryListEvent) => setCoarse(e.matches);
-		mql.addEventListener("change", handler);
-		return () => mql.removeEventListener("change", handler);
-	}, []);
-	return coarse;
-}
+/**
+ * Settings sidebar — a column that shares the page substrate (surface-1) so it
+ * reads as built into the window, with each tab's content floating a layer
+ * above. Holds the close button, wordmark, a collapse toggle, a live search
+ * filter, and the vertical tab list (hairline separators close logical groups).
+ *
+ * Collapsible: the toggle beside the wordmark shrinks the column to an
+ * icon-only rail (search hidden, labels become hover tooltips) and back.
+ */
+export function SettingsSidebar({ links, onClose }: SettingsSidebarProps) {
+	const t = useTranslations("settings");
+	const [query, setQuery] = useState("");
+	const [collapsed, setCollapsed] = useState(readCollapsed);
 
-export function SettingsSidebar({ links }: SettingsSidebarProps) {
-	const isCoarsePointer = useCoarsePointer();
-	const [hoverExpanded, setHoverExpanded] = useState(false);
-	const expanded = isCoarsePointer || hoverExpanded;
-	const setExpanded = setHoverExpanded;
-
-	// Substrate is the page (surface-1). The rail lifts +1 to mirror the
-	// content viewport.
+	// Sidebar stays at the page substrate; the search field lifts one step so it
+	// reads as a recessed input against it.
 	const substrate = useSurface();
-	const railLevel = Math.min(substrate + 1, 8);
+	const inputLevel = Math.min(substrate + 1, 8);
 
-	// Label / wordmark reveal: slide + fade, staggered so the rail "unfurls"
-	// from the top. Kept mounted (no display:none) so labels stay in the
-	// accessibility tree even while collapsed.
-	const revealStyle = (index: number) => ({
-		opacity: expanded ? 1 : 0,
-		transform: expanded ? "translateX(0)" : "translateX(-6px)",
-		transition: `opacity 220ms ${SPRING} ${expanded ? 40 + index * 18 : 0}ms, transform 260ms ${SPRING} ${expanded ? 40 + index * 18 : 0}ms`,
-	});
+	const toggleCollapsed = () => {
+		setCollapsed((prev) => {
+			const next = !prev;
+			writeCollapsed(next);
+			return next;
+		});
+	};
+
+	const trimmed = query.trim().toLowerCase();
+	const searching = trimmed.length > 0 && !collapsed;
+	// Match against the tab's label, tooltip, AND its section/setting keywords
+	// (so "display" surfaces General), with the dictionary's fuzzy matcher for
+	// typo tolerance ("dispaly" → Display). See `matchesSearchQuery`.
+	const visibleLinks = searching
+		? links.filter((l) =>
+				matchesSearchQuery(`${l.label} ${l.tooltip ?? ""} ${l.keywords ?? ""}`, trimmed)
+			)
+		: links;
+
+	const closeButton = (
+		<button
+			aria-label={t("close")}
+			className="titlebar-no-drag group flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-white focus-visible:ring-2 focus-visible:ring-accent"
+			onClick={onClose}
+			type="button"
+		>
+			<HugeiconsIcon
+				className="transition-transform duration-150 ease-out group-hover:scale-110"
+				icon={Cancel01Icon}
+				size={15}
+			/>
+		</button>
+	);
+
+	const toggleButton = (
+		<Tooltip content={collapsed ? t("expandSidebar") : t("collapseSidebar")} side="right">
+			<button
+				aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
+				className="titlebar-no-drag flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
+				onClick={toggleCollapsed}
+				type="button"
+			>
+				<HugeiconsIcon icon={collapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon} size={16} />
+			</button>
+		</Tooltip>
+	);
 
 	return (
-		<SurfaceProvider value={railLevel}>
-			{/* Flow spacer — reserves a constant collapsed-width column so the
-			    content viewport never reflows when the rail expands. The rail
-			    itself is absolutely positioned and overlays the content on
-			    hover/focus, so a wide control (e.g. the recording-mode
-			    Switcher) is never squeezed/clipped by a transient hover.
-			    On touch devices the rail is permanently expanded (no hover to
-			    trigger it), so the spacer matches expanded width — otherwise
-			    the rail would float over the content and obscure the first
-			    136px of every panel. */}
-			<div
-				className="relative h-full shrink-0"
-				style={{ width: isCoarsePointer ? EXPANDED_WIDTH : COLLAPSED_WIDTH }}
+		<aside
+			className="relative flex h-full shrink-0 flex-col bg-surface-1 transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
+			style={{ width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
+		>
+			{/* Header strip — close button + wordmark + collapse toggle. The h-14
+			    band matches the content column's title band so "Settings" and the
+			    active tab name sit on the same baseline. Draggable for window move. */}
+			{collapsed ? (
+				<div className="titlebar-drag flex flex-col items-center gap-1 px-2 pt-2.5 pb-1">
+					{closeButton}
+					{toggleButton}
+				</div>
+			) : (
+				<div className="titlebar-drag flex h-14 shrink-0 items-center gap-2 px-3">
+					{closeButton}
+					<span className="font-semibold text-foreground text-title tracking-[-0.01em]">
+						{t("title")}
+					</span>
+					<div className="flex-1" />
+					{toggleButton}
+				</div>
+			)}
+
+			{/* Search — expanded only */}
+			{collapsed ? null : (
+				<div className="titlebar-no-drag px-3 pb-3">
+					<div className="relative flex items-center">
+						<HugeiconsIcon
+							aria-hidden="true"
+							className="pointer-events-none absolute start-2.5 text-foreground-muted"
+							icon={Search01Icon}
+							size={14}
+						/>
+						<input
+							aria-label={t("searchPlaceholder")}
+							className={`h-8 w-full rounded-md ps-8 pe-7 text-body text-foreground caret-accent outline-none ring-1 ring-divider transition-shadow placeholder:text-foreground-muted hover:ring-border focus-visible:ring-2 focus-visible:ring-accent ${surfaceBg(inputLevel)}`}
+							onChange={(e) => setQuery(e.target.value)}
+							placeholder={t("searchPlaceholder")}
+							type="text"
+							value={query}
+						/>
+						{trimmed.length > 0 ? (
+							<button
+								aria-label={t("searchClear")}
+								className="absolute end-1.5 flex size-5 items-center justify-center rounded-full bg-transparent text-foreground-muted outline-none transition-colors hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
+								onClick={() => setQuery("")}
+								type="button"
+							>
+								<HugeiconsIcon icon={Cancel01Icon} size={12} />
+							</button>
+						) : null}
+					</div>
+				</div>
+			)}
+
+			{/* Tab list */}
+			<Tabs.List
+				className={cn(
+					"relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-3",
+					collapsed ? "items-center px-2" : "px-2"
+				)}
 			>
-				{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: sidebar wrapper uses focus/hover events to drive visual expansion only */}
-				<div
-					className={`absolute inset-y-0 left-0 z-overlay flex h-full flex-col overflow-hidden ${surfaceBg(railLevel)} shadow-[inset_-1px_0_0_0_var(--color-divider-strong),inset_0_1px_0_0_oklch(100%_0_0_/_0.04)] transition-[width] duration-[280ms] ease-[cubic-bezier(0.16,1,0.3,1)]`}
-					onBlur={(e) => {
-						if (!e.currentTarget.contains(e.relatedTarget)) {
-							setExpanded(false);
-						}
-					}}
-					onFocus={(e) => {
-						// Only expand for keyboard-driven focus. Mouse clicks and
-						// window-focus-restoration (e.g. clicking the taskbar to
-						// bring the app forward) also land focus on the last-active
-						// Tab in this rail — without the :focus-visible gate the
-						// sidebar would auto-open every time the user came back to
-						// the window.
-						const target = e.target as Element | null;
-						if (target?.matches?.(":focus-visible")) {
-							setExpanded(true);
-						}
-					}}
-					onMouseEnter={() => setExpanded(true)}
-					onMouseLeave={() => setExpanded(false)}
-					style={{ width: expanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH }}
-				>
-					{/* Atmosphere — same brand vocabulary as the settings titlebar:
-				    an accent hairline kissing the top edge and a soft top-light
-				    wash, plus a faint bottom vignette so the rail reads as a
-				    grounded column rather than a floating strip. */}
-					<span
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-x-0 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
-					/>
-					<span
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[var(--color-surface-3)]/40 to-transparent"
-					/>
-					<span
-						aria-hidden="true"
-						className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-surface-1/35 to-transparent"
-					/>
-
-					<RailSeparator />
-
-					{/* Tab list */}
-					<Tabs.List
-						className="relative flex flex-1 flex-col gap-1 py-3"
-						style={{ paddingInline: SIDE_PAD }}
-					>
-						{links.map((link, index) => {
-							const tab = (
-								<Tabs.Tab
-									className="group relative flex w-full cursor-pointer items-center rounded-md border-0 bg-transparent p-0 outline-none transition-[background-color,box-shadow] duration-200 hover:bg-foreground/[0.03] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 data-[active]:bg-accent/[0.06] data-[active]:shadow-[inset_0_0_0_1px_var(--color-divider-strong)]"
-									key={link.key}
-									style={{ height: ROW_HEIGHT }}
-									value={link.key}
-								>
-									<span
-										aria-hidden="true"
-										className="flex shrink-0 items-center justify-center"
-										style={{ width: ICON_COL, height: ROW_HEIGHT }}
-									>
-										{/* Icon badge — SettingSection's accent-badge
-									    vocabulary, scaled down to a quiet marker:
-									    transparent until active, then a soft
-									    accent wash + text-accent + a single
-									    inset hairline. No glow, no scale jump —
-									    the same clean, embossed way the section
-									    header marks itself. */}
-										<span
-											className="flex items-center justify-center rounded-md bg-transparent ring-1 ring-transparent transition-[background-color,box-shadow] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:bg-foreground/[0.04] group-data-[active]:bg-accent/[0.1] group-data-[active]:ring-accent/25"
-											style={{ width: BADGE_SIZE, height: BADGE_SIZE }}
-										>
-											<HugeiconsIcon
-												className="text-foreground-muted transition-colors duration-200 group-hover:text-foreground-secondary group-data-[active]:text-accent"
-												icon={link.icon}
-												size={16}
-											/>
-										</span>
-									</span>
-									<span
-										className="pointer-events-none whitespace-nowrap pl-2 font-sans text-body text-foreground-secondary group-data-[active]:font-medium group-data-[active]:text-foreground"
-										style={revealStyle(index + 1)}
-									>
+				{visibleLinks.length === 0 ? (
+					<p className="px-2.5 py-4 text-body-sm text-foreground-muted">{t("searchNoResults")}</p>
+				) : (
+					visibleLinks.map((link) => {
+						const tab = (
+							<Tabs.Tab
+								className={cn(
+									"group/seg relative flex cursor-pointer items-center rounded-md border-0 bg-transparent py-0 outline-none transition-[background-color,box-shadow] duration-150 hover:bg-foreground/[0.04] focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 data-[active]:bg-accent/[0.08] data-[active]:shadow-[inset_0_0_0_1px_var(--color-divider-strong)]",
+									collapsed ? "w-9 justify-center" : "w-full gap-2.5 ps-2.5 pe-2.5"
+								)}
+								style={{ height: TAB_HEIGHT }}
+								value={link.key}
+							>
+								{/* Active-row accent bar at the leading edge */}
+								<span
+									aria-hidden="true"
+									className="pointer-events-none absolute start-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent opacity-0 transition-opacity duration-150 group-data-[active]/seg:opacity-100"
+								/>
+								<HugeiconsIcon
+									className="shrink-0 text-foreground-muted transition-colors duration-150 group-hover/seg:text-foreground-secondary group-data-[active]/seg:text-accent"
+									icon={link.icon}
+									size={17}
+								/>
+								{collapsed ? null : (
+									<span className="min-w-0 flex-1 truncate text-start font-sans text-body text-foreground-secondary transition-colors duration-150 group-data-[active]/seg:font-medium group-data-[active]/seg:text-foreground">
 										{link.label}
 									</span>
-								</Tabs.Tab>
-							);
-							const row = link.tooltip ? (
-								<Tooltip content={link.tooltip} side="right">
-									{tab}
-								</Tooltip>
-							) : (
-								tab
-							);
-							return (
-								<div className="contents" key={link.key}>
-									{row}
-									{link.groupEnd ? (
-										<div className="py-1">
-											<RailSeparator />
-										</div>
-									) : null}
-								</div>
-							);
-						})}
-					</Tabs.List>
-				</div>
-			</div>
-		</SurfaceProvider>
+								)}
+							</Tabs.Tab>
+						);
+						return (
+							<div className="contents" key={link.key}>
+								{collapsed ? (
+									<Tooltip content={link.label} side="right">
+										{tab}
+									</Tooltip>
+								) : (
+									tab
+								)}
+								{/* Group separators only when the list isn't filtered */}
+								{!searching && link.groupEnd ? <RailSeparator /> : null}
+							</div>
+						);
+					})
+				)}
+			</Tabs.List>
+		</aside>
 	);
 }

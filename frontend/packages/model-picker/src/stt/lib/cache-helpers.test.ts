@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelCacheInfo, ModelStateEntry } from "@/shared/api/ipc-client";
-import { getCachePillConfig, isCached, resolveQuantCache } from "./cache-helpers";
+import {
+	getCachePillConfig,
+	isCached,
+	resolveEffectiveQuant,
+	resolveQuantCache,
+} from "./cache-helpers";
 
 function cacheInfo(overrides: Partial<ModelCacheInfo> = {}): ModelCacheInfo {
 	return {
@@ -47,6 +52,36 @@ describe("resolveQuantCache", () => {
 		const e = entry({ cache: flat });
 		(e as { cache_by_quantization?: unknown }).cache_by_quantization = undefined;
 		expect(resolveQuantCache(e, "int8")).toBe(flat);
+	});
+});
+
+describe("resolveEffectiveQuant", () => {
+	test("re-resolves the default sentinel to the server's effective precision", () => {
+		// canary-1b-flash: user is on auto (""), but the server loads int8 on
+		// non-CUDA. Checking "" would hit the (cached) default export and skip
+		// the download prompt; we must target int8 instead.
+		const e = entry({ effective_quantization: "int8" });
+		expect(resolveEffectiveQuant(e, "")).toBe("int8");
+	});
+
+	test("keeps the default sentinel when the server leaves it default", () => {
+		// whisper-base on auto: effective_quantization is "" (default export).
+		const e = entry({ effective_quantization: "" });
+		expect(resolveEffectiveQuant(e, "")).toBe("");
+	});
+
+	test("passes a concrete pick through unchanged", () => {
+		const e = entry({ effective_quantization: "int8" });
+		expect(resolveEffectiveQuant(e, "fp16")).toBe("fp16");
+	});
+
+	test("falls back to the raw selection when the field is absent (older server)", () => {
+		const e = entry();
+		expect(resolveEffectiveQuant(e, "")).toBe("");
+	});
+
+	test("falls back to the raw selection when there is no entry", () => {
+		expect(resolveEffectiveQuant(undefined, "")).toBe("");
 	});
 });
 

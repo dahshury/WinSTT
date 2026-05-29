@@ -91,7 +91,10 @@ export async function routeContextToSink(ctx: AudioContext, deviceId: string): P
 	}
 	try {
 		await ctx.setSinkId(deviceId || { type: "none" });
-	} catch {
-		// device unavailable — system default takes over
+	} catch (err) {
+		// Device unavailable — the system default takes over (behaviour
+		// unchanged). Warn for observability so a failed device switch is
+		// diagnosable rather than silent, matching `decodeWav`'s idiom.
+		console.warn("[sound] setSinkId failed; falling back to the system default", err);
 	}
 }

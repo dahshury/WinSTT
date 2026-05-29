@@ -32,7 +32,38 @@ mock.module("electron", () => ({
 }));
 
 const storeModule = await import("./store");
-const { store, getStoreValue, getStoreRaw, applyStoreMigration } = storeModule;
+const {
+	store,
+	getStoreValue,
+	getStoreRaw,
+	applyStoreMigration,
+	setStoreSecret,
+	migrateSecretsAtRest,
+} = storeModule;
+
+// Same mocked `safeStorage` object store.ts imports — grab a handle so the
+// "keystore unavailable" tests can flip `isEncryptionAvailable` in place.
+const { safeStorage: mockSafeStorage } = (await import("electron")) as unknown as {
+	safeStorage: { isEncryptionAvailable: () => boolean };
+};
+
+// Capture `console.warn` calls produced while `fn` runs, restoring it after.
+// Bun's `spyOn(console, "warn")` does NOT intercept the `console.warn` that
+// store.ts (a separately-imported module) invokes here, so reassign the
+// property directly — proven to capture cross-module calls.
+function captureWarnings(fn: () => void): unknown[][] {
+	const orig = console.warn;
+	const calls: unknown[][] = [];
+	console.warn = (...args: unknown[]) => {
+		calls.push(args);
+	};
+	try {
+		fn();
+	} finally {
+		console.warn = orig;
+	}
+	return calls;
+}
 
 // In the full suite, sibling test files (stt-process.test.ts) install a
 // `mock.module("../lib/store", ...)` that uses a partial in-memory shim
@@ -65,7 +96,6 @@ describe("store module", () => {
 		expect(s("model.model")).toBe("tiny");
 		expect(s("model.realtimeModel")).toBe("tiny");
 		expect(s("model.language")).toBe("en");
-		expect(s("model.computeType")).toBe("default");
 		expect(s("model.device")).toBe("auto");
 		expect(s("model.backend")).toBe("faster_whisper");
 	});
@@ -154,17 +184,14 @@ describe("store module", () => {
 		}
 	);
 
-	itIfClean(
-		"default store has audio.sileroSensitivity at 0.7 (Handy-matching) and inputDeviceIndex at null",
-		() => {
-			const s = (key: string) => (store.get as (k: string) => unknown)(key);
-			// 0.7 → Silero trip threshold 0.3, matching Handy. The
-			// previous 0.4 default (trip > 0.6) silently rejected
-			// quiet / distant speech.
-			expect(s("audio.sileroSensitivity")).toBe(0.7);
-			expect(s("audio.inputDeviceIndex")).toBeNull();
-		}
-	);
+	itIfClean("default store has audio.sileroSensitivity at 0.7 and inputDeviceIndex at null", () => {
+		const s = (key: string) => (store.get as (k: string) => unknown)(key);
+		// 0.7 → Silero trip threshold 0.3. The
+		// previous 0.4 default (trip > 0.6) silently rejected
+		// quiet / distant speech.
+		expect(s("audio.sileroSensitivity")).toBe(0.7);
+		expect(s("audio.inputDeviceIndex")).toBeNull();
+	});
 
 	itIfClean(
 		"default store general.minimizeToTray is true (and loopbackDeviceIndex starts null)",
@@ -255,18 +282,15 @@ describe("store migration block (module-load side effects)", () => {
 		expect((store.get as (k: string) => unknown)("quality.useMainModelForRealtime")).toBe(false);
 	});
 
-	itIfClean(
-		"migration leaves audio.sileroSensitivity at the new default 0.7 (v11 Handy port)",
-		() => {
-			// silero === 0.05 branch should NOT trigger (fresh MockStore has
-			// no persisted value, so the schema default 0.7 applies). The
-			// v11 migration only rewrites EXACTLY 0.4 → 0.7 to preserve
-			// any user customization. Locks the post-migration end state.
-			const v = (store.get as (k: string) => unknown)("audio.sileroSensitivity");
-			expect(v).not.toBe(0.05);
-			expect(v).not.toBe(0.4);
-		}
-	);
+	itIfClean("migration leaves audio.sileroSensitivity at the new default 0.7 (v11)", () => {
+		// silero === 0.05 branch should NOT trigger (fresh MockStore has
+		// no persisted value, so the schema default 0.7 applies). The
+		// v11 migration only rewrites EXACTLY 0.4 → 0.7 to preserve
+		// any user customization. Locks the post-migration end state.
+		const v = (store.get as (k: string) => unknown)("audio.sileroSensitivity");
+		expect(v).not.toBe(0.05);
+		expect(v).not.toBe(0.4);
+	});
 });
 
 // applyStoreMigration is a pure function — but it's imported from `./store`,
@@ -411,7 +435,7 @@ describe("applyStoreMigration (pure)", () => {
 	});
 
 	itIfMigrationLoaded("v11 migration writes silero=0.7 when persisted value is exactly 0.4", () => {
-		// Mirrors the Handy-matching bump (trip threshold 0.6 → 0.3).
+		// Mirrors the default bump (trip threshold 0.6 → 0.3).
 		// Only EXACTLY 0.4 is rewritten — anything else (including
 		// 0.05, customized values like 0.55) is preserved.
 		const writes: Write[] = [];
@@ -882,4 +906,241 @@ describe("applyStoreMigration (pure)", () => {
 			expect(map.get("llm.transforms.provider")).toBe("ollama");
 		}
 	);
+});
+
+// ── deriveLiveTranscriptionDisplay (exercised via the v6 migration) ────────
+//
+// `deriveLiveTranscriptionDisplay` is module-private, but the v6 step
+// (`migrateLiveTranscriptionDisplay`) feeds it the two legacy booleans
+// (`general.showLiveTranscription` for the pill, `general.showInAppLive-
+// Transcription` for the in-app window) read straight off `store.get`. We
+// seed those, run `applyStoreMigration(5, …)`, and read back the resulting
+// `general.liveTranscriptionDisplay` write to drive all four branches:
+//   pill && inApp -> "both"; pill only -> "in-pill"; inApp only -> "in-app";
+//   neither -> "none". The function treats missing / non-bool as "on".
+const HAS_APPLY = typeof applyStoreMigration === "function";
+const itDerive = HAS_APPLY ? test : test.skip;
+
+function deriveViaV6(pill: unknown, inApp: unknown): unknown {
+	// Seed the two legacy booleans the v6 step reads via store.get. These keys
+	// were dropped from the live schema (merged into liveTranscriptionDisplay),
+	// so seed/delete them through an untyped cast — same escape hatch the
+	// migration itself uses (store.ts casts to `never`). Cast-and-call INLINE
+	// (mirroring the file's `(store.get as (k) => unknown)(key)` convention):
+	// the parenthesized member access preserves MockStore's `this` binding,
+	// which extracting to a local would drop (set/delete touch `this.store`).
+	if (pill === "DELETE") {
+		(store.delete as (k: string) => void)("general.showLiveTranscription");
+	} else {
+		(store.set as (k: string, v: unknown) => void)("general.showLiveTranscription", pill);
+	}
+	if (inApp === "DELETE") {
+		(store.delete as (k: string) => void)("general.showInAppLiveTranscription");
+	} else {
+		(store.set as (k: string, v: unknown) => void)("general.showInAppLiveTranscription", inApp);
+	}
+	const writes: Array<{ key: string; value: unknown }> = [];
+	applyStoreMigration(
+		5,
+		((key: string) =>
+			({
+				"quality.useMainModelForRealtime": false,
+				"audio.sileroSensitivity": 0.4,
+			})[key]) as Parameters<typeof applyStoreMigration>[1],
+		(key, value) => writes.push({ key, value }),
+		() => undefined
+	);
+	return writes.find((w) => w.key === "general.liveTranscriptionDisplay")?.value;
+}
+
+describe("deriveLiveTranscriptionDisplay (via v6 migration)", () => {
+	itDerive("both pill + in-app ON → 'both'", () => {
+		expect(deriveViaV6(true, true)).toBe("both");
+	});
+
+	itDerive("pill ON, in-app OFF → 'in-pill'", () => {
+		expect(deriveViaV6(true, false)).toBe("in-pill");
+	});
+
+	itDerive("pill OFF, in-app ON → 'in-app'", () => {
+		expect(deriveViaV6(false, true)).toBe("in-app");
+	});
+
+	itDerive("both OFF → 'none'", () => {
+		expect(deriveViaV6(false, false)).toBe("none");
+	});
+
+	itDerive("missing legacy keys default to 'both' (non-false treated as ON)", () => {
+		// The function uses `pill !== false`, so `undefined` (key absent)
+		// counts as ON. Both absent → both ON → "both".
+		expect(deriveViaV6("DELETE", "DELETE")).toBe("both");
+	});
+
+	itDerive("non-boolean (string) values are treated as ON", () => {
+		// "yes"/0 are not strictly `false`, so both read as ON → "both".
+		expect(deriveViaV6("yes", 0)).toBe("both");
+	});
+});
+
+// ── setStoreSecret ─────────────────────────────────────────────────────────
+const itSecret = typeof setStoreSecret === "function" ? test : test.skip;
+
+describe("setStoreSecret", () => {
+	itSecret("encrypts and persists an enc:v1: envelope for a secret dot-path", () => {
+		setStoreSecret("llm.openrouterApiKey", "sk-or-secret");
+		const raw = (store.get as (k: string) => unknown)("llm.openrouterApiKey");
+		// The safeStorage mock wraps as enc:v1:<base64(E(plain))> — assert the
+		// envelope prefix and that the plaintext is NOT stored verbatim.
+		expect(typeof raw).toBe("string");
+		expect(raw as string).toMatch(/^enc:v1:/);
+		expect(raw).not.toBe("sk-or-secret");
+		// And it round-trips back to plaintext through the typed accessor.
+		expect(getStoreValue("llm.openrouterApiKey")).toBe("sk-or-secret");
+	});
+
+	itSecret("encrypts the openai integration secret path too", () => {
+		setStoreSecret("integrations.openai.apiKey", "sk-openai");
+		const raw = (store.get as (k: string) => unknown)("integrations.openai.apiKey");
+		expect(raw as string).toMatch(/^enc:v1:/);
+		expect(getStoreValue("integrations.openai.apiKey")).toBe("sk-openai");
+	});
+
+	itSecret("writes plaintext verbatim for a NON-secret dot-path", () => {
+		setStoreSecret("general.recordingSoundPath", "C:/plain/value.wav");
+		const raw = (store.get as (k: string) => unknown)("general.recordingSoundPath");
+		expect(raw).toBe("C:/plain/value.wav");
+	});
+
+	itSecret("is a no-op when the value is not a string (number)", () => {
+		// Set a sentinel first; the non-string call must leave it untouched.
+		store.set("llm.openrouterApiKey", "");
+		setStoreSecret("llm.openrouterApiKey", 12_345 as unknown);
+		expect((store.get as (k: string) => unknown)("llm.openrouterApiKey")).toBe("");
+	});
+
+	itSecret("warns (but stays a no-op) on a non-string value at a SECRET dot-path", () => {
+		// Regression: a mistyped secret patch (number for an apiKey) used to be
+		// dropped silently. It must still be dropped (behavior unchanged) but now
+		// emit an observable warning so the lost write isn't a black hole.
+		store.set("llm.openrouterApiKey", "");
+		const calls = captureWarnings(() => setStoreSecret("llm.openrouterApiKey", 12_345 as unknown));
+		// Value untouched (still the sentinel) …
+		expect((store.get as (k: string) => unknown)("llm.openrouterApiKey")).toBe("");
+		// … and the drop was surfaced exactly once with the path + type.
+		expect(calls).toHaveLength(1);
+		const msg = String(calls[0]?.[0] ?? "");
+		expect(msg).toContain("llm.openrouterApiKey");
+		expect(msg).toContain("number");
+	});
+
+	itSecret("stays silent on a non-string value at a NON-secret dot-path", () => {
+		// Uniform-patch usage: a number landing on a non-secret key is expected
+		// and benign — no warning noise.
+		const calls = captureWarnings(() =>
+			setStoreSecret("general.recordingSoundPath", 42 as unknown)
+		);
+		expect(calls).toHaveLength(0);
+	});
+
+	itSecret("is a no-op when the value is null/undefined", () => {
+		store.set("integrations.elevenlabs.apiKey", "");
+		setStoreSecret("integrations.elevenlabs.apiKey", null as unknown);
+		expect((store.get as (k: string) => unknown)("integrations.elevenlabs.apiKey")).toBe("");
+		setStoreSecret("integrations.elevenlabs.apiKey", undefined as unknown);
+		expect((store.get as (k: string) => unknown)("integrations.elevenlabs.apiKey")).toBe("");
+	});
+
+	itSecret("stores an empty string verbatim for a secret path (encryptSecret no-ops '')", () => {
+		// "" IS a string, so it passes the typeof guard and goes through
+		// encryptSecret, which returns "" unchanged (no DPAPI call). The
+		// envelope prefix must NOT be present.
+		setStoreSecret("llm.openrouterApiKey", "");
+		const raw = (store.get as (k: string) => unknown)("llm.openrouterApiKey");
+		expect(raw).toBe("");
+	});
+});
+
+// ── migrateSecretsAtRest ─────────────────────────────────────────────────────
+const itMigrate = typeof migrateSecretsAtRest === "function" ? test : test.skip;
+
+describe("migrateSecretsAtRest", () => {
+	itMigrate("encrypts a legacy plaintext secret in place", () => {
+		// Seed a legacy plaintext value (no envelope) — the pre-secret-storage
+		// on-disk shape.
+		store.set("llm.openrouterApiKey", "legacy-plaintext-key");
+		migrateSecretsAtRest();
+		const raw = (store.get as (k: string) => unknown)("llm.openrouterApiKey");
+		expect(raw as string).toMatch(/^enc:v1:/);
+		expect(raw).not.toBe("legacy-plaintext-key");
+		// Still decrypts back to the original plaintext.
+		expect(getStoreValue("llm.openrouterApiKey")).toBe("legacy-plaintext-key");
+	});
+
+	itMigrate("is idempotent — a second pass leaves the already-encrypted value untouched", () => {
+		store.set("integrations.openai.apiKey", "first-run-key");
+		migrateSecretsAtRest();
+		const afterFirst = (store.get as (k: string) => unknown)("integrations.openai.apiKey");
+		expect(afterFirst as string).toMatch(/^enc:v1:/);
+		migrateSecretsAtRest();
+		const afterSecond = (store.get as (k: string) => unknown)("integrations.openai.apiKey");
+		// Byte-identical: the isEncryptedSecret guard short-circuits, so no
+		// re-encryption (which would produce a different blob) happens.
+		expect(afterSecond).toBe(afterFirst);
+	});
+
+	itMigrate("skips empty-string secret values (continue branch)", () => {
+		store.set("integrations.elevenlabs.apiKey", "");
+		migrateSecretsAtRest();
+		// "" stays "" — no envelope written.
+		expect((store.get as (k: string) => unknown)("integrations.elevenlabs.apiKey")).toBe("");
+	});
+
+	itMigrate("skips non-string secret values (continue branch)", () => {
+		// A non-string at a secret path (corrupt/migrated-away) must be left
+		// alone, not crash the loop.
+		store.set("integrations.elevenlabs.apiKey", 42 as unknown);
+		migrateSecretsAtRest();
+		expect((store.get as (k: string) => unknown)("integrations.elevenlabs.apiKey")).toBe(42);
+	});
+
+	itMigrate("warns ONCE and leaves plaintext untouched when no OS keystore is available", () => {
+		// Regression: when safeStorage can't encrypt, the migration used to be
+		// silent (the only signal was a per-path console.warn buried inside
+		// encryptSecret). Now it emits a single clear warning at the migrate
+		// site and skips the busy-work; on-disk values stay plaintext.
+		store.set("llm.openrouterApiKey", "plain-no-keystore");
+		const orig = mockSafeStorage.isEncryptionAvailable;
+		mockSafeStorage.isEncryptionAvailable = () => false;
+		let calls: unknown[][];
+		try {
+			calls = captureWarnings(() => migrateSecretsAtRest());
+		} finally {
+			mockSafeStorage.isEncryptionAvailable = orig;
+		}
+		// Value left as plaintext (no envelope, no mutation).
+		expect((store.get as (k: string) => unknown)("llm.openrouterApiKey")).toBe("plain-no-keystore");
+		// Exactly one warning — not one per secret path.
+		expect(calls).toHaveLength(1);
+		expect(String(calls[0]?.[0] ?? "")).toMatch(/safeStorage unavailable/i);
+	});
+
+	itMigrate("processes ALL secret dot-paths in one pass", () => {
+		store.set("llm.openrouterApiKey", "or-plain");
+		store.set("integrations.openai.apiKey", "oai-plain");
+		store.set("integrations.elevenlabs.apiKey", "el-plain");
+		migrateSecretsAtRest();
+		expect((store.get as (k: string) => unknown)("llm.openrouterApiKey") as string).toMatch(
+			/^enc:v1:/
+		);
+		expect((store.get as (k: string) => unknown)("integrations.openai.apiKey") as string).toMatch(
+			/^enc:v1:/
+		);
+		expect(
+			(store.get as (k: string) => unknown)("integrations.elevenlabs.apiKey") as string
+		).toMatch(/^enc:v1:/);
+		// All three round-trip.
+		expect(getStoreValue("llm.openrouterApiKey")).toBe("or-plain");
+		expect(getStoreValue("integrations.openai.apiKey")).toBe("oai-plain");
+		expect(getStoreValue("integrations.elevenlabs.apiKey")).toBe("el-plain");
+	});
 });

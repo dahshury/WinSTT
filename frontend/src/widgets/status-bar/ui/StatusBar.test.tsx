@@ -125,6 +125,31 @@ describe("StatusBar", () => {
 		expect(screen.getByText("tiny")).toBeDefined();
 	});
 
+	test("shows the size-free variant name in the footer, not the raw id or param count", () => {
+		const canary: ModelInfo = {
+			...model("nemo-canary-180m-flash"),
+			displayName: "NeMo Canary 180M Flash",
+			family: "nemo",
+		};
+		useCatalogStore.setState({ models: [...CATALOG, canary], isLoaded: true });
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				model: { ...initialSettings.model, model: "nemo-canary-180m-flash" },
+			},
+		});
+		render(
+			<IntlProvider>
+				<StatusBar />
+			</IntlProvider>
+		);
+		// "NeMo Canary 180M Flash" → "Canary Flash": family prefix + "180M"
+		// stripped so the always-visible footer matches the picker/settings tab.
+		// The previous behaviour leaked the raw model id into the chip.
+		expect(screen.getByText("Canary Flash")).toBeDefined();
+		expect(screen.queryByText("nemo-canary-180m-flash")).toBeNull();
+	});
+
 	test("shows the swap transition in the picker trigger while a main-model swap is in flight", () => {
 		useSettingsStore.setState({
 			settings: {

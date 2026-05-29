@@ -1,4 +1,4 @@
-import { resolveQuantCache } from "@picker";
+import { resolveEffectiveQuant, resolveQuantCache } from "@picker";
 import type { ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
@@ -266,7 +266,12 @@ function DownloadConfirmationContent({
 	const buttonHover = Math.min(popupLevel + 2, 8);
 	const state = pending ? statesById[pending.modelId] : undefined;
 	const info = pending ? getModel(pending.modelId) : undefined;
-	const targetQuant = pending?.quantization ?? "";
+	// The precision the swap will actually load. When the user left the quant
+	// on auto/default (""), the server re-resolves it per model (NeMo / Cohere
+	// /… → int8 on non-CUDA); ``resolveEffectiveQuant`` mirrors that so the
+	// dialog sizes + describes the file set that's really being fetched rather
+	// than the (often already-cached) default export.
+	const targetQuant = resolveEffectiveQuant(state, pending?.quantization ?? "");
 	const targetCache = resolveQuantCache(state, targetQuant);
 	const quantLabel = targetQuant === "" ? "default precision" : targetQuant;
 

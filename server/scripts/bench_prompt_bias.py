@@ -73,9 +73,7 @@ logger = logging.getLogger(__name__)
 # 16 kHz mono physics lecture from faster-whisper's test fixtures —
 # contains domain vocabulary (quantum, Schrödinger, momentum, etc.)
 # that's ideal for prompt-bias evaluation.
-DEFAULT_WAV = Path(
-    "E:/DL/Projects/WinSTT/examples/faster-whisper/tests/data/physicsworks.wav"
-)
+DEFAULT_WAV = Path("E:/DL/Projects/WinSTT/examples/faster-whisper/tests/data/physicsworks.wav")
 
 # Realistic UIA-snapshot-shaped prior-text. Mirrors what
 # `extractAsrPromptTail` would produce when the user is dictating into

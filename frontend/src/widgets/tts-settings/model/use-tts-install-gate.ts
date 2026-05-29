@@ -186,6 +186,14 @@ export function useTtsInstallGate(): TtsInstallGate {
 		}
 	};
 
+	// `runProbe` rejects if the size-probe IPC throws (server/WS down). The two
+	// fire-and-forget callers below must absorb that rejection — otherwise it
+	// surfaces as an unhandled promise rejection and the toggle/dialog hang with
+	// no signal. We log it; `probing` is already cleared by runProbe's `finally`.
+	const reportProbeError = (err: unknown): void => {
+		console.error("TTS install probe failed", err);
+	};
+
 	// Post-probe dispatch: tuple keyed by `resolveProbeAction` — no `if`.
 	const probeActions: Record<ProbeActionKey, (est: TtsDownloadEstimatePayload) => void> = {
 		enable: () => {
@@ -202,7 +210,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 	// Toggle dispatch: tuple keyed by `resolveToggleAction` — no `if`.
 	const toggleActions: Record<ToggleActionKey, () => void> = {
 		enable: () => {
-			runProbe().then(handleProbeResult);
+			runProbe().then(handleProbeResult).catch(reportProbeError);
 		},
 		disable: () => {
 			update({ enabled: false });
@@ -221,7 +229,7 @@ export function useTtsInstallGate(): TtsInstallGate {
 			update(enablePatch());
 		},
 		retry: () => {
-			runProbe();
+			runProbe().catch(reportProbeError);
 		},
 	};
 	const handleInstallConfirm = (): void => {

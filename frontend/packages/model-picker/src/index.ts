@@ -3,7 +3,7 @@
  *
  * Self-contained OpenRouter / Ollama / STT model picker widget. Consumed via
  * the `@picker` alias by `widgets/model-picker-window`, `widgets/llm-settings`,
- * `widgets/model-settings`, `features/swap-model`, and
+ * `widgets/model-settings`, `widgets/status-bar`, `features/swap-model`, and
  * `features/model-download`.
  */
 
@@ -16,8 +16,10 @@ export {
 	OllamaModelSelector,
 	type OllamaModelSelectorProps,
 } from "./ollama/ui/OllamaModelSelector";
-export { resolveQuantCache } from "./stt/lib/cache-helpers";
+export { resolveEffectiveQuant, resolveQuantCache } from "./stt/lib/cache-helpers";
 export { STT_PICKER_WIDTH_PX } from "./stt/lib/dimensions";
+export { variantDisplayName } from "./stt/lib/family-helpers";
 export { isRealtimeViable } from "./stt/lib/realtime-viability";
 export { SttModelSelector } from "./stt/ui/SttModelSelector";
+export { SttModelSelectorTriggerButton } from "./stt/ui/SttModelSelectorTrigger";
 export { OpenRouterModelSelector } from "./ui/OpenRouterModelSelector";

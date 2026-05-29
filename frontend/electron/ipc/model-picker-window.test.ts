@@ -611,7 +611,7 @@ describe("placement + show", () => {
 	test("sendAnchor relays renderer-local coords", () => {
 		const fw = makeFakeWindow();
 		H.sendAnchor(asWin(fw), { x: 100, y: 200, width: 600, height: 560 }, { x: 50, y: 100 });
-		expect(fw.sendCalls[0]?.[1]).toEqual({ x: 50, y: 100, width: 600, height: 560 });
+		expect(fw.sendCalls[0]?.[1]).toEqual({ x: 50, y: 100, width: 600, height: 560, kind: "main" });
 	});
 
 	test("placeAndShowPicker with anchor draws", () => {
@@ -652,7 +652,7 @@ describe("placement + show", () => {
 		const fw = makeFakeWindow();
 		H.__setPickerWindow(asWin(fw));
 		H.__setPageLoaded(true);
-		H.showModelPickerAtAnchor({ screenLeft: 0, screenRight: 600, screenTopY: 800 });
+		H.showModelPickerAtAnchor({ screenLeft: 0, screenRight: 600, screenTopY: 800 }, "main");
 		expect(fw.showCalls).toBe(1);
 		H.hideModelPicker();
 		H.clearFadeTimer();

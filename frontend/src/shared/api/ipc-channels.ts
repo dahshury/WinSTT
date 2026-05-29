@@ -3,6 +3,7 @@ export const IPC = {
 	STT_REALTIME_TEXT: "stt:realtime-text",
 	STT_FULL_SENTENCE: "stt:full-sentence",
 	STT_NO_AUDIO_DETECTED: "stt:no-audio-detected",
+	STT_TRANSCRIPTION_FAILED: "stt:transcription-failed",
 	STT_RECORDING_START: "stt:recording-start",
 	STT_RECORDING_STOP: "stt:recording-stop",
 	STT_VAD_START: "stt:vad-start",
@@ -315,6 +316,10 @@ export const IPC = {
 	// the <audio> element can consume directly.
 	HISTORY_LOAD_AUDIO: "history:load-audio",
 
+	// Lazily align an entry's WAV to per-word timestamps (server-side
+	// timestamped-Whisper DTW) so playback can highlight words as they're heard.
+	HISTORY_ALIGN_AUDIO: "history:align-audio",
+
 	// Transcription history (main → renderer)
 	HISTORY_ADDED: "history:added",
 	// Broadcast when a single entry is deleted (per-row) so other windows
@@ -381,6 +386,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_REALTIME_TEXT]: ["on"],
 	[IPC.STT_FULL_SENTENCE]: ["on"],
 	[IPC.STT_NO_AUDIO_DETECTED]: ["on"],
+	[IPC.STT_TRANSCRIPTION_FAILED]: ["on"],
 	[IPC.STT_RECORDING_START]: ["on"],
 	[IPC.STT_RECORDING_STOP]: ["on"],
 	[IPC.STT_VAD_START]: ["on"],
@@ -598,6 +604,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.HISTORY_CLEAR]: ["invoke"],
 	[IPC.HISTORY_DELETE]: ["invoke"],
 	[IPC.HISTORY_LOAD_AUDIO]: ["invoke"],
+	[IPC.HISTORY_ALIGN_AUDIO]: ["invoke"],
 	[IPC.HISTORY_ADDED]: ["on"],
 	[IPC.HISTORY_DELETED]: ["on"],
 

@@ -68,7 +68,7 @@ class RecordingPipeline(Worker):
         # monolith's `wake_word_timeout`.
         self._wake_word_timeout: float = config.wake_word.wake_word_timeout
 
-        # Leading-silence carry-forward (Handy parity). The deque holds the
+        # Leading-silence carry-forward. The deque holds the
         # most recent N silence-classified chunks while not recording. On
         # the transition INACTIVE/LISTENING → RECORDING the deque contents
         # are PREPENDED to the recording so the Whisper encoder sees the
@@ -76,9 +76,8 @@ class RecordingPipeline(Worker):
         # context they need to survive far-mic acoustics. ``maxlen`` is
         # derived from chunk_duration_ms = buffer_size / sample_rate;
         # 0-ms (disabled) yields maxlen=0 (the deque accepts and discards
-        # immediately, which is cheaper than guarding every append). See
-        # examples/Handy/src-tauri/src/audio_toolkit/vad/smoothed.rs
-        # (``prefill_frames``).
+        # immediately, which is cheaper than guarding every append).
+        # This is the ``prefill_frames`` mechanism.
         self._silence_prefill: collections.deque[AudioChunk] = collections.deque(
             maxlen=self._compute_silence_prefill_maxlen(config),
         )
@@ -111,7 +110,7 @@ class RecordingPipeline(Worker):
 
         ``chunk_duration_ms = buffer_size / sample_rate * 1000``. At the
         defaults (512 / 16000 = 32 ms) and prefill=450 ms this resolves to
-        ``ceil(450 / 32) = 15`` chunks — matching Handy's hardcoded
+        ``ceil(450 / 32) = 15`` chunks — matching the hardcoded
         ``prefill_frames=15``. We round UP so we don't accidentally
         truncate the prefill window when the buffer size doesn't divide
         the prefill cleanly; an extra chunk of silence costs negligible
@@ -131,7 +130,11 @@ class RecordingPipeline(Worker):
         if chunk_ms <= 0:  # pragma: no cover
             return 0
         # math.ceil without importing math — int(x) + (1 if x % 1 else 0)
-        ratio = prefill_ms / chunk_ms
+        return RecordingPipeline._ceil_ratio(prefill_ms / chunk_ms)
+
+    @staticmethod
+    def _ceil_ratio(ratio: float) -> int:
+        """math.ceil for a non-negative float without importing math."""
         count = int(ratio)
         if ratio > count:
             count += 1
@@ -209,9 +212,11 @@ class RecordingPipeline(Worker):
         # is to clear + re-add. ``clear`` resets pre_roll too but
         # that's already empty post start_recording.
         self._buffer.clear()
-        for frame in prefill_frames:
-            self._buffer.add_frame(frame)
-        for frame in existing:
+        self._refill_buffer_frames(prefill_frames + existing)
+
+    def _refill_buffer_frames(self, frames: list[AudioChunk]) -> None:
+        """Re-add ``frames`` to the (already-cleared) audio buffer in order."""
+        for frame in frames:
             self._buffer.add_frame(frame)
 
     def _emit_no_audio(self) -> None:
@@ -244,12 +249,10 @@ class RecordingPipeline(Worker):
            the source), and the realtime worker would tight-loop on the
            stale pre-roll frames until process exit. (See
            ``project_pipeline_stop_abort_too_short`` memory note.) This is
-           the sole, content-based "no audio detected" gate — Handy's
-           ``SmoothedVad`` follows the same pattern
-           (examples/Handy/src-tauri/src/audio_toolkit/vad/smoothed.rs).
+           the sole, content-based "no audio detected" gate — a smoothed
+           VAD follows the same pattern.
            Short utterances are no longer rejected by a time floor; clips
-           shorter than 1.25 s are zero-padded to 1.25 s at transcribe time
-           (mirrors ``examples/Handy/src-tauri/src/managers/audio.rs``).
+           shorter than 1.25 s are zero-padded to 1.25 s at transcribe time.
 
         Otherwise: finalize stop, transition to TRANSCRIBING, enqueue for
         transcription.
@@ -435,11 +438,15 @@ class RecordingPipeline(Worker):
         # frames. On the first speech chunk that commits a recording
         # (handled below), ``request_start`` drains this into the
         # recording buffer so Whisper sees the silence→speech transition.
-        if not is_speech and self._silence_prefill.maxlen:
-            self._silence_prefill.append(chunk)
+        self._maybe_append_silence_prefill(chunk, is_speech=is_speech)
         if self._try_start_on_voice_activity_from_result(is_speech):
             return
         self._buffer.add_to_pre_roll(chunk)
+
+    def _maybe_append_silence_prefill(self, chunk: AudioChunk, *, is_speech: bool) -> None:
+        """Carry a silence-classified chunk forward in the bounded prefill deque."""
+        if not is_speech and self._silence_prefill.maxlen:
+            self._silence_prefill.append(chunk)
 
     def _begin_silence_turn(self) -> None:
         if self._speech_end_silence_start == 0.0:

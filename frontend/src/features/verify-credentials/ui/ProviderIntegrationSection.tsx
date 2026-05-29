@@ -189,7 +189,6 @@ export function ProviderIntegrationSection({
 	return (
 		<div className="col-span-2">
 			<FormControl
-				caption={keyCaption}
 				label={keyLabel}
 				labelTrailing={
 					<div className="flex items-center gap-2">
@@ -205,6 +204,7 @@ export function ProviderIntegrationSection({
 						)}
 					</div>
 				}
+				tooltip={keyCaption}
 			>
 				<div className="flex flex-col gap-2">
 					<ElevatedSurface inline>

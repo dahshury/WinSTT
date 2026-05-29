@@ -75,9 +75,13 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		icon: AudioWave02Icon,
 		label: "SenseVoice",
 		chip: "bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400",
-		// No brand logo bundled — FunAudioLLM (Alibaba) doesn't ship one in
-		// provider-icons/, so we fall back to the HugeIcon. Matches the
-		// pattern Moonshine uses.
+		logoSrc: "/provider-icons/funaudiollm.png",
+	},
+	dolphin: {
+		icon: AudioWave02Icon,
+		label: "Dolphin",
+		chip: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+		logoSrc: "/provider-icons/dataoceanai.png",
 	},
 	custom: {
 		icon: FolderLibraryIcon,
@@ -91,6 +95,58 @@ export function getFamilyConfig(family: FamilyKey): FamilyConfig {
 	return FAMILY_CONFIG[family];
 }
 
+/** Parameter-count tokens like "180M", "1B", "0.6B" embedded in a display
+ *  name. The picker already surfaces the size in a dedicated 🧠 badge (and the
+ *  model card lists it explicitly), so repeating it in the name is redundant
+ *  noise that only makes the selector rows longer. Anchored on digits + an
+ *  M/B magnitude suffix so version tokens ("v3") and product numbers
+ *  ("Breeze ASR 25") are left intact. */
+const PARAM_COUNT_TOKEN_RE = /\s*\b\d+(?:\.\d+)?[MB]\b/gi;
+
+/** Collapse the whitespace run a mid-name token strip can leave behind. */
+const COLLAPSE_WHITESPACE_RE = /\s{2,}/g;
+
+/** Strip the leading family label only (e.g. "NeMo Canary 1B Flash" → "Canary 1B Flash"). */
+function stripFamilyLabel(model: ModelInfo): string {
+	const familyLabel = getFamilyConfig(model.family).label;
+	const stripped = model.displayName.replace(new RegExp(`^${familyLabel}\\s+`), "").trim();
+	return stripped.length > 0 ? stripped : model.displayName;
+}
+
+/** Drop parameter-count tokens and collapse the whitespace they leave behind. */
+function stripSizeToken(name: string): string {
+	return name.replace(PARAM_COUNT_TOKEN_RE, "").replace(COLLAPSE_WHITESPACE_RE, " ").trim();
+}
+
+/**
+ * The model's name as shown in the picker, with the leading family label and
+ * the redundant parameter-count token removed. The family is conveyed by the
+ * author chip / group header and the size by a dedicated badge, so neither
+ * belongs in the name itself (e.g. "NeMo Canary 180M Flash" → "Canary Flash").
+ *
+ * `peers` re-introduces the size token ONLY when dropping it would make this
+ * model indistinguishable from another in the set — e.g. "Canary 180M Flash"
+ * and "Canary 1B Flash" both collapse to "Canary Flash", so when they appear
+ * together (same bundle / catalog) both keep their size. Without `peers`, or
+ * when there's no collision, the size is always stripped.
+ *
+ * Falls back to the raw display name if stripping would empty it.
+ */
+export function variantDisplayName(model: ModelInfo, peers?: readonly ModelInfo[]): string {
+	const withFamily = stripFamilyLabel(model);
+	const withoutSize = stripSizeToken(withFamily);
+	if (withoutSize.length === 0) {
+		return model.displayName;
+	}
+	if (
+		withoutSize !== withFamily &&
+		peers?.some((p) => p.id !== model.id && stripSizeToken(stripFamilyLabel(p)) === withoutSize)
+	) {
+		return withFamily;
+	}
+	return withoutSize;
+}
+
 /** The org/maker behind each model family — drives the group header. */
 const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	whisper: "OpenAI",
@@ -102,6 +158,7 @@ const FAMILY_AUTHOR: Record<FamilyKey, string> = {
 	moonshine: "Useful Sensors",
 	cohere: "Cohere",
 	sense_voice: "FunAudioLLM",
+	dolphin: "DataoceanAI",
 	custom: "Your Models",
 };
 
@@ -132,6 +189,7 @@ const FAMILY_SEARCH_ALIASES: Record<FamilyKey, string[]> = {
 		"alibaba",
 		"damo",
 	],
+	dolphin: ["dataocean", "dataoceanai", "tsinghua", "eastern", "asian", "multilingual"],
 	custom: ["custom", "user", "local", "byo", "bring your own"],
 };
 

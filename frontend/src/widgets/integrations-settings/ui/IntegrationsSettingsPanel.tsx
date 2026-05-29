@@ -161,7 +161,6 @@ export function IntegrationsSettingsPanel() {
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
 					<FormControl
-						caption={tLlm("endpointCaption")}
 						label={tLlm("endpoint")}
 						labelTrailing={
 							<SettingResetButton
@@ -183,7 +182,6 @@ export function IntegrationsSettingsPanel() {
 
 				<div className="col-span-2">
 					<FormControl
-						caption={tLlm("openrouterApiKeyCaption")}
 						label={tLlm("openrouterApiKey")}
 						labelTrailing={
 							<div className="flex items-center gap-2">
@@ -197,7 +195,7 @@ export function IntegrationsSettingsPanel() {
 								</button>
 							</div>
 						}
-						tooltip={tLlm("openrouterApiKeyTooltip")}
+						tooltip={`${tLlm("openrouterApiKeyTooltip")} ${tLlm("openrouterApiKeyCaption")}`}
 					>
 						<ElevatedSurface inline>
 							<PasswordField

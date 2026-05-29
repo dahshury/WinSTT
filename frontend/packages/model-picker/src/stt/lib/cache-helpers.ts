@@ -45,6 +45,32 @@ export function resolveQuantCache(
 	return entry.cache_by_quantization?.[quantization] ?? entry.cache;
 }
 
+/**
+ * The precision the server will *actually* load for a given selection.
+ *
+ * The default/auto sentinel (`""`) is re-resolved by the server per model —
+ * NeMo / Cohere / GigaAM / Kaldi / SenseVoice families load as `int8` on
+ * non-CUDA accelerators even when the user's `onnx_quantization` is left on
+ * auto. The server surfaces that decision as `entry.effective_quantization`.
+ * So when the user hasn't forced a concrete precision (selection is `""`),
+ * honor the server's effective precision; concrete picks (int8 / fp16 / …)
+ * and entries without the field pass through unchanged.
+ *
+ * Without this, the download gate checks the default-export's cache state
+ * (often on disk) for a model the server will load as `int8` (often NOT on
+ * disk) — so clicking it silently kicks off a background download instead of
+ * prompting. See the canary-1b-flash repro.
+ */
+export function resolveEffectiveQuant(
+	entry: ModelStateEntry | undefined,
+	selectedQuant: string
+): string {
+	if (selectedQuant === "" && entry?.effective_quantization) {
+		return entry.effective_quantization;
+	}
+	return selectedQuant;
+}
+
 export function getCachePillConfig(
 	cache: ModelCacheInfo | undefined
 ): { icon: IconSvgElement; label: string; className: string } | null {

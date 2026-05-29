@@ -4,6 +4,8 @@ import {
 	BarChartIcon,
 	EarIcon,
 	GridIcon,
+	LayoutBottomIcon,
+	PictureInPictureOnIcon,
 	RadialIcon,
 	ToggleOnIcon,
 	TouchInteraction01Icon,
@@ -63,11 +65,11 @@ function buildVisualizerTypeOptions(t: GeneralT): SelectOption[] {
 
 export function buildVisualizerTypeSwitcherOptions(t: GeneralT): SwitcherOption[] {
 	return [
-		{ value: "bar", label: t("visualizerBar"), icon: BarChartIcon },
-		{ value: "grid", label: t("visualizerGrid"), icon: GridIcon },
-		{ value: "radial", label: t("visualizerRadial"), icon: RadialIcon },
-		{ value: "wave", label: t("visualizerWave"), icon: AudioWave02Icon },
-		{ value: "aura", label: t("visualizerAura"), icon: AiBeautifyIcon },
+		{ value: "bar", label: t("visualizerBar"), icon: BarChartIcon, preview: "viz-bar" },
+		{ value: "grid", label: t("visualizerGrid"), icon: GridIcon, preview: "viz-grid" },
+		{ value: "radial", label: t("visualizerRadial"), icon: RadialIcon, preview: "viz-radial" },
+		{ value: "wave", label: t("visualizerWave"), icon: AudioWave02Icon, preview: "viz-wave" },
+		{ value: "aura", label: t("visualizerAura"), icon: AiBeautifyIcon, preview: "viz-aura" },
 	];
 }
 
@@ -76,6 +78,7 @@ export function buildRecordingModeOptions(t: GeneralT): readonly {
 	label: string;
 	icon: IconSvgElement;
 	color: string;
+	preview: "ptt" | "toggle" | "listen" | "wakeword";
 }[] {
 	return [
 		{
@@ -83,24 +86,28 @@ export function buildRecordingModeOptions(t: GeneralT): readonly {
 			label: t("pushToTalk"),
 			icon: TouchInteraction01Icon,
 			color: RECORDING_MODE_COLOR_HEX.ptt,
+			preview: "ptt",
 		},
 		{
 			value: "toggle",
 			label: t("toggle"),
 			icon: ToggleOnIcon,
 			color: RECORDING_MODE_COLOR_HEX.toggle,
+			preview: "toggle",
 		},
 		{
 			value: "listen",
 			label: t("listen"),
 			icon: EarIcon,
 			color: RECORDING_MODE_COLOR_HEX.listen,
+			preview: "listen",
 		},
 		{
 			value: "wakeword",
 			label: t("wakeWord"),
 			icon: VoiceIcon,
 			color: RECORDING_MODE_COLOR_HEX.wakeword,
+			preview: "wakeword",
 		},
 	] as const;
 }
@@ -386,8 +393,18 @@ export function checkedOrFalseIfDisabled(disabled: boolean, value: boolean): boo
 
 export function buildOverlayModeSwitcherOptions(t: GeneralT): SwitcherOption[] {
 	return [
-		{ value: "floating-bottom", label: t("overlayModeFloatingBottom") },
-		{ value: "dynamic-island", label: t("overlayModeDynamicIsland") },
+		{
+			value: "floating-bottom",
+			label: t("overlayModeFloatingBottom"),
+			icon: LayoutBottomIcon,
+			preview: "overlay-floating",
+		},
+		{
+			value: "dynamic-island",
+			label: t("overlayModeDynamicIsland"),
+			icon: PictureInPictureOnIcon,
+			preview: "overlay-island",
+		},
 	];
 }
 

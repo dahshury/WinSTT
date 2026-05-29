@@ -122,6 +122,10 @@ def test_known_pre_ready_commands_advertise_pre_ready() -> None:
     the registry-driven property has real data to compare against."""
     assert is_pre_ready_command("list_models") is True
     assert is_pre_ready_command("list_input_devices") is True
+    # The settings panel fires this on first paint; model load can take >10s
+    # (CrisperWhisper on DirectML ≈ 13.6s). It MUST be pre-ready or the
+    # renderer's 10s sendRequest times out before the recorder is up.
+    assert is_pre_ready_command("list_models_with_state") is True
 
 
 def test_known_post_ready_commands_are_not_pre_ready() -> None:

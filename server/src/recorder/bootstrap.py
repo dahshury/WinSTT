@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -387,146 +386,6 @@ def _resolve_load_target(model_name: str, info: ModelInfo | None) -> tuple[str, 
     return model_name, None
 
 
-def _resolve_sense_voice_model_path(
-    onnx_name: str,
-    local_path: str | None,
-    progress_handler: Callable[[DownloadProgress], None] | None,
-) -> Path:
-    """Materialize the SenseVoice model directory on disk.
-
-    Three cases handled in order:
-
-    1. **Custom model** — ``local_path`` set: the directory ships with
-       the user's own ``model.onnx`` + ``tokens.txt``. No network IO.
-    2. **HF repo path** — ``onnx_name`` looks like ``org/repo``: pull a
-       snapshot via ``huggingface_hub.snapshot_download``. The repo is
-       expected to expose ``model.onnx`` (or ``model.int8.onnx``) and
-       ``tokens.txt`` at its root — the canonical
-       ``csukuangfj/sherpa-onnx-sense-voice-*`` layout.
-    3. **Plain alias** — fall through and treat ``onnx_name`` as a
-       directory path. Useful for ad-hoc local installs.
-
-    Returns the directory the SenseVoiceTranscriber should load from.
-
-    When ``progress_handler`` is supplied the HF fetch streams aggregated
-    per-byte progress through it — same event shape onnx-asr's native
-    ``progress_callback`` emits, so the renderer's progress UI lights up
-    for SenseVoice just like every other family.
-    """
-    if local_path:
-        return Path(local_path)
-    if "/" in onnx_name:
-        from huggingface_hub import snapshot_download
-
-        # SenseVoice exports keep both model.onnx and tokens.txt at the
-        # repo root; the allow_patterns match what every published
-        # variant ships, no surprise extras.
-        snapshot_kwargs: dict[str, Any] = {"allow_patterns": ["model.onnx", "model.int8.onnx", "tokens.txt"]}
-        if progress_handler is not None:
-            snapshot_kwargs["tqdm_class"] = _build_hf_progress_tqdm_class(onnx_name, progress_handler)
-        downloaded = snapshot_download(onnx_name, **snapshot_kwargs)
-        return Path(downloaded)
-    return Path(onnx_name)
-
-
-def _build_hf_progress_tqdm_class(
-    model_name: str,
-    sink: Callable[[DownloadProgress], None],
-) -> type:
-    """Return a tqdm subclass that emits :class:`DownloadProgress` events.
-
-    ``huggingface_hub.snapshot_download`` invokes ``tqdm_class`` once per
-    downloaded file. We override ``update`` and ``close`` and aggregate
-    across all live instances in a closure-shared dict so the UI sees
-    one rolled-up progress bar for the model as a whole — matching how
-    :func:`_make_progress_adapter` rolls up onnx-asr's per-file events
-    for the other families.
-
-    The base class is ``tqdm.auto.tqdm`` so HF's other tqdm-style hooks
-    (``hf_hub_download``'s desc/unit kwargs, …) still work; we only
-    layer a side-channel sink on top.
-    """
-    import time
-
-    from tqdm.auto import tqdm as _BaseTqdm
-
-    aggregate: dict[int, tuple[int, int]] = {}
-    start_time = time.monotonic()
-
-    def _emit() -> None:
-        downloaded_bytes = sum(d for d, _ in aggregate.values())
-        total_bytes = sum(t for _, t in aggregate.values())
-        progress = (downloaded_bytes / total_bytes) if total_bytes > 0 else 0.0
-        elapsed = max(time.monotonic() - start_time, 1e-6)
-        speed_bps = downloaded_bytes / elapsed
-        remaining = max(total_bytes - downloaded_bytes, 0)
-        eta_seconds = (remaining / speed_bps) if speed_bps > 0 else 0.0
-        sink(
-            DownloadProgress(
-                model=model_name,
-                progress=progress,
-                downloaded_bytes=downloaded_bytes,
-                total_bytes=total_bytes,
-                speed_bps=speed_bps,
-                eta_seconds=eta_seconds,
-            )
-        )
-
-    class _ProgressTqdm(_BaseTqdm):  # type: ignore[misc]  # tqdm.auto.tqdm has no public type stub
-        def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401  # tqdm signature is *args/**kwargs
-            super().__init__(*args, **kwargs)
-            self._winstt_key = id(self)
-            aggregate[self._winstt_key] = (0, int(self.total or 0))
-            _emit()
-
-        def update(self, n: int = 1) -> bool | None:
-            result: bool | None = super().update(n)
-            downloaded = int(getattr(self, "n", 0))
-            total = int(getattr(self, "total", 0) or 0)
-            aggregate[self._winstt_key] = (downloaded, total)
-            _emit()
-            return result
-
-        def close(self) -> None:
-            # Pin to the final declared total so partial last-chunk
-            # updates don't leave the bar at 99 %.
-            total = int(getattr(self, "total", 0) or 0)
-            if total:
-                aggregate[self._winstt_key] = (total, total)
-                _emit()
-            super().close()
-
-    return _ProgressTqdm
-
-
-def _build_sense_voice_transcriber(
-    info: ModelInfo,
-    model_name: str,
-    config: RecorderConfig,
-    providers: list[Any] | None,
-    progress_handler: Callable[[DownloadProgress], None] | None,
-) -> ITranscriber:
-    """Construct a :class:`SenseVoiceTranscriber` from a catalog entry.
-
-    Resolves the model directory (custom path / HF snapshot / local
-    directory), then instantiates the transcriber with provider-tuned
-    session options. The SenseVoice family ignores ``quantization``
-    because its catalog only publishes ``int8`` and the file name is
-    auto-resolved by the transcriber.
-    """
-    onnx_name, local_path = _resolve_load_target(model_name, info)
-    model_dir = _resolve_sense_voice_model_path(onnx_name, local_path, progress_handler)
-
-    from src.recorder.infrastructure.sense_voice_transcriber import SenseVoiceTranscriber
-
-    return SenseVoiceTranscriber(
-        model_path=model_dir,
-        providers=providers,
-        on_download_progress=progress_handler,
-        normalize_audio=config.transcription.normalize_audio,
-    )
-
-
 def build_transcriber(
     model_name: str,
     config: RecorderConfig,
@@ -535,7 +394,7 @@ def build_transcriber(
 ) -> ITranscriber:
     """Build the transcriber.
 
-    Three construction paths:
+    Two construction paths:
 
     * **Cloud STT** — ``model_name`` looks like ``openai:<id>`` or
       ``elevenlabs:<id>``: returns a :class:`RemoteTranscriber` that
@@ -544,16 +403,14 @@ def build_transcriber(
       unload-first phase this is what frees the previous local Whisper's
       RAM/VRAM when the user switches to a cloud source.
 
-    * **SenseVoice family** — catalog ``family == "sense_voice"``:
-      returns a :class:`SenseVoiceTranscriber`. SenseVoice doesn't fit
-      onnx-asr's preprocessor abstractions (it has its own FBANK +
-      LFR + CMVN + 4-control-token pipeline) so it ships its own adapter.
-
-    * **Local ONNX** — anything else: catalog lookup → quantization
-      resolution → :class:`OnnxAsrTranscriber`. This is the dominant
-      locally-loaded path; the catalog's ``backend`` marker is consulted
-      for the resolved onnx model name but the construction path is
-      uniform.
+    * **Local ONNX** — every catalog family (Whisper, NeMo/Canary,
+      Moonshine, Cohere, GigaAM, Kaldi/Vosk, T-One, Dolphin AND SenseVoice):
+      catalog lookup → quantization resolution → :class:`OnnxAsrTranscriber`.
+      onnx-asr's resolver is the single source of truth for file resolution
+      and download; SenseVoice now has its own model class in the fork (its
+      FBANK + LFR + CMVN + control-token pipeline runs inside ``SenseVoiceCtc``
+      via the ``identity`` preprocessor), so it no longer needs a bespoke
+      WinSTT adapter or download path.
     """
     cloud = _parse_cloud_model_id(model_name)
     if cloud is not None:
@@ -590,9 +447,6 @@ def build_transcriber(
         device=config.transcription.device,
     )
 
-    if info is not None and info.family == "sense_voice":
-        return _build_sense_voice_transcriber(info, model_name, config, providers, progress_handler)
-
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
     return OnnxAsrTranscriber(
@@ -624,13 +478,15 @@ _FP16_AUTO_PARAM_THRESHOLD: int = 500_000_000
 
 #: Model families that prefer int8 over fp32 on non-CUDA accelerators
 #: (and CPU). NeMo / Cohere / GigaAM / Kaldi / T-One ONNX graphs are
-#: shipped by their authors primarily as int8 — Handy's transcribe-rs
+#: shipped by their authors primarily as int8 — transcribe-rs
 #: loads them with ``Quantization::Int8`` for every backend (CPU,
 #: DirectML, Vulkan) and we mirror that. fp32 still works but trades
 #: ~3-4x memory + 2x latency for no accuracy gain on these well-trained
 #: encoders. Whisper / Moonshine ship working fp32 graphs across every EP
 #: and are excluded so the existing fp32/fp16 auto-promotion still wins.
-_INT8_PREFERRED_FAMILIES: frozenset[str] = frozenset({"nemo", "cohere", "gigaam", "kaldi", "t-one", "sense_voice"})
+_INT8_PREFERRED_FAMILIES: frozenset[str] = frozenset(
+    {"nemo", "cohere", "gigaam", "kaldi", "t-one", "sense_voice", "dolphin"}
+)
 
 
 def _override_dml_to_cpu_for_incompatible_family(
@@ -644,16 +500,15 @@ def _override_dml_to_cpu_for_incompatible_family(
 
     Background — verified locally on 2026-05-27:
 
-    * istupakov's ``encoder-model.int8.onnx`` for Canary 180M (byte-identical
-      to the one Handy ships at ``blob.handy.computer/canary-180m-flash.tar.gz``)
+    * istupakov's ``encoder-model.int8.onnx`` for Canary 180M
       crashes with ``Non-zero status code returned while running Reshape
       node 'node_view'`` (``MLOperatorAuthorImpl.cpp(2597)``,
       ``ERROR_FATAL_APP_EXIT``) on any DirectML provider list, with or
       without graph optimizations.
     * The SAME file runs cleanly on ``CPUExecutionProvider``.
-    * Handy "supports" Canary on Windows DML because their ``transcribe-rs``
-      stack ends up using CPU EP for these families regardless of the
-      ``ort-directml`` Cargo feature — same end result we get here.
+    * A ``transcribe-rs`` stack ends up using CPU EP for these families
+      regardless of the ``ort-directml`` Cargo feature — same end result
+      we get here.
 
     So: when the user's selected accelerator is DML / ROCm / CoreML and
     the model family is in :data:`model_registry._DML_INCOMPATIBLE_FAMILIES`,
@@ -674,7 +529,7 @@ def _override_dml_to_cpu_for_incompatible_family(
     logger.info(
         "Routing %r-family model through CPUExecutionProvider — its ONNX "
         "encoder is known-broken on %s's MLOperatorAuthorImpl reshape "
-        "kernel. Same fallback Handy's transcribe-rs uses for these families.",
+        "kernel, so we fall back to CPU for these families.",
         family,
         resolved_acc,
     )
@@ -825,13 +680,6 @@ def build_realtime_transcriber(
         device=config.transcription.device,
     )
 
-    if info is not None and info.family == "sense_voice":
-        # SenseVoice has a single forward-pass path that already returns
-        # whole-utterance text; there's no separate "bounded-short"
-        # adapter to reach for. Reuse the same construction as the main
-        # transcriber and let the realtime worker drive it.
-        return _build_sense_voice_transcriber(info, model_name, config, providers, progress_handler)
-
     from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
 
     # Realtime feeds bounded-short windows (<= REALTIME_COMMIT_AFTER_SECONDS,
@@ -904,8 +752,10 @@ def _build_oww_detector(config: RecorderConfig) -> IWakeWordDetector:
         else None
     )
     return OWWDetector(
+        # WinSTT is torch-free and runs every model under ONNX; openWakeWord's
+        # own default framework is tflite, so pin ONNX explicitly here.
         model_paths=model_paths,
-        inference_framework=config.wake_word.openwakeword_inference_framework,
+        inference_framework="onnx",
         sensitivity=config.wake_word.wake_words_sensitivity,
     )
 
@@ -1048,7 +898,6 @@ def bootstrap_di(
     )
     silero = SileroVAD(
         sensitivity=config.vad.silero_sensitivity,
-        use_onnx=config.vad.silero_use_onnx,
         sample_rate=config.audio.sample_rate,
     )
     vad = CompositeVAD(webrtc=webrtc, silero=silero)

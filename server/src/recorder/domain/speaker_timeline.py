@@ -44,16 +44,34 @@ class SpeakerTimeline:
         if not segments:
             return
         with self._lock:
-            for seg in segments:
-                start = window_start_seconds + seg.start
-                end = window_start_seconds + seg.end
-                if end <= start:
-                    continue
-                self._segments.append(SpeakerSegment(start=start, end=end, speaker=seg.speaker))
-                self._latest_end = max(self._latest_end, end)
-            cutoff = self._latest_end - _RETAIN_SECONDS
-            if cutoff > 0:
-                self._segments = [s for s in self._segments if s.end >= cutoff]
+            self._append_shifted(segments, window_start_seconds)
+            self._prune_old()
+
+    def _append_shifted(self, segments: tuple[SpeakerSegment, ...], window_start_seconds: float) -> None:
+        """Append window-relative ``segments`` shifted to absolute session time.
+
+        Caller must hold ``self._lock``. Zero-width spans are skipped.
+        """
+        for seg in segments:
+            start = window_start_seconds + seg.start
+            end = window_start_seconds + seg.end
+            if end <= start:
+                continue
+            self._segments.append(SpeakerSegment(start=start, end=end, speaker=seg.speaker))
+            self._latest_end = max(self._latest_end, end)
+
+    def _prune_old(self) -> None:
+        """Drop spans older than :data:`_RETAIN_SECONDS` behind the newest end.
+
+        Caller must hold ``self._lock``.
+        """
+        cutoff = self._latest_end - _RETAIN_SECONDS
+        if cutoff > 0:
+            self._segments = self._retained(cutoff)
+
+    def _retained(self, cutoff: float) -> list[SpeakerSegment]:
+        """Spans whose end is at or after ``cutoff``. Caller must hold the lock."""
+        return [s for s in self._segments if s.end >= cutoff]
 
     def dominant_speaker(self, start: float, end: float) -> int | None:
         """Speaker with the most total overlap in ``[start, end)``.
@@ -63,16 +81,21 @@ class SpeakerTimeline:
         """
         if end <= start:
             return None
-        totals: dict[int, float] = {}
         with self._lock:
-            for s in self._segments:
-                lo = max(start, s.start)
-                hi = min(end, s.end)
-                if hi > lo:
-                    totals[s.speaker] = totals.get(s.speaker, 0.0) + (hi - lo)
+            totals = self._overlap_totals(start, end)
         if not totals:
             return None
         return max(totals, key=lambda spk: totals[spk])
+
+    def _overlap_totals(self, start: float, end: float) -> dict[int, float]:
+        """Per-speaker total overlap with ``[start, end)``. Caller holds the lock."""
+        totals: dict[int, float] = {}
+        for s in self._segments:
+            lo = max(start, s.start)
+            hi = min(end, s.end)
+            if hi > lo:
+                totals[s.speaker] = totals.get(s.speaker, 0.0) + (hi - lo)
+        return totals
 
     def segments_in_range(self, start: float, end: float) -> list[SpeakerSegment]:
         """All timeline spans intersecting ``[start, end)``, clipped to it and
@@ -80,13 +103,17 @@ class SpeakerTimeline:
         if end <= start:
             return []
         with self._lock:
-            hits = [
-                SpeakerSegment(start=max(start, s.start), end=min(end, s.end), speaker=s.speaker)
-                for s in self._segments
-                if min(end, s.end) > max(start, s.start)
-            ]
+            hits = self._clip_hits(start, end)
         hits.sort(key=lambda s: (s.start, s.end))
         return hits
+
+    def _clip_hits(self, start: float, end: float) -> list[SpeakerSegment]:
+        """Spans intersecting ``[start, end)``, clipped to it. Caller holds the lock."""
+        return [
+            SpeakerSegment(start=max(start, s.start), end=min(end, s.end), speaker=s.speaker)
+            for s in self._segments
+            if min(end, s.end) > max(start, s.start)
+        ]
 
     def recent_segments(self, duration: float) -> tuple[SpeakerSegment, ...]:
         """Speaker spans covering the most recent ``duration`` seconds,
@@ -104,14 +131,22 @@ class SpeakerTimeline:
             return ()
         with self._lock:
             origin = self._latest_end - duration
-            out: list[SpeakerSegment] = []
-            for s in self._segments:
-                lo = max(origin, s.start) - origin
-                hi = min(self._latest_end, s.end) - origin
-                if hi > lo:
-                    out.append(SpeakerSegment(start=max(0.0, lo), end=min(duration, hi), speaker=s.speaker))
+            out = self._rebased(origin, duration)
         out.sort(key=lambda s: (s.start, s.end))
         return tuple(out)
+
+    def _rebased(self, origin: float, duration: float) -> list[SpeakerSegment]:
+        """Spans re-based so ``origin`` maps to 0, clipped to ``[0, duration]``.
+
+        Caller must hold ``self._lock``.
+        """
+        out: list[SpeakerSegment] = []
+        for s in self._segments:
+            lo = max(origin, s.start) - origin
+            hi = min(self._latest_end, s.end) - origin
+            if hi > lo:
+                out.append(SpeakerSegment(start=max(0.0, lo), end=min(duration, hi), speaker=s.speaker))
+        return out
 
     def reset(self) -> None:
         """Drop all spans — used when diarization is (re)activated so a new

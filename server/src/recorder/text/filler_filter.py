@@ -1,9 +1,7 @@
 """Locale-aware filler-word stripping + stutter collapse.
 
-Port of Handy's ``filter_transcription_output`` from
-``examples/Handy/src-tauri/src/audio_toolkit/text.rs``. Runs after the
-fuzzy dictionary corrector and before the per-sentence cleanup
-(capitalisation, trailing period). Two transforms in one pass:
+Runs after the fuzzy dictionary corrector and before the per-sentence
+cleanup (capitalisation, trailing period). Two transforms in one pass:
 
 1. **Filler-word removal.** A locale-keyed table of disfluency tokens
    (English ``"uh"`` / ``"um"`` / ``"hmm"`` / etc., German ``"äh"``,
@@ -42,8 +40,7 @@ __all__ = [
 ]
 
 
-# Per-language disfluency tables. Mirrors
-# ``examples/Handy/src-tauri/src/audio_toolkit/text.rs::get_filler_words_for_language``.
+# Per-language disfluency tables.
 # Key on the BASE language code (e.g. "en", "pt"); the locale parser
 # strips the region tag before lookup so "en-US" and "pt-BR" route to
 # the right table. Languages whose canonical fillers conflict with real
@@ -87,7 +84,7 @@ FILLERS_BY_LANG: dict[str, tuple[str, ...]] = {
 # Conservative cross-language fallback for unknown / unsupported
 # language codes. Strips obvious disfluencies but omits tokens that
 # carry meaning in any language we don't know about (``"um"``,
-# ``"eh"``, ``"ha"``). Matches the Rust ``_`` arm.
+# ``"eh"``, ``"ha"``).
 DEFAULT_FILLERS_FALLBACK: tuple[str, ...] = (
     "uh",
     "uhm",
@@ -121,6 +118,24 @@ def get_filler_words_for_language(lang: str) -> tuple[str, ...]:
     return FILLERS_BY_LANG.get(base, DEFAULT_FILLERS_FALLBACK)
 
 
+def _match_run_length(words: list[str], start: int, word_lower: str) -> int:
+    """Count consecutive words from ``start`` matching ``word_lower`` (case-insensitive)."""
+    count = 1
+    while start + count < len(words) and words[start + count].lower() == word_lower:
+        count += 1
+    return count
+
+
+def _stutter_advance(words: list[str], i: int) -> int:
+    """Words to skip after emitting ``words[i]`` once (3+ if it's a collapsed stutter run)."""
+    word_lower = words[i].lower()
+    if word_lower.isalpha():
+        count = _match_run_length(words, i, word_lower)
+        if count >= 3:
+            return count
+    return 1
+
+
 def collapse_stutters(text: str) -> str:
     """Collapse 3+ consecutive identical alphabetic words to one.
 
@@ -136,18 +151,8 @@ def collapse_stutters(text: str) -> str:
     result: list[str] = []
     i = 0
     while i < len(words):
-        word = words[i]
-        word_lower = word.lower()
-        if word_lower.isalpha():
-            count = 1
-            while i + count < len(words) and words[i + count].lower() == word_lower:
-                count += 1
-            if count >= 3:
-                result.append(word)
-                i += count
-                continue
-        result.append(word)
-        i += 1
+        result.append(words[i])
+        i += _stutter_advance(words, i)
     return " ".join(result)
 
 
@@ -156,10 +161,20 @@ def _compile_filler_patterns(fillers: tuple[str, ...] | list[str]) -> list[re.Pa
 
     The trailing ``[,.]?`` swallows a comma or period that immediately
     follows the disfluency so ``"Well, um, I think"`` collapses cleanly
-    to ``"Well, I think"`` rather than ``"Well, , I think"``. Mirrors
-    Handy's ``r"(?i)\\b{word}\\b[,.]?"`` pattern.
+    to ``"Well, I think"`` rather than ``"Well, , I think"`` — the
+    ``r"(?i)\\b{word}\\b[,.]?"`` pattern.
     """
     return [re.compile(rf"(?i)\b{re.escape(word)}\b[,.]?") for word in fillers if word]
+
+
+def _resolve_filler_words(
+    lang: str,
+    custom_filler_words: list[str] | None,
+) -> tuple[str, ...] | list[str]:
+    """Pick the filler table: per-language defaults when ``custom_filler_words`` is ``None``."""
+    if custom_filler_words is None:
+        return get_filler_words_for_language(lang)
+    return custom_filler_words
 
 
 def filter_transcription_output(
@@ -190,10 +205,7 @@ def filter_transcription_output(
     """
     if not text:
         return text
-    if custom_filler_words is None:
-        fillers: tuple[str, ...] | list[str] = get_filler_words_for_language(lang)
-    else:
-        fillers = custom_filler_words
+    fillers = _resolve_filler_words(lang, custom_filler_words)
     filtered = text
     for pattern in _compile_filler_patterns(fillers):
         filtered = pattern.sub("", filtered)

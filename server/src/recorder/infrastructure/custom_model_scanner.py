@@ -56,7 +56,7 @@ _CONFIG_FILE: str = "config.json"
 def _humanize_slug(slug: str) -> str:
     """Turn ``my-custom-whisper`` into ``My Custom Whisper`` for the picker label.
 
-    Mirrors Handy's discovery UX: a user who didn't ship a ``_name_or_path``
+    A user who didn't ship a ``_name_or_path``
     in ``config.json`` still gets a tidy display label without us inventing
     metadata they didn't provide. Hyphens and underscores both collapse to
     spaces so either casing convention works.

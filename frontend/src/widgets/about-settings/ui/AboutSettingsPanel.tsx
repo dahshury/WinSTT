@@ -273,7 +273,6 @@ function UpdatesSection({ t }: { t: AboutT }) {
 		>
 			<div className="flex flex-col gap-3">
 				<FormControl
-					caption={t("receivePrereleaseUpdatesCaption")}
 					label={t("receivePrereleaseUpdates")}
 					labelAddon={
 						<Toggle
@@ -281,6 +280,7 @@ function UpdatesSection({ t }: { t: AboutT }) {
 							onCheckedChange={(v) => update({ receivePrereleaseUpdates: v })}
 						/>
 					}
+					tooltip={t("receivePrereleaseUpdatesCaption")}
 				/>
 				{isDownloading ? (
 					<ElevatedSurface className="p-3">

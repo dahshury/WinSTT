@@ -57,9 +57,15 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 		expect(new Set(labels).size).toBe(labels.length);
 	});
 
-	test("every tag is from the allowed vocabulary", () => {
+	test("every model has a NON-EMPTY tag list, all from the allowed vocabulary", () => {
 		for (const model of RECOMMENDED_OLLAMA_MODELS) {
-			for (const tag of model.tags ?? []) {
+			const tags = model.tags ?? [];
+			// Non-empty guard: tags drive the UI filter chips, so an empty list
+			// silently drops the model from every filter. (Mutation testing flagged
+			// this — emptying any model's tags array `→ []` previously survived
+			// because the vocabulary loop below passes vacuously on `[]`.)
+			expect(tags.length).toBeGreaterThan(0);
+			for (const tag of tags) {
 				expect(ALLOWED_TAGS.has(tag)).toBe(true);
 			}
 		}

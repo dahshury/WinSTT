@@ -1,8 +1,9 @@
 """Speech-to-Text (STT) Server with Real-Time Transcription and WebSocket Interface.
 
-This server provides real-time speech-to-text (STT) transcription using the
-RealtimeSTT library. It allows clients to connect via WebSocket to send audio
-data and receive real-time transcription updates. The server supports
+This server provides real-time speech-to-text (STT) transcription using
+WinSTT's ONNX-only hexagonal recorder (``src.recorder``). It allows clients to
+connect via WebSocket to send audio data and receive real-time transcription
+updates. The server supports
 configurable audio recording parameters, voice activity detection (VAD), and
 wake word detection. It is designed to handle continuous transcription as well
 as post-recording processing, enabling real-time feedback with the option to
@@ -330,25 +331,59 @@ def _probe_audio_subsystem() -> str | None:
     return None
 
 
+#: Realtime-only knobs. Hidden from the startup banner when realtime
+#: transcription is disabled — otherwise their stored defaults
+#: (e.g. ``realtime_model_type=tiny``) print even though the realtime
+#: worker never starts, which reads as "realtime is still on".
+_REALTIME_ONLY_PARAMS: frozenset[str] = frozenset(
+    {
+        "realtime_model_type",
+        "init_realtime_after_seconds",
+        "realtime_processing_pause",
+        "initial_prompt_realtime",
+        "early_transcription_on_silence",
+    }
+)
+
+
+def _format_parameter_banner(recorder_config: dict[str, Any]) -> list[str]:
+    """Build the startup config banner as a clean two-column table.
+
+    Two deliberate omissions keep it readable:
+      * the ~22 wired event callbacks — every one would render as an
+        identical, uninformative ``<callback>`` row;
+      * the realtime-only knobs when realtime is disabled (see
+        :data:`_REALTIME_ONLY_PARAMS`).
+
+    Rendered as a header + rule + left-aligned columns rather than a full
+    box-drawing frame: the right border of a boxed table misaligns the
+    moment a host log pane (Electron's, here) wraps a line, whereas a
+    borderless table stays legible at any width.
+    """
+    realtime_on = bool(recorder_config.get("enable_realtime_transcription"))
+    rows = [
+        (key, str(value))
+        for key, value in recorder_config.items()
+        if not callable(value) and (realtime_on or key not in _REALTIME_ONLY_PARAMS)
+    ]
+    c, e = bcolors.OKBLUE, bcolors.ENDC
+    header = f"{bcolors.OKGREEN}Initializing STT server with parameters:{bcolors.ENDC}"
+    if not rows:
+        return [header]
+    key_w = max(len("Parameter"), *(len(k) for k, _ in rows))
+    val_w = max(len("Value"), *(len(v) for _, v in rows))
+    return [
+        header,
+        f"  {c}{'Parameter':<{key_w}}  {'Value':<{val_w}}{e}",
+        f"  {c}{'─' * key_w}  {'─' * val_w}{e}",
+        *(f"  {key:<{key_w}}  {value}" for key, value in rows),
+    ]
+
+
 def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
     """Initialize the recorder and run the text-processing loop."""
-    print(f"{bcolors.OKGREEN}Initializing RealtimeSTT server with parameters:{bcolors.ENDC}")
-    rows = [(k, "<callback>" if callable(v) else str(v)) for k, v in state.recorder_config.items()]
-    key_w = max(len("Parameter"), *(len(k) for k, _ in rows))
-    val_w = min(80, max(len("Value"), *(len(v) for _, v in rows)))
-    c, e = bcolors.OKBLUE, bcolors.ENDC
-    top = f"  {c}┌{'─' * (key_w + 2)}┬{'─' * (val_w + 2)}┐{e}"
-    sep = f"  {c}├{'─' * (key_w + 2)}┼{'─' * (val_w + 2)}┤{e}"
-    bot = f"  {c}└{'─' * (key_w + 2)}┴{'─' * (val_w + 2)}┘{e}"
-    print(top)
-    print(f"  {c}│{e} {'Parameter':<{key_w}} {c}│{e} {'Value':<{val_w}} {c}│{e}")
-    print(sep)
-    for key, val in rows:
-        chunks = [val[i : i + val_w] for i in range(0, len(val), val_w)] or [""]
-        print(f"  {c}│{e} {key:<{key_w}} {c}│{e} {chunks[0]:<{val_w}} {c}│{e}")
-        for chunk in chunks[1:]:
-            print(f"  {c}│{e} {' ' * key_w} {c}│{e} {chunk:<{val_w}} {c}│{e}")
-    print(bot)
+    for line in _format_parameter_banner(state.recorder_config):
+        print(line)
     # Probe PortAudio Pa_Initialize before we sink time into loading any
     # ONNX model. A broken Windows audio stack (CM_PROB_PHANTOM endpoints,
     # hung Audiosrv/AEB/BluetoothUserService) makes pyaudio.PyAudio() either
@@ -392,14 +427,31 @@ def _recorder_thread(state: ServerState, loop: asyncio.AbstractEventLoop) -> Non
     # event on its own thread, so this subscription happens on the same thread
     # as `recorder.text(process_text)` below — no cross-thread lock needed.
     from src.recorder.domain.events import TranscriptionCompleted as _TC
+    from src.recorder.domain.events import TranscriptionFailed as _TF
 
     last_wav_path: list[str] = [""]
 
     def _capture_wav(event: _TC) -> None:
         last_wav_path[0] = event.wav_path
 
+    def _forward_transcription_failed(event: _TF) -> None:
+        # A genuine transcriber crash (already logged with a full traceback by
+        # the recorder). Forward it as its own WS event so the renderer reports
+        # "transcription failed" instead of the misleading "no audio detected"
+        # the empty-result path would otherwise trigger.
+        message = json.dumps(
+            {
+                "type": "transcription_failed",
+                "reason": event.reason,
+                "category": event.category,
+                "detail": event.detail,
+            }
+        )
+        asyncio.run_coroutine_threadsafe(state.audio_queue.put(message), loop)
+
     if state.recorder is not None:
         state.recorder.event_bus.subscribe(_TC, _capture_wav)
+        state.recorder.event_bus.subscribe(_TF, _forward_transcription_failed)
 
     def process_text(full_sentence: str) -> None:
         state.prev_text = ""
@@ -473,56 +525,6 @@ def _persistent_watchdog(state: ServerState) -> None:
             if elapsed > 10:
                 print(f"{bcolors.FAIL}Watchdog: shutdown deadline exceeded, forcing exit.{bcolors.ENDC}")
                 os._exit(1)
-
-
-def _refresh_catalog_languages_in_background(state: ServerState, loop: asyncio.AbstractEventLoop) -> None:
-    """Worker thread: pull fresh language metadata from HF and broadcast it.
-
-    Runs once per server launch. On success: persists the new overlay so
-    next launch is correct before the network call completes, and pushes
-    the refreshed catalog out the data channel so any open settings panel
-    re-renders the language dropdown without restart. All failure modes
-    (no network, HF outage, missing huggingface_hub install) are logged
-    at debug and swallowed — the bundled catalog plus prior overlay is a
-    valid fallback.
-    """
-    try:
-        from src.recorder.domain.catalog_overlay import load_overlay, save_overlay
-        from src.recorder.domain.catalog_refresh import fetch_language_overlay
-        from src.recorder.domain.model_registry import ModelCatalog
-    except Exception:  # pragma: no cover - defensive
-        return
-    try:
-        catalog = ModelCatalog()
-        new_overlay = fetch_language_overlay(catalog.list_all())
-    except Exception as exc:
-        print(f"{bcolors.WARNING}[catalog-refresh] HF fetch failed: {type(exc).__name__}: {exc}{bcolors.ENDC}")
-        return
-    if not new_overlay:
-        return
-    existing = load_overlay()
-    if existing == new_overlay:
-        return
-    save_overlay(new_overlay)
-    # Re-build the catalog so the overlay we just wrote is reflected in
-    # the broadcast payload. Sending the bundled snapshot would defeat
-    # the point — settings panel would still see Arabic on Canary until
-    # the user restarts the app.
-    try:
-        from src.stt_server.control_handler import _active_accelerator, _active_device
-
-        refreshed = ModelCatalog()
-        device = _active_device(state)
-        accelerator = _active_accelerator(state)
-    except Exception:
-        return
-    payload = json.dumps(
-        {
-            "type": "model_catalog_updated",
-            "models": refreshed.to_dicts(device=device, accelerator=accelerator),
-        },
-    )
-    asyncio.run_coroutine_threadsafe(state.audio_queue.put(payload), loop)
 
 
 def _resolve_log_dir(args_log_dir: str | None) -> Path | None:
@@ -659,7 +661,6 @@ async def main_async() -> None:
         "initial_prompt_realtime": args.initial_prompt_realtime,
         "input_device_index": args.input_device,
         "silero_sensitivity": args.silero_sensitivity,
-        "silero_use_onnx": args.silero_use_onnx,
         "webrtc_sensitivity": args.webrtc_sensitivity,
         "post_speech_silence_duration": args.unknown_sentence_detection_pause,
         "min_gap_between_recordings": args.min_gap_between_recordings,
@@ -674,13 +675,12 @@ async def main_async() -> None:
         "wake_word_activation_delay": args.wake_word_activation_delay,
         "wakeword_backend": args.wakeword_backend,
         "openwakeword_model_paths": args.openwakeword_model_paths,
-        "openwakeword_inference_framework": args.openwakeword_inference_framework,
         "wake_word_buffer_duration": args.wake_word_buffer_duration,
         "use_main_model_for_realtime": args.use_main_model_for_realtime,
         # Diarization — facade kwargs map to DiarizationConfig.enabled / .max_speakers.
         "enable_diarization": args.enable_diarization,
         "diarization_max_speakers": args.diarization_max_speakers,
-        # Handy-style on-demand mic: defaults release the device on PTT
+        # On-demand mic: defaults release the device on PTT
         # idle so the OS mic-in-use indicator doesn't stay lit. Flags
         # override at boot — toggling them in settings requires a server
         # restart (handled by STARTUP_ONLY_KEYS on the renderer side).
@@ -689,11 +689,10 @@ async def main_async() -> None:
         "lazy_close_timeout_seconds": args.lazy_close_timeout_seconds,
         # Tail-of-recording capture window for user-driven stops (PTT
         # release / toggle off). Catches trailing syllables that leave
-        # the lips just after the key-up. 0 = off; matches Handy.
+        # the lips just after the key-up. 0 = off.
         "extra_recording_buffer_ms": args.extra_recording_buffer_ms,
         # Whisper-native translate (multilingual → English in a single
         # decode) + idle-unload timeout to free RAM/VRAM between sessions.
-        # Both port directly from Handy's settings vocabulary.
         "translate_to_english": args.translate_to_english,
         "model_unload_timeout_seconds": (
             None if args.model_unload_timeout_seconds < 0 else args.model_unload_timeout_seconds
@@ -721,11 +720,7 @@ async def main_async() -> None:
         "no_log_file": True,
         "use_extended_logging": args.use_extended_logging,
         "level": state.loglevel,
-        "compute_type": args.compute_type,
-        "gpu_device_index": args.gpu_device_index,
         "device": args.device,
-        "handle_buffer_overflow": args.handle_buffer_overflow,
-        "allowed_latency_limit": args.allowed_latency_limit,
         "backend": args.backend,
         "onnx_quantization": args.onnx_quantization,
     }
@@ -828,18 +823,6 @@ async def main_async() -> None:
                 state.recorder._sigint_reinstall = _reinstall_sigint
 
         print(f"{bcolors.OKGREEN}Server started. Press Ctrl+C to stop the server.{bcolors.ENDC}")
-
-        # Kick off a background HuggingFace refresh of the model catalog's
-        # language whitelists. The bundled catalog.json snapshot was taken
-        # at release; per-program-run refresh keeps the picker honest when
-        # NVIDIA / openai update a model card. Failure here is silent —
-        # the bundled (or last cached) overlay is always a valid fallback.
-        threading.Thread(
-            target=_refresh_catalog_languages_in_background,
-            args=(state, loop),
-            daemon=True,
-            name="catalog-refresh",
-        ).start()
 
         while not state.shutdown_event.is_set():
             await asyncio.sleep(0.5)

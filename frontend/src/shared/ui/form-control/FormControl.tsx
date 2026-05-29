@@ -35,12 +35,10 @@ export interface FormControlProps {
 
 function Header({
 	label,
-	labelAddon,
 	labelTrailing,
 	tooltip,
 }: {
 	label?: string | undefined;
-	labelAddon?: ReactNode;
 	labelTrailing?: ReactNode;
 	tooltip?: string | undefined;
 }) {
@@ -52,7 +50,6 @@ function Header({
 			<Field.Label className="font-medium text-body text-foreground leading-tight">
 				{label}
 			</Field.Label>
-			{labelAddon ? <span className="flex items-center">{labelAddon}</span> : null}
 			{tooltip ? <InfoTooltip content={tooltip} /> : null}
 			{labelTrailing ? <span className="flex items-center">{labelTrailing}</span> : null}
 		</div>
@@ -98,6 +95,8 @@ export function FormControl({
 		<div className={disabled ? "pointer-events-none" : undefined}>{children}</div>
 	) : null;
 
+	// "row" — a compact control (small switcher / number stepper) sits on the
+	// trailing edge of the same row as its label + caption.
 	if (layout === "row") {
 		return (
 			<Field.Root
@@ -108,20 +107,22 @@ export function FormControl({
 				)}
 			>
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
-					<Header
-						label={label}
-						labelAddon={labelAddon}
-						labelTrailing={labelTrailing}
-						tooltip={tooltip}
-					/>
+					<Header label={label} labelTrailing={labelTrailing} tooltip={tooltip} />
 					<Caption caption={caption} />
 					<ErrorMessage error={error} />
 				</div>
+				{labelAddon ? <div className="flex shrink-0 items-center">{labelAddon}</div> : null}
 				{controlBox ? <div className="shrink-0">{controlBox}</div> : null}
 			</Field.Root>
 		);
 	}
 
+	// "stacked" (default) — the header puts label + caption on the left and any
+	// `labelAddon` (a Toggle) on the trailing edge, so switches always sit
+	// right-aligned on the setting's own row rather than crammed after the
+	// label text. A wide control (`children`) flows full-width beneath. When
+	// there is no body the toggle is vertically centred against the
+	// label+caption block; with a body it aligns to the label row.
 	return (
 		<Field.Root
 			className={cn(
@@ -130,13 +131,13 @@ export function FormControl({
 				className
 			)}
 		>
-			<Header
-				label={label}
-				labelAddon={labelAddon}
-				labelTrailing={labelTrailing}
-				tooltip={tooltip}
-			/>
-			<Caption caption={caption} />
+			<div className={cn("flex gap-4", controlBox ? "items-start" : "items-center")}>
+				<div className="flex min-w-0 flex-1 flex-col gap-1">
+					<Header label={label} labelTrailing={labelTrailing} tooltip={tooltip} />
+					<Caption caption={caption} />
+				</div>
+				{labelAddon ? <div className="flex shrink-0 items-center">{labelAddon}</div> : null}
+			</div>
 			{controlBox ? <div className="mt-1">{controlBox}</div> : null}
 			<ErrorMessage error={error} />
 		</Field.Root>

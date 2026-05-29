@@ -70,11 +70,7 @@ export function ContextDenyListSection() {
 	};
 
 	return (
-		<FormControl
-			caption={t("contextDenyListCaption")}
-			label={t("contextDenyList")}
-			tooltip={t("contextDenyListTooltip")}
-		>
+		<FormControl label={t("contextDenyList")} tooltip={t("contextDenyListTooltip")}>
 			<div className="flex flex-col gap-3">
 				<form
 					className="flex items-end gap-2"

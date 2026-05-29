@@ -1,8 +1,7 @@
 /**
  * Cancellable, integrity-verified model downloader for Electron main.
  *
- * Mirrors the Handy reference (`examples/Handy/src-tauri/src/managers/model.rs`)
- * patterns adapted to Node/TypeScript:
+ * Node/TypeScript implementation built around these patterns:
  *
  *  - **Cancellation via AbortSignal** — every chunk-loop iteration checks the
  *    signal. On abort: the partial file is deleted, in-flight download state
@@ -19,8 +18,8 @@
  *    `tar` v7). The archive is removed after a successful extract.
  *  - **Cleanup invariants** — every error path goes through `try/finally`:
  *    the in-flight registry entry is freed; the partial file is best-effort
- *    deleted. This is the TypeScript equivalent of Handy's `DownloadCleanup`
- *    RAII guard (disarmed only on success).
+ *    deleted. This mirrors an RAII cleanup guard that is disarmed only on
+ *    success.
  *
  * The module is process-local and stateless beyond its private
  * `inFlightRegistry` (used so a future `cancelDownload(modelId)` IPC handler
@@ -30,7 +29,7 @@
  *
  * Not yet wired into the live STT model pipeline (which still goes through
  * the Python side's HuggingFace `snapshot_download`). This is the building
- * block for the Handy-style direct-URL flow.
+ * block for the direct-URL download flow.
  */
 
 import { createHash } from "node:crypto";
@@ -54,7 +53,7 @@ export interface DownloadModelOptions {
 	 *  `extractTo` and the archive removed after a successful extract. */
 	dest: string;
 	/** Lowercase hex SHA-256 of the downloaded bytes. When absent, integrity
-	 *  is not verified (matches Handy's behaviour for custom user models). */
+	 *  is not verified (matches our custom-user-model behavior). */
 	expectedSha256?: string;
 	/** Where to extract a tarball. Required when `dest` ends in `.tar.gz`
 	 *  / `.tgz`; ignored otherwise. Must be a directory (created if absent). */
@@ -169,7 +168,7 @@ export function shouldExtractTarball(dest: string): boolean {
 }
 
 /** Verify the streamed digest matches the expected one. On mismatch the
- *  partial file is removed so the next attempt starts clean (mirrors Handy). */
+ *  partial file is removed so the next attempt starts clean. */
 async function verifyDigest(
 	dest: string,
 	actual: string,
@@ -201,18 +200,64 @@ interface StreamArgs {
 	total: number;
 }
 
-async function streamToDiskWithDigest(args: StreamArgs): Promise<StreamResult> {
-	const { body, dest, modelId, onProgress, signal, total } = args;
-	const hash = createHash("sha256");
-	const fileStream = createWriteStream(dest);
-	const fileClosed = new Promise<void>((resolve, reject) => {
-		fileStream.on("close", () => {
+/** Minimal write-stream surface the chunk loop needs. Lets `writeChunk` be
+ *  exercised with a fake stream (covering the backpressure-drain branch)
+ *  without spinning up a real file descriptor. */
+interface ChunkSink {
+	once(event: "drain", listener: () => void): unknown;
+	write(chunk: Uint8Array): boolean;
+}
+
+/** Write one chunk, awaiting the stream's `drain` event when the kernel
+ *  buffer is full (`write()` returned `false`). Honouring backpressure keeps
+ *  memory bounded on slow disks / fast networks. */
+export async function writeChunk(sink: ChunkSink, chunk: Uint8Array): Promise<void> {
+	const wroteOk = sink.write(chunk);
+	if (!wroteOk) {
+		await new Promise<void>((resolve) => {
+			sink.once("drain", resolve);
+		});
+	}
+}
+
+interface FileSink {
+	closed: Promise<void>;
+	stream: ReturnType<typeof createWriteStream>;
+}
+
+/** Open a write stream paired with a `closed` promise that resolves on the
+ *  stream's `close` event and rejects on `error` — so a disk-write failure
+ *  (ENOSPC, EACCES) surfaces instead of being silently swallowed. */
+function openFileSink(dest: string): FileSink {
+	const stream = createWriteStream(dest);
+	const closed = new Promise<void>((resolve, reject) => {
+		stream.on("close", () => {
 			resolve();
 		});
-		fileStream.on("error", (err) => {
+		stream.on("error", (err) => {
 			reject(err);
 		});
 	});
+	return { stream, closed };
+}
+
+/** Build the terminal 100%-style progress tick. When the server omitted
+ *  `Content-Length` (`total === 0`) we report the downloaded byte count as
+ *  the total; a genuinely empty body stays at 0% rather than reporting a
+ *  bogus 100% of nothing. */
+function finalProgress(modelId: string, downloaded: number, total: number): DownloadProgress {
+	return {
+		modelId,
+		downloaded,
+		total: total === 0 ? downloaded : total,
+		percentage: total === 0 && downloaded === 0 ? 0 : 100,
+	};
+}
+
+async function streamToDiskWithDigest(args: StreamArgs): Promise<StreamResult> {
+	const { body, dest, modelId, onProgress, signal, total } = args;
+	const hash = createHash("sha256");
+	const { stream: fileStream, closed: fileClosed } = openFileSink(dest);
 	let downloaded = 0;
 	let lastEmit = 0;
 	const reader = body.getReader();
@@ -227,12 +272,7 @@ async function streamToDiskWithDigest(args: StreamArgs): Promise<StreamResult> {
 			}
 			hash.update(value);
 			downloaded += value.byteLength;
-			const wroteOk = fileStream.write(value);
-			if (!wroteOk) {
-				await new Promise<void>((resolve) => {
-					fileStream.once("drain", resolve);
-				});
-			}
+			await writeChunk(fileStream, value);
 			const now = Date.now();
 			if (onProgress && now - lastEmit >= PROGRESS_THROTTLE_MS) {
 				onProgress({
@@ -255,12 +295,7 @@ async function streamToDiskWithDigest(args: StreamArgs): Promise<StreamResult> {
 		await fileClosed.catch(() => undefined);
 	}
 	if (onProgress) {
-		onProgress({
-			modelId,
-			downloaded,
-			total: total === 0 ? downloaded : total,
-			percentage: total === 0 && downloaded === 0 ? 0 : 100,
-		});
+		onProgress(finalProgress(modelId, downloaded, total));
 	}
 	return { digest: hash.digest("hex"), downloaded };
 }
@@ -304,6 +339,60 @@ export interface DownloadResult {
 	sha256: string;
 }
 
+interface OpenedResponse {
+	body: ReadableStream<Uint8Array>;
+	total: number;
+}
+
+/** Fetch `url` and validate the response is a streamable success. Returns the
+ *  body plus the parsed `Content-Length` (`0` when absent/invalid). Throws on
+ *  a non-2xx status or a missing body so the caller's `catch` runs cleanup. */
+async function openResponseStream(
+	url: string,
+	fetchImpl: DownloadModelOptions["fetchImpl"],
+	signal: AbortSignal
+): Promise<OpenedResponse> {
+	const doFetch: (input: string, init?: { signal?: AbortSignal }) => Promise<Response> =
+		fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
+	const response = await doFetch(url, { signal });
+	if (!response.ok) {
+		throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
+	}
+	if (!response.body) {
+		throw new Error(`Response body missing for ${url}`);
+	}
+	const headerTotal = Number(response.headers.get("content-length") ?? "0");
+	const total = Number.isFinite(headerTotal) && headerTotal > 0 ? headerTotal : 0;
+	return { body: response.body, total };
+}
+
+interface FinalizeArgs {
+	dest: string;
+	digest: string;
+	expectedSha256: string | undefined;
+	extractTo: string | undefined;
+	tarExtract: DownloadModelOptions["tarExtract"];
+}
+
+/** Verify the digest, extract a tarball when applicable, and sanity-check the
+ *  extract target. Returns the extract directory (or `null` for a plain file).
+ *  Each step throws on failure; the caller removes the partial file. */
+async function finalizeDownload(args: FinalizeArgs): Promise<string | null> {
+	const { dest, digest, expectedSha256, extractTo, tarExtract } = args;
+	await verifyDigest(dest, digest, expectedSha256);
+	const extractedTo = await extractIfTarball(dest, extractTo, tarExtract);
+	// Sanity check the extracted directory has at least one entry — a
+	// silently-empty extract is almost certainly a corrupted archive
+	// that the security guards quietly dropped.
+	if (extractedTo) {
+		const info = await stat(extractedTo);
+		if (!info.isDirectory()) {
+			throw new Error(`Extraction target is not a directory: ${extractedTo}`);
+		}
+	}
+	return extractedTo;
+}
+
 /**
  * Stream `url` to `dest` with progress + SHA-256 verification + optional
  * tarball auto-extraction.
@@ -341,17 +430,7 @@ export async function downloadModel(options: DownloadModelOptions): Promise<Down
 	let downloadedSuccessfully = false;
 	try {
 		await ensureDir(dirname(dest));
-		const doFetch: (input: string, init?: { signal?: AbortSignal }) => Promise<Response> =
-			fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
-		const response = await doFetch(url, { signal: controller.signal });
-		if (!response.ok) {
-			throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
-		}
-		if (!response.body) {
-			throw new Error(`Response body missing for ${url}`);
-		}
-		const headerTotal = Number(response.headers.get("content-length") ?? "0");
-		const total = Number.isFinite(headerTotal) && headerTotal > 0 ? headerTotal : 0;
+		const { body, total } = await openResponseStream(url, fetchImpl, controller.signal);
 
 		// Emit an initial 0% tick so the UI can switch to the progress bar
 		// without waiting for the first chunk to land.
@@ -360,7 +439,7 @@ export async function downloadModel(options: DownloadModelOptions): Promise<Down
 		}
 
 		const { digest, downloaded } = await streamToDiskWithDigest({
-			body: response.body,
+			body,
 			dest,
 			modelId,
 			onProgress,
@@ -368,17 +447,13 @@ export async function downloadModel(options: DownloadModelOptions): Promise<Down
 			total,
 		});
 
-		await verifyDigest(dest, digest, expectedSha256);
-		const extractedTo = await extractIfTarball(dest, extractTo, tarExtract);
-		// Sanity check the extracted directory has at least one entry — a
-		// silently-empty extract is almost certainly a corrupted archive
-		// that the security guards quietly dropped.
-		if (extractedTo) {
-			const info = await stat(extractedTo);
-			if (!info.isDirectory()) {
-				throw new Error(`Extraction target is not a directory: ${extractedTo}`);
-			}
-		}
+		const extractedTo = await finalizeDownload({
+			dest,
+			digest,
+			expectedSha256,
+			extractTo,
+			tarExtract,
+		});
 		downloadedSuccessfully = true;
 		return {
 			downloaded,
@@ -389,8 +464,8 @@ export async function downloadModel(options: DownloadModelOptions): Promise<Down
 		};
 	} catch (err) {
 		// Best-effort: the partial file is removed on every error path so
-		// the next attempt starts from a clean slate. Matches Handy's
-		// `verify_sha256` cleanup and the asset_downloader.py pattern.
+		// the next attempt starts from a clean slate. Matches the
+		// digest-verification cleanup and the asset_downloader.py pattern.
 		await bestEffortRemove(dest);
 		throw err;
 	} finally {

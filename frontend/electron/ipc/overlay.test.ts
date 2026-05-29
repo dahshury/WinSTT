@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+const ipcListeners = new Map<string, Array<(event: unknown, ...args: unknown[]) => void>>();
+
 const storeData: Record<string, unknown> = {};
 const storeChangeHandlers = new Map<string, Array<(value: unknown) => void>>();
 
@@ -47,6 +49,28 @@ mock.module("electron", () => ({
 			bounds: { x: 0, y: 0, width: 1920, height: 1080 },
 		}),
 	},
+	// Local ipcMain shim so the `overlay:set-ignore-mouse` listener wired by
+	// setupOverlayHandlers is captured here and can be emitted to in tests.
+	ipcMain: {
+		on: (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
+			const list = ipcListeners.get(channel) ?? [];
+			list.push(listener);
+			ipcListeners.set(channel, list);
+		},
+		off: (channel: string, listener: (event: unknown, ...args: unknown[]) => void) => {
+			ipcListeners.set(
+				channel,
+				(ipcListeners.get(channel) ?? []).filter((x) => x !== listener)
+			);
+		},
+		removeAllListeners: (channel?: string) => {
+			if (channel === undefined) {
+				ipcListeners.clear();
+				return;
+			}
+			ipcListeners.delete(channel);
+		},
+	},
 }));
 
 const {
@@ -65,9 +89,11 @@ interface MockWin {
 	calls: string[];
 	getSize: () => number[];
 	hide: () => void;
+	ignoreMouse: Array<{ ignore: boolean; opts: unknown }>;
 	isDestroyed: () => boolean;
 	isVisible: () => boolean;
 	positions: [number, number][];
+	setIgnoreMouseEvents: (ignore: boolean, opts?: unknown) => void;
 	setOpacity: (v: number) => void;
 	setPosition: (x: number, y: number) => void;
 	showInactive: () => void;
@@ -77,6 +103,7 @@ interface MockWin {
 function makeWindow(): MockWin {
 	const calls: string[] = [];
 	const positions: [number, number][] = [];
+	const ignoreMouse: Array<{ ignore: boolean; opts: unknown }> = [];
 	const win: MockWin = {
 		getSize: () => [800, 120],
 		setOpacity: (v: number) => {
@@ -95,11 +122,16 @@ function makeWindow(): MockWin {
 			calls.push("hide");
 			win.visible = false;
 		},
+		setIgnoreMouseEvents: (ignore: boolean, opts?: unknown) => {
+			calls.push(`ignoreMouse:${ignore}`);
+			ignoreMouse.push({ ignore, opts });
+		},
 		isVisible: () => win.visible,
 		// Real Electron BrowserWindow exposes `isDestroyed()`; the
 		// `repositionIfVisible` guard reads it before touching the window.
 		isDestroyed: () => false,
 		visible: false,
+		ignoreMouse,
 		positions,
 		calls,
 	};
@@ -116,6 +148,7 @@ beforeEach(() => {
 		delete storeData[k];
 	}
 	storeChangeHandlers.clear();
+	ipcListeners.clear();
 	storeData.general = {
 		showRecordingOverlay: true,
 		recordingMode: "ptt",
@@ -128,6 +161,7 @@ afterEach(() => {
 		delete storeData[k];
 	}
 	storeChangeHandlers.clear();
+	ipcListeners.clear();
 	__resetOverlayForTesting__();
 });
 
@@ -770,5 +804,265 @@ describe("overlay handlers", () => {
 		const hidesAfter = win.calls.filter((c) => c === "hide").length;
 		// Reconciler caught the sneak-visible and re-hid → +1 hide.
 		expect(hidesAfter).toBe(hidesAfterReconcilerWindow + 1);
+	});
+
+	// ---------------------------------------------------------------------
+	// isForceOverlayEnvFlagSet — env-flag parsing. Only reachable through
+	// resolveOverlayPosition's `process.platform === "linux"` + `"auto"`
+	// position branch, so each case pins both `process.platform` and
+	// `WINSTT_FORCE_OVERLAY` then observes the resolved show/suppress outcome.
+	// ---------------------------------------------------------------------
+	describe("isForceOverlayEnvFlagSet (Linux env-flag escape hatch)", () => {
+		// `process.platform` is a read-only-but-configurable own property; we
+		// swap it to "linux" for these cases and always restore afterwards so
+		// no other test (or another file in a shared process) sees the change.
+		let originalPlatform: PropertyDescriptor | undefined;
+		const originalEnvFlag = process.env.WINSTT_FORCE_OVERLAY;
+
+		function setPlatform(value: string): void {
+			Object.defineProperty(process, "platform", { value, configurable: true });
+		}
+
+		beforeEach(() => {
+			originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+			setPlatform("linux");
+			// `overlayPosition` left unset → resolveOverlayPosition takes the
+			// "auto" → Linux branch where isForceOverlayEnvFlagSet decides.
+		});
+
+		afterEach(() => {
+			if (originalPlatform) {
+				Object.defineProperty(process, "platform", originalPlatform);
+			}
+			if (originalEnvFlag === undefined) {
+				// Fully remove the key so `process.env.WINSTT_FORCE_OVERLAY === undefined` again.
+				delete process.env.WINSTT_FORCE_OVERLAY;
+			} else {
+				process.env.WINSTT_FORCE_OVERLAY = originalEnvFlag;
+			}
+		});
+
+		test("unset env var on Linux → overlay suppressed (resolveOverlayPosition → 'none')", () => {
+			// Env var must be absent so the `raw === undefined` early-return is hit.
+			delete process.env.WINSTT_FORCE_OVERLAY;
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			showOverlay();
+			// Linux + auto + flag-unset → "none" → suppressed → no paint.
+			expect(win.calls).toEqual([]);
+		});
+
+		for (const truthy of ["1", "true", "yes", "on", "TRUE", "On", " yes "]) {
+			test(`env "${truthy}" → flag truthy → overlay un-suppressed on Linux (resolveOverlayPosition → 'bottom')`, () => {
+				process.env.WINSTT_FORCE_OVERLAY = truthy;
+				const win = makeWindow();
+				setOverlayWindow(asOverlayWin(win));
+				showOverlay();
+				// Flag set → Linux auto resolves to "bottom" → pill paints at the
+				// floating-bottom coordinates (560, 900).
+				expect(win.calls).toContain("show");
+				expect(win.positions[0]).toEqual([560, 900]);
+			});
+		}
+
+		for (const falsy of ["", "0", "false", "no", "off", "FALSE", "Off", "  "]) {
+			test(`env "${falsy}" → flag falsy → overlay stays suppressed on Linux`, () => {
+				process.env.WINSTT_FORCE_OVERLAY = falsy;
+				const win = makeWindow();
+				setOverlayWindow(asOverlayWin(win));
+				showOverlay();
+				expect(win.calls).toEqual([]);
+			});
+		}
+
+		test("arbitrary non-empty value (e.g. 'enabled') is treated as truthy", () => {
+			process.env.WINSTT_FORCE_OVERLAY = "enabled";
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			showOverlay();
+			expect(win.calls).toContain("show");
+		});
+
+		test("env flag is IGNORED on non-Linux platforms (macOS auto → 'bottom' regardless)", () => {
+			setPlatform("darwin");
+			// Even with the flag absent, non-Linux auto resolves to "bottom".
+			delete process.env.WINSTT_FORCE_OVERLAY;
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			showOverlay();
+			// macOS auto → "bottom" → pill shows even though the flag is unset.
+			expect(win.calls).toContain("show");
+			expect(win.positions[0]).toEqual([560, 900]);
+		});
+	});
+
+	// ---------------------------------------------------------------------
+	// performHide — dynamic-island deferred OS-hide path. The synchronous
+	// `desired = "hidden"` flip happens immediately, but the actual
+	// applyHide()/runHidePass() is deferred by DYNAMIC_ISLAND_HIDE_GRACE_MS
+	// (400ms) so the renderer can play its slide-up exit animation.
+	// ---------------------------------------------------------------------
+	describe("performHide dynamic-island deferred hide", () => {
+		test("hideOverlay in dynamic-island mode defers the OS hide pass (no synchronous hide)", async () => {
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
+			// Get the pill visible first so the eventual hide has something to act on.
+			win.visible = true;
+			hideOverlay();
+			// Immediately after: the OS-level hide must NOT have run yet (grace
+			// window for the renderer exit animation). Floating-bottom would have
+			// fired opacity:0/setPosition/hide synchronously here.
+			expect(win.calls).not.toContain("hide");
+			expect(win.calls).toEqual([]);
+			// After the grace period (+ headroom) the deferred runHidePass fires.
+			await new Promise<void>((r) => setTimeout(r, 500));
+			expect(win.calls).toContain("opacity:0");
+			expect(win.calls).toContain("setPosition:-10000,-10000");
+			expect(win.calls).toContain("hide");
+		});
+
+		test("a show landing inside the dynamic-island grace window cancels the deferred hide", async () => {
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
+			win.visible = true;
+			hideOverlay();
+			// Re-show inside the 400ms grace window → flips desired back to "shown"
+			// and clearPendingTimers cancels the deferred runHidePass.
+			showOverlay();
+			await new Promise<void>((r) => setTimeout(r, 500));
+			// The deferred timer either was cancelled or saw `desired !== "hidden"`
+			// and bailed — so no hide pass ever ran.
+			expect(win.calls).not.toContain("hide");
+			expect(win.isVisible()).toBe(true);
+		});
+	});
+
+	// ---------------------------------------------------------------------
+	// overlay:set-ignore-mouse ipcMain handler wired by setupOverlayHandlers.
+	// The renderer flips mouse pass-through on/off over the X cancel button.
+	// ---------------------------------------------------------------------
+	describe("overlay:set-ignore-mouse ipc handler", () => {
+		function emitSetIgnore(payload: unknown): void {
+			for (const l of ipcListeners.get("overlay:set-ignore-mouse") ?? []) {
+				l(undefined, payload);
+			}
+		}
+
+		test("setupOverlayHandlers registers the overlay:set-ignore-mouse listener", () => {
+			const dispose = setupOverlayHandlers();
+			expect(ipcListeners.has("overlay:set-ignore-mouse")).toBe(true);
+			expect((ipcListeners.get("overlay:set-ignore-mouse") ?? []).length).toBe(1);
+			dispose();
+			// Disposer calls ipcMain.off(channel, handler) — removes only the one
+			// listener it registered.
+			expect((ipcListeners.get("overlay:set-ignore-mouse") ?? []).length).toBe(0);
+		});
+
+		test("disposer removes ONLY its own listener, not foreign listeners on the same channel", () => {
+			// Regression for the removeAllListeners-nukes-everything bug: a sibling
+			// (e.g. a second overlay window or unrelated subsystem) may register on
+			// the same channel. The disposer must use ipcMain.off(channel, handler)
+			// so it removes only the handler it added — leaving the foreign one armed.
+			const foreign = (_event: unknown, _payload: unknown): void => undefined;
+			// Register the foreign listener directly through the mocked ipcMain
+			// surface (its `on` pushes into `ipcListeners`).
+			ipcListeners.set("overlay:set-ignore-mouse", [foreign]);
+			const dispose = setupOverlayHandlers();
+			// Two listeners now: the foreign one + the one setupOverlayHandlers added.
+			expect((ipcListeners.get("overlay:set-ignore-mouse") ?? []).length).toBe(2);
+			dispose();
+			// Foreign listener survives the disposer.
+			const remaining = ipcListeners.get("overlay:set-ignore-mouse") ?? [];
+			expect(remaining).toHaveLength(1);
+			expect(remaining[0]).toBe(foreign);
+		});
+
+		test("payload { ignore: true } → setIgnoreMouseEvents(true, { forward: true })", () => {
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			const dispose = setupOverlayHandlers();
+			emitSetIgnore({ ignore: true });
+			expect(win.ignoreMouse).toHaveLength(1);
+			expect(win.ignoreMouse[0]).toEqual({ ignore: true, opts: { forward: true } });
+			dispose();
+		});
+
+		test("payload { ignore: false } → setIgnoreMouseEvents(false, undefined)", () => {
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			const dispose = setupOverlayHandlers();
+			emitSetIgnore({ ignore: false });
+			expect(win.ignoreMouse).toHaveLength(1);
+			expect(win.ignoreMouse[0]).toEqual({ ignore: false, opts: undefined });
+			dispose();
+		});
+
+		test("non-object / malformed payloads coerce to ignore=false (no crash)", () => {
+			const win = makeWindow();
+			setOverlayWindow(asOverlayWin(win));
+			const dispose = setupOverlayHandlers();
+			for (const bad of [null, undefined, "ignore", 42, { other: 1 }, { ignore: 0 }]) {
+				emitSetIgnore(bad);
+			}
+			// Every malformed payload resolves to ignore=false.
+			expect(win.ignoreMouse.every((c) => c.ignore === false)).toBe(true);
+			expect(win.ignoreMouse).toHaveLength(6);
+			dispose();
+		});
+
+		test("handler is a no-op when no overlay window is registered", () => {
+			const dispose = setupOverlayHandlers();
+			// No setOverlayWindow → overlayWindow is null → early return, no throw.
+			expect(() => emitSetIgnore({ ignore: true })).not.toThrow();
+			dispose();
+		});
+
+		test("handler is a no-op when the overlay window is destroyed", () => {
+			const win = makeWindow();
+			win.isDestroyed = () => true;
+			setOverlayWindow(asOverlayWin(win));
+			const dispose = setupOverlayHandlers();
+			emitSetIgnore({ ignore: true });
+			// Destroyed-window guard → setIgnoreMouseEvents never called.
+			expect(win.ignoreMouse).toHaveLength(0);
+			dispose();
+		});
+	});
+
+	test("applyShow swallows a throwing isVisible() and falls back to the fresh-show path (safeReturn catch)", () => {
+		const win = makeWindow();
+		// `applyShow` reads `win.isVisible()` through `safeReturn(..., false)` to
+		// decide between the "already visible" re-show and the fresh opacity-ramp
+		// reveal. A window in mid-teardown can throw here; safeReturn must absorb
+		// it and use the `false` fallback (fresh-show branch).
+		win.isVisible = () => {
+			throw new Error("window mid-teardown");
+		};
+		setOverlayWindow(asOverlayWin(win));
+		expect(() => showOverlay()).not.toThrow();
+		// Fresh-show path taken: position → opacity 0 → show (NOT the
+		// already-visible opacity:1 path).
+		expect(win.calls).toEqual(["setPosition:560,900", "opacity:0", "show"]);
+	});
+
+	test("overlayMode change on a DESTROYED visible window is a no-op (getAliveOverlayWindow → null)", async () => {
+		const win = makeWindow();
+		setOverlayWindow(asOverlayWin(win));
+		const dispose = setupOverlayHandlers();
+		showOverlay();
+		await new Promise<void>((r) => setTimeout(r, 120));
+		const positionsBefore = win.positions.length;
+		// The window gets destroyed after the show. `repositionIfVisible` must
+		// bail via `isOverlayLiveAndVisible` (getAliveOverlayWindow returns null
+		// for a destroyed window) — no setPosition on the dead window.
+		win.isDestroyed = () => true;
+		(storeData.general as Record<string, unknown>).overlayMode = "dynamic-island";
+		for (const cb of storeChangeHandlers.get("general.overlayMode") ?? []) {
+			cb("dynamic-island");
+		}
+		expect(win.positions.length).toBe(positionsBefore);
+		dispose();
 	});
 });

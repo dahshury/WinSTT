@@ -1,6 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { SurfaceProvider, useSurface } from "@/shared/lib/surface";
 import { SettingSection } from "./SettingSection";
+
+function SurfaceProbe() {
+	const level = useSurface();
+	return <span data-testid="surface-level">{level}</span>;
+}
 
 describe("SettingSection", () => {
 	test("renders title and children", () => {
@@ -41,6 +47,20 @@ describe("SettingSection", () => {
 		);
 		fireEvent.click(screen.getByRole("switch"));
 		expect(onToggle).toHaveBeenCalledTimes(1);
+	});
+
+	test("re-provides a +1 surface level to its body (so nested controls keep elevation)", () => {
+		// Flattening removed the card chrome but MUST preserve the surface
+		// context lift, or every ElevatedSurface control inside loses a step of
+		// contrast. On a surface-2 substrate the body context must be surface-3.
+		render(
+			<SurfaceProvider value={2}>
+				<SettingSection title="Audio">
+					<SurfaceProbe />
+				</SettingSection>
+			</SurfaceProvider>
+		);
+		expect(screen.getByTestId("surface-level").textContent).toBe("3");
 	});
 
 	test("dims content when section has a toggle that is off (pointer-events disabled)", () => {

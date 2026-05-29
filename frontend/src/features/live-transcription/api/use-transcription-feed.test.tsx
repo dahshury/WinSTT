@@ -77,6 +77,29 @@ describe("useTranscriptionFeed", () => {
 		expect(useTranscriptionStore.getState().ephemeral).not.toBeNull();
 	});
 
+	test("transcription_failed shows an honest ephemeral message (not 'no audio')", () => {
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		expect(listeners.has(IPC.STT_TRANSCRIPTION_FAILED)).toBe(true);
+		fire(IPC.STT_TRANSCRIPTION_FAILED);
+		const ephemeral = useTranscriptionStore.getState().ephemeral;
+		expect(ephemeral).not.toBeNull();
+		// The pill must say something *other* than the no-audio copy — that's
+		// the whole point of the fix (don't lie when the backend errored).
+		expect(ephemeral?.text).not.toBe("(no audio detected)");
+		expect(ephemeral?.text).toContain("transcription");
+	});
+
+	test("transcription_failed disarms isRecordingActive (terminal event)", () => {
+		useTranscriptionStore.setState({ isRecordingActive: true });
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_TRANSCRIPTION_FAILED);
+		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+	});
+
 	test("recording_start clears stale state and arms isRecordingActive", () => {
 		// Prime the store with a previous session's text (and a stale ephemeral
 		// from a prior no_audio_detected) so we can verify recording_start wipes

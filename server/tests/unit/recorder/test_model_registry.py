@@ -82,8 +82,6 @@ class TestModelCatalog:
             "t-tech/t-one",
             "moonshine-tiny",
             "moonshine-base",
-            "moonshine-tiny-zh",
-            "moonshine-tiny-ja",
             "moonshine-tiny-ko",
             "moonshine-tiny-ar",
             "moonshine-tiny-vi",
@@ -796,11 +794,9 @@ class TestSizeBytesMap:
 
 
 class TestLoadCatalogEntries:
-    """``_load_catalog_entries`` reads catalog.json and folds the overlay."""
+    """``_load_catalog_entries`` reads catalog.json into ModelInfo rows."""
 
-    def test_malformed_models_field_raises_value_error(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_malformed_models_field_raises_value_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # Lines 289-290: a ``models`` key that isn't a list is a corrupt
         # catalog; the loader must raise rather than silently yield nothing.
         bad_catalog = tmp_path / "catalog.json"

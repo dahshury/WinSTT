@@ -4,6 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import {
 	SurfaceProvider,
+	surfaceBg,
 	surfaceClasses,
 	surfaceHighlightedBg,
 	surfaceSelectedBg,
@@ -12,8 +13,31 @@ import {
 import type { SelectOption } from "@/shared/ui/select";
 import "./searchable-select.css";
 
+/**
+ * A labelled section of options rendered with a sticky header — the
+ * grouped-mode counterpart of a flat `options` list. Mirrors the grouping
+ * the STT model selector uses (Base UI `Combobox.Group` + `GroupLabel`):
+ * the TTS voice picker passes one group per country.
+ */
+export interface SelectOptionGroup {
+	/** Optional short code shown as a badge at the header's trailing edge (e.g. "US"). */
+	badge?: string;
+	/** Sticky header text for the section (e.g. "English (US)"). */
+	label: string;
+	options: readonly SelectOption[];
+	/** Stable group identity — also the Base UI group key. */
+	value: string;
+}
+
 export interface SearchableSelectProps {
 	disabled?: boolean;
+	/**
+	 * Grouped options. When provided, the popup renders one sticky
+	 * `Combobox.GroupLabel` header per group (the per-row badge is dropped —
+	 * the header carries the shared attribute) and `options` is ignored for
+	 * the list. The trigger's selected-value lookup still spans every group.
+	 */
+	groups?: readonly SelectOptionGroup[];
 	/**
 	 * Interactive node pinned inside the trigger, just left of the chevron —
 	 * stays visible whether the popup is open or closed. Pointer/click events
@@ -23,7 +47,8 @@ export interface SearchableSelectProps {
 	inputTrailing?: ReactNode;
 	onChange: (value: string) => void;
 	onOpenChange?: (open: boolean) => void;
-	options: readonly SelectOption[];
+	/** Flat options. Mutually exclusive with `groups` (which takes precedence). */
+	options?: readonly SelectOption[];
 	placeholder?: string;
 	/**
 	 * Per-row trailing node rendered at the end of each option in the popup.
@@ -106,8 +131,69 @@ function ItemTrailing({
 	return <StopBubble className="ml-auto flex shrink-0 items-center">{render(item)}</StopBubble>;
 }
 
+// Sticky section header for grouped mode — mirrors the STT model list's
+// `AuthorLabel`. The trailing badge carries the group's short code (e.g.
+// the country) so the per-row badge can be dropped.
+function GroupHeader({
+	badge,
+	label,
+	level,
+}: {
+	badge?: string | undefined;
+	label: string;
+	level: number;
+}) {
+	return (
+		<Combobox.GroupLabel
+			className={`sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b px-2.5 py-1.5 ${surfaceBg(level)}`}
+		>
+			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
+				{label}
+			</span>
+			{badge ? <Badge text={badge} /> : null}
+		</Combobox.GroupLabel>
+	);
+}
+
+// One option row, shared by the flat and grouped list bodies. In grouped
+// mode the per-row badge is suppressed (the `GroupHeader` carries it) and
+// the row is indented a touch so it reads as nested under its header.
+function Row({
+	grouped,
+	highlightLevel,
+	item,
+	renderItemTrailing,
+	selectedLevel,
+}: {
+	grouped?: boolean | undefined;
+	highlightLevel: number;
+	item: SelectOption;
+	renderItemTrailing?: ((option: SelectOption) => ReactNode) | undefined;
+	selectedLevel: number;
+}) {
+	return (
+		<Combobox.Item
+			className={`searchable-select-item mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs py-[7px] pe-2.5 text-body text-foreground leading-normal outline-none ${grouped ? "ps-5" : "ps-2.5"} ${surfaceHighlightedBg(highlightLevel)} ${surfaceSelectedBg(selectedLevel)} data-[selected]:font-medium data-[selected]:text-foreground data-[selected]:shadow-[inset_2px_0_0_0_var(--color-accent)]`}
+			value={item}
+		>
+			<span className="flex w-3 shrink-0 items-center justify-center">
+				<Combobox.ItemIndicator>
+					<CheckIcon />
+				</Combobox.ItemIndicator>
+			</span>
+			{!grouped && item.badge ? <Badge text={item.badge} /> : null}
+			{item.icon ? <OptionIcon icon={item.icon} /> : null}
+			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+				{item.label}
+			</span>
+			{renderItemTrailing ? <ItemTrailing item={item} render={renderItemTrailing} /> : null}
+		</Combobox.Item>
+	);
+}
+
 export function SearchableSelect({
 	options,
+	groups,
 	value,
 	onChange,
 	onOpenChange,
@@ -116,7 +202,18 @@ export function SearchableSelect({
 	inputTrailing,
 	renderItemTrailing,
 }: SearchableSelectProps) {
-	const selected = options.find((o) => o.id === value) ?? null;
+	// Grouped mode flattens to a single list for the selected-value lookup +
+	// the Combobox value contract; the popup still renders grouped.
+	const flatOptions = groups ? groups.flatMap((g) => [...g.options]) : (options ?? []);
+	const selected = flatOptions.find((o) => o.id === value) ?? null;
+	// Base UI accepts either a flat item array or its grouped collection shape
+	// (`{ value, items }[]`, auto-detected via the nested `items` key); the
+	// leaf type is the same SelectOption either way. Group header label/badge
+	// aren't part of that shape, so look them up by `value` at render time.
+	const comboboxItems: readonly unknown[] = groups
+		? groups.map((g) => ({ value: g.value, items: [...g.options] }))
+		: [...flatOptions];
+	const groupMeta = new Map((groups ?? []).map((g) => [g.value, g]));
 
 	const substrate = useSurface();
 	const inputLevel = Math.min(substrate + 1, 8);
@@ -159,7 +256,8 @@ export function SearchableSelect({
 		<Combobox.Root
 			defaultValue={selected}
 			disabled={disabled}
-			items={[...options]}
+			isItemEqualToValue={(a: SelectOption | null, b: SelectOption | null) => a?.id === b?.id}
+			items={comboboxItems}
 			itemToStringLabel={getItemLabel}
 			onOpenChange={onOpenChange}
 			onValueChange={(item: SelectOption | null) => {
@@ -212,27 +310,42 @@ export function SearchableSelect({
 						>
 							<Combobox.Empty className="searchable-select-empty">No results found.</Combobox.Empty>
 							<Combobox.List className="outline-none">
-								{(item: SelectOption) => (
-									<Combobox.Item
-										className={`searchable-select-item mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)} ${surfaceSelectedBg(selectedLevel)} data-[selected]:font-medium data-[selected]:text-foreground data-[selected]:shadow-[inset_2px_0_0_0_var(--color-accent)]`}
-										key={item.id}
-										value={item}
-									>
-										<span className="flex w-3 shrink-0 items-center justify-center">
-											<Combobox.ItemIndicator>
-												<CheckIcon />
-											</Combobox.ItemIndicator>
-										</span>
-										{item.badge ? <Badge text={item.badge} /> : null}
-										{item.icon ? <OptionIcon icon={item.icon} /> : null}
-										<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-											{item.label}
-										</span>
-										{renderItemTrailing ? (
-											<ItemTrailing item={item} render={renderItemTrailing} />
-										) : null}
-									</Combobox.Item>
-								)}
+								{groups
+									? (group: { items: SelectOption[]; value: string }) => {
+											const meta = groupMeta.get(group.value);
+											return (
+												<Combobox.Group
+													className="flex flex-col"
+													items={group.items}
+													key={group.value}
+												>
+													<GroupHeader
+														badge={meta?.badge}
+														label={meta?.label ?? group.value}
+														level={popupLevel}
+													/>
+													{group.items.map((item) => (
+														<Row
+															grouped
+															highlightLevel={highlightLevel}
+															item={item}
+															key={item.id}
+															renderItemTrailing={renderItemTrailing}
+															selectedLevel={selectedLevel}
+														/>
+													))}
+												</Combobox.Group>
+											);
+										}
+									: (item: SelectOption) => (
+											<Row
+												highlightLevel={highlightLevel}
+												item={item}
+												key={item.id}
+												renderItemTrailing={renderItemTrailing}
+												selectedLevel={selectedLevel}
+											/>
+										)}
 							</Combobox.List>
 						</Combobox.Popup>
 					</Combobox.Positioner>

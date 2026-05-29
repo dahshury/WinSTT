@@ -58,7 +58,7 @@ export function SwitcherBadge<T extends string>({ option, rect }: SwitcherBadgeP
 		return badgeButton;
 	}
 	return (
-		<Tooltip content={option.badgeTooltip} side="top">
+		<Tooltip content={option.badgeTooltip} footer={option.badgeTooltipFooter} side="top">
 			{badgeButton}
 		</Tooltip>
 	);

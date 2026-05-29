@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import json
 import logging
 import os
 import re
@@ -556,6 +558,98 @@ def _peak_normalize(audio: AudioArray) -> AudioArray:
     return ((audio / peak) * _NORMALIZE_TARGET_PEAK).astype(np.float32)
 
 
+#: Canonical Whisper base-BPE vocab (id → token), lazily loaded once from the
+#: bundled gzip. Whisper's base vocab (ids < 50257) is identical across every
+#: multilingual variant, so it doubles as the repair source for broken exports.
+_WHISPER_BASE_VOCAB_PATH = Path(__file__).with_name("whisper_base_vocab.json.gz")
+_whisper_base_vocab_cache: dict[int, str] | None = None
+
+
+def _load_whisper_base_vocab() -> dict[int, str]:
+    """Load + cache the bundled canonical Whisper base vocab (id → token).
+
+    Returns an empty dict (repair disabled) if the asset is missing/unreadable —
+    the fork's ``_decode_text`` ``.get()`` still guards against a hard KeyError.
+    """
+    global _whisper_base_vocab_cache  # module-level one-shot cache
+    if _whisper_base_vocab_cache is None:
+        try:
+            with gzip.open(_WHISPER_BASE_VOCAB_PATH, "rt", encoding="utf-8") as f:
+                tok_to_id: dict[str, int] = json.load(f)
+            _whisper_base_vocab_cache = {int(i): t for t, i in tok_to_id.items()}
+        except Exception:
+            logger.exception("could not load bundled whisper base vocab; broken-export repair disabled")
+            _whisper_base_vocab_cache = {}
+    return _whisper_base_vocab_cache
+
+
+def _find_whisper_vocab_holder(
+    model: Any,  # noqa: ANN401 — walks loosely-typed onnx_asr internals
+    _depth: int = 0,
+    _seen: set[int] | None = None,
+) -> Any:  # noqa: ANN401
+    """Walk the onnx-asr adapter to the object holding a Whisper ``_vocab`` dict.
+
+    Identified by the Whisper-specific pairing of a dict ``_vocab`` AND a
+    ``_byte_decoder`` so non-Whisper families (which have no such attrs) return
+    ``None`` and skip the repair entirely.
+    """
+    if _seen is None:
+        _seen = set()
+    if id(model) in _seen or _depth > 4:
+        return None
+    _seen.add(id(model))
+    vocab = getattr(model, "_vocab", None)
+    if isinstance(vocab, dict) and getattr(model, "_byte_decoder", None) is not None:
+        return model
+    for name in vars(model) if hasattr(model, "__dict__") else ():
+        try:
+            child = getattr(model, name)
+        except Exception:  # defensive: some attrs raise on access
+            continue
+        if hasattr(child, "__dict__"):
+            found = _find_whisper_vocab_holder(child, _depth + 1, _seen)
+            if found is not None:
+                return found
+    return None
+
+
+def _repair_whisper_vocab(model: Any) -> None:  # noqa: ANN401 — walks loosely-typed onnx_asr internals
+    """Backfill a Whisper model's ``id → token`` map when its shipped vocab.json
+    is truncated.
+
+    ``onnx-community/CrisperWhisper-ONNX`` ships a vocab.json with only ~45k of
+    the 51865 tokens, so emitted filler tokens like ``' uhm'`` (35007) / ``' hm'``
+    (35481) have no string and are silently dropped by ``_decode_text`` — exactly
+    the verbatim disfluencies CrisperWhisper exists to keep. Whisper's base BPE
+    vocab is identical across all multilingual variants, so we fill ONLY the
+    missing base ids from the bundled canonical reference; the model's own
+    special / added tokens (>= 50257) are left untouched.
+
+    Best-effort + idempotent: non-Whisper models and already-complete vocabs are
+    no-ops, and any failure leaves the model as-is.
+    """
+    try:
+        holder = _find_whisper_vocab_holder(model)
+        if holder is None:
+            return
+        reference = _load_whisper_base_vocab()
+        if not reference:
+            return
+        vocab: dict[int, str] = holder._vocab  # repairing onnx_asr internals by design
+        missing = {tid: tok for tid, tok in reference.items() if tid not in vocab}
+        if not missing:
+            return
+        vocab.update(missing)
+        logger.info(
+            "repaired incomplete Whisper vocab: backfilled %d missing base ids (vocab now %d)",
+            len(missing),
+            len(vocab),
+        )
+    except Exception:
+        logger.exception("whisper vocab repair failed; continuing with shipped vocab")
+
+
 def _snapshot_providers(model: Any) -> list[str]:  # noqa: ANN401 — walks loosely-typed onnx_asr internals
     """Find the ORT providers attached to ``model``'s primary InferenceSession.
 
@@ -695,6 +789,10 @@ class OnnxAsrTranscriber(ITranscriber):
 
         logger.info("Loading onnx-asr model %s (quantization=%s)", model_name, quantization)
         self._model: Any = self._load_model_with_fp16_repair(model_name, kwargs)
+        # Backfill a truncated Whisper vocab (e.g. CrisperWhisper-ONNX ships only
+        # ~45k/51865 tokens, dropping its verbatim fillers). No-op for complete
+        # vocabs and non-Whisper families. See _repair_whisper_vocab.
+        _repair_whisper_vocab(self._model)
         self._ready = True
         self._model_name = model_name
         # Snapshot the actual ORT providers attached to a representative
@@ -731,8 +829,7 @@ class OnnxAsrTranscriber(ITranscriber):
             logger.info("Silero VAD skipped (segment_with_vad=False — bounded-short caller)")
 
         # Translation request flows through two distinct engine APIs in
-        # onnx_asr depending on the model family — Handy makes the same
-        # distinction (managers/transcription.rs:545 vs :607):
+        # onnx_asr depending on the model family:
         #
         # * **Whisper family** — translation is baked into the decoder
         #   prompt at load time (``<|translate|>`` token replaces
@@ -750,8 +847,8 @@ class OnnxAsrTranscriber(ITranscriber):
         self._translate_target_language: str | None = None
         if translate_to_english:
             if self._is_canary_engine():
-                # Canary's native English-target sentinel matches Handy
-                # exactly. Future work: surface the full Canary language
+                # Canary's native English-target sentinel.
+                # Future work: surface the full Canary language
                 # matrix (en/es/de/fr/zh/ja/ru/…) so users can pick the
                 # destination instead of being pinned to English.
                 self._translate_target_language = "en"
@@ -1085,6 +1182,40 @@ class OnnxAsrTranscriber(ITranscriber):
             duration_seconds=elapsed,
         )
 
+    def align_words(self, wav_path: str, known_text: str = "") -> list[dict[str, Any]] | None:
+        """Native per-word timestamps for ``wav_path`` using THIS model, or None.
+
+        Returns ``[{text, start, end}]`` when the active engine can emit timings
+        itself — Whisper ``*_timestamped`` (cross-attention DTW → ``.words``) or
+        CTC / RNN-T / TDT (per-token emit times → grouped to words). Relabelled
+        onto ``known_text`` when given (zero drift). Returns ``None`` when the
+        model can't (plain Whisper ``WhisperOrt``, Canary AED, Moonshine, Cohere)
+        so the caller falls back to the tiny timestamped-Whisper aligner.
+
+        Single 30 s window (Whisper bound) — callers segment long audio first.
+        """
+        from src.recorder.infrastructure.word_aligner import group_tokens_to_words, map_timings_to_text
+
+        try:
+            timestamped = self._model.with_timestamps()
+            result = timestamped.recognize(wav_path, return_timestamps=True, return_word_timestamps=True)
+        except Exception:
+            logger.debug("align_words: native timestamps unavailable for this model", exc_info=True)
+            return None
+
+        native_words = getattr(result, "words", None)
+        if native_words:
+            words = [{"text": w.text, "start": float(w.start), "end": float(w.end)} for w in native_words]
+        else:
+            tokens = getattr(result, "tokens", None)
+            stamps = getattr(result, "timestamps", None)
+            if not (tokens and stamps):
+                return None
+            words = group_tokens_to_words(list(tokens), [float(s) for s in stamps])
+        if not words:
+            return None
+        return map_timings_to_text(words, known_text) if known_text.strip() else words
+
     def _resolve_whisper_engine(self) -> Any:  # noqa: ANN401
         """Return the underlying ``WhisperHf`` engine, or ``None`` if not Whisper.
 
@@ -1289,8 +1420,7 @@ class OnnxAsrTranscriber(ITranscriber):
            reported.
         2. ``maybe_pad_for_aed`` — extend the (now-trimmed) clip with
            trailing zeros up to ``AED_PAD_TO_SAMPLES`` (1.25 s) so the
-           decoder gets the end-of-utterance acoustic cue Handy provides
-           via ``managers/audio.rs:472-480``.
+           decoder gets the end-of-utterance acoustic cue it needs.
 
         Order matters: trim FIRST so the pad measures against the
         trimmed length, not the pre-trim length. Otherwise a 0.6 s clip
@@ -1329,4 +1459,11 @@ class OnnxAsrTranscriber(ITranscriber):
         self._vad_adapter_merge = None
         self._vad_adapter_no_merge = None
         if model is not None and hasattr(model, "close"):
-            model.close()
+            # Best-effort: onnx-asr's close() releases ORT sessions and, when a
+            # (possibly partial) torch is importable, probes torch.cuda. A stray
+            # cleanup error must never abort a swap's unload phase — the sessions
+            # are dropped on GC regardless once we've nulled our reference.
+            try:
+                model.close()
+            except Exception:
+                logger.warning("onnx-asr model.close() raised during shutdown — ignoring", exc_info=True)

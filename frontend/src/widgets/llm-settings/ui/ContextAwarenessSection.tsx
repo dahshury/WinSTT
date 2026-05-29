@@ -53,11 +53,7 @@ export function ContextAwarenessSection() {
 
 	return (
 		<>
-			<FormControl
-				caption={t("contextAwarenessCaption")}
-				label={t("contextAwareness")}
-				tooltip={t("contextAwarenessTooltip")}
-			>
+			<FormControl label={t("contextAwareness")} tooltip={t("contextAwarenessTooltip")}>
 				<Toggle checked={enabled} onCheckedChange={handleToggle} />
 			</FormControl>
 			<OptInDialog

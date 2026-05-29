@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { RuntimeInfo } from "@/entities/connection";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
+import {
+	_resetOptimisticSwapForTests,
+	useCatalogStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { _resetSwapFailureTimingForTests } from "@/shared/lib/swap-failure-timing";
 import {
@@ -122,6 +126,10 @@ afterEach(() => {
 	// adoption order. (Surfaced when Pattern F tightened ``adoptRuntime``
 	// to require a catalog hit.)
 	cleanup();
+	// Cancel any pending optimistic-swap self-heal timer the reconciler armed
+	// via beginSwap — a leaked default-window timer would fire after happy-dom
+	// teardown ("window is not defined" between test files).
+	_resetOptimisticSwapForTests();
 	window.electronAPI = originalApi;
 });
 

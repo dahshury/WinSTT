@@ -1,4 +1,4 @@
-import { STT_PICKER_WIDTH_PX, SttModelSelector } from "@picker";
+import { isRealtimeViable, STT_PICKER_WIDTH_PX, SttModelSelector } from "@picker";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
@@ -81,6 +81,9 @@ export function ModelPickerWindow() {
 	const refreshModelState = useModelStateStore((s) => s.refresh);
 	const refreshLive = useSystemResourcesStore((s) => s.refresh);
 	const mainSwapping = useModelSwapStore((s) => s.activeMain !== null);
+	const realtimeSwapping = useModelSwapStore((s) => s.activeRealtime !== null);
+	const realtimeModel = modelSettings?.realtimeModel ?? "tiny";
+	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
 
 	useEffect(() => {
 		refreshModelState();
@@ -106,13 +109,21 @@ export function ModelPickerWindow() {
 	// the swap (and this close) only fire after the user confirms. Fire only
 	// on the false→true edge so a remount while a swap is still running
 	// doesn't re-send a redundant close.
-	const wasSwappingRef = useRef(mainSwapping);
+	// Which slot this window was opened for (main STT model vs realtime model).
+	// Set from the anchor message; gates the filter, swap target, and value.
+	const [kind, setKind] = useState<"main" | "realtime">("main");
+	const swapping = kind === "main" ? mainSwapping : realtimeSwapping;
+	// Selected value the picker highlights. Cloud ids have no catalog row, so
+	// the main slot shows nothing while a cloud provider is active.
+	const mainSelectorValue = providerOf(currentModel ?? "") === null ? (currentModel ?? "") : "";
+	const selectorValue = kind === "realtime" ? realtimeModel : mainSelectorValue;
+	const wasSwappingRef = useRef(swapping);
 	useEffect(() => {
-		if (mainSwapping && !wasSwappingRef.current) {
+		if (swapping && !wasSwappingRef.current) {
 			close();
 		}
-		wasSwappingRef.current = mainSwapping;
-	}, [mainSwapping]);
+		wasSwappingRef.current = swapping;
+	}, [swapping]);
 
 	// Same per-quant badge handlers the settings panel wires in — without
 	// these props SttModelSelector renders the variants read-only (no
@@ -122,6 +133,16 @@ export function ModelPickerWindow() {
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
 
 	const selectModel = (modelId: string, quantization?: OnnxQuantization) => {
+		if (kind === "realtime") {
+			controller.handleRealtimeModelChange(modelId, quantization);
+			// Picking the main model as the realtime model lets the server reuse the
+			// already-loaded main transcriber instead of loading a duplicate.
+			updateQuality({ useMainModelForRealtime: modelId === currentModel });
+			if (modelId === realtimeModel && quantization === undefined) {
+				close();
+			}
+			return;
+		}
 		controller.handleModelChange(modelId, quantization);
 		// Re-selecting the loaded model is a no-op for the controller (no
 		// swap, no dialog) — dismiss the window so the click still does
@@ -135,7 +156,15 @@ export function ModelPickerWindow() {
 	// (recomputed on every open and on resize, so it always reflects the
 	// current chip position / clamped height).
 	const [panel, setPanel] = useState<PanelRect | null>(null);
-	useEffect(() => ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => setPanel(rect as PanelRect)), []);
+	useEffect(
+		() =>
+			ipcOn(IPC.MODEL_PICKER_ANCHOR, (msg) => {
+				const r = msg as PanelRect & { kind?: "main" | "realtime" };
+				setPanel({ x: r.x, y: r.y, width: r.width, height: r.height });
+				setKind(r.kind === "realtime" ? "realtime" : "main");
+			}),
+		[]
+	);
 
 	// Report the desired footprint once. Main clamps it to the room above
 	// the chip and sends back the final panel rect via MODEL_PICKER_ANCHOR.
@@ -184,21 +213,24 @@ export function ModelPickerWindow() {
 						height: panel.height,
 					}}
 				>
-					<CloudSttSection onSelect={(id) => selectModel(id)} selectedId={currentModel ?? ""} />
+					{kind === "main" && (
+						<CloudSttSection onSelect={(id) => selectModel(id)} selectedId={currentModel ?? ""} />
+					)}
 					<SttModelSelector
 						currentQuantization={currentQuantization}
 						inline
 						isLoading={!catalogLoaded}
-						kind="main"
+						kind={kind}
 						models={catalogModels}
 						onChange={selectModel}
 						onDeleteQuant={handleDeleteQuant}
 						onDownloadAction={handleDownloadAction}
 						onDownloadSnapshot={handleDownloadSnapshot}
 						popupHeightClass={PANEL_HEIGHT}
+						prefilter={kind === "realtime" ? isRealtimeViable : undefined}
 						statesById={statesById}
 						systemInfo={systemInfo}
-						value={providerOf(currentModel ?? "") === null ? (currentModel ?? "") : ""}
+						value={selectorValue}
 					/>
 				</div>
 			)}

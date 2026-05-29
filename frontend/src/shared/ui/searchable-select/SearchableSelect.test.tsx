@@ -1,12 +1,30 @@
 import { describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { SelectOption } from "@/shared/ui/select";
-import { SearchableSelect } from "./SearchableSelect";
+import { SearchableSelect, type SelectOptionGroup } from "./SearchableSelect";
 
 const options: SelectOption[] = [
 	{ id: "tiny", label: "Tiny" },
 	{ id: "base", label: "Base" },
 	{ id: "small", label: "Small" },
+];
+
+const voiceGroups: SelectOptionGroup[] = [
+	{
+		value: "en-us",
+		label: "English (US)",
+		badge: "US",
+		options: [
+			{ id: "af_heart", label: "Heart", badge: "US" },
+			{ id: "am_adam", label: "Adam", badge: "US" },
+		],
+	},
+	{
+		value: "en-gb",
+		label: "English (UK)",
+		badge: "UK",
+		options: [{ id: "bf_emma", label: "Emma", badge: "UK" }],
+	},
 ];
 
 describe("SearchableSelect", () => {
@@ -72,5 +90,34 @@ describe("SearchableSelect", () => {
 		expect(onPreview).toHaveBeenCalledWith("base");
 		// The row's preview must not select the option (StopBubble swallows it).
 		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	test("renders a sticky header per group with its options nested under it", () => {
+		render(<SearchableSelect groups={voiceGroups} onChange={() => undefined} value="af_heart" />);
+		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
+		// Both country headers and every voice row mount.
+		expect(screen.getByText("English (US)")).toBeDefined();
+		expect(screen.getByText("English (UK)")).toBeDefined();
+		expect(screen.getByText("Heart")).toBeDefined();
+		expect(screen.getByText("Adam")).toBeDefined();
+		expect(screen.getByText("Emma")).toBeDefined();
+	});
+
+	test("selecting a grouped row commits that option's id", () => {
+		const onChange = mock((_id: string) => undefined);
+		render(<SearchableSelect groups={voiceGroups} onChange={onChange} value="af_heart" />);
+		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
+		fireEvent.click(screen.getByText("Adam"));
+		expect(onChange).toHaveBeenCalledWith("am_adam");
+	});
+
+	test("search filters within groups and drops emptied group headers", () => {
+		render(<SearchableSelect groups={voiceGroups} onChange={() => undefined} value="af_heart" />);
+		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
+		fireEvent.change(screen.getByRole("combobox"), { target: { value: "emma" } });
+		expect(screen.getByText("Emma")).toBeDefined();
+		// The US group has no match left, so neither its rows nor its header show.
+		expect(screen.queryByText("Heart")).toBeNull();
+		expect(screen.queryByText("English (US)")).toBeNull();
 	});
 });

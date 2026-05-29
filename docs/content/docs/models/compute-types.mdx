@@ -1,42 +1,119 @@
 ---
-title: Compute Types
-description: ONNX quantization options for model inference
+title: Compute & Quantization
+description: How WinSTT picks an execution provider — CPU, DirectML, or OpenVINO — and what the fp16 / int8 / q4 quantization labels mean for size, speed, and accuracy.
 ---
 
-Quantization controls the numerical precision used during model inference. Lower precision reduces memory usage and increases speed at the cost of minor quality differences. WinSTT runs every model on ONNX Runtime, so precision is set with the `onnxQuantization` setting.
+Two knobs decide how fast a model runs: the **execution provider** (which hardware ONNX Runtime targets) and the **quantization** (how compressed the model's weights are). The provider is fixed by the installer you chose; the quantization is per-model in the picker.
 
-An empty string (`""`) uses the model's default precision. Other values are available per-model and surfaced by the model picker — selecting an unsupported value for a given model is not offered.
+## Execution providers
 
-## Available Quantizations
+WinSTT runs every model on [ONNX Runtime](https://onnxruntime.ai). Which hardware backend — "execution provider" (EP) — it uses is baked into the installer, not a runtime setting. Each release publishes three portable builds that wrap the same app and the same speech engine; only the bundled ORT wheel differs.
 
-| Value | Description | Where available |
-|-------|------------|-----------------|
-| `""` | Model default precision | Every model |
-| `fp16` | Half 16-bit precision | Most Whisper, Lite-Whisper |
-| `q4` | 4-bit weight quantization | Most Whisper |
-| `bnb4` | bitsandbytes 4-bit quantization | Most Whisper |
-| `int8` | 8-bit integer quantization | NeMo, GigaAM, Vosk/Kaldi |
+<ModelTable
+  head={["Provider", "Hardware", "When to use"]}
+  rows={[
+    ["CPU", "Any 64-bit x86 with AVX2", "No GPU, a headless box, or you want the smallest (~150 MB) download. The universal fallback."],
+    ["DirectML", "Any DirectX 12 GPU — AMD, Intel, or NVIDIA", "The default GPU build (~200 MB). Vendor-agnostic; uses the system D3D12 stack so there are no driver DLLs to install."],
+    ["OpenVINO", "Intel ARC dGPU, Iris Xe / Arc iGPU", "Intel silicon (~250 MB). Targets the Intel-tuned path; ~10-30% faster than DirectML on Intel GPUs (Intel-published benchmarks)."],
+  ]}
+  caption="One installer = one provider. To switch providers, install a different build — see Install."
+/>
 
-`large-v3` and `t-tech/t-one` support default precision (`""`) only.
+The provider is chosen **at install time**. On Windows, the **Model** tab's Device control only offers **Auto** and **CPU**: `Auto` uses the installed GPU provider when one is viable, and `CPU` forces the CPU path regardless. There is no in-app GPU-vendor switch — the bundled wheel already decides that.
 
-## Recommendations
-
-<Callout title="GPU users" type="info">
-  On the GPU build with a working NVIDIA CUDA stack, `fp16` cuts memory roughly in half versus full precision with negligible quality loss, and modern NVIDIA GPUs accelerate it.
+<Callout type="info" title="Why no CUDA build on Windows?">
+  On our workload DirectML is both faster and ~10× lighter than CUDA. On an RTX 3080 Ti
+  running whisper-tiny-q4, DirectML measures **p50 = 85 ms** (p95 = 89 ms, stdev = 3 ms)
+  versus CUDA's **p50 = 120 ms** (p95 = 151 ms, stdev = 37 ms) — DirectML wins on both the
+  median and consistency, while the installer is ~200 MB instead of ~2 GB. The CUDA path is
+  kept only for a future Linux NVIDIA build, where DirectML doesn't exist.
 </Callout>
 
-<Callout title="CPU users" type="info">
-  For NeMo, GigaAM, and Vosk/Kaldi on CPU, `int8` gives the best performance with minimal quality loss. For Whisper, `q4` or `bnb4` reduce memory footprint when RAM is tight. Use `""` when unsure or when you want maximum quality.
+### Auto-fallback to CPU
+
+The GPU builds degrade gracefully. At startup the server probes the active provider, and if the requested GPU path isn't viable — no DirectX 12 GPU for the DirectML build, no Intel accelerator for the OpenVINO build — it silently falls back to CPU. The CUDA path adds a second check: even when the provider registers, WinSTT verifies the full DLL chain actually loads before using it, and drops to CPU otherwise. You get a working app either way, so installing the DirectML build on a GPU-less machine is harmless.
+
+The per-OS auto priority is **OpenVINO → DirectML → CUDA → CPU** on Windows; entries whose provider isn't bundled are simply skipped, so a DirectML-only install just falls through to DirectML.
+
+<Callout type="info" title="Force CPU manually">
+  Set the **Model** tab's Device control to **CPU** to pin the CPU path regardless of the
+  installed build — useful when a GPU driver is flaky. OpenVINO's target can be steered with
+  the `OPENVINO_DEVICE` env var (`AUTO` / `GPU` / `GPU.0` / `CPU`; default `AUTO`).
 </Callout>
 
-## CPU vs GPU
+## Quantization
 
-CPU vs GPU is chosen **at install time**, not in settings — WinSTT ships as two installers (a CPU build and a GPU build). The `device` setting accepts only `auto` or `cpu`; `auto` uses the GPU when the GPU build is installed with working CUDA, and falls back to CPU otherwise.
+Quantization compresses a model's weights to a lower numerical precision. Lower precision means a smaller download, less RAM/VRAM, and faster inference — at the cost of small, usually-imperceptible accuracy differences. WinSTT exposes it as the `model.onnxQuantization` setting, set per-model in the [picker](/docs/settings/model).
 
-## How to Set
+An empty value (**Auto**) uses the model's default precision. The picker only shows the quantizations the upstream repo actually publishes for a given model — you can't pick a variant that doesn't exist, and the server falls back to the default if a chosen file is missing.
 
-Configure `onnxQuantization` in [Model Settings](/docs/settings/model). The setting applies to both the main model and the realtime model.
+<ModelTable
+  head={["Quantization", "Precision", "Relative size", "Relative speed", "Best for"]}
+  numeric={[2, 3]}
+  rows={[
+    ["Auto", "Model default (fp32)", "100%", "1.0×", "Maximum accuracy; pick when unsure"],
+    ["fp16", "16-bit float", "~50%", "fast on GPU", "DirectML / GPU — the fastest GPU path"],
+    ["int8", "8-bit integer", "~25%", "fast on CPU", "CPU — best balance (NeMo, GigaAM, Vosk)"],
+    ["uint8", "8-bit unsigned int", "~25%", "fast on CPU", "CPU alternative to int8 where published"],
+    ["q4", "4-bit", "~13%", "small + light", "Smallest download, lowest RAM"],
+    ["q4f16", "Mixed 4-/16-bit", "~20%", "small + light", "Small with better quality than plain q4"],
+    ["bnb4", "bitsandbytes 4-bit", "~13%", "small + light", "4-bit alternative where q4 isn't published"],
+  ]}
+  caption="Sizes/speeds are relative to the model's fp32 default and vary by family. The setting applies to both the main model and the realtime model."
+/>
 
-<Callout title="Legacy setting" type="warn">
-  The old `computeType` setting (CTranslate2-style float/int compute types) is a no-op on the ONNX path. It is retained only for backward compatibility and has no effect on inference.
+These seven values match the labels in the **Model** picker exactly. Availability is per-family: most Whisper and Lite-Whisper models publish `fp16`, `q4`, `q4f16`, and `bnb4`; NeMo, GigaAM, and Vosk/Kaldi models publish `int8`. A few models (e.g. `large-v3`, `t-tech/t-one`) ship the default precision only.
+
+### Picking a quantization
+
+<BentoGrid cols={2}>
+  <BentoCell icon="speed" title="On a GPU build">
+    Prefer <strong>fp16</strong> when the model publishes it — it roughly halves memory with
+    negligible quality loss and the GPU accelerates it directly. Fall back to <strong>Auto</strong>
+    if fp16 isn't offered.
+  </BentoCell>
+  <BentoCell icon="cpu" title="On the CPU build">
+    Use <strong>int8</strong> for NeMo / GigaAM / Vosk — best speed for minimal quality cost.
+    For Whisper on a RAM-tight machine, <strong>q4</strong> or <strong>q4f16</strong> shrink the
+    footprint the most.
+  </BentoCell>
+  <BentoCell icon="quality" title="When accuracy matters most">
+    Leave it on <strong>Auto</strong> (full fp32). This is the safe default and the reference
+    against which every other variant trades.
+  </BentoCell>
+  <BentoCell icon="compute" title="When disk or RAM is scarce">
+    <strong>q4</strong> / <strong>bnb4</strong> are ~13% of the fp32 size. Great for laptops and
+    small models you want resident with a long unload timeout.
+  </BentoCell>
+</BentoGrid>
+
+<Callout type="warn" title="int8 on a GPU isn't a free win">
+  4-bit and 8-bit weight quantization is built for shrinking the download and easing CPU/RAM
+  pressure — not for squeezing more speed out of a GPU. On a GPU the dequantization overhead can
+  cancel the savings, and some int8/q4 ONNX exports are broken or unsupported on the GPU EP, so
+  the session quietly falls back to CPU or errors. The reliable GPU lever is <strong>fp16</strong>;
+  reach for int8/q4 when you're constrained on disk or memory, not chasing GPU throughput.
 </Callout>
+
+<Callout type="info" title="Per-quantization downloads">
+  Each quantization is a separate download. In the picker you can download, pause, resume,
+  cancel, or delete a single variant per model — so you can keep, say, fp16 for the GPU and
+  delete the fp32 default to reclaim disk, without touching the other models.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Model settings" href="/docs/settings/model">
+    Pick the model, quantization, language, and device in the app.
+  </Card>
+  <Card title="Browse the catalog" href="/docs/models">
+    All 40+ models across families, with accuracy, speed, and language coverage.
+  </Card>
+  <Card title="Which installer?" href="/docs/install">
+    DirectML, CPU, or OpenVINO — and the system requirements for each.
+  </Card>
+  <Card title="Whisper models" href="/docs/models/whisper">
+    The Whisper family and the quantizations each variant publishes.
+  </Card>
+</Cards>

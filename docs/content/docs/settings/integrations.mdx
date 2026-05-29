@@ -1,0 +1,147 @@
+---
+title: Integrations
+description: Store and verify the API keys WinSTT uses for cloud speech-to-text (OpenAI, ElevenLabs) and LLM cleanup (Ollama, OpenRouter) — encrypted at rest and never exposed to the renderer.
+---
+
+The **Integrations** tab holds every external credential WinSTT can use: the local
+Ollama endpoint, plus API keys for OpenAI, ElevenLabs, and OpenRouter. Local transcription
+needs none of these — they only unlock cloud STT and LLM cleanup.
+
+## What each credential unlocks
+
+Two keys are for **cloud speech-to-text**; the endpoint and one key are for **LLM
+text cleanup**. They never overlap.
+
+<BentoGrid cols={2}>
+  <BentoCell icon="cloud" title="OpenAI" href="/docs/settings/model">
+    Cloud STT **and** LLM cleanup. Sent as `Authorization: Bearer <key>`.
+  </BentoCell>
+  <BentoCell icon="cloud" title="ElevenLabs" href="/docs/settings/model">
+    Cloud STT only (Scribe v1). Sent in a custom `xi-api-key` header — not Bearer.
+  </BentoCell>
+  <BentoCell icon="llm" title="OpenRouter" href="/docs/settings/llm">
+    LLM cleanup only — never used for transcription.
+  </BentoCell>
+  <BentoCell icon="integrations" title="Ollama endpoint" href="/docs/settings/llm">
+    The shared base URL for local LLM cleanup. No key, no cloud.
+  </BentoCell>
+</BentoGrid>
+
+<Callout type="success" title="Cloud audio never touches the Python server — and keys never reach the renderer">
+  When you transcribe with a cloud model, audio goes from the Electron main process
+  **directly** to the provider over HTTPS (via the Vercel AI SDK) and never passes through
+  the local Python STT server. The keys themselves are stored by Electron main and are
+  **never** sent to the renderer UI — the settings window only ever sees the verification
+  status, not the secret. Local models still keep everything on-device.
+</Callout>
+
+## Ollama endpoint
+
+The base URL for your local Ollama (or any OpenAI-compatible) server. This is **shared
+infrastructure** — one endpoint serves both [dictation cleanup](/docs/settings/llm) and
+text transforms.
+
+<Screenshot src="sec-integrations" alt="The External Integrations section: an Ollama endpoint field at the top, followed by OpenAI and ElevenLabs API-key password fields each with a verification pill, and an OpenRouter API-key field." chrome="card" caption="Every external credential in one place — the Ollama endpoint plus the three API keys, each with its own verify pill." />
+
+<SettingRow label="Endpoint" settingKey="llm.endpoint" default="http://localhost:11434">
+  Any HTTP(S) URL. It is **not** validated when you type it and there is no verify pill —
+  an unreachable address persists silently until a feature actually calls it. Changing it
+  does not auto-reconnect; features keep using the old value until the next call. A reset
+  button restores the default.
+</SettingRow>
+
+## Cloud STT keys (OpenAI, ElevenLabs)
+
+Each provider gets its own password field with a reveal toggle. The key **persists on
+every keystroke** — switching tabs mid-typing can never lose it. A background probe then
+verifies the key and drives the status pill; it never blocks typing or reverts the value,
+so a rejected key stays in the field for you to fix in place.
+
+<SettingRow label="OpenAI API Key" settingKey="integrations.openai.apiKey" default="(empty)">
+  Unlocks OpenAI cloud transcription (Whisper v1 / GPT-4o models) and OpenAI LLM cleanup.
+  Verified against `GET /v1/models` with `Authorization: Bearer <key>`.
+</SettingRow>
+
+<SettingRow label="ElevenLabs API Key" settingKey="integrations.elevenlabs.apiKey" default="(empty)">
+  Unlocks ElevenLabs cloud transcription (Scribe v1). Verified against `GET /v1/user`
+  using the custom `xi-api-key` header — **not** Bearer auth.
+</SettingRow>
+
+Each key also stores two metadata fields the rest of the app reads: `verified`
+(`true` / `false` / `null` = never probed) and `lastVerifiedAt` (epoch-ms of the last
+successful check). Both reset to `null` on every keystroke and update after each probe.
+
+### Verification
+
+Verification runs **600 ms** after your last keystroke — long enough that pasting a key
+fires a single probe, short enough that you see the verdict before navigating away.
+
+<ModelTable
+  head={["Pill", "Meaning", "Color"]}
+  rows={[
+    [<span key="1">(none)</span>, "Field is empty — no key to verify.", "—"],
+    ["Verifying", "Probe in flight (spinner).", "Muted"],
+    ["Verified", "Provider accepted the key.", "Green"],
+    ["Invalid", "Provider rejected the key (auth / malformed). Hover for the error.", "Red"],
+    ["Couldn't verify", "Network or transport failure — the key may still be valid. Hover for the error.", "Yellow"],
+  ]}
+  caption="A pill only appears once a key is present. The same five states apply to OpenAI, ElevenLabs, and OpenRouter."
+/>
+
+<Callout type="info" title="A failed probe never deletes your key">
+  An "invalid" or "couldn't verify" result leaves the key exactly as you typed it. Fix a
+  typo inline and the next 600 ms probe re-checks it — no need to re-paste. Only the
+  **Remove** button (below) clears a stored key.
+</Callout>
+
+### Removing a key
+
+A **Remove** button appears below the field whenever a key is stored. Removing clears the
+key, resets `verified` / `lastVerifiedAt`, and drops the pill back to idle.
+
+<Callout type="warn" title="Removing the active cloud key is gated">
+  If the provider you're removing is your **current main STT model**, a confirmation
+  dialog blocks the removal first — yanking the key out from under dictation would silently
+  break your next utterance. If that provider isn't the active model, removal is immediate
+  with no prompt. Clearing the key by hand while the cloud model is active instead surfaces
+  a sticky banner telling you the current pick is now broken.
+</Callout>
+
+## OpenRouter key (LLM only)
+
+OpenRouter is a router for hosted LLMs used by [dictation cleanup](/docs/settings/llm) and
+text transforms. It is **not** a cloud STT provider — it never transcribes audio.
+
+<SettingRow label="OpenRouter API Key" settingKey="llm.openrouterApiKey" default="(empty)">
+  Password field with a reveal toggle and a "Get API key" link to openrouter.ai/keys.
+  Persists on every keystroke; verified 600 ms after the last keystroke with the same five
+  pill states as the cloud-STT keys. Because it is LLM-only, there is no active-model
+  removal gate — clearing it just disables OpenRouter cleanup.
+</SettingRow>
+
+## Encryption at rest
+
+Every key — OpenAI, ElevenLabs, and OpenRouter — is encrypted before it touches disk.
+
+<Callout type="success" title="DPAPI-backed encryption">
+  Keys are written through Electron's `safeStorage`, which on Windows is backed by **DPAPI**
+  (tied to your Windows user account). The encrypted blob lives in the app's settings store;
+  the plaintext never leaves the Electron main process and is never persisted in the clear.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Model" href="/docs/settings/model">
+    Switch the main STT model to an OpenAI or ElevenLabs cloud engine once a key verifies.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Reshape dictation with Ollama, OpenRouter, or Apple Intelligence — the consumers of these keys.
+  </Card>
+  <Card title="Cloud STT" href="/docs/models">
+    How cloud transcription compares to the 40+ local models.
+  </Card>
+  <Card title="Privacy & data" href="/docs/faq">
+    What stays on-device, what leaves it, and where keys are stored.
+  </Card>
+</Cards>

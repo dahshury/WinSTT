@@ -233,6 +233,7 @@ describe("SUPPORTED_EVENT_TYPES", () => {
 			stop_turn_detection: { type: "stop_turn_detection" },
 			transcription_start: { type: "transcription_start" },
 			no_audio_detected: { type: "no_audio_detected" },
+			transcription_failed: { type: "transcription_failed" },
 			vad_sensitivity_adapted: {
 				type: "vad_sensitivity_adapted",
 				new_sensitivity: 0.5,

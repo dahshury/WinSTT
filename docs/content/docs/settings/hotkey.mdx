@@ -1,45 +1,143 @@
 ---
-title: Hotkey Settings
-description: Configure the global push-to-talk hotkey
+title: Hotkeys
+description: The four global hotkeys — push-to-talk, re-paste, read-aloud, and transform — plus the while-held combos that cycle modes and cancel a pass.
 ---
 
-WinSTT uses a global hotkey that works even when the application window is not focused. The hotkey triggers recording according to the active recording mode.
+WinSTT runs four global hotkeys that work even when its window isn't focused: one to dictate, one to re-paste your last transcription, one to read a selection aloud, and one to transform selected text with the LLM. Two more actions ride on the push-to-talk key while it's held.
 
-## Settings Reference
+## Where the controls live
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `pushToTalkKey` | string | `"LCtrl+LMeta"` | The global hotkey, specified as a uiohook-style combo string |
-| `repasteHotkey` | string | `"LCtrl+LShift+V"` | Exclusive global shortcut that re-pastes your most recent transcription. Empty string disables it. |
+The hotkey recorder UI sits in the **Audio** tab, under the input-device picker — that's where you record or rebind the push-to-talk key and read the live shortcuts legend. The re-paste and read-aloud bindings are recorded in the same recorder; the transform binding is set on the **LLM** tab next to the composed transform.
 
-## Re-paste Last Transcription
+<Screenshot src="sec-audio-hotkeys" alt="The Hotkey Configuration section of the Audio tab: the push-to-talk recorder with its current combo, and the live shortcuts legend beneath it." chrome="card" caption="The push-to-talk recorder and the live shortcuts legend, on the Audio tab." />
 
-Pressing the **re-paste** shortcut injects your most recent dictation transcription into whatever app currently has focus — handy when a paste landed in the wrong window, or you want the same text again without re-dictating.
+Every binding is a uiohook-style combo string — physical-key tokens joined with `+`, with left/right-specific modifiers (`LCtrl`, `RCtrl`, `LShift`, `RShift`, `LAlt`, `RAlt`, `LMeta`). These are **not** Electron accelerators. Picking `LMeta` over a generic `Meta` cuts down on conflicts.
 
-Unlike the push-to-talk hotkey (which only *observes* keys), this shortcut is registered **exclusively**: while WinSTT is running the combo is captured system-wide and **only** triggers the re-paste. It will *not* also fire the focused app's own binding for that combo (e.g. `Ctrl+Shift+V` = paste-without-formatting / terminal paste). That is what makes the behaviour deterministic — and why the combo loses its native meaning in every other app while WinSTT runs.
+## The four hotkeys
 
-Because it's exclusive, it's fully rebindable. In **Settings → Hotkey**, record a different combo, or press **Clear** to disable the feature entirely (the setting becomes an empty string and no shortcut is registered).
+<ShortcutLegend rows={[
+  { action: "Push-to-Talk", keys: "LCtrl+LMeta", note: "Start / stop dictation. Max 3 keys. Hidden in Listen mode." },
+  { action: "Re-paste last", keys: "LCtrl+LShift+V", note: "Re-inject your most recent transcription. Exclusive — swallows the combo system-wide." },
+  { action: "Read selection aloud (TTS)", keys: "LMeta+LShift+E", note: "Speak the current selection. Only armed when TTS is enabled." },
+  { action: "Transform selection (LLM)", keys: "(unset)", note: "Run the composed transform on the selection. Empty by default — try LCtrl+LShift+T." },
+]} />
 
-The text is delivered through the same path as dictation auto-paste (per-character typing — your clipboard is never touched), so it behaves the same in terminals, editors, and browsers.
+### Push-to-Talk
 
-## Combo Format
+<SettingRow label="Push-to-Talk Key" settingKey="hotkey.pushToTalkKey" default="LCtrl+LMeta">
+  The primary hotkey for dictation. What pressing it does depends on the active
+  <ModeBadge mode="ptt" /> <ModeBadge mode="toggle" /> <ModeBadge mode="listen" /> <ModeBadge mode="wakeword" />
+  recording mode. Capped at **3 keys** (`MAX_COMBO_KEYS`). Recorded via low-level uiohook —
+  it only *observes* keys, so it never blocks the focused app's own shortcuts. Hidden entirely
+  when the recording mode is **Listen** (loopback capture needs no key).
+</SettingRow>
 
-The hotkey uses a uiohook-style combo string — **not** an Electron accelerator. Tokens are physical keys joined with `+`.
+### Re-paste last transcription
 
-**Modifiers (left/right specific):** `LCtrl`, `RCtrl`, `LShift`, `RShift`, `LAlt`, `RAlt`, `LMeta`
+<SettingRow label="Re-paste Hotkey" settingKey="general.repasteHotkey" default="LCtrl+LShift+V">
+  Re-injects your most recent dictation into whatever window has focus — for when a paste
+  landed in the wrong app, or you want the same text again without re-dictating. It delivers
+  through the same path as dictation auto-paste, so it behaves identically in terminals,
+  editors, and browsers. Silent if you haven't dictated anything yet. Press **Clear** (empty
+  string) to disable it.
+</SettingRow>
 
-**Other keys:** letters, digits, `F1`–`F24`
-
-### Examples
-
-| Combo | Description |
-|-------|-------------|
-| `LCtrl+LMeta` | Left Ctrl and Left Windows key (default) |
-| `LCtrl+Space` | Left Ctrl and Spacebar |
-| `LAlt+LShift+A` | Left Alt, Left Shift, and A |
-| `F13` | Function key 13 (useful for dedicated macro keys) |
-| `LCtrl+LShift+F9` | Left Ctrl, Left Shift, and F9 |
-
-<Callout title="Choosing a hotkey" type="info">
-  Pick a combination that does not conflict with other applications. Left/right-specific modifiers (e.g. `LMeta` rather than a generic `Meta`) reduce conflicts. Keys like F13–F24 are rarely used by other software and make excellent dedicated hotkeys.
+<Callout type="warn" title="Re-paste is an exclusive shortcut">
+  Unlike the other three (which passively observe keys), re-paste is registered through
+  Electron's `globalShortcut` and **swallows the combo system-wide**. While WinSTT runs,
+  <Combo keys="LCtrl+LShift+V" /> only re-pastes — it won't also fire the focused app's
+  native binding (e.g. paste-without-formatting / terminal paste). That's what makes it
+  deterministic, and why it loses its native meaning everywhere until you clear or rebind it.
 </Callout>
+
+### Read selection aloud (TTS)
+
+<SettingRow label="TTS Hotkey" settingKey="tts.hotkey" default="LMeta+LShift+E">
+  Captures the active selection and reads it aloud with the text-to-speech voice. Only fires
+  when **TTS is enabled** *and* something is selected. While the playback is running, hold the
+  TTS hotkey together with <Kbd>Backspace</Kbd> to stop immediately.
+</SettingRow>
+
+### Transform selection (LLM)
+
+<SettingRow label="Transform Hotkey" settingKey="llm.transforms.hotkey" default="(unset)">
+  Runs the composed transform — your active tone preset plus any custom modifiers — on
+  whatever text is currently selected, in place. Empty by default (the feature is off until
+  you bind it). A suggested combo is <Combo keys="LCtrl+LShift+T" />. Single-shot per hold:
+  it fires once, then re-arms only after you release a key, so auto-repeat can't run the LLM
+  dozens of times. Set it on the **LLM** tab next to the composed transform.
+</SettingRow>
+
+## While you hold the push-to-talk key
+
+Two extra actions are detected while the push-to-talk key is held down — press the second key without letting go of the hotkey.
+
+<ShortcutLegend rows={[
+  { action: "Cycle recording mode", keys: "Push-to-Talk + ArrowUp", note: "Step forward: PTT → Toggle → Listen → Wakeword → PTT (wraps)." },
+  { action: "Cancel the current pass", keys: "Push-to-Talk + Backspace", note: "Abort an in-flight transcription or LLM cleanup pass." },
+]} />
+
+Hold the hotkey and tap <Kbd>↑</Kbd> to advance one link in the mode chain
+(<ModeBadge mode="ptt" /> → <ModeBadge mode="toggle" /> → <ModeBadge mode="listen" /> → <ModeBadge mode="wakeword" /> → back to <ModeBadge mode="ptt" />). Hold the hotkey and tap <Kbd>Backspace</Kbd> to cancel whatever is in flight — handy when you misspoke and want to abandon the result before it pastes. The shortcuts legend on the Audio tab highlights the mode you're currently in and shows these two rows (plus the two TTS rows when TTS is enabled).
+
+## Combo format
+
+Tokens are physical keys joined with `+`. Modifiers are left/right-specific.
+
+<ModelTable
+  head={["Combo", "Meaning"]}
+  rows={[
+    ["LCtrl+LMeta", "Left Ctrl + Left Windows key (PTT default)"],
+    ["LCtrl+LShift+V", "Left Ctrl + Left Shift + V (re-paste default)"],
+    ["LMeta+LShift+E", "Left Meta + Left Shift + E (TTS default)"],
+    ["LCtrl+Space", "Left Ctrl + Spacebar"],
+    ["F13", "Function key 13 — great for a dedicated macro key"],
+    ["LCtrl+LShift+F9", "Left Ctrl + Left Shift + F9"],
+  ]}
+  caption="Modifiers: LCtrl RCtrl LShift RShift LAlt RAlt LMeta. Other keys: letters, digits, F1–F24. Push-to-Talk is capped at 3 keys."
+/>
+
+<Callout type="info" title="Choosing a hotkey">
+  Pick a combo no other app uses. Left/right-specific modifiers (`LMeta` rather than a generic
+  `Meta`) reduce conflicts. `F13`–`F24` are almost never bound by other software, which makes
+  them excellent dedicated dictation keys — especially on macro keyboards.
+</Callout>
+
+## Conflict resolution
+
+The recorder rejects a new binding inline if its key set is **equal to, a subset of, or a superset of** any other binding — pressing the larger combo would otherwise fire the smaller one "by accident." Two combos are only allowed when each has at least one key the other lacks (they're disjoint).
+
+A second pass runs at startup as defense against hand-edited `settings.json` or a sync conflict that smuggled overlapping combos past the recorder. Its policy is anchored on push-to-talk:
+
+<ModelTable
+  head={["Binding", "On collision"]}
+  rows={[
+    ["Push-to-Talk", "Anchor — never rewritten."],
+    ["Re-paste", "Reset to its default if it collides with push-to-talk."],
+    ["TTS", "Reset to its default if it collides with push-to-talk or with the settled re-paste binding."],
+  ]}
+  caption="If a default would also collide (e.g. you set PTT to a default's combo), the value is left as-is and the recorder shows the inline error next time you touch it."
+/>
+
+<Callout type="warn" title="Recording a hotkey pauses the others">
+  While you're capturing a new combo in the recorder, the re-paste shortcut is unregistered and
+  the TTS / transform listeners are suppressed — so the keys you press to record don't also fire
+  those actions mid-recording.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Recording modes" href="/docs/recording-modes">
+    Push-to-talk, toggle, listen, and wake-word — what the hotkey triggers in each.
+  </Card>
+  <Card title="Audio & overlay" href="/docs/settings/audio">
+    The input device, recording overlay, and the live shortcuts legend.
+  </Card>
+  <Card title="Text-to-speech" href="/docs/text-to-speech">
+    Enable TTS so the read-aloud hotkey is armed; pick a voice and language.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Build the composed transform that the transform hotkey runs on a selection.
+  </Card>
+</Cards>

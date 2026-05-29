@@ -100,7 +100,12 @@ function pad(v: string, w: number): string {
 	return v.length >= w ? v : v + " ".repeat(w - v.length);
 }
 
-function fmtNum(n: number): string {
+function fmtNum(n: number | null | undefined): string {
+	// CRAP can be null for "no coverage data" functions (type-only / unreachable
+	// spans). Guard so the regression table never crashes on `null.toFixed`.
+	if (typeof n !== "number" || !Number.isFinite(n)) {
+		return "n/a";
+	}
 	return Number.isInteger(n) ? String(n) : n.toFixed(2);
 }
 
@@ -178,7 +183,13 @@ function main(): void {
 	for (const e of current) {
 		const prev = baselineIdx.get(keyOf(e));
 		if (!prev) {
-			if (e.crap > 5) newRisky.push(e);
+			if (Number.isFinite(e.crap) && e.crap > 5) newRisky.push(e);
+			continue;
+		}
+		// A null/NaN CRAP means "no coverage data" (type-only / unreachable span)
+		// — not comparable for regression. Skip rather than treat null as 0,
+		// which previously fabricated bogus regressions and crashed fmtNum.
+		if (!(Number.isFinite(e.crap) && Number.isFinite(prev.crap))) {
 			continue;
 		}
 		const delta = e.crap - prev.crap;

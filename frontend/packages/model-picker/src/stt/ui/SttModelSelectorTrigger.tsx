@@ -3,7 +3,7 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ComponentPropsWithoutRef } from "react";
+import type { ComponentPropsWithoutRef, MouseEvent } from "react";
 import { type ModelInfo, useModelSwapStore } from "@/entities/model-catalog";
 import { Button } from "@/shared/ui/button";
 import {
@@ -12,7 +12,7 @@ import {
 	SwitchingFromToRow,
 	SwitchingPill,
 } from "@/shared/ui/switching-trigger";
-import { getAuthorLabel, getFamilyConfig } from "../lib/family-helpers";
+import { getAuthorLabel, getFamilyConfig, variantDisplayName } from "../lib/family-helpers";
 
 export interface SttModelSelectorTriggerProps {
 	/** Models known to the parent picker. Used to resolve the previous-model
@@ -81,33 +81,39 @@ function AuthorChip({ family, muted = false }: { family: ModelInfo["family"]; mu
 	);
 }
 
-/** "NeMo Parakeet CTC 0.6B" → "Parakeet CTC 0.6B" — the author chip on the
- *  left already conveys the family, so leading it in the name is redundant. */
-function stripFamilyPrefix(model: ModelInfo): string {
-	const familyLabel = getFamilyConfig(model.family).label;
-	const stripped = model.displayName.replace(new RegExp(`^${familyLabel}\\s+`), "");
-	return stripped.length > 0 ? stripped : model.displayName;
-}
-
-function SelectedContent({ selectedModel }: { selectedModel: ModelInfo }) {
+function SelectedContent({
+	selectedModel,
+	peers,
+}: {
+	selectedModel: ModelInfo;
+	peers?: readonly ModelInfo[] | undefined;
+}) {
 	return (
 		<div className="flex min-w-0 flex-1 items-center gap-2">
 			<AuthorChip family={selectedModel.family} />
 			<span className="truncate font-medium text-body text-foreground leading-tight tracking-tight">
-				{stripFamilyPrefix(selectedModel)}
+				{variantDisplayName(selectedModel, peers)}
 			</span>
 		</div>
 	);
 }
 
 /** STT-flavored chip+name pair used as a slot inside `SwitchingFromToRow`. */
-function SttModelLabel({ model, side }: { model: ModelInfo; side: "from" | "to" }) {
+function SttModelLabel({
+	model,
+	side,
+	peers,
+}: {
+	model: ModelInfo;
+	side: "from" | "to";
+	peers?: readonly ModelInfo[] | undefined;
+}) {
 	if (side === "from") {
 		return (
 			<>
 				<AuthorChip family={model.family} muted />
 				<span className="min-w-0 max-w-[8rem] truncate font-medium text-body text-foreground-dim leading-tight tracking-tight line-through decoration-foreground-dim/40">
-					{stripFamilyPrefix(model)}
+					{variantDisplayName(model, peers)}
 				</span>
 			</>
 		);
@@ -116,7 +122,7 @@ function SttModelLabel({ model, side }: { model: ModelInfo; side: "from" | "to" 
 		<>
 			<AuthorChip family={model.family} />
 			<span className="min-w-0 truncate font-semibold text-accent text-body leading-tight tracking-tight">
-				{stripFamilyPrefix(model)}
+				{variantDisplayName(model, peers)}
 			</span>
 		</>
 	);
@@ -142,16 +148,18 @@ function DownloadingBody({
 	percent,
 	count = 1,
 	averagePercent = null,
+	peers,
 }: {
 	ariaLabel: string | undefined;
 	averagePercent?: number | null;
 	count?: number;
+	peers?: readonly ModelInfo[] | undefined;
 	percent: number | null;
 	selectedModel: ModelInfo | undefined;
 	toModel: ModelInfo | undefined;
 }) {
 	const multi = count >= 2;
-	const singleTargetLabel = toModel ? stripFamilyPrefix(toModel) : "model";
+	const singleTargetLabel = toModel ? variantDisplayName(toModel, peers) : "model";
 	const targetLabel = multi ? `${count} downloads` : singleTargetLabel;
 	const reportedPercent = multi ? averagePercent : percent;
 	const percentLabel = reportedPercent === null ? "Starting…" : `${reportedPercent}%`;
@@ -163,7 +171,7 @@ function DownloadingBody({
 			data-slot="downloading-body"
 		>
 			{selectedModel ? (
-				<SelectedContent selectedModel={selectedModel} />
+				<SelectedContent peers={peers} selectedModel={selectedModel} />
 			) : (
 				<span className="font-medium text-body text-foreground-muted italic tracking-tight">
 					(no model)
@@ -191,8 +199,12 @@ function TriggerBody({
 	selectedModel,
 	placeholder,
 	ariaLabel,
+	peers,
 }: {
 	ariaLabel: string | undefined;
+	/** Catalog of known models — lets {@link variantDisplayName} keep the size
+	 *  token when two would collide (Canary 180M Flash vs Canary 1B Flash). */
+	peers?: readonly ModelInfo[] | undefined;
 	/** Mean percent across all in-flight downloads — drives the percent
 	 *  label when ``downloadCount >= 2``. */
 	downloadAveragePercent: number | null;
@@ -224,6 +236,7 @@ function TriggerBody({
 				ariaLabel={ariaLabel}
 				averagePercent={downloadAveragePercent}
 				count={downloadCount}
+				peers={peers}
 				percent={downloadPercent}
 				selectedModel={selectedModel}
 				toModel={toModel}
@@ -236,6 +249,7 @@ function TriggerBody({
 				ariaLabel={ariaLabel}
 				averagePercent={downloadAveragePercent}
 				count={downloadCount}
+				peers={peers}
 				percent={downloadPercent}
 				selectedModel={selectedModel}
 				toModel={downloadingModel}
@@ -246,13 +260,13 @@ function TriggerBody({
 		return (
 			<SwitchingFromToRow
 				ariaLabel={ariaLabel}
-				from={fromModel ? <SttModelLabel model={fromModel} side="from" /> : undefined}
-				to={toModel ? <SttModelLabel model={toModel} side="to" /> : undefined}
+				from={fromModel ? <SttModelLabel model={fromModel} peers={peers} side="from" /> : undefined}
+				to={toModel ? <SttModelLabel model={toModel} peers={peers} side="to" /> : undefined}
 			/>
 		);
 	}
 	if (selectedModel) {
-		return <SelectedContent selectedModel={selectedModel} />;
+		return <SelectedContent peers={peers} selectedModel={selectedModel} />;
 	}
 	return (
 		<span className="font-medium text-body text-foreground-muted italic tracking-tight">
@@ -413,6 +427,7 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 				isBackgroundDownload={isBackgroundDownload}
 				isDownloadingTarget={isDownloadingTarget}
 				isSwitching={isSwitching}
+				peers={catalog}
 				placeholder={rest.placeholder}
 				selectedModel={rest.selectedModel}
 				toModel={toModel}
@@ -441,4 +456,18 @@ export function SttModelSelectorTrigger(props: SttModelSelectorTriggerProps) {
 			)}
 		/>
 	);
+}
+
+/** Standalone trigger button — same glass-card visual, swap/download states,
+ *  and ``data-slot`` as {@link SttModelSelectorTrigger}, but WITHOUT the
+ *  ``Combobox.Trigger`` wrapper. For consumers that open the detached picker
+ *  BrowserWindow on click (extending beyond the host window) instead of an
+ *  in-window popup — the settings panel and the footer chip share this path. */
+export function SttModelSelectorTriggerButton({
+	onActivate,
+	...props
+}: SttModelSelectorTriggerProps & {
+	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+	return <TriggerButton {...props} buttonProps={{ type: "button", onClick: onActivate }} />;
 }

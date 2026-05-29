@@ -14,10 +14,11 @@ import {
 	ttsSpeak,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
+import type { SelectOptionGroup } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { useTtsDownloadProgress } from "../model/use-tts-download-progress";
 import { useTtsInstallGate } from "../model/use-tts-install-gate";
-import { TtsControls, type TtsDeviceValue } from "./TtsControls";
+import { TtsControls } from "./TtsControls";
 import { TtsInstallBanner } from "./TtsInstallBanner";
 import { TtsInstallDialog } from "./TtsInstallDialog";
 
@@ -60,26 +61,64 @@ function deriveLanguage(voiceId: string): string {
 	}
 }
 
-function buildVoiceOptions(catalog: TtsVoiceCatalog): SelectOption[] {
-	// Each voice belongs to exactly one language, so listing them in language-
-	// grouped order keeps the searchable list scannable even at 54 voices.
-	const sorted = catalog.voices.toSorted((a, b) => {
-		const langCmp = a.language.localeCompare(b.language);
-		return langCmp === 0 ? a.label.localeCompare(b.label) : langCmp;
-	});
-	return sorted.map<SelectOption>((voice) => ({
-		id: voice.id,
-		label: `${voice.label} (${voice.language})`,
-		badge: voice.language.split("-")[0]?.toUpperCase() ?? voice.language.toUpperCase(),
-	}));
+// Short country/region code shown as the group-header badge and on the
+// selected voice in the (closed) trigger. Falls back to the language code so
+// an unknown future locale still gets *a* badge.
+const REGION_BADGE: Record<string, string> = {
+	"en-us": "US",
+	"en-gb": "UK",
+	ja: "JP",
+	cmn: "ZH",
+	es: "ES",
+	fr: "FR",
+	hi: "HI",
+	it: "IT",
+	"pt-br": "BR",
+};
+
+function regionBadge(language: string): string {
+	return REGION_BADGE[language] ?? language.split("-")[0]?.toUpperCase() ?? language.toUpperCase();
 }
 
-function buildDeviceOptions(t: ReturnType<typeof useTranslations>): SelectOption[] {
-	return [
-		{ id: "auto", label: t("deviceAuto") },
-		{ id: "cuda", label: t("deviceCuda") },
-		{ id: "cpu", label: t("deviceCpu") },
-	];
+// Catalog labels already suffix the country ("Heart (US)"); under a country
+// header that suffix is redundant, so strip a trailing parenthetical for the
+// row text. The badge keeps the country legible in the closed trigger.
+const TRAILING_PAREN_RE = /\s*\([^)]*\)\s*$/;
+
+function stripRegionSuffix(label: string): string {
+	return label.replace(TRAILING_PAREN_RE, "").trim() || label;
+}
+
+// Group the 54 voices by country (their language/locale) so the picker reads
+// like the STT model selector — one sticky header per country, voices nested
+// under it. Group order follows the catalog's own language ordering; voices
+// whose language isn't listed there sort last, then alphabetically by code.
+function buildVoiceGroups(catalog: TtsVoiceCatalog): SelectOptionGroup[] {
+	const order = new Map(catalog.languages.map((l, i) => [l.code, i]));
+	const labelFor = new Map(catalog.languages.map((l) => [l.code, l.label]));
+	const byLang = new Map<string, SelectOption[]>();
+	for (const voice of catalog.voices) {
+		const opts = byLang.get(voice.language) ?? [];
+		opts.push({
+			id: voice.id,
+			label: stripRegionSuffix(voice.label),
+			badge: regionBadge(voice.language),
+		});
+		byLang.set(voice.language, opts);
+	}
+	const LAST = Number.MAX_SAFE_INTEGER;
+	return [...byLang.entries()]
+		.sort(([a], [b]) => {
+			const ai = order.get(a) ?? LAST;
+			const bi = order.get(b) ?? LAST;
+			return ai === bi ? a.localeCompare(b) : ai - bi;
+		})
+		.map<SelectOptionGroup>(([code, opts]) => ({
+			value: code,
+			label: labelFor.get(code) ?? code,
+			badge: regionBadge(code),
+			options: opts.toSorted((x, y) => x.label.localeCompare(y.label)),
+		}));
 }
 
 export function TtsModelSection(_props: TtsModelSectionProps = {}) {
@@ -127,7 +166,6 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	const enabled = tts?.enabled ?? false;
 	const voice = tts?.voice ?? "af_heart";
 	const speed = tts?.speed ?? DEFAULT_SETTINGS.tts.speed;
-	const device: TtsDeviceValue = (tts?.device as TtsDeviceValue) ?? "auto";
 
 	// Latest-value refs for the on-enable catalog fetch. We only want to run
 	// the fetch when `enabled` flips, but the .then() callback needs the
@@ -235,8 +273,7 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	);
 
 	const downloadProgress = useTtsDownloadProgress(installPhase);
-	const voiceOptions = buildVoiceOptions(catalog);
-	const deviceOptions = buildDeviceOptions(t);
+	const voiceGroups = buildVoiceGroups(catalog);
 
 	const langForVoice = (voiceId: string): string =>
 		catalog.voices.find((v) => v.id === voiceId)?.language ?? deriveLanguage(voiceId);
@@ -277,17 +314,13 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		update({ speed: DEFAULT_SETTINGS.tts.speed });
 	};
 
-	const handleDeviceChange = (next: string): void => {
-		update({ device: next as TtsDeviceValue });
-	};
-
 	const isLoading = playback.requestId !== null && !playback.playing;
 	const isSpeaking = playback.requestId !== null && playback.playing;
-	const voicePlaceholder = voiceOptions.length === 0 ? t("noVoicesYet") : t("voiceCaption");
+	const voicePlaceholder = catalog.voices.length === 0 ? t("noVoicesYet") : t("voiceCaption");
 
 	// While the on-demand install is downloading OR sitting paused, every
 	// settings control below the section header is locked. Two reasons:
-	//   1. Voice / speed / device changes can't take effect until the
+	//   1. Voice / speed changes can't take effect until the
 	//      engine is loaded — letting the user fiddle here pretends to
 	//      change something it doesn't, then surprises them once the
 	//      install finishes and the new settings retroactively apply.
@@ -328,12 +361,9 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 					>
 						<TtsControls
 							activeRequestId={playback.requestId}
-							deviceOptions={deviceOptions}
-							deviceValue={device}
 							isLoading={isLoading}
 							isSpeaking={isSpeaking}
 							langForVoice={langForVoice}
-							onDeviceChange={handleDeviceChange}
 							onSpeedChange={handleSpeedChange}
 							onSpeedReset={handleSpeedReset}
 							onVoiceChange={handleVoiceChange}
@@ -342,7 +372,7 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 							speed={speed}
 							t={t}
 							voice={voice}
-							voiceOptions={voiceOptions}
+							voiceGroups={voiceGroups}
 							voicePlaceholder={voicePlaceholder}
 						/>
 					</div>

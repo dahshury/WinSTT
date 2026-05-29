@@ -49,7 +49,11 @@ export function initSound(mainWindow: BrowserWindow): void {
 		}
 		try {
 			return fs.readFileSync(soundPath);
-		} catch {
+		} catch (err) {
+			// A missing / corrupt splash.wav (or a custom path that vanished)
+			// must surface — a silent null leaves the renderer with no audio and
+			// no clue why. Log before returning null.
+			console.warn("[sound] Failed to read sound file:", soundPath, err);
 			return null;
 		}
 	});

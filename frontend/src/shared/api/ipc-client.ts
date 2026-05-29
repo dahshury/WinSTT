@@ -293,6 +293,8 @@ export const onFullSentence = (cb: (text: string) => void) =>
 
 export const onNoAudioDetected = (cb: () => void) => on(IPC.STT_NO_AUDIO_DETECTED, cb);
 
+export const onTranscriptionFailed = (cb: () => void) => on(IPC.STT_TRANSCRIPTION_FAILED, cb);
+
 export const onRecordingStart = (cb: () => void) => on(IPC.STT_RECORDING_START, cb);
 export const onRecordingStop = (cb: () => void) => on(IPC.STT_RECORDING_STOP, cb);
 export const onVadStart = (cb: () => void) => on(IPC.STT_VAD_START, cb);
@@ -531,6 +533,18 @@ export interface ModelStateEntry {
 	cache_by_quantization: Record<string, ModelCacheInfo>;
 	comfortable_on_cpu: boolean;
 	comfortable_on_gpu: boolean;
+	/**
+	 * The precision the SERVER will actually load for this model under the
+	 * current `onnx_quantization` setting. The default/auto sentinel (`""`)
+	 * is re-resolved per model (e.g. NeMo/Cohere/GigaAM families → `int8` on
+	 * non-CUDA accelerators), so this can differ from the raw setting. The
+	 * download gate + confirmation dialog key off THIS precision's cache
+	 * state — otherwise a model whose default export is on disk but whose
+	 * effective `int8` weights aren't would paint a "Downloaded" badge and
+	 * then silently re-download on swap. Optional: older servers omit it,
+	 * in which case consumers fall back to the raw selection.
+	 */
+	effective_quantization?: string;
 	estimated_bytes: number;
 	id: string;
 }
@@ -875,6 +889,21 @@ export const deleteTranscriptionHistoryEntry = (id: string) =>
 /** Load the WAV for an entry as a data URI ready for an `<audio src>`. */
 export const loadTranscriptionHistoryAudio = (id: string) =>
 	invokeOrDefault<string | null>(IPC.HISTORY_LOAD_AUDIO, null, id);
+
+/** Per-word playback timing (seconds) for highlight-while-playing. */
+export interface WordTiming {
+	end: number;
+	start: number;
+	text: string;
+}
+
+/**
+ * Lazily align an entry's WAV to per-word timestamps (the server runs a small
+ * timestamped-Whisper export via cross-attention DTW). Returns `[]` when the
+ * entry has no audio or alignment fails — highlighting is best-effort.
+ */
+export const alignTranscriptionHistoryAudio = (id: string) =>
+	invokeOrDefault<WordTiming[]>(IPC.HISTORY_ALIGN_AUDIO, [], id);
 
 export const onTranscriptionHistoryAdded = (cb: (entry: TranscriptionHistoryEntry) => void) =>
 	onCast<TranscriptionHistoryEntry>(IPC.HISTORY_ADDED, cb);

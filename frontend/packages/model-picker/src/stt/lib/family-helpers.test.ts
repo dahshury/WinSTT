@@ -6,6 +6,7 @@ import {
 	getFamilyConfig,
 	groupByFamily,
 	parseParameterSize,
+	variantDisplayName,
 } from "./family-helpers";
 
 function model(id: string, family: FamilyKey, sizeLabel = "39M"): ModelInfo {
@@ -50,10 +51,15 @@ describe("getFamilyConfig", () => {
 		const cfg = getFamilyConfig("sense_voice");
 		expect(cfg.label).toBe("SenseVoice");
 		expect(cfg.icon).toBeDefined();
-		// FunAudioLLM (Alibaba) doesn't ship a public provider-icon asset,
-		// so SenseVoice falls back to the HugeIcon — matches Moonshine's
-		// shape.
-		expect(cfg.logoSrc).toBeUndefined();
+		// FunAudioLLM (Alibaba) brand logo bundled under public/provider-icons/.
+		expect(cfg.logoSrc).toBe("/provider-icons/funaudiollm.png");
+	});
+
+	test("includes the Dolphin family with the DataoceanAI brand logo", () => {
+		const cfg = getFamilyConfig("dolphin");
+		expect(cfg.label).toBe("Dolphin");
+		expect(cfg.icon).toBeDefined();
+		expect(cfg.logoSrc).toBe("/provider-icons/dataoceanai.png");
 	});
 });
 
@@ -73,6 +79,65 @@ describe("SenseVoice family bundling", () => {
 		expect(bundles).toHaveLength(1);
 		expect(bundles[0]?.baseId).toBe("sense-voice-small");
 		expect(bundles[0]?.variants).toHaveLength(1);
+	});
+});
+
+describe("variantDisplayName", () => {
+	function named(displayName: string, family: FamilyKey): ModelInfo {
+		return { ...model("id", family), displayName };
+	}
+
+	test("strips the redundant parameter-count token from the name", () => {
+		expect(variantDisplayName(named("NeMo Canary 180M Flash", "nemo"))).toBe("Canary Flash");
+		expect(variantDisplayName(named("NeMo Canary 1B v2", "nemo"))).toBe("Canary v2");
+		expect(variantDisplayName(named("NeMo Parakeet CTC 0.6B", "nemo"))).toBe("Parakeet CTC");
+		// Token mid-name leaves no double space behind.
+		expect(variantDisplayName(named("NeMo Parakeet TDT 0.6B v3", "nemo"))).toBe("Parakeet TDT v3");
+	});
+
+	test("strips the leading family label (the chip already conveys it)", () => {
+		expect(variantDisplayName(named("Whisper Large v3", "whisper"))).toBe("Large v3");
+		expect(variantDisplayName(named("Lite-Whisper Large v3 Turbo", "lite-whisper"))).toBe(
+			"Large v3 Turbo"
+		);
+	});
+
+	test("leaves version tokens and product numbers without an M/B suffix intact", () => {
+		// "v3" / "25" are not parameter counts — they must survive.
+		expect(variantDisplayName(named("GigaAM v3 E2E CTC", "gigaam"))).toBe("v3 E2E CTC");
+		expect(variantDisplayName(named("Breeze ASR 25", "whisper"))).toBe("Breeze ASR 25");
+	});
+
+	test("keeps language / flavour qualifiers", () => {
+		expect(variantDisplayName(named("Whisper Tiny (EN)", "whisper"))).toBe("Tiny (EN)");
+		expect(
+			variantDisplayName(named("Lite-Whisper Large v3 Turbo (Accelerated)", "lite-whisper"))
+		).toBe("Large v3 Turbo (Accelerated)");
+	});
+
+	test("falls back to the raw name if stripping would empty it", () => {
+		// Pathological: name is nothing but the family label + a size token.
+		expect(variantDisplayName(named("Whisper 39M", "whisper"))).toBe("Whisper 39M");
+	});
+
+	test("keeps the size token when dropping it would collide with a peer", () => {
+		const flash180 = {
+			...model("nemo-canary-180m-flash", "nemo"),
+			displayName: "NeMo Canary 180M Flash",
+		};
+		const flash1b = {
+			...model("nemo-canary-1b-flash", "nemo"),
+			displayName: "NeMo Canary 1B Flash",
+		};
+		const v2 = { ...model("nemo-canary-1b-v2", "nemo"), displayName: "NeMo Canary 1B v2" };
+		const peers = [flash180, flash1b, v2];
+		// Both flashes collapse to "Canary Flash" → each keeps its size to disambiguate.
+		expect(variantDisplayName(flash180, peers)).toBe("Canary 180M Flash");
+		expect(variantDisplayName(flash1b, peers)).toBe("Canary 1B Flash");
+		// v2 has no same-name collision → size still stripped.
+		expect(variantDisplayName(v2, peers)).toBe("Canary v2");
+		// Without peers (collision unknown) the size is always stripped.
+		expect(variantDisplayName(flash180)).toBe("Canary Flash");
 	});
 });
 

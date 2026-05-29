@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { asInvalid } from "@test/lib/cast";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
@@ -43,7 +43,12 @@ mock.module("@/shared/api/ipc-client", () => ({
 	},
 }));
 
-const { useModelStateStore, initModelStateStore } = await import("./model-state-store");
+const {
+	useModelStateStore,
+	initModelStateStore,
+	_resetModelStateRetryForTests,
+	_setModelStateRetryDelaysForTests,
+} = await import("./model-state-store");
 
 const SYSTEM_INFO: SystemInfoEntry = {
 	gpus: [{ name: "RTX 4090", total_vram_bytes: 24 * 1024 ** 3 }],
@@ -65,6 +70,13 @@ function makeEntry(id: string): ModelStateEntry {
 function resetStore(): void {
 	useModelStateStore.setState({ statesById: {}, systemInfo: null, isLoaded: false });
 }
+
+afterEach(() => {
+	// Cancel any pending retry timer a failed refresh() armed — a leaked
+	// timer would fire in a sibling test (the store is a process-global
+	// singleton) and call refresh() against another test's payload.
+	_resetModelStateRetryForTests();
+});
 
 describe("useModelStateStore.setAll (covers toMap)", () => {
 	test("maps array of entries into statesById keyed by id and flips isLoaded", () => {
@@ -152,6 +164,40 @@ describe("useModelStateStore.refresh", () => {
 		expect(state.isLoaded).toBe(true);
 		expect(state.statesById).toEqual({});
 		expect(state.systemInfo).toEqual(SYSTEM_INFO);
+	});
+
+	test("retries after a failed first fetch until the server responds (no model switch needed)", async () => {
+		// Repro: on launch the server's first `list_models_with_state` can
+		// exceed the IPC timeout while the startup HF language-overlay refresh
+		// saturates (~25s of per-model `model_info` GETs). Before the retry,
+		// `refresh()` gave up silently and the picker stayed empty until a
+		// `model_cache_changed` (i.e. a model switch) re-triggered it.
+		resetStore();
+		_setModelStateRetryDelaysForTests([5, 5, 5, 5]);
+		ipcOverrides.payload = null; // first attempt times out → null
+		await useModelStateStore.getState().refresh();
+		expect(useModelStateStore.getState().isLoaded).toBe(false);
+
+		// Server becomes responsive; a scheduled retry must pick it up.
+		ipcOverrides.payload = { states: [makeEntry("vosk")], system_info: SYSTEM_INFO };
+		await new Promise((r) => setTimeout(r, 60));
+
+		const state = useModelStateStore.getState();
+		expect(state.isLoaded).toBe(true);
+		expect(state.statesById.vosk).toBeDefined();
+	});
+
+	test("stops retrying once a fetch succeeds (no runaway timers)", async () => {
+		resetStore();
+		_setModelStateRetryDelaysForTests([5, 5, 5, 5]);
+		fetchSpy.mockClear();
+		ipcOverrides.payload = { states: [makeEntry("tiny")], system_info: SYSTEM_INFO };
+		await useModelStateStore.getState().refresh();
+		expect(useModelStateStore.getState().isLoaded).toBe(true);
+		const callsAfterSuccess = fetchSpy.mock.calls.length;
+		await new Promise((r) => setTimeout(r, 40));
+		// No further fetches scheduled after a successful load.
+		expect(fetchSpy.mock.calls.length).toBe(callsAfterSuccess);
 	});
 });
 

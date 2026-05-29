@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import tsconfigPaths from "vite-tsconfig-paths";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -17,13 +17,15 @@ export default defineConfig(({ command }) => {
 		root: rootDir,
 		base: "./",
 		cacheDir: "node_modules/.vite-profile",
+		// Native Vite 8 tsconfig `paths` resolution — kept in sync with
+		// vite.config.ts (replaces the old `vite-tsconfig-paths` plugin).
+		resolve: { tsconfigPaths: true },
 		plugins: [
-			react({
-				babel: {
-					plugins: isProdBuild ? [["babel-plugin-react-compiler", { target: "19" }]] : [],
-				},
-			}),
-			tsconfigPaths(),
+			// React Compiler wired the v6 way (separate @rolldown/plugin-babel pass
+			// + reactCompilerPreset; v6 dropped react()'s `babel` option). Kept in
+			// sync with vite.config.ts. Prod-only so dev stays fast.
+			react(),
+			...(isProdBuild ? [babel({ presets: [reactCompilerPreset()] })] : []),
 			tailwindcss(),
 		],
 		optimizeDeps: {

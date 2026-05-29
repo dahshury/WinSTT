@@ -161,6 +161,12 @@ const ALLOWED_PARAMETERS = new Set([
 	// modifier pipeline runs in this main process.
 	"custom_words",
 	"word_correction_threshold",
+	// Filler-strip toggle. Routed through the RENDERER's syncToServer (so it
+	// passes through this client-side validator, unlike custom_words/threshold
+	// which electron-main's custom-words-sync pushes directly). It lives here
+	// because the electron-main path read a stale electron-store value in the
+	// long-running process and never delivered the user's toggle.
+	"filter_fillers",
 ]);
 
 const ALLOWED_METHODS = new Set([

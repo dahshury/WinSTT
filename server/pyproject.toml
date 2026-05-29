@@ -226,8 +226,12 @@ conflicts = [
 # expects, and the ``cpu`` extra continues to pull in ``onnxruntime``
 # explicitly when selected.
 #
-# Mirrors upstream's ``Requires-Dist`` set verbatim with the single
-# ``onnxruntime <2,>=1.10.0`` line removed. Bump ``version`` and re-check
+# Mirrors upstream's ``Requires-Dist`` set with TWO lines removed: the
+# ``onnxruntime <2,>=1.10.0`` pin (see above) and ``tflite-runtime`` (the
+# TensorFlow-Lite backend). WinSTT runs openWakeWord exclusively under ONNX
+# (``inference_framework="onnx"`` is hard-coded in bootstrap), so the tflite
+# runtime is never imported — dropping it keeps the venv torch/TF-free and
+# stops uv pulling a TF-family wheel on Linux. Bump ``version`` and re-check
 # the list whenever openwakeword is upgraded.
 [[tool.uv.dependency-metadata]]
 name = "openwakeword"
@@ -237,17 +241,18 @@ requires-dist = [
     "scipy <2,>=1.3",
     "scikit-learn <2,>=1",
     "requests <3,>=2.0",
-    "tflite-runtime <3,>=2.8.0 ; platform_system == 'Linux'",
 ]
 
 [tool.uv.sources]
 # onnx-asr lives at https://github.com/dahshury/onnx-asr (WinSTT-side fork of
-# istupakov/onnx-asr) — pinned to a specific commit on feat/lifecycle-close
-# for reproducibility. uv resolves & caches it like any other git dependency,
-# so no local checkout is required for ``uv sync``. To hack on onnx-asr
-# alongside WinSTT, clone the fork as a sibling folder and temporarily swap
-# this entry for ``{ path = "../../onnx-asr", editable = true }``.
-onnx-asr = { git = "https://github.com/dahshury/onnx-asr.git", rev = "7e235c28b514da5bd7049d4381c2e8d52a017951" }
+# istupakov/onnx-asr) — pinned to a specific commit on the winstt-model-expansion
+# branch for reproducibility. uv resolves & caches it like any other git
+# dependency, so no local checkout is required for ``uv sync``. To hack on
+# onnx-asr alongside WinSTT, clone the fork as a sibling folder and temporarily
+# swap this entry for ``{ path = "../../onnx-asr", editable = true }``.
+# 9c74fc8 adds the SenseVoiceCtc model class (every catalog family now loads
+# through onnx-asr's resolver) + the CrisperWhisper vocab fix.
+onnx-asr = { git = "https://github.com/dahshury/onnx-asr.git", rev = "9c74fc890740cc7162e1087d94d3cca0b5d53b78" }
 
 [project.scripts]
 stt-server = "src.stt_server.server:main"
@@ -288,7 +293,7 @@ warn_no_return = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","websocket.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*","pynvml.*","kokoro_onnx.*","rapidfuzz.*","jellyfish.*"]
+module = ["pyaudio.*","pyaudiowpatch.*","webrtcvad.*","pvporcupine.*","openwakeword.*","scipy.*","websockets.*","tqdm.*","huggingface_hub.*","onnx_asr.*","onnx.*","onnxruntime.*","torch.*","transformers.*","psutil.*","nvidia.*","pynvml.*","kokoro_onnx.*","rapidfuzz.*","jellyfish.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -302,7 +307,6 @@ omit = [
     "src/building_blocks/terminal.py",
     "src/recorder/infrastructure/*",
     "src/recorder/bootstrap.py",
-    "src/recorder/client.py",
     "src/stt_server/*",
     # TTS subsystem — infrastructure (Kokoro adapter, asset downloader)
     # and bootstrap are I/O-bound integration code; the domain port and

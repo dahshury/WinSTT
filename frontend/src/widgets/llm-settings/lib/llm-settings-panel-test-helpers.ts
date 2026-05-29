@@ -1,5 +1,11 @@
 import {
+	AiCloud01Icon,
+	AppleIcon,
 	BookOpen01Icon,
+	ComputerIcon,
+	DashboardSpeed01Icon,
+	DashboardSpeed02Icon,
+	DashboardSpeedIcon,
 	HappyIcon,
 	PencilIcon,
 	Suit01Icon,
@@ -108,6 +114,15 @@ const LEVEL_LABEL_KEY = {
 	medium: "levelMedium",
 	high: "levelHigh",
 } as const satisfies Record<PresetLevel, string>;
+
+// Gauge icons that climb with intensity so the level switcher reads at a
+// glance (light → high), matching the icon-per-option convention used by every
+// other switcher.
+const LEVEL_ICONS: Readonly<Record<PresetLevel, IconSvgElement>> = {
+	light: DashboardSpeed01Icon,
+	medium: DashboardSpeed02Icon,
+	high: DashboardSpeedIcon,
+};
 
 export const DEFAULT_LEVEL: PresetLevel = "medium";
 
@@ -318,6 +333,7 @@ export function buildLevelOpts(t: TranslateFn) {
 	return PRESET_LEVELS.map((lvl) => ({
 		value: lvl,
 		label: t(LEVEL_LABEL_KEY[lvl]),
+		icon: LEVEL_ICONS[lvl],
 	}));
 }
 
@@ -334,6 +350,12 @@ export interface ProviderOptsContext {
 	 * the spec: hide on platforms that physically can't run it.
 	 */
 	appleIntelligenceUnavailableOnIntel?: boolean;
+	/**
+	 * No OpenRouter API key configured yet — surface a cloud tooltip on the
+	 * OpenRouter option whose footer points the user to add a key (mirrors the
+	 * STT Source "Cloud" option's hint).
+	 */
+	openrouterNeedsKey?: boolean;
 }
 
 export interface ProviderOption {
@@ -343,7 +365,13 @@ export interface ProviderOption {
 	/** Tooltip shown next to a disabled option explaining why it's unavailable.
 	 *  Maps to the Switcher's badge tooltip surface. */
 	disabledTooltip?: string;
+	/** Leading icon shown before the provider name in the switcher. */
+	icon?: IconSvgElement;
 	label: string;
+	/** Hover tooltip body for the whole option (e.g. the cloud-provider hint). */
+	tooltip?: string;
+	/** Supporting line shown in the option tooltip's footer. */
+	tooltipFooter?: string;
 	value: "ollama" | "openrouter" | "apple-intelligence";
 }
 
@@ -359,15 +387,29 @@ export function buildProviderOpts(
 	ctx: ProviderOptsContext = {}
 ): readonly ProviderOption[] {
 	const opts: ProviderOption[] = [
-		{ value: "ollama", label: t("providerOllama") },
-		{ value: "openrouter", label: t("providerOpenRouter") },
+		{ value: "ollama", label: t("providerOllama"), icon: ComputerIcon },
+		{
+			value: "openrouter",
+			label: t("providerOpenRouter"),
+			icon: AiCloud01Icon,
+			// Cloud-provider hint mirroring the STT Source "Cloud" option: a footer
+			// that points the user to add an API key when none is configured.
+			...(ctx.openrouterNeedsKey
+				? { tooltip: t("providerCaption"), tooltipFooter: t("openrouterApiKeyTooltip") }
+				: {}),
+		},
 	];
 	if (ctx.appleIntelligenceSupported) {
-		opts.push({ value: "apple-intelligence", label: t("providerAppleIntelligence") });
+		opts.push({
+			value: "apple-intelligence",
+			label: t("providerAppleIntelligence"),
+			icon: AppleIcon,
+		});
 	} else if (ctx.appleIntelligenceUnavailableOnIntel) {
 		opts.push({
 			value: "apple-intelligence",
 			label: t("providerAppleIntelligence"),
+			icon: AppleIcon,
 			disabled: true,
 			disabledTooltip: t("providerAppleIntelligenceIntelTooltip"),
 		});

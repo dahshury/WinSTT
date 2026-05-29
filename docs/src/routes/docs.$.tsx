@@ -1,6 +1,7 @@
-import { Suspense, createContext, useContext } from "react";
+import browserCollections from "@source/browser";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
+import { useFumadocsLoader } from "fumadocs-core/source/client";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import {
   DocsBody,
@@ -8,12 +9,11 @@ import {
   DocsPage,
   DocsTitle,
 } from "fumadocs-ui/layouts/docs/page";
-import { useFumadocsLoader } from "fumadocs-core/source/client";
-import browserCollections from "@source/browser";
-import { source } from "@/lib/source";
-import { baseOptions, gitConfig } from "@/lib/layout.shared";
-import { useMDXComponents } from "@/components/mdx";
+import { createContext, Suspense, useContext } from "react";
 import { LLMCopyButton, ViewOptions } from "@/components/ai/page-actions";
+import { useMDXComponents } from "@/components/mdx";
+import { baseOptions, gitConfig } from "@/lib/layout.shared";
+import { source } from "@/lib/source";
 
 type PageMeta = { markdownUrl: string; githubUrl: string };
 const PageMetaContext = createContext<PageMeta | null>(null);

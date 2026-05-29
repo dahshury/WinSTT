@@ -8,11 +8,11 @@ import {
 	Mic01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { variantDisplayName } from "@picker";
 import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import { useInputDevices } from "@/entities/audio-device";
 import { providerDisplayName, providerOf } from "@/entities/cloud-stt-provider";
-import { useConnectionStore } from "@/entities/connection";
 import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { ConnectionIndicator } from "@/features/connect-server";
@@ -22,7 +22,6 @@ import {
 	useDownloadAggregate,
 	useDownloadStore,
 } from "@/features/model-download";
-import { HotkeyDisplay } from "@/features/push-to-talk";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
 import {
@@ -37,7 +36,7 @@ import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 const FOOTER_TOOLTIP_DELAY = 1500;
-const MAX_DEVICE_CHARS = 8;
+const MAX_DEVICE_CHARS = 16;
 
 /** Strip driver/loopback suffixes: "LG TV (NVIDIA …) [Loopback]" → "LG TV" */
 const DEVICE_SUFFIX_RE = /\s*[([].*/;
@@ -83,7 +82,7 @@ function FooterMenuChip({
 			<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 				<Menu.Trigger
 					aria-label={ariaLabel}
-					className={`flex max-w-[140px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+					className={`flex max-w-[180px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
 				>
 					<HugeiconsIcon
 						aria-hidden="true"
@@ -190,7 +189,7 @@ function FooterModelChip({
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<button
 				aria-label={ariaLabel}
-				className={`flex max-w-[140px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+				className={`flex max-w-[180px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
 				data-slot="stt-model-selector-trigger"
 				onClick={openModelPicker}
 				type="button"
@@ -344,9 +343,18 @@ function ActiveModelChip({
 	tIntegrations,
 }: ActiveModelChipProps): ReactNode {
 	const cloudProvider = providerOf(currentModel);
+	const getModel = useCatalogStore((s) => s.getModel);
+	const catalogModels = useCatalogStore((s) => s.models);
 	const cloudVerified = useSettingsStore((s) =>
 		cloudProvider ? s.settings.integrations[cloudProvider].verified : null
 	);
+	// The footer chip shows the size-free variant name so the always-visible
+	// main window matches the detached picker + settings tab (e.g.
+	// "nemo-canary-180m-flash" → "Canary Flash"). The full catalog name lives
+	// on the tooltip; the raw id is the fallback for cloud / boot-race ids the
+	// catalog doesn't know about.
+	const modelInfo = getModel(currentModel);
+	const label = modelInfo ? variantDisplayName(modelInfo, catalogModels) : currentModel;
 	if (cloudProvider) {
 		const status =
 			cloudVerified === true
@@ -356,7 +364,7 @@ function ActiveModelChip({
 			<FooterModelChip
 				ariaLabel={tModel("model")}
 				icon={AiCloud01Icon}
-				label={currentModel}
+				label={label}
 				tooltip={tIntegrations("providerStatus", {
 					provider: providerDisplayName(cloudProvider),
 					status,
@@ -368,8 +376,8 @@ function ActiveModelChip({
 		<FooterModelChip
 			ariaLabel={tModel("model")}
 			icon={AiAudioIcon}
-			label={currentModel}
-			tooltip={tStatus("modelTooltip", { model: currentModel })}
+			label={label}
+			tooltip={tStatus("modelTooltip", { model: modelInfo?.displayName ?? currentModel })}
 		/>
 	);
 }
@@ -388,7 +396,7 @@ export function StatusBar() {
 	// dismissed, so the user can monitor progress from the main window.
 	const downloadAggregate = useDownloadAggregate();
 	const getCatalogModel = useCatalogStore((s) => s.getModel);
-	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
+	const allCatalogModels = useCatalogStore((s) => s.models);
 	const swappingMain = useModelSwapStore((s) => s.activeMain);
 	const mainSwapping = swappingMain !== null;
 	const t = useTranslations("statusBar");
@@ -449,36 +457,37 @@ export function StatusBar() {
 						</span>
 					</Tooltip>
 				) : (
-					<>
-						<HotkeyDisplay isConnected={connectionStatus === "connected"} />
-						<Separator className="h-3 w-px bg-border" orientation="vertical" />
-						<FooterMenuChip
-							ariaLabel={tAudio("inputDevice")}
-							icon={Mic01Icon}
-							label={abbreviateDevice(currentDeviceName)}
-							onChange={handleDeviceChange}
-							options={deviceOptions}
-							tooltip={currentDeviceName}
-							value={currentDeviceId}
-						/>
-					</>
+					<FooterMenuChip
+						ariaLabel={tAudio("inputDevice")}
+						icon={Mic01Icon}
+						label={abbreviateDevice(currentDeviceName)}
+						onChange={handleDeviceChange}
+						options={deviceOptions}
+						tooltip={currentDeviceName}
+						value={currentDeviceId}
+					/>
 				)}
 				{currentModel && (
 					<>
 						<Separator className="h-3 w-px bg-border" orientation="vertical" />
 						{(() => {
 							if (mainSwapping) {
+								const swapModel = swappingMain ? getCatalogModel(swappingMain) : undefined;
+								const swapName = swapModel
+									? variantDisplayName(swapModel, allCatalogModels)
+									: (swappingMain ?? "");
 								return (
 									<ModelSwapChip
-										label={t("switchingModel", { model: swappingMain })}
-										tooltip={t("switchingModelTooltip", { model: swappingMain })}
+										label={t("switchingModel", { model: swapName })}
+										tooltip={t("switchingModelTooltip", { model: swapName })}
 									/>
 								);
 							}
 							if (downloadAggregate) {
-								const primaryName =
-									getCatalogModel(downloadAggregate.primary.modelId)?.displayName ??
-									downloadAggregate.primary.modelId;
+								const primaryModel = getCatalogModel(downloadAggregate.primary.modelId);
+								const primaryName = primaryModel
+									? variantDisplayName(primaryModel, allCatalogModels)
+									: downloadAggregate.primary.modelId;
 								const tooltipKey =
 									downloadAggregate.count >= 2 ? "downloadingMultiTooltip" : "downloadingTooltip";
 								const tooltip = t(tooltipKey, {

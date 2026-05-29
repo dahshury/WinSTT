@@ -126,7 +126,14 @@ function joinPrefixWithGlossary(prefix: string, glossary: string): string {
 function clipOversizedGlossary(glossary: string): string {
 	const tail = glossary.slice(0, MAX_PROMPT_CHARS);
 	const lastComma = tail.lastIndexOf(",");
-	return lastComma === -1 ? tail : `${tail.slice(0, lastComma)}.`;
+	if (lastComma === -1) {
+		// No comma in the first MAX_PROMPT_CHARS chars — a single dictionary
+		// term is itself oversized. Hard-cut at the cap and terminate the
+		// sentence so the prompt stays well-formed (matches the comma branch's
+		// trailing period) and never exceeds the budget.
+		return `${tail.slice(0, MAX_PROMPT_CHARS - 1)}.`;
+	}
+	return `${tail.slice(0, lastComma)}.`;
 }
 
 function clipPrefixToFitGlossary(prefix: string, glossary: string): string {
@@ -249,9 +256,10 @@ export function composeInitialPrompt(
 	if (composed.length <= MAX_PROMPT_CHARS) {
 		return composed;
 	}
-	if (body.length === 0) {
-		return tail.slice(tail.length - MAX_PROMPT_CHARS);
-	}
+	// Past the fast-path guard, body is necessarily non-empty: an empty body
+	// makes `composed === tail`, and `tail` is hard-capped at
+	// MAX_CONTEXT_TAIL_CHARS (250) < MAX_PROMPT_CHARS, so it would have already
+	// returned above. (The former `body.length === 0` branch here was dead.)
 	const roomForTail = MAX_PROMPT_CHARS - body.length - 2; // "\n\n"
 	if (roomForTail <= 0) {
 		return body;

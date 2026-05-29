@@ -24,6 +24,7 @@ import {
 } from "../lib/family-helpers";
 import { collectFilterableLanguages, filterSttModels, hasActiveFilters } from "../lib/filter-state";
 import { DeleteQuantConfirmDialog, type PendingDelete } from "./DeleteQuantConfirmDialog";
+import { SttModelSelectorTriggerButton } from "./SttModelSelectorTrigger";
 import { SttModelSelectorView } from "./SttModelSelectorView";
 import { createInitialUiState, sttSelectorUiReducer } from "./stt-selector-ui-state";
 
@@ -63,6 +64,12 @@ export interface SttModelSelectorProps {
 		modelId: string,
 		quantization: OnnxQuantization
 	) => import("./SttModelCard").QuantDownloadSnapshot | undefined;
+	/** When set, the trigger opens a detached picker window (passing its
+	 *  on-screen rect) INSTEAD of the in-window popup — used by the settings
+	 *  panel so the picker can extend beyond the 700×560 settings window, the
+	 *  same way the main-window footer chip does. The inline popup is fully
+	 *  suppressed in this mode. */
+	onOpenDetached?: (rect: DOMRect) => void;
 	placeholder?: string;
 	/** Popup height class. Defaults to the roomy settings-panel height; the
 	 *  footer chip overrides this with a compact one to fit the status bar. */
@@ -70,7 +77,7 @@ export interface SttModelSelectorProps {
 	/** Popup width class. Defaults to the settings-panel width. */
 	popupWidthClass?: string;
 	/** Optional pre-filter applied before any user filter (e.g., realtime-only picker). */
-	prefilter?: (model: ModelInfo) => boolean;
+	prefilter?: ((model: ModelInfo) => boolean) | undefined;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
 	/** Replaces the default glass-card trigger. The footer passes a compact
@@ -158,6 +165,7 @@ export function SttModelSelector({
 	popupWidthClass = DEFAULT_STT_POPUP_WIDTH,
 	trigger,
 	inline = false,
+	onOpenDetached,
 }: SttModelSelectorProps) {
 	// Pending delete confirmation — driven by trash-icon clicks bubbling
 	// up from any card via `onRequestDeleteQuant`. Lives at the selector
@@ -185,6 +193,25 @@ export function SttModelSelector({
 	const selectedModel = baseModels.find((m) => m.id === value) ?? null;
 	const selectedFamily: FamilyKey | null = selectedModel?.family ?? null;
 	const selectedBaseId = selectedModel === null ? null : getBaseId(selectedModel.id);
+
+	// Detached-open mode (settings panel): render the standalone trigger button
+	// that opens the floating picker window on click, and keep the in-window
+	// popup permanently closed.
+	const externalOpen = onOpenDetached != null;
+	const effectiveTrigger = externalOpen ? (
+		<SttModelSelectorTriggerButton
+			catalog={baseModels}
+			disabled={disabled || isLoading}
+			downloadProgress={downloadProgress}
+			kind={kind}
+			onActivate={(event) => onOpenDetached?.(event.currentTarget.getBoundingClientRect())}
+			open={false}
+			placeholder={placeholder}
+			selectedModel={selectedModel ?? undefined}
+		/>
+	) : (
+		trigger
+	);
 
 	// Consolidated UI/nav state — collapses the 4 separate `useState`s for
 	// filters / activeRailId / expandedBundles / open into one reducer to
@@ -255,6 +282,9 @@ export function SttModelSelector({
 	// intercepted.
 	const lastClickTargetRef = useModelSelectorClickTracking();
 	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
+		if (externalOpen) {
+			return;
+		}
 		if (next) {
 			dispatch({ type: "setOpen", open: true });
 			return;
@@ -311,7 +341,7 @@ export function SttModelSelector({
 				onFiltersChange={(next) => dispatch({ type: "setFilters", filters: next })}
 				onRequestDelete={handleRequestDelete}
 				onToggleExpanded={handleToggleExpanded}
-				open={open}
+				open={externalOpen ? false : open}
 				placeholder={placeholder}
 				popupHeightClass={popupHeightClass}
 				popupRef={(node) => {
@@ -323,7 +353,7 @@ export function SttModelSelector({
 				selectedModel={selectedModel}
 				statesById={statesById}
 				systemInfo={systemInfo}
-				trigger={trigger}
+				trigger={effectiveTrigger}
 				value={value}
 			/>
 			<DeleteQuantConfirmDialog

@@ -79,8 +79,6 @@ const KEEP_ENGLISH: ReadonlySet<string> = new Set([
 	"llm.modelSizeLabel", // "{size} GB"
 	"llm.pullProgress", // "{percent}% — {status}"
 	// Acronyms / shared loanwords across many languages.
-	"tts.deviceCpu", // "CPU" acronym
-	"tts.deviceCuda", // "GPU (CUDA)" acronyms
 	"tray.sectionDiagnostics", // "Diagnostics" — same word in fr
 	"tray.sectionTranscription", // "Transcription" — same word in fr
 	// About panel — brand / proper-noun tokens that legitimately stay identical

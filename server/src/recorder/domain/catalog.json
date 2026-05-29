@@ -972,6 +972,28 @@
       }
     },
     {
+      "id": "crisper-whisper",
+      "display_name": "CrisperWhisper",
+      "family": "whisper",
+      "languages": [
+        "de",
+        "en"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "onnx-community/CrisperWhisper-ONNX",
+      "description": "Verbatim Whisper-large-v3 fine-tune (nyrahealth) — keeps fillers (um/uh), stutters and false starts instead of cleaning them up",
+      "param_count": 1543304960,
+      "wer": 6.7,
+      "rtfx": 150,
+      "available_quantizations": [
+        ""
+      ],
+      "size_bytes_by_quantization": {
+        "": 6490000000
+      }
+    },
+    {
       "id": "lite-whisper-large-v3-turbo",
       "display_name": "Lite-Whisper Large v3 Turbo",
       "family": "whisper",
@@ -1401,72 +1423,6 @@
       }
     },
     {
-      "id": "moonshine-tiny-zh",
-      "display_name": "Moonshine Tiny (ZH)",
-      "family": "moonshine",
-      "languages": [
-        "zh"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "moonshine-tiny-zh",
-      "description": "Useful Sensors Moonshine tiny — Mandarin Chinese fine-tune",
-      "param_count": 27092835,
-      "wer": 15.0,
-      "rtfx": 1800,
-      "available_quantizations": [
-        "",
-        "fp16",
-        "q4",
-        "bnb4",
-        "int8",
-        "uint8",
-        "q4f16"
-      ],
-      "size_bytes_by_quantization": {
-        "": 136824276,
-        "fp16": 54645568,
-        "q4": 55096586,
-        "bnb4": 54102020,
-        "int8": 27994170,
-        "uint8": 27994170,
-        "q4f16": 31767228
-      }
-    },
-    {
-      "id": "moonshine-tiny-ja",
-      "display_name": "Moonshine Tiny (JA)",
-      "family": "moonshine",
-      "languages": [
-        "ja"
-      ],
-      "supports_language_detection": false,
-      "supports_realtime": true,
-      "onnx_model_name": "moonshine-tiny-ja",
-      "description": "Useful Sensors Moonshine tiny — Japanese fine-tune",
-      "param_count": 27092835,
-      "wer": 15.0,
-      "rtfx": 1800,
-      "available_quantizations": [
-        "",
-        "fp16",
-        "q4",
-        "bnb4",
-        "int8",
-        "uint8",
-        "q4f16"
-      ],
-      "size_bytes_by_quantization": {
-        "": 136824277,
-        "fp16": 54645568,
-        "q4": 55096586,
-        "bnb4": 54102020,
-        "int8": 27994171,
-        "uint8": 27994171,
-        "q4f16": 31767228
-      }
-    },
-    {
       "id": "moonshine-tiny-ko",
       "display_name": "Moonshine Tiny (KO)",
       "family": "moonshine",
@@ -1665,6 +1621,44 @@
       }
     },
     {
+      "id": "moonshine-tiny-uk",
+      "display_name": "Moonshine Tiny (UK)",
+      "family": "moonshine",
+      "languages": [
+        "uk"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny-uk",
+      "description": "Useful Sensors Moonshine tiny — Ukrainian (~27M, fast short-form)",
+      "param_count": 27600000,
+      "wer": 0.0,
+      "rtfx": 1000,
+      "available_quantizations": [
+        ""
+      ],
+      "size_bytes_by_quantization": {}
+    },
+    {
+      "id": "moonshine-tiny-fr",
+      "display_name": "Moonshine Tiny (FR)",
+      "family": "moonshine",
+      "languages": [
+        "fr"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "moonshine-tiny-fr",
+      "description": "Useful Sensors Moonshine tiny — French (~27M, fast short-form)",
+      "param_count": 27600000,
+      "wer": 0.0,
+      "rtfx": 1000,
+      "available_quantizations": [
+        ""
+      ],
+      "size_bytes_by_quantization": {}
+    },
+    {
       "id": "cohere-transcribe",
       "display_name": "Cohere Transcribe",
       "family": "cohere",
@@ -1718,7 +1712,7 @@
       "supports_language_detection": true,
       "supports_realtime": true,
       "onnx_model_name": "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
-      "description": "FunAudioLLM SenseVoice Small — Conformer encoder, multilingual ASR (Chinese / English / Japanese / Korean / Cantonese), ships as a single-pass int8 graph (Handy default).",
+      "description": "FunAudioLLM SenseVoice Small — Conformer encoder, multilingual ASR (Chinese / English / Japanese / Korean / Cantonese), ships as a single-pass int8 graph (default int8).",
       "param_count": 234000000,
       "wer": 7.2,
       "rtfx": 850,
@@ -1896,6 +1890,29 @@
       }
     },
     {
+      "id": "nemo-canary-1b-flash",
+      "display_name": "NeMo Canary 1B Flash",
+      "family": "nemo",
+      "languages": [
+        "de",
+        "en",
+        "es",
+        "fr"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "istupakov/canary-1b-flash-onnx",
+      "description": "NVIDIA Canary 1B Flash (en/de/es/fr) — faster 1B Canary (~1000 RTFx) than the multilingual 1B v2",
+      "param_count": 883000000,
+      "wer": 6.4,
+      "rtfx": 1000,
+      "available_quantizations": [
+        "",
+        "int8"
+      ],
+      "size_bytes_by_quantization": {}
+    },
+    {
       "id": "nemo-fastconformer-ru-ctc",
       "display_name": "NeMo FastConformer RU CTC",
       "family": "nemo",
@@ -2052,6 +2069,62 @@
       ],
       "size_bytes_by_quantization": {
         "": 144193371
+      }
+    },
+    {
+      "id": "dolphin-base-ctc",
+      "display_name": "Dolphin Base CTC",
+      "family": "dolphin",
+      "languages": [
+        "ar",
+        "zh",
+        "ja",
+        "ko",
+        "vi",
+        "hi",
+        "th",
+        "id",
+        "ms",
+        "ta",
+        "ur",
+        "fa",
+        "bn",
+        "ne",
+        "my"
+      ],
+      "supports_language_detection": true,
+      "supports_realtime": true,
+      "onnx_model_name": "dolphin-base-ctc",
+      "description": "DataoceanAI Dolphin — multilingual CTC ASR covering 40 Eastern languages + 22 Chinese dialects (incl. Arabic, Hindi, Chinese)",
+      "param_count": 140000000,
+      "wer": 0.0,
+      "rtfx": 1500,
+      "available_quantizations": [
+        "int8"
+      ],
+      "size_bytes_by_quantization": {
+        "int8": 103729802
+      }
+    },
+    {
+      "id": "zipformer-en",
+      "display_name": "Zipformer English",
+      "family": "kaldi",
+      "languages": [
+        "en"
+      ],
+      "supports_language_detection": false,
+      "supports_realtime": true,
+      "onnx_model_name": "zipformer-en",
+      "description": "icefall / sherpa-onnx Zipformer transducer — English (GigaSpeech); fast non-autoregressive RNN-T",
+      "param_count": 70000000,
+      "wer": 11.0,
+      "rtfx": 1500,
+      "available_quantizations": [
+        ""
+      ],
+      "size_bytes_by_quantization": {
+        "": 262925195
       }
     }
   ]

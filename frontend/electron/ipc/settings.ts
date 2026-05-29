@@ -80,16 +80,14 @@ const STARTUP_ONLY_KEYS_LIST = [
 	// set_mode() is a cheap in-place mode swap on the C VAD struct.
 	//
 	// audio.sileroDeactivityDetection is NOT here either — currently a
-	// config-only knob with no runtime consumer (carried for Handy
-	// parity); the facade setter just persists the new value. Restart
-	// would buy nothing.
+	// config-only knob with no runtime consumer; the facade setter just
+	// persists the new value. Restart would buy nothing.
 	//
 	// audio.microphoneRelease is NOT here either — facade setters for
 	// always_on_microphone / lazy_stream_close /
 	// lazy_close_timeout_seconds call PyAudioSource.reconfigure(), which
 	// mutates the three policy fields in place. The next pause()
 	// observes the new flags; the live stream is never re-opened.
-	"model.computeType",
 	"model.device",
 	"quality.useMainModelForRealtime",
 	"quality.realtimeProcessingPause",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
+from math import ceil, gcd
 from types import TracebackType
 from typing import Any, ClassVar
 
@@ -56,6 +57,79 @@ _DEFAULT_BUFFER_SIZE = BufferSize(512)
 _DEFAULT_DEVICE_PROBE_EVERY_N_CHUNKS = 30
 
 
+class _StreamingResampler:
+    """Stateful, seam-free polyphase resampler for the live capture stream.
+
+    Replaces a *stateless* ``resample_poly`` per ~10 ms buffer. Resampling
+    each chunk in isolation filtered it as if silence sat on both sides, which
+    (a) injected a filter discontinuity at every chunk seam — an audible buzz
+    at the chunk rate (~94 Hz for 512-sample buffers @ 48 kHz) — and (b) drifted
+    the sample count: 512-in → ``ceil(512*16000/48000)=171``-out gains a third of
+    a sample per chunk, so a saved recording slowly pitch/length-drifts. Both
+    were largely masked for the transcriber (mel + peak-norm) but obvious on
+    playback of the saved recording.
+
+    This carries the polyphase filter's overlap across chunks (overlap-save with
+    a small constant hold-back) so the emitted stream is **bit-identical** to
+    resampling the whole utterance in one call — the streaming equivalent of a
+    one-shot ``resample_poly`` over the full clip.
+
+    The trailing ``ctx`` input samples are always held back (a constant
+    ~2-10 ms of the most-recent audio at 48/44.1 kHz); they are post-VAD
+    trailing audio in practice, so nothing audible is lost.
+    """
+
+    def __init__(self, from_rate: int, to_rate: int, read_size: int) -> None:
+        g = gcd(to_rate, from_rate)
+        self._up = to_rate // g
+        self._down = from_rate // g
+        # resample_poly's prototype FIR is ``20*max(up,down)+1`` taps at the
+        # up-sampled rate → ``ceil(.../up)`` input samples of support. Round up
+        # to a whole number of ``down`` so each chunk boundary lands on the
+        # integer output grid (no fractional-phase drift).
+        pad_in = ceil((20 * max(self._up, self._down) + 1) / self._up)
+        self._ctx = (pad_in // self._down + 1) * self._down
+        # Consume granularity ≈ one read, snapped down to a multiple of ``down``.
+        self._block = max(self._down, (read_size // self._down) * self._down)
+        self._pending: NDArray[np.float64] = np.zeros(0, dtype=np.float64)
+        self._first = True
+
+    def reset(self) -> None:
+        """Drop pending state so the next utterance starts from silence."""
+        self._pending = np.zeros(0, dtype=np.float64)
+        self._first = True
+
+    def process(self, raw: bytes) -> bytes:
+        """Feed int16 PCM bytes at the source rate; return int16 PCM at target.
+
+        May return ``b""`` while priming or holding back the tail — every
+        downstream consumer (CompositeVAD's residual buffer, the audio buffer,
+        the realtime worker) already tolerates short/empty chunks.
+        """
+        pcm = np.frombuffer(raw, dtype=np.int16)
+        if pcm.size:
+            self._pending = np.concatenate([self._pending, pcm.astype(np.float64)])
+        out: list[NDArray[np.float64]] = []
+        need = self._ctx + self._block + self._ctx
+        while self._pending.size >= need:
+            seg = self._pending[:need]
+            resampled = resample_poly(seg, self._up, self._down)
+            # Skip the warm-up region (real left-context already emitted last
+            # round); the very first block has no prior context so it starts at 0.
+            start = 0 if self._first else (self._ctx * self._up) // self._down
+            end = ((self._ctx + self._block) * self._up) // self._down
+            out.append(resampled[start:end])
+            self._first = False
+            self._pending = self._pending[self._block :]
+        if not out:
+            return b""
+        # Clip before the int16 cast — resample_poly can ring slightly past
+        # full-scale near transients, and a bare ``astype(int16)`` would WRAP
+        # (a loud click) rather than saturate.
+        merged = np.clip(np.concatenate(out), -32768.0, 32767.0)
+        return bytes(merged.astype(np.int16).tobytes())
+
+
 class PyAudioSource(IAudioSource):
     # Sentinel meaning "no device switch is currently queued".  Distinct
     # object identity is required so a queued ``None`` (== system default)
@@ -78,8 +152,7 @@ class PyAudioSource(IAudioSource):
         self._input_device_index = input_device_index
         self._target_sample_rate = target_sample_rate
         self._buffer_size = buffer_size
-        # Mirrors Handy's two-axis design (see examples/Handy/src-tauri/src/
-        # managers/audio.rs MicrophoneMode):
+        # Two-axis microphone-lifecycle design:
         #
         # * ``always_on_microphone=True`` — boot opens the OS mic stream
         #   and keeps it allocated for the entire session. PTT
@@ -108,9 +181,8 @@ class PyAudioSource(IAudioSource):
         # every pause() and on resume(). The timer thread snapshots the
         # generation it scheduled with; on fire it bails out unless the
         # generation still matches AND the source is still paused. This
-        # is the same pattern as Handy's ``close_generation`` (see
-        # ``schedule_lazy_close`` in their audio manager) and replaces
-        # the need for explicit thread cancellation.
+        # is a generation-counter guard (see ``_schedule_lazy_close``) and
+        # replaces the need for explicit thread cancellation.
         self._lazy_close_generation = 0
         self._audio_interface: Any = None
         self._stream: Any = None
@@ -126,6 +198,14 @@ class PyAudioSource(IAudioSource):
         # Storing the int here (not pyaudio.paInt16) so the module still
         # imports cleanly on machines that lack PyAudio for type checks.
         self._capture_format: int | None = None
+        # Stateful resampler from the device's native rate down to 16 kHz,
+        # built by ``_open_stream`` only when the rates differ. ``None`` means
+        # capture is already at the target rate (no resampling). Carrying the
+        # polyphase overlap across reads keeps the saved recording artifact-free
+        # (see ``_StreamingResampler``). ``_resampler_fresh`` is set while paused
+        # so the first read after a resume drops the pre-pause tail.
+        self._resampler: _StreamingResampler | None = None
+        self._resampler_fresh = False
         self._active = False
         # Hardware capture state. True only between resume() and pause().
         # The OS mic-in-use indicator follows this — when False the icon
@@ -208,7 +288,7 @@ class PyAudioSource(IAudioSource):
             raise DeviceError(msg) from e
         pa: Any = self._audio_interface
         try:
-            # On-demand mode (the new default, matching Handy): skip the
+            # On-demand mode (the default): skip the
             # boot-time open entirely. The PyAudio interface is created so
             # device enumeration / probe paths still work, but no stream
             # is allocated until the user's first PTT press calls
@@ -308,10 +388,8 @@ class PyAudioSource(IAudioSource):
         # quantize step we don't get to control. Asking for f32 hands us
         # the engine's native buffer, then we do a deterministic
         # ``np.clip * 32767`` round-to-int16 in ``read_chunk``. Falls back
-        # to paInt16 then paInt24 when the device doesn't advertise f32.
-        # Reference: Handy's
-        # ``audio_toolkit/audio/recorder.rs::get_preferred_config`` which
-        # follows the same F32 > I16 > I24 priority.
+        # to paInt16 then paInt24 when the device doesn't advertise f32
+        # (the F32 > I16 > I24 priority lives in ``_negotiate_format``).
         chosen_format = self._negotiate_format(pa, device_index, sample_rate)
 
         try:
@@ -330,12 +408,19 @@ class PyAudioSource(IAudioSource):
         self._input_device_index = device_index
         self._device_sample_rate = sample_rate
         self._capture_format = chosen_format
+        # Fresh stateful resampler for this stream (resets any prior overlap).
+        # Only needed when the device isn't already at the target rate.
+        self._resampler = (
+            _StreamingResampler(sample_rate, self._target_sample_rate, self._buffer_size)
+            if sample_rate != self._target_sample_rate
+            else None
+        )
+        self._resampler_fresh = False
 
     def _negotiate_format(self, pa: Any, device_index: int, sample_rate: int) -> int:  # noqa: ANN401
         """Pick the cleanest supported capture format in priority order.
 
-        Mirrors Handy's ``audio_toolkit/audio/recorder.rs::get_preferred_config``
-        which probes F32 > I16 > I24 and picks the first one the driver
+        Probes F32 > I16 > I24 and picks the first one the driver
         accepts. The rationale is that some cheap USB / Bluetooth drivers
         report support for multiple input formats but only ONE of them is
         actually the engine's native representation — the others involve
@@ -407,6 +492,9 @@ class PyAudioSource(IAudioSource):
         if not self._capturing:
             import time as _time
 
+            # Mark the resampler stale so the first read after resume drops the
+            # pre-pause overlap tail instead of splicing it onto the new utterance.
+            self._resampler_fresh = True
             _time.sleep(self._silence_sleep_seconds)
             return b"\x00" * (self._buffer_size * self._sample_width)
 
@@ -452,8 +540,13 @@ class PyAudioSource(IAudioSource):
                 raw = self._float32_bytes_to_int16_bytes(raw)
             elif self._capture_format == pyaudio.paInt24:
                 raw = self._int24_bytes_to_int16_bytes(raw)
-        if self._device_sample_rate and self._device_sample_rate != self._target_sample_rate:
-            raw = self._resample(raw, self._device_sample_rate, self._target_sample_rate)
+        if self._resampler is not None:
+            if self._resampler_fresh:
+                # Coming out of a pause: discard the stale overlap so the new
+                # utterance starts cleanly from silence.
+                self._resampler.reset()
+                self._resampler_fresh = False
+            raw = self._resampler.process(raw)
         return raw
 
     @staticmethod
@@ -836,9 +929,8 @@ class PyAudioSource(IAudioSource):
     def _schedule_lazy_close(self) -> None:
         """Spawn a daemon thread that closes the stream after the idle window.
 
-        Mirrors Handy's ``schedule_lazy_close``. The generation counter
-        guards the close: every pause() bumps it and every resume()
-        bumps it again, so a pending timer that wakes after a new
+        The generation counter guards the close: every pause() bumps it
+        and every resume() bumps it again, so a pending timer that wakes after a new
         recording started (or after a manual cleanup ran) finds the
         generation has moved on and exits without touching the live
         stream. Daemon thread so server shutdown doesn't have to join.
@@ -969,15 +1061,14 @@ class PyAudioSource(IAudioSource):
         rate`` failures users hit on USB devices that report a default of
         44100 but only actually support 48 kHz (or vice versa).
 
-        Why device-default first (Handy parity): opening at 16 kHz forces
-        WASAPI / the kernel driver to resample inside the driver chain.
-        Cheap USB mics and Bluetooth audio drivers do this badly and
-        smear transients (the hardest part of far-mic speech). Opening at
-        the device's preferred rate (typically 44.1 / 48 kHz) hands us
-        the engine's clean buffer; we then resample to 16 kHz in-process
-        via ``scipy.signal.resample_poly`` — a high-quality phase-linear
-        polyphase filter equivalent to Handy's ``rubato::FftFixedIn``.
-        See ``examples/Handy/src-tauri/src/audio_toolkit/audio/resampler.rs``.
+        Why device-default first: opening at 16 kHz forces WASAPI / the
+        kernel driver to resample inside the driver chain. Cheap USB mics
+        and Bluetooth audio drivers do this badly and smear transients
+        (the hardest part of far-mic speech). Opening at the device's
+        preferred rate (typically 44.1 / 48 kHz) hands us the engine's
+        clean buffer; we then resample to 16 kHz in-process via the
+        stateful :class:`_StreamingResampler` (a high-quality phase-linear
+        polyphase filter, seam-free across chunk boundaries).
         """
         pa: Any = self._audio_interface
         try:

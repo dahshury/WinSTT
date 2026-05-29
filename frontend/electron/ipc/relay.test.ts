@@ -63,6 +63,9 @@ mock.module("electron", () => ({
 // Track every key requested via getStoreValue() and store.get() so tests
 // can verify which store paths a code path read.
 const storeKeyAccesses: string[] = [];
+// Captures store.onDidChange listeners by key so a test can drive the live
+// `general.historyMaxEntries` change handler wired up inside setupRelay.
+const storeOnDidChange: Record<string, ((next: unknown) => void)[]> = {};
 mock.module("../lib/store", () => {
 	const base = storeMock();
 	return {
@@ -96,10 +99,57 @@ mock.module("../lib/store", () => {
 			set: (k: string, v: unknown) => {
 				storeValues[k] = v;
 			},
-			onDidChange: () => () => undefined,
+			onDidChange: (key: string, cb: (next: unknown) => void) => {
+				const list = storeOnDidChange[key] ?? [];
+				list.push(cb);
+				storeOnDidChange[key] = list;
+				return () => undefined;
+			},
 		},
 	};
 });
+
+// ── node:fs/promises mock ─────────────────────────────────────────────
+// relay's isEnoent() guard is only reachable through the HISTORY_DELETE /
+// HISTORY_LOAD_AUDIO IPC handlers in setupRelay, which call fsUnlink /
+// fsReadFile. We control the outcome per-test via these mutable refs so the
+// ENOENT-silent vs. other-error-logged branches of isEnoent() are exercised.
+let fsUnlinkBehavior: () => Promise<void> = () => Promise.resolve();
+let fsReadFileBehavior: () => Promise<Buffer> = () => Promise.resolve(Buffer.from("WAVDATA"));
+const fsUnlinkCalls: string[] = [];
+const fsReadFileCalls: string[] = [];
+mock.module("node:fs/promises", () => ({
+	unlink: (p: string) => {
+		fsUnlinkCalls.push(p);
+		return fsUnlinkBehavior();
+	},
+	readFile: (p: string) => {
+		fsReadFileCalls.push(p);
+		return fsReadFileBehavior();
+	},
+}));
+
+// ── ./history mock (getActiveHistoryStore) ────────────────────────────
+// maybePersistSqliteRow() (reached via handleFullSentence with a wav_path)
+// pulls the live SQLite store through getActiveHistoryStore(). We swap it
+// per-test so we can cover the null-store skip, the happy add(), and the
+// add()-throws catch branch without standing up node:sqlite under Bun.
+interface MockSqliteStore {
+	add: (row: {
+		fileName: string;
+		transcriptionText: string;
+		postProcessRequested: boolean;
+	}) => unknown;
+}
+let activeSqliteStore: MockSqliteStore | null = null;
+const sqliteAddCalls: Array<{
+	fileName: string;
+	transcriptionText: string;
+	postProcessRequested: boolean;
+}> = [];
+mock.module("./history", () => ({
+	getActiveHistoryStore: () => activeSqliteStore,
+}));
 
 // NOTE: We do NOT mock ../lib/debug-log, ../lib/text-processing, ../lib/serial-queue,
 // ../lib/paste, ../lib/recording-state, ../lib/recording-indicator,
@@ -132,6 +182,11 @@ afterAll(async () => {
 	const recordingState = await import("../lib/recording-state");
 	recordingState.notifyRecordingStop();
 	recordingState.__resetRecordingStateForTesting__();
+	// The no_audio_detected abort-gate test mutates the shared abort-state
+	// singleton; clear it defensively so a mid-test failure can't leave a
+	// stale "aborted" flag poisoning abort-state.test.ts in the same worker.
+	const abortState = await import("../lib/abort-state");
+	abortState.clearSessionAborted();
 });
 // Use relayModule.setupRelay directly in tests to ensure proper typing
 
@@ -164,6 +219,15 @@ function resetState(): void {
 	ipcRemovedChannels.length = 0;
 	storeKeyAccesses.length = 0;
 	clipboardWrites.length = 0;
+	fsUnlinkCalls.length = 0;
+	fsReadFileCalls.length = 0;
+	sqliteAddCalls.length = 0;
+	activeSqliteStore = null;
+	fsUnlinkBehavior = () => Promise.resolve();
+	fsReadFileBehavior = () => Promise.resolve(Buffer.from("WAVDATA"));
+	for (const key of Object.keys(storeOnDidChange)) {
+		delete storeOnDidChange[key];
+	}
 	// Best-effort: clear paste's invocation log. We can't reach into the
 	// module's bindings synchronously here (it's imported async), so the
 	// individual tests that observe `pasteCalls` clear it themselves
@@ -197,8 +261,23 @@ describe("relay pure helpers", () => {
 		expect(helpers.extractEventText({})).toBe("");
 	});
 
+	test("extractAlignedWords returns the words array on a well-formed result", () => {
+		const words = [{ word: "hi", start: 0, end: 0.2 }];
+		expect(helpers.extractAlignedWords({ words })).toBe(words);
+	});
+
+	test("extractAlignedWords returns [] for null / non-object / missing or non-array words", () => {
+		expect(helpers.extractAlignedWords(null)).toEqual([]);
+		expect(helpers.extractAlignedWords("nope")).toEqual([]);
+		expect(helpers.extractAlignedWords(42)).toEqual([]);
+		expect(helpers.extractAlignedWords({})).toEqual([]);
+		expect(helpers.extractAlignedWords({ words: "not-an-array" })).toEqual([]);
+		expect(helpers.extractAlignedWords({ words: { 0: "x" } })).toEqual([]);
+	});
+
 	test.each([
 		["no_audio_detected", "broadcast"],
+		["transcription_failed", "broadcast"],
 		["vad_detect_start", "broadcast"],
 		["vad_detect_stop", "broadcast"],
 		["transcription_start", "mainSend"],
@@ -222,6 +301,7 @@ describe("relay pure helpers", () => {
 
 	test("OVERLAY_RELEVANT_SIMPLE_TYPES contains expected broadcast-bound types", () => {
 		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("no_audio_detected")).toBe(true);
+		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("transcription_failed")).toBe(true);
 		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("vad_detect_start")).toBe(true);
 		expect(helpers.OVERLAY_RELEVANT_SIMPLE_TYPES.has("vad_detect_stop")).toBe(true);
 		// Download lifecycle events must broadcast so the settings-window
@@ -1020,9 +1100,19 @@ describe("setupRelay", () => {
 		mockWindows.length = 0;
 		mockWindows.push(asWindowEntry(w));
 		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
+		// A real disconnect is only broadcast AFTER the first successful connect
+		// — the cold-start latch (hasEverConnected) intentionally suppresses the
+		// reconnect-loop disconnect storm while the Python server is still
+		// binding its WS ports. Connect first so this asserts the post-warmup
+		// disconnect, not the cold-start no-op.
+		client.emit("connected");
 		client.emit("disconnected");
 		cleanup();
-		const msg = w.sent.find((s) => s.channel === "stt:connection-change");
+		const msg = w.sent.find(
+			(s) =>
+				s.channel === "stt:connection-change" &&
+				(s.args[0] as { connected: boolean }).connected === false
+		);
 		expect(msg).toBeDefined();
 		expect((msg?.args[0] as { connected: boolean } | undefined)?.connected).toBe(false);
 	});
@@ -1874,6 +1964,28 @@ describe("setupRelay registers IPC handlers under exact channel names (kills L40
 		expect(ipcRemovedChannels.includes("")).toBe(false);
 	});
 
+	test("cleanup removes EVERY history:* handler it registered (no leaked handlers)", () => {
+		// Regression: dispose used to remove history:get-all / history:clear /
+		// history:align-audio but LEAK history:delete + history:load-audio.
+		// Every channel registered inside setupRelay must be torn down on
+		// cleanup() so a relay re-init doesn't double-register (or leave the
+		// old closure's handlers wired after the window is gone).
+		resetState();
+		const client = makeMockClient();
+		const win = makeMockWin();
+		const cleanup = relayModule.setupRelay(asRelayWin(win), asRelayClient(client));
+		cleanup();
+		expect(ipcRemovedChannels).toContain("history:get-all");
+		expect(ipcRemovedChannels).toContain("history:clear");
+		expect(ipcRemovedChannels).toContain("history:delete");
+		expect(ipcRemovedChannels).toContain("history:load-audio");
+		expect(ipcRemovedChannels).toContain("history:align-audio");
+		// And the handlers are actually gone from the registry (removeHandler
+		// in the mock deletes the entry), so no stale handler survives.
+		expect(ipcHandlers["history:delete"]).toBeUndefined();
+		expect(ipcHandlers["history:load-audio"]).toBeUndefined();
+	});
+
 	test("stt:get-model-catalog handler returns the cached catalog (initially [])", () => {
 		resetState();
 		const client = makeMockClient();
@@ -2359,5 +2471,1018 @@ describe("reconcilePersistedModel — persists the server's actually-loaded mode
 		reconcilePersistedModel({ model: "" });
 		reconcilePersistedModel({ model: 42 });
 		expect(storeValues["model.model"]).toBe("large-v2");
+	});
+});
+
+// ── Shared mock factories for the setupRelay-wired IPC handler suites ──
+function makeRelayClient() {
+	const handlers = new Map<string, ((...args: unknown[]) => void)[]>();
+	const sendControlCalls: Record<string, unknown>[] = [];
+	const alignCalls: Array<{ path: string; text: string }> = [];
+	let alignResult: unknown = { words: [{ word: "hi", start: 0, end: 1 }] };
+	let alignThrows = false;
+	return {
+		on(event: string, cb: (...args: unknown[]) => void) {
+			const list = handlers.get(event) ?? [];
+			list.push(cb);
+			handlers.set(event, list);
+		},
+		off(event: string, cb: (...args: unknown[]) => void) {
+			handlers.set(
+				event,
+				(handlers.get(event) ?? []).filter((x) => x !== cb)
+			);
+		},
+		emit(event: string, ...args: unknown[]) {
+			for (const cb of handlers.get(event) ?? []) {
+				cb(...args);
+			}
+		},
+		sendControl: (payload: Record<string, unknown>) => {
+			sendControlCalls.push(payload);
+		},
+		getParameter: () => Promise.resolve(true),
+		alignWords: (path: string, text: string) => {
+			alignCalls.push({ path, text });
+			if (alignThrows) {
+				return Promise.reject(new Error("align boom"));
+			}
+			return Promise.resolve(alignResult);
+		},
+		setAlignResult: (r: unknown) => {
+			alignResult = r;
+		},
+		setAlignThrows: (v: boolean) => {
+			alignThrows = v;
+		},
+		sendControlCalls,
+		alignCalls,
+		handlers,
+	};
+}
+
+function makeRelayWindow() {
+	const sent: Array<{ channel: string; args: unknown[] }> = [];
+	return {
+		sent,
+		isDestroyed: () => false,
+		webContents: {
+			isDestroyed: () => false,
+			send: (channel: string, ...args: unknown[]) => sent.push({ channel, args }),
+		},
+	};
+}
+
+const asSetupWin = (w: ReturnType<typeof makeRelayWindow>) =>
+	w as unknown as Parameters<typeof relayModule.setupRelay>[0];
+const asSetupClient = (c: ReturnType<typeof makeRelayClient>) =>
+	c as unknown as Parameters<typeof relayModule.setupRelay>[1];
+const asWindowSlot = (w: ReturnType<typeof makeRelayWindow>) =>
+	w as unknown as (typeof mockWindows)[0];
+
+// Build a persisted-history seed entry (passes transcription-history's
+// isEntry() field-predicate gate) so historyStore.getHistory() returns it.
+function seedHistoryEntry(overrides: Record<string, unknown> = {}): void {
+	storeValues.transcriptionHistory = [
+		{
+			id: "entry-1",
+			timestamp: 1000,
+			text: "hello world",
+			wordCount: 2,
+			durationMs: 500,
+			...overrides,
+		},
+	];
+}
+
+describe("handleDeleteModelQuantizationRequest (via stt:delete-model-quantization)", () => {
+	test("forwards delete_model_quantization to the server for a valid payload", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const handler = ipcHandlers["stt:delete-model-quantization"];
+		expect(typeof handler).toBe("function");
+		handler?.({}, { modelId: "whisper-tiny", quantization: "q4" });
+		expect(client.sendControlCalls).toEqual([
+			{ command: "delete_model_quantization", model_id: "whisper-tiny", quantization: "q4" },
+		]);
+		cleanup();
+	});
+
+	test("allows an EMPTY quantization (catalog 'default precision' is a real variant id)", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		ipcHandlers["stt:delete-model-quantization"]?.({}, { modelId: "m", quantization: "" });
+		expect(client.sendControlCalls).toEqual([
+			{ command: "delete_model_quantization", model_id: "m", quantization: "" },
+		]);
+		cleanup();
+	});
+
+	test.each([
+		["null payload", null],
+		["non-object payload (string)", "whisper-tiny"],
+		["empty modelId", { modelId: "", quantization: "q4" }],
+		["non-string modelId", { modelId: 42, quantization: "q4" }],
+		["missing modelId", { quantization: "q4" }],
+		["non-string quantization", { modelId: "m", quantization: 4 }],
+		["missing quantization", { modelId: "m" }],
+	])("rejects %s without firing sendControl", (_label, payload) => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		ipcHandlers["stt:delete-model-quantization"]?.({}, payload);
+		expect(client.sendControlCalls.length).toBe(0);
+		cleanup();
+	});
+});
+
+describe("handleStreamingDownloadCommand (via stt:predownload/pause/resume/cancel)", () => {
+	test.each([
+		["stt:predownload-quant", "predownload_model_quant"],
+		["stt:download-pause", "download_pause"],
+		["stt:download-resume", "download_resume"],
+		["stt:download-cancel-quant", "download_cancel_quant"],
+	])("%s forwards command %s with model_id + quantization", (channel, command) => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const handler = ipcHandlers[channel];
+		expect(typeof handler).toBe("function");
+		handler?.({}, { modelId: "whisper-base", quantization: "q8" });
+		expect(client.sendControlCalls).toEqual([
+			{ command, model_id: "whisper-base", quantization: "q8" },
+		]);
+		cleanup();
+	});
+
+	test("empty quantization is accepted (default precision)", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		ipcHandlers["stt:download-pause"]?.({}, { modelId: "m", quantization: "" });
+		expect(client.sendControlCalls).toEqual([
+			{ command: "download_pause", model_id: "m", quantization: "" },
+		]);
+		cleanup();
+	});
+
+	test.each([
+		["null payload", null],
+		["non-object payload", 123],
+		["empty modelId", { modelId: "", quantization: "q4" }],
+		["non-string modelId", { modelId: {}, quantization: "q4" }],
+		["non-string quantization", { modelId: "m", quantization: null }],
+	])("rejects %s on every download channel without sendControl", (_label, payload) => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		for (const ch of [
+			"stt:predownload-quant",
+			"stt:download-pause",
+			"stt:download-resume",
+			"stt:download-cancel-quant",
+		]) {
+			ipcHandlers[ch]?.({}, payload);
+		}
+		expect(client.sendControlCalls.length).toBe(0);
+		cleanup();
+	});
+});
+
+describe("maybePersistSqliteRow (via handleFullSentence with wav_path)", () => {
+	test("adds a row to the SQLite store when wav_path + text present in dictation mode", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		activeSqliteStore = {
+			add: (row) => {
+				sqliteAddCalls.push(row);
+				return { id: 1 };
+			},
+		};
+		const safeSend = () => undefined;
+		await helpers.handleFullSentence(
+			{ text: "  hello world  ", wav_path: "C:\\recordings\\abc.wav" },
+			safeSend
+		);
+		expect(sqliteAddCalls.length).toBe(1);
+		// fileName is the basename split on / or \, transcriptionText is trimmed.
+		expect(sqliteAddCalls[0]?.fileName).toBe("abc.wav");
+		expect(sqliteAddCalls[0]?.transcriptionText).toBe("hello world");
+		expect(typeof sqliteAddCalls[0]?.postProcessRequested).toBe("boolean");
+	});
+
+	test("splits a POSIX wav_path on '/' to derive the basename", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		activeSqliteStore = {
+			add: (row) => {
+				sqliteAddCalls.push(row);
+				return null;
+			},
+		};
+		await helpers.handleFullSentence(
+			{ text: "x", wav_path: "/home/u/recordings/clip-9.wav" },
+			() => undefined
+		);
+		expect(sqliteAddCalls[0]?.fileName).toBe("clip-9.wav");
+	});
+
+	test("skips persistence in listen mode (captions only)", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "listen";
+		activeSqliteStore = {
+			add: (row) => {
+				sqliteAddCalls.push(row);
+				return null;
+			},
+		};
+		await helpers.handleFullSentence(
+			{ text: "monitored", wav_path: "C:\\r\\a.wav" },
+			() => undefined
+		);
+		expect(sqliteAddCalls.length).toBe(0);
+	});
+
+	test("skips persistence for whitespace-only text", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		activeSqliteStore = {
+			add: (row) => {
+				sqliteAddCalls.push(row);
+				return null;
+			},
+		};
+		await helpers.handleFullSentence({ text: "   ", wav_path: "C:\\r\\a.wav" }, () => undefined);
+		expect(sqliteAddCalls.length).toBe(0);
+	});
+
+	test.each([
+		["missing wav_path", { text: "hi" }],
+		["empty wav_path", { text: "hi", wav_path: "" }],
+		["non-string wav_path", { text: "hi", wav_path: 42 }],
+	])("skips persistence when %s", async (_label, event) => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		activeSqliteStore = {
+			add: (row) => {
+				sqliteAddCalls.push(row);
+				return null;
+			},
+		};
+		await helpers.handleFullSentence(event, () => undefined);
+		expect(sqliteAddCalls.length).toBe(0);
+	});
+
+	test("skips persistence when no active history store is wired (getActiveHistoryStore null)", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		activeSqliteStore = null;
+		// Must not throw even though there's a valid wav_path + text.
+		await expect(
+			helpers.handleFullSentence({ text: "hi", wav_path: "C:\\r\\a.wav" }, () => undefined)
+		).resolves.toBeUndefined();
+		expect(sqliteAddCalls.length).toBe(0);
+	});
+
+	test("swallows a throw from store.add() (sqlite history add failed)", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		activeSqliteStore = {
+			add: () => {
+				throw new Error("disk full");
+			},
+		};
+		// The catch in maybePersistSqliteRow must absorb the throw so the rest
+		// of the fullSentence pipeline (paste, broadcast) still runs.
+		const calls: Array<{ ch: string; args: unknown[] }> = [];
+		const safeSend = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
+		await expect(
+			helpers.handleFullSentence({ text: "hi", wav_path: "C:\\r\\a.wav" }, safeSend)
+		).resolves.toBeUndefined();
+		// fullSentence still broadcast despite the add() failure.
+		expect(calls.some((c) => c.ch === "stt:full-sentence")).toBe(true);
+	});
+});
+
+describe("HISTORY_DELETE handler + isEnoent (via setupRelay)", () => {
+	test("deletes an entry, unlinks its WAV, and broadcasts history:deleted", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		mockWindows.length = 0;
+		mockWindows.push(asWindowSlot(win));
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const handler = ipcHandlers["history:delete"];
+		expect(typeof handler).toBe("function");
+		const result = await handler?.({}, "entry-1");
+		expect(result).toEqual({ deleted: true });
+		// the WAV best-effort unlink fired against the entry's audioFilePath
+		expect(fsUnlinkCalls).toContain("C:\\rec\\entry-1.wav");
+		// allow the unlink promise's .catch chain to settle
+		await new Promise<void>((r) => setTimeout(r, 5));
+		expect(win.sent.some((s) => s.channel === "history:deleted")).toBe(true);
+		cleanup();
+	});
+
+	test("non-string id returns { deleted: false } and does not unlink", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const result = await ipcHandlers["history:delete"]?.({}, 123);
+		expect(result).toEqual({ deleted: false });
+		expect(fsUnlinkCalls.length).toBe(0);
+		cleanup();
+	});
+
+	test("an ENOENT from unlink is swallowed silently (no console.error)", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const enoent = Object.assign(new Error("missing"), { code: "ENOENT" });
+		fsUnlinkBehavior = () => Promise.reject(enoent);
+		const errors: unknown[][] = [];
+		const origError = console.error;
+		console.error = (...a: unknown[]) => errors.push(a);
+		try {
+			const client = makeRelayClient();
+			const win = makeRelayWindow();
+			const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+			await ipcHandlers["history:delete"]?.({}, "entry-1");
+			await new Promise<void>((r) => setTimeout(r, 5));
+			cleanup();
+		} finally {
+			console.error = origError;
+		}
+		// isEnoent === true → the failure is swallowed, nothing logged.
+		expect(errors.length).toBe(0);
+	});
+
+	test("a NON-ENOENT unlink error is logged via console.error", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const eperm = Object.assign(new Error("denied"), { code: "EPERM" });
+		fsUnlinkBehavior = () => Promise.reject(eperm);
+		const errors: unknown[][] = [];
+		const origError = console.error;
+		console.error = (...a: unknown[]) => errors.push(a);
+		try {
+			const client = makeRelayClient();
+			const win = makeRelayWindow();
+			const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+			await ipcHandlers["history:delete"]?.({}, "entry-1");
+			await new Promise<void>((r) => setTimeout(r, 5));
+			cleanup();
+		} finally {
+			console.error = origError;
+		}
+		// isEnoent === false → the branch logs.
+		expect(errors.length).toBeGreaterThan(0);
+		expect(String(errors[0]?.[0])).toContain("[history] failed to delete WAV");
+	});
+
+	test("deleting an entry WITHOUT an audioFilePath does not attempt unlink", async () => {
+		resetState();
+		seedHistoryEntry(); // no audioFilePath
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		mockWindows.length = 0;
+		mockWindows.push(asWindowSlot(win));
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const result = await ipcHandlers["history:delete"]?.({}, "entry-1");
+		expect(result).toEqual({ deleted: true });
+		expect(fsUnlinkCalls.length).toBe(0);
+		cleanup();
+	});
+});
+
+describe("HISTORY_LOAD_AUDIO handler + isEnoent (via setupRelay)", () => {
+	test("returns a base64 data URL for an existing WAV", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		fsReadFileBehavior = () => Promise.resolve(Buffer.from("RIFFWAVE"));
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const result = await ipcHandlers["history:load-audio"]?.({}, "entry-1");
+		expect(typeof result).toBe("string");
+		expect(result as string).toContain("data:audio/wav;base64,");
+		expect(fsReadFileCalls).toContain("C:\\rec\\entry-1.wav");
+		cleanup();
+	});
+
+	test("returns null for a non-string id", async () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		expect(await ipcHandlers["history:load-audio"]?.({}, 99)).toBeNull();
+		expect(fsReadFileCalls.length).toBe(0);
+		cleanup();
+	});
+
+	test("returns null when the entry has no audioFilePath", async () => {
+		resetState();
+		seedHistoryEntry(); // no audioFilePath
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		expect(await ipcHandlers["history:load-audio"]?.({}, "entry-1")).toBeNull();
+		expect(fsReadFileCalls.length).toBe(0);
+		cleanup();
+	});
+
+	test("ENOENT read error returns null silently (no console.error)", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		fsReadFileBehavior = () => Promise.reject(Object.assign(new Error("gone"), { code: "ENOENT" }));
+		const errors: unknown[][] = [];
+		const origError = console.error;
+		console.error = (...a: unknown[]) => errors.push(a);
+		try {
+			const client = makeRelayClient();
+			const win = makeRelayWindow();
+			const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+			const result = await ipcHandlers["history:load-audio"]?.({}, "entry-1");
+			expect(result).toBeNull();
+			cleanup();
+		} finally {
+			console.error = origError;
+		}
+		expect(errors.length).toBe(0);
+	});
+
+	test("non-ENOENT read error logs and returns null", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		fsReadFileBehavior = () => Promise.reject(Object.assign(new Error("io"), { code: "EIO" }));
+		const errors: unknown[][] = [];
+		const origError = console.error;
+		console.error = (...a: unknown[]) => errors.push(a);
+		try {
+			const client = makeRelayClient();
+			const win = makeRelayWindow();
+			const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+			const result = await ipcHandlers["history:load-audio"]?.({}, "entry-1");
+			expect(result).toBeNull();
+			cleanup();
+		} finally {
+			console.error = origError;
+		}
+		expect(errors.length).toBeGreaterThan(0);
+		expect(String(errors[0]?.[0])).toContain("[history] failed to read WAV");
+	});
+});
+
+describe("HISTORY_ALIGN_AUDIO handler (via setupRelay)", () => {
+	test("returns the words array from client.alignWords for a valid entry", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const client = makeRelayClient();
+		client.setAlignResult({ words: [{ word: "hello", start: 0, end: 0.5 }] });
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const result = (await ipcHandlers["history:align-audio"]?.({}, "entry-1")) as unknown[];
+		expect(Array.isArray(result)).toBe(true);
+		expect(result.length).toBe(1);
+		expect(client.alignCalls[0]).toEqual({ path: "C:\\rec\\entry-1.wav", text: "hello world" });
+		cleanup();
+	});
+
+	test("returns [] when alignWords yields a result without a words array", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const client = makeRelayClient();
+		client.setAlignResult({ words: "not-an-array" });
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		expect(await ipcHandlers["history:align-audio"]?.({}, "entry-1")).toEqual([]);
+		cleanup();
+	});
+
+	test("returns [] when alignWords yields null / a non-object", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const client = makeRelayClient();
+		client.setAlignResult(null);
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		expect(await ipcHandlers["history:align-audio"]?.({}, "entry-1")).toEqual([]);
+		cleanup();
+	});
+
+	test("returns [] for a non-string id", async () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		expect(await ipcHandlers["history:align-audio"]?.({}, 5)).toEqual([]);
+		expect(client.alignCalls.length).toBe(0);
+		cleanup();
+	});
+
+	test("returns [] when the entry has no audioFilePath", async () => {
+		resetState();
+		seedHistoryEntry();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		expect(await ipcHandlers["history:align-audio"]?.({}, "entry-1")).toEqual([]);
+		expect(client.alignCalls.length).toBe(0);
+		cleanup();
+	});
+
+	test("returns [] and logs when alignWords rejects", async () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const client = makeRelayClient();
+		client.setAlignThrows(true);
+		const errors: unknown[][] = [];
+		const origError = console.error;
+		console.error = (...a: unknown[]) => errors.push(a);
+		try {
+			const win = makeRelayWindow();
+			const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+			expect(await ipcHandlers["history:align-audio"]?.({}, "entry-1")).toEqual([]);
+			cleanup();
+		} finally {
+			console.error = origError;
+		}
+		expect(errors.length).toBeGreaterThan(0);
+		expect(String(errors[0]?.[0])).toContain("word alignment failed");
+	});
+});
+
+describe("HISTORY_GET_ALL / HISTORY_CLEAR handlers (via setupRelay)", () => {
+	test("HISTORY_GET_ALL returns the seeded history; HISTORY_CLEAR empties it", () => {
+		resetState();
+		seedHistoryEntry({ audioFilePath: "C:\\rec\\entry-1.wav" });
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const all = ipcHandlers["history:get-all"]?.() as unknown[];
+		expect(Array.isArray(all)).toBe(true);
+		expect(all.length).toBe(1);
+		const clearResult = ipcHandlers["history:clear"]?.();
+		expect(clearResult).toEqual({ cleared: true });
+		expect((ipcHandlers["history:get-all"]?.() as unknown[]).length).toBe(0);
+		cleanup();
+	});
+});
+
+describe("setupRelay onRuntimeInfo (reconcile + stale-server skew warning)", () => {
+	test("broadcasts runtime-info, reconciles the model, and warns once on a stale server", () => {
+		resetState();
+		storeValues["model.model"] = "whisper-base";
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		mockWindows.length = 0;
+		mockWindows.push(asWindowSlot(win));
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		// allowed_methods MISSING request_diarization_toggle → stale server.
+		client.emit("runtime-info", { model: "tiny", allowed_methods: ["set_parameter"] });
+		// runtime-info forwarded to renderers
+		expect(win.sent.some((s) => s.channel === "stt:runtime-info")).toBe(true);
+		// model reconciled (server fell back to tiny)
+		expect(storeValues["model.model"]).toBe("tiny");
+		// skew warning fired
+		const skew = win.sent.filter((s) => s.channel === "stt:restart-required");
+		expect(skew.length).toBe(1);
+		// firing runtime-info again does NOT re-warn (one-shot per connection)
+		client.emit("runtime-info", { model: "tiny", allowed_methods: ["set_parameter"] });
+		expect(win.sent.filter((s) => s.channel === "stt:restart-required").length).toBe(1);
+		cleanup();
+	});
+
+	test("does NOT warn when the server reports every required method", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		mockWindows.length = 0;
+		mockWindows.push(asWindowSlot(win));
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		client.emit("runtime-info", {
+			model: "tiny",
+			allowed_methods: ["request_diarization_toggle"],
+		});
+		expect(win.sent.some((s) => s.channel === "stt:restart-required")).toBe(false);
+		cleanup();
+	});
+});
+
+describe("stt:delete-model-cache handler (handleDeleteModelCacheRequest via setupRelay)", () => {
+	test("forwards delete_model_cache for a valid non-empty string model id", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const handler = ipcHandlers["stt:delete-model-cache"];
+		expect(typeof handler).toBe("function");
+		handler?.({}, "whisper-tiny");
+		expect(client.sendControlCalls).toEqual([
+			{ command: "delete_model_cache", model_id: "whisper-tiny" },
+		]);
+		cleanup();
+	});
+
+	test.each([
+		["empty string", ""],
+		["non-string number", 5],
+		["null", null],
+	])("does NOT forward for an invalid model id (%s)", (_label, modelId) => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		ipcHandlers["stt:delete-model-cache"]?.({}, modelId);
+		expect(client.sendControlCalls.length).toBe(0);
+		cleanup();
+	});
+});
+
+describe("setupRelay general.historyMaxEntries onDidChange (live cap update)", () => {
+	test("a finite numeric change re-trims the history store cap", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		const listeners = storeOnDidChange["general.historyMaxEntries"] ?? [];
+		expect(listeners.length).toBeGreaterThan(0);
+		// Drive both branches of the callback's Number.isFinite gate.
+		expect(() => {
+			for (const cb of listeners) {
+				cb(25); // finite → setMaxEntries path
+				cb("not-a-number"); // NaN → ignored, no throw
+			}
+		}).not.toThrow();
+		cleanup();
+	});
+});
+
+describe("readHistoryMaxEntries non-finite fallback (via setupRelay boot)", () => {
+	test("setupRelay tolerates a non-numeric general.historyMaxEntries (falls back to default cap)", () => {
+		resetState();
+		// Number("garbage") → NaN → !Number.isFinite branch → 1000.
+		storeValues["general.historyMaxEntries"] = "garbage";
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		expect(() => relayModule.setupRelay(asSetupWin(win), asSetupClient(client))()).not.toThrow();
+	});
+
+	test("setupRelay honours a finite numeric cap (clamps into [10, 10000])", () => {
+		resetState();
+		// A finite value drives the clamp branch (Math.max/min/floor).
+		storeValues["general.historyMaxEntries"] = 50;
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		expect(() => relayModule.setupRelay(asSetupWin(win), asSetupClient(client))()).not.toThrow();
+	});
+});
+
+describe("maybeInjectAutoSubmit (via pasteIfDictating, autoSubmit on)", () => {
+	test("ptt + autoSubmit=true injects the configured submit key without throwing", async () => {
+		resetState();
+		storeValues["general.autoSubmit"] = true;
+		storeValues["general.autoSubmitKey"] = "Enter";
+		await resetPasteCalls();
+		// pasteIfDictating → maybeInjectAutoSubmit reads autoSubmit + key.
+		expect(() => helpers.pasteIfDictating("ptt", "submit me")).not.toThrow();
+		expect(storeKeyAccesses).toContain("general.autoSubmit");
+		expect(storeKeyAccesses).toContain("general.autoSubmitKey");
+	});
+
+	test("ptt + autoSubmit=false does NOT read the submit key (early return)", () => {
+		resetState();
+		storeValues["general.autoSubmit"] = false;
+		expect(() => helpers.pasteIfDictating("ptt", "no submit")).not.toThrow();
+		expect(storeKeyAccesses).not.toContain("general.autoSubmitKey");
+	});
+});
+
+describe("handleFullSentence abort gate (discardCancelledSession)", () => {
+	test("a cancelled session drops the fullSentence: no broadcast, context cleared", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		const abortState = await import("../lib/abort-state");
+		let cleared = 0;
+		const ctxCap = {
+			capture: () => undefined,
+			clear: () => {
+				cleared += 1;
+			},
+			consume: () => Promise.resolve(""),
+		};
+		const calls: Array<{ ch: string; args: unknown[] }> = [];
+		const send = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
+		abortState.markSessionAborted();
+		try {
+			await helpers.handleFullSentence({ text: "discarded transcript" }, send, undefined, ctxCap);
+		} finally {
+			abortState.clearSessionAborted();
+		}
+		// HARD GATE: nothing reaches the renderer; context was cleared.
+		expect(calls.some((c) => c.ch === "stt:full-sentence")).toBe(false);
+		expect(cleared).toBeGreaterThan(0);
+	});
+});
+
+describe("handleFullSentence SECOND abort gate (cancel lands during the LLM await)", () => {
+	test("a cancel that fires while the LLM is running drops the commit (no paste/broadcast)", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		// LLM configured so the pre-LLM branch does NOT claim the event and we
+		// reach runDictationLlmAndCommit's post-LLM abort gate.
+		storeValues["llm.dictation.enabled"] = true;
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.dictation.model"] = "mistral";
+		storeValues["llm.endpoint"] = "http://localhost:1";
+		storeValues["llm.dictation.presets"] = [{ key: "neutral" }];
+		const abortState = await import("../lib/abort-state");
+		// consume() runs BEFORE the LLM call and AFTER the pre-LLM abort check —
+		// flipping the abort flag here simulates the user hitting
+		// hotkey+Backspace mid-transcription so the SECOND gate trips.
+		let cleared = 0;
+		const ctxCap = {
+			capture: () => undefined,
+			clear: () => {
+				cleared += 1;
+			},
+			consume: () => {
+				abortState.markSessionAborted();
+				return Promise.resolve("");
+			},
+		};
+		const calls: Array<{ ch: string; args: unknown[] }> = [];
+		const send = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
+		try {
+			await helpers.handleFullSentence({ text: "late cancel" }, send, undefined, ctxCap);
+		} finally {
+			abortState.clearSessionAborted();
+		}
+		// The post-LLM gate discarded the result → noopDictationCommit ran, so
+		// the cleaned caption was NEVER broadcast.
+		expect(calls.some((c) => c.ch === "stt:full-sentence")).toBe(false);
+		expect(cleared).toBeGreaterThan(0);
+	});
+});
+
+describe("handleFullSentence empty-text overlay deferral (hideOverlayIfLlmDeferred)", () => {
+	test("empty result with dictation LLM configured still finishes cleanly (overlay hidden)", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "ptt";
+		// shouldRunDictationLlm() === true → the empty-text branch must hide
+		// the overlay that recording_stop deferred to it.
+		storeValues["llm.dictation.enabled"] = true;
+		storeValues["llm.dictation.provider"] = "ollama";
+		storeValues["llm.dictation.model"] = "mistral";
+		const calls: Array<{ ch: string; args: unknown[] }> = [];
+		const send = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
+		await expect(helpers.handleFullSentence({ text: "   " }, send)).resolves.toBeUndefined();
+		// no-audio hint still emitted in dictation mode
+		expect(calls.some((c) => c.ch === "stt:no-audio-detected")).toBe(true);
+	});
+});
+
+describe("handleRealtimeEvent abort gate", () => {
+	test("suppresses realtime text while the session is aborted, flows after clear", async () => {
+		const abortState = await import("../lib/abort-state");
+		const calls: string[] = [];
+		const send = (ch: string) => calls.push(ch);
+		abortState.markSessionAborted();
+		helpers.handleRealtimeEvent({ text: "discarded preview" }, send);
+		expect(calls).toEqual([]);
+		abortState.clearSessionAborted();
+		helpers.handleRealtimeEvent({ text: "live preview" }, send);
+		expect(calls).toEqual(["stt:realtime-text"]);
+	});
+});
+
+describe("recording_start listen-mode side effects (noopRecordingStartSideEffects)", () => {
+	test("listen mode admits the start, broadcasts, but skips history.notifyStarted", async () => {
+		resetState();
+		storeValues["general.recordingMode"] = "listen";
+		storeValues["general.systemAudioReductionWhileDictating"] = 0;
+		const recordingState = await import("../lib/recording-state");
+		recordingState.__resetRecordingStateForTesting__();
+		recordingState.notifyHotkeyPressed();
+		let started = 0;
+		const history = {
+			notifyStarted: () => {
+				started += 1;
+			},
+			notifyStopped: () => undefined,
+			capture: () => null,
+		};
+		const calls: Array<{ ch: string; args: unknown[] }> = [];
+		const send = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
+		const result = helpers.handleRecordingStart(send, history);
+		// listen mode skips the personalisation chain → notifyStarted NOT called
+		expect(started).toBe(0);
+		// …but the start is still broadcast + duck stays off
+		expect(calls.some((c) => c.ch === "stt:recording-start")).toBe(true);
+		expect(result.attempted).toBe(false);
+	});
+});
+
+describe("model lifecycle data-event handlers (via dispatchDataEvent)", () => {
+	function makeCtx() {
+		const broadcastSent: Array<{ ch: string; args: unknown[] }> = [];
+		const catalogWrites: unknown[][] = [];
+		return {
+			broadcastSent,
+			catalogWrites,
+			ctx: {
+				broadcast: (ch: string, ...args: unknown[]) => broadcastSent.push({ ch, args }),
+				mainSend: () => undefined,
+				getMuted: () => false,
+				setMuted: () => undefined,
+				setCatalogCache: (m: unknown[]) => catalogWrites.push(m),
+			},
+		};
+	}
+
+	test("model_swap_started forwards kind + name", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent(
+			"model_swap_started",
+			{ kind: "stt", name: "whisper-tiny" },
+			ctx
+		);
+		const sent = broadcastSent.find((s) => s.ch === "stt:model-swap-started");
+		expect(sent?.args[0]).toEqual({ kind: "stt", name: "whisper-tiny" });
+	});
+
+	test("model_swap_completed forwards kind + name", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent("model_swap_completed", { kind: "stt", name: "base" }, ctx);
+		expect(broadcastSent.find((s) => s.ch === "stt:model-swap-completed")?.args[0]).toEqual({
+			kind: "stt",
+			name: "base",
+		});
+	});
+
+	test("model_swap_failed defaults category=unknown and detail='' when absent", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent(
+			"model_swap_failed",
+			{ kind: "stt", name: "x", reason: "boom" },
+			ctx
+		);
+		const p = broadcastSent.find((s) => s.ch === "stt:model-swap-failed")?.args[0] as Record<
+			string,
+			unknown
+		>;
+		expect(p).toEqual({
+			kind: "stt",
+			name: "x",
+			reason: "boom",
+			category: "unknown",
+			detail: "",
+		});
+	});
+
+	test("model_swap_failed passes through an explicit category + detail", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent(
+			"model_swap_failed",
+			{ kind: "stt", name: "x", reason: "oom", category: "out_of_memory", detail: "raw text" },
+			ctx
+		);
+		const p = broadcastSent.find((s) => s.ch === "stt:model-swap-failed")?.args[0] as Record<
+			string,
+			unknown
+		>;
+		expect(p.category).toBe("out_of_memory");
+		expect(p.detail).toBe("raw text");
+	});
+
+	test("diarization_toggle_started forwards the enabled flag", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent("diarization_toggle_started", { enabled: true }, ctx);
+		expect(broadcastSent.find((s) => s.ch === "stt:diarization-toggle-started")?.args[0]).toEqual({
+			enabled: true,
+		});
+	});
+
+	test("diarization_toggle_completed defaults message to '' when absent", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent("diarization_toggle_completed", { enabled: false }, ctx);
+		expect(broadcastSent.find((s) => s.ch === "stt:diarization-toggle-completed")?.args[0]).toEqual(
+			{ enabled: false, message: "" }
+		);
+	});
+
+	test("diarization_toggle_failed defaults category + detail", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent(
+			"diarization_toggle_failed",
+			{ enabled: true, reason: "nope" },
+			ctx
+		);
+		const p = broadcastSent.find((s) => s.ch === "stt:diarization-toggle-failed")
+			?.args[0] as Record<string, unknown>;
+		expect(p).toEqual({ enabled: true, reason: "nope", category: "unknown", detail: "" });
+	});
+
+	test("model_cache_changed forwards model_id as modelId", async () => {
+		const { ctx, broadcastSent } = makeCtx();
+		await helpers.dispatchDataEvent("model_cache_changed", { model_id: "whisper-base" }, ctx);
+		expect(broadcastSent.find((s) => s.ch === "stt:model-cache-changed")?.args[0]).toEqual({
+			modelId: "whisper-base",
+		});
+	});
+
+	test("model_catalog_updated with an array updates the cache AND broadcasts the catalog", async () => {
+		const { ctx, broadcastSent, catalogWrites } = makeCtx();
+		const models = [{ id: "tiny" }, { id: "base" }];
+		await helpers.dispatchDataEvent("model_catalog_updated", { models }, ctx);
+		expect(catalogWrites.length).toBe(1);
+		expect(catalogWrites[0]).toEqual(models);
+		const sent = broadcastSent.find((s) => s.ch === "stt:model-catalog");
+		expect((sent?.args[0] as { models?: unknown[] })?.models).toEqual(models);
+	});
+
+	test("model_catalog_updated with a NON-array payload neither caches nor broadcasts", async () => {
+		const { ctx, broadcastSent, catalogWrites } = makeCtx();
+		await helpers.dispatchDataEvent("model_catalog_updated", { models: "not-a-list" }, ctx);
+		expect(catalogWrites.length).toBe(0);
+		expect(broadcastSent.some((s) => s.ch === "stt:model-catalog")).toBe(false);
+	});
+});
+
+describe("SIMPLE_RELAY_HANDLERS speaker_segments + no_audio_detected abort gate", () => {
+	test("speaker_segments forwards the segments tuple", () => {
+		const calls: Array<{ ch: string; args: unknown[] }> = [];
+		const send = (ch: string, ...args: unknown[]) => calls.push({ ch, args });
+		const segments = [{ speaker: 0, start: 0, end: 1 }];
+		helpers.SIMPLE_RELAY_HANDLERS.speaker_segments?.({ segments }, send);
+		expect(calls[0]?.ch).toBe("stt:speaker-segments");
+		expect((calls[0]?.args[0] as { segments?: unknown })?.segments).toEqual(segments);
+	});
+
+	test("no_audio_detected is SUPPRESSED while a session is aborted, then flows after clear", async () => {
+		const abortState = await import("../lib/abort-state");
+		const calls: string[] = [];
+		const send = (ch: string) => calls.push(ch);
+		abortState.markSessionAborted();
+		helpers.SIMPLE_RELAY_HANDLERS.no_audio_detected?.({}, send);
+		expect(calls).toEqual([]); // gated by isSessionAborted()
+		abortState.clearSessionAborted();
+		helpers.SIMPLE_RELAY_HANDLERS.no_audio_detected?.({}, send);
+		expect(calls).toEqual(["stt:no-audio-detected"]);
+	});
+
+	test("transcription_failed is SUPPRESSED while a session is aborted, then flows after clear", async () => {
+		const abortState = await import("../lib/abort-state");
+		const calls: string[] = [];
+		const send = (ch: string) => calls.push(ch);
+		abortState.markSessionAborted();
+		helpers.SIMPLE_RELAY_HANDLERS.transcription_failed?.({}, send);
+		expect(calls).toEqual([]); // gated by isSessionAborted(), like no_audio_detected
+		abortState.clearSessionAborted();
+		helpers.SIMPLE_RELAY_HANDLERS.transcription_failed?.({}, send);
+		expect(calls).toEqual(["stt:transcription-failed"]);
+	});
+});
+
+describe("setupRelay onDisconnected cold-start latch", () => {
+	test("suppresses the disconnect broadcast before the first successful connect", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		mockWindows.length = 0;
+		mockWindows.push(asWindowSlot(win));
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		// Cold-start: never connected yet → onDisconnected returns early.
+		client.emit("disconnected");
+		expect(win.sent.some((s) => s.channel === "stt:connection-change")).toBe(false);
+		cleanup();
+	});
+
+	test("broadcasts disconnect=false once a connect has happened first", () => {
+		resetState();
+		const client = makeRelayClient();
+		const win = makeRelayWindow();
+		mockWindows.length = 0;
+		mockWindows.push(asWindowSlot(win));
+		const cleanup = relayModule.setupRelay(asSetupWin(win), asSetupClient(client));
+		client.emit("connected");
+		client.emit("disconnected");
+		const disc = win.sent.find(
+			(s) =>
+				s.channel === "stt:connection-change" &&
+				(s.args[0] as { connected: boolean }).connected === false
+		);
+		expect(disc).toBeDefined();
+		cleanup();
 	});
 });

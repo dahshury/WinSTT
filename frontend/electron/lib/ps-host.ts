@@ -252,9 +252,22 @@ interface PendingCommand {
 
 let psProcess: ChildProcess | null = null;
 let psSetupPromise: Promise<boolean> | null = null;
+// nextId is a monotonic request id used only to demux stdout lines back to
+// their pending command. It's wrapped modulo a large constant so an
+// extremely long-lived host (millions of pastes) can't drift toward
+// Number.MAX_SAFE_INTEGER; collisions are impossible in practice because a
+// command never stays pending longer than its timeout (≤15s), so the live
+// id window is tiny relative to the modulus.
 let nextId = 1;
+const NEXT_ID_MODULO = 1_000_000_000;
 const pending = new Map<number, PendingCommand>();
 let stdoutBuffer = "";
+
+function nextCommandId(): number {
+	const id = nextId;
+	nextId = (nextId % NEXT_ID_MODULO) + 1;
+	return id;
+}
 
 function failAllPending(): void {
 	for (const req of pending.values()) {
@@ -262,6 +275,57 @@ function failAllPending(): void {
 		req.resolve({ ok: false, value: null });
 	}
 	pending.clear();
+}
+
+/**
+ * The process instance currently being torn down by a controlled recycle.
+ * Its `exit` event (which fires asynchronously after `kill()`) must NOT run
+ * `failAllPending()`, otherwise it would collaterally cancel the healthy
+ * in-flight siblings we're deliberately preserving. Compared by identity so an
+ * UNEXPECTED exit of a DIFFERENT (live) host still fails its pending commands —
+ * those have no live pipe left to complete on.
+ */
+let recyclingProcess: ChildProcess | null = null;
+
+/**
+ * Kill the live PowerShell host and clear the module globals so the next
+ * `runPsCommand` respawns a fresh process — WITHOUT failing the still-pending
+ * commands. Used when a single command times out: the host may be wedged
+ * (a security hook is intercepting SendInput), so we recycle it, but the
+ * sibling commands keep their own timeout timers as their safety net rather
+ * than being collaterally force-failed.
+ *
+ * `expected` guards against a stale timeout recycling the WRONG host: a sibling
+ * that times out AFTER its issuing process was already recycled (and a fresh
+ * host spawned for new work) must not kill that fresh, healthy host. When
+ * `expected` is passed and no longer matches the live process, this is a no-op.
+ */
+function recyclePsHost(expected?: ChildProcess): void {
+	const ps = psProcess;
+	if (expected && expected !== ps) {
+		// The issuing host was already recycled — don't touch whatever's live now.
+		return;
+	}
+	psProcess = null;
+	psSetupPromise = null;
+	if (!ps) {
+		return;
+	}
+	// Mark this instance so its async `exit` event skips failAllPending() and
+	// can't cancel the healthy in-flight siblings.
+	recyclingProcess = ps;
+	if (!ps.killed) {
+		try {
+			ps.stdin?.end();
+		} catch {
+			// best-effort
+		}
+		try {
+			ps.kill();
+		} catch {
+			// best-effort
+		}
+	}
 }
 
 function processStdoutLine(line: string): void {
@@ -312,6 +376,7 @@ function startPs(): Promise<boolean> {
 	const promise = new Promise<boolean>((resolveSetup) => {
 		let setupResolved = false;
 		stdoutBuffer = "";
+		recyclingProcess = null;
 		failAllPending();
 
 		const ps = spawn(
@@ -353,7 +418,11 @@ function startPs(): Promise<boolean> {
 
 		ps.stdout?.on("data", onData);
 		ps.stderr?.on("data", (chunk: Buffer) => {
-			const msg = chunk.toString().trim();
+			// Bound the decode: slice the raw buffer to a small cap BEFORE
+			// toString() so a pathological multi-MB stderr burst can't materialize
+			// the whole chunk as a JS string just to throw all but 200 chars away.
+			// 256 bytes ≥ the 200-char log cap even for multi-byte UTF-8 tails.
+			const msg = chunk.subarray(0, 256).toString().trim();
 			if (msg) {
 				dbg("ps-host", `stderr: ${msg.slice(0, 200)}`);
 			}
@@ -368,7 +437,15 @@ function startPs(): Promise<boolean> {
 				psProcess = null;
 				psSetupPromise = null;
 			}
-			failAllPending();
+			// A controlled recycle (single-command timeout) deliberately kills the
+			// host while leaving healthy siblings pending — skip failAllPending so
+			// they aren't collaterally cancelled and can complete on a fresh host
+			// or their own timeout. An unexpected death still fails everything.
+			if (recyclingProcess === ps) {
+				recyclingProcess = null;
+			} else {
+				failAllPending();
+			}
 			finishSetup(false);
 		});
 
@@ -429,18 +506,22 @@ export async function runPsCommand(command: string, opts: RunOptions = {}): Prom
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
 
 	return new Promise<RunResult>((resolve) => {
-		const id = nextId;
-		nextId += 1;
+		const id = nextCommandId();
 		const timer = setTimeout(() => {
 			if (pending.has(id)) {
 				pending.delete(id);
-				dbg("ps-host", `command timed out (id=${id}, >${timeoutMs}ms) — killing PS to recover`);
+				dbg("ps-host", `command timed out (id=${id}, >${timeoutMs}ms) — recycling PS to recover`);
 				resolve({ ok: false, value: null });
-				// PS is wedged (typically a security hook intercepting SendInput).
-				// Kill it so the next runPsCommand respawns a fresh process —
-				// otherwise every subsequent command queues behind the hang and
-				// the app appears permanently frozen.
-				shutdownPsHost();
+				// PS may be wedged (typically a security hook intercepting
+				// SendInput). Recycle the host so the next runPsCommand respawns a
+				// fresh process — otherwise every subsequent command queues behind
+				// the hang and the app appears permanently frozen. recyclePsHost()
+				// (unlike shutdownPsHost) leaves the OTHER in-flight commands
+				// pending: each keeps its own timeout timer, so one slow command
+				// can't collaterally force-fail its healthy siblings. Pass `ps` so a
+				// late-firing timeout can't kill a fresh host spawned after this
+				// command's host was already recycled.
+				recyclePsHost(ps);
 			}
 		}, timeoutMs);
 

@@ -9,12 +9,16 @@ const TEST_TINT: readonly [number, number, number] = [59, 130, 246]; // ptt blue
 // Mock electron with a `nativeImage` that round-trips PNG buffers so
 // renderBarsIcon's output can actually be inspected.
 const lastPngBuffers: Buffer[] = [];
+// Mutable flag so a test can make `createFromPath` return a NON-empty base
+// icon, exercising the `baseIconUsable() === true` branch of revertIcons /
+// initRecordingIndicator (the default empty icon only covers the false side).
+let baseIconEmpty = true;
 mock.module("electron", () => {
 	const base = electronMock();
 	base.nativeImage = {
 		createFromPath: (_p: string) => ({
-			isEmpty: () => true,
-			getSize: () => ({ width: 0, height: 0 }),
+			isEmpty: () => baseIconEmpty,
+			getSize: () => ({ width: baseIconEmpty ? 0 : 16, height: baseIconEmpty ? 0 : 16 }),
 			toPNG: () => Buffer.alloc(0),
 		}),
 		createFromBuffer: (buf: Buffer) => {
@@ -371,6 +375,48 @@ describe("recording-indicator helpers", () => {
 		expect(edge).toBeLessThan(255);
 	});
 
+	test("blitPixel writes tint+alpha straight through onto a transparent pixel (dstA === 0 fast path)", () => {
+		const data = Buffer.alloc(helpers.TARGET_SIZE * helpers.TARGET_SIZE * 4);
+		// pixel (0,0) starts fully transparent → the dstA === 0 branch copies the
+		// tint verbatim and stores the source alpha unblended.
+		helpers.blitPixel(data, 0, 0, [11, 22, 33], 200);
+		expect(data[0]).toBe(11);
+		expect(data[1]).toBe(22);
+		expect(data[2]).toBe(33);
+		expect(data[3]).toBe(200);
+	});
+
+	test("blitPixel SRC_OVER-blends a second stamp onto an existing pixel (outA > 0 path)", () => {
+		const data = Buffer.alloc(helpers.TARGET_SIZE * helpers.TARGET_SIZE * 4);
+		helpers.blitPixel(data, 0, 0, [0, 0, 0], 128); // seed a half-opaque black pixel
+		const seededAlpha = data[3] ?? 0;
+		helpers.blitPixel(data, 0, 0, [255, 255, 255], 128); // blend white on top
+		// Compositing two semi-transparent stamps raises the accumulated alpha and
+		// pulls the RGB toward the new (white) tint — i.e. the blend ran (not the
+		// fast path, not the outA<=0 early return).
+		expect(data[3]).toBeGreaterThan(seededAlpha);
+		expect(data[0]).toBeGreaterThan(0);
+	});
+
+	test("blitPixel returns early (pixel untouched) when the composited alpha collapses to <= 0", () => {
+		// outA = srcA + (dstA/255)*(1 - srcA). With an existing non-zero dst pixel
+		// (so the dstA === 0 fast path is skipped) and a sufficiently NEGATIVE source
+		// alpha, srcA drives outA <= 0 → the early `return` fires and leaves the
+		// destination bytes exactly as they were. This guards the defensive clamp;
+		// every real caller (discCoverage/capCoverage) only ever passes alpha >= 0,
+		// so this branch is reachable only by a direct call.
+		const data = Buffer.alloc(helpers.TARGET_SIZE * helpers.TARGET_SIZE * 4);
+		data[0] = 10;
+		data[1] = 20;
+		data[2] = 30;
+		data[3] = 1; // dstA non-zero → skip the fast path, enter the blend branch
+		helpers.blitPixel(data, 0, 0, [255, 255, 255], -300);
+		expect(data[0]).toBe(10);
+		expect(data[1]).toBe(20);
+		expect(data[2]).toBe(30);
+		expect(data[3]).toBe(1);
+	});
+
 	test("module constants match pill icon-size geometry", () => {
 		expect(helpers.BAR_COUNT).toBe(5);
 		expect(helpers.TARGET_SIZE).toBe(48);
@@ -402,6 +448,17 @@ describe("topology path parsing", () => {
 
 	test("parsePath rejects path without M", () => {
 		expect(() => parsePath("C 1 1 2 2 3 3")).toThrow();
+	});
+
+	test("parsePath throws on a non-numeric coordinate (readNum bad-number guard)", () => {
+		// `M x 0` — the first coordinate token is not a number, so readNum's
+		// Number.parseFloat → NaN → throws "bad number at token N".
+		expect(() => parsePath("M x 0 C 1 1 2 2 3 3 Z")).toThrow(/bad number/);
+	});
+
+	test("parsePath throws when a C segment runs out of numeric tokens", () => {
+		// Truncated control points → readNum hits an undefined token → NaN throw.
+		expect(() => parsePath("M 0 0 C 1 1 2")).toThrow(/bad number/);
 	});
 
 	test("all three thinking-indicator paths have identical topology", () => {
@@ -464,6 +521,20 @@ describe("topology interpolation", () => {
 		const a = parsePath("M 0 0 C 1 1 2 2 3 3 Z");
 		const b = parsePath("M 0 0 C 1 1 2 2 3 3 C 4 4 5 5 6 6 Z");
 		expect(() => lerpPath(a, b, 0.5)).toThrow();
+	});
+
+	test("lerpPath throws 'missing segment' when b has the right length but a hole at the index", () => {
+		// The length check at the top passes (both report length 1), but b.segments[0]
+		// is a SPARSE hole → `other` is undefined inside the map, tripping the per-
+		// segment guard. parsePath can never produce a hole, so this defensive throw
+		// is reachable only by handing lerpPath a hand-built sparse array.
+		const a = parsePath("M 0 0 C 1 1 2 2 3 3 Z");
+		const sparse: unknown[] = [];
+		sparse.length = 1; // index 0 is a hole (undefined), length stays 1
+		const b = { start: [0, 0], segments: sparse };
+		expect(() => lerpPath(a, b as unknown as Parameters<typeof lerpPath>[1], 0.5)).toThrow(
+			/missing segment/
+		);
 	});
 
 	test("interpolateTopology at integer-keyframe times returns the keyframes", () => {
@@ -651,6 +722,218 @@ describe("indicator state machine", () => {
 		onRecordingStop();
 		expect(called).toBe(0);
 		setReapplyTrayImage(null);
+		cleanupRecordingIndicator();
+	});
+});
+
+describe("reconcileView branch coverage", () => {
+	function makeTrayCounting(): {
+		setImage: (icon: unknown) => void;
+		isDestroyed: () => boolean;
+		count: number;
+	} {
+		let count = 0;
+		return {
+			setImage: () => {
+				count += 1;
+			},
+			get count() {
+				return count;
+			},
+			isDestroyed: () => false,
+		} as unknown as {
+			setImage: (icon: unknown) => void;
+			isDestroyed: () => boolean;
+			count: number;
+		};
+	}
+
+	test("recording → thinking swaps the tick interval (stopTick + startTick on interval change)", () => {
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		const tray = makeTrayCounting();
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+
+		// Recording installs the 50 ms BAR tick.
+		onRecordingStart();
+		expect(helpers.getCurrentView()).toBe("recording");
+		// Mark transcribing while still recording (no view change — recording wins).
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("recording");
+		// Drop recording: view flips to thinking, which has a DIFFERENT desired
+		// interval (33 ms) than the live 50 ms tick → reconcileView must tear the
+		// tick down and rebuild it at the thinking cadence. The frame it paints on
+		// rebuild is the topology icon, so the tray gets at least one new image.
+		const before = tray.count;
+		onRecordingStop();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		expect(tray.count).toBeGreaterThan(before);
+
+		onTranscribingStop();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+
+	test("thinking → recording also swaps the interval the other direction", () => {
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		const tray = makeTrayCounting();
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+
+		// Thinking installs the 33 ms tick.
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		// Recording wins → view flips to recording, interval 33 → 50.
+		const before = tray.count;
+		onRecordingStart();
+		expect(helpers.getCurrentView()).toBe("recording");
+		expect(tray.count).toBeGreaterThan(before);
+
+		onRecordingStop();
+		// transcribing flag still set → back to thinking.
+		expect(helpers.getCurrentView()).toBe("thinking");
+		onTranscribingStop();
+		cleanupRecordingIndicator();
+	});
+
+	test("recording → idle with a USABLE base icon reverts to the base icon (setIconOnTray path)", () => {
+		// Flip the base icon to non-empty so baseIconUsable() === true and
+		// revertIcons takes its setIconOnTray(baseIcon) branch instead of the
+		// early return.
+		baseIconEmpty = false;
+		cleanupRecordingIndicator();
+		const tray = makeTrayCounting();
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+		expect(helpers.baseIconUsable()).toBe(true);
+
+		onRecordingStart();
+		const afterStart = tray.count;
+		onRecordingStop();
+		// revertIcons painted the base icon onto the tray → one more setImage.
+		expect(helpers.getCurrentView()).toBe("idle");
+		expect(tray.count).toBeGreaterThan(afterStart);
+
+		cleanupRecordingIndicator();
+		baseIconEmpty = true;
+	});
+
+	test("recording → idle with an EMPTY base icon skips the revert (no extra setImage)", () => {
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		const tray = makeTrayCounting();
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+		expect(helpers.baseIconUsable()).toBe(false);
+
+		onRecordingStart();
+		const afterStart = tray.count;
+		onRecordingStop();
+		// baseIconUsable() === false → revertIcons returns early, no new image.
+		expect(helpers.getCurrentView()).toBe("idle");
+		expect(tray.count).toBe(afterStart);
+
+		cleanupRecordingIndicator();
+	});
+
+	test("thinking → idle with no reapply callback wired is a safe no-op", () => {
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		setReapplyTrayImage(null);
+		const tray = makeTrayCounting();
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		// No reapply fn set → the `reapplyTrayImageFn?.()` optional-call short
+		// circuits without throwing.
+		expect(() => onTranscribingStop()).not.toThrow();
+		expect(helpers.getCurrentView()).toBe("idle");
+
+		cleanupRecordingIndicator();
+	});
+});
+
+describe("initRecordingIndicator base-icon branch", () => {
+	test("non-empty base icon takes the non-empty init branch (baseIconUsable true)", () => {
+		baseIconEmpty = false;
+		cleanupRecordingIndicator();
+		const tray = makeTray();
+		initRecordingIndicator(asTray(tray), "/real/icon.png");
+		expect(helpers.baseIconUsable()).toBe(true);
+		cleanupRecordingIndicator();
+		baseIconEmpty = true;
+	});
+
+	test("empty base icon takes the empty-warning init branch (baseIconUsable false)", () => {
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		const tray = makeTray();
+		initRecordingIndicator(asTray(tray), "/empty/icon.png");
+		expect(helpers.baseIconUsable()).toBe(false);
+		cleanupRecordingIndicator();
+	});
+});
+
+describe("onLlmThinkingStart timeline-reset branch", () => {
+	test("LLM-start while transcribing is already active does NOT reset the thinking timeline", () => {
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		const tray = makeTray();
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+
+		// Transcribing already running → thinkingStartMs already anchored.
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		// LLM-start now: the `!(isTranscribing || isLlmThinking)` guard is FALSE
+		// (isTranscribing is true), so the timeline anchor is NOT reset — the
+		// morph keeps running from the transcribing anchor.
+		expect(() => onLlmThinkingStart()).not.toThrow();
+		expect(helpers.getCurrentView()).toBe("thinking");
+
+		onTranscribingStop();
+		// Still thinking because LLM is active.
+		expect(helpers.getCurrentView()).toBe("thinking");
+		onLlmThinkingStop();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+
+	test("LLM-start from cold (nothing active) anchors a fresh thinking timeline", () => {
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		const tray = makeTray();
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+
+		// No transcribing/llm in flight → guard is TRUE → thinkingStartMs reset.
+		expect(() => onLlmThinkingStart()).not.toThrow();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		onLlmThinkingStop();
+		expect(helpers.getCurrentView()).toBe("idle");
+		cleanupRecordingIndicator();
+	});
+});
+
+describe("startTick interval-fallback branch", () => {
+	test("startTick with no explicit interval uses the view-derived default", () => {
+		// startTick is invoked WITHOUT an explicit interval from reconcileView's
+		// line-231 resume path and from the on*Start handlers. The
+		// `intervalMs ?? (currentView === "thinking" ? ... : ...)` fallback is
+		// what onTranscribingStart exercises: reconcileView for a view CHANGE
+		// passes wantedInterval, but the redundant-resume path does not. We assert
+		// the indicator keeps animating after a redundant start, proving the tick
+		// survived without an explicit interval argument.
+		baseIconEmpty = true;
+		cleanupRecordingIndicator();
+		const tray = makeTray() as ReturnType<typeof makeTray> & { count: number };
+		initRecordingIndicator(asTray(tray), "/fake/icon.png");
+
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+		// A redundant start is a no-op at the flag level AND the tick stays alive
+		// (startTick early-returns because tickHandle !== null — covering line 268).
+		onTranscribingStart();
+		expect(helpers.getCurrentView()).toBe("thinking");
+
+		onTranscribingStop();
 		cleanupRecordingIndicator();
 	});
 });

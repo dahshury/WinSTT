@@ -1004,3 +1004,408 @@ describe("extractAccelerator payload-shape edge cases (mutation guards)", () => 
 		expect(ok).toBe(false);
 	});
 });
+
+const { isPasteGuardActive } = await import("./hotkey");
+
+describe("isPasteGuardActive module-level mirror", () => {
+	test("returns false when no paste is in flight (beforeEach reset to false)", () => {
+		// beforeEach calls setPasteGuard(false), so the guard starts down.
+		expect(isPasteGuardActive()).toBe(false);
+	});
+
+	test("returns true while the guard is engaged, false again after lift", () => {
+		setPasteGuard(true);
+		expect(isPasteGuardActive()).toBe(true);
+		setPasteGuard(false);
+		expect(isPasteGuardActive()).toBe(false);
+	});
+});
+
+// ── Combo-action (`onCombo`) dispatch ───────────────────────────────────
+// The shared beforeEach wires setupHotkeyHandlers WITHOUT an onCombo callback,
+// so the entire second-key combo path (lookupComboAction's hit branch,
+// resolveComboActionIfArmed, tryHandleComboAction's fire body, and
+// dispatchTrackedKeyDown's early-return) stays dark. These tests stand up
+// their OWN handlers with an onCombo spy. Each replaces the beforeEach setup
+// (tearing it down first so the two don't fight over the same IPC channels),
+// and hands the fresh teardown back to the shared `cleanup` so afterEach
+// disposes it.
+const UIO_BACKSPACE = 72; // → "cancel"
+const UIO_ARROW_UP = 120; // → "cycle-mode"
+
+function setupWithCombo(): {
+	reg: (event: unknown, ...args: unknown[]) => unknown;
+	comboActions: string[];
+} {
+	// Dispose the no-onCombo setup that beforeEach created.
+	cleanup?.();
+	const comboActions: string[] = [];
+	cleanup = setupHotkeyHandlers(fakeWindow, fakeSttClient as never, {
+		onCombo: (action) => {
+			comboActions.push(action);
+		},
+	});
+	const reg = handlers.get("hotkey:register");
+	if (!reg) {
+		throw new Error("hotkey:register handler missing after setup");
+	}
+	return { reg, comboActions };
+}
+
+describe("hotkey combo-action dispatch (onCombo)", () => {
+	test("Backspace while the hotkey is actively held fires onCombo('cancel') and is consumed", async () => {
+		const { reg, comboActions } = setupWithCombo();
+		await reg({}, { accelerator: "LCtrl+R" });
+		// Activate the combo so isActive becomes true.
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(isHotkeyActive()).toBe(true);
+		winSent.length = 0;
+		// Press Backspace — recognised second key.
+		fireKey("keydown", UIO_BACKSPACE);
+		expect(comboActions).toEqual(["cancel"]);
+		// Combo action consumed the keypress: no re-activation / no extra
+		// hotkey:pressed event (dispatchTrackedKeyDown returns early).
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeUndefined();
+		// The hotkey stays active — a combo action does not release it.
+		expect(isHotkeyActive()).toBe(true);
+	});
+
+	test("ArrowUp while held fires onCombo('cycle-mode')", async () => {
+		const { reg, comboActions } = setupWithCombo();
+		await reg({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		fireKey("keydown", UIO_ARROW_UP);
+		expect(comboActions).toEqual(["cycle-mode"]);
+	});
+
+	test("auto-repeat keydowns fire onCombo once per keydown (renderer makes it idempotent)", async () => {
+		const { reg, comboActions } = setupWithCombo();
+		await reg({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		fireKey("keydown", UIO_BACKSPACE);
+		fireKey("keydown", UIO_BACKSPACE); // key-repeat
+		fireKey("keydown", UIO_BACKSPACE);
+		expect(comboActions).toEqual(["cancel", "cancel", "cancel"]);
+	});
+
+	test("a recognised combo key pressed while the hotkey is NOT held does nothing (resolveComboActionIfArmed → null)", async () => {
+		const { reg, comboActions } = setupWithCombo();
+		await reg({}, { accelerator: "LCtrl+R" });
+		// Hotkey never activated (no combo keys down). isActive is false →
+		// resolveComboActionIfArmed returns null before lookupComboAction runs.
+		expect(isHotkeyActive()).toBe(false);
+		fireKey("keydown", UIO_BACKSPACE);
+		expect(comboActions).toEqual([]);
+	});
+
+	test("an UNrecognised key while held falls through to tryActivateCombo (lookupComboAction → null branch)", async () => {
+		const { reg, comboActions } = setupWithCombo();
+		await reg({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		winSent.length = 0;
+		// Code 30 ("A") is held + recognised-as-keypress but NOT a combo action.
+		// resolveComboActionIfArmed → lookupComboAction(30) → COMBO_KEYCODES[30]
+		// is undefined → `?? null`. tryHandleComboAction returns false, so
+		// dispatchTrackedKeyDown falls through to tryActivateCombo.
+		fireKey("keydown", 30);
+		expect(comboActions).toEqual([]);
+		// The combo is already active, so tryActivateCombo's canActivateCombo
+		// guard (isActive===true) blocks a duplicate hotkey:pressed.
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeUndefined();
+		expect(isHotkeyActive()).toBe(true);
+	});
+
+	test("with NO onCombo handler registered, a recognised combo key while held falls through to activation (tryHandleComboAction → false)", async () => {
+		// This uses the default beforeEach setup (no onCombo). When the hotkey is
+		// held and Backspace goes down, resolveComboActionIfArmed returns "cancel"
+		// but `options.onCombo` is undefined, so tryHandleComboAction returns false
+		// and dispatchTrackedKeyDown falls through to tryActivateCombo (a no-op
+		// here because the combo is already active). Asserts no crash + no extra
+		// pressed event.
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		winSent.length = 0;
+		expect(() => fireKey("keydown", UIO_BACKSPACE)).not.toThrow();
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeUndefined();
+		expect(isHotkeyActive()).toBe(true);
+	});
+});
+
+// ── runPendingLiftHandler error-swallow (catch body, L103) ──────────────
+// The deferred on-lift evaluator (evalOnLift) fires hotkey:pressed via
+// safeSend → win.webContents.send. createSafeSender does NOT wrap send in a
+// try/catch, so a throwing send bubbles up through evalOnLift into
+// runPendingLiftHandler's try/catch — which logs and swallows it. Verify
+// setPasteGuard(false) never propagates that throw.
+describe("runPendingLiftHandler swallows a throwing on-lift handler", () => {
+	test("a throw from the deferred press handler is caught — setPasteGuard(false) does not throw", async () => {
+		// Tear down the beforeEach (well-behaved) setup and stand up one whose
+		// webContents.send throws, so the deferred-press safeSend throws.
+		cleanup?.();
+		const throwingWindow = asBrowserWindow({
+			isDestroyed: () => false,
+			webContents: {
+				isDestroyed: () => false,
+				send: () => {
+					throw new Error("send blew up");
+				},
+				id: 7,
+			},
+		});
+		cleanup = setupHotkeyHandlers(throwingWindow, fakeSttClient as never);
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		// Engage the guard, then press the full combo so a deferred press is
+		// queued (onPasteGuardLifted = evalOnLift).
+		setPasteGuard(true);
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		// Lifting the guard runs the deferred handler → evalOnLift →
+		// activateDeferredPress → safeSend (throws) → caught by runPendingLiftHandler.
+		expect(() => setPasteGuard(false)).not.toThrow();
+		// After the swallowed throw the pending handler is cleared; lifting again
+		// is a clean no-op.
+		expect(() => setPasteGuard(false)).not.toThrow();
+	});
+});
+
+// ── evalOnLift try/finally: a throwing deferred pass must not strand state ──
+// evalOnLift runs deferred-press → deferred-release → re-arm in sequence. If
+// any pass throws (e.g. a throwing webContents.send), the LATER passes must
+// still run, or the combo is left stuck-active / un-re-armable. The two tests
+// below stand up windows whose `send` throws on a specific channel and prove
+// the re-arm (updateComboReleaseState) still happens.
+describe("evalOnLift survives a throwing deferred pass without stranding the combo", () => {
+	function setupWithSelectiveThrow(throwOn: string): () => void {
+		cleanup?.();
+		const w = asBrowserWindow({
+			isDestroyed: () => false,
+			webContents: {
+				isDestroyed: () => false,
+				send: (channel: string, ...args: unknown[]) => {
+					if (channel === throwOn) {
+						throw new Error(`send(${channel}) blew up`);
+					}
+					// Record non-throwing sends so assertions can observe them.
+					return winSent.push({ channel, args });
+				},
+				id: 11,
+			},
+		});
+		cleanup = setupHotkeyHandlers(w, fakeSttClient as never);
+		return cleanup;
+	}
+
+	test("a throwing deferred RELEASE still re-arms the combo (inner finally runs updateComboReleaseState)", async () => {
+		setupWithSelectiveThrow("hotkey:released");
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		// Activate the combo (comboFullyReleased = false, isActive = true).
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		// Fully release BOTH keys during the paste guard so the lift queues a
+		// deferred release (isActive true, combo not held) AND a re-arm.
+		setPasteGuard(true);
+		fireKey("keyup", 47);
+		fireKey("keyup", 1);
+		// Lifting the guard runs evalOnLift → deferred release → safeSend(
+		// "hotkey:released") throws → caught by runPendingLiftHandler. Pre-fix,
+		// updateComboReleaseState was skipped so comboFullyReleased stayed false.
+		expect(() => setPasteGuard(false)).not.toThrow();
+		// Clear the activation-time `hotkey:pressed` so the re-arm check below
+		// only observes a NEW pressed event, not the stale one.
+		winSent.length = 0;
+		// Re-arm proof: a fresh full combo press must re-fire hotkey:pressed.
+		// (If the re-arm had been skipped, comboFullyReleased=false would gate it,
+		// and the new keydowns would produce no pressed event — this assertion
+		// fails against the un-fixed sequential evalOnLift.)
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
+	});
+
+	test("a throwing deferred PRESS does not strand the one-shot handler or wedge the active state", async () => {
+		setupWithSelectiveThrow("hotkey:pressed");
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		// Press the full combo DURING the guard so the lift queues a deferred
+		// press; on lift activateDeferredPress → safeSend("hotkey:pressed") throws.
+		setPasteGuard(true);
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		// The throw is caught by runPendingLiftHandler; setPasteGuard(false) must
+		// not propagate it, and the finally chain must have completed (so the
+		// later passes ran rather than being abandoned mid-throw).
+		expect(() => setPasteGuard(false)).not.toThrow();
+		// The deferred press flipped isActive true before the send threw — the
+		// hotkey is considered held. Releasing the combo must still fire
+		// hotkey:released (the normal keyup path is reachable, proving state
+		// wasn't wedged). The window only throws on "hotkey:pressed", so the
+		// released send succeeds.
+		winSent.length = 0;
+		fireKey("keyup", 47);
+		fireKey("keyup", 1);
+		expect(winSent.find((e) => e.channel === "hotkey:released")).toBeTruthy();
+		// Lifting an empty guard again is a clean no-op (the one-shot handler was
+		// cleared by runPendingLiftHandler even though the inner pass threw).
+		expect(() => setPasteGuard(false)).not.toThrow();
+	});
+});
+
+// ── handleRegister double-fire absorber + re-bind branches (L488–L510) ──
+// usePushToTalk's effect runs twice on cold boot, emitting the SAME accelerator
+// string both times. handleRegister short-circuits the second one
+// (`accelerator === targetAccelerator → return true`) WITHOUT clearing
+// pressedKeys / resetting comboFullyReleased, so a PTT-during-boot hold isn't
+// torn down mid-press. A genuine re-bind (different string) DOES fall through to
+// the reset path. These exercise BOTH sides of the absorber + the
+// lastRegisteredAccelerator log-suppression branch.
+describe("handleRegister double-fire absorber and re-bind", () => {
+	test("re-registering the SAME accelerator returns true and does NOT tear down a live hold", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		// User is mid-PTT: combo held + active.
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(isHotkeyActive()).toBe(true);
+		winSent.length = 0;
+		// Boot's second effect pass re-registers the identical accelerator.
+		// The absorber (L488) must short-circuit: returns true WITHOUT clearing
+		// pressedKeys or resetting isActive/comboFullyReleased.
+		const again = await reg!({}, { accelerator: "LCtrl+R" });
+		expect(again).toBe(true);
+		// The live hold survived — still active, no spurious released event.
+		expect(isHotkeyActive()).toBe(true);
+		expect(winSent.find((e) => e.channel === "hotkey:released")).toBeUndefined();
+		// Releasing the (still-tracked) combo keys now fires released — proving
+		// pressedKeys was NOT cleared by the absorbed re-register.
+		fireKey("keyup", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:released")).toBeTruthy();
+	});
+
+	test("registering a DIFFERENT accelerator falls through to the reset path (clears prior hold)", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(isHotkeyActive()).toBe(true);
+		winSent.length = 0;
+		// Genuine re-bind to a different accelerator. L488 absorber does NOT
+		// fire (strings differ); the reset path runs: pressedKeys.clear(),
+		// setIsActive(false), comboFullyReleased = true.
+		const ok = await reg!({}, { accelerator: "LAlt+T" });
+		expect(ok).toBe(true);
+		// The old hold was torn down — isActive forced false.
+		expect(isHotkeyActive()).toBe(false);
+		// The NEW accelerator's combo now activates from a clean slate.
+		// parseAccelerator("LAlt+T") → {Alt:3, T:49} per the uiohook test mock.
+		fireKey("keydown", 3); // LAlt
+		fireKey("keydown", 49); // T
+		expect(isHotkeyActive()).toBe(true);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
+	});
+
+	test("re-binding after unregister re-parses and re-activates (targetAccelerator was cleared)", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		const unreg = listeners.get("hotkey:unregister")?.[0];
+		unreg!({});
+		// After unregister, targetAccelerator === "" so re-registering the SAME
+		// string is NOT absorbed (it differs from "") — it falls through and
+		// re-parses, re-arming the combo.
+		const ok = await reg!({}, { accelerator: "LCtrl+R" });
+		expect(ok).toBe(true);
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
+	});
+
+	test("a valid-but-unknown accelerator that parses to no codes returns false after a prior successful register", async () => {
+		// First register a real accelerator (sets targetAccelerator), then send an
+		// unparseable one — it differs from targetAccelerator so the absorber does
+		// NOT short-circuit; parseAccelerator returns null → L496 returns false.
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		const ok = await reg!({}, { accelerator: "TOTALLY_BOGUS_KEY" });
+		expect(ok).toBe(false);
+		// The prior binding is untouched — pressing LCtrl+R still fires.
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
+	});
+});
+
+// ── canMarkComboFullyReleased guard branches (L222–L239) ────────────────
+// Reached only via updateComboReleaseState (onKeyUp tail + evalOnLift). The
+// three exits:
+//   (a) comboFullyReleased already true            → returns false (no-op)
+//   (b) combo armed (false) but some key still held → allComboKeysReleased false
+//   (c) combo armed (false) and all keys released   → marks comboFullyReleased
+// Branch (c) is the one that re-arms the hotkey for the next activation.
+describe("canMarkComboFullyReleased guard branches", () => {
+	test("with NO active hold, a stray keyup leaves comboFullyReleased true (guard a → no-op)", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		// Never activated the combo → comboFullyReleased stays true. A keyup runs
+		// updateComboReleaseState → canMarkComboFullyReleased returns false at the
+		// first guard (already true). Then pressing+releasing the combo must still
+		// activate cleanly (state was never corrupted).
+		fireKey("keyup", 99); // unrelated stray release
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
+	});
+
+	test("partial release after activation does NOT re-arm (guard b: a combo key still held)", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1); // LCtrl
+		fireKey("keydown", 47); // R → activated, comboFullyReleased = false
+		fireKey("keyup", 47); // release R; LCtrl still held
+		// canMarkComboFullyReleased: not-already-true (passes a), targetKeyCodes set
+		// (passes the null guard), allComboKeysReleased → false (LCtrl held). So
+		// comboFullyReleased stays FALSE → re-pressing R must NOT re-fire pressed.
+		winSent.length = 0;
+		fireKey("keydown", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeUndefined();
+	});
+
+	test("full release after activation re-arms the hotkey (guard c: comboFullyReleased → true)", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1);
+		fireKey("keydown", 47); // activated; comboFullyReleased = false
+		fireKey("keyup", 47); // partial: still held → stays false
+		fireKey("keyup", 1); // ALL released → canMarkComboFullyReleased returns true
+		// Re-pressing the full combo now re-fires pressed (proves comboFullyReleased
+		// was flipped back to true by the c-branch).
+		winSent.length = 0;
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
+	});
+
+	test("paste-guard lift after a full release inside the guard re-arms via evalOnLift (guard c path)", async () => {
+		const reg = handlers.get("hotkey:register");
+		await reg!({}, { accelerator: "LCtrl+R" });
+		fireKey("keydown", 1);
+		fireKey("keydown", 47); // activated; comboFullyReleased = false
+		// Release everything DURING the paste guard — keyups defer their state
+		// pass to evalOnLift, which calls updateComboReleaseState on lift.
+		setPasteGuard(true);
+		fireKey("keyup", 47);
+		fireKey("keyup", 1);
+		setPasteGuard(false); // evalOnLift runs → canMarkComboFullyReleased → true
+		winSent.length = 0;
+		// Re-arm proven: a fresh full press fires pressed again.
+		fireKey("keydown", 1);
+		fireKey("keydown", 47);
+		expect(winSent.find((e) => e.channel === "hotkey:pressed")).toBeTruthy();
+	});
+});

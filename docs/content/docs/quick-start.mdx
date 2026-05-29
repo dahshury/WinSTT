@@ -1,0 +1,98 @@
+---
+title: Quick Start
+description: Download, launch, and dictate your first sentence in under two minutes — no Python, no accounts, no setup.
+---
+
+Go from a fresh download to text at your cursor in five steps — the onboarding wizard
+picks a model and tests your mic for you, then you hold a hotkey and speak.
+
+<Screenshot src="onboarding" alt="The WinSTT onboarding wizard on first launch: choose between a local on-device model or a cloud provider, then run a quick microphone test." label="WinSTT — first-run onboarding" caption="The wizard runs once on first launch: pick local vs cloud, test your mic, and download a starter model." />
+
+WinSTT is local-first. The installer bundles the speech engine and a starter model, so
+the only thing you need is a microphone. Audio is transcribed in memory by on-device ONNX
+models and never leaves your machine.
+
+<Callout type="success" title="Nothing to install but the app">
+  The portable installer ships the `stt-server.exe` and a vendored `tiny` model — there's
+  no Python, no separate model download required to get your first transcription, and no
+  account to create. You can be fully offline.
+</Callout>
+
+## Five steps to your first transcription
+
+<StepFlow>
+  <Step title="Download the installer">
+    Grab the portable `.exe` from the [GitHub Releases](https://github.com/dahshury/WinSTT/releases)
+    page. Most people want **`WinSTT-Portable-<version>.exe`** — the default GPU
+    (DirectML) build that runs on any modern AMD, Intel, or NVIDIA GPU and falls back to
+    CPU automatically. Not sure which one? See [Which installer?](/docs/install) for the
+    CPU and OpenVINO variants and their system requirements. The installer is portable —
+    run it, no admin rights needed.
+  </Step>
+
+  <Step title="Launch — onboarding picks local vs cloud and tests your mic">
+    On first launch the onboarding wizard walks you through three choices: run a **local**
+    on-device model (the default — private and offline) or a **cloud** provider, select
+    your **microphone**, and run a quick **mic test** so you can confirm WinSTT hears you
+    before you dictate. Pick local and you're done in seconds.
+
+    <Screenshot src="onboarding" alt="Onboarding wizard step showing the local-versus-cloud choice and a microphone level meter for the mic test." chrome="card" label="Onboarding" caption="Choose local for fully on-device transcription; the mic test confirms your input device works." />
+  </Step>
+
+  <Step title="Pick or download a model">
+    The starter `tiny` model is bundled and ready, so you can skip straight to dictating.
+    To choose a different one, open the model picker from the footer or the **Model**
+    settings tab: it lists 40+ models grouped by maker, each row showing accuracy and
+    speed bars, size, language coverage, and per-quantization download badges. Downloads
+    stream in the background without interrupting the app.
+
+    <Screenshot src="model-dropdown" alt="The open model picker: a maker rail on the left and model rows with accuracy and speed bars, size, language scope, and quantization download badges." chrome="card" label="Model picker" caption="Pick a model and quantization; downloads run in the background and most swaps are live — no restart." />
+  </Step>
+
+  <Step title="Hold the hotkey and speak">
+    The default mode is **Push-to-Talk** <ModeBadge mode="ptt" />: hold <Combo keys="LCtrl+LMeta" />
+    and start talking. A recording overlay floats above whatever you're working in and
+    shows a live preview as the words come in. The main window's footer shows your active
+    hotkey, microphone, and model at a glance.
+
+    <Video src="overlay-island" alt="The dynamic-island recording overlay floating above the screen, showing live transcription text above a small audio-visualizer capsule while you speak." chrome="card" caption="The overlay shows the live preview while you hold the hotkey and speak." />
+  </Step>
+
+  <Step title="Release — text appears at your cursor">
+    Let go of the hotkey and WinSTT runs the final, accurate pass and pastes the polished
+    text straight into wherever your cursor was — a chat box, an editor, a terminal, a
+    search bar. That's it: hold, speak, release.
+
+    <Screenshot src="main" alt="The WinSTT main window: a 9-band audio visualizer with the active hotkey, microphone, and model shown in the footer." label="WinSTT — main window" caption="Between dictations the compact main window stays out of the way; the footer shows your hotkey, device, and model." />
+  </Step>
+</StepFlow>
+
+<Callout type="info" title="Don't like the default hotkey?">
+  Push-to-Talk is bound to <Combo keys="LCtrl+LMeta" /> out of the box. Change it — or
+  switch to Toggle, Listen, or Wake-word triggering — on the
+  [Hotkey](/docs/settings/hotkey) and [recording modes](/docs/recording-modes) pages.
+</Callout>
+
+<Callout type="warn" title="If the hotkey does nothing">
+  Some locked-down corporate machines block the low-level keyboard hooks Push-to-Talk
+  relies on. Switch to **Toggle** mode (it uses a single key event) or run WinSTT as
+  Administrator. See [Troubleshooting](/docs/troubleshooting) for audio-device and
+  download issues.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Which installer?" href="/docs/install">
+    DirectML, CPU, or OpenVINO — pick the build that matches your hardware.
+  </Card>
+  <Card title="Recording modes" href="/docs/recording-modes">
+    Push-to-talk, toggle, listen, and wake-word — and when to use each.
+  </Card>
+  <Card title="Choose a model" href="/docs/models">
+    Browse 40+ STT models and pick the right accuracy/speed trade-off.
+  </Card>
+  <Card title="Change the hotkey" href="/docs/settings/hotkey">
+    Rebind Push-to-Talk and the re-paste shortcut to keys that suit you.
+  </Card>
+</Cards>

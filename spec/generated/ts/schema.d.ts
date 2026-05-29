@@ -7,7 +7,7 @@ export type paths = Record<string, never>;
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["NoAudioDetectedEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["DeviceSwitchFailedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"] | components["schemas"]["SpeakerSegmentsEvent"] | components["schemas"]["TtsChunkEvent"] | components["schemas"]["TtsCompleteEvent"] | components["schemas"]["TtsFailedEvent"] | components["schemas"]["TtsModelDownloadStartEvent"] | components["schemas"]["TtsModelDownloadProgressEvent"] | components["schemas"]["TtsModelDownloadCompleteEvent"];
+        DataEvent: components["schemas"]["RealtimeTextEvent"] | components["schemas"]["FullSentenceEvent"] | components["schemas"]["RecordingStartEvent"] | components["schemas"]["RecordingStopEvent"] | components["schemas"]["NoAudioDetectedEvent"] | components["schemas"]["TranscriptionFailedEvent"] | components["schemas"]["LoopbackStartedEvent"] | components["schemas"]["LoopbackStoppedEvent"] | components["schemas"]["DeviceSwitchFailedEvent"] | components["schemas"]["VadDetectStartEvent"] | components["schemas"]["VadDetectStopEvent"] | components["schemas"]["TranscriptionStartEvent"] | components["schemas"]["WakewordDetectedEvent"] | components["schemas"]["WakewordDetectionStartEvent"] | components["schemas"]["WakewordDetectionEndEvent"] | components["schemas"]["TurnDetectionStartEvent"] | components["schemas"]["TurnDetectionStopEvent"] | components["schemas"]["ModelDownloadStartEvent"] | components["schemas"]["ModelDownloadProgressEvent"] | components["schemas"]["ModelDownloadCompleteEvent"] | components["schemas"]["AudioLevelEvent"] | components["schemas"]["SpeakerSegmentsEvent"] | components["schemas"]["TtsChunkEvent"] | components["schemas"]["TtsCompleteEvent"] | components["schemas"]["TtsFailedEvent"] | components["schemas"]["TtsModelDownloadStartEvent"] | components["schemas"]["TtsModelDownloadProgressEvent"] | components["schemas"]["TtsModelDownloadCompleteEvent"];
         SpeakerSegment: {
             /**
              * Format: float
@@ -94,6 +94,20 @@ export interface components {
              * @enum {string}
              */
             type: "no_audio_detected";
+        };
+        /** @description Emitted when the active transcriber *raised* while decoding real audio (e.g. a model whose ONNX export ships an incomplete vocab, an execution-provider kernel crash, or out-of-memory). Distinct from ``no_audio_detected`` (genuine silence) and from a swap-in-flight skip (transcriber not ready): the renderer surfaces this as an honest "transcription failed" hint instead of mislabelling it "no audio detected". The full traceback is in the server log; ``detail`` carries a concise "<ExceptionType>: <message>" string for diagnostics. */
+        TranscriptionFailedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "transcription_failed";
+            /** @description Short user-facing summary of the failure. */
+            reason?: string;
+            /** @description Stable error bucket for future UI variants (mirrors ``model_swap_failed``). Currently always "unknown". */
+            category?: string;
+            /** @description Raw "<ExceptionType>: <message>" for diagnostics. */
+            detail?: string;
         };
         VadDetectStartEvent: {
             /**
@@ -304,31 +318,35 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index" | "end_of_sentence_detection_pause" | "mid_sentence_detection_pause" | "unknown_sentence_detection_pause" | "initial_prompt" | "initial_prompt_realtime" | "onnx_quantization" | "translate_to_english" | "model_unload_timeout_seconds" | "webrtc_sensitivity" | "silero_deactivity_detection" | "always_on_microphone" | "lazy_stream_close" | "lazy_close_timeout_seconds";
+        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index" | "end_of_sentence_detection_pause" | "mid_sentence_detection_pause" | "unknown_sentence_detection_pause" | "initial_prompt" | "initial_prompt_realtime" | "onnx_quantization" | "translate_to_english" | "model_unload_timeout_seconds" | "webrtc_sensitivity" | "silero_deactivity_detection" | "always_on_microphone" | "lazy_stream_close" | "lazy_close_timeout_seconds" | "filter_fillers";
         /** @enum {string} */
         AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text" | "request_diarization_toggle";
         /** @enum {string} */
         WhisperModel: "tiny" | "tiny.en" | "base" | "base.en" | "small" | "small.en" | "medium" | "medium.en" | "large-v1" | "large-v2" | "large-v3" | "large-v3-turbo";
         /** @enum {string} */
-        ComputeType: "default" | "auto" | "int8" | "int8_float16" | "int8_float32" | "int8_bfloat16" | "int16" | "float16" | "float32" | "bfloat16";
-        /** @enum {string} */
         DeviceType: "auto" | "cpu";
         /**
          * @description User-facing GPU acceleration preference. `auto` walks the per-OS
-         *     priority list (Windows: DirectML > CUDA > CPU; Linux: CUDA > ROCm >
-         *     CPU; macOS: CoreML > CPU). Explicit values pin a specific ONNX
-         *     Runtime execution provider; the server falls back to CPU with a
-         *     log line if the chosen EP isn't registered (e.g. `cuda` selected
-         *     on a DirectML-only build).
+         *     priority list (Windows: OpenVINO > DirectML > CUDA > CPU;
+         *     Linux: OpenVINO > CUDA > ROCm > CPU; macOS: CoreML > CPU).
+         *     Explicit values pin a specific ONNX Runtime execution provider;
+         *     the server falls back to CPU with a log line if the chosen EP
+         *     isn't registered (e.g. `cuda` selected on a DirectML-only build).
+         *
+         *     `openvino` is the Intel-optimised path for Intel ARC dGPUs and
+         *     recent Iris Xe / Arc iGPUs — install the `server[openvino]` extra
+         *     and ship the matching `WinSTT-OpenVINO-Portable-<v>.exe` flavor.
+         *     Override the OpenVINO device target via the `OPENVINO_DEVICE`
+         *     env var (`AUTO` / `GPU` / `GPU.0` / `CPU`; default `AUTO`).
          * @enum {string}
          */
-        AcceleratorType: "auto" | "cuda" | "directml" | "rocm" | "coreml" | "cpu";
+        AcceleratorType: "auto" | "cuda" | "directml" | "openvino" | "rocm" | "coreml" | "cpu";
         /** @enum {string} */
         RecorderState: "inactive" | "listening" | "wakeword" | "recording" | "transcribing";
         /** @enum {string} */
         TranscriberBackend: "faster_whisper" | "onnx_asr";
         /** @enum {string} */
-        ModelFamily: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one" | "moonshine" | "cohere" | "custom";
+        ModelFamily: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one" | "moonshine" | "cohere" | "sense_voice" | "dolphin" | "custom";
         ModelInfo: {
             id: string;
             displayName: string;
@@ -361,6 +379,22 @@ export interface components {
              *     entries; `null` for shipped catalog rows.
              */
             localPath?: string | null;
+            /**
+             * @description Normalized 0..1 speed score derived from the model's published
+             *     RTFx (log-scaled — the catalog spans ~100×–2000× so a linear
+             *     map would crush every Whisper variant). `0.5` is the "unknown"
+             *     sentinel; the picker hides the speed bar in that case.
+             * @default 0.5
+             */
+            speedScore: number;
+            /**
+             * @description Normalized 0..1 accuracy score derived from the model's
+             *     published WER (HF Open ASR Leaderboard for shipped rows,
+             *     upstream model-card claims for non-leaderboard families).
+             *     `0.5` is the "unknown" sentinel and hides the bar.
+             * @default 0.5
+             */
+            accuracyScore: number;
         };
         LoopbackDevice: {
             index: number;
@@ -410,7 +444,6 @@ export interface components {
             model?: string;
             realtimeModel?: string;
             language?: string;
-            computeType?: components["schemas"]["ComputeType"];
             device?: components["schemas"]["DeviceType"];
             accelerator?: components["schemas"]["AcceleratorType"];
             backend?: components["schemas"]["TranscriberBackend"];
@@ -575,9 +608,8 @@ export interface components {
              *     custom-word fuzzy corrector that runs on the server
              *     immediately AFTER ASR and BEFORE the LLM modifier pipeline.
              *     Lower = stricter (fewer false positives, more genuine
-             *     near-misses left for the LLM to fix). 0.18 matches Handy's
-             *     reference value (see
-             *     `examples/Handy/src-tauri/src/audio_toolkit/text.rs`). The
+             *     near-misses left for the LLM to fix). 0.18 is the reference
+             *     default. The
              *     word list itself is derived from the existing `dictionary`
              *     array, using entries whose `replacement` field is empty as
              *     the canonical vocabulary.

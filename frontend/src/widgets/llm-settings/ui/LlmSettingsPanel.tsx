@@ -333,7 +333,7 @@ function OllamaSection(props: OllamaSectionProps) {
 	const supportsThinking = selectedModel?.capabilities?.includes("thinking") ?? false;
 	return (
 		<>
-			<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
+			<FormControl label={t("model")} tooltip={t("modelTooltip")}>
 				<OllamaModelSelector
 					disabled={ollamaScanning}
 					isLoading={ollamaScanning}
@@ -364,9 +364,8 @@ function OllamaSection(props: OllamaSectionProps) {
 
 			{supportsThinking ? (
 				<FormControl
-					caption="How much budget the model spends on its chain-of-thought before producing the final answer. Off disables thinking entirely."
 					label="Thinking effort"
-					tooltip="Reasoning models can spend more or less time thinking before answering. Higher effort improves accuracy on hard inputs but adds latency."
+					tooltip="Reasoning models can spend more or less time thinking before answering. Higher effort improves accuracy on hard inputs but adds latency. Off disables thinking entirely."
 				>
 					<OllamaThinkingEffortToggle onChange={setThinkingEffort} value={thinkingEffort} />
 				</FormControl>
@@ -421,11 +420,7 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 	return (
 		<>
 			<div className="col-span-2">
-				<FormControl
-					caption={t("openrouterModelCaption")}
-					label={t("openrouterModel")}
-					tooltip={t("openrouterModelTooltip")}
-				>
+				<FormControl label={t("openrouterModel")} tooltip={t("openrouterModelTooltip")}>
 					<OpenRouterModelSelector
 						disabled={apiKeyMissing}
 						isLoading={openrouterScanning}
@@ -445,9 +440,8 @@ function OpenRouterSection(props: OpenRouterSectionProps) {
 
 			<div className="col-span-2">
 				<FormControl
-					caption={t("openrouterFallbackModelCaption")}
 					label={t("openrouterFallbackModel")}
-					tooltip={t("openrouterFallbackModelTooltip")}
+					tooltip={`${t("openrouterFallbackModelTooltip")} ${t("openrouterFallbackModelCaption")}`}
 				>
 					<OpenRouterModelSelector
 						disabled={apiKeyMissing}
@@ -1220,6 +1214,7 @@ function useLlmSettingsPanel() {
 	const providerOpts = buildProviderOpts(t, {
 		appleIntelligenceSupported: applePlatform === "apple-silicon",
 		appleIntelligenceUnavailableOnIntel: applePlatform === "intel-mac",
+		openrouterNeedsKey: openrouterApiKey.trim().length === 0,
 	});
 
 	const ollamaCatalogState: OllamaCatalogState = {
@@ -1303,7 +1298,7 @@ function FeaturePresetControls({
 	return (
 		<div className="flex flex-col divide-y divide-surface-1">
 			<div className="col-span-2">
-				<FormControl caption={t("toneCaption")} label={t("tone")} tooltip={t("toneTooltip")}>
+				<FormControl label={t("tone")} tooltip={t("toneTooltip")}>
 					<ElevatedSurface>
 						<Switcher
 							onChange={(v) =>
@@ -1319,9 +1314,8 @@ function FeaturePresetControls({
 			</div>
 			<div className="col-span-2">
 				<FormControl
-					caption={t("modifiersCaption")}
 					label={t("modifiers")}
-					tooltip={t("modifiersTooltip")}
+					tooltip={`${t("modifiersTooltip")} ${t("modifiersCaption")}`}
 				>
 					<ElevatedSurface>
 						<IndependentPresetList
@@ -1402,12 +1396,11 @@ function TransformHotkeyField({
 	return (
 		<div className="py-2">
 			<FormControl
-				caption={t("transformHotkeyCaption")}
 				label={t("transformHotkey")}
 				labelTrailing={
 					<SettingResetButton isDefault={hotkey === ""} onReset={() => onChange("")} />
 				}
-				tooltip={t("transformHotkeyTooltip")}
+				tooltip={`${t("transformHotkeyTooltip")} ${t("transformHotkeyCaption")}`}
 			>
 				<HotkeyRecorder currentKey={hotkey} onKeyRecorded={onChange} />
 			</FormControl>
@@ -1854,11 +1847,7 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 		>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
-					<FormControl
-						caption={t("providerCaption")}
-						label={t("provider")}
-						tooltip={t("providerTooltip")}
-					>
+					<FormControl label={t("provider")} tooltip={t("providerTooltip")}>
 						<ElevatedSurface>
 							<Switcher
 								onChange={(v) => updateAny({ provider: v as LlmProvider })}

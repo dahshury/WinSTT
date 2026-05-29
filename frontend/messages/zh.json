@@ -51,7 +51,12 @@
     "tabAbout": "关于",
     "tabAboutTooltip": "版本、许可证和第三方声明。",
     "minimize": "最小化",
-    "close": "关闭"
+    "close": "关闭",
+    "searchPlaceholder": "搜索设置…",
+    "searchClear": "清除搜索",
+    "searchNoResults": "没有匹配的设置",
+    "collapseSidebar": "折叠侧边栏",
+    "expandSidebar": "展开侧边栏"
   },
   "about": {
     "loading": "正在加载…",
@@ -240,7 +245,7 @@
     "visualizerColorTooltip": "音频可视化动画使用的强调色。",
     "soundFileTooltip": "录音开始时播放的自定义 .wav 或 .mp3 文件。拖放文件或浏览选择。",
     "fileTranscriptionFormatTooltip": "已转录音视频文件的输出文件格式。TXT 为纯文本;SRT 包含用于字幕的时间戳。",
-    "startOnLoginTooltip": "每次登录 Windows 时自动启动 WinSTT。",
+    "startOnLoginTooltip": "每次登录 Windows 时自动以最小化到系统托盘的方式启动 WinSTT。",
     "startMinimizedTooltip": "启动时隐藏在系统托盘中,而不是打开主窗口。",
     "minimizeToTrayTooltip": "关闭主窗口后将 WinSTT 保留在系统托盘中运行,而不是退出程序。",
     "sendCrashReports": "发送匿名崩溃报告",
@@ -337,8 +342,6 @@
     "updateIntervalCaption": "实时更新之间的秒数",
     "updateIntervalTooltip": "实时转录更新之间的最短时间。较低的值提供更频繁的更新，但会使用更多处理能力。如果听写时出现卡顿或 CPU 使用率过高，请增加此值。",
     "llm": "大语言模型",
-    "computeDefaultLabel": "默认(模型原生精度)",
-    "computeAutoLabel": "自动(适合您的硬件)",
     "deviceAutoLabel": "自动",
     "deviceCpuLabel": "CPU",
     "translateToEnglish": "Translate to English",
@@ -403,6 +406,8 @@
     "endWithPeriod": "句末加句号",
     "endWithPeriodCaption": "自动在句尾添加句号",
     "endWithPeriodTooltip": "在不以标点符号结尾的转录句子末尾追加句号。",
+    "removeFillerWords": "移除填充词",
+    "removeFillerWordsTooltip": "从转录中去除\"uh\"、\"um\"、\"hmm\"等语气词。关闭以保留逐字填充词（例如使用 CrisperWhisper 时）。",
     "smartEndpoint": "智能端点",
     "smartEndpointLabel": "智能端点",
     "smartEndpointCaption": "AI 驱动的句子检测",
@@ -513,7 +518,8 @@
   "transcription": {
     "waiting": "等待语音输入...",
     "serverOffline": "服务器离线",
-    "noAudioDetected": "（未检测到音频）"
+    "noAudioDetected": "（未检测到音频）",
+    "transcriptionFailed": "（转录失败）"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -543,7 +549,7 @@
     "providerCaption": "在哪里运行文本转换",
     "providerTooltip": "使用本地 Ollama 服务器，或通过 AI SDK 调用 OpenRouter 并使用结构化输出。",
     "providerOllama": "Ollama（本地）",
-    "providerOpenRouter": "OpenRouter",
+    "providerOpenRouter": "OpenRouter (Cloud)",
     "providerAppleIntelligence": "Apple 智能",
     "providerAppleIntelligenceIntelTooltip": "Apple 智能需要 Apple Silicon Mac（M1 或更新版本）。",
     "appleIntelligenceDescription": "运行 Apple 设备端基础模型。无需配置 — 在 macOS 15+ Apple Silicon 上离线工作。",
@@ -711,11 +717,6 @@
     "speedCaption": "播放速度倍率（1.0× 为正常）。",
     "hotkeyLabel": "文字转语音快捷键",
     "hotkeyHint": "在任何应用中按此组合键以朗读高亮文本。留空仅使用应用内的「朗读」按钮。",
-    "device": "设备",
-    "deviceCaption": "自动在 CUDA 可用时使用 GPU；否则回退到 CPU。",
-    "deviceAuto": "自动",
-    "deviceCuda": "GPU (CUDA)",
-    "deviceCpu": "CPU",
     "testVoice": "测试语音",
     "previewVoice": "试听语音",
     "loadingVoice": "加载中…",

@@ -227,6 +227,8 @@ function deriveView(): IndicatorView {
 function reconcileView(): void {
 	const next = deriveView();
 	if (next === currentView) {
+		// Same view: ensure the animation tick is alive (covers a redundant
+		// on*Start that arrives after the tick was somehow torn down).
 		if (next !== "idle" && tickHandle === null) {
 			startTick();
 		}
@@ -236,20 +238,31 @@ function reconcileView(): void {
 	currentView = next;
 
 	if (next === "idle") {
-		stopTick();
-		// Recording → idle has always reverted to the legacy base icon (tray-state
-		// then layers its themed PNG on top via a microtask). For thinking → idle,
-		// the static tray PNG is already current (fullSentence/llm-end already
-		// passed through tray-state), so we just re-apply that to wipe the
-		// morphing topology we last painted.
-		if (previous === "recording") {
-			revertIcons();
-		} else {
-			reapplyTrayImageFn?.();
-		}
+		enterIdle(previous);
 		return;
 	}
+	enterActiveView(next);
+}
 
+/** Tear down the animation tick and restore the static tray image when no
+ *  view wants the tray anymore. */
+function enterIdle(previous: IndicatorView): void {
+	stopTick();
+	// Recording → idle has always reverted to the legacy base icon (tray-state
+	// then layers its themed PNG on top via a microtask). For thinking → idle,
+	// the static tray PNG is already current (fullSentence/llm-end already
+	// passed through tray-state), so we just re-apply that to wipe the
+	// morphing topology we last painted.
+	if (previous === "recording") {
+		revertIcons();
+	} else {
+		reapplyTrayImageFn?.();
+	}
+}
+
+/** Install (or re-cadence) the animation tick for an active view and paint
+ *  its first frame immediately so the swap isn't delayed by one interval. */
+function enterActiveView(next: Exclude<IndicatorView, "idle">): void {
 	const wantedInterval = next === "thinking" ? THINK_TICK_MS : BAR_TICK_MS;
 	if (tickHandle !== null && tickIntervalMs !== wantedInterval) {
 		stopTick();
@@ -353,20 +366,38 @@ function drawRoundedBar(
 	const y1 = cy + h / 2;
 
 	for (let py = 0; py < TARGET_SIZE; py++) {
+		// Skip scanlines the bar doesn't intersect (above its top or at/below
+		// its bottom). The `py + 1 <= y0` test keeps a partially-covered top row.
 		if (py + 1 <= y0 || py >= y1) {
 			continue;
 		}
-		for (let dx = 0; dx < w; dx++) {
-			const px = x0 + dx;
-			if (px < 0 || px >= TARGET_SIZE) {
-				continue;
-			}
-			const alpha = capCoverage(px - x0, py, x0, y0, y1, r, w);
-			if (alpha <= 0) {
-				continue;
-			}
-			blitPixel(data, px, py, tint, alpha);
+		paintBarScanline(data, x0, py, y0, y1, r, w, tint);
+	}
+}
+
+/** Paint one horizontal scanline of a rounded bar, antialiasing the rounded
+ *  caps via capCoverage. Split out of drawRoundedBar to keep the per-pixel
+ *  clamp/coverage branches out of the row loop. */
+function paintBarScanline(
+	data: Buffer,
+	x0: number,
+	py: number,
+	y0: number,
+	y1: number,
+	r: number,
+	w: number,
+	tint: RGB
+): void {
+	for (let dx = 0; dx < w; dx++) {
+		const px = x0 + dx;
+		if (px < 0 || px >= TARGET_SIZE) {
+			continue;
 		}
+		const alpha = capCoverage(px - x0, py, x0, y0, y1, r, w);
+		if (alpha <= 0) {
+			continue;
+		}
+		blitPixel(data, px, py, tint, alpha);
 	}
 }
 

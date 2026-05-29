@@ -76,10 +76,19 @@ class DiarizationStreamWorker(Worker):
             return
         with self._lock:
             self._ingested_samples += int(flat.size)
-            buf = np.concatenate((self._buffer, flat)) if self._buffer.size else flat.copy()
-            if buf.size > self._max_buffer:
-                buf = buf[-self._max_buffer :]
-            self._buffer = buf
+            self._buffer = self._appended(self._buffer, flat, self._max_buffer)
+
+    @staticmethod
+    def _appended(buffer: AudioArray, flat: AudioArray, max_buffer: int) -> AudioArray:
+        """Append ``flat`` onto ``buffer`` and clamp to the trailing ``max_buffer`` samples.
+
+        Factored out of :meth:`add_audio` so the ring-buffer append+cap math stays
+        below the complexity gate; behaviour is identical to the inline version.
+        """
+        buf = np.concatenate((buffer, flat)) if buffer.size else flat.copy()
+        if buf.size > max_buffer:
+            buf = buf[-max_buffer:]
+        return buf
 
     def _take_window(self) -> tuple[AudioArray, float] | None:
         """Snapshot the trailing window + its absolute start time, or ``None``

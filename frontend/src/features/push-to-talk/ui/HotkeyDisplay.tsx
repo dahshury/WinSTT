@@ -7,9 +7,13 @@ import { useHotkeyStore } from "../model/hotkey-store";
 
 interface HotkeyDisplayProps {
 	isConnected: boolean;
+	/** Tooltip side. Defaults to "top" (footer placement); pass "bottom" when
+	 *  the badge sits at the top edge of a window so the tooltip stays
+	 *  on-screen. */
+	side?: "top" | "bottom";
 }
 
-export function HotkeyDisplay({ isConnected }: HotkeyDisplayProps) {
+export function HotkeyDisplay({ isConnected, side = "top" }: HotkeyDisplayProps) {
 	const isPressed = useHotkeyStore((s) => s.isPressed);
 	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const keys = accelerator.split("+").map(formatKeyName);
@@ -20,7 +24,7 @@ export function HotkeyDisplay({ isConnected }: HotkeyDisplayProps) {
 	const showPulse = isPressed && isConnected;
 
 	return (
-		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side="top">
+		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side={side}>
 			<div className="inline-flex cursor-help">
 				<kbd
 					aria-label={tooltipContent}

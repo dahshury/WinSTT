@@ -1,13 +1,13 @@
 /**
  * State-driven, theme-aware tray icon + menu controller.
  *
- * Mirrors Handy's pattern (see examples/Handy/src-tauri/src/tray.rs). The
+ * The
  * tray reflects three live states (idle / recording / transcribing) and
  * picks light vs dark vs colored icons from the OS theme, refreshing on
  * every nativeTheme `updated` event.
  *
- * On Linux we force the colored variant (handy convention — system tray
- * icons aren't reliably theme-aware on every desktop environment).
+ * On Linux we force the colored variant — system tray
+ * icons aren't reliably theme-aware on every desktop environment.
  *
  * The renderer never sees this module — the tray lives entirely in main.
  *

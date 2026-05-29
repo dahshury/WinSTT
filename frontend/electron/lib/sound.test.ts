@@ -144,6 +144,113 @@ describe("sound module exports", () => {
 	});
 });
 
+// getSoundPath() is a private function reached from TWO call sites:
+//   1. the `sound:get-data` ipcMain handler (gated behind describeIfShared
+//      because invoking it needs OUR shared electron mock), and
+//   2. playRecordingSound(), which is NOT gated — it only needs `win` set
+//      (via initSound, which always runs) and the `./store` mock (always ours).
+//
+// The describeIfShared suites are SKIPPED during the full-suite run whenever
+// another test file's electron mock wins the process-global mock.module race,
+// which leaves getSoundPath()'s extension-validation branches uncovered (this
+// is exactly why crap.json reported it at 83%). The suite below drives every
+// getSoundPath() branch through playRecordingSound() so the branches are
+// covered regardless of which electron mock loaded first.
+describe("getSoundPath branches via playRecordingSound (mock-agnostic)", () => {
+	test("disabled recording sound → getSoundPath returns null → no send", () => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = false;
+		playRecordingSound();
+		expect(sent.length).toBe(0);
+	});
+
+	test("enabled, no custom path → default splash path → sends", () => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		// general.recordingSoundPath stays undefined → `custom && ...` falsy →
+		// skips the extension check and returns DEFAULT_SOUND_PATH (truthy).
+		playRecordingSound();
+		expect(sent.length).toBe(1);
+		expect(sent[0]?.channel).toBe("sound:play");
+	});
+
+	test("enabled, empty custom path string → default path → sends", () => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		// "" makes `custom.length > 0` false → falls through to DEFAULT_SOUND_PATH.
+		storeValues["general.recordingSoundPath"] = "";
+		playRecordingSound();
+		expect(sent.length).toBe(1);
+		expect(sent[0]?.channel).toBe("sound:play");
+	});
+
+	test("enabled, custom path with ALLOWED extension → returns custom → sends", () => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		storeValues["general.recordingSoundPath"] = "C:\\sounds\\beep.mp3";
+		playRecordingSound();
+		// Allowed extension is truthy → playRecordingSound dispatches.
+		expect(sent.length).toBe(1);
+		expect(sent[0]?.channel).toBe("sound:play");
+	});
+
+	test("enabled, custom path with REJECTED extension → default fallback → still sends", () => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		// .exe is not in ALLOWED_SOUND_EXTENSIONS → console.warn + return DEFAULT.
+		// DEFAULT_SOUND_PATH is truthy so playRecordingSound STILL dispatches.
+		storeValues["general.recordingSoundPath"] = "C:\\sounds\\malware.exe";
+		playRecordingSound();
+		expect(sent.length).toBe(1);
+		expect(sent[0]?.channel).toBe("sound:play");
+	});
+
+	test("enabled, UPPERCASE allowed extension is normalized → returns custom → sends", () => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		// path.extname(".WAV").toLowerCase() === ".wav" → allowed.
+		storeValues["general.recordingSoundPath"] = "C:\\sounds\\BEEP.WAV";
+		playRecordingSound();
+		expect(sent.length).toBe(1);
+		expect(sent[0]?.channel).toBe("sound:play");
+	});
+
+	test.each([
+		".wav",
+		".mp3",
+		".ogg",
+		".flac",
+		".m4a",
+		".aac",
+	])("enabled, custom path %s is accepted (allowed-extension set membership)", (ext) => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		storeValues["general.recordingSoundPath"] = `C:\\sounds\\beep${ext}`;
+		playRecordingSound();
+		expect(sent.length).toBe(1);
+		expect(sent[0]?.channel).toBe("sound:play");
+	});
+
+	test("path with NO extension → extname '' rejected → default fallback → sends", () => {
+		const { win, sent } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		// path.extname("C:\\sounds\\noext") === "" which is not in the allowed
+		// set → rejected → DEFAULT_SOUND_PATH (truthy) → dispatches.
+		storeValues["general.recordingSoundPath"] = "C:\\sounds\\noext";
+		playRecordingSound();
+		expect(sent.length).toBe(1);
+		expect(sent[0]?.channel).toBe("sound:play");
+	});
+});
+
 describeIfShared("initSound + sound:get-data handler", () => {
 	// These tests rely on `sharedElectron` being the same ipcMain that sound.ts
 	// captured at import time; if another test file mocked electron first this
@@ -167,10 +274,15 @@ describeIfShared("initSound + sound:get-data handler", () => {
 		const { win } = makeFakeWindow();
 		initSound(win as never);
 		storeValues["general.recordingSound"] = true;
-		readFileImpl = () => Buffer.from("default-bytes");
+		// `general.recordingSoundPath` is undefined (distinct from "") — the
+		// `custom && custom.length > 0` guard is falsy on the `custom` side, so
+		// getSoundPath() must skip the extension check entirely and return the
+		// bundled splash.wav default. Echo the resolved path back so we can prove
+		// it is the default rather than any custom path.
+		readFileImpl = (p) => Buffer.from(`from:${p}`);
 		const data = await sharedElectron.ipcMain.invokeHandler("sound:get-data");
 		expect(data).toBeInstanceOf(Buffer);
-		expect((data as Buffer).toString()).toBe("default-bytes");
+		expect((data as Buffer).toString()).toMatch(/splash\.wav$/);
 	});
 
 	test("handler returns the buffer for a custom path with an allowed extension", async () => {
@@ -231,6 +343,31 @@ describeIfShared("initSound + sound:get-data handler", () => {
 		};
 		const data = await sharedElectron.ipcMain.invokeHandler("sound:get-data");
 		expect(data).toBeNull();
+	});
+
+	test("handler logs a warning (not silent) when readFileSync throws", async () => {
+		// Regression: the catch used to swallow the error with no logging, so a
+		// missing/corrupt splash.wav failed silently. It must warn before
+		// returning null.
+		const { win } = makeFakeWindow();
+		initSound(win as never);
+		storeValues["general.recordingSound"] = true;
+		readFileImpl = () => {
+			throw new Error("file missing");
+		};
+		const warnCalls: unknown[][] = [];
+		const originalWarn = console.warn;
+		console.warn = (...args: unknown[]) => {
+			warnCalls.push(args);
+		};
+		try {
+			const data = await sharedElectron.ipcMain.invokeHandler("sound:get-data");
+			expect(data).toBeNull();
+		} finally {
+			console.warn = originalWarn;
+		}
+		expect(warnCalls.length).toBeGreaterThan(0);
+		expect(String(warnCalls[0]?.[0])).toContain("[sound] Failed to read sound file");
 	});
 
 	test("empty custom path string falls through to the default path", async () => {

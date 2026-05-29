@@ -18,6 +18,7 @@ import {
 	syncModelParams,
 	syncQualityParams,
 	syncSystemParams,
+	syncTextCorrectionParams,
 	syncToServer,
 } from "./sync-actions";
 
@@ -208,6 +209,41 @@ describe("syncQualityParams", () => {
 		});
 		syncQualityParams(deps, same, same);
 		expect(calls.find((c) => c.args[0] === "silence_timing")).toBeUndefined();
+	});
+});
+
+describe("syncTextCorrectionParams", () => {
+	test("pushes filter_fillers on initial connect (including false)", () => {
+		const { deps, calls } = makeDeps();
+		syncTextCorrectionParams(
+			deps,
+			settingsWith({ general: { filterFillers: false } as never }),
+			undefined
+		);
+		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["filter_fillers", false] }]);
+	});
+
+	test("pushes filter_fillers when the toggle flips (true → false)", () => {
+		const { deps, calls } = makeDeps();
+		syncTextCorrectionParams(
+			deps,
+			settingsWith({ general: { filterFillers: false } as never }),
+			settingsWith({ general: { filterFillers: true } as never })
+		);
+		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["filter_fillers", false] }]);
+	});
+
+	test("does NOT push filter_fillers on a no-op (unchanged)", () => {
+		const { deps, calls } = makeDeps();
+		const same = settingsWith({ general: { filterFillers: false } as never });
+		syncTextCorrectionParams(deps, same, same);
+		expect(calls).toEqual([]);
+	});
+
+	test("no-ops when general is missing", () => {
+		const { deps, calls } = makeDeps();
+		syncTextCorrectionParams(deps, settingsWith({}), undefined);
+		expect(calls).toEqual([]);
 	});
 });
 

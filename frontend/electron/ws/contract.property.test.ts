@@ -98,6 +98,12 @@ const validEventArbitraries: Record<SupportedEventType, PayloadGen> = {
 	no_audio_detected: fc.record({
 		type: fc.constant("no_audio_detected"),
 	}),
+	transcription_failed: fc.record({
+		type: fc.constant("transcription_failed"),
+		reason: fc.string(),
+		category: fc.string(),
+		detail: fc.string(),
+	}),
 	vad_sensitivity_adapted: fc.record({
 		type: fc.constant("vad_sensitivity_adapted"),
 		new_sensitivity: fc.double({ min: 0, max: 1, noNaN: true }),

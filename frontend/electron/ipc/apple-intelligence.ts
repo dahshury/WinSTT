@@ -23,9 +23,9 @@
  * (`process.platform === 'darwin' && process.arch !== 'arm64'`) with an
  * explanation that Apple Silicon is required.
  *
- * Availability check — performed lazily on the FIRST CALL only. Handy
- * observed early-init crashes when `SystemLanguageModel.default` is queried
- * during boot on macOS 26 betas; spawning the CLI lazily sidesteps that.
+ * Availability check — performed lazily on the FIRST CALL only. Querying
+ * `SystemLanguageModel.default` during boot can trigger early-init crashes on
+ * macOS 26 betas; spawning the CLI lazily sidesteps that.
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -196,6 +196,15 @@ interface RunChildArgs {
 	spawnFn: AppleLlmSpawnFn;
 }
 
+/**
+ * Overall watchdog for a single CLI invocation. The Swift CLI runs an
+ * on-device FoundationModels query; a hung query (or a child that spawns
+ * but never closes its stdout / never emits `close`) would otherwise keep
+ * this promise pending forever. 30s is generous for a local model call
+ * while still bounding a stuck child.
+ */
+export const APPLE_LLM_TIMEOUT_MS = 30_000;
+
 function runAppleLlmChild(args: RunChildArgs): void {
 	const { binaryPath, spawnFn, req, resolve, reject } = args;
 	let child: ReturnType<AppleLlmSpawnFn>;
@@ -211,6 +220,36 @@ function runAppleLlmChild(args: RunChildArgs): void {
 		return;
 	}
 
+	// A child can emit BOTH `error` and `close` (or `close` plus the
+	// watchdog firing); each handler settles the promise independently.
+	// Guard with a single `settled` flag so the first outcome wins and the
+	// rest become no-ops (resolve/reject after settle would silently
+	// stack-up double-finalizations otherwise).
+	let settled = false;
+	let timeout: ReturnType<typeof setTimeout> | null = null;
+	const clearWatchdog = (): void => {
+		if (timeout) {
+			clearTimeout(timeout);
+			timeout = null;
+		}
+	};
+	const settleResolve = (text: string): void => {
+		if (settled) {
+			return;
+		}
+		settled = true;
+		clearWatchdog();
+		resolve(text);
+	};
+	const settleReject = (err: AppleIntelligenceError): void => {
+		if (settled) {
+			return;
+		}
+		settled = true;
+		clearWatchdog();
+		reject(err);
+	};
+
 	const stdoutChunks: string[] = [];
 	const stderrChunks: string[] = [];
 	child.stdout?.setEncoding("utf8");
@@ -220,7 +259,7 @@ function runAppleLlmChild(args: RunChildArgs): void {
 
 	child.on("error", (err: Error) => {
 		dbg("apple-intelligence", "spawn error", err.message);
-		reject(
+		settleReject(
 			new AppleIntelligenceError(
 				err.message.includes("ENOENT") ? "binary-missing" : "spawn-failed",
 				`Apple Intelligence CLI failed to start: ${err.message}`
@@ -231,8 +270,22 @@ function runAppleLlmChild(args: RunChildArgs): void {
 	child.on("close", (code: number | null) => {
 		const stdout = stdoutChunks.join("");
 		const stderr = stderrChunks.join("");
-		finalizeAppleLlmChild({ code, stdout, stderr, resolve, reject });
+		finalizeAppleLlmChild({ code, stdout, stderr, resolve: settleResolve, reject: settleReject });
 	});
+
+	// Watchdog — kill the child and reject if it never closes. `child.kill()`
+	// sends SIGTERM; the subsequent (or already-missed) `close` event is a
+	// no-op thanks to the `settled` gate.
+	timeout = setTimeout(() => {
+		dbg("apple-intelligence", `CLI timed out after ${APPLE_LLM_TIMEOUT_MS}ms; killing child`);
+		child.kill();
+		settleReject(
+			new AppleIntelligenceError(
+				"spawn-failed",
+				`Apple Intelligence CLI did not respond within ${APPLE_LLM_TIMEOUT_MS}ms`
+			)
+		);
+	}, APPLE_LLM_TIMEOUT_MS);
 
 	const payload = JSON.stringify({
 		system: req.system,
@@ -242,7 +295,10 @@ function runAppleLlmChild(args: RunChildArgs): void {
 	try {
 		child.stdin?.end(payload);
 	} catch (err) {
-		reject(
+		// stdin write failed (e.g. EPIPE) — the child is unusable. Kill it
+		// so the spawned subprocess isn't leaked, then reject.
+		child.kill();
+		settleReject(
 			new AppleIntelligenceError(
 				"spawn-failed",
 				`Failed to write to Apple Intelligence CLI stdin: ${stringifyError(err)}`
@@ -312,8 +368,8 @@ function stringifyError(err: unknown): string {
  * render it greyed-out (Intel Macs), or render it normally (Apple
  * Silicon). The actual `SystemLanguageModel.default.availability` check
  * deliberately stays inside the Swift CLI — querying it from Node would
- * require a separate native binding and risks the early-init crash that
- * Handy hit on macOS 26 betas.
+ * require a separate native binding and risks the early-init crash seen
+ * on macOS 26 betas.
  */
 export type AppleIntelligencePlatformState = "supported" | "intel-mac" | "non-darwin";
 

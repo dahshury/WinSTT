@@ -7,8 +7,7 @@
  *   - The main process bundles via tsup, so every dep adds to the
  *     installer size. Keep the entry-point lean.
  *
- * Supported flags (mirror examples/Handy/src-tauri/src/cli.rs where the
- * action exists in our codebase):
+ * Supported flags (each maps to an action that exists in our codebase):
  *
  *   --toggle-transcription   Toggle recording on/off (forwarded to running instance)
  *   --cancel                 Cancel the in-flight transcription / LLM pass
@@ -25,7 +24,7 @@
  *   - When `--help` is present, every other action flag is ignored so
  *     the help text always wins.
  *   - All flags are runtime-only overrides — they never modify persisted
- *     settings on disk. Matches Handy's behaviour.
+ *     settings on disk.
  */
 export interface CliArgs {
 	/** Cancel the in-flight operation (forwarded to running instance). */

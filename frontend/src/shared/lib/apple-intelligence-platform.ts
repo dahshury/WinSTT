@@ -27,30 +27,39 @@ interface ClassifyOpts {
 }
 
 /**
+ * "Mac" appears in either string ⇒ macOS host. Both inputs are expected
+ * pre-lowercased. Extracted so the top-level classifier reads as a flat
+ * decision (mac? → arch?) instead of inlining the OR-chains.
+ */
+function detectMac(platform: string, userAgent: string): boolean {
+	return platform.includes("mac") || userAgent.includes("mac os") || userAgent.includes("macos");
+}
+
+/**
+ * On a Mac, look for "ARM" / "Apple Silicon" / "arm64" tokens to classify
+ * as Apple Silicon. macOS Safari/Chrome on Apple Silicon include
+ * "Mac OS X" + "Intel" in the UA string for compatibility reasons (legacy
+ * Intel UA), but Electron's userAgent on Apple Silicon includes "Electron"
+ * without lying about the architecture. We additionally accept
+ * `navigator.userAgentData` (Client Hints) if the caller passes a
+ * pre-flattened hint string. Both inputs are expected pre-lowercased.
+ */
+function detectAppleSilicon(platform: string, userAgent: string): boolean {
+	const archSignal = `${platform} ${userAgent}`;
+	return archSignal.includes("arm") || archSignal.includes("apple silicon");
+}
+
+/**
  * Map (platform, userAgent) to one of three buckets. Pure function — no
  * `navigator` access — so the tests can drive it with synthetic strings.
- *
- * Detection rules:
- *   - "Mac" appears in either string ⇒ macOS host.
- *   - On a Mac, look for "ARM" / "Apple Silicon" / "arm64" tokens to
- *     classify as Apple Silicon. macOS Safari/Chrome on Apple Silicon
- *     include "Mac OS X" + "Intel" in the UA string for compatibility
- *     reasons (legacy Intel UA), but Electron's userAgent on Apple
- *     Silicon includes "Electron" without lying about the architecture.
- *     We additionally accept `navigator.userAgentData` (Client Hints)
- *     if the caller passes a pre-flattened hint string.
  */
 export function classifyAppleIntelligencePlatform(opts: ClassifyOpts): AppleIntelligencePlatform {
 	const platform = (opts.platform ?? "").toLowerCase();
 	const userAgent = (opts.userAgent ?? "").toLowerCase();
-	const isMac =
-		platform.includes("mac") || userAgent.includes("mac os") || userAgent.includes("macos");
-	if (!isMac) {
+	if (!detectMac(platform, userAgent)) {
 		return "other";
 	}
-	const archSignal = `${platform} ${userAgent}`;
-	const looksAppleSilicon = archSignal.includes("arm") || archSignal.includes("apple silicon");
-	return looksAppleSilicon ? "apple-silicon" : "intel-mac";
+	return detectAppleSilicon(platform, userAgent) ? "apple-silicon" : "intel-mac";
 }
 
 /**

@@ -2,21 +2,15 @@ import type { useTranslations } from "use-intl";
 import { DEFAULT_SETTINGS, SettingResetButton } from "@/entities/setting";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { SearchableSelect } from "@/shared/ui/searchable-select";
-import { Select, type SelectOption } from "@/shared/ui/select";
+import { SearchableSelect, type SelectOptionGroup } from "@/shared/ui/searchable-select";
 import { Slider } from "@/shared/ui/slider";
 import { TtsPreviewButton } from "./TtsPreviewButton";
 
-export type TtsDeviceValue = "auto" | "cuda" | "cpu";
-
 export interface TtsControlsProps {
 	activeRequestId: string | null;
-	deviceOptions: SelectOption[];
-	deviceValue: TtsDeviceValue;
 	isLoading: boolean;
 	isSpeaking: boolean;
 	langForVoice: (voiceId: string) => string;
-	onDeviceChange: (next: string) => void;
 	onSpeedChange: (next: number) => void;
 	onSpeedReset: () => void;
 	onVoiceChange: (next: string) => void;
@@ -25,20 +19,19 @@ export interface TtsControlsProps {
 	speed: number;
 	t: ReturnType<typeof useTranslations>;
 	voice: string;
-	voiceOptions: SelectOption[];
+	voiceGroups: SelectOptionGroup[];
 	voicePlaceholder: string;
 }
 
-// Voice / speed / device pickers. Extracted so each focused control stays
-// readable and the parent `TtsModelSection` stays composition-only.
+// Voice / speed pickers. Extracted so each focused control stays readable
+// and the parent `TtsModelSection` stays composition-only. The compute
+// device is shared with the main STT model (Model tab → `model.device`),
+// so there's no per-TTS device picker here.
 export function TtsControls({
 	activeRequestId,
-	deviceOptions,
-	deviceValue,
 	isLoading,
 	isSpeaking,
 	langForVoice,
-	onDeviceChange,
 	onSpeedChange,
 	onSpeedReset,
 	onVoiceChange,
@@ -47,14 +40,15 @@ export function TtsControls({
 	speed,
 	t,
 	voice,
-	voiceOptions,
+	voiceGroups,
 	voicePlaceholder,
 }: TtsControlsProps) {
 	return (
 		<>
-			<FormControl caption={voicePlaceholder} label={t("voice")}>
-				<ElevatedSurface inline>
+			<FormControl label={t("voice")} layout="row" tooltip={voicePlaceholder}>
+				<ElevatedSurface className="w-52" inline>
 					<SearchableSelect
+						groups={voiceGroups}
 						inputTrailing={
 							<TtsPreviewButton
 								activeRequestId={activeRequestId}
@@ -69,7 +63,6 @@ export function TtsControls({
 							/>
 						}
 						onChange={onVoiceChange}
-						options={voiceOptions}
 						placeholder={t("noVoicesYet")}
 						renderItemTrailing={(option) => (
 							<TtsPreviewButton
@@ -89,7 +82,6 @@ export function TtsControls({
 				</ElevatedSurface>
 			</FormControl>
 			<FormControl
-				caption={t("speedCaption")}
 				label={t("speed")}
 				labelTrailing={
 					<SettingResetButton
@@ -97,6 +89,7 @@ export function TtsControls({
 						onReset={onSpeedReset}
 					/>
 				}
+				tooltip={t("speedCaption")}
 			>
 				<ElevatedSurface inline>
 					<Slider
@@ -107,16 +100,6 @@ export function TtsControls({
 						onChange={onSpeedChange}
 						step={0.1}
 						value={speed}
-					/>
-				</ElevatedSurface>
-			</FormControl>
-			<FormControl caption={t("deviceCaption")} label={t("device")}>
-				<ElevatedSurface inline>
-					<Select
-						aria-label={t("device")}
-						onChange={onDeviceChange}
-						options={deviceOptions}
-						value={deviceValue}
 					/>
 				</ElevatedSurface>
 			</FormControl>

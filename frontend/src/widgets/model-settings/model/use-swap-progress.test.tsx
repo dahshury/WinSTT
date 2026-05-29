@@ -149,6 +149,40 @@ describe("useSwapProgress", () => {
 		expect(result.current.downloadProgress?.modelId).toBe("tiny-rt");
 	});
 
+	test("STILL flags realtimeSwapping when a DIFFERENT model is the primary download", () => {
+		// Realtime equivalent of the main-slot guard: swapping realtime weights
+		// to "tiny-rt" while a concurrent precache of "other" is the highest
+		// download. primary != tiny-rt → the realtime swap counts as
+		// loading-weights and freezes the picker. Locks the realtime side of
+		// the `!(downloadProgress && downloadProgress.modelId === target)`
+		// short-circuit (the === branch evaluating false).
+		useModelSwapStore.setState({ activeRealtime: "tiny-rt" });
+		useDownloadStore.setState({
+			quantDownloads: {
+				rt: quantEntry("tiny-rt", 10),
+				other: quantEntry("other", 90),
+			},
+		});
+		const { result } = renderHook(() => useSwapProgress());
+		expect(result.current.downloadProgress?.modelId).toBe("other");
+		expect(result.current.realtimeSwapping).toBe(true);
+		expect(result.current.mainSwapping).toBe(false);
+	});
+
+	test("a download for an UNRELATED model leaves both swap targets null and unfrozen", () => {
+		// Neither swap target set, but a download is in flight. Exercises the
+		// `mainSwapTarget !== null` / `realtimeSwapTarget !== null` left
+		// operands evaluating false while downloadProgress is non-null (the
+		// && short-circuits before touching the modelId comparison).
+		useDownloadStore.setState({
+			quantDownloads: { x: quantEntry("unrelated", 70) },
+		});
+		const { result } = renderHook(() => useSwapProgress());
+		expect(result.current.downloadProgress?.modelId).toBe("unrelated");
+		expect(result.current.mainSwapping).toBe(false);
+		expect(result.current.realtimeSwapping).toBe(false);
+	});
+
 	test("can flag both main and realtime swapping at once", () => {
 		useModelSwapStore.setState({ activeMain: "cohere", activeRealtime: "tiny-rt" });
 		const { result } = renderHook(() => useSwapProgress());

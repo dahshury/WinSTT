@@ -241,7 +241,6 @@ The facade composes:
   - `src/building_blocks/terminal.py`
   - `src/recorder/infrastructure/*` (integration-level)
   - `src/recorder/bootstrap.py`
-  - `src/recorder/client.py`
   - `src/stt_server/*`
   - `src/synthesizer/infrastructure/*`, `src/synthesizer/bootstrap.py`, `src/synthesizer/__init__.py`
 - **Property tests via `hypothesis`** (declared in `[dependency-groups].dev`)

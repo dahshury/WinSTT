@@ -47,11 +47,11 @@ export function DictionarySettingsPanel() {
 				{/* Threshold for the server-side deterministic fuzzy corrector. The
 				    matcher runs BEFORE the LLM modifier pipeline, so the LLM still
 				    sees post-dictionary text and can fix anything the deterministic
-				    pass missed. Lower = stricter; 0.18 mirrors Handy's reference. */}
+				    pass missed. Lower = stricter; 0.18 is the reference default. */}
 				<FormControl
-					caption={t("thresholdCaption")}
 					label={t("thresholdLabel")}
-					tooltip={t("thresholdTooltip")}
+					layout="row"
+					tooltip={`${t("thresholdTooltip")} ${t("thresholdCaption")}`}
 				>
 					<ElevatedSurface className="w-fit" inline>
 						<NumberStepper

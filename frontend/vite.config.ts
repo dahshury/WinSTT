@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import tsconfigPaths from "vite-tsconfig-paths";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -23,19 +23,25 @@ export default defineConfig(({ command }) => {
 	// At dev time it dominates the first-window paint cost (~8 s on the ~544
 	// .tsx files behind the main entry per measurement). The compiler's output
 	// only matters for production — it adds memoization the bundler ships to
-	// users — so we drop the babel plugin in `vite serve` (dev) and keep it
-	// in `vite build` (production). HMR + dev correctness are unaffected.
+	// users — so we run it only in `vite build` (production), not `vite serve`
+	// (dev). HMR + dev correctness are unaffected.
+	//
+	// @vitejs/plugin-react v6 transforms JSX via OXC and dropped the v4 `babel`
+	// option, so the compiler is now wired as a SEPARATE @rolldown/plugin-babel
+	// pass using the exported `reactCompilerPreset` (the documented v6 path).
+	// `reactCompilerPreset()` with no `target` targets React 19
+	// (`react/compiler-runtime`). Gating the whole babel plugin on isProdBuild
+	// keeps the babel pass out of dev entirely.
 	const isProdBuild = command === "build";
 	return {
 		root: rootDir,
 		base: "./",
+		// Vite 8 resolves tsconfig `paths` (@/*, @spec/*, @electron/*, …)
+		// natively — replaces the old `vite-tsconfig-paths` plugin.
+		resolve: { tsconfigPaths: true },
 		plugins: [
-			react({
-				babel: {
-					plugins: isProdBuild ? [["babel-plugin-react-compiler", { target: "19" }]] : [],
-				},
-			}),
-			tsconfigPaths(),
+			react(),
+			...(isProdBuild ? [babel({ presets: [reactCompilerPreset()] })] : []),
 			tailwindcss(),
 		],
 		optimizeDeps: {

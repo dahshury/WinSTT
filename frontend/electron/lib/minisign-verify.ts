@@ -110,35 +110,34 @@ export function parseMinisignPubkey(text: string): MinisignPubkey {
 	};
 }
 
+interface MinisignSidecarLines {
+	globalSigLine: string;
+	sigLine: string;
+	trustedComment: string;
+}
+
 /**
- * Parse a `.minisig` signature file. Returns the artifact signature,
- * the trusted comment, and the global signature that covers the
- * (signature ‖ trustedComment) pair.
+ * Scan a `.minisig` text into its three meaningful lines. Layout: [0]
+ * untrusted comment, [1] sig blob, [2] trusted comment line, [3] global sig,
+ * optional trailing newline. Tolerates extra blank lines by indexing the
+ * first matching line of each kind. Throws when any required line is absent.
  */
-export function parseMinisignSignature(text: string): MinisignSignature {
-	const lines = text.split(LINE_SPLIT_RE);
-	// Layout: [0] untrusted comment, [1] sig blob, [2] trusted comment line,
-	// [3] global sig, optional trailing newline. We tolerate extra blank
-	// lines by indexing the first matching line of each kind.
+function scanSidecarLines(text: string): MinisignSidecarLines {
 	let sigLine: string | undefined;
 	let trustedComment: string | undefined;
 	let globalSigLine: string | undefined;
-	for (const rawLine of lines) {
+	for (const rawLine of text.split(LINE_SPLIT_RE)) {
 		const l = rawLine.trim();
-		if (l.length === 0) {
-			continue;
-		}
-		if (l.startsWith("untrusted comment:")) {
+		if (l.length === 0 || l.startsWith("untrusted comment:")) {
 			continue;
 		}
 		if (l.startsWith("trusted comment:")) {
 			trustedComment = l.slice("trusted comment:".length).trim();
-			continue;
-		}
-		// First non-comment line = artifact signature, second = global sig.
-		if (sigLine === undefined) {
+		} else if (sigLine === undefined) {
+			// First non-comment line = artifact signature.
 			sigLine = l;
 		} else if (trustedComment !== undefined && globalSigLine === undefined) {
+			// Second non-comment line, after the trusted comment = global sig.
 			globalSigLine = l;
 		}
 	}
@@ -151,6 +150,15 @@ export function parseMinisignSignature(text: string): MinisignSignature {
 	if (!globalSigLine) {
 		throw new Error("minisign signature: global signature line not found");
 	}
+	return { sigLine, trustedComment, globalSigLine };
+}
+
+/**
+ * Decode + validate the artifact signature blob: exactly
+ * (algo ‖ key id ‖ Ed25519 sig) bytes, raw-Ed25519 algorithm only. Throws a
+ * specific error for a corrupt length vs. an unsupported hashed-mode tag.
+ */
+function decodeSignatureBlob(sigLine: string): Buffer {
 	const sigRaw = Buffer.from(sigLine, "base64");
 	const expected = SIG_ALG_ED25519.length + KEY_ID_BYTES + ED25519_SIG_BYTES;
 	if (sigRaw.length !== expected) {
@@ -163,6 +171,17 @@ export function parseMinisignSignature(text: string): MinisignSignature {
 			"minisign signature: hashed-mode signatures ('ED') are not supported — re-sign without -H"
 		);
 	}
+	return sigRaw;
+}
+
+/**
+ * Parse a `.minisig` signature file. Returns the artifact signature,
+ * the trusted comment, and the global signature that covers the
+ * (signature ‖ trustedComment) pair.
+ */
+export function parseMinisignSignature(text: string): MinisignSignature {
+	const { sigLine, trustedComment, globalSigLine } = scanSidecarLines(text);
+	const sigRaw = decodeSignatureBlob(sigLine);
 	const globalSignature = Buffer.from(globalSigLine, "base64");
 	if (globalSignature.length !== ED25519_SIG_BYTES) {
 		throw new Error(
@@ -264,6 +283,33 @@ export interface VerifyDownloadedUpdateInput {
 	readonly sidecarUrl: string;
 }
 
+/** Normalize a thrown value to a printable message string. */
+function errMsg(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Fetch the `.minisig` sidecar text. Returns a `VerifyResult` failure (never
+ * throws) so the orchestrator below stays a flat sequence of guarded steps —
+ * HTTP-error and network-error paths produce distinct, user-facing reasons.
+ */
+async function fetchSidecarText(
+	sidecarUrl: string
+): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+	try {
+		const response = await fetch(sidecarUrl);
+		if (!response.ok) {
+			return {
+				ok: false,
+				reason: `failed to fetch .minisig sidecar (HTTP ${response.status} ${response.statusText}) — release ${basename(sidecarUrl)} likely wasn't signed`,
+			};
+		}
+		return { ok: true, text: await response.text() };
+	} catch (e) {
+		return { ok: false, reason: `failed to fetch .minisig sidecar: ${errMsg(e)}` };
+	}
+}
+
 export async function verifyDownloadedUpdate({
 	artifactPath,
 	sidecarUrl,
@@ -273,27 +319,12 @@ export async function verifyDownloadedUpdate({
 	try {
 		pubText = await fs.readFile(pubkeyPath, "utf8");
 	} catch (e) {
-		return {
-			ok: false,
-			reason: `pubkey not found at ${pubkeyPath} (${e instanceof Error ? e.message : String(e)})`,
-		};
+		return { ok: false, reason: `pubkey not found at ${pubkeyPath} (${errMsg(e)})` };
 	}
 
-	let sigText: string;
-	try {
-		const response = await fetch(sidecarUrl);
-		if (!response.ok) {
-			return {
-				ok: false,
-				reason: `failed to fetch .minisig sidecar (HTTP ${response.status} ${response.statusText}) — release ${basename(sidecarUrl)} likely wasn't signed`,
-			};
-		}
-		sigText = await response.text();
-	} catch (e) {
-		return {
-			ok: false,
-			reason: `failed to fetch .minisig sidecar: ${e instanceof Error ? e.message : String(e)}`,
-		};
+	const sidecar = await fetchSidecarText(sidecarUrl);
+	if (!sidecar.ok) {
+		return sidecar;
 	}
 
 	let artifactBytes: Buffer;
@@ -302,11 +333,11 @@ export async function verifyDownloadedUpdate({
 	} catch (e) {
 		return {
 			ok: false,
-			reason: `failed to read downloaded artifact at ${artifactPath}: ${e instanceof Error ? e.message : String(e)}`,
+			reason: `failed to read downloaded artifact at ${artifactPath}: ${errMsg(e)}`,
 		};
 	}
 
-	return verifyMinisignSignature(artifactBytes, sigText, pubText);
+	return verifyMinisignSignature(artifactBytes, sidecar.text, pubText);
 }
 
 /**

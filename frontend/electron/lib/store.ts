@@ -1,4 +1,5 @@
 import { setMaxListeners } from "node:events";
+import { safeStorage } from "electron";
 import Store from "electron-store";
 import { z } from "zod";
 import { type AppSettingsOutput, appSettingsSchema } from "../../src/shared/config/settings-schema";
@@ -61,7 +62,7 @@ const storeValueSchemas = {
 		.catch("preserveLimit"),
 	"general.showRecordingOverlay": z.boolean().catch(true),
 	"general.overlayMode": z.enum(["floating-bottom", "dynamic-island"]).catch("floating-bottom"),
-	// Coarse-grained screen-edge gate, modeled after Handy's `OverlayPosition`.
+	// Coarse-grained screen-edge gate.
 	// Distinct from `overlayMode` (which is the visual layout style — pill vs.
 	// dynamic-island capsule): this controls WHETHER the overlay surface is
 	// allowed to appear at all, and on which side of the screen it docks. The
@@ -136,7 +137,7 @@ const storeValueSchemas = {
 	// closes. Null disables the clamshell detector entirely; see
 	// electron/ipc/clamshell.ts for the polling state machine.
 	"audio.clamshellMicrophone": z.number().int().nullable().catch(null),
-	// Boot-time mic policy — both ported from Handy. See the renderer-side
+	// Boot-time mic policy. See the renderer-side
 	// audioSettingsSchema for the full rationale + the on-demand-microphone
 	// project memory. They MUST be declared here so the main-process
 	// snapshot has a concrete value: without these entries
@@ -259,7 +260,6 @@ const storeValueSchemas = {
 	// rule. An empty persisted value falls through `.min(1)` to `.catch()` and
 	// rehydrates to the canonical default, keeping the binding always present.
 	"tts.hotkey": z.string().min(1).catch("LMeta+LShift+E"),
-	"tts.device": z.enum(["auto", "cuda", "cpu"]).catch("auto"),
 	// schema version (internal)
 	_schemaVersion: z.number().optional().catch(undefined),
 } as const;
@@ -439,6 +439,41 @@ function migrateLlmSubFlags(write: StoreWrite): void {
 	}
 }
 
+/** Coalesce an `unknown` legacy value to itself when it's a string, else "". */
+function stringOr(value: unknown): string {
+	return typeof value === "string" ? value : "";
+}
+
+interface LegacyLlmConfig {
+	dictationPresets: unknown;
+	newDictationEnabled: boolean;
+	newTransformsEnabled: boolean;
+	sharedModel: string;
+	sharedOpenrouterFallback: string;
+	sharedOpenrouterModel: string;
+	sharedProvider: "ollama" | "openrouter";
+}
+
+/**
+ * Snapshot + normalize the legacy shared `llm.*` keys into the per-feature
+ * shape. MUST run before any delete/overwrite below: once `llm.transforms`
+ * flips array → object, re-reading would return the new shape. Each field is
+ * an exhaustive coalescer over its differently-shaped legacy value.
+ */
+function snapshotLegacyLlmConfig(): LegacyLlmConfig {
+	const masterOn = store.get("llm.enabled") === true;
+	const presets = store.get("llm.presets") as unknown;
+	return {
+		newDictationEnabled: masterOn && store.get("llm.dictationEnabled") !== false,
+		newTransformsEnabled: masterOn && store.get("llm.transformsEnabled") === true,
+		sharedProvider: store.get("llm.provider") === "openrouter" ? "openrouter" : "ollama",
+		sharedModel: stringOr(store.get("llm.model")),
+		sharedOpenrouterModel: stringOr(store.get("llm.openrouterModel")),
+		sharedOpenrouterFallback: stringOr(store.get("llm.openrouterFallbackModel")),
+		dictationPresets: Array.isArray(presets) && presets.length > 0 ? presets : [{ key: "neutral" }],
+	};
+}
+
 /**
  * v9: drop the single shared `llm.provider`/`llm.model`/etc. and the
  * `llm.enabled` master switch in favor of per-feature config blocks
@@ -465,24 +500,15 @@ function migrateLlmSubFlags(write: StoreWrite): void {
 function migrateLlmPerFeatureConfig(write: StoreWrite): void {
 	// Snapshot legacy values up-front — once we start deleting / overwriting
 	// `llm.transforms` (array → object), later reads would return the new shape.
-	const masterOn = store.get("llm.enabled") === true;
-	const dictationOn = store.get("llm.dictationEnabled");
-	const transformsOn = store.get("llm.transformsEnabled");
-	const provider = store.get("llm.provider") as unknown;
-	const model = store.get("llm.model") as unknown;
-	const openrouterModel = store.get("llm.openrouterModel") as unknown;
-	const openrouterFallbackModel = store.get("llm.openrouterFallbackModel") as unknown;
-	const presets = store.get("llm.presets") as unknown;
-
-	const newDictationEnabled = masterOn && dictationOn !== false;
-	const newTransformsEnabled = masterOn && transformsOn === true;
-	const sharedProvider = provider === "openrouter" ? "openrouter" : "ollama";
-	const sharedModel = typeof model === "string" ? model : "";
-	const sharedOpenrouterModel = typeof openrouterModel === "string" ? openrouterModel : "";
-	const sharedOpenrouterFallback =
-		typeof openrouterFallbackModel === "string" ? openrouterFallbackModel : "";
-	const dictationPresets =
-		Array.isArray(presets) && presets.length > 0 ? presets : [{ key: "neutral" }];
+	const {
+		newDictationEnabled,
+		newTransformsEnabled,
+		sharedProvider,
+		sharedModel,
+		sharedOpenrouterModel,
+		sharedOpenrouterFallback,
+		dictationPresets,
+	} = snapshotLegacyLlmConfig();
 
 	// Delete legacy keys FIRST so the dot-path writes below can create the
 	// new `llm.dictation` / `llm.transforms` objects without colliding with
@@ -546,18 +572,18 @@ function migrateLegacySileroFloor(
 
 /**
  * v11: rewrite the legacy Silero sensitivity default (0.4) to the new
- * Handy-matching default (0.7). The Silero VAD trips when probability
+ * default (0.7). The Silero VAD trips when probability
  * exceeds `1 - sensitivity`, so 0.4 was tripping only above 0.6 — well
  * above the 0.3–0.5 band where quiet / distant speech routinely lands,
- * silently dropping those utterances. Handy hardcodes the equivalent
- * of 0.7 (trip > 0.3); matching that recovers the quiet-voice case.
+ * silently dropping those utterances. A default of 0.7 (trip > 0.3)
+ * recovers the quiet-voice case.
  *
  * We only rewrite the exact prior default (0.4) so users who customized
  * the value keep their choice. Anything else (including the legacy 0.05
  * default, which v<2 migration already coerced to 0.4 here) flows
  * through unchanged.
  */
-function migrateSileroSensitivityToHandyDefault(
+function migrateSileroSensitivityToDefault(
 	write: StoreWrite,
 	read: <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>
 ): void {
@@ -566,60 +592,72 @@ function migrateSileroSensitivityToHandyDefault(
 	}
 }
 
+type MigrationRead = <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>;
+
+/**
+ * Ordered version-gated migration steps. Each runs when the persisted
+ * ``current`` version is below ``minVersion``. Replacing the former
+ * ``if (current < N) {…}`` if-chain with a single iterated lookup keeps the
+ * cyclomatic complexity flat as versions accrue — adding a migration is one
+ * array entry, not another branch. Order is ascending and load-bearing: the
+ * live-store steps chain (e.g. the legacy silero floor writes 0.4, which the
+ * v11 step then bumps to 0.7), so steps MUST stay sorted by ``minVersion``.
+ */
+const MIGRATION_STEPS: ReadonlyArray<{
+	minVersion: number;
+	apply: (write: StoreWrite, read: MigrationRead) => void;
+}> = [
+	{
+		// v4: stale audio.inputDeviceIndex carried a Windows MMDevice index, but
+		// the recorder uses PyAudio's index space. The two don't line up, so any
+		// persisted index points at the wrong device (or none). Reset to system
+		// default; users will re-pick from the now-correct list.
+		minVersion: 4,
+		apply: (write) => write("audio.inputDeviceIndex", null),
+	},
+	{ minVersion: 5, apply: migrateLlmPresets },
+	{ minVersion: 6, apply: migrateLiveTranscriptionDisplay },
+	{ minVersion: 7, apply: migrateMuteToReduction },
+	{ minVersion: 8, apply: migrateLlmSubFlags },
+	{ minVersion: 9, apply: migrateLlmPerFeatureConfig },
+	{ minVersion: 10, apply: migrateDictionaryToFuzzy },
+	{ minVersion: 11, apply: migrateSileroSensitivityToDefault },
+];
+
 /**
  * Pure migration step: given a current schema version and accessors, mutates
  * the store to reflect the desired post-migration shape. Extracted so the
- * branchy version-gated logic can be exhaustively unit-tested without
- * re-importing the module under multiple mock states.
+ * version-gated logic can be exhaustively unit-tested without re-importing the
+ * module under multiple mock states. The branchy if-chain was replaced by an
+ * iterated ``MIGRATION_STEPS`` table (see above) so CC stays flat per version.
  */
 export function applyStoreMigration(
 	current: number,
-	read: <K extends keyof StoreValueSchemas>(key: K) => z.output<StoreValueSchemas[K]>,
+	read: MigrationRead,
 	write: (key: string, value: unknown) => void,
 	// Stryker disable next-line ArrowFunction: equivalent default — production callers do not pass the log arg, but every test exercises an explicit logger to avoid console noise; the unhit default body cannot be observed by the suite
 	log: (msg: string, from: number, to: number) => void = (msg, f, t) => console.log(msg, f, t)
 ): void {
-	if (current < SCHEMA_VERSION) {
-		// `quality.enableRealtimeTranscription` was removed — realtime is now
-		// derived from `general.liveTranscriptionDisplay !== "none"`. The
-		// persisted key (if present from older builds) is left in place; nothing
-		// reads it. New installs simply never write it.
-		if (read("quality.useMainModelForRealtime") !== false) {
-			write("quality.useMainModelForRealtime", false);
-		}
-		migrateLegacySileroFloor(write, read);
-		// Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent — outer guard `current < SCHEMA_VERSION` (=4) requires current ≤ 3 here, so `current < 4` and `current <= 4` are observably identical, and `if (true)` matches the only reachable input
-		if (current < 4) {
-			// v4: stale audio.inputDeviceIndex carried a Windows MMDevice index, but
-			// the recorder uses PyAudio's index space. The two don't line up, so
-			// any persisted index points at the wrong device (or none). Reset to
-			// system default; users will re-pick from the now-correct list.
-			write("audio.inputDeviceIndex", null);
-		}
-		if (current < 5) {
-			migrateLlmPresets(write);
-		}
-		if (current < 6) {
-			migrateLiveTranscriptionDisplay(write);
-		}
-		if (current < 7) {
-			migrateMuteToReduction(write);
-		}
-		if (current < 8) {
-			migrateLlmSubFlags(write);
-		}
-		if (current < 9) {
-			migrateLlmPerFeatureConfig(write);
-		}
-		if (current < 10) {
-			migrateDictionaryToFuzzy(write);
-		}
-		if (current < 11) {
-			migrateSileroSensitivityToHandyDefault(write, read);
-		}
-		log("[store] Migration applied: _schemaVersion", current, SCHEMA_VERSION);
-		write("_schemaVersion", SCHEMA_VERSION);
+	if (current >= SCHEMA_VERSION) {
+		return;
 	}
+	// `quality.enableRealtimeTranscription` was removed — realtime is now
+	// derived from `general.liveTranscriptionDisplay !== "none"`. The
+	// persisted key (if present from older builds) is left in place; nothing
+	// reads it. New installs simply never write it.
+	if (read("quality.useMainModelForRealtime") !== false) {
+		write("quality.useMainModelForRealtime", false);
+	}
+	// Always-on legacy fix (not version-gated): runs before the v4+ steps so the
+	// v11 silero bump sees the corrected 0.4 value.
+	migrateLegacySileroFloor(write, read);
+	for (const step of MIGRATION_STEPS) {
+		if (current < step.minVersion) {
+			step.apply(write, read);
+		}
+	}
+	log("[store] Migration applied: _schemaVersion", current, SCHEMA_VERSION);
+	write("_schemaVersion", SCHEMA_VERSION);
 }
 
 const currentVersion = getStoreValue("_schemaVersion") ?? 1;
@@ -645,6 +683,16 @@ if (hotkeyRewrites.length > 0) {
  */
 export function setStoreSecret(dotPath: string, plaintext: unknown): void {
 	if (typeof plaintext !== "string") {
+		// Non-string at a SECRET path means a mistyped patch (e.g. a number/null
+		// for `llm.openrouterApiKey`); surface it so the dropped write isn't a
+		// silent black hole. Non-secret paths are skipped without noise — this
+		// accessor is called uniformly over a whole settings patch, so a number
+		// landing on a non-secret key is expected and benign.
+		if (isSecretDotPath(dotPath)) {
+			console.warn(
+				`[store] setStoreSecret ignored non-string value for secret path "${dotPath}" (got ${typeof plaintext})`
+			);
+		}
 		return;
 	}
 	if (isSecretDotPath(dotPath)) {
@@ -661,6 +709,20 @@ export function setStoreSecret(dotPath: string, plaintext: unknown): void {
  * already-encrypted values pass straight through.
  */
 export function migrateSecretsAtRest(): void {
+	// When the platform has no working keystore (DPAPI/Keychain/libsecret),
+	// `encryptSecret` deliberately falls back to plaintext — secret-at-rest is
+	// defense-in-depth, not a hard requirement, and there's nowhere to put a
+	// key. Surface that ONCE here rather than relying on the per-path
+	// `console.warn` buried in `encryptSecret` (which would otherwise fire
+	// silently inside the loop for every secret path). Behavior is unchanged:
+	// the loop below is a no-op for already-plaintext values in this state, so
+	// we just emit the clarifying warning and skip the busy-work.
+	if (!safeStorage.isEncryptionAvailable()) {
+		console.warn(
+			"[store] safeStorage unavailable — secrets remain plaintext on disk (no OS keystore)"
+		);
+		return;
+	}
 	for (const dotPath of SECRET_DOT_PATHS) {
 		const raw = store.get(dotPath);
 		if (typeof raw !== "string" || raw === "") {

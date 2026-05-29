@@ -12,6 +12,7 @@ import {
 	isDownloading,
 	listInFlightDownloads,
 	shouldExtractTarball,
+	writeChunk,
 } from "./model-downloader";
 
 type FetchSeam = (input: string, init?: { signal?: AbortSignal }) => Promise<Response>;
@@ -475,5 +476,45 @@ describe("downloadModel — registry invariants", () => {
 
 		expect(isDownloading("neterr")).toBe(false);
 		expect(existsSync(dest)).toBe(false);
+	});
+});
+
+describe("writeChunk — backpressure", () => {
+	test("returns immediately when write() reports the buffer accepted the chunk", async () => {
+		// write() → true means the kernel buffer had room; `drain` must NOT be
+		// awaited (the sink records every `once("drain")` registration).
+		let drainRegistered = false;
+		const sink = {
+			write: () => true,
+			once: () => {
+				drainRegistered = true;
+			},
+		};
+		await writeChunk(sink, new Uint8Array([1, 2, 3]));
+		expect(drainRegistered).toBe(false);
+	});
+
+	test("awaits the 'drain' event when write() signals backpressure", async () => {
+		// write() → false means the buffer is full; writeChunk must park on the
+		// next `drain` before resolving. We capture the listener and fire it
+		// asynchronously, proving the await actually suspends.
+		let drainListener: (() => void) | undefined;
+		const sink = {
+			write: () => false,
+			once: (_event: "drain", listener: () => void) => {
+				drainListener = listener;
+			},
+		};
+		let resolved = false;
+		const pending = writeChunk(sink, new Uint8Array([4, 5, 6])).then(() => {
+			resolved = true;
+		});
+		// Microtask flush — still parked because no drain has fired.
+		await Promise.resolve();
+		expect(resolved).toBe(false);
+		expect(drainListener).toBeDefined();
+		drainListener?.();
+		await pending;
+		expect(resolved).toBe(true);
 	});
 });

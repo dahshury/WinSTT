@@ -1,12 +1,12 @@
 /// <reference types="vite/client" />
 import {
+  createRootRoute,
   HeadContent,
   Link,
   Scripts,
-  createRootRoute,
 } from "@tanstack/react-router";
-import type * as React from "react";
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
+import type * as React from "react";
 import appCss from "@/styles/app.css?url";
 
 const docsBaseUrl =
@@ -58,9 +58,7 @@ function NotFound() {
       >
         404
       </p>
-      <h1 className="mt-3 text-3xl font-bold tracking-tight">
-        Page not found
-      </h1>
+      <h1 className="mt-3 text-3xl font-bold tracking-tight">Page not found</h1>
       <p
         className="mt-3 max-w-md text-sm leading-relaxed"
         style={{ color: "oklch(94% 0.015 265 / 0.6)" }}

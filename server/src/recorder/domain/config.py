@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import logging
-import platform
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, field_validator
-
-INIT_HANDLE_BUFFER_OVERFLOW = platform.system() != "Darwin"
 
 
 class StrictMutableModel(BaseModel):
@@ -20,13 +17,12 @@ class AudioConfig(StrictMutableModel):
     sample_rate: int = 16000
     buffer_size: int = 512
     use_microphone: bool = True
-    handle_buffer_overflow: bool = INIT_HANDLE_BUFFER_OVERFLOW
     # When ``True``, the OS microphone stream is opened at server boot and
     # stays allocated for the entire session — fastest possible PTT response
     # (no PortAudio probe latency on each press) but the OS mic-in-use
     # indicator stays lit whenever the app is running. When ``False`` (the
-    # default, matching Handy's ``always_on_microphone`` design): boot does
-    # not open any stream, the first PTT press opens one lazily, PTT release
+    # default): boot does not open any stream, the first PTT press opens
+    # one lazily, PTT release
     # tears it down so the OS sees the mic as released. The trade-off is
     # ~10-50 ms of extra latency on each PTT press (the open-stream cost on
     # Windows WASAPI) which the pre-roll buffer covers for typical speech.
@@ -34,24 +30,22 @@ class AudioConfig(StrictMutableModel):
     # Only consulted when ``always_on_microphone`` is False. When ``True``,
     # PTT release schedules a delayed close after ``lazy_close_timeout_seconds``
     # rather than closing immediately, so rapid PTT cycles don't pay the
-    # per-press open cost. Matches Handy's ``lazy_stream_close`` knob — it's
-    # a debounce for users who PTT frequently but still want the mic
-    # released during longer idle periods. ``False`` (default) is "release
-    # immediately on release."
+    # per-press open cost. It's a debounce for users who PTT frequently but
+    # still want the mic released during longer idle periods. ``False``
+    # (default) is "release immediately on release."
     lazy_stream_close: bool = False
     # Idle window before the lazy-close timer fires. The renderer's
     # consolidated "Microphone Release" picker maps its enum values
     # (sec30 / min1 / min5) to this number of seconds. Only consulted
-    # when ``lazy_stream_close=True``. Default 30 s matches Handy's
-    # ``STREAM_IDLE_TIMEOUT`` constant.
+    # when ``lazy_stream_close=True``. Default 30 s.
     lazy_close_timeout_seconds: float = 30.0
     # Tail-of-recording capture window in ms, applied after the user
     # releases PTT (or otherwise calls set_microphone(False) while a
     # recording is in progress). The mic keeps capturing for this many
     # ms before the pause+stop sequence runs, so trailing syllables that
     # leave the lips just after the key-up still land in the buffer.
-    # Mirrors Handy's ``extra_recording_buffer_ms``. ``0`` (default) is
-    # off; capped at 2000 ms so a bad value can't lock the recorder.
+    # ``0`` (default) is off; capped at 2000 ms so a bad value can't lock
+    # the recorder.
     # Only applies to user-driven stops (set_microphone path); VAD
     # silence endpoints already consume ``post_speech_silence_duration``.
     extra_recording_buffer_ms: int = Field(default=0, ge=0, le=2000)
@@ -60,9 +54,8 @@ class AudioConfig(StrictMutableModel):
 class VADConfig(StrictMutableModel):
     # Trip threshold = ``1 - silero_sensitivity`` (see
     # :meth:`SileroVad.detect`). Default 0.7 ⇒ speech trips at Silero
-    # probability > 0.3, matching Handy's hardcoded value (see
-    # ``examples/Handy/src-tauri/src/managers/audio.rs::SileroVad::new``).
-    # The previous 0.4 default (⇒ trip > 0.6) was the root cause of
+    # probability > 0.3. The previous 0.4 default (⇒ trip > 0.6) was the
+    # root cause of
     # quiet/distant voice being dropped entirely: Silero's confidence on
     # far-mic speech routinely lands in the 0.3-0.6 band, and 0.4 sits
     # exactly on the wrong side of that. Per-device adaptive calibration
@@ -70,7 +63,6 @@ class VADConfig(StrictMutableModel):
     # baseline. Raising the value back toward 1.0 if a specific mic is
     # over-triggering on noise is the supported escape hatch.
     silero_sensitivity: float = Field(default=0.7, ge=0.0, le=1.0)
-    silero_use_onnx: bool = False
     silero_deactivity_detection: bool = False
     webrtc_sensitivity: int = Field(default=3, ge=0, le=3)
     # Consecutive speech chunks required before VAD onset starts a recording.
@@ -95,8 +87,7 @@ class VADConfig(StrictMutableModel):
     # encoder sees the silence→speech transition. Weak starting consonants
     # (the hardest part of far-mic speech) survive because the model has
     # the leading-silence context it expects from training-data clips.
-    # Mirrors Handy's ``SmoothedVad.prefill_frames`` (15 * 30 ms = 450 ms);
-    # see ``examples/Handy/src-tauri/src/audio_toolkit/vad/smoothed.rs``.
+    # Pre-roll window of 15 * 30 ms = 450 ms.
     # Orthogonal to ``speech_onset_consecutive_chunks`` (debounce decides
     # WHETHER to start a recording; prefill decides WHAT audio context is
     # included once started) and to ``pre_recording_buffer_duration``
@@ -109,8 +100,6 @@ class TranscriptionConfig(StrictMutableModel):
     model: str = "tiny"
     download_root: str | None = None
     language: str = ""
-    compute_type: str = "default"
-    gpu_device_index: int | list[int] = 0
     # "auto" probes CUDA at runtime and falls back to CPU when its DLL chain
     # isn't actually loadable (see :func:`device.resolve_device`). "cuda" /
     # "cpu" still pin the device explicitly; persisted configs from before
@@ -133,7 +122,6 @@ class TranscriptionConfig(StrictMutableModel):
     normalize_audio: bool = True
     print_transcription_time: bool = False
     early_transcription_on_silence: float = 0
-    allowed_latency_limit: int = 100
     backend: str = ""
     # "auto" picks fp16 when the resolved device is CUDA AND the model
     # actually ships an fp16 ONNX (most onnx-community Whisper repos do);
@@ -148,29 +136,26 @@ class TranscriptionConfig(StrictMutableModel):
     # token gets swapped for ``<|translate|>`` so non-English audio is
     # translated to English in a single decode (no LLM hop, no extra
     # latency). Other backends (NeMo, GigaAM, Moonshine, *.en Whispers)
-    # silently no-op with a warning. Mirrors Handy's
-    # ``translate_to_english``.
+    # silently no-op with a warning.
     translate_to_english: bool = False
     # Beam-search width for Whisper-family decoders. ``1`` runs the
     # default greedy argmax path (byte-identical to historical
-    # behaviour). ``3`` matches Handy's ``SamplingStrategy::BeamSearch``
-    # default and typically buys ~1-3 % WER at ~2-3x decode wall-clock
-    # cost. Other engines (NeMo / Moonshine / GigaAM / Cohere / Kaldi /
+    # behaviour). ``3`` typically buys ~1-3 % WER at ~2-3x decode
+    # wall-clock cost. Other engines (NeMo / Moonshine / GigaAM / Cohere / Kaldi /
     # T-one) ignore the setting — their decoders are CTC / RNN-T which
     # don't benefit from beam expansion. Capped at 5 to keep state
     # bookkeeping bounded; sub-1 values are normalised to 1.
     whisper_beam_size: int = Field(default=1, ge=1, le=5)
     # Idle-timeout that unloads the loaded ONNX session(s) to free RAM/
-    # VRAM. Three modes mirroring Handy's ``ModelUnloadTimeout`` enum:
+    # VRAM. Three modes:
     #
     #   * ``None``         — keep the model resident forever
-    #                        (Handy's ``Never`` option)
     #   * ``0``            — tear down immediately after every
-    #                        transcription (Handy's ``Immediately``);
-    #                        every PTT pays the cold-load cost but
-    #                        memory returns to the OS between presses
+    #                        transcription; every PTT pays the cold-load
+    #                        cost but memory returns to the OS between
+    #                        presses
     #   * positive ``int`` — idle seconds before tear-down; default 300
-    #                        (5 min) matches Handy's default
+    #                        (5 min)
     #
     # The next transcription after a tear-down synchronously reloads
     # the saved model on the foreground thread.
@@ -202,7 +187,6 @@ _WAKEWORD_OFF_SENTINELS = frozenset({"", "none", "default"})
 class WakeWordConfig(StrictMutableModel):
     wakeword_backend: str = ""
     openwakeword_model_paths: str | None = None
-    openwakeword_inference_framework: str = "onnx"
     wake_words: str = ""
     wake_words_sensitivity: float = Field(default=0.6, ge=0.0, le=1.0)
     wake_word_activation_delay: float = 0.0
@@ -265,8 +249,7 @@ class TextCorrectionConfig(StrictMutableModel):
     right after ASR finishes and before the per-sentence cleanup
     (capitalisation, trailing period). When ``custom_words`` is empty the
     correction is a no-op fast path. ``threshold`` is forwarded to the
-    matcher verbatim — 0.18 is the value Handy's reference implementation
-    ships, see ``examples/Handy/src-tauri/src/audio_toolkit/text.rs``.
+    matcher verbatim — the reference default is 0.18.
 
     This layer runs BEFORE any LLM modifier pipeline (the LLM step lives
     in the Electron main process), so the LLM still sees post-dictionary
@@ -276,7 +259,7 @@ class TextCorrectionConfig(StrictMutableModel):
     custom_words: list[str] = Field(default_factory=list)
     threshold: float = Field(default=0.18, ge=0.0, le=1.0)
     # Locale-aware filler-word stripping + 3+ consecutive stutter
-    # collapse. Mirrors Handy's ``filter_transcription_output``. When
+    # collapse. When
     # ``True`` (the default) the post-processor consults
     # ``custom_filler_words`` first; if that's empty it falls back to
     # the language table in ``filler_filter.FILLERS_BY_LANG`` keyed on

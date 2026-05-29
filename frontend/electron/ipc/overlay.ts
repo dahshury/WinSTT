@@ -3,8 +3,7 @@ import { ipcMain, screen } from "electron";
 import { getStoreValue, store } from "../lib/store";
 
 /**
- * Focus-pass-through hardening, modeled on Tauri's `tauri-nspanel` + Handy's
- * overlay implementation (examples/Handy/src-tauri/src/overlay.rs). The pill
+ * Focus-pass-through hardening. The pill
  * is purely visual — it MUST NOT steal focus from the app the user is typing
  * into, or the dictation paste lands in the wrong window. Achieved purely
  * through Electron BrowserWindow APIs (no native NSPanel addon):
@@ -28,10 +27,10 @@ import { getStoreValue, store } from "../lib/store";
  * Windows but throws on some Electron builds for some signatures).
  */
 function applyFocusPassThroughFlags(win: BrowserWindow): void {
-	// Mirror examples/Handy/src-tauri/src/overlay.rs: the overlay is a
+	// The overlay is a
 	// regular interactive window that simply doesn't STEAL focus on show.
-	// Handy proved this is enough — they build with `.focused(false)` and
-	// intentionally do NOT call any "ignore mouse" API or set
+	// This is enough — the window is created with `focused: false` and
+	// intentionally does NOT call any "ignore mouse" API or set
 	// WS_EX_NOACTIVATE permanently. We tried both `setIgnoreMouseEvents`
 	// (raced the click) and `setFocusable(false)` (touch landed, mouse
 	// was swallowed by the transparent+alwaysOnTop+NOACTIVATE combination
@@ -45,7 +44,7 @@ function applyFocusPassThroughFlags(win: BrowserWindow): void {
 	// window, returning focus to the user's target app within a frame.
 	//
 	// `setAlwaysOnTop` + `setVisibleOnAllWorkspaces` give the pill the
-	// screen-saver Z-order Handy uses on macOS / Windows.
+	// screen-saver Z-order on macOS / Windows.
 	safeCall(() => win.setAlwaysOnTop(true, "screen-saver", 1));
 	safeCall(() =>
 		win.setVisibleOnAllWorkspaces(true, {
@@ -55,18 +54,22 @@ function applyFocusPassThroughFlags(win: BrowserWindow): void {
 }
 
 /**
- * Coarse-grained "should the overlay even exist on this OS?" gate. Mirrors
- * Handy's behavior of defaulting Linux overlay to OFF because some Wayland /
+ * Coarse-grained "should the overlay even exist on this OS?" gate. The
+ * Linux overlay defaults to OFF because some Wayland /
  * GTK compositors break the paste pipeline when a transparent always-on-top
  * window appears mid-keystroke. Escape hatch: `WINSTT_FORCE_OVERLAY=1` lets
  * Linux users opt-in (with the documented caveat that focus stealing /
  * paste-failure may occur on their compositor).
  *
  * Truthy values: `"1"`, `"true"`, `"yes"`, `"on"` (case-insensitive). Empty
- * string and `"0"` / `"false"` / `"no"` / `"off"` are falsy. Matches the
- * convention in examples/Handy/src-tauri/src/overlay.rs `env_flag_enabled`.
+ * string and `"0"` / `"false"` / `"no"` / `"off"` are falsy.
  */
 function isForceOverlayEnvFlagSet(): boolean {
+	// Intentionally re-read `process.env` on every call rather than caching at
+	// module load: caching would freeze a stale value and (more importantly)
+	// fresh reads keep `process.platform` / env mutations observable, which the
+	// test suite relies on. The call sites are cold (resolveOverlayPosition runs
+	// only on show/reposition), so the read cost is irrelevant.
 	const raw = process.env.WINSTT_FORCE_OVERLAY;
 	if (raw === undefined) {
 		return false;
@@ -238,7 +241,7 @@ function applyHide(): void {
 		return;
 	}
 	// No setIgnoreMouseEvents call — the overlay window is now always
-	// interactive (Handy parity, see applyFocusPassThroughFlags). Hide
+	// interactive (see applyFocusPassThroughFlags). Hide
 	// just suppresses visibility / DWM compositing.
 	//
 	// Order matters: opacity first so DWM stops compositing this surface
@@ -266,7 +269,7 @@ function applyShow(x: number, y: number): void {
 		return;
 	}
 	// No setIgnoreMouseEvents call — the overlay window is always
-	// interactive (Handy parity). The X cancel button receives clicks
+	// interactive. The X cancel button receives clicks
 	// directly because the window simply catches them. Focus stealing is
 	// prevented by `showInactive()` below (NOT `show()`), which puts the
 	// pill on screen without activating it — the user's target app stays
@@ -399,8 +402,8 @@ function isOverlaySuppressedBySettings(): boolean {
  * painted under, mirroring Apple's Dynamic Island behavior.
  *
  * `overlayPosition === "top"` forces the top anchor even when `overlayMode`
- * is `floating-bottom` (and vice-versa for `"bottom"`). This mirrors Handy's
- * `OverlayPosition::Top` / `OverlayPosition::Bottom` which is purely about
+ * is `floating-bottom` (and vice-versa for `"bottom"`). The top/bottom
+ * setting is purely about
  * screen-edge anchoring and orthogonal to layout style.
  */
 function computeOverlayPosition(
@@ -554,6 +557,15 @@ function performHide(): void {
 	desired = "hidden";
 	clearPendingTimers();
 
+	// A mode flip mid-hide cannot strand state: the deferred timer below is
+	// only a SCHEDULING choice (delay the OS hide so the dynamic-island exit
+	// animation can play). The canonical intent is `desired = "hidden"`, set
+	// synchronously above. Whether the window is hidden synchronously
+	// (floating-bottom) or after the grace period (dynamic-island), the
+	// deferred pass re-checks `desired === "hidden"` so a show that races in
+	// cancels it, and `applyHide` null-guards a torn-down window. If the user
+	// flips overlayMode during the grace window the worst case is the hide
+	// lands on the "wrong" schedule for one transition — never a stuck pill.
 	if (resolveOverlayMode() === "dynamic-island") {
 		pendingTimers.push(
 			setTimeout(() => {
@@ -646,7 +658,12 @@ export function setupOverlayHandlers(): () => void {
 	// the renderer for hit-testing. The renderer flips ignore off (`ignore: false`)
 	// while the cursor sits over the X cancel button so the click lands; on leave
 	// it flips back to (true, { forward: true }) so clicks resume falling through.
-	ipcMain.on("overlay:set-ignore-mouse", (_event, payload: unknown) => {
+	// Keep a stable ref so the disposer removes ONLY the listener this call
+	// registered via `ipcMain.off(channel, handler)`. `removeAllListeners`
+	// would nuke every listener on the channel — clobbering any registered by
+	// a sibling overlay window or a future setup pass (mirrors the
+	// off-then-on discipline in onboarding-window.ts).
+	const handleSetIgnoreMouse = (_event: unknown, payload: unknown): void => {
 		if (!overlayWindow || overlayWindow.isDestroyed()) {
 			return;
 		}
@@ -654,7 +671,8 @@ export function setupOverlayHandlers(): () => void {
 			payload && typeof payload === "object" && (payload as { ignore?: unknown }).ignore
 		);
 		overlayWindow.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : undefined);
-	});
+	};
+	ipcMain.on("overlay:set-ignore-mouse", handleSetIgnoreMouse);
 	return () => {
 		disposeOverlaySetting();
 		disposeModeSetting();
@@ -662,7 +680,7 @@ export function setupOverlayHandlers(): () => void {
 		disposeOverlayPosition();
 		clearPendingTimers();
 		stopReconciler();
-		ipcMain.removeAllListeners("overlay:set-ignore-mouse");
+		ipcMain.off("overlay:set-ignore-mouse", handleSetIgnoreMouse);
 	};
 }
 

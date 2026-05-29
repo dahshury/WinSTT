@@ -34,7 +34,6 @@ const SETTINGS_TO_CLI: [storePath: string, cliFlag: string][] = [
 	["model.model", "--model"],
 	["model.realtimeModel", "--rt-model"],
 	["model.language", "--lang"],
-	["model.computeType", "--compute_type"],
 	["model.device", "--device"],
 	["model.backend", "--backend"],
 	["model.onnxQuantization", "--onnx_quantization"],
@@ -71,7 +70,7 @@ const STORE_TRUE_CLI: [storePath: string, cliFlag: string][] = [
  * three server-side CLI knobs (``--always_on_microphone``,
  * ``--lazy_stream_close``, ``--lazy_close_timeout_seconds``). The
  * server's PyAudioSource still consumes the two booleans + the
- * timeout from Handy's original design — the renderer just hides that
+ * timeout — the renderer just hides that
  * shape behind a single picker so the user picks one bucket instead
  * of a "toggle + dependent toggle" pair.
  *
@@ -96,9 +95,8 @@ const MIC_RELEASE_LAZY_SECONDS: Record<string, number> = {
  * server CLI expects. ``never`` becomes -1, which the server treats as
  * "disable" (kept resident forever). ``immediately`` becomes 0, which
  * the server treats as "tear down right after each transcription"
- * (event-driven, no idle poller). The remaining buckets line up with
- * Handy's :class:`ModelUnloadTimeout.to_seconds` mapping so behavior is
- * directly comparable across the two products.
+ * (event-driven, no idle poller). The remaining buckets map each enum
+ * value to a fixed idle duration in seconds.
  */
 const MODEL_UNLOAD_TIMEOUT_SECONDS: Record<string, number> = {
 	immediately: 0,
@@ -414,6 +412,21 @@ function applyRecordingsFlags(args: string[]): void {
 	}
 }
 
+/**
+ * TTS shares the STT compute device — there is no separate TTS device
+ * setting in the UI. Mirror `model.device` onto the synthesizer's
+ * `--tts-device` flag so Kokoro runs on the same accelerator the user
+ * picked for the main model. `model.device` is "auto" | "cpu"; both are
+ * valid `--tts-device` values, and "auto" lets the server resolve the best
+ * available execution provider (DirectML / CUDA / CPU) exactly as STT does.
+ * Emitted unconditionally — the synthesizer is built lazily on first
+ * synthesis, so this is a no-op until TTS is actually used.
+ */
+function applyTtsDeviceFlag(args: string[]): void {
+	const device = String(getStoreRaw("model.device") ?? "auto") || "auto";
+	args.push("--tts-device", device);
+}
+
 function applyDerivedFlags(args: string[]): void {
 	applyRealtimeFlag(args);
 	applySileroDeactivityFlag(args);
@@ -424,6 +437,7 @@ function applyDerivedFlags(args: string[]): void {
 	applyModelUnloadTimeoutFlag(args);
 	applyMicrophoneReleaseFlag(args);
 	applyRecordingsFlags(args);
+	applyTtsDeviceFlag(args);
 }
 
 /** Read all relevant settings from electron-store and convert to CLI args */

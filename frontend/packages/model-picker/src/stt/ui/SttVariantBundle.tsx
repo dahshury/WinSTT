@@ -153,6 +153,9 @@ export function SttVariantBundle({
 		getDownloadSnapshot,
 		onDownloadAction,
 		selectedId,
+		// All variants in the bundle — lets each card keep its size token when
+		// two siblings would otherwise collide (e.g. Canary 180M/1B Flash).
+		siblings: bundle.variants,
 		statesById,
 		systemInfo,
 	};

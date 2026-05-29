@@ -50,6 +50,15 @@ export interface WindowContextSnapshot {
 	axHtml?: string;
 	elementName: string;
 	focusedText: string;
+	/**
+	 * On-device OCR of the foreground window, attached ONLY as a last
+	 * resort when UIA exposed no readable text (canvas/game/RDP windows).
+	 * Lower-fidelity than the structured fields (no reading order
+	 * guarantees, no hidden/scrolled text), so it's labeled as approximate
+	 * in the prompt. Never set for denied apps — `redactSensitiveFields`
+	 * whitelists only the legacy triple, so this is dropped on redaction.
+	 */
+	ocrText?: string;
 	textAfter?: string;
 	textBefore?: string;
 	/** Active page URL when the foreground app is a recognized browser. */
@@ -291,6 +300,11 @@ function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSe
 			format: (v) => `Visible UI (XML — DO NOT echo, only use for reference):\n${v}`,
 		},
 		...buildContentSections(snapshot),
+		{
+			value: collapseBlankLines(snapshot.ocrText),
+			format: (v) =>
+				`Screen text (OCR — approximate, no reliable reading order; the structured fields above were empty so this is the only context):\n${v}`,
+		},
 	];
 }
 

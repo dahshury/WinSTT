@@ -12,13 +12,13 @@ import { dbg } from "./debug-log";
  *
  * Primary path: clipboard-sandwich + SendInput Ctrl+V (one synthetic
  * keystroke = one atomic edit in the target app). The whole transcript
- * appears in a single paste event, which is what every other dictation
- * app on Windows defaults to (Handy, Whispering, voicetypr, openwhispr)
- * and what users universally expect from a "paste" action.
+ * appears in a single paste event, which is the standard dictation-app
+ * behavior on Windows and what users universally expect from a "paste"
+ * action.
  *   1. snapshot the user's clipboard (text + html + rtf + image)
  *   2. write the transcript to the clipboard
- *   3. wait CLIPBOARD_SETTLE_DELAY_MS so the clipboard write fully
- *      propagates before Ctrl+V races it (matches Handy's 60ms default)
+ *   3. wait CLIPBOARD_SETTLE_DELAY_MS (60ms) so the clipboard write fully
+ *      propagates before Ctrl+V races it
  *   4. spawn `winstt-paste.exe` (no args) — it sends Ctrl+V (or
  *      Ctrl+Shift+V if the foreground window is a terminal class)
  *   5. wait CLIPBOARD_RESTORE_DELAY_MS for the target app to consume
@@ -104,7 +104,7 @@ const PASTE_MIN_GAP_MS = 350;
  * dispatching Ctrl+V. Without it, on a small number of targets the
  * synthetic Ctrl+V arrives before the clipboard write has fully propagated
  * to the global clipboard manager and the app pastes the user's previous
- * value (or nothing). 60ms is the same default Handy ships.
+ * value (or nothing). 60ms is a safe default.
  */
 const CLIPBOARD_SETTLE_DELAY_MS = 60;
 /**
@@ -775,6 +775,69 @@ export function pasteText(text: string): void {
 }
 
 /**
+ * Watchdog timeout for the submit-key PowerShell child. More generous than the
+ * native-binary `PASTE_TIMEOUT_MS` (2500ms) because `powershell.exe` cold-start
+ * under Defender scanning can legitimately take 2–8s — we want to outlast a
+ * slow-but-working launch, while still guaranteeing the promise resolves so a
+ * wedged / never-exiting child can't pin `pasteInFlight` forever and block
+ * every subsequent paste.
+ */
+const SUBMIT_KEY_TIMEOUT_MS = 10_000;
+
+/** The two hardcoded SendKeys sequences — whitelist for `key`. */
+const SUBMIT_KEY_SEQUENCES = {
+	ctrl_enter: "^{ENTER}",
+	enter: "{ENTER}",
+} as const;
+
+/**
+ * Spawn the submit-key PowerShell child and resolve when it exits, errors, OR
+ * the watchdog fires. Extracted so the watchdog wiring is unit-testable without
+ * re-entering the `pasteInFlight` chain.
+ *
+ * The watchdog (1) kills the child best-effort and (2) resolves — mirroring
+ * `killBinaryOnTimeout` on the native-binary path. All three settle paths route
+ * through an idempotent `settle()` so the timer is always cleared and resolve
+ * fires exactly once.
+ */
+export function startSubmitKeyRun(resolve: () => void, psSequence: string): void {
+	let settled = false;
+	let watchdog: ReturnType<typeof setTimeout> | null = null;
+	const settle = (): void => {
+		if (settled) {
+			return;
+		}
+		settled = true;
+		if (watchdog) {
+			clearTimeout(watchdog);
+			watchdog = null;
+		}
+		resolve();
+	};
+	const child = spawn(
+		"powershell",
+		[
+			"-NoProfile",
+			"-NonInteractive",
+			"-Command",
+			`Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.SendKeys]::SendWait('${psSequence}')`,
+		],
+		{ stdio: "ignore", windowsHide: true }
+	);
+	watchdog = setTimeout(() => {
+		dbg("paste", `submit-key powershell timed out after ${SUBMIT_KEY_TIMEOUT_MS}ms — killing`);
+		try {
+			child.kill("SIGKILL");
+		} catch {
+			// best-effort — the OS may have already reaped it
+		}
+		settle();
+	}, SUBMIT_KEY_TIMEOUT_MS);
+	child.once("exit", () => settle());
+	child.once("error", () => settle());
+}
+
+/**
  * Send a "submit" key combo into the currently focused window. Used by the
  * auto-submit feature to fire chat-box send buttons (Enter) or IDE chat
  * prompts (Ctrl+Enter) right after a dictation paste lands.
@@ -784,26 +847,19 @@ export function pasteText(text: string): void {
  * Chained onto the in-flight paste so it fires AFTER the paste characters
  * have been delivered. Failure is silent — auto-submit is opt-in, and a
  * stale UAC / blocked PowerShell shouldn't surface a user-facing error.
+ *
+ * A watchdog (SUBMIT_KEY_TIMEOUT_MS) kills the child and resolves if PowerShell
+ * launches but never exits, so a wedged child can't pin `pasteInFlight` and
+ * block every subsequent paste.
  */
 export function injectSubmitKey(key: "enter" | "ctrl_enter"): void {
-	const psSequence = key === "ctrl_enter" ? "^{ENTER}" : "{ENTER}";
+	// `key` is a closed union, so the lookup always hits; the `?? enter` is a
+	// belt-and-braces whitelist guard that also keeps the value a known literal
+	// rather than anything interpolated from an untrusted source.
+	const psSequence = SUBMIT_KEY_SEQUENCES[key] ?? SUBMIT_KEY_SEQUENCES.enter;
 	const tail = pasteInFlight ?? Promise.resolve();
 	const next = tail.then(
-		() =>
-			new Promise<void>((resolve) => {
-				const child = spawn(
-					"powershell",
-					[
-						"-NoProfile",
-						"-NonInteractive",
-						"-Command",
-						`Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.SendKeys]::SendWait('${psSequence}')`,
-					],
-					{ stdio: "ignore", windowsHide: true }
-				);
-				child.once("exit", () => resolve());
-				child.once("error", () => resolve());
-			})
+		() => new Promise<void>((resolve) => startSubmitKeyRun(resolve, psSequence))
 	);
 	pasteInFlight = next.catch(() => undefined);
 }

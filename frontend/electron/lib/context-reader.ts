@@ -5,6 +5,7 @@ import { app } from "electron";
 import {
 	EMPTY_CONTEXT,
 	formatContextForPrompt,
+	isDeniedByList,
 	type WindowContextSnapshot,
 } from "./context-snapshot";
 import { dbg } from "./debug-log";
@@ -23,6 +24,14 @@ export { EMPTY_CONTEXT, formatContextForPrompt, type WindowContextSnapshot };
 const READ_TIMEOUT_MS = 1200;
 
 /**
+ * Hard timeout for the OCR helper. Heavier than a UIA read (it screenshots
+ * the window then runs the on-device OCR model), so it gets more headroom —
+ * but still bounded so a non-accessible app can't stall a dictation. Only
+ * ever incurred when UIA returned nothing, which is rare.
+ */
+const OCR_TIMEOUT_MS = 3000;
+
+/**
  * Cap on raw stdout bytes from the helper.
  *
  * The legacy modes (default / --selection / --split) emit at most
@@ -34,18 +43,18 @@ const READ_TIMEOUT_MS = 1200;
  */
 const MAX_BUFFER_BYTES = 1024 * 1024;
 
-function getBinaryCandidate(): string {
+function binaryCandidate(exe: string): string {
 	if (app.isPackaged) {
-		return path.join(process.resourcesPath, "native", "bin", "winstt-context.exe");
+		return path.join(process.resourcesPath, "native", "bin", exe);
 	}
-	return path.join(import.meta.dirname, "..", "electron", "native", "bin", "winstt-context.exe");
+	return path.join(import.meta.dirname, "..", "electron", "native", "bin", exe);
 }
 
-function resolveBinary(): string | null {
+function resolveHelper(exe: string): string | null {
 	if (process.platform !== "win32") {
 		return null;
 	}
-	const candidate = getBinaryCandidate();
+	const candidate = binaryCandidate(exe);
 	return existsSync(candidate) ? candidate : null;
 }
 
@@ -53,7 +62,7 @@ let cachedBinary: string | null | undefined;
 
 function getBinary(): string | null {
 	if (cachedBinary === undefined) {
-		cachedBinary = resolveBinary();
+		cachedBinary = resolveHelper("winstt-context.exe");
 		if (cachedBinary) {
 			dbg("context", `using ${cachedBinary}`);
 		} else {
@@ -64,6 +73,23 @@ function getBinary(): string | null {
 		}
 	}
 	return cachedBinary;
+}
+
+let cachedOcrBinary: string | null | undefined;
+
+/** OCR helper path (optional last-resort fallback). NULL when the binary
+ *  wasn't built (no MSVC/SDK at build time) — callers degrade to UIA-only. */
+function getOcrBinary(): string | null {
+	if (cachedOcrBinary === undefined) {
+		cachedOcrBinary = resolveHelper("winstt-ocr.exe");
+		dbg(
+			"context",
+			cachedOcrBinary
+				? `OCR fallback available: ${cachedOcrBinary}`
+				: "winstt-ocr.exe not found — OCR fallback disabled (UIA-only)"
+		);
+	}
+	return cachedOcrBinary;
 }
 
 function asString(value: unknown): string {
@@ -79,13 +105,19 @@ function parseJsonOrNull(raw: string): unknown {
 }
 
 function attachCaretFields(snapshot: WindowContextSnapshot, parsed: Record<string, unknown>): void {
+	// Attach each caret side independently — never as a pair. Materializing
+	// `textBefore: ""` just because `textAfter` is present (or vice-versa)
+	// would put an empty key on the snapshot, violating the "attach only
+	// when non-empty" invariant the empty-triple shape relies on (a
+	// caret-less side stays absent, not present-but-blank).
 	const textBefore = asString(parsed.textBefore);
-	const textAfter = asString(parsed.textAfter);
-	if (textBefore.length === 0 && textAfter.length === 0) {
-		return;
+	if (textBefore.length > 0) {
+		snapshot.textBefore = textBefore;
 	}
-	snapshot.textBefore = textBefore;
-	snapshot.textAfter = textAfter;
+	const textAfter = asString(parsed.textAfter);
+	if (textAfter.length > 0) {
+		snapshot.textAfter = textAfter;
+	}
 }
 
 function attachIfNonEmpty(
@@ -208,11 +240,107 @@ export function readWindowSelection(): Promise<WindowContextSnapshot> {
  * chars of axHtml. The relay's deny-list filter strips the heavy
  * fields before they reach the LLM when the user has flagged the app.
  */
-export function readWindowContextTree(): Promise<WindowContextSnapshot> {
-	return spawnContextHelper(["--tree"]);
+/** Below this many chars of element text, an axHtml tree is "contentless" —
+ *  structure/chrome only, no real body — and the OCR fallback may run. */
+const OCR_CONTENT_THRESHOLD = 40;
+/** Inner text between `>` and `<` in the compact axHtml serialization. */
+const AX_TEXT_RE = />([^<]+)</g;
+
+function axHtmlTextLength(ax: string): number {
+	let total = 0;
+	for (const match of ax.matchAll(AX_TEXT_RE)) {
+		total += (match[1] ?? "").trim().length;
+		if (total >= OCR_CONTENT_THRESHOLD) {
+			break;
+		}
+	}
+	return total;
 }
 
-/** Reset the cached binary path. Test-only. */
+/** The three plain-text fields that, if any carries content, mean UIA
+ *  exposed usable text and the OCR fallback should be skipped. */
+const READABLE_TEXT_FIELDS: readonly (keyof WindowContextSnapshot)[] = [
+	"focusedText",
+	"textBefore",
+	"textAfter",
+];
+
+function hasReadableText(snapshot: WindowContextSnapshot): boolean {
+	return READABLE_TEXT_FIELDS.some((field) => asString(snapshot[field]).trim().length > 0);
+}
+
+/** True when UIA exposed no usable text — empty caret/focused text AND an
+ *  axHtml with essentially no element body (the OCR-fallback trigger). */
+function snapshotIsContentless(snapshot: WindowContextSnapshot): boolean {
+	if (hasReadableText(snapshot)) {
+		return false;
+	}
+	return axHtmlTextLength(snapshot.axHtml ?? "") < OCR_CONTENT_THRESHOLD;
+}
+
+/**
+ * Spawn the on-device OCR helper (screenshot + Windows.Media.Ocr). Resolves
+ * to the recognized text, or "" on any failure / missing binary / non-Windows.
+ * Never throws — an empty result just means "no OCR context", which the
+ * pipeline handles like any other empty capture.
+ */
+export function readWindowOcrText(): Promise<string> {
+	const binary = getOcrBinary();
+	if (!binary) {
+		return Promise.resolve("");
+	}
+	return new Promise((resolve) => {
+		execFile(
+			binary,
+			[],
+			{ timeout: OCR_TIMEOUT_MS, windowsHide: true, maxBuffer: MAX_BUFFER_BYTES, encoding: "utf8" },
+			(err, stdout) => {
+				if (err) {
+					dbg("context", `ocr failed: ${err.message}`);
+					resolve("");
+					return;
+				}
+				resolve(String(stdout).trim());
+			}
+		);
+	});
+}
+
+/**
+ * Tree read for the LLM cleanup path (caret split + foreground UIA tree +
+ * browser URL). When `opts.ocrFallback` is set and UIA exposed no readable
+ * text (canvas/game/RDP windows), falls back to on-device OCR of the window.
+ *
+ * The OCR path screenshots the WHOLE window, so it MUST respect the deny-list
+ * — checked here, before redaction, because the relay applies the deny-list
+ * downstream and a denied app would otherwise be screenshotted anyway.
+ */
+export async function readWindowContextTree(
+	opts: { ocrFallback?: boolean; denyList?: readonly string[] } = {}
+): Promise<WindowContextSnapshot> {
+	const snapshot = await spawnContextHelper(["--tree"]);
+	if (!opts.ocrFallback) {
+		return snapshot;
+	}
+	if (!snapshotIsContentless(snapshot)) {
+		return snapshot;
+	}
+	if (isDeniedByList(snapshot, opts.denyList ?? [])) {
+		return snapshot;
+	}
+	const ocr = await readWindowOcrText();
+	if (!ocr) {
+		return snapshot;
+	}
+	dbg("context", `UIA empty — OCR fallback captured ${ocr.length} chars`);
+	return { ...snapshot, ocrText: ocr };
+}
+
+/** Reset the cached binary paths (both the UIA context helper and the OCR
+ *  helper). Test-only. Resetting BOTH lets a test re-exercise either
+ *  binary's missing/present resolution branch after a prior call memoised
+ *  it. */
 export function __resetContextReaderForTesting__(): void {
 	cachedBinary = undefined;
+	cachedOcrBinary = undefined;
 }

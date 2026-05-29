@@ -121,12 +121,8 @@ export function AudioSettingsPanel() {
 			{recordingMode !== "listen" && (
 				<SettingSection icon={Mic01Icon} title={t("inputDevice")}>
 					<div className="flex flex-col divide-y divide-surface-1">
-						<FormControl
-							caption={t("deviceCaption")}
-							label={t("device")}
-							tooltip={t("deviceTooltip")}
-						>
-							<ElevatedSurface inline>
+						<FormControl label={t("device")} layout="row" tooltip={t("deviceTooltip")}>
+							<ElevatedSurface className="w-52" inline>
 								<Select
 									onChange={(v) =>
 										update({
@@ -142,12 +138,8 @@ export function AudioSettingsPanel() {
 						    polling detector lives in the Electron main process; the
 						    setting persists across launches. macOS + Linux supported;
 						    Windows is a documented v1.1 deferral. */}
-						<FormControl
-							caption={t("clamshellCaption")}
-							label={t("clamshellLabel")}
-							tooltip={t("clamshellTooltip")}
-						>
-							<ElevatedSurface inline>
+						<FormControl label={t("clamshellLabel")} layout="row" tooltip={t("clamshellTooltip")}>
+							<ElevatedSurface className="w-52" inline>
 								<Select
 									onChange={(v) =>
 										update({
@@ -169,12 +161,8 @@ export function AudioSettingsPanel() {
 			{showOutputDevice && (
 				<SettingSection icon={VolumeHighIcon} title={t("outputDevice")}>
 					<div className="flex flex-col divide-y divide-surface-1">
-						<FormControl
-							caption={t("outputDeviceCaption")}
-							label={t("outputDevice")}
-							tooltip={t("outputDeviceTooltip")}
-						>
-							<ElevatedSurface inline>
+						<FormControl label={t("outputDevice")} layout="row" tooltip={t("outputDeviceTooltip")}>
+							<ElevatedSurface className="w-52" inline>
 								<Select
 									onChange={(v) => updateGeneral({ outputDeviceId: v })}
 									options={outputDeviceOptions}
@@ -192,11 +180,6 @@ export function AudioSettingsPanel() {
 				<div className="flex flex-col divide-y divide-surface-1">
 					<div className="py-2">
 						<FormControl
-							caption={
-								recordingMode === "listen"
-									? th("pushToTalkKeyCaptionDisabled")
-									: th("pushToTalkKeyCaption")
-							}
 							disabled={recordingMode === "listen"}
 							label={th("pushToTalkKey")}
 							labelTrailing={
@@ -218,7 +201,6 @@ export function AudioSettingsPanel() {
 					</div>
 					<div className="py-2">
 						<FormControl
-							caption={th("repasteKeyCaption")}
 							label={th("repasteKey")}
 							labelTrailing={
 								<SettingResetButton
@@ -239,7 +221,6 @@ export function AudioSettingsPanel() {
 					</div>
 					<div className="py-2">
 						<FormControl
-							caption={tt("hotkeyHint")}
 							label={tt("hotkeyLabel")}
 							labelTrailing={
 								<SettingResetButton
@@ -247,6 +228,7 @@ export function AudioSettingsPanel() {
 									onReset={() => updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey })}
 								/>
 							}
+							tooltip={tt("hotkeyHint")}
 						>
 							<HotkeyRecorder
 								currentKey={ttsHotkey}
@@ -257,9 +239,8 @@ export function AudioSettingsPanel() {
 					</div>
 					<div className="py-3">
 						<FormControl
-							caption={th("shortcutsLegendCaption")}
 							label={th("shortcutsLegendLabel")}
-							tooltip={th("shortcutsLegendTooltip")}
+							tooltip={`${th("shortcutsLegendTooltip")} ${th("shortcutsLegendCaption")}`}
 						>
 							{/* The legend reads the same hotkey state the recorder
 							    above writes, so changing the binding above
@@ -271,7 +252,7 @@ export function AudioSettingsPanel() {
 			</SettingSection>
 
 			{/* ── Advanced — consolidated mic-release picker. Replaces the
-			    original Handy-style "always-on toggle + dependent lazy
+			    original "always-on toggle + dependent lazy
 			    toggle" pair with a single Select that covers the five
 			    discrete behaviors (always / immediate / 30s / 1m / 5m).
 			    STARTUP_ONLY — PyAudioSource reads the resulting flags
@@ -279,11 +260,11 @@ export function AudioSettingsPanel() {
 			<SettingSection icon={DashboardCircleIcon} title={t("advancedTitle")}>
 				<div className="flex flex-col divide-y divide-surface-1">
 					<FormControl
-						caption={t("microphoneReleaseCaption")}
 						label={t("microphoneRelease")}
+						layout="row"
 						tooltip={t("microphoneReleaseTooltip")}
 					>
-						<ElevatedSurface inline>
+						<ElevatedSurface className="w-52" inline>
 							<Select
 								onChange={(v) =>
 									update({

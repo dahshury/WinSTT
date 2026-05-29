@@ -511,6 +511,33 @@ describe("handleFinish (IPC: onboarding:finish)", () => {
 		expect(getFinishListener()).toBeTypeOf("function");
 	});
 
+	test("re-arming setup without teardown does NOT stack a duplicate finish listener (idempotent)", () => {
+		// Regression guard: ipcMain.on silently appends, so setup() off()s first.
+		// Two setups back-to-back → still exactly one handleFinish listener.
+		const t1 = setupOnboardingHandlers({ onFinish: () => undefined });
+		const t2 = setupOnboardingHandlers({ onFinish: () => undefined });
+		expect(electronHandle.ipcMain._listeners.get(ONBOARDING_FINISH)?.length).toBe(1);
+		t1();
+		t2();
+	});
+
+	test("teardown resets finishedOnce so a finish after re-arm is recorded (not stale-blocked)", () => {
+		// First session: a valid finish flips module-level finishedOnce → true.
+		setup();
+		createOnboardingWindow();
+		getFinishListener()?.(fakeEvent, { completed: true, track: "local" });
+		expect(storeSetCalls.length).toBe(3);
+		// Teardown must clear finishedOnce (its only other reset is inside
+		// createOnboardingWindow). Re-arm WITHOUT a fresh window so we isolate
+		// the teardown reset: a second valid finish must still be recorded
+		// (3 more writes) instead of being silently dropped by a stale `true`.
+		activeTeardown?.();
+		setup();
+		getFinishListener()?.(fakeEvent, { completed: true, track: "cloud" });
+		expect(storeSetCalls.length).toBe(6);
+		expect(storeData["general.onboardedTrack"]).toBe("cloud");
+	});
+
 	test("valid payload writes onboarded state, closes the window, and fires onFinish once", () => {
 		setup();
 		createOnboardingWindow();

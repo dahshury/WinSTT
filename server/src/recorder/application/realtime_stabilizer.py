@@ -59,27 +59,46 @@ class RealtimeStabilizer:
         watermark+accumulator design). The returned string is the
         UI-safe, monotonic-anchored text to display.
         """
-        fresh = (fresh_text or "").strip()
+        fresh = self._normalize(fresh_text)
         self.text_storage.append(fresh)
 
         # 1. Detect the new stable prefix from the last two transcriptions
         #    (mirrors audio_recorder.py:2440-2457).
-        if len(self.text_storage) >= 2:
-            last_two = list(self.text_storage)[-2:]
-            prefix = os.path.commonprefix(last_two)
-            # Monotonic: only adopt a new prefix when it is at least as
-            # long as the current safetext. Prevents flicker when a later
-            # transcription disagrees with an earlier one on words the
-            # user has already seen.
-            if len(prefix) >= len(self.stable_safetext):
-                self.stable_safetext = prefix
+        self._update_stable_prefix()
 
         # 2. Merge: stable_safetext + fresh[matching_pos:]
         #    (mirrors audio_recorder.py:2461-2490).
+        return self._merge(fresh)
+
+    @staticmethod
+    def _normalize(fresh_text: str) -> str:
+        """Coerce a (possibly falsy) raw realtime text to its stripped form."""
+        return (fresh_text or "").strip()
+
+    def _update_stable_prefix(self) -> None:
+        """Adopt the monotonic common prefix of the last two transcriptions.
+
+        Mirrors audio_recorder.py:2440-2457. Monotonic: only adopt a new
+        prefix when it is at least as long as the current safetext. Prevents
+        flicker when a later transcription disagrees with an earlier one on
+        words the user has already seen.
+        """
+        if len(self.text_storage) < 2:
+            return
+        last_two = list(self.text_storage)[-2:]
+        prefix = os.path.commonprefix(last_two)
+        if len(prefix) >= len(self.stable_safetext):
+            self.stable_safetext = prefix
+
+    def _merge(self, fresh: str) -> str:
+        """Anchor ``fresh`` onto the stable safetext via tail-match overlap.
+
+        Mirrors audio_recorder.py:2461-2490.
+        """
         matching_pos = self._find_tail_match_in_text(self.stable_safetext, fresh)
         if matching_pos < 0:
             # No overlap: stable wins if non-empty, else fresh (cold start).
-            return self.stable_safetext if self.stable_safetext else fresh
+            return self.stable_safetext or fresh
         return self.stable_safetext + fresh[matching_pos:]
 
     @staticmethod
@@ -100,12 +119,21 @@ class RealtimeStabilizer:
         return is ``15`` — the index at which the tail match ENDS in
         ``text2``, i.e. the cut point for the fresh suffix.
         """
-        if len(text1) < length_of_match or len(text2) < length_of_match:
+        if min(len(text1), len(text2)) < length_of_match:
             return -1
         target = text1[-length_of_match:]
         # Scan text2 windows of length_of_match from right to left so the
         # match closest to the end of text2 is the one returned (this is
         # what makes the algorithm robust to recurring phrases).
+        return RealtimeStabilizer._scan_windows_from_right(text2, target, length_of_match)
+
+    @staticmethod
+    def _scan_windows_from_right(text2: str, target: str, length_of_match: int) -> int:
+        """Return the end index of the right-most window in ``text2`` equal to ``target``.
+
+        Returns ``-1`` when no window matches. The caller guarantees both
+        ``len(text2) >= length_of_match`` and ``len(target) == length_of_match``.
+        """
         for i in range(len(text2) - length_of_match + 1):
             end = len(text2) - i
             window = text2[end - length_of_match : end]

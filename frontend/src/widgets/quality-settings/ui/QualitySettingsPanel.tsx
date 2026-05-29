@@ -1,7 +1,9 @@
 import {
+	ArrowTurnDownIcon,
 	DashboardCircleIcon,
 	EyeIcon,
 	FileScriptIcon,
+	KeyboardIcon,
 	SparklesIcon,
 	SubtitleIcon,
 	TextSquareIcon,
@@ -40,6 +42,10 @@ type QualitySettings = NonNullable<
 type AudioSettings = NonNullable<ReturnType<typeof useSettingsStore.getState>["settings"]["audio"]>;
 type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
 type UpdateAudioFn = (patch: Partial<AudioSettings>) => void;
+type GeneralSettings = NonNullable<
+	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
+>;
+type UpdateGeneralFn = (patch: Partial<GeneralSettings>) => void;
 
 type GeneralT = ReturnType<typeof useTranslations<"general">>;
 
@@ -64,19 +70,19 @@ function PasteBehaviorSection({
 		<SettingSection icon={DashboardCircleIcon} title={tg("pasteBehaviorTitle")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
-					caption={tg("autoSubmitCaption")}
 					label={tg("autoSubmit")}
 					labelAddon={<Toggle checked={autoSubmit} onCheckedChange={onChangeAutoSubmit} />}
 					tooltip={tg("autoSubmitTooltip")}
 				/>
 				{autoSubmit ? (
 					<FormControl
-						caption={tg("autoSubmitKeyCaption")}
 						label={tg("autoSubmitKey")}
+						layout="row"
 						tooltip={tg("autoSubmitKeyTooltip")}
 					>
-						<ElevatedSurface>
+						<ElevatedSurface className="w-52">
 							<Switcher
+								fullWidth
 								onChange={onChangeAutoSubmitKey}
 								options={autoSubmitKeyOptions}
 								value={autoSubmitKey}
@@ -117,7 +123,6 @@ function ContextAwarenessSection({
 		<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
-					caption={tg("contextAwarenessCaption")}
 					label={tg("contextAwareness")}
 					labelAddon={<Toggle checked={enabled} onCheckedChange={handleToggle} />}
 					tooltip={tg("contextAwarenessTooltip")}
@@ -150,14 +155,12 @@ function SmartEndpointSection({ q, t, update, onToggle }: SmartEndpointSectionPr
 		<SettingSection icon={SparklesIcon} title={t("smartEndpoint")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
-					caption={t("smartEndpointCaption")}
 					label={t("smartEndpointLabel")}
 					labelAddon={<Toggle checked={enabled} onCheckedChange={onToggle} />}
 					tooltip={t("smartEndpointTooltip")}
 				/>
 				{enabled && (
 					<FormControl
-						caption={t("detectionSpeedCaption")}
 						label={t("detectionSpeed")}
 						labelTrailing={
 							<SettingResetButton
@@ -170,6 +173,7 @@ function SmartEndpointSection({ q, t, update, onToggle }: SmartEndpointSectionPr
 								}
 							/>
 						}
+						layout="row"
 						tooltip={t("detectionSpeedTooltip")}
 					>
 						<ElevatedSurface className="w-fit" inline>
@@ -202,7 +206,6 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 		<SettingSection icon={SparklesIcon} title={t("sentencePauses")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
-					caption={t("endOfSentencePauseCaption")}
 					label={t("endOfSentencePause")}
 					labelTrailing={
 						<SettingResetButton
@@ -218,6 +221,7 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 							}
 						/>
 					}
+					layout="row"
 					tooltip={t("endOfSentencePauseTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -234,7 +238,6 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 					</ElevatedSurface>
 				</FormControl>
 				<FormControl
-					caption={t("unknownSentencePauseCaption")}
 					label={t("unknownSentencePause")}
 					labelTrailing={
 						<SettingResetButton
@@ -251,6 +254,7 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 							}
 						/>
 					}
+					layout="row"
 					tooltip={t("unknownSentencePauseTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -267,7 +271,6 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 					</ElevatedSurface>
 				</FormControl>
 				<FormControl
-					caption={t("midSentencePauseCaption")}
 					label={t("midSentencePause")}
 					labelTrailing={
 						<SettingResetButton
@@ -283,6 +286,7 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 							}
 						/>
 					}
+					layout="row"
 					tooltip={t("midSentencePauseTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -321,7 +325,6 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 		>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<FormControl
-					caption={ta("sileroSensitivityCaption")}
 					label={ta("sileroSensitivity")}
 					labelTrailing={
 						<SettingResetButton
@@ -336,7 +339,7 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					}
 					tooltip={ta("sileroSensitivityTooltip")}
 				>
-					<ElevatedSurface className="p-3">
+					<ElevatedSurface inline>
 						<Slider
 							aria-label={ta("sileroSensitivity")}
 							formatValue={(v) => v.toFixed(2)}
@@ -349,7 +352,6 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					</ElevatedSurface>
 				</FormControl>
 				<FormControl
-					caption={ta("webrtcSensitivityCaption")}
 					label={ta("webrtcSensitivity")}
 					labelTrailing={
 						<SettingResetButton
@@ -364,7 +366,7 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					}
 					tooltip={ta("webrtcSensitivityTooltip")}
 				>
-					<ElevatedSurface className="p-3">
+					<ElevatedSurface inline>
 						<Slider
 							aria-label={ta("webrtcSensitivity")}
 							max={3}
@@ -376,7 +378,6 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 					</ElevatedSurface>
 				</FormControl>
 				<FormControl
-					caption={ta("postSpeechSilenceCaption")}
 					label={ta("postSpeechSilence")}
 					labelTrailing={
 						<SettingResetButton
@@ -392,6 +393,7 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 							}
 						/>
 					}
+					layout="row"
 					tooltip={ta("postSpeechSilenceTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -405,6 +407,77 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 						/>
 					</ElevatedSurface>
 				</FormControl>
+			</div>
+		</SettingSection>
+	);
+}
+
+interface FormattingSectionProps {
+	general: GeneralSettings | undefined;
+	llmDictationEnabled: boolean;
+	q: QualitySettings | undefined;
+	t: QualityT;
+	update: UpdateQualityFn;
+	updateGeneral: UpdateGeneralFn;
+}
+
+// Post-decode transcript cleanups. LLM dictation rewrites the transcript
+// wholesale (casing, punctuation, fillers) before paste, so these per-utterance
+// fixups are redundant — disable them while LLM dictation is on. Extracted so
+// the panel root stays under the cyclomatic-complexity ceiling.
+function FormattingSection({
+	general,
+	llmDictationEnabled,
+	q,
+	t,
+	update,
+	updateGeneral,
+}: FormattingSectionProps) {
+	return (
+		<SettingSection icon={TextSquareIcon} title={t("formatting")}>
+			<div
+				className={cn(
+					"flex flex-col divide-y divide-surface-1 transition-opacity duration-200 ease-out",
+					llmDictationEnabled && "pointer-events-none opacity-40"
+				)}
+			>
+				<FormControl
+					label={t("uppercaseFirst")}
+					labelAddon={
+						<Toggle
+							checked={q?.ensureSentenceStartingUppercase ?? true}
+							disabled={llmDictationEnabled}
+							onCheckedChange={(v) => update({ ensureSentenceStartingUppercase: v })}
+						/>
+					}
+					tooltip={t("uppercaseFirstTooltip")}
+				/>
+				<FormControl
+					label={t("endWithPeriod")}
+					labelAddon={
+						<Toggle
+							checked={q?.ensureSentenceEndsWithPeriod ?? true}
+							disabled={llmDictationEnabled}
+							onCheckedChange={(v) => update({ ensureSentenceEndsWithPeriod: v })}
+						/>
+					}
+					tooltip={t("endWithPeriodTooltip")}
+				/>
+				{/* Filler removal is a `general.*` setting (synced server-side via
+					custom-words-sync → set_parameter("filter_fillers")). Surfaced here
+					next to the other post-decode cleanups. Turn OFF to keep verbatim
+					disfluencies — the reason to pick a model like CrisperWhisper. */}
+				<FormControl
+					label={t("removeFillerWords")}
+					labelAddon={
+						<Toggle
+							checked={general?.filterFillers ?? true}
+							disabled={llmDictationEnabled}
+							onCheckedChange={(v) => updateGeneral({ filterFillers: v })}
+						/>
+					}
+					tooltip={t("removeFillerWordsTooltip")}
+				/>
 			</div>
 		</SettingSection>
 	);
@@ -464,8 +537,8 @@ export function QualitySettingsPanel() {
 	const autoSubmit = general?.autoSubmit ?? false;
 	const autoSubmitKey = general?.autoSubmitKey ?? "enter";
 	const autoSubmitKeyOptions: SwitcherOption<"enter" | "ctrl_enter">[] = [
-		{ value: "enter", label: tg("autoSubmitKeyEnter") },
-		{ value: "ctrl_enter", label: tg("autoSubmitKeyCtrlEnter") },
+		{ value: "enter", label: tg("autoSubmitKeyEnter"), icon: ArrowTurnDownIcon },
+		{ value: "ctrl_enter", label: tg("autoSubmitKeyCtrlEnter"), icon: KeyboardIcon },
 	];
 
 	return (
@@ -515,53 +588,26 @@ export function QualitySettingsPanel() {
 			)}
 
 			{/* ── Formatting ─────────────────────────────────── */}
-			{/* LLM dictation rewrites the transcript wholesale (casing, punctuation,
-				modifiers) before paste, so the per-character uppercase/period fixups
-				below are redundant — disable them while LLM dictation is on. */}
-			<SettingSection icon={TextSquareIcon} title={t("formatting")}>
-				<div
-					className={cn(
-						"flex flex-col divide-y divide-surface-1 transition-opacity duration-200 ease-out",
-						llmDictationEnabled && "pointer-events-none opacity-40"
-					)}
-				>
-					<FormControl
-						caption={t("uppercaseFirstCaption")}
-						label={t("uppercaseFirst")}
-						labelAddon={
-							<Toggle
-								checked={q?.ensureSentenceStartingUppercase ?? true}
-								disabled={llmDictationEnabled}
-								onCheckedChange={(v) => update({ ensureSentenceStartingUppercase: v })}
-							/>
-						}
-						tooltip={t("uppercaseFirstTooltip")}
-					/>
-					<FormControl
-						caption={t("endWithPeriodCaption")}
-						label={t("endWithPeriod")}
-						labelAddon={
-							<Toggle
-								checked={q?.ensureSentenceEndsWithPeriod ?? true}
-								disabled={llmDictationEnabled}
-								onCheckedChange={(v) => update({ ensureSentenceEndsWithPeriod: v })}
-							/>
-						}
-						tooltip={t("endWithPeriodTooltip")}
-					/>
-				</div>
-			</SettingSection>
+			<FormattingSection
+				general={general}
+				llmDictationEnabled={llmDictationEnabled}
+				q={q}
+				t={t}
+				update={update}
+				updateGeneral={updateGeneral}
+			/>
 
 			{/* ── File Transcription ─────────────────────────── */}
 			<SettingSection icon={FileScriptIcon} title={tg("fileTranscription")}>
 				<div className="flex flex-col divide-y divide-surface-1">
 					<FormControl
-						caption={tg("fileTranscriptionFormatCaption")}
 						label={tg("fileTranscriptionFormat")}
+						layout="row"
 						tooltip={tg("fileTranscriptionFormatTooltip")}
 					>
-						<ElevatedSurface>
+						<ElevatedSurface className="w-52">
 							<Switcher
+								fullWidth
 								onChange={(v) => updateGeneral({ fileTranscriptionFormat: v })}
 								options={TRANSCRIPTION_FORMAT_OPTIONS}
 								value={transcriptionFormat}

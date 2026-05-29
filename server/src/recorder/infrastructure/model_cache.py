@@ -17,6 +17,7 @@ keep the state fresh between probes.
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,8 @@ try:
 except ImportError:  # pragma: no cover — onnx-asr always pulls hf_hub
     hf_constants = None  # type: ignore[assignment]
 
+
+logger = logging.getLogger(__name__)
 
 CacheState = Literal["cached", "partial", "not_cached"]
 
@@ -309,9 +312,7 @@ def _gc_orphan_blobs(snapshots_root: Path, blobs_dir: Path) -> None:
                     continue
                 try:
                     target = snap_file.readlink()
-                    resolved_target = (
-                        target if target.is_absolute() else (snap_file.parent / target).resolve()
-                    )
+                    resolved_target = target if target.is_absolute() else (snap_file.parent / target).resolve()
                     referenced.add(resolved_target.name)
                 except OSError:
                     continue
@@ -397,3 +398,84 @@ def probe_cache_state_by_quantization(hf_repo_id: str, quantizations: list[str])
             by_quant[quant].append(weight_file)
 
     return {q: _state_from_weight_files(files, blobs_dir) for q, files in by_quant.items()}
+
+
+# ── Authoritative "would a load download anything?" check ──────────────────
+#
+# The ``*.onnx`` glob above is a fast HEURISTIC: it sees weight files, not the
+# COMPLETE file set a given family needs to load. A model can have its int8
+# ``*.onnx`` weights on disk but be missing ``vocab.txt`` / ``tokens.txt`` /
+# ``config.json`` / a second decoder graph / the ``.onnx_data`` sidecar — in
+# which case the badge paints "Downloaded" but the swap silently fetches the
+# rest in the background. To make the picker's verdict match what a real swap
+# does **for every family**, we ask the loader's OWN resolver to resolve the
+# full set offline. If it can't, a load would download → the UI must not claim
+# "cached".
+
+
+def onnx_asr_would_download(onnx_model_name: str, quantization: str | None) -> bool | None:
+    """Would loading ``(onnx_model_name, quantization)`` via onnx-asr fetch bytes?
+
+    Delegates to onnx-asr's own ``Resolver.resolve_model`` in OFFLINE mode —
+    the same ``_get_model_files`` + ``config.json`` + ``.onnx?data`` sidecar set
+    it feeds to ``snapshot_download`` at load time. This is the only way to keep
+    the picker's "downloaded" verdict in lock-step with what an actual swap
+    fetches across every family without re-deriving each one's file layout here
+    (NeMo = encoder+decoder+vocab; Whisper = encoder+decoder+tokenizer+vocab+…;
+    Kaldi/Vosk = the ``am/`` + ``graph/`` tree; …). The resolver's glob
+    patterns (``model?int8.onnx``) also absorb the ``.``-vs-``_`` separator
+    difference a hand-rolled probe gets wrong.
+
+    Returns:
+        * ``True``  — at least one required file is missing → a load downloads.
+        * ``False`` — every required file resolves offline → the load is silent.
+        * ``None``  — undeterminable (onnx-asr absent, unknown model type, or an
+          unexpected error); callers keep their heuristic verdict.
+
+    Never hits the network: the resolver is built ``offline=True`` so its
+    download fallback re-raises instead of fetching.
+    """
+    try:
+        from onnx_asr.loader import create_asr_resolver
+    except Exception:  # pragma: no cover — onnx-asr is a hard dependency
+        return None
+    try:
+        resolver = create_asr_resolver(model=onnx_model_name, offline=True)
+        resolver.resolve_model(quantization=quantization or None)
+    except FileNotFoundError:
+        # onnx-asr's ModelFileNotFoundError and huggingface_hub's
+        # LocalEntryNotFoundError both subclass FileNotFoundError → a required
+        # file (or the config.json the resolver reads to pick a model type)
+        # isn't cached, so a load would download it.
+        return True
+    except Exception:
+        # ModelNotSupportedError / InvalidModelTypeInConfigError / a corrupt
+        # snapshot / etc. — we can't speak for this id; let the heuristic stand.
+        logger.debug("onnx-asr offline resolve inconclusive for %s", onnx_model_name, exc_info=True)
+        return None
+    return False
+
+
+def would_download_on_load(
+    onnx_model_name: str | None,
+    *,
+    local_path: str | None,
+    quantization: str | None,
+) -> bool | None:
+    """Unified "would a swap to this model+quant fetch bytes from HF?" verdict.
+
+    Every catalog family now loads through onnx-asr's resolver (SenseVoice
+    included — it has its own ``SenseVoiceCtc`` model class in the fork), so a
+    single authoritative check covers them all:
+
+    * **Custom local bundle** (``local_path`` set) — files already on disk;
+      onnx-asr loads via ``path=`` with no network. → ``False``.
+    * **Everything else** — onnx-asr's offline resolver (authoritative).
+
+    ``None`` means "couldn't tell" — callers keep their heuristic verdict.
+    """
+    if local_path:
+        return False
+    if not onnx_model_name:
+        return None
+    return onnx_asr_would_download(onnx_model_name, quantization)

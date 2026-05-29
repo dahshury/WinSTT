@@ -104,16 +104,15 @@ export function TranscriptionHistoryPanel() {
 			</SettingSection>
 
 			{/* Limits — history-entry cap and saved-recording retention.
-			    Mirrors Handy's history_limit + recording_retention_period.
 			    Cap defaults to 1000, retention defaults to "cap" (delete
 			    only when the entry count exceeds the cap; absolute time
 			    cutoffs are opt-in). */}
 			<SettingSection icon={DashboardCircleIcon} title={t("limitsTitle")}>
 				<div className="flex flex-col divide-y divide-surface-1">
 					<FormControl
-						caption={t("historyMaxEntriesCaption")}
 						label={t("historyMaxEntries")}
-						tooltip={t("historyMaxEntriesTooltip")}
+						layout="row"
+						tooltip={`${t("historyMaxEntriesTooltip")} ${t("historyMaxEntriesCaption")}`}
 					>
 						<ElevatedSurface className="w-fit" inline>
 							<NumberStepper
@@ -125,12 +124,8 @@ export function TranscriptionHistoryPanel() {
 							/>
 						</ElevatedSurface>
 					</FormControl>
-					<FormControl
-						caption={t("retentionCaption")}
-						label={t("retention")}
-						tooltip={t("retentionTooltip")}
-					>
-						<ElevatedSurface inline>
+					<FormControl label={t("retention")} layout="row" tooltip={t("retentionTooltip")}>
+						<ElevatedSurface className="w-52" inline>
 							<Select
 								onChange={(v) => updateGeneral({ recordingRetention: v as RetentionValue })}
 								options={retentionOptions}

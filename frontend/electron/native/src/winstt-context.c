@@ -70,16 +70,23 @@
 #define CARET_BEFORE_CHARS 600
 #define CARET_AFTER_CHARS  400
 
-/* Tree-walk caps. Match Wispr Flow's documented limits exactly:
-   - 150,000-char total payload (their explicit ceiling).
-   - ~9 levels of nesting (their forensic-observed depth).
-   - ~250 elements (their observed ceiling; we stop slightly above).
-   - 200 chars per individual name/value (anything longer is almost
-     certainly a paragraph that doesn't help proper-noun spelling). */
+/* Tree-walk caps. Total payload + depth match Wispr Flow's documented
+   limits (150,000 chars / forensic-observed depth 9); the element count
+   is our own backstop.
+   - 200 chars per INCIDENTAL name/value: enough to disambiguate a
+     nav-bar label or proper noun without bloating the tree.
+   - MAX_CONTENT_VALUE_CHARS: the focused field / Document / Edit element
+     is the CONTENT the user acts on (an email body, a message, a doc).
+     Capping it at 200 like everything else is exactly why "reply to this
+     email" never saw the email — the body lives in one element whose
+     GetText was truncated to the nav header. Give that one element the
+     full pull (bounded by the 150,000-char axHtml budget regardless).
+     See memory/project_context_capture_extraction_strategy.md. */
 #define MAX_AXHTML_CHARS       150000
 #define MAX_TREE_DEPTH         9
 #define MAX_TREE_ELEMENTS      300
 #define MAX_ELEMENT_VALUE_CHARS 200
+#define MAX_CONTENT_VALUE_CHARS 50000
 
 /* Buffer sizes in UTF-8 bytes. Worst-case UTF-16→UTF-8 expansion is 3x
    for BMP code points, 4x for surrogates. Use 4x to be safe. */
@@ -89,6 +96,9 @@
 #define EXE_BUF_BYTES      (MAX_EXE_CHARS * 4 + 1)
 #define URL_BUF_BYTES      (MAX_URL_CHARS * 4 + 1)
 #define AXHTML_BUF_BYTES   (MAX_AXHTML_CHARS + 1)
+/* Heap-only (200KB+) — the focused content element's full text. Sized in
+   chars*4 for worst-case UTF-8 expansion, like the other buffers. */
+#define CONTENT_VALUE_BUF_BYTES (MAX_CONTENT_VALUE_CHARS * 4 + 1)
 
 /* JSON-escaped buffer needs ~6x of raw (\uXXXX is the worst case for
    sub-0x20 bytes). 8x gives a safety margin. The axHtml buffer is
@@ -180,8 +190,11 @@ static int json_escape_into(char* out, int out_size, const char* value) {
 }
 
 /* TextPattern: rich editors (browsers, Office, modern editors).
-   GetText(maxLength) caps the pull at the source so we don't yank a
-   100-page document for one dictation. */
+   Pass -1 (no source-side limit) and let the caller's `out_size` buffer
+   decide how much we keep — this is Microsoft's canonical email-reader
+   pattern (DocumentRange.GetText(-1)). A small buffer (incidental labels)
+   still truncates cheaply; the focused content buffer is large on purpose
+   so an email/message body survives instead of stopping at the header. */
 static int read_text_pattern(IUIAutomationElement* elem, char* out, int out_size) {
     IUnknown* unk = NULL;
     HRESULT hr = IUIAutomationElement_GetCurrentPattern(elem, UIA_TextPatternId, &unk);
@@ -200,7 +213,7 @@ static int read_text_pattern(IUIAutomationElement* elem, char* out, int out_size
     }
 
     BSTR text = NULL;
-    hr = IUIAutomationTextRange_GetText(range, MAX_CONTEXT_CHARS, &text);
+    hr = IUIAutomationTextRange_GetText(range, -1, &text);
     IUIAutomationTextRange_Release(range);
     IUIAutomationTextPattern_Release(pat);
     if (FAILED(hr) || !text) return -1;
@@ -564,6 +577,15 @@ typedef struct {
     int   capacity;
     int   element_count;
     DWORD start_tick;
+    /* Scratch buffer for the focused/content element's full text. Heap
+       (CONTENT_VALUE_BUF_BYTES is ~200KB) so it stays off the recursive
+       stack; reused per content element. NULL when allocation failed —
+       walk_tree falls back to the compact per-element cap. */
+    char* content_buf;
+    /* Longest content-element text captured this walk. Drives the cold-tree
+       retry: a browser walk that yields ~0 content text is likely a lazy
+       Chromium a11y tree that wasn't realized yet. */
+    int   content_chars;
 } TreeBuilder;
 
 static int tb_has_budget(const TreeBuilder* tb) {
@@ -597,6 +619,19 @@ static void tb_emit_xml_escaped(TreeBuilder* tb, const char* s, int cap) {
     int last_space = 0;
     while (*s && emitted < cap && tb->offset < tb->capacity - 8) {
         unsigned char c = (unsigned char)*s;
+        /* Drop pure-noise codepoints that web a11y trees splatter everywhere:
+           U+FFFC OBJECT REPLACEMENT (every image/icon/avatar — the dominant
+           noise, dozens per page), U+FFFD replacement char, U+FEFF BOM /
+           zero-width no-break. All are 3-byte EF-prefixed; checking s[1]!=0
+           keeps the s[2] read in-bounds (string is NUL-terminated). */
+        if (c == 0xEF && (unsigned char)s[1] != 0) {
+            unsigned char c1 = (unsigned char)s[1];
+            unsigned char c2 = (unsigned char)s[2];
+            if ((c1 == 0xBF && (c2 == 0xBC || c2 == 0xBD)) || (c1 == 0xBB && c2 == 0xBF)) {
+                s += 3;
+                continue;
+            }
+        }
         if (c == '<') { tb_emit(tb, "&lt;"); emitted++; last_space = 0; s++; continue; }
         if (c == '>') { tb_emit(tb, "&gt;"); emitted++; last_space = 0; s++; continue; }
         if (c == '"') { tb_emit(tb, "&quot;"); emitted++; last_space = 0; s++; continue; }
@@ -665,21 +700,42 @@ static int walk_tree(TreeBuilder* tb,
     char name[NAME_BUF_BYTES] = {0};
     read_element_name(elem, name, sizeof(name));
 
-    char value[CONTEXT_BUF_BYTES] = {0};
+    /* Detect focus first — it decides whether this element gets the large
+       content cap (the focused field is the email/message the user acts on). */
+    BOOL has_focus = FALSE;
+    IUIAutomationElement_get_CurrentHasKeyboardFocus(elem, &has_focus);
+
+    /* Read the element's text. Document/Edit/Text controls can carry it.
+       The focused field, or any Document/Edit, holds the CONTENT the user
+       acts on ("reply to this email") — pull its full body into the large
+       heap content buffer and emit with the large cap. Incidental Text
+       labels stay on the small stack buffer + 200-char cap so the tree
+       (and the 150K axHtml budget) stays compact. */
+    char value_stack[CONTEXT_BUF_BYTES] = {0};
+    char* value = value_stack;
+    int value_cap = MAX_ELEMENT_VALUE_CHARS;
     if (ctype == UIA_EditControlTypeId
         || ctype == UIA_DocumentControlTypeId
         || ctype == UIA_TextControlTypeId) {
-        tree_read_value(elem, value, sizeof(value));
+        int is_content = has_focus
+                         || ctype == UIA_EditControlTypeId
+                         || ctype == UIA_DocumentControlTypeId;
+        if (is_content && tb->content_buf) {
+            tree_read_value(elem, tb->content_buf, CONTENT_VALUE_BUF_BYTES);
+            value = tb->content_buf;
+            value_cap = MAX_CONTENT_VALUE_CHARS;
+            int cl = (int)strlen(value);
+            if (cl > tb->content_chars) {
+                tb->content_chars = cl;
+            }
+        } else {
+            tree_read_value(elem, value_stack, sizeof(value_stack));
+        }
     }
 
     int has_name = (name[0] != '\0');
     int has_value = (value[0] != '\0');
     int structural_pass_through = is_structural_role(ctype) && !has_name && !has_value;
-
-    /* Detect focus by querying the element directly — cheap, no
-       cross-element comparison needed. */
-    BOOL has_focus = FALSE;
-    IUIAutomationElement_get_CurrentHasKeyboardFocus(elem, &has_focus);
 
     const char* role = role_name(ctype);
 
@@ -699,7 +755,7 @@ static int walk_tree(TreeBuilder* tb,
 
         if (has_value) {
             tb_emit(tb, ">");
-            tb_emit_xml_escaped(tb, value, MAX_ELEMENT_VALUE_CHARS);
+            tb_emit_xml_escaped(tb, value, value_cap);
             tb_emit(tb, "</");
             tb_emit(tb, role);
             tb_emit(tb, ">\n");
@@ -738,33 +794,63 @@ static int walk_tree(TreeBuilder* tb,
 /* Walk the foreground HWND's UIA subtree into axhtml. Always pairs the
    walker with the control view (the screen-reader-relevant subset) so
    we don't dump every decorative pane the app exposes. */
+/* Below this much captured content text, a browser walk is treated as a
+   cold/unrealized a11y tree and retried once. */
+#define COLD_TREE_CONTENT_THRESHOLD 200
+
 static void walk_foreground_tree(IUIAutomation* uia, HWND hwnd,
-                                 char* axhtml, int axhtml_size) {
+                                 char* axhtml, int axhtml_size,
+                                 int allow_retry) {
     if (axhtml_size > 0) axhtml[0] = '\0';
     if (!hwnd) return;
 
-    IUIAutomationElement* root = NULL;
-    HRESULT hr = IUIAutomation_ElementFromHandle(uia, hwnd, &root);
-    if (FAILED(hr) || !root) return;
-
     IUIAutomationTreeWalker* walker = NULL;
-    hr = IUIAutomation_get_ControlViewWalker(uia, &walker);
-    if (FAILED(hr) || !walker) {
+    if (FAILED(IUIAutomation_get_ControlViewWalker(uia, &walker)) || !walker) return;
+
+    /* NULL is tolerated by walk_tree (degrades to the compact cap). Allocated
+       once and reused across retry attempts. */
+    char* content_buf = (char*)malloc(CONTENT_VALUE_BUF_BYTES);
+
+    /* Chrome/Chromium builds its accessibility tree LAZILY (gated on AT
+       detection via WM_GETOBJECT); a cold first read can return chrome but
+       no rendered content. The act of this walk requests the tree, so if a
+       browser yielded ~no content text, wait briefly and walk once more.
+       Non-browsers don't have this behavior, so allow_retry=0 keeps them at
+       a single pass (no added latency). The watchdog still bounds the total. */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        IUIAutomationElement* root = NULL;
+        if (FAILED(IUIAutomation_ElementFromHandle(uia, hwnd, &root)) || !root) break;
+
+        TreeBuilder tb;
+        tb.buf = axhtml;
+        tb.offset = 0;
+        tb.capacity = axhtml_size;
+        tb.element_count = 0;
+        tb.start_tick = GetTickCount();
+        tb.content_buf = content_buf;
+        tb.content_chars = 0;
+        if (axhtml_size > 0) axhtml[0] = '\0';
+
+        walk_tree(&tb, walker, root, 0);
         IUIAutomationElement_Release(root);
-        return;
+
+        if (!allow_retry || tb.content_chars >= COLD_TREE_CONTENT_THRESHOLD) break;
+        Sleep(150);
     }
 
-    TreeBuilder tb;
-    tb.buf = axhtml;
-    tb.offset = 0;
-    tb.capacity = axhtml_size;
-    tb.element_count = 0;
-    tb.start_tick = GetTickCount();
-
-    walk_tree(&tb, walker, root, 0);
-
+    free(content_buf);
     IUIAutomationTreeWalker_Release(walker);
-    IUIAutomationElement_Release(root);
+}
+
+/* Whether the foreground app is a browser whose a11y tree may be lazy
+   (drives the cold-tree retry above). Superset of find_browser_url's list. */
+static int is_browser_exe(const char* app_exe) {
+    return strstr(app_exe, "chrome.exe") || strstr(app_exe, "msedge.exe")
+        || strstr(app_exe, "brave.exe") || strstr(app_exe, "vivaldi.exe")
+        || strstr(app_exe, "opera.exe") || strstr(app_exe, "arc.exe")
+        || strstr(app_exe, "thorium.exe") || strstr(app_exe, "firefox.exe")
+        || strstr(app_exe, "librewolf.exe") || strstr(app_exe, "zen.exe")
+        || strstr(app_exe, "waterfox.exe") ? 1 : 0;
 }
 
 /* Best-effort browser-URL extraction. Looks for the foreground window's
@@ -893,7 +979,8 @@ int main(int argc, char* argv[]) {
                                context_after, sizeof(context_after),
                                focused_text, sizeof(focused_text),
                                element_name, sizeof(element_name));
-            walk_foreground_tree(uia, fg, axhtml, AXHTML_BUF_BYTES);
+            walk_foreground_tree(uia, fg, axhtml, AXHTML_BUF_BYTES,
+                                 is_browser_exe(app_exe));
             find_browser_url(uia, fg, app_exe, url, sizeof(url));
         } else if (split) {
             read_focused_split(uia,

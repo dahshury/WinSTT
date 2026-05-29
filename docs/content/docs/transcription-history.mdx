@@ -1,52 +1,179 @@
 ---
 title: Transcription History
-description: A local dashboard of everything you've transcribed — stats, activity heatmap, and a searchable log
+description: A local dashboard of everything you've dictated — four stat tiles, an activity heatmap, date-range filters, a searchable log, and karaoke playback of saved recordings.
 ---
 
-WinSTT keeps a running log of every completed transcription and surfaces it as a dashboard in the **Settings window → Transcription History** tab. It updates live as you dictate and is stored entirely on your machine.
+Every completed transcription lands in a local dashboard you can search, filter, and play back — word-by-word — without anything leaving your machine. Open it from the Settings window → Transcription History tab; it updates live as you dictate.
+
+The dashboard reads from a local store on disk and updates the moment a dictation finishes. Entries are kept in `userData/history.json`; optional audio recordings live in `userData/recordings/`. Nothing is uploaded.
 
 ## What gets recorded
 
-Each completed transcription is saved as one entry:
+Each finished transcription is appended as one entry:
 
 | Field | Description |
 |-------|-------------|
-| `text` | The final text (after LLM cleanup, if a Dictation feature ran) |
-| `originalText` | The pre-LLM text. Present only when an LLM transformed the result; omitted otherwise |
-| `timestamp` | When the transcription completed |
-| `durationMs` | How long the spoken audio was |
-| `wordCount` | Number of words in the final text |
-| `id` | Stable identifier (used to de-duplicate) |
+| `text` | The final text (after LLM cleanup, if a Dictation feature ran). |
+| `originalText` | The pre-LLM text. Present only when an LLM transformed the result; omitted otherwise. |
+| `timestamp` | When the transcription completed. |
+| `durationMs` | How long the spoken audio was. |
+| `wordCount` | Number of words in the final text. |
+| `audioFilePath` | Path to the saved WAV, when a recording was kept (see [Retention](#retention-policy)). |
+| `id` | Stable identifier, used to de-duplicate. |
 
-Entries are appended in real time — finishing a dictation immediately adds a row.
+## Summary tiles
 
-## The dashboard
+Four tiles aggregate whatever is currently in view — they recompute against the active [date range](#date-range) rather than the whole history.
 
-The panel has three sections:
+<Screenshot src="sec-history-stats" chrome="card" alt="The four summary tiles across the top of the history tab: Total Transcriptions, Total Words, Speaking Time, and Overall WPM, each with a large value and a label." caption="The four stat tiles recompute against the selected date range, not the whole history." />
 
-### Summary
+<StatGrid>
+  <Stat value="1,250" label="Total Transcriptions" />
+  <Stat value="48,300" label="Total Words" />
+  <Stat value="3h 12m 40s" label="Speaking Time" />
+  <Stat value="151.4" label="Overall WPM" />
+</StatGrid>
 
-Aggregate statistics across all recorded entries:
+- **Total Transcriptions** — count of entries in range, localized (e.g. `1,250`).
+- **Total Words** — sum of every entry's `wordCount`.
+- **Speaking Time** — total spoken duration, shown as `Xh YYm ZZs` (or `<1s` under one second).
+- **Overall WPM** — aggregate speaking rate, `total words × 60,000 ÷ total ms`. Shows `—` when the in-range duration is under 500 ms (too little signal to be meaningful).
 
-- **Count** — total number of transcriptions
-- **Total words** and **total duration**
-- **Words per minute (WPM)** — your overall dictation speed (computed from total words ÷ total spoken time)
+## Activity heatmap
 
-### Activity heatmap
+A GitHub-style calendar over a rolling **365-day** window from today, with weeks starting on Sunday and five intensity levels. Days with zero activity are dimmed and not selectable.
 
-A calendar heatmap showing how much you transcribed per day. Days are bucketed in **local time**, so a late-night session stays on the day you actually spoke it rather than splitting across a UTC midnight.
+<Screenshot src="sec-history-heatmap" chrome="card" alt="The calendar activity heatmap: a year-long grid of day cells shaded by intensity, with a Metric selector and a Calendar selector above it." caption="A rolling 365-day grid. Click a day to start a range; the Metric and Calendar selectors are session-only." />
 
-### History table
+<SettingRow label="Metric" default="transcriptions">
+  Choose what drives the color intensity: **transcriptions** (entry count), **words**, or
+  **wpm**. Session-only — not persisted between visits.
+</SettingRow>
 
-A searchable, time-stamped list of every entry. Each row can:
+<SettingRow label="Calendar" default="gregorian">
+  Render the grid on the **gregorian** or **hijri** calendar. Session-only.
+</SettingRow>
 
-- **Copy** the final text
-- **Copy original** — the pre-LLM text, when an LLM transformed that entry (lets you compare raw vs. cleaned-up output)
+Day boundaries are computed in **local time**, so a late-night session stays on the day you actually spoke it instead of splitting across a UTC midnight. Intensity is scaled relative to your busiest day in the 365-day window, not an absolute count — a quiet month still shows contrast.
+
+### Date range
+
+Click a day to start a range, click another to end it; the range bar with the formatted dates and a **Clear** button appears while a manual range is active. Or pick one of nine preset chips:
+
+<ModelTable
+  head={["Preset", "Window"]}
+  rows={[
+    ["Today", "Current day, local time"],
+    ["Yesterday", "Previous day"],
+    ["Last 7 days", "Rolling 7-day window"],
+    ["Last 30 days", "Rolling 30-day window"],
+    ["This month", "1st of the current month → today"],
+    ["Last month", "Full previous calendar month"],
+    ["Month to date", "1st of the current month → now"],
+    ["Year to date", "Jan 1 of the current year → now"],
+    ["Last year", "Full previous calendar year"],
+  ]}
+  caption="The selected range filters both the summary tiles and the history table. Ranges are session-scoped — they reset when you reopen the tab."
+/>
+
+## History table
+
+A scrollable list sorted newest-first. Each row carries the transcribed text, action buttons, and a metadata strip showing **time**, **words**, **duration**, and — when available — **WPM** and the **model** that produced it. Lists under 50 entries render directly; longer ones virtualize for smooth scrolling, capped at a 460 px scroll area.
+
+A **play** button appears on the left of a row only when that entry has a saved recording. Other rows have no play button (see the [gotchas](#gotchas) below).
+
+<Screenshot src="sec-history-table" chrome="card" alt="The searchable history table: timestamped rows of transcribed text, each with a metadata strip (time, words, duration, WPM, model) and copy/delete buttons; rows with a saved recording show a play button on the left." caption="Newest-first rows with copy, delete, and — when a recording exists — a play button that drives the karaoke word highlight." />
+
+
+
+<SettingRow label="Copy">
+  Copies the final `text`; the icon flips to a check for 1.6 s.
+</SettingRow>
+
+<SettingRow label="Copy original">
+  Right-click a row to also copy the pre-LLM `originalText` — handy for comparing raw vs.
+  cleaned-up output. Disabled when the entry has no original (i.e. no LLM ran on it).
+</SettingRow>
+
+<SettingRow label="Delete">
+  Removes the entry and its WAV recording in one step.
+</SettingRow>
+
+### Karaoke playback
+
+Press play and the audio streams while the matching words highlight in sequence — the highlight sweep *is* the progress bar; there is no separate scrubber. Audio and per-word timings load lazily on the first play of each entry.
+
+Playback routes through the output device set in [Audio settings](/docs/settings/audio); if that device is unavailable it falls back to the system default. Word timings are computed on demand by a tiny timestamped-Whisper aligner (~40 MB, CPU) using cross-attention DTW, with a VAD-based fallback — alignment takes roughly 100–200 ms per clip and isn't cached, so it recomputes each play. If alignment fails, the clip still plays; it just won't highlight word-by-word.
+
+## Limits & retention
+
+These two controls live at the bottom of the tab and are the only persisted settings here.
+
+<Screenshot src="sec-history-retention" chrome="card" alt="The Max History Entries stepper and the Recording Retention selector at the bottom of the history tab — the only two persisted settings here." caption="The two persisted controls: a Max History Entries stepper and the Recording Retention selector." />
+
+<SettingRow label="Max History Entries" settingKey="general.historyMaxEntries" default="1000">
+  A stepper from **10** to **10,000**. When you exceed the limit, the oldest entries are
+  trimmed automatically. The store is hard-capped at 10,000 entries regardless.
+</SettingRow>
+
+<SettingRow label="Recording Retention" settingKey="general.recordingRetention" default="cap">
+  How long saved WAV recordings are kept before cleanup. Options: **When over limit** (`cap`,
+  default), **Keep forever** (`never`), **3 days** (`days3`), **2 weeks** (`weeks2`), and
+  **3 months** (`months3`). Cleanup runs at app startup, when you change this setting, and on
+  an hourly sweep.
+</SettingRow>
+
+<Callout type="warn" title="“Keep forever” still saves — retention only governs cleanup">
+  **Recordings are always saved** when audio capture is on. The retention setting only
+  decides *when they get cleaned up*, never *whether they're written*. So **“Keep forever”
+  (`never`) means exactly that — keep them indefinitely — not “don't save.”** If you want
+  recordings purged aggressively, pick `3 days` or `When over limit`; if you never want a
+  recording on disk at all, that's a separate audio-capture decision, not a retention value.
+</Callout>
+
+<Callout type="info" title="Where transcripts and recordings live">
+  Transcribed text persists to `userData/history.json` and recordings to
+  `userData/recordings/` (16 kHz mono PCM WAV). Both stay local and are never uploaded.
+  Clear or delete entries at any time to remove them.
+</Callout>
+
+<Callout type="warn" title="Cloud STT keeps text, not audio">
+  When you transcribe through a **cloud provider** (OpenAI or ElevenLabs), the text is still
+  logged, but **no audio is saved to disk** — so those rows never show a play button. Saved
+  recordings only exist for **local** transcriptions with audio capture enabled.
+</Callout>
 
 ## Clearing history
 
-A **Clear** action wipes all stored entries. It prompts for confirmation first, since the log cannot be recovered afterward.
+A **Clear** action in the table header wipes every stored entry and its recordings.
 
-<Callout title="Where transcripts live" type="info">
-  Transcription history is the one place WinSTT persists transcribed text to disk. It is stored locally and never uploaded. Audio is still discarded after transcription — only the resulting text (and its pre-LLM version, when applicable) is kept. Clear the history at any time to remove it.
+<Callout type="error" title="Clearing is permanent">
+  Clearing prompts for confirmation, then deletes all entries and their WAV files with no
+  undo. Deleting a single row is likewise immediate and final.
 </Callout>
+
+## Gotchas
+
+- **No play button** appears when audio capture was off, the source was cloud STT, or the
+  recording was deleted or aged out by retention.
+- **Original text is missing** when no LLM ran on that entry — “Copy original” stays disabled.
+- **Date-range boundaries are local time**, matching the heatmap, not UTC.
+- **Heatmap colors are relative** to your busiest day in the 365-day window, not an absolute
+  per-day count.
+
+## Related
+
+<Cards>
+  <Card title="General settings" href="/docs/settings/general">
+    Recording modes and the broader behavior switches that surround history.
+  </Card>
+  <Card title="Audio & playback device" href="/docs/settings/audio">
+    Pick the output device used for history playback and the input device for capture.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    What populates an entry's pre-LLM `originalText` versus its final `text`.
+  </Card>
+  <Card title="Cloud STT" href="/docs/settings/integrations">
+    Why cloud transcriptions are logged but never save a recording.
+  </Card>
+</Cards>

@@ -111,12 +111,8 @@ function LoopbackControl({
 	handleLoopbackChange,
 }: LoopbackControlProps): ReactNode {
 	return (
-		<FormControl
-			caption={t("loopbackDeviceCaption")}
-			label={t("loopbackDevice")}
-			tooltip={t("loopbackDeviceTooltip")}
-		>
-			<ElevatedSurface inline>
+		<FormControl label={t("loopbackDevice")} layout="row" tooltip={t("loopbackDeviceTooltip")}>
+			<ElevatedSurface className="w-52" inline>
 				<Select onChange={handleLoopbackChange} options={loopbackOpts} value={currentLoopbackId} />
 			</ElevatedSurface>
 		</FormControl>
@@ -132,12 +128,8 @@ interface MuteSystemAudioControlProps {
 function MuteSystemAudioControl({ general, t, update }: MuteSystemAudioControlProps): ReactNode {
 	const level = muteLevel(general);
 	return (
-		<FormControl
-			caption={t("muteSystemAudioCaption")}
-			label={t("muteSystemAudio")}
-			tooltip={t("muteSystemAudioTooltip")}
-		>
-			<ElevatedSurface className="p-3">
+		<FormControl label={t("muteSystemAudio")} tooltip={t("muteSystemAudioTooltip")}>
+			<ElevatedSurface inline>
 				<Slider
 					aria-label={t("muteSystemAudio")}
 					formatValue={(v) => reductionStepLabel(indexToReduction(v), t)}
@@ -174,7 +166,6 @@ function SpeakerDiarizationControl({
 
 	return (
 		<FormControl
-			caption={t("speakerDiarizationCaption")}
 			label={t("speakerDiarization")}
 			labelAddon={
 				<div className="flex items-center gap-2">
@@ -241,7 +232,6 @@ interface ManualToggleStopControlProps {
 function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControlProps): ReactNode {
 	return (
 		<FormControl
-			caption={t("manualToggleStopCaption")}
 			label={t("manualToggleStop")}
 			labelAddon={
 				<Toggle
@@ -258,12 +248,8 @@ function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControl
 function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode {
 	const options = buildWakeWordOptions();
 	return (
-		<FormControl
-			caption={t("wakeWordCaption")}
-			label={t("wakeWord")}
-			tooltip={t("wakeWordTooltip")}
-		>
-			<ElevatedSurface inline>
+		<FormControl label={t("wakeWord")} layout="row" tooltip={t("wakeWordTooltip")}>
+			<ElevatedSurface className="w-52" inline>
 				<Select
 					aria-label={t("wakeWord")}
 					onChange={(v) => update({ wakeWord: v })}
@@ -282,7 +268,6 @@ function WakeWordSensitivityControl({
 }: WakeWordSensitivityControlProps): ReactNode {
 	return (
 		<FormControl
-			caption={t("wakeWordSensitivityCaption")}
 			label={t("wakeWordSensitivity")}
 			labelTrailing={
 				<SettingResetButton
@@ -294,7 +279,7 @@ function WakeWordSensitivityControl({
 			}
 			tooltip={t("wakeWordSensitivityTooltip")}
 		>
-			<ElevatedSurface className="p-3">
+			<ElevatedSurface inline>
 				<Slider
 					aria-label={t("wakeWordSensitivity")}
 					formatValue={(idx) => sensitivityFromIndex(idx).toFixed(2)}
@@ -312,7 +297,6 @@ function WakeWordSensitivityControl({
 function WakeWordTimeoutControl({ t, value, update }: WakeWordTimeoutControlProps): ReactNode {
 	return (
 		<FormControl
-			caption={t("wakeWordTimeoutCaption")}
 			label={t("wakeWordTimeout")}
 			labelTrailing={
 				<SettingResetButton
@@ -322,7 +306,7 @@ function WakeWordTimeoutControl({ t, value, update }: WakeWordTimeoutControlProp
 			}
 			tooltip={t("wakeWordTimeoutTooltip")}
 		>
-			<ElevatedSurface className="p-3">
+			<ElevatedSurface inline>
 				<Slider
 					aria-label={t("wakeWordTimeout")}
 					formatValue={(v) => `${v}s`}
@@ -353,11 +337,7 @@ function RecordingSection({
 	return (
 		<SettingSection icon={Mic01Icon} title={t("recording")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
-					caption={t("recordingModeCaption")}
-					label={t("recordingMode")}
-					tooltip={t("recordingModeTooltip")}
-				>
+				<FormControl label={t("recordingMode")} tooltip={t("recordingModeTooltip")}>
 					{/* Hero control — sets the design template for every other
 					    interactive group on the tab. Same ElevatedSurface wraps
 					    them all so the tab reads as one consistent language. */}
@@ -406,7 +386,6 @@ function RecordingSection({
 				{isListenMode ? null : <MuteSystemAudioControl general={general} t={t} update={update} />}
 				{isListenMode ? null : (
 					<FormControl
-						caption={t("recordingSoundCaption")}
 						label={t("recordingSound")}
 						labelAddon={
 							<Toggle
@@ -435,38 +414,27 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 	return (
 		<SettingSection icon={PowerSocket01Icon} title={t("startup")}>
 			<div className="flex flex-col divide-y divide-surface-1">
+				{/* Single "Start on login" switch — on launches WinSTT on sign-in,
+				    minimized straight to the tray (autoStart + startMinimized +
+				    minimizeToTray together); off disables auto-launch. The former
+				    separate start-minimized / minimize-to-tray toggles are folded in. */}
 				<FormControl
-					caption={t("startOnLoginCaption")}
 					label={t("startOnLogin")}
 					labelAddon={
-						<Toggle checked={flags.autoStart} onCheckedChange={(v) => update({ autoStart: v })} />
+						<Toggle
+							checked={flags.autoStart}
+							onCheckedChange={(v) =>
+								update(
+									v
+										? { autoStart: true, startMinimized: true, minimizeToTray: true }
+										: { autoStart: false, startMinimized: false }
+								)
+							}
+						/>
 					}
 					tooltip={t("startOnLoginTooltip")}
 				/>
 				<FormControl
-					caption={t("startMinimizedCaption")}
-					label={t("startMinimized")}
-					labelAddon={
-						<Toggle
-							checked={flags.startMinimized}
-							onCheckedChange={(v) => update({ startMinimized: v })}
-						/>
-					}
-					tooltip={t("startMinimizedTooltip")}
-				/>
-				<FormControl
-					caption={t("minimizeToTrayCaption")}
-					label={t("minimizeToTray")}
-					labelAddon={
-						<Toggle
-							checked={flags.minimizeToTray}
-							onCheckedChange={(v) => update({ minimizeToTray: v })}
-						/>
-					}
-					tooltip={t("minimizeToTrayTooltip")}
-				/>
-				<FormControl
-					caption={t("sendCrashReportsCaption")}
 					label={t("sendCrashReports")}
 					labelAddon={
 						<Toggle
@@ -577,12 +545,8 @@ interface LanguageControlProps {
 
 function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactNode {
 	return (
-		<FormControl
-			caption={t("languageCaption")}
-			label={t("language")}
-			tooltip={t("languageTooltip")}
-		>
-			<ElevatedSurface inline>
+		<FormControl label={t("language")} layout="row" tooltip={t("languageTooltip")}>
+			<ElevatedSurface className="w-52" inline>
 				<SearchableSelect
 					onChange={(v) => pickLocale(v, setLocale)}
 					options={LANGUAGE_OPTIONS}
@@ -604,12 +568,14 @@ function OverlayControl({ t, isListenMode, general, update }: OverlayControlProp
 	const idx = overlaySliderToIndex(general);
 	return (
 		<FormControl
-			caption={t("showRecordingOverlayCaption")}
 			disabled={isListenMode}
 			label={t("showRecordingOverlay")}
 			tooltip={t("showRecordingOverlayTooltip")}
 		>
-			<ElevatedSurface className={isListenMode ? "pointer-events-none p-3 opacity-40" : "p-3"}>
+			<ElevatedSurface
+				className={isListenMode ? "pointer-events-none opacity-40" : undefined}
+				inline
+			>
 				<Slider
 					aria-label={t("showRecordingOverlay")}
 					formatValue={(v) => overlaySliderLabel(v, t)}
@@ -645,11 +611,7 @@ function OverlayModeControl({
 		}
 	};
 	return (
-		<FormControl
-			caption={t("overlayModeCaption")}
-			label={t("overlayMode")}
-			tooltip={t("overlayModeTooltip")}
-		>
+		<FormControl label={t("overlayMode")} tooltip={t("overlayModeTooltip")}>
 			<ElevatedSurface className={subDisabled ? "pointer-events-none opacity-40" : undefined}>
 				<Switcher fullWidth onChange={onChange} options={options} value={value} />
 			</ElevatedSurface>
@@ -690,7 +652,6 @@ function LiveTranscriptionDisplayControl({
 	};
 	return (
 		<FormControl
-			caption={t("liveTranscriptionDisplayCaption")}
 			label={t("liveTranscriptionDisplay")}
 			tooltip={t("liveTranscriptionDisplayTooltip")}
 		>
@@ -725,11 +686,7 @@ function VisualizerTypeControl({ t, general, update }: VisualizerTypeControlProp
 	const value = general?.visualizerType ?? "bar";
 	const options = buildVisualizerTypeSwitcherOptions(t);
 	return (
-		<FormControl
-			caption={t("visualizerTypeCaption")}
-			label={t("visualizerType")}
-			tooltip={t("visualizerTypeTooltip")}
-		>
+		<FormControl label={t("visualizerType")} tooltip={t("visualizerTypeTooltip")}>
 			<ElevatedSurface>
 				<Switcher
 					fullWidth
@@ -756,7 +713,6 @@ function VisualizerBarCountControl({
 	const value = general?.visualizerBarCount ?? DEFAULT_SETTINGS.general.visualizerBarCount;
 	return (
 		<FormControl
-			caption={t("visualizerBarCountCaption")}
 			label={t("visualizerBarCount")}
 			labelTrailing={
 				<SettingResetButton
@@ -768,7 +724,7 @@ function VisualizerBarCountControl({
 			}
 			tooltip={t("visualizerBarCountTooltip")}
 		>
-			<ElevatedSurface className="p-3">
+			<ElevatedSurface inline>
 				<Slider
 					aria-label={t("visualizerBarCount")}
 					max={21}

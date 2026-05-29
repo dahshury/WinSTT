@@ -44,6 +44,13 @@ export interface ContextCaptureDeps {
 	getDenyList: () => readonly string[];
 	isEnabled: () => boolean;
 	/**
+	 * Fired when the `onSnapshotReady` consumer itself throws. The side
+	 * channel (`myPending.then(...)`) is fire-and-forget, so a throwing
+	 * consumer would otherwise surface as an unhandled promise rejection.
+	 * Wired to a logger by the caller. Optional — falsy = silently swallow.
+	 */
+	onConsumerError?: (err: unknown) => void;
+	/**
 	 * Fired when the snapshot's lifetime ends: consume(), clear(), or
 	 * when a second capture() overrides the first. Use this to drop any
 	 * per-utterance side effects (e.g., the volatile ASR prompt tail in
@@ -111,7 +118,15 @@ export function createContextCapture(deps: ContextCaptureDeps): ContextCapture {
 				if (pending !== myPending) {
 					return;
 				}
-				deps.onSnapshotReady?.(applyDenyList(snapshot, deps.getDenyList()));
+				// A buggy downstream consumer must not escape as an unhandled
+				// promise rejection — the side channel is fire-and-forget, so
+				// nothing awaits this promise to observe a throw. Log + swallow
+				// so the capture lifecycle stays intact.
+				try {
+					deps.onSnapshotReady?.(applyDenyList(snapshot, deps.getDenyList()));
+				} catch (err) {
+					deps.onConsumerError?.(err);
+				}
 			},
 			() => {
 				// Unreachable — read() is wrapped above — but biome's

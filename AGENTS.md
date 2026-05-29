@@ -17,7 +17,7 @@ This file is short on purpose. It points you at the rules, then enforces a small
 
 1. **Local-first.** Audio never leaves the machine. Cloud STT (OpenAI / ElevenLabs) is opt-in and lives in the Electron main process via the Vercel AI SDK — keys are stored in OS `safeStorage`, never sent to the renderer.
 2. **Hexagonal & FSD.** Server: domain → ports → infrastructure, dependencies point inward. Frontend: `app → views → widgets → features → entities → shared`, no sideways imports. Both are enforced — server by 100 % coverage gate + mypy strict, frontend by `bun check:fsd` (~123 rules).
-3. **One model engine.** Every STT model runs on the same ONNX engine via our `onnx-asr` fork. Adding a model family means a catalog entry + fork commit, NOT a new runtime. Whisper-cpp / GGML are not used (see `examples/Handy` for the alternative we evaluated).
+3. **One model engine.** Every STT model runs on the same ONNX engine via our `onnx-asr` fork. Adding a model family means a catalog entry + fork commit, NOT a new runtime. Whisper-cpp / GGML are not used.
 4. **OpenAPI as the contract.** Any change to a shared type starts in `spec/openapi.yaml`. Then `bun generate`. Then Python.
 
 ## 3. Hard rules (non-negotiable)

@@ -47,8 +47,8 @@
  *    trips a cooldown and drops the paste silently.
  *
  * Why only TWO modes, not a user-selectable PasteMethod enum:
- *  - Reference projects (e.g. Handy/Tauri) ship a `PasteMethod` enum
- *    with six choices (None / Direct / CtrlV / CtrlShiftV / ShiftInsert
+ *  - Some paste utilities expose a `PasteMethod` enum with six choices
+ *    (None / Direct / CtrlV / CtrlShiftV / ShiftInsert
  *    / ExternalScript). We deliberately don't. The clipboard-paste mode
  *    auto-picks Ctrl+Shift+V for the small set of terminal hosts that
  *    require it (see TERMINAL_CLASSES / TERMINAL_EXES below); the
@@ -168,8 +168,7 @@ static BOOL get_exe_name(HWND hwnd, char* out, DWORD out_size) {
  *    it against whatever keyboard layout the FOREGROUND THREAD currently
  *    has loaded. On AZERTY, ЙЦУКЕН, Dvorak, Colemak, etc. the kernel
  *    routes `wVk=0x56` to the physical key bound to V in THAT layout, so
- *    Ctrl+V always pastes regardless of layout. This is the same approach
- *    Handy (Tauri+enigo) uses on Windows with `Key::Other(0x56)`.
+ *    Ctrl+V always pastes regardless of layout.
  *  - `wScan` is filled in with `MapVirtualKeyA(vk, MAPVK_VK_TO_VSC)` for
  *    cosmetic completeness only — a few low-level hooks read it for
  *    diagnostics. `MapVirtualKeyA` itself is layout-aware (uses the

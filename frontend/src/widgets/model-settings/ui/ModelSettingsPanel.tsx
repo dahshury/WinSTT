@@ -6,7 +6,6 @@ import {
 	LockIcon,
 	SpeechToTextIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { isRealtimeViable, SttModelSelector } from "@picker";
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
@@ -24,20 +23,18 @@ import { useSystemResourcesStore } from "@/entities/system-resources";
 import { DownloadConfirmationDialog, useQuantActions } from "@/features/model-download";
 import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import { type SwapController, useModelSwapController } from "@/features/swap-model";
+import { IPC } from "@/shared/api/ipc-channels";
+import { ipcSend } from "@/shared/api/ipc-client";
 import { LANGUAGES, type OnnxQuantization } from "@/shared/config/defaults";
 import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
-import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
-import { Tooltip } from "@/shared/ui/tooltip";
-import { useLockRealtimeToMain } from "../model/use-lock-realtime-to-main";
 import { useStaleModelFallback } from "../model/use-stale-model-fallback";
 import { useSwapProgress } from "../model/use-swap-progress";
 
@@ -89,6 +86,11 @@ interface MainModelSectionProps {
 	) => import("@/features/model-download").QuantDownloadState | undefined;
 	selectedModel: string;
 	settings: ModelSettings | undefined;
+	/** False when the active model advertises exactly one language — the
+	 *  picker would only offer "auto-detect + that one language", which is a
+	 *  no-op choice, so we hide the language control entirely. Multilingual
+	 *  models (empty `languages`) and cloud models keep it. */
+	showLanguage: boolean;
 	statesById: StatesById;
 	systemInfo: SystemInfo;
 	t: TFn;
@@ -168,38 +170,43 @@ function SourceArea({
 				? {}
 				: {
 						badgeIcon: LockIcon,
-						badgeTooltip: tIntegrations("cloudDisabledHint"),
+						badgeTooltip: tIntegrations("sourceCaption"),
+						badgeTooltipFooter: tIntegrations("cloudDisabledHint"),
 						onBadgeClick: () => goToIntegrations("integrations"),
 					}),
 		},
 	];
+	// Open the detached picker window (full work area, can extend beyond the
+	// 700×560 settings window) instead of an in-window popup — mirrors the
+	// main-window footer chip. Main anchors it above this trigger's rect.
+	const openDetachedPicker = (rect: DOMRect) =>
+		ipcSend(IPC.MODEL_PICKER_OPEN, {
+			x: rect.x,
+			y: rect.y,
+			width: rect.width,
+			height: rect.height,
+			kind: "main",
+		});
 	return (
 		<>
 			<div className="col-span-2">
 				<FormControl
-					caption={tIntegrations("sourceCaption")}
 					label={tIntegrations("sourceLabel")}
+					layout="row"
 					tooltip={tIntegrations("sourceTooltip")}
 				>
-					<div className="flex flex-col gap-1.5">
-						<ElevatedSurface>
-							<Switcher onChange={(v) => setSource(v)} options={sourceOpts} value={source} />
-						</ElevatedSurface>
-						{hasAnyCloudKey ? null : (
-							<button
-								className="inline-flex w-fit cursor-pointer items-center gap-1 bg-transparent text-2xs text-foreground-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
-								onClick={() => goToIntegrations("integrations")}
-								type="button"
-							>
-								<HugeiconsIcon aria-hidden="true" className="shrink-0" icon={LockIcon} size={10} />
-								{tIntegrations("cloudDisabledHint")}
-							</button>
-						)}
-					</div>
+					<ElevatedSurface className="w-52">
+						<Switcher
+							fullWidth
+							onChange={(v) => setSource(v)}
+							options={sourceOpts}
+							value={source}
+						/>
+					</ElevatedSurface>
 				</FormControl>
 			</div>
 			<div className="col-span-2">
-				<FormControl caption={t("modelCaption")} label={t("model")} tooltip={t("modelTooltip")}>
+				<FormControl label={t("model")} tooltip={t("modelTooltip")}>
 					{source === "cloud" ? (
 						<CloudModelSelect
 							onSelect={(id) => handleModelChange(id)}
@@ -216,6 +223,7 @@ function SourceArea({
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
 							onDownloadSnapshot={onDownloadSnapshot}
+							onOpenDetached={openDetachedPicker}
 							statesById={statesById}
 							systemInfo={systemInfo}
 							value={isCloud ? "" : selectedModel}
@@ -247,6 +255,7 @@ function MainModelSection({
 	onDownloadSnapshot,
 	selectedModel,
 	handleModelChange,
+	showLanguage,
 	translateSupported,
 }: MainModelSectionProps): ReactNode {
 	const tIntegrations = useTranslations("integrations");
@@ -287,21 +296,25 @@ function MainModelSection({
 					t={t}
 					tIntegrations={tIntegrations}
 				/>
-				<FormControl caption={t("languageCaption")} label={t("language")}>
-					<ElevatedSurface inline>
-						<SearchableSelect
-							onChange={(v) => update({ language: v })}
-							options={langOpts}
-							value={settings?.language ?? "en"}
-						/>
-					</ElevatedSurface>
-				</FormControl>
+				{showLanguage && (
+					<FormControl label={t("language")} layout="row">
+						<ElevatedSurface className="w-52" inline>
+							<SearchableSelect
+								onChange={(v) => update({ language: v })}
+								options={langOpts}
+								value={settings?.language ?? "en"}
+							/>
+						</ElevatedSurface>
+					</FormControl>
+				)}
 				<FormControl
-					caption={gpuAvailable ? t("deviceCaptionGpu") : t("deviceCaptionNoGpu")}
 					label={t("device")}
+					layout="row"
+					tooltip={gpuAvailable ? t("deviceCaptionGpu") : t("deviceCaptionNoGpu")}
 				>
-					<ElevatedSurface>
+					<ElevatedSurface className="w-52">
 						<Switcher
+							fullWidth
 							onChange={(v) => update({ device: v })}
 							options={deviceOpts}
 							value={deviceValue}
@@ -318,11 +331,9 @@ function MainModelSection({
 				    variants of Whisper, GigaAM, Moonshine, …) silently
 				    falls through to plain transcription. We expose the
 				    toggle whenever the user's selected catalog family
-				    is one of the two supported. Matches Handy's gating
-				    (managers/transcription.rs:545 + :607). */}
+				    is one of the two supported. */}
 				{translateSupported && (
 					<FormControl
-						caption={t("translateToEnglishCaption")}
 						label={t("translateToEnglish")}
 						labelAddon={
 							<Toggle
@@ -334,11 +345,11 @@ function MainModelSection({
 					/>
 				)}
 				<FormControl
-					caption={t("modelUnloadTimeoutCaption")}
 					label={t("modelUnloadTimeout")}
+					layout="row"
 					tooltip={t("modelUnloadTimeoutTooltip")}
 				>
-					<ElevatedSurface inline>
+					<ElevatedSurface className="w-52" inline>
 						<SearchableSelect
 							onChange={(v) =>
 								update({
@@ -379,12 +390,6 @@ interface RealtimeModelSectionProps {
 	downloadProgress: { modelId: string; percent: number | null } | null;
 	handleRealtimeModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	isSwapping: boolean;
-	/** True when the main model is itself small enough for live-preview
-	 *  transcription. In that state the dedicated realtime slot is force-bound
-	 *  to the main model (a separate small model would just duplicate work),
-	 *  so the picker becomes informational. */
-	lockedToMainModel: boolean;
-	mainModelId: string;
 	/** Forwarded to the picker — same handler the main picker uses. */
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	/** Forwarded to the picker — per-quant download action. */
@@ -398,7 +403,6 @@ interface RealtimeModelSectionProps {
 		modelId: string,
 		quantization: OnnxQuantization
 	) => import("@/features/model-download").QuantDownloadState | undefined;
-	onUseMainModel: () => void;
 	quality: QualitySettings | undefined;
 	settings: ModelSettings | undefined;
 	statesById: StatesById;
@@ -425,52 +429,28 @@ function RealtimeModelSection({
 	downloadProgress,
 	isSwapping,
 	handleRealtimeModelChange,
-	mainModelId,
 	onDeleteQuant,
 	onDownloadAction,
 	onDownloadSnapshot,
-	onUseMainModel,
-	lockedToMainModel,
 }: RealtimeModelSectionProps): ReactNode {
-	// The dedicated realtime picker stays interactive at all times so the user
-	// can always pick a different realtime model. The "Use Main Model" affordance
-	// is the trailing button on the picker's header.
-	//
-	// Exception: when `lockedToMainModel` is set, the main model is itself
-	// realtime-viable so we force the realtime slot to mirror it and disable
-	// the picker — a separate small model would just duplicate work without
-	// adding any quality. The label shows an info tooltip explaining why.
 	const realtimeModelId = settings?.realtimeModel ?? "tiny";
-	const modelsMatch = realtimeModelId === mainModelId;
-	const trailing = lockedToMainModel ? (
-		<InfoTooltip content={t("realtimeLockedToMainTooltip")} />
-	) : (
-		<Tooltip content={t("useMainModelTooltip")}>
-			<Button
-				className="rounded-md bg-transparent px-1.5 py-0.5 font-medium text-2xs text-foreground-muted leading-none ring-1 ring-divider-strong ring-inset transition-colors hover:not-disabled:bg-surface-2 hover:not-disabled:text-foreground"
-				disabled={modelsMatch}
-				onClick={onUseMainModel}
-			>
-				{t("useMainModel")}
-			</Button>
-		</Tooltip>
-	);
+	// Identical to the main STT model selector — same component, same detached
+	// picker window; the ONLY difference is the realtime prefilter.
+	const openDetachedRealtimePicker = (rect: DOMRect) =>
+		ipcSend(IPC.MODEL_PICKER_OPEN, {
+			x: rect.x,
+			y: rect.y,
+			width: rect.width,
+			height: rect.height,
+			kind: "realtime",
+		});
 	return (
 		<SettingSection icon={AiMagicIcon} title={t("realtimeModelSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
-					<FormControl
-						caption={
-							lockedToMainModel ? t("realtimeLockedToMainCaption") : t("realtimeModelCaption")
-						}
-						disabled={lockedToMainModel}
-						label={t("realtimeModel")}
-						labelTrailing={trailing}
-						tooltip={t("realtimeModelTooltip")}
-					>
+					<FormControl label={t("realtimeModel")} tooltip={t("realtimeModelTooltip")}>
 						<SttModelSelector
 							currentQuantization={currentQuantization}
-							disabled={lockedToMainModel}
 							downloadProgress={downloadProgress}
 							isLoading={!catalogLoaded || isSwapping}
 							kind="realtime"
@@ -479,6 +459,7 @@ function RealtimeModelSection({
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
 							onDownloadSnapshot={onDownloadSnapshot}
+							onOpenDetached={openDetachedRealtimePicker}
 							prefilter={isRealtimeViable}
 							statesById={statesById}
 							systemInfo={systemInfo}
@@ -487,7 +468,6 @@ function RealtimeModelSection({
 					</FormControl>
 				</div>
 				<FormControl
-					caption={t("updateIntervalCaption")}
 					label={t("updateInterval")}
 					labelTrailing={
 						<SettingResetButton
@@ -503,6 +483,7 @@ function RealtimeModelSection({
 							}
 						/>
 					}
+					layout="row"
 					tooltip={t("updateIntervalTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -686,6 +667,11 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		!supportedLanguages || supportedLanguages.length === 0
 			? ALL_LANG_OPTS
 			: ALL_LANG_OPTS.filter((l) => l.id === "" || supportedLanguages.includes(l.id));
+	// Hide the language control for single-language models — the picker would
+	// only offer "auto-detect + that one language", which is a no-op choice.
+	// Multilingual models (empty `languages`) and cloud models (no catalog
+	// entry, so `supportedLanguages` is undefined) keep the control.
+	const showLanguage = supportedLanguages?.length !== 1;
 
 	const controller = useModelSwapController(
 		settings,
@@ -697,45 +683,17 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		update
 	);
 
-	const useMainModelFlag = quality?.useMainModelForRealtime ?? false;
-	const handleUseMainModel = () => {
-		// Mirror the main model into the realtime slot. The controller no-ops when
-		// the ids already match, so this is safe to call unconditionally. Also flip
-		// the server flag so the realtime worker actually reuses the loaded main
-		// transcriber instead of loading a duplicate.
-		controller.handleRealtimeModelChange(selectedModel);
-		if (!useMainModelFlag) {
-			updateQuality({ useMainModelForRealtime: true });
-		}
-	};
 	const handleRealtimePick = (v: string, quantization?: OnnxQuantization) => {
 		controller.handleRealtimeModelChange(v, quantization);
-		// Picking a model that is NOT the main model means the user wants a
-		// separate realtime model — clear the server flag so it actually loads.
-		if (v !== selectedModel && useMainModelFlag) {
-			updateQuality({ useMainModelForRealtime: false });
-		}
+		// Picking the main model as the realtime model lets the server reuse the
+		// already-loaded main transcriber; any other pick loads that model.
+		updateQuality({ useMainModelForRealtime: v === selectedModel });
 	};
 
 	// Per-quant badge handlers (delete + byte-level pause/resume/cancel) live
 	// in one shared feature-layer hook so the settings panel and the detached
 	// footer picker wire the exact same controls into SttModelSelector.
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
-
-	// When the active main model is itself small enough to drive the live
-	// preview, the dedicated realtime slot has no job — a second small model
-	// would just duplicate work without improving quality.
-	const mainIsRealtimeViable =
-		!selectedIsCloud && selectedInfo !== undefined && isRealtimeViable(selectedInfo);
-	const lockRealtimeToMain = realtimeEnabled && mainIsRealtimeViable;
-	useLockRealtimeToMain(
-		lockRealtimeToMain,
-		selectedModel,
-		settings?.realtimeModel,
-		useMainModelFlag,
-		controller.handleRealtimeModelChange,
-		updateQuality
-	);
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -756,6 +714,7 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					onDownloadSnapshot={handleDownloadSnapshot}
 					selectedModel={selectedModel}
 					settings={settings}
+					showLanguage={showLanguage}
 					statesById={statesById}
 					systemInfo={systemInfo}
 					t={t}
@@ -771,12 +730,9 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					downloadProgress={downloadProgress}
 					handleRealtimeModelChange={handleRealtimePick}
 					isSwapping={realtimeSwapping}
-					lockedToMainModel={lockRealtimeToMain}
-					mainModelId={selectedModel}
 					onDeleteQuant={handleDeleteQuant}
 					onDownloadAction={handleDownloadAction}
 					onDownloadSnapshot={handleDownloadSnapshot}
-					onUseMainModel={handleUseMainModel}
 					quality={quality}
 					settings={settings}
 					statesById={statesById}

@@ -116,6 +116,8 @@ docs/.output/
 
 # Scratch
 frontend/scripts/wip.txt
+frontend/scripts/_mascot.html
+frontend/scripts/_icon_candidates.py
 frontend/.rd-*.txt
 frontend/.react-doctor-*.txt
 .rd-*.txt

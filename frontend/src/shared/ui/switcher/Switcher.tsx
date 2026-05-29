@@ -146,6 +146,27 @@ export function Switcher<T extends string = string>({
 				ref={containerRef}
 				value={[value]}
 			>
+				{/* Hairline separators between adjacent options (segmented-control
+				    look). Rendered beneath the indicator pill — the opaque selected
+				    pill covers the dividers touching it, so only the gaps between
+				    unselected options show, matching a native segmented control. */}
+				{options.map((opt, index) => {
+					if (index === 0 || index === selectedIndex || index - 1 === selectedIndex) {
+						return null;
+					}
+					const r = rects[index];
+					if (!r) {
+						return null;
+					}
+					return (
+						<span
+							aria-hidden="true"
+							className="pointer-events-none absolute w-px bg-[var(--color-divider-strong)]"
+							key={`sep-${opt.value}`}
+							style={{ left: r.left, top: r.top + 6, height: Math.max(r.height - 12, 0) }}
+						/>
+					);
+				})}
 				<AnimatePresence>
 					{selectedRect ? (
 						<motion.div

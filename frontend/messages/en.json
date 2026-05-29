@@ -51,7 +51,12 @@
     "tabAbout": "About",
     "tabAboutTooltip": "Version, license, and third-party notices.",
     "minimize": "Minimize",
-    "close": "Close"
+    "close": "Close",
+    "searchPlaceholder": "Search settings…",
+    "searchClear": "Clear search",
+    "searchNoResults": "No matching settings",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
   },
   "about": {
     "loading": "Loading…",
@@ -246,7 +251,7 @@
     "visualizerColorTooltip": "Accent color used by the audio visualizer animation.",
     "soundFileTooltip": "Custom .wav or .mp3 file played when recording starts. Drop a file or browse to select one.",
     "fileTranscriptionFormatTooltip": "Output file format for transcribed audio/video files. TXT is plain text; SRT includes timestamps for subtitles.",
-    "startOnLoginTooltip": "Automatically launch WinSTT each time you sign in to Windows.",
+    "startOnLoginTooltip": "Automatically launch WinSTT minimized to the system tray each time you sign in to Windows.",
     "startMinimizedTooltip": "When launched, start hidden in the system tray instead of opening the main window.",
     "minimizeToTrayTooltip": "Closing the main window keeps WinSTT running in the system tray instead of quitting.",
     "contextAwareness": "Context awareness",
@@ -350,8 +355,6 @@
     "updateIntervalCaption": "Seconds between realtime updates",
     "updateIntervalTooltip": "Minimum time between live transcription updates. Lower values give more frequent updates but use more processing power. Increase if you experience stuttering or high CPU usage during dictation.",
     "llm": "Large Language Model",
-    "computeDefaultLabel": "Default (model's native precision)",
-    "computeAutoLabel": "Auto (best for your hardware)",
     "deviceAutoLabel": "Auto",
     "deviceCpuLabel": "CPU"
   },
@@ -403,6 +406,8 @@
     "endWithPeriod": "End with Period",
     "endWithPeriodCaption": "Auto-add period to sentences",
     "endWithPeriodTooltip": "Append a period to transcribed sentences that don't already end with punctuation.",
+    "removeFillerWords": "Remove Filler Words",
+    "removeFillerWordsTooltip": "Strip disfluencies like \"uh\", \"um\", \"hmm\" from the transcript. Turn OFF to keep verbatim fillers (e.g. with CrisperWhisper).",
     "smartEndpoint": "Smart Endpoint",
     "smartEndpointLabel": "Smart Endpoint",
     "smartEndpointCaption": "AI-powered sentence detection",
@@ -513,7 +518,8 @@
   "transcription": {
     "waiting": "Waiting for speech...",
     "serverOffline": "Server offline",
-    "noAudioDetected": "(no audio detected)"
+    "noAudioDetected": "(no audio detected)",
+    "transcriptionFailed": "(transcription failed)"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -573,7 +579,7 @@
     "providerCaption": "Where to run text transformation",
     "providerTooltip": "Use a local Ollama server, or call OpenRouter through the AI SDK with structured output.",
     "providerOllama": "Ollama (local)",
-    "providerOpenRouter": "OpenRouter",
+    "providerOpenRouter": "OpenRouter (Cloud)",
     "providerAppleIntelligence": "Apple Intelligence",
     "providerAppleIntelligenceIntelTooltip": "Apple Intelligence requires an Apple Silicon Mac (M1 or later).",
     "appleIntelligenceDescription": "Runs Apple's on-device foundation model. No setup required — works offline on macOS 15+ Apple Silicon.",
@@ -711,11 +717,6 @@
     "speedCaption": "Playback speed multiplier (1.0× is normal).",
     "hotkeyLabel": "Text-to-speech key",
     "hotkeyHint": "Press this combo from any app to read the highlighted text aloud. Leave empty to use the in-app Speak button only.",
-    "device": "Device",
-    "deviceCaption": "Auto picks GPU when CUDA is available; falls back to CPU.",
-    "deviceAuto": "Auto",
-    "deviceCuda": "GPU (CUDA)",
-    "deviceCpu": "CPU",
     "testVoice": "Test voice",
     "previewVoice": "Preview voice",
     "loadingVoice": "Loading…",

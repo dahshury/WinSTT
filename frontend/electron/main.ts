@@ -100,6 +100,8 @@ import { registerWindowTelemetry } from "./ipc/window-telemetry";
 import { dbg } from "./lib/debug-log";
 import { verifyDownloadedUpdate } from "./lib/minisign-verify";
 import { shutdownPsHost } from "./lib/ps-host";
+import { resolveHistoryLimit, resolveRetentionPeriod } from "./lib/recording-retention";
+import { isFailOpenUpdateReason } from "./lib/update-gate";
 import {
 	cleanupRecordingIndicator,
 	initRecordingIndicator,
@@ -459,9 +461,14 @@ function installCspHook(): void {
 		// (Base UI / Tailwind insert inline style tags at runtime). No
 		// localhost / 127.0.0.1 endpoints to whitelist — there is no longer
 		// a bundled Node renderer-server in this process.
+		// `media-src 'self' data: blob:` lets the history player load saved
+		// recordings as `data:audio/wav;base64,…` (and future blob URLs). Without
+		// it, `<audio>` falls back to `default-src 'self'`, which blocks the data
+		// URI — the element never loads, play() rejects, and word-highlight stalls
+		// on the first word.
 		const csp = isDev
-			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc: ws://localhost:* http://localhost:*; font-src 'self' data:; img-src 'self' data:"
-			: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc:; font-src 'self' data:; img-src 'self' data:";
+			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc: ws://localhost:* http://localhost:*; font-src 'self' data:; img-src 'self' data:; media-src 'self' data: blob:"
+			: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc:; font-src 'self' data:; img-src 'self' data:; media-src 'self' data: blob:";
 		callback({
 			responseHeaders: {
 				...details.responseHeaders,
@@ -576,11 +583,7 @@ async function verifyDownloadedUpdateAndGate(info: unknown): Promise<void> {
 	// missing OR sidecar 404 → fail-open (Authenticode covers us). Any other
 	// reason → fail-closed (delete artifact, block install).
 	const reason = result.reason;
-	const failOpen =
-		reason.includes("pubkey not found") ||
-		reason.includes("HTTP 404") ||
-		reason.includes("HTTP 410");
-	if (failOpen) {
+	if (isFailOpenUpdateReason(reason)) {
 		dbg("updater", `Minisign verification skipped (fail-open): ${reason}`);
 		recordUpdaterStatus({
 			status: "downloaded",
@@ -1118,33 +1121,16 @@ function setupGlobalIpcHandlers() {
 	// userData). Honours the user's retention setting on an hourly sweeper
 	// + at startup. Disposed in app.before-quit so the WAL flushes cleanly.
 	cleanupHistory = setupHistoryIpc({
-		getRetention: () => {
-			const fromNewKey = getStoreValue("general.recordingRetentionPeriod");
-			const period =
-				typeof fromNewKey === "string" ? fromNewKey : getStoreValue("general.recordingRetention");
-			if (
-				period === "never" ||
-				period === "preserveLimit" ||
-				period === "cap" ||
-				period === "days3" ||
-				period === "weeks2" ||
-				period === "months3"
-			) {
-				return period;
-			}
-			return "preserveLimit";
-		},
-		getLimit: () => {
-			const fromNewKey = Number(getStoreValue("general.historyLimit"));
-			if (Number.isFinite(fromNewKey) && fromNewKey > 0) {
-				return Math.floor(fromNewKey);
-			}
-			const legacy = Number(getStoreValue("general.historyMaxEntries"));
-			if (Number.isFinite(legacy) && legacy > 0) {
-				return Math.floor(legacy);
-			}
-			return 5;
-		},
+		getRetention: () =>
+			resolveRetentionPeriod(
+				getStoreValue("general.recordingRetentionPeriod"),
+				getStoreValue("general.recordingRetention")
+			),
+		getLimit: () =>
+			resolveHistoryLimit(
+				getStoreValue("general.historyLimit"),
+				getStoreValue("general.historyMaxEntries")
+			),
 	}).dispose;
 	// Clamshell-mic switching. Starts polling only when
 	// `audio.clamshellMicrophone` is configured; otherwise the setup call
@@ -1523,6 +1509,15 @@ function createSettingsWindow(): BrowserWindow {
 		...(iconPath ? { icon: iconPath } : {}),
 		width: 700,
 		height: 560,
+		// Hard-lock the size. `resizable: false` alone does NOT stop a known
+		// frameless-window quirk where each renderer reload (e.g. Vite HMR in
+		// dev) shrinks the OS window by the DWM frame extents, so it crept
+		// narrower on every reload. min == max == fixed size makes the OS clamp
+		// any such drift back to 700×560.
+		minWidth: 700,
+		maxWidth: 700,
+		minHeight: 560,
+		maxHeight: 560,
 		resizable: false,
 		frame: false,
 		show: false,
@@ -1621,17 +1616,15 @@ function createOverlayWindow() {
 		// mouse-click messages while still delivering touch input* — the
 		// "X reacts to touch but not mouse" symptom. The dictation paste
 		// pipeline is protected by always calling `showInactive()` (NOT
-		// `show()`), which displays the window without activating it —
-		// same approach Handy uses (examples/Handy/src-tauri/src/overlay.rs
-		// builds with `.focused(false).visible(false)` and then `.show()`,
-		// the Tauri equivalent of `showInactive`). A user-initiated click
+		// `show()`), which displays the window without activating it.
+		// The overlay is created non-focused and hidden, then shown without
+		// activation — the same effect `showInactive` provides. A user-initiated click
 		// on the X SHOULD focus the overlay momentarily — that's how the
 		// click event reaches the React handler — and the abort flow
 		// immediately hides the window so focus returns to the user's
 		// target app within a frame.
 		// On macOS, `type: "panel"` makes the BrowserWindow act like an
-		// NSPanel (the primitive `tauri-nspanel` wraps in Handy's overlay.rs):
-		// non-activating, stays above standard windows, doesn't show in
+		// NSPanel: non-activating, stays above standard windows, doesn't show in
 		// Mission Control or get a Dock entry. Electron 28+ added this
 		// option; we require ^42.0.0 (see package.json). The option is a
 		// no-op on Windows / Linux but we gate on platform for clarity.
@@ -1663,9 +1656,8 @@ function createOverlayWindow() {
 
 	// No setIgnoreMouseEvents call — the overlay is now a normal interactive
 	// window. Focus stealing is prevented by always calling `showInactive()`
-	// instead of `show()` in overlay.ts's applyShow. This matches Handy's
-	// overlay topology (examples/Handy/src-tauri/src/overlay.rs builds with
-	// `.focused(false).visible(false)` and then `.show()`). Removing the
+	// instead of `show()` in overlay.ts's applyShow — the overlay is created
+	// non-focused and hidden, then shown without activation. Removing the
 	// click-through entirely is the only reliable fix for the
 	// X-button-does-nothing regression on both touch AND mouse — the
 	// previous per-tick renderer-side `setIgnoreMouseEvents(false)` flip

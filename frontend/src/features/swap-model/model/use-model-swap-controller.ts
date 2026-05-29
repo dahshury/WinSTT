@@ -1,4 +1,4 @@
-import { resolveQuantCache } from "@picker";
+import { resolveEffectiveQuant, resolveQuantCache } from "@picker";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import {
@@ -105,6 +105,7 @@ interface GateArgs {
 	) => void;
 	quantization: OnnxQuantization | undefined;
 	setPendingFitWarning: (value: PendingFitWarning | null) => void;
+	statesById: StatesById;
 	value: string;
 }
 
@@ -220,8 +221,16 @@ export function useModelSwapController(
 				assessDictationFitOnServer,
 				proceed: proceedWithSelection,
 				setPendingFitWarning,
+				statesById,
 			}),
-		[assessDictationFitOnServer, currentQuantization, deviceValue, getModel, proceedWithSelection]
+		[
+			assessDictationFitOnServer,
+			currentQuantization,
+			deviceValue,
+			getModel,
+			proceedWithSelection,
+			statesById,
+		]
 	);
 
 	const currentMainModel = resolveCurrentMainModel(settings, selectedModel);
@@ -288,7 +297,14 @@ export function useModelSwapController(
 	useEffect(
 		() =>
 			onModelSwapFailed((event) =>
-				handleSwapFailedEvent(event.kind, prevMainModelRef, prevRealtimeModelRef, update, getModel)
+				handleSwapFailedEvent(
+					event.kind,
+					event.category,
+					prevMainModelRef,
+					prevRealtimeModelRef,
+					update,
+					getModel
+				)
 			),
 		[update, getModel]
 	);
@@ -473,9 +489,18 @@ function mapFirstToCache(
 
 function resolveTargetQuant(
 	quantization: OnnxQuantization | undefined,
-	currentQuantization: OnnxQuantization
+	currentQuantization: OnnxQuantization,
+	state?: ModelState | undefined
 ): OnnxQuantization {
-	return quantization ?? currentQuantization;
+	// The precision the SERVER will actually load. The auto/default sentinel
+	// ("") is re-resolved per model by the server (NeMo / Cohere / GigaAM /…
+	// → int8 on non-CUDA) and surfaced as ``effective_quantization``; honor
+	// it so the cache check targets the file set that truly loads. A concrete
+	// pick (int8/fp16/…) passes through. Without this, switching to canary on
+	// auto checks the (cached) default export and silently background-loads
+	// the uncached int8 weights.
+	const selected = quantization ?? currentQuantization;
+	return resolveEffectiveQuant(state, selected) as OnnxQuantization;
 }
 
 function runProceedWithSelection(args: ProceedArgs): void {
@@ -483,7 +508,7 @@ function runProceedWithSelection(args: ProceedArgs): void {
 	// kicking off the download — a model can be cached at int8 but not
 	// at fp16, so check the quantization the swap will actually load.
 	const state = args.statesById[args.value];
-	const targetQuant = resolveTargetQuant(args.quantization, args.currentQuantization);
+	const targetQuant = resolveTargetQuant(args.quantization, args.currentQuantization, state);
 	const branches = needsDownloadPrompt(state, targetQuant)
 		? [() => promptDownload(args)]
 		: [() => args.issueSwap(args.kind, args.value, args.previous, args.quantization)];
@@ -511,7 +536,11 @@ function resolveCandidateName(getModel: GetModelFn, value: string): string {
 
 async function runGateWithAssessment(args: GateArgs): Promise<void> {
 	const candidateName = resolveCandidateName(args.getModel, args.value);
-	const targetQuant = resolveTargetQuant(args.quantization, args.currentQuantization);
+	const targetQuant = resolveTargetQuant(
+		args.quantization,
+		args.currentQuantization,
+		args.statesById[args.value]
+	);
 	const assessment = await args.assessDictationFitOnServer(
 		args.value,
 		targetQuant,
@@ -667,13 +696,29 @@ function matchesPending(current: PendingDownload | null, model: string): boolean
 	return current?.modelId === model;
 }
 
+/** Swap-failure categories that are NOT genuine failures and must NOT roll the
+ *  picker back:
+ *   - ``superseded``: a newer swap took over — IT owns the final model; rolling
+ *     back here reverts the picker (and persisted settings) off the model the
+ *     winning swap committed (the "switch reverts to the old model" bug).
+ *   - ``cancelled``: the user aborted the swap themselves; the picker already
+ *     reflects their intent. */
+const NON_ROLLBACK_SWAP_FAILURE_CATEGORIES: ReadonlySet<string> = new Set([
+	"superseded",
+	"cancelled",
+]);
+
 function handleSwapFailedEvent(
 	kind: "main" | "realtime",
+	category: string,
 	prevMainModelRef: React.MutableRefObject<string | null>,
 	prevRealtimeModelRef: React.MutableRefObject<string | null>,
 	update: UpdateModelFn,
 	getModel: GetModelFn
 ): void {
+	if (NON_ROLLBACK_SWAP_FAILURE_CATEGORIES.has(category)) {
+		return;
+	}
 	const handlers: Record<"main" | "realtime", () => void> = {
 		main: () => rollbackMain(prevMainModelRef, update, getModel),
 		realtime: () => rollbackRealtime(prevRealtimeModelRef, update),

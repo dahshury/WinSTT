@@ -371,6 +371,18 @@ export class SttClient extends EventEmitter {
 		);
 	}
 
+	/**
+	 * Per-word timestamps for a saved recording WAV (history playback highlight).
+	 * `knownText` (the stored transcript) makes the server relabel its timed
+	 * words with ours — exact text, zero re-transcription drift.
+	 */
+	alignWords(wavPath: string, knownText = ""): Promise<unknown> {
+		return this.sendRequest(
+			{ command: "align_words", text: knownText, wav_path: wavPath },
+			"alignWords"
+		);
+	}
+
 	startLoopback(deviceIndex: number): void {
 		this.sendControl({
 			command: "start_loopback",

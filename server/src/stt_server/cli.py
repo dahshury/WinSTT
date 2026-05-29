@@ -271,19 +271,12 @@ def parse_arguments() -> argparse.Namespace:
         default=0.7,
         help=(
             "Sensitivity for Silero VAD. Trip threshold = 1 - sensitivity, so "
-            "0.7 (the default) trips at probability > 0.3 — matches Handy and "
+            "0.7 (the default) trips at probability > 0.3 and "
             "captures quiet / distant voices that the previous 0.4 default (trip "
             "> 0.6) was silently dropping. Lower this only if a specific mic is "
             "over-triggering on background noise; the renderer's per-device "
             "adaptive calibration handles per-device tuning automatically."
         ),
-    )
-
-    parser.add_argument(
-        "--silero_use_onnx",
-        action="store_true",
-        default=False,
-        help="Enable ONNX version of Silero model for faster performance with lower resource usage. Default is False.",
     )
 
     parser.add_argument(
@@ -457,17 +450,6 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--openwakeword_inference_framework",
-        type=str,
-        default="tensorflow",
-        help=(
-            "The inference framework to use for OpenWakeWord models. Supported "
-            'frameworks could include "tensorflow", "pytorch", etc. Default is '
-            '"tensorflow".'
-        ),
-    )
-
-    parser.add_argument(
         "--wake_word_buffer_duration",
         type=float,
         default=1.0,
@@ -519,7 +501,7 @@ def parse_arguments() -> argparse.Namespace:
         default=False,
         help=(
             "Keep the OS microphone stream allocated for the entire server "
-            "session. Default off (release-on-idle) matches Handy: boot does "
+            "session. Default off (release-on-idle): boot does "
             "not open a stream, the first PTT press lazily opens one, PTT "
             "release closes it so the mic-in-use indicator clears. Enable "
             "this if PTT response feels sluggish — the saved ~10-50 ms per "
@@ -548,7 +530,7 @@ def parse_arguments() -> argparse.Namespace:
             "Seconds before the lazy-close timer fires (only consulted "
             "when --lazy_stream_close is set). The renderer's "
             "consolidated 'Microphone Release' picker maps its enum "
-            "values to this number. Default 30 s matches Handy."
+            "values to this number. Default 30 s."
         ),
     )
 
@@ -561,8 +543,7 @@ def parse_arguments() -> argparse.Namespace:
             "releases PTT / toggles dictation off, before tearing the "
             "mic down and running transcription. Catches trailing "
             "syllables that escape just after the key-up. 0 (default) "
-            "preserves the snap-stop behaviour; capped at 2000 ms. "
-            "Mirrors Handy's extra_recording_buffer_ms."
+            "preserves the snap-stop behaviour; capped at 2000 ms."
         ),
     )
 
@@ -589,24 +570,10 @@ def parse_arguments() -> argparse.Namespace:
             "tear-down synchronously reloads the saved model — first "
             "PTT pays the load cost, subsequent presses are free. "
             "Pass ``0`` to tear down immediately after every "
-            "transcription (Handy's 'Immediately'), or a negative "
-            "value to disable (keep model resident forever, Handy's "
-            "'Never'). Default 300 (5 min)."
+            "transcription (the 'Immediately' mode), or a negative "
+            "value to disable (keep model resident forever, the "
+            "'Never' mode). Default 300 (5 min)."
         ),
-    )
-
-    parser.add_argument(
-        "--compute_type",
-        type=str,
-        default="default",
-        help="Type of computation to use. See https://opennmt.net/CTranslate2/quantization.html",
-    )
-
-    parser.add_argument(
-        "--gpu_device_index",
-        type=int,
-        default=0,
-        help="Index of the GPU device to use. Default is None.",
     )
 
     parser.add_argument(
@@ -620,19 +587,6 @@ def parse_arguments() -> argparse.Namespace:
             "Unrecognised values fall back to CPU with a log line. See "
             "``recorder.infrastructure.device.resolve_accelerator``."
         ),
-    )
-
-    parser.add_argument(
-        "--handle_buffer_overflow",
-        action="store_true",
-        help="Handle buffer overflow during transcription. Default is False.",
-    )
-
-    parser.add_argument(
-        "--allowed_latency_limit",
-        type=int,
-        default=100,
-        help="Maximal amount of chunks that can be unprocessed in queue before discarding chunks. Default is 100.",
     )
 
     parser.add_argument(

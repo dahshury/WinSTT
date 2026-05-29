@@ -51,7 +51,12 @@
     "tabAbout": "حول",
     "tabAboutTooltip": "الإصدار والترخيص وإشعارات الأطراف الخارجية.",
     "minimize": "تصغير",
-    "close": "إغلاق"
+    "close": "إغلاق",
+    "searchPlaceholder": "البحث في الإعدادات…",
+    "searchClear": "مسح البحث",
+    "searchNoResults": "لا توجد إعدادات مطابقة",
+    "collapseSidebar": "طي الشريط الجانبي",
+    "expandSidebar": "توسيع الشريط الجانبي"
   },
   "about": {
     "loading": "جارٍ التحميل…",
@@ -240,7 +245,7 @@
     "visualizerColorTooltip": "لون التمييز المستخدم في حركة المرئيات الصوتية.",
     "soundFileTooltip": "ملف .wav أو .mp3 مخصص يتم تشغيله عند بدء التسجيل. أسقط ملفًا أو استعرض لتحديده.",
     "fileTranscriptionFormatTooltip": "تنسيق ملف الإخراج لملفات الصوت/الفيديو المنسوخة. TXT نص عادي، أما SRT فيتضمن طوابع زمنية للترجمات.",
-    "startOnLoginTooltip": "تشغيل WinSTT تلقائيًا في كل مرة تسجّل فيها الدخول إلى Windows.",
+    "startOnLoginTooltip": "تشغيل WinSTT تلقائيًا مُصغّرًا في علبة النظام في كل مرة تسجّل فيها الدخول إلى Windows.",
     "startMinimizedTooltip": "عند التشغيل، ابدأ مخفيًا في علبة النظام بدلاً من فتح النافذة الرئيسية.",
     "minimizeToTrayTooltip": "إغلاق النافذة الرئيسية يبقي WinSTT يعمل في علبة النظام بدلاً من إنهائه.",
     "sendCrashReports": "إرسال تقارير الأعطال المجهولة الهوية",
@@ -337,8 +342,6 @@
     "updateIntervalCaption": "ثوانٍ بين تحديثات الوقت الفعلي",
     "updateIntervalTooltip": "الحد الأدنى للوقت بين تحديثات النسخ المباشرة. القيم الأقل تعطي تحديثات أكثر تكرارًا لكنها تستخدم قدرة معالجة أكثر. قم بزيادتها إذا واجهت تقطعًا أو استخدامًا عاليًا لـ CPU أثناء الإملاء.",
     "llm": "نموذج لغوي كبير",
-    "computeDefaultLabel": "افتراضي (الدقة الأصلية للنموذج)",
-    "computeAutoLabel": "تلقائي (الأفضل لجهازك)",
     "deviceAutoLabel": "تلقائي",
     "deviceCpuLabel": "وحدة المعالجة المركزية",
     "translateToEnglish": "Translate to English",
@@ -403,6 +406,8 @@
     "endWithPeriod": "الإنهاء بنقطة",
     "endWithPeriodCaption": "إضافة نقطة تلقائيًا للجمل",
     "endWithPeriodTooltip": "إضافة نقطة في نهاية الجمل المنسوخة التي لا تنتهي بعلامة ترقيم.",
+    "removeFillerWords": "إزالة كلمات الحشو",
+    "removeFillerWordsTooltip": "إزالة كلمات التردد مثل \"uh\" و\"um\" و\"hmm\" من النص. أوقفه للاحتفاظ بكلمات الحشو الحرفية (مثلاً مع CrisperWhisper).",
     "smartEndpoint": "نقطة النهاية الذكية",
     "smartEndpointLabel": "نقطة النهاية الذكية",
     "smartEndpointCaption": "كشف الجمل بالذكاء الاصطناعي",
@@ -513,7 +518,8 @@
   "transcription": {
     "waiting": "في انتظار الكلام...",
     "serverOffline": "الخادم غير متصل",
-    "noAudioDetected": "(لم يتم اكتشاف صوت)"
+    "noAudioDetected": "(لم يتم اكتشاف صوت)",
+    "transcriptionFailed": "(فشل التفريغ)"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -543,7 +549,7 @@
     "providerCaption": "أين يتم تحويل النص",
     "providerTooltip": "استخدم خادم Ollama محلي أو OpenRouter عبر AI SDK مع مخرجات منظمة.",
     "providerOllama": "Ollama (محلي)",
-    "providerOpenRouter": "OpenRouter",
+    "providerOpenRouter": "OpenRouter (Cloud)",
     "providerAppleIntelligence": "Apple Intelligence",
     "providerAppleIntelligenceIntelTooltip": "تتطلب Apple Intelligence جهاز Mac مزود بشريحة Apple Silicon (M1 أو أحدث).",
     "appleIntelligenceDescription": "تشغل نموذج Apple الأساسي على الجهاز. لا يتطلب أي إعداد — يعمل دون اتصال على macOS 15+ Apple Silicon.",
@@ -711,11 +717,6 @@
     "speedCaption": "مضاعف سرعة التشغيل (1.0× هو الوضع الطبيعي).",
     "hotkeyLabel": "مفتاح تحويل النص إلى كلام",
     "hotkeyHint": "اضغط هذا الاختصار من أي تطبيق لقراءة النص المظلل بصوت عالٍ. اتركه فارغًا لاستخدام زر القراءة داخل التطبيق فقط.",
-    "device": "الجهاز",
-    "deviceCaption": "تلقائي يختار وحدة معالجة الرسومات عند توفر CUDA؛ ويعود إلى وحدة المعالجة المركزية خلاف ذلك.",
-    "deviceAuto": "تلقائي",
-    "deviceCuda": "وحدة معالجة الرسوميات (CUDA)",
-    "deviceCpu": "وحدة المعالجة المركزية",
     "testVoice": "اختبار الصوت",
     "previewVoice": "معاينة الصوت",
     "loadingVoice": "جارٍ التحميل…",

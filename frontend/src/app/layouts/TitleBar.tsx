@@ -2,6 +2,8 @@ import { Separator } from "@base-ui/react/separator";
 import { Cancel01Icon, MinusSignIcon, Settings05Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
+import { useConnectionStore } from "@/entities/connection";
+import { HotkeyDisplay } from "@/features/push-to-talk";
 import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
@@ -12,11 +14,12 @@ export function TitleBar() {
 	const substrate = useSurface();
 	const barLevel = Math.min(substrate + 1, 8);
 	const hoverLevel = Math.min(barLevel + 2, 8);
+	const isConnected = useConnectionStore((s) => s.connectionStatus) === "connected";
 
 	return (
 		<SurfaceProvider value={barLevel}>
 			<header
-				className={`titlebar-drag flex h-8 shrink-0 items-stretch border-border border-b ${surfaceClasses(barLevel, 1)}`}
+				className={`titlebar-drag relative flex h-8 shrink-0 items-stretch border-border border-b ${surfaceClasses(barLevel, 1)}`}
 			>
 				{/* Left: Branding */}
 				<div className="flex items-center pl-3">
@@ -35,6 +38,16 @@ export function TitleBar() {
 
 				{/* Spacer - draggable area */}
 				<div className="flex-1" />
+
+				{/* Center: active hotkey, absolutely centred in the titlebar so it
+				    stays at the true window midpoint regardless of the branding /
+				    control widths. pointer-events-none lets drags + the window
+				    controls behind it stay live; only the badge itself opts back in. */}
+				<div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+					<div className="titlebar-no-drag pointer-events-auto">
+						<HotkeyDisplay isConnected={isConnected} side="bottom" />
+					</div>
+				</div>
 
 				{/* Right: Settings gear + window controls */}
 				<div className="titlebar-no-drag flex items-center">

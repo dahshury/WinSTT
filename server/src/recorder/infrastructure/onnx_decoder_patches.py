@@ -1,7 +1,7 @@
 """Decoder-side safety patches over onnx_asr's engine implementations.
 
 Six monkey-patches that bring our decoding behaviour in line with
-``transcribe-rs`` (the library Handy uses), where the upstream onnx_asr
+``transcribe-rs``, where the upstream onnx_asr
 library lacks safeguards that transcribe-rs ships by default.
 
 1. **Canary AED consecutive-repeat guard.** ``NemoConformerAED._decoding``
@@ -17,8 +17,8 @@ library lacks safeguards that transcribe-rs ships by default.
    ``CohereAsr._decoding``; same constant.
 
 3. **Whisper suppress_non_speech_tokens + suppress_blank + no_speech_thold.**
-   ``WhisperHf._decoding`` is pure greedy. The whisper.cpp default — which
-   Handy uses — masks out the well-known non-speech token ids (``[Music]``,
+   ``WhisperHf._decoding`` is pure greedy. The whisper.cpp default
+   masks out the well-known non-speech token ids (``[Music]``,
    ``(laughter)``, ``♪``, …), suppresses an all-blank output, and gates
    the segment on the first-step ``<|nospeech|>`` probability vs a 0.2
    threshold. Reimplemented here as a logit-mask + EOS-redirect on the
@@ -71,7 +71,7 @@ MAX_CONSECUTIVE_REPEATS: int = 8
 #: Whisper's classic ``no_speech_thold`` — segments whose first-step
 #: ``<|nospeech|>`` softmax prob exceeds this are deemed silence and
 #: short-circuit to an empty transcript. whisper.cpp default; matches
-#: Handy's ``WhisperInferenceParams::default()``.
+#: ``WhisperInferenceParams::default()``.
 WHISPER_NO_SPEECH_THRESHOLD: float = 0.2
 
 #: Moonshine token-rate budget per locale (tokens emitted per second
@@ -94,8 +94,7 @@ _MOONSHINE_DEFAULT_TOKEN_RATE: int = 8
 #: "comfort" window for Canary / Cohere. Below this Canary's decoder
 #: prompt context (10 tokens) is large compared to its encoder
 #: features and the model is prone to either silent-EOS or
-#: dot-loop. Handy's ``managers/audio.rs:472-480`` pads anything under
-#: 16000 samples up to 20000.
+#: dot-loop. Anything under 16000 samples is padded up to 20000.
 AED_MIN_SAMPLES: int = 16_000
 AED_PAD_TO_SAMPLES: int = 20_000  # 1.25 s
 
@@ -560,7 +559,7 @@ def _whisper_decoding_patched(
       detected by ``tokens.shape[-1] <= 1`` and bypasses the prefix.
     * **beam search (width ``B = _winstt_beam_size``)** — when ``B > 1``
       the decode runs as a length-normalised beam search instead of pure
-      argmax. Matches Handy's ``SamplingStrategy::BeamSearch { beam_size: 3 }``
+      argmax. Matches the ``SamplingStrategy::BeamSearch { beam_size: 3 }``
       default. ``B == 1`` (default) runs greedy verbatim, byte-identical
       to the existing path. Beam search is skipped for lang-detect calls
       (``max_length <= 3``) since those run a 1-step argmax over language
@@ -1265,9 +1264,8 @@ def maybe_trim_leading_silence_for_aed(
     prompt prefix (``<|startoftranscript|><|en|>…``), the decoder gets
     trapped in degenerate loops: ``"I speak if I spe, if I speak..."``
     or character-level ``"ikkkkkkkk"`` until the repeat-guard fires.
-    Handy's ``transcribe-rs`` pipeline never injects leading silence
-    (VAD is applied BEFORE the recorder yields samples; see
-    ``managers/audio.rs``).
+    The ``transcribe-rs`` pipeline never injects leading silence
+    (VAD is applied BEFORE the recorder yields samples).
 
     We trim by walking forward in 20 ms windows (``AED_LEADING_SILENCE_WINDOW``
     samples) while the RMS stays below ``AED_LEADING_SILENCE_RMS_THRESHOLD``,
@@ -1306,8 +1304,7 @@ def maybe_pad_for_aed(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]
     intra-sentence ``.`` until it hits something resembling an end-of-
     utterance acoustic feature. Padding to ~1.25 s of trailing silence
     gives the model the acoustic "rest" cue it expects and dramatically
-    reduces dot-loops on accidental short taps. Mirrors Handy's
-    ``managers/audio.rs:472-480``.
+    reduces dot-loops on accidental short taps.
     """
     if audio.size == 0:
         return audio

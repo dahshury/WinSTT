@@ -235,49 +235,60 @@ function setupTtsImpl(sttClient: SttClient) {
 	// the user already opted in earlier in the session.
 	let bootInstallCheckDone = false;
 
-	const maybeWarmup = async (): Promise<void> => {
-		if (!(isTtsEnabled() && sttClient.isConnected)) {
-			return;
+	// First-connect-of-session check: if TTS was left enabled across an app
+	// restart but the install never finished (partial files on disk, or never
+	// started), DON'T silently auto-resume. Flip the store flag off so the user
+	// sees the toggle in OFF state on startup; re-enabling triggers the existing
+	// install gate which shows the dialog and resumes from the partials via HTTP
+	// Range. Subsequent reconnects skip this guard so a server restart in the
+	// middle of a session doesn't keep flipping the toggle off.
+	//
+	// Returns `true` when warm-up must be aborted (the toggle was flipped off);
+	// `false` to proceed (already installed, probe failed, or check already ran).
+	const shouldAbortForIncompleteInstall = async (): Promise<boolean> => {
+		if (bootInstallCheckDone) {
+			return false;
 		}
-		// First-connect-of-session check: if TTS was left enabled across an
-		// app restart but the install never finished (partial files on
-		// disk, or never started), DON'T silently auto-resume. Flip the
-		// store flag off so the user sees the toggle in OFF state on
-		// startup; re-enabling triggers the existing install gate which
-		// shows the dialog and resumes from the partials via HTTP Range.
-		// Subsequent reconnects skip this guard so a server restart in
-		// the middle of a session doesn't keep flipping the toggle off.
-		if (!bootInstallCheckDone) {
-			bootInstallCheckDone = true;
-			try {
-				const raw = (await sttClient.ttsDownloadEstimate()) as unknown;
-				const alreadyInstalled =
-					isPlainObject(raw) && (raw as { already_installed?: unknown }).already_installed === true;
-				if (!alreadyInstalled) {
-					dbg(
-						"tts",
-						"boot: install incomplete; flipping enabled OFF (user must re-enable to resume)"
-					);
-					store.set("tts.enabled", false);
-					// Keep lastTtsEnabled aligned so the store.onDidChange
-					// listener below doesn't fire a spurious warm-up when the
-					// store mutation lands.
-					lastTtsEnabled = false;
-					return;
-				}
-			} catch (err) {
-				// Probe failed (server / network blip). Fall through to the
-				// warm-up — if there's a real problem, it'll surface as
-				// tts_install_failed and the user sees the retry banner.
-				dbg("tts", `boot install-check probe failed: ${getErrorMessage(err)}`);
+		bootInstallCheckDone = true;
+		try {
+			const raw = (await sttClient.ttsDownloadEstimate()) as unknown;
+			const alreadyInstalled =
+				isPlainObject(raw) && (raw as { already_installed?: unknown }).already_installed === true;
+			if (alreadyInstalled) {
+				return false;
 			}
+			dbg("tts", "boot: install incomplete; flipping enabled OFF (user must re-enable to resume)");
+			store.set("tts.enabled", false);
+			// Keep lastTtsEnabled aligned so the store.onDidChange listener below
+			// doesn't fire a spurious warm-up when the store mutation lands.
+			lastTtsEnabled = false;
+			return true;
+		} catch (err) {
+			// Probe failed (server / network blip). Fall through to the warm-up —
+			// if there's a real problem, it'll surface as tts_install_failed and
+			// the user sees the retry banner.
+			dbg("tts", `boot install-check probe failed: ${getErrorMessage(err)}`);
+			return false;
 		}
+	};
+
+	const dispatchWarmup = (): void => {
 		try {
 			sttClient.initTts();
 			dbg("tts", "warm-up: init_tts dispatched");
 		} catch (err) {
 			dbg("tts", `warm-up init_tts failed: ${getErrorMessage(err)}`);
 		}
+	};
+
+	const maybeWarmup = async (): Promise<void> => {
+		if (!(isTtsEnabled() && sttClient.isConnected)) {
+			return;
+		}
+		if (await shouldAbortForIncompleteInstall()) {
+			return;
+		}
+		dispatchWarmup();
 	};
 
 	// Fire now (covers the already-connected case) and on every

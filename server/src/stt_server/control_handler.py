@@ -23,7 +23,9 @@ from src.stt_server.state import ServerState
 if TYPE_CHECKING:
     import pyaudio
 
+    from src.recorder.domain.model_registry import ModelInfo
     from src.recorder.infrastructure.streaming_downloader import StreamingDownloadRegistry
+    from src.recorder.infrastructure.word_aligner import WordAligner
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +147,7 @@ ALLOWED_PARAMETERS: list[str] = [
     # accepts a float clamped to ``[0.0, 1.0]`` by Pydantic.
     "custom_words",
     "word_correction_threshold",
-    # Locale-aware filler / stutter cleanup (Handy port). The recorder
+    # Locale-aware filler / stutter cleanup. The recorder
     # facade exposes matching ``filter_fillers`` (bool) and
     # ``custom_filler_words`` (list[str]) properties; empty list means
     # "use language-default disfluency table" — see
@@ -214,6 +216,36 @@ def _active_device(state: ServerState) -> str | None:
             if isinstance(dev, str):
                 return dev
     return None
+
+
+def _active_quantization(state: ServerState) -> str:
+    """Best-effort current ``onnx_quantization`` setting (``""`` = auto/default).
+
+    Mirrors :func:`_active_device`: reads the live recorder's config first,
+    then the raw ``recorder_config`` dict, defaulting to ``""`` (auto). Used
+    to resolve each model's *effective* load precision for the picker so the
+    "downloaded?" badge reflects the file set the server will actually load
+    rather than the raw setting — auto re-resolves to ``int8`` for the
+    int8-preferred families on non-CUDA accelerators (see
+    :func:`~src.recorder.bootstrap._resolve_quantization`).
+    """
+    rec = state.recorder
+    if rec is not None:
+        svc = getattr(rec, "_service", None)
+        if svc is not None:
+            cfg = getattr(svc, "_config", None)
+            if cfg is not None:
+                quant = getattr(cfg.transcription, "onnx_quantization", None)
+                if isinstance(quant, str):
+                    return quant
+    cfg = state.recorder_config
+    if isinstance(cfg, dict):
+        tx = cfg.get("transcription")
+        if isinstance(tx, dict):
+            quant = tx.get("onnx_quantization")
+            if isinstance(quant, str):
+                return quant
+    return ""
 
 
 def _active_accelerator(state: ServerState) -> str | None:
@@ -559,6 +591,67 @@ async def _handle_transcribe_file(ws: ServerConnection, state: ServerState, data
     await ws.send(json.dumps({"status": "success", "message": "File transcription started"}))
 
 
+_WORD_ALIGNER: WordAligner | None = None
+
+
+def _get_word_aligner() -> WordAligner:
+    """Lazily build the shared word aligner (loads its tiny model on first align)."""
+    global _WORD_ALIGNER
+    if _WORD_ALIGNER is None:
+        from src.recorder.infrastructure.word_aligner import WordAligner
+
+        _WORD_ALIGNER = WordAligner()
+    return _WORD_ALIGNER
+
+
+def _align_with_active_model(state: ServerState, wav_path: str, known_text: str) -> list[dict[str, Any]] | None:
+    """Tier 1: native word timings from the LOADED model, or None if it can't.
+
+    Whisper ``*_timestamped`` (DTW) and CTC/RNN-T/TDT engines emit their own
+    timings; everything else returns None so the caller uses the tiny fallback.
+    Runs in a thread executor (blocking inference).
+    """
+    from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+
+    recorder = state.recorder
+    service = getattr(recorder, "_service", None) if recorder is not None else None
+    transcriber = getattr(service, "_transcriber", None) if service is not None else None
+    if isinstance(transcriber, OnnxAsrTranscriber):
+        return transcriber.align_words(wav_path, known_text)
+    return None
+
+
+@register_command("align_words", pre_ready=True)
+async def _handle_align_words(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Return per-word timestamps for a saved recording WAV (history-playback
+    highlight). The blocking timestamped-Whisper alignment runs in a thread
+    executor so the control loop keeps pumping; see
+    ``memory/project_ws_request_response_value_envelope.md``. ``pre_ready`` so
+    playback highlighting works even before the live recorder finishes loading.
+    """
+    request_id = data.get("request_id")
+    wav_path = data.get("wav_path")
+    if not isinstance(wav_path, str) or not wav_path:
+        await ws.send(json.dumps({"status": "error", "message": "missing or invalid 'wav_path' field"}))
+        return
+    # Optional known transcript: when present the aligner relabels its timed
+    # words with these (zero drift); otherwise it returns its own transcription.
+    known_text_raw = data.get("text")
+    known_text = known_text_raw if isinstance(known_text_raw, str) else ""
+    loop = asyncio.get_event_loop()
+    # Tier 1 — native: use the loaded model's own word/token timestamps when it
+    # has them (Whisper *_timestamped, CTC/RNN-T/TDT). Tier 2 — fallback: the
+    # tiny timestamped-Whisper aligner, relabelled onto our text.
+    words = await loop.run_in_executor(None, _align_with_active_model, state, wav_path, known_text)
+    if words is None:
+        aligner = _get_word_aligner()
+        words = await loop.run_in_executor(None, aligner.align, wav_path, known_text)
+    payload: dict[str, Any] = {"status": "success", "command": "align_words", "value": {"words": words}}
+    if request_id is not None:
+        payload["request_id"] = request_id
+    await ws.send(json.dumps(payload))
+
+
 @register_command("list_models", pre_ready=True)
 async def _handle_list_models(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
     from src.recorder.domain.model_registry import ModelCatalog
@@ -577,12 +670,53 @@ async def _handle_list_models(ws: ServerConnection, state: ServerState, data: di
     )
 
 
-def _build_models_with_state_payload(device: str | None, accelerator: str | None) -> dict[str, Any]:
+def _effective_quant_for(
+    model: ModelInfo,
+    *,
+    onnx_quantization: str,
+    device: str | None,
+    accelerator: str | None,
+) -> str:
+    """The precision the server would load ``model`` at under current settings.
+
+    Delegates to the SAME :func:`~src.recorder.bootstrap._resolve_quantization`
+    the loader uses, so the picker's badge can never disagree with what an
+    actual swap fetches. ``None`` (fp32/default) collapses to ``""``. Best-
+    effort: any resolution error falls back to the raw setting rather than
+    breaking the whole catalog payload.
+    """
+    from src.recorder.bootstrap import _resolve_quantization
+
+    try:
+        resolved = _resolve_quantization(
+            onnx_quantization,
+            device or "",
+            model.param_count,
+            model.available_quantizations,
+            family=model.family,
+            accelerator=accelerator or "auto",
+        )
+    except Exception:
+        logger.debug("effective-quant resolution failed for %s", model.id, exc_info=True)
+        return onnx_quantization
+    return resolved or ""
+
+
+def _build_models_with_state_payload(
+    device: str | None,
+    accelerator: str | None,
+    onnx_quantization: str = "",
+) -> dict[str, Any]:
     """Synchronous catalog + cache-state assembly. Runs in a worker thread.
 
     Walks the HF snapshot tree once per model via ``model_state_dict`` — that
     rglob is the reason this is off-loop. Returning the ``value`` dict shape
     expected by the client's ``sendRequest`` promise resolver.
+
+    ``onnx_quantization`` is the user's current setting; each model's
+    *effective* load precision is resolved from it (auto → int8 for the
+    int8-preferred families on non-CUDA) and surfaced as
+    ``effective_quantization`` so the picker checks the right file set.
     """
     from src.recorder.domain.model_registry import ModelCatalog
     from src.recorder.infrastructure.model_state import (
@@ -595,12 +729,24 @@ def _build_models_with_state_payload(device: str | None, accelerator: str | None
     sys_info = get_system_info()
     return {
         "models": catalog.to_dicts(device=device, accelerator=accelerator),
-        "states": [model_state_dict(m, sys_info) for m in catalog.list_all()],
+        "states": [
+            model_state_dict(
+                m,
+                sys_info,
+                effective_quantization=_effective_quant_for(
+                    m,
+                    onnx_quantization=onnx_quantization,
+                    device=device,
+                    accelerator=accelerator,
+                ),
+            )
+            for m in catalog.list_all()
+        ],
         "system_info": system_info_dict(sys_info),
     }
 
 
-@register_command("list_models_with_state")
+@register_command("list_models_with_state", pre_ready=True)
 async def _handle_list_models_with_state(
     ws: ServerConnection,
     state: ServerState,
@@ -615,6 +761,18 @@ async def _handle_list_models_with_state(
     cache the (slow-changing) catalog and only refresh the (fast-changing)
     states after a download completes.
 
+    ``pre_ready=True``: the payload is assembled purely from the catalog,
+    the local HF-cache probe, and system info — none of it touches the
+    loaded recorder (``_active_device`` / ``_active_accelerator`` both fall
+    back to ``state.recorder_config`` when ``state.recorder is None``). The
+    settings panel issues this on first paint, but model load can take
+    >10s (e.g. CrisperWhisper on DirectML ≈ 13.6s); without ``pre_ready``
+    the dispatcher silently drops the message until the recorder is up and
+    the renderer's 10s ``sendRequest`` times out before it ever gets a
+    reply. Answering pre-ready lets the picker populate immediately during
+    load. Mirrors the sibling ``list_models`` command, which is also
+    ``pre_ready``.
+
     Catalog assembly is off-loaded to a worker thread because each entry
     rglobs the HF cache snapshot dir (twice — overall + per-quantization);
     with ~50 catalog entries that's enough disk I/O to block the control
@@ -623,7 +781,8 @@ async def _handle_list_models_with_state(
     request_id = data.get("request_id")
     device = _active_device(state)
     accelerator = _active_accelerator(state)
-    value = await asyncio.to_thread(_build_models_with_state_payload, device, accelerator)
+    onnx_quantization = _active_quantization(state)
+    value = await asyncio.to_thread(_build_models_with_state_payload, device, accelerator, onnx_quantization)
     # Wrap in ``value`` so SttClient.sendRequest() resolves the promise
     # with the full payload (it reads ``data.value`` by convention).
     payload: dict[str, Any] = {

@@ -360,10 +360,10 @@ describe("settings:save listener", () => {
 	test("changing a startup-only key while STT is running schedules a restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.model = { computeType: "default" };
+		storeData.model = { device: "auto" };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { model: { computeType: "int8" } },
+			settings: { model: { device: "cpu" } },
 		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(1);
@@ -423,16 +423,16 @@ describe("settings:save listener", () => {
 	test("rapid startup-only changes are debounced into a single restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.model = { computeType: "default" };
+		storeData.model = { device: "auto" };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { model: { computeType: "int8" } },
+			settings: { model: { device: "cpu" } },
 		});
 		fireEvent("settings:save", win.webContents, {
-			settings: { model: { computeType: "int16" } },
+			settings: { model: { device: "cpu" } },
 		});
 		fireEvent("settings:save", win.webContents, {
-			settings: { model: { computeType: "float16" } },
+			settings: { model: { device: "cpu" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		expect(sttProcessState.restartCalled).toBe(1);
@@ -441,10 +441,10 @@ describe("settings:save listener", () => {
 	test("before-quit cancels a pending restart", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.model = { computeType: "default" };
+		storeData.model = { device: "auto" };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { model: { computeType: "int8" } },
+			settings: { model: { device: "cpu" } },
 		});
 		// Fire before-quit immediately (sets isShuttingDown + clears timer)
 		for (const cb of appListeners.get("before-quit") ?? []) {
@@ -485,7 +485,7 @@ describe("settings:save listener", () => {
 		storeData = { general: {}, model: undefined, audio: {}, quality: {} };
 		const win = createWindow(1, sentEvents);
 		fireEvent("settings:save", win.webContents, {
-			settings: { model: { computeType: "int8" } },
+			settings: { model: { device: "cpu" } },
 		});
 		await new Promise((r) => setTimeout(r, 600));
 		expect(sttProcessState.restartCalled).toBe(1);
@@ -502,10 +502,10 @@ describe("settings:save listener", () => {
 		try {
 			setupSettingsHandlers(asSttClientArg({ isConnected: true }));
 			sttProcessState.running = false;
-			storeData.model = { computeType: "default" };
+			storeData.model = { device: "auto" };
 			const win = createWindow(1, sentEvents);
 			fireEvent("settings:save", win.webContents, {
-				settings: { model: { computeType: "int8" } },
+				settings: { model: { device: "cpu" } },
 			});
 			await new Promise((r) => setTimeout(r, 600));
 			expect(sttProcessState.restartCalled).toBe(0);
@@ -640,10 +640,10 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 		const aliveA = createWindow(10, events1);
 		const aliveB = createWindow(11, events2);
 		allWindows.push(aliveA, aliveB);
-		storeData.model = { computeType: "default" };
+		storeData.model = { device: "auto" };
 		const sender = createWindow(1, sentEvents);
 		fireEvent("settings:save", sender.webContents, {
-			settings: { model: { computeType: "int8" } },
+			settings: { model: { device: "cpu" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		const restartEvents1 = events1.filter((e) => e.channel === "stt:restart-required");
@@ -660,10 +660,10 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 		const dead = createWindow(20, eventsDead, { destroyed: true });
 		const alive = createWindow(21, eventsAlive);
 		allWindows.push(dead, alive);
-		storeData.model = { computeType: "default" };
+		storeData.model = { device: "auto" };
 		const sender = createWindow(1, sentEvents);
 		fireEvent("settings:save", sender.webContents, {
-			settings: { model: { computeType: "int8" } },
+			settings: { model: { device: "cpu" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		const restartDead = eventsDead.filter((e) => e.channel === "stt:restart-required");
@@ -680,10 +680,10 @@ describe("broadcastRestartRequired (unmanaged server hint)", () => {
 		const bad = createWindow(30, eventsBad, { throwOnSend: true });
 		const alive = createWindow(31, eventsAlive);
 		allWindows.push(bad, alive);
-		storeData.model = { computeType: "default" };
+		storeData.model = { device: "auto" };
 		const sender = createWindow(1, sentEvents);
 		fireEvent("settings:save", sender.webContents, {
-			settings: { model: { computeType: "int8" } },
+			settings: { model: { device: "cpu" } },
 		});
 		await new Promise((r) => setTimeout(r, 700));
 		const restartAlive = eventsAlive.filter((e) => e.channel === "stt:restart-required");
@@ -719,8 +719,8 @@ describe("applyMainProcessSettingsPatch", () => {
 	test("triggers a restart when the patch changes a startup-only key", async () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		storeData.model = { computeType: "default" };
-		applyMainProcessSettingsPatch({ "model.computeType": "int8" });
+		storeData.model = { device: "auto" };
+		applyMainProcessSettingsPatch({ "model.device": "cpu" });
 		await new Promise((r) => setTimeout(r, 700));
 		expect(sttProcessState.restartCalled).toBe(1);
 	});
@@ -836,16 +836,16 @@ describe("shouldScheduleRestart (helper)", () => {
 	test("returns false when relevant change exists but no server to restart", () => {
 		setupSettingsHandlers();
 		sttProcessState.running = false;
-		const old = { model: { computeType: "default" } };
-		const next = { model: { computeType: "int8" } };
+		const old = { model: { device: "auto" } };
+		const next = { model: { device: "cpu" } };
 		expect(shouldScheduleRestart(old, next)).toBe(false);
 	});
 
 	test("returns true when startup key changed AND server is running", () => {
 		setupSettingsHandlers();
 		sttProcessState.running = true;
-		const old = { model: { computeType: "default" } };
-		const next = { model: { computeType: "int8" } };
+		const old = { model: { device: "auto" } };
+		const next = { model: { device: "cpu" } };
 		expect(shouldScheduleRestart(old, next)).toBe(true);
 	});
 
@@ -868,10 +868,7 @@ describe("shouldScheduleRestart (helper)", () => {
 	test("hasRestartRelevantChange covers all three OR branches independently", () => {
 		// Startup-only branch
 		expect(
-			hasRestartRelevantChange(
-				{ model: { computeType: "default" } },
-				{ model: { computeType: "int8" } }
-			)
+			hasRestartRelevantChange({ model: { device: "auto" } }, { model: { device: "cpu" } })
 		).toBe(true);
 		// Wake-word branch
 		expect(

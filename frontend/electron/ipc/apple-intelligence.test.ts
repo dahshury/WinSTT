@@ -272,4 +272,675 @@ describe("CLI wire-format contract (spec for Swift main.swift)", () => {
 		);
 		expect(parsed).toMatchObject({ ok: true, text: "hello" });
 	});
+
+	// ── isCliResponse exhaustive shape rejections ─────────────────────────
+	// isCliResponse (CC=7) is the validator the parser delegates to. Each
+	// rejection below pins a distinct guard branch so a regression that
+	// loosens the type check (e.g. accepting a numeric `ok`, a non-string
+	// `text`, or a non-object payload) is caught.
+
+	test("rejects a numeric `ok` (must be the boolean literal true/false)", () => {
+		// `ok:1` is truthy but `=== true` is false AND `=== false` is false,
+		// so neither success nor failure branch of isCliResponse matches.
+		expect(parseAppleLlmCliStdout('{"ok":1,"text":"hi"}')).toBeNull();
+		expect(parseAppleLlmCliStdout('{"ok":0,"error":"boom"}')).toBeNull();
+	});
+
+	test("rejects ok:true with a non-string `text` (number)", () => {
+		expect(parseAppleLlmCliStdout('{"ok":true,"text":42}')).toBeNull();
+	});
+
+	test("rejects ok:false with a non-string `error` (object)", () => {
+		expect(parseAppleLlmCliStdout('{"ok":false,"error":{"nested":true}}')).toBeNull();
+	});
+
+	test("rejects a JSON primitive that is not an object (string, number, array)", () => {
+		// `typeof value !== "object"` guard — a bare JSON string, number, or
+		// `true` literal must not be mistaken for an envelope.
+		expect(parseAppleLlmCliStdout('"just a string"')).toBeNull();
+		expect(parseAppleLlmCliStdout("123")).toBeNull();
+		expect(parseAppleLlmCliStdout("true")).toBeNull();
+		// Arrays are typeof "object" but lack ok/text/error → still rejected.
+		expect(parseAppleLlmCliStdout('["a","b"]')).toBeNull();
+	});
+});
+
+// ── Forcing the Darwin+arm64 subprocess path ──────────────────────────
+//
+// On the Windows dev box `isAppleIntelligenceSupported()` is false, so the
+// platform gate in `callAppleIntelligenceCli` short-circuits and the whole
+// child-process pipeline (`runAppleLlmChild` → `finalizeAppleLlmChild` →
+// `buildProtocolErrorMessage` → `stringifyError`) is never reached. To
+// exercise those functions we temporarily override `process.platform` and
+// `process.arch` so the gate passes, drive the injected fake spawn, and
+// always restore the originals in a `finally`.
+
+const originalPlatform = process.platform;
+const originalArch = process.arch;
+
+function forceAppleSilicon(): void {
+	Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+	Object.defineProperty(process, "arch", { value: "arm64", configurable: true });
+}
+
+function restorePlatform(): void {
+	Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+	Object.defineProperty(process, "arch", { value: originalArch, configurable: true });
+}
+
+describe("callAppleIntelligenceCli — full subprocess path (forced Apple Silicon)", () => {
+	test("resolves with parsed.text on a clean ok:true envelope + exit 0", async () => {
+		forceAppleSilicon();
+		try {
+			expect(isAppleIntelligenceSupported()).toBe(true);
+			const { spawnFn, capturedStdin } = makeFakeSpawn({
+				stdoutChunks: ['{"ok":true,"text":"cleaned output"}\n'],
+				closeCode: 0,
+			});
+			const text = await callAppleIntelligenceCli(
+				{ system: "be terse", user: "hello there", tokenLimit: 42 },
+				{ spawnFn: spawnFn as never, binaryPath: "/fake/winstt-apple-llm" }
+			);
+			expect(text).toBe("cleaned output");
+			// The stdin payload must carry the exact contract keys the Swift CLI reads.
+			expect(JSON.parse(capturedStdin.value)).toEqual({
+				system: "be terse",
+				user: "hello there",
+				tokenLimit: 42,
+			});
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("defaults tokenLimit to 0 when the request omits it", async () => {
+		forceAppleSilicon();
+		try {
+			const { spawnFn, capturedStdin } = makeFakeSpawn({
+				stdoutChunks: ['{"ok":true,"text":"x"}\n'],
+			});
+			await callAppleIntelligenceCli(
+				{ system: "s", user: "u" },
+				{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+			);
+			expect(JSON.parse(capturedStdin.value).tokenLimit).toBe(0);
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("classifies ok:false 'not currently available' as model-unavailable", async () => {
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				stdoutChunks: [
+					'{"ok":false,"error":"Apple Intelligence is not currently available on this device."}\n',
+				],
+				closeCode: 0,
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			expect(caught).toBeInstanceOf(AppleIntelligenceError);
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("model-unavailable");
+			expect(e.message).toContain("not currently available");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("classifies a generic ok:false envelope as exited-with-error", async () => {
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				stdoutChunks: ['{"ok":false,"error":"decode failure in sandbox"}\n'],
+				closeCode: 0,
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("exited-with-error");
+			expect(e.message).toBe("decode failure in sandbox");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("matches 'not currently available' case-insensitively (mixed case)", async () => {
+		// finalizeAppleLlmChild lower-cases before matching, so a CLI that
+		// title-cases its error string ("Not Currently Available") must still
+		// classify as model-unavailable. Locks the `.toLowerCase()` call.
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				stdoutChunks: ['{"ok":false,"error":"Model Is NOT CURRENTLY AVAILABLE right now"}\n'],
+				closeCode: 0,
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("model-unavailable");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("an empty-string ok:false error classifies as exited-with-error (not model-unavailable)", async () => {
+		// Edge of the substring match: an empty error string does NOT contain
+		// "not currently available", so the generic branch wins and the
+		// rejected error message is the empty string verbatim.
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				stdoutChunks: ['{"ok":false,"error":""}\n'],
+				closeCode: 0,
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("exited-with-error");
+			expect(e.message).toBe("");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("protocol-error with only stdout (no stderr) omits the stderr section", async () => {
+		// buildProtocolErrorMessage appends `stderr:` only when stderr.trim()
+		// is non-empty. With unparseable stdout + empty stderr + exit 0, the
+		// message has the stdout section but NOT the stderr section — pins the
+		// independent `if (stderr.trim())` / `if (stdout.trim())` branches.
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				stdoutChunks: ["partial-not-json"],
+				stderrChunks: [],
+				closeCode: 0,
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("protocol-error");
+			expect(e.message).toContain("exit 0");
+			expect(e.message).toContain("stdout: partial-not-json");
+			expect(e.message).not.toContain("stderr:");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("rejects protocol-error when stdout is unparseable but exit is 0", async () => {
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				stdoutChunks: ["this is not json\n"],
+				stderrChunks: ["swift backtrace noise"],
+				closeCode: 0,
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("protocol-error");
+			// buildProtocolErrorMessage stitches exit code + stderr + stdout.
+			expect(e.message).toContain("exit 0");
+			expect(e.message).toContain("stderr: swift backtrace noise");
+			expect(e.message).toContain("stdout: this is not json");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("rejects non-zero-exit when stdout is unparseable and exit is non-zero", async () => {
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				stdoutChunks: [""],
+				stderrChunks: [],
+				closeCode: 73,
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("non-zero-exit");
+			expect(e.message).toContain("exit 73");
+			// No stderr/stdout sections when both are empty/blank.
+			expect(e.message).not.toContain("stderr:");
+			expect(e.message).not.toContain("stdout:");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("renders 'null' for the exit code when close reports null", async () => {
+		forceAppleSilicon();
+		try {
+			// makeFakeSpawn coerces `closeCode ?? 0`, so a literal null can't pass
+			// through it. Hand-roll a spawn that emits `close` with null directly,
+			// exercising both the `code === 0 ? … : "non-zero-exit"` branch (null
+			// is not 0) AND the `code ?? "null"` rendering in buildProtocolErrorMessage.
+			const spawnFn = (() => {
+				const handlers: Record<string, ((arg: unknown) => void)[]> = {};
+				const child: Record<string, unknown> = {
+					on(event: string, listener: (arg: unknown) => void) {
+						const bucket = handlers[event] ?? [];
+						bucket.push(listener);
+						handlers[event] = bucket;
+						return child;
+					},
+					stdout: {
+						setEncoding: () => undefined,
+						on: (_e: string, l: (chunk: string) => void) => l("garbage"),
+					},
+					stderr: { setEncoding: () => undefined, on: () => undefined },
+					stdin: {
+						end: () => {
+							queueMicrotask(() => {
+								for (const h of handlers.close ?? []) {
+									h(null);
+								}
+							});
+						},
+					},
+				};
+				return child;
+			}) as never;
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			// code === null is NOT 0, so non-zero-exit is chosen.
+			expect(e.reason).toBe("non-zero-exit");
+			expect(e.message).toContain("exit null");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("maps a spawn 'error' event with ENOENT to binary-missing", async () => {
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				emitError: new Error("spawn /fake/bin ENOENT"),
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("binary-missing");
+			expect(e.message).toContain("ENOENT");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("maps a non-ENOENT 'error' event to spawn-failed", async () => {
+		forceAppleSilicon();
+		try {
+			const { spawnFn } = makeFakeSpawn({
+				emitError: new Error("EACCES permission denied"),
+			});
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: spawnFn as never, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("spawn-failed");
+			expect(e.message).toContain("EACCES");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("rejects spawn-failed when spawnFn itself throws synchronously (Error)", async () => {
+		forceAppleSilicon();
+		try {
+			const throwingSpawn = (() => {
+				throw new Error("spawn EMFILE too many open files");
+			}) as never;
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: throwingSpawn, binaryPath: "/fake/winstt-apple-llm" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("spawn-failed");
+			// Message carries the binary path AND the stringified error (Error → .message).
+			expect(e.message).toContain("/fake/winstt-apple-llm");
+			expect(e.message).toContain("EMFILE");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("stringifyError falls back to String() for a non-Error throw value", async () => {
+		forceAppleSilicon();
+		try {
+			const throwingSpawn = (() => {
+				// biome-ignore lint/style/useThrowOnlyError: exercising the non-Error branch of stringifyError
+				throw "raw string failure";
+			}) as never;
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn: throwingSpawn, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("spawn-failed");
+			expect(e.message).toContain("raw string failure");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	test("rejects spawn-failed when stdin.end() throws (stdin write failure)", async () => {
+		forceAppleSilicon();
+		try {
+			// A spawn whose child.stdin.end throws synchronously — exercises the
+			// try/catch around `child.stdin?.end(payload)`.
+			const spawnFn = (() => {
+				const child: Record<string, unknown> = {
+					on: () => child,
+					kill: () => undefined,
+					stdout: { setEncoding: () => undefined, on: () => undefined },
+					stderr: { setEncoding: () => undefined, on: () => undefined },
+					stdin: {
+						end: () => {
+							throw new Error("EPIPE broken pipe");
+						},
+					},
+				};
+				return child;
+			}) as never;
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("spawn-failed");
+			expect(e.message).toContain("stdin");
+			expect(e.message).toContain("EPIPE");
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	// ── Bug 1: stdin write failure must KILL the leaked child ─────────────
+	test("kills the child when stdin.end() throws (no leaked subprocess on EPIPE)", async () => {
+		forceAppleSilicon();
+		try {
+			let killed = false;
+			const spawnFn = (() => {
+				const child: Record<string, unknown> = {
+					on: () => child,
+					kill: () => {
+						killed = true;
+						return true;
+					},
+					stdout: { setEncoding: () => undefined, on: () => undefined },
+					stderr: { setEncoding: () => undefined, on: () => undefined },
+					stdin: {
+						end: () => {
+							throw new Error("EPIPE broken pipe");
+						},
+					},
+				};
+				return child;
+			}) as never;
+			let caught: unknown;
+			try {
+				await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn, binaryPath: "/fake/bin" }
+				);
+			} catch (err) {
+				caught = err;
+			}
+			expect((caught as InstanceType<typeof AppleIntelligenceError>).reason).toBe("spawn-failed");
+			// The fix: the child must be killed so the subprocess isn't leaked.
+			expect(killed).toBe(true);
+		} finally {
+			restorePlatform();
+		}
+	});
+
+	// ── Bug 2: overall hang watchdog ──────────────────────────────────────
+	test("kills the child and rejects when the CLI never closes (hang watchdog)", async () => {
+		forceAppleSilicon();
+		const originalSetTimeout = globalThis.setTimeout;
+		// Holder object (not a bare `let`): a variable assigned only inside the
+		// setTimeout callback gets narrowed back to `null` by TS control-flow,
+		// making `cb?.()` resolve to `never`. A property assignment is exempt.
+		const watchdog: { cb: (() => void) | null } = { cb: null };
+		// Capture the watchdog callback instead of waiting the real 30s.
+		globalThis.setTimeout = ((cb: () => void) => {
+			watchdog.cb = cb;
+			return 0 as unknown as ReturnType<typeof setTimeout>;
+		}) as unknown as typeof globalThis.setTimeout;
+		try {
+			let killed = false;
+			// A child that accepts stdin but NEVER emits `close` or `error` —
+			// the classic hung on-device query. Without the watchdog the
+			// promise would hang forever.
+			const spawnFn = (() => {
+				const child: Record<string, unknown> = {
+					on: () => child,
+					kill: () => {
+						killed = true;
+						return true;
+					},
+					stdout: { setEncoding: () => undefined, on: () => undefined },
+					stderr: { setEncoding: () => undefined, on: () => undefined },
+					stdin: { end: () => undefined },
+				};
+				return child;
+			}) as never;
+			const promise = callAppleIntelligenceCli(
+				{ system: "s", user: "u" },
+				{ spawnFn, binaryPath: "/fake/bin" }
+			);
+			let caught: unknown;
+			const guarded = promise.catch((err: unknown) => {
+				caught = err;
+			});
+			// Fire the captured watchdog — simulates the timeout elapsing.
+			expect(watchdog.cb).not.toBeNull();
+			watchdog.cb?.();
+			await guarded;
+			expect(killed).toBe(true);
+			const e = caught as InstanceType<typeof AppleIntelligenceError>;
+			expect(e.reason).toBe("spawn-failed");
+			expect(e.message).toContain("did not respond");
+		} finally {
+			globalThis.setTimeout = originalSetTimeout;
+			restorePlatform();
+		}
+	});
+
+	// ── Bug 3: double-settle guard ────────────────────────────────────────
+	test("settles exactly once when the child emits BOTH error and close", async () => {
+		forceAppleSilicon();
+		try {
+			let resolveCount = 0;
+			let rejectCount = 0;
+			// A spawn that fires `error` (ENOENT) AND THEN `close` with a clean
+			// ok:true envelope. The pre-fix code would reject (error) and then
+			// resolve (close) the same promise; with the `settled` guard only the
+			// first outcome — the rejection — sticks.
+			const spawnFn = (() => {
+				const handlers: Record<string, ((arg: unknown) => void)[]> = {};
+				const stdoutListeners: ((chunk: string) => void)[] = [];
+				const child: Record<string, unknown> = {
+					on(event: string, listener: (arg: unknown) => void) {
+						const bucket = handlers[event] ?? [];
+						bucket.push(listener);
+						handlers[event] = bucket;
+						return child;
+					},
+					kill: () => true,
+					stdout: {
+						setEncoding: () => undefined,
+						on: (_e: string, l: (chunk: string) => void) => stdoutListeners.push(l),
+					},
+					stderr: { setEncoding: () => undefined, on: () => undefined },
+					stdin: {
+						end: () => {
+							queueMicrotask(() => {
+								// 1) error event fires first → reject
+								for (const h of handlers.error ?? []) {
+									h(new Error("spawn /fake/bin ENOENT"));
+								}
+								// 2) close event fires second with a valid envelope → would resolve
+								for (const l of stdoutListeners) {
+									l('{"ok":true,"text":"late success"}\n');
+								}
+								for (const h of handlers.close ?? []) {
+									h(0);
+								}
+							});
+						},
+					},
+				};
+				return child;
+			}) as never;
+			let caught: unknown;
+			let resolvedText: string | null = null;
+			try {
+				resolvedText = await callAppleIntelligenceCli(
+					{ system: "s", user: "u" },
+					{ spawnFn, binaryPath: "/fake/bin" }
+				);
+				resolveCount++;
+			} catch (err) {
+				caught = err;
+				rejectCount++;
+			}
+			// The first outcome (error → reject) wins; the later close is a no-op.
+			expect(rejectCount).toBe(1);
+			expect(resolveCount).toBe(0);
+			expect(resolvedText).toBeNull();
+			expect((caught as InstanceType<typeof AppleIntelligenceError>).reason).toBe("binary-missing");
+		} finally {
+			restorePlatform();
+		}
+	});
+});
+
+// ── resolveAppleLlmBinaryPath — dev fallback branch ───────────────────
+
+describe("resolveAppleLlmBinaryPath — resourcesPath branches", () => {
+	const proc = process as NodeJS.Process & { resourcesPath?: string };
+	const originalResourcesPath = proc.resourcesPath;
+
+	test("uses process.resourcesPath when it is a non-empty string", () => {
+		Object.defineProperty(process, "resourcesPath", {
+			value: "/Applications/WinSTT.app/Contents/Resources",
+			configurable: true,
+		});
+		try {
+			const resolved = resolveAppleLlmBinaryPath().replaceAll("\\", "/");
+			expect(resolved).toContain("/Applications/WinSTT.app/Contents/Resources");
+			expect(resolved.endsWith("macos/winstt-apple-llm")).toBe(true);
+		} finally {
+			Object.defineProperty(process, "resourcesPath", {
+				value: originalResourcesPath,
+				configurable: true,
+			});
+		}
+	});
+
+	test("falls back to the repo-relative path when resourcesPath is undefined", () => {
+		// Remove resourcesPath entirely (Bun's runner leaves it undefined) — the
+		// dev fallback resolves relative to import.meta.dirname.
+		Object.defineProperty(process, "resourcesPath", { value: undefined, configurable: true });
+		try {
+			const resolved = resolveAppleLlmBinaryPath().replaceAll("\\", "/");
+			expect(resolved.endsWith("macos/winstt-apple-llm")).toBe(true);
+			// The fallback walks ../resources/macos relative to electron/ipc.
+			expect(resolved).toContain("resources/macos/winstt-apple-llm");
+		} finally {
+			Object.defineProperty(process, "resourcesPath", {
+				value: originalResourcesPath,
+				configurable: true,
+			});
+		}
+	});
 });

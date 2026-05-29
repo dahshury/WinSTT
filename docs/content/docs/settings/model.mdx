@@ -1,59 +1,116 @@
 ---
-title: Model Settings
-description: Configure transcription models and inference parameters
+title: Model
+description: Choose the speech-to-text model, quantization, and device — plus the realtime preview model and one-pass translation to English.
 ---
 
-Model settings control which speech recognition models WinSTT uses and how they run. WinSTT uses two models simultaneously: a main model for accurate final transcription, and a realtime model for fast live preview.
+The **Model** tab is where you pick the engine that turns your speech into text. It also
+configures the smaller model used for the live preview.
 
-The transcription stack is ONNX-only. There is effectively one engine — the `backend` value `faster_whisper` is a legacy alias that bootstrap routes to ONNX.
+## Main model
 
-## Settings Reference
+The main model runs the **final, accurate** transcription pass — the text that actually
+gets pasted. Everything in this section configures it.
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `model` | string | `"large-v2"` | Main transcription model used for final output |
-| `realtimeModel` | string | `"tiny"` | Fast model used for live preview while you speak |
-| `language` | string | `"en"` | Transcription language code |
-| `onnxQuantization` | string | `""` | Precision selector for the ONNX path. `""` = the model's default precision |
-| `computeType` | enum | `"default"` | Legacy CTranslate2-era knob. No effect on the ONNX path; kept for settings/IPC stability |
-| `device` | enum | `"auto"` | `"auto"` uses the GPU when the GPU build + a working CUDA stack are present, otherwise CPU. `"cpu"` forces CPU |
-| `backend` | enum | `"faster_whisper"` | `"faster_whisper"` or `"onnx_asr"`. Both resolve to the ONNX engine; effectively vestigial |
-| `beamSize` | integer | `5` | Beam search width for the main model (min 1) |
-| `beamSizeRealtime` | integer | `3` | Beam search width for the realtime model (min 1) |
-| `initialPrompt` | string | `""` | Text prompt to bias main model vocabulary; not emitted in output |
-| `initialPromptRealtime` | string | `""` | Text prompt to bias realtime model vocabulary; not emitted in output |
+<Screenshot src="sec-model-main" alt="The Main Model section: a Local/Cloud source toggle, the model selector, language, device, model-unload timeout, and a Translate to English switch." chrome="card" caption="The Main Model section controls every part of the final transcription pass." />
 
-## ONNX Quantization
+<SettingRow label="Source" settingKey="model.model" default="Local">
+  Run transcription **locally** (on-device ONNX models) or via a **cloud** provider
+  (OpenAI Whisper, ElevenLabs). Cloud is locked until you add an API key in
+  [Integrations](/docs/settings/integrations). Removing a cloud key silently reverts to
+  your last local model.
+</SettingRow>
 
-`onnxQuantization` is the actual precision lever. `""` keeps the model's default precision. Availability is per-model — the model picker only shows the quantizations the selected model supports:
+<SettingRow label="Model" settingKey="model.model" default="tiny">
+  A searchable, filterable list of 40+ models grouped by family. Each row shows its
+  accuracy/speed bars, size, language scope, and per-quantization download badges.
+</SettingRow>
 
-- Most Whisper models: `""`, `fp16`, `q4`, `bnb4`
-- lite-whisper: `""`, `fp16`
-- NeMo / GigaAM / Vosk: `""`, `int8`
-- `large-v3` and `t-tech/t-one`: only `""`
+<SettingRow label="Language" settingKey="model.language" default="en">
+  Pin a language or leave it on auto-detect. Hidden entirely for single-language models.
+</SettingRow>
 
-<Callout title="computeType is legacy" type="warn">
-  `computeType` is a CTranslate2-era setting with no effect on the ONNX path. It is persisted only for settings/IPC stability. Use `onnxQuantization` to change precision.
+<SettingRow label="Device" settingKey="model.device" default="auto">
+  **Auto** uses the GPU when available and falls back to CPU; **CPU** forces CPU-only.
+  Only CPU is offered on machines without a supported GPU.
+</SettingRow>
+
+<SettingRow label="Model Unload Timeout" settingKey="model.modelUnloadTimeout" default="min5">
+  How long the server keeps the model resident after the last transcription before
+  freeing RAM/VRAM. Options run from **Immediately** to **Never**.
+</SettingRow>
+
+<SettingRow label="Translate to English" settingKey="model.translateToEnglish" default="false">
+  Uses Whisper's native `task=translate` to transcribe **and** translate to English in a
+  single pass — no extra latency, no LLM round-trip. Only shown for multilingual Whisper
+  (and Canary) models that support the translate task.
+</SettingRow>
+
+### The model picker
+
+Opening the selector reveals the full catalog. Models are grouped by maker, each row
+showing its hardware fit, size, the languages it covers, and which quantizations you can
+download.
+
+<Screenshot src="model-dropdown" alt="The open model picker dropdown: a maker rail on the left and model rows showing accuracy and speed bars, size, language scope, and quantization badges." label="Model picker" caption="Search, filter by family or language, and download a specific quantization per model." />
+
+Each model exposes one or more **quantizations** — compressed weight formats that trade a
+little accuracy for big wins in size and speed.
+
+<ModelTable
+  head={["Quantization", "Precision", "Relative size", "Best for"]}
+  numeric={[2]}
+  rows={[
+    ["Auto", "fp32 (default)", "100%", "Maximum accuracy"],
+    ["fp16", "16-bit float", "~50%", "GPU (DirectML) — fastest"],
+    ["int8 / uint8", "8-bit integer", "~25%", "CPU — good balance"],
+    ["q4 / bnb4", "4-bit", "~13%", "Smallest download, lowest RAM"],
+    ["q4f16", "mixed 4-/16-bit", "~20%", "Small with better quality than q4"],
+  ]}
+  caption="The picker only shows quantizations the upstream repo actually publishes; the server falls back to fp32 if a chosen variant is missing."
+/>
+
+<Callout type="info" title="Download, pause, resume">
+  Downloads stream in the background without interrupting the running model, so the app
+  stays connected. You can **pause**, **resume**, or **cancel** any download from its
+  badge, and **delete** a single quantization to reclaim disk without removing the others.
 </Callout>
 
-## Beam Size
+## Realtime model
 
-Beam search explores multiple transcription hypotheses in parallel. Higher values produce more accurate results but take longer.
+The realtime model powers the **live preview** that appears while you speak. It runs on a
+smaller, faster model so words show up instantly; the main model still produces the final
+text.
 
-<Callout title="Beam size tuning" type="info">
-  Use a low beam size (1-3) for the realtime model to keep live preview responsive. Use a higher beam size for the main model where accuracy matters more than latency.
+<Screenshot src="section-realtime" alt="The Realtime Model section with a model selector and an update-interval stepper." chrome="card" />
+
+<SettingRow label="Realtime Model" settingKey="model.realtimeModel" default="tiny">
+  Any model under ~700M parameters. If your **main** model is already small enough to run
+  live, this slot is locked to it (one model serves both) and the picker is disabled.
+</SettingRow>
+
+<SettingRow label="Update Interval" settingKey="quality.realtimeProcessingPause" default="0.02">
+  Minimum seconds between live-preview updates. Lower feels snappier but costs more compute.
+</SettingRow>
+
+<Callout type="restart">
+  Most model changes hot-swap live. Switching the **backend** family or toggling cloud vs
+  local reconnects the engine, which takes a moment — the overlay shows a brief "swapping"
+  state.
 </Callout>
 
-## Initial Prompt
+## Related
 
-The `initialPrompt` field accepts free-form text that biases the model toward specific vocabulary. This is useful for:
-
-- Technical terms the model might otherwise mishear
-- Proper nouns (company names, product names, people)
-- Domain-specific jargon
-
-The prompt does not appear in the output. It only influences how the model interprets ambiguous audio.
-
-<Callout title="Text enhancement moved" type="info">
-  LLM post-processing and hotkey text transforms now live on their own page. See [LLM Text Enhancement](/docs/settings/llm).
-</Callout>
+<Cards>
+  <Card title="Browse the catalog" href="/docs/models">
+    All 40+ models across 8 families, with accuracy, speed, and language coverage.
+  </Card>
+  <Card title="Compute & quantization" href="/docs/models/compute-types">
+    What CPU, DirectML, and OpenVINO mean — and how to read the quantization labels.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Reshape the transcribed text with tone presets and custom modifiers.
+  </Card>
+  <Card title="Cloud STT" href="/docs/settings/integrations">
+    Use OpenAI or ElevenLabs instead of a local model.
+  </Card>
+</Cards>

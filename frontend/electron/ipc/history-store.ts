@@ -3,8 +3,7 @@
  * `history.ts` (which wires it to ipcMain / BrowserWindow) and by tests that
  * use a fake DB driver.
  *
- * The shape mirrors Handy's `src-tauri/src/managers/history.rs` so we can
- * reuse its data conventions without paying the Rust runtime cost:
+ * The schema uses these data conventions:
  *
  *   - `transcription_history` table with autoincrement PK, `saved` pin flag,
  *     pre/post-LLM text + prompt, and a `post_process_requested` boolean.
@@ -52,8 +51,8 @@ export interface HistoryAddInput {
 }
 
 /**
- * Migrations are applied in order. The version equals the array length; this
- * matches `rusqlite_migration`'s contract used by Handy and keeps the system
+ * Migrations are applied in order. The version equals the array length; the
+ * system is
  * forward-only (no `down` paths — broken migrations are fixed by appending a
  * corrective migration).
  */
@@ -107,21 +106,25 @@ interface DbRow {
 	transcription_text: string;
 }
 
+// Required columns of a `DbRow` paired with their accepting `typeof`s. `id` and
+// `timestamp` come back as `bigint` from node:sqlite when they exceed 2^53, so
+// both number and bigint are accepted. Driving the check off this table keeps
+// `isDbRow` at CC≈2 (the guard + the loop) instead of a 6-way boolean chain.
+const DB_ROW_FIELD_TYPES: readonly (readonly [keyof DbRow, readonly string[]])[] = [
+	["id", ["number", "bigint"]],
+	["timestamp", ["number", "bigint"]],
+	["file_name", ["string"]],
+	["saved", ["number"]],
+	["title", ["string"]],
+	["transcription_text", ["string"]],
+];
+
 function isDbRow(value: unknown): value is DbRow {
 	if (value === null || typeof value !== "object") {
 		return false;
 	}
 	const r = value as Record<string, unknown>;
-	const idOk = typeof r.id === "number" || typeof r.id === "bigint";
-	const tsOk = typeof r.timestamp === "number" || typeof r.timestamp === "bigint";
-	return (
-		idOk &&
-		tsOk &&
-		typeof r.file_name === "string" &&
-		typeof r.saved === "number" &&
-		typeof r.title === "string" &&
-		typeof r.transcription_text === "string"
-	);
+	return DB_ROW_FIELD_TYPES.every(([field, types]) => types.includes(typeof r[field]));
 }
 
 function toNumber(value: number | bigint): number {
@@ -143,7 +146,7 @@ function mapRow(row: DbRow): HistoryEntryRow {
 }
 
 function formatTimestampTitle(timestamp: number): string {
-	// Match Handy: "Month D, YYYY - H:MMam/pm" in the user's local time. Falls
+	// Format: "Month D, YYYY - H:MMam/pm" in the user's local time. Falls
 	// back to a Unix-stamp string if Date can't parse (e.g. ts=-1 in a test).
 	const d = new Date(timestamp * 1000);
 	if (Number.isNaN(d.getTime())) {
@@ -159,8 +162,29 @@ function formatTimestampTitle(timestamp: number): string {
 }
 
 /**
- * Apply pending migrations under the `PRAGMA user_version` contract used by
- * Handy. Runs every migration whose 1-indexed position is greater than the
+ * Resolve a raw {@link HistoryAddInput} into the fully-defaulted, canonically
+ * typed field set shared by both the INSERT params and the returned
+ * {@link HistoryEntryRow} (everything except the DB-assigned `id`). Centralizing
+ * the defaulting here means the persisted row and the broadcast row can never
+ * disagree, and keeps the `add` method itself branch-free.
+ */
+function normalizeAddInput(entry: HistoryAddInput, now: () => number): Omit<HistoryEntryRow, "id"> {
+	const timestamp = entry.timestamp ?? now();
+	return {
+		fileName: entry.fileName,
+		timestamp,
+		saved: entry.saved === true,
+		title: entry.title ?? formatTimestampTitle(timestamp),
+		transcriptionText: entry.transcriptionText,
+		postProcessedText: entry.postProcessedText ?? null,
+		postProcessPrompt: entry.postProcessPrompt ?? null,
+		postProcessRequested: entry.postProcessRequested === true,
+	};
+}
+
+/**
+ * Apply pending migrations under the `PRAGMA user_version` contract.
+ * Runs every migration whose 1-indexed position is greater than the
  * current version; bumps `user_version` to `MIGRATIONS.length` on completion.
  */
 export function runMigrations(db: DatabaseLike, migrations: readonly string[] = MIGRATIONS): void {
@@ -246,8 +270,23 @@ export function createHistoryStore(options: HistoryStoreOptions): HistoryStore {
 		if (!options.onWavDelete || fileName === "") {
 			return;
 		}
+		// Fire-and-forget by design: the public CRUD/sweep API is synchronous and
+		// reports row counts the moment the DB row is gone. The WAV unlink is
+		// best-effort filesystem cleanup that trails the row deletion — callers
+		// never block on it, and a failed unlink only leaves an orphaned file (the
+		// row it belonged to is already gone), never corrupts the store. This race
+		// is benign; promoting it to an awaited path would force the whole store
+		// API async for no correctness gain.
 		Promise.resolve(options.onWavDelete(fileName)).catch((err: unknown) => {
-			options.onSweepError?.(err);
+			if (options.onSweepError) {
+				options.onSweepError(err);
+				return;
+			}
+			// No sweep-error sink wired: surface the rejection instead of
+			// swallowing it, so an undeletable WAV (EPERM/EBUSY/etc.) is at least
+			// observable. `history-store.ts` is the pure domain layer (no electron
+			// imports), so we use console.warn rather than the dbg() logger.
+			console.warn(`[history] WAV delete for "${fileName}" failed:`, err);
 		});
 	}
 
@@ -270,28 +309,24 @@ export function createHistoryStore(options: HistoryStoreOptions): HistoryStore {
 
 	return {
 		add(entry: HistoryAddInput): HistoryEntryRow {
-			const timestamp = entry.timestamp ?? now();
-			const title = entry.title ?? formatTimestampTitle(timestamp);
+			// Resolve every defaulted/coerced field ONCE so the SQL params and the
+			// returned row can't drift (pre-refactor the `?? null` /
+			// `=== true ? 1 : 0` defaulting was duplicated across both, and `add`
+			// itself carried the resulting CC≈9). `add` is now straight-line.
+			const norm = normalizeAddInput(entry, now);
 			const result = insertStmt.run(
-				entry.fileName,
-				timestamp,
-				entry.saved === true ? 1 : 0,
-				title,
-				entry.transcriptionText,
-				entry.postProcessedText ?? null,
-				entry.postProcessPrompt ?? null,
-				entry.postProcessRequested === true ? 1 : 0
+				norm.fileName,
+				norm.timestamp,
+				norm.saved ? 1 : 0,
+				norm.title,
+				norm.transcriptionText,
+				norm.postProcessedText,
+				norm.postProcessPrompt,
+				norm.postProcessRequested ? 1 : 0
 			);
 			const row: HistoryEntryRow = {
+				...norm,
 				id: toNumber(result.lastInsertRowid),
-				fileName: entry.fileName,
-				timestamp,
-				saved: entry.saved === true,
-				title,
-				transcriptionText: entry.transcriptionText,
-				postProcessedText: entry.postProcessedText ?? null,
-				postProcessPrompt: entry.postProcessPrompt ?? null,
-				postProcessRequested: entry.postProcessRequested === true,
 			};
 			options.onAdded?.(row);
 			return row;
@@ -399,6 +434,23 @@ export function parsePageArgs(payload: unknown): { offset: number; limit: number
 	return { offset, limit };
 }
 
+// The optional fields of `HistoryAddInput`, each with the predicate that decides
+// whether the raw payload value is an acceptable shape to copy through verbatim.
+// `string-or-null` mirrors the nullable TEXT columns; the rest are plain typeof
+// checks. Driving the copy off this table collapses `parseAddInput` from a
+// CC≈15 if-chain to CC≈3 (the two required-field guards + the table loop) while
+// keeping each field's acceptance rule explicit and independently editable.
+const OPTIONAL_ADD_FIELDS: ReadonlyArray<
+	readonly [keyof HistoryAddInput, (value: unknown) => boolean]
+> = [
+	["postProcessedText", (v) => typeof v === "string" || v === null],
+	["postProcessPrompt", (v) => typeof v === "string" || v === null],
+	["postProcessRequested", (v) => typeof v === "boolean"],
+	["title", (v) => typeof v === "string"],
+	["timestamp", (v) => typeof v === "number"],
+	["saved", (v) => typeof v === "boolean"],
+];
+
 export function parseAddInput(payload: unknown): HistoryAddInput | null {
 	if (payload === null || typeof payload !== "object") {
 		return null;
@@ -411,23 +463,15 @@ export function parseAddInput(payload: unknown): HistoryAddInput | null {
 		return null;
 	}
 	const out: HistoryAddInput = { fileName, transcriptionText };
-	if (typeof obj.postProcessedText === "string" || obj.postProcessedText === null) {
-		out.postProcessedText = obj.postProcessedText as string | null;
-	}
-	if (typeof obj.postProcessPrompt === "string" || obj.postProcessPrompt === null) {
-		out.postProcessPrompt = obj.postProcessPrompt as string | null;
-	}
-	if (typeof obj.postProcessRequested === "boolean") {
-		out.postProcessRequested = obj.postProcessRequested;
-	}
-	if (typeof obj.title === "string") {
-		out.title = obj.title;
-	}
-	if (typeof obj.timestamp === "number") {
-		out.timestamp = obj.timestamp;
-	}
-	if (typeof obj.saved === "boolean") {
-		out.saved = obj.saved;
+	for (const [field, accepts] of OPTIONAL_ADD_FIELDS) {
+		const raw = obj[field];
+		if (accepts(raw)) {
+			// The predicate has already narrowed `raw` to a value the field accepts;
+			// the assignable union of HistoryAddInput's optional fields can't be
+			// expressed back to TS from a runtime predicate, so this is the one
+			// contained boundary cast (was 6 scattered `as` casts pre-refactor).
+			(out as unknown as Record<string, unknown>)[field] = raw;
+		}
 	}
 	return out;
 }

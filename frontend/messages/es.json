@@ -51,7 +51,12 @@
     "tabAbout": "Acerca de",
     "tabAboutTooltip": "Versión, licencia y avisos de terceros.",
     "minimize": "Minimizar",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "searchPlaceholder": "Buscar ajustes…",
+    "searchClear": "Borrar búsqueda",
+    "searchNoResults": "No hay ajustes coincidentes",
+    "collapseSidebar": "Contraer barra lateral",
+    "expandSidebar": "Expandir barra lateral"
   },
   "about": {
     "loading": "Cargando…",
@@ -240,7 +245,7 @@
     "visualizerColorTooltip": "Color de acento usado por la animación del visualizador de audio.",
     "soundFileTooltip": "Archivo .wav o .mp3 personalizado que suena al iniciar la grabación. Arrastra un archivo o usa el explorador para seleccionarlo.",
     "fileTranscriptionFormatTooltip": "Formato del archivo de salida para los archivos de audio/vídeo transcritos. TXT es texto plano; SRT incluye marcas de tiempo para subtítulos.",
-    "startOnLoginTooltip": "Inicia WinSTT automáticamente cada vez que inicies sesión en Windows.",
+    "startOnLoginTooltip": "Inicia WinSTT automáticamente minimizado en la bandeja del sistema cada vez que inicias sesión en Windows.",
     "startMinimizedTooltip": "Al iniciarse, comienza oculto en la bandeja del sistema en lugar de abrir la ventana principal.",
     "minimizeToTrayTooltip": "Cerrar la ventana principal mantiene WinSTT en ejecución en la bandeja del sistema en lugar de salir.",
     "sendCrashReports": "Enviar informes de fallos anónimos",
@@ -337,8 +342,6 @@
     "updateIntervalCaption": "Segundos entre actualizaciones en tiempo real",
     "updateIntervalTooltip": "Tiempo mínimo entre actualizaciones de transcripción en vivo. Valores más bajos ofrecen actualizaciones más frecuentes pero usan más potencia de procesamiento. Aumenta si experimentas tartamudeo o alto uso de CPU durante el dictado.",
     "llm": "Modelo de lenguaje grande",
-    "computeDefaultLabel": "Predeterminado (precisión nativa del modelo)",
-    "computeAutoLabel": "Automático (mejor para tu hardware)",
     "deviceAutoLabel": "Automático",
     "deviceCpuLabel": "CPU",
     "translateToEnglish": "Translate to English",
@@ -403,6 +406,8 @@
     "endWithPeriod": "Terminar con punto",
     "endWithPeriodCaption": "Agregar punto automáticamente a las oraciones",
     "endWithPeriodTooltip": "Añade un punto al final de las oraciones transcritas que no terminen ya en signo de puntuación.",
+    "removeFillerWords": "Eliminar muletillas",
+    "removeFillerWordsTooltip": "Elimina muletillas como \"uh\", \"um\", \"hmm\" de la transcripción. Desactívalo para conservar las muletillas literales (p. ej. con CrisperWhisper).",
     "smartEndpoint": "Endpoint inteligente",
     "smartEndpointLabel": "Endpoint inteligente",
     "smartEndpointCaption": "Detección de oraciones con IA",
@@ -513,7 +518,8 @@
   "transcription": {
     "waiting": "Esperando voz...",
     "serverOffline": "Servidor sin conexión",
-    "noAudioDetected": "(no se detectó audio)"
+    "noAudioDetected": "(no se detectó audio)",
+    "transcriptionFailed": "(error de transcripción)"
   },
   "mainPage": {
     "pttButton": "PTT"
@@ -543,7 +549,7 @@
     "providerCaption": "Dónde ejecutar la transformación de texto",
     "providerTooltip": "Usa un servidor Ollama local, o llama a OpenRouter mediante AI SDK con salida estructurada.",
     "providerOllama": "Ollama (local)",
-    "providerOpenRouter": "OpenRouter",
+    "providerOpenRouter": "OpenRouter (Cloud)",
     "providerAppleIntelligence": "Apple Intelligence",
     "providerAppleIntelligenceIntelTooltip": "Apple Intelligence requiere un Mac con Apple Silicon (M1 o posterior).",
     "appleIntelligenceDescription": "Ejecuta el modelo fundacional en el dispositivo de Apple. No requiere configuración — funciona sin conexión en macOS 15+ con Apple Silicon.",
@@ -711,11 +717,6 @@
     "speedCaption": "Multiplicador de velocidad de reproducción (1.0× es normal).",
     "hotkeyLabel": "Tecla de texto a voz",
     "hotkeyHint": "Pulsa esta combinación desde cualquier aplicación para leer el texto resaltado en voz alta. Déjalo vacío para usar solo el botón de la app.",
-    "device": "Dispositivo",
-    "deviceCaption": "Auto elige la GPU cuando CUDA está disponible; vuelve a la CPU si no.",
-    "deviceAuto": "Automático",
-    "deviceCuda": "GPU (CUDA)",
-    "deviceCpu": "CPU",
     "testVoice": "Probar voz",
     "previewVoice": "Previsualizar voz",
     "loadingVoice": "Cargando…",
