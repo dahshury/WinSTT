@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "Пошук налаштувань…",
+    "searchPlaceholderShort": "Пошук…",
     "searchClear": "Очистити пошук",
     "searchNoResults": "Немає відповідних налаштувань",
     "collapseSidebar": "Згорнути бічну панель",

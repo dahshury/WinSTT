@@ -30,8 +30,8 @@ import {
 import { TtsPlaybackMount } from "./TtsPlaybackMount";
 
 /**
- * Reset every store the pill reads from the moment the overlay BrowserWindow
- * becomes visible — before the renderer's first post-show paint.
+ * Clear the stale CONTENT the pill reads from the moment the overlay
+ * BrowserWindow becomes visible — before the renderer's first post-show paint.
  *
  * Why this is needed in addition to the IPC-driven clear in
  * `useTranscriptionFeed` (which runs on STT_RECORDING_START): the IPC is
@@ -43,9 +43,19 @@ import { TtsPlaybackMount } from "./TtsPlaybackMount";
  * a synchronous Zustand `setState` here is guaranteed to be applied before any
  * paint can run, so the very first frame after the window appears is empty.
  *
- * `isRecordingActive` is intentionally reset to `false` too — it will be
- * re-armed by STT_RECORDING_START a beat later, and starting from `false`
- * matches the pill's gating contract: "hidden until a real recording arms us".
+ * `isRecordingActive` is deliberately NOT reset here. The main process sends
+ * STT_RECORDING_START *before* it calls `showOverlay()` (see
+ * `runAdmittedRecordingStart` in electron/ipc/relay.ts), so the renderer
+ * almost always processes that arming IPC — setting `isRecordingActive = true`
+ * — BEFORE the OS delivers `visibilitychange` (which is gated on a compositor
+ * pass). Resetting the flag to `false` here therefore clobbered the
+ * freshly-armed value, and because realtime-text events only update the text
+ * (they never re-arm), the pill's mount gate `(isRecordingActive && hasText)`
+ * stayed `false` for the whole session — the pill "didn't appear on first
+ * use". The transcription feed owns the flag (armed on recording_start,
+ * disarmed on terminal events, already `false` between sessions), so leaving it
+ * alone removes the race; a stale `true` can't flash content because `hasText`
+ * is cleared right here.
  */
 function useResetOnOverlayShow(): void {
 	useEffect(() => {
@@ -56,7 +66,6 @@ function useResetOnOverlayShow(): void {
 			useTranscriptionStore.setState({
 				currentRealtime: "",
 				ephemeral: null,
-				isRecordingActive: false,
 			});
 			useLlmProcessingStore.setState({ isThinking: false });
 			// Belt-and-suspenders: `recordingStopped` in the visualizer

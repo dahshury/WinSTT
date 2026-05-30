@@ -13,7 +13,7 @@ import {
 	useDownloadListener,
 	useQuantActions,
 } from "@/features/model-download";
-import { CloudModelSelect, useSttSourceSwitch } from "@/features/select-cloud-stt-model";
+import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import { useModelSwapController } from "@/features/swap-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { IPC } from "@/shared/api/ipc-channels";
@@ -23,12 +23,9 @@ import {
 	ipcOn,
 	ipcSend,
 	onFileQueueActive,
-	windowOpenSettings,
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
-import { Switcher } from "@/shared/ui/switcher";
 
 // Desired footprint reported once to the main process. Main caps the height
 // to whatever fits above the chip (never spilling over the screen top) and
@@ -76,10 +73,12 @@ interface PickerBodyProps {
 }
 
 /**
- * The picker surface: a Local/Cloud source switcher over the active picker,
- * mirroring Settings → Models so a cloud main model opens straight into the
- * cloud picker. The host mounts this with `key={effectiveSourceIsCloud}` so a
- * persisted-source flip re-initialises `source` without a derived-state effect.
+ * The picker surface: the local STT grid, or the cloud picker when the active
+ * model is a cloud provider's. There is NO Local/Cloud switch here — choosing
+ * the source is a Settings-only control (`SourceArea` in ModelSettingsPanel);
+ * this window just browses the models for whatever source the persisted model
+ * already uses. The host mounts it with `key={effectiveSourceIsCloud}` so a
+ * persisted-source flip cleanly re-mounts the right sub-picker.
  */
 function PickerBody({
 	catalogLoaded,
@@ -95,25 +94,19 @@ function PickerBody({
 	statesById,
 	systemInfo,
 }: PickerBodyProps) {
+	// Which sub-picker shows is derived purely from the active model — there is
+	// NO Local/Cloud switch in this window. The source toggle is a Settings-only
+	// control (see `SourceArea` in ModelSettingsPanel); this detached picker just
+	// browses the models for whatever source the persisted model already uses.
+	// A persisted cloud model whose key was removed falls back to the local list
+	// (the key-removal banner explains why), matching the Settings behaviour.
 	const isCloud = providerOf(currentModel) !== null;
-	const { source, sourceOpts, onSourceChange } = useSttSourceSwitch({
-		hasAnyCloudKey,
-		initialSourceIsCloud: isCloud && hasAnyCloudKey,
-		onConfigureCloud: windowOpenSettings,
-		onModelChange: onSelect,
-		// This window IS a browse grid — toggling to Local just reveals the local
-		// list to pick from. Auto-picking here would select the default model and
-		// close the window (the swap-close effect), defeating browsing. The
-		// Settings-side toggle already lands the persisted model on local before
-		// this window opens, so it opens in local mode anyway.
-		pickLocalDefault: () => null,
-		selectedModel: currentModel,
-	});
+	const showCloud = isCloud && hasAnyCloudKey;
 
 	return (
 		// Bottom-aligned so the short Cloud panel hugs the chip instead of
 		// floating at the top of the (chip-height-capped) window. In Cloud mode
-		// the empty area above the controls is the flex container itself — a
+		// the empty area above the control is the flex container itself — a
 		// pointer-down on it (not a child) closes the picker, same as the
 		// backdrop. In Local mode the grid fills via `flex-1`, leaving no gap.
 		<div
@@ -124,17 +117,10 @@ function PickerBody({
 				}
 			}}
 		>
-			<ElevatedSurface className="w-52">
-				<Switcher fullWidth onChange={onSourceChange} options={sourceOpts} value={source} />
-			</ElevatedSurface>
-			{source === "cloud" ? (
+			{showCloud ? (
 				// Auto-open: the detached window exists only to show the picker, so a
 				// closed combobox would force a pointless second click.
-				<CloudModelSelect
-					defaultOpen
-					onSelect={onSelect}
-					selectedId={isCloud ? currentModel : ""}
-				/>
+				<CloudModelSelect defaultOpen onSelect={onSelect} selectedId={currentModel} />
 			) : (
 				<div className="min-h-0 flex-1 [&>*]:size-full">
 					<SttModelSelector
@@ -292,6 +278,24 @@ export function ModelPickerWindow() {
 		return () => window.removeEventListener("keydown", onKeyDown);
 	}, []);
 
+	// Pre-warm the (heavy) picker body during the window's idle pre-create
+	// rather than on first open. The detached picker window is created hidden +
+	// parked off-screen at app startup, but `PickerBody` — a force-open inline
+	// combobox that mounts EVERY model card — used to be gated entirely behind
+	// `panel`, which the main process only sends on the first open. So the
+	// expensive first mount (Base UI's collection build + the full grouped-list
+	// layout) landed during the 150ms open fade and the user saw it lag.
+	//
+	// Mount it as soon as the catalog has hydrated (which happens in the
+	// background a beat after launch), laid out at the default footprint and held
+	// invisible (`opacity: 0`, `pointer-events: none`) until the real anchor
+	// lands. The window stays parked off-screen the whole time, so this warm
+	// render is never visible; the first real open then just repositions an
+	// already-warm tree (a cheap re-render) instead of mounting the whole picker.
+	const panelRevealed = panel !== null;
+	const warmPanel = panel ?? { x: 0, y: 0, width: DESIRED_WIDTH, height: DESIRED_HEIGHT };
+	const shouldMountBody = panelRevealed || catalogLoaded;
+
 	return (
 		// Full-screen transparent backdrop. A pointer-down that lands on the
 		// backdrop itself (anything that isn't the panel — the visualizer, the
@@ -305,18 +309,26 @@ export function ModelPickerWindow() {
 				}
 			}}
 		>
-			{panel && (
+			{shouldMountBody && (
 				<div
 					// Sized to `STT_PICKER_WIDTH_PX` (see `DESIRED_WIDTH`) so the inline
 					// picker matches the settings popup width. `PickerBody` fills the
 					// rect (`h-full`) and routes between the local grid and the cloud
 					// combobox via the Local/Cloud switcher.
+					//
+					// Until the main process reports the real anchor (`panel`), this is
+					// the off-screen PRE-WARM mount (see `warmPanel` above): laid out at
+					// the default footprint but held invisible + non-interactive so the
+					// heavy first render happens during the window's idle pre-create
+					// instead of during the open fade.
 					className="absolute flex flex-col"
 					style={{
-						left: panel.x,
-						top: panel.y,
-						width: panel.width,
-						height: panel.height,
+						left: warmPanel.x,
+						top: warmPanel.y,
+						width: warmPanel.width,
+						height: warmPanel.height,
+						opacity: panelRevealed ? undefined : 0,
+						pointerEvents: panelRevealed ? undefined : "none",
 					}}
 				>
 					<PickerBody

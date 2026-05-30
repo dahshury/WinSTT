@@ -551,8 +551,9 @@ function CustomModifierRow({
 			trailing={
 				<div className="flex items-center gap-1">
 					{modifier.levelsEnabled ? (
-						<ElevatedSurface inline>
+						<ElevatedSurface className="w-60">
 							<Switcher
+								fullWidth
 								onChange={(v) => onLevelChange(modifier.id, v as PresetLevel)}
 								options={levelOpts}
 								value={modifier.level ?? DEFAULT_LEVEL}
@@ -813,8 +814,9 @@ function IndependentPresetList({
 					);
 				} else if (hasLevel) {
 					trailing = (
-						<ElevatedSurface inline>
+						<ElevatedSurface className="w-60">
 							<Switcher
+								fullWidth
 								onChange={(v) => handleLevel(v as PresetLevel)}
 								options={checked ? levelOpts : disabledLevelOpts}
 								value={displayedLevel}
@@ -1362,6 +1364,7 @@ function FeaturePresetControls({
 				<FormControl label={t("tone")} tooltip={t("toneTooltip")}>
 					<ElevatedSurface>
 						<Switcher
+							fullWidth
 							onChange={(v) =>
 								update({
 									presets: setTone(snapshot.presets, v as (typeof TONE_GROUP)[number]),

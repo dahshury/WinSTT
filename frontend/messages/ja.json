@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "設定を検索…",
+    "searchPlaceholderShort": "検索…",
     "searchClear": "検索をクリア",
     "searchNoResults": "一致する設定はありません",
     "collapseSidebar": "サイドバーを折りたたむ",

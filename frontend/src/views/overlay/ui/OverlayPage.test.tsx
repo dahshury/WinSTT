@@ -336,18 +336,22 @@ describe("OverlayPage", () => {
 		});
 	});
 
-	test("visibilitychange to 'visible' synchronously clears stale transcription + LLM + speaking state", () => {
+	test("visibilitychange to 'visible' clears stale content but does NOT clobber a freshly-armed isRecordingActive", () => {
 		renderOverlay();
-		// Simulate stale state left over from a prior session (the exact
-		// scenario the user reported: previous transcription still in
-		// currentRealtime / ephemeral when the overlay BrowserWindow re-shows).
-		// `isSpeaking` joins the reset because the pill now keys off VAD
-		// detection — a stale `true` would flash the visualizer on re-show.
+		// Regression guard: the main process sends STT_RECORDING_START *before*
+		// it shows the overlay window (see runAdmittedRecordingStart in
+		// electron/ipc/relay.ts), so the renderer usually arms
+		// `isRecordingActive = true` BEFORE `visibilitychange` fires. The reset
+		// must wipe the previous session's text / thinking / speaking state
+		// WITHOUT disarming the flag — otherwise the pill never appears for the
+		// session (realtime-text events only update text, never re-arm).
+		// `isSpeaking` joins the reset because the pill keys off VAD detection —
+		// a stale `true` would flash the visualizer on re-show.
 		act(() => {
 			useTranscriptionStore.setState({
 				currentRealtime: "previous session text",
 				ephemeral: { text: "no audio detected", timestamp: 0 },
-				isRecordingActive: false,
+				isRecordingActive: true,
 			});
 			useLlmProcessingStore.setState({ isThinking: true });
 			useVisualizerStore.setState({ isSpeaking: true });
@@ -361,7 +365,8 @@ describe("OverlayPage", () => {
 		const t = useTranscriptionStore.getState();
 		expect(t.currentRealtime).toBe("");
 		expect(t.ephemeral).toBeNull();
-		expect(t.isRecordingActive).toBe(false);
+		// NOT clobbered — the arming IPC's value survives the content reset.
+		expect(t.isRecordingActive).toBe(true);
 		expect(useLlmProcessingStore.getState().isThinking).toBe(false);
 		expect(useVisualizerStore.getState().isSpeaking).toBe(false);
 	});

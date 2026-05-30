@@ -44,6 +44,14 @@ export interface AxNode {
 const LLM_NOISE_RE = /[\p{C}\p{So}•‣⁃\u{1F000}-\u{1FAFF}]/gu;
 const INLINE_WS_RE = /\s+/g;
 
+// NOTE: There is deliberately NO secret/PII redaction here. The dictation
+// context only ever feeds a LOCAL cleanup/compose LLM (and a local Whisper
+// bias) — nothing leaves the machine — so captured private data (account
+// numbers, one-time codes) is not a leak, and scrubbing it would only add
+// hot-path cost + false positives that strip legitimate numbers the user is
+// dictating around. If a cloud LLM/STT path is ever added, redaction must be
+// reconsidered THERE, at the network boundary, not here.
+
 /**
  * Strip decorative/control noise for the LLM while PRESERVING line structure:
  * split on newline, de-noise + collapse inline whitespace per line, drop blank
@@ -57,6 +65,73 @@ export function denoiseForLlm(raw: string | undefined): string {
 		.split("\n")
 		.map((line) => line.replace(LLM_NOISE_RE, "").replace(INLINE_WS_RE, " ").trim())
 		.filter((line) => line.length > 0)
+		.join("\n")
+		.trim();
+}
+
+/**
+ * A line that is a bare inbox/feed list-row date stamp on its own — "May 29",
+ * "Apr 27", "3:02 AM". These delimit the rows of an email inbox / notification
+ * feed that web apps (Gmail, Outlook web) flatten into the focused field's text
+ * range. A real email/message body never consists of a standalone bare date, so
+ * matching is safe. Full datetimes ("May 17, 2026, 6:29 PM (13 days ago)") are
+ * deliberately NOT matched — those head a real open thread, not an inbox row.
+ */
+const INBOX_DATE_ROW_RE =
+	/^(?:\d{1,2}:\d{2}\s?[AP]M|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2})$/;
+
+/**
+ * Pure-chrome singleton lines that surround a Gmail open-thread once the inbox
+ * scrollback is cut — UI affordances, not content. Lowercased exact-match only,
+ * and ONLY applied when an inbox region was detected (see stripListScrollback),
+ * so normal editors/chat are never touched.
+ */
+const CHROME_LINES: ReadonlySet<string> = new Set([
+	"inbox",
+	"×",
+	"x",
+	"to me",
+	"show details",
+	"hide details",
+	"pop out reply",
+	"everything else",
+	"describe your message",
+	"send",
+	"compose",
+]);
+
+/**
+ * Remove dated inbox/feed list-scrollback that web mail/clients flatten INTO the
+ * focused composer's text range. The harmful case (live-verified on Gmail): the
+ * reply box's TextPattern spans the WHOLE Gmail document, so the caret context
+ * walks back through the entire inbox — leaking dozens of unrelated subjects AND
+ * sensitive data (one-time codes, account numbers) into the LLM/ASR prompt.
+ *
+ * The inbox list is a run of rows each ending in a bare date row; the OPEN email
+ * + the user's draft sit AFTER the last such row, nearest the caret. So: cut
+ * everything up to and including the last bare-date row (searched only in the
+ * leading 85% so a trailing legit date near the caret is never a cut point),
+ * then drop the surrounding chrome singletons. Strict no-op when no inbox region
+ * is present, so editors/IDEs/normal fields are unaffected.
+ */
+export function stripListScrollback(text: string): string {
+	if (!text) {
+		return text;
+	}
+	const lines = text.split("\n");
+	const limit = Math.floor(lines.length * 0.85);
+	let cut = -1;
+	for (let i = 0; i <= limit && i < lines.length; i++) {
+		if (INBOX_DATE_ROW_RE.test((lines[i] ?? "").trim())) {
+			cut = i;
+		}
+	}
+	if (cut === -1) {
+		return text;
+	}
+	return lines
+		.slice(cut + 1)
+		.filter((line) => !CHROME_LINES.has(line.trim().toLowerCase()))
 		.join("\n")
 		.trim();
 }

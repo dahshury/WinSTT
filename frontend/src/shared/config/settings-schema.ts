@@ -590,10 +590,11 @@ const llmTransformsSchema = z.object({
 	// applied to the currently-selected text.
 	presets: presetsSchema,
 	customModifiers: z.array(customModifierSchema).default([]),
-	// uiohook-style accelerator (e.g. "LCtrl+LShift+T") that captures the
-	// active selection and runs the composed transform. Empty disables the
-	// global hotkey; the transform can still be invoked from the UI.
-	hotkey: z.string().default(""),
+	// Always non-empty: transforms the feature stays gated by `enabled`, but the
+	// hotkey itself must always carry a valid combo (Ctrl+Shift+T) so the
+	// conflict checker can compare against it and the recorder UI never renders
+	// an empty chip. The transform can still be invoked from the UI.
+	hotkey: z.string().min(1).default("LCtrl+LShift+T").catch("LCtrl+LShift+T"),
 	// User-configurable text transforms. Each entry carries its own prompt
 	// and optional hotkey. Built-in entries (see `BUILTIN_TRANSFORMS`) carry
 	// `builtin: true` so the UI can show a Reset action instead of Delete.

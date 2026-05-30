@@ -291,7 +291,7 @@ export function SearchableSelect({
 					</span>
 				) : null}
 				<Combobox.Input
-					className={`flex h-8 w-full items-center rounded-sm ${surfaceClasses(inputLevel)} ${inputTrailing ? "pr-16" : "pr-7"} pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-40`}
+					className={`flex h-8 w-full items-center rounded-lg ${surfaceClasses(inputLevel)} ${inputTrailing ? "pr-16" : "pr-7"} pl-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-40`}
 					placeholder={placeholder}
 					style={decorationPadding > 0 ? { paddingLeft: `${decorationPadding}px` } : undefined}
 				/>

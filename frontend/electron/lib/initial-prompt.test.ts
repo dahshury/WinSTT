@@ -112,12 +112,13 @@ describe("composeInitialPrompt", () => {
 		expect(out).toBe("Hi Bob, thanks for the heads up.");
 	});
 
-	test("clips an oversized context tail to the LAST 250 chars (closest to caret = most relevant)", () => {
-		// A 400-char tail of distinct letters lets us assert the tail-clip
-		// direction precisely without depending on word-boundary heuristics.
-		const longTail = "a".repeat(150) + "b".repeat(250);
+	test("clips an oversized context tail to the LAST 500 chars (closest to caret = most relevant)", () => {
+		// An 800-char tail of distinct letters lets us assert the tail-clip
+		// direction precisely without depending on word-boundary heuristics
+		// (one run per letter => no internal space => the boundary-snap no-ops).
+		const longTail = "a".repeat(300) + "b".repeat(500);
 		const out = composeInitialPrompt("", [], longTail);
-		expect(out).toBe("b".repeat(250));
+		expect(out).toBe("b".repeat(500));
 	});
 
 	test("context tail does NOT crowd out a glossary (last-resort cap clips the tail's front)", () => {
@@ -186,23 +187,34 @@ describe("composeInitialPrompt", () => {
 		expect(composeInitialPrompt("", [], "great work 👍🏽 thanks 🎉")).toBe("great work thanks");
 	});
 
-	test("a tail-only prompt of exactly the per-tail cap (250) passes through the no-cap fast-path", () => {
+	test("a tail-only prompt at exactly the per-tail cap (500) passes through the no-cap fast-path", () => {
 		// No prefix, no dictionary => body is empty. The tail is hard-capped to
-		// MAX_CONTEXT_TAIL_CHARS (250) by sanitiseContextTail, which is < the
+		// MAX_CONTEXT_TAIL_CHARS (500) by sanitiseContextTail, which is < the
 		// MAX_PROMPT_CHARS (600) final cap, so the no-cap fast-path returns it
 		// verbatim. This is precisely why the former `body.length === 0`
 		// last-resort branch was dead code (now removed): an empty body can
 		// never reach the cap-overflow path.
-		const tail = "c".repeat(250);
+		const tail = "c".repeat(500);
 		expect(composeInitialPrompt("", [], tail)).toBe(tail);
 	});
 
-	test("a tail-only prompt longer than the per-tail cap keeps only its LAST 250 chars", () => {
-		// A 700-char single token has no whitespace to collapse and no noise to
-		// strip, so sanitiseContextTail keeps only its LAST 250 chars (< 600).
-		const out = composeInitialPrompt("", [], "d".repeat(700));
-		expect(out).toBe("d".repeat(250));
-		expect(out.length).toBe(250);
+	test("a tail-only prompt longer than the per-tail cap keeps only its LAST 500 chars", () => {
+		// A 900-char single token has no whitespace to collapse and no noise to
+		// strip (and no internal space => the boundary-snap no-ops), so
+		// sanitiseContextTail keeps only its LAST 500 chars (< 600).
+		const out = composeInitialPrompt("", [], "d".repeat(900));
+		expect(out).toBe("d".repeat(500));
+		expect(out.length).toBe(500);
+	});
+
+	test("snaps an oversized tail to a clean leading word boundary (drops the partial word)", () => {
+		// The last-500 slice starts mid-word, so the partial leading word is
+		// dropped => Whisper's prompt begins on a whole token, not "…lpha".
+		const tail = `${"alpha ".repeat(120)}omega`;
+		const out = composeInitialPrompt("", [], tail);
+		expect(out.length).toBeLessThanOrEqual(500);
+		expect(out.startsWith("alpha")).toBe(true);
+		expect(out.endsWith("omega")).toBe(true);
 	});
 
 	test("roomForTail <= 0: a body that fills the entire budget drops the tail entirely", () => {

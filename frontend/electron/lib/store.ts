@@ -218,7 +218,10 @@ const storeValueSchemas = {
 	"llm.transforms.thinkingEffort": z.enum(["off", "low", "medium", "high"]).catch("medium"),
 	// Same preset/customModifier schemas as dictation — see comments on the
 	// dictation entries above for shape/intent. The transforms hotkey is a
-	// single uiohook combo string ("LCtrl+LShift+T", etc.); empty disables.
+	// single uiohook combo string; it is always non-empty (Ctrl+Shift+T by
+	// default), mirroring the renderer-side `llmTransformsSchema.hotkey` and the
+	// `tts.hotkey` rule below — an empty persisted value falls through `.min(1)`
+	// to `.catch()` and rehydrates to the canonical default.
 	"llm.transforms.presets": z
 		.array(
 			z.object({
@@ -250,7 +253,7 @@ const storeValueSchemas = {
 			})
 		)
 		.catch([]),
-	"llm.transforms.hotkey": z.string().catch(""),
+	"llm.transforms.hotkey": z.string().min(1).catch("LCtrl+LShift+T"),
 	// tts — Kokoro-82M ONNX text-to-speech
 	"tts.enabled": z.boolean().catch(false),
 	"tts.voice": z.string().catch("af_heart"),

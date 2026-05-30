@@ -53,6 +53,7 @@
     "minimize": "Réduire",
     "close": "Fermer",
     "searchPlaceholder": "Rechercher des paramètres…",
+    "searchPlaceholderShort": "Rechercher…",
     "searchClear": "Effacer la recherche",
     "searchNoResults": "Aucun paramètre correspondant",
     "collapseSidebar": "Réduire la barre latérale",

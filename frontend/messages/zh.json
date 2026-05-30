@@ -53,6 +53,7 @@
     "minimize": "最小化",
     "close": "关闭",
     "searchPlaceholder": "搜索设置…",
+    "searchPlaceholderShort": "搜索…",
     "searchClear": "清除搜索",
     "searchNoResults": "没有匹配的设置",
     "collapseSidebar": "折叠侧边栏",

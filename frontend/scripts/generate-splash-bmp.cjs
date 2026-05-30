@@ -24,7 +24,10 @@ const BG = { r: 0x10, g: 0x12, b: 0x18 }; // near-black
 const FG = { r: 0xff, g: 0xff, b: 0xff };
 
 const buildDir = path.resolve(__dirname, "..", "build");
-const iconPath = path.join(buildDir, "icon.png");
+// public/icon.png is the committed 256px brand mark emitted by
+// generate-icons.py (same mark used everywhere). Compositing its transparent
+// PNG over the dark splash background gives a clean installer splash.
+const iconPath = path.resolve(__dirname, "..", "public", "icon.png");
 const outPath = path.join(buildDir, "splash.bmp");
 
 // ──────────────────────────────────────────────────────────────────────

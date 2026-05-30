@@ -18,7 +18,7 @@
  * are persisted. When no provider is installed the submenu is hidden.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
 	app,
@@ -99,7 +99,57 @@ export function getTrayIconPath(theme: TrayAppTheme, state: TrayIconState): stri
 	return path.join(trayResourcesRoot(), `tray_${state}_${theme}.png`);
 }
 
+/**
+ * Filenames (largest → smallest) we'll try for the idle glyph. We deliberately
+ * prefer the BIGGEST bitmap rather than the @1x 16px one.
+ *
+ * Why: on Windows, Electron's tray uses the image's PRIMARY bitmap and lets the
+ * OS DPI-scale it for the notification-area cell. The 16px primary therefore
+ * gets *upscaled* at 125–175% scaling → the blur you saw. `addRepresentation`
+ * scale-reps are NOT honored for the Win32 tray, so the multi-rep approach
+ * didn't help. The recording/transcribing animation has always been crisp
+ * because `recording-indicator.ts` hands the tray a 48px bitmap that Windows
+ * only ever *downscales*. So we do the same here: feed a single 48px bitmap and
+ * let Windows downscale to whatever the current DPI needs (16/20/24/28/32/40/48
+ * are all clean downscales of 48). This is also what Steam/Discord ship.
+ */
+const TRAY_IDLE_PREFERENCE = [
+	"@4x",
+	"@3x",
+	"@2.5x",
+	"@2x",
+	"@1.75x",
+	"@1.5x",
+	"@1.25x",
+	"",
+] as const;
+
+/**
+ * Load the idle glyph as a single high-res bitmap so Windows downscales (crisp)
+ * instead of upscaling the 16px base (blurry). Picks the largest available
+ * `tray_idle_<theme>@{n}x.png`, falling back through the ladder to the 16px
+ * base. Loaded via createFromBuffer so Electron's implicit "@2x" filename
+ * detection can't override our chosen bitmap with a smaller sibling.
+ */
+export function loadIdleIcon(theme: TrayAppTheme): NativeImage {
+	const root = trayResourcesRoot();
+	for (const suffix of TRAY_IDLE_PREFERENCE) {
+		const repPath = path.join(root, `tray_idle_${theme}${suffix}.png`);
+		if (!existsSync(repPath)) {
+			continue;
+		}
+		const img = nativeImage.createFromBuffer(readFileSync(repPath), { scaleFactor: 1 });
+		if (!img.isEmpty()) {
+			return img;
+		}
+	}
+	return nativeImage.createEmpty();
+}
+
 function loadIcon(state: TrayIconState, theme: TrayAppTheme): NativeImage {
+	if (state === "idle") {
+		return loadIdleIcon(theme);
+	}
 	const iconPath = getTrayIconPath(theme, state);
 	if (!existsSync(iconPath)) {
 		return nativeImage.createEmpty();

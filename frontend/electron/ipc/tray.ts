@@ -8,7 +8,7 @@ import {
 	Tray,
 } from "electron";
 import { showTrayMenuAt } from "./tray-menu-window";
-import { attachTray, getCurrentTrayTheme, getTrayIconPath } from "./tray-state";
+import { attachTray, getCurrentTrayTheme, loadIdleIcon } from "./tray-state";
 
 function resolveLegacyIconFilename(): string {
 	return process.platform === "win32" ? "icon.ico" : "icon.png";
@@ -30,12 +30,11 @@ function resolveLegacyTrayIconPath(): string {
  * `bun run icon:tray:generate` before bundling).
  */
 function loadInitialTrayIcon(): NativeImage {
-	const themed = getTrayIconPath(getCurrentTrayTheme(), "idle");
-	if (fs.existsSync(themed)) {
-		const icon = nativeImage.createFromPath(themed);
-		if (!icon.isEmpty()) {
-			return icon;
-		}
+	// Reuse the crisp multi-size idle loader (largest bitmap → Windows
+	// downscales) so the very first paint isn't the blurry 16px base.
+	const idle = loadIdleIcon(getCurrentTrayTheme());
+	if (!idle.isEmpty()) {
+		return idle;
 	}
 	const legacy = resolveLegacyTrayIconPath();
 	if (!fs.existsSync(legacy)) {

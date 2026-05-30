@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "설정 검색…",
+    "searchPlaceholderShort": "검색…",
     "searchClear": "검색 지우기",
     "searchNoResults": "일치하는 설정이 없습니다",
     "collapseSidebar": "사이드바 접기",

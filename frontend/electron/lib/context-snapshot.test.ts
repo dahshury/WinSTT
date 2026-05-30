@@ -22,6 +22,65 @@ describe("EMPTY_CONTEXT", () => {
 	});
 });
 
+describe("formatContextForPrompt — selected text + clipboard (field-standard supplementary context)", () => {
+	test("emits the selected-text section when a selection is present", () => {
+		const out = formatContextForPrompt(makeSnapshot({ selectedText: "the paragraph to rewrite" }));
+		expect(out).toContain("Selected text (the user highlighted this");
+		expect(out).toContain("the paragraph to rewrite");
+	});
+
+	test("emits the clipboard section when clipboard context is present", () => {
+		const out = formatContextForPrompt(makeSnapshot({ clipboardText: "https://example.com/ref" }));
+		expect(out).toContain("Clipboard contents (the user recently copied this");
+		expect(out).toContain("https://example.com/ref");
+	});
+
+	test("neither section appears when both are absent (no noise)", () => {
+		const out = formatContextForPrompt(makeSnapshot({ focusedText: "hello" }));
+		expect(out).not.toContain("Selected text");
+		expect(out).not.toContain("Clipboard contents");
+	});
+
+	test("selected text leads and clipboard trails the caret content", () => {
+		const out = formatContextForPrompt(
+			makeSnapshot({
+				selectedText: "SELECTED_BLOCK",
+				textBefore: "caret leading text that is clearly long enough to be rich content",
+				clipboardText: "CLIPBOARD_BLOCK",
+			})
+		);
+		const selIdx = out.indexOf("SELECTED_BLOCK");
+		const caretIdx = out.indexOf("caret leading text");
+		const clipIdx = out.indexOf("CLIPBOARD_BLOCK");
+		expect(selIdx).toBeGreaterThanOrEqual(0);
+		expect(caretIdx).toBeGreaterThan(selIdx);
+		expect(clipIdx).toBeGreaterThan(caretIdx);
+	});
+
+	test("de-noises the selection (object-replacement / control chars stripped)", () => {
+		const out = formatContextForPrompt(makeSnapshot({ selectedText: "￼\nclean line\n￼" }));
+		expect(out).toContain("clean line");
+		expect(out).not.toContain("￼");
+	});
+
+	test("a denied snapshot (redacted) carries no selection/clipboard", () => {
+		// redactSensitiveFields keeps only the legacy triple, so selection +
+		// clipboard captured for a denied app never reach the LLM.
+		const redacted = redactSensitiveFields(
+			makeSnapshot({
+				windowTitle: "1Password",
+				selectedText: "master password vault entry",
+				clipboardText: "secret token",
+			})
+		);
+		const out = formatContextForPrompt(redacted);
+		expect(out).not.toContain("master password");
+		expect(out).not.toContain("secret token");
+		expect(out).not.toContain("Selected text");
+		expect(out).not.toContain("Clipboard contents");
+	});
+});
+
 describe("formatContextForPrompt", () => {
 	test("returns empty string when every field is blank", () => {
 		expect(formatContextForPrompt(EMPTY_CONTEXT)).toBe("");

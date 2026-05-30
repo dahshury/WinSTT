@@ -22,15 +22,33 @@ export interface RawDictEntry {
 const MAX_PROMPT_CHARS = 600;
 
 /**
- * Per-utterance hard cap on the dynamic context tail. The tail is the
- * sanitised text immediately before the user's caret (captured via UIA
- * when `general.contextAwareness` is on). It's the highest-signal slice
- * — Whisper was trained to condition on prior text — but it must NOT
- * crowd out the static prefix and dictionary glossary, so we cap it
- * tightly. 250 chars covers a paragraph of preceding email/notes/code
- * while leaving ~350 chars in the overall budget for prefix + glossary.
+ * Per-utterance hard cap on the dynamic context tail — the sanitised text
+ * immediately before the user's caret (captured via UIA when
+ * `general.contextAwareness` is on). It's the highest-signal slice (Whisper
+ * was trained to condition on prior text), but length is a double constraint:
+ *
+ *   1. Whisper's prompt is hard-capped BY THE MODEL at 224 tokens
+ *      (= n_text_ctx//2 - 1; n_text_ctx=448) ≈ ~150 words / ~900 chars of
+ *      English. Anything past that is silently dropped from the HEAD — so
+ *      feeding "the whole email" can't even reach the decoder, only its last
+ *      ~224 tokens would. The whole document is the LLM's job, not Whisper's:
+ *      Whisper never "reads" it, it only biases token probabilities toward the
+ *      prior text's spelling/casing/style.
+ *   2. A long, topical prompt tips the SMALL models (we ship whisper-tiny-q4
+ *      as the offline base) into regurgitating the prompt verbatim on short /
+ *      quiet audio (see memory/project_context_prompt_poisons_whisper.md).
+ *
+ * 500 chars (~125 tokens, ~90 words) is the sweet spot: ~half the model
+ * ceiling, ~80% of {@link MAX_PROMPT_CHARS}, enough to prime the proper nouns
+ * / terms the user is about to dictate (the reply draft + the closing of the
+ * quoted email) without handing tiny Whisper a long block to parrot. The slice
+ * is denoised + descrollbacked upstream, so the old NOISE-poisoning risk is
+ * already gone — this cap governs LENGTH only. Bumped 250→500 (2026-05-30)
+ * once the tail was reliably clean. It must still NOT crowd out the static
+ * prefix + glossary, so composeInitialPrompt clips the tail's FRONT to fit
+ * {@link MAX_PROMPT_CHARS} when those are present.
  */
-const MAX_CONTEXT_TAIL_CHARS = 250;
+const MAX_CONTEXT_TAIL_CHARS = 500;
 
 /**
  * Max number of distinct dictionary vocab terms to fold into the prompt.
@@ -190,7 +208,11 @@ const CONTEXT_NOISE_RE = /[\p{C}\p{So}•‣⁃\u{1F000}-\u{1FAFF}]/gu;
  * {@link MAX_CONTEXT_TAIL_CHARS}, keeping the LAST n chars (the slice
  * closest to the caret is the most relevant prior-text signal). Noise is
  * replaced with a space (not elided) so stripping a glyph between two
- * words can't fuse them into one token.
+ * words can't fuse them into one token. When the cap bites we also drop a
+ * leading PARTIAL word so the prompt starts on a clean token boundary
+ * ("…e of me afford" → "of me afford") — Whisper conditions better on whole
+ * tokens. Guarded against a single oversized word (no internal space), where
+ * snapping would gut the tail.
  */
 export function sanitiseContextTail(rawTail: string): string {
 	const denoised = rawTail.replace(CONTEXT_NOISE_RE, " ");
@@ -198,7 +220,9 @@ export function sanitiseContextTail(rawTail: string): string {
 	if (collapsed.length <= MAX_CONTEXT_TAIL_CHARS) {
 		return collapsed;
 	}
-	return collapsed.slice(collapsed.length - MAX_CONTEXT_TAIL_CHARS);
+	const tail = collapsed.slice(collapsed.length - MAX_CONTEXT_TAIL_CHARS);
+	const firstSpace = tail.indexOf(" ");
+	return firstSpace > 0 && firstSpace < tail.length - 1 ? tail.slice(firstSpace + 1) : tail;
 }
 
 function joinContextWithBody(contextTail: string, body: string): string {
@@ -258,7 +282,7 @@ export function composeInitialPrompt(
 	}
 	// Past the fast-path guard, body is necessarily non-empty: an empty body
 	// makes `composed === tail`, and `tail` is hard-capped at
-	// MAX_CONTEXT_TAIL_CHARS (250) < MAX_PROMPT_CHARS, so it would have already
+	// MAX_CONTEXT_TAIL_CHARS (500) < MAX_PROMPT_CHARS, so it would have already
 	// returned above. (The former `body.length === 0` branch here was dead.)
 	const roomForTail = MAX_PROMPT_CHARS - body.length - 2; // "\n\n"
 	if (roomForTail <= 0) {

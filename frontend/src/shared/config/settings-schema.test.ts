@@ -426,22 +426,25 @@ describe("ttsSettingsSchema hotkey", () => {
 });
 
 describe("appSettingsSchema — no hotkey field is ever empty", () => {
-	test("all three hotkeys resolve to non-empty defaults from an empty input", () => {
+	test("all four hotkeys resolve to non-empty defaults from an empty input", () => {
 		const out = appSettingsSchema.parse({});
 		expect(out.hotkey.pushToTalkKey.length).toBeGreaterThan(0);
 		expect(out.general.repasteHotkey.length).toBeGreaterThan(0);
 		expect(out.tts.hotkey.length).toBeGreaterThan(0);
+		expect(out.llm.transforms.hotkey.length).toBeGreaterThan(0);
 	});
 
-	test("all three hotkeys rehydrate to non-empty even when persisted as empty strings", () => {
+	test("all four hotkeys rehydrate to non-empty even when persisted as empty strings", () => {
 		const out = appSettingsSchema.parse({
 			hotkey: { pushToTalkKey: "" },
 			general: { repasteHotkey: "" },
 			tts: { hotkey: "" },
+			llm: { transforms: { hotkey: "" } },
 		});
 		expect(out.hotkey.pushToTalkKey).toBe("LCtrl+LMeta");
 		expect(out.general.repasteHotkey).toBe("LCtrl+LShift+V");
 		expect(out.tts.hotkey).toBe("LMeta+LShift+E");
+		expect(out.llm.transforms.hotkey).toBe("LCtrl+LShift+T");
 	});
 });
 
@@ -620,11 +623,19 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 		).toThrow();
 	});
 
-	test("transforms defaults mirror dictation: neutral preset, no modifiers, empty hotkey", () => {
+	test("transforms defaults mirror dictation: neutral preset, no modifiers, default Ctrl+Shift+T hotkey", () => {
 		const out = llmSettingsSchema.parse({}).transforms;
 		expect(out.presets).toEqual([{ key: "neutral" }]);
 		expect(out.customModifiers).toEqual([]);
-		expect(out.hotkey).toBe("");
+		// Always non-empty: mirrors the TTS hotkey rule so the conflict checker
+		// can compare against it and the recorder UI never renders an empty chip.
+		expect(out.hotkey).toBe("LCtrl+LShift+T");
+	});
+
+	test("transforms.hotkey rescues empty via .catch() to default", () => {
+		expect(llmSettingsSchema.parse({ transforms: { hotkey: "" } }).transforms.hotkey).toBe(
+			"LCtrl+LShift+T"
+		);
 	});
 
 	test("transforms.presets shares the same composition rules as dictation.presets", () => {

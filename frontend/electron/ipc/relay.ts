@@ -1888,6 +1888,12 @@ export function setupRelay(
 		read: () =>
 			readWindowContextTree({
 				ocrFallback: true,
+				// Field-standard supplementary context (see memory survey): the
+				// user's SELECTED text (highest-signal intent) + the CLIPBOARD
+				// (echo-guarded). Selection uses the side-effect-free UIA read,
+				// safe to fire on recording_start. Both respect the deny-list.
+				includeSelection: true,
+				includeClipboard: true,
 				denyList: getStoreValue("general.contextDenyList"),
 			}),
 		onSnapshotReady: (snapshot) => {

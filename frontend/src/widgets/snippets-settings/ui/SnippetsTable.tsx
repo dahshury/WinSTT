@@ -128,7 +128,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 				className="overflow-y-auto overscroll-contain rounded border border-border"
 				style={{ maxHeight: TABLE_MAX_HEIGHT_PX }}
 			>
-				<Table>
+				<Table className="table-fixed">
 					<TableHeader>
 						<TableRow>
 							<TableHead className="w-1/3">{t("trigger")}</TableHead>
@@ -142,8 +142,8 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 						) : (
 							entries.map((entry, idx) => (
 								<TableRow index={idx} key={entry.id}>
-									<TableCell className="w-1/3 text-purple">{entry.trigger}</TableCell>
-									<TableCell className="text-foreground">{entry.expansion}</TableCell>
+									<TableCell className="w-1/3 break-words text-purple">{entry.trigger}</TableCell>
+									<TableCell className="break-words text-foreground">{entry.expansion}</TableCell>
 									<TableCell className="w-10 text-right">
 										<Tooltip content={tc("delete")}>
 											<Button

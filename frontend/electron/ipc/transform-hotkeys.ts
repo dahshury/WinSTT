@@ -31,6 +31,17 @@ let onKeyUp: ((event: { keycode: number }) => void) | null = null;
 let storeUnsubscribe: (() => void) | null = null;
 
 function loadHotkey(): string {
+	// Arm the combo ONLY while the transforms feature is enabled. The hotkey
+	// string itself is always present (schema default Ctrl+Shift+T) so the
+	// settings UI shows a combo, but a disabled feature must never capture the
+	// global combo: Ctrl+Shift+T is a common shortcut (e.g. reopen-closed-tab),
+	// and `applyTransform` would broadcast a "feature disabled" failure on every
+	// press (see `requireEnabled` in transforms.ts). The `onDidChange("llm")`
+	// subscription below rebuilds the combo when `enabled` flips, since this
+	// result changes with it.
+	if (store.get("llm.transforms.enabled") !== true) {
+		return "";
+	}
 	return (store.get("llm.transforms.hotkey") ?? "").toString().trim();
 }
 

@@ -127,6 +127,17 @@ function reset(): void {
 
 function setHotkey(hotkey: string): void {
 	storeValues["llm.transforms.hotkey"] = hotkey;
+	// `loadHotkey()` now arms the combo ONLY while the transforms feature is
+	// enabled (otherwise pressing Ctrl+Shift+T while off would spam a "feature
+	// disabled" failure). Enable the feature here so the combo-building tests
+	// below — which all expect a real combo from a non-empty hotkey — see the
+	// armed state. The gate (`enabled === false` ⇒ no combo) is covered by its
+	// own focused test that sets these two fields independently.
+	storeValues["llm.transforms.enabled"] = true;
+}
+
+function setEnabled(enabled: boolean): void {
+	storeValues["llm.transforms.enabled"] = enabled;
 }
 
 describe("transform-hotkeys: combo matching", () => {
@@ -147,6 +158,27 @@ describe("transform-hotkeys: combo matching", () => {
 	test("rebuildCombo registers a parseable hotkey", () => {
 		reset();
 		setHotkey("LCtrl+LShift+P");
+		helpers.rebuildCombo();
+		const combo = helpers.getCombo();
+		expect(combo).not.toBeNull();
+		expect(combo?.size).toBe(3);
+	});
+
+	test("rebuildCombo leaves the combo unarmed when the feature is disabled even with a hotkey set", () => {
+		// The hotkey string is always present (schema default Ctrl+Shift+T), but a
+		// disabled feature must NOT capture the global combo: Ctrl+Shift+T is a
+		// common shortcut (reopen-closed-tab) and `applyTransform` would broadcast
+		// a "feature disabled" failure on every press. `loadHotkey()` returns ""
+		// while `llm.transforms.enabled !== true`, so no combo is armed.
+		reset();
+		// A valid, parseable hotkey is present — only the disabled flag suppresses it.
+		storeValues["llm.transforms.hotkey"] = "LCtrl+LShift+P";
+		setEnabled(false);
+		helpers.rebuildCombo();
+		expect(helpers.getCombo()).toBeNull();
+
+		// Flipping enabled to true arms the same hotkey into a real combo.
+		setEnabled(true);
 		helpers.rebuildCombo();
 		const combo = helpers.getCombo();
 		expect(combo).not.toBeNull();

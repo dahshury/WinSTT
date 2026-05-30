@@ -53,6 +53,7 @@
     "minimize": "Minimizar",
     "close": "Cerrar",
     "searchPlaceholder": "Buscar ajustes…",
+    "searchPlaceholderShort": "Buscar…",
     "searchClear": "Borrar búsqueda",
     "searchNoResults": "No hay ajustes coincidentes",
     "collapseSidebar": "Contraer barra lateral",

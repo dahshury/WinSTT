@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "Търсене в настройките…",
+    "searchPlaceholderShort": "Търсене…",
     "searchClear": "Изчистване на търсенето",
     "searchNoResults": "Няма съвпадащи настройки",
     "collapseSidebar": "Свиване на страничната лента",

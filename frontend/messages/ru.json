@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "Поиск настроек…",
+    "searchPlaceholderShort": "Поиск…",
     "searchClear": "Очистить поиск",
     "searchNoResults": "Нет совпадающих настроек",
     "collapseSidebar": "Свернуть боковую панель",

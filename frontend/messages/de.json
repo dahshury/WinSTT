@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "Einstellungen durchsuchen…",
+    "searchPlaceholderShort": "Suchen…",
     "searchClear": "Suche löschen",
     "searchNoResults": "Keine passenden Einstellungen",
     "collapseSidebar": "Seitenleiste einklappen",

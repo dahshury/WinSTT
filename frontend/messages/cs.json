@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "Hledat nastavení…",
+    "searchPlaceholderShort": "Hledat…",
     "searchClear": "Vymazat hledání",
     "searchNoResults": "Žádná odpovídající nastavení",
     "collapseSidebar": "Sbalit postranní panel",

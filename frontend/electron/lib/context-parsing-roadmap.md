@@ -70,7 +70,7 @@ Legend: ⬜ not yet tested · 🟡 captured, needs tuning · ✅ clean · ⛔ bl
 
 | # | App | Surface type | UIA expectation | Status | Notes |
 |---|-----|--------------|-----------------|--------|-------|
-| 1 | Gmail (Chrome) | webmail, contenteditable | rich focused field | 🟡 | Tier-1 drops 25KB tree → 0.3KB; **verify after restart**. Long emails may crop at C `CARET_BEFORE_CHARS=600`. |
+| 1 | Gmail (Chrome) | webmail | 1 | ✅ | LIVE-VERIFIED 2026-05-30: Gmail flattens inbox+thread+composer into ONE doc range, so caret textBefore leaked the whole inbox (incl. one-time codes!). `stripListScrollback` cuts dated inbox rows → fragment = subject+sender+email+draft only (3891→466 chars, zero leaks). Caret cap 4000 keeps long emails. |
 | 2 | Cursor | Electron/IDE | terminal OR editor | 🟡 | Terminal suppressed (tier-2). Editor pane = rich field. `appExe=cursor.exe` now resolves. |
 | 3 | VS Code | Electron/IDE | editor / terminal | ⬜ | Same engine as Cursor; expect same behaviour. |
 | 4 | Discord | Electron, chat | focused message box | ⬜ | Electron a11y can be thin → may hit tier-3/4. |

@@ -1,6 +1,7 @@
 import { Tabs } from "@base-ui/react/tabs";
 import {
 	AiChat02Icon,
+	Cancel01Icon,
 	ChartHistogramIcon,
 	CpuChargeIcon,
 	InformationCircleIcon,
@@ -10,6 +11,7 @@ import {
 	SlidersHorizontalIcon,
 	TextIcon,
 } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
@@ -160,8 +162,6 @@ export function SettingsPage() {
 		},
 	];
 
-	const activeLink = links.find((l) => l.key === activeTab);
-
 	return (
 		<SurfaceProvider value={1}>
 			<div className="noise-overlay flex h-dvh min-h-dvh bg-surface-1">
@@ -173,7 +173,7 @@ export function SettingsPage() {
 						orientation="vertical"
 						value={activeTab}
 					>
-						<SettingsSidebar links={links} onClose={windowCloseSelf} />
+						<SettingsSidebar links={links} />
 						{/* Content card — a rounded, shadowed panel inset with a small margin
 						    so the surface-1 substrate shows around it. The sidebar reads as
 						    built into the window while each tab's content floats a layer above.
@@ -182,22 +182,33 @@ export function SettingsPage() {
 						    from there as usual. */}
 						<div className="min-w-0 flex-1 py-2.5 ps-2 pe-2.5">
 							<Elevated
-								className="flex h-full flex-col overflow-hidden rounded-xl ring-1 ring-divider-strong"
+								className="relative flex h-full flex-col overflow-hidden rounded-xl ring-1 ring-divider-strong"
 								offset={2}
 								shadowLevel={5}
 							>
-								{/* Per-tab title — sits in a fixed band whose height matches the
-								    sidebar's "Settings" band so the two wordmarks share a baseline.
-								    Doubles as a window drag region for the frameless window. */}
-								<div className="titlebar-drag flex h-14 shrink-0 items-center px-6">
-									<h2 className="font-semibold text-foreground text-title tracking-[-0.02em]">
-										{activeLink?.label ?? ""}
-									</h2>
-								</div>
-								<ScrollArea className="min-h-0 flex-1" viewportClassName="px-6 pb-6">
-									{activeLink?.tooltip ? (
-										<p className="pb-3 text-body text-foreground-muted">{activeLink.tooltip}</p>
-									) : null}
+								{/* No title band — the active tab's name lives in the sidebar rail,
+								    not repeated here. The window close button floats at the card's
+								    very top-right corner, above the scrolling content. */}
+								<button
+									aria-label={t("close")}
+									className="titlebar-no-drag group absolute end-1.5 top-1.5 z-raised flex size-7 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-white focus-visible:ring-2 focus-visible:ring-accent"
+									onClick={windowCloseSelf}
+									type="button"
+								>
+									<HugeiconsIcon
+										className="transition-transform duration-150 ease-out group-hover:scale-110"
+										icon={Cancel01Icon}
+										size={15}
+									/>
+								</button>
+								{/* Top padding clears the floating close button (~44px tall from
+								    the card top) so the first section starts just below it. */}
+								<ScrollArea
+									className="min-h-0 flex-1"
+									verticalOnly
+									verticalScrollbarClassName="mt-9 mb-3 me-1"
+									viewportClassName="px-6 pt-9 pb-6"
+								>
 									<Tabs.Panel value="general">
 										<GeneralSettingsPanel />
 									</Tabs.Panel>

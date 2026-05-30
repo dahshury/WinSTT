@@ -7,7 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -46,8 +46,6 @@ export interface SidebarLink {
 
 interface SettingsSidebarProps {
 	links: SidebarLink[];
-	/** Close the settings window (rendered as the leading × in the header). */
-	onClose: () => void;
 }
 
 const SIDEBAR_WIDTH = 170;
@@ -74,28 +72,105 @@ function writeCollapsed(next: boolean): void {
 /**
  * Settings sidebar — a column that shares the page substrate (surface-1) so it
  * reads as built into the window, with each tab's content floating a layer
- * above. Holds the close button, wordmark, a collapse toggle, a live search
- * filter, and the vertical tab list (hairline separators close logical groups).
+ * above. Holds a search affordance (an icon that grows into a live filter
+ * field), the wordmark, a collapse toggle, and the vertical tab list (hairline
+ * separators close logical groups). The window close button lives in the
+ * content card (top-right), not here.
+ *
+ * The search starts as an icon sitting where the close button used to (leading
+ * edge of the header). Clicking it tweens a field open over the "Settings"
+ * wordmark (width transition via `.t-resize`); the wordmark hides while it's
+ * open. The field folds back when it loses focus — either a blur, or a pointer
+ * press anywhere outside it (a plain click on a non-focusable region never
+ * blurs an input, so the outside-press listener is what actually catches it).
  *
  * Collapsible: the toggle beside the wordmark shrinks the column to an
- * icon-only rail (search hidden, labels become hover tooltips) and back.
+ * icon-only rail (labels become hover tooltips) and back.
  */
-export function SettingsSidebar({ links, onClose }: SettingsSidebarProps) {
+export function SettingsSidebar({ links }: SettingsSidebarProps) {
 	const t = useTranslations("settings");
 	const [query, setQuery] = useState("");
 	const [collapsed, setCollapsed] = useState(readCollapsed);
+	const [searchOpen, setSearchOpen] = useState(false);
+	const inputRef = useRef<HTMLInputElement>(null);
+	// Wraps the search affordance + field so an outside-press can tell whether
+	// the press landed on the search or somewhere it should fold away.
+	const searchRegionRef = useRef<HTMLDivElement>(null);
 
 	// Sidebar stays at the page substrate; the search field lifts one step so it
 	// reads as a recessed input against it.
 	const substrate = useSurface();
 	const inputLevel = Math.min(substrate + 1, 8);
 
+	// Focus the field the moment it opens so the user can type immediately.
+	useEffect(() => {
+		if (searchOpen) {
+			inputRef.current?.focus();
+		}
+	}, [searchOpen]);
+
+	// Fold the field away on any pointer press outside it. A click on a
+	// non-focusable region (drag strip, a tab row, the content card) never
+	// blurs the input, so `onBlur` alone misses it — this is the catch-all.
+	// Deferred one tick so a press landing on a filtered tab selects it before
+	// the list reverts to the full set.
+	useEffect(() => {
+		if (!searchOpen) {
+			return;
+		}
+		const onOutsidePress = (event: PointerEvent) => {
+			const target = event.target as Node | null;
+			if (target && searchRegionRef.current?.contains(target)) {
+				return;
+			}
+			window.setTimeout(() => {
+				setSearchOpen(false);
+				setQuery("");
+			}, 120);
+		};
+		// Capture phase + pointerdown so the press is caught even when a child
+		// (a Base UI tab, the scroll area, a field in the tab content) stops
+		// propagation in the bubble phase — that was why some outside presses
+		// didn't fold the field away.
+		document.addEventListener("pointerdown", onOutsidePress, true);
+		return () => document.removeEventListener("pointerdown", onOutsidePress, true);
+	}, [searchOpen]);
+
+	const closeSearch = () => {
+		setSearchOpen(false);
+		setQuery("");
+		inputRef.current?.blur();
+	};
+
+	// Keyboard tab-away: focus leaves to a real focusable (toggle, a tab). A
+	// click on a non-focusable region is handled by the outside-press listener
+	// above instead. Deferred + guarded so refocus (e.g. the clear button) wins.
+	const handleSearchBlur = () => {
+		window.setTimeout(() => {
+			if (document.activeElement !== inputRef.current) {
+				setSearchOpen(false);
+				setQuery("");
+			}
+		}, 120);
+	};
+
+	const openSearch = () => {
+		// No room for the field in the collapsed rail — expand first.
+		if (collapsed) {
+			setCollapsed(false);
+			writeCollapsed(false);
+		}
+		setSearchOpen(true);
+	};
+
 	const toggleCollapsed = () => {
-		setCollapsed((prev) => {
-			const next = !prev;
-			writeCollapsed(next);
-			return next;
-		});
+		const next = !collapsed;
+		setCollapsed(next);
+		writeCollapsed(next);
+		// Collapsing has no room for the search field — fold it away cleanly.
+		if (next) {
+			closeSearch();
+		}
 	};
 
 	const trimmed = query.trim().toLowerCase();
@@ -109,18 +184,14 @@ export function SettingsSidebar({ links, onClose }: SettingsSidebarProps) {
 			)
 		: links;
 
-	const closeButton = (
+	const searchButton = (
 		<button
-			aria-label={t("close")}
-			className="titlebar-no-drag group flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-white focus-visible:ring-2 focus-visible:ring-accent"
-			onClick={onClose}
+			aria-label={t("searchPlaceholder")}
+			className="titlebar-no-drag flex size-7 shrink-0 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
+			onClick={openSearch}
 			type="button"
 		>
-			<HugeiconsIcon
-				className="transition-transform duration-150 ease-out group-hover:scale-110"
-				icon={Cancel01Icon}
-				size={15}
-			/>
+			<HugeiconsIcon icon={Search01Icon} size={16} />
 		</button>
 	);
 
@@ -142,54 +213,89 @@ export function SettingsSidebar({ links, onClose }: SettingsSidebarProps) {
 			className="relative flex h-full shrink-0 flex-col bg-surface-1 transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
 			style={{ width: collapsed ? COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
 		>
-			{/* Header strip — close button + wordmark + collapse toggle. The h-14
-			    band matches the content column's title band so "Settings" and the
-			    active tab name sit on the same baseline. Draggable for window move. */}
+			{/* Header strip — search affordance + wordmark + collapse toggle. The
+			    h-14 band gives the column a title region. Draggable for window move;
+			    opening search tweens a field over the wordmark. */}
 			{collapsed ? (
 				<div className="titlebar-drag flex flex-col items-center gap-1 px-2 pt-2.5 pb-1">
-					{closeButton}
+					{searchButton}
 					{toggleButton}
 				</div>
 			) : (
-				<div className="titlebar-drag flex h-14 shrink-0 items-center gap-2 px-3">
-					{closeButton}
-					<span className="font-semibold text-foreground text-title tracking-[-0.01em]">
-						{t("title")}
-					</span>
-					<div className="flex-1" />
-					{toggleButton}
-				</div>
-			)}
-
-			{/* Search — expanded only */}
-			{collapsed ? null : (
-				<div className="titlebar-no-drag px-3 pb-3">
-					<div className="relative flex items-center">
-						<HugeiconsIcon
-							aria-hidden="true"
-							className="pointer-events-none absolute start-2.5 text-foreground-muted"
-							icon={Search01Icon}
-							size={14}
-						/>
-						<input
-							aria-label={t("searchPlaceholder")}
-							className={`h-8 w-full rounded-md ps-8 pe-7 text-body text-foreground caret-accent outline-none ring-1 ring-divider transition-shadow placeholder:text-foreground-muted hover:ring-border focus-visible:ring-2 focus-visible:ring-accent ${surfaceBg(inputLevel)}`}
-							onChange={(e) => setQuery(e.target.value)}
-							placeholder={t("searchPlaceholder")}
-							type="text"
-							value={query}
-						/>
-						{trimmed.length > 0 ? (
-							<button
-								aria-label={t("searchClear")}
-								className="absolute end-1.5 flex size-5 items-center justify-center rounded-full bg-transparent text-foreground-muted outline-none transition-colors hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
-								onClick={() => setQuery("")}
-								type="button"
-							>
-								<HugeiconsIcon icon={Cancel01Icon} size={12} />
-							</button>
-						) : null}
+				<div
+					className={cn(
+						"flex h-14 shrink-0 items-center gap-2 px-3",
+						// While the field is open the header must NOT be an OS drag region:
+						// drag regions swallow pointer events, so a press in the header gutter
+						// (even one pixel to the right of the field) never reached the
+						// outside-press listener and the field wouldn't dismiss.
+						searchOpen ? "titlebar-no-drag" : "titlebar-drag"
+					)}
+				>
+					<div
+						className="relative flex h-8 min-w-0 flex-1 items-center gap-2"
+						ref={searchRegionRef}
+					>
+						{searchOpen ? null : (
+							<>
+								{searchButton}
+								<span className="min-w-0 flex-1 truncate font-semibold text-foreground text-title tracking-[-0.01em]">
+									{t("title")}
+								</span>
+							</>
+						)}
+						{/* Search field — an overlay that tweens its width 0 → full over the
+						    region (the `.t-resize` recipe) so it grows in / out instead of
+						    snapping. Always mounted so the close also animates; gated out of
+						    the a11y/tab order while folded. */}
+						<div
+							className="t-resize titlebar-no-drag absolute inset-y-0 start-0 overflow-hidden"
+							style={{ width: searchOpen ? "100%" : "0px" }}
+						>
+							<div className="relative flex h-full w-full items-center">
+								<HugeiconsIcon
+									aria-hidden="true"
+									className="pointer-events-none absolute start-2.5 text-foreground-muted"
+									icon={Search01Icon}
+									size={14}
+								/>
+								<input
+									aria-hidden={!searchOpen}
+									aria-label={t("searchPlaceholder")}
+									// No focus ring — the open field + caret are signal enough; the
+									// accent ring on each edge read as noise while typing.
+									className={`h-8 w-full rounded-md ps-8 pe-7 text-body text-foreground caret-accent outline-none ring-1 ring-border ring-inset transition-shadow placeholder:text-foreground-muted hover:ring-border-hover ${surfaceBg(inputLevel)}`}
+									onBlur={handleSearchBlur}
+									onChange={(e) => setQuery(e.target.value)}
+									onKeyDown={(e) => {
+										if (e.key === "Escape") {
+											// Close the field, not the window.
+											e.stopPropagation();
+											closeSearch();
+										}
+									}}
+									placeholder={t("searchPlaceholderShort")}
+									ref={inputRef}
+									tabIndex={searchOpen ? 0 : -1}
+									type="text"
+									value={query}
+								/>
+								{trimmed.length > 0 ? (
+									<button
+										aria-label={t("searchClear")}
+										className="absolute end-1.5 flex size-5 items-center justify-center rounded-full bg-transparent text-foreground-muted outline-none transition-colors hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
+										onClick={() => setQuery("")}
+										// Keep focus on the input so clearing doesn't fold the field.
+										onMouseDown={(e) => e.preventDefault()}
+										type="button"
+									>
+										<HugeiconsIcon icon={Cancel01Icon} size={12} />
+									</button>
+								) : null}
+							</div>
+						</div>
 					</div>
+					{toggleButton}
 				</div>
 			)}
 

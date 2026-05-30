@@ -131,6 +131,8 @@ export interface ContextDebugReaders {
 	readSplit: () => Promise<WindowContextSnapshot>;
 	readTree: (opts: {
 		denyList: readonly string[];
+		includeClipboard?: boolean;
+		includeSelection?: boolean;
 		ocrFallback: boolean;
 	}) => Promise<WindowContextSnapshot>;
 }
@@ -180,7 +182,14 @@ export async function captureContextDebugReport(
 
 	// Primary capture: byte-for-byte the call the relay makes for dictation.
 	const treeStart = Date.now();
-	const raw = await readers.readTree({ denyList: opts.denyList, ocrFallback: true });
+	const raw = await readers.readTree({
+		denyList: opts.denyList,
+		ocrFallback: true,
+		// Mirror production (relay) so the debug view shows the same selection +
+		// clipboard supplementary context the dictation path now captures.
+		includeSelection: true,
+		includeClipboard: true,
+	});
 	const treeDurationMs = Date.now() - treeStart;
 
 	const denied = isDeniedByList(raw, opts.denyList);

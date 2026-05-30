@@ -1662,6 +1662,14 @@ function createOverlayWindow() {
 		height: 240,
 		transparent: true,
 		frame: false,
+		// Disable the OS-drawn window shadow. On Windows, DWM paints a soft drop
+		// shadow around a frameless window's *rectangular bounds* (the full
+		// 720×240 region), which on a transparent overlay shows up as a faint
+		// thin rectangle framing the pill — visible the whole time the overlay
+		// is up, not just on entrance. The pill draws its own CSS shadow, so the
+		// native one is pure noise. Matches Handy's overlay (`.shadow(false)` in
+		// `src-tauri/src/overlay.rs`). `hasShadow` defaults to `true`.
+		hasShadow: false,
 		alwaysOnTop: true,
 		skipTaskbar: true,
 		show: false,

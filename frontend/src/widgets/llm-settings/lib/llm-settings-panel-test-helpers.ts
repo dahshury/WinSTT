@@ -3,12 +3,12 @@ import {
 	AppleIcon,
 	BookOpen01Icon,
 	ComputerIcon,
-	DashboardSpeed01Icon,
-	DashboardSpeed02Icon,
-	DashboardSpeedIcon,
 	HappyIcon,
 	LockIcon,
 	PencilIcon,
+	SignalFull02Icon,
+	SignalLow02Icon,
+	SignalMedium02Icon,
 	Suit01Icon,
 	WavingHand01Icon,
 } from "@hugeicons/core-free-icons";
@@ -116,13 +116,15 @@ const LEVEL_LABEL_KEY = {
 	high: "levelHigh",
 } as const satisfies Record<PresetLevel, string>;
 
-// Gauge icons that climb with intensity so the level switcher reads at a
+// Signal-bar icons that climb with intensity so the level switcher reads at a
 // glance (light → high), matching the icon-per-option convention used by every
-// other switcher.
+// other switcher. NB: don't go back to the DashboardSpeed gauge set — hugeicons
+// aliases DashboardSpeed01Icon and DashboardSpeedIcon to byte-identical SVGs, so
+// "light" and "high" rendered the exact same glyph (only DashboardSpeed02 differs).
 const LEVEL_ICONS: Readonly<Record<PresetLevel, IconSvgElement>> = {
-	light: DashboardSpeed01Icon,
-	medium: DashboardSpeed02Icon,
-	high: DashboardSpeedIcon,
+	light: SignalLow02Icon,
+	medium: SignalMedium02Icon,
+	high: SignalFull02Icon,
 };
 
 export const DEFAULT_LEVEL: PresetLevel = "medium";

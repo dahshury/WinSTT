@@ -295,12 +295,25 @@ export function DynamicIsland({
 	};
 
 	return (
+		// `layout` is gated on `isVisible` (not just `fitContent`). When the
+		// island is collapsed (`empty` preset → 0 height) and then reveals, the
+		// layout-projection would animate the box from that 0×0 origin up to the
+		// full content size — a large `scale` transform that drags the shell's
+		// soft drop-shadow with it, painting a wide, faint dark rectangle below
+		// the island for a few frames before settling (the "transparent
+		// rectangle on first appear" bug). Disabling `layout` until the island
+		// is visible makes the reveal/close a pure panel-slide (opacity + y +
+		// blur, see `animateTarget`) with no projection scale, so the shadow
+		// stays tight. Once visible it stays visible for the whole session, so
+		// `layout` is active for every in-flight size change (per-line height
+		// growth, compact→long widen) exactly as before — those animate from a
+		// real box, not from 0, so they never distort the shadow.
 		<m.div
 			animate={animateTarget}
 			className={baseClasses.join(" ")}
 			id={id}
 			initial={false}
-			layout={fitContent}
+			layout={fitContent && isVisible}
 			style={motionStyle}
 			transition={transition}
 			{...rest}

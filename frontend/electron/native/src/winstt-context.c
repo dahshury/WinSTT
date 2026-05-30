@@ -60,17 +60,26 @@
    not exfiltrate documents. */
 #define MAX_TITLE_CHARS    200
 #define MAX_NAME_CHARS     200
-#define MAX_CONTEXT_CHARS  1000
+/* Whole-field + caret context budget. Raised from 1000 → 6000 so the LLM sees
+   a FULL email/message being replied to, not just the last ~600 chars before
+   the caret (a long quoted email used to get its opening cropped — see
+   memory/project_context_capture_extraction_strategy.md). The escape buffers
+   that scale with this (text/before/after) are heap-allocated in main() because
+   at 6000 chars × 8 they'd be ~192KB each — too large for the stack. */
+#define MAX_CONTEXT_CHARS  6000
 #define MAX_EXE_CHARS      120
 #define MAX_URL_CHARS      400
 
 /* Caret-split caps. The tail right before the caret is what decides
-   "continue this sentence vs. start fresh", so it gets the larger share;
-   the lookahead after the caret only needs enough to avoid duplicating
-   text the user is about to be inserted in front of. Sum stays under
-   MAX_CONTEXT_CHARS so the combined payload matches the non-split path. */
-#define CARET_BEFORE_CHARS 600
-#define CARET_AFTER_CHARS  400
+   "continue this sentence vs. start fresh" AND carries the quoted email/message
+   the user is replying to, so it gets the larger share; the lookahead after the
+   caret only needs enough to avoid duplicating text the output sits in front of.
+   Sum (4000 + 1000) stays under MAX_CONTEXT_CHARS so the combined payload still
+   fits the shared CONTEXT buffer. 4000 covers a long real email; a truly
+   enormous one crops its oldest lines, which is acceptable (the recent text
+   nearest the caret is the highest-signal slice). */
+#define CARET_BEFORE_CHARS 4000
+#define CARET_AFTER_CHARS  1000
 
 /* Tree-walk caps. Total payload + depth match Wispr Flow's documented
    limits (150,000 chars / forensic-observed depth 9); the element count
@@ -101,6 +110,12 @@
 /* Heap-only (200KB+) — the focused content element's full text. Sized in
    chars*4 for worst-case UTF-8 expansion, like the other buffers. */
 #define CONTENT_VALUE_BUF_BYTES (MAX_CONTENT_VALUE_CHARS * 4 + 1)
+/* Per-element INCIDENTAL value buffer used inside the recursive tree walk. It
+   only ever holds a ≤MAX_ELEMENT_VALUE_CHARS (200-char) nav/label value — the
+   big focused/Document/Edit body uses the heap content_buf instead. Sized off
+   MAX_ELEMENT_VALUE_CHARS (NOT MAX_CONTEXT_CHARS) so raising the context cap
+   doesn't multiply this across the 9 recursion frames and overflow the stack. */
+#define INCIDENTAL_VALUE_BUF_BYTES (MAX_ELEMENT_VALUE_CHARS * 4 + 1)
 
 /* JSON-escaped buffer needs ~6x of raw (\uXXXX is the worst case for
    sub-0x20 bytes). 8x gives a safety margin. The axHtml buffer is
@@ -764,7 +779,7 @@ static int walk_tree(TreeBuilder* tb,
        heap content buffer and emit with the large cap. Incidental Text
        labels stay on the small stack buffer + 200-char cap so the tree
        (and the 150K axHtml budget) stays compact. */
-    char value_stack[CONTEXT_BUF_BYTES] = {0};
+    char value_stack[INCIDENTAL_VALUE_BUF_BYTES] = {0};
     char* value = value_stack;
     int value_cap = MAX_ELEMENT_VALUE_CHARS;
     if (ctype == UIA_EditControlTypeId
@@ -1065,24 +1080,28 @@ int main(int argc, char* argv[]) {
 
     char  title_esc[TITLE_ESC_BYTES];
     char  name_esc[NAME_ESC_BYTES];
-    char  text_esc[CONTEXT_ESC_BYTES];
-    char  before_esc[CONTEXT_ESC_BYTES];
-    char  after_esc[CONTEXT_ESC_BYTES];
     char  exe_esc[EXE_ESC_BYTES];
     char  url_esc[URL_ESC_BYTES];
-    /* axhtml_esc is the only one that can plausibly exceed stack — keep on heap. */
+    /* text/before/after_esc scale with MAX_CONTEXT_CHARS (×8 ≈ 192KB each at the
+       raised 6000-char cap) and axhtml_esc is ~450KB — all far too large for the
+       stack, so heap-allocate. free(NULL) is a no-op, so the combined cleanup is
+       safe even on a partial allocation failure. */
+    char* text_esc   = (char*)malloc(CONTEXT_ESC_BYTES);
+    char* before_esc = (char*)malloc(CONTEXT_ESC_BYTES);
+    char* after_esc  = (char*)malloc(CONTEXT_ESC_BYTES);
     char* axhtml_esc = (char*)malloc(AXHTML_ESC_BYTES);
-    if (!axhtml_esc) {
-        fprintf(stderr, "ERROR: out of memory allocating axHtml escape buffer\n");
+    if (!text_esc || !before_esc || !after_esc || !axhtml_esc) {
+        fprintf(stderr, "ERROR: out of memory allocating escape buffers\n");
+        free(text_esc); free(before_esc); free(after_esc); free(axhtml_esc);
         free(axhtml);
         if (wd) { TerminateThread(wd, 0); CloseHandle(wd); }
         return 1;
     }
     json_escape_into(title_esc,  sizeof(title_esc),  window_title);
     json_escape_into(name_esc,   sizeof(name_esc),   element_name);
-    json_escape_into(text_esc,   sizeof(text_esc),   focused_text);
-    json_escape_into(before_esc, sizeof(before_esc), context_before);
-    json_escape_into(after_esc,  sizeof(after_esc),  context_after);
+    json_escape_into(text_esc,   CONTEXT_ESC_BYTES,  focused_text);
+    json_escape_into(before_esc, CONTEXT_ESC_BYTES,  context_before);
+    json_escape_into(after_esc,  CONTEXT_ESC_BYTES,  context_after);
     json_escape_into(exe_esc,    sizeof(exe_esc),    app_exe);
     json_escape_into(url_esc,    sizeof(url_esc),    url);
     json_escape_into(axhtml_esc, AXHTML_ESC_BYTES,   axhtml);
@@ -1094,6 +1113,7 @@ int main(int argc, char* argv[]) {
            exe_esc, url_esc, axhtml_esc);
     fflush(stdout);
 
+    free(text_esc); free(before_esc); free(after_esc);
     free(axhtml_esc);
     free(axhtml);
     if (wd) { TerminateThread(wd, 0); CloseHandle(wd); }

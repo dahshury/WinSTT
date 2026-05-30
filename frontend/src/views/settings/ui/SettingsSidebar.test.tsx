@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { Tabs } from "@base-ui/react/tabs";
 import { Cancel01Icon, Settings05Icon } from "@hugeicons/core-free-icons";
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -15,14 +15,22 @@ const links: SidebarLink[] = [
 	{ key: "audio", label: "Audio", icon: Cancel01Icon, tooltip: "Audio configuration" },
 ];
 
-function renderSidebar(onClose: () => void = () => undefined) {
+function renderSidebar() {
 	return render(
 		<IntlProvider>
 			<Tabs.Root defaultValue="general">
-				<SettingsSidebar links={links} onClose={onClose} />
+				<SettingsSidebar links={links} />
 			</Tabs.Root>
 		</IntlProvider>
 	);
+}
+
+// The field is always mounted (so it can animate in/out) but `aria-hidden` while
+// folded, so a role query only finds it once it's open. Click the affordance,
+// then return the now-accessible textbox.
+function openSearch() {
+	fireEvent.click(screen.getByRole("button", { name: /search/i }));
+	return screen.getByRole("textbox");
 }
 
 describe("SettingsSidebar", () => {
@@ -48,14 +56,29 @@ describe("SettingsSidebar", () => {
 		expect(screen.queryByRole("button", { name: /Reset/i })).toBeNull();
 	});
 
-	test("renders a search box", () => {
+	test("does not render a close button (it lives in the content card now)", () => {
 		renderSidebar();
-		expect(screen.getByPlaceholderText(/search/i)).toBeDefined();
+		expect(screen.queryByRole("button", { name: /close/i })).toBeNull();
+	});
+
+	test("search field stays out of reach until the affordance is clicked", () => {
+		renderSidebar();
+		// Folded: the field is aria-hidden, so no accessible textbox.
+		expect(screen.queryByRole("textbox")).toBeNull();
+		openSearch();
+		expect(screen.queryByRole("textbox")).not.toBeNull();
+	});
+
+	test("hides the Settings wordmark while the search field is open", () => {
+		renderSidebar();
+		expect(screen.getByText("Settings")).toBeDefined();
+		openSearch();
+		expect(screen.queryByText("Settings")).toBeNull();
 	});
 
 	test("filters the tab list by label as you type", () => {
 		renderSidebar();
-		const search = screen.getByPlaceholderText(/search/i);
+		const search = openSearch();
 		fireEvent.change(search, { target: { value: "audio" } });
 		const tabs = screen.getAllByRole("tab");
 		expect(tabs).toHaveLength(1);
@@ -64,7 +87,7 @@ describe("SettingsSidebar", () => {
 
 	test("search also matches a tab's description text", () => {
 		renderSidebar();
-		const search = screen.getByPlaceholderText(/search/i);
+		const search = openSearch();
 		// "configuration" only appears in the Audio tab's tooltip, not its label
 		fireEvent.change(search, { target: { value: "configuration" } });
 		const tabs = screen.getAllByRole("tab");
@@ -74,7 +97,7 @@ describe("SettingsSidebar", () => {
 
 	test("search matches a tab's section/setting keywords, not just its label", () => {
 		renderSidebar();
-		const search = screen.getByPlaceholderText(/search/i);
+		const search = openSearch();
 		// "display" only appears in General's keywords (a section name) — neither
 		// its label nor tooltip. This is the reported bug.
 		fireEvent.change(search, { target: { value: "display" } });
@@ -85,7 +108,7 @@ describe("SettingsSidebar", () => {
 
 	test("search tolerates typos via fuzzy matching", () => {
 		renderSidebar();
-		const search = screen.getByPlaceholderText(/search/i);
+		const search = openSearch();
 		fireEvent.change(search, { target: { value: "dispaly" } });
 		const tabs = screen.getAllByRole("tab");
 		expect(tabs).toHaveLength(1);
@@ -94,34 +117,24 @@ describe("SettingsSidebar", () => {
 
 	test("shows a no-results message when nothing matches", () => {
 		renderSidebar();
-		const search = screen.getByPlaceholderText(/search/i);
+		const search = openSearch();
 		fireEvent.change(search, { target: { value: "zzzznomatch" } });
 		expect(screen.queryAllByRole("tab")).toHaveLength(0);
 	});
 
-	test("invokes onClose when the close button is clicked", () => {
-		const onClose = mock(() => undefined);
-		renderSidebar(onClose);
-		fireEvent.click(screen.getByRole("button", { name: /close/i }));
-		expect(onClose).toHaveBeenCalledTimes(1);
-	});
-
-	test("collapses to an icon rail (hides search + labels) and toggles back", () => {
+	test("collapses to an icon rail (hides labels) and toggles back", () => {
 		renderSidebar();
-		// Expanded: search box present, labels visible.
-		expect(screen.queryByPlaceholderText(/search/i)).not.toBeNull();
+		// Expanded: tab labels visible.
 		expect(screen.getByText("General")).toBeDefined();
 
 		fireEvent.click(screen.getByRole("button", { name: /collapse sidebar/i }));
 
-		// Collapsed: search box gone, tab labels removed (icon-only), tabs remain.
-		expect(screen.queryByPlaceholderText(/search/i)).toBeNull();
+		// Collapsed: tab labels removed (icon-only), tabs remain.
 		expect(screen.queryByText("General")).toBeNull();
 		expect(screen.getAllByRole("tab")).toHaveLength(links.length);
 
 		// The toggle flips to an expand affordance and restores the rail.
 		fireEvent.click(screen.getByRole("button", { name: /expand sidebar/i }));
-		expect(screen.queryByPlaceholderText(/search/i)).not.toBeNull();
 		expect(screen.getByText("General")).toBeDefined();
 	});
 });

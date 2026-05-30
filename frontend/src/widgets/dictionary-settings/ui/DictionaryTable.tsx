@@ -88,7 +88,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 				className="overflow-y-auto overscroll-contain rounded border border-border"
 				style={{ maxHeight: TABLE_MAX_HEIGHT_PX }}
 			>
-				<Table>
+				<Table className="table-fixed">
 					<TableHeader>
 						<TableRow>
 							<TableHead>{t("term")}</TableHead>
@@ -101,7 +101,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 						) : (
 							entries.map((entry, idx) => (
 								<TableRow index={idx} key={entry.id}>
-									<TableCell className="text-foreground">{entry.term}</TableCell>
+									<TableCell className="break-words text-foreground">{entry.term}</TableCell>
 									<TableCell className="w-10 text-right">
 										<Tooltip content={tc("delete")}>
 											<Button

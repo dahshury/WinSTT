@@ -1,5 +1,81 @@
 import { describe, expect, test } from "bun:test";
-import { denoiseForLlm, isCanvasSurface, parseAxHtml, pruneAxHtmlForLlm } from "./ax-prune";
+import {
+	denoiseForLlm,
+	isCanvasSurface,
+	parseAxHtml,
+	pruneAxHtmlForLlm,
+	stripListScrollback,
+} from "./ax-prune";
+
+describe("stripListScrollback", () => {
+	// Mirrors the REAL harmful Gmail capture: the focused reply box's text range
+	// spans the whole inbox, so caret context = [inbox rows] → [open email] →
+	// [draft]. Each inbox row ends in a bare date; the email + draft follow the
+	// last one. (Live capture even leaked a one-time code — SYNTHETIC here.)
+	const gmailCaret = [
+		"Security alert",
+		"You allowed Claude for Google Drive access to some of your data",
+		"Apr 24",
+		"Microsoft account",
+		"Your single-use code is: 111111 Only enter this code on an official site",
+		"Apr 23",
+		"AWS Budgets: Account 123456789012 exceeded your alert threshold",
+		"Apr 16",
+		"Everything else",
+		"GenAI Launchpad question",
+		"Inbox",
+		"×",
+		"Johny Turing johny@example.com",
+		"May 17, 2026, 6:29 PM (13 days ago)",
+		"to me",
+		"Show details",
+		"Hi Mostafa",
+		"Any chance you could update your genai-launchpad-fork?",
+		"Take care,",
+		"Johny",
+		"Pop out reply",
+		"I can't do this johny, sorry",
+	].join("\n");
+
+	test("cuts the inbox scrollback, keeps the open email + draft", () => {
+		const out = stripListScrollback(gmailCaret);
+		// Kept: subject, the email body, the user's draft.
+		expect(out).toContain("GenAI Launchpad question");
+		expect(out).toContain("Hi Mostafa");
+		expect(out).toContain("Any chance you could update your genai-launchpad-fork?");
+		expect(out).toContain("I can't do this johny, sorry");
+		// The full-datetime thread header is NOT a bare-date row, so it survives.
+		expect(out).toContain("May 17, 2026, 6:29 PM");
+	});
+
+	test("removes the harmful inbox rows AND the leaked one-time code", () => {
+		const out = stripListScrollback(gmailCaret);
+		expect(out).not.toContain("111111");
+		expect(out).not.toContain("Security alert");
+		expect(out).not.toContain("AWS Budgets");
+		expect(out).not.toContain("Apr 24");
+		expect(out).not.toContain("Apr 16");
+	});
+
+	test("drops the surrounding Gmail chrome singletons", () => {
+		const out = stripListScrollback(gmailCaret);
+		expect(out).not.toContain("Everything else");
+		expect(out).not.toContain("Pop out reply");
+		expect(out).not.toContain("Show details");
+		expect(out).not.toMatch(/^Inbox$/m);
+	});
+
+	test("is a strict no-op on normal editor/chat text (no bare-date rows)", () => {
+		const code = "export function f() {\n  return 1;\n}";
+		expect(stripListScrollback(code)).toBe(code);
+		const chat = "alice: hey\nbob: what's up\nme: replying now";
+		expect(stripListScrollback(chat)).toBe(chat);
+	});
+
+	test("empty / undefined-ish input is returned unchanged", () => {
+		expect(stripListScrollback("")).toBe("");
+	});
+});
 
 describe("denoiseForLlm", () => {
 	test("strips object-replacement / control / dingbats, keeps line structure", () => {

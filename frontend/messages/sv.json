@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "Sök inställningar…",
+    "searchPlaceholderShort": "Sök…",
     "searchClear": "Rensa sökning",
     "searchNoResults": "Inga matchande inställningar",
     "collapseSidebar": "Fäll ihop sidofältet",

@@ -53,6 +53,7 @@
     "minimize": "Minimize",
     "close": "Close",
     "searchPlaceholder": "Ayarlarda ara…",
+    "searchPlaceholderShort": "Ara…",
     "searchClear": "Aramayı temizle",
     "searchNoResults": "Eşleşen ayar yok",
     "collapseSidebar": "Kenar çubuğunu daralt",

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { app } from "electron";
+import { app, clipboard } from "electron";
 import {
 	EMPTY_CONTEXT,
 	formatContextForPrompt,
@@ -10,6 +10,7 @@ import {
 } from "./context-snapshot";
 import { dbg } from "./debug-log";
 import { isPlainObject } from "./ipc-helpers";
+import { getLastTranscription } from "./last-transcription";
 
 export { EMPTY_CONTEXT, formatContextForPrompt, type WindowContextSnapshot };
 
@@ -308,26 +309,98 @@ export function readWindowOcrText(): Promise<string> {
 	});
 }
 
+/** Hard cap on captured clipboard text. Clipboards can hold megabytes (a copied
+ *  document); we only want a context hint, so anything past this is noise. */
+const CLIPBOARD_CAPTURE_MAX = 4000;
+
+/** Read the current clipboard text as supplementary context, with two guards:
+ *  (1) ECHO — drop it when it equals our own last transcription, because WinSTT
+ *  pastes via a clipboard sandwich, so right after a dictation the clipboard
+ *  holds the text we just pasted (feeding it back makes the LLM echo itself);
+ *  (2) SIZE — cap so a copied document doesn't flood the prompt. Guarded so a
+ *  clipboard-read failure (or a non-electron test env) degrades to "". */
+function readClipboardContext(): string {
+	let raw = "";
+	try {
+		raw = clipboard?.readText?.() ?? "";
+	} catch (err) {
+		dbg("context", `clipboard read failed: ${err instanceof Error ? err.message : String(err)}`);
+		return "";
+	}
+	const text = raw.trim();
+	if (text.length === 0) {
+		return "";
+	}
+	if (text === getLastTranscription().trim()) {
+		// Our own last paste, echoed back by the clipboard sandwich — skip it.
+		return "";
+	}
+	return text.length > CLIPBOARD_CAPTURE_MAX ? text.slice(0, CLIPBOARD_CAPTURE_MAX) : text;
+}
+
+/**
+ * Enrich a tree snapshot with the field-standard supplementary context sources
+ * (see memory/reference_stt_context_awareness_field_survey.md): the user's
+ * SELECTED text (UIA `--selection`, side-effect-free — no Ctrl+C keystroke
+ * injection during recording) and the CLIPBOARD (echo-guarded). Both opt-gated
+ * and skipped entirely when off, so existing callers are byte-identical.
+ */
+async function enrichWithSupplementaryContext(
+	base: WindowContextSnapshot,
+	opts: { includeSelection?: boolean; includeClipboard?: boolean }
+): Promise<WindowContextSnapshot> {
+	let snapshot = base;
+	if (opts.includeSelection) {
+		const selectionSnapshot = await readWindowSelection().catch(() => EMPTY_CONTEXT);
+		const selected = selectionSnapshot.focusedText.trim();
+		if (selected.length > 0) {
+			dbg("context", `selection captured: ${selected.length} chars`);
+			snapshot = { ...snapshot, selectedText: selected };
+		}
+	}
+	if (opts.includeClipboard) {
+		const clip = readClipboardContext();
+		if (clip.length > 0) {
+			dbg("context", `clipboard captured: ${clip.length} chars`);
+			snapshot = { ...snapshot, clipboardText: clip };
+		}
+	}
+	return snapshot;
+}
+
 /**
  * Tree read for the LLM cleanup path (caret split + foreground UIA tree +
- * browser URL). When `opts.ocrFallback` is set and UIA exposed no readable
- * text (canvas/game/RDP windows), falls back to on-device OCR of the window.
+ * browser URL). Optionally enriched with the user's selected text and clipboard
+ * (`includeSelection` / `includeClipboard`), and with on-device OCR of the
+ * window when `ocrFallback` is set and UIA exposed no readable text
+ * (canvas/game/RDP windows).
  *
- * The OCR path screenshots the WHOLE window, so it MUST respect the deny-list
- * — checked here, before redaction, because the relay applies the deny-list
- * downstream and a denied app would otherwise be screenshotted anyway.
+ * The OCR path screenshots the WHOLE window AND the supplementary sources read
+ * selection/clipboard, so all three MUST respect the deny-list — checked here,
+ * before redaction, because the relay applies the deny-list downstream and a
+ * denied app would otherwise be screenshotted / selection-scraped anyway.
  */
 export async function readWindowContextTree(
-	opts: { ocrFallback?: boolean; denyList?: readonly string[] } = {}
+	opts: {
+		ocrFallback?: boolean;
+		denyList?: readonly string[];
+		includeSelection?: boolean;
+		includeClipboard?: boolean;
+	} = {}
 ): Promise<WindowContextSnapshot> {
-	const snapshot = await spawnContextHelper(["--tree"]);
+	const base = await spawnContextHelper(["--tree"]);
+	const denied = isDeniedByList(base, opts.denyList ?? []);
+	// Selection + clipboard are skipped for denied apps (defense in depth: the
+	// downstream redaction would strip them anyway, but we'd rather not scrape
+	// a password manager's selection in the first place).
+	const snapshot = denied ? base : await enrichWithSupplementaryContext(base, opts);
 	if (!opts.ocrFallback) {
 		return snapshot;
 	}
 	if (!snapshotIsContentless(snapshot)) {
 		return snapshot;
 	}
-	if (isDeniedByList(snapshot, opts.denyList ?? [])) {
+	if (denied) {
 		return snapshot;
 	}
 	const ocr = await readWindowOcrText();

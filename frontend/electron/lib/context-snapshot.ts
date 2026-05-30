@@ -7,7 +7,7 @@
  * timing when imported transitively.
  */
 
-import { denoiseForLlm, isCanvasSurface, pruneAxHtmlForLlm } from "./ax-prune";
+import { denoiseForLlm, isCanvasSurface, pruneAxHtmlForLlm, stripListScrollback } from "./ax-prune";
 
 export interface WindowContextSnapshot {
 	/** Lowercased exe basename of the foreground window's process. */
@@ -18,6 +18,14 @@ export interface WindowContextSnapshot {
 	 * most ~150K chars / 250 elements / 9 levels deep.
 	 */
 	axHtml?: string;
+	/**
+	 * Current clipboard text, interleaved as supplementary context (Handy's
+	 * "80% of the use case with 5% of the code"). Echo-guarded at capture time:
+	 * dropped when it equals our own last transcription, because WinSTT pastes
+	 * via a clipboard sandwich, so right after a dictation the clipboard holds
+	 * the text we just pasted — feeding it back would make the LLM echo itself.
+	 */
+	clipboardText?: string;
 	elementName: string;
 	focusedText: string;
 	/**
@@ -29,6 +37,18 @@ export interface WindowContextSnapshot {
 	 * whitelists only the legacy triple, so this is dropped on redaction.
 	 */
 	ocrText?: string;
+	/**
+	 * The user's currently-selected text (UIA TextPattern selection). The
+	 * highest-signal context we have: if the user highlighted something before
+	 * dictating, that's almost always the thing they're acting on (the email to
+	 * reply to, the paragraph to rewrite). Captured side-effect-free via the
+	 * `--selection` UIA read — NOT the Ctrl+C clipboard trick, which would
+	 * inject keystrokes mid-recording. Absent when nothing is selected.
+	 * Mirrors the field-standard "selected text first" approach (whishpy,
+	 * VoiceInk's SelectedTextService) — see
+	 * memory/reference_stt_context_awareness_field_survey.md.
+	 */
+	selectedText?: string;
 	textAfter?: string;
 	textBefore?: string;
 	/** Active page URL when the foreground app is a recognized browser. */
@@ -266,13 +286,24 @@ const RICH_FIELD_MIN_CHARS = 40;
  * doc the user is acting on — via either the caret split or the whole-text read.
  * Drives the focused-field-first decision in {@link buildPromptSections}.
  */
+/**
+ * De-noise a caret/field string for the LLM AND strip dated inbox/feed
+ * list-scrollback (Gmail/Outlook-web flatten the whole inbox into the focused
+ * composer's text range — see {@link stripListScrollback}). This is the single
+ * "clean caret context" funnel used by both the richness gate and the emitted
+ * sections, so the rich-vs-thin decision is made on REAL content (an inbox-only
+ * field strips to empty → thin → falls through to the Tier-3 tree pruner).
+ */
+function cleanCaret(raw: string | undefined): string {
+	return stripListScrollback(denoiseForLlm(raw));
+}
+
 function focusedFieldIsRich(snapshot: WindowContextSnapshot): boolean {
-	const caretChars =
-		denoiseForLlm(snapshot.textBefore).length + denoiseForLlm(snapshot.textAfter).length;
+	const caretChars = cleanCaret(snapshot.textBefore).length + cleanCaret(snapshot.textAfter).length;
 	if (caretChars >= RICH_FIELD_MIN_CHARS) {
 		return true;
 	}
-	return denoiseForLlm(snapshot.focusedText).length >= RICH_FIELD_MIN_CHARS;
+	return cleanCaret(snapshot.focusedText).length >= RICH_FIELD_MIN_CHARS;
 }
 
 /** The lightweight "where are we" sections — app / IDE / URL / window / focused
@@ -290,19 +321,53 @@ function buildMetadataSections(snapshot: WindowContextSnapshot): readonly Prompt
 	];
 }
 
+/** Caps for the supplementary context fields. Selected text keeps its HEAD (a
+ *  coherent highlighted block reads top-down); clipboard keeps its HEAD too. */
+const SELECTED_TEXT_LLM_MAX = 4000;
+const CLIPBOARD_LLM_MAX = 2000;
+
+/** The user's explicit selection — the strongest intent signal. Emitted right
+ *  after the metadata so it leads the content the LLM reasons over. Empty (and
+ *  thus filtered out) when nothing was selected. */
+function buildSelectedTextSection(snapshot: WindowContextSnapshot): PromptSection {
+	return {
+		value: clipHead(cleanCaret(snapshot.selectedText), SELECTED_TEXT_LLM_MAX),
+		format: (v) =>
+			`Selected text (the user highlighted this — likely the thing they're acting on):\n${v}`,
+	};
+}
+
+/** Clipboard interleave — lowest-priority supplementary context, so it's emitted
+ *  last. Already echo-guarded at capture time (never carries our own last
+ *  paste), but flagged "use only if relevant" so the LLM can ignore stale copies. */
+function buildClipboardSection(snapshot: WindowContextSnapshot): PromptSection {
+	return {
+		value: clipHead(cleanCaret(snapshot.clipboardText), CLIPBOARD_LLM_MAX),
+		format: (v) =>
+			`Clipboard contents (the user recently copied this — use only if relevant):\n${v}`,
+	};
+}
+
 function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
 	const meta = buildMetadataSections(snapshot);
+	// Supplementary context, shared by every branch: the explicit selection
+	// (highest-signal, leads) and the clipboard interleave (lowest, trails).
+	// Empty sections are filtered by sectionHasValue, so they're no-ops when absent.
+	const selected = buildSelectedTextSection(snapshot);
+	const clip = buildClipboardSection(snapshot);
 	// Terminal/console: the scrollback (axHtml tree + caret text) is re-render
 	// soup, not "what the user is acting on". Omit it and just flag the surface
 	// so the LLM knows where the dictation lands without the noise.
 	if (looksLikeTerminal(snapshot)) {
 		return [
 			...meta,
+			selected,
 			{
 				value: "terminal",
 				format: () =>
 					"Terminal/console focused — scrollback omitted (no clean prior text available).",
 			},
+			clip,
 		];
 	}
 	const content = buildContentSections(snapshot);
@@ -314,9 +379,16 @@ function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSe
 	// dropped. Only when the focused field is thin (empty reply box, canvas,
 	// game, odd app) do we fall back to the tree + OCR for surrounding context.
 	if (focusedFieldIsRich(snapshot)) {
-		return [...meta, ...content];
+		return [...meta, selected, ...content, clip];
 	}
-	return [...meta, buildFallbackTreeSection(snapshot), ...content, buildOcrSection(snapshot)];
+	return [
+		...meta,
+		selected,
+		buildFallbackTreeSection(snapshot),
+		...content,
+		buildOcrSection(snapshot),
+		clip,
+	];
 }
 
 /**
@@ -358,14 +430,14 @@ function buildOcrSection(snapshot: WindowContextSnapshot): PromptSection {
 }
 
 function buildContentSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
-	const before = denoiseForLlm(snapshot.textBefore);
-	const after = denoiseForLlm(snapshot.textAfter);
+	const before = cleanCaret(snapshot.textBefore);
+	const after = cleanCaret(snapshot.textAfter);
 	if (isCaretMode(before, after)) {
 		return buildCaretSections(before, after);
 	}
 	return [
 		{
-			value: denoiseForLlm(snapshot.focusedText),
+			value: cleanCaret(snapshot.focusedText),
 			format: (v) => `Visible content:\n${v}`,
 		},
 	];
@@ -375,15 +447,36 @@ function isCaretMode(before: string, after: string): boolean {
 	return before.length > 0 || after.length > 0;
 }
 
+/**
+ * Backstop caps for the caret context handed to the LLM. The native helper
+ * already bounds capture at CARET_BEFORE_CHARS=4000 / CARET_AFTER_CHARS=1000
+ * (winstt-context.c) — these are deliberately set ABOVE those so a normal
+ * email/message is NEVER cropped here; they only fire if some other path (a
+ * future capture source, a non-native test, a pathological field) produces a
+ * giant string, keeping the dictation prompt bounded. `before` keeps its TAIL
+ * (the text nearest the caret is the highest-signal continuation context);
+ * `after` keeps its HEAD (the text the output sits in front of).
+ */
+const CARET_BEFORE_LLM_MAX = 6000;
+const CARET_AFTER_LLM_MAX = 2000;
+
+function clipTail(value: string, max: number): string {
+	return value.length > max ? value.slice(value.length - max) : value;
+}
+
+function clipHead(value: string, max: number): string {
+	return value.length > max ? value.slice(0, max) : value;
+}
+
 function buildCaretSections(before: string, after: string): readonly PromptSection[] {
 	return [
 		{
-			value: before,
+			value: clipTail(before, CARET_BEFORE_LLM_MAX),
 			format: (v) =>
 				`Text immediately before the caret (your cleaned output will be inserted directly after this — continue it, do not repeat it):\n${v}`,
 		},
 		{
-			value: after,
+			value: clipHead(after, CARET_AFTER_LLM_MAX),
 			format: (v) =>
 				`Text immediately after the caret (your output will sit directly before this — do not repeat it):\n${v}`,
 		},
@@ -414,5 +507,9 @@ export function extractAsrPromptTail(snapshot: WindowContextSnapshot): string {
 	if (typeof before !== "string") {
 		return "";
 	}
-	return before.trim();
+	// Strip dated inbox/feed scrollback so Whisper's prior-text bias never
+	// includes unrelated inbox subjects. The downstream sanitiseContextTail still
+	// removes decorative noise and caps to ~500 chars. (No PII redaction — the
+	// tail only biases a LOCAL Whisper decoder; nothing leaves the machine.)
+	return stripListScrollback(before.trim());
 }

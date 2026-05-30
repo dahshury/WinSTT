@@ -8,7 +8,7 @@ import {
 	Mic01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { variantDisplayName } from "@picker";
+import { getFamilyConfig, variantDisplayName } from "@picker";
 import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import { useInputDevices } from "@/entities/audio-device";
@@ -137,7 +137,47 @@ interface FooterModelChipProps {
 	ariaLabel: string;
 	icon?: IconSvgElement;
 	label: string;
+	/** Public path to the model maker's brand logo. When set, the logo is
+	 *  rendered recolored to the footer's dim gray (alpha-masked) in place of
+	 *  the HugeIcon, so the chip shows the model's own mark while staying
+	 *  monochrome with the rest of the footer. */
+	logoSrc?: string | undefined;
 	tooltip: string;
+}
+
+/** Leading glyph for the footer model chip. When a brand `logoSrc` is bundled
+ *  for the family, the logo is painted in the footer's dim gray via a CSS alpha
+ *  mask (the logo's own colors are discarded — only its silhouette shows), so
+ *  it matches the surrounding monochrome footer. Otherwise the family's
+ *  HugeIcon is shown in the same gray. */
+function FooterModelGlyph({
+	icon,
+	logoSrc,
+}: {
+	icon: IconSvgElement;
+	logoSrc?: string | undefined;
+}): ReactNode {
+	if (logoSrc) {
+		return (
+			<span
+				aria-hidden="true"
+				className="size-[11px] shrink-0 bg-foreground-dim"
+				style={{
+					maskImage: `url("${logoSrc}")`,
+					maskPosition: "center",
+					maskRepeat: "no-repeat",
+					maskSize: "contain",
+					WebkitMaskImage: `url("${logoSrc}")`,
+					WebkitMaskPosition: "center",
+					WebkitMaskRepeat: "no-repeat",
+					WebkitMaskSize: "contain",
+				}}
+			/>
+		);
+	}
+	return (
+		<HugeiconsIcon aria-hidden="true" color="var(--color-foreground-dim)" icon={icon} size={11} />
+	);
 }
 
 /** Same outer shape as the old footer select chip (icon · name · chevron),
@@ -151,6 +191,7 @@ function FooterModelChip({
 	label,
 	tooltip,
 	icon = AiAudioIcon,
+	logoSrc,
 }: FooterModelChipProps): ReactNode {
 	const substrate = useSurface();
 	const hoverLevel = Math.min(substrate + 2, 8);
@@ -189,17 +230,12 @@ function FooterModelChip({
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<button
 				aria-label={ariaLabel}
-				className={`flex max-w-[180px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+				className={`flex max-w-full cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
 				data-slot="stt-model-selector-trigger"
 				onClick={openModelPicker}
 				type="button"
 			>
-				<HugeiconsIcon
-					aria-hidden="true"
-					color="var(--color-foreground-dim)"
-					icon={icon}
-					size={11}
-				/>
+				<FooterModelGlyph icon={icon} logoSrc={logoSrc} />
 				<span className="min-w-0 truncate">{label}</span>
 				<HugeiconsIcon
 					aria-hidden="true"
@@ -224,7 +260,7 @@ function ModelSwapChip({ label, tooltip }: ModelSwapChipProps): ReactNode {
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<span
 				aria-live="polite"
-				className="flex max-w-[180px] cursor-default select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim"
+				className="flex max-w-full cursor-default select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim"
 			>
 				<Spinner className="size-2.5 border" />
 				<span className="min-w-0 truncate">{label}</span>
@@ -297,7 +333,7 @@ function FooterDownloadChip({
 			<button
 				aria-label={ariaLabel}
 				aria-live="polite"
-				className={`flex max-w-[180px] cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
+				className={`flex max-w-full cursor-pointer select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim outline-none transition-colors ${surfaceHoverBg(hoverLevel)} focus-visible:ring-1 focus-visible:ring-accent`}
 				data-slot="stt-model-selector-trigger"
 				onClick={open}
 				type="button"
@@ -355,6 +391,11 @@ function ActiveModelChip({
 	// catalog doesn't know about.
 	const modelInfo = getModel(currentModel);
 	const label = modelInfo ? variantDisplayName(modelInfo, catalogModels) : currentModel;
+	// Local models lead with their maker's brand logo — recolored to the
+	// footer's dim gray (alpha-masked) in FooterModelGlyph — instead of a
+	// generic audio glyph. Families without a bundled logo fall back to their
+	// family HugeIcon (still more specific than the old generic icon).
+	const familyConfig = modelInfo ? getFamilyConfig(modelInfo.family) : null;
 	if (cloudProvider) {
 		const status =
 			cloudVerified === true
@@ -375,8 +416,9 @@ function ActiveModelChip({
 	return (
 		<FooterModelChip
 			ariaLabel={tModel("model")}
-			icon={AiAudioIcon}
+			icon={familyConfig?.icon ?? AiAudioIcon}
 			label={label}
+			logoSrc={familyConfig?.logoSrc}
 			tooltip={tStatus("modelTooltip", { model: modelInfo?.displayName ?? currentModel })}
 		/>
 	);
@@ -433,14 +475,15 @@ export function StatusBar() {
 	return (
 		<div
 			className={[
-				`flex shrink-0 items-center justify-between overflow-hidden whitespace-nowrap border-border border-t ${surfaceClasses(barLevel, 1)} px-2 py-1 font-mono`,
+				`flex shrink-0 items-center gap-1.5 overflow-hidden whitespace-nowrap border-border border-t ${surfaceClasses(barLevel, 1)} px-2 py-1 font-mono`,
 				isDownloading && "pointer-events-none opacity-50",
 			]
 				.filter(Boolean)
 				.join(" ")}
 		>
 			<ConnectionIndicator />
-			<div className="flex items-center gap-1.5">
+			<div className="flex min-w-0 flex-1 items-center gap-1.5">
+				<Separator className="h-3 w-px shrink-0 bg-border" orientation="vertical" />
 				{recordingMode === "listen" ? (
 					<Tooltip
 						content={isListening ? t("loopbackActiveTooltip") : t("loopbackIdleTooltip")}
@@ -469,49 +512,51 @@ export function StatusBar() {
 				)}
 				{currentModel && (
 					<>
-						<Separator className="h-3 w-px bg-border" orientation="vertical" />
-						{(() => {
-							if (mainSwapping) {
-								const swapModel = swappingMain ? getCatalogModel(swappingMain) : undefined;
-								const swapName = swapModel
-									? variantDisplayName(swapModel, allCatalogModels)
-									: (swappingMain ?? "");
+						<Separator className="h-3 w-px shrink-0 bg-border" orientation="vertical" />
+						<div className="flex min-w-0 flex-1 items-center">
+							{(() => {
+								if (mainSwapping) {
+									const swapModel = swappingMain ? getCatalogModel(swappingMain) : undefined;
+									const swapName = swapModel
+										? variantDisplayName(swapModel, allCatalogModels)
+										: (swappingMain ?? "");
+									return (
+										<ModelSwapChip
+											label={t("switchingModel", { model: swapName })}
+											tooltip={t("switchingModelTooltip", { model: swapName })}
+										/>
+									);
+								}
+								if (downloadAggregate) {
+									const primaryModel = getCatalogModel(downloadAggregate.primary.modelId);
+									const primaryName = primaryModel
+										? variantDisplayName(primaryModel, allCatalogModels)
+										: downloadAggregate.primary.modelId;
+									const tooltipKey =
+										downloadAggregate.count >= 2 ? "downloadingMultiTooltip" : "downloadingTooltip";
+									const tooltip = t(tooltipKey, {
+										count: downloadAggregate.count,
+										model: primaryName,
+									});
+									return (
+										<FooterDownloadChip
+											aggregate={downloadAggregate}
+											ariaLabel={tModel("model")}
+											primaryModelName={primaryName}
+											tooltip={tooltip}
+										/>
+									);
+								}
 								return (
-									<ModelSwapChip
-										label={t("switchingModel", { model: swapName })}
-										tooltip={t("switchingModelTooltip", { model: swapName })}
+									<ActiveModelChip
+										currentModel={currentModel}
+										tIntegrations={tIntegrations}
+										tModel={tModel}
+										tStatus={t}
 									/>
 								);
-							}
-							if (downloadAggregate) {
-								const primaryModel = getCatalogModel(downloadAggregate.primary.modelId);
-								const primaryName = primaryModel
-									? variantDisplayName(primaryModel, allCatalogModels)
-									: downloadAggregate.primary.modelId;
-								const tooltipKey =
-									downloadAggregate.count >= 2 ? "downloadingMultiTooltip" : "downloadingTooltip";
-								const tooltip = t(tooltipKey, {
-									count: downloadAggregate.count,
-									model: primaryName,
-								});
-								return (
-									<FooterDownloadChip
-										aggregate={downloadAggregate}
-										ariaLabel={tModel("model")}
-										primaryModelName={primaryName}
-										tooltip={tooltip}
-									/>
-								);
-							}
-							return (
-								<ActiveModelChip
-									currentModel={currentModel}
-									tIntegrations={tIntegrations}
-									tModel={tModel}
-									tStatus={t}
-								/>
-							);
-						})()}
+							})()}
+						</div>
 					</>
 				)}
 			</div>

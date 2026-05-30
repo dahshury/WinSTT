@@ -1,0 +1,20 @@
+import { chromium } from "@playwright/test";
+import { buildMockMap } from "./mock-data.mjs";
+const BASE=process.env.BASE_URL ?? "http://localhost:3000";
+function installMock(map){const clone=(v)=>{try{return structuredClone(v)}catch{return JSON.parse(JSON.stringify(v))}};window.electronAPI={getPathForFile:()=>"",send:()=>{},invoke:(c)=>Promise.resolve(c in map.invoke?clone(map.invoke[c]):undefined),secureInvoke:(c)=>Promise.resolve(c in map.secure?clone(map.secure[c]):undefined),on:(c,cb)=>{if(c in map.emit){const p=map.emit[c];setTimeout(()=>{try{cb(clone(p))}catch{}},0)}return()=>{}}};}
+const browser=await chromium.launch();
+const ctx=await browser.newContext({viewport:{width:1100,height:1500},deviceScaleFactor:2,colorScheme:"dark",locale:"en-US"});
+await ctx.addInitScript(installMock, buildMockMap({}));
+const page=await ctx.newPage();
+await page.goto(`${BASE}/windows/settings.html`,{waitUntil:"domcontentloaded"});
+await page.getByRole("tab").first().waitFor({timeout:20000});
+await page.getByRole("tab").nth(1).click();
+await page.waitForTimeout(900);
+await page.getByRole("button",{name:"Playground"}).first().click();
+await page.waitForTimeout(800);
+await page.evaluate(async()=>{await document.fonts.ready;});
+await page.addStyleTag({content:"*,*::before,*::after{animation:none!important;transition:none!important;}"});
+const dialog=page.getByRole("dialog").first();
+await dialog.screenshot({path:"scripts/docs-shots/_modal-full.png"});
+console.log("ok");
+await ctx.close();await browser.close();
