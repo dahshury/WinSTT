@@ -34,17 +34,17 @@ pub mod endpointing;
 /// RealtimeSTT-faithful preview stabilizer + committed-watermark accumulator.
 pub mod realtime_stabilizer;
 
-// ───────────────────────── WAVE 2 — reqwest / windows-feature (next) ─────────────────────────
-// All-Rust LLM post-processing: prompt composition + Ollama NDJSON streaming + CoT salvage.
-// pub mod llm;
-// Cloud STT: reqwest multipart to OpenAI/ElevenLabs (needs reqwest `multipart` feature).
-// pub mod cloud_stt;
-// Context-awareness: winstt-context.exe sidecar wrapper + deny-list.
-// pub mod context;
-// Terminal-aware paste (needs windows Win32_System_ProcessStatus feature).
-// pub mod paste_ext;
-// System-audio ducking (needs windows Win32_Media_Audio feature).
-// pub mod ducking;
+// ───────────────────────── WAVE 2 — reqwest / windows-feature ─────────────────────────
+/// All-Rust LLM post-processing: prompt composition + Ollama NDJSON streaming + CoT salvage.
+pub mod llm;
+/// Cloud STT: reqwest multipart to OpenAI/ElevenLabs.
+pub mod cloud_stt;
+/// Context-awareness: winstt-context.exe sidecar wrapper + deny-list.
+pub mod context;
+/// Terminal-aware paste (TERMINAL_CLASSES/EXES → Ctrl+Shift+V) + fallback chain + circuit-breaker.
+pub mod paste_ext;
+/// System-audio ducking via IAudioEndpointVolume::SetMasterVolumeLevelScalar (graduated 0-100%).
+pub mod ducking;
 
 // ───────────────────────── WAVE 3 — new heavy crates (gated by STT spike) ─────────────────────────
 // Unified ONNX-on-`ort` STT engine: Transcriber trait + per-family engines. NEEDS: ort, ndarray.
