@@ -1,0 +1,74 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "WinSTT",
+  "version": "0.1.0",
+  "identifier": "com.winstt.app",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["**"],
+          "requireLiteralLeadingDot": false
+        }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "resources": ["resources/**/*"],
+    "license": "MIT",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "files": {},
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libgtk-layer-shell0"]
+      },
+      "rpm": {
+        "compression": {
+          "type": "none"
+        }
+      },
+      "appimage": {
+        "bundleMediaFramework": true,
+        "files": {}
+      }
+    },
+    "windows": {
+      "nsis": {
+        "template": "nsis/installer.nsi"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "TODO_REPLACE_WITH_WINSTT_MINISIGN_PUBKEY",
+      "endpoints": [
+        "https://github.com/dahshury/WinSTT/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
