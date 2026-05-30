@@ -30,6 +30,22 @@
 
 use std::path::PathBuf;
 
+// ── engine submodules ──
+/// Log-mel feature extraction (Slaney 80/128-mel) shared by Whisper-family engines.
+pub mod mel;
+/// Hand-rolled Whisper BPE/byte tokenizer + special-token table + segment parser.
+pub mod whisper_tokenizer;
+/// Whisper / lite-whisper / distil-whisper ONNX engine (encoder + merged-decoder KV-cache).
+pub mod whisper;
+/// HF snapshot resolver + download + sharded-data completeness + per-quant cache.
+pub mod resolver;
+/// In-file fp16 decoder protobuf repair (prost) + external-data refetch detection.
+pub mod fp16_patch;
+/// Non-Whisper families: CTC (SenseVoice/GigaAM/Dolphin/Kaldi), RNNT/TDT (Parakeet/zipformer), AED (Canary/Cohere).
+pub mod families;
+
+pub use whisper::WhisperEngine;
+
 // ---------------------------------------------------------------------------
 // Result / error types
 // ---------------------------------------------------------------------------
@@ -383,13 +399,31 @@ pub struct EngineConfig {
     pub whisper_fp16_workaround: bool,
 }
 
-/// Factory: build the right `Transcriber` for a resolved model. DRAFT — the
-/// match arms construct the per-family structs once those land behind the spike.
-pub fn build_engine(_cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
-    // DRAFT PORT — not yet compiled. Dispatch table specified in 03_stt_engine.md §3.
-    Err(SttError::Unsupported(
-        "build_engine: engines are SPEC-ONLY pending the ort de-risking spike (PORT/03)",
-    ))
+/// Factory: build the right `Transcriber` for a resolved model. Dispatch table in
+/// 03_stt_engine.md §3. The Whisper-family arm (`WhisperHf`, covering whisper /
+/// lite-whisper / distil-whisper / breeze) is implemented; the remaining family
+/// engines (Moonshine / Cohere / NeMo / Kaldi / GigaAM / T-One / Dolphin / SenseVoice)
+/// are owned by their respective slices and land as they're ported.
+pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
+    match cfg.kind {
+        EngineKind::WhisperHf => Ok(Box::new(whisper::WhisperEngine::load(&cfg)?)),
+        // SPIKE: other family engines wired by their slices; until then route to a
+        // clear Unsupported so the coordinator can surface a precise error.
+        other => Err(SttError::Unsupported(match other {
+            EngineKind::WhisperOrt => "WhisperOrt engine not yet ported (PORT/03 §4.1 whisper_ort)",
+            EngineKind::Moonshine => "Moonshine engine not yet ported (PORT/03 §4.5)",
+            EngineKind::CohereAsr => "Cohere engine not yet ported (PORT/03 §4.6)",
+            EngineKind::NemoCtc | EngineKind::NemoRnnt | EngineKind::NemoTdt | EngineKind::NemoAed => {
+                "NeMo engine not yet ported (PORT/03 §4.2-4.4)"
+            }
+            EngineKind::KaldiTransducer => "Kaldi/Zipformer engine not yet ported (PORT/03 §4.3)",
+            EngineKind::GigaamCtc | EngineKind::GigaamRnnt => "GigaAM engine not yet ported",
+            EngineKind::ToneCtc => "T-One engine not yet ported",
+            EngineKind::DolphinCtc => "Dolphin engine not yet ported (PORT/03 §6.9)",
+            EngineKind::SenseVoiceCtc => "SenseVoice engine not yet ported (PORT/03 §6.9)",
+            EngineKind::WhisperHf => unreachable!(),
+        })),
+    }
 }
 
 // ---------------------------------------------------------------------------

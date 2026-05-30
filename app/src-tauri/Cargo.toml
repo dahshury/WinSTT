@@ -75,9 +75,23 @@ transcribe-rs = { version = "0.3.8", features = ["whisper-cpp", "onnx"] }
 # WinSTT unified ONNX STT engine (blueprint S2). ort/ndarray already resolve to one version each
 # via transcribe-rs (ort =2.0.0-rc.12, ndarray 0.17.2 — Gate 1+2 satisfied); declared direct so
 # winstt/stt can `use ort`. directml EP + dylib loading come from transcribe-rs's ort-directml feature.
-ort = { version = "=2.0.0-rc.12", features = ["ndarray"] }
+ort = { version = "=2.0.0-rc.12", features = ["ndarray", "half"] }
 ndarray = "0.17.2"
 thiserror = "2"
+# WinSTT port — remaining subsystem deps (versions per app/PORT/00_cargo_additions.md, verified 2026-05)
+hf-hub = "1.0.0-rc.1"            # HF snapshot resolver for STT model files (resolver/download)
+prost = "0.13"                   # ONNX-proto edit for the fp16 decoder patch (03_stt_engine.md §6.1)
+tokenizers = { version = "0.22.1", default-features = false, features = ["onig"] }  # DistilBERT + custom models
+ollama-rs = "0.3.4"              # native Ollama /api/* (pull progress not OpenAI-compatible)
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
+keyring = "4.0.1"                # encrypted API keys at rest
+symphonia = { version = "0.6.0", default-features = false, features = ["wav", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
+base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
+half = "2"                       # f16 tensor element type (matches ort's half)
+sherpa-onnx = "1.13.2"           # k2-fsa first-party — KWS wake word + diarization embedder
+# TTS: kokoroxide DROPPED (pins yanked ort ^1.16, conflicts with our ort 2.0.0-rc.12).
+# Instead we run the Kokoro-82M ONNX on OUR ort 2.0.0-rc.12 + an espeak-ng phonemizer
+# (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine). See app/PORT/06_tts.md.
 handy-keys = "0.2.4"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
@@ -100,6 +114,7 @@ tauri-plugin-updater = "2.10.0"
 # `ort`/DirectML (blueprint S2), so whisper.cpp's GPU backend is unused; whisper-cpp (from the base
 # dep) falls back to its CPU backend. Tracked in app/PORT/PROGRESS.md.
 transcribe-rs = { version = "0.3.3", features = ["ort-directml"] }
+wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_Media_Audio",
