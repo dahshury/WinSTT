@@ -88,7 +88,10 @@ keyring = "4.0.1"                # encrypted API keys at rest
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
 half = "2"                       # f16 tensor element type (matches ort's half)
-sherpa-onnx = "1.13.2"           # k2-fsa first-party — KWS wake word + diarization embedder
+# sherpa-onnx ships only /MT (static-CRT) Windows libs; the `static` default clashes with Rust's /MD
+# CRT (LNK2038/LNK2005). Use `shared` → link sherpa-onnx as a DLL so its /MT CRT stays isolated.
+# Ship sherpa-onnx.dll alongside the exe (it lands in target/<profile>/ via the build).
+sherpa-onnx = { version = "1.13.2", default-features = false, features = ["shared"] }  # KWS wake word + diarization embedder
 # TTS: kokoroxide DROPPED (pins yanked ort ^1.16, conflicts with our ort 2.0.0-rc.12).
 # Instead we run the Kokoro-82M ONNX on OUR ort 2.0.0-rc.12 + an espeak-ng phonemizer
 # (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine). See app/PORT/06_tts.md.

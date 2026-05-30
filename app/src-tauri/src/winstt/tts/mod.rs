@@ -1530,7 +1530,12 @@ mod tests {
         let vs = &body["voice_settings"];
         assert_eq!(vs["similarity_boost"], 0.75);
         assert_eq!(vs["use_speaker_boost"], true);
-        assert_eq!(vs["speed"], 1.2);
+        // f32 1.2 serializes as 1.2000000476837158 in JSON — compare with tolerance.
+        assert!(
+            (vs["speed"].as_f64().unwrap() - 1.2).abs() < 1e-4,
+            "speed ~1.2, got {}",
+            vs["speed"]
+        );
     }
 
     #[test]
