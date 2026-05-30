@@ -5,32 +5,38 @@
 > The engineering package is `app/PORT/` (master = `README.md`); per-subsystem specs are `00..07_*.md`;
 > the registration map is `lib_wiring.md`.
 
-**Last updated:** 2026-05-31 (wiring + tracker session)
+**Last updated:** 2026-05-31 (compile-loop session — waves 1+2 GREEN)
 **Branch:** `winstt-rust-port` (inside the WinSTT repo)
-**Build state:** ⛔ **NOT COMPILED** — Rust toolchain is not installed on this machine. All `.rs`
-files are first-draft (`// DRAFT PORT — not yet compiled` header); all `#[cfg(test)]` tests are
-written-but-unrun. The compile loop is the next human-in-the-loop phase.
+**Build state:** ✅ **FOUNDATION BUILDS + 11/15 MODULES COMPILE & TEST GREEN.**
+- Toolchain installed: Rust 1.96, MSVC/VS2026 C++, cmake/ninja (VS-bundled), LLVM/libclang 22.
+- Build helper: `rust-migration/cargo-env.bat <cargo-args>` (sets vcvars + cmake/ninja/cargo/LLVM on PATH).
+- Foundation (Handy, rebranded) **compiles + links to `winstt.exe`** (dropped `whisper-vulkan`; whisper.cpp CPU backend).
+- **Wave 1 + 2 wired into lib.rs & GREEN:** `cargo check --lib` 0 errors; `cargo test --lib winstt` **171 passed / 0 failed**.
+  - Wave 1 (pure): catalog · settings_schema · vad_calibrator · composite_vad · endpointing · realtime_stabilizer
+  - Wave 2 (reqwest/windows): llm · cloud_stt · context · paste_ext · ducking
+- **Gate 1 GREEN:** `cargo tree -i ort` → exactly one `ort 2.0.0-rc.12` (transcribe-rs resolved 0.3.8).
+- Commits: `a0ad3dc` (foundation + wave 1), `e90c805` (wave 2).
+- **NOT yet compiled (wave 3 — gated):** `stt` (ort engine), `wakeword` (sherpa-onnx), `tts` (kokoro) — still commented in `winstt/mod.rs`.
 
 ---
 
 ## ▶ NEXT SESSION STARTS HERE
 
-**Phase: pre-compile / spec-complete. The next action is human-gated (toolchain install).**
+**Phase: wave-3 / STT engine. Toolchain + waves 1-2 are done. The next action is the STT de-risking spike.**
 
-1. **User installs the toolchain** (interactive — see `README.md` §"Build / test loop"):
-   `winget install Rustlang.Rustup` → `rustup default stable`; VS Build Tools + Desktop C++ workload;
-   WebView2 (preinstalled on Win11).
-2. **First wiring action (mechanical):** apply `lib_wiring.md` §1 — add `pub mod winstt;` to `lib.rs`
-   and **repair `winstt/mod.rs`** (it is missing `pub mod catalog; stt; wakeword; tts;` — lost to a
-   write-conflict; the files exist on disk but aren't declared). Then `cargo check` per module.
-3. **Add Cargo deps + run the `cargo tree -i ort` gate** (`lib_wiring.md` §8) — reconcile the one
-   `ort = =2.0.0-rc.12` and the `sherpa-onnx 1.13.2` vs `sherpa-rs 0.6.8` naming conflict (deps slice
-   is authoritative: **sherpa-onnx**).
-4. **THE GATE → run the STT de-risking spike** (`03_stt_engine.md` §11). Nothing in the decode loop or
-   the `TranscriptionManager` engine-swap ships until this is green. See §"Mandatory gates" below.
+1. **Gate 2 — add the `ort`/`ndarray` direct deps and reconcile versions** (`lib_wiring.md` §8): add
+   `ort = "=2.0.0-rc.12"` (features `ndarray`; +directml on windows) and `ndarray` **matching ort's
+   ndarray major** — run `cargo tree -i ndarray` FIRST to read ort rc.12's ndarray version, then pin
+   ours to match (avoids the two-ndarray type-mismatch trap). Then uncomment `pub mod stt;`.
+2. **THE GATE → run the STT de-risking spike** (`03_stt_engine.md` §11): load real Whisper-fp16 +
+   lite-whisper-fp16 + Cohere-fp16-sharded in `ort` and reproduce transcripts. Nothing in the decode
+   loop or the `TranscriptionManager` engine-swap ships until this is green.
+3. **Engine swap** (`lib_wiring.md` §7) inside `managers/transcription.rs` → first end-to-end dictation.
+4. **Then `wakeword`** (add `sherpa-onnx 1.13.2`, reconcile the draft's `sherpa_rs`→`sherpa-onnx` API)
+   and **`tts`** (licensing decision: in-process kokoroxide=GPL-v3 vs sidecar; Gate 3).
 
-Everything downstream (engine swap → first dictation → catalog → realtime → TTS/LLM → advanced)
-follows the order in `lib_wiring.md` §9.
+Everything downstream (catalog/picker commands → realtime → TTS/LLM commands → advanced → frontend
+re-wire → packaging) follows the order in `lib_wiring.md` §9.
 
 ---
 
