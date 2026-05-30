@@ -47,8 +47,9 @@ pub mod paste_ext;
 pub mod ducking;
 
 // ───────────────────────── WAVE 3 — new heavy crates (gated by STT spike) ─────────────────────────
-// Unified ONNX-on-`ort` STT engine: Transcriber trait + per-family engines. NEEDS: ort, ndarray.
-// pub mod stt;
+/// Unified ONNX-on-`ort` STT engine: Transcriber trait + per-family engines.
+/// Trait/types/helpers compile; decode loops + per-model fixes land after the STT spike (03_*.md §11).
+pub mod stt;
 // sherpa-onnx KWS wake word. NEEDS: sherpa-onnx (reconcile the draft's `sherpa_rs` → `sherpa-onnx`).
 // pub mod wakeword;
 // Local Kokoro (in-process) + cloud ElevenLabs TTS. NEEDS: kokoroxide/kokorox, ort.

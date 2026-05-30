@@ -72,6 +72,12 @@ tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
 transcribe-rs = { version = "0.3.8", features = ["whisper-cpp", "onnx"] }
+# WinSTT unified ONNX STT engine (blueprint S2). ort/ndarray already resolve to one version each
+# via transcribe-rs (ort =2.0.0-rc.12, ndarray 0.17.2 — Gate 1+2 satisfied); declared direct so
+# winstt/stt can `use ort`. directml EP + dylib loading come from transcribe-rs's ort-directml feature.
+ort = { version = "=2.0.0-rc.12", features = ["ndarray"] }
+ndarray = "0.17.2"
+thiserror = "2"
 handy-keys = "0.2.4"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
