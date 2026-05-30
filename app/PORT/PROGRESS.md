@@ -7,16 +7,19 @@
 
 **Last updated:** 2026-05-31 (compile-loop session — waves 1+2 GREEN)
 **Branch:** `winstt-rust-port` (inside the WinSTT repo)
-**Build state:** ✅ **FOUNDATION BUILDS + 11/15 MODULES COMPILE & TEST GREEN.**
+**Build state:** ✅ **FOUNDATION BUILDS + 12/15 MODULES COMPILE & TEST GREEN.**
 - Toolchain installed: Rust 1.96, MSVC/VS2026 C++, cmake/ninja (VS-bundled), LLVM/libclang 22.
 - Build helper: `rust-migration/cargo-env.bat <cargo-args>` (sets vcvars + cmake/ninja/cargo/LLVM on PATH).
 - Foundation (Handy, rebranded) **compiles + links to `winstt.exe`** (dropped `whisper-vulkan`; whisper.cpp CPU backend).
-- **Wave 1 + 2 wired into lib.rs & GREEN:** `cargo check --lib` 0 errors; `cargo test --lib winstt` **171 passed / 0 failed**.
+- **Waves 1 + 2 + stt wired into lib.rs & GREEN:** `cargo check --lib` 0 errors; `cargo test --lib winstt` **183 passed / 0 failed**.
   - Wave 1 (pure): catalog · settings_schema · vad_calibrator · composite_vad · endpointing · realtime_stabilizer
   - Wave 2 (reqwest/windows): llm · cloud_stt · context · paste_ext · ducking
-- **Gate 1 GREEN:** `cargo tree -i ort` → exactly one `ort 2.0.0-rc.12` (transcribe-rs resolved 0.3.8).
-- Commits: `a0ad3dc` (foundation + wave 1), `e90c805` (wave 2).
-- **NOT yet compiled (wave 3 — gated):** `stt` (ort engine), `wakeword` (sherpa-onnx), `tts` (kokoro) — still commented in `winstt/mod.rs`.
+  - Wave 3 partial: **stt** (Transcriber trait + Quantization/EngineKind types + pure helpers compile; decode loops still stubbed)
+- **Gates 1 + 2 GREEN:** one `ort 2.0.0-rc.12` + one `ndarray 0.17.2` (both via transcribe-rs; declared direct).
+- Cargo deps added so far: `ort`, `ndarray`, `thiserror`; features added: reqwest `multipart`, windows `Media_Audio`/`Com`/`ProcessStatus`/`Threading`.
+- Commits: `a0ad3dc` (foundation+wave1), `e90c805` (wave2), `946023a` (tracker), `9d86779` (stt).
+- **NOT yet compiled (gated):** `wakeword` (needs `sherpa-onnx 1.13.2` + draft `sherpa_rs`→`sherpa-onnx` API reconcile),
+  `tts` (needs Kokoro crate + GATE 3 licensing decision) — still commented in `winstt/mod.rs`.
 
 ---
 
