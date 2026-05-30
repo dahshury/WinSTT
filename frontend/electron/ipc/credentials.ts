@@ -26,19 +26,34 @@
  * connection errors on no-internet. We map all three to the
  * CloudSttErrorCode enum in the spec for symmetry with the transcribe
  * failure path.
+ *
+ * ElevenLabs scoped-key caveat: ElevenLabs lets users mint permission-scoped
+ * API keys. A key granted only e.g. text-to-speech returns 401 with body
+ * `{"detail":{"status":"missing_permissions",…}}` on read endpoints like
+ * /v1/user — but that response PROVES the key authenticated; it merely lacks
+ * read scope on the probe endpoint. A genuinely bad key returns
+ * `invalid_api_key` instead. So for ElevenLabs we treat a missing_permissions
+ * 401 as a VALID credential (see `isElevenLabsScopedKeyValid`). Verified
+ * against the live API 2026-05-30. Whether the key actually grants the
+ * `voices_read` scope cloud TTS needs is decided downstream in the TTS section
+ * (see `widgets/tts-settings` — it fetches the voice list and surfaces a
+ * missing-permission notice), NOT here: this probe only proves authentication.
  */
 import { ipcMain } from "electron";
 import { IPC } from "../../src/shared/api/ipc-channels";
 import { getErrorMessage } from "../../src/shared/lib/errors";
+import {
+	authHeadersFor,
+	type CloudHttpProvider,
+	classifyHttpStatus,
+} from "../lib/cloud-provider-http";
 import { dbg } from "../lib/debug-log";
 
-type CloudSttProvider = "openai" | "elevenlabs";
-
-/** Providers the verify-credentials IPC accepts. STT-only (`CloudSttProvider`)
- *  plus `openrouter`, which is an LLM credential but shares the same probe-and-
- *  classify shape. Kept distinct from `CloudSttProvider` so the cloud-STT type
- *  union doesn't grow non-STT members. */
-type VerifiableProvider = CloudSttProvider | "openrouter";
+/** Providers the verify-credentials IPC accepts. STT providers (`openai` /
+ *  `elevenlabs`) plus `openrouter`, which is an LLM credential but shares the
+ *  same probe-and-classify shape. Aliased to the shared `CloudHttpProvider`
+ *  union so the auth-header + status-classify helpers apply unchanged. */
+type VerifiableProvider = CloudHttpProvider;
 
 type VerifyCredentialResult =
 	| { ok: true }
@@ -85,41 +100,42 @@ function probeUrlFor(provider: VerifiableProvider): string {
 	return "https://api.elevenlabs.io/v1/user";
 }
 
-function authHeadersFor(provider: VerifiableProvider, apiKey: string): Record<string, string> {
-	if (provider === "elevenlabs") {
-		// ElevenLabs uses a custom header, not Bearer auth.
-		return { "xi-api-key": apiKey };
-	}
-	// OpenAI and OpenRouter both use standard Bearer auth.
-	return { Authorization: `Bearer ${apiKey}` };
-}
-
-const AUTH_STATUS_CODES = new Set([401, 403]);
-
-function classifyHttpStatus(status: number): "auth" | "rate_limit" | "provider_error" {
-	if (AUTH_STATUS_CODES.has(status)) {
-		return "auth";
-	}
-	if (status === 429) {
-		return "rate_limit";
-	}
-	return "provider_error";
-}
-
-async function readErrorBody(response: Response): Promise<string> {
+/** Read the response body once, defensively. Returns "" if unreadable. A
+ *  Response body can only be consumed once, so callers that need both the
+ *  classified failure AND the scoped-key check must share this single read. */
+async function safeReadBody(response: Response): Promise<string> {
 	try {
-		const text = await response.text();
-		// Body unreadable / empty — keep the HTTP-status-only message.
-		return text ? `: ${text.slice(0, 200)}` : "";
+		return await response.text();
 	} catch {
 		return "";
 	}
 }
 
-async function buildFailureFromResponse(response: Response): Promise<VerifyCredentialResult> {
-	const code = classifyHttpStatus(response.status);
-	const suffix = await readErrorBody(response);
-	return { ok: false, code, message: `HTTP ${response.status}${suffix}` };
+/**
+ * True when an ElevenLabs 401 body signals a valid-but-scoped key. ElevenLabs
+ * returns `{"detail":{"status":"missing_permissions",…}}` when the key
+ * authenticated successfully but lacks read scope on the probe endpoint — the
+ * credential is still valid for what it IS scoped to (e.g. text-to-speech). A
+ * genuinely bad key returns `invalid_api_key`; a missing key
+ * `needs_authorization`. Only `missing_permissions` proves authentication.
+ */
+function isElevenLabsScopedKeyValid(status: number, bodyText: string): boolean {
+	if (status !== 401) {
+		return false;
+	}
+	try {
+		const parsed = JSON.parse(bodyText) as { detail?: { status?: unknown } };
+		return parsed?.detail?.status === "missing_permissions";
+	} catch {
+		return false;
+	}
+}
+
+function buildFailureFromBody(status: number, bodyText: string): VerifyCredentialResult {
+	const code = classifyHttpStatus(status);
+	// Body unreadable / empty — keep the HTTP-status-only message.
+	const suffix = bodyText ? `: ${bodyText.slice(0, 200)}` : "";
+	return { ok: false, code, message: `HTTP ${status}${suffix}` };
 }
 
 async function probeProvider(
@@ -134,7 +150,13 @@ async function probeProvider(
 	if (response.ok) {
 		return { ok: true };
 	}
-	return await buildFailureFromResponse(response);
+	const bodyText = await safeReadBody(response);
+	// A scoped ElevenLabs key 401s on /v1/user yet is perfectly valid for TTS —
+	// accept it rather than reporting a false "invalid key". See file header.
+	if (provider === "elevenlabs" && isElevenLabsScopedKeyValid(response.status, bodyText)) {
+		return { ok: true };
+	}
+	return buildFailureFromBody(response.status, bodyText);
 }
 
 async function verifyCredential(
@@ -180,6 +202,7 @@ export {
 	authHeadersFor,
 	classifyHttpStatus,
 	handleVerifyInvocation,
+	isElevenLabsScopedKeyValid,
 	isVerifyPayload,
 	probeUrlFor,
 	verifyCredential,

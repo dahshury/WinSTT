@@ -58,9 +58,6 @@ interface Anchor {
 	screenTopY: number;
 }
 let lastAnchor: Anchor | null = null;
-// Which picker slot the open targeted — forwarded to the renderer so the
-// detached window renders the main vs realtime variant (filter + swap slot).
-let lastKind: "main" | "realtime" = "main";
 // Renderer-reported desired footprint (one-shot). Main owns the final size:
 // width is honored, height is capped to the room above the chip.
 let desiredSize = { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT };
@@ -404,7 +401,6 @@ function sendAnchor(win: BrowserWindow, panel: PickerBounds, workArea: { x: numb
 		y: panel.y - workArea.y,
 		width: panel.width,
 		height: panel.height,
-		kind: lastKind,
 	});
 }
 
@@ -469,9 +465,8 @@ function showWhenReady(win: BrowserWindow): void {
 	deferShowUntilLoaded(win);
 }
 
-function showModelPickerAtAnchor(anchor: Anchor, kind: "main" | "realtime"): void {
+function showModelPickerAtAnchor(anchor: Anchor): void {
 	lastAnchor = anchor;
-	lastKind = kind;
 	showWhenReady(createModelPickerWindow());
 }
 
@@ -536,7 +531,6 @@ function applyResize(payload: { width: number; height: number }): void {
 
 interface OpenRect {
 	height: number;
-	kind?: "main" | "realtime";
 	width: number;
 	x: number;
 	y: number;
@@ -603,10 +597,7 @@ function tryOpenForSender(event: Electron.IpcMainEvent, payload: OpenRect): void
 	if (!isWindowAlive(senderWin)) {
 		return;
 	}
-	showModelPickerAtAnchor(
-		anchorFromRect(senderWin, payload),
-		payload.kind === "realtime" ? "realtime" : "main"
-	);
+	showModelPickerAtAnchor(anchorFromRect(senderWin, payload));
 }
 
 function processOpen(event: Electron.IpcMainEvent, payload: OpenRect): void {

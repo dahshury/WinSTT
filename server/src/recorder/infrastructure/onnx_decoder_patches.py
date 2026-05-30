@@ -1296,6 +1296,54 @@ def maybe_trim_leading_silence_for_aed(
     return audio[cursor:].astype(np.float32, copy=False)
 
 
+def maybe_trim_trailing_silence_for_aed(
+    audio: npt.NDArray[np.float32],
+) -> npt.NDArray[np.float32]:
+    """Strip a trailing near-silence tail from Cohere AED inputs.
+
+    Cohere Transcribe's ONNX merged-decoder export carries **no
+    ``encoder_attention_mask`` input** (verified against
+    ``onnx-community/cohere-transcribe-03-2026-ONNX``), so the decoder
+    cross-attends to EVERY encoder frame — including any trailing
+    silence or zero-padding. Cohere's own model card warns it "is eager
+    to transcribe, even non-speech sounds … benefits from prepending a
+    noise gate or VAD … to prevent low-volume, floor noise from turning
+    into hallucinations." Fed a silent tail, it phrase-loops — re-emitting
+    the final sentence over and over (the bug this fixes). The reference
+    transformers.js pipeline keeps silence out of the encoder via
+    VAD/energy-chunking; this is the cheap native equivalent — a backward
+    RMS scan that strips a near-zero tail, no extra model or inference.
+
+    Symmetric to :func:`maybe_trim_leading_silence_for_aed` and shares its
+    RMS threshold / window, so only programmatic zero-padding / dead
+    silence is removed — real quiet-room tone (~-66 dBFS) is preserved.
+    Capped at ``AED_MAX_LEADING_TRIM_SAMPLES`` so a fully-silent clip
+    keeps at least one sample.
+
+    **Cohere-only.** Canary AED is deliberately NOT tail-trimmed: it needs
+    the trailing "acoustic rest" cue to emit EOS on short clips
+    (see :func:`maybe_pad_for_aed`). Trimming Canary's tail would
+    reintroduce the dot-loop that pad fixes.
+    """
+    if audio.size == 0:
+        return audio
+    window = AED_LEADING_SILENCE_WINDOW
+    threshold = AED_LEADING_SILENCE_RMS_THRESHOLD
+    max_trim = min(AED_MAX_LEADING_TRIM_SAMPLES, audio.shape[0] - 1)
+    floor = audio.shape[0] - max_trim
+    cursor = audio.shape[0]
+    while cursor - window >= floor:
+        chunk = audio[cursor - window : cursor]
+        # RMS in float64 to avoid underflow on near-zero windows.
+        rms = float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
+        if rms > threshold:
+            break
+        cursor -= window
+    if cursor == audio.shape[0]:
+        return audio
+    return audio[:cursor].astype(np.float32, copy=False)
+
+
 def maybe_pad_for_aed(audio: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     """Zero-pad short audio up to ``AED_PAD_TO_SAMPLES`` for Canary/Cohere.
 

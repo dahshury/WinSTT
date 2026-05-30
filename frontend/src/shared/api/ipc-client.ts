@@ -21,6 +21,7 @@ import type {
 
 export type { LlmWarmupModelStatus, LlmWarmupStatus };
 
+import type { CustomModifier, PresetEntry } from "@/shared/lib/preset-prompts";
 import { decodeSettingsPayload } from "./settings-codec";
 
 type AppSettings = ReturnType<typeof decodeSettingsPayload>;
@@ -927,6 +928,63 @@ export const onFileTranscriptionError = (
 	cb: (data: { requestId: string; fileName: string; error: string }) => void
 ) => onCast(IPC.FILE_TRANSCRIPTION_ERROR, cb);
 
+// Multi-file transcription queue
+export type FileQueueStatus =
+	| "queued"
+	| "transcribing"
+	| "complete"
+	| "error"
+	| "paused"
+	| "canceled";
+
+export interface FileQueueItem {
+	fileName: string;
+	id: string;
+	message: string;
+	/** 0..1 */
+	progress: number;
+	stage: string;
+	status: FileQueueStatus;
+}
+
+export const fileQueueEnqueue = (files: { filePath: string; fileName: string }[]) =>
+	invokeOrDefault<null>(IPC.FILE_QUEUE_ENQUEUE, null, { files });
+
+export const fileQueueCancel = (id: string) =>
+	invokeOrDefault<null>(IPC.FILE_QUEUE_CANCEL, null, { id });
+
+export const fileQueueRetry = (id: string) =>
+	invokeOrDefault<null>(IPC.FILE_QUEUE_RETRY, null, { id });
+
+export const fileQueueCopy = (id: string) =>
+	invokeOrDefault<null>(IPC.FILE_QUEUE_COPY, null, { id });
+
+export const fileQueueClear = () => invokeOrDefault<null>(IPC.FILE_QUEUE_CLEAR, null);
+
+/** Pause ONE file (the in-flight one); it parks and the queue moves to the next. */
+export const fileQueuePause = (id: string) =>
+	invokeOrDefault<null>(IPC.FILE_QUEUE_PAUSE, null, { id });
+
+/** Resume ONE paused file — continues from where it stopped. */
+export const fileQueueResume = (id: string) =>
+	invokeOrDefault<null>(IPC.FILE_QUEUE_RESUME, null, { id });
+
+/** Discard the whole queue (cancels the in-flight file) and return to the visualizer. */
+export const fileQueueDiscardAll = () => invokeOrDefault<null>(IPC.FILE_QUEUE_DISCARD_ALL, null);
+
+/** One-shot read of the busy flag — for windows mounted after the edge-triggered broadcast. */
+export const fileQueueGetActive = () => invokeOrDefault<boolean>(IPC.FILE_QUEUE_GET_ACTIVE, false);
+
+export const onFileQueueUpdate = (cb: (data: { items: FileQueueItem[] }) => void) =>
+	onCast(IPC.FILE_QUEUE_UPDATE, cb);
+
+export const onFileQueueProgress = (
+	cb: (data: { id: string; progress: number; stage: string }) => void
+) => onCast(IPC.FILE_QUEUE_PROGRESS, cb);
+
+export const onFileQueueActive = (cb: (data: { active: boolean }) => void) =>
+	onCast(IPC.FILE_QUEUE_ACTIVE, cb);
+
 // LLM
 export type {
 	OllamaDeleteResult,
@@ -992,13 +1050,34 @@ export const applyTransform = (): Promise<TransformApplyResult> =>
 	);
 
 /**
+ * Explicit LLM config the Playground can run against, independent of the
+ * feature's saved settings. Mirrors the electron-main `FeatureLlmConfig`
+ * shape; shared connection values (Ollama endpoint, OpenRouter API key) are
+ * NOT included — main reads those from the store regardless.
+ */
+export interface LlmPreviewConfig {
+	customModifiers: readonly CustomModifier[];
+	model: string;
+	openrouterFallbackModel: string;
+	openrouterModel: string;
+	presets: readonly PresetEntry[];
+	provider: string;
+	thinkingEffort: "off" | "low" | "medium" | "high";
+}
+
+/**
  * Playground preview — runs `text` through the chosen feature's full pipeline
  * (composed presets+customModifiers + provider/model). Returns the transformed
  * result. Does not touch selection, clipboard, or paste. Used by the LLM
- * settings playground in both the dictation and transforms sections.
+ * Playground modal. An explicit `config` overrides the feature's saved config
+ * so the user can test arbitrary tone/modifier/provider/model combinations.
  */
-export const runLlmPreview = (text: string, feature: "dictation" | "transforms"): Promise<string> =>
-	invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, feature });
+export const runLlmPreview = (
+	text: string,
+	feature: "dictation" | "transforms",
+	config?: LlmPreviewConfig
+): Promise<string> =>
+	invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, feature, config });
 
 interface TransformAppliedPayload {
 	after: string;
@@ -1103,7 +1182,22 @@ export interface TtsInstallFailedPayload {
 	reason: string;
 }
 
+export interface CloudTtsVoice {
+	category: string;
+	id: string;
+	language: string | null;
+	name: string;
+	previewUrl: string | null;
+}
+
+export interface CloudTtsVoiceCatalog {
+	error: string | null;
+	voices: CloudTtsVoice[];
+}
+
 const TTS_VOICE_FALLBACK: TtsVoiceCatalog = { voices: [], languages: [] };
+
+const TTS_CLOUD_VOICE_FALLBACK: CloudTtsVoiceCatalog = { voices: [], error: null };
 
 const TTS_ESTIMATE_FALLBACK: TtsDownloadEstimatePayload = {
 	totalBytes: 0,
@@ -1118,6 +1212,40 @@ const TTS_ESTIMATE_FALLBACK: TtsDownloadEstimatePayload = {
  */
 export const listTtsVoices = (): Promise<TtsVoiceCatalog> =>
 	invokeOrDefault<TtsVoiceCatalog>(IPC.TTS_LIST_VOICES, TTS_VOICE_FALLBACK);
+
+/**
+ * Fetch the live ElevenLabs voice catalog for cloud TTS (GET /v2/voices,
+ * including cloned voices on the account). Requires a verified ElevenLabs
+ * key; returns `{ voices: [], error }` when the key is missing/invalid.
+ */
+export const ttsCloudListVoices = (): Promise<CloudTtsVoiceCatalog> =>
+	invokeOrDefault<CloudTtsVoiceCatalog>(IPC.TTS_CLOUD_LIST_VOICES, TTS_CLOUD_VOICE_FALLBACK);
+
+/**
+ * Play a cloud voice's FREE pre-generated sample (`previewUrl` from the voice
+ * catalog) through the playback pipeline. Main fetches the CDN mp3 (the renderer
+ * can't — CSP blocks external hosts) and streams it back via {@link onTtsChunk},
+ * so previewing voices costs no ElevenLabs character credits. Returns the
+ * server-correlated ``requestId`` like {@link ttsSpeak}.
+ */
+export const ttsCloudPreview = (payload: { previewUrl: string }): Promise<TtsSpeakResult> =>
+	invokeOrDefault<TtsSpeakResult>(IPC.TTS_CLOUD_PREVIEW, { requestId: "" }, payload);
+
+/**
+ * Read the ElevenLabs key's subscription: plan `tier` (`"free"`, `"starter"`, …
+ * or null when undeterminable — key lacks user-read scope / request failed) and
+ * `creditsExhausted` (monthly character quota spent, free OR paid). The TTS
+ * picker locks premium voices unless a paid tier is confirmed, and disables
+ * cloud entirely when credits are exhausted.
+ */
+export const ttsCloudSubscription = (): Promise<{
+	creditsExhausted: boolean;
+	tier: string | null;
+}> =>
+	invokeOrDefault<{ creditsExhausted: boolean; tier: string | null }>(IPC.TTS_CLOUD_SUBSCRIPTION, {
+		tier: null,
+		creditsExhausted: false,
+	});
 
 /**
  * Side-effect-free probe of what enabling TTS will download. Drives the
@@ -1157,6 +1285,15 @@ export const ttsSpeak = (payload: {
 /** Cancel one or every active TTS request. */
 export const ttsCancel = (requestId?: string): void => {
 	send(IPC.TTS_CANCEL, { requestId });
+};
+
+/**
+ * Set the read-aloud speed (from the pill's speed control). Applies to the
+ * active read's upcoming sentences (next-sentence, natural pitch) and persists
+ * to the active source's speed setting.
+ */
+export const ttsSetSpeed = (speed: number): void => {
+	send(IPC.TTS_SET_SPEED, { speed });
 };
 
 /**

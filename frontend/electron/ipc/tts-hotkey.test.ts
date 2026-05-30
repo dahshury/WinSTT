@@ -109,11 +109,21 @@ mock.module("./recording-mode", () => ({
 	isAnyHotkeyRecording: () => anyHotkeyRecording,
 }));
 
-// ── tts shim (triggerTtsCancelAll) ─────────────────────────────────
+// ── tts shim (triggerTtsCancelAll + triggerTtsSpeakText) ───────────
+// The hotkey no longer dispatches synthesis itself — it captures the selection
+// then hands the TEXT to `triggerTtsSpeakText`, which (in production) routes
+// through the SAME source-aware dispatcher the renderer "Speak" button uses
+// (local Kokoro or cloud ElevenLabs). The voice / lang / speed / model resolution
+// lives there, NOT here, so the hotkey suite only asserts WHICH text was handed
+// off and that the gating is correct.
 let cancelAllCount = 0;
+const speakTexts: string[] = [];
 mock.module("./tts", () => ({
 	triggerTtsCancelAll: () => {
 		cancelAllCount += 1;
+	},
+	triggerTtsSpeakText: (text: string) => {
+		speakTexts.push(text);
 	},
 }));
 
@@ -136,28 +146,11 @@ function logContains(needle: string): boolean {
 }
 
 // ── fake SttClient ─────────────────────────────────────────────────
-interface SynthCall {
-	lang?: string;
-	requestId: string;
-	speed?: number;
-	text: string;
-	voice?: string;
-}
-function makeClient(): { synth: SynthCall[]; client: { ttsSynthesize: (p: SynthCall) => void } } {
-	const synth: SynthCall[] = [];
-	return {
-		synth,
-		client: {
-			ttsSynthesize: (p: SynthCall) => {
-				synth.push(p);
-			},
-		},
-	};
-}
-// The production signature takes an SttClient; our stub only needs ttsSynthesize.
+// `setupTtsHotkey(sttClient)` only uses the client as a "setup ran" guard now
+// (synthesis is dispatched through `triggerTtsSpeakText`), so a bare stub object
+// is enough. The cast mirrors the production signature.
 type SetupArg = Parameters<typeof setupTtsHotkey>[0];
-const asClient = (m: { ttsSynthesize: (p: SynthCall) => void }): SetupArg =>
-	m as unknown as SetupArg;
+const DUMMY_CLIENT: SetupArg = {} as unknown as SetupArg;
 
 const COMBO = "LCtrl+LShift+S";
 const COMBO_KEYS = [UiohookKey.Ctrl, UiohookKey.Shift, UiohookKey.S];
@@ -193,17 +186,14 @@ function fireTtsStoreChange(): void {
 // listenerInstalled/activeClient) that is only cleared by the returned
 // dispose(). Each test installs fresh state and disposes via this handle.
 let active: { dispose: () => void } | null = null;
-function install(
-	client: { ttsSynthesize: (p: SynthCall) => void },
-	opts: { hotkey?: string | unknown; enabled?: boolean } = {}
-): void {
+function install(opts: { hotkey?: string | unknown; enabled?: boolean } = {}): void {
 	if ("hotkey" in opts) {
 		storeValues["tts.hotkey"] = opts.hotkey;
 	} else {
 		storeValues["tts.hotkey"] = COMBO;
 	}
 	storeValues["tts.enabled"] = opts.enabled ?? true;
-	active = setupTtsHotkey(asClient(client));
+	active = setupTtsHotkey(DUMMY_CLIENT);
 }
 
 beforeEach(() => {
@@ -223,22 +213,21 @@ beforeEach(() => {
 	captureRejectWithString = false;
 	captureCallCount = 0;
 	cancelAllCount = 0;
+	speakTexts.length = 0;
 	pasteGuardActive = false;
 	anyHotkeyRecording = false;
 });
 
 describe("setupTtsHotkey: install / lifecycle", () => {
 	test("installs keydown + keyup listeners and a tts store subscription", () => {
-		const { client } = makeClient();
-		install(client);
+		install();
 		expect(uioListeners.keydown.length).toBe(1);
 		expect(uioListeners.keyup.length).toBe(1);
 		expect((storeChangeListeners.get("tts") ?? []).length).toBe(1);
 	});
 
 	test("returns a handle whose dispose() detaches both listeners and the subscription", () => {
-		const { client } = makeClient();
-		install(client);
+		install();
 		const handle = active;
 		expect(handle).not.toBeNull();
 		handle?.dispose();
@@ -249,10 +238,9 @@ describe("setupTtsHotkey: install / lifecycle", () => {
 	});
 
 	test("is idempotent — a second call does not double-register listeners", () => {
-		const { client } = makeClient();
-		install(client);
+		install();
 		// Second call while installed: returns a handle but installs nothing new.
-		const second = setupTtsHotkey(asClient(client));
+		const second = setupTtsHotkey(DUMMY_CLIENT);
 		expect(uioListeners.keydown.length).toBe(1);
 		expect(uioListeners.keyup.length).toBe(1);
 		expect((storeChangeListeners.get("tts") ?? []).length).toBe(1);
@@ -260,8 +248,7 @@ describe("setupTtsHotkey: install / lifecycle", () => {
 	});
 
 	test("dispose() twice is a safe no-op (second call detaches nothing)", () => {
-		const { client } = makeClient();
-		install(client);
+		install();
 		const handle = active;
 		active = null;
 		handle?.dispose();
@@ -271,41 +258,22 @@ describe("setupTtsHotkey: install / lifecycle", () => {
 	});
 
 	test("re-install after dispose works (listenerInstalled is reset by cleanup)", () => {
-		const { client } = makeClient();
-		install(client);
+		install();
 		active?.dispose();
 		active = null;
 		uioListeners.keydown.length = 0;
 		uioListeners.keyup.length = 0;
 		// Fresh install must register again — proves cleanup() flipped
 		// listenerInstalled back to false.
-		install(client);
+		install();
 		expect(uioListeners.keydown.length).toBe(1);
 		expect(uioListeners.keyup.length).toBe(1);
-	});
-
-	test("BUG: idempotent re-call drops the new SttClient — speak still goes to the FIRST client", async () => {
-		// setupTtsHotkey returns early when listenerInstalled, WITHOUT updating
-		// `activeClient`. If a caller re-wires with a fresh client (e.g. after a
-		// WS reconnect) without disposing first, synthesis keeps dispatching to
-		// the STALE first client. Documents current (arguably buggy) behaviour.
-		const first = makeClient();
-		const second = makeClient();
-		install(first.client);
-		const handle = setupTtsHotkey(asClient(second.client));
-		holdCombo();
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(first.synth.length).toBe(1);
-		expect(second.synth.length).toBe(0);
-		handle.dispose();
 	});
 });
 
 describe("setupTtsHotkey: combo firing (happy path)", () => {
-	test("dispatches ttsSynthesize only once the FULL combo is held", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+	test("hands the text off only once the FULL combo is held", async () => {
+		install();
 		fireKeyDown(COMBO_KEYS[0] as number);
 		fireKeyDown(COMBO_KEYS[1] as number);
 		expect(captureCallCount).toBe(0);
@@ -313,89 +281,26 @@ describe("setupTtsHotkey: combo firing (happy path)", () => {
 		expect(captureCallCount).toBe(1);
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
-		expect(synth[0]?.text).toBe("hello world");
+		expect(speakTexts.length).toBe(1);
+		expect(speakTexts[0]).toBe("hello world");
 	});
 
-	test("passes the captured selection text + store voice/lang/speed verbatim", async () => {
-		const { client, synth } = makeClient();
-		storeValues["tts.voice"] = "bf_emma";
-		storeValues["tts.lang"] = "en-gb";
-		storeValues["tts.speed"] = 1.25;
-		install(client);
+	test("passes the captured selection text verbatim (trimming/params live downstream)", async () => {
+		install();
+		// Whitespace is preserved on the wire — the hotkey only checks the trimmed
+		// text is non-empty; the actual trim/voice/speed handling is in tts.ts.
 		captureResult = { text: "  read me  ", source: "uia", originalClipboard: null };
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
-		const call = synth[0];
-		expect(call?.text).toBe("  read me  ");
-		expect(call?.voice).toBe("bf_emma");
-		expect(call?.lang).toBe("en-gb");
-		expect(call?.speed).toBe(1.25);
-		// requestId is a randomUUID — present and non-empty.
-		expect(typeof call?.requestId).toBe("string");
-		expect((call?.requestId ?? "").length).toBeGreaterThan(0);
-	});
-
-	test("applies default voice / lang / speed when the store keys are unset", async () => {
-		const { client, synth } = makeClient();
-		install(client); // no tts.voice/lang/speed seeded
-		holdCombo();
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(synth[0]?.voice).toBe("af_heart");
-		expect(synth[0]?.lang).toBe("en-us");
-		expect(synth[0]?.speed).toBe(1.0);
-	});
-
-	test("speed below 0.5 is clamped up to 0.5", async () => {
-		const { client, synth } = makeClient();
-		storeValues["tts.speed"] = 0.1;
-		install(client);
-		holdCombo();
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(synth[0]?.speed).toBe(0.5);
-	});
-
-	test("speed above 2.0 is clamped down to 2.0", async () => {
-		const { client, synth } = makeClient();
-		storeValues["tts.speed"] = 9;
-		install(client);
-		holdCombo();
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(synth[0]?.speed).toBe(2.0);
-	});
-
-	test("non-numeric speed falls back to the 1.0 default", async () => {
-		const { client, synth } = makeClient();
-		storeValues["tts.speed"] = "fast";
-		install(client);
-		holdCombo();
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(synth[0]?.speed).toBe(1.0);
-	});
-
-	test("empty-string store voice/lang fall back to defaults (|| not ??)", async () => {
-		const { client, synth } = makeClient();
-		storeValues["tts.voice"] = "";
-		storeValues["tts.lang"] = "";
-		install(client);
-		holdCombo();
-		await Promise.resolve();
-		await Promise.resolve();
-		expect(synth[0]?.voice).toBe("af_heart");
-		expect(synth[0]?.lang).toBe("en-us");
+		expect(speakTexts.length).toBe(1);
+		expect(speakTexts[0]).toBe("  read me  ");
 	});
 });
 
 describe("setupTtsHotkey: single-shot per hold (auto-repeat guard)", () => {
 	test("does NOT re-dispatch while the combo stays held (OS auto-repeat)", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		holdCombo();
 		// Auto-repeat re-delivers the last key several times.
 		fireKeyDown(COMBO_KEYS[2] as number);
@@ -403,32 +308,30 @@ describe("setupTtsHotkey: single-shot per hold (auto-repeat guard)", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(captureCallCount).toBe(1);
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 
 	test("re-dispatches after a key in the combo is released and re-pressed", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 		// Release the non-modifier — combo no longer fully held → fired flag clears.
 		fireKeyUp(COMBO_KEYS[2] as number);
 		// Re-press it → combo fully held again → fire #2.
 		fireKeyDown(COMBO_KEYS[2] as number);
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(2);
+		expect(speakTexts.length).toBe(2);
 	});
 
 	test("releasing a key NOT in the combo leaves the fired flag intact (no re-fire)", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 		// Press + release an unrelated key while the combo is still fully held.
 		fireKeyDown(UiohookKey.A);
 		fireKeyUp(UiohookKey.A);
@@ -436,99 +339,91 @@ describe("setupTtsHotkey: single-shot per hold (auto-repeat guard)", () => {
 		fireKeyDown(COMBO_KEYS[2] as number);
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 });
 
 describe("setupTtsHotkey: gating guards", () => {
 	test("no dispatch when tts.enabled is false", async () => {
-		const { client, synth } = makeClient();
-		install(client, { enabled: false });
+		install({ enabled: false });
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(captureCallCount).toBe(0);
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 	});
 
 	test("no dispatch when no hotkey is configured (empty string)", async () => {
-		const { client, synth } = makeClient();
-		install(client, { hotkey: "" });
+		install({ hotkey: "" });
 		// Pressing the keys that WOULD form the combo does nothing — combo is null.
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(captureCallCount).toBe(0);
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		expect(logContains("no hotkey configured")).toBe(true);
 	});
 
 	test("no dispatch when the configured hotkey is unparseable", async () => {
-		const { client, synth } = makeClient();
 		consoleLogLines.length = 0;
-		install(client, { hotkey: "LCtrl+NotAKey" });
+		install({ hotkey: "LCtrl+NotAKey" });
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		expect(logContains("unparseable")).toBe(true);
 	});
 
 	test("non-string hotkey value is coerced to no-combo (loadHotkey type guard)", async () => {
-		const { client, synth } = makeClient();
-		install(client, { hotkey: 12_345 });
+		install({ hotkey: 12_345 });
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 	});
 
 	test("whitespace-padded hotkey is trimmed before parsing", async () => {
-		const { client, synth } = makeClient();
-		install(client, { hotkey: `  ${COMBO}  ` });
+		install({ hotkey: `  ${COMBO}  ` });
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
 		// Trimmed → parses to the same combo → fires.
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 
 	test("keydown is fully short-circuited while the paste guard is active", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		pasteGuardActive = true;
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
 		// Guard blocks before pressed.add, so the combo never registers as held.
 		expect(captureCallCount).toBe(0);
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 	});
 
 	test("keydown is short-circuited (no fire) while a hotkey is being recorded", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		anyHotkeyRecording = true;
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		// But pressed-state is still tracked: ending recording then re-pressing
 		// the last key should now fire (combo was already held internally).
 		anyHotkeyRecording = false;
 		fireKeyDown(COMBO_KEYS[2] as number);
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 
 	test("paste guard active during keyup does not mutate pressed-state (early return)", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 		// Release the combo key WHILE the paste guard is active → keyup early
 		// returns, so pressed.delete never runs and firedThisHold stays true.
 		pasteGuardActive = true;
@@ -538,30 +433,28 @@ describe("setupTtsHotkey: gating guards", () => {
 		fireKeyDown(COMBO_KEYS[2] as number);
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 
 	test("keyup while a hotkey is being recorded does not clear the fired flag", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 		anyHotkeyRecording = true;
 		fireKeyUp(COMBO_KEYS[2] as number); // would clear fired, but recording blocks it
 		anyHotkeyRecording = false;
 		fireKeyDown(COMBO_KEYS[2] as number);
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 });
 
 describe("setupTtsHotkey: stop gesture (combo + Backspace)", () => {
 	test("combo + Backspace cancels TTS and suppresses the speak path", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		consoleLogLines.length = 0;
 		fireKeyDown(COMBO_KEYS[0] as number);
 		fireKeyDown(COMBO_KEYS[1] as number);
@@ -569,19 +462,18 @@ describe("setupTtsHotkey: stop gesture (combo + Backspace)", () => {
 		// At this point speak already fired once. Now add Backspace → stop.
 		await Promise.resolve();
 		await Promise.resolve();
-		const synthBeforeStop = synth.length;
+		const spokenBeforeStop = speakTexts.length;
 		fireKeyDown(UiohookKey.Backspace);
 		expect(cancelAllCount).toBe(1);
 		await Promise.resolve();
 		await Promise.resolve();
 		// Stop does not enqueue any further synthesis.
-		expect(synth.length).toBe(synthBeforeStop);
+		expect(speakTexts.length).toBe(spokenBeforeStop);
 		expect(logContains("stop gesture")).toBe(true);
 	});
 
 	test("Backspace pressed FIRST (with combo) cancels and never speaks", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		fireKeyDown(UiohookKey.Backspace);
 		fireKeyDown(COMBO_KEYS[0] as number);
 		fireKeyDown(COMBO_KEYS[1] as number);
@@ -590,86 +482,79 @@ describe("setupTtsHotkey: stop gesture (combo + Backspace)", () => {
 		await Promise.resolve();
 		await Promise.resolve();
 		// firedThisHold was set by maybeStop before maybeFire could run → no speak.
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		expect(captureCallCount).toBe(0);
 	});
 
 	test("Backspace WITHOUT the full combo does not cancel", () => {
-		const { client } = makeClient();
-		install(client);
+		install();
 		fireKeyDown(COMBO_KEYS[0] as number); // partial combo
 		fireKeyDown(UiohookKey.Backspace);
 		expect(cancelAllCount).toBe(0);
 	});
 
 	test("stop gesture is inert when tts.enabled is false", () => {
-		const { client } = makeClient();
-		install(client, { enabled: false });
+		install({ enabled: false });
 		holdCombo();
 		fireKeyDown(UiohookKey.Backspace);
 		expect(cancelAllCount).toBe(0);
 	});
 
 	test("stop gesture is inert when no combo is configured", () => {
-		const { client } = makeClient();
-		install(client, { hotkey: "" });
+		install({ hotkey: "" });
 		holdCombo();
 		fireKeyDown(UiohookKey.Backspace);
 		expect(cancelAllCount).toBe(0);
 	});
 });
 
-describe("dispatchSpeak: selection + client edge cases", () => {
-	test("empty selection text does NOT call ttsSynthesize", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+describe("dispatchSpeak: selection edge cases", () => {
+	test("empty selection text does NOT hand any text off", async () => {
+		install();
 		captureResult = { text: "   ", source: "uia", originalClipboard: null };
 		consoleLogLines.length = 0;
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(captureCallCount).toBe(1);
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		expect(logContains("no selection captured")).toBe(true);
 	});
 
 	test("captureSelection rejection is swallowed and logged (Error branch)", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		captureShouldReject = true;
 		consoleLogLines.length = 0;
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		expect(logContains("captureSelection failed")).toBe(true);
 		expect(logContains("UIA blew up")).toBe(true);
 	});
 
 	test("captureSelection rejection with a non-Error value is also swallowed", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		captureRejectWithString = true;
 		consoleLogLines.length = 0;
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		expect(logContains("captureSelection failed")).toBe(true);
 	});
 });
 
 describe("setupTtsHotkey: store-change subscription (re-arm)", () => {
 	test("a tts.hotkey change re-runs rebuildCombo and arms the NEW combo", async () => {
-		const { client, synth } = makeClient();
 		// Install with NO hotkey → combo is null, nothing fires.
-		install(client, { hotkey: "" });
+		install({ hotkey: "" });
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		// Now configure a real hotkey and fire the store subscription.
 		storeValues["tts.hotkey"] = COMBO;
 		fireTtsStoreChange();
@@ -680,17 +565,16 @@ describe("setupTtsHotkey: store-change subscription (re-arm)", () => {
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 
 	test("a tts.enabled change is part of the fingerprint and re-arms the listener", async () => {
-		const { client, synth } = makeClient();
 		// Install disabled — combo is parsed but maybeFire is gated off.
-		install(client, { enabled: false });
+		install({ enabled: false });
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(0);
+		expect(speakTexts.length).toBe(0);
 		// Flip enabled true, fire the subscription (fingerprint changed).
 		storeValues["tts.enabled"] = true;
 		fireTtsStoreChange();
@@ -698,12 +582,11 @@ describe("setupTtsHotkey: store-change subscription (re-arm)", () => {
 		fireKeyDown(COMBO_KEYS[2] as number);
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 
 	test("a no-op store change (identical fingerprint) does NOT rebuild the combo", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		consoleLogLines.length = 0;
 		// Fire the subscription WITHOUT changing tts.hotkey / tts.enabled. The
 		// fingerprint matches → early return, so rebuildCombo is skipped (no
@@ -713,12 +596,11 @@ describe("setupTtsHotkey: store-change subscription (re-arm)", () => {
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
+		expect(speakTexts.length).toBe(1);
 	});
 
 	test("changing only an unrelated tts.* key (voice) leaves the fingerprint stable", async () => {
-		const { client, synth } = makeClient();
-		install(client);
+		install();
 		// voice/speed/lang are NOT part of the fingerprint — a change here fires
 		// the subscription but must NOT trigger a rebuild (early return path).
 		storeValues["tts.voice"] = "bf_emma";
@@ -726,8 +608,6 @@ describe("setupTtsHotkey: store-change subscription (re-arm)", () => {
 		holdCombo();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(synth.length).toBe(1);
-		// The new voice is still read at dispatch time (dispatchSpeak reads live).
-		expect(synth[0]?.voice).toBe("bf_emma");
+		expect(speakTexts.length).toBe(1);
 	});
 });

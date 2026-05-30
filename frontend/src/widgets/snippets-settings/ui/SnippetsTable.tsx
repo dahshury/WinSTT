@@ -22,6 +22,12 @@ import { Tooltip } from "@/shared/ui/tooltip";
 
 type SnippetEntry = components["schemas"]["SnippetEntry"];
 
+// Cap the entry list so it scrolls inside its own frame rather than growing
+// without bound and pushing the rest of the panel off the fixed-height
+// settings window (700×560). Picked to keep the table comfortably within the
+// page — ~7 rows visible before the scrollbar engages.
+const TABLE_MAX_HEIGHT_PX = 280;
+
 export interface SnippetsTableProps {
 	entries: SnippetEntry[];
 	onAdd: (entry: Omit<SnippetEntry, "id">) => void;
@@ -114,38 +120,47 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 					{tc("add")}
 				</Button>
 			</Form>
-			<Table containerClassName="rounded border border-border overflow-hidden">
-				<TableHeader>
-					<TableRow>
-						<TableHead className="w-1/3">{t("trigger")}</TableHead>
-						<TableHead>{t("expansion")}</TableHead>
-						<TableHead className="w-10" />
-					</TableRow>
-				</TableHeader>
-				<TableBody>
-					{entries.length === 0 ? (
-						<TableEmpty colSpan={3}>{t("emptyState")}</TableEmpty>
-					) : (
-						entries.map((entry, idx) => (
-							<TableRow index={idx} key={entry.id}>
-								<TableCell className="w-1/3 text-purple">{entry.trigger}</TableCell>
-								<TableCell className="text-foreground">{entry.expansion}</TableCell>
-								<TableCell className="w-10 text-right">
-									<Tooltip content={tc("delete")}>
-										<Button
-											aria-label={`${tc("delete")} "${entry.trigger}"`}
-											className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
-											onClick={() => onRemove(entry.id)}
-										>
-											<HugeiconsIcon icon={Delete02Icon} size={14} />
-										</Button>
-									</Tooltip>
-								</TableCell>
-							</TableRow>
-						))
-					)}
-				</TableBody>
-			</Table>
+			{/* Scroll lives on this OUTER frame so the Table's inner
+			    proximity-hover container scrolls as one unit within it and the
+			    row-hover backdrop stays aligned. The border/rounding moves here
+			    too so the frame stays put while the rows scroll. */}
+			<div
+				className="overflow-y-auto overscroll-contain rounded border border-border"
+				style={{ maxHeight: TABLE_MAX_HEIGHT_PX }}
+			>
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead className="w-1/3">{t("trigger")}</TableHead>
+							<TableHead>{t("expansion")}</TableHead>
+							<TableHead className="w-10" />
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{entries.length === 0 ? (
+							<TableEmpty colSpan={3}>{t("emptyState")}</TableEmpty>
+						) : (
+							entries.map((entry, idx) => (
+								<TableRow index={idx} key={entry.id}>
+									<TableCell className="w-1/3 text-purple">{entry.trigger}</TableCell>
+									<TableCell className="text-foreground">{entry.expansion}</TableCell>
+									<TableCell className="w-10 text-right">
+										<Tooltip content={tc("delete")}>
+											<Button
+												aria-label={`${tc("delete")} "${entry.trigger}"`}
+												className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
+												onClick={() => onRemove(entry.id)}
+											>
+												<HugeiconsIcon icon={Delete02Icon} size={14} />
+											</Button>
+										</Tooltip>
+									</TableCell>
+								</TableRow>
+							))
+						)}
+					</TableBody>
+				</Table>
+			</div>
 			{onClearAll && (
 				<>
 					<ConfirmDialog

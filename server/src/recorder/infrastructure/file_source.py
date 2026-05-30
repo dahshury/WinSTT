@@ -40,6 +40,12 @@ class FileAudioSource(IAudioSource):
             return b"\x00" * (self._buffer_size * 2)
 
     @override
+    def drain_available(self) -> AudioChunk:
+        # File / loopback sources push frames through ``_queue`` as they
+        # arrive; there's no separate device ring buffer to flush on stop.
+        return b""
+
+    @override
     def cleanup(self) -> None:
         self._active = False
 

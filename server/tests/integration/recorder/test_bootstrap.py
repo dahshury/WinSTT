@@ -6,7 +6,12 @@ import pytest
 
 from src.building_blocks.errors import ConfigurationError
 from src.building_blocks.event_bus import EventBus
-from src.recorder.bootstrap import CALLBACK_EVENT_MAP, _validate_language_against_model, wire_callback
+from src.recorder.bootstrap import (
+    CALLBACK_EVENT_MAP,
+    _assert_cloud_model_id_not_blank,
+    _validate_language_against_model,
+    wire_callback,
+)
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import RecordingStarted
 
@@ -28,6 +33,24 @@ class TestBootstrap:
             "on_realtime_transcription_update",
         ):
             assert required in CALLBACK_EVENT_MAP, f"missing required callback: {required}"
+
+    def test_blank_cloud_model_id_raises_clear_error(self) -> None:
+        # A bare provider prefix (the renderer's broken "cloud enabled, no
+        # model chosen" state) must surface a clear config error rather than
+        # silently fall through to the ONNX resolver.
+        with pytest.raises(ConfigurationError, match="no model id"):
+            _assert_cloud_model_id_not_blank("openai:")
+
+    def test_whitespace_cloud_model_id_raises_clear_error(self) -> None:
+        with pytest.raises(ConfigurationError, match="no model id"):
+            _assert_cloud_model_id_not_blank("elevenlabs:   ")
+
+    def test_valid_cloud_model_id_does_not_raise(self) -> None:
+        _assert_cloud_model_id_not_blank("openai:gpt-4o-transcribe")
+
+    def test_local_model_id_does_not_raise(self) -> None:
+        # Plain local ids never match a cloud prefix, so the guard is a no-op.
+        _assert_cloud_model_id_not_blank("tiny")
 
     def test_wire_callback_fires_on_event(self) -> None:
         event_bus = EventBus()

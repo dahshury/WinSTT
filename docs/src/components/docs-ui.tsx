@@ -99,6 +99,14 @@ export interface ScreenshotProps {
   maxWidth?: number;
   /** Window-title text shown in the chrome bar. */
   label?: string;
+  /**
+   * When set, crops the image to this CSS aspect-ratio (e.g. "4 / 3") via
+   * object-fit: cover. Use to make a row of screenshots a uniform height while
+   * each crop frames only the relevant feature. Pair with `focus`.
+   */
+  aspect?: string;
+  /** CSS object-position for the crop (e.g. "top", "center", "50% 18%"). */
+  focus?: string;
 }
 
 function resolveSrc(src: string): string {
@@ -114,6 +122,8 @@ export function Screenshot({
   chrome = "window",
   maxWidth,
   label,
+  aspect,
+  focus,
 }: ScreenshotProps) {
   const url = resolveSrc(src);
   return (
@@ -136,6 +146,16 @@ export function Screenshot({
           loading="lazy"
           decoding="async"
           className="shot-img"
+          style={
+            aspect
+              ? {
+                  aspectRatio: aspect,
+                  height: "auto",
+                  objectFit: "cover",
+                  objectPosition: focus ?? "center",
+                }
+              : undefined
+          }
         />
       </div>
       {caption ? <figcaption className="shot-cap">{caption}</figcaption> : null}

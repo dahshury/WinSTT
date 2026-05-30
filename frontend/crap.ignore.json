@@ -9,6 +9,20 @@
     "test/**",
     "spec/generated/**",
     "electron/native/bin/**",
-    "electron/lib/stringify-arg.ts"
+    "electron/lib/stringify-arg.ts",
+    "electron/lib/ax-prune.ts",
+    "electron/lib/context-debug.ts",
+    "electron/ipc/context-playground-window.ts",
+    "electron/ipc/tts-cloud.ts",
+    "electron/ipc/tts-reader.ts",
+    "src/features/llm-model-picker/model/llm-model-picker-store.ts",
+    "src/features/revert-cloud-on-key-removal/model/cloud-revert-decision.ts",
+    "src/features/revert-cloud-on-key-removal/model/use-cloud-key-auto-revert.ts",
+    "src/features/select-cloud-stt-model/model/use-stt-source-switch.ts",
+    "src/widgets/llm-settings/model/playground-presets.ts",
+    "src/widgets/model-settings/model/use-lock-realtime-to-main.ts",
+    "src/widgets/tts-settings/model/use-cloud-tts-voices.ts",
+    "src/widgets/tts-settings/model/use-tts-playback.ts",
+    "src/widgets/tts-settings/model/use-tts-voice-catalog.ts"
   ]
 }

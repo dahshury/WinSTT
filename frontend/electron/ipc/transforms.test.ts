@@ -310,4 +310,51 @@ describe("assertPreviewPayload", () => {
 		expect(() => helpers.assertPreviewPayload({ text: "x", feature: "dictation" })).not.toThrow();
 		expect(() => helpers.assertPreviewPayload({ text: "x", feature: "transforms" })).not.toThrow();
 	});
+
+	test("accepts payload with a valid explicit config", () => {
+		expect(() =>
+			helpers.assertPreviewPayload({ text: "x", feature: "dictation", config: VALID_CONFIG })
+		).not.toThrow();
+	});
+
+	test("rejects a malformed explicit config", () => {
+		expect(() =>
+			helpers.assertPreviewPayload({ text: "x", feature: "dictation", config: { provider: 1 } })
+		).toThrow();
+	});
+});
+
+const VALID_CONFIG = {
+	provider: "ollama",
+	model: "llama3",
+	openrouterModel: "",
+	openrouterFallbackModel: "",
+	thinkingEffort: "medium",
+	presets: [{ key: "neutral" }],
+	customModifiers: [],
+};
+
+describe("assertPreviewConfig", () => {
+	test("accepts a fully-formed config", () => {
+		expect(() => helpers.assertPreviewConfig(VALID_CONFIG)).not.toThrow();
+	});
+
+	test("rejects non-object configs", () => {
+		expect(() => helpers.assertPreviewConfig(null)).toThrow();
+		expect(() => helpers.assertPreviewConfig("nope")).toThrow();
+	});
+
+	test("rejects non-string provider/model fields", () => {
+		expect(() => helpers.assertPreviewConfig({ ...VALID_CONFIG, provider: 1 })).toThrow();
+		expect(() => helpers.assertPreviewConfig({ ...VALID_CONFIG, model: null })).toThrow();
+	});
+
+	test("rejects an invalid thinkingEffort", () => {
+		expect(() => helpers.assertPreviewConfig({ ...VALID_CONFIG, thinkingEffort: "max" })).toThrow();
+	});
+
+	test("rejects non-array presets/customModifiers", () => {
+		expect(() => helpers.assertPreviewConfig({ ...VALID_CONFIG, presets: "x" })).toThrow();
+		expect(() => helpers.assertPreviewConfig({ ...VALID_CONFIG, customModifiers: 3 })).toThrow();
+	});
 });

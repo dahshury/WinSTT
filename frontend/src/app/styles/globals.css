@@ -188,6 +188,15 @@
 	   hairline at the top edge, just put in motion. */
 	--animate-swap-sweep: swap-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 
+	/* File-transcription queue rows. row-in: staggered entrance (ease-out,
+	   transform + opacity only). glyph-pop: one-shot success overshoot on the
+	   completed-row check. hairline-pulse: a calm breathe on a paused row's
+	   frozen fill so it never reads as idle. All gated by `motion-safe:` at the
+	   call site (see QueueRow.tsx). */
+	--animate-row-in: row-in 220ms ease-out both;
+	--animate-glyph-pop: glyph-pop 240ms ease-out both;
+	--animate-hairline-pulse: hairline-pulse 1.6s ease-in-out infinite;
+
 	/* z-index scale — keep in sync with shared/config/z-index.ts.
 	   `--z-index-*` isn't a built-in Tailwind v4 namespace, so the matching
 	   `z-{name}` utilities are declared via `@utility` below. JSX uses the
@@ -334,6 +343,48 @@
 	}
 	100% {
 		transform: translateX(200%);
+	}
+}
+
+/* File-transcription queue row entrance — ease-out, transform + opacity only.
+   Stagger applied per-row via inline animation-delay (see QueueRow.tsx). */
+@keyframes row-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* Completed-row check — one-shot scale overshoot, the single moment of
+   exaggeration in the queue, spent on the success beat. */
+@keyframes glyph-pop {
+	0% {
+		opacity: 0;
+		transform: scale(0.6);
+	}
+	60% {
+		opacity: 1;
+		transform: scale(1.12);
+	}
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+/* Paused-row hairline — calm opacity breathe so a frozen progress fill never
+   reads as idle. */
+@keyframes hairline-pulse {
+	0%,
+	100% {
+		opacity: 0.45;
+	}
+	50% {
+		opacity: 1;
 	}
 }
 
@@ -535,6 +586,99 @@
 
 @media (prefers-reduced-motion: reduce) {
 	.t-modal {
+		transition: none !important;
+	}
+	/* File-transcription queue: the `motion-safe:` variants already drop every
+	   keyframe (row-in, spin, glyph-pop, hairline-pulse) under reduced motion.
+	   This neutralizes the remaining always-on transitions — the progress-width
+	   glide, the press scale, the hover fades — so progress snaps to its value
+	   (state, not decoration) and no status information is lost. */
+	.file-queue *,
+	.file-queue *::before,
+	.file-queue *::after {
+		transition-duration: 0.001ms !important;
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+	}
+}
+
+/* ── Transitions.dev — Page side-by-side (visualizer ⇄ file-transcription) ──
+   The main-window AudioDisplay cross-fades between the idle visualizer
+   (data-page-id="1") and the transcription queue (data-page-id="2"); the active
+   page is selected by data-page on .t-page-slide. Page 1 exits left, page 2
+   exits right, with a blur + fade. */
+.t-page-slide {
+	--page-slide-dur: 220ms;
+	--page-fade-dur: 220ms;
+	--page-slide-distance: 8px;
+	--page-blur: 3px;
+	--page-stagger: 0ms;
+	--page-exit-enabled: 1;
+	--page-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--page-fade-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	position: absolute;
+	inset: 0;
+}
+.t-page-slide .t-page[data-page-id="1"] {
+	--t-page-from-x: calc(var(--page-slide-distance) * -1);
+}
+.t-page-slide .t-page[data-page-id="2"] {
+	--t-page-from-x: var(--page-slide-distance);
+}
+.t-page-slide .t-page {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	opacity: 0;
+	filter: blur(calc(var(--page-blur) * var(--page-exit-enabled)));
+	transform: translateX(
+		calc(var(--t-page-from-x, 0px) * var(--page-exit-enabled))
+	);
+	transition:
+		opacity var(--page-fade-dur) var(--page-fade-ease),
+		transform var(--page-slide-dur) var(--page-slide-ease),
+		filter var(--page-slide-dur) var(--page-slide-ease);
+	will-change: opacity, transform, filter;
+}
+.t-page-slide[data-page="1"] .t-page[data-page-id="1"],
+.t-page-slide[data-page="2"] .t-page[data-page-id="2"] {
+	pointer-events: auto;
+	opacity: 1;
+	filter: blur(0);
+	transform: translateX(0);
+	transition-delay: var(--page-stagger);
+}
+
+/* ── Transitions.dev — Text states swap (queue header label) ──
+   JS three-phase swap (see TextSwap.tsx): .is-exit slides the old text up +
+   blurs + fades; the text is swapped; .is-enter-start jumps it below (no
+   transition); removing it animates the new text back to rest. */
+.t-text-swap {
+	display: inline-block;
+	opacity: 1;
+	filter: blur(0);
+	transform: translateY(0);
+	transition:
+		transform 150ms ease-in-out,
+		filter 150ms ease-in-out,
+		opacity 150ms ease-in-out;
+	will-change: transform, filter, opacity;
+}
+.t-text-swap.is-exit {
+	opacity: 0;
+	filter: blur(2px);
+	transform: translateY(-4px);
+}
+.t-text-swap.is-enter-start {
+	opacity: 0;
+	filter: blur(2px);
+	transform: translateY(4px);
+	transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.t-page-slide .t-page,
+	.t-text-swap {
 		transition: none !important;
 	}
 }

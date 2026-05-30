@@ -26,6 +26,8 @@ class FakeAudioSource(IAudioSource):
         self._switched_to: list[int | None] = []
         self._pause_count = 0
         self._resume_count = 0
+        self._drain_payload: AudioChunk = b""
+        self._drain_count = 0
 
     @override
     def setup(self) -> None:
@@ -39,6 +41,20 @@ class FakeAudioSource(IAudioSource):
             self._index += 1
             return chunk
         return b"\x00" * (self._buffer_size * 2)
+
+    @override
+    def drain_available(self) -> AudioChunk:
+        # Tests set ``drain_payload`` to simulate the OS-buffered tail a real
+        # hardware source would flush on PTT release; default is "nothing".
+        self._drain_count += 1
+        return self._drain_payload
+
+    def set_drain_payload(self, payload: AudioChunk) -> None:
+        self._drain_payload = payload
+
+    @property
+    def drain_count(self) -> int:
+        return self._drain_count
 
     @override
     def cleanup(self) -> None:

@@ -260,6 +260,17 @@ const storeValueSchemas = {
 	// rule. An empty persisted value falls through `.min(1)` to `.catch()` and
 	// rehydrates to the canonical default, keeping the binding always present.
 	"tts.hotkey": z.string().min(1).catch("LMeta+LShift+E"),
+	// tts cloud (ElevenLabs) — active when tts.source === "cloud"; mirrors the
+	// nested `ttsSettingsSchema.cloud` defaults. 2-level dot-paths round-trip
+	// like `integrations.elevenlabs.apiKey` / `llm.dictation.provider`.
+	"tts.source": z.enum(["local", "cloud"]).catch("local"),
+	"tts.cloud.voice": z.string().catch(""),
+	"tts.cloud.model": z.string().catch("eleven_multilingual_v2"),
+	"tts.cloud.stability": z.number().min(0).max(1).catch(0.5),
+	"tts.cloud.similarity": z.number().min(0).max(1).catch(0.75),
+	"tts.cloud.style": z.number().min(0).max(1).catch(0),
+	"tts.cloud.speed": z.number().min(0.7).max(1.2).catch(1.0),
+	"tts.cloud.speakerBoost": z.boolean().catch(true),
 	// schema version (internal)
 	_schemaVersion: z.number().optional().catch(undefined),
 } as const;

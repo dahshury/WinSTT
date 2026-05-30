@@ -118,6 +118,37 @@ export function buildModelOpts(
 	return opts;
 }
 
+/**
+ * True when the model can honor a decoder-level "translate to English" pass.
+ * Two engine families support it: multilingual Whisper exports (via the
+ * `<|translate|>` decoder token) and NeMo Canary (via the `target_language`
+ * recognize kwarg). `.en` Whisper variants advertise English only
+ * (`supportsLanguageDetection = false`) so they have nothing to translate, and
+ * every other family silently no-ops server-side. The Model-tab toggle — and
+ * the LLM "Translate" modifier lock that mirrors it — only apply to these two.
+ */
+export function supportsTranslateToEnglish(model: ModelInfo): boolean {
+	return (model.family === "whisper" && model.supportsLanguageDetection) || model.family === "nemo";
+}
+
+/**
+ * True when the model conditions its decode on a free-text `initial_prompt`
+ * (Whisper's "prior text" slot). Both the standard Whisper exports and the
+ * Lite-Whisper distillations honor it — `.en` and multilingual alike — because
+ * the prompt is fed as prior decoder context, independent of language detection.
+ *
+ * Deliberately Whisper-only: every other family either lacks the slot or ships
+ * an untrained one. NeMo Canary / Cohere expose a `<|startofcontext|>` token in
+ * their vocab but the released checkpoints don't read it (180M empty-outs, 1B
+ * no-ops — see memory/project_canary_cohere_prompt_slot_untrained), and CTC
+ * engines (GigaAM, Kaldi/Vosk, Moonshine, Dolphin, SenseVoice) have no decoder
+ * prompt at all. Showing the field for those would just lie to the user, so the
+ * Model-tab control gates on this exactly like the translate toggle does.
+ */
+export function supportsInitialPrompt(model: ModelInfo): boolean {
+	return model.family === "whisper" || model.family === "lite-whisper";
+}
+
 /** Build select options filtered to models that support realtime transcription. */
 export function buildRealtimeOpts(
 	models: readonly ModelInfo[],

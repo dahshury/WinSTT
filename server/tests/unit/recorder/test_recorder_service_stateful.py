@@ -359,11 +359,12 @@ TestRecorderServiceModel.settings = settings(
 def test_set_microphone_off_clears_recording_eventually(mic_sequence: list[bool]) -> None:
     """A ``set_microphone(False)`` must eventually drop the recording.
 
-    The PTT release path sets ``_microphone_enabled = False`` and (when
-    a recording is in progress) calls ``request_stop()``. After the
-    sequence ends with ``False``, the state machine must not be stuck
-    in RECORDING — either INACTIVE, LISTENING, or TRANSCRIBING are
-    acceptable (the transcribe finalises the recording).
+    The PTT release routes the stop through the pipeline's audio queue (so
+    every queued chunk is buffered before finalizing — no clipped tail),
+    which means finalization runs on the worker thread rather than inline.
+    After the sequence ends with ``False`` the recording must therefore stop
+    *eventually* — INACTIVE, LISTENING, or TRANSCRIBING are all acceptable
+    (the transcribe finalises the recording).
     """
     service = _make_service()
     try:
@@ -376,8 +377,11 @@ def test_set_microphone_off_clears_recording_eventually(mic_sequence: list[bool]
         for value in mic_sequence:
             service.set_microphone(value)
         # Final set was the last element; if False, the recording must
-        # have been requested to stop.
+        # have been requested to stop (poll — the worker finalizes async).
         if not mic_sequence[-1]:
-            assert service.state != RecorderState.RECORDING or not service.is_recording
+            deadline = time.time() + 2.0
+            while service.is_recording and time.time() < deadline:
+                time.sleep(0.01)
+            assert not service.is_recording
     finally:
         service.shutdown()

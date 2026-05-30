@@ -252,6 +252,70 @@ describe("usePushToTalk", () => {
 		expect(silenceCall?.value).toBe(false);
 	});
 
+	test("PTT press re-asserts silence endpoint + timing OFF before set_microphone(true)", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "ptt",
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		// Drop the mount-effect pushes so we inspect only what the PRESS emits.
+		sentChannels.length = 0;
+		fire(IPC.HOTKEY_PRESSED);
+
+		const params = sentChannels
+			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
+			.map((c) => c.args[0] as { parameter: string; value: unknown });
+		expect(params).toContainEqual({ parameter: "silence_endpoint_enabled", value: false });
+		expect(params).toContainEqual({ parameter: "silence_timing", value: false });
+
+		// Both disables must precede the set_microphone(true) relay so the server
+		// applies them before the recording starts accumulating silence.
+		const idxEndpoint = sentChannels.findIndex(
+			(c) =>
+				c.channel === IPC.STT_SET_PARAMETER &&
+				(c.args[0] as { parameter: string }).parameter === "silence_endpoint_enabled"
+		);
+		const idxMic = sentChannels.findIndex(
+			(c) =>
+				c.channel === IPC.STT_CALL_METHOD &&
+				(c.args[0] as { method: string }).method === "set_microphone"
+		);
+		expect(idxEndpoint).toBeGreaterThanOrEqual(0);
+		expect(idxMic).toBeGreaterThan(idxEndpoint);
+	});
+
+	test("toggle press does NOT force the silence endpoint off (VAD still segments)", () => {
+		useSettingsStore.setState({
+			settings: {
+				...useSettingsStore.getState().settings,
+				general: {
+					...useSettingsStore.getState().settings.general,
+					recordingMode: "toggle",
+					manualToggleStop: false,
+				},
+			},
+		});
+		renderHook(() => usePushToTalk());
+		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
+			return;
+		}
+		sentChannels.length = 0;
+		fire(IPC.HOTKEY_PRESSED);
+		const forcedOff = sentChannels
+			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
+			.map((c) => c.args[0] as { parameter: string; value: unknown })
+			.some((p) => p.parameter === "silence_endpoint_enabled" && p.value === false);
+		expect(forcedOff).toBe(false);
+	});
+
 	test("disables silence endpoint in toggle mode when manualToggleStop is on", () => {
 		useSettingsStore.setState({
 			settings: {

@@ -433,8 +433,8 @@ export function ipcClientMock(): Record<string, unknown> {
 			onCast(IPC.LLM_REASONING_DELTA, cb),
 		onLlmLearnedProperNouns: (cb: (payload: { nouns: readonly string[] }) => void) =>
 			onCast(IPC.LLM_LEARNED_PROPER_NOUNS, cb),
-		runLlmPreview: (text: string, feature: "dictation" | "transforms") =>
-			invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, feature }),
+		runLlmPreview: (text: string, feature: "dictation" | "transforms", config?: unknown) =>
+			invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, feature, config }),
 
 		// Diarization (runtime toggle + speaker segments)
 		sttRequestDiarizationToggle: (enabled: boolean) =>

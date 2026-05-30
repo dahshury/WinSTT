@@ -138,7 +138,9 @@ SHOTS["overlay-island"] = {
 	name: "overlay-island",
 	url: "/windows/overlay.html",
 	width: 600,
-	height: 88,
+	// Match overlay-floating's height so the side-by-side pair in the docs
+	// grids (index / dictation / settings-general) lines up to one height.
+	height: 112,
 	seconds: 6,
 	bg: DESK_BG,
 	mockOpts: {
@@ -157,8 +159,10 @@ SHOTS["overlay-island"] = {
 SHOTS["main"] = {
 	name: "main",
 	url: "/index.html",
-	width: 560,
-	height: 200,
+	// 2x the real 420x150 window (same 2.8 aspect) so the clip is crisp when the
+	// docs render it at ~700px wide instead of upscaling a 560px source.
+	width: 840,
+	height: 300,
 	seconds: 6,
 	mockOpts: {
 		recording: true,

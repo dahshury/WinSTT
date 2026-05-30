@@ -30,6 +30,13 @@ export interface SelectOptionGroup {
 }
 
 export interface SearchableSelectProps {
+	/**
+	 * Open the popup on mount (uncontrolled initial state). Used by the detached
+	 * model-picker window, whose whole purpose is to show the options — there a
+	 * closed combobox would force a pointless second click. Settings-panel usage
+	 * omits this so the combobox stays closed until the user opens it.
+	 */
+	defaultOpen?: boolean;
 	disabled?: boolean;
 	/**
 	 * Grouped options. When provided, the popup renders one sticky
@@ -173,7 +180,8 @@ function Row({
 }) {
 	return (
 		<Combobox.Item
-			className={`searchable-select-item mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs py-[7px] pe-2.5 text-body text-foreground leading-normal outline-none ${grouped ? "ps-5" : "ps-2.5"} ${surfaceHighlightedBg(highlightLevel)} ${surfaceSelectedBg(selectedLevel)} data-[selected]:font-medium data-[selected]:text-foreground data-[selected]:shadow-[inset_2px_0_0_0_var(--color-accent)]`}
+			className={`searchable-select-item mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs py-[7px] pe-2.5 text-body text-foreground leading-normal outline-none data-[disabled]:cursor-not-allowed ${grouped ? "ps-5" : "ps-2.5"} ${surfaceHighlightedBg(highlightLevel)} ${surfaceSelectedBg(selectedLevel)} data-[selected]:font-medium data-[selected]:text-foreground data-[selected]:shadow-[inset_2px_0_0_0_var(--color-accent)]`}
+			disabled={item.disabled}
 			value={item}
 		>
 			<span className="flex w-3 shrink-0 items-center justify-center">
@@ -199,6 +207,7 @@ export function SearchableSelect({
 	onOpenChange,
 	placeholder = "Search…",
 	disabled = false,
+	defaultOpen = false,
 	inputTrailing,
 	renderItemTrailing,
 }: SearchableSelectProps) {
@@ -254,6 +263,7 @@ export function SearchableSelect({
 
 	return (
 		<Combobox.Root
+			defaultOpen={defaultOpen}
 			defaultValue={selected}
 			disabled={disabled}
 			isItemEqualToValue={(a: SelectOption | null, b: SelectOption | null) => a?.id === b?.id}

@@ -24,7 +24,7 @@
     "test:e2e:electron": "bun run electron:compile && PW_SKIP_WEBSERVER=1 playwright test --project=electron",
     "test:visual": "playwright test visual-regression",
     "test:visual:update": "playwright test visual-regression --update-snapshots",
-    "generate": "openapi-typescript ../spec/openapi.yaml -o ../spec/generated/ts/schema.d.ts && bun run scripts/generate-zod-schemas.ts",
+    "generate": "openapi-typescript ../spec/openapi.yaml -o ../spec/generated/ts/schema.d.ts && bun run scripts/generate-zod-schemas.ts && bun run scripts/generate-cloud-models.ts",
     "knip": "knip",
     "icon:generate": "python scripts/generate-icons.py",
     "icon:tray:generate": "python scripts/generate-icons.py",

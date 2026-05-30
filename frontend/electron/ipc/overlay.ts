@@ -550,7 +550,7 @@ function runHidePass(): void {
  * right intent (and cancels the pending hide via `clearPendingTimers`).
  * Floating-bottom keeps the original synchronous behavior.
  */
-function performHide(): void {
+function performHide(forceGrace = false): void {
 	if (!overlayWindow) {
 		return;
 	}
@@ -566,7 +566,11 @@ function performHide(): void {
 	// cancels it, and `applyHide` null-guards a torn-down window. If the user
 	// flips overlayMode during the grace window the worst case is the hide
 	// lands on the "wrong" schedule for one transition — never a stuck pill.
-	if (resolveOverlayMode() === "dynamic-island") {
+	// `forceGrace` is set by the TTS read-aloud pill, which is ALWAYS a
+	// dynamic-island (regardless of the `overlayMode` setting) and plays a
+	// slide-up exit — so it needs the composited grace even when the user's STT
+	// overlay mode is floating-bottom.
+	if (forceGrace || resolveOverlayMode() === "dynamic-island") {
 		pendingTimers.push(
 			setTimeout(() => {
 				if (desired === "hidden") {
@@ -586,9 +590,9 @@ function performHide(): void {
  * as no longer wanting the pill so a later main-window hide can't
  * resurrect a finished session's pill.
  */
-export function hideOverlay(): void {
+export function hideOverlay(opts?: { forceGrace?: boolean }): void {
 	sessionWantsOverlay = false;
-	performHide();
+	performHide(opts?.forceGrace === true);
 }
 
 /**

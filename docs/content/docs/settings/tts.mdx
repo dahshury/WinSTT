@@ -19,9 +19,11 @@ This page is the quick settings reference. For the full walkthrough — voice ca
 
 <SettingRow label="Voice" settingKey="tts.voice" default="af_heart">
   A searchable list of 54 voices grouped by language, each with a per-row preview button and
-  a region badge (US, UK, JP, ZH). Picking a voice auto-updates the language. Default is
-  **Heart** (US female, `af_heart`). If a saved voice ID is missing from the catalog, the
-  first available voice is selected.
+  a region badge (US, UK, JP, ZH). The languages in this list — US/UK English, Japanese,
+  Mandarin, Spanish, French, Hindi, Italian, Brazilian Portuguese — are the only ones local
+  TTS can speak. Picking a voice auto-updates the language. Default is **Heart** (US female,
+  `af_heart`). If a saved voice ID is missing from the catalog, the first available voice is
+  selected.
 </SettingRow>
 
 <SettingRow label="Speed" settingKey="tts.speed" default="1.0">
@@ -35,6 +37,13 @@ This page is the quick settings reference. For the full walkthrough — voice ca
   [Hotkeys](/docs/settings/general) capture field; leave it empty to trigger TTS only from
   the tray or the preview buttons.
 </SettingRow>
+
+<Callout type="info" title="9 languages, local only">
+  The voice picker is the full list of languages local TTS supports — Kokoro is the only
+  bundled engine and it doesn't translate. ElevenLabs (already used for
+  [cloud STT](/docs/settings/integrations)) covers far more languages, but **cloud
+  text-to-speech isn't available in WinSTT yet**.
+</Callout>
 
 ## On-demand voice pack
 

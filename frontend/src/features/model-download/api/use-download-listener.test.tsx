@@ -18,6 +18,7 @@ beforeEach(() => {
 		speedBps: 0,
 		etaSeconds: 0,
 		cancelled: false,
+		quantDownloads: {},
 	});
 	window.electronAPI = {
 		...originalApi,
@@ -80,5 +81,43 @@ describe("useDownloadListener", () => {
 		expect(listeners.get(IPC.STT_MODEL_DOWNLOAD_START)?.length ?? 0).toBe(0);
 		expect(listeners.get(IPC.STT_MODEL_DOWNLOAD_PROGRESS)?.length ?? 0).toBe(0);
 		expect(listeners.get(IPC.STT_MODEL_DOWNLOAD_COMPLETE)?.length ?? 0).toBe(0);
+	});
+});
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe("useDownloadListener per-quant coalescing", () => {
+	test("buffers per-quant progress (not applied synchronously) then flushes the latest", async () => {
+		renderHook(() => useDownloadListener());
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, { model: "cohere", quantization: "int8", progress: 0.3 });
+		// Buffered on a trailing timer — NOT applied to the store synchronously,
+		// so a burst of chunk events doesn't re-render the picker per chunk.
+		expect(useDownloadStore.getState().quantDownloads["cohere@int8"]).toBeUndefined();
+		// A later frame supersedes the earlier one in the buffer.
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, { model: "cohere", quantization: "int8", progress: 0.6 });
+		await delay(150);
+		const entry = useDownloadStore.getState().quantDownloads["cohere@int8"];
+		expect(entry?.progress).toBe(60);
+	});
+
+	test("complete drops the buffered frame so a trailing flush can't resurrect it", async () => {
+		renderHook(() => useDownloadListener());
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, { model: "cohere", quantization: "int8", progress: 0.9 });
+		// Completion arrives before the buffered frame flushes — it must clear the
+		// entry AND evict the buffer, otherwise the flush re-inserts a zombie.
+		fire(IPC.STT_MODEL_DOWNLOAD_COMPLETE, {
+			model: "cohere",
+			quantization: "int8",
+			cancelled: false,
+		});
+		await delay(150);
+		expect(useDownloadStore.getState().quantDownloads["cohere@int8"]).toBeUndefined();
+	});
+
+	test("legacy whole-model progress still applies synchronously (singleton slot)", () => {
+		renderHook(() => useDownloadListener());
+		// No `quantization` → legacy path → singleton slot, applied immediately.
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, { model: "tiny", progress: 0.4 });
+		expect(useDownloadStore.getState().progress).toBe(40);
 	});
 });

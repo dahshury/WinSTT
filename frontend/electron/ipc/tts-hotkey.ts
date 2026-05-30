@@ -10,7 +10,6 @@
  * synthesis requests during one held press.
  */
 
-import { randomUUID } from "node:crypto";
 import { UiohookKey, uIOhook } from "uiohook-napi";
 import { getErrorMessage } from "../../src/shared/lib/errors";
 import { dbg } from "../lib/debug-log";
@@ -20,7 +19,7 @@ import { store } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
 import { isPasteGuardActive } from "./hotkey";
 import { isAnyHotkeyRecording } from "./recording-mode";
-import { triggerTtsCancelAll } from "./tts";
+import { triggerTtsCancelAll, triggerTtsSpeakText } from "./tts";
 
 /** uiohook keycode for Backspace — the "stop reading" modifier on the combo. */
 const BACKSPACE_KEYCODE = UiohookKey.Backspace;
@@ -76,29 +75,22 @@ function isTtsEnabled(): boolean {
 }
 
 function dispatchSpeak(): void {
+	// `activeClient` doubles as a "setup ran" guard — `triggerTtsSpeakText` is a
+	// no-op before `setupTts` wires the source-aware dispatcher, so bail early.
 	if (!activeClient) {
 		return;
 	}
-	const client = activeClient;
-	const requestId = randomUUID();
-	const voice = (store.get("tts.voice") as string) || "af_heart";
-	const lang = (store.get("tts.lang") as string) || "en-us";
-	const speedRaw = store.get("tts.speed");
-	const speed = Math.max(0.5, Math.min(2.0, typeof speedRaw === "number" ? speedRaw : 1.0));
-
 	captureSelection()
 		.then((selection) => {
 			if (!selection.text.trim()) {
 				dbg("tts-hotkey", "no selection captured");
 				return;
 			}
-			client.ttsSynthesize({
-				requestId,
-				text: selection.text,
-				voice,
-				lang,
-				speed,
-			});
+			// Route through the shared source-aware speak entry so the hotkey
+			// honours the Local⇄Cloud toggle (ElevenLabs when cloud) instead of
+			// always synthesizing on the local Kokoro engine. Voice / model /
+			// tuning are read from the store inside that dispatcher per source.
+			triggerTtsSpeakText(selection.text);
 		})
 		.catch((err: unknown) => {
 			dbg("tts-hotkey", `captureSelection failed: ${getErrorMessage(err)}`);

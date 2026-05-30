@@ -1,6 +1,5 @@
 import { resolveEffectiveQuant, resolveQuantCache } from "@picker";
 import type { ReactNode } from "react";
-import { useShallow } from "zustand/react/shallow";
 import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { formatBytes } from "@/shared/lib/format-bytes";
@@ -43,7 +42,6 @@ export interface DownloadConfirmationDialogProps {
 		? R
 		: never;
 	onCancel: () => void;
-	onConfirm: () => void;
 	pending: {
 		kind: "main" | "realtime";
 		modelId: string;
@@ -57,7 +55,6 @@ export interface DownloadConfirmationDialogProps {
 export function DownloadConfirmationDialog({
 	pending,
 	getModel,
-	onConfirm,
 	onCancel,
 	statesById,
 	systemInfo,
@@ -66,7 +63,6 @@ export function DownloadConfirmationDialog({
 		<DownloadConfirmationContent
 			getModel={getModel}
 			onCancel={onCancel}
-			onConfirm={onConfirm}
 			pending={pending}
 			statesById={statesById}
 			systemInfo={systemInfo}
@@ -251,7 +247,6 @@ function IdleInfoCard({
 function DownloadConfirmationContent({
 	pending,
 	getModel,
-	onConfirm,
 	onCancel,
 	statesById,
 	systemInfo,
@@ -275,26 +270,32 @@ function DownloadConfirmationContent({
 	const targetCache = resolveQuantCache(state, targetQuant);
 	const quantLabel = targetQuant === "" ? "default precision" : targetQuant;
 
-	// Live download state from the store — drives the progress bar and the
-	// active/paused/idle branch. The store is fed by the IPC listener
-	// installed in DownloadOverlay's parent; if no download is in flight,
-	// `isDownloading` is false and we fall through to disk-cache state.
-	const live = useDownloadStore(
-		useShallow((s) => ({
-			isDownloading: s.isDownloading,
-			modelName: s.modelName,
-			progress: s.progress,
-			downloadedBytes: s.downloadedBytes,
-			totalBytes: s.totalBytes,
-			speedBps: s.speedBps,
-			cancelDownload: s.cancelDownload,
-			discardCache: s.discardCache,
-		}))
-	);
+	// This dialog drives the SAME per-quant streaming predownload the badges
+	// use — NOT a model swap. Keeping ``activeMain`` unset is the whole point:
+	// the picker never freezes / shows "Switching" while bytes flow, downloads
+	// run in the background (parallel-safe), and the user switches to the model
+	// explicitly once it's cached (the swap controller blocks switching TO a
+	// still-downloading model). The legacy whole-model swap-download (which set
+	// activeMain and locked the picker for the entire transfer) is gone.
+	const downloadKey = `${pending?.modelId ?? ""}@${targetQuant}`;
+	const quant = useDownloadStore((s) => s.quantDownloads[downloadKey]);
+	const predownloadQuant = useDownloadStore((s) => s.predownloadQuant);
+	const pauseQuantEntry = useDownloadStore((s) => s.pauseQuantEntry);
+	const pauseQuantDownload = useDownloadStore((s) => s.pauseQuantDownload);
+	const resumeQuantDownload = useDownloadStore((s) => s.resumeQuantDownload);
+	const discardQuantCache = useDownloadStore((s) => s.discardQuantCache);
 
-	const isThisDownloading = live.isDownloading && live.modelName === pending?.modelId;
-	const partialOnDisk = targetCache?.state === "partial";
+	const isThisDownloading = quant !== undefined && !quant.paused;
+	// "Paused" covers both an explicitly-paused live entry and a partial left on
+	// disk from a previous session (no live entry, resumable from the bytes).
+	const partialOnDisk = targetCache?.state === "partial" || (quant?.paused ?? false);
 	const phase: DownloadPhase = resolveDownloadPhase(isThisDownloading, partialOnDisk);
+	const liveForBar: LiveDownload = {
+		progress: quant?.progress ?? null,
+		downloadedBytes: quant?.downloadedBytes ?? 0,
+		totalBytes: quant?.totalBytes ?? 0,
+		speedBps: quant?.speedBps ?? 0,
+	};
 
 	const fitness = computeFitness(state, systemInfo);
 	const displayName = info?.displayName ?? pending?.modelId ?? "";
@@ -306,15 +307,50 @@ function DownloadConfirmationContent({
 	// (`243 MB`) — the precise byte count goes in the IdleInfoCard.
 	const sizeSuffix = info?.sizeLabel ? ` (${info.sizeLabel})` : "";
 
+	// Download / Resume / Stop / Discard all act on the per-quant streaming
+	// download for the precision that will actually load — never a swap.
+	//
+	// Starting / resuming a download is a BACKGROUND action: kick it off and
+	// immediately dismiss this (modal) dialog so the user can keep using the
+	// picker — switch to an already-cached model, queue more downloads, etc.
+	// Live progress continues on the precision badge + the selector trigger;
+	// ``onCancel`` only clears the dialog's pending-state, it does NOT cancel
+	// the download.
+	const startDownload = (): void => {
+		if (pending) {
+			predownloadQuant(pending.modelId, targetQuant);
+		}
+		onCancel();
+	};
+	const handleResume = (): void => {
+		if (!pending) {
+			return;
+		}
+		// A live paused entry resumes in place; a partial-on-disk with no live
+		// entry restarts the stream, which the downloader continues from the
+		// bytes already written.
+		if (quant?.paused) {
+			resumeQuantDownload(pending.modelId, targetQuant);
+		} else {
+			predownloadQuant(pending.modelId, targetQuant);
+		}
+		onCancel();
+	};
 	const handleStop = (): void => {
-		live.cancelDownload();
+		if (!pending) {
+			return;
+		}
+		// Optimistic local flip so the badge/dialog re-render as paused before
+		// the server's confirmation lands; the partial bytes stay on disk.
+		pauseQuantEntry(pending.modelId, targetQuant);
+		pauseQuantDownload(pending.modelId, targetQuant);
 	};
 
 	const handleDiscard = (): void => {
 		if (!pending) {
 			return;
 		}
-		live.discardCache(pending.modelId);
+		discardQuantCache(pending.modelId, targetQuant);
 	};
 
 	// Footer cancel/dismiss button — same shape as ConfirmDialog / OptInDialog's
@@ -325,7 +361,7 @@ function DownloadConfirmationContent({
 		<DialogShell
 			body={
 				<div className="flex flex-col gap-3">
-					{phase === "active" && <ActiveProgress live={live} />}
+					{phase === "active" && <ActiveProgress live={liveForBar} />}
 					{phase === "paused" && <PausedProgress targetCache={targetCache} />}
 					{phase === "idle" && (
 						<IdleInfoCard
@@ -359,8 +395,8 @@ function DownloadConfirmationContent({
 			<DownloadActions
 				labels={DIALOG_ACTION_LABELS}
 				onDiscard={handleDiscard}
-				onDownload={onConfirm}
-				onResume={onConfirm}
+				onDownload={startDownload}
+				onResume={handleResume}
 				onStop={handleStop}
 				phase={phase}
 			/>

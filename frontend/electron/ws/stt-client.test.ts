@@ -330,6 +330,20 @@ describe("SttClient", () => {
 		expect(client.isConnected).toBe(false);
 	});
 
+	test("isControlConnected is true with only the control socket open (data down)", () => {
+		MockWebSocket.reset();
+		const client = new SttClient();
+		client.connect().catch(() => undefined);
+		const { control } = getSockets();
+		control.fireOpen(); // data socket intentionally left unopened
+		// Full isConnected needs BOTH sockets → false while data is down.
+		expect(client.isConnected).toBe(false);
+		// Control-only gate → true, so recording + the pre-roll chime proceed
+		// even though the data channel (realtime/visualizer/TTS) isn't up.
+		expect(client.isControlConnected).toBe(true);
+		client.disconnect();
+	});
+
 	test("connection error from socket fails the connect() promise", async () => {
 		MockWebSocket.reset();
 		const client = new SttClient();

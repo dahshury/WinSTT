@@ -35,12 +35,14 @@ import {
 	createContextMenuIpcHandler,
 	registerContextMenuIpcHandler,
 } from "./ipc/context-menu-handler";
+import { setupContextPlaygroundHandlers } from "./ipc/context-playground-window";
 import { setupCredentials } from "./ipc/credentials";
 import { setupCustomModelsHandlers } from "./ipc/custom-models";
 import { setupDevicePickerHandlers } from "./ipc/device-picker-window";
 import { setupDiagBundleHandler } from "./ipc/diag-bundle";
 import { setupDialogHandlers } from "./ipc/dialog";
 import { setupFileTranscribeHandlers } from "./ipc/file-transcribe";
+import { setupFileTranscribeQueue } from "./ipc/file-transcribe-queue";
 import { setupHistoryIpc } from "./ipc/history";
 import { type HotkeyComboAction, setupHotkeyHandlers } from "./ipc/hotkey";
 import {
@@ -49,7 +51,7 @@ import {
 	encryptIpcPayload,
 	generateIpcPayloadKey,
 } from "./ipc/ipc-payload-crypto";
-import { setupLlm, setupLlmWarmup } from "./ipc/llm";
+import { evictWarmedOllamaModels, setupLlm, setupLlmWarmup } from "./ipc/llm";
 import { setupLoopbackHandlers } from "./ipc/loopback";
 import { setupModelPickerHandlers } from "./ipc/model-picker-window";
 import { setupOllamaRegistry } from "./ipc/ollama-registry";
@@ -72,7 +74,9 @@ import {
 import { setupCloudStt } from "./ipc/stt-cloud";
 import { handleAbortOperation, setupSttCommandHandlers } from "./ipc/stt-commands";
 import {
+	disableSttAutoRespawn,
 	killSttProcess,
+	killSttServerByImageSync,
 	markServerRunning,
 	setupSttProcessHandlers,
 	tryAutoSpawnServer,
@@ -108,6 +112,7 @@ import {
 	onTranscribingStart,
 	onTranscribingStop,
 	setReapplyTrayImage,
+	setTrayVisualizerStyle,
 } from "./lib/recording-indicator";
 import { isAllowedRendererUrl, loadRendererPage } from "./lib/renderer-url";
 import { captureMainException, initSentryMain } from "./lib/sentry-main";
@@ -134,6 +139,7 @@ let cleanupRelay: (() => void) | null = null;
 let cleanupRepasteHotkey: (() => void) | null = null;
 let cleanupHotkeys: (() => void) | null = null;
 let cleanupFileTranscribe: (() => void) | null = null;
+let cleanupFileQueue: (() => void) | null = null;
 let cleanupLlm: (() => void) | null = null;
 let cleanupCredentials: (() => void) | null = null;
 let cleanupCloudStt: (() => void) | null = null;
@@ -145,6 +151,7 @@ let cleanupTts: (() => void) | null = null;
 let cleanupTtsHotkey: (() => void) | null = null;
 let cleanupTrayMenu: (() => void) | null = null;
 let cleanupModelPicker: (() => void) | null = null;
+let cleanupContextPlayground: (() => void) | null = null;
 let cleanupDevicePicker: (() => void) | null = null;
 let cleanupOnboarding: (() => void) | null = null;
 let cleanupAppMenu: (() => void) | null = null;
@@ -466,9 +473,15 @@ function installCspHook(): void {
 		// it, `<audio>` falls back to `default-src 'self'`, which blocks the data
 		// URI — the element never loads, play() rejects, and word-highlight stalls
 		// on the first word.
+		// `worker-src 'self' blob:` is REQUIRED — without it, blob-URL Web Workers
+		// fall back to `script-src` (which has no `blob:`) and are blocked. The
+		// Vite dev client spins up a blob worker, and audio playback paths
+		// (decode/synthesis helpers) may construct one too; a blocked worker
+		// surfaces as "Creating a worker from 'blob:…' violates … script-src" and
+		// silently breaks the feature that needed it (e.g. TTS playback).
 		const csp = isDev
-			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc: ws://localhost:* http://localhost:*; font-src 'self' data:; img-src 'self' data:; media-src 'self' data: blob:"
-			: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc:; font-src 'self' data:; img-src 'self' data:; media-src 'self' data: blob:";
+			? "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc: ws://localhost:* http://localhost:*; font-src 'self' data:; img-src 'self' data:; media-src 'self' data: blob:"
+			: "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' sentry-ipc:; font-src 'self' data:; img-src 'self' data:; media-src 'self' data: blob:";
 		callback({
 			responseHeaders: {
 				...details.responseHeaders,
@@ -976,6 +989,9 @@ if (gotTheLock) {
 	// ── Cleanup on quit ───────────────────────────────────────────────
 	app.on("before-quit", (event) => {
 		isQuitting = true;
+		// Stop crash auto-recovery from respawning the STT server while we tear
+		// down — a server that faults during the shutdown window must stay dead.
+		disableSttAutoRespawn();
 		// If we ducked the master volume for dictation, schedule a restore
 		// and defer quit until the PS host has confirmed it (or timed out).
 		// Without this the user can be left at DUCK_LEVEL volume after a
@@ -983,14 +999,37 @@ if (gotTheLock) {
 		if (!hasFlushedAudioOnQuit) {
 			hasFlushedAudioOnQuit = true;
 			unmuteSystemAudio();
+			// Two best-effort jobs to finish before exit:
+			//  1. Restore the master volume we ducked for dictation.
+			//  2. Evict warmed Ollama models — Ollama is a detached daemon, so
+			//     killSttProcess() below never frees its VRAM; a keep_alive:0
+			//     does. (STT + TTS live in the killed stt-server process, so
+			//     those need no explicit unload.)
+			// Both run concurrently and are capped at 1.5 s so a hung PS host or
+			// unreachable Ollama can't hold the app open. The evict request only
+			// needs to reach Ollama to take effect, which is near-instant on a
+			// local daemon — so 1.5 s is ample even when we don't await the body.
 			const flushDeadline = new Promise<void>((resolve) => setTimeout(resolve, 1500));
+			const pendingCleanup = Promise.allSettled([flushMutePending(), evictWarmedOllamaModels()]);
 			event.preventDefault();
-			Promise.race([flushMutePending(), flushDeadline]).finally(() => {
+			Promise.race([pendingCleanup, flushDeadline]).finally(() => {
 				shutdownPsHost();
 				app.quit();
 			});
 			return;
 		}
+		// Backstop: guarantee the process actually dies. Two failure modes here,
+		// both seen as "bun dev won't terminate when I press Quit":
+		//   • a teardown step below throws → the before-quit emit aborts Electron's
+		//     quit and our uncaughtException handler swallows it, leaving the app
+		//     alive with cleanup half-done;
+		//   • Electron's graceful close → will-quit → quit stalls in dev because the
+		//     renderer windows are still attached to the Vite HMR socket / DevTools,
+		//     so window-close never resolves and the process never exits.
+		// The unref'd timer can't itself hold the app open; the explicit app.exit(0)
+		// at the end of teardown beats it to the punch on the happy path.
+		const forceExitTimer = setTimeout(() => app.exit(0), 1500);
+		forceExitTimer.unref();
 		shutdownPsHost();
 		cleanupSound();
 		cleanupRecordingIndicator();
@@ -998,6 +1037,8 @@ if (gotTheLock) {
 		cleanupTrayMenu = null;
 		cleanupModelPicker?.();
 		cleanupModelPicker = null;
+		cleanupContextPlayground?.();
+		cleanupContextPlayground = null;
 		cleanupDevicePicker?.();
 		cleanupDevicePicker = null;
 		cleanupOnboarding?.();
@@ -1077,6 +1118,19 @@ if (gotTheLock) {
 			settingsWindow.destroy();
 		}
 		settingsWindow = null;
+		// killSttProcess above fires an ASYNC taskkill on the server pid; the
+		// app.exit(0) below exits immediately and would interrupt it, orphaning the
+		// `stt-server.exe → python` tree (worse in dev, where `uv run` reparents the
+		// server out from under the tracked uv pid). Kill it SYNCHRONOUSLY by image
+		// here so it's dead before we exit.
+		killSttServerByImageSync();
+		// Everything is disposed. Don't wait on the graceful close → will-quit →
+		// quit sequence — in dev it stalls on the HMR/DevTools-attached renderer
+		// windows, which is exactly why `bun dev` kept running after Quit. Exit hard
+		// now; the backstop timer above only fires if a teardown step above threw
+		// before we reached here.
+		clearTimeout(forceExitTimer);
+		app.exit(0);
 	});
 } else {
 	app.quit();
@@ -1095,6 +1149,8 @@ function setupGlobalIpcHandlers() {
 	cleanupTrayMenu = setupTrayMenuHandlers();
 	cleanupModelPicker = setupModelPickerHandlers();
 	cleanupDevicePicker = setupDevicePickerHandlers();
+	// Debug-only context-awareness playground (no-op when the flag is off).
+	cleanupContextPlayground = setupContextPlaygroundHandlers();
 	cleanupLlm = setupLlm();
 	cleanupCredentials = setupCredentials();
 	cleanupCloudStt = setupCloudStt(sttClient);
@@ -1834,9 +1890,19 @@ function createWindow() {
 		onCombo: (action) => handleHotkeyCombo(action, sttClient),
 	});
 
-	// Setup file transcription
-	const { cleanup: fileTranscribeCleanup } = setupFileTranscribeHandlers(mainWindow, sttClient);
+	// Setup file transcription. The base layer owns single-file validation, the
+	// save dialog and writing the output file; the queue layer (sharing its
+	// pendingRequests map) adds sequential multi-file orchestration, the
+	// per-file UI state, and pause/resume around live dictation.
+	const { cleanup: fileTranscribeCleanup, pendingRequests: fileTranscribeRequests } =
+		setupFileTranscribeHandlers(mainWindow, sttClient);
 	cleanupFileTranscribe = fileTranscribeCleanup;
+	const { cleanup: fileQueueCleanup } = setupFileTranscribeQueue(
+		mainWindow,
+		sttClient,
+		fileTranscribeRequests
+	);
+	cleanupFileQueue = fileQueueCleanup;
 
 	// Setup tray with custom menu window. The tray-state controller manages
 	// the native context menu (state label + open/settings/quit + reserved
@@ -1860,6 +1926,9 @@ function createWindow() {
 	if (iconPath) {
 		initRecordingIndicator(newTray, iconPath);
 	}
+	// Mirror the renderer's chosen visualizer style onto the animated tray icon
+	// (initial read; the onDidChange("general") watcher below keeps it live).
+	setTrayVisualizerStyle(store.get("general") as Record<string, unknown> | undefined);
 	// Hand the indicator a way to repaint the theme-aware tray PNG when the
 	// thinking topology animation winds down, so the static idle icon isn't
 	// left behind as the last morph frame.
@@ -1868,10 +1937,11 @@ function createWindow() {
 	// Toggle window resizable when recording mode changes to/from listen
 	applyListenModeWindow(mainWindow);
 	disposeGeneralSettingsWatcher?.();
-	disposeGeneralSettingsWatcher = store.onDidChange("general", () => {
+	disposeGeneralSettingsWatcher = store.onDidChange("general", (next: unknown) => {
 		if (mainWindow) {
 			applyListenModeWindow(mainWindow);
 		}
+		setTrayVisualizerStyle(next as Record<string, unknown> | undefined);
 	});
 
 	// STT server auto-spawn + WS client connect both happen in the
@@ -1883,12 +1953,14 @@ function createWindow() {
 		cleanupHotkeys?.();
 		cleanupRelay?.();
 		cleanupFileTranscribe?.();
+		cleanupFileQueue?.();
 		cleanupWindowTelemetry?.();
 		disposeGeneralSettingsWatcher?.();
 		disposeGeneralSettingsWatcher = null;
 		cleanupHotkeys = null;
 		cleanupRelay = null;
 		cleanupFileTranscribe = null;
+		cleanupFileQueue = null;
 		cleanupWindowTelemetry = null;
 		setMainWindow(null);
 		mainWindow = null;

@@ -38,54 +38,52 @@ function fire(channel: string, ...args: unknown[]) {
 }
 
 describe("useFileTranscriptionListener", () => {
-	test("subscribes to all three file-transcription channels", () => {
+	test("subscribes to all three queue channels", () => {
 		renderHook(() => useFileTranscriptionListener());
-		expect(listeners.has(IPC.FILE_TRANSCRIPTION_PROGRESS)).toBe(true);
-		expect(listeners.has(IPC.FILE_TRANSCRIPTION_COMPLETE)).toBe(true);
-		expect(listeners.has(IPC.FILE_TRANSCRIPTION_ERROR)).toBe(true);
+		expect(listeners.has(IPC.FILE_QUEUE_UPDATE)).toBe(true);
+		expect(listeners.has(IPC.FILE_QUEUE_PROGRESS)).toBe(true);
+		expect(listeners.has(IPC.FILE_QUEUE_ACTIVE)).toBe(true);
 	});
 
-	test("progress events update the store", () => {
+	test("queue-update replaces the items", () => {
 		renderHook(() => useFileTranscriptionListener());
-		useFileTranscriptionStore.getState().setProcessing("a.wav");
-		fire(IPC.FILE_TRANSCRIPTION_PROGRESS, {
-			fileName: "a.wav",
-			progress: 0.42,
-			message: "halfway",
+		fire(IPC.FILE_QUEUE_UPDATE, {
+			items: [
+				{ id: "a", fileName: "a.wav", status: "queued", progress: 0, stage: "queued", message: "" },
+			],
 		});
-		const state = useFileTranscriptionStore.getState();
-		expect(state.progress).toBe(0.42);
-		expect(state.message).toBe("halfway");
+		expect(useFileTranscriptionStore.getState().items.map((i) => i.id)).toEqual(["a"]);
 	});
 
-	test("complete events transition the store to 'complete'", () => {
+	test("queue-progress patches the matching row's progress", () => {
 		renderHook(() => useFileTranscriptionListener());
-		fire(IPC.FILE_TRANSCRIPTION_COMPLETE, {
-			requestId: "r",
-			fileName: "a.wav",
-			text: "hi",
-			outputPath: "/p",
+		fire(IPC.FILE_QUEUE_UPDATE, {
+			items: [
+				{
+					id: "a",
+					fileName: "a.wav",
+					status: "transcribing",
+					progress: 0,
+					stage: "transcribing",
+					message: "",
+				},
+			],
 		});
-		expect(useFileTranscriptionStore.getState().status).toBe("complete");
+		fire(IPC.FILE_QUEUE_PROGRESS, { id: "a", progress: 0.5, stage: "transcribing" });
+		expect(useFileTranscriptionStore.getState().items[0]?.progress).toBe(0.5);
 	});
 
-	test("error events transition the store to 'error' with the error message", () => {
+	test("queue-active updates the cross-window busy flag", () => {
 		renderHook(() => useFileTranscriptionListener());
-		fire(IPC.FILE_TRANSCRIPTION_ERROR, {
-			requestId: "r",
-			fileName: "a.wav",
-			error: "decode failed",
-		});
-		const state = useFileTranscriptionStore.getState();
-		expect(state.status).toBe("error");
-		expect(state.message).toBe("decode failed");
+		fire(IPC.FILE_QUEUE_ACTIVE, { active: true });
+		expect(useFileTranscriptionStore.getState().queueActive).toBe(true);
 	});
 
-	test("unsubscribes all three channels on unmount", () => {
+	test("unsubscribes all channels on unmount", () => {
 		const { unmount } = renderHook(() => useFileTranscriptionListener());
 		unmount();
-		expect(listeners.get(IPC.FILE_TRANSCRIPTION_PROGRESS)?.length ?? 0).toBe(0);
-		expect(listeners.get(IPC.FILE_TRANSCRIPTION_COMPLETE)?.length ?? 0).toBe(0);
-		expect(listeners.get(IPC.FILE_TRANSCRIPTION_ERROR)?.length ?? 0).toBe(0);
+		expect(listeners.get(IPC.FILE_QUEUE_UPDATE)?.length ?? 0).toBe(0);
+		expect(listeners.get(IPC.FILE_QUEUE_PROGRESS)?.length ?? 0).toBe(0);
+		expect(listeners.get(IPC.FILE_QUEUE_ACTIVE)?.length ?? 0).toBe(0);
 	});
 });

@@ -1373,7 +1373,7 @@ const OLLAMA_KEEP_ALIVE = "30m";
  * thinking models without an effort knob treat any truthy `think` as
  * "on" and ignore the level.
  */
-type ThinkingEffort = "off" | "low" | "medium" | "high";
+export type ThinkingEffort = "off" | "low" | "medium" | "high";
 
 function thinkingFlagFor(effort: ThinkingEffort, supportsThinking: boolean): unknown {
 	if (!supportsThinking || effort === "off") {
@@ -2349,7 +2349,15 @@ async function runOpenRouterWithFallback(
 // provider/model/openrouter selection, custom modifiers, and thinking effort.
 type LlmFeature = "dictation" | "transforms";
 
-interface FeatureLlmConfig {
+/**
+ * The full per-feature LLM config the pipeline runs on. Normally read from the
+ * store for the active feature ({@link readFeatureLlmConfig}), but the
+ * Playground passes an explicit instance so the user can test an arbitrary
+ * tone/modifier/provider/model combination without touching saved settings.
+ * Shared connection values (Ollama endpoint, OpenRouter API key) are NOT part
+ * of this shape — they're always read from the store.
+ */
+export interface FeatureLlmConfig {
 	customModifiers: readonly CustomModifier[];
 	model: string;
 	openrouterFallbackModel: string;
@@ -2487,11 +2495,16 @@ function runProcessText(
 export async function processText(
 	text: string,
 	context = "",
-	feature: LlmFeature = "dictation"
+	feature: LlmFeature = "dictation",
+	overrideConfig?: FeatureLlmConfig
 ): Promise<string> {
 	assertNonEmptyString(text, "Text is required for LLM processing", "text");
 
-	const cfg = readFeatureLlmConfig(feature);
+	// The Playground supplies an explicit config to test arbitrary
+	// tone/modifier/provider/model combinations; everything else reads the
+	// active feature's saved config. Connection values (endpoint, API key)
+	// stay store-sourced either way (see runOllamaPath / runOpenRouterPath).
+	const cfg = overrideConfig ?? readFeatureLlmConfig(feature);
 	// Enabled custom modifiers are folded into the preset list here so the
 	// whole downstream chain (compose, logging, both provider paths) keeps
 	// operating on the single `presets` array — no extra param threading.
@@ -3767,6 +3780,26 @@ async function unloadOllamaModel(endpoint: string, model: string): Promise<void>
 	}
 }
 
+/**
+ * Evict every model WinSTT has warmed into Ollama's VRAM/RAM. Called on app
+ * quit. Ollama is a detached, long-lived daemon (often a system service), so
+ * killing the WinSTT process tree never frees its models — they stay pinned
+ * until the keep-alive lease lapses (default 5 m, longer if the user raised
+ * it). A `keep_alive: 0` POST per model hands that VRAM back the moment WinSTT
+ * exits. Scoped to `lastWarmedModels` so we only evict what *we* pinned, never
+ * a model the user loaded from another app. Best-effort and bounded (each
+ * request self-caps at 5 s); a down/unreachable Ollama just no-ops.
+ */
+export async function evictWarmedOllamaModels(): Promise<void> {
+	const toEvict = Array.from(lastWarmedModels);
+	lastWarmedModels = new Set();
+	if (toEvict.length === 0) {
+		return;
+	}
+	const endpoint = getStoreValue("llm.endpoint");
+	await Promise.all(toEvict.map((m) => unloadOllamaModel(endpoint, m)));
+}
+
 async function warmupEnabledModels(): Promise<void> {
 	const models = collectEnabledOllamaModels();
 	const endpoint = getStoreValue("llm.endpoint");
@@ -4077,6 +4110,7 @@ export const __llm_test_helpers__ = {
 	waitForOllama,
 	addEnabledOllamaModel,
 	unloadOllamaModel,
+	evictWarmedOllamaModels,
 	readWarmupFeatureSignature,
 	computeWarmupSignature,
 	scheduleDebouncedWarmup,

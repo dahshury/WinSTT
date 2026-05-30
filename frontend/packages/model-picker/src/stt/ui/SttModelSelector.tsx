@@ -1,5 +1,6 @@
 "use client";
 
+import { StarIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useReducer, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
@@ -16,13 +17,18 @@ import { useModelSelectorClickTracking } from "../../lib/use-model-selector-clic
 import { STT_PICKER_WIDTH_CLASS } from "../lib/dimensions";
 import {
 	buildModelSearchCorpus,
+	FAVORITES_GROUP_VALUE,
 	type FamilyKey,
 	getAuthorLabel,
 	getBaseId,
 	getFamilyConfig,
 	groupModelsByAuthor,
+	isFavoritesGroup,
+	type SttListGroup,
+	withFavoritesGroup,
 } from "../lib/family-helpers";
 import { collectFilterableLanguages, filterSttModels, hasActiveFilters } from "../lib/filter-state";
+import { useFavoriteSttModels } from "../lib/use-favorite-stt-models";
 import { DeleteQuantConfirmDialog, type PendingDelete } from "./DeleteQuantConfirmDialog";
 import { SttModelSelectorTriggerButton } from "./SttModelSelectorTrigger";
 import { SttModelSelectorView } from "./SttModelSelectorView";
@@ -109,12 +115,27 @@ function matchesQuery(model: ModelInfo, query: string): boolean {
 	return buildModelSearchCorpus(model).includes(q);
 }
 
-function buildRailItems(groups: ReturnType<typeof groupModelsByAuthor>): GroupRailItem[] {
+function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
 	return groups.map((group) => {
-		const cfg = getFamilyConfig(group.value);
+		// The Favorites tile is maker-agnostic — a star instead of a brand logo,
+		// jumping to the synthetic group pinned at the top of the list.
+		if (isFavoritesGroup(group.value)) {
+			return {
+				id: FAVORITES_GROUP_VALUE,
+				label: "Favorites",
+				badge: group.items.length,
+				icon: (
+					<span className="flex size-5 items-center justify-center rounded bg-amber-500/15 text-amber-500">
+						<HugeiconsIcon className="size-3 fill-amber-500" icon={StarIcon} />
+					</span>
+				),
+			};
+		}
+		const family: FamilyKey = group.value;
+		const cfg = getFamilyConfig(family);
 		return {
-			id: group.value,
-			label: `${getAuthorLabel(group.value)} · ${cfg.label}`,
+			id: family,
+			label: `${getAuthorLabel(family)} · ${cfg.label}`,
 			badge: group.items.length,
 			icon: cfg.logoSrc ? (
 				<img
@@ -189,6 +210,10 @@ export function SttModelSelector({
 		setPendingDelete(null);
 	};
 
+	// Per-window starred-model set, persisted to localStorage. Drives both the
+	// per-card star toggle and the synthetic "Favorites" group pinned to the top.
+	const { isFavorite, toggleFavorite } = useFavoriteSttModels();
+
 	const baseModels = applyPrefilter(models, prefilter);
 	const selectedModel = baseModels.find((m) => m.id === value) ?? null;
 	const selectedFamily: FamilyKey | null = selectedModel?.family ?? null;
@@ -230,7 +255,10 @@ export function SttModelSelector({
 		filters,
 		searchQuery: "",
 	});
-	const groups = groupModelsByAuthor(menuFilteredModels);
+	// Prepend the synthetic Favorites group (starred models, maker-sorted +
+	// deduped) ahead of the per-maker groups. The starred models are repeated,
+	// not moved — they keep their maker card AND gain a shortcut card up top.
+	const groups = withFavoritesGroup(groupModelsByAuthor(menuFilteredModels), isFavorite);
 	const filtersActive = hasActiveFilters(filters);
 	const availableLanguages = collectFilterableLanguages(baseModels);
 
@@ -333,6 +361,7 @@ export function SttModelSelector({
 				handleRailClick={handleRailClick}
 				handleSelect={handleSelect}
 				inline={inline}
+				isFavorite={isFavorite}
 				isLoading={isLoading}
 				kind={kind}
 				menuFilteredModels={menuFilteredModels}
@@ -341,6 +370,7 @@ export function SttModelSelector({
 				onFiltersChange={(next) => dispatch({ type: "setFilters", filters: next })}
 				onRequestDelete={handleRequestDelete}
 				onToggleExpanded={handleToggleExpanded}
+				onToggleFavorite={toggleFavorite}
 				open={externalOpen ? false : open}
 				placeholder={placeholder}
 				popupHeightClass={popupHeightClass}

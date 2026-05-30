@@ -2,11 +2,13 @@ import {
 	AiBrain02Icon,
 	ArrangeIcon,
 	BrushIcon,
+	Cancel01Icon,
 	Delete02Icon,
 	LanguageSkillIcon,
 	Layout01Icon,
 	MagicWand01Icon,
 	PencilIcon,
+	PlayIcon,
 	PlusSignIcon,
 	StickyNote01Icon,
 } from "@hugeicons/core-free-icons";
@@ -29,26 +31,39 @@ import {
 	useOllamaLibraryStore,
 	useOpenRouterCatalogStore,
 } from "@/entities/llm-catalog";
-import { useModelStateStore } from "@/entities/model-catalog";
+import {
+	supportsTranslateToEnglish,
+	useCatalogStore,
+	useModelStateStore,
+} from "@/entities/model-catalog";
 import {
 	SettingResetButton,
 	SettingSection,
 	SettingSubsection,
 	useSettingsStore,
 } from "@/entities/setting";
+import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { HotkeyRecorder } from "@/features/record-hotkey";
-import { detectOllama, fetchOllamaModels, startOllama } from "@/shared/api/ipc-client";
+import {
+	detectOllama,
+	fetchOllamaModels,
+	type LlmPreviewConfig,
+	runLlmPreview,
+	startOllama,
+} from "@/shared/api/ipc-client";
 import type { OpenRouterModel } from "@/shared/api/models";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
 import { cn } from "@/shared/lib/cn";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
+import { useMountEffect } from "@/shared/lib/use-mount-effect";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { IconButton } from "@/shared/ui/icon-button";
+import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { Modal } from "@/shared/ui/modal";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -81,9 +96,16 @@ import {
 	shouldSyncOllamaModel,
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
+import {
+	clonePlaygroundConfig,
+	loadPlaygroundPresets,
+	makePlaygroundPresetId,
+	type PlaygroundConfig,
+	type PlaygroundPreset,
+	savePlaygroundPresets,
+} from "../model/playground-presets";
 import { useWarmupStatusStore } from "../model/warmup-status-store";
-import { ContextAwarenessSection } from "./ContextAwarenessSection";
-import { ContextDenyListSection } from "./ContextDenyListSection";
+import { CreatableCombobox, type CreatableComboboxItem } from "./CreatableCombobox";
 import { Playground } from "./Playground";
 import { WarmupStatusBanner } from "./WarmupStatusBanner";
 
@@ -480,6 +502,10 @@ interface IndependentPresetListProps {
 	presets: readonly BuiltinPresetEntry[];
 	t: TranslateFn;
 	tc: TranslateFn;
+	/** True when the STT decoder is already translating to English, so the
+	 *  built-in "Translate" modifier is force-off and locked (the transcript
+	 *  would otherwise be translated twice). Dictation-only. */
+	translateLocked?: boolean;
 }
 
 interface CustomModifierRowProps {
@@ -691,6 +717,7 @@ function IndependentPresetList({
 	presets,
 	t,
 	tc,
+	translateLocked,
 }: IndependentPresetListProps) {
 	// `null` ⇒ dialog closed. A draft (id not in the list) ⇒ Add mode; a copy
 	// of an existing row ⇒ Edit mode. The instance is reused; the dialog
@@ -724,7 +751,7 @@ function IndependentPresetList({
 	const builtinCount = INDEPENDENT_PRESETS.length;
 	const checkedIndices = new Set<number>();
 	INDEPENDENT_PRESETS.forEach((key, i) => {
-		if (isIndependentEnabled(presets, key)) {
+		if (isIndependentEnabled(presets, key) && !(key === "translate" && translateLocked)) {
 			checkedIndices.add(i);
 		}
 	});
@@ -743,6 +770,9 @@ function IndependentPresetList({
 			{INDEPENDENT_PRESETS.map((key, i) => {
 				const checked = isIndependentEnabled(presets, key);
 				const isTranslate = key === "translate";
+				// STT-side translate-to-English already covers this transcript, so
+				// the built-in Translate modifier is force-off and the row locked.
+				const rowLocked = isTranslate && Boolean(translateLocked);
 				const hasLevel = (PRESETS_WITH_LEVELS as readonly string[]).includes(key);
 				const displayedLevel = checked ? getLevel(presets, key) : levelCache[key];
 				const handleLevel = (lvl: PresetLevel) => {
@@ -766,7 +796,9 @@ function IndependentPresetList({
 				// remembered language so re-enabling restores the choice.
 				let trailing: ReactNode = null;
 				if (isTranslate) {
-					trailing = (
+					trailing = rowLocked ? (
+						<InfoTooltip content={t("translateLockedBySttTooltip")} />
+					) : (
 						<ElevatedSurface inline>
 							<div className="w-44">
 								<SearchableSelect
@@ -792,7 +824,8 @@ function IndependentPresetList({
 				}
 				return (
 					<CheckboxItem
-						checked={checked}
+						checked={checked && !rowLocked}
+						disabled={rowLocked}
 						index={i}
 						key={key}
 						label={t(PRESET_LABEL_KEY[key])}
@@ -886,6 +919,9 @@ interface FeatureBlockProps {
 	openrouterApiKey: string;
 	openrouterCatalog: OpenRouterCatalogState;
 	setShowApiKeyDialog: (v: boolean) => void;
+	/** Open the model-picker modal so the user can download a model when none
+	 *  is installed — the toggle commits `enabled` only once a model lands. */
+	setShowModelPicker: (v: boolean) => void;
 	setShowOllamaDialog: (v: boolean) => void;
 	t: TranslateFn;
 	tc: TranslateFn;
@@ -924,6 +960,7 @@ function useFeatureToggleHandler(
 			},
 			setShowOllamaDialog: props.setShowOllamaDialog,
 			setShowApiKeyDialog: props.setShowApiKeyDialog,
+			setShowModelPicker: props.setShowModelPicker,
 		});
 	};
 }
@@ -1207,6 +1244,17 @@ function useLlmSettingsPanel() {
 			setPendingFeature(feature);
 		}
 	};
+	// Open the model-picker modal (rendered at the SettingsPage view level, since
+	// the dialog is a widget and widgets can't import widgets). Toggling a feature
+	// on with no installed model routes here; the picker's install callback then
+	// commits `enabled: true` — the toggle never enables on its own.
+	const setShowModelPickerFor = (feature: "dictation" | "transforms") => (v: boolean) => {
+		if (v) {
+			useLlmModelPickerStore.getState().openFor(feature, true);
+		} else {
+			useLlmModelPickerStore.getState().close();
+		}
+	};
 
 	const toneOpts = buildToneOpts(t);
 	const levelOpts = buildLevelOpts(t);
@@ -1255,6 +1303,7 @@ function useLlmSettingsPanel() {
 		updateTransforms,
 		setShowOllamaDialogFor,
 		setShowApiKeyDialogFor,
+		setShowModelPickerFor,
 		showOllamaDialog,
 		showApiKeyDialog,
 		handleOllamaStarted,
@@ -1295,6 +1344,18 @@ function FeaturePresetControls({
 }) {
 	const { t, tc, toneOpts, levelOpts } = model;
 	const activeTone = getToneKey(snapshot.presets);
+	// When the active STT model decodes straight to English, the built-in
+	// "Translate" modifier would translate the transcript a second time — lock
+	// it off for the dictation pass. Transforms operate on already-selected
+	// text, so the STT toggle has no bearing there (lock stays dictation-only).
+	const sttTranslateOn = useSettingsStore((s) => s.settings.model?.translateToEnglish ?? false);
+	const activeSttModelId = useSettingsStore((s) => s.settings.model?.model ?? "");
+	const activeSttModel = useCatalogStore((s) => s.getModel(activeSttModelId));
+	const translateLocked =
+		feature === "dictation" &&
+		sttTranslateOn &&
+		activeSttModel !== undefined &&
+		supportsTranslateToEnglish(activeSttModel);
 	return (
 		<div className="flex flex-col divide-y divide-surface-1">
 			<div className="col-span-2">
@@ -1361,20 +1422,11 @@ function FeaturePresetControls({
 							presets={snapshot.presets}
 							t={t}
 							tc={tc}
+							translateLocked={translateLocked}
 						/>
 					</ElevatedSurface>
 				</FormControl>
 			</div>
-			{feature === "dictation" ? (
-				<>
-					<div className="col-span-2">
-						<ContextAwarenessSection />
-					</div>
-					<div className="col-span-2">
-						<ContextDenyListSection />
-					</div>
-				</>
-			) : null}
 		</div>
 	);
 }
@@ -1405,6 +1457,321 @@ function TransformHotkeyField({
 				<HotkeyRecorder currentKey={hotkey} onKeyRecorded={onChange} />
 			</FormControl>
 		</div>
+	);
+}
+
+// ── Playground modal ──────────────────────────────────────────────────
+//
+// A single, detached LLM playground (one modal in the Model tab, not a
+// duplicated inline block per feature). The config combobox seeds an EDITABLE,
+// ephemeral config from the saved Dictation config, the saved Transforms
+// config, or a saved preset — and typing a new name saves the current config
+// as a preset. Tweaks here never touch saved settings. The composed config
+// (tone + modifiers + provider/model) is sent to the preview IPC as an explicit
+// override so the user can test how the LLM behaves under arbitrary configs.
+
+// Built-in (non-deletable) selections — the live dictation/transforms configs.
+// Saved config presets use their own ids.
+const LIVE_DICTATION = "live:dictation";
+const LIVE_TRANSFORMS = "live:transforms";
+
+function seedDraftFromFeature(f: LlmFeatureDraft & PresetCarrier): PlaygroundConfig {
+	return {
+		enabled: f.enabled,
+		maxOutputTokens: f.maxOutputTokens,
+		provider: f.provider,
+		model: f.model,
+		openrouterModel: f.openrouterModel,
+		openrouterFallbackModel: f.openrouterFallbackModel,
+		reasoningEffort: f.reasoningEffort,
+		thinkingEffort: f.thinkingEffort,
+		verbosity: f.verbosity,
+		presets: [...f.presets],
+		customModifiers: [...f.customModifiers],
+	};
+}
+
+function initialPlaygroundSelection(model: LlmSettingsPanelModel): string {
+	return model.dictation.enabled || !model.transforms.enabled ? LIVE_DICTATION : LIVE_TRANSFORMS;
+}
+
+/** Resolve the editable draft for the chosen combobox value — a live config or
+ *  a clone of a saved preset. */
+function seedForSelection(
+	selection: string,
+	model: LlmSettingsPanelModel,
+	presets: readonly PlaygroundPreset[]
+): PlaygroundConfig {
+	if (selection === LIVE_TRANSFORMS) {
+		return seedDraftFromFeature(model.transforms);
+	}
+	const preset = presets.find((p) => p.id === selection);
+	if (preset) {
+		return clonePlaygroundConfig(preset.config);
+	}
+	return seedDraftFromFeature(model.dictation);
+}
+
+/** Initial editable draft when the playground opens: the live config for the
+ *  feature the user is most likely tuning. Mirrors the lazy `useState` seed for
+ *  `selection` so both derive from `model` the same single-call way. */
+function initialPlaygroundDraft(model: LlmSettingsPanelModel): PlaygroundConfig {
+	return seedForSelection(initialPlaygroundSelection(model), model, []);
+}
+
+/**
+ * Provider + model picker for the playground. Reuses the SAME `ProviderSection`
+ * the settings panel uses (real Ollama picker with install/download/swap, real
+ * OpenRouter picker, Apple Intelligence stub) — no bespoke combobox. The
+ * editable draft is a structural superset of `LlmFeatureDraft`, so the picker
+ * drives it directly via `updateAny`. Swap-tracking is a no-op here (the
+ * playground doesn't need the from→to animation).
+ */
+function PlaygroundModelPicker({
+	draft,
+	model,
+	onChange,
+}: {
+	draft: PlaygroundConfig;
+	model: LlmSettingsPanelModel;
+	onChange: (patch: Partial<PlaygroundConfig>) => void;
+}) {
+	const { t, tc, providerOpts, ollamaCatalogState, openrouterCatalogState, openrouterApiKey } =
+		model;
+
+	const handleProvider = (provider: LlmProvider) => {
+		onChange({ provider });
+		if (provider === "ollama" && !ollamaCatalogState.isLoaded) {
+			ollamaCatalogState.scanModels();
+		} else if (
+			provider === "openrouter" &&
+			openrouterApiKey.trim().length > 0 &&
+			!openrouterCatalogState.isLoaded
+		) {
+			openrouterCatalogState.scanModels();
+		}
+	};
+
+	// Explicit `LlmFeatureDraft` projection (the picker's prop shape). `enabled`
+	// is forced on so the picker is fully interactive regardless of the seeded
+	// feature's toggle state.
+	const featureSnapshot: LlmFeatureDraft = {
+		enabled: true,
+		maxOutputTokens: draft.maxOutputTokens,
+		model: draft.model,
+		openrouterFallbackModel: draft.openrouterFallbackModel,
+		openrouterModel: draft.openrouterModel,
+		provider: draft.provider,
+		reasoningEffort: draft.reasoningEffort,
+		thinkingEffort: draft.thinkingEffort,
+		verbosity: draft.verbosity,
+	};
+
+	return (
+		<div className="flex flex-col divide-y divide-surface-1">
+			<div className="col-span-2">
+				<FormControl label={t("provider")} tooltip={t("providerTooltip")}>
+					<ElevatedSurface>
+						<Switcher
+							onChange={(v) => handleProvider(v as LlmProvider)}
+							options={providerOpts}
+							value={draft.provider}
+						/>
+					</ElevatedSurface>
+				</FormControl>
+			</div>
+			<ProviderSection
+				beginOllamaSwap={() => undefined}
+				fallbackExclusion={computeModelExclusionConfig(draft.openrouterModel)}
+				featureSnapshot={featureSnapshot}
+				librarySearch={model.librarySearchProps}
+				ollamaCatalog={ollamaCatalogState}
+				ollamaPullBundle={model.ollamaPullBundle}
+				ollamaReachable={model.ollamaReachable}
+				ollamaSwap={null}
+				openrouterApiKey={openrouterApiKey}
+				openrouterCatalog={openrouterCatalogState}
+				t={t}
+				tc={tc}
+				updateAny={onChange}
+			/>
+		</div>
+	);
+}
+
+/** True when the chosen provider has enough configured to actually run. */
+function playgroundHasModel(draft: PlaygroundConfig, openrouterApiKey: string): boolean {
+	if (draft.provider === "apple-intelligence") {
+		return true;
+	}
+	if (draft.provider === "openrouter") {
+		return openrouterApiKey.trim().length > 0 && draft.openrouterModel.length > 0;
+	}
+	return draft.model.length > 0;
+}
+
+/** Combobox items for the playground config selector: the two live configs
+ *  (non-deletable) followed by the saved config presets (deletable). */
+function buildConfigItems(
+	presets: readonly PlaygroundPreset[],
+	t: TranslateFn
+): CreatableComboboxItem[] {
+	return [
+		{ id: LIVE_DICTATION, label: t("playgroundConfigDictation") },
+		{ id: LIVE_TRANSFORMS, label: t("playgroundConfigTransforms") },
+		...presets.map((p) => ({ id: p.id, label: p.name, deletable: true })),
+	];
+}
+
+function PlaygroundModalBody({
+	model,
+	onClose,
+}: {
+	model: LlmSettingsPanelModel;
+	onClose: () => void;
+}) {
+	const { t, tc } = model;
+	const [presets, setPresets] = useState<PlaygroundPreset[]>(loadPlaygroundPresets);
+	const [selection, setSelection] = useState<string>(() => initialPlaygroundSelection(model));
+	const [draft, setDraft] = useState<PlaygroundConfig>(() => initialPlaygroundDraft(model));
+
+	const update = (patch: Partial<PlaygroundConfig>) => setDraft((prev) => ({ ...prev, ...patch }));
+
+	const handleSelect = (next: string) => {
+		setSelection(next);
+		setDraft(seedForSelection(next, model, presets));
+	};
+
+	const handleCreatePreset = (rawName: string) => {
+		const name = rawName.trim();
+		if (!name) {
+			return;
+		}
+		const preset: PlaygroundPreset = {
+			id: makePlaygroundPresetId(),
+			name,
+			config: clonePlaygroundConfig(draft),
+		};
+		const next = [...presets, preset];
+		setPresets(next);
+		savePlaygroundPresets(next);
+		setSelection(preset.id);
+	};
+
+	const deletePreset = (id: string) => {
+		const next = presets.filter((p) => p.id !== id);
+		setPresets(next);
+		savePlaygroundPresets(next);
+		if (selection === id) {
+			handleSelect(LIVE_DICTATION);
+		}
+	};
+
+	// One-shot catalog warm on open so the model dropdown isn't empty for a
+	// provider the per-feature settings hadn't already scanned. Mount-only by
+	// intent: re-firing on draft.provider / catalog-state changes would re-scan
+	// on every interaction. Provider switches do their own scan in `handleProvider`.
+	useMountEffect(() => {
+		if (draft.provider === "ollama" && !model.ollamaCatalogState.isLoaded) {
+			model.ollamaCatalogState.scanModels();
+		} else if (
+			draft.provider === "openrouter" &&
+			model.openrouterApiKey.trim().length > 0 &&
+			!model.openrouterCatalogState.isLoaded
+		) {
+			model.openrouterCatalogState.scanModels();
+		}
+	});
+
+	// The preview runs the composed config directly — it does NOT require the
+	// dictation/transforms feature to be toggled on (the server applies the
+	// explicit override regardless). So the only gate is having a usable model
+	// for the chosen provider; once that's set, typing a sample enables Run.
+	const hasModel = playgroundHasModel(draft, model.openrouterApiKey);
+	const runDisabled = !hasModel;
+	const disabledReason = hasModel ? undefined : t("playgroundNoModel");
+
+	const configItems = buildConfigItems(presets, t);
+
+	const run = (sample: string) => {
+		const config: LlmPreviewConfig = {
+			provider: draft.provider,
+			model: draft.model,
+			openrouterModel: draft.openrouterModel,
+			openrouterFallbackModel: draft.openrouterFallbackModel,
+			thinkingEffort: draft.thinkingEffort,
+			presets: draft.presets,
+			customModifiers: draft.customModifiers,
+		};
+		return runLlmPreview(
+			sample,
+			selection === LIVE_TRANSFORMS ? "transforms" : "dictation",
+			config
+		);
+	};
+
+	return (
+		<div className="flex w-[44rem] max-w-[94vw] flex-col">
+			<header className="flex shrink-0 items-center gap-2 px-6 pt-6 pb-3">
+				<HugeiconsIcon className="text-accent" icon={PlayIcon} size={18} />
+				<h2 className="font-semibold text-foreground text-lg">{t("playgroundModalTitle")}</h2>
+				<IconButton
+					aria-label={tc("cancel")}
+					className="ml-auto"
+					icon={<HugeiconsIcon icon={Cancel01Icon} size={16} />}
+					onClick={onClose}
+				/>
+			</header>
+			{/* The viewport carries the max-height + overflow so the body scrolls
+			    even though the popup is content-sized (a `flex-1` child of a
+			    `max-h` popup never gets a definite height to scroll within). */}
+			<ScrollArea viewportClassName="max-h-[76vh] px-6 pb-6">
+				<div className="flex flex-col gap-4">
+					<FormControl label={t("playgroundConfigLabel")} tooltip={t("playgroundConfigHint")}>
+						<CreatableCombobox
+							createLabel={(name) => t("modifierPresetCreate", { name })}
+							deleteAriaLabel={t("playgroundDeletePreset")}
+							emptyLabel={t("modifierPresetEmpty")}
+							items={configItems}
+							onCreate={handleCreatePreset}
+							onDelete={deletePreset}
+							onSelect={handleSelect}
+							placeholder={t("playgroundSelectConfig")}
+							value={selection}
+						/>
+					</FormControl>
+					<PlaygroundModelPicker draft={draft} model={model} onChange={update} />
+					{/* Re-key on `selection` so the preset list's internal level/lang
+					    caches reseed from the freshly-seeded draft on switch. */}
+					<FeaturePresetControls
+						feature="transforms"
+						key={selection}
+						model={model}
+						snapshot={{ presets: draft.presets, customModifiers: draft.customModifiers }}
+						update={update}
+					/>
+					<Playground disabled={runDisabled} disabledReason={disabledReason} run={run} />
+				</div>
+			</ScrollArea>
+		</div>
+	);
+}
+
+/** Detached LLM playground modal. The body is mounted only while open so each
+ *  open re-seeds a fresh ephemeral draft from the current saved settings. */
+function PlaygroundModal({
+	model,
+	onClose,
+	open,
+}: {
+	model: LlmSettingsPanelModel;
+	onClose: () => void;
+	open: boolean;
+}) {
+	return (
+		<Modal isOpen={open} onClose={onClose}>
+			{open ? <PlaygroundModalBody model={model} onClose={onClose} /> : null}
+		</Modal>
 	);
 }
 
@@ -1469,6 +1836,7 @@ function LlmSettingsDialogs({
 
 export function LlmSettingsPanel() {
 	const model = useLlmSettingsPanel();
+	const [playgroundOpen, setPlaygroundOpen] = useState(false);
 	const {
 		t,
 		tc,
@@ -1490,14 +1858,29 @@ export function LlmSettingsPanel() {
 		updateTransforms,
 		setShowOllamaDialogFor,
 		setShowApiKeyDialogFor,
+		setShowModelPickerFor,
 	} = model;
 
 	return (
 		<>
-			<SettingSection icon={AiBrain02Icon} title={t("title")}>
+			<SettingSection
+				headerAction={
+					<Button
+						className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 font-medium text-foreground-secondary text-sm transition-colors hover:border-accent hover:text-accent"
+						onClick={() => setPlaygroundOpen(true)}
+					>
+						<HugeiconsIcon icon={PlayIcon} size={14} />
+						{t("playgroundTitle")}
+					</Button>
+				}
+				icon={AiBrain02Icon}
+				title={t("title")}
+			>
 				{/* Provider connection inputs (Ollama endpoint, OpenRouter API
 				    key) live in the dedicated Integrations settings tab — both
-				    feature subsections read the same shared values. */}
+				    feature subsections read the same shared values. The shared,
+				    detached Playground (header action above) replaces the old
+				    per-feature inline playground blocks. */}
 				<FeatureBlock
 					checkOllamaReachable={checkOllamaReachable}
 					endpoint={endpoint}
@@ -1512,6 +1895,7 @@ export function LlmSettingsPanel() {
 					openrouterCatalog={openrouterCatalogState}
 					providerOpts={providerOpts}
 					setShowApiKeyDialog={setShowApiKeyDialogFor("dictation")}
+					setShowModelPicker={setShowModelPickerFor("dictation")}
 					setShowOllamaDialog={setShowOllamaDialogFor("dictation")}
 					t={t}
 					tc={tc}
@@ -1525,7 +1909,6 @@ export function LlmSettingsPanel() {
 						snapshot={dictation}
 						update={updateDictation}
 					/>
-					<Playground feature="dictation" />
 				</FeatureBlock>
 
 				<FeatureBlock
@@ -1541,6 +1924,7 @@ export function LlmSettingsPanel() {
 					openrouterCatalog={openrouterCatalogState}
 					providerOpts={providerOpts}
 					setShowApiKeyDialog={setShowApiKeyDialogFor("transforms")}
+					setShowModelPicker={setShowModelPickerFor("transforms")}
 					setShowOllamaDialog={setShowOllamaDialogFor("transforms")}
 					t={t}
 					tc={tc}
@@ -1559,11 +1943,21 @@ export function LlmSettingsPanel() {
 						onChange={(hotkey) => updateTransforms({ hotkey })}
 						t={t}
 					/>
-					<Playground feature="transforms" />
 				</FeatureBlock>
 			</SettingSection>
 
 			<LlmSettingsDialogs model={model} />
+			{/* Reset the surface baseline low so the modal gets a settings-like
+			    elevation ramp (popup → cards → inputs) with real contrast,
+			    instead of clamping flat at surface-8 when opened from a deeply
+			    nested settings substrate. */}
+			<SurfaceProvider value={1}>
+				<PlaygroundModal
+					model={model}
+					onClose={() => setPlaygroundOpen(false)}
+					open={playgroundOpen}
+				/>
+			</SurfaceProvider>
 		</>
 	);
 }
@@ -1799,6 +2193,7 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 		providerOpts,
 		setShowOllamaDialog,
 		setShowApiKeyDialog,
+		setShowModelPicker,
 		checkOllamaReachable,
 		update,
 		updateShared,
@@ -1820,6 +2215,7 @@ function FeatureBlock(props: FeatureBlockComponentProps) {
 			ollamaReachable,
 			setShowOllamaDialog,
 			setShowApiKeyDialog,
+			setShowModelPicker,
 			update,
 			updateShared,
 			warmupStatus,

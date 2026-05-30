@@ -10,7 +10,8 @@ export interface QuantizationOption {
 const QUANTIZATION_LABELS: Record<OnnxQuantization, { label: string; tooltip: string }> = {
 	"": {
 		label: "Auto",
-		tooltip: "Default fp32 weights — slowest but most accurate. Always available.",
+		tooltip:
+			"Automatically uses the best precision for your device and runtime (e.g. fp16 on a DirectML GPU, int8 on CPU where available). Recommended.",
 	},
 	int8: {
 		label: "int8",

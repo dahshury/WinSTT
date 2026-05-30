@@ -56,6 +56,13 @@ _DEFAULT_BUFFER_SIZE = BufferSize(512)
 # reader loop when the system genuinely has no input hardware.
 _DEFAULT_DEVICE_PROBE_EVERY_N_CHUNKS = 30
 
+# Safety cap for the one-shot ``drain_available`` read at PTT release. The OS
+# input ring buffer normally holds only a buffer or three, but a wedged host
+# can report a pathologically large ``get_read_available`` — capping keeps the
+# release path from blocking while it reads seconds of audio. 256 buffers is
+# ~2.7 s at 48 kHz / 512-frame buffers, far above any real backlog.
+_MAX_DRAIN_BUFFERS = 256
+
 
 class _StreamingResampler:
     """Stateful, seam-free polyphase resampler for the live capture stream.
@@ -532,20 +539,68 @@ class PyAudioSource(IAudioSource):
         # Fold whatever format the driver gave us down to the canonical
         # int16 bytes so the rest of the pipeline (CompositeVAD,
         # audio_buffer, resampler) doesn't need to know capture used
-        # something else. paFloat32 → int16 covers WASAPI's native f32;
-        # paInt24 → int16 covers high-end USB mics that pump packed
-        # 24-bit samples. paInt16 falls through untouched.
-        if self._capture_format is not None:
-            if self._capture_format == pyaudio.paFloat32:
-                raw = self._float32_bytes_to_int16_bytes(raw)
-            elif self._capture_format == pyaudio.paInt24:
-                raw = self._int24_bytes_to_int16_bytes(raw)
+        # something else.
+        raw = self._to_int16(raw)
         if self._resampler is not None:
             if self._resampler_fresh:
                 # Coming out of a pause: discard the stale overlap so the new
                 # utterance starts cleanly from silence.
                 self._resampler.reset()
                 self._resampler_fresh = False
+            raw = self._resampler.process(raw)
+        return raw
+
+    def _to_int16(self, raw: bytes) -> bytes:
+        """Fold the negotiated capture format down to canonical int16 bytes.
+
+        paFloat32 → int16 covers WASAPI's native f32; paInt24 → int16 covers
+        high-end USB mics that pump packed 24-bit samples. paInt16 (and the
+        not-yet-negotiated ``None``) fall through untouched.
+        """
+        if self._capture_format is None:
+            return raw
+        if self._capture_format == pyaudio.paFloat32:
+            return self._float32_bytes_to_int16_bytes(raw)
+        if self._capture_format == pyaudio.paInt24:
+            return self._int24_bytes_to_int16_bytes(raw)
+        return raw
+
+    @override
+    def drain_available(self) -> AudioChunk:
+        """Read the OS-buffered tail without blocking; see ``IAudioSource``.
+
+        On PTT release the stream is about to close. PortAudio's input ring
+        buffer can still hold the last fraction of a second the user spoke —
+        the audio captured between the reader thread's final ``read_chunk``
+        and ``pause()``. This pulls exactly what's already available
+        (``get_read_available``), converts + resamples it the same way
+        ``read_chunk`` does, and hands it back so the caller can feed it into
+        the recording before the device is released. Returns ``b""`` when
+        paused, streamless, or nothing is buffered.
+
+        Shares ``_stream_op_lock`` with ``read_chunk`` / ``_release_stream``
+        so the one-shot read can't race the reader thread or a concurrent
+        teardown.
+        """
+        with self._stream_op_lock:
+            if self._stream is None or not self._capturing:
+                return b""
+            try:
+                available = int(self._stream.get_read_available())
+            except Exception as e:
+                # Any PortAudio failure here just means there's nothing to drain.
+                logger.debug("drain_available: get_read_available failed: %s", _format_pa_error(e))
+                return b""
+            if available <= 0:
+                return b""
+            available = min(available, self._buffer_size * _MAX_DRAIN_BUFFERS)
+            try:
+                raw: bytes = self._stream.read(available, exception_on_overflow=False)
+            except OSError as e:
+                logger.debug("drain_available: read failed: %s", _format_pa_error(e))
+                return b""
+        raw = self._to_int16(raw)
+        if self._resampler is not None:
             raw = self._resampler.process(raw)
         return raw
 

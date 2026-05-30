@@ -1054,6 +1054,65 @@ components:
         visualizerColor:
           type: string
           pattern: "^#[0-9a-fA-F]{6}$"
+        visualizerRadialDotCount:
+          type: integer
+          minimum: 6
+          maximum: 48
+          description: Radial visualizer — number of dots around the ring.
+        visualizerRadialRadius:
+          type: integer
+          minimum: 20
+          maximum: 90
+          description: Radial visualizer — ring radius as a percentage of the visualizer half-height.
+        visualizerGridRows:
+          type: integer
+          minimum: 3
+          maximum: 8
+          description: Grid visualizer — number of dot rows.
+        visualizerGridColumns:
+          type: integer
+          minimum: 3
+          maximum: 8
+          description: Grid visualizer — number of dot columns.
+        visualizerGridSpeed:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Grid visualizer — idle-sweep speed (1 slow … 10 fast).
+        visualizerWaveLineWidth:
+          type: integer
+          minimum: 1
+          maximum: 6
+          description: Wave visualizer — oscilloscope line thickness.
+        visualizerWaveSmoothing:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Wave visualizer — edge softness (percent → shader uSmoothing 0–1).
+        visualizerWaveColorShift:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Wave visualizer — rainbow edge hue-shift (percent → shader uColorShift 0–1).
+        visualizerAuraShape:
+          type: string
+          enum: [circle, line]
+          description: Aura visualizer — base shape (circle or line).
+        visualizerAuraBlur:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Aura visualizer — field blur (percent → shader uBlur 0–1).
+        visualizerAuraBloom:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Aura visualizer — additive bloom, dark theme only (percent → shader uBloom 0–1).
+        visualizerAuraColorShift:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Aura visualizer — rainbow hue-shift (percent → shader uColorShift 0–1).
         contextAwareness:
           type: boolean
           description: |

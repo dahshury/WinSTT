@@ -15,6 +15,31 @@ import { getStoreRaw, getStoreValue, store } from "../lib/store";
 let sttProcess: ChildProcess | null = null;
 let status: "idle" | "starting" | "running" | "error" = "idle";
 
+// ── Crash auto-recovery ───────────────────────────────────────────────
+//
+// The Python STT server occasionally dies from a native fault outside our
+// control — most often a third-party file-system filter driver (antivirus,
+// OneDrive, the search indexer) access-violating inside an `os.stat` syscall
+// while the frozen process probes `sys.path` for a not-yet-frozen module
+// (the sys.path-injected TTS support pack / vendored onnx_asr). `faulthandler`
+// surfaces it as "Windows fatal exception: access violation" and the OS then
+// terminates stt-server.exe. We can't stop a foreign DLL from faulting, but we
+// can self-heal: respawn the server with bounded backoff so a rare transient
+// crash doesn't strand the renderer on "cannot connect to the server".
+//
+// Bounded so a *deterministic* crash (broken audio stack, corrupt model) can't
+// spin forever: at most RESPAWN_MAX_ATTEMPTS restarts within
+// RESPAWN_HEALTHY_UPTIME_MS, after which we surface a real error state. A
+// process that stayed up past that window counts as healthy and earns a fresh
+// budget — exactly the "rare fault after a long session" case.
+const RESPAWN_MAX_ATTEMPTS = 3;
+const RESPAWN_HEALTHY_UPTIME_MS = 60_000;
+const RESPAWN_BACKOFF_MS = [1000, 3000, 8000] as const;
+let respawnAttempts = 0;
+let respawnTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSpawnAt = 0;
+let autoRespawnDisabled = false;
+
 function setErrorState() {
 	status = "error";
 	sttProcess = null;
@@ -427,6 +452,19 @@ function applyTtsDeviceFlag(args: string[]): void {
 	args.push("--tts-device", device);
 }
 
+/**
+ * Boot the server with the user's filler-strip choice. The server defaults to
+ * ON, so we must pass `--no-filter_fillers` explicitly when the user turned it
+ * OFF (verbatim models like CrisperWhisper). Pushed at BOOT (not only via the
+ * runtime set_parameter sync) because the runtime electron-store read was
+ * delivering a stale value, leaving the recorder stripping fillers despite the
+ * setting being off. `BooleanOptionalAction` on the server accepts both forms.
+ */
+function applyFilterFillersFlag(args: string[]): void {
+	const enabled = getStoreRaw("general.filterFillers") !== false; // default ON
+	args.push(enabled ? "--filter_fillers" : "--no-filter_fillers");
+}
+
 function applyDerivedFlags(args: string[]): void {
 	applyRealtimeFlag(args);
 	applySileroDeactivityFlag(args);
@@ -438,6 +476,7 @@ function applyDerivedFlags(args: string[]): void {
 	applyMicrophoneReleaseFlag(args);
 	applyRecordingsFlags(args);
 	applyTtsDeviceFlag(args);
+	applyFilterFillersFlag(args);
 }
 
 /** Read all relevant settings from electron-store and convert to CLI args */
@@ -546,6 +585,63 @@ function clearOwningProcess(proc: ChildProcess): void {
 	}
 }
 
+function cancelPendingRespawn(): void {
+	if (respawnTimer) {
+		clearTimeout(respawnTimer);
+		respawnTimer = null;
+	}
+}
+
+/**
+ * Schedule a bounded, backed-off restart after the owning server process exited
+ * unexpectedly (a crash — see the auto-recovery note at the top of the file).
+ * No-op once the budget is exhausted: that flips status to "error" so the
+ * renderer shows a real failure instead of spinning on "cannot connect".
+ */
+function maybeRespawnAfterCrash(): void {
+	if (autoRespawnDisabled) {
+		return;
+	}
+	// A server that stayed up past the healthy-uptime window earns a fresh
+	// budget — a single transient fault after a long session is not a crash loop.
+	if (Date.now() - lastSpawnAt >= RESPAWN_HEALTHY_UPTIME_MS) {
+		respawnAttempts = 0;
+	}
+	if (respawnAttempts >= RESPAWN_MAX_ATTEMPTS) {
+		console.error(
+			`[stt-server] auto-restart gave up after ${respawnAttempts} attempt(s) within ${RESPAWN_HEALTHY_UPTIME_MS / 1000}s`
+		);
+		setErrorState();
+		return;
+	}
+	// `?? 8000` (the last/longest backoff) is unreachable since the index is
+	// always in-bounds — it just satisfies noUncheckedIndexedAccess.
+	const delay =
+		RESPAWN_BACKOFF_MS[Math.min(respawnAttempts, RESPAWN_BACKOFF_MS.length - 1)] ?? 8000;
+	respawnAttempts += 1;
+	status = "starting";
+	breadcrumb(
+		"process",
+		"stt-server crashed — scheduling auto-restart",
+		{ attempt: respawnAttempts, delay },
+		"warning"
+	);
+	cancelPendingRespawn();
+	respawnTimer = setTimeout(() => {
+		respawnTimer = null;
+		// A manual kill/restart (or app quit) during the backoff supersedes us.
+		if (autoRespawnDisabled || sttProcess) {
+			return;
+		}
+		try {
+			spawnServer();
+		} catch (err) {
+			setErrorState();
+			console.error("[stt-server] auto-restart spawn failed:", getErrorMessage(err));
+		}
+	}, delay);
+}
+
 function handleProcessExit(proc: ChildProcess, code: number | null, signal: string | null): void {
 	const exitCode = normalizeExitCode(code);
 	breadcrumb(
@@ -554,7 +650,15 @@ function handleProcessExit(proc: ChildProcess, code: number | null, signal: stri
 		{ code: exitCode, signal: signal ?? "" },
 		exitBreadcrumbSeverity(exitCode)
 	);
+	// Capture ownership BEFORE clearing: killSttProcess() nulls `sttProcess`
+	// before terminating, so an exit that still owns the slot means the process
+	// died on its own. A non-zero code rules out a clean self-shutdown, leaving
+	// only an unexpected crash — recover from it.
+	const crashed = isOwningProcess(proc) && exitCode !== 0;
 	clearOwningProcess(proc);
+	if (crashed) {
+		maybeRespawnAfterCrash();
+	}
 }
 
 function reportSpawnError(proc: ChildProcess, err: Error): void {
@@ -719,6 +823,10 @@ function spawnServer(): void {
 	reclaimOrphanStttServers();
 
 	status = "starting";
+	lastSpawnAt = Date.now();
+	// A fresh deliberate spawn begins a new lifecycle — re-arm crash recovery
+	// (only ever disabled by the app's `before-quit` shutdown guard).
+	autoRespawnDisabled = false;
 
 	const proc = spawn(command, args, {
 		cwd: serverDir,
@@ -801,6 +909,16 @@ export function isSttProcessRunning(): boolean {
 	return sttProcess != null;
 }
 
+/**
+ * Permanently disable crash auto-restart for the rest of the process lifetime.
+ * Called from the app's `before-quit` handler so a server that happens to crash
+ * mid-shutdown isn't immediately respawned, racing teardown.
+ */
+export function disableSttAutoRespawn(): void {
+	autoRespawnDisabled = true;
+	cancelPendingRespawn();
+}
+
 function formatAutoSpawnError(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
 }
@@ -840,6 +958,10 @@ function dispatchPlatformKill(proc: ChildProcess, pid: number): void {
 
 /** Kill the STT subprocess tree. Exported for use in app lifecycle cleanup. */
 export function killSttProcess(): void {
+	// A deliberate stop supersedes any in-flight crash auto-restart and resets
+	// the budget — the next lifecycle starts clean.
+	cancelPendingRespawn();
+	respawnAttempts = 0;
 	const proc = sttProcess;
 	if (!proc?.pid) {
 		return;
@@ -855,6 +977,37 @@ export function killSttProcess(): void {
 	} catch (err) {
 		// Process may have already exited
 		dbg("stt-process", `Failed to kill process ${pid}:`, getErrorMessage(err));
+	}
+}
+
+/**
+ * Synchronously force-kill the STT server by IMAGE name. Used by the app's
+ * `before-quit` handler right before `app.exit(0)`.
+ *
+ * Two reasons the pid-based {@link killSttProcess} above isn't enough at quit:
+ *   1. It fires an ASYNC `taskkill /PID`, and `app.exit(0)` exits immediately —
+ *      interrupting that taskkill before it cascades, so the tree survives.
+ *   2. In dev the server runs as `uv run stt-server`; `uv` hands off to
+ *      `stt-server.exe`, which REPARENTS out from under the tracked `uv` pid, so
+ *      `taskkill /T /PID <uv>` never reaches it (seen live: orphaned
+ *      `stt-server.exe → python → python` after quit).
+ * An image-name kill is reliable regardless of reparenting, and being
+ * SYNCHRONOUS it completes before we exit. `/T` takes the python children with
+ * it. `stt-server.exe` is the WinSTT-specific image (dev venv console-script AND
+ * the bundled prod exe), so this can't hit unrelated processes. Windows-only.
+ */
+export function killSttServerByImageSync(): void {
+	if (process.platform !== "win32") {
+		return;
+	}
+	try {
+		spawnSync("taskkill", ["/F", "/T", "/IM", "stt-server.exe"], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: 3000,
+		});
+	} catch (err) {
+		dbg("stt-process", "killSttServerByImageSync ignored:", getErrorMessage(err));
 	}
 }
 

@@ -251,8 +251,9 @@ requires-dist = [
 # onnx-asr alongside WinSTT, clone the fork as a sibling folder and temporarily
 # swap this entry for ``{ path = "../../onnx-asr", editable = true }``.
 # 9c74fc8 adds the SenseVoiceCtc model class (every catalog family now loads
-# through onnx-asr's resolver) + the CrisperWhisper vocab fix.
-onnx-asr = { git = "https://github.com/dahshury/onnx-asr.git", rev = "9c74fc890740cc7162e1087d94d3cca0b5d53b78" }
+# through onnx-asr's resolver) + the CrisperWhisper vocab fix; a8218d1 lowercases
+# all-uppercase (LibriSpeech zipformer) decoder output.
+onnx-asr = { git = "https://github.com/dahshury/onnx-asr.git", rev = "a8218d143e4afbeacf840b4e980dbe2551cd1042" }
 
 [project.scripts]
 stt-server = "src.stt_server.server:main"

@@ -561,6 +561,19 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--filter_fillers",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Strip locale-aware disfluencies ('uh'/'um'/'hmm'/…) + collapse "
+            "stutters from the transcript. Enabled by default. Pass "
+            "--no-filter_fillers to keep verbatim fillers — the reason to pick "
+            "a model like CrisperWhisper. Maps to TextCorrectionConfig.filter_fillers; "
+            "the renderer also pushes it at runtime via set_parameter."
+        ),
+    )
+
+    parser.add_argument(
         "--model_unload_timeout_seconds",
         type=int,
         default=300,

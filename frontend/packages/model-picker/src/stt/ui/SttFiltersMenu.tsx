@@ -10,7 +10,6 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef } from "react";
-import { LANGUAGES } from "@/shared/config/defaults";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -21,14 +20,7 @@ import {
 	hasActiveFilters,
 	type SttFilterState,
 } from "../lib/filter-state";
-
-const LANGUAGE_NAMES: Record<string, string> = Object.fromEntries(
-	LANGUAGES.map((l) => [l.code, l.name])
-);
-
-function languageLabel(code: string): string {
-	return LANGUAGE_NAMES[code] ?? code.toUpperCase();
-}
+import { languageLabel } from "../lib/language-names";
 
 interface FilterRowProps {
 	checked: boolean;

@@ -233,6 +233,15 @@ function tailOf(text: string, max: number): string {
 
 export interface ThinkingIndicatorProps extends ComponentPropsWithoutRef<"output"> {
 	/**
+	 * Let the streamed-reasoning band fill its container's width (`w-full`)
+	 * instead of using its intrinsic `clamp(220px,32vw,420px)`. Set when the
+	 * indicator lives inside a fixed-width shell (the Dynamic Island) so the
+	 * reasoning tracks whatever width the island settled on and never
+	 * overflows a compact island. Left off for the floating-bottom bubble,
+	 * which is shrink-to-fit and relies on the clamp to establish its width.
+	 */
+	fluidWidth?: boolean;
+	/**
 	 * Live-streamed reasoning text from the model's `message.thinking`
 	 * channel. Empty for non-reasoning models — the band collapses to
 	 * nothing in that case so the indicator looks identical to before
@@ -273,6 +282,7 @@ export function ThinkingIndicator({
 	words = DEFAULT_WORDS,
 	reasoning = "",
 	startedAt = null,
+	fluidWidth = false,
 	...rest
 }: ThinkingIndicatorProps) {
 	const [index, setIndex] = useState(() => initialWordIndex(words));
@@ -431,7 +441,10 @@ export function ThinkingIndicator({
 					{showReasoning && (
 						<m.div
 							animate={{ opacity: 1, height: "auto" }}
-							className="flex w-[clamp(220px,32vw,420px)] flex-col items-stretch overflow-hidden"
+							className={cn(
+								"flex flex-col items-stretch overflow-hidden",
+								fluidWidth ? "w-full" : "w-[clamp(220px,32vw,420px)]"
+							)}
 							exit={{
 								opacity: 0,
 								height: 0,

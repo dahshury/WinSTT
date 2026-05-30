@@ -286,6 +286,20 @@ describe("extractAsrPromptTail", () => {
 		expect(extractAsrPromptTail(EMPTY_CONTEXT)).toBe("");
 	});
 
+	test("suppresses terminal/console scrollback (it poisons Whisper)", () => {
+		expect(
+			extractAsrPromptTail(
+				makeSnapshot({
+					elementName: "Terminal 45, claude Use Alt+F1 for terminal accessibility help",
+					textBefore: "Ran 1 shell command Done. Combobulating…",
+				})
+			)
+		).toBe("");
+		expect(
+			extractAsrPromptTail(makeSnapshot({ elementName: "Console", textBefore: "PS C:\\>" }))
+		).toBe("");
+	});
+
 	test("returns empty string when textBefore is whitespace-only", () => {
 		expect(extractAsrPromptTail(makeSnapshot({ textBefore: "  \n\t " }))).toBe("");
 	});
@@ -317,5 +331,76 @@ describe("extractAsrPromptTail", () => {
 			})
 		);
 		expect(extractAsrPromptTail(redacted)).toBe("");
+	});
+});
+
+describe("formatContextForPrompt — focused-field-first (drop tree when rich)", () => {
+	// Gmail-style capture: rich caret body + a giant page-chrome axHtml tree.
+	// ￼ is the object-replacement char Gmail splatters around icons/avatars.
+	const gmail = (): WindowContextSnapshot =>
+		makeSnapshot({
+			appExe: "chrome.exe",
+			url: "mail.google.com",
+			windowTitle: "Inbox (2,669) - me@gmail.com - Gmail - Google Chrome",
+			elementName: "Message Body",
+			focusedText: "",
+			textBefore:
+				"￼\nHi Mostafa\nAny chance you could update your genai-launchpad-fork?\n￼\nTake care,\nJohny\n￼\nI can't do this johny, sorry",
+			textAfter: "",
+			axHtml:
+				"<window><doc>INBOX LIST Steam GoDaddy AWS Talabat — 60 browser tabs —</doc></window>",
+		});
+
+	test("drops the axHtml tree when the focused field carries a real body", () => {
+		const result = formatContextForPrompt(gmail());
+		expect(result).not.toContain("Visible UI (XML");
+		expect(result).not.toContain("INBOX LIST");
+		expect(result).not.toContain("60 browser tabs");
+	});
+
+	test("keeps the de-noised email body + draft for the LLM", () => {
+		const result = formatContextForPrompt(gmail());
+		expect(result).toContain("Hi Mostafa");
+		expect(result).toContain("I can't do this johny, sorry");
+		// Object-replacement noise stripped; line structure preserved.
+		expect(result).not.toContain("￼");
+	});
+
+	test("still includes the App / Window / Focused-field metadata header", () => {
+		const result = formatContextForPrompt(gmail());
+		expect(result).toContain("App: chrome.exe");
+		expect(result).toContain("Focused field: Message Body");
+	});
+
+	test("KEEPS the axHtml tree when the focused field is thin (empty reply / canvas)", () => {
+		const result = formatContextForPrompt(
+			makeSnapshot({
+				appExe: "chrome.exe",
+				windowTitle: "Inbox - Gmail",
+				elementName: "Message Body",
+				textBefore: "",
+				textAfter: "",
+				axHtml: "<window><doc>The email to reply to lives only in the tree here.</doc></window>",
+			})
+		);
+		// Tier 3 now PRUNES the tree to the content landmark (better than the
+		// raw "Visible UI (XML" dump), so the email body reaches the LLM either
+		// way — assert the content survives, not the specific heading.
+		expect(result).toMatch(/Surrounding content|Visible UI \(XML/);
+		expect(result).toContain("lives only in the tree");
+	});
+});
+
+describe("denoiseForLlm (via focusedText non-caret path)", () => {
+	test("strips object-replacement / dingbats but preserves line structure", () => {
+		const result = formatContextForPrompt(
+			makeSnapshot({
+				elementName: "Body",
+				focusedText: "￼\nLine one ✶✻\n￼\n￼\nLine two\n￼",
+			})
+		);
+		expect(result).toContain("Visible content:\nLine one\nLine two");
+		expect(result).not.toContain("￼");
+		expect(result).not.toContain("✶");
 	});
 });

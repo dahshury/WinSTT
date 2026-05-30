@@ -141,7 +141,19 @@ export function useModelSwapController(
 	deviceValue: DeviceValue,
 	getModel: GetModelFn,
 	statesById: StatesById,
-	update: UpdateModelFn
+	update: UpdateModelFn,
+	// Injected (FSD: a feature can't import the model-download feature) so the
+	// controller can refuse to switch TO a model whose target precision is
+	// still downloading. Defaults to "nothing downloading" for callers/tests
+	// that don't wire it.
+	isQuantDownloading: (modelId: string, quantization: string) => boolean = () => false,
+	// Injected (FSD: a feature can't import the file-transcription feature) so
+	// the controller refuses to swap the shared STT model while the file queue
+	// is busy — the swap would shut down and reload the very transcriber the
+	// queue is mid-stream on. The Electron main process enforces the same block
+	// as a safety net; this keeps the renderer from even issuing the request.
+	// Defaults to "not busy" for callers/tests that don't wire it.
+	isFileQueueBusy: () => boolean = () => false
 ): SwapController {
 	const assessDictationFitOnServer = useSystemResourcesStore((s) => s.assessDictationFitOnServer);
 
@@ -238,6 +250,27 @@ export function useModelSwapController(
 
 	const handleModelChange = useCallback(
 		(v: string, quantization?: OnnxQuantization) => {
+			// Block model swaps while the file-transcription queue is busy — the
+			// swap would yank the shared transcriber out from under in-flight
+			// file work. The UI also disables the selector when busy.
+			if (isFileQueueBusy()) {
+				return;
+			}
+			// Refuse to switch TO a model whose target precision is still
+			// downloading — it isn't on disk yet, so a swap would just fail /
+			// re-trigger a fetch. The download keeps running in the background;
+			// the user can switch once it finishes.
+			if (
+				isSwapBlockedByDownload(
+					v,
+					quantization,
+					currentQuantization,
+					statesById,
+					isQuantDownloading
+				)
+			) {
+				return;
+			}
 			runHandleMainChange({
 				value: v,
 				quantization,
@@ -249,11 +282,34 @@ export function useModelSwapController(
 				gateWithAssessment,
 			});
 		},
-		[gateWithAssessment, issueSwap, currentMainModel, currentQuantization, update]
+		[
+			gateWithAssessment,
+			issueSwap,
+			currentMainModel,
+			currentQuantization,
+			update,
+			statesById,
+			isQuantDownloading,
+			isFileQueueBusy,
+		]
 	);
 
 	const handleRealtimeModelChange = useCallback(
 		(v: string, quantization?: OnnxQuantization) => {
+			if (isFileQueueBusy()) {
+				return;
+			}
+			if (
+				isSwapBlockedByDownload(
+					v,
+					quantization,
+					currentQuantization,
+					statesById,
+					isQuantDownloading
+				)
+			) {
+				return;
+			}
 			runHandleRealtimeChange({
 				value: v,
 				quantization,
@@ -265,7 +321,16 @@ export function useModelSwapController(
 				gateWithAssessment,
 			});
 		},
-		[gateWithAssessment, issueSwap, currentRealtimeModel, currentQuantization, update]
+		[
+			gateWithAssessment,
+			issueSwap,
+			currentRealtimeModel,
+			currentQuantization,
+			update,
+			statesById,
+			isQuantDownloading,
+			isFileQueueBusy,
+		]
 	);
 
 	// Kick off the swap (which triggers the download) but keep the modal
@@ -362,13 +427,27 @@ function applyQuantOverride(
 	return Object.assign(patch, ...overrides);
 }
 
+// Cloud transcribers carry no local weights and aren't catalog entries, so
+// the server's ``build_transcriber`` routes them purely by the ``provider:``
+// prefix and never reads ``backend``. The renderer's ``ModelPatch`` still
+// requires a backend when ``model`` is set, so persist a benign valid value.
+const CLOUD_MODEL_BACKEND = "onnx_asr" as const;
+
 function applyMainSwap(args: IssueSwapArgs, quantizationChanging: boolean): void {
 	const info = args.getModel(args.value);
-	// The picker only surfaces models that are in the catalog, so ``info``
-	// is always defined in production. Bail rather than write an inconsistent
-	// ``{ model, backend? }`` pair — the typed ``ModelPatch`` would reject
-	// that anyway, but the explicit guard makes the invariant readable.
+	// Cloud models (``openai:…`` / ``elevenlabs:…``) have no catalog entry, so
+	// ``getModel`` returns undefined. Persist the selection anyway — without
+	// this the swap silently no-ops and the cloud combo shows "no model
+	// chosen" (the picker never reflects the pick, and the auto-select on
+	// switching the source to Cloud appears to do nothing).
 	if (!info) {
+		if (isCloudModel(args.value)) {
+			args.prevMainModelRef.current = args.previous;
+			useModelSwapStore.getState().beginSwap("main", args.previous, args.value);
+			args.update({ model: args.value, backend: CLOUD_MODEL_BACKEND });
+		}
+		// A genuinely-missing LOCAL id can't form a valid ``{ model, backend }``
+		// pair, so bail rather than write an inconsistent couple.
 		return;
 	}
 	args.prevMainModelRef.current = args.previous;
@@ -501,6 +580,22 @@ function resolveTargetQuant(
 	// the uncached int8 weights.
 	const selected = quantization ?? currentQuantization;
 	return resolveEffectiveQuant(state, selected) as OnnxQuantization;
+}
+
+/** True when a swap to ``(value, target precision)`` must be refused because
+ *  that precision is mid-download. Mirrors the target-quant resolution the swap
+ *  itself uses (``resolveTargetQuant``) so a row-select (no explicit quant →
+ *  effective) and a precision-badge click (explicit quant) are both checked
+ *  against the precision that would actually load. */
+function isSwapBlockedByDownload(
+	value: string,
+	quantization: OnnxQuantization | undefined,
+	currentQuantization: OnnxQuantization,
+	statesById: StatesById,
+	isQuantDownloading: (modelId: string, quantization: string) => boolean
+): boolean {
+	const targetQuant = resolveTargetQuant(quantization, currentQuantization, statesById[value]);
+	return isQuantDownloading(value, targetQuant);
 }
 
 function runProceedWithSelection(args: ProceedArgs): void {
@@ -773,6 +868,7 @@ export const __testables = {
 	isCloudModel,
 	isCriticalAssessment,
 	isQuantizationChanging,
+	isSwapBlockedByDownload,
 	mapFirstToCache,
 	matchesPending,
 	maybeHotReload,

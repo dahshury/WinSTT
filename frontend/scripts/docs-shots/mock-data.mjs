@@ -288,6 +288,51 @@ export function buildMockMap(opts = {}) {
 		],
 	};
 
+	// Live ElevenLabs catalog for cloud TTS. Only consumed when the EL key is
+	// VERIFIED (the hook is gated on it), so this is inert for screenshots that
+	// leave `integrations.elevenlabs` empty — pass a verified key via mockOpts to
+	// light up the Local⇄Cloud switch. All "premade" so none lock on the free tier.
+	const cloudTtsVoices = {
+		error: null,
+		voices: [
+			{
+				id: "21m00Tcm4TlvDq8ikWAM",
+				name: "Rachel",
+				language: "en",
+				category: "premade",
+				previewUrl: null,
+			},
+			{
+				id: "AZnzlk1XvdvUeBnXmlld",
+				name: "Domi",
+				language: "en",
+				category: "premade",
+				previewUrl: null,
+			},
+			{
+				id: "EXAVITQu4vr4xnSDxMaL",
+				name: "Bella",
+				language: "en",
+				category: "premade",
+				previewUrl: null,
+			},
+			{
+				id: "ErXwobaYiN019PkySvjV",
+				name: "Antoni",
+				language: "en",
+				category: "premade",
+				previewUrl: null,
+			},
+			{
+				id: "TxGEqnHWrfWFTfGW9XjX",
+				name: "Josh",
+				language: "en",
+				category: "premade",
+				previewUrl: null,
+			},
+		],
+	};
+
 	const ollamaScan = {
 		reachable: true,
 		models: [
@@ -352,6 +397,8 @@ export function buildMockMap(opts = {}) {
 			{ index: 11, name: "VB-Audio Virtual Cable", defaultSampleRate: 48000, maxOutputChannels: 2 },
 		],
 		"tts:list-voices": ttsVoices,
+		"tts:cloud-list-voices": cloudTtsVoices,
+		"tts:cloud-subscription": { tier: "creator", creditsExhausted: false },
 		"history:get-all": buildHistory(),
 		"llm:scan-models": ollamaScan,
 		"llm:detect-ollama": { installed: true, running: true },

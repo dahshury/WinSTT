@@ -1,23 +1,30 @@
-import { VolumeHighIcon } from "@hugeicons/core-free-icons";
-import { useEffect, useRef, useState } from "react";
+import { AiCloud01Icon, CpuIcon, LockIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
-import { DEFAULT_SETTINGS, SettingSection, useSettingsStore } from "@/entities/setting";
 import {
-	listTtsVoices,
-	onTtsFailed,
-	onTtsPlaybackEnded,
-	onTtsPlaybackStarted,
-	onTtsStarted,
+	DEFAULT_SETTINGS,
+	SettingSection,
+	useSettingsStore,
+	useSettingsTabStore,
+} from "@/entities/setting";
+import {
 	type TtsVoiceCatalog,
 	ttsCancel,
+	ttsCloudPreview,
 	ttsInstallCancel,
 	ttsSpeak,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { FormControl } from "@/shared/ui/form-control";
 import type { SelectOptionGroup } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
+import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
+import { type UseCloudTtsVoices, useCloudTtsVoices } from "../model/use-cloud-tts-voices";
 import { useTtsDownloadProgress } from "../model/use-tts-download-progress";
 import { useTtsInstallGate } from "../model/use-tts-install-gate";
+import { useTtsPlayback } from "../model/use-tts-playback";
+import { useTtsVoiceCatalog } from "../model/use-tts-voice-catalog";
+import { CloudTtsControls } from "./CloudTtsControls";
 import { TtsControls } from "./TtsControls";
 import { TtsInstallBanner } from "./TtsInstallBanner";
 import { TtsInstallDialog } from "./TtsInstallDialog";
@@ -31,6 +38,12 @@ export interface TtsModelSectionProps {
 // Sample sentence read aloud by the "Test voice" button. Static so the speed/
 // voice change is the only audible variable.
 const TEST_SAMPLE_FALLBACK = "The quick brown fox jumps over the lazy dog.";
+
+// Shown when the ElevenLabs character quota is spent (free OR paid) — Cloud is
+// locked until it resets / the plan upgrades. Plain const (not an i18n key) to
+// avoid touching the 20 locale files the cleanup sweep is editing.
+const OUT_OF_CREDITS_NOTE =
+	"Out of ElevenLabs credits — cloud text-to-speech is paused until your quota resets or you upgrade.";
 
 // Voice ids encode language as a short prefix ("af_heart" → "a" → "en-us").
 // When the catalog response provides an explicit `language` field we use that;
@@ -108,7 +121,7 @@ function buildVoiceGroups(catalog: TtsVoiceCatalog): SelectOptionGroup[] {
 	}
 	const LAST = Number.MAX_SAFE_INTEGER;
 	return [...byLang.entries()]
-		.sort(([a], [b]) => {
+		.toSorted(([a], [b]) => {
 			const ai = order.get(a) ?? LAST;
 			const bi = order.get(b) ?? LAST;
 			return ai === bi ? a.localeCompare(b) : ai - bi;
@@ -121,42 +134,91 @@ function buildVoiceGroups(catalog: TtsVoiceCatalog): SelectOptionGroup[] {
 		}));
 }
 
+interface CloudGate {
+	/** Cloud source is selectable (key verified AND voices available/loading). */
+	cloudAllowed: boolean;
+	/** Verified key that authenticated but can't list voices — drives the notice. */
+	noVoiceAccess: boolean;
+}
+
+// Derive the cloud-source gate from the live voice-catalog probe. A verified
+// ElevenLabs key proves authentication (dictation / cloud STT work), but cloud
+// TTS additionally needs the `voices_read` scope. An in-flight fetch is treated
+// as optimistically allowed (most keys grant the scope, so the switch shouldn't
+// flicker to local while we confirm); we lock only once the catalog resolves
+// empty, surfacing the server's permission message via `noVoiceAccess`. Pulled
+// out of the component to keep it under the complexity budget.
+function deriveCloudGate(elevenVerified: boolean, cloud: UseCloudTtsVoices): CloudGate {
+	if (!elevenVerified) {
+		return { cloudAllowed: false, noVoiceAccess: false };
+	}
+	// Out of ElevenLabs credits (free OR paid) → cloud is unusable regardless of
+	// voices, so lock the whole source. The reason is surfaced by the caller.
+	if (cloud.creditsExhausted) {
+		return { cloudAllowed: false, noVoiceAccess: false };
+	}
+	if (cloud.isLoading) {
+		return { cloudAllowed: true, noVoiceAccess: false };
+	}
+	const hasVoices = cloud.voices.length > 0;
+	return { cloudAllowed: hasVoices, noVoiceAccess: !hasVoices && cloud.error !== null };
+}
+
+// Tooltip footer for the locked Cloud switch: prefer the out-of-credits note,
+// then the server's voice/permission error, else the generic "add a key" hint.
+// Extracted to keep `TtsModelSection` under the complexity budget.
+function cloudLockFooterText(
+	elevenVerified: boolean,
+	cloud: UseCloudTtsVoices,
+	fallbackHint: string
+): string {
+	if (cloud.creditsExhausted) {
+		return OUT_OF_CREDITS_NOTE;
+	}
+	if (elevenVerified && cloud.error) {
+		return cloud.error;
+	}
+	return fallbackHint;
+}
+
 export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	const t = useTranslations("tts");
+	const tIntegrations = useTranslations("integrations");
 	const tts = useSettingsStore((s) => s.settings.tts);
 	const update = useSettingsStore((s) => s.updateTtsSettings);
+	const integrations = useSettingsStore((s) => s.settings.integrations);
+	const goToIntegrations = useSettingsTabStore((s) => s.setActiveTab);
 
-	const [catalog, setCatalog] = useState<TtsVoiceCatalog>({ voices: [], languages: [] });
+	// Cloud is only selectable once the ElevenLabs key is present AND the last
+	// probe verified it. A persisted `source: "cloud"` without a verified key
+	// falls back to local — same posture as the STT model source area, so a
+	// removed/invalidated key can never strand TTS on an unreachable provider.
+	const elevenVerified =
+		integrations.elevenlabs.apiKey.trim().length > 0 && integrations.elevenlabs.verified === true;
+	// Probe the live voice catalog whenever the key is VERIFIED — even in local
+	// mode — so we know before the user picks Cloud whether the key actually
+	// grants the `voices_read` scope that cloud TTS needs. A verified key only
+	// proves authentication (so dictation / cloud STT work); voice access is a
+	// separate ElevenLabs permission, so that gate lives HERE, not in credential
+	// verification (which intentionally accepts a working-but-scoped key).
+	const cloud = useCloudTtsVoices(elevenVerified);
+	// Cloud gating (allowed / no-voice-access) is derived in a module helper so
+	// this component stays under the complexity budget — see `deriveCloudGate`.
+	const { cloudAllowed, noVoiceAccess } = deriveCloudGate(elevenVerified, cloud);
+	const effectiveSource = tts?.source === "cloud" && cloudAllowed ? "cloud" : "local";
+	const isCloud = effectiveSource === "cloud";
 
-	// The play/loading/stop affordance tracks *audible* playback via events
-	// the main process broadcasts to every window — so it works even though
-	// the audio queue lives in a different window (the settings window has
-	// none). Lifecycle: `onTtsStarted` → loading (synthesis ~1s);
-	// `onTtsPlaybackStarted` → speaking (audio actually playing);
-	// `onTtsPlaybackEnded` → idle (buffered audio fully played out, not the
-	// much-earlier `tts_complete`).
-	const [playback, setPlayback] = useState<{ requestId: string | null; playing: boolean }>({
-		requestId: null,
-		playing: false,
-	});
-	const [errorReason, setErrorReason] = useState<string | null>(null);
-	// Which voice the active preview belongs to — drives the per-row and
-	// in-trigger play/stop/loading affordance. Set optimistically on click
-	// (the request id isn't known until `onTtsStarted`) and cleared whenever
-	// playback returns to idle — that clear happens INLINE in the playback
-	// terminal handlers below so we never need a `playback.requestId === null`
-	// reflex effect.
-	const [previewVoiceId, setPreviewVoiceId] = useState<string | null>(null);
 	// Confirm-before-download gate (state + handlers live in the model
-	// hook — see use-tts-install-gate). `handleEnabledToggle` only flips
-	// the store's `enabled` flag after the user accepts the dialog.
+	// hook — see use-tts-install-gate). `handleLocalEnabledToggle` only flips
+	// the store's `enabled` flag after the user accepts the dialog — it is the
+	// LOCAL path; cloud has nothing to download (see `handleEnabledToggle`).
 	const {
 		confirmOpen,
 		estimate,
 		probing,
 		installPhase,
 		installError,
-		handleEnabledToggle,
+		handleEnabledToggle: handleLocalEnabledToggle,
 		handleInstallConfirm,
 		handleInstallCancel,
 		closeConfirm,
@@ -167,110 +229,9 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	const voice = tts?.voice ?? "af_heart";
 	const speed = tts?.speed ?? DEFAULT_SETTINGS.tts.speed;
 
-	// Latest-value refs for the on-enable catalog fetch. We only want to run
-	// the fetch when `enabled` flips, but the .then() callback needs the
-	// freshest `voice` / `update` to apply the stale-voice fallback. Reading
-	// them through a ref keeps the effect's dependency array down to
-	// `[enabled]` without tripping exhaustive-deps. Refs are written in an
-	// effect (NOT during render) to comply with React's no-side-effects-in-
-	// render rule.
-	const voiceRef = useRef(voice);
-	const updateRef = useRef(update);
-	useEffect(() => {
-		voiceRef.current = voice;
-		updateRef.current = update;
-	});
-
-	// Fetch the voice catalog whenever the section becomes enabled. The IPC
-	// layer caches the result on the main side, so re-enabling is cheap.
-	//
-	// Guard: TTS must always resolve to a voice the catalog actually offers.
-	// The schema default ("af_heart") covers the common case, but a stale
-	// saved voice (catalog change, corrupted settings) would otherwise leave
-	// the dropdown in an empty-selection state and crash synth at request
-	// time. Folded INTO the same .then() so we don't need a second effect
-	// that reacts to `catalog.voices` (which would be a no-event-handler
-	// finding for "react to a fetch result with a setState").
-	useEffect(() => {
-		if (!enabled) {
-			return;
-		}
-		let cancelled = false;
-		listTtsVoices().then((result) => {
-			if (cancelled) {
-				return;
-			}
-			setCatalog(result);
-			if (result.voices.length === 0) {
-				return;
-			}
-			const currentVoice = voiceRef.current;
-			const valid = result.voices.some((v) => v.id === currentVoice);
-			if (valid) {
-				return;
-			}
-			const first = result.voices[0];
-			if (first) {
-				updateRef.current({ voice: first.id, lang: first.language });
-			}
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [enabled]);
-
-	useEffect(
-		() =>
-			onTtsStarted(({ requestId }) => {
-				setPlayback({ requestId, playing: false });
-				setErrorReason(null);
-			}),
-		[]
-	);
-	useEffect(
-		() =>
-			onTtsPlaybackStarted(({ requestId }) => {
-				// Synthesis gap is over, audio is now playing. Exact-match so
-				// a stale start from a superseded preview can't promote the
-				// wrong request.
-				setPlayback((p) => (p.requestId === requestId ? { requestId, playing: true } : p));
-			}),
-		[]
-	);
-	useEffect(
-		() =>
-			onTtsPlaybackEnded(({ requestId }) => {
-				// Exact-match only. `onTtsStarted` always delivers the real id
-				// before audio plays, so we never need a wildcard reset — and
-				// a stale empty-id "ended" (from the cancel that precedes
-				// every preview) must NOT clear the freshly-started request.
-				setPlayback((p) => {
-					if (p.requestId !== requestId) {
-						return p;
-					}
-					// Playback truly ended for the active preview — also clear
-					// the per-row affordance inline so we never need a reflex
-					// effect on `playback.requestId === null`.
-					setPreviewVoiceId(null);
-					return { requestId: null, playing: false };
-				});
-			}),
-		[]
-	);
-	useEffect(
-		() =>
-			onTtsFailed(({ requestId, reason }) => {
-				setPlayback((p) => {
-					if (p.requestId !== requestId) {
-						return p;
-					}
-					setPreviewVoiceId(null);
-					return { requestId: null, playing: false };
-				});
-				setErrorReason(reason);
-			}),
-		[]
-	);
+	const catalog = useTtsVoiceCatalog(enabled, voice, update);
+	const { playback, isLoading, isSpeaking, previewVoiceId, setPreviewVoiceId, errorReason } =
+		useTtsPlayback();
 
 	const downloadProgress = useTtsDownloadProgress(installPhase);
 	const voiceGroups = buildVoiceGroups(catalog);
@@ -294,6 +255,26 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		});
 	};
 
+	// Cloud voice preview plays the voice's FREE pre-generated sample
+	// (`previewUrl`) instead of a paid synthesis — browsing voices costs no
+	// ElevenLabs credits. Falls back to a (paid) synthesis preview only for a
+	// voice with no sample URL. Mirrors `previewVoice`'s cancel-then-mark so the
+	// play/stop affordance behaves identically.
+	const previewCloudVoice = (nextVoiceId: string, previewLang: string): void => {
+		const previewUrl = cloud.voices.find((v) => v.id === nextVoiceId)?.previewUrl;
+		if (previewUrl) {
+			ttsCancel();
+			setPreviewVoiceId(nextVoiceId);
+			ttsCloudPreview({ previewUrl });
+			return;
+		}
+		// No free sample clip: a usable voice can fall back to a (paid) synthesis
+		// preview, but a locked premium voice must NOT — that would 402.
+		if (!cloud.lockedVoiceIds.has(nextVoiceId)) {
+			previewVoice(nextVoiceId, previewLang);
+		}
+	};
+
 	const handleVoiceChange = (nextVoice: string): void => {
 		// Each voice belongs to one language — derive it so the user doesn't
 		// have to keep two pickers in sync. Prefer the catalog field when
@@ -314,8 +295,6 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		update({ speed: DEFAULT_SETTINGS.tts.speed });
 	};
 
-	const isLoading = playback.requestId !== null && !playback.playing;
-	const isSpeaking = playback.requestId !== null && playback.playing;
 	const voicePlaceholder = catalog.voices.length === 0 ? t("noVoicesYet") : t("voiceCaption");
 
 	// While the on-demand install is downloading OR sitting paused, every
@@ -333,7 +312,10 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	// init) where no progress events fire. `downloadProgress.active` is a
 	// belt-and-suspenders backup for any window where bytes are streaming
 	// before the next status ping arrives.
-	const installing = installPhase !== null || downloadProgress.active;
+	// The install gate (and its lock) only applies to LOCAL Kokoro — cloud has
+	// nothing to download. In cloud mode the controls stay live and the toggle
+	// never opens a dialog.
+	const installing = !isCloud && (installPhase !== null || downloadProgress.active);
 	const handleCancelInstall = (): void => {
 		ttsInstallCancel();
 		// Cancel means "discard, I don't want this anymore" — flip the
@@ -341,6 +323,50 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		// rather than sitting on `enabled: true` with no engine.
 		update({ enabled: false });
 	};
+
+	// Cloud bypasses the confirm-before-download gate entirely — flip `enabled`
+	// straight away. Local routes through the gate so the Kokoro install dialog
+	// can intercept the off→on edge.
+	const handleEnabledToggle = (next: boolean): void => {
+		if (isCloud) {
+			update({ enabled: next });
+			return;
+		}
+		handleLocalEnabledToggle(next);
+	};
+
+	const handleSourceChange = (next: "local" | "cloud"): void => {
+		update({ source: next });
+	};
+
+	// Local ⇄ Cloud segmented switch — mirrors the STT model `SourceArea`.
+	// Cloud is locked (lock badge + tooltip → Integrations) for two reasons:
+	//   • no verified key             → the generic "add a key" hint
+	//   • verified key, no voices_read → the server's precise permission message
+	//     (cloud.error), so the user learns the key works for dictation but lacks
+	//     the voice scope. Both badge-clicks deep-link to Integrations.
+	const cloudLockFooter = cloudLockFooterText(
+		elevenVerified,
+		cloud,
+		tIntegrations("cloudDisabledHint")
+	);
+	const sourceOpts: SwitcherOption<"local" | "cloud">[] = [
+		{ value: "local", label: tIntegrations("sourceLocal"), icon: CpuIcon },
+		{
+			value: "cloud",
+			label: tIntegrations("sourceCloud"),
+			icon: AiCloud01Icon,
+			disabled: !cloudAllowed,
+			...(cloudAllowed
+				? {}
+				: {
+						badgeIcon: LockIcon,
+						badgeTooltip: tIntegrations("sourceTooltip"),
+						badgeTooltipFooter: cloudLockFooter,
+						onBadgeClick: () => goToIntegrations("integrations"),
+					}),
+		},
+	];
 
 	return (
 		<>
@@ -359,40 +385,82 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 							installing && "pointer-events-none opacity-40"
 						)}
 					>
-						<TtsControls
-							activeRequestId={playback.requestId}
-							isLoading={isLoading}
-							isSpeaking={isSpeaking}
-							langForVoice={langForVoice}
-							onSpeedChange={handleSpeedChange}
-							onSpeedReset={handleSpeedReset}
-							onVoiceChange={handleVoiceChange}
-							previewVoice={previewVoice}
-							previewVoiceId={previewVoiceId}
-							speed={speed}
-							t={t}
-							voice={voice}
-							voiceGroups={voiceGroups}
-							voicePlaceholder={voicePlaceholder}
-						/>
+						<FormControl
+							label={tIntegrations("sourceLabel")}
+							layout="row"
+							tooltip={tIntegrations("sourceTooltip")}
+						>
+							<ElevatedSurface className="w-52">
+								<Switcher
+									fullWidth
+									onChange={handleSourceChange}
+									options={sourceOpts}
+									value={effectiveSource}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+						{noVoiceAccess ? (
+							<p className="px-1 pt-2 text-2xs text-foreground-muted leading-relaxed">
+								{cloud.error}
+							</p>
+						) : null}
+						{elevenVerified && cloud.creditsExhausted ? (
+							<p className="px-1 pt-2 text-2xs text-warning leading-relaxed">
+								{OUT_OF_CREDITS_NOTE}
+							</p>
+						) : null}
+						{isCloud ? (
+							<CloudTtsControls
+								activeRequestId={playback.requestId}
+								error={cloud.error}
+								groups={cloud.groups}
+								isLoading={isLoading}
+								isLoadingVoices={cloud.isLoading}
+								isSpeaking={isSpeaking}
+								previewVoice={previewCloudVoice}
+								previewVoiceId={previewVoiceId}
+								t={t}
+							/>
+						) : (
+							<TtsControls
+								activeRequestId={playback.requestId}
+								isLoading={isLoading}
+								isSpeaking={isSpeaking}
+								langForVoice={langForVoice}
+								onSpeedChange={handleSpeedChange}
+								onSpeedReset={handleSpeedReset}
+								onVoiceChange={handleVoiceChange}
+								previewVoice={previewVoice}
+								previewVoiceId={previewVoiceId}
+								speed={speed}
+								t={t}
+								voice={voice}
+								voiceGroups={voiceGroups}
+								voicePlaceholder={voicePlaceholder}
+							/>
+						)}
 					</div>
-					<TtsInstallBanner
-						downloadProgress={downloadProgress}
-						errorReason={errorReason}
-						installError={installError}
-						onCancelInstall={handleCancelInstall}
-						onRetry={retryInstall}
-						t={t}
-					/>
+					{isCloud ? null : (
+						<TtsInstallBanner
+							downloadProgress={downloadProgress}
+							errorReason={errorReason}
+							installError={installError}
+							onCancelInstall={handleCancelInstall}
+							onRetry={retryInstall}
+							t={t}
+						/>
+					)}
 				</div>
 			</SettingSection>
-			<TtsInstallDialog
-				estimate={estimate}
-				onCancel={handleInstallCancel}
-				onClose={closeConfirm}
-				onConfirm={handleInstallConfirm}
-				open={confirmOpen && !probing}
-			/>
+			{isCloud ? null : (
+				<TtsInstallDialog
+					estimate={estimate}
+					onCancel={handleInstallCancel}
+					onClose={closeConfirm}
+					onConfirm={handleInstallConfirm}
+					open={confirmOpen && !probing}
+				/>
+			)}
 		</>
 	);
 }

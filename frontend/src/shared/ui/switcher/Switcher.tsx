@@ -117,6 +117,7 @@ export function Switcher<T extends string = string>({
 			}
 			setRects((prev) => (rectsEqual(prev, next) ? prev : next));
 		};
+		// react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- not a prop→state mirror: this measures live DOM geometry (segment rects) which can't be derived during render; `optionsKey` is the re-measure cache key, not a value being copied into state
 		measure();
 		const ro = new ResizeObserver(measure);
 		ro.observe(container);

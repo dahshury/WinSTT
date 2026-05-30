@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import dataclasses
 import logging
 import queue
 
@@ -33,6 +34,19 @@ from src.recorder.domain.ports.wake_word import IWakeWordDetector
 from src.recorder.domain.state_machine import RecorderState, RecorderStateMachine
 
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass(frozen=True)
+class _StopMarker:
+    """End-of-recording sentinel pushed onto the audio queue.
+
+    Lets a user-driven stop (PTT release) be ordered AFTER every audio chunk
+    already queued: the worker buffers those chunks first, then sees the
+    marker and finalizes — so the tail captured right up to release isn't
+    dropped. See :meth:`RecordingPipeline.request_stop_via_queue`.
+    """
+
+    backdate_seconds: float = 0.0
 
 
 class RecordingPipeline(Worker):
@@ -82,7 +96,7 @@ class RecordingPipeline(Worker):
             maxlen=self._compute_silence_prefill_maxlen(config),
         )
 
-        self._audio_queue: queue.Queue[AudioChunk] = queue.Queue()
+        self._audio_queue: queue.Queue[AudioChunk | _StopMarker] = queue.Queue()
         self._recording_start_time: float = 0.0
         self._speech_end_silence_start: float = 0.0
         self._listen_start: float = 0.0
@@ -266,6 +280,21 @@ class RecordingPipeline(Worker):
             return
         self._finalize_stop(backdate_seconds)
 
+    def request_stop_via_queue(self, backdate_seconds: float = 0.0) -> None:
+        """Stop by enqueuing a marker, so queued audio is buffered first.
+
+        The user-release path (``set_microphone(False)``) calls this instead
+        of ``request_stop()`` directly. A direct call from the control thread
+        transitions to TRANSCRIBING immediately — any chunks still sitting in
+        ``_audio_queue`` then hit ``_process_not_recording`` and are dropped
+        from the recording, clipping the last fraction of a second the user
+        spoke. Routing the stop through the queue guarantees the worker
+        drains those trailing chunks into the buffer before it finalizes, and
+        keeps the state transition on the worker thread (single-writer
+        invariant — see CLAUDE.md §5).
+        """
+        self._audio_queue.put(_StopMarker(backdate_seconds))
+
     def _finalize_stop(self, backdate_seconds: float) -> None:
         if backdate_seconds > 0:
             self._buffer.backdate(backdate_seconds)
@@ -363,10 +392,18 @@ class RecordingPipeline(Worker):
     def _run(self) -> None:
         while not self.should_stop:
             try:
-                chunk = self._audio_queue.get(timeout=0.01)
+                item = self._audio_queue.get(timeout=0.01)
             except queue.Empty:
                 continue
-            self._handle_chunk(chunk)
+            self._dispatch_queue_item(item)
+
+    def _dispatch_queue_item(self, item: AudioChunk | _StopMarker) -> None:
+        if isinstance(item, _StopMarker):
+            # All chunks queued before the marker have now been buffered;
+            # finalize the recording on this (worker) thread.
+            self.request_stop(item.backdate_seconds)
+        else:
+            self._handle_chunk(item)
 
     def _maybe_expire_wake_word(self) -> None:
         """Clear the wake-word gate if the follow-up window has elapsed.

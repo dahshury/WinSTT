@@ -263,6 +263,7 @@ describe("SUPPORTED_EVENT_TYPES", () => {
 			file_transcription_progress: { type: "file_transcription_progress", progress: 0 },
 			file_transcription_complete: { type: "file_transcription_complete" },
 			file_transcription_error: { type: "file_transcription_error", error: "boom" },
+			file_transcription_canceled: { type: "file_transcription_canceled" },
 			tts_complete: { type: "tts_complete", request_id: "r1" },
 			tts_failed: { type: "tts_failed", request_id: "r1", reason: "boom" },
 			tts_model_download_start: { type: "tts_model_download_start" },

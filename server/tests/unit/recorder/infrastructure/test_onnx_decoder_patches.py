@@ -224,6 +224,61 @@ def test_aed_trim_then_pad_short_clip_with_prefill() -> None:
     assert float(np.max(np.abs(padded[tail_start:]))) == 0.0
 
 
+def test_aed_trailing_trim_strips_trailing_zero_pad() -> None:
+    """Cohere's ONNX export has no encoder attention mask, so the decoder
+    cross-attends to every encoder frame. A silent tail (e.g. the
+    cross-segment zero-padding onnx-asr's ``pad_list`` appends when
+    batching unequal VAD chunks) makes it phrase-loop — re-emitting the
+    final sentence. The trailing trim must strip that tail before it
+    reaches the encoder.
+    """
+    speech = np.full(9_600, 0.1, dtype=np.float32)  # 600 ms @ 16 kHz
+    trailing = np.zeros(7_200, dtype=np.float32)  # 450 ms of zero pad
+    audio = np.concatenate([speech, trailing], axis=0)
+
+    out = patches.maybe_trim_trailing_silence_for_aed(audio)
+
+    # The trailing pad is gone (modulo at most one window the backward
+    # walk straddles); all speech samples at the head are preserved.
+    assert out.shape[0] >= speech.shape[0]
+    assert out.shape[0] < speech.shape[0] + patches.AED_LEADING_SILENCE_WINDOW
+    np.testing.assert_array_equal(out[: speech.shape[0]], speech)
+
+
+def test_aed_trailing_trim_preserves_quiet_real_audio() -> None:
+    """Quiet-room mic tone (~-66 dBFS) must NOT be mistaken for the
+    programmatic zero tail — same threshold rationale as the leading trim.
+    """
+    samples = np.arange(16_000, dtype=np.float32)
+    quiet_speech = (0.005 * np.sin(2 * np.pi * 200 * samples / 16_000)).astype(np.float32)
+
+    out = patches.maybe_trim_trailing_silence_for_aed(quiet_speech)
+
+    assert out.shape == quiet_speech.shape
+    np.testing.assert_array_equal(out, quiet_speech)
+
+
+def test_aed_trailing_trim_passes_through_clip_with_no_trailing_silence() -> None:
+    """If the audio ends on speech, the trailing trim is an identity no-op."""
+    speech = np.full(16_000, 0.1, dtype=np.float32)
+    out = patches.maybe_trim_trailing_silence_for_aed(speech)
+    # Short-circuits when cursor == len(audio) and returns the input unchanged.
+    assert out is speech
+
+
+def test_aed_trailing_trim_handles_empty_audio() -> None:
+    audio = np.zeros(0, dtype=np.float32)
+    out = patches.maybe_trim_trailing_silence_for_aed(audio)
+    assert out.shape == (0,)
+
+
+def test_aed_trailing_trim_caps_to_preserve_at_least_one_sample() -> None:
+    """A fully-silent clip must not collapse to length 0."""
+    audio = np.zeros(8_000, dtype=np.float32)  # 0.5 s of pure silence
+    out = patches.maybe_trim_trailing_silence_for_aed(audio)
+    assert out.shape[0] >= 1
+
+
 def test_parakeet_leading_silence_always_pads() -> None:
     audio = np.full(16_000, 0.5, dtype=np.float32)
     out = patches.maybe_prepend_silence_for_parakeet(audio)

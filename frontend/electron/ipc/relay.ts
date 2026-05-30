@@ -46,6 +46,7 @@ import {
 	type HistoryPersistence,
 	type TranscriptionHistoryEntry,
 } from "./transcription-history";
+import { triggerTtsCancelAll } from "./tts";
 
 function readHistoryMaxEntries(): number {
 	const raw = getStoreValue("general.historyMaxEntries");
@@ -694,6 +695,11 @@ function runAdmittedRecordingStart(
 	RECORDING_START_MODE_DISPATCH[modeKey](history, contextCapture);
 	safeSend(IPC.STT_RECORDING_START);
 	onRecordingStart();
+	// STT takes precedence over a TTS read-aloud: force-stop any in-flight read
+	// (and its buffered audio) so dictation owns the island. The overlay's
+	// `useTtsIslandBridge` also discards on the renderer side; this is the
+	// main-process belt for the case the renderer is mid-reload.
+	triggerTtsCancelAll();
 	showOverlay();
 	const duckLevel = dictationDuckLevel();
 	const duckKey = String(duckLevel > 0) as "true" | "false";

@@ -8,16 +8,7 @@ interface OnboardingWizardState {
 	currentStep: OnboardingStepId;
 	goBack: () => void;
 	goNext: () => void;
-	/**
-	 * Whether the Ollama model-picker dialog is open. The dialog itself
-	 * lives in the view (`OnboardingPage`) because it's a sibling-widget
-	 * to onboarding-wizard, and widgets can't import siblings. The step
-	 * that wants to open it flips this flag; the page reads it to render
-	 * the dialog.
-	 */
-	llmPickerOpen: boolean;
 	micTestPassed: boolean;
-	setLlmPickerOpen: (open: boolean) => void;
 	setMicTestPassed: (passed: boolean) => void;
 	setTrack: (track: OnboardingTrack) => void;
 	track: OnboardingTrack;
@@ -47,10 +38,8 @@ export const useOnboardingWizardStore = create<OnboardingWizardState>((set) => (
 	currentStep: "welcome",
 	track: "",
 	micTestPassed: false,
-	llmPickerOpen: false,
 	setTrack: (track) => set({ track }),
 	setMicTestPassed: (passed) => set({ micTestPassed: passed }),
-	setLlmPickerOpen: (open) => set({ llmPickerOpen: open }),
 	goNext: () => set((s) => ({ currentStep: step(s.currentStep, 1, s.track) })),
 	goBack: () => set((s) => ({ currentStep: step(s.currentStep, -1, s.track) })),
 }));

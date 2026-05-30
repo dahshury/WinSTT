@@ -486,17 +486,22 @@ function useShaderToyEngine(
 	}, [animateWhenNotVisible, pinnedHandlers, canvasRef]);
 
 	useEffect(() => {
-		// Synchronous WebGL init: capture `gl` to a local so the cleanup uses
-		// the captured local instead of `glRef.current` (which would be stale
-		// if the ref had been reassigned between effect and unmount). Only the
-		// per-frame draw loop is deferred to rAF — context creation happens
-		// inline so we can capture cleanly.
-		pinnedHandlers.initWebGL();
-		const gl = glRef.current;
 		const canvasNode = canvasRef.current;
+		if (!canvasNode) {
+			return;
+		}
 		const resizeHandler = pinnedHandlers.onResize;
-		let observer: ResizeObserver | null = null;
-		if (gl && canvasNode) {
+
+		// (Re)build the whole GL scene on whatever context is currently live.
+		// Idempotent so it can run both on the initial mount AND after a
+		// `webglcontextrestored` event — it recompiles shaders, recreates the
+		// vertex buffer, and restarts the draw loop on the fresh context.
+		// Cancels any in-flight rAF first so a restore never stacks two loops.
+		const bootstrapScene = () => {
+			const gl = glRef.current;
+			if (!gl) {
+				return;
+			}
 			const [r, g, b, a] = pinnedInitOpts.clearColor;
 			gl.clearColor(r, g, b, a);
 			gl.clearDepth(1.0);
@@ -511,29 +516,68 @@ function useShaderToyEngine(
 				pinnedInitOpts.vs || BASIC_VS
 			);
 			pinnedHandlers.initBuffers();
+			cancelAnimationFrame(initFrameIdRef.current ?? 0);
+			cancelAnimationFrame(animFrameIdRef.current ?? 0);
 			initFrameIdRef.current = requestAnimationFrame(pinnedHandlers.drawScene);
+			resizeHandler();
+		};
+
+		// A WebGL context can be lost at any time — a GPU TDR/driver reset, a
+		// sleep/wake, or Chromium evicting the least-recently-used context once
+		// too many are live across the app's windows. Without `preventDefault`
+		// on `webglcontextlost` the browser marks the context UNrestorable and
+		// paints its grey sad-face placeholder forever; calling it opts into the
+		// paired `webglcontextrestored` event, where we rebuild the scene.
+		//
+		// This is also why cleanup below no longer eagerly calls
+		// `WEBGL_lose_context.loseContext()`: React StrictMode (dev) runs every
+		// effect mount→cleanup→mount on the SAME <canvas>, and a canvas only ever
+		// hands out one WebGL context — losing it on the first cleanup left the
+		// remount holding a dead context, which is exactly the sad-face the
+		// wave/aura presets showed in the main window. Not losing it lets the
+		// remount rebuild on the still-live context.
+		const handleContextLost = (event: Event) => {
+			event.preventDefault();
+			cancelAnimationFrame(initFrameIdRef.current ?? 0);
+			cancelAnimationFrame(animFrameIdRef.current ?? 0);
+		};
+		const handleContextRestored = () => {
+			pinnedHandlers.initWebGL();
+			bootstrapScene();
+		};
+		canvasNode.addEventListener("webglcontextlost", handleContextLost);
+		canvasNode.addEventListener("webglcontextrestored", handleContextRestored);
+
+		pinnedHandlers.initWebGL();
+		const gl = glRef.current;
+		let observer: ResizeObserver | null = null;
+		if (gl) {
+			bootstrapScene();
 			observer = new ResizeObserver(resizeHandler);
 			observer.observe(canvasNode);
 			resizeObserverRef.current = observer;
 			window.addEventListener("resize", resizeHandler, { passive: true });
-			resizeHandler();
 		}
 
-		const capturedShaderProgram = shaderProgramRef.current;
-		const capturedInitFrameId = initFrameIdRef.current;
-		const capturedAnimFrameId = animFrameIdRef.current;
 		return () => {
-			if (gl) {
-				gl.getExtension("WEBGL_lose_context")?.loseContext();
-				gl.useProgram(null);
-				gl.deleteProgram(capturedShaderProgram ?? null);
-			}
+			canvasNode.removeEventListener("webglcontextlost", handleContextLost);
+			canvasNode.removeEventListener("webglcontextrestored", handleContextRestored);
+			cancelAnimationFrame(initFrameIdRef.current ?? 0);
+			cancelAnimationFrame(animFrameIdRef.current ?? 0);
 			if (observer) {
 				observer.disconnect();
 				window.removeEventListener("resize", resizeHandler);
 			}
-			cancelAnimationFrame(capturedInitFrameId ?? 0);
-			cancelAnimationFrame(capturedAnimFrameId ?? 0);
+			// Free the GPU-side program + buffer (the bulk of this context's
+			// memory) but leave the context itself alive — the canvas reclaims
+			// it on GC at real unmount, and keeping it live is what lets a
+			// StrictMode remount rebuild instead of inheriting a dead context.
+			const liveGl = glRef.current;
+			if (liveGl && !liveGl.isContextLost()) {
+				liveGl.useProgram(null);
+				liveGl.deleteProgram(shaderProgramRef.current ?? null);
+				liveGl.deleteBuffer(squareVerticesBufferRef.current ?? null);
+			}
 		};
 	}, [pinnedHandlers, pinnedInitOpts, canvasRef]);
 }

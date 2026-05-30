@@ -182,7 +182,7 @@ async function promptSaveLocation(filePath: string, fmt: string): Promise<string
 	return result.filePath;
 }
 
-interface PendingRequest {
+export interface PendingRequest {
 	filePath: string;
 	outputPath?: string;
 }
@@ -326,12 +326,19 @@ function getTranscriptionSettings(): { format: string; saveLocation: string } {
 	};
 }
 
+/** Continuation state for resuming a paused file (see file-transcribe-queue.ts). */
+export interface ResumeState {
+	priorSegments: [number, number, string][];
+	resumeFrom: number;
+}
+
 function enqueueTranscription(
 	client: SttClient,
 	filePath: string,
 	format: string,
 	outputPath: string | undefined,
-	pendingRequests: Map<string, PendingRequest>
+	pendingRequests: Map<string, PendingRequest>,
+	resume?: ResumeState
 ): string {
 	// Stryker disable next-line UpdateOperator: equivalent — `++` vs `--`
 	// produces a different numeric value in the requestId, but tests only
@@ -347,6 +354,10 @@ function enqueueTranscription(
 		request_id: requestId,
 		file_path: filePath,
 		format,
+		// Resume continuation (0 / [] for a fresh start) — the server transcribes
+		// only the audio after resume_from and concatenates prior_segments.
+		resume_from: resume?.resumeFrom ?? 0,
+		prior_segments: resume?.priorSegments ?? [],
 	});
 	return requestId;
 }
@@ -380,7 +391,8 @@ async function getFileSizeBytes(filePath: string): Promise<number> {
 export async function transcribeFile(
 	client: SttClient,
 	filePath: string,
-	pendingRequests: Map<string, PendingRequest>
+	pendingRequests: Map<string, PendingRequest>,
+	resume?: ResumeState
 ): Promise<{ requestId: string }> {
 	const { format, outputPath } = await validateAndResolveOutput(client, filePath);
 	if (outputPath === null) {
@@ -396,7 +408,8 @@ export async function transcribeFile(
 		filePath,
 		format,
 		outputPath || undefined,
-		pendingRequests
+		pendingRequests,
+		resume
 	);
 	return { requestId };
 }

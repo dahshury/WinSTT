@@ -5,11 +5,7 @@ import { useTranscriptionStore } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import { Elevated, surfaceBg90, useSurface } from "@/shared/lib/surface";
-import {
-	getContainerClassName,
-	runTranscription,
-	validateDroppedFile,
-} from "../lib/audio-display-test-helpers";
+import { enqueueDroppedFiles, getContainerClassName } from "../lib/audio-display-test-helpers";
 import { FileOverlay } from "./FileOverlay";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { TranscriptionThinking } from "./TranscriptionThinking";
@@ -39,10 +35,7 @@ function DropZoneOverlay({ visible, label }: { visible: boolean; label: string }
 
 export function AudioDisplay() {
 	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
-	const setProcessing = useFileTranscriptionStore((s) => s.setProcessing);
-	const setError = useFileTranscriptionStore((s) => s.setError);
 	const t = useTranslations("audioDisplay");
-	const tf = useTranslations("fileOverlay");
 
 	// Dim the visualizer whenever dictation text is being shown in the main
 	// window: live realtime text being written, or finalized sentences from the
@@ -52,6 +45,10 @@ export function AudioDisplay() {
 	const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
 	const hasFinalText = useTranscriptionStore((s) => s.items.length > 0);
 	const dimVisualizer = liveText.length > 0 || (isRecordingActive && hasFinalText);
+
+	// Drives the page-slide: cross-fade to the queue while it has files, back to
+	// the visualizer when it drains (FileOverlay lingers its rows for the fade).
+	const queueVisible = useFileTranscriptionStore((s) => s.items.length > 0);
 
 	const [isDragOver, setIsDragOver] = useState(false);
 	const dragCounter = useRef(0);
@@ -81,24 +78,16 @@ export function AudioDisplay() {
 		}
 	};
 
-	const handleDrop = async (e: DragEvent) => {
+	const handleDrop = (e: DragEvent) => {
 		e.preventDefault();
 		e.stopPropagation();
 		dragCounter.current = 0;
 		setIsDragOver(false);
-
-		const file = Array.from(e.dataTransfer.files)[0];
-		const result = validateDroppedFile(file, tf);
-		if (!result.ok) {
-			if (result.errorMessage && result.fileName) {
-				setError(result.fileName, result.errorMessage);
-			}
-			return;
-		}
-		await runTranscription(result.fileName as string, result.filePath as string, {
-			setProcessing,
-			setError,
-			tf,
+		// Multi-file: append every transcribable file to the queue. Repeated
+		// drops accumulate — the main process never clears on a new drop.
+		// Enqueue errors surface as error rows from the main process.
+		enqueueDroppedFiles(Array.from(e.dataTransfer.files)).catch(() => {
+			/* surfaced as queue rows */
 		});
 	};
 
@@ -113,19 +102,27 @@ export function AudioDisplay() {
 			onDrop={handleDrop}
 			role="region"
 		>
-			<div
-				className="absolute inset-0 flex items-center justify-center"
-				style={{
-					opacity: dimVisualizer ? VISUALIZER_DIMMED_OPACITY : 1,
-					transition: "opacity 300ms ease-out",
-				}}
-			>
-				<AudioVisualizer size="auto" />
+			<div className="t-page-slide" data-page={queueVisible ? "2" : "1"}>
+				{/* Page 1 — idle visualizer */}
+				<div className="t-page" data-page-id="1">
+					<div
+						className="absolute inset-0 flex items-center justify-center"
+						style={{
+							opacity: dimVisualizer ? VISUALIZER_DIMMED_OPACITY : 1,
+							transition: "opacity 300ms ease-out",
+						}}
+					>
+						<AudioVisualizer size="auto" />
+					</div>
+				</div>
+				{/* Page 2 — file-transcription queue */}
+				<div className="t-page" data-page-id="2">
+					<FileOverlay />
+				</div>
 			</div>
 
+			{/* Top-level overlays — above whichever page is active. */}
 			<DropZoneOverlay label={t("dropToTranscribe")} visible={isDragOver} />
-
-			<FileOverlay />
 			<SubtitleOverlay />
 			<TranscriptionThinking />
 		</Elevated>

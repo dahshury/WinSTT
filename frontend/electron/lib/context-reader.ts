@@ -270,8 +270,10 @@ function hasReadableText(snapshot: WindowContextSnapshot): boolean {
 }
 
 /** True when UIA exposed no usable text — empty caret/focused text AND an
- *  axHtml with essentially no element body (the OCR-fallback trigger). */
-function snapshotIsContentless(snapshot: WindowContextSnapshot): boolean {
+ *  axHtml with essentially no element body (the OCR-fallback trigger).
+ *  Exported so the context-playground debug tooling can show the same
+ *  "would OCR fire here?" verdict the production tree path computes. */
+export function snapshotIsContentless(snapshot: WindowContextSnapshot): boolean {
 	if (hasReadableText(snapshot)) {
 		return false;
 	}

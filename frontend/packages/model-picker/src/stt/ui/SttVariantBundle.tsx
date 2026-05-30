@@ -19,6 +19,8 @@ export interface SttVariantBundleProps {
 	getDownloadSnapshot?:
 		| ((modelId: string, quantization: OnnxQuantization) => QuantDownloadSnapshot | undefined)
 		| undefined;
+	/** Forwarded to each card so its star toggle reflects the live state. */
+	isFavorite?: ((modelId: string) => boolean) | undefined;
 	/** Forwarded to every card → its PrecisionGroup. */
 	onDownloadAction?:
 		| ((action: QuantDownloadAction, modelId: string, quantization: OnnxQuantization) => void)
@@ -36,6 +38,8 @@ export interface SttVariantBundleProps {
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
 	/** Toggle handler — fires on chevron click; should not propagate to the row. */
 	onToggleExpanded: (baseId: string) => void;
+	/** Forwarded to each card so its star toggle stars / unstars the model. */
+	onToggleFavorite?: ((modelId: string) => void) | undefined;
 	selectedId: string | undefined;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
@@ -133,11 +137,13 @@ export function SttVariantBundle({
 	bundle,
 	currentQuantization,
 	expanded,
+	isFavorite,
 	onSelect,
 	onRequestDeleteQuant,
 	getDownloadSnapshot,
 	onDownloadAction,
 	onToggleExpanded,
+	onToggleFavorite,
 	selectedId,
 	statesById,
 	systemInfo,
@@ -148,10 +154,12 @@ export function SttVariantBundle({
 	}
 	const sharedCardProps = {
 		currentQuantization,
+		isFavorite,
 		onSelect,
 		onRequestDeleteQuant,
 		getDownloadSnapshot,
 		onDownloadAction,
+		onToggleFavorite,
 		selectedId,
 		// All variants in the bundle — lets each card keep its size token when
 		// two siblings would otherwise collide (e.g. Canary 180M/1B Flash).

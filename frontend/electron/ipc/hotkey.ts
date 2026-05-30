@@ -285,7 +285,12 @@ export function setupHotkeyHandlers(
 		mode === "toggle" && !isToggleSessionActive();
 
 	const shouldPlayRecordingSound = (mode: unknown): boolean => {
-		if (isSilentRecordingMode(mode) || !sttClient.isConnected) {
+		// Gate on the CONTROL channel, not full isConnected: recording flows
+		// over control, while the data channel (realtime/visualizer/TTS) is
+		// irrelevant to "a recording is starting". With a cloud model the data
+		// socket can sit down (no realtime), which used to wrongly mute the
+		// pre-roll chime even though set_microphone + cloud transcribe worked.
+		if (isSilentRecordingMode(mode) || !sttClient.isControlConnected) {
 			return false;
 		}
 		// Toggle mode is one press to start, another to stop. Only the

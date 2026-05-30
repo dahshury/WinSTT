@@ -152,30 +152,48 @@ def _per_quant_states(model: ModelInfo) -> dict[str, ModelCacheState]:
 
 
 def _verify_quant_cache(model: ModelInfo, quantization: str, state: ModelCacheState) -> ModelCacheState:
-    """Demote a heuristic ``"cached"`` verdict to ``"partial"`` when the loader
-    would still fetch files for this precision.
+    """Reconcile the fast ``*.onnx`` glob heuristic with the loader's OWN
+    resolver, which knows this precision's EXACT required file set.
 
-    Only ``"cached"`` is verified: ``partial`` / ``not_cached`` already make the
-    picker prompt a download, so no SILENT background fetch is possible there —
-    and skipping them keeps the authoritative (resolver) check off the hot path
-    for everything not already on disk. When :func:`would_download_on_load`
-    confirms a load would download, we report ``"partial"`` (keeping the bytes
-    actually on disk) so the badge reads honestly and the swap gate prompts
-    instead of silently downloading. ``None`` (undeterminable) leaves the
-    heuristic verdict untouched.
+    Two corrections, both driven by :func:`would_download_on_load` (the single
+    source of truth for "would a load fetch anything?"):
+
+    - heuristic ``"cached"`` but the resolver WOULD download → demote to
+      ``"partial"`` so a swap can't silently background-fetch a missing required
+      file (vocab / second decoder graph / ``.onnx_data`` shard).
+    - heuristic ``"partial"`` but the resolver would NOT download → upgrade to
+      ``"cached"``. The heuristic's ``partial`` is often a FALSE alarm: the
+      repo-wide ``.incomplete`` / ``.partial`` blob scan in
+      :func:`~....model_cache._state_from_weight_files` can't attribute a marker
+      to a precision, so ONE abandoned download (e.g. an old quant's orphan
+      ``.incomplete``) makes EVERY precision of that repo read ``partial`` — even
+      ones whose files are all present. The resolver checks THIS precision's
+      files only, so it clears the false alarm. A genuinely-incomplete (or
+      actively-downloading) precision still has a missing file → the resolver
+      returns ``True`` → it stays ``partial``.
+
+    ``not_cached`` is left untouched (no files on disk → a load always
+    downloads; no point paying for the resolver). ``None`` (undeterminable)
+    leaves the heuristic verdict as-is.
     """
-    if state.state != "cached":
+    if state.state == "not_cached":
         return state
     would_download = would_download_on_load(
         model.onnx_model_name,
         local_path=model.local_path,
         quantization=quantization,
     )
-    if would_download is True:
+    if state.state == "cached" and would_download is True:
         return ModelCacheState(
             state="partial",
             downloaded_bytes=state.downloaded_bytes,
             total_bytes=max(state.total_bytes, state.downloaded_bytes + 1),
+        )
+    if state.state == "partial" and would_download is False:
+        return ModelCacheState(
+            state="cached",
+            downloaded_bytes=state.downloaded_bytes,
+            total_bytes=state.downloaded_bytes,
         )
     return state
 

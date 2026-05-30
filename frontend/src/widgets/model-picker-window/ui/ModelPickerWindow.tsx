@@ -1,4 +1,4 @@
-import { isRealtimeViable, STT_PICKER_WIDTH_PX, SttModelSelector } from "@picker";
+import { STT_PICKER_WIDTH_PX, SttModelSelector } from "@picker";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
@@ -9,16 +9,26 @@ import { useSystemResourcesStore } from "@/entities/system-resources";
 import { useConnectionListener } from "@/features/connect-server";
 import {
 	DownloadConfirmationDialog,
+	isQuantDownloading,
 	useDownloadListener,
 	useQuantActions,
 } from "@/features/model-download";
-import { CloudSttSection } from "@/features/select-cloud-stt-model";
+import { CloudModelSelect, useSttSourceSwitch } from "@/features/select-cloud-stt-model";
 import { useModelSwapController } from "@/features/swap-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { IPC } from "@/shared/api/ipc-channels";
-import { gpuGetInfo, ipcOn, ipcSend } from "@/shared/api/ipc-client";
+import {
+	fileQueueGetActive,
+	gpuGetInfo,
+	ipcOn,
+	ipcSend,
+	onFileQueueActive,
+	windowOpenSettings,
+} from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
+import { Switcher } from "@/shared/ui/switcher";
 
 // Desired footprint reported once to the main process. Main caps the height
 // to whatever fits above the chip (never spilling over the screen top) and
@@ -43,6 +53,110 @@ interface PanelRect {
 
 function close(): void {
 	ipcSend(IPC.MODEL_PICKER_CLOSE);
+}
+
+type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
+type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
+type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
+type QuantActions = ReturnType<typeof useQuantActions>;
+
+interface PickerBodyProps {
+	catalogLoaded: boolean;
+	catalogModels: CatalogModels;
+	currentModel: string;
+	currentQuantization: OnnxQuantization;
+	fileQueueBusy: boolean;
+	hasAnyCloudKey: boolean;
+	onDeleteQuant: QuantActions["handleDeleteQuant"];
+	onDownloadAction: QuantActions["handleDownloadAction"];
+	onDownloadSnapshot: QuantActions["handleDownloadSnapshot"];
+	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+	statesById: StatesById;
+	systemInfo: SystemInfo;
+}
+
+/**
+ * The picker surface: a Local/Cloud source switcher over the active picker,
+ * mirroring Settings → Models so a cloud main model opens straight into the
+ * cloud picker. The host mounts this with `key={effectiveSourceIsCloud}` so a
+ * persisted-source flip re-initialises `source` without a derived-state effect.
+ */
+function PickerBody({
+	catalogLoaded,
+	catalogModels,
+	currentModel,
+	currentQuantization,
+	fileQueueBusy,
+	hasAnyCloudKey,
+	onDeleteQuant,
+	onDownloadAction,
+	onDownloadSnapshot,
+	onSelect,
+	statesById,
+	systemInfo,
+}: PickerBodyProps) {
+	const isCloud = providerOf(currentModel) !== null;
+	const { source, sourceOpts, onSourceChange } = useSttSourceSwitch({
+		hasAnyCloudKey,
+		initialSourceIsCloud: isCloud && hasAnyCloudKey,
+		onConfigureCloud: windowOpenSettings,
+		onModelChange: onSelect,
+		// This window IS a browse grid — toggling to Local just reveals the local
+		// list to pick from. Auto-picking here would select the default model and
+		// close the window (the swap-close effect), defeating browsing. The
+		// Settings-side toggle already lands the persisted model on local before
+		// this window opens, so it opens in local mode anyway.
+		pickLocalDefault: () => null,
+		selectedModel: currentModel,
+	});
+
+	return (
+		// Bottom-aligned so the short Cloud panel hugs the chip instead of
+		// floating at the top of the (chip-height-capped) window. In Cloud mode
+		// the empty area above the controls is the flex container itself — a
+		// pointer-down on it (not a child) closes the picker, same as the
+		// backdrop. In Local mode the grid fills via `flex-1`, leaving no gap.
+		<div
+			className="flex h-full flex-col justify-end gap-2"
+			onPointerDown={(e) => {
+				if (e.target === e.currentTarget) {
+					close();
+				}
+			}}
+		>
+			<ElevatedSurface className="w-52">
+				<Switcher fullWidth onChange={onSourceChange} options={sourceOpts} value={source} />
+			</ElevatedSurface>
+			{source === "cloud" ? (
+				// Auto-open: the detached window exists only to show the picker, so a
+				// closed combobox would force a pointless second click.
+				<CloudModelSelect
+					defaultOpen
+					onSelect={onSelect}
+					selectedId={isCloud ? currentModel : ""}
+				/>
+			) : (
+				<div className="min-h-0 flex-1 [&>*]:size-full">
+					<SttModelSelector
+						currentQuantization={currentQuantization}
+						disabled={fileQueueBusy}
+						inline
+						isLoading={!catalogLoaded}
+						kind="main"
+						models={catalogModels}
+						onChange={onSelect}
+						onDeleteQuant={onDeleteQuant}
+						onDownloadAction={onDownloadAction}
+						onDownloadSnapshot={onDownloadSnapshot}
+						popupHeightClass={PANEL_HEIGHT}
+						statesById={statesById}
+						systemInfo={systemInfo}
+						value={isCloud ? "" : currentModel}
+					/>
+				</div>
+			)}
+		</div>
+	);
 }
 
 /**
@@ -70,6 +184,14 @@ export function ModelPickerWindow() {
 	const modelSettings = useSettingsStore((s) => s.settings.model);
 	const currentModel = modelSettings?.model;
 	const update = useSettingsStore((s) => s.updateModelSettings);
+	const integrations = useSettingsStore((s) => s.settings.integrations);
+	// Cloud is only reachable with a configured key; a persisted cloud model
+	// whose key was removed falls back to the local picker (the key-removal
+	// banner already explains why).
+	const hasAnyCloudKey =
+		integrations.openai.apiKey.trim().length > 0 ||
+		integrations.elevenlabs.apiKey.trim().length > 0;
+	const effectiveSourceIsCloud = providerOf(currentModel ?? "") !== null && hasAnyCloudKey;
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const tModel = useTranslations("model");
 
@@ -81,9 +203,6 @@ export function ModelPickerWindow() {
 	const refreshModelState = useModelStateStore((s) => s.refresh);
 	const refreshLive = useSystemResourcesStore((s) => s.refresh);
 	const mainSwapping = useModelSwapStore((s) => s.activeMain !== null);
-	const realtimeSwapping = useModelSwapStore((s) => s.activeRealtime !== null);
-	const realtimeModel = modelSettings?.realtimeModel ?? "tiny";
-	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
 
 	useEffect(() => {
 		refreshModelState();
@@ -93,6 +212,17 @@ export function ModelPickerWindow() {
 	const gpuAvailable = gpuInfo?.available ?? true;
 	const currentQuantization = (modelSettings?.onnxQuantization ?? "") as OnnxQuantization;
 	const deviceValue = gpuAvailable ? (modelSettings?.device ?? "auto") : "cpu";
+	// This detached window doesn't mount the global IPC listener, so subscribe
+	// directly: disable model switching while the file-transcription queue is
+	// busy (the swap would reload the shared transcriber mid-queue). The
+	// broadcast is edge-triggered, so also pull the current value on mount —
+	// the window is created lazily and may open mid-transcription.
+	const [fileQueueBusy, setFileQueueBusy] = useState(false);
+	useEffect(() => onFileQueueActive((data) => setFileQueueBusy(data.active)), []);
+	useEffect(() => {
+		fileQueueGetActive().then(setFileQueueBusy);
+	}, []);
+
 	const controller = useModelSwapController(
 		modelSettings,
 		currentModel ?? "",
@@ -100,7 +230,9 @@ export function ModelPickerWindow() {
 		deviceValue,
 		getModel,
 		statesById,
-		update
+		update,
+		isQuantDownloading,
+		() => fileQueueBusy
 	);
 
 	// Close once a swap actually starts (server emitted model_swap_started →
@@ -109,21 +241,13 @@ export function ModelPickerWindow() {
 	// the swap (and this close) only fire after the user confirms. Fire only
 	// on the false→true edge so a remount while a swap is still running
 	// doesn't re-send a redundant close.
-	// Which slot this window was opened for (main STT model vs realtime model).
-	// Set from the anchor message; gates the filter, swap target, and value.
-	const [kind, setKind] = useState<"main" | "realtime">("main");
-	const swapping = kind === "main" ? mainSwapping : realtimeSwapping;
-	// Selected value the picker highlights. Cloud ids have no catalog row, so
-	// the main slot shows nothing while a cloud provider is active.
-	const mainSelectorValue = providerOf(currentModel ?? "") === null ? (currentModel ?? "") : "";
-	const selectorValue = kind === "realtime" ? realtimeModel : mainSelectorValue;
-	const wasSwappingRef = useRef(swapping);
+	const wasSwappingRef = useRef(mainSwapping);
 	useEffect(() => {
-		if (swapping && !wasSwappingRef.current) {
+		if (mainSwapping && !wasSwappingRef.current) {
 			close();
 		}
-		wasSwappingRef.current = swapping;
-	}, [swapping]);
+		wasSwappingRef.current = mainSwapping;
+	}, [mainSwapping]);
 
 	// Same per-quant badge handlers the settings panel wires in — without
 	// these props SttModelSelector renders the variants read-only (no
@@ -133,16 +257,6 @@ export function ModelPickerWindow() {
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
 
 	const selectModel = (modelId: string, quantization?: OnnxQuantization) => {
-		if (kind === "realtime") {
-			controller.handleRealtimeModelChange(modelId, quantization);
-			// Picking the main model as the realtime model lets the server reuse the
-			// already-loaded main transcriber instead of loading a duplicate.
-			updateQuality({ useMainModelForRealtime: modelId === currentModel });
-			if (modelId === realtimeModel && quantization === undefined) {
-				close();
-			}
-			return;
-		}
 		controller.handleModelChange(modelId, quantization);
 		// Re-selecting the loaded model is a no-op for the controller (no
 		// swap, no dialog) — dismiss the window so the click still does
@@ -156,15 +270,7 @@ export function ModelPickerWindow() {
 	// (recomputed on every open and on resize, so it always reflects the
 	// current chip position / clamped height).
 	const [panel, setPanel] = useState<PanelRect | null>(null);
-	useEffect(
-		() =>
-			ipcOn(IPC.MODEL_PICKER_ANCHOR, (msg) => {
-				const r = msg as PanelRect & { kind?: "main" | "realtime" };
-				setPanel({ x: r.x, y: r.y, width: r.width, height: r.height });
-				setKind(r.kind === "realtime" ? "realtime" : "main");
-			}),
-		[]
-	);
+	useEffect(() => ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => setPanel(rect as PanelRect)), []);
 
 	// Report the desired footprint once. Main clamps it to the room above
 	// the chip and sends back the final panel rect via MODEL_PICKER_ANCHOR.
@@ -201,11 +307,11 @@ export function ModelPickerWindow() {
 		>
 			{panel && (
 				<div
-					// `[&>:last-child]:size-full` stretches the picker to fill the
-					// panel rect, which is already sized to `STT_PICKER_WIDTH_PX`
-					// (see `DESIRED_WIDTH` above) so the inline picker ends up at
-					// exactly the same pixel width the settings popup uses.
-					className="absolute flex flex-col gap-2 [&>:last-child]:size-full"
+					// Sized to `STT_PICKER_WIDTH_PX` (see `DESIRED_WIDTH`) so the inline
+					// picker matches the settings popup width. `PickerBody` fills the
+					// rect (`h-full`) and routes between the local grid and the cloud
+					// combobox via the Local/Cloud switcher.
+					className="absolute flex flex-col"
 					style={{
 						left: panel.x,
 						top: panel.y,
@@ -213,31 +319,28 @@ export function ModelPickerWindow() {
 						height: panel.height,
 					}}
 				>
-					{kind === "main" && (
-						<CloudSttSection onSelect={(id) => selectModel(id)} selectedId={currentModel ?? ""} />
-					)}
-					<SttModelSelector
+					<PickerBody
+						catalogLoaded={catalogLoaded}
+						catalogModels={catalogModels}
+						currentModel={currentModel ?? ""}
 						currentQuantization={currentQuantization}
-						inline
-						isLoading={!catalogLoaded}
-						kind={kind}
-						models={catalogModels}
-						onChange={selectModel}
+						fileQueueBusy={fileQueueBusy}
+						hasAnyCloudKey={hasAnyCloudKey}
+						// Re-mount so `source` re-initialises when the persisted model's
+						// source flips (or a key is added/removed) — no derived effect.
+						key={effectiveSourceIsCloud ? "cloud" : "local"}
 						onDeleteQuant={handleDeleteQuant}
 						onDownloadAction={handleDownloadAction}
 						onDownloadSnapshot={handleDownloadSnapshot}
-						popupHeightClass={PANEL_HEIGHT}
-						prefilter={kind === "realtime" ? isRealtimeViable : undefined}
+						onSelect={selectModel}
 						statesById={statesById}
 						systemInfo={systemInfo}
-						value={selectorValue}
 					/>
 				</div>
 			)}
 			<DownloadConfirmationDialog
 				getModel={getModel}
 				onCancel={controller.cancelPendingDownload}
-				onConfirm={controller.confirmPendingDownload}
 				pending={controller.pendingDownload}
 				statesById={statesById}
 				systemInfo={systemInfo}

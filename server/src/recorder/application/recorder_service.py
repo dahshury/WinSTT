@@ -81,6 +81,19 @@ logger = logging.getLogger(__name__)
 # bounded input window so latency stays flat for 30+ minute recordings.
 REALTIME_COMMIT_AFTER_SECONDS = 20.0
 
+# Cloud-transcriber model-id prefixes. A model name carrying one of these is a
+# RemoteTranscriber (OpenAI / ElevenLabs RPC), not a local ONNX session — so it
+# holds no resident weights to unload. Mirrors ``bootstrap._CLOUD_PROVIDER_PREFIXES``
+# (the canonical list used at construction time); kept here as a tiny local
+# predicate so the application layer needn't import the bootstrap composition
+# root at module load (it would pull infrastructure in transitively).
+_CLOUD_MODEL_PREFIXES: tuple[str, ...] = ("openai:", "elevenlabs:")
+
+
+def _is_cloud_model_name(name: str) -> bool:
+    """True when ``name`` addresses a cloud (RemoteTranscriber) model."""
+    return name.startswith(_CLOUD_MODEL_PREFIXES)
+
 
 @dataclass
 class _RealtimeLoopState:
@@ -176,6 +189,10 @@ class RecorderService:
 
         self._is_running = False
         self._microphone_enabled: bool = config.audio.use_microphone
+        # Bumped on every set_microphone() call so a tail-window release daemon
+        # that wakes after a newer transition (re-press, or another release)
+        # finds its generation stale and bails — see _run_release_pad.
+        self._release_generation: int = 0
         self._external_audio_mode: bool = False
         self._audio_reader_thread: threading.Thread | None = None
         self._realtime_thread: threading.Thread | None = None
@@ -271,6 +288,13 @@ class RecorderService:
         # when the worker is disabled.
         self._saved_main_model_name: str = config.transcription.model
         self._saved_realtime_model_name: str = self._initial_realtime_model_name(config)
+        # Set when a SEPARATE local realtime model was torn down because the
+        # main model became cloud (a cloud main has no live-preview path and
+        # the UI hides the realtime section, so a resident local realtime ONNX
+        # session is pure waste). Drives the reload back to that local model
+        # when the main model returns to local. See
+        # ``_reconcile_separate_realtime_with_main``.
+        self._realtime_unloaded_for_cloud_main: bool = False
         # Lock for serializing lazy-reload attempts so two concurrent
         # transcribe paths (e.g. main text() and the realtime worker)
         # don't both try to rebuild the same model at the same time.
@@ -836,33 +860,61 @@ class RecorderService:
     def set_microphone(self, microphone_on: bool = True) -> None:
         """Toggle microphone capture on/off.
 
-        When ``microphone_on=True``: resume hardware capture so the
-        audio reader thread starts feeding real chunks to the pipeline.
-        When ``microphone_on=False``: pause hardware capture (the OS
-        mic-in-use indicator turns off, no further audio chunks are
-        produced) AND, if a recording is currently in progress, stop
-        it immediately so transcription kicks off without waiting for
-        silence-based endpoint detection (PTT release should feel snappy).
+        ``microphone_on=True``: resume hardware capture so the audio reader
+        thread starts feeding real chunks to the pipeline.
 
-        Wake-word mode is the exception: when a wake-word detector is
-        configured, the recorder needs continuous capture to listen for
-        the hotword. In that case pause()/resume() are skipped — the
-        ``_microphone_enabled`` flag still gates feed_audio so the
-        pipeline state machine still sees the on/off transition.
+        ``microphone_on=False`` while recording: end the recording WITHOUT
+        clipping its tail. Rather than snapping the stream shut and
+        transitioning straight to TRANSCRIBING (which abandons audio still in
+        the OS ring buffer and the pipeline's audio queue — the last fraction
+        of a second the user spoke), we drain the OS-buffered tail, feed it,
+        then stop *through the audio queue* so the pipeline worker buffers
+        every queued chunk before finalizing. See ``_finish_release_stop``.
 
-        When ``microphone_on=False`` AND
-        ``AudioConfig.extra_recording_buffer_ms > 0`` AND a recording is
-        in progress, the pause + stop sequence is deferred to a daemon
-        thread that sleeps the configured ms first. The mic keeps
-        capturing during the sleep so trailing syllables that escape
-        just after the PTT key-up still land in the buffer (the
-        ``extra_recording_buffer_ms`` setting).
+        ``AudioConfig.extra_recording_buffer_ms`` (default 0 = off) optionally
+        keeps capturing for an extra window before that flush, for users who
+        trail off just after the key-up; the mic keeps feeding during the
+        window. ``0`` flushes immediately on release.
+
+        Wake-word mode is the exception: the detector needs continuous
+        capture, so pause()/resume() and the flush are skipped — the
+        ``_microphone_enabled`` flag still gates feed_audio so the pipeline
+        sees the on/off transition, and the stop runs immediately.
         """
-        self._microphone_enabled = microphone_on
-        if all([not microphone_on, self._should_defer_microphone_off()]):
-            self._spawn_tail_buffer_thread()
+        # Supersede any pending tail-window release: a re-press cancels the
+        # daemon so it can't stop the fresh recording; a second release
+        # replaces the prior daemon (only the latest generation acts).
+        self._release_generation += 1
+        if microphone_on:
+            self._microphone_enabled = True
+            self._apply_microphone_toggle(True)
             return
-        self._apply_microphone_toggle(microphone_on)
+        self._route_microphone_off()
+
+    def _route_microphone_off(self) -> None:
+        """Turn the mic off, flushing the recording tail when mid-recording.
+
+        A live (non-wake-word) recording takes the tail-preserving stop path;
+        otherwise (released while LISTENING/INACTIVE, or wake-word mode) there
+        is nothing in flight to flush, so the immediate off path runs.
+        """
+        if self._wake_word_detector is None and self._state_machine.is_recording:
+            self._begin_release_stop()
+            return
+        self._microphone_enabled = False
+        self._apply_microphone_toggle(False)
+
+    def _begin_release_stop(self) -> None:
+        """Stop a live recording without clipping its tail.
+
+        With ``extra_recording_buffer_ms`` set, keep capturing for that window
+        first (via a spawned daemon); otherwise flush-and-stop immediately.
+        """
+        tail_ms = self._config.audio.extra_recording_buffer_ms
+        if tail_ms > 0:
+            self._spawn_release_pad_thread(tail_ms, self._release_generation)
+        else:
+            self._finish_release_stop()
 
     def _apply_microphone_toggle(self, microphone_on: bool) -> None:
         """Immediate (non-deferred) mic on/off: toggle hardware + handle off."""
@@ -874,43 +926,56 @@ class RecorderService:
         if not microphone_on:
             self._handle_microphone_off()
 
-    def _should_defer_microphone_off(self) -> bool:
-        """Whether to delay the off-sequence to capture a recording tail.
-
-        Only meaningful when (a) a tail window is configured, (b) we're
-        actively recording so there's something to extend, and (c) the
-        wake-word backend isn't in play (those keep capturing anyway, so
-        the tail buffer is already implicit in their always-on capture).
-        Returning False here falls through to the immediate flow.
-        """
-        return (
-            self._config.audio.extra_recording_buffer_ms > 0
-            and self._state_machine.is_recording
-            and self._wake_word_detector is None
-        )
-
-    def _spawn_tail_buffer_thread(self) -> None:
-        """Run the off-sequence after the configured tail window.
-
-        Daemon thread so server shutdown doesn't have to join. Single
-        daemon per call — a second ``set_microphone(False)`` arriving
-        during the sleep would spawn its own thread, but the state-
-        machine guards in ``_handle_microphone_off`` make the duplicate
-        call a no-op (recording is no longer in progress by then).
+    def _spawn_release_pad_thread(self, tail_ms: int, generation: int) -> None:
+        """Run the release flush after the optional ``extra_recording_buffer_ms``
+        window. Daemon thread so the WS control thread isn't blocked during the
+        sleep; the mic keeps feeding for the window so trailing syllables still
+        land in the buffer. ``generation`` lets a stale daemon (superseded by a
+        later set_microphone) bail without stopping a fresh recording.
         """
         threading.Thread(
-            target=self._run_delayed_microphone_off,
+            target=self._run_release_pad,
+            args=(tail_ms, generation),
             daemon=True,
             name="extra-recording-buffer",
         ).start()
 
-    def _run_delayed_microphone_off(self) -> None:
-        """Sleep the tail window, then run the normal off sequence."""
-        sleep_seconds = self._config.audio.extra_recording_buffer_ms / 1000.0
-        time.sleep(sleep_seconds)
-        if self._wake_word_detector is None:
-            self._toggle_hardware_capture(False)
-        self._handle_microphone_off()
+    def _run_release_pad(self, tail_ms: int, generation: int) -> None:
+        time.sleep(tail_ms / 1000.0)
+        if generation != self._release_generation:
+            # A re-press (or another release) superseded this window.
+            return
+        self._finish_release_stop()
+
+    def _finish_release_stop(self) -> None:
+        """Flush captured audio, release the device, then stop via the queue.
+
+        Order matters:
+        1. drain the OS-buffered tail (audio captured between the reader's
+           last read and now) and feed it as buffer-sized frames;
+        2. stop the reader feeding new (post-release) reads;
+        3. pause/close the device (OS mic indicator clears);
+        4. enqueue the stop marker so the pipeline worker buffers every
+           queued chunk — the drained tail and any backlog — BEFORE it
+           transitions out of RECORDING. A direct ``request_stop`` here
+           would abandon that in-flight audio, clipping the last words.
+
+        Only reached for the non-wake-word recording path (the caller
+        guarantees ``_wake_word_detector is None``).
+        """
+        self._feed_drained_tail(self._audio_source.drain_available())
+        self._microphone_enabled = False
+        self._toggle_hardware_capture(False)
+        self._pipeline.request_stop_via_queue()
+
+    def _feed_drained_tail(self, drained: AudioChunk) -> None:
+        """Feed the drained release tail into the pipeline in buffer-sized
+        frames so VAD's fixed-window invariant holds. A sub-frame remainder
+        (<~32 ms) is dropped; empty input is a no-op.
+        """
+        frame_bytes = self._config.audio.buffer_size * 2  # int16 → 2 bytes/sample
+        for start in range(0, len(drained) - frame_bytes + 1, frame_bytes):
+            self._pipeline.feed_audio(drained[start : start + frame_bytes])
 
     def _toggle_hardware_capture(self, microphone_on: bool) -> None:
         action = self._audio_source.resume if microphone_on else self._audio_source.pause
@@ -1348,8 +1413,11 @@ class RecorderService:
 
         The slot is Optional via the swap bookkeeping — guard for type
         safety / defensive code (a swap can leave it transiently ``None``).
+        Cloud/remote transcribers opt out via ``requires_warmup`` — warming
+        one would be a real billed API round-trip that can hang the recorder
+        thread at startup (see ``RemoteTranscriber.requires_warmup``).
         """
-        if transcriber is not None:
+        if transcriber is not None and transcriber.requires_warmup:
             transcriber.transcribe(dummy, lang)
 
     def warmup(self) -> None:
@@ -2193,6 +2261,21 @@ class RecorderService:
         name: str,
         on_progress: Callable[[DownloadProgress], None] | None,
     ) -> ITranscriber:
+        # Cloud STT (``openai:…`` / ``elevenlabs:…``) routes to the WS-RPC
+        # proxy, NOT the local ONNX loader. Mirror :func:`bootstrap.build_transcriber`
+        # — without this branch the swap path feeds the cloud id straight into
+        # onnx-asr's resolver, which raises ``ModelNotSupportedError`` and the
+        # swap reverts to a local model (the "switching to cloud silently falls
+        # back to tiny" bug). Done first so no catalog/quant work runs for cloud.
+        from src.recorder.bootstrap import _parse_cloud_model_id
+
+        cloud = _parse_cloud_model_id(name)
+        if cloud is not None:
+            provider, cloud_model_id = cloud
+            from src.recorder.infrastructure.remote_transcriber import RemoteTranscriber
+
+            return RemoteTranscriber(provider=provider, model_id=cloud_model_id)
+
         # Late import to keep the application layer free of infrastructure imports
         # at module load time. The hexagonal rulebook keeps bootstrap as the only
         # composition root; swaps are a tactical exception scoped to this method.
@@ -2282,9 +2365,79 @@ class RecorderService:
         self._maybe_relink_realtime(is_main, new_transcriber, name)
 
     def _maybe_relink_realtime(self, is_main: bool, new_main: ITranscriber, name: str) -> None:
-        """Re-slave the realtime slot to a freshly-committed main model."""
-        if is_main and self._realtime_slaved_to_main():
+        """Keep the realtime slot consistent with a freshly-committed main model.
+
+        Two independent concerns, both triggered only by a ``main`` swap:
+
+        - **Slaved** (``use_main_model_for_realtime``): re-point the realtime
+          slot at the new main instance so the shared-object invariant holds.
+        - **Separate**: when the realtime slot runs its own model, keep its
+          local/cloud nature in step with main — a cloud main must not leave a
+          resident local realtime ONNX session behind, and returning to a local
+          main rebuilds the realtime model that was torn down.
+        """
+        if not is_main:
+            return
+        if self._realtime_slaved_to_main():
             self._relink_realtime_to_main(new_main, name)
+            return
+        self._reconcile_separate_realtime_with_main(name)
+
+    def _reconcile_separate_realtime_with_main(self, main_name: str) -> None:
+        """Sync a SEPARATE realtime model with the main model's local/cloud kind.
+
+        No-op unless realtime is enabled. When the new main is cloud, unload a
+        resident local realtime model (the cloud main has no live-preview path
+        and the UI hides the realtime section). When the new main is local,
+        rebuild the local realtime model that an earlier cloud main tore down.
+        """
+        if not self._config.realtime.enable_realtime_transcription:
+            return
+        rt_name = self._config.realtime.realtime_model_type
+        if _is_cloud_model_name(main_name):
+            self._unload_separate_realtime_for_cloud_main(rt_name)
+        else:
+            self._reload_separate_realtime_after_cloud_main(rt_name)
+
+    def _unload_separate_realtime_for_cloud_main(self, rt_name: str) -> None:
+        """Tear down a resident local realtime model when main went cloud.
+
+        Skips a cloud realtime model (a lightweight RPC proxy — no resident
+        weights to free) and an already-empty slot. The realtime worker
+        tolerates a ``None`` slot mid-run (``_safe_transcribe`` short-circuits),
+        so nulling here is safe even while the worker is ticking.
+        """
+        if _is_cloud_model_name(rt_name) or self._realtime_transcriber is None:
+            return
+        old = self._detach_current_transcriber("realtime")
+        self._shutdown_transcriber_safely("realtime", old)
+        gc.collect()
+        self._realtime_unloaded_for_cloud_main = True
+        logger.info("[unload] released separate realtime model (main is cloud): %s", rt_name)
+
+    def _reload_separate_realtime_after_cloud_main(self, rt_name: str) -> None:
+        """Rebuild the local realtime model a prior cloud main tore down.
+
+        Only fires when ``_unload_separate_realtime_for_cloud_main`` previously
+        ran, so a normal local→local main swap never touches the
+        independently-managed realtime slot. The load runs synchronously on the
+        swap worker (mirrors ``_relink_realtime_to_main``); a load failure
+        leaves the slot empty and the realtime worker simply keeps backing off.
+        """
+        if not self._realtime_unloaded_for_cloud_main:
+            return
+        self._realtime_unloaded_for_cloud_main = False
+        if not _is_cloud_model_name(rt_name):
+            self._rebuild_realtime_slot(rt_name)
+
+    def _rebuild_realtime_slot(self, rt_name: str) -> None:
+        """Load ``rt_name`` and point the realtime slot at it (no-op on load failure)."""
+        new_rt = self._load_transcriber_or_none(rt_name)
+        if new_rt is None:
+            return
+        with self._realtime_transcriber_lock:
+            self._realtime_transcriber = new_rt
+        logger.info("[reload] rebuilt separate realtime model (main is local): %s", rt_name)
 
     def _assign_transcriber_slot(self, is_main: bool, name: str, new_transcriber: ITranscriber) -> None:
         """Point the chosen slot at ``new_transcriber`` and persist its name.

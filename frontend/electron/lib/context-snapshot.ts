@@ -7,38 +7,8 @@
  * timing when imported transitively.
  */
 
-/**
- * Snapshot of the user's focused UI surface, captured via Windows UI
- * Automation immediately before a dictation starts.
- *
- * Two tiers of data:
- *
- *   1. The legacy minimal triple (windowTitle / elementName / focusedText)
- *      — present on every snapshot, exactly the shape `EMPTY_CONTEXT` has
- *      so the `toEqual(EMPTY_CONTEXT)` assertions throughout the test
- *      suite stay valid when nothing was captured.
- *
- *   2. Optional Wispr-style enrichments (`textBefore/After`, `appExe`,
- *      `url`, `axHtml`). Each one is attached ONLY when the native helper
- *      produced something non-empty — so a snapshot that legitimately
- *      has no caret + no tree still equals the empty triple.
- *
- * The fields:
- * - `textBefore` / `textAfter`: caret-split capture (`--split` and
- *   `--tree` paths). The LLM uses textBefore to decide whether it's
- *   continuing an unfinished sentence or starting fresh.
- * - `appExe`: lowercased process basename of the foreground window
- *   (e.g. "chrome.exe", "outlook.exe"). Powers the deny-list match —
- *   without it, the deny-list silently never fires.
- * - `url`: Browser URL extracted from the omnibox/urlbar via UIA when
- *   the foreground app is a recognized browser. Used both as a
- *   spelling hint ("we're on github.com") and as a second deny-list
- *   key (host-suffix match on `bankofamerica.com`, etc.).
- * - `axHtml`: Hierarchical XML serialization of the foreground
- *   window's UIA subtree (`--tree` path). The structure preserves the
- *   relationship between e.g. an email's sender + body + the reply
- *   field, which a flat text dump loses.
- */
+import { denoiseForLlm, isCanvasSurface, pruneAxHtmlForLlm } from "./ax-prune";
+
 export interface WindowContextSnapshot {
 	/** Lowercased exe basename of the foreground window's process. */
 	appExe?: string;
@@ -193,13 +163,29 @@ const SCHEME_PREFIX_RE = /^[a-z]+:\/\//;
  *  `*.example.com` or `example.com` interchangeably. */
 const LEADING_WILDCARD_RE = /^\*\./;
 
-/** True when the snapshot's foreground app is a recognised IDE. */
-function isIdeContext(snapshot: WindowContextSnapshot): boolean {
+/** True when the snapshot's foreground app is a recognised IDE. Exported so
+ *  the context-playground debug tooling can surface the same IDE verdict the
+ *  prompt formatter uses (it drives the "treat visible content as code" hint). */
+export function isIdeContext(snapshot: WindowContextSnapshot): boolean {
 	const exe = (snapshot.appExe ?? "").toLowerCase();
 	if (!exe) {
 		return false;
 	}
 	return IDE_EXE_MATCHERS.some((match) => match(exe));
+}
+
+/** Accessibility-name marker for a console-style control whose "text before
+ *  the caret" is the ENTIRE scrollback buffer (animation frames, ANSI/log
+ *  residue) rather than a clean editable field. Matched against the focused
+ *  element's NAME (not its content) — e.g. VS Code / Cursor's
+ *  "Terminal 45, <shell> Use Alt+F1 for terminal accessibility help". */
+const TERMINAL_NAME_RE = /\b(?:terminal|console)\b/i;
+
+/** True when the focused control looks like a terminal/console. Its caret
+ *  context is scrollback soup, not useful prior text — the playground surfaces
+ *  this so terminal noise can be recognised (and suppressed). */
+export function looksLikeTerminal(snapshot: WindowContextSnapshot): boolean {
+	return TERMINAL_NAME_RE.test(snapshot.elementName);
 }
 
 /**
@@ -230,24 +216,9 @@ function stripQueryAndFragment(hostPart: string): string {
 /**
  * Format the snapshot into a compact prompt fragment for the LLM cleanup
  * step. Returns "" when no context is available, so callers can blindly
- * concatenate without checking.
- *
- * Shape (everything except the caret labels is conditional on the
- * corresponding field being non-empty):
- *
- *   App: chrome.exe
- *   URL: github.com
- *   Window: <title>
- *   Focused field: <element name>
- *   Visible UI:
- *   <axHtml — preserved verbatim>
- *   Text immediately before the caret: <textBefore>
- *   Text immediately after the caret: <textAfter>
- *   Visible content: <focusedText>      ← only when no caret-split present
- *
- * The two caret labels are exact literal phrases the system-prompt's
- * continuation clause matches against — don't reword them or split
- * them across lines.
+ * concatenate without checking. The two caret labels are exact literal
+ * phrases the system-prompt's continuation clause matches against — don't
+ * reword them or split them across lines.
  */
 export function formatContextForPrompt(snapshot: WindowContextSnapshot): string {
 	const sections = buildPromptSections(snapshot);
@@ -281,7 +252,32 @@ function ideMarkerFor(snapshot: WindowContextSnapshot): string {
 	return isIdeContext(snapshot) ? "yes" : "";
 }
 
-function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
+/**
+ * Below this many chars of de-noised focused-field text, the focused element
+ * isn't carrying a real body (empty reply box, search bar, canvas) — so the
+ * full-window axHtml tree (pruned or raw) is worth including as fallback
+ * context. At/above it, the focused field IS the context and the tree is
+ * redundant page chrome.
+ */
+const RICH_FIELD_MIN_CHARS = 40;
+
+/**
+ * True when the focused element yielded a substantial body — the email/message/
+ * doc the user is acting on — via either the caret split or the whole-text read.
+ * Drives the focused-field-first decision in {@link buildPromptSections}.
+ */
+function focusedFieldIsRich(snapshot: WindowContextSnapshot): boolean {
+	const caretChars =
+		denoiseForLlm(snapshot.textBefore).length + denoiseForLlm(snapshot.textAfter).length;
+	if (caretChars >= RICH_FIELD_MIN_CHARS) {
+		return true;
+	}
+	return denoiseForLlm(snapshot.focusedText).length >= RICH_FIELD_MIN_CHARS;
+}
+
+/** The lightweight "where are we" sections — app / IDE / URL / window / focused
+ *  field. Always safe to include: short, no scraped body content. */
+function buildMetadataSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
 	return [
 		{ value: trimOrEmpty(snapshot.appExe), format: (v) => `App: ${v}` },
 		{
@@ -291,32 +287,85 @@ function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSe
 		{ value: trimOrEmpty(snapshot.url), format: (v) => `URL: ${v}` },
 		{ value: snapshot.windowTitle.trim(), format: (v) => `Window: ${v}` },
 		{ value: snapshot.elementName.trim(), format: (v) => `Focused field: ${v}` },
-		// axHtml goes BEFORE the caret labels so the LLM sees the broader
-		// "what is on screen" picture first, then the immediate insertion
-		// point. Wrapped in a fence so the model treats the inner tags as
-		// data, not as markdown / nested instructions.
-		{
-			value: trimOrEmpty(snapshot.axHtml),
-			format: (v) => `Visible UI (XML — DO NOT echo, only use for reference):\n${v}`,
-		},
-		...buildContentSections(snapshot),
-		{
-			value: collapseBlankLines(snapshot.ocrText),
-			format: (v) =>
-				`Screen text (OCR — approximate, no reliable reading order; the structured fields above were empty so this is the only context):\n${v}`,
-		},
 	];
 }
 
+function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
+	const meta = buildMetadataSections(snapshot);
+	// Terminal/console: the scrollback (axHtml tree + caret text) is re-render
+	// soup, not "what the user is acting on". Omit it and just flag the surface
+	// so the LLM knows where the dictation lands without the noise.
+	if (looksLikeTerminal(snapshot)) {
+		return [
+			...meta,
+			{
+				value: "terminal",
+				format: () =>
+					"Terminal/console focused — scrollback omitted (no clean prior text available).",
+			},
+		];
+	}
+	const content = buildContentSections(snapshot);
+	// Focused-field-first (mirrors Wispr Flow's "reads limited text near your
+	// cursor" + superwhisper's focused-input capture — no mainstream dictation
+	// tool dumps the whole a11y tree). When the focused element yields a real
+	// body (email/message/doc), THAT is the context; the full-window axHtml tree
+	// is redundant page chrome (inbox list, 60 browser tabs, bookmark bar) and is
+	// dropped. Only when the focused field is thin (empty reply box, canvas,
+	// game, odd app) do we fall back to the tree + OCR for surrounding context.
+	if (focusedFieldIsRich(snapshot)) {
+		return [...meta, ...content];
+	}
+	return [...meta, buildFallbackTreeSection(snapshot), ...content, buildOcrSection(snapshot)];
+}
+
+/**
+ * The "what's around the thin focused field" section. Tier 3: try the
+ * role-pruned tree first (just the item the user is acting on — the original
+ * email, the message thread); only if that can't beat the raw tree do we fall
+ * back to dumping the whole axHtml. Both are reference-only for the LLM.
+ */
+function buildFallbackTreeSection(snapshot: WindowContextSnapshot): PromptSection {
+	// Canvas/grid surfaces (Figma, Canva, Google Sheets) expose only chrome via
+	// UIA — their real content is painted to <canvas>. Skip the tree entirely so
+	// we don't leak menu/panel labels; the OCR section carries these instead.
+	if (isCanvasSurface(snapshot.appExe, snapshot.url)) {
+		return { value: "", format: (v) => v };
+	}
+	const pruned = pruneAxHtmlForLlm(snapshot.axHtml);
+	if (pruned.length > 0) {
+		return {
+			value: pruned,
+			format: (v) =>
+				`Surrounding content (pruned from the UI — the item you're acting on; DO NOT echo, only use for reference):\n${v}`,
+		};
+	}
+	// axHtml goes BEFORE the caret labels so the LLM sees the broader "what is on
+	// screen" picture first, then the immediate insertion point. Fenced so the
+	// model treats the inner tags as data, not markdown / nested instructions.
+	return {
+		value: trimOrEmpty(snapshot.axHtml),
+		format: (v) => `Visible UI (XML — DO NOT echo, only use for reference):\n${v}`,
+	};
+}
+
+function buildOcrSection(snapshot: WindowContextSnapshot): PromptSection {
+	return {
+		value: collapseBlankLines(snapshot.ocrText),
+		format: (v) =>
+			`Screen text (OCR — approximate, no reliable reading order; the structured fields above were empty so this is the only context):\n${v}`,
+	};
+}
+
 function buildContentSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
-	const before = collapseBlankLines(snapshot.textBefore);
-	const after = collapseBlankLines(snapshot.textAfter);
+	const before = denoiseForLlm(snapshot.textBefore);
+	const after = denoiseForLlm(snapshot.textAfter);
 	if (isCaretMode(before, after)) {
 		return buildCaretSections(before, after);
 	}
 	return [
 		{
-			value: collapseBlankLines(snapshot.focusedText),
+			value: denoiseForLlm(snapshot.focusedText),
 			format: (v) => `Visible content:\n${v}`,
 		},
 	];
@@ -345,19 +394,22 @@ function buildCaretSections(before: string, after: string): readonly PromptSecti
  * Extract a prior-text fragment from the snapshot for use as a Whisper
  * `initial_prompt` tail. Returns "" when nothing useful is present.
  *
- * Whisper's prompt is decoder context — it conditions the model as if
- * the prompt were prior speech. The highest-signal slice we have is
- * `textBefore` (the user's caret-leading text in the focused field):
- * a code editor's prior lines, an email's prior body, etc. We do NOT
- * include `appExe` / `url` / `axHtml` / window titles here — those are
- * structured metadata, not natural prior-text, and Whisper degrades when
- * the prompt isn't shaped like real speech.
- *
- * The deny-list path emits {@link redactSensitiveFields} which already
- * strips `textBefore`, so a denied snapshot extracts to "". Callers
- * needn't re-apply the deny-list filter here.
+ * Whisper's prompt is decoder context — it conditions the model as if the
+ * prompt were prior speech. The highest-signal slice we have is `textBefore`
+ * (the user's caret-leading text in the focused field). We do NOT include
+ * `appExe` / `url` / `axHtml` / window titles — structured metadata degrades
+ * the decoder. Terminal/console scrollback is suppressed entirely (re-render
+ * soup, never the user's prior text). The deny-list path emits
+ * {@link redactSensitiveFields}, which strips `textBefore`, so a denied
+ * snapshot extracts to "".
  */
 export function extractAsrPromptTail(snapshot: WindowContextSnapshot): string {
+	// Terminal/console scrollback is re-render soup (animation frames, ANSI
+	// residue, lost spaces) — never the user's prior text. Feeding it to Whisper
+	// only biases the decoder toward noise, so suppress it entirely for terminals.
+	if (looksLikeTerminal(snapshot)) {
+		return "";
+	}
 	const before = snapshot.textBefore;
 	if (typeof before !== "string") {
 		return "";

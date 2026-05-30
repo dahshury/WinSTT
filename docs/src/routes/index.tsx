@@ -351,6 +351,7 @@ const privacyBadges = [
   { icon: <ShieldIcon />, label: "100% local" },
   { icon: <WifiOffIcon />, label: "Works offline" },
   { icon: <CpuIcon />, label: "On-device AI" },
+  { icon: <HeartIcon />, label: "Free & open source" },
 ];
 
 function HomePage() {
@@ -368,19 +369,12 @@ function HomePage() {
 
           <div className="relative mb-10">
             <div
-              className="absolute inset-0 rounded-[28px] animate-ping"
-              style={{
-                background: "oklch(62% 0.19 260 /0.08)",
-                animationDuration: "3s",
-              }}
-            />
-            <div
               className="relative z-10 p-4 rounded-[28px]"
               style={{
                 background: "oklch(62% 0.19 260 /0.06)",
                 border: "1px solid oklch(62% 0.19 260 /0.2)",
                 boxShadow:
-                  "inset 0 1px 0 0 oklch(100% 0 0 / 0.06), 0 0 80px oklch(62% 0.19 260 /0.18), 0 20px 60px -20px oklch(0% 0 0 / 0.6)",
+                  "inset 0 1px 0 0 oklch(100% 0 0 / 0.06), 0 20px 60px -20px oklch(0% 0 0 / 0.6)",
               }}
             >
               <img
@@ -417,9 +411,10 @@ function HomePage() {
             className="text-lg max-w-xl text-center leading-relaxed"
             style={{ color: "oklch(94% 0.015 265 /0.55)" }}
           >
-            Local speech-to-text for Windows. Real-time transcription powered by
-            Whisper, NeMo, and 40+ AI models — completely offline, entirely on
-            your hardware. Free forever, source on GitHub.
+            A complete local voice toolkit for Windows. Speech-to-text,
+            text-to-speech, wake-word detection, and LLM-powered text processing
+            — powered by Whisper, NeMo, and 40+ AI models, completely offline and
+            entirely on your hardware. Free forever, source on GitHub.
           </p>
 
           <div className="flex items-center gap-4 mt-6">
@@ -545,7 +540,7 @@ function HomePage() {
               className="text-2xl font-bold tracking-tight mb-2"
               style={{ color: "oklch(94% 0.015 265 /0.9)" }}
             >
-              A real desktop app, not a demo
+              Designed down to the last detail
             </h2>
             <p
               className="text-sm"
@@ -555,30 +550,54 @@ function HomePage() {
               a few
             </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             <Screenshot
-              src="settings-model"
-              alt="The Model settings tab: source toggle, searchable model selector, language, device, and unload timeout."
-              label="Settings — Model"
-              caption="Pick from 40+ models, set quantization and device."
-            />
-            <Screenshot
-              src="settings-history"
-              alt="The transcription history dashboard with stat tiles, an activity heatmap, and a searchable log."
-              label="Transcription history"
-              caption="Stats, an activity heatmap, and karaoke playback."
-            />
-            <Screenshot
-              src="model-dropdown"
-              alt="The open model picker showing models grouped by maker with accuracy/speed bars, sizes, and quantization badges."
+              src="feat-model"
+              alt="The model picker open, showing STT models grouped by maker with accuracy and speed bars, sizes, and quantization badges."
               label="Model picker"
-              caption="Download, resume, and compare models inline."
+              caption="Browse 40+ STT models — accuracy and speed at a glance."
+              aspect="3 / 2"
+              focus="top"
             />
             <Screenshot
-              src="onboarding"
-              alt="The first-run onboarding wizard choosing between local Whisper and a cloud provider."
-              label="Onboarding"
-              caption="A guided first run — local or cloud, mic test, done."
+              src="feat-stt"
+              alt="The Model settings tab with the Source toggle between Local and Cloud, plus model, language, and device options."
+              label="Speech-to-text"
+              caption="Transcribe on-device, or switch to OpenAI or ElevenLabs in the cloud."
+              aspect="3 / 2"
+              focus="top"
+            />
+            <Screenshot
+              src="feat-tts"
+              alt="The Text-to-Speech settings with a Local/Cloud source toggle, voice selector, and playback speed."
+              label="Text-to-speech"
+              caption="Read text aloud with local Kokoro or cloud ElevenLabs voices."
+              aspect="3 / 2"
+              focus="center"
+            />
+            <Screenshot
+              src="feat-llm"
+              alt="The LLM post-processing settings with a local-Ollama / cloud-OpenRouter provider toggle, model, tone, and modifiers."
+              label="LLM post-processing"
+              caption="Clean up and reshape dictation — local Ollama or cloud OpenRouter."
+              aspect="3 / 2"
+              focus="top"
+            />
+            <Screenshot
+              src="feat-recording"
+              alt="The Recording settings showing the mode selector: Push to Talk, Toggle, Listen, and Wake Word."
+              label="Recording modes"
+              caption="Push-to-talk, toggle, listen, or wake word."
+              aspect="3 / 2"
+              focus="top"
+            />
+            <Screenshot
+              src="feat-history"
+              alt="The transcription history dashboard with stat tiles and a daily-activity heatmap."
+              label="History"
+              caption="Stats, an activity heatmap, and karaoke playback."
+              aspect="3 / 2"
+              focus="top"
             />
           </div>
         </section>

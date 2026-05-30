@@ -1,12 +1,41 @@
 import { afterEach, beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
-import {
+import { debugLogMock } from "@test/mocks/debug-log";
+import { electronMock } from "@test/mocks/electron";
+
+// credentials.ts pulls `ipcMain` (electron) and `dbg` (electron-log) at module
+// load. Shim both BEFORE importing it so the suite runs in isolation rather
+// than only when a sibling suite happens to register the electron mock first
+// (the prior static import was hoisted ahead of any mock → "Export named 'app'
+// not found"). Dynamic import after the mocks mirrors tts-cloud.test.ts.
+mock.module("electron", () => electronMock());
+mock.module("../lib/debug-log", () => debugLogMock());
+
+const {
 	authHeadersFor,
 	classifyHttpStatus,
 	handleVerifyInvocation,
+	isElevenLabsScopedKeyValid,
 	isVerifyPayload,
 	probeUrlFor,
 	verifyCredential,
-} from "./credentials";
+} = await import("./credentials");
+
+// Real ElevenLabs 401 bodies (captured from the live API 2026-05-30).
+const EL_MISSING_PERMISSIONS = JSON.stringify({
+	detail: {
+		status: "missing_permissions",
+		message: "The API key you used is missing the permission user_read to execute this operation.",
+	},
+});
+const EL_INVALID_API_KEY = JSON.stringify({
+	detail: { status: "invalid_api_key", message: "Invalid API key" },
+});
+const EL_NEEDS_AUTHORIZATION = JSON.stringify({
+	detail: {
+		status: "needs_authorization",
+		message: "Neither authorization header nor xi-api-key received.",
+	},
+});
 
 // Contained boundary cast: a Bun mock fn stands in for the real global `fetch`.
 // The runtime value is returned unchanged — only the static type is widened.
@@ -79,6 +108,30 @@ describe("authHeadersFor", () => {
 		expect(authHeadersFor("openrouter", "sk-or-test")).toEqual({
 			Authorization: "Bearer sk-or-test",
 		});
+	});
+});
+
+describe("isElevenLabsScopedKeyValid", () => {
+	test("missing_permissions 401 → valid (key authenticated, just scoped)", () => {
+		expect(isElevenLabsScopedKeyValid(401, EL_MISSING_PERMISSIONS)).toBe(true);
+	});
+
+	test("invalid_api_key 401 → not valid", () => {
+		expect(isElevenLabsScopedKeyValid(401, EL_INVALID_API_KEY)).toBe(false);
+	});
+
+	test("needs_authorization 401 → not valid", () => {
+		expect(isElevenLabsScopedKeyValid(401, EL_NEEDS_AUTHORIZATION)).toBe(false);
+	});
+
+	test("non-401 statuses are never treated as scoped-but-valid", () => {
+		expect(isElevenLabsScopedKeyValid(403, EL_MISSING_PERMISSIONS)).toBe(false);
+		expect(isElevenLabsScopedKeyValid(429, EL_MISSING_PERMISSIONS)).toBe(false);
+	});
+
+	test("non-JSON / empty body → not valid (no false positive)", () => {
+		expect(isElevenLabsScopedKeyValid(401, "")).toBe(false);
+		expect(isElevenLabsScopedKeyValid(401, "Unauthorized")).toBe(false);
 	});
 });
 
@@ -158,6 +211,40 @@ describe("verifyCredential", () => {
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
 			expect(result.code).toBe("rate_limit");
+		}
+	});
+
+	test("ElevenLabs scoped key (401 missing_permissions) → ok", async () => {
+		// Regression guard for the false "invalid key": a TTS-only key 401s on the
+		// /v1/user probe but is perfectly valid. It must verify as ok.
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response(EL_MISSING_PERMISSIONS, { status: 401 })))
+		);
+		const result = await verifyCredential("elevenlabs", "sk_scoped");
+		expect(result).toEqual({ ok: true });
+	});
+
+	test("ElevenLabs genuinely-bad key (401 invalid_api_key) → auth error", async () => {
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response(EL_INVALID_API_KEY, { status: 401 })))
+		);
+		const result = await verifyCredential("elevenlabs", "sk_bogus");
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.code).toBe("auth");
+		}
+	});
+
+	test("OpenAI 401 missing_permissions-shaped body is NOT excused (EL-only rule)", async () => {
+		// The scoped-key escape hatch is ElevenLabs-specific; an OpenAI 401 with a
+		// look-alike body must still classify as an auth failure.
+		globalThis.fetch = asFetch(
+			mock(() => Promise.resolve(new Response(EL_MISSING_PERMISSIONS, { status: 401 })))
+		);
+		const result = await verifyCredential("openai", "sk-whatever");
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.code).toBe("auth");
 		}
 	});
 

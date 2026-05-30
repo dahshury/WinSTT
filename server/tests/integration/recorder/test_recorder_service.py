@@ -1001,6 +1001,26 @@ class TestRecorderService:
         assert transcriber.call_count == 1
         service.shutdown()
 
+    def test_warmup_skips_transcriber_that_opts_out(self) -> None:
+        """A transcriber with ``requires_warmup=False`` (e.g. a cloud
+        ``RemoteTranscriber``) is NOT warmed — warming it would be a real
+        billed API round-trip that can hang the recorder thread at startup."""
+
+        class _NoWarmupTranscriber(FakeTranscriber):
+            @property
+            @override
+            def requires_warmup(self) -> bool:
+                return False
+
+        rt_transcriber = _NoWarmupTranscriber()
+        service, transcriber, _, _ = self._make_service(realtime_transcriber=rt_transcriber)
+        service.warmup()
+        assert service.wait_for_background_warmup(timeout=5.0)
+        # Main still warms (local default); the opted-out realtime does not.
+        assert transcriber.call_count == 1
+        assert rt_transcriber.call_count == 0
+        service.shutdown()
+
     def test_warmup_runs_realtime_transcriber(self) -> None:
         """warmup() also warms up the realtime transcriber when present.
 
@@ -1445,6 +1465,165 @@ class TestRecorderService:
         assert service._realtime_transcriber is rt
         assert not rt.shutdown_called
         service.shutdown()
+
+    def test_main_swap_to_cloud_unloads_separate_local_realtime(self) -> None:
+        """End-to-end: swapping main to a cloud model frees a resident
+        SEPARATE local realtime ONNX session (the cloud main has no live-
+        preview path and the UI hides the realtime section, so a local
+        realtime model would just waste RAM/VRAM)."""
+        from src.recorder.domain.events import ModelSwapCompleted
+
+        rt = FakeTranscriber()
+        service, _, event_bus, loaded = self._swap_service()
+        service._realtime_transcriber = rt
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+        service._config.realtime.realtime_model_type = "onnx-community/whisper-tiny"
+
+        completed: list[ModelSwapCompleted] = []
+        event_bus.subscribe(ModelSwapCompleted, completed.append)
+
+        service.request_model_swap("main", "openai:gpt-4o-mini-transcribe")
+        self._wait_for(lambda: len(completed) == 1)
+
+        assert service._transcriber is loaded[0]
+        assert service._realtime_transcriber is None
+        assert rt.shutdown_called
+        assert service._realtime_unloaded_for_cloud_main is True
+        service.shutdown()
+
+    def test_load_transcriber_routes_cloud_id_to_remote(self) -> None:
+        """The REAL swap loader must build a RemoteTranscriber for a cloud id,
+        NOT feed it to onnx-asr — which raises ModelNotSupportedError and makes
+        the live switch-to-cloud swap revert to a local model."""
+        from src.recorder.infrastructure.remote_transcriber import RemoteTranscriber
+
+        service, _, _, _ = self._make_service()
+        transcriber = service._load_transcriber("openai:gpt-4o-transcribe", None)
+        assert isinstance(transcriber, RemoteTranscriber)
+        assert transcriber.provider == "openai"
+        assert transcriber.model_id == "gpt-4o-transcribe"
+        transcriber.shutdown()
+        service.shutdown()
+
+    def test_reconcile_separate_realtime_noop_when_realtime_disabled(self) -> None:
+        """A main swap must not touch the realtime slot when realtime is off."""
+        rt = FakeTranscriber()
+        service, _, _, _ = self._make_service()
+        service._realtime_transcriber = rt
+        service._config.realtime.enable_realtime_transcription = False
+        service._reconcile_separate_realtime_with_main("openai:gpt-4o-mini-transcribe")
+        assert service._realtime_transcriber is rt
+        assert not rt.shutdown_called
+        assert service._realtime_unloaded_for_cloud_main is False
+        service.shutdown()
+
+    def test_main_to_cloud_keeps_cloud_realtime(self) -> None:
+        """A cloud realtime model is an RPC proxy with no resident weights —
+        leave it in place and never set the unloaded flag."""
+        rt = FakeTranscriber()
+        service, _, _, _ = self._make_service()
+        service._realtime_transcriber = rt
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+        service._config.realtime.realtime_model_type = "elevenlabs:scribe_v1"
+        service._reconcile_separate_realtime_with_main("openai:gpt-4o-mini-transcribe")
+        assert service._realtime_transcriber is rt
+        assert not rt.shutdown_called
+        assert service._realtime_unloaded_for_cloud_main is False
+        service.shutdown()
+
+    def test_main_to_cloud_unload_idempotent_when_slot_empty(self) -> None:
+        """Cloud→cloud (realtime already unloaded) is a safe no-op; nothing was
+        held, so the unloaded flag stays clear."""
+        service, _, _, _ = self._make_service()
+        service._realtime_transcriber = None
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+        service._config.realtime.realtime_model_type = "onnx-community/whisper-tiny"
+        service._reconcile_separate_realtime_with_main("openai:gpt-4o-transcribe")
+        assert service._realtime_transcriber is None
+        assert service._realtime_unloaded_for_cloud_main is False
+        service.shutdown()
+
+    def test_main_back_to_local_reloads_separate_realtime(self) -> None:
+        """Returning main to a local model rebuilds the realtime model a prior
+        cloud main tore down, and clears the flag."""
+        rebuilt = FakeTranscriber()
+        service, _, _, _ = self._make_service()
+        service._load_transcriber = lambda name, on_progress: rebuilt  # type: ignore[method-assign]
+        service._realtime_transcriber = None
+        service._realtime_unloaded_for_cloud_main = True
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+        service._config.realtime.realtime_model_type = "onnx-community/whisper-tiny"
+        service._reconcile_separate_realtime_with_main("onnx-community/whisper-base")
+        assert service._realtime_transcriber is rebuilt
+        assert service._realtime_unloaded_for_cloud_main is False
+        service.shutdown()
+
+    def test_main_back_to_local_skips_reload_for_cloud_realtime(self) -> None:
+        """A cloud realtime model has nothing to rebuild — clear the flag and
+        never call the loader."""
+        service, _, _, _ = self._make_service()
+        loads: list[str] = []
+        service._load_transcriber = lambda name, on_progress: (  # type: ignore[method-assign]
+            loads.append(name),
+            FakeTranscriber(),
+        )[1]
+        service._realtime_transcriber = None
+        service._realtime_unloaded_for_cloud_main = True
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+        service._config.realtime.realtime_model_type = "openai:gpt-4o-mini-transcribe"
+        service._reconcile_separate_realtime_with_main("onnx-community/whisper-base")
+        assert service._realtime_transcriber is None
+        assert loads == []
+        assert service._realtime_unloaded_for_cloud_main is False
+        service.shutdown()
+
+    def test_main_back_to_local_reload_failure_leaves_slot_empty(self) -> None:
+        """A failed realtime rebuild leaves the slot empty (the worker keeps
+        backing off) and still clears the flag."""
+        service, _, _, _ = self._make_service()
+        service._load_transcriber = lambda name, on_progress: None  # type: ignore[method-assign]
+        service._realtime_transcriber = None
+        service._realtime_unloaded_for_cloud_main = True
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+        service._config.realtime.realtime_model_type = "onnx-community/whisper-tiny"
+        service._reconcile_separate_realtime_with_main("onnx-community/whisper-base")
+        assert service._realtime_transcriber is None
+        assert service._realtime_unloaded_for_cloud_main is False
+        service.shutdown()
+
+    def test_reload_separate_realtime_noop_when_flag_unset(self) -> None:
+        """Local→local main swaps never rebuild the independently-managed
+        realtime slot (flag was never set)."""
+        service, _, _, _ = self._make_service()
+        loads: list[str] = []
+        service._load_transcriber = lambda name, on_progress: (  # type: ignore[method-assign]
+            loads.append(name),
+            FakeTranscriber(),
+        )[1]
+        service._realtime_transcriber = None
+        service._realtime_unloaded_for_cloud_main = False
+        service._config.realtime.enable_realtime_transcription = True
+        service._config.realtime.use_main_model_for_realtime = False
+        service._config.realtime.realtime_model_type = "onnx-community/whisper-tiny"
+        service._reconcile_separate_realtime_with_main("onnx-community/whisper-base")
+        assert service._realtime_transcriber is None
+        assert loads == []
+        service.shutdown()
+
+    def test_is_cloud_model_name_predicate(self) -> None:
+        """The module-level cloud predicate recognises both provider prefixes
+        and rejects local catalog ids."""
+        from src.recorder.application.recorder_service import _is_cloud_model_name
+
+        assert _is_cloud_model_name("openai:gpt-4o-mini-transcribe") is True
+        assert _is_cloud_model_name("elevenlabs:scribe_v1") is True
+        assert _is_cloud_model_name("onnx-community/whisper-tiny") is False
 
     def test_request_realtime_swap_rejected_when_slaved_to_main(self) -> None:
         """A direct ``reload_realtime_model`` while slaved would silently
@@ -2984,32 +3163,93 @@ class TestRecorderService:
         assert service._maybe_save_wav(b"\x00\x01" * 256) == ""
         service.shutdown()
 
-    # ---- _run_delayed_microphone_off (tail-buffer pause both branches) ----
+    # ---- release flush (drain + queue-marker stop, no clipped tail) ----
 
-    def test_run_delayed_microphone_off_pauses_when_no_wake_word(self) -> None:
-        """No wake-word detector → the delayed off sequence pauses hardware
-        capture before running ``_handle_microphone_off`` (covers 777->779
-        taken branch)."""
+    def test_finish_release_stop_feeds_drained_tail(self) -> None:
+        """The OS-buffered tail (drain_available) is fed in buffer-sized
+        frames before the stop, so audio captured right up to release lands
+        in the recording instead of being abandoned when the stream closes."""
         service, _, _, audio_source = self._make_service()
-        service._config.audio.extra_recording_buffer_ms = 0  # no real sleep
-        assert service._wake_word_detector is None
+        frame = b"\x01\x00" * service._config.audio.buffer_size  # one buffer_size frame
+        audio_source.set_drain_payload(frame + frame)  # two frames buffered by the OS
+        fed: list[bytes] = []
+        service._pipeline.feed_audio = lambda c: fed.append(c)  # type: ignore[assignment,method-assign]
 
-        service._run_delayed_microphone_off()
+        service._finish_release_stop()
 
+        assert audio_source.drain_count == 1
+        assert fed == [frame, frame]  # split into two buffer-sized frames
         assert audio_source._pause_count == 1
+        assert service.use_microphone is False
         service.shutdown()
 
-    def test_run_delayed_microphone_off_skips_pause_in_wake_word_mode(self) -> None:
-        """Wake-word mode keeps the mic hot — the delayed off sequence must
-        NOT pause capture (covers 777->779 not-taken branch)."""
-        wake_word = FakeWakeWordDetector()
-        service, _, _, audio_source = self._make_service(wake_word_detector=wake_word)
-        service._config.audio.extra_recording_buffer_ms = 0
-        assert service._wake_word_detector is not None
+    def test_finish_release_stop_pauses_and_stops_via_queue(self) -> None:
+        """With nothing buffered to drain, release still pauses the device and
+        ends the recording through the queue marker (worker finalizes)."""
+        service, _, _, audio_source = self._make_service()
+        service.listen()
+        service.start()
+        assert service.state == RecorderState.RECORDING
 
-        service._run_delayed_microphone_off()
+        service._finish_release_stop()
+        deadline = time.time() + 1.0
+        while service.is_recording and time.time() < deadline:
+            time.sleep(0.01)
+
+        assert audio_source.drain_count == 1
+        assert audio_source._pause_count == 1
+        assert service.use_microphone is False
+        assert service.state != RecorderState.RECORDING
+        service.shutdown()
+
+    def test_run_release_pad_finishes_when_generation_current(self) -> None:
+        """The tail-window daemon runs the stop when its generation is still
+        current (no superseding press)."""
+        service, _, _, audio_source = self._make_service()
+        service.listen()
+        service.start()
+        gen = service._release_generation
+
+        service._run_release_pad(tail_ms=0, generation=gen)  # tail_ms=0 → no real sleep
+        deadline = time.time() + 1.0
+        while service.is_recording and time.time() < deadline:
+            time.sleep(0.01)
+
+        assert audio_source._pause_count == 1
+        assert service.state != RecorderState.RECORDING
+        service.shutdown()
+
+    def test_run_release_pad_bails_when_superseded(self) -> None:
+        """A re-press during the tail window bumps the generation; the stale
+        daemon must NOT stop the fresh recording."""
+        service, _, _, audio_source = self._make_service()
+        service.listen()
+        service.start()
+        stale_gen = service._release_generation
+        service._release_generation = stale_gen + 1  # a later set_microphone bumped it
+
+        service._run_release_pad(tail_ms=0, generation=stale_gen)
+
+        assert audio_source._pause_count == 0  # bailed — no pause, no stop
+        assert service.state == RecorderState.RECORDING
+        service.shutdown()
+
+    def test_set_microphone_repress_cancels_tail_window(self) -> None:
+        """A re-press within extra_recording_buffer_ms cancels the pending stop
+        so the new recording isn't clipped."""
+        service, _, _, audio_source = self._make_service()
+        service._config.audio.extra_recording_buffer_ms = 200
+        service.listen()
+        service.start()
+        assert service.state == RecorderState.RECORDING
+
+        service.set_microphone(False)  # spawns the 200ms tail daemon
+        service.set_microphone(True)  # re-press → bumps generation → cancels it
+        time.sleep(0.3)  # the stale daemon would have fired by now
 
         assert audio_source._pause_count == 0
+        assert service.state == RecorderState.RECORDING
+        service.shutdown()
         service.shutdown()
 
     # ---- set_unload_timeout_seconds (runtime retune of the idle daemon) ----

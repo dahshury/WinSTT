@@ -11,6 +11,7 @@ import {
 	isUncomfortable,
 	needsModelFallback,
 	pickDefaultSttModel,
+	supportsInitialPrompt,
 } from "./model-options";
 
 const fixture: ModelInfo[] = [
@@ -388,5 +389,34 @@ describe("pickDefaultSttModel", () => {
 		// With no state entries at all, every model has Infinity size — first stays first.
 		const out = pickDefaultSttModel(fixture, {});
 		expect(out).toBe("tiny");
+	});
+});
+
+describe("supportsInitialPrompt", () => {
+	const withFamily = (family: ModelInfo["family"]): ModelInfo =>
+		({ ...fixture[0], family }) as ModelInfo;
+
+	test("is true for the Whisper family (.en and multilingual alike)", () => {
+		expect(supportsInitialPrompt(withFamily("whisper"))).toBe(true);
+	});
+
+	test("is true for Lite-Whisper distillations", () => {
+		expect(supportsInitialPrompt(withFamily("lite-whisper"))).toBe(true);
+	});
+
+	test("is false for every non-Whisper engine (no prompt slot, or an untrained one)", () => {
+		for (const family of [
+			"nemo",
+			"gigaam",
+			"kaldi",
+			"t-one",
+			"moonshine",
+			"cohere",
+			"sense_voice",
+			"dolphin",
+			"custom",
+		] as const) {
+			expect(supportsInitialPrompt(withFamily(family))).toBe(false);
+		}
 	});
 });

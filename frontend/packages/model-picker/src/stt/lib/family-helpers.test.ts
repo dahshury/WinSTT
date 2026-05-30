@@ -2,11 +2,15 @@ import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@/entities/model-catalog";
 import {
 	bundleVariants,
+	FAVORITES_GROUP_VALUE,
 	type FamilyKey,
 	getFamilyConfig,
 	groupByFamily,
+	groupModelsByAuthor,
+	isFavoritesGroup,
 	parseParameterSize,
 	variantDisplayName,
+	withFavoritesGroup,
 } from "./family-helpers";
 
 function model(id: string, family: FamilyKey, sizeLabel = "39M"): ModelInfo {
@@ -213,6 +217,49 @@ describe("groupByFamily", () => {
 		const families = grouped.map(([fam]) => fam);
 		expect(families).toContain("custom");
 		expect(families).toContain("whisper");
+	});
+});
+
+describe("withFavoritesGroup", () => {
+	test("returns the author groups unchanged when nothing is favorited", () => {
+		const groups = groupModelsByAuthor([model("tiny", "whisper"), model("n1", "nemo", "600M")]);
+		const result = withFavoritesGroup(groups, () => false);
+		expect(result.map((g) => g.value)).toEqual(groups.map((g) => g.value));
+		// No synthetic group prepended.
+		expect(result.some((g) => isFavoritesGroup(g.value))).toBe(false);
+	});
+
+	test("prepends a Favorites group carrying the starred models in maker-sorted order", () => {
+		const groups = groupModelsByAuthor([
+			model("tiny", "whisper", "39M"),
+			model("n1", "nemo", "600M"),
+		]);
+		const favorites = new Set(["n1", "tiny"]);
+		const result = withFavoritesGroup(groups, (id) => favorites.has(id));
+		expect(result[0]?.value).toBe(FAVORITES_GROUP_VALUE);
+		// whisper (39M) sorts ahead of nemo (600M), so the favorites mirror that order
+		// regardless of which was starred first.
+		expect(result[0]?.items.map((m) => m.id)).toEqual(["tiny", "n1"]);
+		// The maker groups still follow — starred models are repeated, not moved.
+		expect(result.slice(1).map((g) => g.value)).toEqual(["whisper", "nemo"]);
+	});
+
+	test("only includes favorited models, de-duplicated", () => {
+		const groups = groupModelsByAuthor([
+			model("tiny", "whisper", "39M"),
+			model("base", "whisper", "74M"),
+		]);
+		const result = withFavoritesGroup(groups, (id) => id === "base");
+		expect(result[0]?.value).toBe(FAVORITES_GROUP_VALUE);
+		expect(result[0]?.items.map((m) => m.id)).toEqual(["base"]);
+	});
+});
+
+describe("isFavoritesGroup", () => {
+	test("true only for the synthetic favorites sentinel", () => {
+		expect(isFavoritesGroup(FAVORITES_GROUP_VALUE)).toBe(true);
+		expect(isFavoritesGroup("whisper")).toBe(false);
+		expect(isFavoritesGroup("custom")).toBe(false);
 	});
 });
 

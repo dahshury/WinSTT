@@ -13,6 +13,9 @@ import {
 export interface SelectOption {
 	/** Optional short badge text shown before the label (e.g. "EN", "中") */
 	badge?: string;
+	/** When true the option is shown but can't be selected (e.g. a premium TTS
+	 *  voice on a free plan). Row-trailing controls (preview) still work. */
+	disabled?: boolean;
 	/** Optional leading icon shown before the label */
 	icon?: IconSvgElement;
 	id: string;

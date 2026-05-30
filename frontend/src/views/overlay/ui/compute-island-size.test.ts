@@ -19,16 +19,33 @@ describe("computeIslandSize", () => {
 		).toBe("empty");
 	});
 
-	test("thinking always wins (survives the recording → post-processing edge)", () => {
+	test("thinking with NO captioned text stays compact (main-model-only path)", () => {
 		// isRecordingActive has already flipped off by the time the LLM-thinking
-		// callback fires; without this branch the island would briefly empty
-		// out between the recording end and the thinking indicator showing.
+		// callback fires; the thinking branch still resolves first so the island
+		// doesn't empty out between the recording end and the indicator showing.
+		// But with no captioned text the indicator is a chip-sized rotating-word
+		// readout — the island keeps its compact recording footprint and swaps
+		// the visualizer for the indicator instead of ballooning to `long`.
 		expect(
 			computeIslandSize({
 				isRecordingActive: false,
 				isSpeaking: false,
 				isThinking: true,
 				hasShownText: false,
+			})
+		).toBe("compactMedium");
+	});
+
+	test("thinking WITH captioned text widens to long (text needs the room)", () => {
+		// When the realtime model streamed words into the pill, the thinking
+		// indicator shares the surface with wrapped captions — keep the wide
+		// `long` width so both read legibly.
+		expect(
+			computeIslandSize({
+				isRecordingActive: false,
+				isSpeaking: false,
+				isThinking: true,
+				hasShownText: true,
 			})
 		).toBe("long");
 	});

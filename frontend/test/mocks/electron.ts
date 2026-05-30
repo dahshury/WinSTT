@@ -89,6 +89,7 @@ export interface ElectronMockHandle {
 		buildFromTemplate: (template: unknown[]) => { popup: () => void };
 		setApplicationMenu: (menu: unknown) => void;
 	};
+	Notification: { isSupported: () => boolean };
 	nativeImage: {
 		createFromPath: (path: string) => { isEmpty: () => boolean };
 		createFromBuffer: (buf: Buffer) => { isEmpty: () => boolean };
@@ -241,6 +242,16 @@ export function electronMock(): ElectronMockHandle {
 		Menu: {
 			buildFromTemplate: () => ({ popup: () => undefined }),
 			setApplicationMenu: () => undefined,
+		},
+		// Native OS notification (used by cloud-TTS failure feedback). `isSupported`
+		// returns false in tests so the notifier no-ops without constructing one.
+		Notification: class MockNotification {
+			static isSupported(): boolean {
+				return false;
+			}
+			show(): void {
+				return;
+			}
 		},
 		nativeImage: {
 			createFromPath: () => ({ isEmpty: () => false }),

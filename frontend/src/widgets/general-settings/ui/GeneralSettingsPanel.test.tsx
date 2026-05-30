@@ -1,7 +1,8 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
 import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	DEFAULT_WAKE_WORD,
 	flagsToLiveDisplay,
@@ -30,6 +31,35 @@ describe("GeneralSettingsPanel", () => {
 			</IntlProvider>
 		);
 		expect(container.firstElementChild).not.toBeNull();
+	});
+});
+
+describe("GeneralSettingsPanel — per-shape visualizer controls render", () => {
+	const initial = useSettingsStore.getState().settings;
+	afterEach(() => {
+		useSettingsStore.setState({ settings: initial });
+	});
+
+	// Each visualizer type swaps in a different customization control group
+	// (VisualizerShapeControls → VizSliderControl / VisualizerAuraShapeControl).
+	// Mounting the panel per type exercises every group + the percent formatter.
+	test.each([
+		"bar",
+		"grid",
+		"radial",
+		"wave",
+		"aura",
+	] as const)("mounts the %s customization controls", (visualizerType) => {
+		useSettingsStore.setState({
+			settings: { ...initial, general: { ...initial.general, visualizerType } },
+		});
+		const { container, unmount } = render(
+			<IntlProvider>
+				<GeneralSettingsPanel />
+			</IntlProvider>
+		);
+		expect(container.firstElementChild).not.toBeNull();
+		unmount();
 	});
 });
 
@@ -272,6 +302,43 @@ describe("GeneralSettingsPanel helpers — isBarVisualizer", () => {
 
 	test("false for non-bar types", () => {
 		expect(helpers.isBarVisualizer(asSettings({ visualizerType: "wave" }))).toBe(false);
+	});
+});
+
+describe("GeneralSettingsPanel helpers — getVisualizerType", () => {
+	test("defaults to bar when general is missing", () => {
+		expect(helpers.getVisualizerType(undefined)).toBe("bar");
+	});
+
+	test("returns the configured visualizer type", () => {
+		expect(helpers.getVisualizerType(asSettings({ visualizerType: "aura" }))).toBe("aura");
+		expect(helpers.getVisualizerType(asSettings({ visualizerType: "radial" }))).toBe("radial");
+	});
+});
+
+describe("GeneralSettingsPanel helpers — buildAuraShapeSwitcherOptions", () => {
+	test("returns circle and line options with labels", () => {
+		const opts = helpers.buildAuraShapeSwitcherOptions(tStub);
+		expect(opts.map((o) => o.value)).toEqual(["circle", "line"]);
+		for (const opt of opts) {
+			expect(typeof opt.label).toBe("string");
+		}
+	});
+});
+
+describe("GeneralSettingsPanel helpers — pickAuraShape", () => {
+	test("calls update for valid shapes", () => {
+		const update = mock(() => undefined);
+		helpers.pickAuraShape("circle", update);
+		expect(update).toHaveBeenCalledWith({ visualizerAuraShape: "circle" });
+		helpers.pickAuraShape("line", update);
+		expect(update).toHaveBeenCalledWith({ visualizerAuraShape: "line" });
+	});
+
+	test("ignores anything off the enum", () => {
+		const update = mock(() => undefined);
+		helpers.pickAuraShape("triangle", update);
+		expect(update).not.toHaveBeenCalled();
 	});
 });
 

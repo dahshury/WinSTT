@@ -179,6 +179,24 @@ describe("LlmSettingsPanel helpers — buildProviderOpts", () => {
 		const opts = helpers.buildProviderOpts(tStub, {});
 		expect(opts.some((o) => o.value === "apple-intelligence")).toBe(false);
 	});
+
+	test("locks the OpenRouter option (disabled + lock badge) when no key is configured", () => {
+		// Parity with the STT Source "Cloud" option: with no OpenRouter key the
+		// cloud LLM provider must be DISABLED, not merely hinted — otherwise it
+		// stays selectable after the user removes their key.
+		const opts = helpers.buildProviderOpts(tStub, { openrouterNeedsKey: true });
+		const openrouter = opts.find((o) => o.value === "openrouter");
+		expect(openrouter?.disabled).toBe(true);
+		expect(openrouter?.badgeIcon).toBeDefined();
+		expect(openrouter?.badgeTooltipFooter).toBe("openrouterApiKeyTooltip");
+	});
+
+	test("leaves the OpenRouter option enabled once a key is present", () => {
+		const opts = helpers.buildProviderOpts(tStub, { openrouterNeedsKey: false });
+		const openrouter = opts.find((o) => o.value === "openrouter");
+		expect(openrouter?.disabled).toBeUndefined();
+		expect(openrouter?.badgeIcon).toBeUndefined();
+	});
 });
 
 describe("LlmSettingsPanel helpers — pickReplacementOllamaModel", () => {
@@ -246,6 +264,7 @@ type ToggleDepsForTest = FeatureToggleDeps & {
 	scanOllama: ReturnType<typeof mock>;
 	scanOpenRouter: ReturnType<typeof mock>;
 	setShowApiKeyDialog: ReturnType<typeof mock>;
+	setShowModelPicker: ReturnType<typeof mock>;
 	setShowOllamaDialog: ReturnType<typeof mock>;
 };
 
@@ -264,6 +283,7 @@ function makeDeps(overrides: Partial<ToggleDepsForTest> = {}): ToggleDepsForTest
 		apply: mock(() => undefined),
 		setShowOllamaDialog: mock(() => undefined),
 		setShowApiKeyDialog: mock(() => undefined),
+		setShowModelPicker: mock(() => undefined),
 		...overrides,
 	};
 }
@@ -301,12 +321,16 @@ describe("LlmSettingsPanel helpers — tryEnableOllamaForFeature", () => {
 		expect(deps.apply).not.toHaveBeenCalled();
 	});
 
-	test("opens install dialog when reachable but no models installed", async () => {
+	test("opens the model picker when reachable but no models installed", async () => {
 		const deps = makeDeps({ ollamaLoaded: true });
 		await helpers.tryEnableOllamaForFeature(deps);
-		// No model to pick — must NOT silently enable with model: "".
+		// No model to pick — must NOT silently enable with model: "". Instead the
+		// picker opens so the user can download one; `enabled` is committed by the
+		// picker's install callback (not here), and the install/run dialog stays
+		// out of it since Ollama is already reachable.
 		expect(deps.apply).not.toHaveBeenCalled();
-		expect(deps.setShowOllamaDialog).toHaveBeenCalledWith(true);
+		expect(deps.setShowModelPicker).toHaveBeenCalledWith(true);
+		expect(deps.setShowOllamaDialog).not.toHaveBeenCalled();
 	});
 
 	test("auto-picks smallest installed when current model is empty", async () => {

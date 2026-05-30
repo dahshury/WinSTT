@@ -433,6 +433,27 @@ def _aggregate_progress_sink(
     return _on_chunk
 
 
+def _adopt_hf_incomplete(blob: Path) -> None:
+    """Adopt a prior ``huggingface_hub`` ``.incomplete`` partial as our ``.partial``.
+
+    The streaming primitive resumes from ``<blob>.partial`` (HTTP ``Range``).
+    But a download that started via the OLD swap path (or any
+    ``snapshot_download`` call) leaves huggingface_hub's own ``<blob>.incomplete``
+    instead — different suffix, so without this the streaming resume can't see
+    those bytes and restarts the file from scratch (the "cohere resumed from 0%
+    despite 70% on disk" report). When only the HF partial exists, rename it so
+    the resume picks up where HF left off. If the prefix turns out incompatible
+    (e.g. a non-contiguous transfer or a server that ignores ``Range``), the
+    primitive falls back to a fresh ``200`` fetch and the load-time
+    sharded-refetch guard self-heals any residue — never silent corruption.
+    """
+    partial = blob.with_name(blob.name + ".partial")
+    hf_incomplete = blob.with_name(blob.name + ".incomplete")
+    if hf_incomplete.exists() and not partial.exists():
+        with contextlib.suppress(OSError):
+            hf_incomplete.rename(partial)
+
+
 def _download_one(
     controller: DownloadController,
     repo_root: Path,
@@ -458,6 +479,7 @@ def _download_one(
         return "completed"
 
     blob.parent.mkdir(parents=True, exist_ok=True)
+    _adopt_hf_incomplete(blob)
     on_chunk = _aggregate_progress_sink(controller, df, progress_sink)
     try:
         outcome = download_with_progress(
@@ -472,6 +494,54 @@ def _download_one(
     if outcome == "completed":
         _link_snapshot_to_blob(snapshot, blob)
     return outcome
+
+
+#: How many times to retry a single file's download after a transient network
+#: failure (stalled read / dropped connection) before giving up. Each retry
+#: resumes from the ``.partial`` via Range, so a flaky CDN connection on a
+#: multi-GB shard recovers instead of freezing the whole download forever.
+_MAX_FILE_RETRIES = 5
+
+
+def _download_one_with_retry(
+    controller: DownloadController,
+    repo_root: Path,
+    df: DownloadFile,
+    progress_sink: Callable[[str, str, int, int, float], None],
+) -> str:
+    """``_download_one`` with resume-retry on transient network failures.
+
+    ``download_with_progress`` raises ``RuntimeError`` on a stalled read /
+    dropped connection (leaving the ``.partial`` intact). Without a retry the
+    worker would surface that as a dead download. We retry — resuming from the
+    bytes already on disk — with a short capped backoff, bailing immediately if
+    the user paused or cancelled in the meantime. Returns the terminal outcome
+    (``completed`` / ``paused`` / ``cancelled`` / ``error``).
+    """
+    attempt = 0
+    while True:
+        try:
+            return _download_one(controller, repo_root, df, progress_sink)
+        except Exception as exc:
+            # Any fetch failure is retryable (resume from .partial); cancel/pause
+            # are checked below so a Stop never gets stuck in the retry loop.
+            if controller.cancel_event.is_set():
+                return "cancelled"
+            attempt += 1
+            if attempt > _MAX_FILE_RETRIES:
+                logger.warning("download of %s gave up after %d retries: %s", df.filename, _MAX_FILE_RETRIES, exc)
+                return "error"
+            logger.info(
+                "download of %s hit %s — resume-retry %d/%d",
+                df.filename,
+                type(exc).__name__,
+                attempt,
+                _MAX_FILE_RETRIES,
+            )
+            # Capped backoff. ``pause_event.wait`` returns early (True) the
+            # instant the user pauses/cancels, so a retry never blocks a Stop.
+            if controller.pause_event.wait(timeout=min(2.0 * attempt, 10.0)):
+                return "cancelled" if controller.cancel_event.is_set() else "paused"
 
 
 def _run_download(
@@ -509,15 +579,20 @@ def _run_download(
                 outcome = "cancelled"
                 break
             controller._current_file = df.filename
-            file_outcome = _download_one(controller, repo_root, df, progress_sink)
-            if file_outcome == "paused":
-                outcome = "paused"
-                break
-            if file_outcome == "cancelled":
-                outcome = "cancelled"
+            file_outcome = _download_one_with_retry(controller, repo_root, df, progress_sink)
+            if file_outcome != "completed":
+                # paused / cancelled / error — stop and report it verbatim.
+                outcome = file_outcome
                 break
         if outcome == "completed":
             _write_ref(repo_root, files[0].commit_hash if files else "main")
+    except Exception:
+        # A crash mid-download must NOT fall through to the ``"completed"``
+        # default — that falsely tells the renderer the model is ready (entry
+        # cleared, dialog closed) while the bytes are incomplete. Report
+        # ``"error"`` so the partial stays resumable and the UI stays honest.
+        logger.exception("streaming download crashed for %s@%s", controller.model_id, controller.quantization)
+        outcome = "error"
     finally:
         controller.is_running.clear()
         completion_sink(controller.model_id, controller.quantization, outcome)

@@ -9,7 +9,7 @@ import {
 	diagOpenLogsFolder,
 	diagSaveBundle,
 	dialogOpenFile,
-	fileTranscribe,
+	fileQueueEnqueue,
 	ipcSend,
 	onConnectionChange,
 	onSettingsChanged,
@@ -17,6 +17,7 @@ import {
 	settingsSave,
 	sttIsConnected,
 } from "@/shared/api/ipc-client";
+import { CONTEXT_PLAYGROUND_ENABLED } from "@/shared/config/debug-flags";
 import type { RecordingMode } from "@/shared/config/recording-mode-color";
 import { cn } from "@/shared/lib/cn";
 import {
@@ -28,6 +29,9 @@ import {
 } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { Switcher } from "@/shared/ui/switcher";
+
+// Path separators (win + posix) for deriving a file name from a full path.
+const PATH_SEPARATOR_RE = /[\\/]/;
 
 interface TrayMenuState {
 	inputDeviceIndex: number | null;
@@ -164,7 +168,10 @@ export function TrayMenu() {
 		);
 
 		if (filePath) {
-			await fileTranscribe(filePath);
+			// Route through the same queue as drag-drop so it shows in the
+			// main-window queue UI (and shares its sequencing / pause-resume).
+			const fileName = filePath.split(PATH_SEPARATOR_RE).pop() || filePath;
+			await fileQueueEnqueue([{ filePath, fileName }]);
 		}
 		closeTrayMenu();
 	};
@@ -181,6 +188,13 @@ export function TrayMenu() {
 	const handleSaveDiagBundle = async () => {
 		closeTrayMenu();
 		await diagSaveBundle();
+	};
+
+	// DEBUG-ONLY: open the context-awareness playground. Hidden from end users —
+	// the whole branch is compiled out when CONTEXT_PLAYGROUND_ENABLED is false.
+	const handleOpenContextPlayground = () => {
+		ipcSend(IPC.CONTEXT_PLAYGROUND_OPEN);
+		closeTrayMenu();
 	};
 
 	const recordingModeOptions: ReadonlyArray<{ value: RecordingMode; label: string }> = [
@@ -295,6 +309,20 @@ export function TrayMenu() {
 				>
 					{t("saveDiagnosticBundle")}
 				</MenuItem>
+
+				{CONTEXT_PLAYGROUND_ENABLED && (
+					<>
+						<MenuSeparator />
+						<MenuItem
+							activeBg={activeBg}
+							hoverBg={hoverBg}
+							icon={Bug01Icon}
+							onClick={handleOpenContextPlayground}
+						>
+							Context Playground (debug)
+						</MenuItem>
+					</>
+				)}
 
 				<MenuSeparator />
 

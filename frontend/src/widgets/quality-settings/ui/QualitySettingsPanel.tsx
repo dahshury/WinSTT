@@ -28,6 +28,7 @@ import { OptInDialog } from "@/shared/ui/opt-in-dialog";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
+import { ContextDenyListSection } from "./ContextDenyListSection";
 
 const TRANSCRIPTION_FORMAT_OPTIONS: readonly SwitcherOption<"txt" | "srt">[] = [
 	{ value: "txt", label: "TXT", icon: Txt01Icon },
@@ -127,6 +128,10 @@ function ContextAwarenessSection({
 					labelAddon={<Toggle checked={enabled} onCheckedChange={handleToggle} />}
 					tooltip={tg("contextAwarenessTooltip")}
 				/>
+				{/* The deny-list (apps/sites to skip) configures the same capture
+				    pipeline this toggle gates, so it lives directly beneath it —
+				    shown only once context awareness is actually on. */}
+				{enabled ? <ContextDenyListSection /> : null}
 			</div>
 			<OptInDialog
 				body={tg("contextAwarenessDialogBody")}

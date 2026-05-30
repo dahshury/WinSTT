@@ -1,13 +1,14 @@
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useSettingsStore } from "@/entities/setting";
+import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { useSyncSettings } from "@/features/update-settings";
 import { windowCloseSelf } from "@/shared/api/ipc-client";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
-import { OnboardingWizard, useOnboardingWizardStore } from "@/widgets/onboarding-wizard";
+import { OnboardingWizard } from "@/widgets/onboarding-wizard";
 
 /**
  * First-run wizard view. Mirrors the SettingsPage shell so the window reads
@@ -30,13 +31,14 @@ export function OnboardingPage() {
 	useSyncSettings();
 	// The Ollama model-picker dialog lives here at the view level rather than
 	// inside the wizard widget because it's a sibling widget — widgets can't
-	// import other widgets. The LLM step toggles `llmPickerOpen` in the
-	// wizard store; we read that flag and render the dialog wired to the
-	// settings store so installs persist into `llm.dictation.model`.
-	const llmPickerOpen = useOnboardingWizardStore((s) => s.llmPickerOpen);
-	const setLlmPickerOpen = useOnboardingWizardStore((s) => s.setLlmPickerOpen);
+	// import other widgets. The LLM step drives the shared `llm-model-picker`
+	// store (same one Settings uses); we render the dialog from that store so
+	// installs persist into `llm.dictation.model` — and, when the open was a
+	// toggle-driven turn-on, commit `enabled: true` once a model lands.
+	const pickerOpen = useLlmModelPickerStore((s) => s.open);
+	const closePicker = useLlmModelPickerStore((s) => s.close);
+	const commitInstalled = useLlmModelPickerStore((s) => s.commitInstalled);
 	const llmDictation = useSettingsStore((s) => s.settings.llm.dictation);
-	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 
 	return (
 		<SurfaceProvider value={1}>
@@ -89,9 +91,9 @@ export function OnboardingPage() {
 				</Elevated>
 				<OllamaModelManagerDialog
 					currentModel={llmDictation.model}
-					isOpen={llmPickerOpen}
-					onClose={() => setLlmPickerOpen(false)}
-					onModelInstalled={(name) => updateLlmDictation({ model: name, provider: "ollama" })}
+					isOpen={pickerOpen}
+					onClose={closePicker}
+					onModelInstalled={commitInstalled}
 				/>
 			</div>
 		</SurfaceProvider>

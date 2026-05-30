@@ -2,11 +2,10 @@ import { Tooltip } from "@base-ui/react/tooltip";
 import type { ReactNode } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { RestartRequiredToast } from "@/features/restart-notice";
-import { CloudKeyRemovalBanner } from "@/features/show-cloud-key-removal-banner";
+import { CloudKeyRevertNotice } from "@/features/revert-cloud-on-key-removal";
 import { CloudSttErrorToasts } from "@/features/show-cloud-stt-errors";
 import { SwapFailureToast } from "@/features/swap-notifications";
 import { TransformToast } from "@/features/transform-notifications";
-import { TtsPlaybackMount } from "@/features/tts-playback";
 import { SurfaceProvider } from "@/shared/lib/surface";
 import { IntlProvider } from "../providers/IntlProvider";
 import { IpcProvider } from "../providers/IpcProvider";
@@ -27,8 +26,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
 							<SwapFailureToast />
 							<RestartRequiredToast />
 							<CloudSttErrorToasts />
-							<CloudKeyRemovalBanner />
-							<TtsPlaybackMount />
+							<CloudKeyRevertNotice />
 						</div>
 					</SurfaceProvider>
 				</IpcProvider>

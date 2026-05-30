@@ -14,7 +14,9 @@ mock.module("@/shared/api/ipc-client", () => ({
 	cancelDownload: cancelSpy,
 }));
 
-const { useDownloadStore, normalizeProgressPayload } = await import("./download-store");
+const { useDownloadStore, normalizeProgressPayload, isQuantDownloading } = await import(
+	"./download-store"
+);
 
 beforeEach(() => {
 	cancelSpy.mockClear();
@@ -137,5 +139,34 @@ describe("useDownloadStore", () => {
 	test("cancelDownload calls the IPC client's cancelDownload", () => {
 		useDownloadStore.getState().cancelDownload();
 		expect(cancelSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("isQuantDownloading", () => {
+	afterEach(() => useDownloadStore.setState({ quantDownloads: {} }));
+
+	test("true only for a quant with a live entry in the map", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"m@int8": {
+					modelId: "m",
+					quantization: "int8",
+					progress: 12,
+					downloadedBytes: 1,
+					totalBytes: 10,
+					speedBps: 0,
+					paused: false,
+				},
+			},
+		});
+		expect(isQuantDownloading("m", "int8")).toBe(true);
+		// A different precision of the same model is NOT downloading → switchable.
+		expect(isQuantDownloading("m", "fp16")).toBe(false);
+		// A different model entirely → not downloading.
+		expect(isQuantDownloading("other", "int8")).toBe(false);
+	});
+
+	test("false when nothing is in flight", () => {
+		expect(isQuantDownloading("m", "int8")).toBe(false);
 	});
 });

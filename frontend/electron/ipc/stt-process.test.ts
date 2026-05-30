@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { asInvalid } from "@test/lib/cast";
 import { debugLogMock } from "@test/mocks/debug-log";
@@ -705,6 +705,28 @@ describe("spawnServer argv builder", () => {
 		expect(args).not.toContain("--no-enable_realtime_transcription");
 	});
 
+	test("buildServerArgs: default (filterFillers unset) pushes --filter_fillers", () => {
+		// Server defaults filter ON; absent setting must boot ON too.
+		sttProcess.tryAutoSpawnServer();
+		const args = spawnLog[0]?.args ?? [];
+		expect(args).toContain("--filter_fillers");
+		expect(args).not.toContain("--no-filter_fillers");
+	});
+
+	test("buildServerArgs: general.filterFillers=false boots --no-filter_fillers (keep verbatim fillers)", () => {
+		// THE fix: the boot flag carries the user's choice so a verbatim model
+		// (CrisperWhisper) keeps its fillers even if the runtime push is lost.
+		sharedStoreMock.store.set("general.filterFillers", false);
+		try {
+			sttProcess.tryAutoSpawnServer();
+			const args = spawnLog[0]?.args ?? [];
+			expect(args).toContain("--no-filter_fillers");
+			expect(args).not.toContain("--filter_fillers");
+		} finally {
+			sharedStoreMock.store.set("general.filterFillers", true);
+		}
+	});
+
 	test("buildServerArgs: liveTranscriptionDisplay='none' forces --no-enable_realtime_transcription", () => {
 		// No display surface → no consumer → derived realtime OFF.
 		sharedStoreMock.store.set("general.liveTranscriptionDisplay", "none");
@@ -1005,6 +1027,224 @@ describe("process handler wiring", () => {
 		// Status must NOT be "error" — it's "starting" because second is fresh.
 		expect(await statusHandler!(undefined)).toBe("starting");
 		expect(sttProcess.isSttProcessRunning()).toBe(true);
+	});
+
+	// ─── crash auto-recovery ──────────────────────────────────────────
+	//
+	// An unexpected death of the OWNING process (e.g. a native access
+	// violation surfaced by the Python faulthandler) must self-heal via a
+	// bounded, backed-off respawn — see the auto-recovery note in
+	// stt-process.ts. killSttProcess() nulls `sttProcess` before terminating,
+	// so "still owns the slot on exit" is the crash signal.
+	const sttSpawnCount = () => spawnLog.filter((c) => c.command === "uv").length;
+
+	test("auto-restarts the server after an unexpected (non-zero) crash", async () => {
+		jest.useFakeTimers();
+		try {
+			const child = makeFakeChild("uv", 4242);
+			spawnQueue.push(() => child);
+			ipcHandlers.clear();
+			sttProcess.setupSttProcessHandlers();
+			const spawnHandler = ipcHandlers.get("stt-server:spawn");
+			const statusHandler = ipcHandlers.get("stt-server:status");
+			await spawnHandler!(undefined);
+			expect(sttSpawnCount()).toBe(1);
+			// Native access-violation crash: process dies on its own, non-zero code.
+			child.emit("exit", 3_221_225_477, null);
+			// Backoff scheduled but not yet fired — recovery is in progress.
+			expect(sttSpawnCount()).toBe(1);
+			expect(await statusHandler!(undefined)).toBe("starting");
+			jest.advanceTimersByTime(1000);
+			// Respawned.
+			expect(sttSpawnCount()).toBe(2);
+			expect(sttProcess.isSttProcessRunning()).toBe(true);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("does NOT auto-restart after a clean (code 0) exit", async () => {
+		jest.useFakeTimers();
+		try {
+			const child = makeFakeChild("uv", 4243);
+			spawnQueue.push(() => child);
+			ipcHandlers.clear();
+			sttProcess.setupSttProcessHandlers();
+			const spawnHandler = ipcHandlers.get("stt-server:spawn");
+			const statusHandler = ipcHandlers.get("stt-server:status");
+			await spawnHandler!(undefined);
+			child.emit("exit", 0, null);
+			jest.advanceTimersByTime(60_000);
+			expect(sttSpawnCount()).toBe(1);
+			expect(await statusHandler!(undefined)).toBe("idle");
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("a crash from a STALE (non-owning) process does NOT auto-restart", async () => {
+		jest.useFakeTimers();
+		try {
+			const first = makeFakeChild("uv", 4250);
+			spawnQueue.push(() => first);
+			ipcHandlers.clear();
+			sttProcess.setupSttProcessHandlers();
+			const spawnHandler = ipcHandlers.get("stt-server:spawn");
+			await spawnHandler!(undefined);
+			const second = makeFakeChild("uv", 4251);
+			spawnQueue.push(() => second);
+			sttProcess.restartSttProcess(); // `second` now owns the slot
+			const before = sttSpawnCount();
+			// The stale `first` crashes with a non-zero code — must be ignored.
+			first.emit("exit", 1, null);
+			jest.advanceTimersByTime(60_000);
+			expect(sttSpawnCount()).toBe(before);
+			expect(sttProcess.isSttProcessRunning()).toBe(true);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("a deliberate kill cancels a pending crash auto-restart", async () => {
+		jest.useFakeTimers();
+		try {
+			const child = makeFakeChild("uv", 4244);
+			spawnQueue.push(() => child);
+			sttProcess.tryAutoSpawnServer();
+			expect(sttSpawnCount()).toBe(1);
+			child.emit("exit", 1, null); // schedules a respawn
+			sttProcess.killSttProcess(); // user/app stops it before the backoff fires
+			jest.advanceTimersByTime(60_000);
+			expect(sttSpawnCount()).toBe(1); // no respawn happened
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("disableSttAutoRespawn() stops crash recovery (shutdown guard)", async () => {
+		jest.useFakeTimers();
+		try {
+			const child = makeFakeChild("uv", 4245);
+			spawnQueue.push(() => child);
+			sttProcess.tryAutoSpawnServer();
+			sttProcess.disableSttAutoRespawn();
+			child.emit("exit", 1, null);
+			jest.advanceTimersByTime(60_000);
+			expect(sttSpawnCount()).toBe(1);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("gives up and surfaces an error after exhausting the crash-restart budget", async () => {
+		jest.useFakeTimers();
+		try {
+			const children: FakeChild[] = [];
+			for (let i = 0; i < 4; i++) {
+				spawnQueue.push(() => {
+					const c = makeFakeChild("uv", 5000 + i);
+					children.push(c);
+					return c;
+				});
+			}
+			ipcHandlers.clear();
+			sttProcess.setupSttProcessHandlers();
+			const spawnHandler = ipcHandlers.get("stt-server:spawn");
+			const statusHandler = ipcHandlers.get("stt-server:status");
+			await spawnHandler!(undefined); // children[0]
+			// Rapid crashes within the healthy-uptime window burn the 3-attempt budget.
+			const backoffs = [1000, 3000, 8000];
+			for (const [i, delay] of backoffs.entries()) {
+				children[i]!.emit("exit", 1, null);
+				jest.advanceTimersByTime(delay);
+			}
+			// The final respawn crashes too — budget spent, no further restart.
+			children[3]!.emit("exit", 1, null);
+			expect(await statusHandler!(undefined)).toBe("error");
+			expect(sttProcess.isSttProcessRunning()).toBe(false);
+			expect(sttSpawnCount()).toBe(4);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("a crash after a long healthy uptime resets the budget instead of giving up", async () => {
+		jest.useFakeTimers();
+		try {
+			const children: FakeChild[] = [];
+			for (let i = 0; i < 5; i++) {
+				spawnQueue.push(() => {
+					const c = makeFakeChild("uv", 7000 + i);
+					children.push(c);
+					return c;
+				});
+			}
+			ipcHandlers.clear();
+			sttProcess.setupSttProcessHandlers();
+			const spawnHandler = ipcHandlers.get("stt-server:spawn");
+			const statusHandler = ipcHandlers.get("stt-server:status");
+			await spawnHandler!(undefined);
+			// Burn the entire budget with rapid crashes (attempts → max).
+			const backoffs = [1000, 3000, 8000];
+			for (const [i, delay] of backoffs.entries()) {
+				children[i]!.emit("exit", 1, null);
+				jest.advanceTimersByTime(delay);
+			}
+			// children[3] (the last respawn) runs healthily well past the window…
+			jest.setSystemTime(Date.now() + 65_000);
+			children[3]!.emit("exit", 1, null);
+			// …so the budget resets and a fresh restart is scheduled, not an error.
+			expect(await statusHandler!(undefined)).toBe("starting");
+			jest.advanceTimersByTime(1000);
+			expect(sttSpawnCount()).toBe(5);
+			expect(await statusHandler!(undefined)).not.toBe("error");
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("a manual spawn during the backoff supersedes the pending crash restart", async () => {
+		jest.useFakeTimers();
+		try {
+			const first = makeFakeChild("uv", 4260);
+			spawnQueue.push(() => first);
+			ipcHandlers.clear();
+			sttProcess.setupSttProcessHandlers();
+			const spawnHandler = ipcHandlers.get("stt-server:spawn");
+			await spawnHandler!(undefined); // spawn #1
+			first.emit("exit", 1, null); // schedules a respawn; slot is now empty
+			const manual = makeFakeChild("uv", 4261);
+			spawnQueue.push(() => manual);
+			await spawnHandler!(undefined); // spawn #2 — a manual restart fills the slot
+			expect(sttSpawnCount()).toBe(2);
+			// The backoff fires but the slot is already taken → no third spawn.
+			jest.advanceTimersByTime(1000);
+			expect(sttSpawnCount()).toBe(2);
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("surfaces an error when the auto-restart spawn itself throws", async () => {
+		jest.useFakeTimers();
+		try {
+			const child = makeFakeChild("uv", 4270);
+			spawnQueue.push(() => child);
+			ipcHandlers.clear();
+			sttProcess.setupSttProcessHandlers();
+			const spawnHandler = ipcHandlers.get("stt-server:spawn");
+			const statusHandler = ipcHandlers.get("stt-server:status");
+			await spawnHandler!(undefined);
+			child.emit("exit", 1, null); // schedules a respawn
+			// Make the respawn's spawnServer() throw (no resolvable server dir).
+			delete process.env.STT_SERVER_DIR;
+			setIsPackaged(false);
+			jest.advanceTimersByTime(1000);
+			expect(await statusHandler!(undefined)).toBe("error");
+			expect(sttProcess.isSttProcessRunning()).toBe(false);
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 
 	test("markServerRunning() against a STALE-then-replaced state still flips current owner", async () => {

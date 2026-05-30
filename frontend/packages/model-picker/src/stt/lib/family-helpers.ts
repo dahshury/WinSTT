@@ -293,6 +293,62 @@ export function groupModelsByAuthor(models: readonly ModelInfo[]): AuthorGroup[]
 }
 
 /**
+ * Synthetic group value for the user's starred models. NOT a {@link FamilyKey}
+ * — the Favorites group aggregates models across makers and is pinned to the
+ * top of the picker list, so list/rail code special-cases it before falling
+ * back to the per-family rendering.
+ */
+export const FAVORITES_GROUP_VALUE = "favorites";
+
+/** A picker list group is either a real maker family or the synthetic
+ *  "favorites" aggregate pinned to the top. */
+export type SttGroupValue = FamilyKey | typeof FAVORITES_GROUP_VALUE;
+
+/** Widened {@link AuthorGroup} that also admits the synthetic favorites group. */
+export interface SttListGroup {
+	items: ModelInfo[];
+	value: SttGroupValue;
+}
+
+/** Narrowing helper — true for the synthetic favorites group. */
+export function isFavoritesGroup(value: SttGroupValue): value is typeof FAVORITES_GROUP_VALUE {
+	return value === FAVORITES_GROUP_VALUE;
+}
+
+/**
+ * Prepend a synthetic "Favorites" group to the per-maker author groups.
+ *
+ * The favorited models are walked in maker-sorted order (the order the author
+ * groups already arrive in) and de-duplicated, so the Favorites group reads
+ * the same top-to-bottom as the rest of the list. The models are REPEATED, not
+ * moved — each starred model keeps its normal maker-group card AND gains a
+ * shortcut card up top, which is exactly the requested behaviour.
+ *
+ * Returns the author groups unchanged (widened to {@link SttListGroup}) when
+ * nothing is favorited, so the Favorites group / rail tile only appear once the
+ * user has starred at least one model.
+ */
+export function withFavoritesGroup(
+	groups: readonly AuthorGroup[],
+	isFavorite: (modelId: string) => boolean
+): SttListGroup[] {
+	const favorites: ModelInfo[] = [];
+	const seen = new Set<string>();
+	for (const group of groups) {
+		for (const model of group.items) {
+			if (isFavorite(model.id) && !seen.has(model.id)) {
+				seen.add(model.id);
+				favorites.push(model);
+			}
+		}
+	}
+	if (favorites.length === 0) {
+		return [...groups];
+	}
+	return [{ value: FAVORITES_GROUP_VALUE, items: favorites }, ...groups];
+}
+
+/**
  * A "variant bundle" pairs a multilingual base model with its ``.en``
  * English-only sibling (when both are present in the same family) so the
  * picker can render them as one collapsible card instead of two adjacent

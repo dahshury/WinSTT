@@ -4,6 +4,7 @@ import {
 	AudioVisualizerRadial,
 	resolveRadialBarCount,
 	resolveRadialDistance,
+	resolveRadialDistancePct,
 	resolveRadialSequencerInterval,
 } from "./AudioVisualizerRadial";
 
@@ -92,5 +93,26 @@ describe("resolveRadialDistance", () => {
 
 	test("md → 32 (default)", () => {
 		expect(resolveRadialDistance(undefined, "md")).toBe(32);
+	});
+});
+
+describe("resolveRadialDistancePct", () => {
+	test("returns undefined when no percentage is set", () => {
+		expect(resolveRadialDistancePct(undefined, "md")).toBeUndefined();
+	});
+
+	test("57% of md half-height (56) ≈ the previous default (32)", () => {
+		expect(resolveRadialDistancePct(57, "md")).toBe(32);
+	});
+
+	test("scales with the size variant's half-height", () => {
+		expect(resolveRadialDistancePct(50, "lg")).toBe(56); // 112 * 0.5
+		expect(resolveRadialDistancePct(90, "xl")).toBe(202); // round(224 * 0.9)
+		expect(resolveRadialDistancePct(20, "icon")).toBe(2); // round(12 * 0.2)
+	});
+
+	test("renders without throwing when given a radiusPct prop", () => {
+		const { container } = render(<AudioVisualizerRadial radiusPct={40} size="lg" />);
+		expect(container.firstElementChild).not.toBeNull();
 	});
 });

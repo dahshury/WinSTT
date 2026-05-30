@@ -261,6 +261,42 @@ export const generalSettingsSchema = z.object({
 	// `decodeSettingsPayload`, and other windows fall back to ALL defaults —
 	// which then broadcasts back and silently resets unrelated settings.
 	visualizerBarCount: z.number().int().min(3).max(21).default(9).catch(9),
+	// Per-shape visualizer customization. Each knob mirrors the bar-count
+	// pattern above: a defaulted, `.catch`-guarded scalar that the renderer
+	// forwards into the matching component prop / shader uniform (see
+	// `resolveVisualizerConfig` in features/audio-visualizer). Defaults
+	// reproduce the previous hardcoded look exactly. `.catch` keeps a stale
+	// out-of-range persisted value from failing the whole `general` parse —
+	// which would otherwise fall back to ALL defaults and silently wipe
+	// unrelated settings across windows on upgrade.
+	// — Radial —
+	visualizerRadialDotCount: z.number().int().min(6).max(48).default(24).catch(24),
+	// Ring radius as a percentage of the visualizer's half-height (size-relative
+	// so it stays sensible across the xs–xl overlay presets). ~57 % reproduces
+	// the previous size-derived radius.
+	visualizerRadialRadius: z.number().int().min(20).max(90).default(57).catch(57),
+	// — Grid —
+	visualizerGridRows: z.number().int().min(3).max(8).default(5).catch(5),
+	visualizerGridColumns: z.number().int().min(3).max(8).default(5).catch(5),
+	// Idle-sweep speed (1 = slow … 10 = fast); mapped to the animation interval
+	// via `gridSpeedToInterval` (interval = round(600 / speed)). 6 ≈ the previous
+	// 100 ms tick.
+	visualizerGridSpeed: z.number().int().min(1).max(10).default(6).catch(6),
+	// — Wave (WebGL) —
+	visualizerWaveLineWidth: z.number().int().min(1).max(6).default(2).catch(2),
+	// Edge softness, 0–100 % → uSmoothing 0.0–1.0 (50 → 0.5, the previous value).
+	visualizerWaveSmoothing: z.number().int().min(0).max(100).default(50).catch(50),
+	// Rainbow hue-shift toward the wave edges, 0–100 % → uColorShift 0.0–1.0
+	// (5 → 0.05, the previous value; the shader treats < 1 % as off).
+	visualizerWaveColorShift: z.number().int().min(0).max(100).default(5).catch(5),
+	// — Aura (WebGL) —
+	visualizerAuraShape: z.enum(["circle", "line"]).default("circle").catch("circle"),
+	// Field blur, 0–100 % → uBlur 0.0–1.0 (20 → 0.2, the previous value).
+	visualizerAuraBlur: z.number().int().min(0).max(100).default(20).catch(20),
+	// Additive bloom (dark theme only), 0–100 % → uBloom 0.0–1.0 (0 → off).
+	visualizerAuraBloom: z.number().int().min(0).max(100).default(0).catch(0),
+	// Rainbow hue-shift across the aura, 0–100 % → uColorShift 0.0–1.0 (5 → 0.05).
+	visualizerAuraColorShift: z.number().int().min(0).max(100).default(5).catch(5),
 	contextAwareness: z.boolean().default(false),
 	/**
 	 * User-managed deny-list for context capture. Each entry is either
@@ -618,6 +654,33 @@ export const ttsSettingsSchema = z.object({
 	// hotkey itself must always carry a valid combo so the conflict checker
 	// can compare against it and the recorder UI never renders an empty chip.
 	hotkey: z.string().min(1).default("LMeta+LShift+E").catch("LMeta+LShift+E"),
+	// Local ⇄ Cloud switch mirroring the STT/LLM source toggles. "local" =
+	// Kokoro ONNX (the `voice`/`lang`/`speed` fields above); "cloud" routes
+	// synthesis through ElevenLabs entirely in the Electron main process (see
+	// `electron/ipc/tts-cloud.ts`). Cloud is only selectable when the
+	// ElevenLabs key is present AND verified (`integrations.elevenlabs.verified`);
+	// the renderer gates the option, and the cloud path reuses the same
+	// encrypted `integrations.elevenlabs.apiKey` secret — no new key storage.
+	source: z.enum(["local", "cloud"]).default("local"),
+	// ElevenLabs tuning, active only when `source === "cloud"`. `voice` is the
+	// account voice_id (fetched live via /v2/voices, so cloned voices appear);
+	// `model` is one of the streaming-PCM-capable model ids (see
+	// `widgets/tts-settings/config/cloud-tts-models`). `stability`/`similarity`/`style` are the
+	// 0..1 voice-settings knobs, `speed` the 0.7..1.2 multiplier, and
+	// `speakerBoost` the use_speaker_boost flag — passed verbatim into the
+	// ElevenLabs `voice_settings` payload. `.prefault({})` lets the whole
+	// sub-object default cleanly when absent from persisted JSON.
+	cloud: z
+		.object({
+			voice: z.string().default(""),
+			model: z.string().default("eleven_multilingual_v2"),
+			stability: z.number().min(0).max(1).default(0.5),
+			similarity: z.number().min(0).max(1).default(0.75),
+			style: z.number().min(0).max(1).default(0),
+			speed: z.number().min(0.7).max(1.2).default(1.0),
+			speakerBoost: z.boolean().default(true),
+		})
+		.prefault({}),
 });
 
 export const appSettingsSchema = z.object({

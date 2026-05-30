@@ -14,6 +14,7 @@ import {
 	NeuralNetworkIcon,
 	PauseIcon,
 	PlayIcon,
+	StarIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
@@ -23,9 +24,10 @@ import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { resolveQuantCache } from "../lib/cache-helpers";
+import { resolveEffectiveQuant, resolveQuantCache } from "../lib/cache-helpers";
 import { variantDisplayName } from "../lib/family-helpers";
 import { isUncomfortable } from "../lib/hardware-fit";
+import { formatLanguages } from "../lib/language-names";
 import { quantCacheStatus } from "../lib/pill-helpers";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
@@ -49,7 +51,14 @@ function buildAttributeSegments(
 			label: "Multilingual",
 			icon: GlobeIcon,
 			className: "text-sky-600 dark:text-sky-400",
-			tooltip: "Transcribes many languages",
+			// Spell out exactly which languages the model transcribes. The
+			// catalog fills `languages` with the full list (Whisper ~99,
+			// Canary/Parakeet ~25); fall back to the generic blurb only when
+			// the list hasn't been populated yet.
+			tooltip:
+				model.languages.length > 0
+					? `Supports ${model.languages.length} languages: ${formatLanguages(model.languages)}`
+					: "Transcribes many languages",
 		});
 	} else if (englishOnly) {
 		segments.push({
@@ -295,6 +304,12 @@ type QuantOption = ReturnType<typeof getQuantizationOptions>[number];
 type QuantCacheState = ReturnType<typeof resolveQuantCache>;
 
 interface QuantActionButtonsProps {
+	/** The precision these controls actually act on. For a concrete badge this
+	 *  equals ``opt.value``; for the Auto badge it's the SERVER's effective
+	 *  precision (e.g. ``int8`` for an int8-preferred family) so pause / resume /
+	 *  cancel target the same ``model@quant`` key the download was started under.
+	 *  ``opt.label`` is still used for the human-facing tooltip/aria text. */
+	actionQuant: OnnxQuantization;
 	cache: QuantCacheState;
 	download: QuantDownloadSnapshot | undefined;
 	model: ModelInfo;
@@ -317,6 +332,7 @@ interface QuantActionButtonsProps {
  *  Extracted from {@link QuantOptionButton} so each branch is counted in its
  *  own scope, keeping both functions under the cognitive-complexity cap. */
 function QuantActionButtons({
+	actionQuant,
 	cache,
 	download,
 	model,
@@ -339,7 +355,7 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Resume ${opt.label} download`}
 					icon={PlayIcon}
-					onClick={() => onDownloadAction("resume", model.id, opt.value)}
+					onClick={() => onDownloadAction("resume", model.id, actionQuant)}
 					tone="primary"
 					tooltip="Resume download"
 				/>
@@ -348,7 +364,7 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Pause ${opt.label} download`}
 					icon={PauseIcon}
-					onClick={() => onDownloadAction("pause", model.id, opt.value)}
+					onClick={() => onDownloadAction("pause", model.id, actionQuant)}
 					tooltip="Pause download (resumable mid-file)"
 				/>
 			) : null}
@@ -356,7 +372,7 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Cancel ${opt.label} download`}
 					icon={CancelCircleIcon}
-					onClick={() => onDownloadAction("cancel", model.id, opt.value)}
+					onClick={() => onDownloadAction("cancel", model.id, actionQuant)}
 					tone="danger"
 					tooltip="Cancel download"
 				/>
@@ -368,7 +384,7 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Delete ${opt.label} weights for ${model.displayName}`}
 					icon={Delete02Icon}
-					onClick={() => onRequestDeleteQuant(model.id, opt.value, model.displayName, opt.label)}
+					onClick={() => onRequestDeleteQuant(model.id, actionQuant, model.displayName, opt.label)}
 					tone="danger"
 					tooltip={deleteTooltip}
 				/>
@@ -507,22 +523,48 @@ function QuantOptionButton({
 	onDownloadAction,
 }: QuantOptionButtonProps) {
 	const isActive = isSelectedModel && opt.value === currentQuantization;
-	const cache = resolveQuantCache(state, opt.value);
-	const download = getDownloadSnapshot?.(model.id, opt.value);
+	// "Auto" (value "") is a selection-only router. It maps to the precision the
+	// SERVER will actually load for this device/runtime — ``effective_quantization``
+	// (e.g. fp16 on DirectML, int8 on CPU for the int8-preferred families) — NOT
+	// the raw fp32 default export. So we reflect THAT precision's cache tone (Auto
+	// reads green when selecting it loads instantly) but give Auto NO download
+	// chrome of its own: no progress fill, no pause/cancel/delete, and no
+	// click-to-fetch. Clicking Auto always selects at "" and lets the swap
+	// controller resolve + prompt the right device-appropriate download. Without
+	// this, Auto checked the (usually absent) fp32 default, so clicking it either
+	// fired a spurious fp32 download ("picks a random quantization") or went inert.
+	const isAuto = opt.value === "";
+	// ``resolveEffectiveQuant`` returns ``string`` (the server's
+	// ``effective_quantization``); every value it can yield is a member of the
+	// ``OnnxQuantization`` union (it's sourced from the same catalog quant list),
+	// so narrow it back the way ``use-model-swap-controller.resolveTargetQuant``
+	// does — keeps the snapshot lookup + action dispatch on the typed quant.
+	const effectiveValue = (
+		isAuto ? resolveEffectiveQuant(state, opt.value) : opt.value
+	) as OnnxQuantization;
+	const cache = resolveQuantCache(state, effectiveValue);
+	// Look up the live download by the EFFECTIVE precision, not ``opt.value``.
+	// The Auto badge is the only surface representing an int8-preferred family's
+	// effective download (e.g. cohere has no concrete ``int8`` badge, yet a
+	// download started via Auto/row lands under ``model@int8``). Keying off
+	// ``effectiveValue`` makes Auto reflect that download's progress + controls
+	// instead of silently showing nothing. For a concrete badge ``effectiveValue``
+	// equals ``opt.value``, so this is a no-op there.
+	const download = getDownloadSnapshot?.(model.id, effectiveValue);
 	const isDownloading = download !== undefined;
 	const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
 	const cacheToneClass = badgeToneForCache(cache?.state);
 	const progressFillPct = resolveProgressFillPct(cache, download);
-	// A not-cached, idle badge IS the download button: clicking it kicks off a
-	// background predownload (no swap) rather than selecting. Cached/partial
+	// A not-cached, idle concrete badge IS the download button: clicking it kicks
+	// off a background predownload (no swap) rather than selecting. Cached/partial
 	// badges keep their select-to-swap behaviour (partial resumes via the swap
-	// controller on select). Falls back to select if the consumer wired no
-	// download dispatcher.
-	const canStartDownload = !(isDownloading || isOnDisk) && onDownloadAction !== undefined;
+	// controller on select). Auto is never a download button — it routes through
+	// select. Falls back to select if the consumer wired no download dispatcher.
+	const canStartDownload = !(isAuto || isDownloading || isOnDisk) && onDownloadAction !== undefined;
 	// With the inline Download button gone, a not-cached idle badge has no
 	// trailing controls — round both ends so it doesn't show a square right
 	// edge inside the group ring. (Downloading → pause/cancel; on-disk → trash.)
-	const canDelete = onRequestDeleteQuant !== undefined && isOnDisk;
+	const canDelete = !isAuto && onRequestDeleteQuant !== undefined && isOnDisk;
 	const hasTrailingActions =
 		(isDownloading && onDownloadAction !== undefined) || (canDelete && !isDownloading);
 	const statusHint = canStartDownload ? " Click to download." : "";
@@ -542,15 +584,24 @@ function QuantOptionButton({
 				side="top"
 			>
 				<button
+					aria-disabled={isDownloading}
 					aria-label={badgeAriaLabel}
 					className={cn(
-						"group/badge relative inline-flex h-6 cursor-pointer items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
+						"group/badge relative inline-flex h-6 items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
+						isDownloading ? "cursor-default" : "cursor-pointer",
 						hasTrailingActions ? "rounded-l-[5px]" : "rounded-[5px]",
 						isActive ? "bg-accent/20 text-accent" : cacheToneClass
 					)}
 					onClick={(e) => {
 						e.preventDefault();
 						e.stopPropagation();
+						// While this precision is downloading, the badge body is inert
+						// for selection — switching to a not-yet-downloaded precision
+						// would just fail / re-fetch. The trailing pause/cancel
+						// controls (QuantActionButtons) own the in-flight download.
+						if (isDownloading) {
+							return;
+						}
 						if (canStartDownload) {
 							onDownloadAction?.("start", model.id, opt.value);
 						} else {
@@ -574,12 +625,18 @@ function QuantOptionButton({
 					/>
 				</button>
 			</Tooltip>
+			{/* Auto still renders its download controls (pause/resume/cancel) when
+			    its EFFECTIVE precision is downloading — for int8-preferred families
+			    Auto is the only badge representing that download. Delete stays off
+			    Auto (the "Auto" label would read wrong on a delete confirm; the
+			    concrete badge or the dialog's Discard owns deletion). */}
 			<QuantActionButtons
+				actionQuant={effectiveValue}
 				cache={cache}
 				download={download}
 				model={model}
 				onDownloadAction={onDownloadAction}
-				onRequestDeleteQuant={onRequestDeleteQuant}
+				onRequestDeleteQuant={isAuto ? undefined : onRequestDeleteQuant}
 				opt={opt}
 			/>
 		</ButtonGroup>
@@ -628,6 +685,57 @@ function PrecisionGroup({
 	);
 }
 
+/**
+ * Star toggle pinned to the card's right edge. Clicking it stars / unstars the
+ * model, which adds / removes it from the synthetic "Favorites" group at the
+ * top of the list. Mirrors the rail's favorite-star vocabulary (amber, filled
+ * when active) so the two affordances read as the same gesture.
+ *
+ * ``preventDefault`` + ``stopPropagation`` keep the click from bubbling to the
+ * enclosing ``Combobox.Item`` (which would otherwise select the model) — the
+ * same guard {@link ExpandTrigger} and the per-badge buttons use.
+ */
+function FavoriteToggle({
+	displayName,
+	isFavorited,
+	modelId,
+	onToggle,
+}: {
+	displayName: string;
+	isFavorited: boolean;
+	modelId: string;
+	onToggle: (modelId: string) => void;
+}) {
+	return (
+		<Tooltip content={isFavorited ? "Remove from Favorites" : "Add to Favorites"} side="top">
+			<button
+				aria-label={
+					isFavorited ? `Remove ${displayName} from favorites` : `Add ${displayName} to favorites`
+				}
+				aria-pressed={isFavorited}
+				className={cn(
+					"inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors",
+					"motion-reduce:transition-none",
+					isFavorited
+						? "text-amber-500 hover:bg-amber-500/15"
+						: "text-foreground-muted opacity-55 hover:bg-surface-hover hover:text-foreground hover:opacity-100"
+				)}
+				onClick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onToggle(modelId);
+				}}
+				type="button"
+			>
+				<HugeiconsIcon
+					className={cn("size-3.5", isFavorited && "fill-amber-500")}
+					icon={StarIcon}
+				/>
+			</button>
+		</Tooltip>
+	);
+}
+
 export interface SttModelCardProps {
 	/**
 	 * Optional content rendered in the card's header right column, after
@@ -652,6 +760,9 @@ export interface SttModelCardProps {
 	 * sibling card below.
 	 */
 	hasSelectedVariant?: boolean;
+	/** Whether ``model.id`` is currently starred — drives the favorite toggle's
+	 *  filled/amber state. Defaults to ``false`` when omitted. */
+	isFavorite?: ((modelId: string) => boolean) | undefined;
 	model: ModelInfo;
 	/**
 	 * Renders the recessed {@link CARD_NESTED} chrome — set by
@@ -680,6 +791,9 @@ export interface SttModelCardProps {
 		  ) => void)
 		| undefined;
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+	/** Star / unstar handler. When omitted, no favorite toggle is rendered
+	 *  (keeps the card read-only for consumers that don't wire favorites). */
+	onToggleFavorite?: ((modelId: string) => void) | undefined;
 	selectedId: string | undefined;
 	/**
 	 * Sibling variants in the same bundle. Passed so {@link variantDisplayName}
@@ -753,7 +867,9 @@ export function SttModelCard({
 	onDownloadAction,
 	actions,
 	hasSelectedVariant = false,
+	isFavorite,
 	nested = false,
+	onToggleFavorite,
 	siblings,
 }: SttModelCardProps) {
 	const isSelected = model.id === selectedId;
@@ -822,6 +938,17 @@ export function SttModelCard({
 					<PerfBars accuracyScore={model.accuracyScore} speedScore={model.speedScore} />
 					<AttributeGroup segments={segments} />
 					{actions}
+					{/* Favorite star — hidden on broken custom drops (you can't
+					    star a model you can't load) and when the consumer wires
+					    no toggle handler. */}
+					{onToggleFavorite && !isUnavailable ? (
+						<FavoriteToggle
+							displayName={model.displayName}
+							isFavorited={isFavorite?.(model.id) ?? false}
+							modelId={model.id}
+							onToggle={onToggleFavorite}
+						/>
+					) : null}
 				</div>
 			</div>
 			{isUnavailable ? null : (

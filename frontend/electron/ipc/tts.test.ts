@@ -43,18 +43,33 @@ mock.module("electron", () => ({
 }));
 
 // ── store shim ────────────────────────────────────────────────────────
-// A focused store mock: a flat dot-path map plus an onDidChange registry
-// keyed by the EXACT key passed to set() (matching the @test/mocks/store
-// shim's semantics — production electron-store fans nested changes up, but
-// the mock and the code-under-test only ever wire up `onDidChange("tts")`).
+// A focused store mock: a flat dot-path map plus an onDidChange registry.
+// Like production electron-store (conf), a write to a nested key fans the
+// change UP to its ancestor keys and dispatches their listeners SYNCHRONOUSLY
+// inside set() — so `store.set("tts.enabled", …)` fires the `onDidChange("tts")`
+// listener the code-under-test wires up, mid-`set`. Replicating that timing is
+// what lets the boot-path regression test below catch a listener that runs
+// while stale state (lastLocalActive) hasn't been re-aligned yet.
 let storeData: Record<string, unknown> = {};
 const storeListeners = new Map<string, Array<(value: unknown, prev: unknown) => void>>();
+
+function fireStoreKey(key: string, value: unknown, prev: unknown): void {
+	for (const cb of storeListeners.get(key) ?? []) {
+		cb(value, prev);
+	}
+}
 
 function setStore(key: string, value: unknown): void {
 	const prev = storeData[key];
 	storeData[key] = value;
-	for (const cb of storeListeners.get(key) ?? []) {
-		cb(value, prev);
+	fireStoreKey(key, value, prev);
+	// Fan up to every ancestor key (e.g. "tts.enabled" → "tts"), matching conf.
+	// Production listeners ignore the (value, prev) args and re-read from the
+	// store, so the (flat-map) ancestor value is a sufficient stand-in.
+	const segments = key.split(".");
+	for (let depth = segments.length - 1; depth > 0; depth--) {
+		const ancestor = segments.slice(0, depth).join(".");
+		fireStoreKey(ancestor, storeData[ancestor], storeData[ancestor]);
 	}
 }
 
@@ -145,6 +160,9 @@ class FakeSttClient {
 		if (this.initThrows) {
 			throw new Error("init boom");
 		}
+	}
+	shutdownTts(): void {
+		this.calls.push({ method: "shutdownTts" });
 	}
 	ttsSynthesize(payload: unknown): void {
 		this.calls.push({ method: "ttsSynthesize", arg: payload });
@@ -1185,42 +1203,148 @@ describe("eager warm-up", () => {
 		expect(logContains("warm-up init_tts failed")).toBe(true);
 	});
 
-	test("flipping tts.enabled off→on via the store change re-fires warm-up", async () => {
+	// Fire the onDidChange("tts") listener registered by setupTts. The store
+	// mock keys listeners by the exact set() key, and the handler subscribes to
+	// "tts"; the production listener ignores the (value, prev) args and re-reads
+	// from the store, so (undefined, undefined) is fine.
+	function fireTtsChange(): void {
+		for (const cb of storeListeners.get("tts") ?? []) {
+			cb(undefined, undefined);
+		}
+	}
+
+	// CASE 1 — warm-up on off→on while source is local.
+	test("flipping tts.enabled off→on while source is local fires warm-up, not shutdown", async () => {
 		setup({ enabled: false });
+		storeData["tts.source"] = "local";
+		client.estimateResult = { already_installed: true };
 		await flushMicrotasks();
 		expect(client.countCalls("initTts")).toBe(0);
-		// Set the flag true, then fire the onDidChange("tts") listener.
 		storeData["tts.enabled"] = true;
-		client.estimateResult = { already_installed: true };
-		// The store mock fires onDidChange listeners keyed by the exact set() key.
-		// The handler subscribes to "tts", so simulate that change.
-		for (const cb of storeListeners.get("tts") ?? []) {
-			cb(undefined, undefined);
-		}
+		fireTtsChange();
 		await flushMicrotasks();
 		expect(client.countCalls("initTts")).toBeGreaterThanOrEqual(1);
+		expect(client.countCalls("shutdownTts")).toBe(0);
 	});
 
-	test("an on→on store change (no edge) does NOT re-fire warm-up", async () => {
+	// CASE 2 — shutdown on on→off while source is local.
+	test("flipping tts.enabled on→off while source is local fires shutdownTts to free Kokoro", async () => {
 		setup({ enabled: true });
+		storeData["tts.source"] = "local";
 		client.estimateResult = { already_installed: true };
 		await flushMicrotasks();
-		const afterSetup = client.countCalls("initTts");
-		// Already enabled; firing the store change again is a no-edge → no extra init.
-		for (const cb of storeListeners.get("tts") ?? []) {
-			cb(undefined, undefined);
-		}
+		const initBefore = client.countCalls("initTts");
+		storeData["tts.enabled"] = false;
+		fireTtsChange();
 		await flushMicrotasks();
-		expect(client.countCalls("initTts")).toBe(afterSetup);
+		expect(client.countCalls("shutdownTts")).toBe(1);
+		expect(client.countCalls("initTts")).toBe(initBefore);
+	});
+
+	// CASE 3 — shutdown on source local→cloud while enabled (the headline gap:
+	// tts.enabled never changes, so the old off→on check missed it entirely).
+	test("switching tts.source local→cloud while enabled fires shutdownTts (no warm-up)", async () => {
+		setup({ enabled: true });
+		storeData["tts.source"] = "local";
+		client.estimateResult = { already_installed: true };
+		await flushMicrotasks();
+		const initBefore = client.countCalls("initTts");
+		storeData["tts.source"] = "cloud";
+		fireTtsChange();
+		await flushMicrotasks();
+		expect(client.countCalls("shutdownTts")).toBe(1);
+		expect(client.countCalls("initTts")).toBe(initBefore);
+	});
+
+	// CASE 4 — warm-up on source cloud→local while enabled. lastLocalActive is
+	// computed at construction, so the initial state must be cloud (inactive).
+	test("switching tts.source cloud→local while enabled fires warm-up, no shutdown", async () => {
+		storeData = { "tts.enabled": true, "tts.source": "cloud" };
+		client = new FakeSttClient();
+		client.estimateResult = { already_installed: true };
+		cleanup = setupTts(asSttClient(client));
+		await flushMicrotasks();
+		expect(client.countCalls("initTts")).toBe(0);
+		storeData["tts.source"] = "local";
+		fireTtsChange();
+		await flushMicrotasks();
+		expect(client.countCalls("initTts")).toBeGreaterThanOrEqual(1);
+		expect(client.countCalls("shutdownTts")).toBe(0);
+	});
+
+	// CASE 5 — neither edge fires while source stays cloud (cloud is never the
+	// local synthesis path, so toggling tts.enabled is a no-op for Kokoro).
+	test("toggling tts.enabled while source is cloud fires NEITHER warm-up NOR shutdownTts", async () => {
+		storeData = { "tts.enabled": false, "tts.source": "cloud" };
+		client = new FakeSttClient();
+		client.estimateResult = { already_installed: true };
+		cleanup = setupTts(asSttClient(client));
+		await flushMicrotasks();
+		expect(client.countCalls("initTts")).toBe(0);
+		expect(client.countCalls("shutdownTts")).toBe(0);
+		storeData["tts.enabled"] = true;
+		fireTtsChange();
+		await flushMicrotasks();
+		expect(client.countCalls("initTts")).toBe(0);
+		expect(client.countCalls("shutdownTts")).toBe(0);
+		storeData["tts.enabled"] = false;
+		fireTtsChange();
+		await flushMicrotasks();
+		expect(client.countCalls("initTts")).toBe(0);
+		expect(client.countCalls("shutdownTts")).toBe(0);
+	});
+
+	// REGRESSION GUARD — a no-edge change (e.g. voice/speed edit) on the active
+	// local path fires neither warm-up nor shutdown.
+	test("an on→on (enabled, local) store change with no edge fires neither warm-up nor shutdown", async () => {
+		setup({ enabled: true });
+		storeData["tts.source"] = "local";
+		client.estimateResult = { already_installed: true };
+		await flushMicrotasks();
+		const initBefore = client.countCalls("initTts");
+		fireTtsChange();
+		await flushMicrotasks();
+		expect(client.countCalls("initTts")).toBe(initBefore);
+		expect(client.countCalls("shutdownTts")).toBe(0);
 	});
 
 	test("an off→off store change does NOT warm up", async () => {
 		setup({ enabled: false });
 		await flushMicrotasks();
-		for (const cb of storeListeners.get("tts") ?? []) {
-			cb(undefined, undefined);
-		}
+		fireTtsChange();
 		await flushMicrotasks();
 		expect(client.countCalls("initTts")).toBe(0);
+		expect(client.countCalls("shutdownTts")).toBe(0);
+	});
+
+	// REGRESSION GUARD — on→off while local but disconnected must skip the
+	// shutdown (shutdown_tts is a fire-and-forget control send; pointless on a
+	// dead channel and ungated internally, so the caller must gate on isConnected).
+	test("on→off while local but client disconnected does NOT call shutdownTts", async () => {
+		setup({ enabled: true, connected: false });
+		storeData["tts.source"] = "local";
+		await flushMicrotasks();
+		storeData["tts.enabled"] = false;
+		fireTtsChange();
+		await flushMicrotasks();
+		expect(client.countCalls("shutdownTts")).toBe(0);
+	});
+
+	// REGRESSION GUARD — the boot install-check's programmatic flip-off must not
+	// register as an active→inactive edge (nothing was ever warmed, so freeing
+	// is a no-op). This is NON-VACUOUS only because the store mock fans the
+	// `store.set("tts.enabled", false)` write up to the "tts" listener
+	// SYNCHRONOUSLY (like conf): the listener runs mid-`set`, so it fails unless
+	// `lastLocalActive` is pre-aligned to false BEFORE the write in tts.ts. With
+	// the ordering reversed, the listener would see stale `lastLocalActive=true`
+	// and fire a spurious shutdownTts → this test would catch it.
+	test("first-connect boot check flipping tts.enabled OFF does NOT call shutdownTts", async () => {
+		storeData = { "tts.enabled": true, "tts.source": "local" };
+		client = new FakeSttClient();
+		client.estimateResult = { already_installed: false };
+		cleanup = setupTts(asSttClient(client));
+		await flushMicrotasks();
+		expect(storeSetCalls).toContainEqual({ key: "tts.enabled", value: false });
+		expect(client.countCalls("shutdownTts")).toBe(0);
 	});
 });

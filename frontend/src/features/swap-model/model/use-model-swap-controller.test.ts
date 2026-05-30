@@ -203,6 +203,32 @@ describe("resolveTargetQuant", () => {
 	});
 });
 
+describe("isSwapBlockedByDownload", () => {
+	const states = { m: { id: "m", effective_quantization: "int8" } } as never;
+
+	test("blocks a row-select when the model's effective precision is downloading", () => {
+		// Row select → quantization undefined → effective int8. int8 is
+		// downloading, so switching to it must be refused.
+		const dl = (id: string, q: string) => id === "m" && q === "int8";
+		expect(t.isSwapBlockedByDownload("m", undefined, "", states, dl)).toBe(true);
+	});
+
+	test("allows switching to a cached precision while a DIFFERENT precision downloads", () => {
+		// fp16 is cached + explicitly picked; only int8 is downloading → allow.
+		const dl = (id: string, q: string) => id === "m" && q === "int8";
+		expect(t.isSwapBlockedByDownload("m", "fp16", "", states, dl)).toBe(false);
+	});
+
+	test("blocks an explicit precision-badge pick that is downloading", () => {
+		const dl = (id: string, q: string) => id === "m" && q === "int8";
+		expect(t.isSwapBlockedByDownload("m", "int8", "", states, dl)).toBe(true);
+	});
+
+	test("never blocks when nothing is downloading", () => {
+		expect(t.isSwapBlockedByDownload("m", undefined, "", states, () => false)).toBe(false);
+	});
+});
+
 describe("isCriticalAssessment", () => {
 	test("false when assessment is missing", () => {
 		expect(t.isCriticalAssessment(null)).toBe(false);
@@ -331,6 +357,37 @@ describe("dispatchChange / dispatchGate", () => {
 		});
 		await new Promise((r) => setTimeout(r, 5));
 		expect(console.error).toHaveBeenCalled();
+	});
+});
+
+describe("runIssueSwap — cloud persistence (regression: cloud combo showed no model)", () => {
+	const cloudArgs = (value: string) => ({
+		kind: "main" as const,
+		value,
+		previous: "tiny",
+		quantization: undefined,
+		currentQuantization: "int8" as OnnxQuantization,
+		// Cloud ids are never in the catalog, so getModel returns undefined.
+		getModel: (() => undefined) as never,
+		prevMainModelRef: { current: null as string | null } as never,
+		prevRealtimeModelRef: { current: null as string | null } as never,
+	});
+
+	test("persists a cloud model despite the empty catalog lookup", () => {
+		const update = mock(() => undefined);
+		t.runIssueSwap({ ...cloudArgs("openai:gpt-4o-mini-transcribe"), update: update as never });
+		// Without the fix `applyMainSwap` bailed on `!info` and never called
+		// update, leaving model.model unchanged → the cloud combo stayed empty.
+		expect(update).toHaveBeenCalledWith({
+			model: "openai:gpt-4o-mini-transcribe",
+			backend: "onnx_asr",
+		});
+	});
+
+	test("still bails for a genuinely-missing LOCAL id (no invalid patch)", () => {
+		const update = mock(() => undefined);
+		t.runIssueSwap({ ...cloudArgs("nonexistent-local-id"), update: update as never });
+		expect(update).not.toHaveBeenCalled();
 	});
 });
 

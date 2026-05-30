@@ -269,6 +269,19 @@ async function run() {
 			name: "Text-to-Speech",
 			heading: "section-tts",
 			tabIdx: 1,
+			// Verified ElevenLabs key + cloud voices (see mock-data) unlock the
+			// Local⇄Cloud switch so the shot shows BOTH sources, not local-only.
+			mockOpts: {
+				settings: {
+					integrations: {
+						elevenlabs: {
+							apiKey: "sk_demo_elevenlabs_key",
+							verified: true,
+							lastVerifiedAt: 1_748_000_000_000,
+						},
+					},
+				},
+			},
 		}).catch((e) => console.error(`  ✗ tts: ${e.message}`));
 		await shootSection(browser, {
 			name: "LLM Post-Processing",

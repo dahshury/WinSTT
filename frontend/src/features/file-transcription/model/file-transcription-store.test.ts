@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { FileQueueItem } from "@/shared/api/ipc-client";
 import { useFileTranscriptionStore } from "./file-transcription-store";
+
+function makeItem(over: Partial<FileQueueItem> = {}): FileQueueItem {
+	return {
+		id: "1",
+		fileName: "a.wav",
+		status: "queued",
+		progress: 0,
+		stage: "queued",
+		message: "",
+		...over,
+	};
+}
 
 beforeEach(() => {
 	useFileTranscriptionStore.getState().reset();
@@ -10,76 +23,49 @@ afterEach(() => {
 });
 
 describe("useFileTranscriptionStore", () => {
-	test("initial state is idle with zeroed progress", () => {
+	test("initial state is an empty queue and not active", () => {
 		const state = useFileTranscriptionStore.getState();
-		expect(state.status).toBe("idle");
-		expect(state.progress).toBe(0);
-		expect(state.message).toBe("");
-		expect(state.fileName).toBe("");
+		expect(state.items).toEqual([]);
+		expect(state.queueActive).toBe(false);
 	});
 
-	test("setProcessing sets status='processing' and resets progress", () => {
-		useFileTranscriptionStore.getState().setProgress(0.5, "old");
-		useFileTranscriptionStore.getState().setProcessing("a.wav");
-		const state = useFileTranscriptionStore.getState();
-		expect(state.status).toBe("processing");
-		expect(state.progress).toBe(0);
-		expect(state.message).toBe("Starting...");
-		expect(state.fileName).toBe("a.wav");
+	test("setItems replaces the whole queue", () => {
+		useFileTranscriptionStore.getState().setItems([makeItem({ id: "a" }), makeItem({ id: "b" })]);
+		expect(useFileTranscriptionStore.getState().items.map((i) => i.id)).toEqual(["a", "b"]);
 	});
 
-	test("setProgress updates progress and message without changing status or fileName", () => {
-		useFileTranscriptionStore.getState().setProcessing("a.wav");
-		useFileTranscriptionStore.getState().setProgress(0.42, "halfway");
-		const state = useFileTranscriptionStore.getState();
-		expect(state.progress).toBe(0.42);
-		expect(state.message).toBe("halfway");
-		expect(state.status).toBe("processing");
-		expect(state.fileName).toBe("a.wav");
+	test("patchProgress updates only the matching row's progress + stage", () => {
+		useFileTranscriptionStore
+			.getState()
+			.setItems([
+				makeItem({ id: "a", status: "transcribing", progress: 0.1, stage: "transcribing" }),
+				makeItem({ id: "b", progress: 0 }),
+			]);
+		useFileTranscriptionStore.getState().patchProgress("a", 0.6, "transcribing");
+		const items = useFileTranscriptionStore.getState().items;
+		expect(items.find((i) => i.id === "a")?.progress).toBe(0.6);
+		expect(items.find((i) => i.id === "b")?.progress).toBe(0);
 	});
 
-	test("setComplete moves to status='complete' with full progress", () => {
-		useFileTranscriptionStore.getState().setComplete("a.wav");
-		const state = useFileTranscriptionStore.getState();
-		expect(state.status).toBe("complete");
-		expect(state.progress).toBe(1);
-		expect(state.fileName).toBe("a.wav");
+	test("patchProgress is a no-op for an unknown id", () => {
+		useFileTranscriptionStore.getState().setItems([makeItem({ id: "a", progress: 0.2 })]);
+		useFileTranscriptionStore.getState().patchProgress("missing", 0.9, "transcribing");
+		expect(useFileTranscriptionStore.getState().items[0]?.progress).toBe(0.2);
 	});
 
-	test("setError moves to status='error' with the error message", () => {
-		useFileTranscriptionStore.getState().setError("a.wav", "boom");
-		const state = useFileTranscriptionStore.getState();
-		expect(state.status).toBe("error");
-		expect(state.message).toBe("boom");
-		expect(state.fileName).toBe("a.wav");
+	test("setQueueActive toggles the cross-window busy flag", () => {
+		useFileTranscriptionStore.getState().setQueueActive(true);
+		expect(useFileTranscriptionStore.getState().queueActive).toBe(true);
+		useFileTranscriptionStore.getState().setQueueActive(false);
+		expect(useFileTranscriptionStore.getState().queueActive).toBe(false);
 	});
 
-	test("reset returns to idle from any state", () => {
-		useFileTranscriptionStore.getState().setError("a.wav", "boom");
+	test("reset clears items and the active flag", () => {
+		useFileTranscriptionStore.getState().setItems([makeItem()]);
+		useFileTranscriptionStore.getState().setQueueActive(true);
 		useFileTranscriptionStore.getState().reset();
 		const state = useFileTranscriptionStore.getState();
-		expect(state.status).toBe("idle");
-		expect(state.progress).toBe(0);
-		expect(state.message).toBe("");
-		expect(state.fileName).toBe("");
+		expect(state.items).toEqual([]);
+		expect(state.queueActive).toBe(false);
 	});
-
-	test("setComplete schedules an idle reset after 3000ms (auto-clear)", async () => {
-		useFileTranscriptionStore.getState().setComplete("a.wav");
-		expect(useFileTranscriptionStore.getState().status).toBe("complete");
-		await new Promise((resolve) => setTimeout(resolve, 3050));
-		expect(useFileTranscriptionStore.getState().status).toBe("idle");
-	}, 6000);
-
-	test("a follow-up setProcessing within the auto-clear window cancels the reset", async () => {
-		useFileTranscriptionStore.getState().setComplete("a.wav");
-		// Within 3s, start a new processing — the deferred reset only fires if
-		// status is still 'complete' at that point.
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		useFileTranscriptionStore.getState().setProcessing("b.wav");
-		await new Promise((resolve) => setTimeout(resolve, 3000));
-		const state = useFileTranscriptionStore.getState();
-		expect(state.status).toBe("processing");
-		expect(state.fileName).toBe("b.wav");
-	}, 6000);
 });

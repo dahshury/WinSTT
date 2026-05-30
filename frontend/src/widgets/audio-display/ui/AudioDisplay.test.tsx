@@ -1,14 +1,18 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { render } from "@testing-library/react";
-import type { useTranslations } from "use-intl";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { __audio_display_test_helpers__ as helpers } from "../lib/audio-display-test-helpers";
 import { AudioDisplay } from "./AudioDisplay";
 
-// The helpers accept the use-intl translate function. We only need its
-// callable shape for the tests, so cast through unknown rather than build a
-// full IntlProvider-backed t.
-type TranslateFn = ReturnType<typeof useTranslations>;
+const originalApi = window.electronAPI;
+
+afterEach(() => {
+	window.electronAPI = originalApi;
+});
+
+function makeFile(name: string): File {
+	return new File(["x"], name, { type: "application/octet-stream" });
+}
 
 describe("AudioDisplay", () => {
 	test("renders without crashing", () => {
@@ -20,15 +24,6 @@ describe("AudioDisplay", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 });
-
-// Contains the single boundary cast from the callable stub to the real
-// use-intl translate type — the function passed in is returned unchanged.
-type StubTranslateFn = (key: string, vars?: Record<string, unknown>) => string;
-const asTranslateFn = (fn: StubTranslateFn) => fn as unknown as TranslateFn;
-
-const tStub = asTranslateFn((key: string, vars?: Record<string, unknown>) =>
-	vars ? `${key}:${JSON.stringify(vars)}` : key
-);
 
 describe("AudioDisplay helpers — getExtension", () => {
 	const cases: [string, string][] = [
@@ -56,70 +51,55 @@ describe("AudioDisplay helpers — SUPPORTED_EXTENSIONS", () => {
 	});
 });
 
-describe("AudioDisplay helpers — validateDroppedFile", () => {
-	test("returns ok=false when file is undefined", () => {
-		const result = helpers.validateDroppedFile(undefined, tStub);
-		expect(result.ok).toBe(false);
-		expect(result.fileName).toBeUndefined();
+describe("AudioDisplay helpers — collectDroppedFiles", () => {
+	beforeEach(() => {
+		window.electronAPI = {
+			...originalApi,
+			getPathForFile: (file: File) => `/tmp/${file.name}`,
+		};
 	});
 
-	test("rejects unsupported extension with error message", () => {
-		const file = new File(["x"], "doc.txt", { type: "text/plain" });
-		const result = helpers.validateDroppedFile(file, tStub);
-		expect(result.ok).toBe(false);
-		expect(result.fileName).toBe("doc.txt");
-		expect(result.errorMessage).toContain("unsupportedFormat");
+	test("keeps only supported extensions, preserving order", () => {
+		const result = helpers.collectDroppedFiles([
+			makeFile("one.mp3"),
+			makeFile("doc.txt"),
+			makeFile("two.mp4"),
+			makeFile("image.png"),
+		]);
+		expect(result.map((f) => f.fileName)).toEqual(["one.mp3", "two.mp4"]);
+		expect(result[0]?.filePath).toBe("/tmp/one.mp3");
 	});
 
-	test("rejects supported file when getFilePath returns empty", () => {
-		// In tests window.electronAPI.getPathForFile returns "" so a supported
-		// extension still cannot resolve a path.
-		const file = new File(["x"], "song.mp3", { type: "audio/mp3" });
-		const result = helpers.validateDroppedFile(file, tStub);
-		expect(result.ok).toBe(false);
-		expect(result.errorMessage).toContain("cannotDetermineFilePath");
-	});
-});
-
-describe("AudioDisplay helpers — extractErrorMessage", () => {
-	test("uses Error.message when given an Error", () => {
-		expect(helpers.extractErrorMessage(new Error("boom"), tStub)).toBe("boom");
-	});
-
-	test("falls back to translation key for non-Error", () => {
-		expect(helpers.extractErrorMessage("nope", tStub)).toBe("transcriptionFailed");
+	test("drops files whose native path can't be resolved", () => {
+		window.electronAPI = { ...originalApi, getPathForFile: () => "" };
+		const result = helpers.collectDroppedFiles([makeFile("song.mp3")]);
+		expect(result).toEqual([]);
 	});
 });
 
-describe("AudioDisplay helpers — runTranscription", () => {
-	test("calls setProcessing then completes via fileTranscribe (happy path)", async () => {
-		const setProcessing = mock(() => undefined);
-		const setError = mock(() => undefined);
-		await helpers.runTranscription("song.mp3", "/tmp/song.mp3", {
-			setProcessing,
-			setError,
-			tf: tStub,
-		});
-		expect(setProcessing).toHaveBeenCalledWith("song.mp3");
-		// fileTranscribe is wrapped in invokeOrDefault which swallows errors,
-		// so setError should not be called in the happy path.
-		expect(setError).not.toHaveBeenCalled();
+describe("AudioDisplay helpers — enqueueDroppedFiles", () => {
+	test("enqueues the collected files and returns the count", async () => {
+		const invoke = mock(() => Promise.resolve(null));
+		window.electronAPI = {
+			...originalApi,
+			getPathForFile: (file: File) => `/tmp/${file.name}`,
+			invoke: invoke as unknown as typeof window.electronAPI.invoke,
+		};
+		const count = await helpers.enqueueDroppedFiles([makeFile("a.wav"), makeFile("skip.txt")]);
+		expect(count).toBe(1);
+		expect(invoke).toHaveBeenCalled();
 	});
 
-	test("starts processing before resolving the transcription", async () => {
-		const calls: string[] = [];
-		const setProcessing = mock(() => {
-			calls.push("processing");
-		});
-		const setError = mock(() => {
-			calls.push("error");
-		});
-		await helpers.runTranscription("a.wav", "/p/a.wav", {
-			setProcessing,
-			setError,
-			tf: tStub,
-		});
-		expect(calls[0]).toBe("processing");
+	test("returns 0 and does not enqueue when nothing is transcribable", async () => {
+		const invoke = mock(() => Promise.resolve(null));
+		window.electronAPI = {
+			...originalApi,
+			getPathForFile: (file: File) => `/tmp/${file.name}`,
+			invoke: invoke as unknown as typeof window.electronAPI.invoke,
+		};
+		const count = await helpers.enqueueDroppedFiles([makeFile("doc.txt")]);
+		expect(count).toBe(0);
+		expect(invoke).not.toHaveBeenCalled();
 	});
 });
 

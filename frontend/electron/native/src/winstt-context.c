@@ -49,10 +49,12 @@
 #include <objbase.h>
 #include <oleauto.h>
 #include <uiautomation.h>
+#include <tlhelp32.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 /* Hard caps. Keep payload small — we want to disambiguate names,
    not exfiltrate documents. */
@@ -321,38 +323,89 @@ static void get_window_title(HWND hwnd, char* out, int out_size) {
     if (n > 0) wide_to_utf8(buf, n, out, out_size);
 }
 
+/* Lowercase an ASCII A-Z wide string in place. Exe names are ASCII, so this
+   is enough for stable case-insensitive comparisons (deny-list, IDE match). */
+static void lowercase_wide_ascii(wchar_t* s) {
+    for (wchar_t* p = s; *p; p++) {
+        if (*p >= L'A' && *p <= L'Z') *p = (wchar_t)(*p - L'A' + L'a');
+    }
+}
+
+/* Return a pointer to the basename within a full path (after the last
+   backslash or forward slash). */
+static wchar_t* wide_basename(wchar_t* path) {
+    wchar_t* base = path;
+    for (wchar_t* p = path; *p; p++) {
+        if (*p == L'\\' || *p == L'/') base = p + 1;
+    }
+    return base;
+}
+
+/* Primary resolver: open the process and read its image path. Exact and fast,
+   but OpenProcess is DENIED when the target runs at a higher integrity level
+   than this (non-elevated) helper. Returns 1 on success, 0 on failure. */
+static int exe_via_open_process(DWORD pid, char* out, int out_size) {
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return 0;
+    wchar_t path[MAX_PATH];
+    DWORD path_len = MAX_PATH;
+    if (!QueryFullProcessImageNameW(proc, 0, path, &path_len)) {
+        CloseHandle(proc);
+        return 0;
+    }
+    CloseHandle(proc);
+    wchar_t* base = wide_basename(path);
+    lowercase_wide_ascii(base);
+    /* Pass the REAL length, not -1: wide_to_utf8 rejects src_len <= 0, so the
+       "-1 means null-terminated" convention silently produced an empty string
+       (the original bug that left appExe blank for EVERY app). */
+    wide_to_utf8(base, (int)wcslen(base), out, out_size);
+    return 1;
+}
+
+/* Fallback resolver: scan the system process list via a Toolhelp snapshot.
+   Unlike OpenProcess this needs NO handle to the target, so it succeeds for
+   ELEVATED / higher-integrity foreground windows (e.g. an admin-launched
+   editor or terminal) where the primary path returns ACCESS_DENIED — the
+   exact case that left appExe empty and silently disabled BOTH the deny-list
+   and IDE detection. PROCESSENTRY32W.szExeFile is already a bare basename.
+   Returns 1 on success, 0 if the pid wasn't found. */
+static int exe_via_toolhelp(DWORD pid, char* out, int out_size) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W entry;
+    entry.dwSize = sizeof(entry);
+    int found = 0;
+    if (Process32FirstW(snap, &entry)) {
+        do {
+            if (entry.th32ProcessID == pid) {
+                lowercase_wide_ascii(entry.szExeFile);
+                wide_to_utf8(entry.szExeFile, (int)wcslen(entry.szExeFile), out, out_size);
+                found = 1;
+                break;
+            }
+        } while (Process32NextW(snap, &entry));
+    }
+    CloseHandle(snap);
+    return found;
+}
+
 /* Get the foreground window's process executable basename (lowercased,
    e.g. "chrome.exe", "outlook.exe", "code.exe"). This is the load-bearing
    signal for deny-list matching and for app/IDE detection downstream —
    exe name is far more reliable than the window title for "what app am
-   I in." Returns the empty string when the foreground process can't be
-   opened (elevated targets) or doesn't have a module path. */
+   I in." Tries OpenProcess first, then the handle-free Toolhelp snapshot so
+   elevated targets still resolve. Empty only when the window has no pid. */
 static void get_process_exe(HWND hwnd, char* out, int out_size) {
     if (out_size > 0) out[0] = '\0';
     if (!hwnd) return;
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
     if (!pid) return;
-    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!proc) return;
-    wchar_t path[MAX_PATH];
-    DWORD path_len = MAX_PATH;
-    if (!QueryFullProcessImageNameW(proc, 0, path, &path_len)) {
-        CloseHandle(proc);
-        return;
+    if (!exe_via_open_process(pid, out, out_size)) {
+        exe_via_toolhelp(pid, out, out_size);
     }
-    CloseHandle(proc);
-    /* basename */
-    wchar_t* base = path;
-    for (wchar_t* p = path; *p; p++) {
-        if (*p == L'\\' || *p == L'/') base = p + 1;
-    }
-    /* lowercase for stable comparisons */
-    for (wchar_t* p = base; *p; p++) {
-        if (*p >= L'A' && *p <= L'Z') *p = (wchar_t)(*p - L'A' + L'a');
-    }
-    wide_to_utf8(base, -1, out, out_size);
-    /* -1 included the NUL terminator; trim it if present */
+    /* wide_to_utf8(-1) copies the NUL terminator; trim any trailing one. */
     int len = (int)strlen(out);
     if (len > 0 && out[len - 1] == '\0') {
         out[len - 1] = '\0';

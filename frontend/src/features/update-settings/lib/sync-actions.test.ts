@@ -210,6 +210,60 @@ describe("syncQualityParams", () => {
 		syncQualityParams(deps, same, same);
 		expect(calls.find((c) => c.args[0] === "silence_timing")).toBeUndefined();
 	});
+
+	// silence_endpoint_enabled is the master "server may auto-stop" switch.
+	// It MUST be pushed through the canonical (server-ready-gated) sync, not
+	// only via the racy usePushToTalk mount effect — otherwise a cold start
+	// where the mount push is dropped leaves the server at its default True,
+	// and PTT auto-stops on silence before the user releases the key.
+	test("pushes silence_endpoint_enabled=false for PTT on initial connect", () => {
+		const { deps, calls } = makeDeps();
+		syncQualityParams(
+			deps,
+			settingsWith({ general: { recordingMode: "ptt" } as never }),
+			undefined
+		);
+		expect(calls).toContainEqual({
+			kind: "sttSetParameter",
+			args: ["silence_endpoint_enabled", false],
+		});
+	});
+
+	test("pushes silence_endpoint_enabled=true for toggle on initial connect", () => {
+		const { deps, calls } = makeDeps();
+		syncQualityParams(
+			deps,
+			settingsWith({ general: { recordingMode: "toggle", manualToggleStop: false } as never }),
+			undefined
+		);
+		expect(calls).toContainEqual({
+			kind: "sttSetParameter",
+			args: ["silence_endpoint_enabled", true],
+		});
+	});
+
+	test("re-pushes silence_endpoint_enabled when the recording mode flips", () => {
+		const { deps, calls } = makeDeps();
+		syncQualityParams(
+			deps,
+			settingsWith({ general: { recordingMode: "ptt" } as never }),
+			settingsWith({ general: { recordingMode: "toggle" } as never })
+		);
+		expect(calls).toContainEqual({
+			kind: "sttSetParameter",
+			args: ["silence_endpoint_enabled", false],
+		});
+	});
+
+	test("skips silence_endpoint_enabled when mode and manual-toggle-stop are unchanged", () => {
+		const { deps, calls } = makeDeps();
+		const same = settingsWith({
+			general: { recordingMode: "ptt", manualToggleStop: false } as never,
+			quality: { smartEndpoint: false } as never,
+		});
+		syncQualityParams(deps, same, same);
+		expect(calls.find((c) => c.args[0] === "silence_endpoint_enabled")).toBeUndefined();
+	});
 });
 
 describe("syncTextCorrectionParams", () => {

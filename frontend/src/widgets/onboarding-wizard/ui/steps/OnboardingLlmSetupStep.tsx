@@ -7,24 +7,17 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
-import {
-	findRecommendedModel,
-	RECOMMENDED_OLLAMA_MODELS,
-	useLlmCatalogStore,
-} from "@/entities/llm-catalog";
+import { findRecommendedModel, useLlmCatalogStore } from "@/entities/llm-catalog";
 import { useSettingsStore } from "@/entities/setting";
+import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { detectOllama, type OllamaDetectResult, startOllama } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
 import { Toggle } from "@/shared/ui/toggle";
-import { useOnboardingWizardStore } from "../../model/wizard-store";
 
 const OLLAMA_HOMEPAGE = "https://ollama.com/download";
-const DEFAULT_FALLBACK_MODEL =
-	RECOMMENDED_OLLAMA_MODELS.find((m) => (m.tags ?? []).includes("recommended"))?.name ??
-	"llama3.2:3b";
 
 /**
  * Step 4: optional LLM cleanup. Tries to detect Ollama (`detectOllama` returns
@@ -42,7 +35,7 @@ export function OnboardingLlmSetupStep() {
 	const [detect, setDetect] = useState<OllamaDetectResult | null>(null);
 	const [starting, setStarting] = useState(false);
 	const [startError, setStartError] = useState<string | null>(null);
-	const setPickerOpen = useOnboardingWizardStore((s) => s.setLlmPickerOpen);
+	const openModelPicker = useLlmModelPickerStore((s) => s.openFor);
 	const llmDictation = useSettingsStore((s) => s.settings.llm.dictation);
 	const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
 	const installedModels = useLlmCatalogStore((s) => s.models);
@@ -110,11 +103,16 @@ export function OnboardingLlmSetupStep() {
 			updateLlmDictation({ enabled: false });
 			return;
 		}
-		// Per feedback_capability_must_have_model: never set enabled=true with model="".
-		// Falls back to the smallest recommended model so the toggle never lands
-		// on an empty capability.
-		const resolved = selectedModel || DEFAULT_FALLBACK_MODEL;
-		updateLlmDictation({ enabled: true, model: resolved, provider: "ollama" });
+		// Never enable without a real, installed model (feedback_capability_must_have_model).
+		// If the current pick is installed, enable immediately; otherwise open the
+		// picker and let the install commit `enabled` (OnboardingPage wires the
+		// model-installed callback through the shared llm-model-picker store).
+		// Dismissing the picker without installing leaves the toggle off.
+		if (isInstalled) {
+			updateLlmDictation({ enabled: true, model: selectedModel, provider: "ollama" });
+			return;
+		}
+		openModelPicker("dictation", true);
 	};
 
 	return (
@@ -136,7 +134,7 @@ export function OnboardingLlmSetupStep() {
 							"hover:bg-foreground/[0.04]",
 							"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1"
 						)}
-						onClick={() => setPickerOpen(true)}
+						onClick={() => openModelPicker("dictation", false)}
 						type="button"
 					>
 						<span className="flex min-w-0 flex-1 items-center gap-2">

@@ -241,3 +241,12 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		});
 	},
 }));
+
+/** Whether ``(modelId, quantization)`` has an in-flight streaming download.
+ *
+ *  Read synchronously (not a hook) so non-React callers — notably the swap
+ *  controller's selection guard, which must NOT let the user switch to a model
+ *  whose target precision is still downloading — can check the live map. */
+export function isQuantDownloading(modelId: string, quantization: string): boolean {
+	return useDownloadStore.getState().quantDownloads[quantKey(modelId, quantization)] !== undefined;
+}

@@ -1,8 +1,8 @@
-import type React from "react";
 import { useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { RECORDING_MODE_COLOR_HEX, type RecordingMode } from "@/shared/config/recording-mode-color";
-import type { VisualizerSize, VisualizerType } from "../lib/audio-visualizer";
+import type { VisualizerConfig, VisualizerSize, VisualizerType } from "../lib/audio-visualizer";
+import { resolveVisualizerConfig } from "../lib/audio-visualizer";
 import { useFitSize } from "../lib/use-fit-size";
 import { AudioVisualizerAura } from "./AudioVisualizerAura";
 import { AudioVisualizerBar } from "./AudioVisualizerBar";
@@ -20,25 +20,23 @@ interface AudioVisualizerProps {
 }
 
 /**
- * Renders the visualizer selected in settings.
- * Defaults to "bar" if no setting is configured.
+ * Renders the visualizer selected in settings, forwarding the per-shape
+ * customization knobs (resolved by `resolveVisualizerConfig`) to the matching
+ * component. Defaults to "bar" if no setting is configured.
  */
 export function AudioVisualizer({ size = "lg", className }: AudioVisualizerProps) {
-	const visualizerType: VisualizerType = useSettingsStore(
-		(s) => s.settings.general?.visualizerType ?? "bar"
-	);
-	const barCount = useSettingsStore((s) => s.settings.general?.visualizerBarCount);
-	const recordingMode = useSettingsStore(
-		(s) => (s.settings.general?.recordingMode ?? "ptt") as RecordingMode
-	);
+	const general = useSettingsStore((s) => s.settings.general);
+	const visualizerType: VisualizerType = general?.visualizerType ?? "bar";
+	const recordingMode = (general?.recordingMode ?? "ptt") as RecordingMode;
 	const color = RECORDING_MODE_COLOR_HEX[recordingMode] as `#${string}`;
+	const config = resolveVisualizerConfig(general);
 
 	if (size === "auto") {
 		return (
 			<AutoSizedVisualizer
-				barCount={barCount}
 				className={className}
 				color={color}
+				config={config}
 				type={visualizerType}
 			/>
 		);
@@ -46,9 +44,9 @@ export function AudioVisualizer({ size = "lg", className }: AudioVisualizerProps
 
 	return (
 		<VisualizerVariant
-			barCount={barCount}
 			className={className}
 			color={color}
+			config={config}
 			size={size}
 			type={visualizerType}
 		/>
@@ -56,22 +54,22 @@ export function AudioVisualizer({ size = "lg", className }: AudioVisualizerProps
 }
 
 interface AutoSizedVisualizerProps {
-	barCount?: number | undefined;
 	className?: string | undefined;
-	color?: `#${string}` | undefined;
+	color: `#${string}`;
+	config: VisualizerConfig;
 	type: VisualizerType;
 }
 
-function AutoSizedVisualizer({ type, className, color, barCount }: AutoSizedVisualizerProps) {
+function AutoSizedVisualizer({ type, className, color, config }: AutoSizedVisualizerProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fitSize = useFitSize(containerRef);
 
 	return (
 		<div className="flex h-full w-full items-center justify-center" ref={containerRef}>
 			<VisualizerVariant
-				barCount={barCount}
 				className={className}
 				color={color}
+				config={config}
 				size={fitSize}
 				type={type}
 			/>
@@ -80,31 +78,64 @@ function AutoSizedVisualizer({ type, className, color, barCount }: AutoSizedVisu
 }
 
 interface VisualizerVariantProps {
-	barCount?: number | undefined;
 	className?: string | undefined;
-	color?: `#${string}` | undefined;
+	color: `#${string}`;
+	config: VisualizerConfig;
 	size: VisualizerSize;
 	type: VisualizerType;
 }
 
-interface CommonVisualizerProps {
-	className?: string | undefined;
-	color?: `#${string}` | undefined;
-	size: VisualizerSize;
-}
-type VisualizerComponent = React.ComponentType<CommonVisualizerProps>;
-
-const NON_BAR_VARIANTS: Partial<Record<VisualizerType, VisualizerComponent>> = {
-	grid: AudioVisualizerGrid as VisualizerComponent,
-	radial: AudioVisualizerRadial as VisualizerComponent,
-	wave: AudioVisualizerWave as VisualizerComponent,
-	aura: AudioVisualizerAura as VisualizerComponent,
-};
-
-function VisualizerVariant({ type, barCount, ...common }: VisualizerVariantProps) {
-	const NonBarComponent = NON_BAR_VARIANTS[type];
-	if (NonBarComponent) {
-		return <NonBarComponent {...common} />;
+function VisualizerVariant({ type, config, className, color, size }: VisualizerVariantProps) {
+	// Omit `className` entirely when undefined — the leaf components declare it as
+	// a non-`undefined` optional (exactOptionalPropertyTypes), so a literal
+	// `className={undefined}` would be a type error.
+	const cls = className === undefined ? {} : { className };
+	switch (type) {
+		case "grid":
+			return (
+				<AudioVisualizerGrid
+					{...cls}
+					color={color}
+					columnCount={config.gridColumns}
+					interval={config.gridInterval}
+					rowCount={config.gridRows}
+					size={size}
+				/>
+			);
+		case "radial":
+			return (
+				<AudioVisualizerRadial
+					{...cls}
+					barCount={config.radialDotCount}
+					color={color}
+					radiusPct={config.radialRadiusPct}
+					size={size}
+				/>
+			);
+		case "wave":
+			return (
+				<AudioVisualizerWave
+					{...cls}
+					blur={config.waveBlur}
+					color={color}
+					colorShift={config.waveColorShift}
+					lineWidth={config.waveLineWidth}
+					size={size}
+				/>
+			);
+		case "aura":
+			return (
+				<AudioVisualizerAura
+					{...cls}
+					bloom={config.auraBloom}
+					blur={config.auraBlur}
+					color={color}
+					colorShift={config.auraColorShift}
+					shape={config.auraShape}
+					size={size}
+				/>
+			);
+		default:
+			return <AudioVisualizerBar {...cls} barCount={config.barCount} color={color} size={size} />;
 	}
-	return <AudioVisualizerBar {...common} barCount={barCount} />;
 }

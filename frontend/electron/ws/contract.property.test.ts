@@ -158,6 +158,9 @@ const validEventArbitraries: Record<SupportedEventType, PayloadGen> = {
 		type: fc.constant("file_transcription_error"),
 		error: fc.string(),
 	}),
+	file_transcription_canceled: fc.record({
+		type: fc.constant("file_transcription_canceled"),
+	}),
 	wakeword_detection_start: fc.record({
 		type: fc.constant("wakeword_detection_start"),
 	}),

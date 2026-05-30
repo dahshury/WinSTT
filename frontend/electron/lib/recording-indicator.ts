@@ -90,6 +90,25 @@ let thinkingStartMs = 0;
 let tickHandle: ReturnType<typeof setInterval> | null = null;
 let tickIntervalMs = BAR_TICK_MS;
 
+// ── Visualizer style (mirrors the renderer's chosen visualizerType) ──
+//
+// Historically the tray only ever drew bars. The renderer's pill
+// (features/audio-visualizer) renders whichever style the user picked, so the
+// tray now honors the same choice. main.ts pushes these in via
+// setTrayVisualizerStyle() — once on boot and again on every
+// store.onDidChange("general"). Counts are clamped to stay legible at the 48px
+// tray size; unknown/missing values fall back to the shipped defaults.
+type VisualizerStyle = "bar" | "grid" | "radial" | "wave" | "aura";
+const VISUALIZER_STYLES: readonly VisualizerStyle[] = ["bar", "grid", "radial", "wave", "aura"];
+
+let visualizerStyle: VisualizerStyle = "bar";
+let gridRows = 5;
+let gridColumns = 5;
+let radialDotCount = 24;
+let waveLineWidth = 2;
+let auraShape: "circle" | "line" = "circle";
+let auraBlur = 0.2;
+
 // ── Pill math (ported 1:1) ───────────────────────────────────────────
 
 export function computeAmplified(
@@ -124,6 +143,35 @@ export function initRecordingIndicator(tray: Tray, iconPath: string): void {
 		dbg("indicator", "Base icon is empty — indicator will skip revert step");
 	}
 	dbg("indicator", `Initialized: bars=${BAR_COUNT} target=${TARGET_SIZE}x${TARGET_SIZE}`);
+}
+
+function clampInt(value: unknown, lo: number, hi: number, fallback: number): number {
+	const n = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
+	return Math.max(lo, Math.min(hi, n));
+}
+
+function asVisualizerStyle(value: unknown): VisualizerStyle {
+	return typeof value === "string" && (VISUALIZER_STYLES as readonly string[]).includes(value)
+		? (value as VisualizerStyle)
+		: "bar";
+}
+
+/**
+ * Sync the tray visualizer to the renderer's chosen `visualizerType` (and its
+ * per-shape knobs). Called from main.ts with the raw `general` settings object
+ * on boot and on every `store.onDidChange("general")`. Counts are clamped to
+ * stay legible at the 48px tray icon; unknown/missing values fall back to the
+ * shipped defaults, so a partial object is safe.
+ */
+export function setTrayVisualizerStyle(general: Record<string, unknown> | null | undefined): void {
+	const g = general ?? {};
+	visualizerStyle = asVisualizerStyle(g.visualizerType);
+	gridRows = clampInt(g.visualizerGridRows, 3, 8, 5);
+	gridColumns = clampInt(g.visualizerGridColumns, 3, 8, 5);
+	radialDotCount = clampInt(g.visualizerRadialDotCount, 6, 24, 24);
+	waveLineWidth = clampInt(g.visualizerWaveLineWidth, 1, 6, 2);
+	auraShape = g.visualizerAuraShape === "line" ? "line" : "circle";
+	auraBlur = clampInt(g.visualizerAuraBlur, 0, 100, 20) / 100;
 }
 
 export function onRecordingStart(): void {
@@ -306,12 +354,25 @@ function renderRecordingFrame(): void {
 	const next = computeAmplified(rawLevel, peak);
 	peak = next.peak;
 	const time = (nowMs() - sessionStartMs) / 1000;
-	const bands: number[] = [];
-	for (let i = 0; i < BAR_COUNT; i++) {
-		bands.push(computeBandValue(i, BAR_COUNT, time, next.amplified));
-	}
-	const icon = renderBarsIcon(bands, TRAY_INK);
+	const icon = renderVisualizerFrame(next.amplified, rawLevel, time);
 	setIconOnTray(icon);
+}
+
+/** Rasterize one recording-view frame in whichever style the user picked. The
+ *  thinking view stays the topology morph regardless of style. */
+function renderVisualizerFrame(amplified: number, level: number, time: number): NativeImage {
+	switch (visualizerStyle) {
+		case "grid":
+			return renderGridIcon(amplified, time, TRAY_INK);
+		case "radial":
+			return renderRadialIcon(amplified, time, TRAY_INK);
+		case "wave":
+			return renderWaveIcon(level, time, TRAY_INK);
+		case "aura":
+			return renderAuraIcon(level, time, TRAY_INK);
+		default:
+			return renderBarsIcon(computeBands(BAR_COUNT, time, amplified), TRAY_INK);
+	}
 }
 
 function renderThinkingFrame(): void {
@@ -344,6 +405,214 @@ export function renderBarsIcon(bands: readonly number[], tint: RGB): NativeImage
 
 	const buf = PNG.sync.write(png);
 	return nativeImage.createFromBuffer(buf);
+}
+
+// ── Style rasterizers (grid / radial / wave / aura) ──────────────────
+//
+// Each ports the *speaking-state* math from the matching renderer component
+// (features/audio-visualizer/ui/AudioVisualizer*.tsx) into a 48px monochrome
+// PNG. Grid and radial are pure DOM math and port 1:1; wave and aura are WebGL
+// shaders, approximated here as a 2D oscilloscope line and a soft pulsing SDF
+// blob — faithful enough to read as the chosen style at tray size.
+
+/** Per-band volume series shared by every style. Ported from
+ *  use-multiband-volume's `computeBandValue`. */
+function computeBands(count: number, time: number, amplified: number): number[] {
+	const bands: number[] = [];
+	for (let i = 0; i < count; i++) {
+		bands.push(computeBandValue(i, count, time, amplified));
+	}
+	return bands;
+}
+
+/** Stamp an antialiased filled disc, scaling coverage by `intensity` (0–1).
+ *  Used for the grid's dim/bright cells and the radial dots. */
+function drawDot(
+	data: Buffer,
+	cx: number,
+	cy: number,
+	r: number,
+	tint: RGB,
+	intensity: number
+): void {
+	const minX = Math.max(0, Math.floor(cx - r - 1));
+	const maxX = Math.min(TARGET_SIZE - 1, Math.ceil(cx + r + 1));
+	const minY = Math.max(0, Math.floor(cy - r - 1));
+	const maxY = Math.min(TARGET_SIZE - 1, Math.ceil(cy + r + 1));
+	for (let py = minY; py <= maxY; py++) {
+		for (let px = minX; px <= maxX; px++) {
+			const dx = px + 0.5 - cx;
+			const dy = py + 0.5 - cy;
+			const alpha = Math.round(discCoverage(Math.hypot(dx, dy), r) * intensity);
+			if (alpha > 0) {
+				blitPixel(data, px, py, tint, alpha);
+			}
+		}
+	}
+}
+
+/** Ported verbatim from AudioVisualizerGrid.isSpeakingCellHighlighted: a cell
+ *  lights up when its column's band clears the row's distance-from-middle
+ *  threshold, giving a volume-driven per-column bar graph. */
+export function isSpeakingCellHighlighted(
+	index: number,
+	columnCount: number,
+	rowCount: number,
+	volumeBands: readonly number[]
+): boolean {
+	const y = Math.floor(index / columnCount);
+	const rowMidPoint = Math.floor(rowCount / 2);
+	const volumeChunks = 1 / (rowMidPoint + 1);
+	const distanceToMid = Math.abs(rowMidPoint - y);
+	const threshold = distanceToMid * volumeChunks;
+	return (volumeBands[index % columnCount] ?? 0) >= threshold;
+}
+
+/** 10%-opacity baseline for un-highlighted grid cells (renderer's `bg-current/10`). */
+const GRID_DIM_INTENSITY = 0.18;
+const GRID_MARGIN = 5;
+
+export function renderGridIcon(amplified: number, time: number, tint: RGB): NativeImage {
+	const png = new PNG({ width: TARGET_SIZE, height: TARGET_SIZE });
+	png.data.fill(0);
+
+	const cols = gridColumns;
+	const rows = gridRows;
+	const bands = computeBands(cols, time, amplified);
+	const usable = TARGET_SIZE - GRID_MARGIN * 2;
+	const cellW = usable / cols;
+	const cellH = usable / rows;
+	const dotR = Math.max(1, Math.min(cellW, cellH) * 0.32);
+
+	for (let index = 0; index < rows * cols; index++) {
+		const col = index % cols;
+		const row = Math.floor(index / cols);
+		const cx = GRID_MARGIN + (col + 0.5) * cellW;
+		const cy = GRID_MARGIN + (row + 0.5) * cellH;
+		const intensity = isSpeakingCellHighlighted(index, cols, rows, bands) ? 1 : GRID_DIM_INTENSITY;
+		drawDot(png.data, cx, cy, dotR, tint, intensity);
+	}
+
+	return nativeImage.createFromBuffer(PNG.sync.write(png));
+}
+
+const RADIAL_INNER = 7;
+const RADIAL_OUTER = 21;
+const RADIAL_DOT_R = 1.8;
+
+export function renderRadialIcon(amplified: number, time: number, tint: RGB): NativeImage {
+	const png = new PNG({ width: TARGET_SIZE, height: TARGET_SIZE });
+	png.data.fill(0);
+
+	const count = radialDotCount;
+	const bands = computeBands(count, time, amplified);
+	const cx = TARGET_SIZE / 2;
+	const cy = TARGET_SIZE / 2;
+
+	for (let i = 0; i < count; i++) {
+		// Start at 12 o'clock, sweep clockwise so the ring reads upright.
+		const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+		const band = clamp01(bands[i] ?? 0.05);
+		const radius = RADIAL_INNER + band * (RADIAL_OUTER - RADIAL_INNER);
+		const px = cx + Math.cos(angle) * radius;
+		const py = cy + Math.sin(angle) * radius;
+		drawDot(png.data, px, py, RADIAL_DOT_R, tint, 1);
+	}
+
+	return nativeImage.createFromBuffer(PNG.sync.write(png));
+}
+
+// Speaking-branch wave params from use-wave-animator.ts. `speaking` falls to the
+// switch's default case, so uSpeed = DEFAULT_SPEED * 2 = 10.
+const WAVE_SPEED = 10;
+const WAVE_MAX_AMPLITUDE = 0.4;
+const WAVE_AMPLITUDE_BASE = 0.06;
+const WAVE_AMPLITUDE_GAIN = 0.9;
+
+export function renderWaveIcon(level: number, time: number, tint: RGB): NativeImage {
+	const png = new PNG({ width: TARGET_SIZE, height: TARGET_SIZE });
+	png.data.fill(0);
+
+	const lvl = clamp01(level);
+	const amplitude = Math.min(
+		WAVE_MAX_AMPLITUDE,
+		WAVE_AMPLITUDE_BASE + WAVE_AMPLITUDE_GAIN * Math.sqrt(lvl)
+	);
+	const frequency = 20 + 60 * lvl;
+	const r = Math.max(1, waveLineWidth) / 2;
+
+	// Oscilloscope line ported from the wave shader:
+	//   y = 0.5 + sin(relX*freq + t*speed) * amp * bell(relX)
+	// sampled at 3× pixel density so the stroke stays continuous at high freq.
+	const samples = TARGET_SIZE * 3;
+	for (let s = 0; s <= samples; s++) {
+		const uvx = s / samples;
+		const relX = uvx - 0.5;
+		const normDist = Math.min(1, Math.abs(relX) * 2);
+		const bell = Math.cos((normDist * Math.PI) / 4) ** 16;
+		const wave = Math.sin(relX * frequency + time * WAVE_SPEED) * amplitude * bell;
+		const px = uvx * (TARGET_SIZE - 1);
+		const py = (0.5 + wave) * (TARGET_SIZE - 1);
+		drawDot(png.data, px, py, r, tint, 1);
+	}
+
+	return nativeImage.createFromBuffer(PNG.sync.write(png));
+}
+
+export function renderAuraIcon(level: number, time: number, tint: RGB): NativeImage {
+	const png = new PNG({ width: TARGET_SIZE, height: TARGET_SIZE });
+	png.data.fill(0);
+
+	const lvl = clamp01(level);
+	// uScale speaking branch from use-aura-animator.ts: 0.2 + 0.2 * level. The
+	// WebGL aura animates turbulence over time; here a gentle ±4 % breathing
+	// pulse keeps the blob alive at a steady level without a shader.
+	const breathe = 1 + 0.04 * Math.sin(time * 2.2);
+	const scale = (0.2 + 0.2 * lvl) * breathe;
+	const edge = 2 + auraBlur * 6; // soft glow falloff, widened by the blur knob
+	const cx = TARGET_SIZE / 2;
+	const cy = TARGET_SIZE / 2;
+
+	if (auraShape === "line") {
+		const halfLen = Math.min(TARGET_SIZE / 2 - 3, 4 + scale * TARGET_SIZE);
+		paintSoftField(png.data, tint, edge, 3, (px, py) => {
+			const qx = Math.max(cx - halfLen, Math.min(cx + halfLen, px));
+			return Math.hypot(px - qx, py - cy);
+		});
+	} else {
+		const radius = scale * TARGET_SIZE;
+		paintSoftField(png.data, tint, edge, radius, (px, py) => Math.hypot(px - cx, py - cy));
+	}
+
+	return nativeImage.createFromBuffer(PNG.sync.write(png));
+}
+
+/** Fill pixels within `core` of the shape at full intensity, fading to zero
+ *  over `edge` px beyond it — the soft pulsing blob/bar that stands in for the
+ *  WebGL aura at tray size. */
+function paintSoftField(
+	data: Buffer,
+	tint: RGB,
+	edge: number,
+	core: number,
+	distanceAt: (px: number, py: number) => number
+): void {
+	for (let py = 0; py < TARGET_SIZE; py++) {
+		for (let px = 0; px < TARGET_SIZE; px++) {
+			const d = distanceAt(px + 0.5, py + 0.5);
+			let intensity: number;
+			if (d <= core) {
+				intensity = 1;
+			} else if (d >= core + edge) {
+				intensity = 0;
+			} else {
+				intensity = 1 - (d - core) / edge;
+			}
+			if (intensity > 0) {
+				blitPixel(data, px, py, tint, Math.round(255 * intensity));
+			}
+		}
+	}
 }
 
 function clamp01(v: number): number {
@@ -728,6 +997,19 @@ export const __recording_indicator_test_helpers__ = {
 	trayIsLive,
 	setIconOnTray,
 	baseIconUsable,
+	computeBands,
+	drawDot,
+	paintSoftField,
+	renderVisualizerFrame,
+	getVisualizerStyle: (): VisualizerStyle => visualizerStyle,
+	getVisualizerConfig: () => ({
+		gridRows,
+		gridColumns,
+		radialDotCount,
+		waveLineWidth,
+		auraShape,
+		auraBlur,
+	}),
 	getCurrentView: (): IndicatorView => currentView,
 	get BAR_COUNT() {
 		return BAR_COUNT;

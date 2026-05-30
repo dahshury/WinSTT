@@ -3,6 +3,7 @@ import { IPC } from "../../src/shared/api/ipc-channels";
 import { ConnectionError } from "../../src/shared/lib/errors";
 import { markSessionAborted } from "../lib/abort-state";
 import { dbg, dbgVerbose } from "../lib/debug-log";
+import { isFileQueueBusy } from "../lib/file-transcribe-state";
 import { isRecord } from "../lib/ipc-helpers";
 import { getStoreValue } from "../lib/store";
 import type { SttClient } from "../ws/stt-client";
@@ -492,6 +493,15 @@ function handleReloadModel(sttClient: SttClient, payload: unknown): void {
 	if (!parsed) {
 		// Stryker disable next-line StringLiteral: log-only console.warn; observable behavior (no sendControl call) is verified by the dedicated invalid-payload tests.
 		console.warn("[stt:reload-model] rejected invalid payload", payload);
+		return;
+	}
+	// Block model swaps while the file-transcription queue is busy. The swap
+	// would shut down and reload the very transcriber the queue is mid-stream
+	// on, racing the in-flight inference. The renderer disables the selector
+	// when the queue is active (file:queue-active broadcast); this is the
+	// defence-in-depth no-op for any path that slips past the UI guard.
+	if (isFileQueueBusy()) {
+		console.warn("[stt:reload-model] ignored — file transcription queue is busy");
 		return;
 	}
 	sttClient.sendControl({

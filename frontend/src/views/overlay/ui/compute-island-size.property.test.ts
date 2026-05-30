@@ -7,7 +7,9 @@ import { computeIslandSize } from "./OverlayPage";
 // to one of: "empty", "compact", "compactMedium", "long".
 //
 // Invariants:
-//   1. isThinking dominates — always "long" regardless of other flags.
+//   1. isThinking resolves first — "long" when captioned text is also shown,
+//      otherwise "compactMedium" (the compact recording footprint), never
+//      "empty"/"compact".
 //   2. Monotone escalation: turning ON a flag never *decreases* the size
 //      below where it was (with respect to the ordering empty < compact <
 //      compactMedium < long).
@@ -38,11 +40,11 @@ const argsArb: fc.Arbitrary<Args> = fc.record({
 });
 
 describe("computeIslandSize properties", () => {
-	test("isThinking dominance: always 'long' when isThinking is true", () => {
+	test("isThinking resolves first: 'long' iff captioned text is shown, else 'compactMedium'", () => {
 		fc.assert(
 			fc.property(argsArb, (args) => {
 				const a = { ...args, isThinking: true };
-				expect(computeIslandSize(a)).toBe("long");
+				expect(computeIslandSize(a)).toBe(a.hasShownText ? "long" : "compactMedium");
 			}),
 			{ numRuns: 300 }
 		);

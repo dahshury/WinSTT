@@ -128,6 +128,20 @@ export const IPC = {
 	DEVICE_PICKER_CLOSE: "device-picker:close",
 	DEVICE_PICKER_RESIZE: "device-picker:resize",
 
+	// Context-awareness playground (DEBUG-ONLY — gated by
+	// `shared/config/debug-flags.ts` CONTEXT_PLAYGROUND_ENABLED; never wired
+	// when the flag is off, so end users never see these channels).
+	// OPEN: tray → main, show the playground window.
+	// SET_LIVE: renderer → main, toggle the foreground-polling loop.
+	// ARM_DEEP: renderer → main, run all four UIA modes on the next external focus.
+	// CLOSE: renderer → main, hide the window.
+	// REPORT: main → renderer, push a capture report (or a "waiting" heartbeat).
+	CONTEXT_PLAYGROUND_OPEN: "context-playground:open",
+	CONTEXT_PLAYGROUND_SET_LIVE: "context-playground:set-live",
+	CONTEXT_PLAYGROUND_ARM_DEEP: "context-playground:arm-deep",
+	CONTEXT_PLAYGROUND_CLOSE: "context-playground:close",
+	CONTEXT_PLAYGROUND_REPORT: "context-playground:report",
+
 	// First-run onboarding wizard (renderer → main).
 	// The wizard owns a dedicated BrowserWindow opened before the main window
 	// when `general.onboarded` is false. ONBOARDING_FINISH closes the window,
@@ -152,6 +166,22 @@ export const IPC = {
 	FILE_TRANSCRIPTION_PROGRESS: "file:transcription-progress",
 	FILE_TRANSCRIPTION_COMPLETE: "file:transcription-complete",
 	FILE_TRANSCRIPTION_ERROR: "file:transcription-error",
+
+	// Multi-file transcription queue (renderer → main)
+	FILE_QUEUE_ENQUEUE: "file:queue-enqueue",
+	FILE_QUEUE_CANCEL: "file:queue-cancel",
+	FILE_QUEUE_RETRY: "file:queue-retry",
+	FILE_QUEUE_COPY: "file:queue-copy",
+	FILE_QUEUE_CLEAR: "file:queue-clear",
+	FILE_QUEUE_PAUSE: "file:queue-pause",
+	FILE_QUEUE_RESUME: "file:queue-resume",
+	FILE_QUEUE_DISCARD_ALL: "file:queue-discard-all",
+	FILE_QUEUE_GET_ACTIVE: "file:queue-get-active",
+
+	// Multi-file transcription queue events (main → renderer)
+	FILE_QUEUE_UPDATE: "file:queue-update",
+	FILE_QUEUE_PROGRESS: "file:queue-progress",
+	FILE_QUEUE_ACTIVE: "file:queue-active",
 
 	// Loopback commands (renderer → main)
 	LOOPBACK_LIST_DEVICES: "loopback:list-devices",
@@ -221,8 +251,25 @@ export const IPC = {
 	TTS_SPEAK: "tts:speak",
 	TTS_SPEAK_SELECTION: "tts:speak-selection",
 	TTS_CANCEL: "tts:cancel",
+	// Set the read-aloud speed from the pill's speed control. Applies to the
+	// active read's UPCOMING sentences (next-sentence, natural pitch) and persists
+	// to the active source's speed setting.
+	TTS_SET_SPEED: "tts:set-speed",
 	TTS_INIT: "tts:init",
 	TTS_LIST_VOICES: "tts:list-voices",
+	// Cloud (ElevenLabs) voice catalog — GET /v2/voices. Mirrors
+	// TTS_LIST_VOICES but for the cloud source; synthesis still reuses
+	// the existing TTS_SPEAK / TTS_CHUNK / TTS_COMPLETED contract.
+	TTS_CLOUD_LIST_VOICES: "tts:cloud-list-voices",
+	// Play a cloud voice's FREE pre-generated sample (`preview_url` from
+	// /v2/voices) through the playback pipeline. Main fetches the CDN mp3 — the
+	// renderer can't (CSP blocks external hosts) — so browsing voices costs no
+	// ElevenLabs character credits (unlike a real synthesis).
+	TTS_CLOUD_PREVIEW: "tts:cloud-preview",
+	// Read the ElevenLabs key's subscription tier (GET /v1/user/subscription) so
+	// the picker can hide cloned/professional voices on a free plan (they 402 on
+	// synthesis). Returns `{ tier: null }` when the key lacks user-read scope.
+	TTS_CLOUD_SUBSCRIPTION: "tts:cloud-subscription",
 	// Side-effect-free probe: what enabling TTS will download (engine pack +
 	// model + voices). Drives the confirm dialog; never triggers a download.
 	TTS_DOWNLOAD_ESTIMATE: "tts:download-estimate",
@@ -484,6 +531,13 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.DEVICE_PICKER_CLOSE]: ["send"],
 	[IPC.DEVICE_PICKER_RESIZE]: ["send"],
 
+	// Context-awareness playground (debug-only)
+	[IPC.CONTEXT_PLAYGROUND_OPEN]: ["send"],
+	[IPC.CONTEXT_PLAYGROUND_SET_LIVE]: ["send"],
+	[IPC.CONTEXT_PLAYGROUND_ARM_DEEP]: ["send"],
+	[IPC.CONTEXT_PLAYGROUND_CLOSE]: ["send"],
+	[IPC.CONTEXT_PLAYGROUND_REPORT]: ["on"],
+
 	// First-run onboarding
 	[IPC.ONBOARDING_FINISH]: ["send"],
 
@@ -499,6 +553,20 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.FILE_TRANSCRIPTION_PROGRESS]: ["on"],
 	[IPC.FILE_TRANSCRIPTION_COMPLETE]: ["on"],
 	[IPC.FILE_TRANSCRIPTION_ERROR]: ["on"],
+
+	// Multi-file transcription queue
+	[IPC.FILE_QUEUE_ENQUEUE]: ["invoke"],
+	[IPC.FILE_QUEUE_CANCEL]: ["invoke"],
+	[IPC.FILE_QUEUE_RETRY]: ["invoke"],
+	[IPC.FILE_QUEUE_COPY]: ["invoke"],
+	[IPC.FILE_QUEUE_CLEAR]: ["invoke"],
+	[IPC.FILE_QUEUE_PAUSE]: ["invoke"],
+	[IPC.FILE_QUEUE_RESUME]: ["invoke"],
+	[IPC.FILE_QUEUE_DISCARD_ALL]: ["invoke"],
+	[IPC.FILE_QUEUE_GET_ACTIVE]: ["invoke"],
+	[IPC.FILE_QUEUE_UPDATE]: ["on"],
+	[IPC.FILE_QUEUE_PROGRESS]: ["on"],
+	[IPC.FILE_QUEUE_ACTIVE]: ["on"],
 
 	// Loopback
 	[IPC.LOOPBACK_LIST_DEVICES]: ["invoke"],
@@ -553,8 +621,12 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_SPEAK]: ["invoke"],
 	[IPC.TTS_SPEAK_SELECTION]: ["invoke"],
 	[IPC.TTS_CANCEL]: ["send"],
+	[IPC.TTS_SET_SPEED]: ["send"],
 	[IPC.TTS_INIT]: ["invoke"],
 	[IPC.TTS_LIST_VOICES]: ["invoke"],
+	[IPC.TTS_CLOUD_LIST_VOICES]: ["invoke"],
+	[IPC.TTS_CLOUD_PREVIEW]: ["invoke"],
+	[IPC.TTS_CLOUD_SUBSCRIPTION]: ["invoke"],
 	[IPC.TTS_DOWNLOAD_ESTIMATE]: ["invoke"],
 	[IPC.TTS_INSTALL_PAUSE]: ["send"],
 	[IPC.TTS_INSTALL_RESUME]: ["send"],

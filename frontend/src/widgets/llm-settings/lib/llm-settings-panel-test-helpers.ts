@@ -7,6 +7,7 @@ import {
 	DashboardSpeed02Icon,
 	DashboardSpeedIcon,
 	HappyIcon,
+	LockIcon,
 	PencilIcon,
 	Suit01Icon,
 	WavingHand01Icon,
@@ -359,6 +360,16 @@ export interface ProviderOptsContext {
 }
 
 export interface ProviderOption {
+	/** Corner badge icon (e.g. a lock) floated over the option. Unlike the
+	 *  whole-segment `tooltip`, the badge stays hover/click-interactive even
+	 *  when the option is `disabled` — a disabled <button> never fires hover,
+	 *  so a locked option MUST use the badge (not `tooltip`) to explain itself.
+	 *  This is the same surface the STT Source "Cloud" lock uses. */
+	badgeIcon?: IconSvgElement;
+	/** Tooltip body shown when the badge is hovered/focused. */
+	badgeTooltip?: string;
+	/** Supporting line in the badge tooltip's footer (e.g. "add a key to enable"). */
+	badgeTooltipFooter?: string;
 	/** Forwarded to the Switcher option — dims the row and blocks selection.
 	 *  Used for Intel Macs where Apple Intelligence is visible-but-disabled. */
 	disabled?: boolean;
@@ -392,10 +403,21 @@ export function buildProviderOpts(
 			value: "openrouter",
 			label: t("providerOpenRouter"),
 			icon: AiCloud01Icon,
-			// Cloud-provider hint mirroring the STT Source "Cloud" option: a footer
-			// that points the user to add an API key when none is configured.
+			// LOCK the cloud provider until a key is configured — full parity with
+			// the STT Source "Cloud" option (disabled + lock badge whose footer
+			// points the user at the key). A bare `tooltip` was insufficient: a
+			// disabled <button> fires no hover events, so the old soft hint never
+			// showed AND the option stayed selectable. The main-window auto-revert
+			// guard (use-cloud-key-auto-revert) separately flips any feature that
+			// was already ON OpenRouter back to Ollama when the key is cleared;
+			// this disables the *option* so it can't be re-selected while keyless.
 			...(ctx.openrouterNeedsKey
-				? { tooltip: t("providerCaption"), tooltipFooter: t("openrouterApiKeyTooltip") }
+				? {
+						disabled: true,
+						badgeIcon: LockIcon,
+						badgeTooltip: t("providerCaption"),
+						badgeTooltipFooter: t("openrouterApiKeyTooltip"),
+					}
 				: {}),
 		},
 	];
@@ -492,6 +514,12 @@ export interface FeatureToggleDeps {
 	scanOllama: () => void;
 	scanOpenRouter: () => void;
 	setShowApiKeyDialog: (v: boolean) => void;
+	/** Open the model-picker modal (browse + download + select). Used when
+	 *  Ollama is reachable but has NO installed model — enabling can't pick a
+	 *  model, so we open the picker and let its `onModelInstalled` callback
+	 *  commit `enabled: true`. Distinct from `setShowOllamaDialog`, which only
+	 *  covers the install/run-Ollama step (daemon unreachable). */
+	setShowModelPicker: (v: boolean) => void;
 	setShowOllamaDialog: (v: boolean) => void;
 }
 
@@ -510,10 +538,15 @@ function applyOllamaModel(deps: FeatureToggleDeps, model: string): void {
 	deps.apply({ model, enabled: true });
 }
 
-function applyReplacementOrShowDialog(deps: FeatureToggleDeps): void {
+function applyReplacementOrOpenPicker(deps: FeatureToggleDeps): void {
 	const smallest = pickSmallestInstalledOllama(deps.ollamaModels);
 	if (smallest === null) {
-		deps.setShowOllamaDialog(true);
+		// Ollama is running but has no models. Don't enable with model: "".
+		// Open the picker so the user can download one — the picker's
+		// `onModelInstalled` callback commits `enabled: true` once a model
+		// finishes installing (and reverting the toggle when the picker is
+		// dismissed empty keeps the never-enabled-without-a-model invariant).
+		deps.setShowModelPicker(true);
 		return;
 	}
 	applyOllamaModel(deps, smallest);
@@ -526,7 +559,7 @@ function enableOllamaForExistingModel(deps: FeatureToggleDeps): void {
 function continueOllamaEnable(deps: FeatureToggleDeps): void {
 	const paths: Readonly<Record<"keep" | "replace", (d: FeatureToggleDeps) => void>> = {
 		keep: enableOllamaForExistingModel,
-		replace: applyReplacementOrShowDialog,
+		replace: applyReplacementOrOpenPicker,
 	};
 	paths[isCurrentOllamaModelInstalled(deps) ? "keep" : "replace"](deps);
 }

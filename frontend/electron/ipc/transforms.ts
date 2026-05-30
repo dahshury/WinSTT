@@ -6,9 +6,12 @@ import { isPlainObject } from "../lib/ipc-helpers";
 import { pasteText } from "../lib/paste";
 import { captureSelection } from "../lib/selection-capture";
 import { getStoreValue } from "../lib/store";
-import { processText } from "./llm";
+import { type FeatureLlmConfig, processText, type ThinkingEffort } from "./llm";
 
 interface PreviewPayload {
+	/** Explicit config to run against (Playground "build your own" / editable
+	 *  copy). When omitted, the chosen feature's saved config is used. */
+	config?: FeatureLlmConfig;
 	feature: "dictation" | "transforms";
 	text: string;
 }
@@ -21,11 +24,45 @@ function asRecord(payload: unknown, label: string): Record<string, unknown> {
 }
 
 const VALID_PREVIEW_FEATURES = new Set(["dictation", "transforms"] as const);
+const VALID_THINKING_EFFORTS = new Set(["off", "low", "medium", "high"] as const);
 
 function isValidPreviewFeature(value: unknown): value is PreviewPayload["feature"] {
 	return (
 		typeof value === "string" && VALID_PREVIEW_FEATURES.has(value as "dictation" | "transforms")
 	);
+}
+
+function assertString(obj: Record<string, unknown>, key: string, label: string): void {
+	if (typeof obj[key] !== "string") {
+		throw new ValidationError(`${label}.${key} must be a string`, key);
+	}
+}
+
+/**
+ * Validate the optional explicit config the Playground sends. Mirrors the
+ * {@link FeatureLlmConfig} shape; arrays are checked for presence only (the
+ * LLM pipeline tolerates an empty/odd entry far better than a non-array).
+ */
+function assertPreviewConfig(value: unknown): asserts value is FeatureLlmConfig {
+	const cfg = asRecord(value, "LLM preview config");
+	for (const key of ["provider", "model", "openrouterModel", "openrouterFallbackModel"]) {
+		assertString(cfg, key, "LLM preview config");
+	}
+	if (!VALID_THINKING_EFFORTS.has(cfg.thinkingEffort as ThinkingEffort)) {
+		throw new ValidationError(
+			"LLM preview config.thinkingEffort must be off/low/medium/high",
+			"thinkingEffort"
+		);
+	}
+	if (!Array.isArray(cfg.presets)) {
+		throw new ValidationError("LLM preview config.presets must be an array", "presets");
+	}
+	if (!Array.isArray(cfg.customModifiers)) {
+		throw new ValidationError(
+			"LLM preview config.customModifiers must be an array",
+			"customModifiers"
+		);
+	}
 }
 
 function assertPreviewPayload(payload: unknown): asserts payload is PreviewPayload {
@@ -38,6 +75,9 @@ function assertPreviewPayload(payload: unknown): asserts payload is PreviewPaylo
 			"LLM preview payload.feature must be 'dictation' or 'transforms'",
 			"feature"
 		);
+	}
+	if (obj.config !== undefined) {
+		assertPreviewConfig(obj.config);
 	}
 }
 
@@ -151,10 +191,11 @@ export function setupTransforms(): () => void {
 	// Playground: feeds the user's sample text through the chosen feature's
 	// full pipeline (composed presets+modifiers + provider/model), bypassing
 	// selection capture and paste. Same code path the runtime would take —
-	// only the input/output sites differ.
+	// only the input/output sites differ. An explicit `config` (the editable
+	// playground draft) overrides the feature's saved config when present.
 	const handlePreview = async (_event: unknown, payload: unknown) => {
 		assertPreviewPayload(payload);
-		return await processText(payload.text, "", payload.feature);
+		return await processText(payload.text, "", payload.feature, payload.config);
 	};
 
 	ipcMain.handle(IPC.TRANSFORMS_APPLY, handleApply);
@@ -167,6 +208,7 @@ export function setupTransforms(): () => void {
 }
 
 export const __transforms_test_helpers__ = {
+	assertPreviewConfig,
 	assertPreviewPayload,
 	asRecord,
 	broadcastAll,

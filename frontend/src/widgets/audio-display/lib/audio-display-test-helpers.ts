@@ -1,5 +1,4 @@
-import type { useTranslations } from "use-intl";
-import { fileTranscribe, getFilePath } from "@/shared/api/ipc-client";
+import { fileQueueEnqueue, getFilePath } from "@/shared/api/ipc-client";
 
 const SUPPORTED_EXTENSIONS = new Set([
 	".mp3",
@@ -23,59 +22,44 @@ function getExtension(name: string): string {
 	return i >= 0 ? name.slice(i).toLowerCase() : "";
 }
 
-type TranslateFn = ReturnType<typeof useTranslations>;
-
-interface DropValidation {
-	errorMessage?: string;
-	fileName?: string;
-	filePath?: string;
-	ok: boolean;
+export interface DroppedFile {
+	fileName: string;
+	filePath: string;
 }
 
-function checkExtension(file: File, tf: TranslateFn): DropValidation | null {
-	const ext = getExtension(file.name);
-	if (SUPPORTED_EXTENSIONS.has(ext)) {
-		return null;
+/**
+ * Filter a raw drop to the audio/video files we can actually transcribe and
+ * resolve each to a native path. Unsupported types (a stray image, a folder)
+ * and files we can't get a path for are dropped silently — the queue only ever
+ * sees real, transcribable inputs. Order is preserved so the queue reflects the
+ * drop order.
+ */
+function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
+	const out: DroppedFile[] = [];
+	for (const file of files) {
+		if (!SUPPORTED_EXTENSIONS.has(getExtension(file.name))) {
+			continue;
+		}
+		const filePath = getFilePath(file);
+		if (!filePath) {
+			continue;
+		}
+		out.push({ filePath, fileName: file.name });
 	}
-	return { ok: false, fileName: file.name, errorMessage: tf("unsupportedFormat", { ext }) };
+	return out;
 }
 
-function checkFilePath(file: File, tf: TranslateFn): DropValidation {
-	const filePath = getFilePath(file);
-	if (!filePath) {
-		return { ok: false, fileName: file.name, errorMessage: tf("cannotDetermineFilePath") };
+/**
+ * Enqueue every transcribable file from a drop. Appends to the existing queue
+ * (the main process never clears on a new drop), so repeated drops accumulate.
+ * Returns the number of files actually enqueued.
+ */
+async function enqueueDroppedFiles(files: readonly File[]): Promise<number> {
+	const collected = collectDroppedFiles(files);
+	if (collected.length > 0) {
+		await fileQueueEnqueue(collected);
 	}
-	return { ok: true, fileName: file.name, filePath };
-}
-
-function validateDroppedFile(file: File | undefined, tf: TranslateFn): DropValidation {
-	if (!file) {
-		return { ok: false };
-	}
-	return checkExtension(file, tf) ?? checkFilePath(file, tf);
-}
-
-function extractErrorMessage(err: unknown, tf: TranslateFn): string {
-	return err instanceof Error ? err.message : tf("transcriptionFailed");
-}
-
-interface RunTranscriptionDeps {
-	setError: (name: string, msg: string) => void;
-	setProcessing: (name: string) => void;
-	tf: TranslateFn;
-}
-
-async function runTranscription(
-	fileName: string,
-	filePath: string,
-	deps: RunTranscriptionDeps
-): Promise<void> {
-	deps.setProcessing(fileName);
-	try {
-		await fileTranscribe(filePath);
-	} catch (err) {
-		deps.setError(fileName, extractErrorMessage(err, deps.tf));
-	}
+	return collected.length;
 }
 
 function getContainerClassName(isListenMode: boolean): string {
@@ -84,14 +68,13 @@ function getContainerClassName(isListenMode: boolean): string {
 	return `${base} ${border}`;
 }
 
-export { getContainerClassName, runTranscription, validateDroppedFile };
+export { collectDroppedFiles, enqueueDroppedFiles, getContainerClassName, getExtension };
 
 // Test-only exports — pure helpers extracted from drag/drop handling.
 export const __audio_display_test_helpers__ = {
 	getExtension,
-	validateDroppedFile,
-	extractErrorMessage,
-	runTranscription,
+	collectDroppedFiles,
+	enqueueDroppedFiles,
 	getContainerClassName,
 	SUPPORTED_EXTENSIONS,
 };

@@ -582,13 +582,43 @@ async def _handle_transcribe_file(ws: ServerConnection, state: ServerState, data
     request_id = data.get("request_id", "")
     file_path = data.get("file_path", "")
     fmt = data.get("format", "txt")
+    # Resume continuation: ``resume_from`` (seconds into the file) + the chunks
+    # already finished (``prior_segments`` = [[start, end, text], …]). Coerce the
+    # JSON lists to typed tuples for the worker.
+    resume_from = float(data.get("resume_from", 0.0) or 0.0)
+    raw_prior = data.get("prior_segments") or []
+    prior_segments = [(float(seg[0]), float(seg[1]), str(seg[2])) for seg in raw_prior]
     loop = asyncio.get_event_loop()
     threading.Thread(
         target=handle_transcribe_file,
-        args=(file_path, request_id, state, loop, fmt),
+        args=(file_path, request_id, state, loop, fmt, resume_from, prior_segments),
         daemon=True,
     ).start()
     await ws.send(json.dumps({"status": "success", "message": "File transcription started"}))
+
+
+@register_command("cancel_file_transcription")
+async def _handle_cancel_file_transcription(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Flag a file transcription to abort between VAD chunks.
+
+    Polled by ``handle_transcribe_file``'s ``on_progress`` callback, which
+    raises to break the segment loop and release the shared model so a
+    push-to-talk dictation can run. Request-scoped: the worker cancels only
+    when its own ``request_id`` matches, so a cancel issued during a file's
+    dispatch window can't bleed onto the next file (and a stale flag naming a
+    different request is inert).
+    """
+    request_id = data.get("request_id", "")
+    state.cancel_file_transcription_requested = request_id or None
+    await ws.send(
+        json.dumps(
+            {
+                "status": "success",
+                "message": "File transcription cancel requested",
+                "request_id": request_id,
+            }
+        )
+    )
 
 
 _WORD_ALIGNER: WordAligner | None = None
@@ -821,6 +851,22 @@ async def _handle_reload_model(ws: ServerConnection, state: ServerState, data: d
         return
     _log_call(f"request_model_swap({kind}", model + ")")
     await ws.send(json.dumps({"status": "success", "message": f"model swap requested: kind={kind} name={model}"}))
+
+
+@register_command("stt_cloud_transcribe_response")
+async def _handle_cloud_transcribe_response(ws: ServerConnection, state: ServerState, data: dict[str, Any]) -> None:
+    """Route a cloud transcribe RESPONSE from electron-main back to the
+    in-flight ``RemoteTranscriber`` future (correlated by ``request_id``).
+
+    This is the reply leg of the cloud-STT RPC bridge whose request leg is
+    ``server._send_cloud_request``. One-way delivery — no reply is sent (the
+    pipeline thread is already blocked on the future). Unmatched responses
+    (stale acks after a timeout / model swap) are silently dropped.
+    """
+    del ws, state  # delivery is routed via the module-level active-transcriber registry
+    from src.recorder.infrastructure.remote_transcriber import deliver_cloud_response
+
+    deliver_cloud_response(data)
 
 
 @register_command("get_runtime_info")

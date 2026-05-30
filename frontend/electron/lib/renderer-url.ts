@@ -19,7 +19,10 @@ export type RendererPage =
 	| "model-picker"
 	| "device-picker"
 	| "onboarding"
-	| "history";
+	| "history"
+	// Debug-only — gated by CONTEXT_PLAYGROUND_ENABLED. The HTML entry always
+	// ships, but the window is only ever loaded when the flag is on.
+	| "context-playground";
 
 // `main` stays at the project root (Vite dev-root convention); the 6 secondary
 // window entries live under `windows/` so the frontend root isn't cluttered
@@ -34,6 +37,7 @@ const PAGE_TO_FILE: Record<RendererPage, string> = {
 	"device-picker": "windows/device-picker.html",
 	onboarding: "windows/onboarding.html",
 	history: "windows/history.html",
+	"context-playground": "windows/context-playground.html",
 };
 
 const DEV_BASE_URL = "http://localhost:3000";

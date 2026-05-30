@@ -13,6 +13,18 @@ class IAudioSource(ABC):
     def read_chunk(self) -> AudioChunk: ...
 
     @abstractmethod
+    def drain_available(self) -> AudioChunk:
+        """Return audio captured-but-not-yet-read, without blocking.
+
+        Called once on user-driven stop (PTT release) so the tail the OS
+        buffered between the reader's last ``read_chunk`` and the stream
+        closing isn't abandoned. Returns target-rate int16 PCM bytes, or
+        ``b""`` when there's nothing buffered. Only hardware-backed sources
+        (``PyAudioSource``) have a device ring buffer worth draining; file
+        and fake sources feed through their own queue and return ``b""``.
+        """
+
+    @abstractmethod
     def cleanup(self) -> None: ...
 
     @abstractmethod

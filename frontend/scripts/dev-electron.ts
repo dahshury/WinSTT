@@ -9,7 +9,7 @@
  * clean `app.quit()` (code 0) terminates the dev orchestrator via
  * `concurrently -k`.
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, type FSWatcher, statSync, watch } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -161,15 +161,35 @@ async function startElectron(baselineMtimeMs: number): Promise<void> {
 
 	proc.once("exit", (code, signal) => {
 		child = null;
-		if (restarting) {
+		// A clean exit (code 0, no signal) is a USER quit — the tray "Quit" button
+		// runs app.exit(0)/app.quit(). A dev-initiated hot-reload restart instead
+		// kills electron via `taskkill /F` (or SIGTERM), which surfaces as a
+		// non-zero code or a signal. During heavy editing tsup rebuilds constantly,
+		// so `restarting` is often set; without this guard a Quit that lands in that
+		// window is swallowed into an endless relaunch (electron reboots HIDDEN into
+		// the tray) — the process never exits, dev-electron never propagates, and
+		// `bun dev` never returns to the prompt. Honour the clean exit instead.
+		const userQuit = code === 0 && !signal;
+		if (restarting && !userQuit) {
 			restarting = false;
 			// Wait for a build NEWER than the one this electron ran before relaunching.
 			void startElectron(launchedMtimeMs);
 			return;
 		}
+		restarting = false;
 		if (shuttingDown) {
 			return;
 		}
+		// Clean electron exit (e.g. the tray "Quit" button). before-quit →
+		// killSttProcess fires an ASYNC taskkill that can lose the race against
+		// electron's exit, orphaning the STT server tree; sweep it synchronously
+		// so nothing outlives `bun dev`.
+		reapSttServers();
+		// Arm the out-of-tree backstop: concurrently's `-k` teardown is unreliable
+		// with this deep Windows tree, so a clean exit here often still leaves
+		// vite/tsup (and `bun dev`) running. The detached, delayed taskkill returns
+		// the prompt even when concurrently wedges (no-ops when it tears down clean).
+		scheduleDevSessionNuke();
 		// Propagate the child's exit so the dev orchestrator can tear down.
 		if (signal) {
 			log(`electron exited via signal ${signal}`);
@@ -183,6 +203,126 @@ async function startElectron(baselineMtimeMs: number): Promise<void> {
 		log(`failed to spawn electron: ${err.message}`);
 		process.exit(1);
 	});
+}
+
+/**
+ * Tear down the electron child AND its entire descendant tree.
+ *
+ * Node's `child.kill()` is a single-process `TerminateProcess` on Windows — it
+ * does NOT cascade to descendants. The child we spawn is
+ * `node electron/cli.js` → `electron.exe` → (in dev) `uv run stt-server` →
+ * `stt-server.exe` → `python`. A bare `child.kill()` hard-kills electron (cli.js
+ * forwards the signal as a hard kill, so electron's `before-quit` —and thus
+ * `killSttProcess()`— never runs), but the OS leaves the STT server subtree
+ * orphaned on the bound ports (8011/8012), holding the GPU/model in RAM. That is
+ * the exact class `reclaimOrphanStttServers()` exists to mop up on the NEXT
+ * spawn — but on the final session-end there is no next spawn, so it survives
+ * `bun dev`. `taskkill /T` walks the whole tree by pid and force-kills every
+ * descendant, so a hot-reload restart or a Ctrl+C leaves nothing behind. POSIX
+ * already cascades child death via the process group, so a plain kill suffices.
+ */
+function killChildTree(): void {
+	const proc = child;
+	if (!proc?.pid) {
+		return;
+	}
+	if (process.platform !== "win32") {
+		proc.kill();
+		return;
+	}
+	try {
+		spawnSync("taskkill", ["/T", "/F", "/PID", String(proc.pid)], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: 5000,
+		});
+	} catch {
+		proc.kill(); // best-effort fallback if taskkill is missing/blocked
+	}
+}
+
+/**
+ * Sweep any leftover `stt-server.exe` (the venv console-script launcher the dev
+ * server runs via `uv run stt-server`). Mirrors electron's
+ * `reclaimOrphanStttServers()` but runs on the way OUT, as a synchronous net for
+ * the *clean* electron-exit path (the tray "Quit" button): there before-quit →
+ * killSttProcess fires an ASYNC `taskkill` that can lose the race against
+ * electron's own exit, and by then the server tree is already orphaned (its
+ * parent electron is gone) so a pid tree-kill can't find it. An image-name kill
+ * reaps it regardless of parent. `stt-server.exe` is WinSTT-specific, so this
+ * can't touch unrelated processes; `/T` takes its python children with it.
+ * No-op off Windows.
+ */
+function reapSttServers(): void {
+	if (process.platform !== "win32") {
+		return;
+	}
+	try {
+		spawnSync("taskkill", ["/F", "/T", "/IM", "stt-server.exe"], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: 3000,
+		});
+	} catch {
+		// Best-effort: a missing/blocked taskkill leaves it for the next
+		// `bun dev` to reclaim via reclaimOrphanStttServers().
+	}
+}
+
+/**
+ * Backstop that guarantees `bun dev` returns to the prompt on a user Quit.
+ *
+ * dev-electron lives deep inside the orchestrator tree
+ * (`concurrently → cmd.exe → bun run electron:start → bun run dev-electron →
+ * electron`). On Windows, concurrently's `-k` teardown intermittently fails to
+ * react when this "app" command exits — verified live: the whole app chain was
+ * gone yet concurrently + vite + tsup kept running and never returned the prompt
+ * (only Ctrl+C, which kills the tree, worked). So a clean dev-electron exit is
+ * NOT enough on its own.
+ *
+ * We walk up our own ancestors to find the `concurrently` pid, then have WMI
+ * (`Win32_Process.Create`) spawn a detached, slightly-delayed killer that runs
+ * `taskkill /F /T /IM stt-server.exe` (reaps the orphaned server tree, which
+ * reparents out from under every pid-based kill) AND `taskkill /F /T /PID <cc>`.
+ * Key properties:
+ *   • OUT-OF-TREE — created by WmiPrvSE, not as our child — so the killer isn't
+ *     taken down together with the very tree it is killing.
+ *   • WINDOW-LESS — `Win32_ProcessStartup.ShowWindow = SW_HIDE (0)`, so the
+ *     helper cmd runs with a hidden console and never flashes a terminal.
+ *     (Don't use CreateFlags: CREATE_NO_WINDOW / 0x08000000 is rejected by WMI
+ *     with "invalid parameter", and DETACHED_PROCESS / 8 gives the cmd NO console
+ *     at all, which silently breaks the taskkill inside it — verified live.
+ *     SW_HIDE keeps a real (hidden) console so taskkill still works.)
+ *   • DELAYED ~1s — if concurrently DOES tear down cleanly (the common case),
+ *     its tree is already gone and the taskkill no-ops; the kill only matters
+ *     when the teardown wedged.
+ *   • SCOPED to one concurrently pid, so a second `bun dev` is untouched.
+ * Killing concurrently force-closes vite + tsup + the app chain; its parents
+ * (`bun run electron:dev` → `bun dev`) then exit on their own, returning the
+ * prompt. No-op when there's no concurrently ancestor (dev-electron run
+ * standalone) or off Windows.
+ */
+function scheduleDevSessionNuke(): void {
+	if (process.platform !== "win32") {
+		return;
+	}
+	const ps =
+		`$me=${process.pid};$all=Get-CimInstance Win32_Process;$cur=$me;$cc=$null;` +
+		"for($i=0;$i -lt 16;$i++){$p=$all|Where-Object{$_.ProcessId -eq $cur};if(-not $p){break};" +
+		"if($p.CommandLine -match 'concurrently'){$cc=$p.ProcessId;break};$cur=$p.ParentProcessId};" +
+		"if($cc){$si=([wmiclass]'Win32_ProcessStartup').CreateInstance();$si.ShowWindow=0;" +
+		"([wmiclass]'Win32_Process').Create('cmd /c ping -n 2 127.0.0.1 >nul " +
+		"& taskkill /F /T /IM stt-server.exe & taskkill /F /T /PID '+$cc,$null,$si)|Out-Null}";
+	try {
+		spawnSync("powershell", ["-NoProfile", "-Command", ps], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: 4000,
+		});
+	} catch {
+		// Best-effort backstop — if it can't arm, the clean process.exit below
+		// plus concurrently's own teardown are the only recourse.
+	}
 }
 
 function scheduleRestart(reason: string): void {
@@ -200,7 +340,7 @@ function scheduleRestart(reason: string): void {
 		}
 		log(`restarting (${reason})`);
 		restarting = true;
-		child.kill();
+		killChildTree();
 	}, 150);
 }
 
@@ -227,11 +367,13 @@ function shutdown(signal: NodeJS.Signals): void {
 	shuttingDown = true;
 	log(`received ${signal}, shutting down`);
 	watcher?.close();
-	if (child) {
-		child.kill();
-	} else {
-		process.exit(0);
-	}
+	// Hard-kill the whole electron tree (cli.js → electron → uv → stt-server →
+	// python) synchronously, then sweep any stray stt-server.exe by image name,
+	// so an abrupt `bun dev` end (Ctrl+C, closed terminal, a sibling command
+	// dying under `concurrently -k`) never leaves the STT server running.
+	killChildTree();
+	reapSttServers();
+	process.exit(0);
 }
 
 process.on("SIGINT", shutdown);

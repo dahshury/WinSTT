@@ -12,7 +12,9 @@ import {
 } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
+import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { useDownloadListener } from "@/features/model-download";
+import { useCloudKeyAutoRevert } from "@/features/revert-cloud-on-key-removal";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { windowCloseSelf } from "@/shared/api/ipc-client";
@@ -25,6 +27,7 @@ import { GeneralSettingsPanel } from "@/widgets/general-settings";
 import { IntegrationsSettingsPanel } from "@/widgets/integrations-settings";
 import { LlmSettingsPanel } from "@/widgets/llm-settings";
 import { ModelSettingsPanel } from "@/widgets/model-settings";
+import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
 import { QualitySettingsPanel } from "@/widgets/quality-settings";
 import { SnippetsSettingsPanel } from "@/widgets/snippets-settings";
 import { TranscriptionHistoryPanel } from "@/widgets/transcription-history-settings";
@@ -34,6 +37,32 @@ import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
 
 const llmSettingsSlot = <LlmSettingsPanel />;
 const ttsSettingsSlot = <TtsModelSection />;
+
+/**
+ * Host for the LLM Ollama model-picker modal. The dialog is a widget, so it
+ * can't be rendered from the LLM settings *widget* (FSD widget→widget ban) —
+ * the LLM panel only drives `useLlmModelPickerStore`, and this view-level host
+ * renders the actual modal. On install it commits the model (and `enabled` when
+ * the open was a toggle-driven turn-on), so the feature is never enabled
+ * without a model.
+ */
+function LlmModelPickerHost() {
+	const open = useLlmModelPickerStore((s) => s.open);
+	const feature = useLlmModelPickerStore((s) => s.feature);
+	const close = useLlmModelPickerStore((s) => s.close);
+	const commitInstalled = useLlmModelPickerStore((s) => s.commitInstalled);
+	const currentModel = useSettingsStore((s) =>
+		feature === "transforms" ? s.settings.llm.transforms.model : s.settings.llm.dictation.model
+	);
+	return (
+		<OllamaModelManagerDialog
+			currentModel={currentModel}
+			isOpen={open}
+			onClose={close}
+			onModelInstalled={commitInstalled}
+		/>
+	);
+}
 
 export function SettingsPage() {
 	const isLoaded = useSettingsStore((s) => s.isLoaded);
@@ -46,6 +75,12 @@ export function SettingsPage() {
 	// so the picker reflects reality when the server has fallen back from
 	// an unloadable user choice. Idempotent when the two already agree.
 	useSyncActiveModel();
+	// Auto-revert any cloud surface (STT model / LLM provider / cloud TTS) to a
+	// local engine when its API key is removed. Mounted HERE (not the main
+	// window) because keys are edited in this window and the OpenRouter key
+	// shares the `llm` section with the LLM provider/enabled flags — a revert
+	// from another window loses the cross-window user-dirty merge.
+	useCloudKeyAutoRevert();
 	const t = useTranslations("settings");
 	// Per-tab search keywords (section headings + setting names) so the sidebar
 	// search surfaces a tab by its contents, not just its label/tooltip.
@@ -197,6 +232,7 @@ export function SettingsPage() {
 				) : (
 					<div className="flex-1 bg-surface-1" />
 				)}
+				<LlmModelPickerHost />
 			</div>
 		</SurfaceProvider>
 	);

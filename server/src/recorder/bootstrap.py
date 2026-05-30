@@ -363,6 +363,27 @@ def _parse_cloud_model_id(model_name: str) -> tuple[str, str] | None:
     return None
 
 
+def _assert_cloud_model_id_not_blank(model_name: str) -> None:
+    """Reject a known cloud prefix with no (or whitespace-only) model id.
+
+    ``_parse_cloud_model_id`` returns ``None`` for ``"openai:"`` so the local
+    construction path runs unchanged — but a bare prefix is never a valid
+    local model either. Without this guard it would silently fall through to
+    the ONNX resolver and surface a confusing "model not found" download
+    error. Raising here turns the renderer's broken "cloud enabled, no model
+    chosen" state into a clear configuration error instead.
+    """
+    for prefix in _CLOUD_PROVIDER_PREFIXES:
+        if model_name.startswith(prefix) and not model_name[len(prefix) :].strip():
+            from src.building_blocks.errors import ConfigurationError
+
+            provider = prefix.rstrip(":")
+            raise ConfigurationError(
+                f"Cloud STT provider '{provider}' selected with no model id "
+                f"(got {model_name!r}); pick a model before transcribing."
+            )
+
+
 def _resolve_load_target(model_name: str, info: ModelInfo | None) -> tuple[str, str | None]:
     """Pick the ``(onnx_model_name, local_path)`` pair onnx-asr should load.
 
@@ -418,6 +439,8 @@ def build_transcriber(
         from src.recorder.infrastructure.remote_transcriber import RemoteTranscriber
 
         return RemoteTranscriber(provider=provider, model_id=cloud_model_id)
+
+    _assert_cloud_model_id_not_blank(model_name)
 
     from src.recorder.domain.model_registry import ModelCatalog
 
@@ -651,6 +674,8 @@ def build_realtime_transcriber(
         from src.recorder.infrastructure.remote_transcriber import RemoteTranscriber
 
         return RemoteTranscriber(provider=provider, model_id=cloud_model_id)
+
+    _assert_cloud_model_id_not_blank(model_name)
 
     from src.recorder.domain.model_registry import ModelCatalog
 

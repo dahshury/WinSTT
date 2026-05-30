@@ -19,12 +19,24 @@ machine.
 
 The voice catalog covers **54 voices across 9 languages** — US/UK English, Japanese,
 Mandarin, Spanish, French, Hindi, Italian, and Brazilian Portuguese. Picking a voice also
-sets its language, so there is no second picker to keep in sync.
+sets its language, so there is no second picker to keep in sync. The voice list *is* the
+complete set of languages local TTS can speak: if a language has no voice in the picker,
+Kokoro can't synthesize it, and it never translates — it reads the selected text in the
+chosen voice's language.
 
 <Callout type="success" title="Synthesized locally">
   Kokoro-82M runs entirely on local hardware — the same ONNX runtime that powers
   transcription. Selected text is read from the focused app and synthesized in memory; it
   is never written to disk or uploaded.
+</Callout>
+
+<Callout type="info" title="Need a language that isn't listed?">
+  Local Kokoro is the only text-to-speech engine WinSTT ships today, so its 9 languages are
+  the hard limit for on-device read-aloud. A cloud engine such as
+  [ElevenLabs](https://elevenlabs.io) synthesizes dozens of languages — and WinSTT already
+  talks to ElevenLabs for [cloud transcription](/docs/settings/integrations) — but **cloud
+  text-to-speech isn't wired up yet**. For now, languages beyond the 9 above mean reaching
+  for an external TTS tool.
 </Callout>
 
 ## First-time setup
@@ -93,7 +105,8 @@ The pack downloads in three parts, totaling about **190 MB**:
 
 <SettingRow label="Language" settingKey="tts.lang" default="en-us">
   Set automatically from the chosen voice — there's no separate language control to
-  manage. Each voice belongs to exactly one of the 9 languages.
+  manage. Each voice belongs to exactly one of the 9 supported languages, and those 9 are
+  the only languages local TTS can speak — there's no way to add more on-device.
 </SettingRow>
 
 <SettingRow label="Text-to-speech key" settingKey="tts.hotkey" default="LMeta+LShift+E">

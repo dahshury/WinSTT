@@ -153,9 +153,15 @@ const auraVariants = cva(["aspect-square"], {
 });
 
 export interface AudioVisualizerAuraProps {
+	/** Additive bloom (dark theme only), 0–1 → shader `uBloom`. Default 0. */
+	bloom?: number;
+	/** Field blur, 0–1 → shader `uBlur`. Default 0.2. */
+	blur?: number;
 	className?: string;
 	color?: `#${string}`;
 	colorShift?: number;
+	/** Base SDF shape — circle or line. Default "circle". */
+	shape?: "circle" | "line";
 	size?: VisualizerSize;
 	themeMode?: "dark" | "light";
 }
@@ -170,6 +176,14 @@ export function themeModeToUniform(theme: "dark" | "light"): number {
 	return theme === "light" ? 1.0 : 0.0;
 }
 
+/** Maps the base-shape choice to the shader's `uShape` selector. */
+export function auraShapeToUniform(shape: "circle" | "line" | undefined): number {
+	return shape === "line" ? 2.0 : 1.0;
+}
+
+const DEFAULT_AURA_BLUR = 0.2;
+const DEFAULT_AURA_BLOOM = 0.0;
+
 const DEFAULT_FALLBACK_COLOR: [number, number, number] = [0, 0.7, 1];
 const DEVICE_PIXEL_RATIO = globalThis.devicePixelRatio ?? 1;
 
@@ -177,6 +191,9 @@ export function AudioVisualizerAura({
 	size = "lg",
 	color = DEFAULT_COLOR,
 	colorShift = 0.05,
+	blur = DEFAULT_AURA_BLUR,
+	bloom = DEFAULT_AURA_BLOOM,
+	shape,
 	themeMode,
 	className,
 	...props
@@ -186,16 +203,17 @@ export function AudioVisualizerAura({
 
 	const resolvedTheme = resolveAuraTheme(themeMode);
 	const modeUniform = themeModeToUniform(resolvedTheme);
+	const shapeUniform = auraShapeToUniform(shape);
 
 	// Mutable uniforms ref — animators write here directly, ReactShaderToy reads on each frame
 	const uniformsRef = useRef<Uniforms>({
 		uSpeed: { type: "1f", value: 10 },
-		uBlur: { type: "1f", value: 0.2 },
+		uBlur: { type: "1f", value: blur },
 		uScale: { type: "1f", value: 0.2 },
-		uShape: { type: "1f", value: 1.0 },
+		uShape: { type: "1f", value: shapeUniform },
 		uFrequency: { type: "1f", value: 0.5 },
 		uAmplitude: { type: "1f", value: 2 },
-		uBloom: { type: "1f", value: 0.0 },
+		uBloom: { type: "1f", value: bloom },
 		uMix: { type: "1f", value: 1.5 },
 		uSpacing: { type: "1f", value: 0.5 },
 		uColorShift: { type: "1f", value: colorShift },
@@ -211,7 +229,10 @@ export function AudioVisualizerAura({
 		uniformsRef.current.uColorShift = { type: "1f", value: colorShift };
 		uniformsRef.current.uMode = { type: "1f", value: modeUniform };
 		uniformsRef.current.uColor = { type: "3fv", value: rgbColor };
-	}, [colorShift, modeUniform, rgbColor]);
+		uniformsRef.current.uBlur = { type: "1f", value: blur };
+		uniformsRef.current.uBloom = { type: "1f", value: bloom };
+		uniformsRef.current.uShape = { type: "1f", value: shapeUniform };
+	}, [colorShift, modeUniform, rgbColor, blur, bloom, shapeUniform]);
 
 	// Hook up motion-value-driven animations that write to uniformsRef (zero re-renders)
 	useAuraAnimator(state, uniformsRef);

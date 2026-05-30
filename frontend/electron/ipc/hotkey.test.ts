@@ -111,7 +111,12 @@ const fakeSttClient = {
 	get isConnected() {
 		return sttConnectedState;
 	},
-} as { isConnected: boolean };
+	// Mirrors isConnected here so the existing "disconnected skips the sound"
+	// test still drives the (now control-channel-gated) chime via one flag.
+	get isControlConnected() {
+		return sttConnectedState;
+	},
+} as { isConnected: boolean; isControlConnected: boolean };
 
 let sttConnectedState = true;
 let cleanup: (() => void) | null = null;

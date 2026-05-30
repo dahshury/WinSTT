@@ -1,2 +1,2 @@
+export { useSttSourceSwitch } from "./model/use-stt-source-switch";
 export { CloudModelSelect } from "./ui/CloudModelSelect";
-export { CloudSttSection } from "./ui/CloudSttSection";

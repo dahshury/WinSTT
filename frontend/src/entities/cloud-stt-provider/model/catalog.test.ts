@@ -5,7 +5,9 @@ import {
 	type CloudModel,
 	defaultCloudModelId,
 	getApiKeyUrl,
+	mergeCloudModels,
 	pickDefaultCloudModel,
+	prettifyModelId,
 	providerDisplayName,
 	providerOf,
 } from "./catalog";
@@ -110,5 +112,53 @@ describe("providerDisplayName", () => {
 
 	test("returns 'ElevenLabs' for elevenlabs", () => {
 		expect(providerDisplayName("elevenlabs")).toBe("ElevenLabs");
+	});
+});
+
+describe("prettifyModelId", () => {
+	test("normalizes separators and uppercases the gpt token", () => {
+		expect(prettifyModelId("gpt-4o-mini-transcribe-2025-12-15")).toBe(
+			"GPT 4o Mini Transcribe 2025 12 15"
+		);
+		expect(prettifyModelId("scribe_v1_experimental")).toBe("Scribe V1 Experimental");
+	});
+});
+
+describe("mergeCloudModels", () => {
+	const curated: CloudModel[] = [
+		{ id: "gpt-4o-mini-transcribe", displayName: "GPT-4o mini transcribe", isDefault: true },
+		{ id: "whisper-1", displayName: "Whisper v1" },
+	];
+
+	test("keeps curated entries first with their metadata", () => {
+		const merged = mergeCloudModels(curated, [{ id: "whisper-1" }]);
+		expect(merged.slice(0, 2)).toEqual(curated);
+	});
+
+	test("appends unknown dynamic ids with provider or prettified labels", () => {
+		const merged = mergeCloudModels(curated, [
+			{ id: "gpt-4o-transcribe-diarize", displayName: "GPT-4o transcribe (diarize)" },
+			{ id: "gpt-4o-transcribe-2099-01-01" },
+		]);
+		expect(merged.map((m) => m.id)).toEqual([
+			"gpt-4o-mini-transcribe",
+			"whisper-1",
+			"gpt-4o-transcribe-diarize",
+			"gpt-4o-transcribe-2099-01-01",
+		]);
+		expect(merged[2]?.displayName).toBe("GPT-4o transcribe (diarize)");
+		// No provider label → prettified id.
+		expect(merged[3]?.displayName).toBe("GPT 4o Transcribe 2099 01 01");
+	});
+
+	test("dedupes by id (idempotent re-scan)", () => {
+		const once = mergeCloudModels(curated, [{ id: "gpt-4o-transcribe" }]);
+		const twice = mergeCloudModels(once, [{ id: "gpt-4o-transcribe" }]);
+		expect(twice).toEqual(once);
+	});
+
+	test("retains curated entries the scan omits (union, never drops)", () => {
+		const merged = mergeCloudModels(curated, []);
+		expect(merged).toEqual(curated);
 	});
 });

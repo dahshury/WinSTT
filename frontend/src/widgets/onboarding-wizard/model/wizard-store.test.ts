@@ -16,7 +16,6 @@ beforeEach(() => {
 		currentStep: "welcome",
 		track: "",
 		micTestPassed: false,
-		llmPickerOpen: false,
 	});
 });
 
@@ -70,14 +69,12 @@ describe("useOnboardingWizardStore — initial state", () => {
 		expect(s.currentStep).toBe("welcome");
 		expect(s.track).toBe("");
 		expect(s.micTestPassed).toBe(false);
-		expect(s.llmPickerOpen).toBe(false);
 	});
 
 	test("factory initial-state literals (mutation guard)", () => {
 		expect(INITIAL_STATE.currentStep).toBe("welcome");
 		expect(INITIAL_STATE.track).toBe("");
 		expect(INITIAL_STATE.micTestPassed).toBe(false);
-		expect(INITIAL_STATE.llmPickerOpen).toBe(false);
 	});
 });
 
@@ -92,11 +89,6 @@ describe("useOnboardingWizardStore — setters", () => {
 	test("setMicTestPassed updates only the flag", () => {
 		useOnboardingWizardStore.getState().setMicTestPassed(true);
 		expect(useOnboardingWizardStore.getState().micTestPassed).toBe(true);
-	});
-
-	test("setLlmPickerOpen updates only the flag", () => {
-		useOnboardingWizardStore.getState().setLlmPickerOpen(true);
-		expect(useOnboardingWizardStore.getState().llmPickerOpen).toBe(true);
 	});
 });
 

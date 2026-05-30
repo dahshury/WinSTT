@@ -90,6 +90,18 @@ class ServerState:
     # a daemon thread.
     main_loop: asyncio.AbstractEventLoop | None = None
 
+    # ─── File-transcription state ────────────────────────────────────
+    # The id of the file transcription currently running (None when idle).
+    # Electron drives the queue strictly one-at-a-time, so a single slot is
+    # enough. ``cancel_file_transcription_requested`` holds the *request_id* to
+    # cancel (request-scoped, not a global bool): the worker's ``on_progress``
+    # callback raises only when it matches THIS request, so a cancel issued
+    # during the dispatch window can't bleed onto the next file and a stale flag
+    # for a different request is inert. Setting it breaks the segment loop so a
+    # push-to-talk dictation can reclaim the shared model.
+    active_file_request_id: str | None = None
+    cancel_file_transcription_requested: str | None = None
+
     # ─── Download state ──────────────────────────────────────────────
     download_state: str | None = None
     cancel_download_requested: bool = False

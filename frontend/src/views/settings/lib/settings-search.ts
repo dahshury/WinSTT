@@ -159,12 +159,14 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 		].join(" "),
 		integrations: [
 			ti("title"),
+			ti("llmSectionTitle"),
+			ti("sttSectionTitle"),
 			ti("openai"),
 			ti("elevenlabs"),
 			ti("cloudModels"),
 			ti("sourceLabel"),
 			ti("getApiKey"),
-			"api key cloud",
+			"api key cloud llm openrouter ollama speech to text transcription",
 		].join(" "),
 		about: [
 			tAbout("appInfoTitle"),

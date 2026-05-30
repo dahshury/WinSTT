@@ -163,6 +163,36 @@ class TestRecordingPipeline:
     # New tests for full coverage
     # ------------------------------------------------------------------ #
 
+    def test_request_stop_via_queue_buffers_backlog_before_finalizing(self) -> None:
+        """The stop marker buffers every already-queued chunk BEFORE the
+        transition out of RECORDING — so the tail spoken right up to PTT
+        release isn't dropped. A direct ``request_stop()`` would finalize
+        immediately and leave the queued chunks to ``_process_not_recording``.
+        """
+        pipeline, event_bus, sm, buf = self._make_pipeline(speech_pattern=[True] + [False] * 50)
+        # PTT semantics: no VAD silence endpoint, so only the marker stops us.
+        pipeline.silence_endpoint_enabled = False
+        stopped: list[object] = []
+        event_bus.subscribe(RecordingStopped, stopped.append)
+
+        pipeline.request_start()
+        assert sm.state == RecorderState.RECORDING
+        # Queue a backlog of chunks, then the stop marker, all BEFORE the
+        # worker starts draining — mirrors a release while chunks are in flight.
+        for _ in range(8):
+            pipeline.feed_audio(_make_chunk())
+        pipeline.request_stop_via_queue()
+
+        with pipeline:
+            deadline = time.time() + 1.0
+            while sm.state == RecorderState.RECORDING and time.time() < deadline:
+                time.sleep(0.01)
+
+        assert sm.state == RecorderState.TRANSCRIBING  # type: ignore[comparison-overlap]
+        # All 8 queued chunks landed in the buffer before the marker finalized.
+        assert buf.frame_count >= 8
+        assert len(stopped) == 1
+
     def test_request_listen_when_already_listening(self) -> None:
         """Line 72->74: request_listen() skips transition when state is already LISTENING."""
         clock = Clock.fixed_clock(1000.0)

@@ -15,6 +15,28 @@ afterEach(() => {
 });
 
 describe("IntegrationsSettingsPanel", () => {
+	test("groups keys under the LLM and Cloud STT capability sections", () => {
+		// The panel must make it unambiguous which key unlocks which feature:
+		// OpenRouter/Ollama sit under "Language Models (LLM)", while the
+		// OpenAI/ElevenLabs cloud-STT keys sit under "Cloud Speech-to-Text".
+		// A user who adds only an OpenRouter key should see it grouped away
+		// from the STT section — that's the whole point of the split.
+		const { getByText } = render(
+			<IntlProvider>
+				<IntegrationsSettingsPanel />
+			</IntlProvider>
+		);
+		expect(getByText("Language Models (LLM)")).toBeDefined();
+		expect(getByText("Cloud Speech-to-Text")).toBeDefined();
+		// The STT caption points the user at the Model-tab Cloud source so
+		// they know where the key takes effect.
+		expect(
+			getByText(
+				"Transcribe with a cloud provider instead of a local model. Add a key here to unlock the Cloud source in the Model tab."
+			)
+		).toBeDefined();
+	});
+
 	test("renders the Ollama endpoint and OpenRouter API key inputs", () => {
 		useSettingsStore.setState({
 			settings: {

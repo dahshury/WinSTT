@@ -8,6 +8,7 @@ import {
 	BinaryCodeIcon,
 	Brain01Icon,
 	Delete02Icon,
+	Idea01Icon,
 	StarIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -45,6 +46,7 @@ import {
 	getOllamaPublisherBySlug,
 	groupOllamaModelsByPublisher,
 } from "../lib/family-helpers";
+import { useFavoriteOllamaModels } from "../lib/use-favorite-ollama-models";
 
 interface PausedPullState {
 	pausedAt: number;
@@ -137,6 +139,7 @@ export interface OllamaModelSelectorProps {
 const DEFAULT_PLACEHOLDER = "Select a model";
 const OLLAMA_LIBRARY_URL = "https://ollama.com/library";
 const VALID_MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]+$/;
+const FAVORITES_RAIL_ID = "__favorites__";
 const RECOMMENDED_RAIL_ID = "__recommended__";
 const LIBRARY_RAIL_ID = "__library__";
 const LEADING_LETTERS_RE = /^[a-zA-Z]+/;
@@ -272,6 +275,66 @@ function WontFitChip({ fit }: { fit: OllamaFitInfo | undefined }) {
 				)}
 			/>
 			<TooltipContent side="top">{tooltip}</TooltipContent>
+		</Tooltip>
+	);
+}
+
+/**
+ * Star toggle pinned to an installed row's right edge. Clicking it stars /
+ * unstars the model, which adds / removes it from the synthetic "Favorites"
+ * group pinned to the top of the list. Mirrors the STT picker's `FavoriteToggle`
+ * (amber, filled when active) so the gesture reads the same across pickers.
+ *
+ * `preventDefault` + `stopPropagation` keep the click from bubbling to the
+ * enclosing `Combobox.Item` (which would otherwise select the model) — same
+ * guard the delete button uses.
+ */
+function FavoriteToggle({
+	isFavorited,
+	modelName,
+	onToggle,
+}: {
+	isFavorited: boolean;
+	modelName: string;
+	onToggle: (name: string) => void;
+}) {
+	const displayName = formatOllamaDisplayName(modelName);
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={(props) => (
+					<button
+						{...(props as ComponentPropsWithoutRef<"button">)}
+						aria-label={
+							isFavorited
+								? `Remove ${displayName} from favorites`
+								: `Add ${displayName} to favorites`
+						}
+						aria-pressed={isFavorited}
+						className={cn(
+							"flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors",
+							"motion-reduce:transition-none",
+							isFavorited
+								? "text-amber-500 hover:bg-amber-500/15"
+								: "text-foreground-muted opacity-55 hover:bg-surface-hover hover:text-foreground hover:opacity-100"
+						)}
+						onClick={(e) => {
+							e.preventDefault();
+							e.stopPropagation();
+							onToggle(modelName);
+						}}
+						type="button"
+					>
+						<HugeiconsIcon
+							className={cn("size-3.5", isFavorited && "fill-amber-500")}
+							icon={StarIcon}
+						/>
+					</button>
+				)}
+			/>
+			<TooltipContent side="top">
+				{isFavorited ? "Remove from Favorites" : "Add to Favorites"}
+			</TooltipContent>
 		</Tooltip>
 	);
 }
@@ -516,13 +579,17 @@ function TriggerPullProgressOverlay({ summary }: { summary: TriggerPullSummary }
 function OllamaModelRow({
 	model,
 	isSelected,
+	isFavorited,
 	onSelect,
 	onDelete,
+	onToggleFavorite,
 }: {
+	isFavorited: boolean;
 	isSelected: boolean;
 	model: OllamaModel;
 	onDelete: ((name: string) => void) | undefined;
 	onSelect: (name: string) => void;
+	onToggleFavorite: (name: string) => void;
 }) {
 	return (
 		<Combobox.Item
@@ -543,6 +610,11 @@ function OllamaModelRow({
 				<SizeChip size={model.size} />
 				<ParameterSizeChip value={model.details?.parameterSize} />
 				<QuantizationChip value={model.details?.quantizationLevel} />
+				<FavoriteToggle
+					isFavorited={isFavorited}
+					modelName={model.name}
+					onToggle={onToggleFavorite}
+				/>
 				{onDelete ? (
 					<Tooltip>
 						<TooltipTrigger
@@ -592,6 +664,21 @@ function PublisherGroupHeader({ publisherSlug, count }: { count: number; publish
 	);
 }
 
+function FavoritesGroupHeader({ count }: { count: number }) {
+	return (
+		<div
+			className="sticky top-0 z-raised flex items-center justify-between border-border/40 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur"
+			data-rail-section={FAVORITES_RAIL_ID}
+		>
+			<span className="flex items-center gap-1.5 font-semibold text-foreground-secondary text-xs uppercase tracking-wide">
+				<HugeiconsIcon className="size-3 fill-amber-500 text-amber-500" icon={StarIcon} />
+				Favorites
+			</span>
+			<span className="text-[10px] text-foreground-muted tabular-nums">{count}</span>
+		</div>
+	);
+}
+
 function RecommendedGroupHeader({ count }: { count: number }) {
 	return (
 		<div
@@ -599,7 +686,7 @@ function RecommendedGroupHeader({ count }: { count: number }) {
 			data-rail-section={RECOMMENDED_RAIL_ID}
 		>
 			<span className="flex items-center gap-1.5 font-semibold text-foreground-secondary text-xs uppercase tracking-wide">
-				<HugeiconsIcon className="size-3 text-amber-500" icon={StarIcon} />
+				<HugeiconsIcon className="size-3 text-sky-500" icon={Idea01Icon} />
 				Recommended
 			</span>
 			<span className="text-[10px] text-foreground-muted tabular-nums">{count}</span>
@@ -1410,10 +1497,15 @@ function libraryEmptyMessage(state: LibrarySectionState): string {
 interface ListBodyProps {
 	customPullPaused: PausedPullState | undefined;
 	customPullProgress: OllamaPullProgress | undefined;
+	/** Installed models the user has starred — query-filtered, rendered as a
+	 *  synthetic "Favorites" group pinned to the very top (repeated: each model
+	 *  also keeps its row in its publisher group). */
+	favoritesVisible: readonly OllamaModel[];
 	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
 	grouped: [string, OllamaModel[]][];
 	hasQuery: boolean;
 	installedNames: ReadonlySet<string>;
+	isFavorite: (name: string) => boolean;
 	library: LibrarySectionState | undefined;
 	onDelete: ((name: string) => void) | undefined;
 	onDiscard: (name: string) => void;
@@ -1421,6 +1513,7 @@ interface ListBodyProps {
 	onResume: (name: string) => void;
 	onSelect: (name: string) => void;
 	onStop: (name: string) => void;
+	onToggleFavorite: (name: string) => void;
 	pausedPulls: Readonly<Record<string, PausedPullState>>;
 	pulls: Readonly<Record<string, OllamaPullProgress>>;
 	query: string;
@@ -1432,6 +1525,7 @@ interface ListBodyProps {
 function ListBody(props: ListBodyProps) {
 	const {
 		grouped,
+		favoritesVisible,
 		recommendedVisible,
 		showRecommendedSection,
 		hasQuery,
@@ -1443,6 +1537,7 @@ function ListBody(props: ListBodyProps) {
 		customPullPaused,
 		getFit,
 		installedNames,
+		isFavorite,
 		library,
 		onSelect,
 		onDelete,
@@ -1450,6 +1545,7 @@ function ListBody(props: ListBodyProps) {
 		onStop,
 		onResume,
 		onDiscard,
+		onToggleFavorite,
 	} = props;
 
 	const installedEmpty = grouped.length === 0;
@@ -1467,22 +1563,24 @@ function ListBody(props: ListBodyProps) {
 
 	return (
 		<Combobox.List className="min-h-0 flex-1 overflow-y-auto p-0" data-slot="ollama-model-list">
-			{grouped.map(([publisherSlug, items]) => (
-				<div key={publisherSlug}>
-					<PublisherGroupHeader count={items.length} publisherSlug={publisherSlug} />
+			{favoritesVisible.length > 0 ? (
+				<div>
+					<FavoritesGroupHeader count={favoritesVisible.length} />
 					<div className="flex flex-col gap-0.5 p-1">
-						{items.map((m) => (
+						{favoritesVisible.map((m) => (
 							<OllamaModelRow
+								isFavorited
 								isSelected={m.name === value}
-								key={m.name}
+								key={`fav-${m.name}`}
 								model={m}
 								onDelete={onDelete}
 								onSelect={onSelect}
+								onToggleFavorite={onToggleFavorite}
 							/>
 						))}
 					</div>
 				</div>
-			))}
+			) : null}
 			{showRecommendedSection && (recommendedVisible.length > 0 || showCustom) ? (
 				<div>
 					<RecommendedGroupHeader count={recommendedVisible.length + (showCustom ? 1 : 0)} />
@@ -1514,6 +1612,24 @@ function ListBody(props: ListBodyProps) {
 					</div>
 				</div>
 			) : null}
+			{grouped.map(([publisherSlug, items]) => (
+				<div key={publisherSlug}>
+					<PublisherGroupHeader count={items.length} publisherSlug={publisherSlug} />
+					<div className="flex flex-col gap-0.5 p-1">
+						{items.map((m) => (
+							<OllamaModelRow
+								isFavorited={isFavorite(m.name)}
+								isSelected={m.name === value}
+								key={m.name}
+								model={m}
+								onDelete={onDelete}
+								onSelect={onSelect}
+								onToggleFavorite={onToggleFavorite}
+							/>
+						))}
+					</div>
+				</div>
+			))}
 			{showLibrarySection && library ? (
 				<div>
 					<LibraryRootHeader isLoading={library.isLoading} totalMatched={library.totalMatched} />
@@ -1589,11 +1705,13 @@ function selectorListSlot(body: ReactNode): ReactNode {
 	);
 }
 
-/** Build the GroupRail tile list: one tile per installed publisher, an
- *  optional Recommended tile, and the Library section header + per-publisher
- *  sub-tiles when the catalog has loaded. Extracted from `OllamaModelSelector`
- *  to keep the component body under the cognitive-complexity cap. */
+/** Build the GroupRail tile list: a Favorites tile and a Recommended tile
+ *  pinned to the top, then one tile per installed publisher, then the Library
+ *  section header + per-publisher sub-tiles when the catalog has loaded.
+ *  Extracted from `OllamaModelSelector` to keep the component body under the
+ *  cognitive-complexity cap. */
 function buildOllamaRailItems(opts: {
+	favoritesVisibleCount: number;
 	grouped: [string, OllamaModel[]][];
 	libraryGroupedByPublisher: [string, OllamaLibraryHit[]][];
 	libraryIsLoaded: boolean;
@@ -1601,10 +1719,29 @@ function buildOllamaRailItems(opts: {
 	recommendedVisibleCount: number;
 	showRecommendedSection: boolean;
 }): GroupRailItem[] {
-	const railItems: GroupRailItem[] = opts.grouped.map(([publisherSlug, entries]) => {
+	const railItems: GroupRailItem[] = [];
+	// Favorites + Recommended are pinned to the top of the rail, before the
+	// per-publisher tiles — mirrors the list section order.
+	if (opts.favoritesVisibleCount > 0) {
+		railItems.push({
+			id: FAVORITES_RAIL_ID,
+			label: "Favorites",
+			icon: <HugeiconsIcon className="size-3.5 fill-amber-500 text-amber-500" icon={StarIcon} />,
+			badge: opts.favoritesVisibleCount,
+		});
+	}
+	if (opts.showRecommendedSection && opts.recommendedVisibleCount > 0) {
+		railItems.push({
+			id: RECOMMENDED_RAIL_ID,
+			label: "Recommended",
+			icon: <HugeiconsIcon className="size-3.5 text-sky-500" icon={Idea01Icon} />,
+			badge: opts.recommendedVisibleCount,
+		});
+	}
+	for (const [publisherSlug, entries] of opts.grouped) {
 		const publisher = getOllamaPublisherBySlug(publisherSlug);
 		const iconSrc = getProviderIconWithFallback(publisher.slug);
-		return {
+		railItems.push({
 			id: publisherSlug,
 			label: publisher.label,
 			badge: entries.length,
@@ -1617,14 +1754,6 @@ function buildOllamaRailItems(opts: {
 					width={20}
 				/>
 			),
-		};
-	});
-	if (opts.showRecommendedSection && opts.recommendedVisibleCount > 0) {
-		railItems.push({
-			id: RECOMMENDED_RAIL_ID,
-			label: "Recommended",
-			icon: <HugeiconsIcon className="size-3.5 text-amber-500" icon={StarIcon} />,
-			badge: opts.recommendedVisibleCount,
 		});
 	}
 	if (opts.libraryIsLoaded && opts.libraryGroupedByPublisher.length > 0) {
@@ -1734,6 +1863,11 @@ export function OllamaModelSelector({
 		loadCatalog?.();
 	}, [loadCatalog]);
 
+	// localStorage-backed per-model favorites — same affordance as the STT
+	// picker. The star toggle on each installed row flips membership; favorited
+	// models surface as a "Favorites" group pinned to the top of the list.
+	const { isFavorite, toggleFavorite } = useFavoriteOllamaModels();
+
 	const showRecommendedSection = !!(
 		recommendedModels &&
 		onPull &&
@@ -1747,6 +1881,11 @@ export function OllamaModelSelector({
 		: models;
 
 	const grouped = groupOllamaModelsByPublisher(installedFiltered);
+
+	// Starred installed models, query-filtered — pinned to the top of the list
+	// as a synthetic "Favorites" group. The model is repeated (it also keeps its
+	// publisher-group row), matching the STT picker's behavior.
+	const favoritesVisible = installedFiltered.filter((m) => isFavorite(m.name));
 
 	const installedNameSet = new Set(models.map((m) => m.name));
 
@@ -1769,6 +1908,7 @@ export function OllamaModelSelector({
 	// "Recommended" tile at the bottom. Matches the OpenRouter + STT pickers
 	// (same `GroupRail` shell).
 	const railItems = buildOllamaRailItems({
+		favoritesVisibleCount: favoritesVisible.length,
 		grouped,
 		libraryGroupedByPublisher,
 		libraryIsLoaded: librarySearch?.isLoaded ?? false,
@@ -1837,10 +1977,12 @@ export function OllamaModelSelector({
 		<ListBody
 			customPullPaused={customPullPaused}
 			customPullProgress={customPullProgress}
+			favoritesVisible={favoritesVisible}
 			getFit={systemFit}
 			grouped={grouped}
 			hasQuery={query.trim().length > 0}
 			installedNames={installedNameSet}
+			isFavorite={isFavorite}
 			library={librarySection}
 			onDelete={onDelete}
 			onDiscard={onDiscardPull ?? noop}
@@ -1848,6 +1990,7 @@ export function OllamaModelSelector({
 			onResume={onResumePull ?? noop}
 			onSelect={onChange}
 			onStop={onStopPull ?? noop}
+			onToggleFavorite={toggleFavorite}
 			pausedPulls={pausedPulls}
 			pulls={pulls}
 			query={query}

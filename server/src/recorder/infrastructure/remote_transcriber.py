@@ -324,6 +324,16 @@ class RemoteTranscriber(ITranscriber):
             pending.future.set_result(response)
         return True
 
+    @property
+    @override
+    def requires_warmup(self) -> bool:
+        # Nothing to JIT-compile here — a "warmup" would be a real billed
+        # cloud round-trip with 1 s of silence that also races the electron
+        # connection at server start (a miss blocks the recorder thread for
+        # the full request timeout, then the server falls back to a local
+        # model and silently drops the user's cloud pick). Skip it.
+        return False
+
     @override
     def is_ready(self) -> bool:
         # Always "ready" — the AI SDK call is per-request; there's no

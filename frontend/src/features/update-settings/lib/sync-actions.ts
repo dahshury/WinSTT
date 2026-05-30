@@ -11,6 +11,7 @@ import type { AllowedParameter } from "@/shared/api/models";
 import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
 import {
 	autoStartChanged,
+	computeSilenceEndpointEnabled,
 	computeSilenceTiming,
 	getManualToggleStop,
 	getPrevManualToggleStop,
@@ -19,6 +20,7 @@ import {
 	getSmartEndpoint,
 	shouldSendInitial,
 	shouldSendOnChange,
+	silenceEndpointNeedsUpdate,
 	silenceTimingNeedsUpdate,
 } from "./sync-helpers";
 
@@ -341,12 +343,56 @@ function maybeSyncSilenceTiming(
 	}
 }
 
+/**
+ * Push the `silence_endpoint_enabled` flag when the recording mode or the
+ * manual-toggle-stop flag changed (or on initial connect).
+ *
+ * This is the CANONICAL, server-ready-gated push for the flag. The
+ * `usePushToTalk` mount effect also pushes it, but that effect fires once at
+ * mount and races the WS handshake + recorder-ready gate — on a cold start the
+ * server isn't ready yet, so the push is dropped (electron-main drops it as
+ * "not connected", or the Python control handler drops it as "not pre-ready")
+ * and is never retried (its deps are [recordingMode, manualToggleStop], neither
+ * of which changes after connect). Without this canonical push the server keeps
+ * its default `silence_endpoint_enabled = True`, and PTT recordings auto-stop on
+ * silence (VAD silence-end + noise-break) BEFORE the user releases the key — the
+ * "pastes early sometimes" bug. `syncToServer` runs on every `shouldSyncOnConnect`
+ * (server ready) and on every settings change, so routing the flag through here
+ * guarantees the server gets the right value once it can actually accept it.
+ */
+function maybeSyncSilenceEndpoint(
+	deps: SyncDeps,
+	settings: AppSettings,
+	prev: AppSettings | undefined
+): void {
+	const mode = getRecordingMode(settings);
+	const manualToggleStop = getManualToggleStop(settings);
+	const prevManualToggleStop = getPrevManualToggleStop(prev);
+	const isInitial = !prev;
+
+	if (
+		silenceEndpointNeedsUpdate(
+			settings.general?.recordingMode,
+			prev?.general?.recordingMode,
+			isInitial,
+			manualToggleStop,
+			prevManualToggleStop
+		)
+	) {
+		deps.sttSetParameter(
+			"silence_endpoint_enabled",
+			computeSilenceEndpointEnabled(mode, manualToggleStop)
+		);
+	}
+}
+
 export function syncQualityParams(
 	deps: SyncDeps,
 	settings: AppSettings,
 	prev: AppSettings | undefined
 ): void {
 	maybeSyncSilenceTiming(deps, settings, prev);
+	maybeSyncSilenceEndpoint(deps, settings, prev);
 	syncQualityFields(deps, settings.quality, prev?.quality, !prev);
 }
 

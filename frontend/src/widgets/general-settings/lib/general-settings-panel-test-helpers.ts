@@ -14,7 +14,7 @@ import {
 import type { IconSvgElement } from "@hugeicons/react";
 import type { useTranslations } from "use-intl";
 import type { useSettingsStore } from "@/entities/setting";
-import { isVisualizerType } from "@/features/audio-visualizer";
+import { isVisualizerType, type VisualizerType } from "@/features/audio-visualizer";
 import { RECORDING_MODE_COLOR_HEX } from "@/shared/config/recording-mode-color";
 import { isLocale, type Locale } from "@/shared/i18n";
 import type { SelectOption } from "@/shared/ui/select";
@@ -465,6 +465,26 @@ export function isBarVisualizer(general: GeneralSettings | undefined): boolean {
 	return type === "bar";
 }
 
+/** Resolves the active visualizer type, defaulting to "bar" when unset. */
+export function getVisualizerType(general: GeneralSettings | undefined): VisualizerType {
+	return general?.visualizerType ?? "bar";
+}
+
+/** Segmented-control options for the Aura base-shape switcher (label-only). */
+export function buildAuraShapeSwitcherOptions(t: GeneralT): SwitcherOption[] {
+	return [
+		{ value: "circle", label: t("visualizerAuraShapeCircle") },
+		{ value: "line", label: t("visualizerAuraShapeLine") },
+	];
+}
+
+/** Applies a guarded Aura-shape selection (ignores anything off the enum). */
+export function pickAuraShape(value: string, update: UpdateFn): void {
+	if (value === "circle" || value === "line") {
+		update({ visualizerAuraShape: value });
+	}
+}
+
 export const __general_settings_panel_test_helpers__ = {
 	buildVisualizerTypeOptions,
 	buildRecordingModeOptions,
@@ -488,6 +508,9 @@ export const __general_settings_panel_test_helpers__ = {
 	checkedOrFalseIfDisabled,
 	pickVisualizerType,
 	isBarVisualizer,
+	getVisualizerType,
+	buildAuraShapeSwitcherOptions,
+	pickAuraShape,
 	readBoolFlag,
 	readStartupFlags,
 	recordingModePatch,

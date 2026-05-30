@@ -400,6 +400,16 @@ export class SttClient extends EventEmitter {
 		);
 	}
 
+	/** True when only the CONTROL channel is open. Recording (set_microphone,
+	 *  abort, transcribe RPC) flows entirely over control — the data channel
+	 *  carries realtime/visualizer/TTS frames. Callers that gate a
+	 *  recording-capable action (e.g. the pre-roll chime) should use this so a
+	 *  briefly-down data socket can't suppress feedback for a recording that
+	 *  will still happen. */
+	get isControlConnected(): boolean {
+		return this.controlWs?.readyState === WebSocket.OPEN;
+	}
+
 	sendControl(data: Record<string, unknown>): void {
 		if (this.controlWs?.readyState === WebSocket.OPEN) {
 			this.controlWs.send(JSON.stringify(data));

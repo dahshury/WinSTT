@@ -3000,6 +3000,60 @@ describe("unloadOllamaModel", () => {
 	});
 });
 
+// ── evictWarmedOllamaModels ──────────────────────────────────────────
+
+describe("evictWarmedOllamaModels", () => {
+	const originalFetch = globalThis.fetch;
+
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		for (const key of Object.keys(STORE_OVERRIDES)) {
+			delete STORE_OVERRIDES[key];
+		}
+	});
+
+	test("no-op when nothing has been warmed (no fetch)", async () => {
+		// Drain any models a prior test left in the warmed set so this asserts
+		// the genuinely-empty branch regardless of test order.
+		await helpers.evictWarmedOllamaModels();
+		const fetchSpy = mock(() => Promise.resolve(new Response("{}", { status: 200 })));
+		globalThis.fetch = asFetch(fetchSpy);
+		await helpers.evictWarmedOllamaModels();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	test("evicts each warmed model with keep_alive=0, then clears the set", async () => {
+		// Warm a model end-to-end so it lands in the module's warmed set.
+		STORE_OVERRIDES["llm.dictation.enabled"] = true;
+		STORE_OVERRIDES["llm.dictation.provider"] = "ollama";
+		STORE_OVERRIDES["llm.dictation.model"] = "evict:test";
+		globalThis.fetch = asFetch(
+			mock((url: string) => {
+				if (url.includes("/api/tags")) {
+					return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }));
+				}
+				return Promise.resolve(new Response(JSON.stringify({ response: "" }), { status: 200 }));
+			})
+		);
+		await helpers.warmupEnabledModels();
+
+		const evictSpy = mock(() => Promise.resolve(new Response("{}", { status: 200 })));
+		globalThis.fetch = asFetch(evictSpy);
+		await helpers.evictWarmedOllamaModels();
+		expect(evictSpy).toHaveBeenCalledTimes(1);
+		const args = evictSpy.mock.calls[0] as unknown as [string, RequestInit];
+		expect(args[0]).toContain("/api/generate");
+		const body = JSON.parse(String(args[1].body));
+		expect(body.model).toBe("evict:test");
+		expect(body.keep_alive).toBe(0);
+
+		// Second call is a no-op — the set was cleared after the first eviction.
+		evictSpy.mockClear();
+		await helpers.evictWarmedOllamaModels();
+		expect(evictSpy).not.toHaveBeenCalled();
+	});
+});
+
 // ── readWarmupFeatureSignature + computeWarmupSignature ──────────────
 
 describe("readWarmupFeatureSignature", () => {

@@ -594,6 +594,33 @@ export interface components {
             visualizerType?: "bar" | "grid" | "radial" | "wave" | "aura";
             visualizerBarCount?: number;
             visualizerColor?: string;
+            /** @description Radial visualizer — number of dots around the ring. */
+            visualizerRadialDotCount?: number;
+            /** @description Radial visualizer — ring radius as a percentage of the visualizer half-height. */
+            visualizerRadialRadius?: number;
+            /** @description Grid visualizer — number of dot rows. */
+            visualizerGridRows?: number;
+            /** @description Grid visualizer — number of dot columns. */
+            visualizerGridColumns?: number;
+            /** @description Grid visualizer — idle-sweep speed (1 slow … 10 fast). */
+            visualizerGridSpeed?: number;
+            /** @description Wave visualizer — oscilloscope line thickness. */
+            visualizerWaveLineWidth?: number;
+            /** @description Wave visualizer — edge softness (percent → shader uSmoothing 0–1). */
+            visualizerWaveSmoothing?: number;
+            /** @description Wave visualizer — rainbow edge hue-shift (percent → shader uColorShift 0–1). */
+            visualizerWaveColorShift?: number;
+            /**
+             * @description Aura visualizer — base shape (circle or line).
+             * @enum {string}
+             */
+            visualizerAuraShape?: "circle" | "line";
+            /** @description Aura visualizer — field blur (percent → shader uBlur 0–1). */
+            visualizerAuraBlur?: number;
+            /** @description Aura visualizer — additive bloom, dark theme only (percent → shader uBloom 0–1). */
+            visualizerAuraBloom?: number;
+            /** @description Aura visualizer — rainbow hue-shift (percent → shader uColorShift 0–1). */
+            visualizerAuraColorShift?: number;
             /**
              * @description When enabled, the Electron client reads text from the focused window
              *     via Windows UI Automation immediately before each dictation and feeds

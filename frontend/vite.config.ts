@@ -105,6 +105,8 @@ export default defineConfig(({ command }) => {
 					"device-picker": resolve(rootDir, "windows/device-picker.html"),
 					onboarding: resolve(rootDir, "windows/onboarding.html"),
 					history: resolve(rootDir, "windows/history.html"),
+					// Debug-only context-awareness playground (CONTEXT_PLAYGROUND_ENABLED).
+					"context-playground": resolve(rootDir, "windows/context-playground.html"),
 				},
 				output: {
 					// Hand-curated chunk split to keep per-page bundles lean. Without

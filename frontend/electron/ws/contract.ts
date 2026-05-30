@@ -270,24 +270,48 @@ const loopbackStoppedSchema = z.object({
 // File-transcription progress / completion. Emitted by the
 // ``file_transcribe`` worker for drag-drop and CLI-piped audio. Progress
 // fires repeatedly with a 0..1 fraction; complete and error are terminal.
+// Field names mirror what the Python worker actually sends (request_id +
+// file_path/file_name), matching the canceled schema below.
 const fileTranscriptionProgressSchema = z.object({
 	type: z.literal("file_transcription_progress"),
-	job_id: z.string().optional(),
+	request_id: z.string().optional(),
+	file_path: z.string().optional(),
+	file_name: z.string().optional(),
 	progress: z.number(),
 	stage: z.string().optional(),
+	message: z.string().optional(),
 });
 
 const fileTranscriptionCompleteSchema = z.object({
 	type: z.literal("file_transcription_complete"),
-	job_id: z.string().optional(),
+	request_id: z.string().optional(),
+	file_path: z.string().optional(),
+	file_name: z.string().optional(),
 	text: z.string().optional(),
-	output_path: z.string().optional(),
+	format: z.string().optional(),
 });
 
 const fileTranscriptionErrorSchema = z.object({
 	type: z.literal("file_transcription_error"),
-	job_id: z.string().optional(),
+	request_id: z.string().optional(),
+	file_path: z.string().optional(),
+	file_name: z.string().optional(),
 	error: z.string(),
+	error_type: z.string().optional(),
+});
+
+// Cancellation is a non-error terminal: the queue was paused (push-to-talk
+// dictation) or the file was cancelled by the user. The queue layer re-queues
+// or drops the row accordingly.
+const fileTranscriptionCanceledSchema = z.object({
+	type: z.literal("file_transcription_canceled"),
+	request_id: z.string().optional(),
+	file_path: z.string().optional(),
+	file_name: z.string().optional(),
+	// Resume continuation: how far the worker got + the finished chunks
+	// ([start, end, text]). The queue stores these so a resume continues here.
+	resume_from: z.number().optional(),
+	partial_segments: z.array(z.tuple([z.number(), z.number(), z.string()])).optional(),
 });
 
 // ── TTS data-channel events ──────────────────────────────────────────
@@ -390,6 +414,7 @@ const serverEventSchema = z.discriminatedUnion("type", [
 	fileTranscriptionProgressSchema,
 	fileTranscriptionCompleteSchema,
 	fileTranscriptionErrorSchema,
+	fileTranscriptionCanceledSchema,
 	ttsCompleteSchema,
 	ttsFailedSchema,
 	ttsModelDownloadStartSchema,

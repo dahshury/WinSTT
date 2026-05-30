@@ -270,51 +270,27 @@ export function HotkeyShortcutsLegend({ disabled = false }: HotkeyShortcutsLegen
 				{null}
 			</ShortcutRow>
 
-			{/* ── TTS ROWS ────────────────────────────────────────────────
-			    The Text-to-Speech feature has its own configurable hotkey
-			    (Settings → Model → Text-to-Speech). Pressing it alone reads
-			    the active selection; held together with Backspace it stops
-			    playback — same "+⌫ is the escape hatch" idiom as the cancel
-			    row above. Only shown when TTS is enabled so the legend
-			    stays literal to what's actually armed. */}
+			{/* ── TTS STOP ROW ─────────────────────────────────────────────
+			    The Text-to-Speech hotkey is already configured above
+			    ("Text-to-speech key" — it reads the active selection), so we
+			    don't repeat a "read selection" row here. Held together with
+			    Backspace it stops playback — the same "+⌫ is the escape hatch"
+			    idiom as the cancel row above, and the only place that combo is
+			    surfaced. Shown only when TTS is enabled so the legend stays
+			    literal to what's actually armed. */}
 			{ttsEnabled ? (
-				<>
-					<ShortcutRow
-						hint={t("shortcutTtsRead")}
-						prefix={
-							<span className="inline-flex items-center gap-1">
-								{ttsHotkeyParts.length > 0 ? (
-									ttsHotkeyParts.map((key, i) => (
-										<span className="inline-flex items-center gap-1" key={key}>
-											{i > 0 ? (
-												<span aria-hidden className="text-[9px] text-foreground-dim">
-													＋
-												</span>
-											) : null}
-											<Keycap emphasized>{formatKeyName(key)}</Keycap>
-										</span>
-									))
-								) : (
-									<Keycap emphasized>{placeholder}</Keycap>
-								)}
-							</span>
-						}
-					>
-						{null}
-					</ShortcutRow>
-					<ShortcutRow
-						hint={t("shortcutTtsStop")}
-						prefix={
-							<HotkeyPrefix
-								keys={ttsHotkeyParts}
-								placeholder={placeholder}
-								secondKey={<Keycap>⌫</Keycap>}
-							/>
-						}
-					>
-						{null}
-					</ShortcutRow>
-				</>
+				<ShortcutRow
+					hint={t("shortcutTtsStop")}
+					prefix={
+						<HotkeyPrefix
+							keys={ttsHotkeyParts}
+							placeholder={placeholder}
+							secondKey={<Keycap>⌫</Keycap>}
+						/>
+					}
+				>
+					{null}
+				</ShortcutRow>
 			) : null}
 		</section>
 	);

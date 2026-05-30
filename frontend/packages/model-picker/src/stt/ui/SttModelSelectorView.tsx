@@ -30,6 +30,7 @@ export interface SttModelSelectorViewProps {
 	handleRailClick: (id: string) => void;
 	handleSelect: SttModelChange;
 	inline: boolean;
+	isFavorite: (modelId: string) => boolean;
 	isLoading: boolean;
 	kind: "main" | "realtime";
 	menuFilteredModels: readonly ModelInfo[];
@@ -49,6 +50,7 @@ export interface SttModelSelectorViewProps {
 		  ) => void)
 		| undefined;
 	onToggleExpanded: (baseId: string) => void;
+	onToggleFavorite: (modelId: string) => void;
 	open: boolean;
 	placeholder: string;
 	popupHeightClass: string;
@@ -85,6 +87,7 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 		handleRailClick,
 		handleSelect,
 		inline,
+		isFavorite,
 		isLoading,
 		kind,
 		menuFilteredModels,
@@ -93,6 +96,7 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 		onFiltersChange,
 		onRequestDelete,
 		onToggleExpanded,
+		onToggleFavorite,
 		open,
 		placeholder,
 		popupHeightClass,
@@ -131,10 +135,12 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 					expandedBundles={expandedBundles}
 					getDownloadSnapshot={onDownloadSnapshot}
 					hasActiveFilters={filtersActive}
+					isFavorite={isFavorite}
 					onDownloadAction={onDownloadAction}
 					onRequestDeleteQuant={onRequestDelete}
 					onSelect={handleSelect}
 					onToggleExpanded={onToggleExpanded}
+					onToggleFavorite={onToggleFavorite}
 					selectedId={value}
 					statesById={statesById}
 					systemInfo={systemInfo}

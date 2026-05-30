@@ -61,6 +61,7 @@ export function ProviderIntegrationSection({
 	const persistedApiKey = useSettingsStore((s) => s.settings.integrations[provider].apiKey);
 	const updateIntegrations = useSettingsStore((s) => s.updateIntegrations);
 	const activeModel = useSettingsStore((s) => s.settings.model?.model ?? "");
+	const ttsSource = useSettingsStore((s) => s.settings.tts.source);
 	const status = useCredentialStatus(provider);
 	const tc = useTranslations("common");
 	const t = useTranslations("integrations");
@@ -164,8 +165,13 @@ export function ProviderIntegrationSection({
 	};
 
 	const requestRemoveApiKey = () => {
-		const isActiveCloud = providerOf(activeModel) === provider;
-		if (isActiveCloud) {
+		// Confirm before yanking a key that backs a live cloud surface: the
+		// active STT model, or — for ElevenLabs — cloud TTS. The auto-revert
+		// guard (main window) does the actual switch-to-local once the cleared
+		// key broadcasts; this dialog just gates the destructive removal.
+		const isActiveSttCloud = providerOf(activeModel) === provider;
+		const isActiveTtsCloud = provider === "elevenlabs" && ttsSource === "cloud";
+		if (isActiveSttCloud || isActiveTtsCloud) {
 			setDialogOpen(true);
 			return;
 		}

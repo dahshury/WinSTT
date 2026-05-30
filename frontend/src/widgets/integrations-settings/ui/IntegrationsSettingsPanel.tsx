@@ -1,4 +1,4 @@
-import { PlugSocketIcon } from "@hugeicons/core-free-icons";
+import { AiBrain01Icon, SpeechToTextIcon } from "@hugeicons/core-free-icons";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
@@ -12,6 +12,7 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { ipcInvoke } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { Spinner } from "@/shared/ui/spinner";
@@ -69,6 +70,8 @@ export function IntegrationsSettingsPanel() {
 	const endpoint = useSettingsStore((s) => s.settings.llm.endpoint);
 	const persistedOpenrouterKey = useSettingsStore((s) => s.settings.llm.openrouterApiKey);
 	const updateLlmSettings = useSettingsStore((s) => s.updateLlmSettings);
+	const dictationProvider = useSettingsStore((s) => s.settings.llm.dictation.provider);
+	const transformsProvider = useSettingsStore((s) => s.settings.llm.transforms.provider);
 	const t = useTranslations("integrations");
 	const tLlm = useTranslations("llm");
 	const tc = useTranslations("common");
@@ -93,6 +96,7 @@ export function IntegrationsSettingsPanel() {
 	}>({ status: "idle" });
 	const openrouterDebounceRef = useRef<number | null>(null);
 	const openrouterReqIdRef = useRef(0);
+	const [openrouterDialogOpen, setOpenrouterDialogOpen] = useState(false);
 
 	useEffect(
 		() => () => {
@@ -149,6 +153,32 @@ export function IntegrationsSettingsPanel() {
 		}, VERIFY_DEBOUNCE_MS);
 	};
 
+	// Cancel any pending verify and clear the key. The auto-revert guard (main
+	// window) switches any LLM feature on OpenRouter back to Ollama + disabled
+	// once the cleared key broadcasts — here we just drop the secret + pill.
+	const clearOpenrouterKey = () => {
+		if (openrouterDebounceRef.current !== null) {
+			window.clearTimeout(openrouterDebounceRef.current);
+			openrouterDebounceRef.current = null;
+		}
+		openrouterReqIdRef.current++;
+		updateLlmSettings({ openrouterApiKey: "" });
+		setOpenrouterStatus({ status: "idle" });
+	};
+
+	const requestRemoveOpenrouter = () => {
+		// Confirm before yanking a key an LLM feature is actively using; otherwise
+		// clear immediately. Manual field-clears always auto-revert silently.
+		const isActiveCloud = dictationProvider === "openrouter" || transformsProvider === "openrouter";
+		if (isActiveCloud) {
+			setOpenrouterDialogOpen(true);
+			return;
+		}
+		clearOpenrouterKey();
+	};
+
+	const hasOpenrouterKey = persistedOpenrouterKey.trim().length > 0;
+
 	const openrouterPill = renderOpenrouterPill({
 		apiKey: persistedOpenrouterKey,
 		chipLevel,
@@ -157,73 +187,121 @@ export function IntegrationsSettingsPanel() {
 	});
 
 	return (
-		<SettingSection description={t("description")} icon={PlugSocketIcon} title={t("title")}>
-			<div className="flex flex-col divide-y divide-surface-1">
-				<div className="col-span-2">
-					<FormControl
-						label={tLlm("endpoint")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
-								onReset={() => updateLlmSettings({ endpoint: DEFAULT_SETTINGS.llm.endpoint })}
-							/>
-						}
-						tooltip={tLlm("endpointTooltip")}
-					>
-						<ElevatedSurface inline>
-							<TextField
-								onChange={(e) => updateLlmSettings({ endpoint: e.target.value })}
-								placeholder="http://localhost:11434"
-								value={endpoint}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-				</div>
+		<div className="flex flex-col gap-2">
+			{/* ── Language Models (LLM) ───────────────────────────────────
+			 *  Powers dictation cleanup, context-aware edits and translation.
+			 *  Backed by a LOCAL Ollama server (endpoint) or a CLOUD OpenRouter
+			 *  key. These keys have nothing to do with cloud transcription —
+			 *  the grouping makes that explicit so an OpenRouter key is no
+			 *  longer mistaken for the thing that unlocks Cloud STT. */}
+			<SettingSection icon={AiBrain01Icon} title={t("llmSectionTitle")}>
+				<p className="pt-1 pb-2 text-body-sm text-foreground-muted leading-snug">
+					{t("llmSectionCaption")}
+				</p>
+				<div className="flex flex-col divide-y divide-surface-1">
+					<div className="col-span-2">
+						<FormControl
+							label={tLlm("endpoint")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
+									onReset={() => updateLlmSettings({ endpoint: DEFAULT_SETTINGS.llm.endpoint })}
+								/>
+							}
+							tooltip={tLlm("endpointTooltip")}
+						>
+							<ElevatedSurface inline>
+								<TextField
+									onChange={(e) => updateLlmSettings({ endpoint: e.target.value })}
+									placeholder="http://localhost:11434"
+									value={endpoint}
+								/>
+							</ElevatedSurface>
+						</FormControl>
+					</div>
 
-				<div className="col-span-2">
-					<FormControl
-						label={tLlm("openrouterApiKey")}
-						labelTrailing={
-							<div className="flex items-center gap-2">
-								{openrouterPill}
-								<button
-									className="text-foreground-muted text-xs underline-offset-2 hover:text-foreground-secondary hover:underline"
-									onClick={() => window.open(OPENROUTER_KEYS_URL, "_blank")}
-									type="button"
-								>
-									{t("getApiKey")}
-								</button>
+					<div className="col-span-2">
+						<FormControl
+							label={tLlm("openrouterApiKey")}
+							labelTrailing={
+								<div className="flex items-center gap-2">
+									{openrouterPill}
+									<button
+										className="text-foreground-muted text-xs underline-offset-2 hover:text-foreground-secondary hover:underline"
+										onClick={() => window.open(OPENROUTER_KEYS_URL, "_blank")}
+										type="button"
+									>
+										{t("getApiKey")}
+									</button>
+								</div>
+							}
+							tooltip={`${tLlm("openrouterApiKeyTooltip")} ${tLlm("openrouterApiKeyCaption")}`}
+						>
+							<div className="flex flex-col gap-2">
+								<ElevatedSurface inline>
+									<PasswordField
+										hideLabel={tc("hidePassword")}
+										onChange={(e) => handleOpenrouterChange(e.target.value)}
+										placeholder={tLlm("openrouterApiKeyPlaceholder")}
+										revealLabel={tc("showPassword")}
+										value={persistedOpenrouterKey}
+									/>
+								</ElevatedSurface>
+								{hasOpenrouterKey && (
+									<div className="flex items-center justify-end gap-2">
+										<button
+											className={cn(
+												"rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
+												surfaceBg(chipLevel)
+											)}
+											onClick={requestRemoveOpenrouter}
+											type="button"
+										>
+											{t("removeKey")}
+										</button>
+									</div>
+								)}
 							</div>
-						}
-						tooltip={`${tLlm("openrouterApiKeyTooltip")} ${tLlm("openrouterApiKeyCaption")}`}
-					>
-						<ElevatedSurface inline>
-							<PasswordField
-								hideLabel={tc("hidePassword")}
-								onChange={(e) => handleOpenrouterChange(e.target.value)}
-								placeholder={tLlm("openrouterApiKeyPlaceholder")}
-								revealLabel={tc("showPassword")}
-								value={persistedOpenrouterKey}
-							/>
-						</ElevatedSurface>
-					</FormControl>
+						</FormControl>
+					</div>
 				</div>
-
-				<ProviderIntegrationSection
-					keyCaption={t("openaiApiKeyCaption")}
-					keyLabel={t("openaiApiKey")}
-					placeholder={t("openaiApiKeyPlaceholder")}
-					provider="openai"
+				<ConfirmDialog
+					cancelLabel={t("cancel")}
+					confirmLabel={t("remove")}
+					description={t("removeKeyConfirm", { provider: "OpenRouter" })}
+					onConfirm={clearOpenrouterKey}
+					onOpenChange={setOpenrouterDialogOpen}
+					open={openrouterDialogOpen}
+					title={t("removeKeyTitle", { provider: "OpenRouter" })}
 				/>
+			</SettingSection>
 
-				<ProviderIntegrationSection
-					keyCaption={t("elevenlabsApiKeyCaption")}
-					keyLabel={t("elevenlabsApiKey")}
-					placeholder={t("elevenlabsApiKeyPlaceholder")}
-					provider="elevenlabs"
-				/>
-			</div>
-		</SettingSection>
+			{/* ── Cloud Speech-to-Text ────────────────────────────────────
+			 *  THE keys that unlock the Local/Cloud Source switcher in the
+			 *  Model tab. OpenAI (Whisper / GPT-4o transcribe) and ElevenLabs
+			 *  (Scribe) are the only cloud STT providers — `hasAnyCloudKey`
+			 *  in ModelSettingsPanel gates on exactly these two. */}
+			<SettingSection icon={SpeechToTextIcon} title={t("sttSectionTitle")}>
+				<p className="pt-1 pb-2 text-body-sm text-foreground-muted leading-snug">
+					{t("sttSectionCaption")}
+				</p>
+				<div className="flex flex-col divide-y divide-surface-1">
+					<ProviderIntegrationSection
+						keyCaption={t("openaiApiKeyCaption")}
+						keyLabel={t("openaiApiKey")}
+						placeholder={t("openaiApiKeyPlaceholder")}
+						provider="openai"
+					/>
+
+					<ProviderIntegrationSection
+						keyCaption={t("elevenlabsApiKeyCaption")}
+						keyLabel={t("elevenlabsApiKey")}
+						placeholder={t("elevenlabsApiKeyPlaceholder")}
+						provider="elevenlabs"
+					/>
+				</div>
+			</SettingSection>
+		</div>
 	);
 }
 

@@ -1,0 +1,34 @@
+/* Mirrors searchable-select.css: Base UI's Combobox.Popup injects an inline
+   `transition: none` for the one-frame `transitionStatus === 'starting'`
+   phase, which suppresses transitions keyed off `[data-starting-style]`.
+   CSS animations are immune (the inline override only touches `transition`),
+   so the popup animates in via keyframes instead. */
+.tag-input-popup[data-open] {
+	animation: tag-input-popup-in 150ms ease-out;
+}
+
+.tag-input-popup[data-ending-style] {
+	animation: tag-input-popup-out 150ms ease-out forwards;
+}
+
+@keyframes tag-input-popup-in {
+	from {
+		opacity: 0;
+		transform: scale(0.95);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@keyframes tag-input-popup-out {
+	from {
+		opacity: 1;
+		transform: scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: scale(0.95);
+	}
+}

@@ -70,6 +70,33 @@ _QUANT_SUFFIXES: tuple[str, ...] = ("q4f16", "bnb4", "int8", "fp16", "uint8", "q
 _QUANT_RE = re.compile(r"[._](" + "|".join(_QUANT_SUFFIXES) + r")$")
 
 
+#: External-data sidecar tail: ``.onnx_data`` (onnx-community) / ``.onnx.data``
+#: (istupakov NeMo), optionally followed by a ``_<n>`` shard index for weights
+#: split across multiple files (``encoder_model_fp16.onnx_data_1``). Stripped so
+#: the quant lookup runs on the stem. Without the shard branch the second shard
+#: of an fp16 export (``…_fp16.onnx_data_1``) parsed as the DEFAULT precision,
+#: splitting the fp16 file set across two quant buckets and corrupting the
+#: per-quant "downloaded?" accounting.
+_EXTERNAL_DATA_TAIL_RE = re.compile(r"\.onnx[._]data(?:_\d+)?$")
+
+
+#: Size ceiling above which an ``.onnx`` graph is treated as inline-weight and
+#: NOT parsed for external-data references. ``onnx.load(load_external_data=False)``
+#: only skips loading SEPARATE sidecar files — it still deserialises the entire
+#: graph protobuf, INCLUDING inline ``raw_data`` tensors. For a 1 GB inline-weight
+#: graph (gigaam, canary-int8, lite-whisper) that parse costs ~0.5-1 s and holds
+#: the GIL; doing it per cached quant across the whole catalog took ``list_models_
+#: with_state`` to ~18 s and starved the WS event loop (every concurrent request
+#: timed out at the renderer's 10 s budget). External-data graphs are the OPPOSITE
+#: shape — they're structure-only stubs whose weights live in the sidecars, so they
+#: stay tiny: every external-data graph in our catalog is ≤ ~42 MB (parakeet; cohere
+#: ≤ 1.4 MB, canary ~5 MB, CrisperWhisper 2.3 MB, whisper-large-v3 3 MB). A large
+#: ``.onnx`` therefore holds its weights INLINE and references no external data, so
+#: the check is pure waste. 64 MB clears parakeet with margin and sits far below the
+#: ≥190 MB inline graphs whose parse caused the stall.
+_EXTERNAL_DATA_GRAPH_MAX_BYTES = 64 * 1024 * 1024
+
+
 def _file_quantization(weight_file: Path) -> str:
     """Return the quantization suffix encoded in an onnx weight filename.
 
@@ -77,18 +104,17 @@ def _file_quantization(weight_file: Path) -> str:
     ``"int8"`` (alphacep / Vosk uses ``.`` as separator);
     ``encoder_model.onnx`` → ``""`` (the default, un-suffixed export).
     External-data sidecars use either ``.onnx_data`` (onnx-community
-    convention) or ``.onnx.data`` (istupakov NeMo convention); both are
-    stripped so the same stem-based quant lookup applies.
-    ``model.onnx.data`` → ``""``, ``model.int8.onnx.data`` → ``"int8"``.
+    convention) or ``.onnx.data`` (istupakov NeMo convention) and may be
+    sharded (``.onnx_data_1`` …); all forms are stripped so the same
+    stem-based quant lookup applies. ``model.onnx.data`` → ``""``,
+    ``model.int8.onnx.data`` → ``"int8"``,
+    ``encoder_model_fp16.onnx_data_1`` → ``"fp16"``.
     """
     name = weight_file.name
-    if name.endswith(".onnx.data"):
-        name = name[: -len(".onnx.data")]
-    elif name.endswith(".onnx_data"):
-        name = name[: -len(".onnx_data")]
-    elif name.endswith(".onnx"):
-        name = name[: -len(".onnx")]
-    match = _QUANT_RE.search(name)
+    stem = _EXTERNAL_DATA_TAIL_RE.sub("", name)
+    if stem == name and name.endswith(".onnx"):
+        stem = name[: -len(".onnx")]
+    match = _QUANT_RE.search(stem)
     return match.group(1) if match else ""
 
 
@@ -163,7 +189,12 @@ def _collect_weight_files(snapshot: Path) -> list[Path]:
     different upstream exporters disagree on the separator.
     """
     weight_files: list[Path] = []
-    for pattern in ("*.onnx", "*.onnx_data", "*.onnx.data"):
+    # ``*.onnx_data_*`` / ``*.onnx.data_*`` catch the numbered shards of >2 GB
+    # weights (``encoder_model_fp16.onnx_data_1``) — glob ``*.onnx_data`` alone
+    # would skip them, so their bytes went uncounted and a missing shard could
+    # hide behind an otherwise-"cached" verdict. The patterns are mutually
+    # exclusive (a name ends in exactly one tail) so no file is double-listed.
+    for pattern in ("*.onnx", "*.onnx_data", "*.onnx.data", "*.onnx_data_*", "*.onnx.data_*"):
         for child in snapshot.rglob(pattern):
             if child.is_file() or child.is_symlink():
                 weight_files.append(child)
@@ -194,7 +225,12 @@ def _state_from_weight_files(weight_files: list[Path], blobs_dir: Path) -> Model
     if blobs_dir.exists():
         try:
             for entry in blobs_dir.iterdir():
-                if entry.name.endswith(".incomplete"):
+                # ``.incomplete`` is huggingface_hub's in-flight marker;
+                # ``.partial`` is the streaming downloader's (it streams to
+                # ``blobs/<etag>.partial`` and only links the snapshot on
+                # completion). Either means a download is mid-flight / was
+                # interrupted, so the snapshot can't be trusted as complete.
+                if entry.name.endswith((".incomplete", ".partial")):
                     return ModelCacheState(
                         state="partial",
                         downloaded_bytes=downloaded,
@@ -413,6 +449,61 @@ def probe_cache_state_by_quantization(hf_repo_id: str, quantizations: list[str])
 # "cached".
 
 
+def _onnx_external_data_missing(onnx_path: Path) -> bool:
+    """True iff ``onnx_path`` references external-data files not present on disk.
+
+    onnx-community ships >2 GB fp16/fp32 weights as a small ``.onnx`` graph plus
+    one or more ``.onnx_data`` / ``.onnx_data_<n>`` sidecars. onnx-asr's resolver
+    only NAMES the ``.onnx`` graph in ``_get_model_files`` — never the sidecars —
+    so a download that finished the (tiny) graph but not its multi-GB weight
+    shards still "resolves" offline. ORT then dies at session-create with
+    ``External data path does not exist: …onnx_data``. Parse the graph and
+    confirm every referenced sidecar sits beside it, so the cache probe can
+    report ``partial`` instead of a green badge that fails on first transcribe.
+
+    Skips graphs larger than :data:`_EXTERNAL_DATA_GRAPH_MAX_BYTES`: an ``.onnx``
+    that big holds its weights INLINE and references no external data, and
+    parsing it (``onnx.load`` reads the whole protobuf, ``load_external_data``
+    only governs the SEPARATE sidecars) would cost ~0.5-1 s of GIL-bound work
+    for nothing — see the constant's note for the event-loop-starvation it caused.
+
+    Returns ``False`` (don't override the resolver's verdict) when the graph is
+    inline-weight sized, onnx isn't importable, or the graph can't be parsed —
+    best-effort, never raises.
+    """
+    try:
+        if onnx_path.stat().st_size > _EXTERNAL_DATA_GRAPH_MAX_BYTES:
+            return False
+    except OSError:  # pragma: no cover — the resolver just confirmed it exists
+        return False
+    try:
+        import onnx
+    except Exception:  # pragma: no cover — onnx ships with onnx-asr
+        return False
+    try:
+        model = onnx.load(str(onnx_path), load_external_data=False)
+    except Exception:
+        return False
+    try:
+        from onnx.external_data_helper import _get_all_tensors
+
+        tensors = list(_get_all_tensors(model))
+    except Exception:  # pragma: no cover — fall back to top-level initializers
+        tensors = list(model.graph.initializer)
+    base = onnx_path.parent
+    checked: set[str] = set()
+    for tensor in tensors:
+        if getattr(tensor, "data_location", 0) != onnx.TensorProto.EXTERNAL:
+            continue
+        for entry in tensor.external_data:
+            if entry.key != "location" or entry.value in checked:
+                continue
+            checked.add(entry.value)
+            if not (base / entry.value).is_file():
+                return True
+    return False
+
+
 def onnx_asr_would_download(onnx_model_name: str, quantization: str | None) -> bool | None:
     """Would loading ``(onnx_model_name, quantization)`` via onnx-asr fetch bytes?
 
@@ -426,8 +517,17 @@ def onnx_asr_would_download(onnx_model_name: str, quantization: str | None) -> b
     patterns (``model?int8.onnx``) also absorb the ``.``-vs-``_`` separator
     difference a hand-rolled probe gets wrong.
 
+    The resolver only verifies the NAMED ``.onnx`` graph files, never their
+    external-data sidecars (``_get_model_files`` doesn't list them). So after a
+    clean offline resolve we additionally confirm every resolved graph's
+    ``.onnx_data`` / ``.onnx_data_<n>`` shards are present — otherwise a partial
+    sharded download (graph done, multi-GB weights still missing) reports
+    "cached" and then fails at session-create. See
+    :func:`_onnx_external_data_missing`.
+
     Returns:
-        * ``True``  — at least one required file is missing → a load downloads.
+        * ``True``  — at least one required file (graph OR external-data shard)
+          is missing → a load downloads.
         * ``False`` — every required file resolves offline → the load is silent.
         * ``None``  — undeterminable (onnx-asr absent, unknown model type, or an
           unexpected error); callers keep their heuristic verdict.
@@ -441,7 +541,7 @@ def onnx_asr_would_download(onnx_model_name: str, quantization: str | None) -> b
         return None
     try:
         resolver = create_asr_resolver(model=onnx_model_name, offline=True)
-        resolver.resolve_model(quantization=quantization or None)
+        resolved = resolver.resolve_model(quantization=quantization or None)
     except FileNotFoundError:
         # onnx-asr's ModelFileNotFoundError and huggingface_hub's
         # LocalEntryNotFoundError both subclass FileNotFoundError → a required
@@ -453,6 +553,13 @@ def onnx_asr_would_download(onnx_model_name: str, quantization: str | None) -> b
         # snapshot / etc. — we can't speak for this id; let the heuristic stand.
         logger.debug("onnx-asr offline resolve inconclusive for %s", onnx_model_name, exc_info=True)
         return None
+    # All named graphs resolved offline — but their external-data sidecars are
+    # invisible to the resolver. A missing shard means ORT would re-fetch
+    # (or fail) at load, so treat it as "would download".
+    for path in resolved.values():
+        graph = Path(path)
+        if graph.suffix == ".onnx" and _onnx_external_data_missing(graph):
+            return True
     return False
 
 

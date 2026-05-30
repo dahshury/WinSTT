@@ -140,9 +140,14 @@ def download_with_progress(
                     if on_progress is not None:
                         progress = downloaded / total if total else 0.0
                         on_progress(progress, downloaded, total)
-    except urllib.error.URLError as exc:
-        # Network blips leave the .partial in place so a retry can resume
-        # rather than start over. Cancel/pause own their own cleanup paths.
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        # Network blip / stalled mid-stream read (``TimeoutError`` from the
+        # socket timeout — NOT a ``URLError`` subclass, so it has to be named
+        # explicitly) / dropped connection. The ``.partial`` stays on disk so
+        # the caller's retry resumes via ``Range`` rather than starting over —
+        # this is what stops a large multi-GB shard (e.g. cohere fp16) from
+        # silently freezing forever when the CDN connection stalls.
+        # Cancel/pause own their own cleanup paths.
         raise RuntimeError(f"Failed to download {url}: {exc}") from exc
 
     partial.replace(target)

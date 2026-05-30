@@ -819,10 +819,22 @@ class OnnxAsrTranscriber(ITranscriber):
         self._normalize_audio = normalize_audio
         self._segment_with_vad = segment_with_vad
         self._vad: Any = None
-        # Adapter cache for the VAD-segmented recognize path. Lazily filled
-        # on the first call per ``merge`` flag (see _recognize_vad_segments).
-        self._vad_adapter_merge: Any = None
-        self._vad_adapter_no_merge: Any = None
+        # Adapter cache for the VAD-segmented recognize path, keyed by
+        # ``(merge, responsive)`` and lazily filled (see _recognize_vad_segments).
+        # ``responsive`` adapters use ``batch_size=1`` so the cancel flag is
+        # polled after EVERY chunk (file transcription) instead of every 8-chunk
+        # batch — that batch granularity was the "cancel takes way too long" lag.
+        self._vad_adapters: dict[tuple[bool, bool], Any] = {}
+        # Serializes every recognition call on THIS transcriber instance. The
+        # main model is shared between live dictation (RecordingPipeline) and
+        # file transcription (the file_transcribe worker thread); two threads
+        # driving the cached with_vad adapter at once would corrupt its
+        # internal bookkeeping arrays. The realtime transcriber is a separate
+        # instance with its own lock, so this never blocks the live preview.
+        # File transcription cooperatively breaks its segment loop on cancel
+        # (a cancel raised from ``on_chunk`` below), releasing this lock
+        # promptly so a push-to-talk dictation can grab the model mid-queue.
+        self._infer_lock = threading.Lock()
         if segment_with_vad:
             self._vad = _get_or_load_silero_vad(providers_tuple)
         else:
@@ -1034,7 +1046,12 @@ class OnnxAsrTranscriber(ITranscriber):
         """True if any GPU-class ORT provider is active (CUDA / TensorRT / DirectML / ROCm)."""
         return any(p in GPU_PROVIDERS for p in self._active_providers)
 
-    def _recognize_direct(self, audio: AudioArray, lang_arg: str | None) -> list[tuple[float, float, str]]:
+    def _recognize_direct(
+        self,
+        audio: AudioArray,
+        lang_arg: str | None,
+        on_chunk: Callable[[float, float, str], None] | None = None,
+    ) -> list[tuple[float, float, str]]:
         """Single-pass recognition for bounded-short callers (no VAD).
 
         Used when ``segment_with_vad=False`` (realtime live preview). The
@@ -1048,15 +1065,18 @@ class OnnxAsrTranscriber(ITranscriber):
             recognize_kwargs["language"] = lang_arg
         if self._translate_target_language is not None:
             recognize_kwargs["target_language"] = self._translate_target_language
-        try:
-            text = self._model.recognize(audio, **recognize_kwargs)
-        except TypeError:
-            # Engines that don't accept one of our kwargs (older
-            # onnx_asr builds, custom adapters) — strip the optional
-            # ones and retry with just the sample_rate baseline.
-            recognize_kwargs.pop("language", None)
-            recognize_kwargs.pop("target_language", None)
-            text = self._model.recognize(audio, **recognize_kwargs)
+        with self._infer_lock:
+            try:
+                text = self._model.recognize(audio, **recognize_kwargs)
+            except TypeError:
+                # Engines that don't accept one of our kwargs (older
+                # onnx_asr builds, custom adapters) — strip the optional
+                # ones and retry with just the sample_rate baseline.
+                recognize_kwargs.pop("language", None)
+                recognize_kwargs.pop("target_language", None)
+                text = self._model.recognize(audio, **recognize_kwargs)
+        if on_chunk is not None:
+            on_chunk(0.0, 0.0, text or "")
         return [(0.0, 0.0, text or "")]
 
     def _recognize_vad_segments(
@@ -1065,6 +1085,7 @@ class OnnxAsrTranscriber(ITranscriber):
         lang_arg: str | None,
         *,
         merge: bool,
+        on_chunk: Callable[[float, float, str], None] | None = None,
     ) -> list[tuple[float, float, str]]:
         """WhisperX-style VAD-segmented recognition.
 
@@ -1097,34 +1118,80 @@ class OnnxAsrTranscriber(ITranscriber):
         # — a small but real win on the long-audio path, which fires the
         # adapter once per recording for `transcribe_segments` (SRT) and
         # once per utterance for the normal merged-VAD `transcribe`.
-        adapter = self._vad_adapter_merge if merge else self._vad_adapter_no_merge
+        # File transcription (``on_chunk`` set) uses ``batch_size=1`` so the
+        # cancel flag is polled after EVERY chunk. The default batch_size (8)
+        # made a cancel wait for a whole 8-chunk inference to finish — the
+        # "cancel is heavy / takes way too long" lag the user hit on long files.
+        # Dictation (``on_chunk`` is None) keeps the throughput-batched
+        # default; its utterances are short so the granularity is moot there.
+        #
+        # AED engines (Cohere, Canary) ALSO force ``batch_size=1``, for
+        # correctness rather than cancel-responsiveness: onnx-asr's VAD
+        # adapter batches up to ``batch_size`` segments and zero-pads the
+        # shorter ones up to the longest via ``pad_list`` (utils.py). These
+        # merged-decoder ONNX exports carry no ``encoder_attention_mask``,
+        # so the decoder cross-attends to those trailing zeros and
+        # phrase-loops — re-emitting the segment's final sentence. This was
+        # the live Cohere bug: a >29 s dictation split into two VAD chunks,
+        # the shorter second chunk got zero-padded up to the first (several
+        # seconds of trailing zeros), and Cohere looped on the padding.
+        # ``batch_size=1`` makes ``pad_list`` pad each segment to itself →
+        # no spurious silence. Free for dictation (≤ a handful of chunks).
+        responsive = on_chunk is not None
+        unbatched = (
+            responsive
+            or onnx_decoder_patches.is_cohere_engine(self._model)
+            or onnx_decoder_patches.is_canary_aed_engine(self._model)
+        )
+        cache_key = (merge, unbatched)
+        adapter = self._vad_adapters.get(cache_key)
         if adapter is None:
             vad_kwargs: dict[str, Any] = {"max_speech_duration_s": self._VAD_MAX_SPEECH_DURATION_S}
             if merge:
                 vad_kwargs["min_silence_duration_ms"] = self._VAD_MIN_SILENCE_MS
+            if unbatched:
+                vad_kwargs["batch_size"] = 1
             adapter = self._model.with_vad(self._vad, **vad_kwargs)
-            if merge:
-                self._vad_adapter_merge = adapter
-            else:
-                self._vad_adapter_no_merge = adapter
+            self._vad_adapters[cache_key] = adapter
         recognize_kwargs: dict[str, Any] = {"sample_rate": 16_000}
         if lang_arg is not None:
             recognize_kwargs["language"] = lang_arg
         if self._translate_target_language is not None:
             recognize_kwargs["target_language"] = self._translate_target_language
 
-        try:
-            segments_iter = adapter.recognize(audio, **recognize_kwargs)
-        except TypeError:
-            # Some models don't accept the language kwarg through with_vad,
-            # and ``target_language`` is even more selective (Canary only).
-            # Strip both and retry with the bare baseline so unrelated
-            # engines still transcribe rather than erroring out.
-            recognize_kwargs.pop("language", None)
-            recognize_kwargs.pop("target_language", None)
-            segments_iter = adapter.recognize(audio, **recognize_kwargs)
+        # Progress + resume source: the VAD adapter yields one (already
+        # transcribed) chunk at a time — see ``onnx_asr/vad.py::recognize_batch``,
+        # whose inner generator runs ``asr.recognize_batch`` per batch then
+        # ``yield``s each result lazily. Each chunk carries GLOBAL (start, end)
+        # timestamps + text, forwarded to ``on_chunk`` so the file worker can
+        # both drive the progress bar and accumulate finished chunks for resume.
+        # Serialize on this instance (see ``_infer_lock`` in __init__). Held
+        # across the whole lazy consume so the shared with_vad adapter is never
+        # driven by two threads at once. ``on_chunk`` may raise (file
+        # transcription's cancel path) — the ``with`` releases the lock as the
+        # exception propagates, freeing the model for a push-to-talk dictation.
+        with self._infer_lock:
+            try:
+                segments_iter = adapter.recognize(audio, **recognize_kwargs)
+            except TypeError:
+                # Some models don't accept the language kwarg through with_vad,
+                # and ``target_language`` is even more selective (Canary only).
+                # Strip both and retry with the bare baseline so unrelated
+                # engines still transcribe rather than erroring out.
+                recognize_kwargs.pop("language", None)
+                recognize_kwargs.pop("target_language", None)
+                segments_iter = adapter.recognize(audio, **recognize_kwargs)
 
-        return [(float(s.start), float(s.end), s.text) for s in segments_iter]
+            results: list[tuple[float, float, str]] = []
+            for s in segments_iter:
+                seg = (float(s.start), float(s.end), s.text)
+                results.append(seg)
+                # ``on_chunk`` (file transcription) observes each completed chunk
+                # so the worker can report progress AND accumulate finished chunks
+                # for resume — it may raise to cancel between chunks.
+                if on_chunk is not None:
+                    on_chunk(*seg)
+            return results
 
     @override
     def transcribe(
@@ -1134,6 +1201,7 @@ class OnnxAsrTranscriber(ITranscriber):
         use_prompt: bool = True,
         custom_words: list[str] | None = None,
         initial_prompt_text: str | None = None,
+        on_chunk: Callable[[float, float, str], None] | None = None,
     ) -> TranscriptionResult:
         start_t = time.time()
         lang_arg = language if language else None
@@ -1167,8 +1235,10 @@ class OnnxAsrTranscriber(ITranscriber):
                 installed_prompt = self._install_initial_prompt_text(prompt_text)
         try:
             # Plain text: merge VAD chunks for speed — granularity is irrelevant
-            # once the segment texts are concatenated.
-            segments = self._recognize(audio, lang_arg, merge=True)
+            # once the segment texts are concatenated. ``on_chunk`` (file
+            # transcription only) receives the real per-chunk completion
+            # fraction; it may raise to cancel a long file mid-flight.
+            segments = self._recognize(audio, lang_arg, merge=True, on_chunk=on_chunk)
         finally:
             if installed_prompt:
                 self._uninstall_initial_prompt_text()
@@ -1197,8 +1267,15 @@ class OnnxAsrTranscriber(ITranscriber):
         from src.recorder.infrastructure.word_aligner import group_tokens_to_words, map_timings_to_text
 
         try:
-            timestamped = self._model.with_timestamps()
-            result = timestamped.recognize(wav_path, return_timestamps=True, return_word_timestamps=True)
+            # Serialize on ``_infer_lock`` like the other recognition entry
+            # points: history word-alignment shares this model's ORT sessions
+            # with live dictation and file transcription, so an unlocked
+            # recognize() here would violate the lock's "every recognition call
+            # on this instance is serialized" invariant (and, on DirectML, risk
+            # the documented concurrent-Run heap corruption).
+            with self._infer_lock:
+                timestamped = self._model.with_timestamps()
+                result = timestamped.recognize(wav_path, return_timestamps=True, return_word_timestamps=True)
         except Exception:
             logger.debug("align_words: native timestamps unavailable for this model", exc_info=True)
             return None
@@ -1362,6 +1439,7 @@ class OnnxAsrTranscriber(ITranscriber):
         self,
         audio: AudioArray,
         language: str = "",
+        on_chunk: Callable[[float, float, str], None] | None = None,
     ) -> list[tuple[float, float, str]]:
         """Segmented transcription with global timestamps, for SRT export.
 
@@ -1371,9 +1449,16 @@ class OnnxAsrTranscriber(ITranscriber):
         subtitle granularity; SRT export is an explicit, infrequent action.
         """
         lang_arg = language if language else None
-        return self._recognize(audio, lang_arg, merge=False)
+        return self._recognize(audio, lang_arg, merge=False, on_chunk=on_chunk)
 
-    def _recognize(self, audio: AudioArray, lang_arg: str | None, *, merge: bool) -> list[tuple[float, float, str]]:
+    def _recognize(
+        self,
+        audio: AudioArray,
+        lang_arg: str | None,
+        *,
+        merge: bool,
+        on_chunk: Callable[[float, float, str], None] | None = None,
+    ) -> list[tuple[float, float, str]]:
         """Dispatch to the VAD-segmented or direct path per ``segment_with_vad``.
 
         ``merge`` is forwarded to the VAD path (ignored on the direct path,
@@ -1399,8 +1484,8 @@ class OnnxAsrTranscriber(ITranscriber):
             audio = _peak_normalize(audio)
         audio = self._maybe_apply_engine_pads(audio)
         if self._segment_with_vad:
-            return self._recognize_vad_segments(audio, lang_arg, merge=merge)
-        return self._recognize_direct(audio, lang_arg)
+            return self._recognize_vad_segments(audio, lang_arg, merge=merge, on_chunk=on_chunk)
+        return self._recognize_direct(audio, lang_arg, on_chunk=on_chunk)
 
     def _maybe_apply_engine_pads(self, audio: AudioArray) -> AudioArray:
         """Apply Canary/Cohere short-audio pad or Parakeet leading-silence pad.
@@ -1411,27 +1496,35 @@ class OnnxAsrTranscriber(ITranscriber):
         lifetime, but it's cheap enough to re-resolve and keeps the
         method side-effect-free w.r.t. instance state.
 
-        AED engines (Canary, Cohere) get two transformations in this order:
+        The two AED families need OPPOSITE tail handling, so they branch:
 
-        1. ``maybe_trim_leading_silence_for_aed`` — strip any leading
-           zero-pad the pipeline spliced in via ``vad_prefill_ms``. This
-           prefix wrecks Canary's cross-attention on short clips and
-           reproduces the "I speak if I spe, ikkkkkkkk" stutter the user
-           reported.
-        2. ``maybe_pad_for_aed`` — extend the (now-trimmed) clip with
-           trailing zeros up to ``AED_PAD_TO_SAMPLES`` (1.25 s) so the
-           decoder gets the end-of-utterance acoustic cue it needs.
+        * **Canary AED** — trim leading silence, then ``maybe_pad_for_aed``
+          extends the clip with trailing zeros up to ``AED_PAD_TO_SAMPLES``
+          (1.25 s). Canary needs that end-of-utterance "rest" cue to emit
+          EOS; without it short clips dot-loop. (The leading trim also
+          kills the "I speak if I spe, ikkkkkkkk" stutter that the spliced
+          ``vad_prefill_ms`` silence caused.)
+        * **Cohere** — trim leading AND trailing silence, NEVER pad.
+          Cohere's ONNX export has no ``encoder_attention_mask``, so the
+          decoder cross-attends to any trailing silence and phrase-loops
+          (re-emits the final sentence). Padding the tail — or leaving a
+          silent tail in — is the loop trigger, the exact inverse of what
+          Canary wants. See ``maybe_trim_trailing_silence_for_aed`` and
+          the model card's noise-gate/VAD guidance.
 
-        Order matters: trim FIRST so the pad measures against the
+        Order matters: trim FIRST so the pad/trim measures against the
         trimmed length, not the pre-trim length. Otherwise a 0.6 s clip
         with 0.45 s of leading silence would pass the
         ``shape[0] >= AED_MIN_SAMPLES`` check before trimming and exit
         the pad path with only 0.15 s of real audio.
         """
         engine = self._model
-        if onnx_decoder_patches.is_canary_aed_engine(engine) or onnx_decoder_patches.is_cohere_engine(engine):
+        if onnx_decoder_patches.is_canary_aed_engine(engine):
             trimmed = onnx_decoder_patches.maybe_trim_leading_silence_for_aed(audio)
             return onnx_decoder_patches.maybe_pad_for_aed(trimmed)
+        if onnx_decoder_patches.is_cohere_engine(engine):
+            trimmed = onnx_decoder_patches.maybe_trim_leading_silence_for_aed(audio)
+            return onnx_decoder_patches.maybe_trim_trailing_silence_for_aed(trimmed)
         if onnx_decoder_patches.is_parakeet_transducer_engine(engine):
             return onnx_decoder_patches.maybe_prepend_silence_for_parakeet(audio)
         return audio
@@ -1456,8 +1549,7 @@ class OnnxAsrTranscriber(ITranscriber):
         # Drop our reference to the shared VAD — cache keeps the canonical one.
         self._vad = None
         # Drop the with_vad adapter cache — the model it wraps is going away.
-        self._vad_adapter_merge = None
-        self._vad_adapter_no_merge = None
+        self._vad_adapters = {}
         if model is not None and hasattr(model, "close"):
             # Best-effort: onnx-asr's close() releases ORT sessions and, when a
             # (possibly partial) torch is importable, probes torch.cuda. A stray

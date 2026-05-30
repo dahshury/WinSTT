@@ -28,6 +28,52 @@ let recordingActive = false;
 let toggleSessionActive = false;
 
 /**
+ * Listeners notified when "is the user dictating?" flips. The file-transcription
+ * queue subscribes: it pauses (and cancels the in-flight file so the shared STT
+ * model is freed) when dictation starts, and resumes when it ends. Covers PTT,
+ * toggle, listen and wake-word uniformly via the derived predicate below.
+ */
+type DictationActiveListener = (active: boolean) => void;
+const dictationListeners = new Set<DictationActiveListener>();
+let lastDictationActive = false;
+
+/**
+ * Derived: is a dictation session in flight right now? True while a recording
+ * is live, a single-shot PTT intent is pending its `recording_start`, or a
+ * toggle session is open.
+ */
+function isDictationActiveInternal(): boolean {
+	return recordingActive || signaledIntent || toggleSessionActive;
+}
+
+function emitDictationActiveChange(): void {
+	const now = isDictationActiveInternal();
+	if (now === lastDictationActive) {
+		return;
+	}
+	lastDictationActive = now;
+	for (const listener of dictationListeners) {
+		listener(now);
+	}
+}
+
+/**
+ * Subscribe to dictation-active transitions. Returns an unsubscribe fn.
+ * Fires `true` when a dictation session opens, `false` when it fully ends.
+ */
+export function onDictationActiveChange(listener: DictationActiveListener): () => void {
+	dictationListeners.add(listener);
+	return () => {
+		dictationListeners.delete(listener);
+	};
+}
+
+/** True while the user is dictating (PTT held, toggle session open, or live). */
+export function isDictationActive(): boolean {
+	return isDictationActiveInternal();
+}
+
+/**
  * Pure predicate: in this mode, does the SERVER own the session lifecycle
  * (loopback / wake-word detector) rather than the hotkey? When true, every
  * `recording_start` is authorised unconditionally.
@@ -53,6 +99,7 @@ export function notifyHotkeyPressed(): void {
 	if (mode === "ptt") {
 		signaledIntent = true;
 		toggleSessionActive = false;
+		emitDictationActiveChange();
 		return;
 	}
 	if (mode === "toggle") {
@@ -63,11 +110,13 @@ export function notifyHotkeyPressed(): void {
 		// mid-session without pressing toggle-off.
 		toggleSessionActive = !toggleSessionActive;
 		signaledIntent = false;
+		emitDictationActiveChange();
 		return;
 	}
 	// listen / wakeword: server-driven, hotkey not involved. Drop any
 	// stale toggle session left over from a mode switch.
 	toggleSessionActive = false;
+	emitDictationActiveChange();
 }
 
 /**
@@ -97,6 +146,7 @@ export function consumeRecordingStart(): boolean {
 	}
 	signaledIntent = false;
 	recordingActive = true;
+	emitDictationActiveChange();
 	return true;
 }
 
@@ -109,6 +159,7 @@ export function consumeRecordingStart(): boolean {
 export function notifyRecordingStop(): void {
 	recordingActive = false;
 	signaledIntent = false;
+	emitDictationActiveChange();
 }
 
 /**
@@ -140,4 +191,6 @@ export function __resetRecordingStateForTesting__(): void {
 	signaledIntent = false;
 	recordingActive = false;
 	toggleSessionActive = false;
+	lastDictationActive = false;
+	dictationListeners.clear();
 }

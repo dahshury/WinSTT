@@ -40,8 +40,25 @@ export interface AudioVisualizerRadialProps {
 	className?: string;
 	color?: `#${string}`;
 	radius?: number;
+	/**
+	 * Ring radius as a percentage (20–90) of the visualizer's half-height.
+	 * Size-relative so a single user setting stays sensible across the xs–xl
+	 * overlay presets. Lower priority than the absolute `radius` prop, higher
+	 * than the size-derived default.
+	 */
+	radiusPct?: number;
 	size?: VisualizerSize;
 }
+
+// Available half-height per size variant. Mirrors the heights in
+// `radialVariants` (icon 24, sm 56, md 112, lg 224, xl 448) — keep in sync.
+const RADIAL_CONTAINER_HALF: Record<VisualizerSize, number> = {
+	icon: 12,
+	sm: 28,
+	md: 56,
+	lg: 112,
+	xl: 224,
+};
 
 export function resolveRadialBarCount(barCount: number | undefined, size: VisualizerSize): number {
 	if (barCount) {
@@ -75,10 +92,26 @@ export function resolveRadialDistance(radius: number | undefined, size: Visualiz
 	return RADIAL_DISTANCE_BY_SIZE[size] ?? 32;
 }
 
+/**
+ * Converts a size-relative radius percentage into an absolute pixel distance
+ * for the given size variant. Returns `undefined` when no percentage is set so
+ * callers can fall back to the size-derived default.
+ */
+export function resolveRadialDistancePct(
+	radiusPct: number | undefined,
+	size: VisualizerSize
+): number | undefined {
+	if (radiusPct === undefined) {
+		return;
+	}
+	return Math.round((RADIAL_CONTAINER_HALF[size] * radiusPct) / 100);
+}
+
 export function AudioVisualizerRadial({
 	size = "md",
 	color,
 	radius,
+	radiusPct,
 	barCount,
 	className,
 	style,
@@ -92,7 +125,11 @@ export function AudioVisualizerRadial({
 
 	const sequencerInterval = resolveRadialSequencerInterval(state);
 
-	const distanceFromCenter = resolveRadialDistance(radius, size);
+	// Priority: explicit absolute `radius` → size-relative `radiusPct` → size default.
+	const distanceFromCenter = resolveRadialDistance(
+		radius ?? resolveRadialDistancePct(radiusPct, size),
+		size
+	);
 
 	const highlightedIndices = useRadialAnimator(state, _barCount, sequencerInterval);
 	const bands = state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
@@ -100,9 +137,7 @@ export function AudioVisualizerRadial({
 	const dotSize = (distanceFromCenter * Math.PI) / _barCount;
 
 	// Available space from the radial ring out to the container edge.
-	// Mirrors the heights in `radialVariants` above (icon 24, sm 56, md 112, lg 224, xl 448);
-	// keep both in sync.
-	const containerHalf = { icon: 12, sm: 28, md: 56, lg: 112, xl: 224 }[size ?? "md"] ?? 56;
+	const containerHalf = RADIAL_CONTAINER_HALF[size];
 	const maxBarHeight = Math.max(0, containerHalf - distanceFromCenter);
 
 	const minBarHeight = Math.min(dotSize, maxBarHeight);

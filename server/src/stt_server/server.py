@@ -723,6 +723,14 @@ async def main_async() -> None:
         "device": args.device,
         "backend": args.backend,
         "onnx_quantization": args.onnx_quantization,
+        # Filler / disfluency stripping. Boot value comes from the renderer's
+        # stored setting so the recorder starts with the user's choice instead
+        # of the True default — critical for verbatim models (CrisperWhisper)
+        # where stripping eats the whole point. The renderer ALSO pushes
+        # ``filter_fillers`` at runtime via set_parameter for live toggling, but
+        # the boot flag guarantees correctness even if that runtime push is
+        # delayed or lost (which it was — the electron-store sync read stale).
+        "filter_fillers": args.filter_fillers,
     }
 
     try:
@@ -753,6 +761,24 @@ async def main_async() -> None:
         # Stash the running loop so worker threads (streaming downloader,
         # TTS install) can dispatch back to it via ``run_coroutine_threadsafe``.
         state.main_loop = loop
+
+        # Wire the cloud-STT RPC bridge. A cloud ``RemoteTranscriber`` (built
+        # when the user picks ``openai:…`` / ``elevenlabs:…``) dispatches its
+        # transcribe requests through this sender; we broadcast the envelope to
+        # the control client(s) — electron-main handles it via the AI SDK and
+        # replies with a ``stt_cloud_transcribe_response`` control message
+        # (routed back in ``control_handler._handle_cloud_transcribe_response``).
+        # ``transcribe()`` runs on the pipeline thread, so schedule the send
+        # onto this loop thread-safely. Cleared in ``shutdown_procedure``.
+        from src.recorder.infrastructure.remote_transcriber import register_cloud_sender
+
+        def _send_cloud_request(envelope: dict[str, Any]) -> None:
+            payload = json.dumps(envelope)
+            for ws in list(state.control_connections):
+                asyncio.run_coroutine_threadsafe(ws.send(payload), loop)
+
+        register_cloud_sender(_send_cloud_request)
+
         _shutdown_count = 0
 
         def _request_shutdown() -> None:
@@ -849,6 +875,11 @@ async def main_async() -> None:
 
 async def shutdown_procedure(state: ServerState) -> None:
     """Gracefully shut down the recorder and cancel remaining tasks."""
+    # Drop the cloud-STT dispatcher so any late transcribe raises a clear
+    # "no cloud sender" error instead of sending into a torn-down loop.
+    from src.recorder.infrastructure.remote_transcriber import register_cloud_sender
+
+    register_cloud_sender(None)
 
     def _watchdog() -> None:
         time.sleep(8)

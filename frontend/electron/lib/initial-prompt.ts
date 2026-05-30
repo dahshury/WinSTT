@@ -192,7 +192,7 @@ const CONTEXT_NOISE_RE = /[\p{C}\p{So}•‣⁃\u{1F000}-\u{1FAFF}]/gu;
  * replaced with a space (not elided) so stripping a glyph between two
  * words can't fuse them into one token.
  */
-function sanitiseContextTail(rawTail: string): string {
+export function sanitiseContextTail(rawTail: string): string {
 	const denoised = rawTail.replace(CONTEXT_NOISE_RE, " ");
 	const collapsed = denoised.replace(/\s+/g, " ").trim();
 	if (collapsed.length <= MAX_CONTEXT_TAIL_CHARS) {

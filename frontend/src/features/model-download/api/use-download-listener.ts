@@ -1,10 +1,23 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
+	type DownloadProgressPayload,
 	onModelDownloadComplete,
 	onModelDownloadProgress,
 	onModelDownloadStart,
 } from "@/shared/api/ipc-client";
 import { useDownloadStore } from "../model/download-store";
+
+// ~12fps. The server emits one ``model_download_progress`` per ~64KB chunk —
+// hundreds/sec on a fast CDN. The detached model-picker subscribes to the
+// whole ``quantDownloads`` map, so applying every chunk re-renders all ~44
+// model cards, saturating that window's renderer (it feels frozen and drops
+// clicks). Coalescing the per-quant ticks to this cadence keeps the bar smooth
+// while the picker stays responsive enough to switch models mid-download.
+const QUANT_PROGRESS_FLUSH_MS = 80;
+
+function quantBufferKey(model: string, quantization: string): string {
+	return `${model}@${quantization}`;
+}
 
 /**
  * Bridge WS download events into the renderer's download store.
@@ -22,6 +35,10 @@ import { useDownloadStore } from "../model/download-store";
  * which made the (now-removed) main-window ``DownloadOverlay`` cover the
  * audio visualizer for every badge-initiated download — confusing because
  * the same progress was already visible inside the selector.
+ *
+ * Per-quant progress is COALESCED (see ``QUANT_PROGRESS_FLUSH_MS``) so a
+ * high-frequency download can't storm the picker's renderer; the legacy
+ * singleton path stays synchronous (it updates a single slot, not a list).
  */
 export function useDownloadListener(): void {
 	const setDownloadStart = useDownloadStore((s) => s.setDownloadStart);
@@ -30,38 +47,72 @@ export function useDownloadListener(): void {
 	const setQuantDownloadProgress = useDownloadStore((s) => s.setQuantDownloadProgress);
 	const setQuantDownloadComplete = useDownloadStore((s) => s.setQuantDownloadComplete);
 
-	useEffect(
-		() =>
-			onModelDownloadStart((model, quantization) => {
-				if (typeof quantization === "string") {
-					return;
-				}
-				setDownloadStart(model);
-			}),
-		[setDownloadStart]
-	);
+	// Latest buffered per-quant payload keyed by ``model@quant``, flushed on a
+	// trailing timer. Refs (not state) so buffering never schedules a render.
+	const pendingRef = useRef(new Map<string, DownloadProgressPayload>());
+	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	useEffect(
-		() =>
-			onModelDownloadProgress((payload) => {
-				if (typeof payload.quantization === "string") {
-					setQuantDownloadProgress(payload.model, payload.quantization, payload);
-					return;
-				}
-				setDownloadProgress(payload);
-			}),
-		[setDownloadProgress, setQuantDownloadProgress]
-	);
+	useEffect(() => {
+		const pending = pendingRef.current;
+		const flush = (): void => {
+			flushTimerRef.current = null;
+			for (const payload of pending.values()) {
+				// ``quantization`` is always a string for buffered entries (only the
+				// per-quant branch buffers), but narrow for the type checker.
+				setQuantDownloadProgress(payload.model, payload.quantization ?? "", payload);
+			}
+			pending.clear();
+		};
 
-	useEffect(
-		() =>
-			onModelDownloadComplete((model, cancelled, quantization) => {
-				if (typeof quantization === "string") {
-					setQuantDownloadComplete(model, quantization, cancelled);
-					return;
+		const offStart = onModelDownloadStart((model, quantization) => {
+			// Per-quant starts are represented by the badge's optimistic seed +
+			// the first progress frame; only whole-model downloads touch the
+			// singleton slot here.
+			if (typeof quantization === "string") {
+				return;
+			}
+			setDownloadStart(model);
+		});
+
+		const offProgress = onModelDownloadProgress((payload) => {
+			if (typeof payload.quantization === "string") {
+				// Buffer the LATEST frame for this key; the trailing flush applies it.
+				pending.set(quantBufferKey(payload.model, payload.quantization), payload);
+				if (flushTimerRef.current === null) {
+					flushTimerRef.current = setTimeout(flush, QUANT_PROGRESS_FLUSH_MS);
 				}
-				setDownloadComplete(cancelled);
-			}),
-		[setDownloadComplete, setQuantDownloadComplete]
-	);
+				return;
+			}
+			setDownloadProgress(payload);
+		});
+
+		const offComplete = onModelDownloadComplete((model, cancelled, quantization) => {
+			if (typeof quantization === "string") {
+				// Drop any buffered progress for this key FIRST so a pending flush
+				// can't re-insert the entry we're about to clear (which would leave
+				// a zombie "downloading" badge that never resolves).
+				pending.delete(quantBufferKey(model, quantization));
+				setQuantDownloadComplete(model, quantization, cancelled);
+				return;
+			}
+			setDownloadComplete(cancelled);
+		});
+
+		return () => {
+			offStart();
+			offProgress();
+			offComplete();
+			if (flushTimerRef.current !== null) {
+				clearTimeout(flushTimerRef.current);
+				flushTimerRef.current = null;
+			}
+			pending.clear();
+		};
+	}, [
+		setDownloadStart,
+		setDownloadProgress,
+		setDownloadComplete,
+		setQuantDownloadProgress,
+		setQuantDownloadComplete,
+	]);
 }

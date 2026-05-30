@@ -92,10 +92,8 @@ export function usePushToTalk(): void {
 	useEffect(
 		() =>
 			onHotkeyPressed(() => {
-				const decision = decidePressAction(
-					recordingModeRef.current as RecordingMode,
-					isActiveRef.current
-				);
+				const mode = recordingModeRef.current as RecordingMode;
+				const decision = decidePressAction(mode, isActiveRef.current);
 				if (decision === null) {
 					return;
 				}
@@ -103,6 +101,21 @@ export function usePushToTalk(): void {
 				if (decision.persistActive) {
 					isActiveRef.current = decision.micOn;
 					setActive(decision.micOn);
+				}
+				// PTT hard invariant: the key release is the ONLY thing that ends
+				// a PTT recording. Re-assert the server's auto-stop disables at the
+				// exact instant the recording starts so NEITHER the VAD silence
+				// endpoint NOR the smart-endpoint pause tuning can fire mid-hold —
+				// the "pastes before I lift my finger" bug. This is race-free where
+				// the mount/connect sync is not: at press time the mode is stably
+				// "ptt" and the server is connected+ready (you can't be recording
+				// otherwise), so the push can't be dropped by the cold-boot
+				// not-ready/not-connected gates that silently swallowed the mount
+				// effect. Deduped downstream (electron-main) → one push per session,
+				// not per-press. See memory/project_ptt_silence_endpoint_sync_race.md.
+				if (mode === "ptt" && decision.micOn) {
+					sttSetParameter("silence_endpoint_enabled", false);
+					sttSetParameter("silence_timing", false);
 				}
 				sttCallMethod("set_microphone", [decision.micOn]);
 			}),
