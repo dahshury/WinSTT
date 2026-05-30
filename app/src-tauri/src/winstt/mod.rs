@@ -50,7 +50,21 @@ pub mod ducking;
 /// Unified ONNX-on-`ort` STT engine: Transcriber trait + per-family engines.
 /// Trait/types/helpers compile; decode loops + per-model fixes land after the STT spike (03_*.md §11).
 pub mod stt;
-// sherpa-onnx KWS wake word. NEEDS: sherpa-onnx (reconcile the draft's `sherpa_rs` → `sherpa-onnx`).
-// pub mod wakeword;
-// Local Kokoro (in-process) + cloud ElevenLabs TTS. NEEDS: kokoroxide/kokorox, ort.
-// pub mod tts;
+/// sherpa-onnx KWS wake word (open-vocabulary, offline).
+pub mod wakeword;
+/// Local Kokoro (in-process, on our ort) + cloud ElevenLabs TTS.
+pub mod tts;
+
+// ───────────────────────── Advanced subsystems ─────────────────────────
+/// Speaker diarization: sherpa-onnx embedder + OnlineSpeakerClustering + SpeakerTimeline.
+pub mod diarization;
+/// WASAPI system-audio loopback capture (listen mode) + slow-tracking AGC.
+pub mod loopback;
+/// Cross-attention DTW word-level timestamps (karaoke playback).
+pub mod word_timestamps;
+
+// ───────────────────────── Tauri command + manager layer ─────────────────────────
+/// Manager structs held in Tauri state (LlmManager, TtsManager, WakeWordManager, …).
+pub mod managers;
+/// #[tauri::command] #[specta::specta] wrappers (settings, stt, tts, llm, cloud_stt, wakeword, …).
+pub mod commands;

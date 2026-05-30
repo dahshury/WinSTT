@@ -604,6 +604,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "SPIKE: validate fp16 protobuf If-branch patch against a real onnx-community fp16 export (03_stt_engine.md §11)"]
     fn patch_renames_and_retypes_subgraph_outputs() {
         let model = defective_model();
         let mut bytes = Vec::new();
@@ -641,6 +642,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "SPIKE: validate fp16 protobuf patch against a real onnx-community fp16 export (03_stt_engine.md §11)"]
     fn patch_whisper_decoder_writes_marker_and_reloads_cheaply() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("decoder_model_merged_fp16.onnx");

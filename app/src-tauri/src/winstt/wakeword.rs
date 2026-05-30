@@ -1,21 +1,45 @@
-// DRAFT PORT — not yet compiled.
-// Source (WinSTT reference):
+// PORT IMPL — drafted against real APIs, pending compile.
+// Source: docs.rs/sherpa-onnx/1.13.2 (KeywordSpotter / KeywordSpotterConfig /
+//         OnlineModelConfig / OnlineTransducerModelConfig / OnlineStream / KeywordResult),
+//         verified 2026-05-31 via docs.rs source (src/kws.rs, src/online_asr.rs).
+// WinSTT reference (behavior parity target):
 //   server/src/recorder/infrastructure/porcupine_detector.py
 //   server/src/recorder/infrastructure/oww_detector.py
 //   server/src/recorder/infrastructure/composite_wake_word.py
 //   server/src/recorder/bootstrap.py (WAKE_WORD_BACKENDS registry, L938-945)
-//   handy_winstt/examples/winstt-port-docs/inventory/04_audio_vad_wake_diar.md (§3)
 //   frontend/src/shared/config/settings-schema.ts (general.wakeWord/wakeWordSensitivity/wakeWordTimeout)
-// External API (verified 2026-05, sherpa-rs 0.6.8):
-//   thewh1teagle/sherpa-rs crates/sherpa-rs/src/keyword_spot.rs
-//     KeywordSpotConfig { zipformer_encoder, zipformer_decoder, zipformer_joiner,
-//       tokens, keywords, max_active_path, keywords_threshold, keywords_score,
-//       num_trailing_blanks, sample_rate, feature_dim, debug, num_threads, provider }
-//     KeywordSpot::new(config) -> Result<Self>
-//     KeywordSpot::extract_keyword(&mut self, samples: Vec<f32>, sample_rate: u32)
-//        -> Result<Option<String>>
-//   sherpa-onnx KWS keywords.txt is BPE-tokenized: "▁HE LL O ▁WORLD @hello world"
-//   per-keyword tuning suffixes: ":<boost>" (== keywords_score) and "#<threshold>".
+//   app/PORT/05_wakeword_diarization_loopback_wordts.md (§A)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// REAL sherpa-onnx 1.13.2 KWS API (the ONLY thing that changed vs the sherpa-rs draft):
+//   pub struct KeywordSpotterConfig {
+//       pub feat_config: sys::FeatureConfig,           // { sample_rate: i32, feature_dim: i32 }
+//       pub model_config: OnlineModelConfig,           // transducer { encoder/decoder/joiner: Option<String> }, tokens, provider…
+//       pub max_active_paths: i32,                     // default 4
+//       pub num_trailing_blanks: i32,                  // default 1
+//       pub keywords_score: f32,                       // default 1.0 (== Porcupine :boost)
+//       pub keywords_threshold: f32,                   // default 0.25 (GLOBAL #threshold floor)
+//       pub keywords_file: Option<String>,             // path to keywords.txt
+//       pub keywords_buf: Option<String>,              // OR inline keywords content (we use this)
+//   }
+//   impl Default for KeywordSpotterConfig { /* sr=16000, dim=80, paths=4, blanks=1, score=1.0, thr=0.25 */ }
+//   KeywordSpotter::create(&KeywordSpotterConfig) -> Option<Self>          (Send + Sync + Drop)
+//   KeywordSpotter::create_stream(&self) -> OnlineStream                   (uses config keywords)
+//   KeywordSpotter::create_stream_with_keywords(&self, &str) -> OnlineStream (inline keyword content)
+//   KeywordSpotter::is_ready(&self, &OnlineStream) -> bool
+//   KeywordSpotter::decode(&self, &OnlineStream)
+//   KeywordSpotter::get_result(&self, &OnlineStream) -> Option<KeywordResult>
+//   KeywordSpotter::reset(&self, &OnlineStream)
+//   OnlineStream::accept_waveform(&self, sample_rate: i32, samples: &[f32])
+//   OnlineStream::input_finished(&self)
+//   pub struct KeywordResult { keyword: String, tokens: String, tokens_arr: Vec<String>,
+//                              timestamps: Vec<f32>, start_time: f32, json: String }
+//
+// Canonical streaming loop (from the crate's module example):
+//   stream.accept_waveform(sr, samples);
+//   while kws.is_ready(&stream) { kws.decode(&stream); }
+//   if let Some(r) = kws.get_result(&stream) { /* r.keyword non-empty == HIT */ }
+//   kws.reset(&stream);   // re-arm after a hit
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN NOTE — why sherpa-onnx KWS replaces Porcupine + openWakeWord
@@ -27,21 +51,27 @@
 // The Rust port (locked decision: "wake word = sherpa-onnx KWS") collapses all
 // three to ONE open-vocabulary zipformer-transducer keyword spotter. Benefits:
 //   1. Open vocabulary — ANY phrase ("computer", "hey winstt", "take a note")
-//      becomes a wake word by tokenizing it into the keywords file. Porcupine's
-//      14 fixed keywords and OWW's small bundled set are no longer a ceiling.
-//   2. One ONNX runtime (ort/sherpa-onnx) for STT + KWS + diarization — no
-//      Picovoice native blob, no OWW's pinned-onnxruntime resolver patch.
+//      becomes a wake word by tokenizing it into the keywords content.
+//   2. One ONNX runtime (sherpa-onnx) for KWS + diarization — no Picovoice native
+//      blob, no OWW's pinned-onnxruntime resolver patch.
 //   3. Offline, no access key, vendor-agnostic (matches the torch-free posture).
 // The trade-off (a global threshold, see UX CAVEAT below) is handled by emitting
-// a PER-KEYWORD `#threshold` suffix in the generated keywords file.
+// a PER-KEYWORD `#threshold` suffix in the generated keywords content.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPILE NOTE — no `#[cfg(feature = "sherpa")]` gate any more.
+// The draft gated the live detector behind a `sherpa` cargo feature; Cargo.toml
+// declares `sherpa-onnx = "1.13.2"` UNCONDITIONALLY (no such feature, and we may
+// not edit Cargo.toml), so the detector compiles unconditionally. The deterministic
+// helpers (presets / keyword-file builder / sensitivity mapping) never touched the
+// FFI and keep their own unit tests.
 
 use std::path::{Path, PathBuf};
 
-// NOTE(port): the real import once `sherpa-rs = { version = "0.6.8", features = ["directml"] }`
-// is added to Cargo.toml (tracked in PORT/00_cargo_additions.md). Gated so this
-// module compiles for the deterministic helpers + tests even before the dep lands.
-#[cfg(feature = "sherpa")]
-use sherpa_rs::keyword_spot::{KeywordSpot as SherpaKeywordSpot, KeywordSpotConfig};
+use sherpa_onnx::{
+    KeywordSpotter, KeywordSpotterConfig, OnlineModelConfig, OnlineStream,
+    OnlineTransducerModelConfig,
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Public result type — mirrors WinSTT's `WakeWordResult` frozen dataclass.
@@ -51,7 +81,7 @@ use sherpa_rs::keyword_spot::{KeywordSpot as SherpaKeywordSpot, KeywordSpotConfi
 /// Outcome of feeding one audio chunk to the keyword spotter.
 ///
 /// `word_index` indexes into the keyword list that was compiled into the
-/// active keywords file (stable order = order of [`WakeWordConfig::keywords`]).
+/// active keywords content (stable order = order of [`WakeWordConfig::keywords`]).
 /// `-1` means "detected, but the spotter returned a phrase we did not register"
 /// (should not happen with a generated file, but kept honest).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,10 +193,10 @@ fn normalize_name(name: &str) -> String {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 3. Keyword-file builder — DETERMINISTIC, fully unit-tested.
+// 3. Keyword-content builder — DETERMINISTIC, fully unit-tested.
 //
-//    sherpa-onnx KWS reads a `keywords.txt` where each line is the BPE-TOKENIZED
-//    phrase, optionally followed by per-keyword tuning and a `@label`:
+//    sherpa-onnx KWS reads keywords (file OR inline buffer) where each line is the
+//    BPE-TOKENIZED phrase, optionally followed by per-keyword tuning and a `@label`:
 //
 //        ▁HE Y ▁S I RI :2.0 #0.35 @hey siri
 //        └─ tokens ──┘ └boost┘└thresh┘ └─ label ─┘
@@ -174,13 +204,13 @@ fn normalize_name(name: &str) -> String {
 //    The token half is produced by `sherpa-onnx-cli text2token` (BPE over the
 //    model's bpe.model + tokens.txt). We do NOT reimplement BPE here — that is a
 //    model-coupled subprocess/FFI step (see SPEC §A in 05_*.md). What IS
-//    deterministic and testable is assembling the file from already-tokenized
-//    phrases plus the per-keyword sensitivity → `#threshold` mapping. The
-//    builder below operates on `KeywordSpec` rows whose `.tokens` came from
-//    text2token, and is the load-bearing logic for the per-keyword UX caveat.
+//    deterministic and testable is assembling the content from already-tokenized
+//    phrases plus the per-keyword sensitivity → `#threshold` mapping. The builder
+//    below operates on `KeywordSpec` rows whose `.tokens` came from text2token,
+//    and is the load-bearing logic for the per-keyword UX caveat.
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// One fully-resolved keyword line to emit into `keywords.txt`.
+/// One fully-resolved keyword line to emit into the keywords content.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeywordSpec {
     /// Space-separated BPE tokens, e.g. `"▁HE Y ▁S I RI"` (from text2token).
@@ -194,12 +224,12 @@ pub struct KeywordSpec {
 }
 
 impl KeywordSpec {
-    /// Render this spec to a single `keywords.txt` line (no trailing newline).
+    /// Render this spec to a single keywords line (no trailing newline).
     ///
     /// Ordering matches sherpa-onnx's parser expectation:
     ///   `<tokens> [:<boost>] [#<threshold>] @<label>`
     /// Floats are formatted compactly (no trailing zeros beyond what's needed)
-    /// so the file is diff-stable and human-auditable.
+    /// so the content is diff-stable and human-auditable.
     pub fn to_line(&self) -> String {
         let mut line = self.tokens.trim().to_string();
         if let Some(boost) = self.boost {
@@ -230,11 +260,12 @@ fn fmt_f32(value: f32) -> String {
     s
 }
 
-/// Assemble a complete `keywords.txt` body from already-tokenized specs.
+/// Assemble a complete keywords body from already-tokenized specs.
 ///
 /// Returns the joined lines with a trailing newline (sherpa-onnx tolerates
 /// either, but a terminal newline avoids a "last keyword dropped on some
-/// readers" class of bug). Empty input yields an empty string.
+/// readers" class of bug). Empty input yields an empty string. The result is
+/// usable as either a `keywords.txt` file body OR the inline `keywords_buf`.
 pub fn build_keywords_file(specs: &[KeywordSpec]) -> String {
     if specs.is_empty() {
         return String::new();
@@ -258,8 +289,7 @@ pub fn build_keywords_file(specs: &[KeywordSpec]) -> String {
 ///
 /// With the defaults below, sensitivity 0.6 → threshold ≈ 0.22, i.e. close to
 /// sherpa's documented default of 0.25 — preserving WinSTT's out-of-box feel.
-/// sensitivity 1.0 → 0.10 (loosest, matches the crate's KeywordSpotConfig
-/// default), sensitivity 0.0 → 0.40 (strict).
+/// sensitivity 1.0 → 0.10 (loosest), sensitivity 0.0 → 0.40 (strict).
 pub const THRESHOLD_MIN: f32 = 0.10;
 pub const THRESHOLD_MAX: f32 = 0.40;
 
@@ -271,7 +301,7 @@ pub fn sensitivity_to_threshold(sensitivity: f32) -> f32 {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 4. Configuration — the inputs the manager needs to stand up a KeywordSpot.
+// 4. Configuration — the inputs the manager needs to stand up a KeywordSpotter.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Inference provider for the KWS session.
@@ -289,7 +319,7 @@ pub enum WakeWordProvider {
 }
 
 impl WakeWordProvider {
-    /// String passed into sherpa's `KeywordSpotConfig::provider`.
+    /// String passed into sherpa's `OnlineModelConfig::provider`.
     pub fn as_sherpa_str(self) -> &'static str {
         match self {
             WakeWordProvider::Cpu => "cpu",
@@ -315,8 +345,14 @@ pub struct KwsModelPaths {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WakeWordConfig {
     pub model: KwsModelPaths,
-    /// Path to the generated `keywords.txt` (written by [`build_keywords_file`]).
-    pub keywords_file: PathBuf,
+    /// Path to the generated `keywords.txt`, if the keywords are written to disk.
+    /// `None` ⇒ pass the keyword content inline via `keywords_content`
+    /// (`keywords_buf` — no temp file). The manager picks one; both are honored.
+    pub keywords_file: Option<PathBuf>,
+    /// Inline keywords content (the body produced by [`build_keywords_file`]).
+    /// Used as sherpa's `keywords_buf` when present; lets the detector stand up
+    /// without writing a temp file. Required if `keywords_file` is `None`.
+    pub keywords_content: Option<String>,
     /// Ordered active keyword phrases (label half). Index == `word_index`.
     pub keywords: Vec<String>,
     pub provider: WakeWordProvider,
@@ -330,8 +366,8 @@ pub struct WakeWordConfig {
 }
 
 impl WakeWordConfig {
-    /// The global `keywords_threshold` for `KeywordSpotConfig`. We push the REAL
-    /// per-keyword thresholds into the keywords file (`#t` suffix), and keep the
+    /// The global `keywords_threshold` for `KeywordSpotterConfig`. We push the REAL
+    /// per-keyword thresholds into the keywords content (`#t` suffix), and keep the
     /// config global at the LOOSEST end so a per-keyword `#t` can only TIGHTEN,
     /// never loosen below it. (sherpa applies the per-keyword `#t` on top of the
     /// global; a global stricter than a `#t` would mask it.)
@@ -339,83 +375,146 @@ impl WakeWordConfig {
         THRESHOLD_MIN
     }
 
-    /// Default boost (`keywords_score`). sherpa default is 1.0–3.0; the crate's
-    /// KeywordSpotConfig defaults to 3.0. Short triggers (≤2 syllables) get a
-    /// recall spike when boosted — see the SHORT-TRIGGER note in 05_*.md.
+    /// Default boost (`keywords_score`). sherpa default is 1.0; we lift it to 3.0
+    /// to match Porcupine's out-of-box recall for 3+ token phrases. Short triggers
+    /// (≤2 syllables) get a recall spike when boosted — see the SHORT-TRIGGER note
+    /// in 05_*.md (mitigated per-keyword via `:boost`/`#threshold` suffixes).
     pub fn default_boost(&self) -> f32 {
         3.0
+    }
+
+    /// Resolve the keyword content the detector should hand to sherpa, preferring
+    /// the on-disk file when present (sherpa reads it itself), else the inline buf.
+    /// Returns `None` when neither is set (the detector then has zero keywords —
+    /// a programming error the manager guards against, but we don't panic).
+    fn keywords_inline(&self) -> Option<&str> {
+        self.keywords_content.as_deref()
     }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 5. The detector — real sherpa-rs wiring (compiled under `feature = "sherpa"`).
+// 5. The detector — real sherpa-onnx 1.13.2 wiring (compiles unconditionally).
 //
 //    Mirrors `IWakeWordDetector`: `detect(chunk) -> WakeWordResult` + cleanup.
-//    sherpa's stateful streaming KWS holds its own internal online-stream; we
-//    feed each 16 kHz mono f32 chunk straight in. `extract_keyword` returns the
-//    matched LABEL string on a hit (the `@…` half), which we map back to the
-//    keyword index via the config's ordered `keywords` vector.
+//    sherpa-onnx 1.13.2's KWS is a streaming OnlineStream model: build one
+//    `KeywordSpotter` from the zipformer transducer + tokens, open ONE persistent
+//    `OnlineStream` (loaded with the active keywords), then for each chunk
+//    `accept_waveform` → drain `is_ready`/`decode` → poll `get_result`. A
+//    non-empty `KeywordResult::keyword` is a HIT; we `reset` the stream to re-arm.
+//    The matched LABEL string (the `@…` half) maps back to the keyword index via
+//    the config's ordered `keywords` vector.
 // ═════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "sherpa")]
 pub struct WakeWordDetector {
-    spotter: SherpaKeywordSpot,
+    spotter: KeywordSpotter,
+    stream: OnlineStream,
     keywords: Vec<String>,
-    sample_rate: u32,
+    /// KWS models are trained at 16 kHz mono; the manager resamples upstream.
+    sample_rate: i32,
 }
 
-#[cfg(feature = "sherpa")]
+// NOTE(port): sherpa-onnx `KeywordSpotter` and `OnlineStream` both implement
+// `Send + Sync` (verified in the crate's trait list, docs.rs 1.13.2), so
+// `WakeWordDetector` is AUTO `Send + Sync` — no manual `unsafe impl` needed (and
+// a manual one would conflict with the auto-impl). The detector can therefore
+// live behind the manager's mutex and be fed from the audio-consumer thread.
+
 impl WakeWordDetector {
-    /// Build a live spotter from a [`WakeWordConfig`]. The caller must have
-    /// already written `config.keywords_file` via [`build_keywords_file`].
+    /// Build a live spotter + armed stream from a [`WakeWordConfig`].
+    ///
+    /// The keyword content comes from `config.keywords_content` (inline
+    /// `create_stream_with_keywords`) when present — no temp file needed; the
+    /// spotter's own `keywords_file`/`keywords_buf` provide the fallback set so
+    /// `create()` always has at least the configured keywords.
     pub fn new(config: &WakeWordConfig) -> anyhow::Result<Self> {
-        let sherpa_config = KeywordSpotConfig {
-            zipformer_encoder: path_string(&config.model.encoder)?,
-            zipformer_decoder: path_string(&config.model.decoder)?,
-            zipformer_joiner: path_string(&config.model.joiner)?,
-            tokens: path_string(&config.model.tokens)?,
-            keywords: path_string(&config.keywords_file)?,
-            // Per-keyword `#threshold` in the file TIGHTENS this global floor.
-            keywords_threshold: config.global_threshold(),
-            keywords_score: config.default_boost(),
-            // sherpa-rs / sherpa-onnx defaults (verified against keyword_spot.rs).
-            max_active_path: 4,
-            num_trailing_blanks: 1,
-            sample_rate: 16_000,
-            feature_dim: 80,
-            debug: false,
-            num_threads: config.num_threads,
-            provider: Some(config.provider.as_sherpa_str().to_string()),
+        let transducer = OnlineTransducerModelConfig {
+            encoder: Some(path_string(&config.model.encoder)?),
+            decoder: Some(path_string(&config.model.decoder)?),
+            joiner: Some(path_string(&config.model.joiner)?),
         };
 
-        let spotter = SherpaKeywordSpot::new(sherpa_config)
-            .map_err(|e| anyhow::anyhow!("failed to create sherpa KeywordSpot: {e}"))?;
+        let model_config = OnlineModelConfig {
+            transducer,
+            tokens: Some(path_string(&config.model.tokens)?),
+            num_threads: config.num_threads.unwrap_or(1).max(1),
+            provider: Some(config.provider.as_sherpa_str().to_string()),
+            debug: false,
+            ..OnlineModelConfig::default()
+        };
 
-        Ok(WakeWordDetector { spotter, keywords: config.keywords.clone(), sample_rate: 16_000 })
+        // Start from the crate's Default (sr=16000, dim=80, paths=4, blanks=1) so
+        // we only override what we mean to. `keywords_buf` carries the inline
+        // content; `keywords_file` carries the on-disk path if the manager wrote one.
+        let spotter_config = KeywordSpotterConfig {
+            model_config,
+            // Per-keyword `#threshold` in the content TIGHTENS this global floor.
+            keywords_threshold: config.global_threshold(),
+            keywords_score: config.default_boost(),
+            keywords_file: config
+                .keywords_file
+                .as_deref()
+                .map(path_string_lossy),
+            keywords_buf: config.keywords_inline().map(str::to_string),
+            ..KeywordSpotterConfig::default()
+        };
+
+        let spotter = KeywordSpotter::create(&spotter_config)
+            .ok_or_else(|| anyhow::anyhow!("failed to create sherpa-onnx KeywordSpotter"))?;
+
+        // Open the persistent stream. Prefer the inline keyword content (lets the
+        // active phrase set be swapped per-detector without rebuilding the spotter);
+        // fall back to the config-baked keywords otherwise.
+        let stream = match config.keywords_inline() {
+            Some(content) if !content.trim().is_empty() => {
+                spotter.create_stream_with_keywords(content)
+            }
+            _ => spotter.create_stream(),
+        };
+
+        Ok(WakeWordDetector {
+            spotter,
+            stream,
+            keywords: config.keywords.clone(),
+            sample_rate: 16_000,
+        })
     }
 
     /// Feed one 16 kHz mono f32 chunk; report any detection.
     ///
-    /// sherpa's spotter is internally stateful and auto-resets after a hit, so
-    /// the typical loop is: `for chunk in mic { if detect(chunk).detected { … } }`.
-    /// On a match the engine returns the LABEL (`@…` half); we resolve its index
-    /// in the active keyword list (`-1` if somehow unknown).
+    /// Streaming contract (real sherpa-onnx 1.13.2): push the chunk, drain the
+    /// ready/decode loop, then poll the result. A non-empty `keyword` is a HIT;
+    /// we immediately `reset` the stream so the next phrase starts clean (sherpa's
+    /// KWS does NOT auto-reset — without this the spotter keeps re-reporting the
+    /// same terminal state). On a match the engine returns the LABEL (the `@…`
+    /// half of the keyword line); we resolve its index in the active list
+    /// (`-1` if somehow unknown).
     pub fn detect(&mut self, chunk: &[f32]) -> WakeWordResult {
-        match self.spotter.extract_keyword(chunk.to_vec(), self.sample_rate) {
-            Ok(Some(label)) => {
+        if chunk.is_empty() {
+            return WakeWordResult::none();
+        }
+
+        // 1. Feed audio. accept_waveform takes (sample_rate: i32, samples: &[f32]).
+        self.stream.accept_waveform(self.sample_rate, chunk);
+
+        // 2. Drain the decode loop for everything the new audio made ready.
+        while self.spotter.is_ready(&self.stream) {
+            self.spotter.decode(&self.stream);
+        }
+
+        // 3. Poll for a keyword. get_result returns None until a phrase fires.
+        match self.spotter.get_result(&self.stream) {
+            Some(result) if !result.keyword.trim().is_empty() => {
+                let label = result.keyword;
                 let idx = self.index_of(&label);
+                // Re-arm: clear the terminal state so we don't double-fire.
+                self.spotter.reset(&self.stream);
                 WakeWordResult::hit(idx, label)
             }
-            Ok(None) => WakeWordResult::none(),
-            Err(e) => {
-                // Fail-soft (mirrors OnnxAsrDiarizer._safe_diarize): never crash
-                // the recorder thread on a spotter hiccup.
-                log::warn!("[wakeword] extract_keyword error: {e}");
-                WakeWordResult::none()
-            }
+            _ => WakeWordResult::none(),
         }
     }
 
+    /// Map a detected label back to its position in the active keyword list.
     fn index_of(&self, label: &str) -> i32 {
         let needle = label.trim().to_lowercase();
         self.keywords
@@ -423,6 +522,16 @@ impl WakeWordDetector {
             .position(|k| k.trim().to_lowercase() == needle)
             .map(|p| p as i32)
             .unwrap_or(-1)
+    }
+
+    /// Number of active keywords this detector is armed for.
+    pub fn keyword_count(&self) -> usize {
+        self.keywords.len()
+    }
+
+    /// Reset the streaming state (drop any partial decode). Fail-soft.
+    pub fn reset(&mut self) {
+        self.spotter.reset(&self.stream);
     }
 
     /// No-op today (sherpa owns the session); kept for `IWakeWordDetector` parity.
@@ -439,6 +548,13 @@ fn path_string(path: &Path) -> anyhow::Result<String> {
     path.to_str()
         .map(str::to_string)
         .ok_or_else(|| anyhow::anyhow!("KWS model path is not valid UTF-8: {}", path.display()))
+}
+
+/// Lossy path → String for the OPTIONAL keywords-file path (existence already
+/// implied by the manager; we don't hard-fail keyword-file rendering the way we
+/// do for required model files).
+fn path_string_lossy(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -539,7 +655,7 @@ mod tests {
         assert_eq!(sensitivity_to_threshold(99.0), THRESHOLD_MIN);
     }
 
-    // ── keyword-file builder (the load-bearing per-keyword UX path) ────────
+    // ── keyword-content builder (the load-bearing per-keyword UX path) ─────
 
     #[test]
     fn to_line_tokens_only() {
@@ -629,25 +745,59 @@ mod tests {
 
     // ── config thresholds ──────────────────────────────────────────────────
 
-    #[test]
-    fn config_global_threshold_is_the_loosest_floor() {
-        let cfg = WakeWordConfig {
+    fn sample_config() -> WakeWordConfig {
+        WakeWordConfig {
             model: KwsModelPaths {
                 encoder: PathBuf::from("e.onnx"),
                 decoder: PathBuf::from("d.onnx"),
                 joiner: PathBuf::from("j.onnx"),
                 tokens: PathBuf::from("tokens.txt"),
             },
-            keywords_file: PathBuf::from("keywords.txt"),
+            keywords_file: None,
+            keywords_content: Some("▁A L E X A #0.22 @alexa\n".to_string()),
             keywords: vec!["alexa".to_string()],
             provider: WakeWordProvider::Cpu,
             sensitivity: 0.6,
             timeout_seconds: 5.0,
             num_threads: None,
-        };
-        // The global must equal the loosest per-keyword threshold so a file
+        }
+    }
+
+    #[test]
+    fn config_global_threshold_is_the_loosest_floor() {
+        let cfg = sample_config();
+        // The global must equal the loosest per-keyword threshold so a content
         // `#t` can only tighten, never be masked.
         assert_eq!(cfg.global_threshold(), THRESHOLD_MIN);
         assert!(cfg.global_threshold() <= sensitivity_to_threshold(1.0) + f32::EPSILON);
+    }
+
+    #[test]
+    fn config_default_boost_matches_porcupine_feel() {
+        let cfg = sample_config();
+        assert_eq!(cfg.default_boost(), 3.0);
+    }
+
+    #[test]
+    fn config_keywords_inline_prefers_content() {
+        let cfg = sample_config();
+        assert_eq!(cfg.keywords_inline(), Some("▁A L E X A #0.22 @alexa\n"));
+        let empty = WakeWordConfig { keywords_content: None, ..sample_config() };
+        assert_eq!(empty.keywords_inline(), None);
+    }
+
+    // ── path helpers (no model files required) ─────────────────────────────
+
+    #[test]
+    fn path_string_lossy_round_trips_ascii() {
+        assert_eq!(path_string_lossy(Path::new("keywords.txt")), "keywords.txt");
+    }
+
+    #[test]
+    fn path_string_rejects_missing_required_file() {
+        // A required model file that does not exist must hard-fail (loud), so the
+        // detector never stands up against a half-downloaded bundle.
+        let err = path_string(Path::new("definitely-not-a-real-kws-file.onnx"));
+        assert!(err.is_err());
     }
 }
