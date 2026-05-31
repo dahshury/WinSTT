@@ -408,23 +408,21 @@ pub struct EngineConfig {
 /// are owned by their respective slices and land as they're ported.
 pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
     match cfg.kind {
+        // Whisper family (whisper / lite-whisper / distil / crisper) — PROVEN via the STT spike.
         EngineKind::WhisperHf => Ok(Box::new(whisper::WhisperEngine::load(&cfg)?)),
-        // SPIKE: other family engines wired by their slices; until then route to a
-        // clear Unsupported so the coordinator can surface a precise error.
-        other => Err(SttError::Unsupported(match other {
-            EngineKind::WhisperOrt => "WhisperOrt engine not yet ported (PORT/03 §4.1 whisper_ort)",
-            EngineKind::Moonshine => "Moonshine engine not yet ported (PORT/03 §4.5)",
-            EngineKind::CohereAsr => "Cohere engine not yet ported (PORT/03 §4.6)",
-            EngineKind::NemoCtc | EngineKind::NemoRnnt | EngineKind::NemoTdt | EngineKind::NemoAed => {
-                "NeMo engine not yet ported (PORT/03 §4.2-4.4)"
-            }
-            EngineKind::KaldiTransducer => "Kaldi/Zipformer engine not yet ported (PORT/03 §4.3)",
-            EngineKind::GigaamCtc | EngineKind::GigaamRnnt => "GigaAM engine not yet ported",
-            EngineKind::ToneCtc => "T-One engine not yet ported",
-            EngineKind::DolphinCtc => "Dolphin engine not yet ported (PORT/03 §6.9)",
-            EngineKind::SenseVoiceCtc => "SenseVoice engine not yet ported (PORT/03 §6.9)",
-            EngineKind::WhisperHf => unreachable!(),
-        })),
+        // Own engine files not yet ported.
+        EngineKind::WhisperOrt => {
+            Err(SttError::Unsupported("WhisperOrt engine not yet ported (PORT/03 §4.1 whisper_ort)"))
+        }
+        EngineKind::Moonshine => {
+            Err(SttError::Unsupported("Moonshine engine not yet ported (PORT/03 §4.5)"))
+        }
+        // All other families dispatch through `families::build_family_engine` (SenseVoice /
+        // Dolphin / NeMo {Ctc,Rnnt,Tdt,Aed} / Kaldi / GigaAM / Cohere). Their numerics are
+        // drafted but spike-gated — the LIVE path only enables a family after it's validated
+        // (see `engine_kind_for` whitelist in managers/transcription.rs); the spike harness
+        // (`stt_spike --catalog`) reaches them directly to drive that validation.
+        _ => families::build_family_engine(cfg),
     }
 }
 

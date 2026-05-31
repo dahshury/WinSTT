@@ -43,6 +43,23 @@ fn load_audio() -> Vec<f32> {
     audio
 }
 
+/// Catalog `Family` → the policy slug the engine helpers key on.
+fn family_slug_of(family: handy_app_lib::winstt::catalog::Family) -> &'static str {
+    use handy_app_lib::winstt::catalog::Family;
+    match family {
+        Family::Whisper => "whisper",
+        Family::Moonshine => "moonshine",
+        Family::Cohere => "cohere",
+        Family::Nemo => "nemo",
+        Family::SenseVoice => "sense_voice",
+        Family::GigaAm => "gigaam",
+        Family::Kaldi => "kaldi",
+        Family::TOne => "t-one",
+        Family::Dolphin => "dolphin",
+        Family::Custom => "custom",
+    }
+}
+
 /// Catalog mode — exercises the EXACT path `TranscriptionManager::load_winstt_model` uses:
 /// `catalog::find(id)` → `resolver::resolve` (cache-only) → `build_engine` → `transcribe`.
 /// Proves the resolver wires the right files (incl. config-derived n_mels) for a real catalog id.
@@ -52,17 +69,24 @@ fn run_catalog_mode(cat_id: &str) {
     use handy_app_lib::winstt::stt::build_engine;
 
     let entry = catalog::find(cat_id).unwrap_or_else(|| panic!("catalog id '{cat_id}' not found"));
+    let family_slug = family_slug_of(entry.family);
+    let kind = handy_app_lib::winstt::stt::cache_probe::engine_kind_for(
+        entry.id,
+        family_slug,
+        entry.onnx_model_name,
+    );
     eprintln!("=== CATALOG MODE ===");
     eprintln!("catalog id : {cat_id}");
-    eprintln!("repo       : {} (family {:?})", entry.onnx_model_name, entry.family);
+    eprintln!("repo       : {} (family {:?} -> {:?})", entry.onnx_model_name, entry.family, kind);
 
-    let kind = EngineKind::WhisperHf; // this harness only drives the Whisper family
+    // Download if not cached (family models often aren't pre-cached); cache-first when present.
+    let local_files_only = std::env::var("SPIKE_CACHE_ONLY").is_ok();
     let req = ResolveRequest {
         model_id: entry.onnx_model_name.to_string(),
         kind,
         effective_quant: Quantization::Default,
         local_dir: None,
-        local_files_only: true,
+        local_files_only,
     };
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let resolved = match rt.block_on(resolver::resolve(&req)) {
@@ -78,7 +102,7 @@ fn run_catalog_mode(cat_id: &str) {
 
     let cfg = EngineConfig {
         model_name: cat_id.to_string(),
-        family: "whisper".to_string(),
+        family: family_slug.to_string(),
         kind,
         resolved,
         providers: vec![Accelerator::Cpu],

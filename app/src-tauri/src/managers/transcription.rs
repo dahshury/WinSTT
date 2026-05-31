@@ -59,11 +59,18 @@ enum LoadedEngine {
 /// instead of silently doing nothing.
 fn engine_kind_for(entry: &crate::winstt::catalog::ModelEntry) -> Option<crate::winstt::stt::EngineKind> {
     use crate::winstt::catalog::Family;
-    use crate::winstt::stt::EngineKind;
-    Some(match entry.family {
-        Family::Whisper => EngineKind::WhisperHf,
-        _ => return None,
-    })
+    // Only families whose ONNX numerics have been validated end-to-end (the STT spike) are
+    // enabled in the LIVE dictation path; the rest return a clean "no Rust engine yet" error
+    // instead of silent garbage output. Expand this whitelist as each family is spiked.
+    let validated = matches!(entry.family, Family::Whisper);
+    if !validated {
+        return None;
+    }
+    Some(crate::winstt::stt::cache_probe::engine_kind_for(
+        entry.id,
+        family_policy_slug(entry.family),
+        entry.onnx_model_name,
+    ))
 }
 
 /// Catalog family → the policy slug string the `stt` helpers key on (mirrors the Python
