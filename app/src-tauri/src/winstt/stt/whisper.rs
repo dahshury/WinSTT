@@ -43,6 +43,7 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use ort::ep::ExecutionProviderDispatch;
+use ort::memory::Allocator;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::{Session, SessionInputValue};
 use ort::value::{Tensor, TensorRef, ValueType};
@@ -120,13 +121,41 @@ impl WhisperEngine {
 			.filter(|n| n.starts_with("past_key_values."))
 			.collect();
 		past_kv_names.sort_by_key(|n| kv_sort_key(n));
-		let kv_dims: Vec<(i64, i64)> = past_kv_names.iter().map(|n| kv_head_dim(&decoder, n)).collect();
+		let mut kv_dims: Vec<(i64, i64)> = past_kv_names.iter().map(|n| kv_head_dim(&decoder, n)).collect();
+		// Optimum exports often declare past_key_values dims (num_heads, head_dim) as
+		// SYMBOLIC — ort reports those as 0/-1 (unlike onnxruntime-python, which yields the
+		// concrete ints). The empty step-0 cache must still be (0, num_heads, 0, head_dim)
+		// or the merged decoder's If-node branch shapes mismatch. Fall back to config.json
+		// (sibling of vocab.json): decoder_attention_heads + d_model/heads.
+		if kv_dims.iter().any(|&(h, d)| h <= 0 || d <= 0) {
+			if let Some((h, d)) = read_whisper_head_dims(vocab_path) {
+				for kv in kv_dims.iter_mut() {
+					if kv.0 <= 0 {
+						kv.0 = h;
+					}
+					if kv.1 <= 0 {
+						kv.1 = d;
+					}
+				}
+			}
+		}
 
 		let has_use_cache_branch = decoder.inputs().iter().any(|o| o.name() == "use_cache_branch");
 		let has_cross_attention = decoder
 			.outputs()
 			.iter()
 			.any(|o| o.name().starts_with("cross_attentions."));
+
+		if std::env::var("WINSTT_STT_DEBUG").is_ok() {
+			eprintln!(
+				"[whisper] {} past_kv tensors; dims[0]={:?}; use_cache_branch={}; cross_attn={}; multilingual={}",
+				past_kv_names.len(),
+				kv_dims.first(),
+				has_use_cache_branch,
+				has_cross_attention,
+				tokenizer.is_multilingual
+			);
+		}
 
 		let providers = cfg.providers.iter().map(provider_label).collect();
 
@@ -255,9 +284,21 @@ impl WhisperEngine {
 			for (i, name) in self.past_kv_names.iter().enumerate() {
 				let (shape, data) = &past[i];
 				let usize_shape: Vec<usize> = shape.iter().map(|&x| x.max(0) as usize).collect();
-				let t = Tensor::from_array((usize_shape, data.clone().into_boxed_slice()))
-					.map_err(|e| SttError::Inference(format!("past kv {name}: {e}")))?;
-				named.push((Cow::Owned(name.clone()), SessionInputValue::from(t)));
+				let num_elem: usize = usize_shape.iter().product();
+				let val: SessionInputValue<'_> = if num_elem == 0 {
+					// Empty past (step 0): the merged decoder's use_cache_branch=False path
+					// needs the (0, num_heads, 0, head_dim) empty cache (onnx-asr _create_state).
+					// from_array's raw-data path REJECTS any 0-sized dim ("dimension #N must be
+					// >= 1"); the allocator-backed ctor accepts 0-element tensors (= np.zeros).
+					let t = Tensor::<f32>::new(&Allocator::default(), usize_shape)
+						.map_err(|e| SttError::Inference(format!("empty past kv {name}: {e}")))?;
+					SessionInputValue::from(t)
+				} else {
+					let t = Tensor::from_array((usize_shape, data.clone().into_boxed_slice()))
+						.map_err(|e| SttError::Inference(format!("past kv {name}: {e}")))?;
+					SessionInputValue::from(t)
+				};
+				named.push((Cow::Owned(name.clone()), val));
 			}
 
 			let outputs = self
@@ -572,6 +613,22 @@ fn kv_sort_key(name: &str) -> (i64, i64) {
 /// Best-effort CPU count (for `pick_intra_op_threads`). Falls back to 4 when unknown.
 fn num_cpus() -> usize {
 	std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+}
+
+/// Read (num_heads, head_dim) from the Whisper `config.json` that sits beside `vocab.json`
+/// in the HF snapshot. `head_dim = d_model / decoder_attention_heads`. Used to shape the
+/// step-0 empty KV cache when the decoder graph declares those dims symbolically (ort → 0).
+fn read_whisper_head_dims(vocab_path: &Path) -> Option<(i64, i64)> {
+	let cfg_path = vocab_path.parent()?.join("config.json");
+	let raw = std::fs::read_to_string(cfg_path).ok()?;
+	let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+	let heads = v.get("decoder_attention_heads").and_then(|x| x.as_i64())?;
+	let d_model = v.get("d_model").and_then(|x| x.as_i64())?;
+	if heads > 0 && d_model > 0 {
+		Some((heads, d_model / heads))
+	} else {
+		None
+	}
 }
 
 #[cfg(test)]
