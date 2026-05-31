@@ -34,7 +34,6 @@ const TONE_ICONS: Readonly<Record<ToneKey, IconSvgElement>> = {
 	formal: Suit01Icon,
 	friendly: WavingHand01Icon,
 	technical: BookOpen01Icon,
-	casual: HappyIcon,
 };
 
 type TranslateFn = ReturnType<typeof useTranslations>;

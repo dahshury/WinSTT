@@ -444,7 +444,11 @@ async function callPlugin(target: PluginTarget, args: unknown): Promise<unknown>
 				filters?: Array<{ name: string; extensions: string[] }>;
 				title?: string;
 			};
-			return open({ multiple: false, filters: a.filters, title: a.title });
+			return open({
+				multiple: false,
+				...(a.filters ? { filters: a.filters } : {}),
+				...(a.title ? { title: a.title } : {}),
+			});
 		}
 		case "clipboard:operate": {
 			const cm = await import("@tauri-apps/plugin-clipboard-manager");

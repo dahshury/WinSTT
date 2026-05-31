@@ -438,7 +438,7 @@ export function CheckboxItem({
 				<span
 					className={cn(
 						"flex shrink-0 transition-colors duration-100",
-						checked || isActive ? "text-foreground" : "text-foreground-dim"
+						checked || isActive ? "text-foreground" : "text-foreground-secondary"
 					)}
 				>
 					{leading}

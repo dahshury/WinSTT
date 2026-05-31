@@ -37,5 +37,13 @@
     "exactOptionalPropertyTypes": true
   },
   "include": ["src", "packages", "spec"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.property.test.ts",
+    "**/*.property.test.tsx",
+    "**/*test-helpers*",
+    "**/__tests__/**"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -118,7 +118,6 @@ export const LlmPresetKeySchema = z.enum([
 	"formal",
 	"friendly",
 	"technical",
-	"casual",
 	"concise",
 	"summarize",
 	"reorder",
