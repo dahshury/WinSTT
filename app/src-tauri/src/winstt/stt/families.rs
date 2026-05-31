@@ -848,8 +848,9 @@ impl Transcriber for CtcEngine {
 				)
 			}
 			CtcFrontend::NemoMel => {
-				// (T, feat) → (feat, T) → (1, feat, T)
-				let t = features.t().to_owned();
+				// (T, feat) → (feat, T) → (1, feat, T). `.t()` is an F-order view; force a
+				// C-contiguous owned copy before reshaping (into_shape_with_order rejects F-order).
+				let t = features.t().as_standard_layout().into_owned();
 				let x = t
 					.into_shape_with_order((1, feat_dim, n_frames))
 					.map_err(|e| SttError::Inference(format!("nemo reshape: {e}")))?;
@@ -985,8 +986,8 @@ impl TransducerEngine {
 				(x, "x_lens", "x", "encoder_out", "encoder_out_lens")
 			}
 			TransducerKind::NemoRnnt | TransducerKind::NemoTdt => {
-				// (1, feat, T)
-				let tr = fbank.t().to_owned();
+				// (1, feat, T). Force C-contiguous after the transpose (see NemoMel note above).
+				let tr = fbank.t().as_standard_layout().into_owned();
 				let x = tr
 					.into_shape_with_order((1, feat_dim, t))
 					.map_err(|e| SttError::Inference(format!("nemo enc reshape: {e}")))?;
@@ -1609,9 +1610,12 @@ impl Transcriber for CanaryEngine {
 			return Ok(Transcription::default());
 		}
 		let feat_dim = fbank.ncols();
+		// `.t()` is an F-order view; force a C-contiguous owned copy before reshaping
+		// (into_shape_with_order rejects the transposed layout — was "incompatible memory layout").
 		let x = fbank
 			.t()
-			.to_owned()
+			.as_standard_layout()
+			.into_owned()
 			.into_shape_with_order((1, feat_dim, t))
 			.map_err(|e| SttError::Inference(format!("canary enc reshape: {e}")))?;
 		let x_tensor = Tensor::from_array(x)

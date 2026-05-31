@@ -59,10 +59,18 @@ enum LoadedEngine {
 /// instead of silently doing nothing.
 fn engine_kind_for(entry: &crate::winstt::catalog::ModelEntry) -> Option<crate::winstt::stt::EngineKind> {
     use crate::winstt::catalog::Family;
-    // Only families whose ONNX numerics have been validated end-to-end (the STT spike) are
-    // enabled in the LIVE dictation path; the rest return a clean "no Rust engine yet" error
-    // instead of silent garbage output. Expand this whitelist as each family is spiked.
-    let validated = matches!(entry.family, Family::Whisper);
+    // Only families whose ONNX numerics have been validated end-to-end (the STT spike,
+    // transcribing JFK correctly) are enabled in the LIVE dictation path; the rest return a
+    // clean "no Rust engine yet" error instead of silent garbage. Expand as each is spiked.
+    //   Whisper      — proven (whisper-tiny/.en, lite-whisper-128mel, crisper) via the resolver.
+    //   SenseVoice   — proven (sense-voice-small, CtcEngine) transcribes JFK with ITN punctuation.
+    // PENDING (drafted in stt::families, need a per-family featurizer/decode spike before enabling):
+    //   Nemo (Canary/parakeet) + GigaAM — need the real 128-bin NeMo log-mel featurizer w/
+    //     per-feature normalization (current frontend is an 80-bin kaldi fbank placeholder).
+    //   Cohere — needs the 128-bin time-first Cohere mel + fp16 KV-cache dtype.
+    //   Kaldi/zipformer+vosk — resolver file_globs need the sherpa `encoder-epoch-*.onnx` naming.
+    //   Dolphin/T-One — multilingual/ru, validate with non-English audio.
+    let validated = matches!(entry.family, Family::Whisper | Family::SenseVoice);
     if !validated {
         return None;
     }
