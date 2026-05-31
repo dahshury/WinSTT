@@ -144,6 +144,15 @@ fn create_audio_recorder(
                 // react to the loudest band (what the eye tracks). Clamped to 0..1.
                 let level = levels.iter().copied().fold(0.0_f32, f32::max).clamp(0.0, 1.0);
                 crate::winstt::commands::dictation::SttEvents::audio_level(&app_handle, level);
+                // DIAGNOSTIC: log the peak level ~once/sec so we can see whether the
+                // mic is actually delivering audio (a silent/virtual default device
+                // reads ~0.00 here → flat visualizer). Callback fires ~94 Hz.
+                {
+                    static LEVEL_LOG_TICK: AtomicU64 = AtomicU64::new(0);
+                    if LEVEL_LOG_TICK.fetch_add(1, Ordering::Relaxed) % 90 == 0 {
+                        log::info!("[audio] mic peak level = {level:.3} ({} bands)", levels.len());
+                    }
+                }
             }
         })
         .with_chunk_callback({

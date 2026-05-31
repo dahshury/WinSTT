@@ -4,7 +4,10 @@ import { HtmlLang } from "@/app/layouts/HtmlLang";
 import { RootLayout } from "@/app/layouts/RootLayout";
 import "@/app/styles/fonts.css";
 import "@/app/styles/globals.css";
+import { installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { MainPage } from "@/views/main";
+
+installWebviewDiag("main");
 
 // Each Electron window has its own root because each window is its own
 // HTML document — there is no shared layout shell, no router. The wrapper

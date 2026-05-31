@@ -9,7 +9,10 @@ import { useConnectionListener } from "@/features/connect-server";
 import { useDownloadListener } from "@/features/model-download";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
+import { diagBeacon, installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { SettingsPage } from "@/views/settings";
+
+installWebviewDiag("settings");
 
 const container = document.getElementById("root");
 if (!container) {
@@ -30,6 +33,7 @@ function SettingsBootstrap() {
 	useSyncActiveModel(); // active-model reconcile for the model tab
 	useDownloadListener(); // per-quant download progress for the model tab
 	useConnectionListener(); // server/runtime status for the badges
+	diagBeacon("settings", "SettingsBootstrap render reached");
 	return <SettingsPage />;
 }
 

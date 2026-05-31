@@ -8,7 +8,10 @@ import { useConnectionListener } from "@/features/connect-server";
 import { useDownloadListener } from "@/features/model-download";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
+import { diagBeacon, installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { ModelPickerPage } from "@/views/model-picker";
+
+installWebviewDiag("model-picker");
 
 const container = document.getElementById("root");
 if (!container) {
@@ -28,6 +31,7 @@ function ModelPickerBootstrap() {
 	useSyncActiveModel();
 	useDownloadListener();
 	useConnectionListener();
+	diagBeacon("model-picker", "ModelPickerBootstrap render reached");
 	return <ModelPickerPage />;
 }
 

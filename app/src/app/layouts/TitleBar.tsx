@@ -6,6 +6,7 @@ import { useConnectionStore } from "@/entities/connection";
 import { HotkeyDisplay } from "@/features/push-to-talk";
 import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
 import { publicAsset } from "@/shared/lib/public-asset";
+import { diagBeacon } from "@/shared/lib/winstt-diag";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -56,7 +57,10 @@ export function TitleBar() {
 						<Button
 							aria-label={t("settings")}
 							className={`flex h-full w-8 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 ${surfaceHoverBg(hoverLevel)} hover:text-foreground-secondary`}
-							onClick={windowOpenSettings}
+							onClick={() => {
+								diagBeacon("main", "settings button onClick fired");
+								windowOpenSettings();
+							}}
 						>
 							<HugeiconsIcon icon={Settings05Icon} size={13} />
 						</Button>

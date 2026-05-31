@@ -277,6 +277,7 @@ impl SttEvents {
     /// `stt:recording-start` — a new recording cycle began. The renderer wipes the
     /// realtime/ephemeral state and arms `isRecordingActive` (the overlay pill gate).
     pub fn recording_start(app: &AppHandle) {
+        log::info!("[stt] emit stt:recording-start (visualizer arm)");
         let _ = app.emit("stt:recording-start", ());
     }
 

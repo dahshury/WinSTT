@@ -567,6 +567,7 @@ pub fn run(cli_args: CliArgs) {
             winstt::commands::sound::sound_library_remove,
             winstt::commands::transforms::apply_transform,
             winstt::commands::transforms::apply_transform_preview,
+            winstt::commands::windows::winstt_diag,
             winstt::commands::windows::open_window,
             winstt::commands::windows::close_window,
             winstt::commands::windows::resize_window,

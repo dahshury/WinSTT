@@ -390,7 +390,13 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
     }
 
     if let Some(data_dir) = crate::portable::data_dir() {
-        builder = builder.data_directory(data_dir.join(format!("webview-{label}")));
+        // CRITICAL: every webview in the process MUST share ONE WebView2 user-data
+        // folder — WebView2 allows only a single user-data-folder per process, and a
+        // second webview requesting a DIFFERENT folder silently fails to load its
+        // content (the window is created but its JS never runs → blank window). The
+        // main window uses `data_dir/webview` (lib.rs setup), so every secondary
+        // window MUST use the SAME path, NOT a per-label `webview-{label}` dir.
+        builder = builder.data_directory(data_dir.join("webview"));
     }
 
     let window = builder.build().map_err(|e| {
@@ -616,6 +622,22 @@ fn resolve_opener(
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
+
+/// `winstt_diag` — webview → backend log bridge. The secondary windows (settings /
+/// model-picker / …) are separate webviews whose console + uncaught errors are
+/// invisible to the Rust log, so a blank/non-rendering window leaves no trace. The
+/// renderer entries install `window.onerror` + an "mounted" beacon that call this,
+/// surfacing renderer crashes (the usual cause of a blank secondary window) in
+/// handy.log where we can see them. Diagnostic; harmless to keep.
+#[tauri::command]
+#[specta::specta]
+pub fn winstt_diag(label: String, level: String, message: String) {
+    match level.as_str() {
+        "error" => log::error!("[webview:{label}] {message}"),
+        "warn" => log::warn!("[webview:{label}] {message}"),
+        _ => log::info!("[webview:{label}] {message}"),
+    }
+}
 
 /// `open_window` — create-if-needed, then show + focus the labelled window.
 ///
