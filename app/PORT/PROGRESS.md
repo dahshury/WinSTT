@@ -5,20 +5,17 @@
 > The engineering package is `app/PORT/` (master = `README.md`); per-subsystem specs are `00..07_*.md`;
 > the registration map is `lib_wiring.md`.
 
-**Last updated:** 2026-05-31 (compile-loop session 2 — ENTIRE BACKEND BUILDS + LINKS + TESTS)
+**Last updated:** 2026-05-31 (session 3 — FULL APP BUILDS + LAUNCHES, frontend ported)
 **Branch:** `winstt-rust-port` (inside the WinSTT repo)
-**Build state:** ✅✅ **FULL APP BINARY BUILDS — all 15/15 module groups + foundation link into `winstt.exe` (89.7 MB); `cargo test` 436 passed / 0 failed / 3 ignored (spike-gated).**
-- Toolchain: Rust 1.96, MSVC/VS2026 C++, cmake/ninja (VS), LLVM/libclang 22. Helper: `rust-migration/cargo-env.bat <args>`.
-- **Every winstt subsystem compiles, links, and unit-tests green** (~24K LOC):
-  - STT engine: `stt/{whisper,mel,whisper_tokenizer,resolver,fp16_patch,families}` — full onnx-asr→ort port (Whisper/lite-whisper + CTC/RNNT/TDT/AED families)
-  - wakeword (sherpa-onnx KWS), tts (`tts/{mod,kokoro,phonemize}` — in-proc Kokoro on our ort + espeak + cloud EL)
-  - diarization (sherpa embedder + OnlineSpeakerClustering), loopback (wasapi), word_timestamps (DTW)
-  - llm · cloud_stt · context · paste_ext · ducking · catalog · settings_schema · vad_calibrator · composite_vad · endpointing · realtime_stabilizer
-  - 9 managers (`managers/*`) + 11 command groups (`commands/*`) — COMPILE but NOT yet registered in lib.rs (next step)
-- **Deps**: ort(+ndarray,half), ndarray, thiserror, hf-hub, prost, tokenizers, ollama-rs, zip, keyring, symphonia, base85, half, wasapi(win), **sherpa-onnx (shared/DLL)**. kokoroxide REJECTED (yanked ort 1.16).
-- **CRT fix**: sherpa ships only /MT libs → linked `shared` (sherpa-onnx.dll isolates its /MT CRT). **Runtime TODO: ship sherpa-onnx.dll next to the exe.**
-- **3 tests `#[ignore]`'d = SPIKE-gated numerics** (fp16 protobuf offsets ×2, mel normalization bound) — validate in the STT spike.
-- Commits this session: a0ad3dc · e90c805 · 946023a · 9d86779 · a311355(stt engine) · 1069af8(full backend) · d504892(CRT fix).
+**Build state:** ✅✅✅ **THE WHOLE WINSTT TAURI APP BUILDS *AND* LAUNCHES.**
+- `cargo build` → `winstt.exe` links the foundation + ~24K-LOC backend + 100 commands + embedded frontend.
+- `cargo test` 436 passed / 0 failed / 3 ignored (spike-gated). Frontend: `tsc` 0 prod errors + `vite build` all 9 windows green.
+- **Smoke test: `winstt.exe` boots cleanly** — managers init, history DB migrates under `com.winstt.app`, accelerators set, no panics. (Only warning: winstt-context.exe sidecar not bundled.)
+- **Backend** (compiles+links+tested): STT engine `stt/{whisper,mel,whisper_tokenizer,resolver,fp16_patch,families}` (onnx-asr→ort, all families); wakeword (sherpa KWS); tts (in-proc Kokoro on ort + espeak + cloud EL); diarization/loopback/word_timestamps; llm/cloud_stt/context/paste_ext/ducking/catalog/settings/vad/endpoint/realtime; 9 managers + ~100 commands wired into lib.rs.
+- **Frontend** (tsc+vite green): WinSTT's full FSD renderer ported VERBATIM via the `electron-tauri-adapter.ts` polyfill seam (window.electronAPI→Tauri invoke/listen); 9 multi-page windows; React 19 + Base UI + use-intl; 20 locales; model-picker package. Tests excluded from build tsconfig (run via bun test).
+- **Deps**: ort(+ndarray,half), ndarray, thiserror, hf-hub, prost, tokenizers, ollama-rs, zip, keyring, symphonia, base85, half, wasapi, **sherpa-onnx (shared)**. kokoroxide REJECTED (yanked ort 1.16). CRT fix = sherpa `shared` (DLLs auto-staged next to exe: sherpa-onnx-c-api/cxx-api.dll, onnxruntime.dll, DirectML.dll).
+- **3 tests `#[ignore]`'d = SPIKE-gated numerics** (fp16 protobuf offsets ×2, mel normalization). Tray i18n: restored Handy `src/i18n/locales` for build.rs.
+- Session-3 commits: 4df23af(frontend port wip) · 331da1a(backend converged, 100 cmds) · 31e5c87(frontend converged, tsc+vite green). Earlier: a0ad3dc…d504892 (backend) + b4a99a7(manager/cmd/event wiring).
 
 ---
 
