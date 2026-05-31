@@ -52,7 +52,10 @@ use super::mel::{HOP_LENGTH, MelExtractor};
 use super::whisper_tokenizer::WhisperTokenizer;
 use super::{
 	Accelerator, EngineConfig, EngineKind, Segment, SttError, SttResult, TranscribeOptions,
-	Transcriber, Transcription,
+	Transcriber, Transcription, WordResult,
+};
+use crate::winstt::word_timestamps::{
+	self, AlignArgs, CrossAttentions, lookup_alignment_heads,
 };
 
 /// Maximum decoder length (Whisper's hard cap). The loop also stops on all-EOS.
@@ -73,6 +76,10 @@ pub struct WhisperEngine {
 	kv_dims: Vec<(i64, i64)>,
 	has_use_cache_branch: bool,
 	has_cross_attention: bool,
+	/// Sorted `cross_attentions.*` decoder output names (canonical layer 0..N-1 order),
+	/// empty unless this is a `*_timestamped` export. Mirrors `_hf.py`
+	/// `_cross_attention_output_names` (sorted by trailing integer layer index).
+	cross_attn_names: Vec<String>,
 	ready: bool,
 }
 
@@ -150,10 +157,20 @@ impl WhisperEngine {
 		}
 
 		let has_use_cache_branch = decoder.inputs().iter().any(|o| o.name() == "use_cache_branch");
-		let has_cross_attention = decoder
+		// Collect + sort the `cross_attentions.{i}` output names by the trailing integer layer
+		// index (canonical layer-0..N-1 order), exactly like `_hf.py::_cross_attention_output_names`.
+		let mut cross_attn_names: Vec<String> = decoder
 			.outputs()
 			.iter()
-			.any(|o| o.name().starts_with("cross_attentions."));
+			.map(|o| o.name().to_string())
+			.filter(|n| n.starts_with("cross_attentions."))
+			.collect();
+		cross_attn_names.sort_by_key(|n| {
+			n.trim_start_matches("cross_attentions.")
+				.parse::<i64>()
+				.unwrap_or(i64::MAX)
+		});
+		let has_cross_attention = !cross_attn_names.is_empty();
 
 		if std::env::var("WINSTT_STT_DEBUG").is_ok() {
 			eprintln!(
@@ -179,6 +196,7 @@ impl WhisperEngine {
 			kv_dims,
 			has_use_cache_branch,
 			has_cross_attention,
+			cross_attn_names,
 			ready: true,
 		})
 	}
@@ -235,23 +253,54 @@ impl WhisperEngine {
 	/// Short 3-token decode from `[sot]`; position-1 argmax = detected language token.
 	fn detect_language(&mut self, enc_shape: &[i64], enc_data: &[f32]) -> SttResult<i64> {
 		let prompt = vec![self.tokenizer.bos_token_id];
-		let tokens = self.decode_greedy(enc_shape, enc_data, prompt, 3, false)?;
+		let tokens = self.decode_greedy(enc_shape, enc_data, prompt, 3)?;
 		Ok(*tokens.get(1).unwrap_or(&self.tokenizer.eos_token_id))
 	}
 
 	/// The greedy autoregressive KV-cache loop. Returns the full token sequence
 	/// (prompt + generated incl. trailing eos). Port of `_hf.py::_decoding` / `_decode`.
-	/// When `_collect_cross_attn` is set the loop also reads cross_attentions (word-ts
-	/// path), but the host-side accumulation is left to the aligner slice; here it only
-	/// gates the extra outputs request so they're computed.
 	fn decode_greedy(
 		&mut self,
 		enc_shape: &[i64],
 		enc_data: &[f32],
 		prompt: Vec<i64>,
 		max_length: usize,
-		_collect_cross_attn: bool,
 	) -> SttResult<Vec<i64>> {
+		let (tokens, _) = self.decode_inner(enc_shape, enc_data, prompt, max_length, false)?;
+		Ok(tokens)
+	}
+
+	/// Greedy decode that ALSO collects per-step cross-attention from the
+	/// `cross_attentions.{i}` decoder outputs (word-timestamp path). Port of
+	/// `_hf.py::_decoding_with_cross_attention`. Returns the full token sequence and a
+	/// stacked `(num_layers, num_heads, num_decoder_tokens, num_encoder_frames)` tensor.
+	///
+	/// Requires `self.has_cross_attention`; callers gate on `supports_word_timestamps()`.
+	fn decode_with_cross_attn(
+		&mut self,
+		enc_shape: &[i64],
+		enc_data: &[f32],
+		prompt: Vec<i64>,
+		max_length: usize,
+	) -> SttResult<(Vec<i64>, CrossAttentions)> {
+		let (tokens, attn) = self.decode_inner(enc_shape, enc_data, prompt, max_length, true)?;
+		let attn = attn.ok_or_else(|| {
+			SttError::Inference("cross-attention requested but decoder produced none".into())
+		})?;
+		Ok((tokens, attn))
+	}
+
+	/// Shared greedy KV-cache decode body. When `collect_cross_attn` is set the loop reads the
+	/// sorted `cross_attentions.{i}` outputs each step and concatenates them along the decoder-
+	/// token axis, returning the stacked `(num_layers, num_heads, num_dec_tokens, num_enc_frames)`.
+	fn decode_inner(
+		&mut self,
+		enc_shape: &[i64],
+		enc_data: &[f32],
+		prompt: Vec<i64>,
+		max_length: usize,
+		collect_cross_attn: bool,
+	) -> SttResult<(Vec<i64>, Option<CrossAttentions>)> {
 		let eos = self.tokenizer.eos_token_id;
 		let mut tokens = prompt;
 		// Carried KV cache host-side: name → (shape, data). Empty (0,H,0,D) on step 0.
@@ -260,6 +309,16 @@ impl WhisperEngine {
 			.iter()
 			.map(|&(h, d)| (vec![0i64, h, 0, d], Vec::<f32>::new()))
 			.collect();
+
+		let want_attn = collect_cross_attn && self.has_cross_attention && !self.cross_attn_names.is_empty();
+		// Per-layer running buffers: each entry is (heads, dec_step_len, enc_frames) FLAT data, one
+		// per decode step. Concatenated along the decoder-token (step) axis at the end, exactly like
+		// `_hf.py` `np.concatenate(layer_steps, axis=2)` then `np.stack(..., axis=1)`.
+		let n_layers = self.cross_attn_names.len();
+		let mut per_layer_steps: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_layers];
+		// Resolved at the FIRST step from the actual output shapes (steps are uniform per layer).
+		let mut ca_heads = 0usize;
+		let mut ca_frames = 0usize;
 
 		let enc_shape_usize: Vec<usize> = enc_shape.iter().map(|&d| d.max(0) as usize).collect();
 		let total_steps = max_length.saturating_sub(tokens.len());
@@ -337,6 +396,30 @@ impl WhisperEngine {
 				next = eos;
 			}
 
+			// Collect this step's cross-attention BEFORE the present→past carry drops `outputs`.
+			// Each `cross_attentions.{i}` output is (batch=1, num_heads, dec_step_len, enc_frames)
+			// where dec_step_len == id_len (the number of decoder tokens fed THIS step — the full
+			// prompt on step 0, then 1 thereafter). We store the FLAT (heads*dec_step_len*frames)
+			// data per layer per step; the dec_step_len axis is what we concat over.
+			if want_attn {
+				for (li, name) in self.cross_attn_names.iter().enumerate() {
+					let v = outputs.get(name.as_str()).ok_or_else(|| {
+						SttError::Inference(format!("decoder produced no {name}"))
+					})?;
+					let (shape, data) = v.try_extract_tensor::<f32>().map_err(|e| {
+						SttError::Inference(format!("{name} extract: {e}"))
+					})?;
+					// shape = [batch, heads, dec_step_len, frames]; batch is always 1.
+					let h = shape.get(1).copied().unwrap_or(0).max(0) as usize;
+					let f = shape.get(3).copied().unwrap_or(0).max(0) as usize;
+					if li == 0 && per_layer_steps[0].is_empty() {
+						ca_heads = h;
+						ca_frames = f;
+					}
+					per_layer_steps[li].push(data.to_vec());
+				}
+			}
+
 			// Carry present.* → past.* (the "keep prev when present is 0-length" zip merge).
 			let mut new_past: Vec<(Vec<i64>, Vec<f32>)> = Vec::with_capacity(self.past_kv_names.len());
 			for (i, name) in self.past_kv_names.iter().enumerate() {
@@ -359,7 +442,95 @@ impl WhisperEngine {
 				break;
 			}
 		}
-		Ok(tokens)
+
+		// Stack the collected per-layer per-step attention into one dense
+		// (num_layers, num_heads, num_dec_tokens, num_enc_frames) buffer in CrossAttentions's
+		// canonical layout. The per-step `dec_step_len` segments concatenate along the token axis
+		// in generation order (step 0's prompt rows first, then one row per subsequent step) — the
+		// same order the decoder tokens themselves were produced, so token row i lines up with
+		// `tokens[i]`. Mirrors `np.concatenate(steps, axis=2)` then `np.stack(layers, axis=1)`.
+		let attn = if want_attn && ca_heads > 0 && ca_frames > 0 && !per_layer_steps[0].is_empty() {
+			// Total decoder tokens = sum of each step's dec_step_len for layer 0.
+			let total_tokens: usize = per_layer_steps[0]
+				.iter()
+				.map(|step| step.len() / (ca_heads * ca_frames).max(1))
+				.sum();
+			let mut ca = CrossAttentions::new(n_layers, ca_heads, total_tokens, ca_frames);
+			for (li, steps) in per_layer_steps.iter().enumerate() {
+				let mut tok_base = 0usize; // running decoder-token offset across steps
+				for step in steps {
+					// step is (heads, dec_step_len, frames) row-major.
+					let step_tokens = step.len() / (ca_heads * ca_frames).max(1);
+					for h in 0..ca_heads {
+						for t in 0..step_tokens {
+							for fr in 0..ca_frames {
+								let src = (h * step_tokens + t) * ca_frames + fr;
+								ca.set(li, h, tok_base + t, fr, step[src]);
+							}
+						}
+					}
+					tok_base += step_tokens;
+				}
+			}
+			Some(ca)
+		} else {
+			None
+		};
+
+		Ok((tokens, attn))
+	}
+
+	/// Run cross-attention DTW on `cross_attentions` to recover per-word start/end seconds.
+	/// `full_tokens` is the FULL decoded sequence (prompt + generated incl. trailing eos);
+	/// `prompt_length` is the number of decoder-prompt tokens at its head (cross-attention row 0
+	/// aligns with `full_tokens[0]`). Mirrors `_base.py::_align_word_timestamps`.
+	fn align_word_timestamps(
+		&self,
+		cross_attentions: &CrossAttentions,
+		full_tokens: &[i64],
+		prompt_length: usize,
+		num_audio_frames: usize,
+		language: Option<&str>,
+	) -> Vec<WordResult> {
+		// Generated text tokens = everything after the prompt, eos stripped, then ONE eos appended
+		// (the aligner needs the trailing-eot anchor to bound the last real word). Mirrors
+		// `recognize_batch`: `generated = [t for t in row[prompt_length:] if t != eos] + [eos]`.
+		let eos = self.tokenizer.eos_token_id;
+		let mut generated: Vec<i64> = full_tokens
+			.iter()
+			.skip(prompt_length)
+			.copied()
+			.filter(|&t| t != eos)
+			.collect();
+		generated.push(eos);
+
+		let num_layers = cross_attentions.num_layers;
+		let num_heads = cross_attentions.num_heads;
+		let vocab_size = self.tokenizer.vocab_size().max(0) as usize;
+		let heads_mask = lookup_alignment_heads(num_layers, num_heads, vocab_size);
+
+		// decode_one MUST preserve the leading space (`Ġ`/" ") so word-boundary splitting works.
+		let decode_one = |ids: &[i64]| -> String {
+			self.tokenizer.decode_text_preserve_leading_space(ids)
+		};
+
+		let args = AlignArgs {
+			text_tokens: &generated,
+			decode_one: &decode_one,
+			eot_id: eos,
+			prompt_length,
+			num_audio_frames,
+			language,
+			medfilt_width: 7,
+			qk_scale: 1.0,
+		};
+		match word_timestamps::align_words(cross_attentions, &heads_mask, args) {
+			Ok(timings) => timings
+				.into_iter()
+				.map(|t| WordResult { text: t.word, start: t.start as f32, end: t.end as f32 })
+				.collect(),
+			Err(_) => Vec::new(),
+		}
 	}
 }
 
@@ -400,6 +571,35 @@ impl Transcriber for WhisperEngine {
 			}
 		}
 
+		let want_words = opts.return_word_timestamps && self.has_cross_attention;
+
+		// ── Word-timestamp path: cross-attention DTW (no initial-prompt prefix) ──
+		// The aligner needs each cross-attention row to line up 1:1 with a decoder-prompt /
+		// generated token, so we DON'T inject the `<|startofprev|>` prefix here (it would shift
+		// every row index and the history aligner has no prior-text bias to apply anyway). The
+		// `prompt_length` is the plain decoder prompt length; cross-attention row 0 == prompt[0].
+		if want_words {
+			let prompt_length = prompt.len();
+			let (tokens, cross_attn) =
+				self.decode_with_cross_attn(&enc_shape, &enc_data, prompt, MAX_LENGTH)?;
+			let text = self.tokenizer.decode_text(&tokens);
+			let segments = if opts.return_timestamps { Some(self.to_segments(&tokens)) } else { None };
+			// num_audio_frames = num_samples // HOP_LENGTH (pre 2× encoder downsample). The aligner
+			// crops to `// 2` internally to match the encoder frame count.
+			let num_audio_frames = audio.len() / HOP_LENGTH;
+			let language = opts.language.as_deref().filter(|l| !l.is_empty());
+			let words = self.align_word_timestamps(
+				&cross_attn,
+				&tokens,
+				prompt_length,
+				num_audio_frames,
+				language,
+			);
+			let words = if words.is_empty() { None } else { Some(words) };
+			return Ok(Transcription { text, segments, words });
+		}
+
+		// ── Standard path: greedy decode (optional initial-prompt biasing) ──
 		// Initial-prompt biasing (Whisper-only; `EngineKind::supports_initial_prompt`).
 		// Prepend `[<|startofprev|>, *encoded]` BEFORE the standard prompt so the decoder
 		// soft-attends to the prior text (custom vocab / continuation). Sanitized upstream
@@ -425,8 +625,7 @@ impl Transcriber for WhisperEngine {
 			}
 		}
 
-		let want_words = opts.return_word_timestamps && self.has_cross_attention;
-		let tokens = self.decode_greedy(&enc_shape, &enc_data, prompt, max_length, want_words)?;
+		let tokens = self.decode_greedy(&enc_shape, &enc_data, prompt, max_length)?;
 		// Strip the injected initial-prompt prefix before decode.
 		let tokens: &[i64] = if prefix_len > 0 && prefix_len <= tokens.len() {
 			&tokens[prefix_len..]
@@ -440,10 +639,6 @@ impl Transcriber for WhisperEngine {
 		} else {
 			None
 		};
-		// Word-DTW lives in word_timestamps.rs (cross-attention alignment table). Until
-		// that slice is wired, surface text + segments and leave words None rather than
-		// fabricate timings. SPIKE: wire align_words() once that module lands.
-		let _audio_frames = audio.len() / HOP_LENGTH;
 		Ok(Transcription { text, segments, words: None })
 	}
 

@@ -1,28 +1,36 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/07_*.md §2,
-// frontend/electron/ipc/stt-cloud.ts + credentials.ts. Wraps winstt::cloud_stt.
+// Cloud STT transport. Source: frontend/electron/ipc/stt-cloud.ts + credentials.ts.
+// Wraps winstt::cloud_stt's pure layer.
 //
 // CloudSttManager owns the reqwest client + the in-flight transcribe cancel set.
-// It implements the multipart upload sketch from cloud_stt.rs against real
-// reqwest, and routes verify/transcribe through the pure classification helpers
-// already drafted there (status taxonomy, EL scoped-key handling, retry-after).
+// It implements the multipart upload against real reqwest, and routes
+// verify/transcribe through the pure classification helpers in `cloud_stt`
+// (status taxonomy, EL scoped-key handling, retry-after). The live pipeline
+// calls `transcribe_samples` from `TranscriptionManager::transcribe` when the
+// selected model id carries a cloud prefix (`openai:` / `elevenlabs:`).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::cloud_stt::{
-    classify_http_failure, classify_transport_error, classify_verify, parse_transcription_json,
-    preflight, CloudSttError, CloudSttErrorCode, CloudSttProvider, CloudTranscribeRequest,
-    CloudTranscription, VerifyResult, CLOUD_TRANSCRIBE_TIMEOUT_SECS,
+    classify_http_failure, classify_transport_error, classify_verify, default_cloud_model_id,
+    parse_transcription_json, preflight, samples_to_wav_bytes, split_model_id, CloudSttError,
+    CloudSttErrorCode, CloudSttProvider, CloudTranscribeRequest, CloudTranscription, VerifyResult,
+    CLOUD_TRANSCRIBE_TIMEOUT_SECS,
 };
+use crate::winstt::commands::settings::read_settings;
 
 pub struct CloudSttManager {
     app: AppHandle,
     client: reqwest::Client,
     /// request_id → cancelled. A model swap / quit aborts in-flight uploads.
     cancelled: Mutex<HashMap<String, bool>>,
+    /// Monotonic counter for auto-generated request ids (the live pipeline call
+    /// path has no renderer-supplied id; the cancel command supplies its own).
+    next_request: AtomicU64,
 }
 
 impl CloudSttManager {
@@ -31,7 +39,13 @@ impl CloudSttManager {
             app: app.clone(),
             client: reqwest::Client::new(),
             cancelled: Mutex::new(HashMap::new()),
+            next_request: AtomicU64::new(0),
         }
+    }
+
+    fn next_request_id(&self) -> String {
+        let n = self.next_request.fetch_add(1, Ordering::Relaxed);
+        format!("cloud-stt-{n}")
     }
 
     pub fn cancel(&self, request_id: &str) {
@@ -112,6 +126,71 @@ impl CloudSttManager {
             self.emit_error(provider, e);
         }
         result
+    }
+
+    /// LIVE pipeline entry point. Called from `TranscriptionManager::transcribe`
+    /// when the selected model id carries a cloud prefix. Resolves the provider +
+    /// bare model id from `model_id` (`<provider>:<id>`), pulls the matching API
+    /// key off the settings store (decrypted by `read_settings`), encodes the
+    /// 16 kHz mono f32 capture into an in-memory WAV, and runs the upload. Returns
+    /// the transcript text (the contract `TranscriptionManager::transcribe`
+    /// expects); on any failure it emits `stt-cloud-error` (via `transcribe`) and
+    /// returns the typed error.
+    ///
+    /// `language`: the validated decode language (`None` = auto-detect). Mirrors
+    /// the optional `language` / `language_code` multipart field.
+    pub async fn transcribe_samples(
+        &self,
+        model_id: &str,
+        samples: &[f32],
+        language: Option<String>,
+    ) -> Result<String, CloudSttError> {
+        let (provider, bare_id) = split_model_id(model_id).ok_or_else(|| {
+            CloudSttError::new(
+                CloudSttErrorCode::ProviderError,
+                format!("'{model_id}' is not a cloud STT model id"),
+            )
+        })?;
+
+        // A bare `<provider>:` with no model picks the curated default (parity
+        // with the renderer's `defaultCloudModelId`).
+        let model_for_request = if bare_id.is_empty() {
+            split_model_id(&default_cloud_model_id(provider))
+                .map(|(_, id)| id)
+                .unwrap_or(bare_id)
+        } else {
+            bare_id
+        };
+
+        let api_key = self.api_key_for(provider);
+
+        // Encode BEFORE the preflight so the size guard sees the real byte count.
+        let audio_wav = samples_to_wav_bytes(samples).inspect_err(|e| {
+            self.emit_error(provider, e);
+        })?;
+
+        let req = CloudTranscribeRequest {
+            provider,
+            model_id: model_for_request,
+            api_key,
+            language,
+            media_type: "audio/wav".into(),
+            audio_wav,
+        };
+
+        let request_id = self.next_request_id();
+        let result = self.transcribe(&request_id, req).await?;
+        Ok(result.text)
+    }
+
+    /// Read the provider's API key off the WinSTT settings store (decrypted).
+    /// Mirrors `loadApiKey` reading `integrations.<provider>.apiKey`.
+    fn api_key_for(&self, provider: CloudSttProvider) -> String {
+        let settings = read_settings(&self.app);
+        match provider {
+            CloudSttProvider::OpenAi => settings.integrations.openai.api_key,
+            CloudSttProvider::ElevenLabs => settings.integrations.elevenlabs.api_key,
+        }
     }
 
     async fn do_upload(&self, req: CloudTranscribeRequest) -> Result<CloudTranscription, CloudSttError> {

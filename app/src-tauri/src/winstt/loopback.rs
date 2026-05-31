@@ -1,40 +1,22 @@
-// PORT IMPL — drafted against real APIs, pending compile.
-// Source: server/src/stt_server/loopback.py (LoopbackCapture + slow-tracking AGC)
-//         app/PORT/05_wakeword_diarization_loopback_wordts.md §C
-// External API (wasapi 0.23.0, verified docs.rs 2026-05):
-//   wasapi::initialize_mta() -> Result<()> ; deinitialize()
-//   DeviceEnumerator::new() -> Result<DeviceEnumerator>
-//     .get_default_device(&Direction) -> Result<Device>
-//     .enumerate_audio_endpoints(&Direction, DeviceState) (device list)
-//   Device::get_iaudioclient() -> Result<AudioClient> ; .get_friendlyname() -> Result<String>
-//   AudioClient::get_mixformat() -> Result<WaveFormat>
-//     .initialize_client(&WaveFormat, &Direction, &StreamMode) -> Result<()>
-//        // LOOPBACK = default RENDER device + Direction::Capture in initialize_client
-//     .set_get_eventhandle() -> Result<Handle>
-//     .get_audiocaptureclient() -> Result<AudioCaptureClient>
-//     .start_stream() / .stop_stream() -> Result<()>
-//   AudioCaptureClient::read_from_device_to_deque(&mut VecDeque<u8>) -> Result<BufferInfo>
-//     .get_next_packet_size() -> Result<Option<u32>>
-//   Handle::wait_for_event(timeout_ms: u32) -> Result<()>
-//   WaveFormat::get_nchannels()->u16 ; get_samplespersec()->u32 ;
-//     get_bitspersample()->u16 ; get_subformat()->Result<SampleType>
-//     ; new(storebits, validbits, &SampleType, samplerate, channels, mask)
+// WASAPI system-audio loopback capture for Listen mode.
 //
-// ─────────────────────────────────────────────────────────────────────────────
-// WHAT THIS DOES
-// ─────────────────────────────────────────────────────────────────────────────
-// Listen mode transcribes SYSTEM audio (a call, a YouTube lecture), not the mic.
-// cpal (Handy's capture lib) cannot capture the render endpoint on Windows, so we
-// open the default RENDER device in WASAPI LOOPBACK mode (render device + capture
-// direction), pull blocks on the WASAPI event, convert to mono, run the
-// slow-tracking AGC, and push 16 kHz-bound i16 frames onto a channel that the
-// existing Handy consumer (`run_consumer`) resamples + VAD-gates.
+// Source of truth: server/src/stt_server/loopback.py (LoopbackCapture + slow-tracking AGC).
+// Listen mode transcribes SYSTEM audio (a call, a YouTube lecture), not the mic. cpal (Handy's
+// capture lib) cannot capture the render endpoint on Windows, so we open the default RENDER device
+// in WASAPI shared-mode loopback (render device + `Direction::Capture` in `initialize_client` — a
+// combination the `wasapi` crate explicitly supports), pull blocks on the WASAPI event handle,
+// fold to mono, run the slow-tracking AGC (in the int16 domain, bit-faithful to the Python so the
+// downstream VAD endpoint behaves identically), resample to 16 kHz, and push f32 frames onto a
+// channel that the `LoopbackManager` VAD-gates + transcribes.
 //
-// PORTABILITY: WASAPI is Windows-only. The CAPTURE thread + COM init are gated
-// `#[cfg(windows)]`. The SlowTrackingAgc, the stereo→mono fold, and the channel
-// plumbing are platform-agnostic and unit-tested everywhere.
-
-#![allow(dead_code)] // DRAFT: surface defined ahead of the LoopbackManager call sites.
+// THREADING: the capture loop owns a daemon thread; `start()` is non-blocking (it spawns the
+// thread and returns) so it never stalls the Tauri async command loop — the exact antipattern
+// the project memory warns about for `start_loopback`. `stop()` flips an atomic + joins (bounded
+// by the 200 ms WASAPI event-wait timeout).
+//
+// PORTABILITY: WASAPI is Windows-only. The capture thread + COM init are gated `#[cfg(windows)]`.
+// The SlowTrackingAgc, the multichannel→mono fold, and the channel plumbing are platform-agnostic
+// and unit-tested everywhere.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -42,9 +24,9 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 1. Slow-tracking AGC — ARITHMETIC, verbatim port of loopback.py constants.
-//    Operates in the int16 domain (peak measured as |sample| in int16), exactly
-//    like the Python so the VAD-endpoint behavior is bit-faithful.
+// 1. Slow-tracking AGC — verbatim port of loopback.py constants (int16 domain).
+//    Peak is measured as |sample| in int16, exactly like the Python, so the
+//    VAD-endpoint behaviour is bit-faithful.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Target peak amplitude (out of 32768).
@@ -64,9 +46,9 @@ pub const GAIN_SMOOTH: f32 = 0.05;
 /// * else (silence) → `gain += GAIN_SMOOTH*(1.0-gain)`; PASS THROUGH unamplified.
 ///
 /// The silence branch is LOAD-BEARING: holding speech-time gain over trailing
-/// silence multiplies room noise by up to `MAX_GAIN`, pinning the composite VAD
-/// at "speech" forever so Listen mode never reaches its silence endpoint. Decaying
-/// toward unity (and never amplifying sub-floor audio) is what lets the VAD gate.
+/// silence multiplies room noise by up to `MAX_GAIN`, pinning the VAD at "speech"
+/// forever so Listen mode never reaches its silence endpoint. Decaying toward
+/// unity (and never amplifying sub-floor audio) is what lets the VAD gate.
 #[derive(Debug, Clone)]
 pub struct SlowTrackingAgc {
     gain: f32,
@@ -111,7 +93,7 @@ impl SlowTrackingAgc {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 2. Channel folding — interleaved multichannel → mono (average channels).
+// 2. Channel folding — interleaved multichannel → mono.
 //    Matches Python's reshape(-1, channels) + feed_audio's mono fold.
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -131,8 +113,8 @@ pub fn interleaved_to_mono_i16(interleaved: &[i16], channels: usize) -> Vec<i16>
     out
 }
 
-/// Average `channels`-interleaved f32 frames into mono f32, then convert to i16
-/// (clip to range). WASAPI shared-mode render is usually 32-bit float.
+/// Average `channels`-interleaved f32 PCM frames into mono i16 (scale + clip).
+/// WASAPI shared-mode render is normally 32-bit float in [-1, 1].
 pub fn interleaved_f32_to_mono_i16(interleaved: &[f32], channels: usize) -> Vec<i16> {
     let channels = channels.max(1);
     let frames = interleaved.len() / channels;
@@ -141,11 +123,16 @@ pub fn interleaved_f32_to_mono_i16(interleaved: &[f32], channels: usize) -> Vec<
         let base = f * channels;
         let sum: f32 = interleaved[base..base + channels].iter().copied().sum();
         let mono = sum / channels as f32;
-        // f32 PCM is in [-1, 1]; scale to int16 with clipping.
         let scaled = (mono * 32768.0).clamp(-32768.0, 32767.0);
         out.push(scaled as i16);
     }
     out
+}
+
+/// Convert an int16 PCM block to f32 in [-1, 1] (the domain the recorder/VAD/
+/// transcriber pipeline consumes). Inverse of the `* 32768` scale above.
+pub fn i16_to_f32(samples: &[i16]) -> Vec<f32> {
+    samples.iter().map(|&s| s as f32 / 32768.0).collect()
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -184,18 +171,15 @@ pub enum LoopbackError {
 // ═════════════════════════════════════════════════════════════════════════════
 // 4. LoopbackCapture — owns the WASAPI capture thread.
 //
-//    The captured i16 mono frames are pushed onto `sink` (the consumer's
-//    `mpsc::Sender<Vec<i16>>`); the consumer side resamples to 16 kHz + VADs.
-//    Mirrors WinSTT's FileAudioSource (external-feed source) rather than editing
+//    The captured 16 kHz mono f32 frames are pushed onto `sink` (the manager's
+//    `mpsc::Sender<Vec<f32>>`); the manager side VAD-gates + transcribes them.
+//    A standalone source (mirrors WinSTT's FileAudioSource) rather than editing
 //    Handy's recorder.rs.
 // ═════════════════════════════════════════════════════════════════════════════
 
 pub struct LoopbackCapture {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
-    /// AGC state is reset on each `start` (and lives in the capture thread); this
-    /// copy is the seed so tests / callers can pre-seed if needed.
-    agc_seed: SlowTrackingAgc,
 }
 
 impl Default for LoopbackCapture {
@@ -203,7 +187,6 @@ impl Default for LoopbackCapture {
         LoopbackCapture {
             stop: Arc::new(AtomicBool::new(false)),
             thread: None,
-            agc_seed: SlowTrackingAgc::new(),
         }
     }
 }
@@ -218,7 +201,9 @@ impl LoopbackCapture {
     }
 
     /// Open the default render endpoint in WASAPI loopback, spawn the capture
-    /// thread that AGCs each block and pushes mono i16 frames onto `sink`.
+    /// thread that AGCs each block, resamples to 16 kHz mono, and pushes f32
+    /// frames onto `sink`. Returns the resolved [`DeviceInfo`] synchronously so
+    /// the caller surfaces device-open errors before the thread spins.
     ///
     /// `device_id == None` uses the default render device. Serialize start/stop
     /// in the manager (concurrent WASAPI start/stop crash the audio backend).
@@ -226,14 +211,13 @@ impl LoopbackCapture {
     pub fn start(
         &mut self,
         device_id: Option<String>,
-        sink: Sender<Vec<i16>>,
+        sink: Sender<Vec<f32>>,
     ) -> Result<DeviceInfo, LoopbackError> {
         if self.is_active() {
             return Err(LoopbackError::AlreadyActive);
         }
         self.stop.store(false, Ordering::SeqCst);
         let stop = self.stop.clone();
-        let agc = self.agc_seed.clone();
 
         // Resolve device info synchronously so the caller gets it (and errors)
         // before the thread spins; the thread re-opens its own client.
@@ -250,7 +234,6 @@ impl LoopbackCapture {
                     thread_info,
                     sink,
                     stop,
-                    agc,
                 ) {
                     log::error!("[loopback] capture loop ended with error: {e}");
                 }
@@ -265,7 +248,7 @@ impl LoopbackCapture {
     pub fn start(
         &mut self,
         _device_id: Option<String>,
-        _sink: Sender<Vec<i16>>,
+        _sink: Sender<Vec<f32>>,
     ) -> Result<DeviceInfo, LoopbackError> {
         Err(LoopbackError::Unsupported)
     }
@@ -300,53 +283,79 @@ impl Drop for LoopbackCapture {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 5. Windows WASAPI implementation (the FFI half). `// SPIKE:` markers flag the
-//    exact-shape details to confirm against a live device in the compile loop.
+// 5. Windows WASAPI implementation.
 // ═════════════════════════════════════════════════════════════════════════════
 
 #[cfg(windows)]
 mod windows_impl {
     use super::*;
     use std::collections::VecDeque;
-    use wasapi::{
-        deinitialize, initialize_mta, Direction, SampleType, StreamMode,
-    };
+    use std::time::Duration;
 
-    /// Buffer duration requested from WASAPI (hundred-nanosecond units). 200ms
+    use crate::audio_toolkit::audio::FrameResampler;
+    use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
+    use wasapi::{deinitialize, initialize_mta, Direction, SampleType, StreamMode};
+
+    /// Buffer duration requested from WASAPI (hundred-nanosecond units). 200 ms
     /// shared-mode buffer keeps the event wait responsive to `stop`.
     const BUFFER_DURATION_HNS: i64 = 2_000_000; // 200 ms in 100-ns ticks.
     /// Event-wait timeout per loop iteration (ms) — bounds stop latency.
     const EVENT_TIMEOUT_MS: u32 = 200;
+    /// Resampler frame size (matches the recorder's 30 ms emit cadence so the
+    /// downstream Silero VAD receives whole 30 ms / 480-sample frames).
+    const RESAMPLER_FRAME_MS: u64 = 30;
+
+    /// RAII COM-apartment guard. `initialize_mta()` returns an `HRESULT`; we only
+    /// pair a `deinitialize()` with an init that actually entered the apartment
+    /// (`S_OK`/`S_FALSE`). `RPC_E_CHANGED_MODE` means another lib already put this
+    /// thread in an STA — WASAPI still works there, but we must NOT `deinitialize`
+    /// an apartment we didn't enter.
+    struct ComGuard {
+        owned: bool,
+    }
+
+    impl ComGuard {
+        fn enter() -> Self {
+            // HRESULT::ok() → Ok(()) on S_OK/S_FALSE, Err otherwise (incl.
+            // RPC_E_CHANGED_MODE when the thread is already STA).
+            let owned = initialize_mta().ok().is_ok();
+            ComGuard { owned }
+        }
+    }
+
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.owned {
+                deinitialize();
+            }
+        }
+    }
 
     /// Resolve the default (or named) render device into [`DeviceInfo`] without
     /// starting capture. Used by `start` to surface device errors synchronously.
     pub fn resolve_render_device(device_id: Option<&str>) -> anyhow::Result<DeviceInfo> {
-        initialize_mta().ok();
-        let result = (|| -> anyhow::Result<DeviceInfo> {
-            let enumerator = wasapi::DeviceEnumerator::new()
-                .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
-            let device = open_device(&enumerator, device_id)?;
-            let id = device
-                .get_id()
-                .map_err(|e| anyhow::anyhow!("device id: {e:?}"))?;
-            let name = device
-                .get_friendlyname()
-                .unwrap_or_else(|_| "System Audio".to_string());
-            let client = device
-                .get_iaudioclient()
-                .map_err(|e| anyhow::anyhow!("get_iaudioclient: {e:?}"))?;
-            let format = client
-                .get_mixformat()
-                .map_err(|e| anyhow::anyhow!("get_mixformat: {e:?}"))?;
-            Ok(DeviceInfo {
-                id,
-                name,
-                sample_rate: format.get_samplespersec(),
-                channels: format.get_nchannels(),
-            })
-        })();
-        deinitialize();
-        result
+        let _com = ComGuard::enter();
+        let enumerator = wasapi::DeviceEnumerator::new()
+            .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
+        let device = open_device(&enumerator, device_id)?;
+        let id = device
+            .get_id()
+            .map_err(|e| anyhow::anyhow!("device id: {e:?}"))?;
+        let name = device
+            .get_friendlyname()
+            .unwrap_or_else(|_| "System Audio".to_string());
+        let client = device
+            .get_iaudioclient()
+            .map_err(|e| anyhow::anyhow!("get_iaudioclient: {e:?}"))?;
+        let format = client
+            .get_mixformat()
+            .map_err(|e| anyhow::anyhow!("get_mixformat: {e:?}"))?;
+        Ok(DeviceInfo {
+            id,
+            name,
+            sample_rate: format.get_samplespersec(),
+            channels: format.get_nchannels(),
+        })
     }
 
     /// Open the default render device, or the one matching `device_id`.
@@ -370,89 +379,96 @@ mod windows_impl {
 
     /// List render endpoints (the loopback-capable outputs).
     pub fn list_render_devices() -> anyhow::Result<Vec<LoopbackDeviceInfo>> {
-        initialize_mta().ok();
-        let result = (|| -> anyhow::Result<Vec<LoopbackDeviceInfo>> {
-            let enumerator = wasapi::DeviceEnumerator::new()
-                .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
-            let default_id = enumerator
-                .get_default_device(&Direction::Render)
-                .ok()
-                .and_then(|d| d.get_id().ok());
-            let collection = enumerator
-                .get_device_collection(&Direction::Render)
-                .map_err(|e| anyhow::anyhow!("get_device_collection(Render): {e:?}"))?;
-            let mut out = Vec::new();
-            for idx in 0..collection.get_nbr_devices().unwrap_or(0) {
-                if let Ok(dev) = collection.get_device_at_index(idx) {
-                    let id = dev.get_id().unwrap_or_default();
-                    let name = dev.get_friendlyname().unwrap_or_else(|_| "Output".into());
-                    let is_default = default_id.as_deref() == Some(id.as_str());
-                    out.push(LoopbackDeviceInfo { id, name, is_default });
-                }
+        let _com = ComGuard::enter();
+        let enumerator = wasapi::DeviceEnumerator::new()
+            .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
+        let default_id = enumerator
+            .get_default_device(&Direction::Render)
+            .ok()
+            .and_then(|d| d.get_id().ok());
+        let collection = enumerator
+            .get_device_collection(&Direction::Render)
+            .map_err(|e| anyhow::anyhow!("get_device_collection(Render): {e:?}"))?;
+        let mut out = Vec::new();
+        for idx in 0..collection.get_nbr_devices().unwrap_or(0) {
+            if let Ok(dev) = collection.get_device_at_index(idx) {
+                let id = dev.get_id().unwrap_or_default();
+                let name = dev.get_friendlyname().unwrap_or_else(|_| "Output".into());
+                let is_default = default_id.as_deref() == Some(id.as_str());
+                out.push(LoopbackDeviceInfo { id, name, is_default });
             }
-            Ok(out)
-        })();
-        deinitialize();
-        result
+        }
+        Ok(out)
     }
 
-    /// The capture thread body. Opens the render device in LOOPBACK mode
-    /// (render device + `Direction::Capture` in `initialize_client`), drains
-    /// blocks on the WASAPI event, folds to mono i16, AGCs, and pushes to `sink`.
+    /// The capture thread body. Opens the render device in LOOPBACK mode (render
+    /// device + `Direction::Capture` in `initialize_client`), drains blocks on the
+    /// WASAPI event, folds to mono i16, AGCs (int16 domain — Python parity), then
+    /// resamples to 16 kHz and pushes f32 frames to `sink`.
     pub fn capture_loop(
         device_id: Option<&str>,
-        info: DeviceInfo,
-        sink: Sender<Vec<i16>>,
+        _info: DeviceInfo,
+        sink: Sender<Vec<f32>>,
         stop: Arc<AtomicBool>,
-        mut agc: SlowTrackingAgc,
     ) -> anyhow::Result<()> {
-        initialize_mta().ok();
-        let run = (|| -> anyhow::Result<()> {
-            let enumerator = wasapi::DeviceEnumerator::new()
-                .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
-            let device = open_device(&enumerator, device_id)?;
-            let mut client = device
-                .get_iaudioclient()
-                .map_err(|e| anyhow::anyhow!("get_iaudioclient: {e:?}"))?;
-            let format = client
-                .get_mixformat()
-                .map_err(|e| anyhow::anyhow!("get_mixformat: {e:?}"))?;
+        let _com = ComGuard::enter();
 
-            let channels = format.get_nchannels() as usize;
-            // f32 vs int16 subformat — WASAPI shared render is normally float32.
-            // SPIKE: confirm get_subformat() returns SampleType::Float for the
-            // default shared mix format on the target machine.
-            let sample_type = format.get_subformat().unwrap_or(SampleType::Float);
-            let bytes_per_sample = (format.get_bitspersample() / 8) as usize;
-            let block_align = bytes_per_sample * channels;
+        let enumerator = wasapi::DeviceEnumerator::new()
+            .map_err(|e| anyhow::anyhow!("DeviceEnumerator::new: {e:?}"))?;
+        let device = open_device(&enumerator, device_id)?;
+        let mut client = device
+            .get_iaudioclient()
+            .map_err(|e| anyhow::anyhow!("get_iaudioclient: {e:?}"))?;
+        let format = client
+            .get_mixformat()
+            .map_err(|e| anyhow::anyhow!("get_mixformat: {e:?}"))?;
 
-            // LOOPBACK: render device opened with Direction::Capture. autoconvert
-            // lets WASAPI hand us the mix format directly.
-            let mode = StreamMode::EventsShared {
-                autoconvert: true,
-                buffer_duration_hns: BUFFER_DURATION_HNS,
-            };
-            client
-                .initialize_client(&format, &Direction::Capture, &mode)
-                .map_err(|e| anyhow::anyhow!("initialize_client(loopback): {e:?}"))?;
+        let channels = format.get_nchannels() as usize;
+        let device_rate = format.get_samplespersec();
+        // WASAPI shared render is normally float32; honour whatever the mix
+        // format actually reports.
+        let sample_type = format.get_subformat().unwrap_or(SampleType::Float);
+        let bytes_per_sample = (format.get_bitspersample() / 8) as usize;
+        let block_align = bytes_per_sample * channels;
 
-            let h_event = client
-                .set_get_eventhandle()
-                .map_err(|e| anyhow::anyhow!("set_get_eventhandle: {e:?}"))?;
-            let capture = client
-                .get_audiocaptureclient()
-                .map_err(|e| anyhow::anyhow!("get_audiocaptureclient: {e:?}"))?;
+        // LOOPBACK: render device opened with Direction::Capture (a combo the
+        // wasapi crate maps to AUDCLNT_STREAMFLAGS_LOOPBACK). autoconvert lets
+        // WASAPI hand us the mix format directly.
+        let mode = StreamMode::EventsShared {
+            autoconvert: true,
+            buffer_duration_hns: BUFFER_DURATION_HNS,
+        };
+        client
+            .initialize_client(&format, &Direction::Capture, &mode)
+            .map_err(|e| anyhow::anyhow!("initialize_client(loopback): {e:?}"))?;
 
-            client
-                .start_stream()
-                .map_err(|e| anyhow::anyhow!("start_stream: {e:?}"))?;
+        let h_event = client
+            .set_get_eventhandle()
+            .map_err(|e| anyhow::anyhow!("set_get_eventhandle: {e:?}"))?;
+        let capture = client
+            .get_audiocaptureclient()
+            .map_err(|e| anyhow::anyhow!("get_audiocaptureclient: {e:?}"))?;
 
-            let mut raw: VecDeque<u8> = VecDeque::new();
-            let mut consecutive_errors = 0u32;
-            const MAX_ERRORS: u32 = 5;
+        client
+            .start_stream()
+            .map_err(|e| anyhow::anyhow!("start_stream: {e:?}"))?;
 
+        // AGC runs at the device rate in int16 (Python parity), BEFORE resampling.
+        let mut agc = SlowTrackingAgc::new();
+        // Resample device-rate mono → 16 kHz mono, emitting 30 ms frames.
+        let mut resampler = FrameResampler::new(
+            device_rate as usize,
+            WHISPER_SAMPLE_RATE as usize,
+            Duration::from_millis(RESAMPLER_FRAME_MS),
+        );
+
+        let mut raw: VecDeque<u8> = VecDeque::new();
+        let mut consecutive_errors = 0u32;
+        const MAX_ERRORS: u32 = 5;
+
+        let result = (|| -> anyhow::Result<()> {
             while !stop.load(Ordering::SeqCst) {
-                // Drain all currently-available packets into `raw`.
+                // Drain all currently-available bytes into `raw`.
                 match capture.read_from_device_to_deque(&mut raw) {
                     Ok(_) => consecutive_errors = 0,
                     Err(e) => {
@@ -474,9 +490,27 @@ mod windows_impl {
                     let usable = (raw.len() / block_align) * block_align;
                     if usable > 0 {
                         let bytes: Vec<u8> = raw.drain(0..usable).collect();
-                        let mut mono = bytes_to_mono_i16(&bytes, channels, sample_type, bytes_per_sample);
+                        let mut mono = bytes_to_mono_i16(
+                            &bytes,
+                            channels,
+                            sample_type,
+                            bytes_per_sample,
+                        );
+                        // AGC at device rate, int16 domain (Python parity).
                         agc.process(&mut mono);
-                        if !mono.is_empty() && sink.send(mono).is_err() {
+                        // int16 → f32 [-1, 1], then resample to 16 kHz mono in
+                        // 30 ms frames and forward to the consumer.
+                        let device_f32 = i16_to_f32(&mono);
+                        let mut send_err = false;
+                        resampler.push(&device_f32, &mut |frame: &[f32]| {
+                            if send_err {
+                                return;
+                            }
+                            if sink.send(frame.to_vec()).is_err() {
+                                send_err = true;
+                            }
+                        });
+                        if send_err {
                             // Consumer gone → end the session.
                             break;
                         }
@@ -489,17 +523,19 @@ mod windows_impl {
                     continue;
                 }
             }
-
-            let _ = client.stop_stream();
             Ok(())
         })();
-        let _ = info; // info already returned to caller; kept for symmetry.
-        deinitialize();
-        run
+
+        // Flush any partially-buffered resampler tail before tearing down.
+        resampler.finish(&mut |frame: &[f32]| {
+            let _ = sink.send(frame.to_vec());
+        });
+        let _ = client.stop_stream();
+        result
     }
 
-    /// Decode a byte buffer of interleaved PCM into mono i16, honoring the
-    /// WASAPI sample type (float32 or int16).
+    /// Decode a byte buffer of interleaved PCM into mono i16, honouring the
+    /// WASAPI sample type (float32 or int16/int32).
     fn bytes_to_mono_i16(
         bytes: &[u8],
         channels: usize,
@@ -516,8 +552,6 @@ mod windows_impl {
                 interleaved_f32_to_mono_i16(&interleaved, channels)
             }
             SampleType::Int => {
-                // SPIKE: int paths can be 16/24/32-bit; handle the common 16-bit
-                // mix and treat anything else as the top 16 bits.
                 if bytes_per_sample == 2 {
                     let mut interleaved = Vec::with_capacity(bytes.len() / 2);
                     for chunk in bytes.chunks_exact(2) {
@@ -525,6 +559,7 @@ mod windows_impl {
                     }
                     interleaved_to_mono_i16(&interleaved, channels)
                 } else if bytes_per_sample == 4 {
+                    // 32-bit int → top 16 bits.
                     let mut interleaved = Vec::with_capacity(bytes.len() / 4);
                     for chunk in bytes.chunks_exact(4) {
                         let v = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -654,5 +689,14 @@ mod tests {
         assert_eq!(out[0], 16384);
         assert_eq!(out[1], 32767);
         assert_eq!(out[2], -32768);
+    }
+
+    #[test]
+    fn i16_to_f32_roundtrips_scale() {
+        // 16384 / 32768 = 0.5; -32768 / 32768 = -1.0; 0 -> 0.
+        let out = i16_to_f32(&[16384, -32768, 0]);
+        assert!((out[0] - 0.5).abs() < 1e-6);
+        assert!((out[1] + 1.0).abs() < 1e-6);
+        assert_eq!(out[2], 0.0);
     }
 }

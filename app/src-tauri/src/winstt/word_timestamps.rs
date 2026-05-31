@@ -14,18 +14,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-word timestamps via Whisper cross-attention DTW (torch-free). Two halves:
 //
-//   Half 1 (HEAVY, `// SPIKE:`) — collect per-step cross-attention from the
-//   `onnx-community/whisper-*_timestamped` decoder export via ort IoBinding while
-//   the autoregressive loop runs. The exact ORT output names/shapes for
-//   `cross_attentions.*` and the IoBinding device-buffer copy-out can only be
-//   confirmed against a live session, so the COLLECTION is left a trait + stub.
+//   Half 1 (COLLECTION, implemented in `stt::whisper`) — the autoregressive decode
+//   loop reads the sorted `cross_attentions.{i}` outputs from the
+//   `onnx-community/whisper-*_timestamped` decoder export each step and concatenates
+//   them along the decoder-token axis into the [`CrossAttentions`] buffer below.
+//   See `WhisperEngine::decode_with_cross_attn`.
 //
-//   Half 2 (PURE NUMPY → Rust, implemented + tested) — the DTW alignment pipeline:
+//   Half 2 (PURE ARITHMETIC, implemented + tested here) — the DTW alignment pipeline:
 //   alignment-heads decode (base85+gzip), median filter, softmax/normalize, DTW
 //   backtrace, GPT-2 byte-decoder word grouping, and the jump-time word boundaries.
 //   This is `word_timestamps.py` verbatim, entirely arithmetic.
 
-#![allow(dead_code)] // DRAFT: surface defined ahead of the WordAligner call sites.
+#![allow(dead_code)] // some defensive early-returns / helpers are exercised only by the engine.
 
 use ndarray::{Array2, Array3};
 
@@ -600,12 +600,13 @@ pub fn align_words<F: Fn(&[i64]) -> String>(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 7. CrossAttentions container + collection trait (Half 1, `// SPIKE:`).
+// 7. CrossAttentions container (filled by the engine's decode loop — Half 1).
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Flat `(num_layers, num_heads, num_tokens, num_frames)` cross-attention store.
-/// A dense `Vec<f32>` (not Array4) so the SPIKE'd collector can fill it from
-/// whatever shape the ort `cross_attentions.*` outputs land in.
+/// A dense `Vec<f32>` (not Array4) so the engine's per-step collector
+/// (`WhisperEngine::decode_with_cross_attn`) can fill it row-major regardless of the
+/// per-step ort `cross_attentions.{i}` `(1, heads, dec_step_len, frames)` shape.
 pub struct CrossAttentions {
     pub data: Vec<f32>,
     pub num_layers: usize,
@@ -640,27 +641,6 @@ impl CrossAttentions {
         let i = self.index(l, h, t, f);
         self.data[i] = v;
     }
-}
-
-/// The autoregressive decode + cross-attention collection result.
-pub struct TimestampedDecodeOutput {
-    /// Generated tokens incl trailing EOT.
-    pub text_tokens: Vec<i64>,
-    pub cross_attentions: CrossAttentions,
-    /// `num_samples // HOP_LENGTH` (pre 2× downsample).
-    pub num_audio_frames: usize,
-    /// Prompt prefix length (e.g. `[SOT, lang, transcribe, notimestamps]` → 4).
-    pub prompt_length: usize,
-}
-
-/// Drives the `*_timestamped` Whisper decoder via ort IoBinding, capturing each
-/// step's `cross_attentions.*` outputs. The IoBinding device-buffer copy-out,
-/// KV-cache management, and the exact ORT output names are the `// SPIKE:` part —
-/// confirmed against a live `onnx-community/whisper-*_timestamped` session in the
-/// compile loop. The arithmetic consumer ([`align_words`]) is independent of it.
-pub trait TimestampedDecoder {
-    /// Run the decode loop on a precomputed mel, returning tokens + attentions.
-    fn decode_with_cross_attn(&mut self) -> Result<TimestampedDecodeOutput, WordTsError>;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

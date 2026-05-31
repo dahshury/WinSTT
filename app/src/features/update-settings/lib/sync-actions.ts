@@ -8,7 +8,10 @@
  */
 
 import type { AllowedParameter } from "@/shared/api/models";
-import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-schema";
+import type {
+	AppSettingsOutput as AppSettings,
+	DictionaryEntry,
+} from "@/shared/config/settings-schema";
 import {
 	autoStartChanged,
 	computeSilenceEndpointEnabled,
@@ -29,6 +32,29 @@ export interface SyncDeps {
 	autostartSet: (enabled: boolean) => void;
 	sttRequestDiarizationToggle: (enabled: boolean) => void;
 	sttSetParameter: <V>(param: AllowedParameter, value: V) => void;
+	/**
+	 * Push the server-side custom-word (vocab-biasing) list. Backed by the
+	 * `update_custom_words` Tauri command (`commands.updateCustomWords`), which
+	 * writes `settings.custom_words`; the recorder reads that field at
+	 * transcription time (`apply_custom_words` in `managers/transcription.rs`).
+	 * Optional so the existing test harness (and any non-Tauri host) can omit it.
+	 */
+	updateCustomWords?: (words: string[]) => void;
+	/**
+	 * Push the deterministic fuzzy-corrector threshold. Backed by the
+	 * `change_word_correction_threshold_setting` Tauri command
+	 * (`commands.changeWordCorrectionThresholdSetting`), which writes
+	 * `settings.word_correction_threshold`.
+	 */
+	changeWordCorrectionThreshold?: (threshold: number) => void;
+	/**
+	 * Push the per-user filler-word override. Writes `settings.custom_filler_words`
+	 * (consumed by `filter_transcription_output`). No generated binding exists for
+	 * this yet — the integrator must add a `change_custom_filler_words_setting`
+	 * Tauri command and wire it here (see summary). Optional + guarded so the file
+	 * still works before that command lands.
+	 */
+	changeCustomFillerWords?: (words: string[]) => void;
 }
 
 /** camelCase → snake_case mapping for audio parameters sent to the STT server */
@@ -467,6 +493,130 @@ export function syncTextCorrectionParams(
 	sendIfChanged(deps, general.filterFillers, prev?.general?.filterFillers, "filter_fillers", !prev);
 }
 
+/**
+ * Default fuzzy-corrector threshold. Mirrors the server's
+ * ``TextCorrectionConfig`` default (and the renderer schema's
+ * ``general.wordCorrectionThreshold`` default) so a settings tree missing the
+ * field pushes the same value the matcher would use if it were never sent.
+ */
+const DEFAULT_WORD_CORRECTION_THRESHOLD = 0.18;
+
+/**
+ * Derive the server-side custom-words list from the persisted dictionary.
+ *
+ * Only entries WITHOUT a ``replacement`` are considered — those are the
+ * "vocab-biasing" terms the fuzzy matcher should bias toward. Entries WITH a
+ * ``replacement`` are deterministic find-and-replace pairs handled separately
+ * by the post-processor; feeding them to the server-side matcher would
+ * double-correct them. Mirrors ``readCurrentCustomWords`` in Electron's
+ * ``custom-words-sync.ts``. Returns trimmed, de-duplicated terms in insertion
+ * order.
+ */
+export function deriveCustomWords(dictionary: readonly DictionaryEntry[] | undefined): string[] {
+	if (!dictionary?.length) {
+		return [];
+	}
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const entry of dictionary) {
+		const term = typeof entry.term === "string" ? entry.term.trim() : "";
+		const replacement = typeof entry.replacement === "string" ? entry.replacement.trim() : "";
+		if (!term || replacement || seen.has(term)) {
+			continue;
+		}
+		seen.add(term);
+		out.push(term);
+	}
+	return out;
+}
+
+/** Trim + de-duplicate the per-user filler-word override list. */
+export function deriveCustomFillerWords(words: readonly string[] | undefined): string[] {
+	if (!words?.length) {
+		return [];
+	}
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const entry of words) {
+		const trimmed = typeof entry === "string" ? entry.trim() : "";
+		if (!trimmed || seen.has(trimmed)) {
+			continue;
+		}
+		seen.add(trimmed);
+		out.push(trimmed);
+	}
+	return out;
+}
+
+/** Resolve ``general.wordCorrectionThreshold`` to a number, defaulting safely. */
+export function resolveWordCorrectionThreshold(value: unknown): number {
+	return typeof value === "number" ? value : DEFAULT_WORD_CORRECTION_THRESHOLD;
+}
+
+/** Order-insensitive value equality for the derived string lists. */
+function listsEqual(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) {
+		return false;
+	}
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Push the Dictionary (custom words) + threshold + custom filler words to the
+ * backend so they take effect.
+ *
+ * Unlike the `set_parameter`-routed knobs above, these three settings are NOT
+ * `AllowedParameter`s — the Tauri backend persists them into its settings store
+ * and reads them straight off disk at transcription time
+ * (`apply_custom_words` / `filter_transcription_output` in
+ * `managers/transcription.rs`). So "taking effect" just means writing the value
+ * via the dedicated command. Mirrors Electron's `installCustomWordsSync`:
+ *
+ *   - `dictionary` (entries without `replacement`) → `update_custom_words`
+ *   - `general.wordCorrectionThreshold` → `change_word_correction_threshold_setting`
+ *   - `general.customFillerWords` → `change_custom_filler_words_setting` (⚠ command TBD)
+ *
+ * Pushed on initial connect (`prev` undefined) and whenever the derived value
+ * actually changes — so unrelated settings edits don't churn a disk write. Each
+ * dep is optional + guarded; a host that didn't wire it (or a backend that
+ * doesn't yet have the filler command) silently skips that push.
+ *
+ * NOTE: `settings.snippets` is deliberately NOT pushed here. Snippet expansion
+ * is a post-transcription text-processing concern (mirrors Electron's
+ * `text-processing.ts replaceWithSnippets`), not an STT-engine input — the
+ * reference never sends snippets to the recorder, so neither do we.
+ */
+export function syncDictionaryParams(
+	deps: SyncDeps,
+	settings: AppSettings,
+	prev: AppSettings | undefined
+): void {
+	const isInitial = !prev;
+
+	const words = deriveCustomWords(settings.dictionary);
+	const prevWords = deriveCustomWords(prev?.dictionary);
+	if (deps.updateCustomWords && (isInitial || !listsEqual(words, prevWords))) {
+		deps.updateCustomWords(words);
+	}
+
+	const threshold = resolveWordCorrectionThreshold(settings.general?.wordCorrectionThreshold);
+	const prevThreshold = resolveWordCorrectionThreshold(prev?.general?.wordCorrectionThreshold);
+	if (deps.changeWordCorrectionThreshold && (isInitial || threshold !== prevThreshold)) {
+		deps.changeWordCorrectionThreshold(threshold);
+	}
+
+	const fillers = deriveCustomFillerWords(settings.general?.customFillerWords);
+	const prevFillers = deriveCustomFillerWords(prev?.general?.customFillerWords);
+	if (deps.changeCustomFillerWords && (isInitial || !listsEqual(fillers, prevFillers))) {
+		deps.changeCustomFillerWords(fillers);
+	}
+}
+
 export function syncToServer(deps: SyncDeps, settings: AppSettings, prev?: AppSettings): void {
 	syncAudioParams(deps, settings, prev);
 	syncModelParams(deps, settings, prev);
@@ -474,4 +624,5 @@ export function syncToServer(deps: SyncDeps, settings: AppSettings, prev?: AppSe
 	syncDiarizationParams(deps, settings, prev);
 	syncSystemParams(deps, settings, prev);
 	syncTextCorrectionParams(deps, settings, prev);
+	syncDictionaryParams(deps, settings, prev);
 }

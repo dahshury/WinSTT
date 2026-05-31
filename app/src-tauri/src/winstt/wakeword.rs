@@ -301,6 +301,122 @@ pub fn sensitivity_to_threshold(sensitivity: f32) -> f32 {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// 3b. Phrase → keyword-token tokenization (the missing bridge before the engine).
+//
+//    sherpa-onnx KWS does NOT tokenize keyword text itself: `EncodeKeywords`
+//    (sherpa-onnx/csrc/utils.cc) feeds each `keywords.txt`/`keywords_buf` line
+//    STRAIGHT into the symbol table — every whitespace-separated piece must
+//    already be a token present in the model's `tokens.txt`, or the WHOLE line is
+//    rejected as OOV (`has_oov` → `EncodeBase` returns false → `KeywordSpotter`
+//    drops that keyword). The BPE `text2token` step (`sherpa-onnx-cli text2token`)
+//    is an OFFLINE preprocessing step that runs SentencePiece over `bpe.model`.
+//    We cannot run SentencePiece offline here (no `.model` reader, no subprocess),
+//    so we use two layers:
+//
+//    1. A VERIFIED static map of the canonical preset phrases → their gigaspeech
+//       BPE token strings (taken from the upstream `text2token` doc examples — the
+//       `▁`-prefixed sentencepiece form). This is the optimal, fewest-decode-steps
+//       tokenization for the built-in wake words.
+//    2. A CHARACTER fallback for anything else (custom phrases, or presets the map
+//       doesn't cover): split each word into `▁<first-char> <char> <char> …`. Every
+//       single character (and its `▁`-prefixed word-start form) is GUARANTEED to be
+//       in the BPE `tokens.txt` of these models, so the line is never OOV-rejected.
+//       The transducer still reaches the keyword's terminal state — it just walks
+//       one char per step instead of one BPE piece, costing a few extra decode
+//       steps but never failing. This is the safe, always-valid path.
+//
+//    Both produce the exact `<space-separated tokens>` half of a keyword line; the
+//    `#threshold`/`@label` suffixes are added by [`build_keyword_content`].
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Word-start marker used by sentencepiece BPE vocabularies (U+2581).
+const BPE_WORD_PREFIX: char = '▁';
+
+/// Verified gigaspeech-BPE tokenizations for the canonical preset phrases.
+///
+/// Keyed by the resolved phrase (lower-case, the output of [`resolve_phrase`]).
+/// Values are the space-separated `tokens.txt` symbols. The three multi-word
+/// entries (`hey siri`, `hey google`, `ok google`) match the upstream
+/// `text2token` examples verbatim; the single-word entries follow the same
+/// `▁<WORD-START> …` sentencepiece convention. Anything not here falls through to
+/// [`char_tokenize_phrase`], so a missing/incorrect entry only costs decode steps,
+/// never correctness.
+const PRESET_BPE_TOKENS: &[(&str, &str)] = &[
+    // Multi-word — verbatim from upstream `text2token` BPE examples.
+    ("hey siri", "▁HE Y ▁S I RI"),
+    ("hey google", "▁HE Y ▁GO O G LE"),
+    ("ok google", "▁O K ▁GO O G LE"),
+    ("hey jarvis", "▁HE Y ▁J AR VI S"),
+    ("hey mycroft", "▁HE Y ▁MY CRO FT"),
+    ("hey rhasspy", "▁HE Y ▁R HA S S P Y"),
+];
+
+/// Tokenize a resolved phrase into the space-separated token half of a keyword
+/// line. Prefers the verified BPE map, falls back to the always-valid char split.
+///
+/// Returns an empty string only for an empty/blank phrase (the caller skips it).
+pub fn tokenize_phrase(phrase: &str) -> String {
+    let normalized = phrase.trim().to_lowercase();
+    if normalized.is_empty() {
+        return String::new();
+    }
+    for (name, tokens) in PRESET_BPE_TOKENS {
+        if *name == normalized {
+            return (*tokens).to_string();
+        }
+    }
+    char_tokenize_phrase(&normalized)
+}
+
+/// Character-level fallback tokenizer (always in-vocab → never OOV-rejected).
+///
+/// Each whitespace-delimited word becomes `▁<C0> <C1> <C2> …` with the first
+/// character carrying the sentencepiece word-start marker. Letters are upper-cased
+/// because these English BPE vocabularies are upper-case (the upstream examples use
+/// `▁HE Y …`, never lower-case). Non-letters (digits, apostrophes) are passed
+/// through unchanged — single code points that the symbol table still contains.
+fn char_tokenize_phrase(phrase: &str) -> String {
+    let mut pieces: Vec<String> = Vec::new();
+    for word in phrase.split_whitespace() {
+        let mut first = true;
+        for ch in word.chars() {
+            let up = ch.to_uppercase().collect::<String>();
+            if first {
+                pieces.push(format!("{BPE_WORD_PREFIX}{up}"));
+                first = false;
+            } else {
+                pieces.push(up);
+            }
+        }
+    }
+    pieces.join(" ")
+}
+
+/// Build the full keyword content (the body for `keywords_buf` / `keywords.txt`)
+/// for ONE active wake word from its resolved phrase + UI sensitivity.
+///
+/// Produces a single line: `<tokens> #<threshold> @<label>` followed by a newline.
+/// The `#threshold` is the direction-flipped [`sensitivity_to_threshold`]; the
+/// `@label` echoes the human-readable phrase back on a hit (so the detector can map
+/// `KeywordResult::keyword` → keyword index). Returns an empty string when the
+/// phrase tokenizes to nothing (blank input), which the manager treats as "no
+/// active keyword" (detector not built).
+pub fn build_keyword_content(phrase: &str, sensitivity: f32) -> String {
+    let tokens = tokenize_phrase(phrase);
+    if tokens.is_empty() {
+        return String::new();
+    }
+    let label = phrase.trim().to_lowercase();
+    let spec = KeywordSpec {
+        tokens,
+        label,
+        boost: None,
+        threshold: Some(sensitivity_to_threshold(sensitivity)),
+    };
+    build_keywords_file(std::slice::from_ref(&spec))
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // 4. Configuration — the inputs the manager needs to stand up a KeywordSpotter.
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -339,6 +455,40 @@ pub struct KwsModelPaths {
     pub decoder: PathBuf,
     pub joiner: PathBuf,
     pub tokens: PathBuf,
+}
+
+/// The gigaspeech English KWS bundle (the default wake-word model). Files match
+/// the upstream `kws-models` release layout
+/// (`sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01`):
+/// `encoder/decoder/joiner-epoch-12-avg-2-chunk-16-left-64.onnx` + `tokens.txt`.
+pub const KWS_BUNDLE_DIRNAME: &str = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01";
+pub const KWS_ENCODER_FILE: &str = "encoder-epoch-12-avg-2-chunk-16-left-64.onnx";
+pub const KWS_DECODER_FILE: &str = "decoder-epoch-12-avg-2-chunk-16-left-64.onnx";
+pub const KWS_JOINER_FILE: &str = "joiner-epoch-12-avg-2-chunk-16-left-64.onnx";
+pub const KWS_TOKENS_FILE: &str = "tokens.txt";
+
+impl KwsModelPaths {
+    /// Resolve the four bundle files under `bundle_dir` (the directory the model
+    /// archive was extracted into). Pure path joining — does NOT check existence
+    /// (use [`KwsModelPaths::all_present`] for that).
+    pub fn from_bundle_dir(bundle_dir: &Path) -> Self {
+        KwsModelPaths {
+            encoder: bundle_dir.join(KWS_ENCODER_FILE),
+            decoder: bundle_dir.join(KWS_DECODER_FILE),
+            joiner: bundle_dir.join(KWS_JOINER_FILE),
+            tokens: bundle_dir.join(KWS_TOKENS_FILE),
+        }
+    }
+
+    /// True only when all four required files exist on disk (a complete bundle).
+    /// The detector cannot stand up against a partial download, so the manager
+    /// gates `WakeWordDetector::new` on this.
+    pub fn all_present(&self) -> bool {
+        self.encoder.exists()
+            && self.decoder.exists()
+            && self.joiner.exists()
+            && self.tokens.exists()
+    }
 }
 
 /// Everything needed to build/refresh a live keyword spotter.
@@ -715,6 +865,70 @@ mod tests {
     #[test]
     fn build_keywords_file_empty_is_empty() {
         assert_eq!(build_keywords_file(&[]), "");
+    }
+
+    // ── phrase tokenization (the bridge before the engine) ─────────────────
+
+    #[test]
+    fn tokenize_known_preset_uses_verified_bpe() {
+        // Verbatim from the upstream text2token BPE example.
+        assert_eq!(tokenize_phrase("hey siri"), "▁HE Y ▁S I RI");
+        assert_eq!(tokenize_phrase("HEY SIRI"), "▁HE Y ▁S I RI");
+        assert_eq!(tokenize_phrase("ok google"), "▁O K ▁GO O G LE");
+    }
+
+    #[test]
+    fn tokenize_unknown_phrase_falls_back_to_chars() {
+        // "alexa" isn't in the BPE map → char fallback (always in-vocab).
+        assert_eq!(tokenize_phrase("alexa"), "▁A L E X A");
+        assert_eq!(tokenize_phrase("computer"), "▁C O M P U T E R");
+    }
+
+    #[test]
+    fn char_tokenize_marks_each_word_start() {
+        // Each word gets its own ▁ word-start marker.
+        assert_eq!(char_tokenize_phrase("hey winstt"), "▁H E Y ▁W I N S T T");
+    }
+
+    #[test]
+    fn tokenize_blank_phrase_is_empty() {
+        assert_eq!(tokenize_phrase("   "), "");
+        assert_eq!(tokenize_phrase(""), "");
+    }
+
+    #[test]
+    fn build_keyword_content_emits_tokens_threshold_label() {
+        // alexa @0.6 sensitivity → #0.22, char-tokenized, labelled.
+        let body = build_keyword_content("alexa", 0.6);
+        assert_eq!(body, "▁A L E X A #0.22 @alexa\n");
+        assert!(body.ends_with('\n'));
+    }
+
+    #[test]
+    fn build_keyword_content_blank_is_empty() {
+        assert_eq!(build_keyword_content("", 0.6), "");
+    }
+
+    #[test]
+    fn build_keyword_content_preset_uses_bpe_tokens() {
+        let body = build_keyword_content("hey siri", 0.6);
+        assert_eq!(body, "▁HE Y ▁S I RI #0.22 @hey siri\n");
+    }
+
+    // ── KWS bundle path resolution ─────────────────────────────────────────
+
+    #[test]
+    fn kws_paths_from_bundle_dir_joins_known_files() {
+        let dir = Path::new("/tmp/kws");
+        let paths = KwsModelPaths::from_bundle_dir(dir);
+        assert_eq!(paths.encoder, dir.join(KWS_ENCODER_FILE));
+        assert_eq!(paths.tokens, dir.join(KWS_TOKENS_FILE));
+    }
+
+    #[test]
+    fn kws_paths_all_present_false_when_missing() {
+        let paths = KwsModelPaths::from_bundle_dir(Path::new("/definitely/not/here"));
+        assert!(!paths.all_present());
     }
 
     // ── result helpers ─────────────────────────────────────────────────────

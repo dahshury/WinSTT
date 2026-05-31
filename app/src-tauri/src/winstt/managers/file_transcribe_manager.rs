@@ -1,6 +1,7 @@
 // PORT IMPL — drafted against real APIs, pending compile. Source (authoritative):
 // frontend/electron/ipc/file-transcribe-queue.ts (the canonical multi-file queue)
-// + app/PORT/07_*.md / 10_frontend_port_plan.md §6 WU-8. Uses symphonia for decode.
+// + app/PORT/07_*.md / 10_frontend_port_plan.md §6 WU-8. Decode via symphonia
+// (in-process; no external ffmpeg, unlike the Python server's ffmpeg shell-out).
 //
 // FileTranscribeManager is a faithful Rust port of WinSTT's Electron
 // `setupFileTranscribeQueue`: a SEQUENTIAL file queue (the shared STT model is
@@ -27,9 +28,9 @@
 // (functionally identical output; only wasted work, like a cold retry). The
 // queue/pause/skip/broadcast mechanics are preserved exactly.
 //
-// The audio decode (symphonia: wav/mp3/mp4/aac/flac/ogg) + 16 kHz mono resample
-// are the heavy bits (compile-loop spike below in `decode_audio_to_pcm`); the
-// queue/lifecycle/pause-resume control logic compiles unconditionally.
+// The audio decode (symphonia: wav/mp3/mp4/aac/flac/ogg/vorbis) + 16 kHz mono
+// resample live in `decode_audio_to_pcm` below; the queue/lifecycle/pause-resume
+// control logic surrounds it.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -485,10 +486,10 @@ impl FileTranscribeManager {
     }
 
     fn process_file(self: &Arc<Self>, item: &QueueItem) {
-        // SPIKE: symphonia decode → 16 kHz mono f32 → (lazy VAD chunk iterator).
-        // Until the chunk iterator lands we transcribe the whole file in one shot
-        // (Handy's `TranscriptionManager::transcribe`); the per-chunk progress
-        // loop is the mechanism that will replace the single 0.5 tick below.
+        // Decode the file to 16 kHz mono f32, then transcribe the whole buffer in
+        // one shot (Handy's `TranscriptionManager::transcribe` is one-shot — there's
+        // no streaming server to feed a lazy VAD chunk iterator). The single 0.5
+        // mid-file tick below stands in for the server's per-chunk progress loop.
         let audio = match decode_audio_to_pcm(&item.file_path) {
             Ok(a) => a,
             Err(e) => {
@@ -668,18 +669,169 @@ struct FileQueueActive {
     active: bool,
 }
 
-// ── Audio decode (SPIKE) ────────────────────────────────────────────────────
+// ── Audio decode (symphonia → 16 kHz mono f32) ───────────────────────────────
+
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::CodecParameters;
+use symphonia::core::errors::Error as SymError;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
+use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
+use symphonia::core::meta::MetadataOptions;
+
+use crate::audio_toolkit::audio::FrameResampler;
+
+/// The transcription pipeline (mic, loopback, file) is 16 kHz mono f32 PCM — the
+/// same rate every onnx-asr preprocessor targets, so the model's own resampler is
+/// a no-op. Mirrors `_TARGET_SAMPLE_RATE` in `server/.../file_transcribe.py`.
+const TARGET_SAMPLE_RATE: usize = 16_000;
+
+/// Frame size the resampler emits in (30 ms @ 16 kHz). Chosen to match the
+/// recorder/loopback frame cadence; the last partial frame is zero-padded on
+/// `finish()` (≤30 ms of trailing silence, trimmed by VAD before transcription).
+const RESAMPLE_FRAME_MS: u64 = 30;
 
 /// Decode an audio/video file to mono 16 kHz f32 PCM.
-/// SPIKE: symphonia probe → decode → downmix → resample to 16 kHz. Until that
-/// lands, return an error so the file is reported as an error ROW rather than
-/// silently transcribing garbage. The queue/pause/progress mechanism around it
-/// is real and compiles unconditionally. See file-transcribe.ts for chunking +
-/// VAD-iterator parity.
-fn decode_audio_to_pcm(_path: &std::path::Path) -> Result<Vec<f32>, String> {
-    // SPIKE: implement with symphonia (features wav/mp3/isomp4/aac/flac/ogg/vorbis)
-    // + rubato/resample_poly to 16 kHz mono.
-    Err("file audio decode not yet wired (symphonia spike)".to_string())
+///
+/// Faithful port of `server/src/stt_server/file_transcribe.py::_decode_media_to_pcm`,
+/// which shells out to `ffmpeg -f f32le -ac 1 -ar 16000`. Here we decode in-process
+/// with symphonia (wav/mp3/mp4/aac/flac/ogg/vorbis) so no external ffmpeg binary is
+/// required: probe the container, decode every packet of the default audio track,
+/// downmix to mono, then resample to 16 kHz via the project's recording-grade
+/// `FftFixedIn` resampler (`FrameResampler`).
+///
+/// Robust to arbitrary input sample rates and channel layouts. Per-packet
+/// `DecodeError`s are skipped (the stream resyncs on the next packet, matching how
+/// ffmpeg tolerates a corrupt frame); a clean EOF ends the loop.
+fn decode_audio_to_pcm(path: &std::path::Path) -> Result<Vec<f32>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("cannot open file: {e}"))?;
+    let mss = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
+
+    // Hint the probe with the file extension — cheap disambiguation for the
+    // signature scan (e.g. raw ADTS/AAC streams that share magic with others).
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let mut format = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
+        .map_err(|e| format!("unsupported or unreadable media: {e}"))?;
+
+    // Pick the default audio track (the container may also carry video/subtitle
+    // tracks for .mp4/.mkv inputs — we want the audio stream only). Extract owned
+    // values in a scope so the immutable borrow of `format` is released before the
+    // mutable `next_packet()` loop below.
+    let (track_id, audio_params) = {
+        let track = format
+            .default_track(TrackType::Audio)
+            .ok_or_else(|| "no audio track found in file".to_string())?;
+        let params = match &track.codec_params {
+            Some(CodecParameters::Audio(p)) => p.clone(),
+            _ => return Err("audio track has no codec parameters".to_string()),
+        };
+        (track.id, params)
+    };
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(&audio_params, &AudioDecoderOptions::default())
+        .map_err(|e| format!("no decoder for audio codec: {e}"))?;
+
+    // Accumulated mono samples at the file's NATIVE rate; resampled to 16 kHz once
+    // the whole stream is decoded (the source rate isn't reliably known until the
+    // first decoded buffer carries its `AudioSpec`).
+    let mut mono: Vec<f32> = Vec::new();
+    let mut source_rate: Option<u32> = None;
+    // Scratch buffer reused across packets for the interleaved f32 copy.
+    let mut interleaved: Vec<f32> = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(Some(packet)) => packet,
+            // Clean end of stream.
+            Ok(None) => break,
+            // Some demuxers signal EOF as an UnexpectedEof IoError rather than
+            // `Ok(None)`; treat it as a normal end of stream.
+            Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(SymError::ResetRequired) => {
+                // Track list changed mid-stream (e.g. chained OGG). We only handle
+                // the initial track; stop cleanly with what we have.
+                break;
+            }
+            Err(e) => return Err(format!("error reading packet: {e}")),
+        };
+
+        // Skip packets that don't belong to our chosen audio track.
+        if packet.track_id != track_id {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let spec = decoded.spec();
+                if source_rate.is_none() {
+                    source_rate = Some(spec.rate());
+                }
+                let channels = spec.channels().count().max(1);
+                let frames = decoded.frames();
+                if frames == 0 {
+                    continue;
+                }
+
+                // Copy the decoded buffer to interleaved f32 (handles any source
+                // sample format — i16/i32/f32/etc — via symphonia's conversion).
+                decoded.copy_to_vec_interleaved::<f32>(&mut interleaved);
+
+                if channels <= 1 {
+                    mono.extend_from_slice(&interleaved);
+                } else {
+                    // Downmix to mono by averaging channels (matches the Python
+                    // FileAudioSource `np.mean(arr, axis=1)` / ffmpeg `-ac 1`).
+                    mono.reserve(frames);
+                    let inv = 1.0 / channels as f32;
+                    for frame in interleaved.chunks_exact(channels) {
+                        let sum: f32 = frame.iter().copied().sum();
+                        mono.push(sum * inv);
+                    }
+                }
+            }
+            // A single corrupt packet is recoverable — skip it and resync on the
+            // next one (the decoder clears its internal buffer on error).
+            Err(SymError::DecodeError(_)) => continue,
+            Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(format!("decode error: {e}")),
+        }
+    }
+
+    if mono.is_empty() {
+        return Err("file contained no decodable audio".to_string());
+    }
+
+    let in_rate = source_rate.unwrap_or(TARGET_SAMPLE_RATE as u32) as usize;
+    Ok(resample_to_target(mono, in_rate))
+}
+
+/// Resample mono f32 PCM from `in_rate` Hz to 16 kHz using the project's
+/// recording-grade `FftFixedIn` resampler (overlap-save, stateful — the same
+/// resampler the live recorder/loopback path uses, so file decodes inherit the
+/// recording-resample-quality fix). A no-op (re-frame only) when already 16 kHz.
+fn resample_to_target(mono: Vec<f32>, in_rate: usize) -> Vec<f32> {
+    if in_rate == TARGET_SAMPLE_RATE {
+        return mono;
+    }
+    let frame_dur = std::time::Duration::from_millis(RESAMPLE_FRAME_MS);
+    let mut resampler = FrameResampler::new(in_rate, TARGET_SAMPLE_RATE, frame_dur);
+    let mut out: Vec<f32> = Vec::with_capacity(
+        (mono.len() as u64 * TARGET_SAMPLE_RATE as u64 / in_rate.max(1) as u64) as usize + 1,
+    );
+    resampler.push(&mono, |frame| out.extend_from_slice(frame));
+    resampler.finish(|frame| out.extend_from_slice(frame));
+    out
 }
 
 fn now_millis() -> u128 {

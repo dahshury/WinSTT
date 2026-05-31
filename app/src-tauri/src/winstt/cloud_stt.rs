@@ -1,15 +1,15 @@
-// DRAFT PORT — not yet compiled. Source: frontend/electron/ipc/stt-cloud.ts +
-// frontend/electron/ipc/credentials.ts
+// Cloud STT pure layer. Source: frontend/electron/ipc/stt-cloud.ts +
+// frontend/electron/ipc/credentials.ts + entities/cloud-stt-provider/model/catalog.ts.
 //
 // Cloud STT: reqwest multipart POST to OpenAI /v1/audio/transcriptions and
 // ElevenLabs /v1/speech-to-text. In WinSTT-Electron the Python pipeline's
 // RemoteTranscriber adapter sends the WAV bytes to the main process over WS;
 // in the Rust/Tauri port there is NO Python and NO WS — the
-// TranscriptionManager calls this module directly when the active model is a
-// cloud model (`openai:…` / `elevenlabs:…`), exactly the way Handy's
-// in-process flow calls `transcribe-rs`. So this module is a plain async
-// function returning `Result<CloudTranscription, CloudSttError>` rather than
-// a WS request/response handler.
+// TranscriptionManager calls `CloudSttManager::transcribe` directly when the
+// active model is a cloud model (`openai:…` / `elevenlabs:…`), exactly the way
+// Handy's in-process flow calls `transcribe-rs`. So this module exposes the
+// pure classification + request-shape layer, and the upload itself lives in
+// `managers::CloudSttManager`.
 //
 // Ported faithfully:
 //   - Provider audio byte limits (bail BEFORE the upload). [PROVIDER_AUDIO_LIMIT_BYTES]
@@ -18,11 +18,8 @@
 //     key. [isElevenLabsScopedKeyValid / credentials.ts]
 //   - retry-after parsing for rate limits.
 //   - per-call provider instance (key reflects current store value).
-//
-// The actual multipart upload is the one heavy bit; the body shapes are
-// documented and the transport is a thin reqwest call (DRAFT — wire the
-// multipart form during the compile loop). All the classification +
-// limit logic is pure and fully tested.
+//   - the `<provider>:<id>` model-id convention (settings_schema ModelSettings.model)
+//     and the curated cloud catalog the picker renders. [CLOUD_CATALOG / catalog.ts]
 
 /// Cloud STT providers. Mirrors `CloudSttProvider`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,72 +265,162 @@ pub fn preflight(req: &CloudTranscribeRequest) -> Result<(), CloudSttError> {
     Ok(())
 }
 
-/// The transport. Behind a trait so the manager can inject a fake in tests.
-/// Mirrors the AI SDK `experimental_transcribe` call, but as a direct
-/// multipart POST (the Rust port has no AI SDK).
-pub trait CloudTranscriber {
-    fn transcribe(&self, req: &CloudTranscribeRequest) -> Result<CloudTranscription, CloudSttError>;
+/// 90s ceiling for a single transcribe round-trip. Mirrors
+/// CLOUD_TRANSCRIBE_TIMEOUT_MS. The upload itself (multipart POST, timeout,
+/// per-request cancel token, taxonomy) lives in `managers::CloudSttManager`.
+pub const CLOUD_TRANSCRIBE_TIMEOUT_SECS: u64 = 90;
+
+// ── `<provider>:<id>` model-id convention + curated cloud catalog ─────────
+//
+// The picker persists the prefixed `<provider>:<id>` into `model.model`
+// (settings_schema ModelSettings.model). `providerOf` / `split_model_id`
+// recover the provider + bare provider model id at the boundary. The reused
+// React renderer renders the cloud picker straight from its own hardcoded
+// `CLOUD_CATALOG` (entities/cloud-stt-provider/model/catalog.ts) — it never
+// queries the backend for cloud rows — so `CLOUD_CATALOG` below is the
+// backend-side mirror, kept BYTE-IDENTICAL to the renderer's curated table
+// (used to default + validate a cloud id and available for any future
+// enumerate-cloud-models command). Crucially it is NOT folded into the local
+// STT catalog (`catalog_data.json` / `catalog_rows`): those rows carry
+// local-engine editorial fields (quants / sizes / WER / RTFx) the picker's
+// local grid requires, and cloud models have none.
+
+/// One curated cloud STT model. Mirrors the renderer's `CloudModel`
+/// (entities/cloud-stt-provider/model/catalog.ts).
+#[derive(Debug, Clone, Copy)]
+pub struct CloudModel {
+    /// Bare provider model id (appended to the provider prefix verbatim, e.g.
+    /// `whisper-1` → `openai:whisper-1`).
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub description: &'static str,
+    /// The provider's default pick (sits first in the picker / `default_cloud_model_id`).
+    pub is_default: bool,
 }
 
-// ── reqwest multipart sketch (DRAFT — wire during compile loop) ────────
-//
-// pub struct ReqwestCloudTranscriber { client: reqwest::Client }
-//
-// impl CloudTranscriber for ReqwestCloudTranscriber {
-//   fn transcribe(&self, req) -> Result<CloudTranscription, CloudSttError> {
-//     preflight(req)?;                            // key + size, free + fast
-//
-//     // OpenAI /v1/audio/transcriptions multipart fields:
-//     //   file=<wav bytes; filename audio.wav; mime req.media_type>
-//     //   model=<req.model_id>          (whisper-1 | gpt-4o-mini-transcribe | …)
-//     //   response_format=verbose_json  (gives language + duration)
-//     //   language=<req.language>       (optional, ISO-639-1)
-//     // Auth: header  Authorization: Bearer <api_key>
-//     //
-//     // ElevenLabs /v1/speech-to-text multipart fields:
-//     //   file=<wav bytes>
-//     //   model_id=<req.model_id>       (scribe_v1)
-//     //   language_code=<req.language>  (optional)
-//     // Auth: header  xi-api-key: <api_key>
-//
-//     let part = reqwest::multipart::Part::bytes(req.audio_wav.clone())
-//         .file_name("audio.wav")
-//         .mime_str(&req.media_type).map_err(|e| CloudSttError::new(ProviderError, e.to_string()))?;
-//     let form = match req.provider {
-//       OpenAi => reqwest::multipart::Form::new()
-//           .part("file", part).text("model", req.model_id.clone())
-//           .text("response_format", "verbose_json")
-//           .opt_text("language", req.language.clone()),
-//       ElevenLabs => reqwest::multipart::Form::new()
-//           .part("file", part).text("model_id", req.model_id.clone())
-//           .opt_text("language_code", req.language.clone()),
-//     };
-//     let mut rb = self.client.post(req.provider.endpoint())
-//         .multipart(form).timeout(CLOUD_TRANSCRIBE_TIMEOUT);   // 90s
-//     rb = match req.provider {
-//       OpenAi => rb.bearer_auth(&req.api_key),
-//       ElevenLabs => rb.header("xi-api-key", &req.api_key),
-//     };
-//     let resp = rb.send().await.map_err(|e| classify_transport_error(&e.to_string()))?;
-//     if !resp.status().is_success() {
-//       let status = resp.status().as_u16();
-//       let retry = resp.headers().get("retry-after").and_then(|h| h.to_str().ok()).map(str::to_owned);
-//       let body = resp.text().await.unwrap_or_default();
-//       return Err(classify_http_failure(status, &body, retry.as_deref()));
-//     }
-//     let json: serde_json::Value = resp.json().await
-//         .map_err(|e| CloudSttError::new(ProviderError, e.to_string()))?;
-//     Ok(parse_transcription_json(req.provider, &json))
-//   }
-// }
-//
-// Timeout: 90s ceiling (CLOUD_TRANSCRIBE_TIMEOUT_MS). Cancellation: hold a
-// per-request token in the manager so a model swap / quit aborts in-flight
-// calls (mirrors inFlight + abortAllCloudTranscribes).
+/// OpenAI cloud STT models. Curated metadata fused with the AI SDK's generated
+/// id union; mirrors `CURATED_CLOUD_MODELS.openai` ∪ `GENERATED_CLOUD_MODEL_IDS.openai`.
+///
+/// NOTE: dated `gpt-4o-*-transcribe` snapshots and `gpt-4o-transcribe-diarize`
+/// are intentionally absent — the AI SDK / our upload posts
+/// `response_format=verbose_json`, which only `whisper-1` and the two base
+/// `gpt-4o` aliases accept (catalog.ts header).
+pub const OPENAI_CLOUD_MODELS: &[CloudModel] = &[
+    CloudModel {
+        id: "gpt-4o-mini-transcribe",
+        display_name: "GPT-4o mini transcribe",
+        description: "Fast and cheap general-purpose transcription.",
+        is_default: true,
+    },
+    CloudModel {
+        id: "gpt-4o-transcribe",
+        display_name: "GPT-4o transcribe",
+        description: "Higher-accuracy GPT-4o transcription.",
+        is_default: false,
+    },
+    CloudModel {
+        id: "whisper-1",
+        display_name: "Whisper v1",
+        description: "Legacy Whisper hosted model.",
+        is_default: false,
+    },
+];
 
-/// 90s ceiling for a single transcribe round-trip. Mirrors
-/// CLOUD_TRANSCRIBE_TIMEOUT_MS.
-pub const CLOUD_TRANSCRIBE_TIMEOUT_SECS: u64 = 90;
+/// ElevenLabs cloud STT models. Mirrors `CURATED_CLOUD_MODELS.elevenlabs` ∪
+/// `GENERATED_CLOUD_MODEL_IDS.elevenlabs`.
+pub const ELEVENLABS_CLOUD_MODELS: &[CloudModel] = &[
+    CloudModel {
+        id: "scribe_v1",
+        display_name: "Scribe v1",
+        description: "ElevenLabs transcription, multilingual.",
+        is_default: true,
+    },
+    CloudModel {
+        id: "scribe_v1_experimental",
+        display_name: "Scribe v1 (experimental)",
+        description: "Latest experimental Scribe build.",
+        is_default: false,
+    },
+];
+
+/// The curated cloud STT catalog for `provider` (the renderer's `CLOUD_CATALOG[provider]`).
+pub fn cloud_models_for(provider: CloudSttProvider) -> &'static [CloudModel] {
+    match provider {
+        CloudSttProvider::OpenAi => OPENAI_CLOUD_MODELS,
+        CloudSttProvider::ElevenLabs => ELEVENLABS_CLOUD_MODELS,
+    }
+}
+
+/// Recover the provider from a prefixed `<provider>:<id>` model id, or `None`
+/// for a local-catalog / custom id. Mirrors `providerOf` (catalog.ts).
+pub fn provider_of(model_id: &str) -> Option<CloudSttProvider> {
+    if model_id.starts_with("openai:") {
+        Some(CloudSttProvider::OpenAi)
+    } else if model_id.starts_with("elevenlabs:") {
+        Some(CloudSttProvider::ElevenLabs)
+    } else {
+        None
+    }
+}
+
+/// Split a prefixed `<provider>:<id>` model id into `(provider, bare_id)`.
+/// Returns `None` when `model_id` carries no known cloud prefix. The bare id is
+/// what goes into the multipart `model` / `model_id` field.
+pub fn split_model_id(model_id: &str) -> Option<(CloudSttProvider, String)> {
+    let provider = provider_of(model_id)?;
+    let bare = model_id
+        .split_once(':')
+        .map(|(_, rest)| rest.to_string())
+        .unwrap_or_default();
+    Some((provider, bare))
+}
+
+/// The default `<provider>:<id>` for a provider — the `is_default` entry, else
+/// the first. Mirrors `defaultCloudModelId` (catalog.ts).
+pub fn default_cloud_model_id(provider: CloudSttProvider) -> String {
+    let models = cloud_models_for(provider);
+    let chosen = models
+        .iter()
+        .find(|m| m.is_default)
+        .or_else(|| models.first());
+    match chosen {
+        Some(m) => format!("{}:{}", provider.id(), m.id),
+        None => provider.id().to_string(),
+    }
+}
+
+/// Encode 16 kHz mono f32 samples (the WinSTT/Handy capture format) into an
+/// in-memory WAV byte buffer for the multipart upload. Mirrors
+/// `audio_toolkit::save_wav_file` but writes to a `Vec<u8>` (Cursor) instead of
+/// a file so the bytes never hit disk. 16-bit PCM, 16 kHz, mono.
+pub fn samples_to_wav_bytes(samples: &[f32]) -> Result<Vec<u8>, CloudSttError> {
+    use hound::{SampleFormat, WavSpec, WavWriter};
+    use std::io::Cursor;
+
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut cursor = Cursor::new(Vec::<u8>::new());
+    {
+        let mut writer = WavWriter::new(&mut cursor, spec).map_err(|e| {
+            CloudSttError::new(CloudSttErrorCode::ProviderError, format!("wav init: {e}"))
+        })?;
+        for &sample in samples {
+            let clamped = sample.clamp(-1.0, 1.0);
+            let s16 = (clamped * i16::MAX as f32) as i16;
+            writer.write_sample(s16).map_err(|e| {
+                CloudSttError::new(CloudSttErrorCode::ProviderError, format!("wav write: {e}"))
+            })?;
+        }
+        writer.finalize().map_err(|e| {
+            CloudSttError::new(CloudSttErrorCode::ProviderError, format!("wav finalize: {e}"))
+        })?;
+    }
+    Ok(cursor.into_inner())
+}
 
 /// Parse a provider transcription JSON body into the common payload.
 /// OpenAI verbose_json: { text, language, duration }. ElevenLabs:
@@ -527,5 +614,77 @@ mod tests {
         assert!(!CloudSttErrorCode::Aborted.should_notify());
         assert!(CloudSttErrorCode::Auth.should_notify());
         assert!(CloudSttErrorCode::Network.should_notify());
+    }
+
+    #[test]
+    fn provider_of_recognizes_cloud_prefixes() {
+        assert_eq!(provider_of("openai:whisper-1"), Some(CloudSttProvider::OpenAi));
+        assert_eq!(
+            provider_of("elevenlabs:scribe_v1"),
+            Some(CloudSttProvider::ElevenLabs)
+        );
+        // local-catalog ids + custom ids carry no prefix.
+        assert_eq!(provider_of("tiny"), None);
+        assert_eq!(provider_of("nemo-canary-1b-v2"), None);
+        assert_eq!(provider_of("alphacep/vosk-model-ru"), None);
+    }
+
+    #[test]
+    fn split_model_id_peels_the_bare_provider_id() {
+        assert_eq!(
+            split_model_id("openai:gpt-4o-transcribe"),
+            Some((CloudSttProvider::OpenAi, "gpt-4o-transcribe".to_string()))
+        );
+        assert_eq!(
+            split_model_id("elevenlabs:scribe_v1_experimental"),
+            Some((
+                CloudSttProvider::ElevenLabs,
+                "scribe_v1_experimental".to_string()
+            ))
+        );
+        assert_eq!(split_model_id("tiny"), None);
+    }
+
+    #[test]
+    fn default_cloud_model_matches_curated_catalog() {
+        // Mirrors catalog.ts: openai default = gpt-4o-mini-transcribe, elevenlabs = scribe_v1.
+        assert_eq!(
+            default_cloud_model_id(CloudSttProvider::OpenAi),
+            "openai:gpt-4o-mini-transcribe"
+        );
+        assert_eq!(
+            default_cloud_model_id(CloudSttProvider::ElevenLabs),
+            "elevenlabs:scribe_v1"
+        );
+    }
+
+    #[test]
+    fn cloud_catalog_mirrors_renderer() {
+        // Exactly one default per provider; ids match the renderer's CLOUD_CATALOG.
+        let openai = cloud_models_for(CloudSttProvider::OpenAi);
+        assert_eq!(openai.iter().filter(|m| m.is_default).count(), 1);
+        assert!(openai.iter().any(|m| m.id == "whisper-1"));
+        assert!(openai.iter().any(|m| m.id == "gpt-4o-transcribe"));
+        let el = cloud_models_for(CloudSttProvider::ElevenLabs);
+        assert_eq!(el.iter().filter(|m| m.is_default).count(), 1);
+        assert!(el.iter().any(|m| m.id == "scribe_v1"));
+    }
+
+    #[test]
+    fn wav_bytes_are_a_valid_riff_container() {
+        // 0.1s of silence at 16 kHz mono → a parseable WAV with a RIFF/WAVE header.
+        let samples = vec![0.0f32; 1600];
+        let bytes = samples_to_wav_bytes(&samples).expect("encode");
+        assert!(bytes.len() > 44, "must include 44-byte header + data");
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        // Round-trips through hound's reader at the expected spec.
+        let reader =
+            hound::WavReader::new(std::io::Cursor::new(bytes)).expect("reparse wav header");
+        let spec = reader.spec();
+        assert_eq!(spec.channels, 1);
+        assert_eq!(spec.sample_rate, 16_000);
+        assert_eq!(spec.bits_per_sample, 16);
+        assert_eq!(reader.len(), 1600);
     }
 }
