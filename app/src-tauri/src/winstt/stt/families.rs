@@ -432,6 +432,129 @@ mod frontend {
 		out
 	}
 
+	// ── NeMo 128-mel log-mel featurizer (NemoPreprocessorNumpy) ───────────────────────────
+	// n_fft=512, win=400, hop=160, preemph=0.97; 128 Slaney mels (fmin=0, fmax=sr/2);
+	// log(x + 2^-24); PER-FEATURE (per-mel-bin) normalization over time (unbiased var, +1e-5).
+	// Source: onnx-asr preprocessors/numpy_preprocessor.py::NemoPreprocessorNumpy. Cohere reuses
+	// the same 128-mel Slaney bank. SEPARATE from the 80-mel kaldi `compute_fbank` above.
+	pub const NEMO_N_FFT: usize = 512;
+	pub const NEMO_WIN: usize = 400;
+	pub const NEMO_HOP: usize = 160;
+	pub const NEMO_N_MELS: usize = 128;
+	const NEMO_LOG_GUARD: f32 = 5.960_464_5e-8; // 2^-24
+
+	/// Slaney-normalized mel filterbank `(n_fft/2+1, n_mels)` for NeMo/Cohere (fmin=0, fmax=sr/2).
+	pub fn build_nemo_mel_filterbank() -> Array2<f32> {
+		let n_freqs = NEMO_N_FFT / 2 + 1; // 257
+		let fmax = SAMPLE_RATE as f32 / 2.0;
+		let all_freqs: Vec<f32> = (0..n_freqs).map(|i| fmax * i as f32 / (n_freqs - 1) as f32).collect();
+		let hz_to_mel = |f: f32| -> f32 {
+			const F_SP: f32 = 200.0 / 3.0;
+			const MIN_LOG_HZ: f32 = 1000.0;
+			const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP; // 15
+			let logstep = (6.4f32).ln() / 27.0;
+			if f < MIN_LOG_HZ {
+				f / F_SP
+			} else {
+				MIN_LOG_MEL + (f / MIN_LOG_HZ).ln() / logstep
+			}
+		};
+		let mel_to_hz = |m: f32| -> f32 {
+			const F_SP: f32 = 200.0 / 3.0;
+			const MIN_LOG_MEL: f32 = 15.0;
+			const MIN_LOG_HZ: f32 = 1000.0;
+			let logstep = (6.4f32).ln() / 27.0;
+			if m < MIN_LOG_MEL {
+				F_SP * m
+			} else {
+				MIN_LOG_HZ * (logstep * (m - MIN_LOG_MEL)).exp()
+			}
+		};
+		let m_min = hz_to_mel(0.0);
+		let m_max = hz_to_mel(fmax);
+		let m_pts: Vec<f32> = (0..NEMO_N_MELS + 2)
+			.map(|i| mel_to_hz(m_min + (m_max - m_min) * i as f32 / (NEMO_N_MELS + 1) as f32))
+			.collect();
+		let mut fb = Array2::<f32>::zeros((n_freqs, NEMO_N_MELS));
+		for f in 0..n_freqs {
+			for m in 0..NEMO_N_MELS {
+				let lower = m_pts[m];
+				let center = m_pts[m + 1];
+				let upper = m_pts[m + 2];
+				let up = (all_freqs[f] - lower) / (center - lower);
+				let down = (upper - all_freqs[f]) / (upper - center);
+				let mut tri = up.min(down).max(0.0);
+				tri *= 2.0 / (upper - lower); // Slaney area normalization
+				fb[[f, m]] = tri;
+			}
+		}
+		fb
+	}
+
+	/// NeMo featurizer → `(T, 128)` per-feature-normalized log-mel (T = `samples.len()/hop`, the
+	/// model's `features_lens`). The engine transposes to `(1, 128, T)` for `audio_signal`.
+	pub fn nemo_features(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
+		use std::f32::consts::PI;
+		let n = samples.len();
+		let num_frames = n / NEMO_HOP; // == features_lens (waveforms_lens // hop)
+		if num_frames == 0 {
+			return Array2::<f32>::zeros((0, NEMO_N_MELS));
+		}
+		// 1. pre-emphasis y[i] = x[i] - 0.97*x[i-1], y[0] = x[0].
+		let mut y = vec![0f32; n];
+		y[0] = samples[0];
+		for i in 1..n {
+			y[i] = samples[i] - PRE_EMPHASIS * samples[i - 1];
+		}
+		// 2. zero-pad n_fft//2 each side.
+		let pad = NEMO_N_FFT / 2;
+		let mut padded = vec![0f32; n + 2 * pad];
+		padded[pad..pad + n].copy_from_slice(&y);
+		// 3. numpy.hanning(400) = 0.5 - 0.5*cos(2πk/399), zero-padded (centered) to 512.
+		let wpad = (NEMO_N_FFT - NEMO_WIN) / 2;
+		let mut window = vec![0f32; NEMO_N_FFT];
+		for k in 0..NEMO_WIN {
+			window[wpad + k] = 0.5 - 0.5 * (2.0 * PI * k as f32 / (NEMO_WIN as f32 - 1.0)).cos();
+		}
+		// 4. frame (len n_fft, hop) → window → power spectrum → mel → log(x + 2^-24).
+		let n_freqs = NEMO_N_FFT / 2 + 1;
+		let mut log_mel = Array2::<f32>::zeros((num_frames, NEMO_N_MELS));
+		let mut frame = vec![0f32; NEMO_N_FFT];
+		for t in 0..num_frames {
+			let start = t * NEMO_HOP;
+			for (i, slot) in frame.iter_mut().enumerate() {
+				*slot = padded.get(start + i).copied().unwrap_or(0.0) * window[i];
+			}
+			let power = rfft_power(&frame, NEMO_N_FFT, n_freqs);
+			for m in 0..NEMO_N_MELS {
+				let mut acc = 0f32;
+				for (f, &p) in power.iter().enumerate() {
+					acc += p * fbanks[[f, m]];
+				}
+				log_mel[[t, m]] = (acc + NEMO_LOG_GUARD).ln();
+			}
+		}
+		// 5. per-feature (per mel bin) normalization over time: (x-mean)/(sqrt(unbiased var)+1e-5).
+		for m in 0..NEMO_N_MELS {
+			let mut mean = 0f32;
+			for t in 0..num_frames {
+				mean += log_mel[[t, m]];
+			}
+			mean /= num_frames as f32;
+			let mut var = 0f32;
+			for t in 0..num_frames {
+				let d = log_mel[[t, m]] - mean;
+				var += d * d;
+			}
+			let denom = if num_frames > 1 { (num_frames - 1) as f32 } else { 1.0 };
+			let std = (var / denom).sqrt() + 1e-5;
+			for t in 0..num_frames {
+				log_mel[[t, m]] = (log_mel[[t, m]] - mean) / std;
+			}
+		}
+		log_mel
+	}
+
 	/// Low-Frame-Rate stacking. `window_size` frames per row, step `window_shift`; the final
 	/// partial window is right-padded with its last frame. Port of `_apply_lfr`.
 	pub fn apply_lfr(features: &Array2<f32>, window_size: usize, window_shift: usize) -> Array2<f32> {
@@ -1562,7 +1685,7 @@ impl CanaryEngine {
 			transcribe_input,
 			eos_token_id,
 			max_sequence_length: 1024,
-			mel_fb: frontend::build_mel_filterbank(),
+			mel_fb: frontend::build_nemo_mel_filterbank(),
 			model_name: cfg.model_name.clone(),
 			providers: providers_to_strings(&cfg.providers),
 		})
@@ -1604,7 +1727,8 @@ impl Transcriber for CanaryEngine {
 			return Ok(Transcription::default());
 		}
 		// Encode (audio_signal=(1,feat,T), length=[T]) → (encoder_embeddings, encoder_mask).
-		let fbank = frontend::compute_fbank(audio, &self.mel_fb);
+		// NeMo 128-mel featurizer (per-feature normalized) — NOT the 80-mel kaldi fbank.
+		let fbank = frontend::nemo_features(audio, &self.mel_fb);
 		let t = fbank.nrows();
 		if t == 0 {
 			return Ok(Transcription::default());
@@ -1634,36 +1758,29 @@ impl Transcriber for CanaryEngine {
 		let prefix_len = prompt.len();
 		let mut batch_tokens: Vec<i64> = prompt;
 
-		// SPIKE: `decoder_mems` shape `(layers, 1, mem_len, hidden)` is read from the decoder input
-		// metadata at load; here we feed an empty (mem_len=0) on the first step and the decoder
-		// returns the grown mems. The exact carry of `decoder_hidden_states`→`decoder_mems` across
-		// steps is wired by the spike. We run the prompt step + greedy continuation with host
-		// re-feeds (correct, slower) — see CohereEngine for the same pattern.
-		let mut decoder_mems_empty = true;
-
-		// encoder tensors get re-fed each step (host); device bind is a spike optimization.
+		// Greedy AED decode with the NeMo `decoder_mems` cache. The decoder returns
+		// `decoder_hidden_states`, which becomes the NEXT step's `decoder_mems` (port of
+		// nemo.py `NemoConformerAED._decode`/`_decoding`). input_ids = full prompt while the mems
+		// are empty (shape[2]==0), then only the last token. EOS breaks BEFORE it's appended.
+		// (The prior code re-fed zero mems every step → no context after token 0 → output "And".)
 		let enc_shape = encoder_embeddings.shape().to_vec();
 		let mask_shape = encoder_mask.shape().to_vec();
+		// Initial decoder_mems: (num_layers, 1, 0, hidden) — dms_shape declares mem_len(dim 2)=0.
+		let mut decoder_mems: ArrayD<f32> = ArrayD::<f32>::zeros(ndarray::IxDyn(&dms_shape(&self.decoder)));
 
 		while batch_tokens.len() < self.max_sequence_length {
-			let input_len = if decoder_mems_empty {
-				batch_tokens.len()
+			let mem_len = decoder_mems.shape().get(2).copied().unwrap_or(0);
+			let (input_len, input_ids_data): (usize, Vec<i64>) = if mem_len == 0 {
+				(batch_tokens.len(), batch_tokens.clone())
 			} else {
-				1
-			};
-			let input_ids_data: Vec<i64> = if decoder_mems_empty {
-				batch_tokens.clone()
-			} else {
-				vec![*batch_tokens.last().unwrap()]
+				(1, vec![*batch_tokens.last().unwrap()])
 			};
 			let input_ids = tensor_i64((1, input_len), input_ids_data)?;
 
 			let enc_emb = clone_f32_arrayd(&encoder_embeddings, &enc_shape)?;
 			let enc_mask = clone_i64_arrayd(&encoder_mask, &mask_shape)?;
-			let mems = Tensor::from_array(ArrayD::<f32>::zeros(ndarray::IxDyn(&dms_shape(
-				&self.decoder,
-			))))
-			.map_err(|e| SttError::Inference(format!("canary mems: {e}")))?;
+			let mems_tensor = Tensor::from_array(decoder_mems.clone())
+				.map_err(|e| SttError::Inference(format!("canary mems: {e}")))?;
 
 			let outputs = self
 				.decoder
@@ -1671,11 +1788,14 @@ impl Transcriber for CanaryEngine {
 					"input_ids" => input_ids,
 					"encoder_embeddings" => enc_emb,
 					"encoder_mask" => enc_mask,
-					"decoder_mems" => mems,
+					"decoder_mems" => mems_tensor,
 				])
 				.map_err(|e| SttError::Inference(format!("canary decoder run: {e}")))?;
 
 			let logits = out_to_f32(&outputs["logits"])?;
+			let next_mems = out_to_f32(&outputs["decoder_hidden_states"])?;
+			drop(outputs);
+
 			let last = last_step_row(&logits)?;
 			let (best, _) = argmax_1d(&last);
 			let next = best as i64;
@@ -1683,7 +1803,7 @@ impl Transcriber for CanaryEngine {
 				break;
 			}
 			batch_tokens.push(next);
-			decoder_mems_empty = false;
+			decoder_mems = next_mems; // carry decoder_hidden_states → decoder_mems
 		}
 
 		// Decode: strip <|...|> tokens.

@@ -58,27 +58,33 @@ enum LoadedEngine {
 /// SenseVoice live in `stt::families` but aren't wired) so the swap surfaces a precise error
 /// instead of silently doing nothing.
 fn engine_kind_for(entry: &crate::winstt::catalog::ModelEntry) -> Option<crate::winstt::stt::EngineKind> {
-    use crate::winstt::catalog::Family;
-    // Only families whose ONNX numerics have been validated end-to-end (the STT spike,
-    // transcribing JFK correctly) are enabled in the LIVE dictation path; the rest return a
-    // clean "no Rust engine yet" error instead of silent garbage. Expand as each is spiked.
-    //   Whisper      — proven (whisper-tiny/.en, lite-whisper-128mel, crisper) via the resolver.
-    //   SenseVoice   — proven (sense-voice-small, CtcEngine) transcribes JFK with ITN punctuation.
-    // PENDING (drafted in stt::families, need a per-family featurizer/decode spike before enabling):
-    //   Nemo (Canary/parakeet) + GigaAM — need the real 128-bin NeMo log-mel featurizer w/
-    //     per-feature normalization (current frontend is an 80-bin kaldi fbank placeholder).
-    //   Cohere — needs the 128-bin time-first Cohere mel + fp16 KV-cache dtype.
-    //   Kaldi/zipformer+vosk — resolver file_globs need the sherpa `encoder-epoch-*.onnx` naming.
-    //   Dolphin/T-One — multilingual/ru, validate with non-English audio.
-    let validated = matches!(entry.family, Family::Whisper | Family::SenseVoice);
-    if !validated {
-        return None;
-    }
-    Some(crate::winstt::stt::cache_probe::engine_kind_for(
+    use crate::winstt::stt::EngineKind;
+    let kind = crate::winstt::stt::cache_probe::engine_kind_for(
         entry.id,
         family_policy_slug(entry.family),
         entry.onnx_model_name,
-    ))
+    );
+    // Gate on the resolved ENGINE KIND (not just family) — `Family::Nemo` spans both the
+    // validated Canary (NemoAed) and the still-unvalidated parakeet CTC/TDT, so kind-level
+    // gating lets Canary go live while parakeet stays disabled. Only kinds whose ONNX
+    // numerics are spike-proven (transcribe JFK correctly) are enabled; the rest return a
+    // clean "no Rust engine yet" error instead of silent garbage. Expand as each is spiked.
+    //   WhisperHf     — proven (whisper-tiny/.en, lite-whisper-128mel, crisper) via the resolver.
+    //   SenseVoiceCtc — proven (sense-voice-small) transcribes JFK with ITN punctuation.
+    //   NemoAed       — proven (canary-180m-flash) full JFK w/ PnC: NeMo 128-mel featurizer
+    //                   (per-feature norm) + decoder_mems carry.
+    // PENDING (drafted in stt::families): NemoCtc/Rnnt/Tdt (parakeet — wire the NeMo featurizer
+    //   into Ctc/Transducer + validate the transducer decode), GigaAM (own featurizer, ru),
+    //   Cohere (128-mel + fp16 KV), Kaldi/zipformer (sherpa glob), Dolphin/T-One (non-en audio).
+    let validated = matches!(
+        kind,
+        EngineKind::WhisperHf | EngineKind::SenseVoiceCtc | EngineKind::NemoAed
+    );
+    if validated {
+        Some(kind)
+    } else {
+        None
+    }
 }
 
 /// Catalog family → the policy slug string the `stt` helpers key on (mirrors the Python
