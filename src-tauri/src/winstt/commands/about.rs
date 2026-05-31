@@ -31,10 +31,10 @@ const COPYRIGHT: &str = "© 2024-2026 dahshury";
 
 /// The bundled End-User License text (repo-root `LICENSE`). Embedded at compile
 /// time so no runtime file / resource registration is required.
-const LICENSE_TEXT: &str = include_str!("../../../../../LICENSE");
+const LICENSE_TEXT: &str = include_str!("../../../../LICENSE");
 
 /// The bundled third-party notices (repo-root `THIRD_PARTY_NOTICES.md`).
-const NOTICES_TEXT: &str = include_str!("../../../../../THIRD_PARTY_NOTICES.md");
+const NOTICES_TEXT: &str = include_str!("../../../../THIRD_PARTY_NOTICES.md");
 
 /// App metadata surfaced in the About panel. Field names mirror the renderer's
 /// `AboutAppInfo` interface exactly (camelCase) so the value round-trips through

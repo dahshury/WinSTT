@@ -1,257 +1,130 @@
 # Build Instructions
 
-This guide covers how to set up a development environment for WinSTT and how to produce the two release installers (CPU + DirectML).
-
-For end-user installation, just download an installer from the [releases page](https://github.com/dahshury/WinSTT/releases) — this document is for **building from source**.
+This guide covers how to set up the development environment and build Handy from source across different platforms.
 
 ## Prerequisites
 
-All builds:
+### All Platforms
 
-- **[Git](https://git-scm.com/)** — `onnx-asr` is fetched as a git dependency
-- **[uv](https://docs.astral.sh/uv/)** — Python toolchain manager (installs Python 3.11 for you)
-- **[Bun](https://bun.sh/)** — JS runtime and package manager
-- **PowerShell 7+** (`pwsh`) — only required for the packaging script (`server/packaging/build.ps1`)
+- [Rust](https://rustup.rs/) (latest stable)
+- [Bun](https://bun.sh/) package manager
+- [Tauri Prerequisites](https://tauri.app/start/prerequisites/)
 
-Optional, depending on what you build:
+### Platform-Specific Requirements
 
-| Need | Required for |
-|---|---|
-| **NVIDIA GPU + recent driver** | The legacy `gpu` extra (`onnxruntime-gpu` + ~2 GB of CUDA wheels). Not used by the default DirectML release flow. |
-| **D3D12-capable GPU** | The DirectML build at runtime (AMD / Intel / NVIDIA via DirectX 12). The packaged installer falls back to CPU when no compatible GPU is present. |
-| **Visual Studio Build Tools 2022** with C++ Desktop workload | Only if you rebuild the native helpers in `frontend/electron/native/src/winstt-*.c`. The prebuilt NAPI binaries that ship with `uiohook-napi` are loaded as-is in normal dev. |
-| **Ollama** | Local LLM cleanup / custom transforms (runtime feature, not a build requirement). |
+#### macOS
 
-> WinSTT's transcription stack is **ONNX-only**. PyTorch is only pulled in by the optional `sentence-classifier` extra (Smart Endpoint / DistilBERT) and never bundled into a release.
+- Xcode Command Line Tools
+- Install with: `xcode-select --install`
 
-## Quick Setup
+#### Windows
 
-From the repo root:
+- Microsoft C++ Build Tools
+- Visual Studio 2019/2022 with C++ development tools
+- Or Visual Studio Build Tools 2019/2022
 
-```bat
-setup-dev.bat
-```
+#### Linux
 
-This script:
+- Build essentials
+- ALSA development libraries
+- Install with:
 
-1. Installs uv (if missing).
-2. Installs Bun (if missing).
-3. Detects an NVIDIA GPU and picks `--extra cpu` or `--extra gpu` automatically — override with `setup-dev.bat --flavor cpu | gpu`.
-4. Syncs Python 3.11 + server deps via `uv sync`.
-5. Runs `bun install` in `frontend/`.
+  ```bash
+  # Ubuntu/Debian
+  sudo apt update
+  sudo apt install build-essential libasound2-dev pkg-config libssl-dev libvulkan-dev vulkan-tools glslc libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-layer-shell0 libgtk-layer-shell-dev patchelf cmake
 
-After it finishes, [run the app](#running-locally).
+  # Fedora/RHEL
+  sudo dnf groupinstall "Development Tools"
+  sudo dnf install alsa-lib-devel pkgconf openssl-devel vulkan-devel \
+    gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel \
+    gtk-layer-shell gtk-layer-shell-devel \
+    cmake
 
-## Manual Setup
+  # Arch Linux
+  sudo pacman -S base-devel alsa-lib pkgconf openssl vulkan-devel \
+    gtk3 webkit2gtk-4.1 libappindicator-gtk3 librsvg gtk-layer-shell \
+    cmake
+  ```
 
-### 1. Install uv
+## Setup Instructions
 
-```powershell
-irm https://astral.sh/uv/install.ps1 | iex
-```
-
-Add `C:\Users\<you>\.local\bin` to your PATH and restart your terminal.
-
-```bash
-uv --version    # verify
-```
-
-### 2. Server dependencies
+### 1. Clone the Repository
 
 ```bash
-cd server
-uv sync --extra cpu          # CPU-only ONNX Runtime (~small)
-# or
-uv sync --extra gpu          # onnxruntime-gpu + full NVIDIA CUDA wheels (~2 GB)
+git clone git@github.com:cjpais/Handy.git
+cd Handy
 ```
 
-Optional feature extras can be combined:
+### 2. Install Dependencies
 
 ```bash
-uv sync --extra cpu --extra tts --extra sentence-classifier
-```
-
-| Extra | Adds |
-|---|---|
-| `cpu` | `onnxruntime` (CPU only). Required if you don't use `gpu`. |
-| `gpu` | `onnxruntime-gpu` + the full NVIDIA cu12 wheel set. Mutually exclusive with `cpu`. |
-| `directml` | `onnxruntime-directml`. Used by the default Windows release. |
-| `tts` | Kokoro-82M ONNX TTS (`kokoro-onnx`, torch-free). |
-| `sentence-classifier` | Smart Endpoint / DistilBERT. The only extra that pulls in `torch` + `transformers`; gated and fails soft if absent. |
-
-> **One ONNX runtime extra is required.** Plain `uv sync` with no extra installs neither runtime, and the server will crash on import.
-
-### 3. Frontend dependencies
-
-```bash
-cd frontend
 bun install
 ```
 
-Verify the Electron build compiles:
+### 3. Start Dev Server
 
 ```bash
-bun electron:compile
+bun tauri dev
 ```
 
-## Running locally
-
-Open two terminals:
+### 4. Build for Production
 
 ```bash
-# Terminal 1 — STT server
-cd server
-uv run stt-server
-
-# Terminal 2 — Electron app
-cd frontend
-bun electron:dev
+bun run tauri build
 ```
 
-The server starts two WebSockets on `127.0.0.1`:
+This compiles a release binary and generates platform-specific bundles (deb, rpm, AppImage on Linux; dmg on macOS; msi on Windows).
 
-- Control (JSON commands) — port `8011`
-- Audio (binary PCM) — port `8012`
+## Linux Install (from source)
 
-Useful server flags:
+The raw binary (`src-tauri/target/release/handy`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.
+
+**Install from the deb bundle** (works on any Linux distro):
 
 ```bash
-uv run stt-server -m tiny.en          # smaller model, faster startup
-uv run stt-server --device cpu        # force CPU (no CUDA / DirectML)
-uv run stt-server -c 8011 -d 8012     # custom WebSocket ports
-uv run stt-server -D                  # verbose / debug log level
-uv run stt-server --help              # all options
+cd /tmp
+ar x /path/to/Handy/src-tauri/target/release/bundle/deb/Handy_*_amd64.deb data.tar.gz
+tar xzf data.tar.gz
+sudo cp usr/bin/handy /usr/bin/
+sudo cp -r usr/lib/Handy /usr/lib/
+sudo cp -r usr/share/icons/hicolor/* /usr/share/icons/hicolor/
+sudo cp usr/share/applications/Handy.desktop /usr/share/applications/
 ```
 
-The Electron main process is the only WebSocket client — the renderer talks to it via IPC.
-
-## Packaging (release builds)
-
-WinSTT ships **two NSIS installers per release**. Both wrap the same Electron app; only the bundled `stt-server.exe` differs:
-
-| Installer | Size | ORT wheel | When to ship |
-|---|---|---|---|
-| `WinSTT-Portable-<version>.exe` | ~200 MB | `onnxruntime-directml` | Default GPU build — any Windows GPU via DirectX 12. Auto-falls-back to CPU. |
-| `WinSTT-CPU-Portable-<version>.exe` | ~150 MB | `onnxruntime` | Servers / headless boxes / users who want the smallest download. |
-
-The legacy CUDA-bundle build (`onnxruntime-gpu` + 8 NVIDIA cu12 wheels, ~2 GB) was retired for Windows because DirectML is faster on our workload (DirectML p50 = 85 ms vs CUDA 120 ms on a Whisper-tiny q4 benchmark), more consistent in tail latency, and ~10× smaller. CUDA EP detection is preserved in `server/src/recorder/infrastructure/device.py` for the eventual Linux NVIDIA build.
-
-### Layout
-
-Run from the **repo root**. All packaging configs and intermediate bundles live under `packaging/`; the final installer lands at `<repo>/dist/`:
-
-```
-packaging/
-├── electron-builder.yml
-├── electron-builder.cpu.yml
-├── electron-builder.directml.yml
-└── stt-server-dist/
-    ├── cpu/                # PyInstaller output, CPU flavor
-    └── directml/           # PyInstaller output, DirectML flavor
-```
-
-### Two-step build
-
-Build the server executable first, then the matching installer.
-
-**CPU:**
+After subsequent rebuilds, only the binary needs re-copying:
 
 ```bash
-pwsh server/packaging/build.ps1 -Flavor cpu        # -> packaging/stt-server-dist/cpu/
-bun run electron:build:cpu                         # -> dist/WinSTT-CPU-Portable-<version>.exe
+sudo cp src-tauri/target/release/handy /usr/bin/
 ```
 
-**DirectML (default GPU):**
-
-```bash
-pwsh server/packaging/build.ps1 -Flavor directml   # -> packaging/stt-server-dist/directml/
-bun run electron:build:directml                    # -> dist/WinSTT-Portable-<version>.exe
-```
-
-`build.ps1` uses an **isolated build venv** (`server/.venv-build-<flavor>/`, controlled by `UV_PROJECT_ENVIRONMENT`) so packaging never fights the live `stt-server` process holding DLLs open in the dev `.venv`. You can keep `bun electron:dev` running in another terminal while you build.
-
-The PyInstaller spec at `server/packaging/stt-server.spec` auto-detects whether the `nvidia` package is in the venv (the `[gpu]` extra) and bundles CUDA DLLs accordingly. For shipped Windows builds neither flavor installs `[gpu]`, so no NVIDIA DLLs end up in the installer.
-
-### Tagging a release
-
-```bash
-git tag v0.X.0
-git push --tags
-```
-
-`.github/workflows/electron-release.yml` runs the CPU + DirectML builds as a matrix on tag push and publishes both installers to the same GitHub Release.
-
-### macOS-only: Apple Intelligence CLI
-
-When packaging the Electron app on macOS, compile the bundled Apple Intelligence bridge **before** running electron-builder:
-
-```bash
-bash tools/apple-intelligence-cli/build.sh
-```
-
-This emits `frontend/electron/resources/macos/winstt-apple-llm` — a tiny Swift binary that the Electron main process spawns to call Apple's on-device `FoundationModels` framework (macOS 15+ Apple Silicon). The script no-ops on Windows/Linux. The corresponding renderer-side provider option is hidden on non-Apple-Silicon platforms.
-
-## Useful Commands
-
-### Server (`server/`)
-
-| Command | Description |
-|---|---|
-| `uv run stt-server` | Start the STT server |
-| `uv run pytest` | Run all tests |
-| `uv run pytest tests/unit/recorder/test_state_machine.py` | Single test file |
-| `uv run pytest -k "test_name"` | Single test by name |
-| `uv run ruff format .` | Format |
-| `uv run ruff check . --fix` | Lint with auto-fix |
-| `uv run mypy src/ --strict` | Type check (must be zero errors) |
-| `make` | All of the above as a single check |
-
-### Frontend (`frontend/`)
-
-| Command | Description |
-|---|---|
-| `bun dev` | Vite renderer dev server (no Electron) |
-| `bun electron:dev` | Full Electron + Vite dev |
-| `bun electron:compile` | Compile Electron main/preload only |
-| `bun build` | Production renderer build |
-| `bun electron:build` | Build distributable Electron app |
-| `bun typecheck` | TypeScript check |
-| `bun lint` / `bun lint:fix` | Biome lint |
-| `bun format` | Biome format |
-| `bun test` | Bun test runner |
-| `bun generate` | Regenerate TS types from OpenAPI spec |
-| `bun knip` | Detect unused exports/files |
-
-### Native helpers (rarely needed)
-
-If you've modified `frontend/electron/native/src/winstt-*.c`, rebuild from a Developer Command Prompt:
-
-```bash
-bun --cwd frontend run native:build
-```
-
-Otherwise the prebuilt NAPI binaries shipped with `uiohook-napi` are loaded as-is.
+Resources only need re-copying if they change upstream (new icons, sounds, etc.).
 
 ## Troubleshooting
 
-For runtime issues see [docs/content/docs/troubleshooting.mdx](docs/content/docs/troubleshooting.mdx). Build-specific gotchas below.
+### AppImage build fails on Arch / rolling-release distros
 
-### `uv sync` installs no ONNX runtime / `No module named onnxruntime`
+`linuxdeploy` bundles its own `strip` binary which is too old to process system libraries built with newer toolchains on rolling-release distros (Arch, CachyOS, Manjaro, EndeavourOS).
 
-You forgot `--extra cpu` or `--extra gpu`. They conflict, so pick one. Add `--extra tts` / `--extra sentence-classifier` for the optional features.
+The error from Tauri:
 
-### `onnx-asr` git fetch fails
+```
+Bundling Handy_*_amd64.AppImage
+failed to bundle project `failed to run linuxdeploy`
+```
 
-`onnx-asr` is fetched directly from `github.com/dahshury/onnx-asr` (pinned commit in `server/pyproject.toml`). If `uv sync` errors on the git step, check your network / GitHub access and re-run. No local clone is needed.
+Tauri swallows the real linuxdeploy error. To see it, run linuxdeploy manually:
 
-### `bun install` errors on `uiohook-napi`
+```bash
+cd src-tauri/target/release/bundle/appimage
+~/.cache/tauri/linuxdeploy-x86_64.AppImage --appimage-extract-and-run \
+  --appdir Handy.AppDir --plugin gtk --output appimage
+```
 
-The prebuilt NAPI binary loads as-is; no rebuild is forced in normal dev. If you specifically need to rebuild the native C helpers, install Visual Studio Build Tools 2022 with the C++ Desktop workload and run `bun --cwd frontend run native:build` from a Developer Command Prompt.
+**Workaround:** The binary, deb, and rpm bundles all build fine — only the AppImage step fails. To skip it:
 
-### `electron-builder` complains about a locked DLL
+```bash
+bun run tauri build -- --bundles deb
+```
 
-Stop the dev server (`bun electron:dev`) before packaging — Electron holds onnxruntime DLLs open. The packaging script uses an isolated build venv so the *server* side is decoupled, but the *frontend* side still needs the dev Electron to exit.
-
-### PyInstaller wheel resolution is wrong
-
-Delete `server/.venv-build-cpu/` or `server/.venv-build-directml/` and re-run `pwsh server/packaging/build.ps1 -Flavor <flavor>`. The isolated build venv is disposable.
+Then install using the deb extraction method above.
