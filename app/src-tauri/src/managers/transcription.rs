@@ -14,6 +14,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
+use crate::winstt::stt::Transcriber as WinsttTranscriber;
 use transcribe_rs::{
     onnx::{
         canary::CanaryModel,
@@ -45,6 +46,53 @@ enum LoadedEngine {
     GigaAM(GigaAMModel),
     Canary(CanaryModel),
     Cohere(CohereModel),
+    /// WinSTT unified ort-ONNX engine — whisper / lite-whisper / distil / crisper (and, as
+    /// `stt::families` lands, the remaining families). The ONLY path that loads WinSTT's exact
+    /// ONNX exports + lite-whisper (transcribe-rs's Whisper is GGML and cannot). Proven via the
+    /// STT spike (`src/bin/stt_spike.rs`; see project memory). `Box<dyn Transcriber>` is `Send`.
+    Winstt(Box<dyn WinsttTranscriber>),
+}
+
+/// Catalog family → engine decode archetype. Returns `None` for families whose engine isn't
+/// dispatched by `stt::build_engine` yet (Moonshine/Cohere/NeMo/Kaldi/GigaAM/T-One/Dolphin/
+/// SenseVoice live in `stt::families` but aren't wired) so the swap surfaces a precise error
+/// instead of silently doing nothing.
+fn engine_kind_for(entry: &crate::winstt::catalog::ModelEntry) -> Option<crate::winstt::stt::EngineKind> {
+    use crate::winstt::catalog::Family;
+    use crate::winstt::stt::EngineKind;
+    Some(match entry.family {
+        Family::Whisper => EngineKind::WhisperHf,
+        _ => return None,
+    })
+}
+
+/// Catalog family → the policy slug string the `stt` helpers key on (mirrors the Python
+/// `family` strings used by `resolve_quantization_auto` / `override_dml_to_cpu_for_family`).
+fn family_policy_slug(family: crate::winstt::catalog::Family) -> &'static str {
+    use crate::winstt::catalog::Family;
+    match family {
+        Family::Whisper => "whisper",
+        Family::Moonshine => "moonshine",
+        Family::Cohere => "cohere",
+        Family::Nemo => "nemo",
+        Family::SenseVoice => "sense_voice",
+        Family::GigaAm => "gigaam",
+        Family::Kaldi => "kaldi",
+        Family::TOne => "t-one",
+        Family::Dolphin => "dolphin",
+        Family::Custom => "custom",
+    }
+}
+
+/// Peak-normalize to 0.95 — the single audio-conditioning chokepoint the WinSTT engines expect
+/// (mirrors Python `_peak_normalize`; the `Transcriber` contract says the caller conditions).
+fn peak_normalize(audio: &[f32]) -> Vec<f32> {
+    let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+    if peak <= 0.0 {
+        return audio.to_vec();
+    }
+    let g = 0.95 / peak;
+    audio.iter().map(|&x| x * g).collect()
 }
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
@@ -412,24 +460,191 @@ impl TranscriptionManager {
         Ok(())
     }
 
-    /// Kicks off the model loading in a background thread if it's not already loaded
+    /// The model the user actually selected. The WinSTT picker (`winstt_settings.model.model`)
+    /// is the source of truth; fall back to Handy's `selected_model` (cloud ids / first-run).
+    fn desired_model_id(&self) -> String {
+        let winstt = crate::winstt::commands::settings::read_settings(&self.app_handle)
+            .model
+            .model;
+        if !winstt.trim().is_empty() {
+            winstt
+        } else {
+            get_settings(&self.app_handle).selected_model
+        }
+    }
+
+    /// Reconcile the loaded engine to the user's selected model. Loads it if nothing is loaded
+    /// OR swaps if a *different* model is loaded (the previous early-return-if-loaded blocked
+    /// model switching). WinSTT-catalog ids load through the unified ort engine
+    /// (`load_winstt_model`); anything else falls back to Handy's transcribe-rs `load_model`.
     pub fn initiate_model_load(&self) {
         let mut is_loading = self.is_loading.lock().unwrap();
-        if *is_loading || self.is_model_loaded() {
-            return;
+        if *is_loading {
+            return; // a load is already in flight; it picks up the latest selection
+        }
+        let desired = self.desired_model_id();
+        if self.is_model_loaded() && self.get_current_model().as_deref() == Some(desired.as_str()) {
+            return; // already on the selected model
         }
 
         *is_loading = true;
+        drop(is_loading);
         let self_clone = self.clone();
         thread::spawn(move || {
-            let settings = get_settings(&self_clone.app_handle);
-            if let Err(e) = self_clone.load_model(&settings.selected_model) {
-                error!("Failed to load model: {}", e);
+            // Free the previous engine's ORT sessions before loading the next (Windows DLL race).
+            if self_clone.is_model_loaded() {
+                let _ = self_clone.unload_model();
+            }
+            let desired = self_clone.desired_model_id();
+            let result = if crate::winstt::catalog::find(&desired).is_some() {
+                self_clone.load_winstt_model(&desired)
+            } else {
+                self_clone.load_model(&desired)
+            };
+            if let Err(e) = result {
+                error!("Failed to load model '{}': {}", desired, e);
             }
             let mut is_loading = self_clone.is_loading.lock().unwrap();
             *is_loading = false;
             self_clone.loading_condvar.notify_all();
         });
+    }
+
+    /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT spike
+    /// path). Resolves the catalog entry → effective quant + provider list (device/quant
+    /// settings + family policy) → HF file set → `winstt::stt::build_engine`. Deliberately
+    /// bypasses Handy's transcribe-rs `ModelManager` registry (a different id namespace).
+    fn load_winstt_model(&self, model_id: &str) -> Result<()> {
+        use crate::winstt::catalog::Family;
+        use crate::winstt::settings_schema::DeviceType;
+        use crate::winstt::stt::resolver::{self, ResolveRequest};
+        use crate::winstt::stt::{self, Accelerator, EngineConfig, Quantization};
+
+        let load_start = std::time::Instant::now();
+        let entry = crate::winstt::catalog::find(model_id)
+            .ok_or_else(|| anyhow::anyhow!("model '{}' not in WinSTT catalog", model_id))?;
+        let family_slug = family_policy_slug(entry.family);
+        let kind = engine_kind_for(entry).ok_or_else(|| {
+            anyhow::anyhow!(
+                "model '{}' (family {:?}) has no Rust engine yet — only the Whisper family is wired",
+                model_id,
+                entry.family
+            )
+        })?;
+
+        let settings = crate::winstt::commands::settings::read_settings(&self.app_handle);
+
+        // device → primary accelerator (CPU vs the shipped GPU flavor)
+        let primary = match settings.model.device {
+            DeviceType::Cpu => Accelerator::Cpu,
+            DeviceType::Auto => {
+                if cfg!(windows) {
+                    Accelerator::DirectMl
+                } else {
+                    Accelerator::Cpu
+                }
+            }
+        };
+
+        // requested quant from settings; auto-resolve the int8-preferred / fp16 policy
+        let requested =
+            Quantization::parse(settings.model.onnx_quantization.trim()).unwrap_or(Quantization::Default);
+        let available: Vec<Quantization> = entry
+            .available_quantizations
+            .iter()
+            .filter_map(|s| Quantization::parse(s))
+            .collect();
+        let effective =
+            stt::resolve_quantization_auto(requested, primary, family_slug, entry.param_count, Some(&available));
+
+        // provider list (primary + CPU fallback), then the DML-incompatible-family override.
+        let providers = match primary {
+            Accelerator::Cpu => vec![Accelerator::Cpu],
+            other => vec![other, Accelerator::Cpu],
+        };
+        let providers = stt::override_dml_to_cpu_for_family(providers, family_slug);
+
+        // emit loading_started (parity with the Handy path's event surface)
+        let _ = self.app_handle.emit(
+            "model-state-changed",
+            ModelStateEvent {
+                event_type: "loading_started".to_string(),
+                model_id: Some(model_id.to_string()),
+                model_name: Some(entry.display_name.to_string()),
+                error: None,
+            },
+        );
+
+        // resolve the on-disk file set (cache-first; one network refetch if a shard is missing)
+        let req = ResolveRequest {
+            model_id: entry.onnx_model_name.to_string(),
+            kind,
+            effective_quant: effective,
+            local_dir: None,
+            local_files_only: true,
+        };
+        let emit_failed = |msg: &str| {
+            let _ = self.app_handle.emit(
+                "model-state-changed",
+                ModelStateEvent {
+                    event_type: "loading_failed".to_string(),
+                    model_id: Some(model_id.to_string()),
+                    model_name: Some(entry.display_name.to_string()),
+                    error: Some(msg.to_string()),
+                },
+            );
+        };
+        let resolved = tauri::async_runtime::block_on(resolver::resolve(&req)).map_err(|e| {
+            let msg = format!("resolve {}: {}", model_id, e);
+            emit_failed(&msg);
+            anyhow::anyhow!(msg)
+        })?;
+
+        let whisper_fp16_workaround =
+            matches!(entry.family, Family::Whisper) && effective == Quantization::Fp16;
+
+        let cfg = EngineConfig {
+            model_name: model_id.to_string(),
+            family: family_slug.to_string(),
+            kind,
+            resolved,
+            providers,
+            whisper_fp16_workaround,
+        };
+
+        let engine = stt::build_engine(cfg).map_err(|e| {
+            let msg = format!("build WinSTT engine for {}: {}", model_id, e);
+            emit_failed(&msg);
+            anyhow::anyhow!(msg)
+        })?;
+
+        {
+            let mut guard = self.lock_engine();
+            *guard = Some(LoadedEngine::Winstt(engine));
+        }
+        {
+            let mut current = self.current_model_id.lock().unwrap();
+            *current = Some(model_id.to_string());
+        }
+        self.touch_activity();
+
+        let _ = self.app_handle.emit(
+            "model-state-changed",
+            ModelStateEvent {
+                event_type: "loading_completed".to_string(),
+                model_id: Some(model_id.to_string()),
+                model_name: Some(entry.display_name.to_string()),
+                error: None,
+            },
+        );
+        info!(
+            "Loaded WinSTT model '{}' ({:?}/{:?}) in {}ms",
+            model_id,
+            kind,
+            effective,
+            load_start.elapsed().as_millis()
+        );
+        Ok(())
     }
 
     pub fn get_current_model(&self) -> Option<String> {
@@ -499,6 +714,37 @@ impl TranscriptionManager {
                     settings.selected_language
                 );
                 "auto".to_string()
+            }
+        };
+
+        // WinSTT engine inputs come from the WinSTT settings store (the picker's source of
+        // truth), not Handy's settings — derive them once here so the catch_unwind closure
+        // stays free of `self` borrows. Ignored by the transcribe-rs engine arms.
+        let winstt_opts = {
+            let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
+            let language = {
+                let l = ws.model.language.trim();
+                if l.is_empty() || l == "auto" {
+                    None
+                } else if l == "zh-Hans" || l == "zh-Hant" {
+                    Some("zh".to_string())
+                } else {
+                    Some(l.to_string())
+                }
+            };
+            let initial_prompt_text = {
+                let p = ws.model.initial_prompt.trim();
+                if p.is_empty() {
+                    None
+                } else {
+                    Some(p.to_string())
+                }
+            };
+            crate::winstt::stt::TranscribeOptions {
+                language,
+                translate: ws.model.translate_to_english,
+                initial_prompt_text,
+                ..Default::default()
             }
         };
 
@@ -628,6 +874,16 @@ impl TranscriptionManager {
                             cohere_engine
                                 .transcribe(&audio, &options)
                                 .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
+                        }
+                        LoadedEngine::Winstt(winstt_engine) => {
+                            let conditioned = peak_normalize(&audio);
+                            winstt_engine
+                                .transcribe(&conditioned, &winstt_opts)
+                                .map(|t| transcribe_rs::TranscriptionResult {
+                                    text: t.text,
+                                    segments: None,
+                                })
+                                .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e))
                         }
                     }
                 },

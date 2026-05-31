@@ -21,8 +21,95 @@ use handy_app_lib::winstt::stt::{
 
 const DEFAULT_SNAP: &str = "C:/Users/MASTE/.cache/huggingface/hub/models--onnx-community--whisper-tiny.en/snapshots/2575352d61be1bf7225cf8f8b268a4678025fc58";
 
+fn load_audio() -> Vec<f32> {
+    let audio_path = std::path::PathBuf::from("jfk_16k_mono.f32");
+    let audio_path = if audio_path.exists() {
+        audio_path
+    } else {
+        PathBuf::from("E:/DL/Projects/WinSTT/app/src-tauri/jfk_16k_mono.f32")
+    };
+    let bytes = std::fs::read(&audio_path).expect("read jfk_16k_mono.f32");
+    let mut audio: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+    let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+    if peak > 0.0 {
+        let g = 0.95 / peak;
+        for x in audio.iter_mut() {
+            *x *= g;
+        }
+    }
+    audio
+}
+
+/// Catalog mode — exercises the EXACT path `TranscriptionManager::load_winstt_model` uses:
+/// `catalog::find(id)` → `resolver::resolve` (cache-only) → `build_engine` → `transcribe`.
+/// Proves the resolver wires the right files (incl. config-derived n_mels) for a real catalog id.
+fn run_catalog_mode(cat_id: &str) {
+    use handy_app_lib::winstt::catalog;
+    use handy_app_lib::winstt::stt::resolver::{self, ResolveRequest};
+    use handy_app_lib::winstt::stt::build_engine;
+
+    let entry = catalog::find(cat_id).unwrap_or_else(|| panic!("catalog id '{cat_id}' not found"));
+    eprintln!("=== CATALOG MODE ===");
+    eprintln!("catalog id : {cat_id}");
+    eprintln!("repo       : {} (family {:?})", entry.onnx_model_name, entry.family);
+
+    let kind = EngineKind::WhisperHf; // this harness only drives the Whisper family
+    let req = ResolveRequest {
+        model_id: entry.onnx_model_name.to_string(),
+        kind,
+        effective_quant: Quantization::Default,
+        local_dir: None,
+        local_files_only: true,
+    };
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let resolved = match rt.block_on(resolver::resolve(&req)) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("RESOLVE FAILED: {e}");
+            std::process::exit(4);
+        }
+    };
+    let mut keys: Vec<&String> = resolved.files.keys().collect();
+    keys.sort();
+    eprintln!("resolved   : {} files {:?}", resolved.files.len(), keys);
+
+    let cfg = EngineConfig {
+        model_name: cat_id.to_string(),
+        family: "whisper".to_string(),
+        kind,
+        resolved,
+        providers: vec![Accelerator::Cpu],
+        whisper_fp16_workaround: false,
+    };
+    let mut engine = match build_engine(cfg) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("BUILD FAILED: {e}");
+            std::process::exit(5);
+        }
+    };
+    let audio = load_audio();
+    match engine.transcribe(&audio, &TranscribeOptions::default()) {
+        Ok(out) => println!("\n=== CATALOG TRANSCRIPT ({cat_id}) ===\n{}\n==================", out.text),
+        Err(e) => {
+            eprintln!("TRANSCRIBE FAILED: {e}");
+            std::process::exit(6);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    // Catalog mode: `stt_spike --catalog <catalog_id>` (verifies the resolver→engine path).
+    if args.get(1).map(|s| s == "--catalog").unwrap_or(false) {
+        let cat_id = args.get(2).cloned().unwrap_or_else(|| "tiny.en".to_string());
+        run_catalog_mode(&cat_id);
+        return;
+    }
     let snap = args.get(1).cloned().unwrap_or_else(|| DEFAULT_SNAP.to_string());
     let n_mels = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(80);
     let lang = args.get(3).cloned().unwrap_or_else(|| "en".to_string());

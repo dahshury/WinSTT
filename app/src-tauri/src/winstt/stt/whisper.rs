@@ -94,12 +94,21 @@ impl WhisperEngine {
 
 		let tokenizer = WhisperTokenizer::load(vocab_path, added_tokens_path)?;
 
-		// n_mels from config.json num_mel_bins (resolver stashes it as a decimal-string
-		// pseudo-path under "num_mel_bins"); default 80 (every export except large-v3=128).
+		// n_mels resolution order: explicit "num_mel_bins" pseudo-entry (spike) → the
+		// config.json `num_mel_bins` (the resolver provides a "config" path; else the sibling
+		// of vocab.json) → 80 (every export except large-v3 = 128). Getting this wrong silently
+		// breaks 128-mel models loaded through the live resolver path (they'd run at 80 mel).
 		let n_mels = files
 			.get("num_mel_bins")
 			.and_then(|p| p.to_str())
 			.and_then(|s| s.parse::<usize>().ok())
+			.or_else(|| {
+				let cfg = files
+					.get("config")
+					.map(|p| p.to_path_buf())
+					.or_else(|| vocab_path.parent().map(|d| d.join("config.json")))?;
+				read_config_usize(&cfg, "num_mel_bins")
+			})
 			.unwrap_or(80);
 		let mel = MelExtractor::new(n_mels);
 
@@ -613,6 +622,14 @@ fn kv_sort_key(name: &str) -> (i64, i64) {
 /// Best-effort CPU count (for `pick_intra_op_threads`). Falls back to 4 when unknown.
 fn num_cpus() -> usize {
 	std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+}
+
+/// Read an integer field (e.g. `num_mel_bins`) from a Whisper `config.json`. Tolerant: missing
+/// file / key / non-integer → None (caller falls back to a default).
+fn read_config_usize(config_path: &Path, key: &str) -> Option<usize> {
+	let raw = std::fs::read_to_string(config_path).ok()?;
+	let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+	v.get(key).and_then(|x| x.as_u64()).map(|n| n as usize)
 }
 
 /// Read (num_heads, head_dim) from the Whisper `config.json` that sits beside `vocab.json`
