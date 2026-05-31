@@ -646,12 +646,14 @@ pub fn run(cli_args: CliArgs) {
 
             // Create main window programmatically so we can set data_directory
             // for portable mode (redirects WebView2 cache to portable Data dir)
+            // WinSTT main window: 420x150 frameless floating pill (windows.rs WINDOW_SPECS[main]).
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
-                    .title("Handy")
-                    .inner_size(680.0, 570.0)
-                    .min_inner_size(680.0, 570.0)
-                    .resizable(true)
+                    .title("WinSTT")
+                    .inner_size(420.0, 150.0)
+                    .min_inner_size(420.0, 150.0)
+                    .resizable(false)
+                    .decorations(false)
                     .maximizable(false)
                     .visible(false);
 

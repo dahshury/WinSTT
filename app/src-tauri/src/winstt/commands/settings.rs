@@ -303,7 +303,6 @@ fn preset_slug(key: PresetKey) -> &'static str {
         PresetKey::Formal => "formal",
         PresetKey::Friendly => "friendly",
         PresetKey::Technical => "technical",
-        PresetKey::Casual => "casual",
         PresetKey::Concise => "concise",
         PresetKey::Summarize => "summarize",
         PresetKey::Reorder => "reorder",
@@ -317,11 +316,7 @@ fn preset_slug(key: PresetKey) -> &'static str {
 fn is_tone_preset(key: PresetKey) -> bool {
     matches!(
         key,
-        PresetKey::Neutral
-            | PresetKey::Formal
-            | PresetKey::Friendly
-            | PresetKey::Technical
-            | PresetKey::Casual
+        PresetKey::Neutral | PresetKey::Formal | PresetKey::Friendly | PresetKey::Technical
     )
 }
 
@@ -388,7 +383,7 @@ mod tests {
 
     #[test]
     fn rejects_two_tones() {
-        let presets = vec![p(PresetKey::Formal), p(PresetKey::Casual)];
+        let presets = vec![p(PresetKey::Formal), p(PresetKey::Friendly)];
         assert!(validate_presets(&presets).is_err());
     }
 
