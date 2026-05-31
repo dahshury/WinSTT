@@ -228,18 +228,36 @@ impl AudioRecordingManager {
             false
         };
 
-        let device_name = if use_clamshell_mic {
-            settings.clamshell_microphone.as_ref().unwrap()
+        let device_name: Option<&String> = if use_clamshell_mic {
+            settings.clamshell_microphone.as_ref()
         } else {
-            settings.selected_microphone.as_ref()?
+            settings.selected_microphone.as_ref()
         };
 
-        // Find the device by name
+        // Some Windows hosts default to a SILENT virtual/loopback input ("WO Mic",
+        // "Stereo Mix", "CABLE", …). Falling back to it yields level=0.00 → a dead
+        // visualizer + no captured audio. When no device is explicitly chosen, prefer
+        // a real physical input over these. (Returning None here would make the caller
+        // fall back to cpal's default, which on this machine IS the silent virtual mic.)
+        fn is_likely_virtual(name: &str) -> bool {
+            let lower = name.to_lowercase();
+            [
+                "stereo mix", "what u hear", "wo mic", "loopback", "virtual",
+                "aggregate", "wavetable", "stereo out", "mono mix", "voicemeeter", "cable",
+            ]
+            .iter()
+            .any(|p| lower.contains(p))
+        }
+
         match list_input_devices() {
-            Ok(devices) => devices
-                .into_iter()
-                .find(|d| d.name == *device_name)
-                .map(|d| d.device),
+            Ok(devices) => {
+                // explicit selection by name → first non-virtual → first → cpal default
+                let chosen = device_name
+                    .and_then(|name| devices.iter().position(|d| d.name == *name))
+                    .or_else(|| devices.iter().position(|d| !is_likely_virtual(&d.name)))
+                    .or_else(|| (!devices.is_empty()).then_some(0usize));
+                chosen.and_then(|i| devices.into_iter().nth(i)).map(|d| d.device)
+            }
             Err(e) => {
                 debug!("Failed to list devices, using default: {}", e);
                 None

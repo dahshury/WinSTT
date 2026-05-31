@@ -718,6 +718,13 @@ pub fn run(cli_args: CliArgs) {
             // Must run BEFORE the transforms hook below so HandyKeysState is initialized first.
             crate::shortcut::init_shortcuts(&app_handle);
 
+            // Pre-create every secondary window (hidden) here in setup. Building a webview
+            // lazily inside the `open_window` command hangs on Windows (WebView2 needs the
+            // main-thread message loop the sync command blocks) → blank windows. Creating
+            // them at startup, off the command path, makes `open_window` a pure show().
+            // Mirrors Handy's eager-create + show/hide model.
+            winstt::commands::windows::prewarm_windows(&app_handle);
+
             // WinSTT transforms global hotkey: arm `llm.transforms.hotkey` only while the
             // feature is enabled (mirrors transform-hotkeys.ts). The accelerator lives in the
             // WinSTT settings tree, so re-point the `transforms` binding at it here.

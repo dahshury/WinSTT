@@ -399,10 +399,29 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         builder = builder.data_directory(data_dir.join("webview"));
     }
 
+    // DIAGNOSTIC: log when this webview actually LOADS its page (fires regardless of
+    // whether the page's JS/invoke works), so we can tell "page never navigated/loaded"
+    // apart from "page loaded but its invokes are blocked". Tauri `on_page_load`.
+    {
+        let diag_label = spec.label;
+        builder = builder.on_page_load(move |_w, payload| {
+            log::info!(
+                "[webview-load:{diag_label}] {:?} url={}",
+                payload.event(),
+                payload.url()
+            );
+        });
+    }
+
     let window = builder.build().map_err(|e| {
         log::error!("ensure_window: failed to build '{label}': {e}");
         e.to_string()
     })?;
+
+    log::info!(
+        "[webview-built:{label}] url={}",
+        window.url().map(|u| u.to_string()).unwrap_or_else(|_| "<none>".into())
+    );
 
     if spec.ignore_cursor {
         let _ = window.set_ignore_cursor_events(true);
@@ -619,6 +638,28 @@ fn resolve_opener(
         "tray-menu"
     };
     app.get_webview_window(fallback)
+}
+
+/// Pre-create (hidden) every secondary window at STARTUP so `open_window` only ever
+/// has to SHOW an already-built window. Building a `WebviewWindow` lazily *inside* the
+/// synchronous `open_window` command handler hangs on Windows: WebView2 creation needs
+/// the main thread's message loop to pump, but the command IS running on the main
+/// thread and blocking it — so the window object is created yet its page never
+/// navigates/loads (blank window, "nothing happens"). The tray-menu + recording
+/// overlay already work precisely because they're built in `setup` (off the command
+/// path). This mirrors Handy, which creates its windows eagerly at startup and only
+/// `show()`/`hide()`s them thereafter. Idempotent — `ensure_window` early-returns for
+/// any window that already exists, so tray-menu/overlay aren't rebuilt.
+pub(crate) fn prewarm_windows(app: &AppHandle) {
+    for spec in WINDOW_SPECS {
+        if spec.label == "main" {
+            continue; // created in lib.rs setup
+        }
+        match ensure_window(app, spec.label) {
+            Ok(_) => log::info!("[prewarm] '{}' pre-created (hidden)", spec.label),
+            Err(e) => log::warn!("[prewarm] '{}' failed: {e}", spec.label),
+        }
+    }
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────

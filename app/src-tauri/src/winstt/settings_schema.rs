@@ -998,7 +998,12 @@ pub struct HotkeySettings {
 
 impl HotkeySettings {
     fn default_push_to_talk_key() -> String {
-        "LCtrl+LMeta".to_string()
+        // Must contain a REAL key, not just modifiers. The previous default
+        // `LCtrl+LMeta` (Ctrl+Windows) is modifier-only, and the OS-level key hook
+        // (handy-keys) never fires press/release for a modifier-only combo on Windows
+        // — so dictation could never trigger. `LCtrl+Space` matches Handy's proven
+        // `ctrl+space` default and works one-handed for push-to-talk.
+        "LCtrl+Space".to_string()
     }
 }
 
@@ -1571,7 +1576,7 @@ mod tests {
         );
 
         // hotkey
-        assert_eq!(s.hotkey.push_to_talk_key, "LCtrl+LMeta");
+        assert_eq!(s.hotkey.push_to_talk_key, "LCtrl+Space");
 
         // dictionary / snippets
         assert!(s.dictionary.is_empty());
