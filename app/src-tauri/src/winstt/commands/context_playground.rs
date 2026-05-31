@@ -32,7 +32,9 @@
 // The push payloads are BYTE-IDENTICAL to `ContextPlaygroundPush` in
 // context-debug-types.ts so the reused renderer listener needs no changes.
 
-#![cfg(feature = "context-playground")]
+// NOTE(port): de-gated — the renderer's CONTEXT_PLAYGROUND_ENABLED flag controls visibility;
+// the backend commands compile unconditionally so the renderer's invokes always resolve.
+// (was: #![cfg(feature = "context-playground")])
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

@@ -38,6 +38,10 @@ pub mod dictation;
 /// HOTKEY_REGISTER/UNREGISTER + key-combo capture (START/STOP_RECORDING) commands
 /// + the HotkeyEvents emit façade (hotkey:pressed/released/recording-update/done).
 pub mod hotkey;
+/// User-initiated dictation cancel: `cancel_current_operation` (STT_ABORT_OPERATION
+/// → overlay X / cancel combo). Wraps the centralized `utils::cancel_current_operation`
+/// + emits `stt:session-aborted`. Registered in lib.rs collect_commands![].
+pub mod cancel;
 pub mod tts;
 pub mod llm;
 // ── slice: LLM/Ollama long-tail (app/PORT/10_frontend_port_plan.md — WU-6) ──
@@ -70,8 +74,15 @@ pub mod audio_devices;
 pub mod wordts;
 pub mod file_transcribe;
 pub mod context;
-/// Recording-sound library: sound_library_add / sound_library_read_file / sound_library_remove.
+/// Recording-sound library + active-chime bytes: sound_library_add / sound_library_read_file /
+/// sound_library_remove + sound_get_data (SOUND_GET_DATA — the renderer's Web Audio preloader).
 pub mod sound;
+
+// ── slice: custom-models folder (app/PORT/10_frontend_port_plan.md §6 — WU-11) ──
+/// `open_custom_models_folder` — return the per-user custom-models dir
+/// (`<appData>/models/custom`) for the opener-plugin route (CUSTOM_MODELS_OPEN_FOLDER).
+/// Registered in lib.rs collect_commands![].
+pub mod custom_models;
 
 // ── slice: history (app/PORT/10_frontend_port_plan.md §6 — WU-10) ──
 /// History command surface: backs BOTH the dedicated history window (SQLite-store

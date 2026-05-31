@@ -51,7 +51,6 @@ pub enum PresetKey {
     Formal,
     Friendly,
     Technical,
-    Casual,
     Concise,
     Summarize,
     Reorder,
@@ -149,9 +148,8 @@ fn raw_builtin_prompt(key: PresetKey, level: Option<PresetLevel>) -> String {
     match key {
         PresetKey::Neutral => POLISH_PROMPT.to_string(),
         PresetKey::Formal => "Rewrite in professional business English. Remove contractions, slang, and casual phrasing. Preserve meaning and structure.".to_string(),
-        PresetKey::Friendly => "Rewrite in a warm, conversational tone with approachable wording. Preserve meaning and ideas.".to_string(),
+        PresetKey::Friendly => "Rewrite in a warm, friendly, conversational tone — relaxed and approachable, with natural contractions and casual phrasing. Preserve meaning and ideas.".to_string(),
         PresetKey::Technical => "Rewrite with precise technical terminology and rigorous structure. Replace vague terms with exact ones. Preserve meaning.".to_string(),
-        PresetKey::Casual => "Rewrite in a relaxed, conversational register with natural contractions and casual phrasing. Preserve meaning.".to_string(),
         PresetKey::Concise => leveled_concise(lvl).to_string(),
         PresetKey::Summarize => leveled_summarize(lvl).to_string(),
         PresetKey::Reorder => "Reorder sentences for logical flow without rewording them. Lead with the most important point; group related ideas.".to_string(),

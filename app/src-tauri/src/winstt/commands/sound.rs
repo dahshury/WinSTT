@@ -26,7 +26,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+use crate::winstt::commands::settings::read_settings;
 
 /// Process-local monotonic counter, combined with the wall-clock nanos to form a
 /// collision-free library filename id (no `uuid` crate dependency — mirrors the
@@ -233,5 +235,76 @@ pub fn sound_library_read_file(path: String) -> Option<Vec<u8>> {
     if path.is_empty() {
         return None;
     }
+    std::fs::read(&path).ok()
+}
+
+// ── recording-sound "get-data" (SOUND_GET_DATA) ────────────────────────────────
+// Verbatim port of `frontend/electron/lib/sound.ts::getSoundData` / `getSoundPath`.
+//
+// The renderer (`features/recording-sound/use-sound-preview.ts` +
+// `use-recording-sound.ts`) calls `invoke("sound:get-data")` on mount to fetch the
+// ACTIVE recording chime's raw bytes (default OR the user-chosen custom path). It
+// decodes them into a Web Audio buffer and plays it on `sound:play`. The adapter
+// (electron-tauri-adapter.ts) routes `SOUND_GET_DATA → sound_get_data`, expecting
+// `Vec<u8> | null` (`Uint8Array | null` in TS).
+//
+// Behaviour mirror:
+//   - recording sound disabled (`general.recordingSound == false`) → null
+//   - `general.recordingSoundPath` set + an allowed audio extension → those bytes
+//   - bad/empty custom path → the bundled default chime
+//   - any read failure → null (renderer treats null as "no audio, no crash")
+
+/// Allowed audio extensions for the ACTIVE recording chime. Broader than the
+/// library's `.wav/.mp3` (the get-data path also accepts the formats Web Audio can
+/// decode), matching `ALLOWED_SOUND_EXTENSIONS` in `sound.ts`.
+fn is_allowed_recording_sound_ext(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("wav" | "mp3" | "ogg" | "flac" | "m4a" | "aac")
+    )
+}
+
+/// Resolve the bundled default chime (`resources/recording_sound_default.wav`,
+/// copied from the Electron build's `build/splash.wav`). Mirrors `DEFAULT_SOUND_PATH`.
+fn default_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resolve(
+            "resources/recording_sound_default.wav",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok()
+}
+
+/// Resolve the ACTIVE recording-sound file, or `None` when the chime is disabled.
+/// Mirrors `getSoundPath()` in `sound.ts`: disabled → None; a valid custom path →
+/// that path; missing/empty/bad-extension custom → the bundled default.
+fn active_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
+    let general = read_settings(app).general;
+    if !general.recording_sound {
+        return None;
+    }
+    let custom = general.recording_sound_path;
+    if !custom.is_empty() {
+        if is_allowed_recording_sound_ext(&custom) {
+            return Some(PathBuf::from(custom));
+        }
+        // Bad extension → fall through to the default chime (sound.ts logs + defaults).
+        return default_recording_sound_path(app);
+    }
+    default_recording_sound_path(app)
+}
+
+/// `sound_get_data` — serve the ACTIVE recording chime's bytes to the renderer's
+/// Web Audio preloader. Returns `None` when the chime is disabled or the file is
+/// missing/unreadable (the renderer treats null as "no sound"). Mirrors the
+/// `ipcMain.handle("sound:get-data", ...)` body in `sound.ts`.
+#[tauri::command]
+#[specta::specta]
+pub fn sound_get_data(app: AppHandle) -> Option<Vec<u8>> {
+    let path = active_recording_sound_path(&app)?;
     std::fs::read(&path).ok()
 }

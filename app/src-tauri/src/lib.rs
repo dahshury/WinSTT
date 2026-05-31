@@ -552,6 +552,13 @@ pub fn run(cli_args: CliArgs) {
             winstt::commands::tray_menu::show_tray_menu,
             winstt::commands::tray_menu::reanchor_tray_menu,
             winstt::commands::tray_menu::hide_tray_menu,
+            // ── de-brand/completion slice ──
+            winstt::commands::sound::sound_get_data,
+            winstt::commands::cancel::cancel_current_operation,
+            winstt::commands::custom_models::open_custom_models_folder,
+            winstt::commands::context_playground::context_playground_set_live,
+            winstt::commands::context_playground::context_playground_arm_deep,
+            winstt::commands::context_playground::context_playground_capture,
         ])
         .events(collect_events![
             managers::history::HistoryUpdatePayload,

@@ -31,8 +31,14 @@ tauri_panel! {
     })
 }
 
-const OVERLAY_WIDTH: f64 = 172.0;
-const OVERLAY_HEIGHT: f64 = 36.0;
+// WinSTT overlay = a 720x240 transparent click-through canvas hosting the
+// dynamic-island pill (windows/overlay.html). Matches WINDOW_SPECS[overlay]
+// (winstt/commands/windows.rs) and frontend/electron/main.ts createOverlayWindow.
+// The renderer centers the pill horizontally and anchors it near the bottom
+// edge; the extra transparent margin is invisible because the window is
+// click-through.
+const OVERLAY_WIDTH: f64 = 720.0;
+const OVERLAY_HEIGHT: f64 = 240.0;
 
 #[cfg(target_os = "macos")]
 const OVERLAY_TOP_OFFSET: f64 = 46.0;
@@ -42,8 +48,10 @@ const OVERLAY_TOP_OFFSET: f64 = 4.0;
 #[cfg(target_os = "macos")]
 const OVERLAY_BOTTOM_OFFSET: f64 = 15.0;
 
+// Mirror Electron's `y = height - winHeight - 60` floating-bottom anchor so the
+// 240px-tall transparent window leaves a 60px gap above the taskbar.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
-const OVERLAY_BOTTOM_OFFSET: f64 = 40.0;
+const OVERLAY_BOTTOM_OFFSET: f64 = 60.0;
 
 #[cfg(target_os = "linux")]
 fn update_gtk_layer_shell_anchors(overlay_window: &tauri::webview::WebviewWindow) {
@@ -85,8 +93,8 @@ fn env_flag_enabled(name: &str) -> bool {
 /// Returns true if layer shell was successfully initialized, false otherwise
 #[cfg(target_os = "linux")]
 fn init_gtk_layer_shell(overlay_window: &tauri::webview::WebviewWindow) -> bool {
-    if env_flag_enabled("HANDY_NO_GTK_LAYER_SHELL") {
-        debug!("Skipping GTK layer shell init (HANDY_NO_GTK_LAYER_SHELL is enabled)");
+    if env_flag_enabled("WINSTT_NO_GTK_LAYER_SHELL") {
+        debug!("Skipping GTK layer shell init (WINSTT_NO_GTK_LAYER_SHELL is enabled)");
         return false;
     }
 
@@ -242,7 +250,7 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
         "recording_overlay",
         tauri::WebviewUrl::App("windows/overlay.html".into()),
     )
-    .title("Recording")
+    .title("WinSTT — Overlay")
     .resizable(false)
     .inner_size(OVERLAY_WIDTH, OVERLAY_HEIGHT)
     .shadow(false)
@@ -264,6 +272,12 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     #[allow(unused_variables)]
     match builder.build() {
         Ok(window) => {
+            // WINDOW_SPECS[overlay].ignore_cursor == true: the dynamic-island
+            // pill is a passive HUD, so let clicks fall through to whatever app
+            // the user is dictating into (matches the click-through overlay in
+            // winstt/commands/windows.rs).
+            let _ = window.set_ignore_cursor_events(true);
+
             #[cfg(target_os = "linux")]
             {
                 // Try to initialize GTK layer shell, ignore errors if compositor doesn't support it
@@ -290,7 +304,7 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
         // The window remains registered, so get_webview_window() still works.
         match PanelBuilder::<_, RecordingOverlayPanel>::new(app_handle, "recording_overlay")
             .url(WebviewUrl::App("windows/overlay.html".into()))
-            .title("Recording")
+            .title("WinSTT — Overlay")
             .position(tauri::Position::Logical(tauri::LogicalPosition { x, y }))
             .level(PanelLevel::Status)
             .size(tauri::Size::Logical(tauri::LogicalSize {

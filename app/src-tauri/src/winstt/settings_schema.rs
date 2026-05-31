@@ -233,7 +233,7 @@ pub enum ThinkingEffort {
 
 /// LLM preset key (`presetKeySchema`). Built-in cleanup modifiers.
 /// Constraints (enforced at the application layer, not by the type): no
-/// duplicate keys; ≤1 tone key (Neutral/Formal/Friendly/Technical/Casual);
+/// duplicate keys; ≤1 tone key (Neutral/Formal/Friendly/Technical);
 /// `level` only for Summarize/Concise; `targetLang` only for Translate.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "camelCase")]
@@ -242,7 +242,6 @@ pub enum PresetKey {
     Formal,
     Friendly,
     Technical,
-    Casual,
     Concise,
     Summarize,
     Reorder,

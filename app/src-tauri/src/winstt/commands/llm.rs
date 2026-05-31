@@ -52,7 +52,6 @@ fn to_llm_key(key: SettingsPresetKey) -> LlmPresetKey {
         SettingsPresetKey::Formal => LlmPresetKey::Formal,
         SettingsPresetKey::Friendly => LlmPresetKey::Friendly,
         SettingsPresetKey::Technical => LlmPresetKey::Technical,
-        SettingsPresetKey::Casual => LlmPresetKey::Casual,
         SettingsPresetKey::Concise => LlmPresetKey::Concise,
         SettingsPresetKey::Summarize => LlmPresetKey::Summarize,
         SettingsPresetKey::Reorder => LlmPresetKey::Reorder,
