@@ -1,0 +1,82 @@
+import type { IconSvgElement } from "@hugeicons/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import type { ReactNode } from "react";
+import { cn } from "@/shared/lib/cn";
+import { Toggle } from "@/shared/ui/toggle";
+
+export interface SettingSubsectionProps {
+	/** One-line description rendered under the title. */
+	caption?: string;
+	children: ReactNode;
+	/** Action rendered on the trailing edge of the title row, before any toggle. */
+	headerAction?: ReactNode;
+	/** Optional leading icon shown before the title. */
+	icon?: IconSvgElement;
+	onToggle?: (checked: boolean) => void;
+	title: string;
+	toggleDisabled?: boolean;
+	/** When provided, renders a toggle switch on the trailing edge of the title row. */
+	toggled?: boolean;
+}
+
+/**
+ * Subordinate section nested *inside* a {@link SettingSection}. Visually
+ * lighter than a section — a hairline divider above (skipped for the first
+ * subsection), no card chrome, sentence-case title in the body weight. When
+ * its toggle is off the children dim + go non-interactive; when the parent
+ * SettingSection's master toggle is off the wrapping pointer-events/opacity
+ * cascade already covers the whole subtree.
+ */
+export function SettingSubsection({
+	title,
+	caption,
+	children,
+	headerAction,
+	icon,
+	toggled,
+	onToggle,
+	toggleDisabled,
+}: SettingSubsectionProps) {
+	const hasToggle = onToggle !== undefined;
+	const isDisabled = hasToggle && !toggled;
+
+	return (
+		<div className="mt-7 border-divider border-t pt-6 first:mt-0 first:border-t-0 first:pt-0">
+			<div className="mb-3 flex items-center gap-2">
+				{icon && (
+					<span
+						aria-hidden="true"
+						className="flex size-7 shrink-0 items-center justify-center rounded bg-teal/10 text-teal ring-1 ring-teal/20"
+					>
+						<HugeiconsIcon icon={icon} size={13} />
+					</span>
+				)}
+				<h4 className="font-medium text-foreground text-subtitle">{title}</h4>
+				{headerAction || hasToggle ? (
+					<div className="ml-auto flex items-center gap-1.5">
+						{headerAction}
+						{hasToggle && (
+							<Toggle
+								aria-label={`Toggle ${title}`}
+								checked={toggled ?? false}
+								disabled={toggleDisabled}
+								onCheckedChange={onToggle}
+							/>
+						)}
+					</div>
+				) : null}
+			</div>
+			{caption ? (
+				<p className="-mt-1 mb-3 text-body-sm text-foreground-muted leading-snug">{caption}</p>
+			) : null}
+			<div
+				className={cn(
+					"transition-opacity duration-200 ease-out",
+					isDisabled && "pointer-events-none opacity-40"
+				)}
+			>
+				{children}
+			</div>
+		</div>
+	);
+}

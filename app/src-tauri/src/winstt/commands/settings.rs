@@ -13,15 +13,28 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_store::StoreExt;
 
 use crate::winstt::settings_schema::{
-    is_secret, is_startup_only, PresetEntry, PresetKey, WinsttSettings, REALTIME_EFFECTIVE_KEYS,
-    SECRET_KEYS, WAKEWORD_CONFIG_KEYS,
+    is_secret, is_startup_only, AudioSettings, DictionaryEntry, GeneralSettings, HotkeySettings,
+    IntegrationsSettings, LlmSettings, ModelSettings, PresetEntry, PresetKey, QualitySettings,
+    SnippetEntry, TtsSettings, WinsttSettings, REALTIME_EFFECTIVE_KEYS, SECRET_KEYS,
+    WAKEWORD_CONFIG_KEYS,
 };
 
 const WINSTT_SETTINGS_KEY: &str = "winstt_settings";
+
+/// The `settings:changed` plain event — the post-save full snapshot every other
+/// window re-hydrates its Zustand store from. Byte-identical to WinSTT's Electron
+/// IPC shape (`{ settings }`) so the reused renderer's `onSettingsChanged`
+/// listener (ipc-client.ts) needs no changes.
+const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
+
+/// The `settings:save-error` plain event — emitted on validation/persist failure
+/// (the renderer's save path is fire-and-forget, so it can't see the `Result`).
+/// Shape `{ error }` matches `onSettingsSaveError` in ipc-client.ts.
+const SETTINGS_SAVE_ERROR_EVENT: &str = "settings:save-error";
 
 /// Result of `winstt_set_settings`: whether the change requires an engine
 /// restart, and which dot-paths drove that decision (for diagnostics / UI).
@@ -30,6 +43,44 @@ const WINSTT_SETTINGS_KEY: &str = "winstt_settings";
 pub struct SetSettingsResult {
     pub needs_restart: bool,
     pub changed_startup_keys: Vec<String>,
+}
+
+/// The partial section patch the renderer posts to `winstt_set_settings`.
+///
+/// The renderer (`collectChangedSections` in `features/update-settings`) diffs
+/// against its last-saved baseline and sends only the changed top-level sections
+/// (e.g. VAD calibration and device-switch-feedback post just `{ audio }` after
+/// every utterance). Every field is `Option` so an absent section deserializes
+/// to `None` (= "leave the persisted value untouched") rather than resetting to a
+/// default — the clobber the old full-`WinsttSettings` parameter caused.
+///
+/// Sections are always posted whole (the renderer copies the entire section
+/// value), so an `Option<Section>` round-trips losslessly. Using the typed
+/// section structs (vs. `serde_json::Value`) keeps `specta::Type` derivable
+/// without enabling specta's `serde_json` feature in Handy's `Cargo.toml`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PartialWinsttSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<QualitySettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub general: Option<GeneralSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hotkey: Option<HotkeySettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dictionary: Option<Vec<DictionaryEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippets: Option<Vec<SnippetEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm: Option<LlmSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tts: Option<TtsSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrations: Option<IntegrationsSettings>,
 }
 
 fn store_path(_app: &AppHandle) -> std::path::PathBuf {
@@ -65,20 +116,58 @@ pub fn winstt_get_settings(app: AppHandle) -> WinsttSettings {
     read_settings(&app)
 }
 
-/// `winstt_set_settings` — validate, diff restart-need, encrypt secrets, persist.
+/// `winstt_set_settings` — merge a PARTIAL section patch, validate, diff
+/// restart-need, encrypt secrets, persist, broadcast.
+///
+/// The renderer sends **partial** top-level sections, not the whole tree:
+/// `collectChangedSections` in `features/update-settings` diffs against its
+/// last-saved baseline and posts only the changed sections (e.g. VAD calibration
+/// and device-switch-feedback post just `{ audio: ... }` after every utterance).
+/// Deserializing such a patch straight into `WinsttSettings` would reset every
+/// OTHER section to its default (all fields are `#[serde(default)]`) and then
+/// persist that — silently wiping `general`/`model`/etc. So we accept a
+/// `PartialWinsttSettings` (every section `Option`) and merge each present
+/// section over the persisted snapshot, exactly like Electron's `applySettings`
+/// per-section overwrite.
+///
+/// On any failure the renderer's fire-and-forget save can't observe the `Err`,
+/// so we ALSO emit `settings:save-error { error }` (and still return `Err`).
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_set_settings(
     app: AppHandle,
-    settings: WinsttSettings,
+    settings: PartialWinsttSettings,
 ) -> Result<SetSettingsResult, String> {
-    // (a) cross-field validation (the Zod `.refine` equivalents).
-    validate_settings(&settings)?;
+    match apply_settings_patch(&app, settings) {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            // Mirror Electron's `event.sender.send("settings:save-error", { error })`.
+            let _ = app.emit(SETTINGS_SAVE_ERROR_EVENT, serde_json::json!({ "error": error }));
+            Err(error)
+        }
+    }
+}
 
-    let previous = read_settings(&app);
+/// The set-settings body, factored out so the error branch in
+/// `winstt_set_settings` can emit `settings:save-error` once for any failure
+/// (validation, merge, or persistence).
+fn apply_settings_patch(
+    app: &AppHandle,
+    patch: PartialWinsttSettings,
+) -> Result<SetSettingsResult, String> {
+    let previous = read_settings(app);
+
+    // Merge the partial patch over the persisted full snapshot, section by
+    // section (matching `applySettings` / `mergeMainOwnedFields` in
+    // frontend/electron/ipc/settings.ts). Each present section overwrites its
+    // counterpart wholesale; absent sections keep the persisted value.
+    let next = merge_patch_over(&previous, patch);
+
+    // (a) cross-field validation (the Zod `.refine` equivalents).
+    validate_settings(&next)?;
 
     // (b) restart-need diff over the dot-path sets.
-    let changed = changed_dot_paths(&previous, &settings);
+    let changed = changed_dot_paths(&previous, &next);
     let changed_startup: Vec<String> = changed
         .iter()
         .filter(|p| {
@@ -97,12 +186,76 @@ pub fn winstt_set_settings(
     // single seam. SECRET_KEYS = llm.openrouterApiKey / openai.apiKey / elevenlabs.apiKey.
     debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
 
-    write_settings_value(&app, &settings)?;
+    write_settings_value(app, &next)?;
+
+    // Broadcast the post-save FULL snapshot (not the raw partial) so every other
+    // window re-hydrates the same canonical view. Sending the partial would make
+    // the renderer's `decodeSettingsPayload` fill DEFAULTS for the missing
+    // sections and stomp customized fields on receivers — the exact reason
+    // Electron broadcasts the snapshot, not the raw payload.
+    let snapshot = serde_json::to_value(&next).map_err(|e| e.to_string())?;
+    let _ = app.emit(SETTINGS_CHANGED_EVENT, serde_json::json!({ "settings": snapshot }));
 
     Ok(SetSettingsResult {
         needs_restart,
         changed_startup_keys: changed_startup,
     })
+}
+
+/// Merge a partial section patch over the current full tree.
+///
+/// Each `Some(section)` in `patch` OVERWRITES the corresponding section in
+/// `current` wholesale (the renderer always posts whole sections, never partial
+/// leaves — `collectChangedSections` keys on top-level sections). A `None`
+/// section keeps the persisted value. For `general`, the main-owned `onboarded*`
+/// fields are restored from the persisted copy so a renderer round-trip can't
+/// revert them.
+fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> WinsttSettings {
+    let mut next = current.clone();
+    if let Some(model) = patch.model {
+        next.model = model;
+    }
+    if let Some(quality) = patch.quality {
+        next.quality = quality;
+    }
+    if let Some(audio) = patch.audio {
+        next.audio = audio;
+    }
+    if let Some(general) = patch.general {
+        next.general = preserve_main_owned_general(&current.general, general);
+    }
+    if let Some(hotkey) = patch.hotkey {
+        next.hotkey = hotkey;
+    }
+    if let Some(dictionary) = patch.dictionary {
+        next.dictionary = dictionary;
+    }
+    if let Some(snippets) = patch.snippets {
+        next.snippets = snippets;
+    }
+    if let Some(llm) = patch.llm {
+        next.llm = llm;
+    }
+    if let Some(tts) = patch.tts {
+        next.tts = tts;
+    }
+    if let Some(integrations) = patch.integrations {
+        next.integrations = integrations;
+    }
+    next
+}
+
+/// Re-merge the main-owned `onboarded*` fields from the on-disk `general` section
+/// into the incoming `general` patch so a renderer save can't clobber them.
+/// Mirrors `mergeMainOwnedFields` in frontend/electron/ipc/settings.ts.
+fn preserve_main_owned_general(
+    existing: &GeneralSettings,
+    mut incoming: GeneralSettings,
+) -> GeneralSettings {
+    incoming.onboarded = existing.onboarded;
+    incoming.onboarded_at = existing.onboarded_at;
+    incoming.onboarded_track = existing.onboarded_track;
+    incoming
 }
 
 /// Re-run the Zod cross-field rules: no duplicate preset keys, at most one tone
@@ -290,5 +443,90 @@ mod tests {
         b = serde_json::from_value(bv).unwrap();
         let changed = changed_dot_paths(&a, &b);
         assert!(changed.iter().any(|p| p == "general.sendCrashReports"));
+    }
+
+    // ── Partial-patch merge: the load-bearing fix for partial section saves ──
+
+    /// Deserialize a JSON object into the partial patch — exactly the path the
+    /// adapter takes when the renderer posts `{ audio: { ... } }` (the `settings`
+    /// envelope is unwrapped by the adapter's normalizeArgs before invoke).
+    fn patch_from_json(value: serde_json::Value) -> PartialWinsttSettings {
+        serde_json::from_value(value).expect("partial patch deserialize")
+    }
+
+    /// A partial `{ audio: ... }` patch (what useVadCalibration posts) must NOT
+    /// reset the other sections to defaults. This is the clobber the old
+    /// full-tree `winstt_set_settings` signature caused.
+    #[test]
+    fn partial_patch_preserves_untouched_sections() {
+        // Start from a non-default snapshot: a customized model section.
+        let mut current = WinsttSettings::default();
+        let mut cv = serde_json::to_value(&current).unwrap();
+        cv["model"]["model"] = serde_json::json!("nemo-canary-180m-flash");
+        current = serde_json::from_value(cv).unwrap();
+        let customized_model = current.model.clone();
+
+        // Patch ONLY the audio section (a whole section, as the renderer posts).
+        let mut audio = serde_json::to_value(&current.audio).unwrap();
+        audio["vadSensitivity"] = serde_json::json!(0.42);
+        let patch = patch_from_json(serde_json::json!({ "audio": audio }));
+        let next = merge_patch_over(&current, patch);
+
+        // The model section the patch never mentioned is untouched …
+        assert_eq!(next.model, customized_model);
+        // … and the audio section reflects the patch.
+        let audio_val = serde_json::to_value(&next.audio).unwrap();
+        assert_eq!(audio_val["vadSensitivity"], serde_json::json!(0.42));
+    }
+
+    /// A `general` patch carrying a stale `onboarded:false` must NOT overwrite
+    /// the on-disk `onboarded:true` (main-owned field), else the wizard re-shows.
+    #[test]
+    fn general_patch_cannot_revert_onboarded() {
+        // On-disk: onboarded already completed.
+        let mut current = WinsttSettings::default();
+        let mut cv = serde_json::to_value(&current).unwrap();
+        cv["general"]["onboarded"] = serde_json::json!(true);
+        cv["general"]["onboardedTrack"] = serde_json::json!("local");
+        current = serde_json::from_value(cv).unwrap();
+
+        // Renderer posts a whole general section with a stale onboarded:false
+        // plus a user-controlled change.
+        let mut general = serde_json::to_value(&current.general).unwrap();
+        general["onboarded"] = serde_json::json!(false);
+        general["onboardedTrack"] = serde_json::json!("");
+        general["recordingMode"] = serde_json::json!("toggle");
+        let patch = patch_from_json(serde_json::json!({ "general": general }));
+        let next = merge_patch_over(&current, patch);
+
+        // onboarded* stay at the on-disk (main-owned) values …
+        assert!(next.general.onboarded);
+        assert_eq!(
+            next.general.onboarded_track,
+            crate::winstt::settings_schema::OnboardedTrack::Local
+        );
+        // … but the user-controlled field in the same patch DID apply.
+        let general_val = serde_json::to_value(&next.general).unwrap();
+        assert_eq!(general_val["recordingMode"], serde_json::json!("toggle"));
+    }
+
+    /// An empty patch (no sections) is a no-op (persists current unchanged).
+    #[test]
+    fn empty_patch_is_noop() {
+        let current = WinsttSettings::default();
+        let next = merge_patch_over(&current, PartialWinsttSettings::default());
+        assert_eq!(next, current);
+    }
+
+    /// `PartialWinsttSettings` deserializes from a JSON object that omits most
+    /// sections — the absent ones become `None`, not defaults.
+    #[test]
+    fn partial_deserializes_with_absent_sections_as_none() {
+        let patch: PartialWinsttSettings =
+            serde_json::from_value(serde_json::json!({ "audio": {} })).unwrap();
+        assert!(patch.audio.is_some());
+        assert!(patch.model.is_none());
+        assert!(patch.general.is_none());
+        assert!(patch.integrations.is_none());
     }
 }

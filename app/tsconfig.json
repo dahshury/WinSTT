@@ -1,9 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2023",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "types": ["node"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
 
@@ -14,20 +13,29 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
 
-    /* Path Aliases */
+    /* Path Aliases — renderer (@/*, @spec/*, @picker) + Tauri bindings (@/bindings) */
     "baseUrl": ".",
     "paths": {
+      "@/bindings": ["./src/bindings.ts"],
       "@/*": ["./src/*"],
-      "@/bindings": ["./src/bindings.ts"]
+      "@spec/*": ["./spec/generated/ts/*"],
+      "@picker": ["./packages/model-picker/src/index.ts"],
+      "@picker/*": ["./packages/model-picker/src/*"]
     },
 
-    /* Linting */
+    /* Linting (matched to WinSTT's renderer tsconfig) */
     "strict": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true
   },
-  "include": ["src"],
+  "include": ["src", "packages", "spec"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

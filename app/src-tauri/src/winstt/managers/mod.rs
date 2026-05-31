@@ -21,10 +21,15 @@ pub mod diarization_manager;
 pub mod loopback_manager;
 pub mod word_aligner;
 pub mod file_transcribe_manager;
+// ── slice: model download (app/PORT/10_frontend_port_plan.md §6 WU-4) ──
+/// Per-quant streaming download manager (predownload/pause/resume/cancel/delete +
+/// the stt:model-download-* / stt:model-cache-changed broadcasts).
+pub mod download_manager;
 
 pub use cloud_stt_manager::CloudSttManager;
 pub use context_manager::ContextManager;
 pub use diarization_manager::DiarizationManager;
+pub use download_manager::DownloadManager;
 pub use file_transcribe_manager::FileTranscribeManager;
 pub use llm_manager::LlmManager;
 pub use loopback_manager::LoopbackManager;
