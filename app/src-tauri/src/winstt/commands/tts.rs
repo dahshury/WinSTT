@@ -1,66 +1,47 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/06_tts.md + lib_wiring.md §3,
+// PORT IMPL — Source: app/PORT/06_tts.md + lib_wiring.md §3,
 // frontend/electron/ipc/{tts,tts-cloud,tts-reader}.ts. Wraps managers::TtsManager.
 //
 // TTS commands. Local synthesis runs blocking on a worker (spawn_blocking) so the
 // async pump never stalls on the first-run download / session create / inference.
-// Voices come from the static 54-voice catalog (local) or a live `/v2/voices`
-// fetch (cloud). Cancel + install lifecycle route through the manager.
+// The voice catalog is the static 54-voice Kokoro list ({ voices, languages });
+// cloud voices come from a live `/v2/voices` fetch ({ voices, error }). Cancel +
+// speed + install lifecycle route through the manager.
+//
+// Every payload shape is byte-identical to what the reused WinSTT renderer's
+// `ipc-client.ts` expects (TtsSpeakResult / TtsVoiceCatalog / CloudTtsVoiceCatalog
+// / {tier,creditsExhausted} / TtsDownloadEstimatePayload).
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-use specta::Type;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::winstt::managers::tts_manager::{
+    CloudSubscriptionPayload, CloudVoiceCatalogPayload, DownloadEstimatePayload, VoiceCatalogPayload,
+};
 use crate::winstt::managers::TtsManager;
-
-/// One voice surfaced to the renderer picker (specta-typed wire shape).
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct VoicePayload {
-    pub id: String,
-    pub label: String,
-    pub language: String,
-    pub gender: String,
-}
-
-/// Cloud (ElevenLabs) subscription summary for the picker quota hints.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct CloudSubscription {
-    pub tier: String,
-    pub character_count: u64,
-    pub character_limit: u64,
-}
-
-/// Download size estimate for the on-demand Kokoro pack.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct DownloadEstimate {
-    pub total_bytes: u64,
-    pub already_have_bytes: u64,
-}
 
 /// Result of a speak/preview start — the request id the renderer correlates the
 /// `tts://chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
 /// `ipc-client.ts` (`{ requestId }`).
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeakResult {
     pub request_id: String,
 }
 
-/// `tts_speak` — read `text` aloud (dictation/manual). Returns the request id so
-/// the renderer can correlate the `tts://chunk` stream + cancel it.
+/// `tts_speak` — read `text` aloud (the renderer "Speak" button / dictation).
+/// Returns the request id so the renderer can correlate the `tts://chunk` stream
+/// + cancel it. Enabled-gate, source selection (local/cloud), and settings
+/// fallbacks for voice/lang/speed all live in `TtsManager::read_aloud` (mirrors
+/// the Electron `handleSpeak`). Empty `voice`/`lang` → the manager resolves them
+/// from the active source's settings.
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_speak(
-    app: AppHandle,
+    _app: AppHandle,
     tts: State<'_, Arc<TtsManager>>,
     text: String,
-    // `voice`/`lang`/`speed` are optional in the renderer's `ttsSpeak` wrapper
-    // (`{ text, voice?, lang?, speed? }`) — the host resolves them from settings
-    // when omitted. Empty voice/lang let the engine pick its configured defaults.
+    // `voice`/`lang`/`speed` are optional in the renderer's `ttsSpeak` wrapper.
     voice: Option<String>,
     lang: Option<String>,
     speed: Option<f32>,
@@ -70,46 +51,61 @@ pub async fn tts_speak(
     let rid = request_id.clone();
     let voice = voice.unwrap_or_default();
     let lang = lang.unwrap_or_default();
-    // Seed the live speed from this request, then sample it per sentence so the
-    // pill's mid-read speed change (`tts_set_speed`) applies to the NEXT sentence.
-    mgr.set_speed(speed.unwrap_or(1.0));
+    // Seed the live speed from this request (or the persisted setting), then sample
+    // it per sentence so the pill's mid-read `tts_set_speed` applies NEXT sentence.
+    if let Some(sp) = speed {
+        mgr.set_speed(sp);
+    }
     let speed_mgr = mgr.clone();
     // Run the blocking synthesis off the async pump.
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = mgr.read_aloud(&rid, &text, &voice, &lang, move || speed_mgr.current_speed());
+        mgr.read_aloud(&rid, &text, &voice, &lang, move || speed_mgr.current_speed());
     });
-    let _ = app;
     Ok(SpeakResult { request_id })
 }
 
 /// `tts_speak_selection` — read the current selection aloud (the read hotkey).
 /// The selected text is captured by the caller (context sidecar / clipboard) and
-/// passed in; this wraps the same synthesis path.
+/// passed in; this wraps the same source-aware synthesis path. An empty selection
+/// emits `tts:failed { reason: "No text selected" }` (mirrors Electron).
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_speak_selection(
+    app: AppHandle,
     tts: State<'_, Arc<TtsManager>>,
-    text: String,
+    text: Option<String>,
     voice: Option<String>,
     lang: Option<String>,
     speed: Option<f32>,
 ) -> Result<SpeakResult, String> {
     let mgr = tts.inner().clone();
     let request_id = mgr.next_request_id();
+    let text = text.unwrap_or_default();
+    if text.trim().is_empty() {
+        // No selection — surface the same failure the Electron path broadcasts so
+        // the overlay pill shows the error and resets.
+        let _ = app.emit(
+            "tts:failed",
+            serde_json::json!({ "requestId": "", "reason": "No text selected" }),
+        );
+        return Ok(SpeakResult::default());
+    }
     let rid = request_id.clone();
     let voice = voice.unwrap_or_default();
     let lang = lang.unwrap_or_default();
-    mgr.set_speed(speed.unwrap_or(1.0));
+    if let Some(sp) = speed {
+        mgr.set_speed(sp);
+    }
     let speed_mgr = mgr.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = mgr.read_aloud(&rid, &text, &voice, &lang, move || speed_mgr.current_speed());
+        mgr.read_aloud(&rid, &text, &voice, &lang, move || speed_mgr.current_speed());
     });
     Ok(SpeakResult { request_id })
 }
 
-/// `tts_cancel` — stop one (or, with no id, every) in-flight read. The renderer's
-/// `ttsCancel(requestId?)` sends `{ requestId: undefined }` for the cancel-all
-/// gesture, so `request_id` is optional (mirrors `tts.ts` `cancel(requestId?)`).
+/// `tts_cancel` — stop one (or, with no id / empty id, every) in-flight read. The
+/// renderer's `ttsCancel(requestId?)` sends `{ requestId: undefined }` for the
+/// cancel-all gesture (mirrors `tts.ts` `cancel(requestId?)`).
 #[tauri::command]
 #[specta::specta]
 pub fn tts_cancel(tts: State<'_, Arc<TtsManager>>, request_id: Option<String>) {
@@ -129,25 +125,31 @@ pub fn tts_set_speed(tts: State<'_, Arc<TtsManager>>, speed: f32) {
     tts.set_speed(speed);
 }
 
-/// `tts_report_playback_started` — the window that owns the Web Audio queue
-/// (the overlay) reports that audio for `request_id` ACTUALLY started playing
-/// (the ~1s synthesis gap is over). Re-broadcast as `tts:playback-started` so a
-/// play/stop control in a window WITHOUT a queue (settings) can flip its loading
-/// spinner to a stop control. Mirrors `tts.ts` `handleReportPlaybackStarted`.
+/// `tts_report_playback_started` — the window that owns the Web Audio queue (the
+/// overlay) reports that audio for `request_id` ACTUALLY started playing (the ~1s
+/// synthesis gap is over). Re-broadcast as `tts:playback-started` so a play/stop
+/// control in a queue-less window (settings) flips its spinner to a stop control.
+/// Mirrors `tts.ts` `handleReportPlaybackStarted`.
 #[tauri::command]
 #[specta::specta]
 pub fn tts_report_playback_started(app: AppHandle, request_id: String) {
-    let _ = app.emit("tts:playback-started", serde_json::json!({ "requestId": request_id }));
+    let _ = app.emit(
+        "tts:playback-started",
+        serde_json::json!({ "requestId": request_id }),
+    );
 }
 
 /// `tts_report_playback_ended` — the overlay reports that audio for `request_id`
 /// has finished draining (also fires on cancel / failure). Re-broadcast as
-/// `tts:playback-ended` so a queue-less window tracks REAL playback (not the much
-/// earlier synthesis-complete). Mirrors `tts.ts` `handleReportPlaybackEnded`.
+/// `tts:playback-ended` so a queue-less window tracks REAL playback. Mirrors
+/// `tts.ts` `handleReportPlaybackEnded`.
 #[tauri::command]
 #[specta::specta]
 pub fn tts_report_playback_ended(app: AppHandle, request_id: String) {
-    let _ = app.emit("tts:playback-ended", serde_json::json!({ "requestId": request_id }));
+    let _ = app.emit(
+        "tts:playback-ended",
+        serde_json::json!({ "requestId": request_id }),
+    );
 }
 
 /// `tts_cancel_all` — stop every read (STT force-stop / app exit).
@@ -158,79 +160,120 @@ pub fn tts_cancel_all(tts: State<'_, Arc<TtsManager>>) {
 }
 
 /// `tts_init` — force the engine warm-up off the UI thread (download + session
-/// create / key check). Idempotent.
+/// create / key check). Idempotent. Cloud source has no Kokoro engine to warm, so
+/// it's a no-op there (mirrors Electron `maybeWarmup` skipping cloud). Returns
+/// `{ ready }` (the renderer's `initTts` expects `{ ready: boolean }`).
 #[tauri::command]
 #[specta::specta]
-pub async fn tts_init(tts: State<'_, Arc<TtsManager>>) -> Result<(), String> {
+pub async fn tts_init(tts: State<'_, Arc<TtsManager>>) -> Result<TtsInitResult, String> {
     let mgr = tts.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || mgr.warm_up().map_err(|e| e.to_string()))
+    // Cloud needs no warm-up; report ready (key is checked at synth time).
+    if mgr.is_cloud_source() {
+        return Ok(TtsInitResult { ready: true });
+    }
+    let ready = tauri::async_runtime::spawn_blocking(move || mgr.warm_up().is_ok())
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(TtsInitResult { ready })
 }
 
-/// `tts_list_voices` — the static 54-voice local Kokoro catalog.
+/// `{ ready }` — the `initTts` result shape (`{ ready: boolean }`).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsInitResult {
+    pub ready: bool,
+}
+
+/// `tts_list_voices` — the static 54-voice Kokoro catalog as `{ voices, languages }`
+/// (the `TtsVoiceCatalog` the renderer's `listTtsVoices` expects). NOT a bare array.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_list_voices(tts: State<'_, Arc<TtsManager>>) -> Vec<VoicePayload> {
-    tts.list_voices()
-        .into_iter()
-        .map(|v| VoicePayload {
-            id: v.id.to_string(),
-            label: v.label.to_string(),
-            language: v.language.to_string(),
-            gender: v.gender.as_str().to_string(),
-        })
-        .collect()
+pub fn tts_list_voices(tts: State<'_, Arc<TtsManager>>) -> VoiceCatalogPayload {
+    tts.list_voices_catalog()
 }
 
 /// `tts_list_cloud_voices` — live `GET /v2/voices` (cloned voices appear here).
-/// SPIKE: reqwest the ElevenLabs voices endpoint with the stored key. Empty until
-/// the key + transport are wired; the picker falls back to the local catalog.
+/// Returns `{ voices, error }` (`CloudTtsVoiceCatalog`); never throws across the
+/// boundary — a missing/invalid key surfaces as `{ voices: [], error }`.
 #[tauri::command]
 #[specta::specta]
-pub async fn tts_list_cloud_voices(_app: AppHandle) -> Result<Vec<VoicePayload>, String> {
-    // SPIKE: GET ELEVENLABS_VOICES_URL with xi-api-key; map name/voice_id/labels.
-    Ok(Vec::new())
+pub async fn tts_list_cloud_voices(
+    tts: State<'_, Arc<TtsManager>>,
+) -> Result<CloudVoiceCatalogPayload, String> {
+    Ok(tts.inner().list_cloud_voices().await)
 }
 
-/// `tts_cloud_subscription` — the ElevenLabs quota summary.
+/// `tts_cloud_subscription` — the ElevenLabs quota summary `{ tier, creditsExhausted }`.
+/// Defaults to `{ tier: null, creditsExhausted: false }` on a missing-scope key /
+/// request failure (never wrongly blocks cloud TTS).
 #[tauri::command]
 #[specta::specta]
-pub async fn tts_cloud_subscription(_app: AppHandle) -> Result<CloudSubscription, String> {
-    // SPIKE: GET /v1/user/subscription with xi-api-key.
-    Ok(CloudSubscription::default())
+pub async fn tts_cloud_subscription(
+    tts: State<'_, Arc<TtsManager>>,
+) -> Result<CloudSubscriptionPayload, String> {
+    Ok(tts.inner().cloud_subscription().await)
 }
 
-/// `tts_download_estimate` — bytes to fetch for the on-demand Kokoro pack.
+/// `tts_download_estimate` — side-effect-free estimate of what enabling local
+/// Kokoro TTS will download `{ alreadyInstalled, components, totalBytes,
+/// unavailable? }` (`TtsDownloadEstimatePayload`). Calling this never starts a
+/// download. Cloud source reports `alreadyInstalled: true` (nothing local to fetch).
 #[tauri::command]
 #[specta::specta]
-pub fn tts_download_estimate(_app: AppHandle) -> DownloadEstimate {
-    // SPIKE: stat the cache dir vs the known model+voicepack sizes.
-    DownloadEstimate::default()
+pub async fn tts_download_estimate(
+    tts: State<'_, Arc<TtsManager>>,
+) -> Result<DownloadEstimatePayload, String> {
+    Ok(tts.inner().download_estimate().await)
 }
 
 /// `tts_install_pause` — cooperatively pause the engine-pack download.
+///
+/// The local Kokoro install is just the two model FILES (no separate engine pack),
+/// and the current downloader runs synchronously inside `warm_up`/first-synth, so
+/// there is no long-lived resumable job to pause yet. We emit `tts:install-paused`
+/// for UI parity with Electron; the partial files survive on disk and re-enabling
+/// resumes via HTTP Range automatically.
+// TODO(engine): when the shared resumable asset downloader lands (mod.rs
+// `download_kokoro_assets` DownloadControl), wire pause/resume/cancel to its
+// cooperative pause/cancel flags instead of this UI-only emit.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_install_pause(_app: AppHandle) {
-    // SPIKE: signal the asset downloader (Range-resumable) to pause.
+pub fn tts_install_pause(app: AppHandle) {
+    let _ = app.emit("tts:install-paused", serde_json::json!({}));
 }
 
-/// `tts_install_resume` — resume a paused install.
+/// `tts_install_resume` — resume a paused install by re-firing warm-up (which
+/// re-downloads any missing model file via HTTP Range, then loads the session).
+/// No-op for cloud.
 #[tauri::command]
 #[specta::specta]
-pub async fn tts_install_resume(tts: State<'_, Arc<TtsManager>>) -> Result<(), String> {
+pub async fn tts_install_resume(
+    app: AppHandle,
+    tts: State<'_, Arc<TtsManager>>,
+) -> Result<(), String> {
+    let _ = app.emit("tts:install-resumed", serde_json::json!({}));
     let mgr = tts.inner().clone();
+    if mgr.is_cloud_source() {
+        return Ok(());
+    }
     tauri::async_runtime::spawn_blocking(move || mgr.warm_up().map_err(|e| e.to_string()))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// `tts_install_cancel` — cancel the install + clean up the partial download.
+///
+/// Emits `tts:model-download-complete { cancelled: true }` for UI parity. Partial-
+/// file removal happens lazily on the next resume (HTTP Range re-validates).
+// TODO(engine): wire to the shared downloader's cooperative cancel + `.partial`
+// removal once it lands (see `tts_install_pause`).
 #[tauri::command]
 #[specta::specta]
-pub fn tts_install_cancel(_app: AppHandle) {
-    // SPIKE: signal the asset downloader to cancel + remove `.partial`.
+pub fn tts_install_cancel(app: AppHandle) {
+    let _ = app.emit(
+        "tts:model-download-complete",
+        serde_json::json!({ "cancelled": true }),
+    );
 }
 
 /// `tts_preview_cloud` — play a cloud voice's FREE pre-generated sample clip

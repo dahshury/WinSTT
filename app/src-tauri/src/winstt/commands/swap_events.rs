@@ -20,10 +20,12 @@
 //   IPC.STT_MODEL_SWAP_FAILED    → "stt:model-swap-failed"    { kind, name, category, detail, reason }
 //   IPC.STT_RUNTIME_INFO         → "stt:runtime-info"         (RuntimeInfoPayload)
 
-use serde_json::json;
-use tauri::{AppHandle, Emitter};
+use std::sync::Arc;
 
-use super::runtime::RuntimeInfoPayload;
+use serde_json::json;
+use tauri::{AppHandle, Emitter, Manager};
+
+use super::runtime::{self, RuntimeInfoPayload};
 
 /// Stable swap-failure category — mirrors the renderer's `ModelSwapFailedCategory`
 /// (ipc-client.ts) / the server's `SwapErrorCategory`. Adding a variant is a wire-format
@@ -103,6 +105,98 @@ impl SwapEvents {
     /// each completed swap) so `useSyncActiveModel` reconciles the picker with what's actually loaded.
     pub fn runtime_info(app: &AppHandle, info: &RuntimeInfoPayload) {
         let _ = app.emit("stt:runtime-info", info);
+    }
+}
+
+/// Drive the FULL main-model swap lifecycle off the command thread.
+///
+/// This is what `set_winstt_model(kind="main", name)` must call (the dictation slice owns that
+/// command's signature; it delegates here — see the lib-wiring report). The renderer's swap store
+/// sets the "Switching to {name}..." chip on `model-swap-started` and CLEARS it only on
+/// `model-swap-completed` / `model-swap-failed` — so this orchestration is what makes the picker's
+/// switch spinner resolve instead of spinning forever.
+///
+/// Sequence (mirrors the server's `request_model_swap`):
+///   1. emit `model-swap-started` (confirms the swap, arms the chip),
+///   2. ask Handy's `TranscriptionManager` to (re)load the model on its worker,
+///   3. on success → push fresh `runtime-info` (so the active-model chip reconciles) + emit
+///      `model-swap-completed`; on failure → emit `model-swap-failed` with a classified category.
+///
+/// The model SELECTION is already persisted to settings by the renderer's `update(...)` before this
+/// fires, so `get_runtime_info` reflects the new id even before the engine finishes loading; the
+/// engine LOAD itself rides `TranscriptionManager::initiate_model_load` (real ort numerics for the
+/// non-Whisper families land behind the STT engine spike — `// TODO(engine)`).
+pub fn perform_model_swap(app: &AppHandle, kind: &str, name: &str) {
+    // Realtime-kind reloads are owned by the realtime slice (04_*) — only the main model swaps here.
+    if kind != "main" {
+        return;
+    }
+    SwapEvents::started(app, kind, name);
+
+    let app = app.clone();
+    let kind = kind.to_string();
+    let name = name.to_string();
+    std::thread::spawn(move || {
+        // Kick Handy's model-load worker. `initiate_model_load` reads the persisted selection (the
+        // renderer already wrote it) and rebuilds the engine session in the background.
+        let load_result: Result<(), String> = match app
+            .try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+        {
+            Some(tm) => {
+                tm.initiate_model_load();
+                Ok(())
+            }
+            None => Err("transcription manager not initialized".to_string()),
+        };
+
+        match load_result {
+            Ok(()) => {
+                // Push the reconciled runtime snapshot BEFORE completed (the renderer reads the new
+                // active model off runtime-info, then clears the chip on completed).
+                if let Some(tm) =
+                    app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+                {
+                    let info = runtime::runtime_info_snapshot(&app, tm.inner().as_ref());
+                    SwapEvents::runtime_info(&app, &info);
+                }
+                SwapEvents::completed(&app, &kind, &name);
+            }
+            Err(detail) => {
+                SwapEvents::failed(
+                    &app,
+                    &kind,
+                    &name,
+                    classify_swap_error(&detail),
+                    "Failed to load model",
+                    &detail,
+                );
+            }
+        }
+    });
+}
+
+/// Map a raw load-error string to the renderer's `ModelSwapFailedCategory`. Mirrors the server's
+/// `SwapErrorCategory` classifier heuristics (substring match on the exception text).
+fn classify_swap_error(detail: &str) -> SwapFailedCategory {
+    let d = detail.to_ascii_lowercase();
+    if d.contains("cancel") {
+        SwapFailedCategory::Cancelled
+    } else if d.contains("network") || d.contains("connect") || d.contains("timed out") {
+        SwapFailedCategory::Network
+    } else if d.contains("not found") || d.contains("missing") || d.contains("no such") {
+        SwapFailedCategory::ModelNotFound
+    } else if d.contains("quantiz") {
+        SwapFailedCategory::IncompatibleQuantization
+    } else if d.contains("corrupt") || d.contains("invalid") || d.contains("parse") {
+        SwapFailedCategory::ModelCorrupt
+    } else if d.contains("memory") || d.contains("oom") || d.contains("alloc") {
+        SwapFailedCategory::OutOfMemory
+    } else if d.contains("disk") || d.contains("space") {
+        SwapFailedCategory::DiskFull
+    } else if d.contains("permission") || d.contains("denied") || d.contains("access") {
+        SwapFailedCategory::PermissionDenied
+    } else {
+        SwapFailedCategory::Unknown
     }
 }
 

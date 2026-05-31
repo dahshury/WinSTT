@@ -458,6 +458,18 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_error.is_none() {
+            // WinSTT lifecycle: a new recording cycle began. The reused renderer's
+            // useVisualizerSync (onRecordingStart) arms the rAF level loop + shows the
+            // overlay pill, and useTranscriptionFeed wipes ephemeral state + sets
+            // isRecordingActive(true). Emitted only once the recorder actually opened
+            // (recording_error is None) so a failed-mic start doesn't flash the pill.
+            // vad-start primes the renderer's `speaking` state; the in-proc recorder
+            // doesn't surface per-segment VAD boundaries to this layer, so the
+            // recording-active window stands in for "speaking" (renderer uses it only
+            // to drive a visual `setSpeaking` flag). See
+            // winstt/commands/dictation.rs::SttEvents for the byte-identical shapes.
+            crate::winstt::commands::dictation::SttEvents::recording_start(app);
+            crate::winstt::commands::dictation::SttEvents::vad_start(app);
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -504,6 +516,14 @@ impl ShortcutAction for TranscribeAction {
         change_tray_icon(app, TrayIconState::Transcribing);
         show_transcribing_overlay(app);
 
+        // WinSTT lifecycle: the recorder stopped (PTT release / toggle-off). The
+        // renderer's useVisualizerSync (onRecordingStop) snaps the visualizer to
+        // zero; the overlay pill stays armed until a terminal event lands.
+        // isRecordingActive is held true across recording-stop so the pill survives
+        // the "transcribing/thinking" transition (see useTranscriptionFeed).
+        crate::winstt::commands::dictation::SttEvents::recording_stop(app);
+        crate::winstt::commands::dictation::SttEvents::vad_stop(app);
+
         // Unmute before playing audio feedback so the stop sound is audible
         rm.remove_mute();
 
@@ -530,6 +550,10 @@ impl ShortcutAction for TranscribeAction {
 
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
+                    // WinSTT terminal: nothing usable was captured. The renderer's
+                    // useTranscriptionFeed (onNoAudioDetected) shows the ephemeral
+                    // "(no audio detected)" pill and resets isRecordingActive.
+                    crate::winstt::commands::dictation::SttEvents::no_audio_detected(&ah);
                     utils::hide_recording_overlay(&ah);
                     change_tray_icon(&ah, TrayIconState::Idle);
                 } else {
@@ -542,6 +566,13 @@ impl ShortcutAction for TranscribeAction {
                     let wav_handle = tauri::async_runtime::spawn_blocking(move || {
                         crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
                     });
+
+                    // WinSTT lifecycle: transcription kicked off. `audioBase64` is
+                    // None here — the renderer's onTranscriptionStart wrapper exists
+                    // for parity but has no active consumer (history playback reads
+                    // the saved WAV via history_load_audio, not this payload), so we
+                    // skip the base64 encode in the hot path.
+                    crate::winstt::commands::dictation::SttEvents::transcription_start(&ah, None);
 
                     // Transcribe concurrently with WAV save
                     let transcription_time = Instant::now();
@@ -600,9 +631,26 @@ impl ShortcutAction for TranscribeAction {
                             }
 
                             if processed.final_text.is_empty() {
+                                // WinSTT terminal: the engine ran but produced no
+                                // text (silence / pure noise). Same pill slot as the
+                                // empty-samples case (onNoAudioDetected).
+                                crate::winstt::commands::dictation::SttEvents::no_audio_detected(
+                                    &ah,
+                                );
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             } else {
+                                // WinSTT terminal: a finalized transcription (post
+                                // Chinese-variant convert + optional LLM cleanup).
+                                // The renderer's useTranscriptionFeed (onFullSentence)
+                                // appends it to the live feed + history store and
+                                // resets isRecordingActive; useVisualizerSync pulses
+                                // the sentence ring. Emitted BEFORE the paste so the
+                                // pill updates the instant the text is ready.
+                                crate::winstt::commands::dictation::SttEvents::full_sentence(
+                                    &ah,
+                                    &processed.final_text,
+                                );
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();
                                 let final_text = processed.final_text;
@@ -629,6 +677,13 @@ impl ShortcutAction for TranscribeAction {
                         }
                         Err(err) => {
                             debug!("Global Shortcut Transcription error: {}", err);
+                            // WinSTT terminal: a genuine transcriber error (engine
+                            // panic / model not loaded / decode failure) — report it
+                            // honestly via onTranscriptionFailed ("(transcription
+                            // failed)" pill) rather than the misleading "no audio
+                            // detected" lie (memory:
+                            // project_whisper_incomplete_vocab_and_transcription_failed).
+                            crate::winstt::commands::dictation::SttEvents::transcription_failed(&ah);
                             // Save entry with empty text so user can retry
                             if wav_saved {
                                 if let Err(save_err) = hm.save_entry(
@@ -648,6 +703,10 @@ impl ShortcutAction for TranscribeAction {
                 }
             } else {
                 debug!("No samples retrieved from recording stop");
+                // WinSTT terminal: stop_recording returned None (binding mismatch /
+                // already stopped). Reset the renderer's armed pill so it doesn't
+                // hang on isRecordingActive=true with no terminal event to clear it.
+                crate::winstt::commands::dictation::SttEvents::no_audio_detected(&ah);
                 utils::hide_recording_overlay(&ah);
                 change_tray_icon(&ah, TrayIconState::Idle);
             }

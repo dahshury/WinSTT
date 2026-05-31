@@ -30,8 +30,10 @@ use specta::Type;
 use tauri::{AppHandle, State};
 
 use crate::managers::transcription::TranscriptionManager;
-use crate::winstt::catalog::Accelerator;
+use crate::winstt::catalog::{self as catalog, Accelerator};
+use crate::winstt::managers::DownloadManager;
 use crate::winstt::settings_schema::DeviceType;
+use crate::winstt::stt::cache_probe::{CacheState, ProbeModel};
 
 use super::catalog_data::{self, ModelsWithState, SystemInfoEntry, ModelCacheInfo};
 use super::settings::read_settings;
@@ -95,23 +97,35 @@ pub fn get_runtime_info(
     app: AppHandle,
     transcription: State<'_, Arc<TranscriptionManager>>,
 ) -> RuntimeInfoPayload {
-    let accel = picker_accelerator(&app);
+    runtime_info_snapshot(&app, transcription.inner().as_ref())
+}
+
+/// Build the active-EP + loaded-model snapshot. Shared by the `get_runtime_info` command and the
+/// swap orchestration (which pushes a fresh `stt:runtime-info` after each completed swap). Prefers
+/// the actually-loaded model; falls back to the persisted setting so the cold-boot chip shows the
+/// user's chosen model before the engine finishes loading.
+pub fn runtime_info_snapshot(
+    app: &AppHandle,
+    transcription: &TranscriptionManager,
+) -> RuntimeInfoPayload {
+    let accel = picker_accelerator(app);
     let (device, is_gpu, providers) = accel_runtime(accel);
-    let settings = read_settings(&app);
-    // Prefer the actually-loaded model; fall back to the persisted setting so the cold-boot chip
-    // shows the user's chosen model before the engine finishes loading.
+    let settings = read_settings(app);
     let loaded = transcription.get_current_model();
     let model = loaded.or_else(|| {
         let m = settings.model.model.clone();
         if m.is_empty() { None } else { Some(m) }
     });
+    let realtime_model = {
+        let rt = settings.model.realtime_model.clone();
+        if rt.is_empty() { None } else { Some(rt) }
+    };
     RuntimeInfoPayload {
         device: device.to_string(),
         is_gpu,
         model,
         providers,
-        // Realtime model load is tracked separately (WU-3); not surfaced here yet.
-        realtime_model: None,
+        realtime_model,
     }
 }
 
@@ -119,20 +133,75 @@ pub fn get_runtime_info(
 /// consumes (model-state-store.ts). `states[*].cache_by_quantization` is keyed per precision and the
 /// `effective_quantization` badge bridge tells the picker WHICH precision's cache state to trust.
 ///
-/// Cache states are sourced from the embedded catalog + (when wired) the DownloadManager's live
-/// snapshots; system_info is the live-resources snapshot reshaped to `SystemInfoEntry`. Until the HF
-/// cache probe lands, every precision reads `not_cached` (the picker shows "Not downloaded", which is
-/// honest — never the "Downloaded then silently re-download" lie the effective-quant bridge prevents).
+/// Cache states are sourced from a REAL probe of the HuggingFace cache (the same cache the resolver
+/// downloads into) overlaid with the DownloadManager's in-flight registry; system_info is the
+/// live-resources snapshot reshaped to `SystemInfoEntry`. The effective-quant bridge keys the
+/// overall badge off the precision the loader will ACTUALLY load, so "Downloaded" never lies into a
+/// silent re-download.
 #[tauri::command]
 #[specta::specta]
-pub fn list_models_with_state(app: AppHandle) -> ModelsWithState {
+pub fn list_models_with_state(
+    app: AppHandle,
+    downloads: State<'_, Arc<DownloadManager>>,
+) -> ModelsWithState {
     let accel = picker_accelerator(&app);
-    // SPIKE: probe the HF cache per (model, quant) and fill `cache_by_model`. The engine slice's
-    // resolver (winstt::stt::resolver) owns the cache-path resolution; the DownloadManager keeps a
-    // live overlay for in-flight downloads. Empty map → all not_cached.
-    let cache_by_model: BTreeMap<String, BTreeMap<String, ModelCacheInfo>> = BTreeMap::new();
+    let cache_by_model = probe_cache_states(downloads.inner().as_ref());
     let sys = system_info_snapshot();
     catalog_data::models_with_state(accel, sys, &cache_by_model)
+}
+
+/// Build the `ProbeModel` list from the catalog const table, run the DownloadManager's blocking HF
+/// cache probe, and reshape `(CacheState, downloaded, total)` → the renderer's `ModelCacheInfo`.
+fn probe_cache_states(
+    downloads: &DownloadManager,
+) -> BTreeMap<String, BTreeMap<String, ModelCacheInfo>> {
+    let probe_models: Vec<ProbeModel> = catalog::STT_CATALOG
+        .iter()
+        .map(|m| ProbeModel {
+            id: m.id.to_string(),
+            family: m.family.as_str().to_string(),
+            onnx_name: m.onnx_model_name.to_string(),
+            quantizations: m.available_quantizations.iter().map(|q| q.to_string()).collect(),
+        })
+        .collect();
+
+    let snapshot = downloads.cache_snapshot(&probe_models);
+    let mut out: BTreeMap<String, BTreeMap<String, ModelCacheInfo>> = BTreeMap::new();
+    for (model_id, by_quant) in snapshot {
+        let mut quant_map: BTreeMap<String, ModelCacheInfo> = BTreeMap::new();
+        for (quant, (state, downloaded, total)) in by_quant {
+            quant_map.insert(quant, cache_info_from(state, downloaded, total));
+        }
+        out.insert(model_id, quant_map);
+    }
+    out
+}
+
+/// `(CacheState, downloaded, total)` → renderer `ModelCacheInfo`. `cached` reports progress 1.0;
+/// `partial` reports the on-disk fraction; `not_cached` is zeroed.
+fn cache_info_from(state: CacheState, downloaded: u64, total: u64) -> ModelCacheInfo {
+    match state {
+        CacheState::Cached => ModelCacheInfo {
+            state: "cached".into(),
+            downloaded_bytes: downloaded,
+            total_bytes: total.max(downloaded),
+            progress: 1.0,
+        },
+        CacheState::Partial => {
+            let progress = if total > 0 {
+                (downloaded as f64 / total as f64).min(0.999)
+            } else {
+                0.0
+            };
+            ModelCacheInfo { state: "partial".into(), downloaded_bytes: downloaded, total_bytes: total, progress }
+        }
+        CacheState::NotCached => ModelCacheInfo {
+            state: "not_cached".into(),
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            progress: 0.0,
+        },
+    }
 }
 
 /// Live system snapshot for the fitness fields. SPIKE: `sysinfo` for RAM + DXGI for VRAM. Zeros are

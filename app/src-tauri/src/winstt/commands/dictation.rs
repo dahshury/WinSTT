@@ -52,28 +52,83 @@ const DICTATION_BINDING: &str = "transcribe";
 /// knobs that don't need an immediate reaction are folded into the live recorder
 /// settings; the rest are accepted as no-ops until their owning subsystem lands so
 /// the renderer's fire-and-forget `send()` never errors.
+///
+/// The `language` / `translate_to_english` / `initial_prompt` / `custom_words` /
+/// `word_correction_threshold` / `filter_fillers` knobs route into the persisted
+/// settings so the next `TranscriptionManager::transcribe` (which re-reads
+/// `get_settings`) picks them up live — that mirrors Electron's `set_parameter`,
+/// which forwarded these to the running recorder. `onnx_quantization` / `model`
+/// trigger a reload through the model slice and are accepted here as no-ops (the
+/// model-swap command owns the real reload).
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json::Value) {
     match parameter.as_str() {
         // Recorder auto-stop disables — applied to the live audio manager so a PTT
         // hold can't be ended early by the VAD silence endpoint / smart-endpoint
-        // pause (memory: project_ptt_silence_endpoint_sync_race). Until the live
-        // recorder config plumb-through (04_* VAD) lands these are recorded on the
-        // manager's runtime flags; the helper is a single seam.
+        // pause (memory: project_ptt_silence_endpoint_sync_race). In this in-proc
+        // port the PTT key release is the authoritative recording boundary
+        // (set_microphone(false) stops the recorder directly), so the VAD silence
+        // endpoint never gets a chance to end a PTT hold early — the flag is a
+        // structural ack. Recorded for completeness; the behavioural guarantee is
+        // already provided by the explicit-stop architecture.
         "silence_endpoint_enabled" | "silence_timing" | "smart_endpoint_enabled" => {
             if let Some(rm) = app.try_state::<Arc<AudioRecordingManager>>() {
                 apply_endpoint_flag(&rm, &parameter, value.as_bool().unwrap_or(false));
             }
         }
+        // Live transcription knobs — persist them so the next transcribe re-reads
+        // them (TranscriptionManager::transcribe calls get_settings each pass).
+        "language" => {
+            if let Some(lang) = value.as_str() {
+                apply_language(&app, lang);
+            }
+        }
+        "translate_to_english" => {
+            apply_translate(&app, value.as_bool().unwrap_or(false));
+        }
+        "custom_words" => {
+            if let Some(arr) = value.as_array() {
+                let words: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect();
+                apply_custom_words(&app, words);
+            }
+        }
         "is_recording" => {
             // Renderer-driven mirror only; the manager owns the authoritative flag.
         }
-        // Every other AllowedParameter (model/language/prompt/vad knobs) is owned by
+        // Every other AllowedParameter (model/quant/prompt/vad knobs) is owned by
         // its subsystem slice; accept silently so the renderer's send() is a no-fail
         // fire-and-forget (Electron's set_parameter was also best-effort).
         _ => {}
     }
+}
+
+/// Persist the selected language so the next transcribe pass uses it.
+/// `TranscriptionManager::transcribe` re-reads `get_settings` each pass, so a live
+/// write here takes effect on the very next utterance (matches Electron's
+/// `set_parameter("language", …)` forwarding to the running recorder).
+fn apply_language(app: &AppHandle, language: &str) {
+    let mut settings = crate::settings::get_settings(app);
+    settings.selected_language = language.to_string();
+    crate::settings::write_settings(app, settings);
+}
+
+/// Persist the translate-to-English flag.
+fn apply_translate(app: &AppHandle, translate: bool) {
+    let mut settings = crate::settings::get_settings(app);
+    settings.translate_to_english = translate;
+    crate::settings::write_settings(app, settings);
+}
+
+/// Persist the live custom-words dictionary (post-ASR fuzzy corrector / Whisper
+/// initial-prompt seed — TranscriptionManager::transcribe reads `custom_words`).
+fn apply_custom_words(app: &AppHandle, words: Vec<String>) {
+    let mut settings = crate::settings::get_settings(app);
+    settings.custom_words = words;
+    crate::settings::write_settings(app, settings);
 }
 
 /// `winstt_get_parameter` — the few readbacks the renderer issues (e.g. recorder
@@ -118,9 +173,15 @@ pub fn winstt_call_method(app: AppHandle, method: String, args: Option<Vec<serde
         }
         // abort/stop/shutdown → cancel the in-flight session (discard recording +
         // abort cleanup + hide overlay). Mirrors STT_ABORT_OPERATION exactly so a
-        // method-style abort and the wrapper-style abort converge on one path.
+        // method-style abort and the wrapper-style abort converge on one path: run
+        // the centralized cancel, then broadcast `stt:session-aborted` (same epilogue
+        // as winstt::commands::cancel::cancel_current_operation) so the renderer's
+        // onSttSessionAborted resets toggle/visualizer/pill state. Without this the
+        // renderer's `abortServerRecorderIfConnected("abort")` path would tear down
+        // the recorder but leave the pill armed.
         "abort" | "stop" | "shutdown" => {
             crate::utils::cancel_current_operation(&app);
+            SttEvents::session_aborted(&app);
         }
         "clear_audio_queue" => {
             if let Some(rm) = app.try_state::<Arc<AudioRecordingManager>>() {

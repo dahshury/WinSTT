@@ -8,9 +8,9 @@
 //   - ollama_cancel_pull   → LLM_CANCEL_PULL_MODEL  → returns { cancelled: bool }
 //   - llm_get_warmup_status → LLM_GET_WARMUP_STATUS → returns LlmWarmupStatus | null
 //
-// CANCEL CONTRACT: `ollama_pull` (currently a spike stub in llm.rs; converge will wire the streaming
-// `POST /api/pull` drain) MUST call `is_pull_cancelled(&model)` between NDJSON chunks and abort the
-// stream when it returns true, then `clear_pull_cancel(&model)`. The pull-progress event it emits is
+// CANCEL CONTRACT: `ollama_pull` (in llm.rs; now wired against `LlmManager::ollama_pull_stream`'s
+// streaming `POST /api/pull` drain) calls `is_pull_cancelled(&model)` between NDJSON chunks and aborts
+// the stream when it returns true, then `clear_pull_cancel(&model)`. The pull-progress event it emits is
 // the plain `llm:pull-progress` channel carrying an `OllamaPullProgress` payload (shape below mirrors
 // spec/openapi.yaml so the reused renderer's `onOllamaPullProgress` listener parses it unchanged).
 //

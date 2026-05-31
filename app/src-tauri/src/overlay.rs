@@ -118,8 +118,11 @@ fn init_gtk_layer_shell(overlay_window: &tauri::webview::WebviewWindow) -> bool 
 }
 
 /// Forces a window to be topmost using Win32 API (Windows only)
-/// This is more reliable than Tauri's set_always_on_top which can be overridden
+/// This is more reliable than Tauri's set_always_on_top which can be overridden.
+/// Now only referenced by the legacy `show_overlay_state` (the WinSTT overlay has
+/// its own topmost helper in `winstt::commands::overlay`), so allow dead code.
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn force_overlay_topmost(overlay_window: &tauri::webview::WebviewWindow) {
     use windows::Win32::UI::WindowsAndMessaging::{
         SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
@@ -333,6 +336,10 @@ pub fn create_recording_overlay(app_handle: &AppHandle) {
     }
 }
 
+// Legacy Handy `recording_overlay` shower — retained for reference / the macOS
+// panel path but no longer the dictation overlay (the WinSTT `overlay` window is,
+// driven via `winstt::commands::overlay`). Kept to preserve the Handy plumbing.
+#[allow(dead_code)]
 fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     // Check if overlay should be shown based on position setting
     let settings = settings::get_settings(app_handle);
@@ -353,50 +360,47 @@ fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     }
 }
 
-/// Shows the recording overlay window with fade-in animation
+// ── WinSTT overlay redirection ──────────────────────────────────────────────────
+//
+// WinSTT port: the on-screen recording pill is the `overlay` WebviewWindow
+// (windows/overlay.html — the React dynamic-island), NOT Handy's `recording_overlay`
+// HTML. The renderer paints ALL content from the STT IPC events it already receives
+// (stt:recording-start / realtime-update / stt:audio-level / …) via its Zustand
+// stores, so the backend's only job is to SHOW / HIDE / POSITION that window in
+// lock-step with the recording lifecycle. These four entry points (the unchanged
+// call sites in actions.rs + utils::cancel_current_operation) are therefore
+// redirected to `winstt::commands::overlay`, which targets the correct window and
+// applies the WinSTT suppression gates + position math (showRecordingOverlay /
+// listen-mode / overlayPosition / overlayMode). The legacy `recording_overlay`
+// helpers above (`show_overlay_state` etc.) are retained for the macOS panel + the
+// Handy window plumbing but are no longer the dictation overlay.
+
+/// Shows the WinSTT recording overlay (gated by settings; positioned per mode).
 pub fn show_recording_overlay(app_handle: &AppHandle) {
-    show_overlay_state(app_handle, "recording");
+    crate::winstt::commands::overlay::show_recording_overlay(app_handle);
 }
 
-/// Shows the transcribing overlay window
+/// Transcribing state keeps the SAME pill on screen — the renderer's own stores
+/// distinguish recording vs transcription/thinking, so there is no separate window
+/// swap. Ensure the pill stays visible (a no-op when already shown).
 pub fn show_transcribing_overlay(app_handle: &AppHandle) {
-    show_overlay_state(app_handle, "transcribing");
+    crate::winstt::commands::overlay::show_recording_overlay(app_handle);
 }
 
-/// Shows the processing overlay window
+/// Post-processing (LLM cleanup) state likewise reuses the same pill; the renderer
+/// shows its thinking indicator inside it. Keep the pill visible.
 pub fn show_processing_overlay(app_handle: &AppHandle) {
-    show_overlay_state(app_handle, "processing");
+    crate::winstt::commands::overlay::show_recording_overlay(app_handle);
 }
 
-/// Updates the overlay window position based on current settings
+/// Re-anchor the WinSTT overlay after a live overlayPosition / overlayMode change.
 pub fn update_overlay_position(app_handle: &AppHandle) {
-    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        #[cfg(target_os = "linux")]
-        {
-            update_gtk_layer_shell_anchors(&overlay_window);
-        }
-
-        if let Some((x, y)) = calculate_overlay_position(app_handle) {
-            let _ = overlay_window
-                .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
-        }
-    }
+    crate::winstt::commands::overlay::reposition_overlay_if_visible(app_handle);
 }
 
-/// Hides the recording overlay window with fade-out animation
+/// Hides the WinSTT recording overlay (emit hide-overlay → grace → hide window).
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
-    // Always hide the overlay regardless of settings - if setting was changed while recording,
-    // we still want to hide it properly
-    if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
-        // Emit event to trigger fade-out animation
-        let _ = overlay_window.emit("hide-overlay", ());
-        // Hide the window after a short delay to allow animation to complete
-        let window_clone = overlay_window.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            let _ = window_clone.hide();
-        });
-    }
+    crate::winstt::commands::overlay::hide_recording_overlay(app_handle);
 }
 
 pub fn emit_levels(app_handle: &AppHandle, levels: &Vec<f32>) {

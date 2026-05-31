@@ -133,7 +133,17 @@ fn create_audio_recorder(
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
+                // Handy-native multiband spectrum for the recording overlay's
+                // bar renderer (mic-level event, Vec<f32>).
                 utils::emit_levels(&app_handle, &levels);
+                // WinSTT scalar level for the reused renderer's audio visualizer.
+                // useVisualizerSync (onAudioLevel) reads `{ level: number }` (a
+                // single 0..1 RMS-ish amplitude) and feeds the rAF bar loop. The
+                // multiband callback gives a per-band magnitude vector; collapse it
+                // to one representative level via peak-across-bands so the bars
+                // react to the loudest band (what the eye tracks). Clamped to 0..1.
+                let level = levels.iter().copied().fold(0.0_f32, f32::max).clamp(0.0, 1.0);
+                crate::winstt::commands::dictation::SttEvents::audio_level(&app_handle, level);
             }
         });
 

@@ -166,11 +166,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
 
+    // Seed WinSTT settings defaults BEFORE managers read them (first-run materialization).
+    winstt::commands::settings::seed_defaults(app_handle);
+
     // ── WinSTT managers (lib_wiring.md §2) ──
     {
         use crate::winstt::managers::{
-            CloudSttManager, ContextManager, DiarizationManager, FileTranscribeManager,
-            LlmManager, LoopbackManager, TtsManager, WakeWordManager, WordAligner,
+            CloudSttManager, ContextManager, DiarizationManager, DownloadManager,
+            FileTranscribeManager, LlmManager, LoopbackManager, TtsManager, WakeWordManager,
+            WordAligner,
         };
         app_handle.manage(Arc::new(LlmManager::new(app_handle)));
         app_handle.manage(Arc::new(CloudSttManager::new(app_handle)));
@@ -184,7 +188,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             app_handle,
             transcription_manager.clone(),
         )));
+        // C4 fix: DownloadManager MUST be managed or the 6 download commands panic on State injection.
+        app_handle.manage(Arc::new(DownloadManager::new(app_handle)));
     }
+    // Tray-menu placement state + the custom-HTML-tray + history live-event bridge.
+    app_handle.manage(crate::winstt::commands::tray_menu::TrayMenuAnchor::default());
+    winstt::commands::history::install_history_event_bridge(app_handle);
+    winstt::commands::tray_menu::install_tray_menu_lifecycle(app_handle);
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -556,6 +566,7 @@ pub fn run(cli_args: CliArgs) {
             winstt::commands::sound::sound_get_data,
             winstt::commands::cancel::cancel_current_operation,
             winstt::commands::custom_models::open_custom_models_folder,
+            winstt::commands::download::winstt_cancel_download,
             winstt::commands::context_playground::context_playground_set_live,
             winstt::commands::context_playground::context_playground_arm_deep,
             winstt::commands::context_playground::context_playground_capture,

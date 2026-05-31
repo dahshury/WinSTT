@@ -111,11 +111,14 @@ fn resolve_anchor(app: &AppHandle, x: Option<f64>, y: Option<f64>) -> (f64, f64)
         .unwrap_or((0.0, 0.0))
 }
 
-/// Core placement: ensure the tray-menu window exists, read its CURRENT logical
-/// size, clamp the anchor to the monitor work area, position + show + focus it.
-fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
-    let window = ensure_window(app, TRAY_MENU_LABEL)?;
-
+/// Clamp the anchor against the live menu size + monitor work area and move the
+/// tray-menu window there. Shared by `place_tray_menu` (open path) and the
+/// resize-reanchor handler (reposition only, no show/focus → no flicker).
+fn position_tray_menu(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    anchor: (f64, f64),
+) -> Result<(), String> {
     // Use the window's live logical inner size so the clamp matches what the
     // renderer's ResizeObserver has reported (the menu is `w-fit` and reports
     // its real size right after mount via TRAY_MENU_RESIZE → resize_window).
@@ -130,7 +133,14 @@ fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
 
     window
         .set_position(LogicalPosition::new(px, py))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
+
+/// Core placement: ensure the tray-menu window exists, clamp the anchor to the
+/// monitor work area, position + show + focus it.
+fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
+    let window = ensure_window(app, TRAY_MENU_LABEL)?;
+    position_tray_menu(app, &window, anchor)?;
     window.show().map_err(|e| e.to_string())?;
     let _ = window.set_focus();
     Ok(())
@@ -182,6 +192,105 @@ pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Hide the tray menu directly (no command roundtrip). Used by the blur/resize
+/// window-event handler the tray-click wiring installs. Clears the stored anchor.
+fn hide_tray_menu_internal(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(TRAY_MENU_LABEL) {
+        let _ = window.hide();
+    }
+    if let Some(state) = app.try_state::<TrayMenuAnchor>() {
+        if let Ok(mut guard) = state.0.lock() {
+            *guard = None;
+        }
+    }
+}
+
+/// Open the tray menu from a TRAY-ICON click. The Tauri `TrayIconEvent::Click`
+/// reports the cursor `position` in PHYSICAL pixels relative to the icon; the menu
+/// placement works in LOGICAL screen px, so convert via the primary monitor's
+/// scale factor before anchoring at that point. Called from `on_tray_icon_event`
+/// in lib.rs (REPORTED in libOther). Errors are logged, never propagated (a tray
+/// click must never panic the app). The cursor lands at the bottom of the screen
+/// near the tray, so `clamp_to_work_area` (called by `place_tray_menu`) pulls the
+/// menu up into the work area above the taskbar.
+pub fn show_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y: f64) {
+    let scale = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    let logical = (physical_x / scale, physical_y / scale);
+    if let Some(state) = app.try_state::<TrayMenuAnchor>() {
+        if let Ok(mut guard) = state.0.lock() {
+            *guard = Some(logical);
+        }
+    }
+    if let Err(e) = place_tray_menu(app, logical) {
+        log::warn!("Failed to open tray menu from tray click: {e}");
+    }
+}
+
+/// Toggle the tray menu from a tray-icon click: hide if it's already visible,
+/// otherwise open it anchored at the click point. Mirrors the desktop convention
+/// where clicking the tray icon again dismisses the popup. Called from
+/// `on_tray_icon_event` (REPORTED in libOther).
+pub fn toggle_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y: f64) {
+    let visible = app
+        .get_webview_window(TRAY_MENU_LABEL)
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    if visible {
+        hide_tray_menu_internal(app);
+    } else {
+        show_tray_menu_at_physical(app, physical_x, physical_y);
+    }
+}
+
+/// Install the tray-menu window's lifecycle behaviors ONCE (called from lib.rs
+/// setup — REPORTED in libOther). Two parities with Electron's
+/// `tray-menu-window.ts`:
+///   1. RESIZE → RE-ANCHOR: the renderer's ResizeObserver reports the menu's real
+///      `w-fit` content size via TRAY_MENU_RESIZE → `resize_window`. When the OS
+///      resize lands, re-place the menu against the stored anchor so the now
+///      correctly-sized menu stays glued to the click point (Electron's
+///      `reanchorMenuIfVisible`).
+///   2. BLUR → HIDE: when the menu loses focus (user clicked elsewhere), dismiss it
+///      (Electron's `handleBlur`). The detached device-picker child is allowed to
+///      steal focus — Electron suppresses blur-hide for that, but here the picker is
+///      a separate always-on-top window and the menu staying open under it is
+///      acceptable for v1; the renderer also closes the menu on item clicks.
+pub fn install_tray_menu_lifecycle(app: &AppHandle) {
+    // The window is created lazily on first open; defer wiring until then by
+    // re-checking on each open is over-engineered — instead create it now (hidden)
+    // so the event hook is attached exactly once.
+    let Ok(window) = ensure_window(app, TRAY_MENU_LABEL) else {
+        log::warn!("tray-menu window unavailable; skipping lifecycle wiring");
+        return;
+    };
+    let app_handle = app.clone();
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Resized(_) => {
+            // Re-anchor only while the menu is on screen, against the stored anchor.
+            // Reposition ONLY (no show/focus) so the reanchor can't flicker focus.
+            let anchor = app_handle
+                .try_state::<TrayMenuAnchor>()
+                .and_then(|state| state.0.lock().ok().and_then(|g| *g));
+            if let Some(anchor) = anchor {
+                if let Some(window) = app_handle.get_webview_window(TRAY_MENU_LABEL) {
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = position_tray_menu(&app_handle, &window, anchor);
+                    }
+                }
+            }
+        }
+        tauri::WindowEvent::Focused(false) => {
+            hide_tray_menu_internal(&app_handle);
+        }
+        _ => {}
+    });
 }
 
 #[cfg(test)]

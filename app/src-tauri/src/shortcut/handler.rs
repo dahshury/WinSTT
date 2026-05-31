@@ -9,9 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
-use crate::settings::get_settings;
 use crate::transcription_coordinator::is_transcribe_binding;
-use crate::TranscriptionCoordinator;
 
 /// Handle a shortcut event from either implementation.
 ///
@@ -32,14 +30,25 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
-    let settings = get_settings(app);
-
-    // Transcribe bindings are handled by the coordinator.
+    // WinSTT port fork (WU-3 dictation): the transcribe binding's accelerator does
+    // NOT drive the TranscribeAction directly. Instead the press/release of the
+    // registered accelerator is surfaced to the renderer as the plain
+    // `hotkey:pressed` / `hotkey:released` events; the renderer's usePushToTalk then
+    // decides (per recording mode) whether to issue `set_microphone(true/false)`
+    // (winstt_call_method), which routes back through the coordinator. This keeps
+    // the renderer as the single source of truth for the 4 modes (ptt / toggle /
+    // listen / wakeword) — listen & wakeword are server-driven and the renderer
+    // deliberately suppresses set_microphone for them, so routing the hotkey
+    // straight into the coordinator here would wrongly start a mic recording in
+    // those modes AND double-record in ptt/toggle (the renderer ALSO calls
+    // set_microphone). Emitting the events instead is the byte-compatible WinSTT
+    // behaviour (frontend/electron/ipc/hotkey.ts → onHotkeyPressed/Released).
     if is_transcribe_binding(binding_id) {
-        if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-            coordinator.send_input(binding_id, hotkey_string, is_pressed, settings.push_to_talk);
+        use crate::winstt::commands::hotkey::HotkeyEvents;
+        if is_pressed {
+            HotkeyEvents::pressed(app);
         } else {
-            warn!("TranscriptionCoordinator is not initialized");
+            HotkeyEvents::released(app);
         }
         return;
     }

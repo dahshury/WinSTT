@@ -168,6 +168,12 @@ impl Default for LocalTtsConfig {
 }
 
 impl LocalTtsConfig {
+    /// Public view of the derived Kokoro engine config (cache dir + filenames +
+    /// device) so the host can stat the asset paths for the download estimate.
+    pub fn to_kokoro_config_pub(&self) -> KokoroConfig {
+        self.to_kokoro_config()
+    }
+
     fn to_kokoro_config(&self) -> KokoroConfig {
         KokoroConfig {
             cache_dir: self.cache_dir.clone(),

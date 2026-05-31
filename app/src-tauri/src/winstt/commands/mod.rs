@@ -10,6 +10,12 @@
 // to `collect_commands![]` in lib.rs (the full list is in lib_wiring.md §3).
 
 pub mod settings;
+/// Secret-at-rest seal/open (`enc:v1:` envelope) for the three secret settings
+/// (`llm.openrouterApiKey` + the two `integrations.*.apiKey`). The Rust analogue
+/// of Electron's `safeStorage` wrapper (frontend/electron/lib/secret-storage.ts):
+/// `winstt_set_settings` seals on write, `read_settings` opens on read so every
+/// internal consumer (LLM / cloud-STT / verify) and the renderer see plaintext.
+pub mod secret_storage;
 pub mod stt;
 
 // ── slice: model catalog + picker + download (app/PORT/10_frontend_port_plan.md §6 — WU-4) ──
@@ -38,6 +44,12 @@ pub mod dictation;
 /// HOTKEY_REGISTER/UNREGISTER + key-combo capture (START/STOP_RECORDING) commands
 /// + the HotkeyEvents emit façade (hotkey:pressed/released/recording-update/done).
 pub mod hotkey;
+/// Recording-overlay visibility: show/hide/reposition the WinSTT `overlay` window
+/// (windows/overlay.html — the renderer dynamic-island pill) in lock-step with the
+/// recording lifecycle. Ports frontend/electron/ipc/overlay.ts (showOverlay /
+/// hideOverlay / computeOverlayPosition / suppression gates). No commands — called
+/// from the recording pipeline (TranscribeAction + cancel) and settings live-change.
+pub mod overlay;
 /// User-initiated dictation cancel: `cancel_current_operation` (STT_ABORT_OPERATION
 /// → overlay X / cancel combo). Wraps the centralized `utils::cancel_current_operation`
 /// + emits `stt:session-aborted`. Registered in lib.rs collect_commands![].

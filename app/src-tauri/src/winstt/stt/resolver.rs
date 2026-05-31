@@ -630,6 +630,118 @@ async fn download_one(
         .map_err(|e| SttError::Resolve(format!("download {repo_path}: {e}")))
 }
 
+// ---------------------------------------------------------------------------
+// 6b. Per-quant download PLAN + progress-aware fetch (consumed by DownloadManager)
+// ---------------------------------------------------------------------------
+
+/// The full set of repo-relative POSIX paths a `(model_id, kind, quant)` download must fetch INTO
+/// the HF cache: every required graph (`.onnx`) + its external-data sidecars + `config.json` /
+/// `config.yaml` + the vocab/tokenizer text files. Mirrors `resolve_remote`'s planning step but
+/// returns the path LIST (instead of downloading) so the DownloadManager can stream each file with
+/// pause/cancel/progress. Lists the repo tree once over the network.
+pub async fn plan_quant_download(
+    model_id: &str,
+    kind: EngineKind,
+    quant: Quantization,
+) -> SttResult<Vec<String>> {
+    use hf_hub::HFClient;
+
+    let (owner, name) = resolve_repo(model_id)
+        .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {model_id}")))?;
+    let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
+    let repo = client.model(owner.clone(), name.clone());
+    let tree_paths = list_repo_tree(&repo).await?;
+
+    let globs = file_globs(kind, quant);
+    let mut planned: Vec<String> = Vec::new();
+    let mut onnx_stems: Vec<String> = Vec::new();
+    for fg in &globs {
+        let mut matches: Vec<&String> = tree_paths.iter().filter(|p| glob_match(&fg.glob, p)).collect();
+        if matches.is_empty() {
+            if let Some(stem) = fg.glob.strip_suffix(".onnx") {
+                let ort = format!("{stem}.ort");
+                matches = tree_paths.iter().filter(|p| glob_match(&ort, p)).collect();
+            }
+        }
+        let path = match matches.first() {
+            Some(p) => (*p).clone(),
+            None => {
+                return Err(SttError::Resolve(format!(
+                    "missing {} ({}) in {owner}/{name}",
+                    fg.key, fg.glob
+                )));
+            }
+        };
+        if let Some(stem) = path.strip_suffix(".onnx") {
+            onnx_stems.push(stem.to_string());
+        }
+        planned.push(path);
+    }
+    // External-data sidecars for each planned `.onnx`.
+    for stem in &onnx_stems {
+        for p in &tree_paths {
+            if is_sidecar_for(stem, p) {
+                planned.push(p.clone());
+            }
+        }
+    }
+    // config.json / config.yaml when present.
+    for cfg in ["config.json", "config.yaml"] {
+        if tree_paths.iter().any(|p| p == cfg) {
+            planned.push(cfg.to_string());
+        }
+    }
+    // De-dup (a sidecar could in theory also be a planned graph match — defensive).
+    planned.sort();
+    planned.dedup();
+    Ok(planned)
+}
+
+/// Download ONE planned repo file INTO the HF cache, reporting byte-level progress via `progress`
+/// (an hf-hub `ProgressHandler`). Returns the local cached path. `cache_only` skips the network
+/// when the file is already present (used to short-circuit already-cached files cheaply).
+pub async fn download_planned_file(
+    model_id: &str,
+    repo_path: &str,
+    cache_only: bool,
+    progress: impl Into<hf_hub::progress::Progress>,
+) -> SttResult<PathBuf> {
+    use hf_hub::HFClient;
+
+    let (owner, name) = resolve_repo(model_id)
+        .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {model_id}")))?;
+    let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
+    let repo = client.model(owner, name);
+    let progress: hf_hub::progress::Progress = progress.into();
+    repo.download_file()
+        .filename(repo_path)
+        .local_files_only(cache_only)
+        .progress(progress)
+        .send()
+        .await
+        .map_err(|e| SttError::Resolve(format!("download {repo_path}: {e}")))
+}
+
+/// True iff `repo_path` is already present + complete in the HF cache (used to skip already-cached
+/// files when resuming a partial per-quant download). A cache-only `download_file` succeeds iff the
+/// file is cached; we then verify external-data completeness for `.onnx`.
+pub async fn is_file_cached(model_id: &str, repo_path: &str) -> bool {
+    struct Noop;
+    impl hf_hub::progress::ProgressHandler for Noop {
+        fn on_progress(&self, _e: &hf_hub::progress::ProgressEvent) {}
+    }
+    match download_planned_file(model_id, repo_path, true, Noop).await {
+        Ok(p) => {
+            if repo_path.ends_with(".onnx") {
+                verify_external_data_complete(&p)
+            } else {
+                p.metadata().map(|m| m.len() > 0).unwrap_or(false)
+            }
+        }
+        Err(_) => false,
+    }
+}
+
 /// Collect the repo's POSIX file paths via `repo.info().send()` → `ModelInfo.siblings`, each a
 /// `RepoSibling { rfilename: String, .. }` (the relative repo path — the same `siblings`/`rfilename`
 /// surface the Python `huggingface_hub` exposes, which onnx-asr's resolver fnmatches). This is

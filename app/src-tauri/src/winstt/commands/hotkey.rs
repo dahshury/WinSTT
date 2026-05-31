@@ -1,6 +1,6 @@
-// PORT IMPL — WU-3 (app/PORT/10_frontend_port_plan.md §6 "Main window …" — the
-// hotkey-capture events). Source: frontend/electron/ipc/hotkey.ts + the renderer
-// wrappers in src/shared/api/ipc-client.ts (hotkeyRegister / hotkeyUnregister /
+// PORT IMPL — WU-3 hotkey (app/PORT/10_frontend_port_plan.md §6). Source:
+// frontend/electron/ipc/hotkey.ts + the renderer wrappers in
+// src/shared/api/ipc-client.ts (hotkeyRegister / hotkeyUnregister /
 // hotkeyStartRecording / hotkeyStopRecording / onHotkeyPressed / onHotkeyReleased /
 // onHotkeyRecordingUpdate / onHotkeyRecordingDone) consumed by
 // features/push-to-talk (usePushToTalk) + features/record-hotkey (useKeyRecorder).
@@ -15,15 +15,20 @@
 //     When the registered accelerator is pressed/released the backend emits the
 //     PLAIN events `hotkey:pressed` / `hotkey:released` (no payload). The renderer's
 //     usePushToTalk then issues `set_microphone(true/false)` (winstt_call_method).
+//     ── CRITICAL fork ── the transcribe binding does NOT run Handy's coordinator
+//     directly; `handle_shortcut_event` calls `dispatch_transcribe_hotkey` here so
+//     the press/release becomes WinSTT events. The renderer (which knows the
+//     recording MODE: ptt/toggle/listen/wakeword) is the authority over whether a
+//     press starts/stops the mic. See libOther for the one-line handler.rs edit.
 //
 //  2. KEY-COMBO CAPTURE (record-hotkey slice — rebinding a hotkey in settings):
 //       hotkeyStartRecording() → begin capturing the next combo; stream live keys
 //                                via `hotkey:recording-update` { keys: string[] }
 //       hotkeyStopRecording()  → finish; emit `hotkey:recording-done` { combo|null }
-//     Wraps Handy's existing key-recording listener (shortcut::handy_keys), which
-//     already emits a per-key `handy-keys-event`; the WinSTT-shape translation
-//     (accumulate held keys → `keys`/`combo`) is wired by the Handy-side bridge
-//     documented in libWiring (one small listener; see HotkeyEvents below).
+//     Wraps Handy's key-recording listener (shortcut::handy_keys), which emits a
+//     per-key `handy-keys-event`. The CaptureBridge below folds those into WinSTT's
+//     accumulated `{keys}`/`{combo}` shape (peak-held set, WinSTT key names, Escape
+//     cancels) so the reused renderer's useKeyRecorder works byte-for-byte.
 //
 // Event NAMES match the adapter ROUTE map (electron-tauri-adapter.ts):
 //   HOTKEY_PRESSED          → "hotkey:pressed"
@@ -33,7 +38,8 @@
 // All four are PLAIN string events (not specta-collected) so the reused renderer's
 // listeners are byte-compatible (lib_wiring.md §4b).
 
-use tauri::{AppHandle, Emitter};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Listener, Manager};
 
 /// The transcribe binding the PTT/toggle hotkey drives. The renderer registers an
 /// accelerator string against THIS binding so the press/release of that accelerator
@@ -43,9 +49,11 @@ const PTT_BINDING: &str = "transcribe";
 
 /// `hotkey_register` — point the PTT/toggle binding at `accelerator` so its press/
 /// release fires the WinSTT hotkey events. WinSTT sends the accelerator as a WinSTT
-/// key string; `change_binding` validates + (un)registers it for the active keyboard
-/// implementation. An empty accelerator is treated as "unbound" (no-op success) so
-/// the renderer's cold-boot register-then-rebind sequence can't error.
+/// key string (e.g. `LCtrl+LMeta`); handy-keys' `parse_single`/`Key::from_str`
+/// accept those WinSTT names verbatim (lctrl/lmeta/rshift/space/r…), so
+/// `change_binding` validates + (un)registers it directly. An empty accelerator is
+/// treated as "unbound" (no-op success) so the renderer's cold-boot
+/// register-then-rebind sequence can't error.
 ///
 /// Returns whether the accelerator is now active (the renderer's `hotkeyRegister`
 /// wrapper reads a `boolean`, defaulting to `false`).
@@ -80,33 +88,274 @@ pub fn hotkey_unregister(app: AppHandle, accelerator: String) {
     let _ = crate::shortcut::unregister_shortcut(&app, binding);
 }
 
+// ── 1. PTT/TOGGLE press-dispatch (the handle_shortcut_event fork) ───────────────
+
+/// Dispatch a transcribe-binding press/release as the WinSTT hotkey events the
+/// renderer's `usePushToTalk` listens for. Called from `handle_shortcut_event`
+/// (shortcut/handler.rs) INSTEAD of routing the transcribe binding straight into
+/// the TranscriptionCoordinator: the renderer is the recording-MODE authority
+/// (ptt vs toggle vs listen vs wakeword), so it decides — via `set_microphone` —
+/// whether each press starts/stops the mic. This makes the four WinSTT recording
+/// modes share ONE passive hotkey, exactly like the Electron build.
+///
+/// REPORTED (libOther): the call site in `handle_shortcut_event` is the one-line
+/// fork — when `is_transcribe_binding(binding_id)`, call THIS instead of
+/// `coordinator.send_input(...)`.
+pub fn dispatch_transcribe_hotkey(app: &AppHandle, is_pressed: bool) {
+    if is_pressed {
+        HotkeyEvents::pressed(app);
+    } else {
+        HotkeyEvents::released(app);
+    }
+}
+
+// ── 2. KEY-COMBO CAPTURE (record-hotkey) ────────────────────────────────────────
+
+/// Folds Handy's per-key `handy-keys-event` stream into WinSTT's combo-capture
+/// shape. Tracks the currently-held key set (for live `recording-update`) and the
+/// PEAK set (the largest combo seen — what `recording-done` reports), matching the
+/// Electron recorder's "peak snapshot" semantics (hotkey.ts updatePeakSnapshot).
+#[derive(Default)]
+pub struct CaptureBridge {
+    inner: Mutex<CaptureState>,
+}
+
+#[derive(Default)]
+struct CaptureState {
+    active: bool,
+    /// Currently-held keys, in WinSTT names + modifier-first order.
+    held: Vec<String>,
+    /// Largest combo observed this capture (the result on stop).
+    peak: Vec<String>,
+    /// True once the user cancelled with Escape (done → combo: null).
+    cancelled: bool,
+    /// The `handy-keys-event` listener id, so it can be detached on stop.
+    listener: Option<tauri::EventId>,
+}
+
+impl CaptureBridge {
+    /// Begin a capture: reset state, attach the `handy-keys-event` translation
+    /// listener. The listener accumulates held keys and emits `recording-update`.
+    fn begin(&self, app: &AppHandle) {
+        // Detach any stale listener from a previous (un-stopped) capture first.
+        self.detach(app);
+
+        {
+            let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            st.active = true;
+            st.held.clear();
+            st.peak.clear();
+            st.cancelled = false;
+        }
+
+        let app_for_listener = app.clone();
+        let id = app.listen("handy-keys-event", move |event| {
+            handle_handy_key_event(&app_for_listener, event.payload());
+        });
+
+        let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        st.listener = Some(id);
+    }
+
+    /// Finish a capture: detach the listener, emit `recording-done` with the peak
+    /// combo (or `null` if nothing captured / cancelled).
+    fn finish(&self, app: &AppHandle) {
+        self.detach(app);
+        let (cancelled, peak) = {
+            let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            st.active = false;
+            (st.cancelled, std::mem::take(&mut st.peak))
+        };
+        if cancelled || peak.is_empty() {
+            HotkeyEvents::recording_done(app, None);
+        } else {
+            let combo = peak.join("+");
+            HotkeyEvents::recording_done(app, Some(&combo));
+        }
+    }
+
+    fn detach(&self, app: &AppHandle) {
+        let id = {
+            let mut st = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            st.listener.take()
+        };
+        if let Some(id) = id {
+            app.unlisten(id);
+        }
+    }
+}
+
+/// One `handy-keys-event` payload (matches FrontendKeyEvent in shortcut/handy_keys.rs).
+#[derive(serde::Deserialize)]
+struct HandyKeyEventPayload {
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    is_key_down: bool,
+    /// The side-aware Handy combo string (`to_handy_string()` — e.g.
+    /// "ctrl_left+super_left" or "ctrl_left+r"). Side info lives ONLY here (the
+    /// flat `modifiers` field drops L/R), so we rebuild the WinSTT combo from this.
+    #[serde(default)]
+    hotkey_string: String,
+}
+
+/// Per-event translation: parse the Handy combo string → WinSTT names, update the
+/// held set, track the peak, and emit a live `recording-update`. Escape cancels.
+fn handle_handy_key_event(app: &AppHandle, raw: &str) {
+    let Ok(payload) = serde_json::from_str::<HandyKeyEventPayload>(raw) else {
+        return;
+    };
+
+    // Escape (key-down) cancels the capture, exactly like Electron's
+    // handleRecordingKeyDown(Escape) → recording-done { combo: null }.
+    if payload.is_key_down && payload.key.as_deref() == Some("escape") {
+        if let Some(bridge) = app.try_state::<CaptureBridge>() {
+            let mut st = bridge.inner.lock().unwrap_or_else(|e| e.into_inner());
+            st.cancelled = true;
+        }
+        // Emit a done(null) immediately; the renderer's stop call is idempotent.
+        HotkeyEvents::recording_done(app, None);
+        return;
+    }
+
+    let names = handy_string_to_winstt_names(&payload.hotkey_string);
+
+    if let Some(bridge) = app.try_state::<CaptureBridge>() {
+        let snapshot = {
+            let mut st = bridge.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if !st.active {
+                return;
+            }
+            st.held = names.clone();
+            // Peak = the largest combo seen (modifiers-then-key, capped naturally
+            // by the OS at a handful of simultaneous keys). Mirrors Electron's
+            // updatePeakSnapshot (size > peak.length).
+            if st.held.len() > st.peak.len() {
+                st.peak = st.held.clone();
+            }
+            st.held.clone()
+        };
+        HotkeyEvents::recording_update(app, &snapshot);
+    }
+}
+
+/// Convert a side-aware Handy combo string ("ctrl_left+super_left+r") into the
+/// WinSTT internal key names the renderer expects (["LCtrl","LMeta","R"]), in
+/// modifier-first order. Mirrors keycodes.ts KEYCODE_TO_NAME + sortKeycodes.
+fn handy_string_to_winstt_names(handy: &str) -> Vec<String> {
+    let mut mods: Vec<(u8, String)> = Vec::new();
+    let mut key: Option<String> = None;
+
+    for token in handy.split('+') {
+        let t = token.trim().to_ascii_lowercase();
+        if t.is_empty() {
+            continue;
+        }
+        match t.as_str() {
+            // Modifiers (rank mirrors keycodes.ts MODIFIER_ORDER 0..7).
+            "ctrl" | "ctrl_left" | "lctrl" | "control" => mods.push((0, "LCtrl".into())),
+            "ctrl_right" | "rctrl" => mods.push((1, "RCtrl".into())),
+            "alt" | "alt_left" | "lalt" | "opt" | "option" => mods.push((2, "LAlt".into())),
+            "alt_right" | "ralt" | "altgr" => mods.push((3, "RAlt".into())),
+            "shift" | "shift_left" | "lshift" => mods.push((4, "LShift".into())),
+            "shift_right" | "rshift" => mods.push((5, "RShift".into())),
+            "super" | "super_left" | "command" | "command_left" | "cmd" | "meta" | "win"
+            | "lmeta" => mods.push((6, "LMeta".into())),
+            "super_right" | "command_right" | "rmeta" => mods.push((7, "RMeta".into())),
+            // Otherwise it's the main key — translate to its WinSTT display name.
+            other => key = Some(handy_key_to_winstt_name(other)),
+        }
+    }
+
+    mods.sort_by_key(|(rank, _)| *rank);
+    mods.dedup_by(|a, b| a.1 == b.1);
+    let mut out: Vec<String> = mods.into_iter().map(|(_, n)| n).collect();
+    if let Some(k) = key {
+        out.push(k);
+    }
+    out
+}
+
+/// Map a lowercase Handy key name to the WinSTT display name (KEYCODE_TO_NAME).
+/// Single letters → uppercase; named keys → CamelCase WinSTT label.
+fn handy_key_to_winstt_name(key: &str) -> String {
+    match key {
+        "space" => "Space".into(),
+        "tab" => "Tab".into(),
+        "return" | "enter" => "Enter".into(),
+        "escape" | "esc" => "Escape".into(),
+        "delete" | "backspace" => "Backspace".into(),
+        "forwarddelete" | "del" => "Delete".into(),
+        "insert" | "ins" => "Insert".into(),
+        "home" => "Home".into(),
+        "end" => "End".into(),
+        "pageup" => "PageUp".into(),
+        "pagedown" => "PageDown".into(),
+        "left" | "leftarrow" => "ArrowLeft".into(),
+        "right" | "rightarrow" => "ArrowRight".into(),
+        "up" | "uparrow" => "ArrowUp".into(),
+        "down" | "downarrow" => "ArrowDown".into(),
+        // Single ASCII letter → uppercase (matches KEYCODE_TO_NAME["A".."Z"]).
+        s if s.len() == 1 && s.chars().all(|c| c.is_ascii_alphabetic()) => s.to_ascii_uppercase(),
+        // Digits + everything else pass through verbatim (KEYCODE_TO_NAME["0".."9"]).
+        s => s.to_string(),
+    }
+}
+
 /// `hotkey_start_recording` — begin capturing the next key combo for a rebind. Wraps
-/// Handy's key-recording listener; the per-key `handy-keys-event` stream is folded
-/// into WinSTT's `hotkey:recording-update` { keys } by the translation bridge
-/// (libWiring). Returns whether capture started (`hotkeyStartRecording` reads a bool).
+/// Handy's key-recording listener AND installs the CaptureBridge translation so the
+/// per-key `handy-keys-event` stream becomes WinSTT's `hotkey:recording-update`
+/// {keys}. Returns whether capture started (`hotkeyStartRecording` reads a bool).
 #[tauri::command]
 #[specta::specta]
 pub fn hotkey_start_recording(app: AppHandle) -> bool {
+    // Install/refresh the translation bridge BEFORE starting the Handy listener so
+    // no early key event is dropped.
+    if let Some(bridge) = app.try_state::<CaptureBridge>() {
+        bridge.begin(&app);
+    }
+    // Suspend the live PTT binding during capture so pressing the CURRENT combo to
+    // rebind it can't ALSO fire hotkey:pressed → start a dictation recording.
+    // Mirrors Electron hotkey.ts handleStartRecording (`setIsActive(false)` +
+    // routing every keydown to the recorder instead of activation). Re-armed on stop.
+    let _ = crate::shortcut::suspend_binding(app.clone(), PTT_BINDING.to_string());
     // The binding id under capture is irrelevant to the WinSTT combo-capture UI
     // (the renderer picks the target field); use the PTT binding as the carrier.
-    crate::shortcut::handy_keys::start_handy_keys_recording(app, PTT_BINDING.to_string()).is_ok()
+    let started =
+        crate::shortcut::handy_keys::start_handy_keys_recording(app.clone(), PTT_BINDING.to_string())
+            .is_ok();
+    if !started {
+        // Roll back the bridge + re-arm the binding so a failed start doesn't leave a
+        // dangling listener or a suspended hotkey.
+        if let Some(bridge) = app.try_state::<CaptureBridge>() {
+            bridge.detach(&app);
+        }
+        let _ = crate::shortcut::resume_binding(app.clone(), PTT_BINDING.to_string());
+    }
+    started
 }
 
-/// `hotkey_stop_recording` — finish combo capture. On stop the translation bridge
-/// emits `hotkey:recording-done` { combo } with the captured combo (or `null` if no
-/// keys were captured), matching WinSTT's cancel semantics.
+/// `hotkey_stop_recording` — finish combo capture. Detaches the Handy listener AND
+/// the translation bridge, re-arms the suspended PTT binding, then emits
+/// `hotkey:recording-done` { combo } with the captured peak combo (or `null` if
+/// nothing was captured / cancelled).
 #[tauri::command]
 #[specta::specta]
 pub fn hotkey_stop_recording(app: AppHandle) {
-    let _ = crate::shortcut::handy_keys::stop_handy_keys_recording(app);
+    let _ = crate::shortcut::handy_keys::stop_handy_keys_recording(app.clone());
+    // Re-arm the PTT binding that `hotkey_start_recording` suspended.
+    let _ = crate::shortcut::resume_binding(app.clone(), PTT_BINDING.to_string());
+    if let Some(bridge) = app.try_state::<CaptureBridge>() {
+        bridge.finish(&app);
+    }
 }
 
 /// Typed emit façade for the four hotkey events. The CALL SITES live in Handy-owned
-/// files: `hotkey:pressed`/`released` from the passive PTT shortcut handler (when
-/// the PTT binding's accelerator is pressed/released — instead of running the
-/// TranscribeAction), and `hotkey:recording-update`/`done` from the key-recording
-/// loop translation (folding `handy-keys-event` into the WinSTT shapes). Centralized
-/// here so those wiring edits are one-liners and the event shapes can't drift.
+/// files: `hotkey:pressed`/`released` from `dispatch_transcribe_hotkey` (invoked by
+/// `handle_shortcut_event` for the transcribe binding — instead of running the
+/// TranscribeAction), and `hotkey:recording-update`/`done` from the CaptureBridge
+/// translation. Centralized here so those wiring edits are one-liners and the event
+/// shapes can't drift.
 pub struct HotkeyEvents;
 
 impl HotkeyEvents {
@@ -124,15 +373,59 @@ impl HotkeyEvents {
 
     /// `hotkey:recording-update` — live snapshot of the currently-held keys during a
     /// combo capture. `onHotkeyRecordingUpdate` reads `.keys`. Keys are the WinSTT
-    /// display names (lowercase, e.g. `["ctrl","shift","v"]`).
+    /// display names (e.g. `["LCtrl","LShift","V"]`), modifier-first.
     pub fn recording_update(app: &AppHandle, keys: &[String]) {
         let _ = app.emit("hotkey:recording-update", serde_json::json!({ "keys": keys }));
     }
 
     /// `hotkey:recording-done` — capture finished. `combo` is the `+`-joined combo
-    /// (e.g. `"ctrl+shift+v"`) or `null` when nothing was captured / cancelled.
+    /// (e.g. `"LCtrl+LShift+V"`) or `null` when nothing was captured / cancelled.
     /// `onHotkeyRecordingDone` reads `.combo`.
     pub fn recording_done(app: &AppHandle, combo: Option<&str>) {
         let _ = app.emit("hotkey:recording-done", serde_json::json!({ "combo": combo }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{handy_key_to_winstt_name, handy_string_to_winstt_names};
+
+    #[test]
+    fn default_ptt_combo_roundtrips_to_winstt_names() {
+        // handy `to_handy_string()` for LCtrl+LMeta is "ctrl_left+super_left".
+        let names = handy_string_to_winstt_names("ctrl_left+super_left");
+        assert_eq!(names, vec!["LCtrl", "LMeta"]);
+    }
+
+    #[test]
+    fn compound_and_key_combo() {
+        let names = handy_string_to_winstt_names("ctrl+shift+r");
+        assert_eq!(names, vec!["LCtrl", "LShift", "R"]);
+    }
+
+    #[test]
+    fn modifiers_sort_first_and_in_order() {
+        // Out-of-order input → modifier-first canonical order (Ctrl<Alt<Shift<Meta).
+        let names = handy_string_to_winstt_names("super_left+shift+ctrl_left+space");
+        assert_eq!(names, vec!["LCtrl", "LShift", "LMeta", "Space"]);
+    }
+
+    #[test]
+    fn right_side_modifiers() {
+        let names = handy_string_to_winstt_names("ctrl_right+v");
+        assert_eq!(names, vec!["RCtrl", "V"]);
+    }
+
+    #[test]
+    fn key_name_mapping() {
+        assert_eq!(handy_key_to_winstt_name("a"), "A");
+        assert_eq!(handy_key_to_winstt_name("space"), "Space");
+        assert_eq!(handy_key_to_winstt_name("uparrow"), "ArrowUp");
+        assert_eq!(handy_key_to_winstt_name("5"), "5");
+    }
+
+    #[test]
+    fn empty_combo_is_empty() {
+        assert!(handy_string_to_winstt_names("").is_empty());
     }
 }

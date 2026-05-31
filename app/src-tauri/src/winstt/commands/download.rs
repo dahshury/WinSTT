@@ -96,7 +96,13 @@ pub fn delete_model_cache(downloads: State<'_, Arc<DownloadManager>>, model_id: 
 }
 
 /// `cancel_download` — cancel the legacy single-slot whole-model swap-download (no quantization).
-#[allow(dead_code)] // dup of Handy's commands::models::cancel_download (de-command'd to avoid dup name)
-pub fn cancel_download(downloads: State<'_, Arc<DownloadManager>>) {
+/// The renderer's `cancelDownload()` sends NO args (matches the param-less signature). This is the
+/// command the adapter's `STT_CANCEL_DOWNLOAD` channel must route to; lib.rs currently registers
+/// Handy's `commands::models::cancel_download` (which needs a `model_id` and would reject the
+/// arg-less call) — see the lib-wiring report to repoint it here. Renamed `winstt_cancel_download`
+/// to avoid the duplicate-command-name clash with Handy's during registration.
+#[tauri::command]
+#[specta::specta]
+pub fn winstt_cancel_download(downloads: State<'_, Arc<DownloadManager>>) {
     downloads.cancel_download();
 }

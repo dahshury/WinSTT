@@ -63,13 +63,29 @@ impl CloudSttManager {
 
     /// Emit the single code-discriminated cloud error channel (07_* §4b).
     /// `aborted` is suppressed (user-initiated cancel).
-    fn emit_error(&self, err: &CloudSttError) {
-        if err.code.should_notify() {
-            let _ = self.app.emit(
-                "stt-cloud-error",
-                serde_json::json!({ "code": err.code.as_str(), "message": err.message }),
-            );
+    ///
+    /// The renderer's `CloudSttErrorToasts` fan-out (electron-tauri-adapter
+    /// `shouldDeliver`) routes ONE `stt-cloud-error` event to one of the five
+    /// WinSTT channels by matching the payload `code` against the fan-out tokens
+    /// `auth_failed | network_error | key_missing | rate_limited | provider_error`.
+    /// So we emit the FAN-OUT token (not the raw taxonomy `auth`/`network`/…) and
+    /// include `provider` + `retryAfter` exactly like the Electron handler's
+    /// `notifyRenderer` payload.
+    fn emit_error(&self, provider: CloudSttProvider, err: &CloudSttError) {
+        if !err.code.should_notify() {
+            return;
         }
+        let fanout = fanout_code(err.code);
+        let mut payload = serde_json::Map::new();
+        payload.insert("code".into(), serde_json::json!(fanout));
+        payload.insert("provider".into(), serde_json::json!(provider.id()));
+        payload.insert("message".into(), serde_json::json!(err.message));
+        if let Some(retry) = err.retry_after_seconds {
+            payload.insert("retryAfter".into(), serde_json::json!(retry));
+        }
+        let _ = self
+            .app
+            .emit("stt-cloud-error", serde_json::Value::Object(payload));
     }
 
     /// Transcribe one utterance via the cloud provider. Honors the pre-flight
@@ -80,8 +96,9 @@ impl CloudSttManager {
         request_id: &str,
         req: CloudTranscribeRequest,
     ) -> Result<CloudTranscription, CloudSttError> {
+        let provider = req.provider;
         if let Err(e) = preflight(&req) {
-            self.emit_error(&e);
+            self.emit_error(provider, &e);
             return Err(e);
         }
         if self.is_cancelled(request_id) {
@@ -92,7 +109,7 @@ impl CloudSttManager {
         let result = self.do_upload(req).await;
         self.clear(request_id);
         if let Err(ref e) = result {
-            self.emit_error(e);
+            self.emit_error(provider, e);
         }
         result
     }
@@ -192,5 +209,45 @@ impl CloudSttManager {
                 }
             }
         }
+    }
+}
+
+/// Map the internal taxonomy code to the renderer fan-out token the
+/// `electron-tauri-adapter` `shouldDeliver` routes on. `timeout` and
+/// `audio_too_large` have no dedicated WinSTT channel, so they ride the
+/// network / provider channels respectively (matching the Electron
+/// `ERROR_CODE_CHANNEL` mapping). `aborted` never reaches here (suppressed
+/// by `should_notify`).
+fn fanout_code(code: CloudSttErrorCode) -> &'static str {
+    match code {
+        CloudSttErrorCode::Auth => "auth_failed",
+        CloudSttErrorCode::Network | CloudSttErrorCode::Timeout => "network_error",
+        CloudSttErrorCode::KeyMissing => "key_missing",
+        CloudSttErrorCode::RateLimit => "rate_limited",
+        CloudSttErrorCode::AudioTooLarge | CloudSttErrorCode::ProviderError => "provider_error",
+        // Unreachable (suppressed earlier) — default to provider_error.
+        CloudSttErrorCode::Aborted => "provider_error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fanout_tokens_match_adapter() {
+        assert_eq!(fanout_code(CloudSttErrorCode::Auth), "auth_failed");
+        assert_eq!(fanout_code(CloudSttErrorCode::Network), "network_error");
+        assert_eq!(fanout_code(CloudSttErrorCode::Timeout), "network_error");
+        assert_eq!(fanout_code(CloudSttErrorCode::KeyMissing), "key_missing");
+        assert_eq!(fanout_code(CloudSttErrorCode::RateLimit), "rate_limited");
+        assert_eq!(
+            fanout_code(CloudSttErrorCode::ProviderError),
+            "provider_error"
+        );
+        assert_eq!(
+            fanout_code(CloudSttErrorCode::AudioTooLarge),
+            "provider_error"
+        );
     }
 }

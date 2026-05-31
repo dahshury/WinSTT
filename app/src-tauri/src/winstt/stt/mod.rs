@@ -39,6 +39,8 @@ pub mod whisper_tokenizer;
 pub mod whisper;
 /// HF snapshot resolver + download + sharded-data completeness + per-quant cache.
 pub mod resolver;
+/// On-disk HF-cache probe (per-model per-quant cached/partial/not_cached) for the picker badges.
+pub mod cache_probe;
 /// In-file fp16 decoder protobuf repair (prost) + external-data refetch detection.
 pub mod fp16_patch;
 /// Non-Whisper families: CTC (SenseVoice/GigaAM/Dolphin/Kaldi), RNNT/TDT (Parakeet/zipformer), AED (Canary/Cohere).
