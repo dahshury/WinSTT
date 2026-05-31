@@ -5,6 +5,7 @@ import { useTranslations } from "use-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { HotkeyDisplay } from "@/features/push-to-talk";
 import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
+import { publicAsset } from "@/shared/lib/public-asset";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -28,7 +29,7 @@ export function TitleBar() {
 						className="mr-1.5 size-4"
 						draggable={false}
 						height={16}
-						src="/icon.ico"
+						src={publicAsset("/icon.ico")}
 						width={16}
 					/>
 					<span className="font-mono font-semibold text-foreground-secondary text-xs-tight uppercase tracking-widest">

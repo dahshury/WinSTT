@@ -111,6 +111,19 @@ describe("SearchableSelect", () => {
 		expect(onChange).toHaveBeenCalledWith("am_adam");
 	});
 
+	test("stamps each open row with data-menu-option=<id> (the highlight-layer contract)", () => {
+		render(<SearchableSelect onChange={() => undefined} options={options} value="tiny" />);
+		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
+		// MenuHighlightLayer finds the selected/highlighted rows via this attr —
+		// if Base UI ever stops forwarding it the animated pills go dark, so pin it.
+		expect(screen.getByText("Base").closest("[data-menu-option]")?.getAttribute("data-menu-option")).toBe(
+			"base"
+		);
+		expect(screen.getByText("Tiny").closest("[data-menu-option]")?.getAttribute("data-menu-option")).toBe(
+			"tiny"
+		);
+	});
+
 	test("search filters within groups and drops emptied group headers", () => {
 		render(<SearchableSelect groups={voiceGroups} onChange={() => undefined} value="af_heart" />);
 		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));

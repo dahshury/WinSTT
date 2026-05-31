@@ -725,6 +725,21 @@ pub fn run(cli_args: CliArgs) {
             // Mirrors Handy's eager-create + show/hide model.
             winstt::commands::windows::prewarm_windows(&app_handle);
 
+            // Initialize Enigo (keyboard simulation used to PASTE the transcription) at
+            // startup. On macOS this needs accessibility permission so Handy left it to a
+            // frontend `initialize_enigo` call — but the WinSTT renderer never makes that
+            // call, so on Windows the paste pipeline failed with "Enigo state not
+            // initialized" (dictation transcribed but never typed). No permission gate
+            // exists off macOS, so initialize it directly here.
+            #[cfg(not(target_os = "macos"))]
+            match crate::input::EnigoState::new() {
+                Ok(enigo_state) => {
+                    app_handle.manage(enigo_state);
+                    log::info!("Enigo initialized at startup (paste pipeline ready)");
+                }
+                Err(e) => log::warn!("Enigo init at startup failed: {e}"),
+            }
+
             // WinSTT transforms global hotkey: arm `llm.transforms.hotkey` only while the
             // feature is enabled (mirrors transform-hotkeys.ts). The accelerator lives in the
             // WinSTT settings tree, so re-point the `transforms` binding at it here.

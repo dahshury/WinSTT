@@ -34,69 +34,69 @@ export interface ModelVariantInfo {
 	textClass: string;
 }
 
+// fluidfunctionalism: variants are a quiet GRAY meta token, not a 7-hue rainbow.
+// Every variant now shares the same neutral treatment (faint foreground-tinted
+// fill + muted foreground text), so the variant badge, the (now-neutral) top
+// strip, and the variant filter chips all read as restrained gray differentiation
+// — the icon shape + label carry the meaning, color does not. The ONE exception
+// kept slightly tinted is `free` (a genuine "cheap" signal), desaturated to a
+// muted emerald in line with the picker's free-pricing scale.
+const NEUTRAL_VARIANT_CHROME = {
+	bgClass: "bg-foreground/[0.04]",
+	textClass: "text-foreground-muted",
+	borderClass: "border-border/60",
+	gradientClass: "from-foreground/[0.06] via-transparent to-transparent",
+} as const;
+
+const FREE_VARIANT_CHROME = {
+	bgClass: "bg-emerald-500/[0.08]",
+	textClass: "text-emerald-300/80",
+	borderClass: "border-emerald-500/20",
+	gradientClass: "from-emerald-500/[0.06] via-transparent to-transparent",
+} as const;
+
 export const MODEL_VARIANT_INFO: Record<ModelVariant, ModelVariantInfo> = {
 	free: {
 		id: "free",
 		label: "Free",
 		description: "Free version with possible rate limits",
-		bgClass: "bg-emerald-500/10 dark:bg-emerald-500/15",
-		textClass: "text-emerald-700 dark:text-emerald-400",
-		borderClass: "border-emerald-500/30 dark:border-emerald-500/40",
-		gradientClass: "from-emerald-500/5 via-transparent to-transparent",
+		...FREE_VARIANT_CHROME,
 	},
 	extended: {
 		id: "extended",
 		label: "Extended",
 		description: "Extended context window version",
-		bgClass: "bg-blue-500/10 dark:bg-blue-500/15",
-		textClass: "text-blue-700 dark:text-blue-400",
-		borderClass: "border-blue-500/30 dark:border-blue-500/40",
-		gradientClass: "from-blue-500/5 via-transparent to-transparent",
+		...NEUTRAL_VARIANT_CHROME,
 	},
 	exacto: {
 		id: "exacto",
 		label: "Exacto",
 		description: "High precision/accuracy version",
-		bgClass: "bg-rose-500/10 dark:bg-rose-500/15",
-		textClass: "text-rose-700 dark:text-rose-400",
-		borderClass: "border-rose-500/30 dark:border-rose-500/40",
-		gradientClass: "from-rose-500/5 via-transparent to-transparent",
+		...NEUTRAL_VARIANT_CHROME,
 	},
 	nitro: {
 		id: "nitro",
 		label: "Nitro",
 		description: "Higher throughput routing",
-		bgClass: "bg-amber-500/10 dark:bg-amber-500/15",
-		textClass: "text-amber-700 dark:text-amber-400",
-		borderClass: "border-amber-500/30 dark:border-amber-500/40",
-		gradientClass: "from-amber-500/5 via-transparent to-transparent",
+		...NEUTRAL_VARIANT_CHROME,
 	},
 	floor: {
 		id: "floor",
 		label: "Floor",
 		description: "Lowest price routing",
-		bgClass: "bg-cyan-500/10 dark:bg-cyan-500/15",
-		textClass: "text-cyan-700 dark:text-cyan-400",
-		borderClass: "border-cyan-500/30 dark:border-cyan-500/40",
-		gradientClass: "from-cyan-500/5 via-transparent to-transparent",
+		...NEUTRAL_VARIANT_CHROME,
 	},
 	thinking: {
 		id: "thinking",
 		label: "Thinking",
 		description: "Reasoning/thinking enabled",
-		bgClass: "bg-violet-500/10 dark:bg-violet-500/15",
-		textClass: "text-violet-700 dark:text-violet-400",
-		borderClass: "border-violet-500/30 dark:border-violet-500/40",
-		gradientClass: "from-violet-500/5 via-transparent to-transparent",
+		...NEUTRAL_VARIANT_CHROME,
 	},
 	online: {
 		id: "online",
 		label: "Online",
 		description: "Real-time/online capable",
-		bgClass: "bg-sky-500/10 dark:bg-sky-500/15",
-		textClass: "text-sky-700 dark:text-sky-400",
-		borderClass: "border-sky-500/30 dark:border-sky-500/40",
-		gradientClass: "from-sky-500/5 via-transparent to-transparent",
+		...NEUTRAL_VARIANT_CHROME,
 	},
 };
 

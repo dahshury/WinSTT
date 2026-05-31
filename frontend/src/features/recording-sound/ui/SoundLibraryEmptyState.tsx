@@ -19,39 +19,36 @@ export function SoundLibraryEmptyState({
 	addLabel,
 	onAdd,
 }: SoundLibraryEmptyStateProps): ReactNode {
+	// Borderless, grayscale prompt — no dashed drop box. Drag feedback is the
+	// whole card's neutral ring (see SoundLibrary); here it's just a soft neutral
+	// wash so the row reads as "active target" without any accent or border.
 	return (
 		<div
 			className={cn(
-				// Compact horizontal drop target: dashed border keeps the "drop here"
-				// affordance, but the row collapses to a single line so it doesn't
-				// dwarf the row list above. Title + description stack tightly on the
-				// left of the action button.
-				"relative m-2 flex items-center gap-2.5 rounded-md border-2 border-divider-strong border-dashed bg-surface-2/70 px-2.5 py-2 transition-[background-color,border-color,box-shadow,transform] duration-200 ease-out",
-				dragOver
-					? "scale-[1.005] border-accent/80 bg-accent/8 shadow-[0_0_0_4px] shadow-accent/15"
-					: ""
+				"relative z-raised flex items-center gap-3 rounded-lg px-3 py-3 transition-colors duration-200",
+				dragOver ? "bg-foreground/[0.05]" : ""
 			)}
 		>
 			<span
 				aria-hidden="true"
 				className={cn(
-					"flex size-7 shrink-0 items-center justify-center rounded-full ring-1 transition-colors duration-200",
+					"flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors duration-200",
 					dragOver
-						? "bg-accent/20 text-accent ring-accent/40"
-						: "bg-surface-3 text-foreground-dim ring-divider"
+						? "bg-foreground/15 text-foreground"
+						: "bg-foreground/[0.06] text-foreground-muted"
 				)}
 			>
-				<HugeiconsIcon icon={MusicNote01Icon} size={14} />
+				<HugeiconsIcon icon={MusicNote01Icon} size={15} />
 			</span>
 			<div className="flex min-w-0 flex-1 flex-col">
 				<span className="truncate font-medium text-body-sm text-foreground">{title}</span>
-				<span className="truncate text-foreground-dim text-xs-tight leading-tight">
+				<span className="truncate text-foreground-muted text-xs-tight leading-tight">
 					{description}
 				</span>
 			</div>
 			<Button
 				aria-label={addLabel}
-				className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-divider bg-surface-3 px-2.5 py-1 font-medium text-body-sm text-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-surface-4 active:scale-[0.98]"
+				className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-foreground/[0.06] px-2.5 py-1.5 font-medium text-body-sm text-foreground transition-colors duration-150 hover:bg-foreground/10 active:scale-[0.98]"
 				onClick={onAdd}
 			>
 				<HugeiconsIcon icon={PlusSignIcon} size={12} />

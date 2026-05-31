@@ -60,13 +60,20 @@
    not exfiltrate documents. */
 #define MAX_TITLE_CHARS    200
 #define MAX_NAME_CHARS     200
-/* Whole-field + caret context budget. Raised from 1000 → 6000 so the LLM sees
-   a FULL email/message being replied to, not just the last ~600 chars before
-   the caret (a long quoted email used to get its opening cropped — see
+/* Whole-field + caret context budget. Raised 1000 → 6000 → 24000 so the LLM
+   sees ~100 chat turns / a very long email or message being replied to, not
+   just the last few hundred chars before the caret (a long quoted email used to
+   get its opening cropped — see
    memory/project_context_capture_extraction_strategy.md). The escape buffers
    that scale with this (text/before/after) are heap-allocated in main() because
-   at 6000 chars × 8 they'd be ~192KB each — too large for the stack. */
-#define MAX_CONTEXT_CHARS  6000
+   at 24000 chars × 4 (UTF-8) × 8 (escape) they'd be ~768KB each — far too large
+   for the stack. The three RAW context buffers (focused_text/context_before/
+   context_after, CONTEXT_BUF_BYTES ≈ 96KB each) are declared `static` in main()
+   for the same reason — 3 × 96KB of auto storage alongside the deep UIA
+   recursion would risk a stack overflow. NOTE: the production consumer
+   electron/lib/context-reader.ts must keep a maxBuffer >= ~4MB; raising this
+   cap raised worst-case stdout to ~2.7MB. */
+#define MAX_CONTEXT_CHARS  24000
 #define MAX_EXE_CHARS      120
 #define MAX_URL_CHARS      400
 
@@ -74,12 +81,14 @@
    "continue this sentence vs. start fresh" AND carries the quoted email/message
    the user is replying to, so it gets the larger share; the lookahead after the
    caret only needs enough to avoid duplicating text the output sits in front of.
-   Sum (4000 + 1000) stays under MAX_CONTEXT_CHARS so the combined payload still
-   fits the shared CONTEXT buffer. 4000 covers a long real email; a truly
-   enormous one crops its oldest lines, which is acceptable (the recent text
-   nearest the caret is the highest-signal slice). */
-#define CARET_BEFORE_CHARS 4000
-#define CARET_AFTER_CHARS  1000
+   Sum (21000 + 2000 = 23000) stays strictly UNDER MAX_CONTEXT_CHARS (24000).
+   before/after are written to SEPARATE CONTEXT_BUF_BYTES buffers (never
+   concatenated), so the real bound is per-half; the sum is kept < MAX anyway so
+   the documented invariant holds with 1000 chars of slack. 21000 covers ~100
+   chat turns / a very long email; a truly enormous one crops its oldest lines,
+   which is acceptable (the recent text nearest the caret is highest-signal). */
+#define CARET_BEFORE_CHARS 21000
+#define CARET_AFTER_CHARS  2000
 
 /* Tree-walk caps. Total payload + depth match Wispr Flow's documented
    limits (150,000 chars / forensic-observed depth 9); the element count
@@ -280,7 +289,13 @@ static int read_text_pattern_selection(IUIAutomationElement* elem,
         /* GetText(-1) returns the entire range — fine here because we already
            expect the user's selection to be bounded. */
         if (SUCCEEDED(IUIAutomationTextRange_GetText(range, -1, &text)) && text) {
-            char tmp[CONTEXT_BUF_BYTES];
+            /* static (NOT auto): at MAX_CONTEXT_CHARS=24000 this is
+               CONTEXT_BUF_BYTES ≈ 96KB — too large for the stack frame of a
+               function reachable from the UIA walk. It's filled then fully
+               copied out before the next loop iteration / any recursion, so a
+               single shared static instance is safe here (no re-entrant use of
+               tmp's contents across calls). */
+            static char tmp[CONTEXT_BUF_BYTES];
             bstr_to_utf8(text, tmp, sizeof(tmp));
             SysFreeString(text);
 
@@ -528,6 +543,55 @@ static int read_caret_split(IUIAutomationElement* elem,
     return rc;
 }
 
+/* When non-NULL (set by --hwnd), focused-element reads are scoped to this
+   window's UIA subtree instead of the OS-global focused element. Lets the
+   context-harness capture a specific, possibly NON-foreground Chrome window
+   deterministically — no flaky SetForegroundWindow race. NULL in normal
+   dictation use, where the helper reads whatever window is foreground. */
+static HWND g_scope_hwnd = NULL;
+
+/* Find the keyboard-focused element inside g_scope_hwnd's window via a single
+   FindFirst(HasKeyboardFocus==TRUE) over the whole subtree — depth-unbounded
+   (Gmail's reply box sits ~15 levels deep, far past the walker's depth cap, so
+   a bounded recursion missed it). Returns an AddRef'd element (caller releases)
+   or NULL. */
+static IUIAutomationElement* find_focused_in_window(IUIAutomation* uia, HWND hwnd) {
+    IUIAutomationElement* root = NULL;
+    if (FAILED(IUIAutomation_ElementFromHandle(uia, hwnd, &root)) || !root) return NULL;
+
+    VARIANT v;
+    VariantInit(&v);
+    v.vt = VT_BOOL;
+    v.boolVal = VARIANT_TRUE;
+    IUIAutomationCondition* cond = NULL;
+    HRESULT hr = IUIAutomation_CreatePropertyCondition(
+        uia, UIA_HasKeyboardFocusPropertyId, v, &cond);
+    VariantClear(&v);
+    if (FAILED(hr) || !cond) { IUIAutomationElement_Release(root); return NULL; }
+
+    IUIAutomationElement* focused = NULL;
+    /* TreeScope_Subtree = the root itself + all descendants. */
+    IUIAutomationElement_FindFirst(root, TreeScope_Subtree, cond, &focused);
+    IUIAutomationCondition_Release(cond);
+    IUIAutomationElement_Release(root);
+    return focused;
+}
+
+/* Acquire the focused element. With --hwnd (g_scope_hwnd) the read is STRICTLY
+   scoped to that window — we never fall back to GetFocusedElement, because the
+   OS-global focus belongs to a DIFFERENT window (e.g. the launching terminal),
+   and capturing it would be wrong-window data. Without --hwnd, normal dictation
+   behaviour: the OS-global focused element. Caller releases. This is the ONLY
+   focused-element entry point, so --hwnd transparently redirects every mode. */
+static IUIAutomationElement* acquire_focused_element(IUIAutomation* uia) {
+    if (g_scope_hwnd) {
+        return find_focused_in_window(uia, g_scope_hwnd);
+    }
+    IUIAutomationElement* el = NULL;
+    IUIAutomation_GetFocusedElement(uia, &el);
+    return el;
+}
+
 /* Read context from the focused element. Walks fallbacks: TextPattern →
    ValuePattern → element name. Returns 0 if anything was read. When
    selection_only is true, only the selection-range path is attempted —
@@ -537,9 +601,8 @@ static int read_focused_context(IUIAutomation* uia,
                                 char* out_text, int out_text_size,
                                 char* out_name, int out_name_size,
                                 int selection_only) {
-    IUIAutomationElement* focused = NULL;
-    HRESULT hr = IUIAutomation_GetFocusedElement(uia, &focused);
-    if (FAILED(hr) || !focused) return -1;
+    IUIAutomationElement* focused = acquire_focused_element(uia);
+    if (!focused) return -1;
 
     read_element_name(focused, out_name, out_name_size);
 
@@ -566,9 +629,8 @@ static void read_focused_split(IUIAutomation* uia,
                                char* out_after, int out_after_size,
                                char* out_text, int out_text_size,
                                char* out_name, int out_name_size) {
-    IUIAutomationElement* focused = NULL;
-    HRESULT hr = IUIAutomation_GetFocusedElement(uia, &focused);
-    if (FAILED(hr) || !focused) return;
+    IUIAutomationElement* focused = acquire_focused_element(uia);
+    if (!focused) return;
 
     read_element_name(focused, out_name, out_name_size);
 
@@ -992,6 +1054,12 @@ int main(int argc, char* argv[]) {
         if (strcmp(argv[i], "--selection") == 0) selection_only = 1;
         else if (strcmp(argv[i], "--split") == 0) split = 1;
         else if (strcmp(argv[i], "--tree") == 0) tree = 1;
+        /* --hwnd <decimal> : capture THIS window instead of the OS-foreground
+           one (used by the context-harness to target a specific Chrome window
+           deterministically; see g_scope_hwnd). Accepts a following arg. */
+        else if (strcmp(argv[i], "--hwnd") == 0 && i + 1 < argc) {
+            g_scope_hwnd = (HWND)(uintptr_t)_strtoui64(argv[++i], NULL, 10);
+        }
     }
 
     HANDLE wd = CreateThread(NULL, 0, watchdog,
@@ -999,9 +1067,14 @@ int main(int argc, char* argv[]) {
 
     char window_title[TITLE_BUF_BYTES] = {0};
     char element_name[NAME_BUF_BYTES] = {0};
-    char focused_text[CONTEXT_BUF_BYTES] = {0};
-    char context_before[CONTEXT_BUF_BYTES] = {0};
-    char context_after[CONTEXT_BUF_BYTES] = {0};
+    /* static (NOT auto): at MAX_CONTEXT_CHARS=24000 each is CONTEXT_BUF_BYTES
+       ≈ 96KB; 3 on the auto stack alongside the deep UIA recursion would risk a
+       stack overflow. static lives in zero-initialised BSS (so `= {0}` is
+       redundant), and this is a short-lived single-pass main(), so there is no
+       re-entrancy concern. */
+    static char focused_text[CONTEXT_BUF_BYTES];
+    static char context_before[CONTEXT_BUF_BYTES];
+    static char context_after[CONTEXT_BUF_BYTES];
     char app_exe[EXE_BUF_BYTES] = {0};
     char url[URL_BUF_BYTES] = {0};
     /* axHtml is large (~150KB) — keep it on the heap so a future build
@@ -1017,7 +1090,7 @@ int main(int argc, char* argv[]) {
        are useful even when UIA fails (elevated target, hung tree).
        app_exe powers the deny-list match, so without it the deny-list
        silently never fires. */
-    HWND fg = GetForegroundWindow();
+    HWND fg = g_scope_hwnd ? g_scope_hwnd : GetForegroundWindow();
     get_window_title(fg, window_title, sizeof(window_title));
     get_process_exe(fg, app_exe, sizeof(app_exe));
 
@@ -1082,10 +1155,15 @@ int main(int argc, char* argv[]) {
     char  name_esc[NAME_ESC_BYTES];
     char  exe_esc[EXE_ESC_BYTES];
     char  url_esc[URL_ESC_BYTES];
-    /* text/before/after_esc scale with MAX_CONTEXT_CHARS (×8 ≈ 192KB each at the
-       raised 6000-char cap) and axhtml_esc is ~450KB — all far too large for the
-       stack, so heap-allocate. free(NULL) is a no-op, so the combined cleanup is
-       safe even on a partial allocation failure. */
+    /* text/before/after_esc scale with MAX_CONTEXT_CHARS (×4 UTF-8 ×8 escape ≈
+       768KB each at the raised 24000-char cap) and axhtml_esc is ~450KB — all
+       far too large for the stack, so heap-allocate. Worst-case stdout is then
+       ~3×768KB + ~450KB + small fields ≈ 2.7MB — every consumer that buffers the
+       whole output must allow >= ~4MB (the context-harness uses 4MB; the
+       production reader electron/lib/context-reader.ts was bumped from 1MB to
+       4MB to match; Node execFile's 1MB default would error with
+       ERR_CHILD_PROCESS_STDIO_MAXBUFFER and silently drop ALL context). free(NULL)
+       is a no-op, so the combined cleanup is safe even on a partial alloc failure. */
     char* text_esc   = (char*)malloc(CONTEXT_ESC_BYTES);
     char* before_esc = (char*)malloc(CONTEXT_ESC_BYTES);
     char* after_esc  = (char*)malloc(CONTEXT_ESC_BYTES);

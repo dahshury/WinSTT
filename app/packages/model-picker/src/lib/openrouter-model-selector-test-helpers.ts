@@ -27,9 +27,13 @@ const POPUP_ROLES: ReadonlySet<string> = new Set([
  * extension, clicking a filter toggle while the picker is open trips
  * Base UI's outside-press detection and dismisses the whole selector.
  */
-export type FilterMenuPopupSlot = "model-filters-menu-content" | "stt-filters-menu-content";
+export type FilterMenuPopupSlot =
+	| "model-filters-menu-content"
+	| "ollama-sort-menu-content"
+	| "stt-filters-menu-content";
 const POPUP_SLOTS: ReadonlySet<FilterMenuPopupSlot> = new Set<FilterMenuPopupSlot>([
 	"model-filters-menu-content",
+	"ollama-sort-menu-content",
 	"stt-filters-menu-content",
 ]);
 

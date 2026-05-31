@@ -86,7 +86,7 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 	test("the 'tiny' tag tracks parameter count, NOT disk size", () => {
 		// NOTE: "tiny" is NOT a disk-size promise. llama3.2:1b is tagged "tiny"
 		// (1.2B params) yet weighs 1.3 GB on disk — more than several non-tiny
-		// entries (e.g. qwen3:4b at 2.6 GB IS larger but is the bigger model).
+		// entries (e.g. granite4.1:3b at 2.1 GB IS larger but is the bigger model).
 		// So the only invariant we can assert is that every "tiny" model is
 		// small by parameter label. Anyone reading the tag as "small download"
 		// would be misled — flagged as a UX wart, not asserted as a size bound.
@@ -101,14 +101,14 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 
 describe("findRecommendedModel", () => {
 	test("returns the matching entry by exact name", () => {
-		const found = findRecommendedModel("gemma3:4b");
-		expect(found?.displayName).toBe("Gemma 3 4B");
+		const found = findRecommendedModel("gemma4:e2b");
+		expect(found?.displayName).toBe("Gemma 4 E2B");
 		expect(found?.family).toBe("gemma");
 	});
 
 	test("returns the SAME object reference as the catalog entry (no clone)", () => {
-		const fromCatalog = RECOMMENDED_OLLAMA_MODELS.find((m) => m.name === "phi3:mini");
-		expect(findRecommendedModel("phi3:mini")).toBe(fromCatalog);
+		const fromCatalog = RECOMMENDED_OLLAMA_MODELS.find((m) => m.name === "phi4-mini:3.8b");
+		expect(findRecommendedModel("phi4-mini:3.8b")).toBe(fromCatalog);
 	});
 
 	test("returns undefined for an unknown name", () => {

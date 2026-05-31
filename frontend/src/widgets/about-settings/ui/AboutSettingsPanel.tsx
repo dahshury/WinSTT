@@ -8,7 +8,12 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingResetButton,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import {
 	type AboutAppInfo,
 	aboutGetAppInfo,
@@ -278,6 +283,18 @@ function UpdatesSection({ t }: { t: AboutT }) {
 						<Toggle
 							checked={receivePrereleaseUpdates}
 							onCheckedChange={(v) => update({ receivePrereleaseUpdates: v })}
+						/>
+					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								receivePrereleaseUpdates === DEFAULT_SETTINGS.general.receivePrereleaseUpdates
+							}
+							onReset={() =>
+								update({
+									receivePrereleaseUpdates: DEFAULT_SETTINGS.general.receivePrereleaseUpdates,
+								})
+							}
 						/>
 					}
 					tooltip={t("receivePrereleaseUpdatesCaption")}

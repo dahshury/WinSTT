@@ -1254,7 +1254,7 @@ components:
               default: [{ key: neutral }]
               description: >-
                 Ordered list of cleanup presets to apply to dictated text. At
-                most one tone preset (neutral/formal/friendly/technical/casual)
+                most one tone preset (neutral/formal/friendly/technical)
                 may appear. `level` is only valid for `summarize` and `concise`.
               items:
                 $ref: "#/components/schemas/LlmPresetEntry"
@@ -1337,7 +1337,6 @@ components:
         - formal
         - friendly
         - technical
-        - casual
         - concise
         - summarize
         - reorder

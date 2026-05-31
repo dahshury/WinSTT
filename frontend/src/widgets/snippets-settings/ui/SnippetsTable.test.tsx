@@ -31,10 +31,10 @@ describe("SnippetsTable", () => {
 
 	test("Add button is disabled with empty inputs", () => {
 		renderWith({});
-		const buttons = screen.getAllByRole("button");
-		const addBtn = buttons.find((b) => (b.textContent ?? "").trim().toLowerCase() === "add");
-		expect(addBtn).toBeDefined();
-		expect((addBtn! as HTMLButtonElement).disabled).toBe(true);
+		// The Add action now lives in the expansion field's trailing slot as an
+		// icon button, so it's found by its accessible name, not its text.
+		const addBtn = screen.getByRole("button", { name: /add/i });
+		expect((addBtn as HTMLButtonElement).disabled).toBe(true);
 	});
 
 	test("renders a 'Delete All' button when onClearAll is provided", () => {

@@ -7,6 +7,7 @@ import type { OnnxQuantization } from "@/shared/config/defaults";
 import { GroupRail, type GroupRailItem } from "../../core/GroupRail";
 import { ModelPicker } from "../../core/ModelPicker";
 import type { SttFilterState } from "../lib/filter-state";
+import type { SttSortValue } from "../lib/sort-state";
 import { SttFiltersMenu } from "./SttFiltersMenu";
 import type { QuantDownloadAction, QuantDownloadSnapshot } from "./SttModelCard";
 import { SttModelList } from "./SttModelList";
@@ -49,6 +50,7 @@ export interface SttModelSelectorViewProps {
 				quantLabel: string
 		  ) => void)
 		| undefined;
+	onSortChange: (next: SttSortValue) => void;
 	onToggleExpanded: (baseId: string) => void;
 	onToggleFavorite: (modelId: string) => void;
 	open: boolean;
@@ -56,8 +58,11 @@ export interface SttModelSelectorViewProps {
 	popupHeightClass: string;
 	popupRef: (node: HTMLElement | null) => void;
 	popupWidthClass: string;
+	onToggleRailFavorite?: ((id: string) => void) | undefined;
+	railFavorites?: readonly string[] | undefined;
 	railItems: readonly GroupRailItem[];
 	selectedModel: ModelInfo | null;
+	sort: SttSortValue;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
 	trigger?: ReactNode;
@@ -94,6 +99,7 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 		onDownloadAction,
 		onDownloadSnapshot,
 		onFiltersChange,
+		onSortChange,
 		onRequestDelete,
 		onToggleExpanded,
 		onToggleFavorite,
@@ -102,8 +108,11 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 		popupHeightClass,
 		popupRef,
 		popupWidthClass,
+		onToggleRailFavorite,
+		railFavorites,
 		railItems,
 		selectedModel,
+		sort,
 		statesById,
 		systemInfo,
 		trigger,
@@ -118,6 +127,8 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 					availableLanguages={availableLanguages}
 					filters={filters}
 					onFiltersChange={onFiltersChange}
+					onSortChange={onSortChange}
+					sort={sort}
 				/>
 			}
 			inline={inline}
@@ -142,6 +153,7 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 					onToggleExpanded={onToggleExpanded}
 					onToggleFavorite={onToggleFavorite}
 					selectedId={value}
+					sortKey={sort}
 					statesById={statesById}
 					systemInfo={systemInfo}
 					visibleModelCount={menuFilteredModels.length}
@@ -177,7 +189,13 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 			searchPlaceholder="Search transcription models"
 			sidebarSlot={
 				railItems.length > 1 ? (
-					<GroupRail activeId={activeRailId} items={railItems} onClick={handleRailClick} />
+					<GroupRail
+						activeId={activeRailId}
+						favorites={railFavorites}
+						items={railItems}
+						onClick={handleRailClick}
+						onToggleFavorite={onToggleRailFavorite}
+					/>
 				) : undefined
 			}
 			trigger={

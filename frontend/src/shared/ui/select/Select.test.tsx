@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { Select, type SelectOption } from "./Select";
 
 const options: SelectOption[] = [
@@ -33,5 +33,14 @@ describe("Select", () => {
 		render(<Select aria-label="lang" onChange={() => undefined} options={options} value="en" />);
 		// 'French' is not the selected one; with the popup closed it should not be in the DOM
 		expect(document.body.textContent?.match(/French/g)?.length ?? 0).toBeLessThan(2);
+	});
+
+	test("stamps each open row with data-menu-option=<id> (the highlight-layer contract)", () => {
+		render(<Select aria-label="lang" onChange={() => undefined} options={options} value="en" />);
+		fireEvent.click(screen.getByRole("button", { name: "lang" }));
+		// MenuHighlightLayer finds the selected/highlighted rows via this attr.
+		expect(
+			screen.getByText("French").closest("[data-menu-option]")?.getAttribute("data-menu-option")
+		).toBe("fr");
 	});
 });

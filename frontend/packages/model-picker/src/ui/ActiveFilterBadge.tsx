@@ -19,7 +19,7 @@ export function ActiveFilterBadge({ label, value, onRemove, className }: ActiveF
 	return (
 		<div
 			className={cn(
-				"inline-flex items-stretch overflow-hidden rounded-md border border-accent/30 bg-accent/15 text-accent text-xs-tight",
+				"inline-flex items-stretch overflow-hidden rounded-md bg-foreground/[0.04] text-foreground-muted text-xs-tight",
 				className
 			)}
 			data-slot="active-filter-badge"
@@ -30,7 +30,7 @@ export function ActiveFilterBadge({ label, value, onRemove, className }: ActiveF
 						<button
 							{...(triggerProps as ComponentPropsWithoutRef<"button">)}
 							aria-label={`${label}: ${value}`}
-							className="flex h-6 items-center gap-1 px-2 font-medium hover:bg-accent/20"
+							className="flex h-6 items-center gap-1 px-2 font-medium transition-colors hover:bg-foreground/[0.08] hover:text-foreground-secondary"
 							type="button"
 						>
 							<span>{value}</span>
@@ -41,7 +41,7 @@ export function ActiveFilterBadge({ label, value, onRemove, className }: ActiveF
 			</Tooltip>
 			<button
 				aria-label={`Remove filter: ${label} ${value}`}
-				className="flex h-6 items-center justify-center border-accent/30 border-s px-1.5 text-accent/70 hover:bg-accent/25 hover:text-accent"
+				className="flex h-6 items-center justify-center border-foreground/[0.06] border-s px-1.5 text-foreground-dim transition-colors hover:bg-error/15 hover:text-error"
 				onClick={onRemove}
 				type="button"
 			>

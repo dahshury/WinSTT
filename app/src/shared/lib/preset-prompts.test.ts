@@ -26,10 +26,9 @@ function makeCustomModifier(overrides: Partial<CustomModifier> = {}): CustomModi
 }
 
 describe("preset-prompts", () => {
-	test("ALL_PRESET_KEYS contains the eleven canonical presets", () => {
+	test("ALL_PRESET_KEYS contains the ten canonical presets", () => {
 		expect([...(ALL_PRESET_KEYS as readonly string[])].sort()).toEqual(
 			[
-				"casual",
 				"concise",
 				"formal",
 				"friendly",

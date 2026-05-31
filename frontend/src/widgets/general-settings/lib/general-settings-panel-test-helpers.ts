@@ -15,7 +15,6 @@ import type { IconSvgElement } from "@hugeicons/react";
 import type { useTranslations } from "use-intl";
 import type { useSettingsStore } from "@/entities/setting";
 import { isVisualizerType, type VisualizerType } from "@/features/audio-visualizer";
-import { RECORDING_MODE_COLOR_HEX } from "@/shared/config/recording-mode-color";
 import { isLocale, type Locale } from "@/shared/i18n";
 import type { SelectOption } from "@/shared/ui/select";
 import type { SwitcherOption } from "@/shared/ui/switcher";
@@ -77,36 +76,35 @@ export function buildRecordingModeOptions(t: GeneralT): readonly {
 	value: "ptt" | "toggle" | "listen" | "wakeword";
 	label: string;
 	icon: IconSvgElement;
-	color: string;
 	preview: "ptt" | "toggle" | "listen" | "wakeword";
 }[] {
+	// No per-option `color` — the recording-mode switcher uses the standard
+	// muted surface theme (like every other Switcher: visualizer type, overlay
+	// mode, aura shape). The four distinct icons (touch / toggle / ear / voice)
+	// carry the per-mode differentiation instead of a bright accent fill.
 	return [
 		{
 			value: "ptt",
 			label: t("pushToTalk"),
 			icon: TouchInteraction01Icon,
-			color: RECORDING_MODE_COLOR_HEX.ptt,
 			preview: "ptt",
 		},
 		{
 			value: "toggle",
 			label: t("toggle"),
 			icon: ToggleOnIcon,
-			color: RECORDING_MODE_COLOR_HEX.toggle,
 			preview: "toggle",
 		},
 		{
 			value: "listen",
 			label: t("listen"),
 			icon: EarIcon,
-			color: RECORDING_MODE_COLOR_HEX.listen,
 			preview: "listen",
 		},
 		{
 			value: "wakeword",
 			label: t("wakeWord"),
 			icon: VoiceIcon,
-			color: RECORDING_MODE_COLOR_HEX.wakeword,
 			preview: "wakeword",
 		},
 	] as const;

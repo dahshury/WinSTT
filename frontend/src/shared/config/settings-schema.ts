@@ -456,7 +456,6 @@ const presetKeySchema = z.enum([
 	"formal",
 	"friendly",
 	"technical",
-	"casual",
 	"concise",
 	"summarize",
 	"reorder",
@@ -468,7 +467,7 @@ const presetKeySchema = z.enum([
 const presetLevelSchema = z.enum(["light", "medium", "high"]);
 
 const KEYS_WITH_LEVELS = new Set(["summarize", "concise"]);
-const TONE_KEYS = new Set(["neutral", "formal", "friendly", "technical", "casual"]);
+const TONE_KEYS = new Set(["neutral", "formal", "friendly", "technical"]);
 
 const presetEntrySchema = z
 	.object({
@@ -508,7 +507,7 @@ const presetsSchema = z
 			const toneCount = entries.filter((e) => TONE_KEYS.has(e.key)).length;
 			return toneCount <= 1;
 		},
-		{ message: "only one tone preset (neutral/formal/friendly/technical/casual) may be active" }
+		{ message: "only one tone preset (neutral/formal/friendly/technical) may be active" }
 	);
 
 // User-authored cleanup modifiers layered on top of the built-in tone /

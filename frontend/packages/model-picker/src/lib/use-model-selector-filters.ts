@@ -7,6 +7,11 @@ import { getUniqueEndpoints } from "./model-selector-display-utils";
 import { filterModels, groupModelsByMaker } from "./model-selector-logic";
 import type { ModelVariant } from "./model-variant-utils";
 import type { FilterableParameter } from "./openrouter-provider-utils";
+import {
+	type OpenRouterSortValue,
+	SORTED_GROUP_KEY,
+	sortOpenRouterModels,
+} from "./openrouter-sort";
 import { useFavoriteProviders } from "./use-favorite-providers";
 
 /** Pure: appends `<modelId>@<provider>` for each endpoint into `items`. */
@@ -53,6 +58,24 @@ interface UseModelSelectorFiltersProps {
 	setSelectedMakers: React.Dispatch<React.SetStateAction<string[]>>;
 	setSelectedParameters: React.Dispatch<React.SetStateAction<FilterableParameter[]>>;
 	setSelectedVariant: (variant: ModelVariant | "none" | null) => void;
+	sortKey?: OpenRouterSortValue;
+}
+
+/**
+ * Pure: build the grouped model list. While a sort is active, flatten every
+ * maker into one globally-sorted group (under {@link SORTED_GROUP_KEY}) so the
+ * column reads as a single ordered list; otherwise keep the per-maker grouping.
+ */
+function buildGroupedModels(
+	filteredModels: OpenRouterModel[],
+	hasSearch: boolean,
+	sortKey: OpenRouterSortValue
+): [string, OpenRouterModel[]][] {
+	if (sortKey === null) {
+		return groupModelsByMaker(filteredModels, hasSearch);
+	}
+	const sorted = sortOpenRouterModels(filteredModels, sortKey);
+	return sorted.length > 0 ? [[SORTED_GROUP_KEY, sorted]] : [];
 }
 
 /** Pure: returns true when any list-typed filter has a selection. */
@@ -115,6 +138,7 @@ export function useModelSelectorFilters({
 	setSelectedVariant,
 	setSelectedEndpointProvider,
 	setSelectedParameters,
+	sortKey = null,
 	isOpen = false,
 }: UseModelSelectorFiltersProps) {
 	const { favorites, toggleFavorite } = useFavoriteProviders();
@@ -168,8 +192,8 @@ export function useModelSelectorFilters({
 
 	const groupedModelsAll = useMemo(() => {
 		const hasSearch = searchQuery.trim() !== "";
-		return groupModelsByMaker(filteredModels, hasSearch);
-	}, [filteredModels, searchQuery]);
+		return buildGroupedModels(filteredModels, hasSearch, sortKey);
+	}, [filteredModels, searchQuery, sortKey]);
 
 	const comboboxItems = useMemo(() => {
 		if (!(isOpen || searchQuery)) {

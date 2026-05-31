@@ -7,7 +7,7 @@ interface OpenRouterCatalogState {
 	isReachable: boolean;
 	isScanning: boolean;
 	models: OpenRouterModel[];
-	scanModels: () => Promise<void>;
+	scanModels: (force?: boolean) => Promise<void>;
 }
 
 function makeScanErrorState(err: unknown) {
@@ -39,8 +39,11 @@ export const useOpenRouterCatalogStore = create<OpenRouterCatalogState>()((set, 
 	isScanning: false,
 	isReachable: false,
 	error: null,
-	scanModels: async () => {
-		if (get().isScanning) {
+	scanModels: async (force = false) => {
+		// Opening the combobox calls this with no args — once the catalog is loaded,
+		// reuse the cache instead of refetching (which spins + resets the list from
+		// outside). `force` (e.g. right after the API key is saved) retries anyway.
+		if (get().isScanning || (!force && get().isLoaded)) {
 			return;
 		}
 		set({ isScanning: true, error: null });

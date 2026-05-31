@@ -2,8 +2,10 @@ import { ArrowRight01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
-import { RECORDING_MODE_COLOR_HEX, type RecordingMode } from "@/shared/config/recording-mode-color";
+import type { RecordingMode } from "@/shared/config/recording-mode-color";
+import { cn } from "@/shared/lib/cn";
 import { formatKeyName } from "@/shared/lib/format-key-name";
+import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 
 /**
  * Visual legend for the two hotkey combos detected in
@@ -21,10 +23,9 @@ import { formatKeyName } from "@/shared/lib/format-key-name";
  *
  * The mode chain reads left-to-right as the actual `MODE_CYCLE` order in
  * `electron/main.ts` (ptt → toggle → listen → wakeword → ptt). The
- * currently-active mode glows in its accent color (see
- * `RECORDING_MODE_COLOR_HEX`) so the legend doubles as a "you are here"
- * indicator — same palette the tray icon, settings switcher, and
- * recording pill use, so the legend reads as part of one system.
+ * currently-active mode is marked with the single app accent (the same
+ * selection treatment the model cards use) so the legend doubles as a
+ * "you are here" indicator; every other link stays neutral grayscale.
  *
  * Pure display surface: no interactive controls. The work happens in the
  * global hotkey listener; this just teaches the user what's possible.
@@ -47,19 +48,25 @@ interface KeycapProps {
 }
 
 /**
- * Physical-feel keycap. The double-shadow (inset highlight on top,
- * inset deep-shadow on bottom, outer drop) is the same recipe the
- * recording-pill and ElevatedSurface use, so this slots in beside the
- * rest of the panel as one material system.
+ * Flat neutral keycap. A plain surface fill + a single hairline divider
+ * ring — no 3D bevel shadow, no white rings — so it reads as a calm
+ * grayscale chip. The emphasized variant (the user's actual hotkey) just
+ * lifts a touch via a brighter surface + border.
  */
 function Keycap({ children, emphasized = false }: KeycapProps) {
+	// Surface-aware keycap that matches the hotkey recorder's idle chips: a
+	// lifted surface + hairline ring rather than a hard-coded bg-surface-N. The
+	// user's actual hotkey (emphasized) lifts one step further so it reads as the
+	// "primary" cap. Resolves relative to the row's SurfaceProvider substrate.
+	const level = useSurface();
 	return (
 		<span
-			className={`inline-flex min-w-[1.6rem] items-center justify-center rounded-md px-1.5 py-0.5 font-mono text-[11px] leading-none tracking-tight ${
+			className={cn(
+				"inline-flex h-6 min-w-[1.6rem] items-center justify-center rounded-[6px] px-1.5 font-mono text-[11px] leading-none tracking-tight ring-1",
 				emphasized
-					? "bg-surface-5 text-foreground ring-1 ring-white/10"
-					: "bg-surface-3 text-foreground-secondary ring-1 ring-white/[0.06]"
-			} shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.45),0_1px_2px_-0.5px_rgba(0,0,0,0.55)]`}
+					? cn(surfaceBg(Math.min(level + 2, 8)), "text-foreground ring-divider-strong")
+					: cn(surfaceBg(Math.min(level + 1, 8)), "text-foreground-secondary ring-divider")
+			)}
 		>
 			{children}
 		</span>
@@ -106,46 +113,33 @@ function HotkeyPrefix({ keys, placeholder, secondKey }: HotkeyPrefixProps) {
 interface ModeChipProps {
 	isCurrent: boolean;
 	label: string;
-	mode: RecordingMode;
 }
 
 /**
- * One link in the cycle chain. The active mode gets a saturated accent
- * border + glow; the others stay neutral so the chain reads as "you're
- * at X, ↑ takes you to the next one". Color matches
- * `RECORDING_MODE_COLOR_HEX` — same palette the tray icon, pill, and
- * settings switcher already use.
+ * One link in the cycle chain. The active mode gets the single app accent
+ * — the same selection treatment the model cards use (accent tint + accent
+ * ring + accent text/dot) — while every other link stays neutral grayscale
+ * so the chain reads as "you're at X, ↑ takes you to the next one". No
+ * per-mode hues, no colored glows.
  */
-function ModeChip({ label, mode, isCurrent }: ModeChipProps) {
-	const accent = RECORDING_MODE_COLOR_HEX[mode];
+function ModeChip({ label, isCurrent }: ModeChipProps) {
+	const level = useSurface();
 	return (
 		<span
-			className="relative inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 ring-1 ring-white/[0.06] transition-colors duration-200"
-			data-current={isCurrent || undefined}
-			style={
+			className={cn(
+				"relative inline-flex items-center gap-1.5 rounded-md px-2 py-1 ring-1 transition-colors duration-200",
 				isCurrent
-					? {
-							boxShadow: `inset 0 0 0 1px ${accent}66, 0 0 10px -2px ${accent}88`,
-							backgroundColor: `${accent}14`,
-						}
-					: undefined
-			}
+					? "bg-accent/[0.10] text-foreground ring-accent/30"
+					: cn(surfaceBg(Math.min(level + 1, 8)), "text-foreground-secondary ring-divider")
+			)}
+			data-current={isCurrent || undefined}
 		>
-			{/* Mode color dot — always visible, brightens when active. */}
+			{/* Status dot — accent when active, neutral/dim otherwise. */}
 			<span
 				aria-hidden="true"
-				className="size-1.5 rounded-full"
-				style={{
-					backgroundColor: accent,
-					boxShadow: isCurrent ? `0 0 6px 0 ${accent}` : undefined,
-					opacity: isCurrent ? 1 : 0.55,
-				}}
+				className={cn("size-1.5 rounded-full", isCurrent ? "bg-accent" : "bg-foreground-dim/55")}
 			/>
-			<span
-				className={`font-medium font-mono text-[10.5px] uppercase leading-none tracking-[0.08em] ${
-					isCurrent ? "text-foreground" : "text-foreground-secondary"
-				}`}
-			>
+			<span className="font-medium font-mono text-[10.5px] uppercase leading-none tracking-[0.08em]">
 				{label}
 			</span>
 		</span>
@@ -165,16 +159,27 @@ interface ShortcutRowProps {
  * dominating the panel.
  */
 function ShortcutRow({ prefix, hint, children }: ShortcutRowProps) {
+	// Each row is its own lifted surface (the surfaces concept) and re-provides
+	// that level downward, so the keycaps + mode chips inside lift relative to
+	// the row — not the panel — and stay legible at any nesting depth.
+	const rowLevel = Math.min(useSurface() + 1, 8);
 	return (
-		<div className="flex flex-col gap-2 rounded-lg bg-surface-1/40 px-3 py-2.5 ring-1 ring-white/[0.04]">
-			<div className="flex flex-wrap items-center gap-3">
-				{prefix}
-				<span className="font-mono text-[10.5px] text-foreground-secondary uppercase tracking-[0.08em]">
-					{hint}
-				</span>
+		<SurfaceProvider value={rowLevel}>
+			<div
+				className={cn(
+					"flex flex-col gap-2.5 rounded-lg px-3.5 py-3 ring-1 ring-divider",
+					surfaceBg(rowLevel)
+				)}
+			>
+				<div className="flex flex-wrap items-center gap-3">
+					{prefix}
+					<span className="font-mono text-[10.5px] text-foreground-secondary uppercase tracking-[0.08em]">
+						{hint}
+					</span>
+				</div>
+				{children}
 			</div>
-			{children}
-		</div>
+		</SurfaceProvider>
 	);
 }
 
@@ -198,13 +203,13 @@ export function HotkeyShortcutsLegend({ disabled = false }: HotkeyShortcutsLegen
 	return (
 		<section
 			aria-label={t("shortcutsLegendAriaLabel")}
-			className={`flex flex-col gap-2 ${disabled ? "opacity-50" : ""}`}
+			className={`flex flex-col gap-2.5 ${disabled ? "opacity-50" : ""}`}
 		>
 			{/* ── CYCLE MODE ROW ──────────────────────────────────────────
 			    Visualises the cycle as a left-to-right chain. The active
-			    mode glows in its accent color; arrows between chips show
-			    the ↑ direction takes you forward one link; the trailing ↺
-			    glyph hints "wraps around". */}
+			    mode is marked with the single app accent; arrows between
+			    chips show the ↑ direction takes you forward one link; the
+			    trailing ↺ glyph hints "wraps around". */}
 			<ShortcutRow
 				hint={t("shortcutCycleMode")}
 				prefix={
@@ -236,11 +241,7 @@ export function HotkeyShortcutsLegend({ disabled = false }: HotkeyShortcutsLegen
 									strokeWidth={2}
 								/>
 							) : null}
-							<ModeChip
-								isCurrent={recordingMode === mode}
-								label={t(MODE_LABEL_KEY[mode])}
-								mode={mode}
-							/>
+							<ModeChip isCurrent={recordingMode === mode} label={t(MODE_LABEL_KEY[mode])} />
 						</span>
 					))}
 					{/* Wrap-around hint — small ↻ glyph in the dim foreground

@@ -10,6 +10,10 @@ import {
 	PencilIcon,
 	PlayIcon,
 	PlusSignIcon,
+	SignalFull02Icon,
+	SignalLow02Icon,
+	SignalMedium02Icon,
+	SignalNo02Icon,
 	StickyNote01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -69,7 +73,7 @@ import { Modal } from "@/shared/ui/modal";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
-import { Switcher } from "@/shared/ui/switcher";
+import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { PasswordField, TextField } from "@/shared/ui/text-field";
 import { Toggle } from "@/shared/ui/toggle";
 import { useWarmupStatusFeed } from "../api/use-warmup-status-feed";
@@ -243,65 +247,16 @@ interface OllamaSectionProps {
 	thinkingEffort: OllamaThinkingEffort;
 }
 
-const OLLAMA_THINKING_EFFORT_OPTIONS: ReadonlyArray<{
-	label: string;
-	value: OllamaThinkingEffort;
-}> = [
-	{ value: "off", label: "Off" },
-	{ value: "low", label: "Low" },
-	{ value: "medium", label: "Medium" },
-	{ value: "high", label: "High" },
+// Same four signal-bar icons as the modifier-level switcher (light/medium/high)
+// plus a "no signal" glyph for Off, so thinking-effort reads as the same family
+// of control. Ollama exposes Off (think: false) which OpenRouter's
+// always-reasoning models don't — hence the extra first segment.
+const OLLAMA_THINKING_EFFORT_OPTIONS: readonly SwitcherOption<OllamaThinkingEffort>[] = [
+	{ value: "off", label: "Off", icon: SignalNo02Icon },
+	{ value: "low", label: "Low", icon: SignalLow02Icon },
+	{ value: "medium", label: "Medium", icon: SignalMedium02Icon },
+	{ value: "high", label: "High", icon: SignalFull02Icon },
 ];
-
-/** Four-segment radio toggle bound to the per-feature `thinkingEffort`
- *  setting. Mirrors the OpenRouter ReasoningEffortDropdown visually so
- *  the picker stays coherent, but exposes an extra "Off" option because
- *  Ollama's thinking-capable models support disabling thinking outright
- *  via `think: false` whereas OpenRouter's reasoning models are always
- *  reasoning. */
-function OllamaThinkingEffortToggle({
-	value,
-	onChange,
-}: {
-	onChange: (value: OllamaThinkingEffort) => void;
-	value: OllamaThinkingEffort;
-}) {
-	const activeBg = surfaceBg(Math.min(useSurface() + 1, 8));
-	return (
-		<div
-			aria-label="Thinking effort"
-			className="flex w-full min-w-0 max-w-full gap-1 rounded-md border border-border bg-surface-secondary/60 p-1 shadow-inner"
-			role="radiogroup"
-		>
-			{OLLAMA_THINKING_EFFORT_OPTIONS.map((option) => {
-				const isSelected = value === option.value;
-				return (
-					<label
-						className={cn(
-							"relative flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-center truncate rounded-sm px-2 text-sm transition-[background-color,color,box-shadow] duration-200",
-							isSelected
-								? cn(activeBg, "font-semibold text-foreground shadow-md ring-1 ring-border")
-								: "bg-transparent font-medium text-foreground-muted hover:bg-surface/60 hover:text-foreground"
-						)}
-						data-state={isSelected ? "selected" : "idle"}
-						key={option.value}
-					>
-						<input
-							aria-label={option.label}
-							checked={isSelected}
-							className="sr-only"
-							name="ollama-thinking-effort"
-							onChange={() => onChange(option.value)}
-							type="radio"
-							value={option.value}
-						/>
-						{option.label}
-					</label>
-				);
-			})}
-		</div>
-	);
-}
 
 /** Shared error banner used by both Ollama and OpenRouter sections.
  *  Null-renders on empty message so callers can pass their error state
@@ -390,7 +345,14 @@ function OllamaSection(props: OllamaSectionProps) {
 					label="Thinking effort"
 					tooltip="Reasoning models can spend more or less time thinking before answering. Higher effort improves accuracy on hard inputs but adds latency. Off disables thinking entirely."
 				>
-					<OllamaThinkingEffortToggle onChange={setThinkingEffort} value={thinkingEffort} />
+					<ElevatedSurface>
+						<Switcher
+							fullWidth
+							onChange={setThinkingEffort}
+							options={OLLAMA_THINKING_EFFORT_OPTIONS}
+							value={thinkingEffort}
+						/>
+					</ElevatedSurface>
 				</FormControl>
 			) : null}
 
@@ -543,7 +505,7 @@ function CustomModifierRow({
 			leading={
 				<HugeiconsIcon
 					aria-hidden="true"
-					className="shrink-0"
+					className="shrink-0 text-foreground"
 					icon={AiBrain02Icon}
 					size={16}
 				/>
@@ -552,7 +514,10 @@ function CustomModifierRow({
 			trailing={
 				<div className="flex items-center gap-1">
 					{modifier.levelsEnabled ? (
-						<ElevatedSurface className="w-80">
+						// `inline` drops ElevatedSurface's p-1.5 gutter so the L/M/H
+						// control stays as short as the row (no row-height growth);
+						// w-64 keeps it compact instead of stretching the row.
+						<ElevatedSurface className="w-64" inline>
 							<Switcher
 								fullWidth
 								onChange={(v) => onLevelChange(modifier.id, v as PresetLevel)}
@@ -815,7 +780,7 @@ function IndependentPresetList({
 					);
 				} else if (hasLevel) {
 					trailing = (
-						<ElevatedSurface className="w-80">
+						<ElevatedSurface className="w-64" inline>
 							<Switcher
 								fullWidth
 								onChange={(v) => handleLevel(v as PresetLevel)}
@@ -835,7 +800,7 @@ function IndependentPresetList({
 						leading={
 							<HugeiconsIcon
 								aria-hidden="true"
-								className="shrink-0"
+								className="shrink-0 text-foreground"
 								icon={INDEPENDENT_PRESET_ICONS[key]}
 								size={16}
 							/>
@@ -1225,7 +1190,9 @@ function useLlmSettingsPanel() {
 	const handleApiKeySaved = (key: string) => {
 		updateShared({ openrouterApiKey: key });
 		setShowApiKeyDialog(false);
-		scanOpenRouter();
+		// Force past the loaded-cache guard: the prior scan failed (no key) and
+		// marked the catalog loaded, so a plain scan would skip the retry.
+		scanOpenRouter(true);
 		if (pendingFeature === "dictation") {
 			updateDictation(resolveOpenRouterEnablePatch(dictation.openrouterModel));
 			disableSmartEndpoint();

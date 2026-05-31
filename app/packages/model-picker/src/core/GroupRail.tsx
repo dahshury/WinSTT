@@ -5,6 +5,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { cn } from "@/shared/lib/cn";
+import { SurfaceProvider, surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 
 /**
@@ -22,6 +23,19 @@ export interface GroupRailItem {
 	id: string;
 	/** Tooltip label shown on hover. */
 	label: string;
+	/**
+	 * Pinned tiles sit at the very top of the rail in their given order and are
+	 * never starred or moved into the favorites partition — the special "jump"
+	 * tiles (Favorites / Recommended / Sorted) that aren't authors.
+	 */
+	pinned?: boolean;
+	/**
+	 * Author tiles are starrable by default. Set `false` for non-author tiles
+	 * that should keep their position but show no star and never float into the
+	 * favorites partition (e.g. Ollama's "Ollama Library" section + its
+	 * per-publisher browse tiles).
+	 */
+	starrable?: boolean;
 }
 
 export interface GroupRailProps {
@@ -34,25 +48,23 @@ export interface GroupRailProps {
 	 * existing rail behavior so consumers don't lose that feature when
 	 * they adopt the shared rail.
 	 */
-	favorites?: readonly string[];
+	favorites?: readonly string[] | undefined;
 	/** Tiles to render, in display order. */
 	items: readonly GroupRailItem[];
 	/** Called when the user clicks a tile — typically scrolls the list. */
 	onClick: (id: string) => void;
 	/** Called when the user toggles the star button on a tile. */
-	onToggleFavorite?: (id: string) => void;
+	onToggleFavorite?: ((id: string) => void) | undefined;
 }
 
 const TILE_BASE_CLASSES = cn(
-	"group/tile relative flex h-11 w-11 shrink-0 items-center justify-center rounded-md border transition-colors",
+	"group/tile relative flex h-11 w-11 shrink-0 items-center justify-center rounded-md ring-1 transition-colors",
 	"focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
 );
 
-const TILE_ACTIVE = "border-accent/50 bg-accent/15 text-accent shadow-sm";
-const TILE_IDLE = cn(
-	"border-transparent text-foreground-muted",
-	"hover:bg-[var(--color-surface-2)]/60 hover:text-foreground"
-);
+// Selected tile: the single app accent (tint + accent ring + accent icon) —
+// the same restrained selection treatment the model cards use.
+const TILE_ACTIVE = "bg-accent/15 text-accent ring-accent/40 shadow-sm";
 
 const STAR_FAVORITED = "text-amber-400 opacity-100";
 const STAR_IDLE = cn(
@@ -66,6 +78,13 @@ const STAR_IDLE = cn(
  * picker now gets the same maker / family sidebar with the same tile
  * vocabulary, the same active-state styling, the same favorites toggle,
  * and the same click-to-jump affordance.
+ *
+ * Surfaces: the rail column is transparent (it shares the popup substrate and
+ * is delineated only by its end divider); every tile is a surface lifted one
+ * step above that substrate, so the provider icons sit *on* a surface of their
+ * own instead of floating directly on the rail. Count badge / favorite star /
+ * fallback initial each lift a further step so they read as their own small
+ * surfaces stacked on the tile, never as bare pills.
  */
 export function GroupRail({
 	activeId,
@@ -85,21 +104,34 @@ export function GroupRail({
 		tile?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 	}, [activeId]);
 
+	// Pinned "jump" tiles (Favorites / Recommended / Sorted / Library) always sit
+	// at the very top in their given order, never starred or partitioned. The
+	// remaining (author) tiles partition into a favorited section + the rest so
+	// starred authors float up — the same affordance OpenRouter's maker rail had,
+	// now shared by every picker.
 	const favoritesSet = new Set(favorites ?? []);
-	const hasFavorites = favoritesSet.size > 0;
-	const favoriteItems = hasFavorites ? items.filter((it) => favoritesSet.has(it.id)) : [];
-	const otherItems = hasFavorites ? items.filter((it) => !favoritesSet.has(it.id)) : items;
+	const isStarredAuthor = (it: GroupRailItem) => it.starrable !== false && favoritesSet.has(it.id);
+	const pinnedItems = items.filter((it) => it.pinned);
+	const authorItems = items.filter((it) => !it.pinned);
+	const favoriteItems = authorItems.filter(isStarredAuthor);
+	const otherItems = authorItems.filter((it) => !isStarredAuthor(it));
 	const showDivider = favoriteItems.length > 0 && otherItems.length > 0;
 
 	return (
-		<div
-			aria-orientation="vertical"
-			className={cn(
-				"flex w-14 shrink-0 flex-col self-stretch",
-				"border-divider border-e bg-[var(--color-surface-1)]/40"
-			)}
-			role="tablist"
-		>
+		// Fixed surface baseline so the rail looks IDENTICAL regardless of where the
+		// picker is embedded: STT opens in its own (substrate-1) window, while Ollama
+		// nests in the LLM settings panel (a higher substrate) — which otherwise made
+		// Ollama's author tiles render lighter/washed than STT's. Pinning to 1 yields
+		// a recessed surface-1 sidebar with surface-2 tiles in every picker.
+		<SurfaceProvider value={1}>
+			<div
+				aria-orientation="vertical"
+				className={cn(
+					"flex w-14 shrink-0 flex-col self-stretch border-divider border-e",
+					surfaceBg(1)
+				)}
+				role="tablist"
+			>
 			<div
 				className={cn(
 					"min-h-0 flex-1 overflow-y-auto",
@@ -109,6 +141,15 @@ export function GroupRail({
 				style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
 			>
 				<div className="flex flex-col items-center gap-1.5 px-1 py-2">
+					{pinnedItems.map((item) => (
+						<GroupRailTile
+							isActive={item.id === activeId}
+							isFavorited={false}
+							item={item}
+							key={item.id}
+							onClick={onClick}
+						/>
+					))}
 					{favoriteItems.map((item) => (
 						<GroupRailTile
 							isActive={item.id === activeId}
@@ -129,12 +170,13 @@ export function GroupRail({
 							item={item}
 							key={item.id}
 							onClick={onClick}
-							onToggleFavorite={onToggleFavorite}
+							onToggleFavorite={item.starrable === false ? undefined : onToggleFavorite}
 						/>
 					))}
 				</div>
 			</div>
 		</div>
+		</SurfaceProvider>
 	);
 }
 
@@ -153,6 +195,17 @@ function GroupRailTile({
 	onClick,
 	onToggleFavorite,
 }: GroupRailTileProps) {
+	const level = useSurface();
+	// Idle tile: its own hairline-ringed surface lifted one step above the rail
+	// substrate, brightening another step on hover.
+	const idleTile = cn(
+		surfaceBg(Math.min(level + 1, 8)),
+		surfaceHoverBg(Math.min(level + 2, 8)),
+		"text-foreground-muted ring-divider hover:text-foreground hover:ring-border"
+	);
+	// Corner badge / star lift a couple of steps further so they read as small
+	// surfaces stacked on the tile, not bare pills.
+	const cornerSurface = surfaceBg(Math.min(level + 3, 8));
 	const handleFavoriteClick = (event: React.MouseEvent) => {
 		event.preventDefault();
 		event.stopPropagation();
@@ -167,7 +220,7 @@ function GroupRailTile({
 							{...(props as ComponentPropsWithoutRef<"button">)}
 							aria-label={item.label}
 							aria-selected={isActive}
-							className={cn(TILE_BASE_CLASSES, isActive ? TILE_ACTIVE : TILE_IDLE)}
+							className={cn(TILE_BASE_CLASSES, isActive ? TILE_ACTIVE : idleTile)}
 							onClick={() => onClick(item.id)}
 							role="tab"
 							type="button"
@@ -176,7 +229,12 @@ function GroupRailTile({
 								{item.icon ?? <FallbackInitial label={item.label} />}
 							</span>
 							{item.badge ? (
-								<span className="absolute -end-1 -bottom-1 z-raised flex h-4 min-w-4 items-center justify-center rounded-full border border-divider bg-[var(--color-surface-2)] px-1 font-semibold text-[9px] text-foreground-secondary tabular-nums leading-none">
+								<span
+									className={cn(
+										"absolute -end-1 -bottom-1 z-raised flex h-4 min-w-4 items-center justify-center rounded-full px-1 font-semibold text-[9px] text-foreground-secondary tabular-nums leading-none ring-1 ring-divider",
+										cornerSurface
+									)}
+								>
 									{item.badge}
 								</span>
 							) : null}
@@ -190,7 +248,8 @@ function GroupRailTile({
 					aria-label={isFavorited ? `Unfavorite ${item.label}` : `Favorite ${item.label}`}
 					aria-pressed={isFavorited}
 					className={cn(
-						"absolute -end-1 -top-1 z-raised flex size-5 items-center justify-center rounded-full border border-divider bg-[var(--color-surface-2)] shadow-sm transition-opacity",
+						"absolute -end-1 -top-1 z-raised flex size-5 items-center justify-center rounded-full shadow-sm ring-1 ring-divider transition-opacity",
+						cornerSurface,
 						isFavorited ? STAR_FAVORITED : STAR_IDLE
 					)}
 					onClick={handleFavoriteClick}
@@ -207,14 +266,43 @@ function GroupRailTile({
 }
 
 /**
- * Fallback when a group has no provider icon — use the first letter of
- * the label inside a tinted circle. Keeps the rail visually balanced
- * (Ollama families don't ship with logos, so most tiles get this).
+ * The neutral / favorite "icon chip" every picker drops a Hugeicon into for its
+ * non-logo rail tiles (Favorites, Recommended, Sorted, family fallbacks, …).
+ * Centralised here so the maker rail looks IDENTICAL across STT / Ollama /
+ * OpenRouter: a `size-5 rounded` chip — neutral grey, or amber for the
+ * Favorites tile. A semi-transparent foreground tint, so it reads correctly on
+ * any tile shade without needing the substrate level.
+ */
+export function RailIconChip({
+	children,
+	tone = "neutral",
+}: {
+	children: ReactNode;
+	tone?: "neutral" | "favorite";
+}) {
+	return (
+		<span
+			className={cn(
+				"flex size-5 items-center justify-center rounded",
+				tone === "favorite"
+					? "bg-amber-400/[0.12] text-amber-400"
+					: "bg-foreground/[0.06] text-foreground-muted"
+			)}
+		>
+			{children}
+		</span>
+	);
+}
+
+/**
+ * Fallback when a group has no icon at all — the first letter of the label in
+ * the same neutral chip as {@link RailIconChip}, so an iconless tile still
+ * matches the rest of the rail instead of standing out as a bare circle.
  */
 function FallbackInitial({ label }: { label: string }) {
 	const letter = label.trim().charAt(0).toUpperCase() || "?";
 	return (
-		<span className="flex size-5 items-center justify-center rounded-full bg-[var(--color-surface-3)] font-semibold text-[11px] text-foreground-secondary">
+		<span className="flex size-5 items-center justify-center rounded bg-foreground/[0.06] font-semibold text-[11px] text-foreground-secondary">
 			{letter}
 		</span>
 	);

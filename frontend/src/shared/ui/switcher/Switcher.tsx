@@ -25,13 +25,28 @@ interface SegmentRect {
 	width: number;
 }
 
-function rectFromElement(el: HTMLElement, containerRect: DOMRect): SegmentRect {
+function rectFromElement(
+	el: HTMLElement,
+	containerRect: DOMRect,
+	scaleX: number,
+	scaleY: number
+): SegmentRect {
 	const r = el.getBoundingClientRect();
+	// `getBoundingClientRect` reports post-transform (visual) geometry, but the
+	// absolute indicator is positioned in the container's *untransformed* layout
+	// space. When an ancestor is scaled — e.g. the modal open animation
+	// (`scale(0.96)`→`scale(1)`, see `--modal-scale` in globals.css) — the visual
+	// offsets are compressed by that scale, so an indicator placed at the raw
+	// offset would only travel `scale×` of the real range (fine on the first
+	// option at left≈0, increasingly short on later ones). A transform change
+	// never fires ResizeObserver, so we can't rely on a post-animation re-measure;
+	// instead we divide every offset by the *live* ancestor scale here, recovering
+	// layout-space coordinates that track each option exactly at any frame.
 	return {
-		top: r.top - containerRect.top,
-		left: r.left - containerRect.left,
-		width: r.width,
-		height: r.height,
+		top: (r.top - containerRect.top) / scaleY,
+		left: (r.left - containerRect.left) / scaleX,
+		width: r.width / scaleX,
+		height: r.height / scaleY,
 	};
 }
 
@@ -108,11 +123,16 @@ export function Switcher<T extends string = string>({
 		const items = Array.from(container.querySelectorAll<HTMLElement>("[data-switcher-index]"));
 		const measure = () => {
 			const containerRect = container.getBoundingClientRect();
+			// Cumulative ancestor scale = visual size (rect) ÷ layout size (offset).
+			// 1 when untransformed; <1 mid modal-open animation. Guard the hidden
+			// (offset 0) case so we never divide by zero.
+			const scaleX = container.offsetWidth ? containerRect.width / container.offsetWidth : 1;
+			const scaleY = container.offsetHeight ? containerRect.height / container.offsetHeight : 1;
 			const next: Record<number, SegmentRect> = {};
 			for (const el of items) {
 				const idx = Number(el.dataset.switcherIndex);
 				if (!Number.isNaN(idx)) {
-					next[idx] = rectFromElement(el, containerRect);
+					next[idx] = rectFromElement(el, containerRect, scaleX, scaleY);
 				}
 			}
 			setRects((prev) => (rectsEqual(prev, next) ? prev : next));

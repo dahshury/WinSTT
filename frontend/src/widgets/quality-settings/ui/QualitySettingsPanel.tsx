@@ -73,11 +73,23 @@ function PasteBehaviorSection({
 				<FormControl
 					label={tg("autoSubmit")}
 					labelAddon={<Toggle checked={autoSubmit} onCheckedChange={onChangeAutoSubmit} />}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={autoSubmit === DEFAULT_SETTINGS.general.autoSubmit}
+							onReset={() => onChangeAutoSubmit(DEFAULT_SETTINGS.general.autoSubmit)}
+						/>
+					}
 					tooltip={tg("autoSubmitTooltip")}
 				/>
 				{autoSubmit ? (
 					<FormControl
 						label={tg("autoSubmitKey")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={autoSubmitKey === DEFAULT_SETTINGS.general.autoSubmitKey}
+								onReset={() => onChangeAutoSubmitKey(DEFAULT_SETTINGS.general.autoSubmitKey)}
+							/>
+						}
 						layout="row"
 						tooltip={tg("autoSubmitKeyTooltip")}
 					>
@@ -126,6 +138,12 @@ function ContextAwarenessSection({
 				<FormControl
 					label={tg("contextAwareness")}
 					labelAddon={<Toggle checked={enabled} onCheckedChange={handleToggle} />}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={enabled === DEFAULT_SETTINGS.general.contextAwareness}
+							onReset={onCancel}
+						/>
+					}
 					tooltip={tg("contextAwarenessTooltip")}
 				/>
 				{/* The deny-list (apps/sites to skip) configures the same capture
@@ -162,6 +180,12 @@ function SmartEndpointSection({ q, t, update, onToggle }: SmartEndpointSectionPr
 				<FormControl
 					label={t("smartEndpointLabel")}
 					labelAddon={<Toggle checked={enabled} onCheckedChange={onToggle} />}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={enabled === DEFAULT_SETTINGS.quality.smartEndpoint}
+							onReset={() => onToggle(DEFAULT_SETTINGS.quality.smartEndpoint)}
+						/>
+					}
 					tooltip={t("smartEndpointTooltip")}
 				/>
 				{enabled && (
@@ -455,6 +479,20 @@ function FormattingSection({
 							onCheckedChange={(v) => update({ ensureSentenceStartingUppercase: v })}
 						/>
 					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(q?.ensureSentenceStartingUppercase ?? true) ===
+								DEFAULT_SETTINGS.quality.ensureSentenceStartingUppercase
+							}
+							onReset={() =>
+								update({
+									ensureSentenceStartingUppercase:
+										DEFAULT_SETTINGS.quality.ensureSentenceStartingUppercase,
+								})
+							}
+						/>
+					}
 					tooltip={t("uppercaseFirstTooltip")}
 				/>
 				<FormControl
@@ -464,6 +502,20 @@ function FormattingSection({
 							checked={q?.ensureSentenceEndsWithPeriod ?? true}
 							disabled={llmDictationEnabled}
 							onCheckedChange={(v) => update({ ensureSentenceEndsWithPeriod: v })}
+						/>
+					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(q?.ensureSentenceEndsWithPeriod ?? true) ===
+								DEFAULT_SETTINGS.quality.ensureSentenceEndsWithPeriod
+							}
+							onReset={() =>
+								update({
+									ensureSentenceEndsWithPeriod:
+										DEFAULT_SETTINGS.quality.ensureSentenceEndsWithPeriod,
+								})
+							}
 						/>
 					}
 					tooltip={t("endWithPeriodTooltip")}
@@ -479,6 +531,16 @@ function FormattingSection({
 							checked={general?.filterFillers ?? true}
 							disabled={llmDictationEnabled}
 							onCheckedChange={(v) => updateGeneral({ filterFillers: v })}
+						/>
+					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								(general?.filterFillers ?? true) === DEFAULT_SETTINGS.general.filterFillers
+							}
+							onReset={() =>
+								updateGeneral({ filterFillers: DEFAULT_SETTINGS.general.filterFillers })
+							}
 						/>
 					}
 					tooltip={t("removeFillerWordsTooltip")}
@@ -607,6 +669,16 @@ export function QualitySettingsPanel() {
 				<div className="flex flex-col divide-y divide-surface-1">
 					<FormControl
 						label={tg("fileTranscriptionFormat")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={transcriptionFormat === DEFAULT_SETTINGS.general.fileTranscriptionFormat}
+								onReset={() =>
+									updateGeneral({
+										fileTranscriptionFormat: DEFAULT_SETTINGS.general.fileTranscriptionFormat,
+									})
+								}
+							/>
+						}
 						layout="row"
 						tooltip={tg("fileTranscriptionFormatTooltip")}
 					>

@@ -6,13 +6,15 @@ import { type ReactNode, useReducer, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import type { GroupRailItem } from "../../core/GroupRail";
+import { RailIconChip, type GroupRailItem } from "../../core/GroupRail";
+import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
 import { extractCloseReason } from "../../lib/combobox-reasons";
 import {
 	applyCloseWith,
 	isInsideMenuPopup,
 } from "../../lib/openrouter-model-selector-test-helpers";
+import { publicAsset } from "../../lib/public-asset";
 import { useModelSelectorClickTracking } from "../../lib/use-model-selector-click-tracking";
 import { STT_PICKER_WIDTH_CLASS } from "../lib/dimensions";
 import {
@@ -24,10 +26,13 @@ import {
 	getFamilyConfig,
 	groupModelsByAuthor,
 	isFavoritesGroup,
+	isSortedGroup,
+	SORTED_GROUP_VALUE,
 	type SttListGroup,
 	withFavoritesGroup,
 } from "../lib/family-helpers";
 import { collectFilterableLanguages, filterSttModels, hasActiveFilters } from "../lib/filter-state";
+import { sortSttModels } from "../lib/sort-state";
 import { useFavoriteSttModels } from "../lib/use-favorite-stt-models";
 import { DeleteQuantConfirmDialog, type PendingDelete } from "./DeleteQuantConfirmDialog";
 import { SttModelSelectorTriggerButton } from "./SttModelSelectorTrigger";
@@ -116,24 +121,31 @@ function matchesQuery(model: ModelInfo, query: string): boolean {
 }
 
 function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
-	return groups.map((group) => {
+	const items: GroupRailItem[] = [];
+	for (const group of groups) {
+		// The flat sorted column has no maker rail tile.
+		if (isSortedGroup(group.value)) {
+			continue;
+		}
 		// The Favorites tile is maker-agnostic — a star instead of a brand logo,
 		// jumping to the synthetic group pinned at the top of the list.
 		if (isFavoritesGroup(group.value)) {
-			return {
+			items.push({
 				id: FAVORITES_GROUP_VALUE,
 				label: "Favorites",
+				pinned: true,
 				badge: group.items.length,
 				icon: (
-					<span className="flex size-5 items-center justify-center rounded bg-amber-500/15 text-amber-500">
-						<HugeiconsIcon className="size-3 fill-amber-500" icon={StarIcon} />
-					</span>
+					<RailIconChip tone="favorite">
+						<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
+					</RailIconChip>
 				),
-			};
+			});
+			continue;
 		}
 		const family: FamilyKey = group.value;
 		const cfg = getFamilyConfig(family);
-		return {
+		items.push({
 			id: family,
 			label: `${getAuthorLabel(family)} · ${cfg.label}`,
 			badge: group.items.length,
@@ -142,16 +154,17 @@ function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
 					alt=""
 					className="size-5 rounded-[3px] object-cover"
 					height={20}
-					src={cfg.logoSrc}
+					src={publicAsset(cfg.logoSrc)}
 					width={20}
 				/>
 			) : (
-				<span className={`flex size-5 items-center justify-center rounded ${cfg.chip}`}>
+				<RailIconChip>
 					<HugeiconsIcon className="size-3" icon={cfg.icon} />
-				</span>
+				</RailIconChip>
 			),
-		};
-	});
+		});
+	}
+	return items;
 }
 
 /**
@@ -213,6 +226,12 @@ export function SttModelSelector({
 	// Per-window starred-model set, persisted to localStorage. Drives both the
 	// per-card star toggle and the synthetic "Favorites" group pinned to the top.
 	const { isFavorite, toggleFavorite } = useFavoriteSttModels();
+	// Per-window starred-AUTHOR set (the family rail tiles). Starred authors float
+	// to the top of the side rail — the maker-favoriting affordance every picker
+	// now shares. Separate localStorage key from the per-model favorites above.
+	const { favorites: favoriteAuthors, toggleFavorite: toggleAuthorFavorite } = useFavoriteSet(
+		"winstt:stt-favorite-authors"
+	);
 
 	const baseModels = applyPrefilter(models, prefilter);
 	const selectedModel = baseModels.find((m) => m.id === value) ?? null;
@@ -244,7 +263,7 @@ export function SttModelSelector({
 	const [uiState, dispatch] = useReducer(sttSelectorUiReducer, undefined, () =>
 		createInitialUiState(selectedFamily, selectedBaseId)
 	);
-	const { filters, activeRailId, expandedBundles, open } = uiState;
+	const { filters, sort, activeRailId, expandedBundles, open } = uiState;
 
 	// Menu filters (cached / realtime / language / hardware) prune the items
 	// before the picker sees them; the text query is then handled by Base
@@ -255,17 +274,23 @@ export function SttModelSelector({
 		filters,
 		searchQuery: "",
 	});
-	// Prepend the synthetic Favorites group (starred models, maker-sorted +
-	// deduped) ahead of the per-maker groups. The starred models are repeated,
-	// not moved — they keep their maker card AND gain a shortcut card up top.
-	const groups = withFavoritesGroup(groupModelsByAuthor(menuFilteredModels), isFavorite);
+	// Two list shapes:
+	//   • Default (no sort): the synthetic Favorites group (starred models,
+	//     maker-sorted + deduped, REPEATED not moved) ahead of the per-maker
+	//     groups, with the maker rail on the side.
+	//   • Sorted: every surviving model flattened into ONE globally-sorted
+	//     column (rail suppressed below) so "fastest / smallest / most-accurate
+	//     overall" reads top-to-bottom instead of being split per maker.
+	const groups: SttListGroup[] =
+		sort === null
+			? withFavoritesGroup(groupModelsByAuthor(menuFilteredModels), isFavorite)
+			: [{ value: SORTED_GROUP_VALUE, items: sortSttModels(menuFilteredModels, sort) }];
 	const filtersActive = hasActiveFilters(filters);
 	const availableLanguages = collectFilterableLanguages(baseModels);
 
-	// Shared rail: one tile per family, with the family's branded icon and a
-	// count badge. Same `GroupRail` component the OpenRouter + Ollama
-	// pickers use — visual parity by construction, not by convention.
-	const railItems: GroupRailItem[] = buildRailItems(groups);
+	// Shared rail: one tile per family. Suppressed while a global sort flattens
+	// the list — a single column has no maker sections to jump between.
+	const railItems: GroupRailItem[] = sort === null ? buildRailItems(groups) : [];
 	// Re-sync the active rail tile to the selection's family during render
 	// whenever it changes, while still letting a user rail click override
 	// it until the selection moves again. The prev-value tracker is a ref
@@ -369,8 +394,10 @@ export function SttModelSelector({
 				onDownloadSnapshot={onDownloadSnapshot}
 				onFiltersChange={(next) => dispatch({ type: "setFilters", filters: next })}
 				onRequestDelete={handleRequestDelete}
+				onSortChange={(next) => dispatch({ type: "setSort", sort: next })}
 				onToggleExpanded={handleToggleExpanded}
 				onToggleFavorite={toggleFavorite}
+					onToggleRailFavorite={toggleAuthorFavorite}
 				open={externalOpen ? false : open}
 				placeholder={placeholder}
 				popupHeightClass={popupHeightClass}
@@ -379,8 +406,10 @@ export function SttModelSelector({
 					railSpy.attach(node);
 				}}
 				popupWidthClass={popupWidthClass}
-				railItems={railItems}
+				railFavorites={favoriteAuthors}
+					railItems={railItems}
 				selectedModel={selectedModel}
+				sort={sort}
 				statesById={statesById}
 				systemInfo={systemInfo}
 				trigger={effectiveTrigger}

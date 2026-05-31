@@ -20,12 +20,21 @@ function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
 }
 
 describe("getQuantizationOptions", () => {
-	test("returns only shipped quantizations in canonical order", () => {
+	test("returns only shipped quantizations, heaviest → lightest", () => {
 		const opts = getQuantizationOptions(model({ availableQuantizations: ["int8", "", "q4"] }));
 		expect(opts.map((o) => o.value)).toEqual(["", "int8", "q4"]);
 		expect(opts[0]?.label).toBe("Auto");
 		expect(opts[1]?.label).toBe("int8");
 		expect(opts[1]?.tooltip).toContain("8-bit");
+	});
+
+	test("orders by precision weight, not the canonical list (fp16 before int8)", () => {
+		// Canonical ONNX_QUANTIZATIONS lists int8 before fp16, but fp16 is heavier
+		// and more faithful, so it must render first. "" (≈fp32) always leads.
+		const opts = getQuantizationOptions(
+			model({ availableQuantizations: ["q4", "int8", "fp16", "", "q4f16"] })
+		);
+		expect(opts.map((o) => o.value)).toEqual(["", "fp16", "int8", "q4f16", "q4"]);
 	});
 
 	test("ignores quantizations the UI cannot label", () => {

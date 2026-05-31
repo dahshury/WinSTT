@@ -45,17 +45,37 @@ function isKnownQuantization(value: string): value is OnnxQuantization {
 }
 
 /**
- * Quantization options the upstream repo actually ships for this model,
- * in canonical order. Unknown suffixes the server reports are ignored so
- * the picker never offers a precision the UI can't label.
+ * Precision "weight" — bit width as a proxy for how heavy (RAM/CPU) AND how
+ * faithful each quantization is. Drives the shelf order: most-capable / heaviest
+ * on the left to least on the right. `""` is the default export (≈ fp32, the
+ * recommended + heaviest), so it leads. The canonical `ONNX_QUANTIZATIONS` order
+ * is NOT weight-sorted (it lists int8 before fp16), so this re-sorts it.
+ */
+const QUANTIZATION_WEIGHT: Record<OnnxQuantization, number> = {
+	"": 32,
+	fp16: 16,
+	int8: 8,
+	uint8: 8,
+	q4f16: 6,
+	bnb4: 4,
+	q4: 4,
+};
+
+/**
+ * Quantization options the upstream repo actually ships for this model, ordered
+ * heaviest/most-capable → lightest (ties keep canonical order, a stable sort).
+ * Unknown suffixes the server reports are ignored so the picker never offers a
+ * precision the UI can't label.
  */
 export function getQuantizationOptions(model: ModelInfo): QuantizationOption[] {
 	const available = new Set(model.availableQuantizations);
-	return ONNX_QUANTIZATIONS.filter((value) => available.has(value)).map((value) => ({
-		value,
-		label: QUANTIZATION_LABELS[value].label,
-		tooltip: QUANTIZATION_LABELS[value].tooltip,
-	}));
+	return ONNX_QUANTIZATIONS.filter((value) => available.has(value))
+		.map((value) => ({
+			value,
+			label: QUANTIZATION_LABELS[value].label,
+			tooltip: QUANTIZATION_LABELS[value].tooltip,
+		}))
+		.sort((a, b) => QUANTIZATION_WEIGHT[b.value] - QUANTIZATION_WEIGHT[a.value]);
 }
 
 /**

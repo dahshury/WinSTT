@@ -6,7 +6,8 @@ import { type ReactNode, useReducer, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import type { GroupRailItem } from "../../core/GroupRail";
+import { RailIconChip, type GroupRailItem } from "../../core/GroupRail";
+import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
 import { extractCloseReason } from "../../lib/combobox-reasons";
 import {
@@ -132,11 +133,12 @@ function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
 			items.push({
 				id: FAVORITES_GROUP_VALUE,
 				label: "Favorites",
+				pinned: true,
 				badge: group.items.length,
 				icon: (
-					<span className="flex size-5 items-center justify-center rounded bg-amber-400/[0.12] text-amber-400">
+					<RailIconChip tone="favorite">
 						<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
-					</span>
+					</RailIconChip>
 				),
 			});
 			continue;
@@ -156,9 +158,9 @@ function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
 					width={20}
 				/>
 			) : (
-				<span className="flex size-5 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted">
+				<RailIconChip>
 					<HugeiconsIcon className="size-3" icon={cfg.icon} />
-				</span>
+				</RailIconChip>
 			),
 		});
 	}
@@ -224,6 +226,12 @@ export function SttModelSelector({
 	// Per-window starred-model set, persisted to localStorage. Drives both the
 	// per-card star toggle and the synthetic "Favorites" group pinned to the top.
 	const { isFavorite, toggleFavorite } = useFavoriteSttModels();
+	// Per-window starred-AUTHOR set (the family rail tiles). Starred authors float
+	// to the top of the side rail — the maker-favoriting affordance every picker
+	// now shares. Separate localStorage key from the per-model favorites above.
+	const { favorites: favoriteAuthors, toggleFavorite: toggleAuthorFavorite } = useFavoriteSet(
+		"winstt:stt-favorite-authors"
+	);
 
 	const baseModels = applyPrefilter(models, prefilter);
 	const selectedModel = baseModels.find((m) => m.id === value) ?? null;
@@ -389,6 +397,7 @@ export function SttModelSelector({
 				onSortChange={(next) => dispatch({ type: "setSort", sort: next })}
 				onToggleExpanded={handleToggleExpanded}
 				onToggleFavorite={toggleFavorite}
+					onToggleRailFavorite={toggleAuthorFavorite}
 				open={externalOpen ? false : open}
 				placeholder={placeholder}
 				popupHeightClass={popupHeightClass}
@@ -397,7 +406,8 @@ export function SttModelSelector({
 					railSpy.attach(node);
 				}}
 				popupWidthClass={popupWidthClass}
-				railItems={railItems}
+				railFavorites={favoriteAuthors}
+					railItems={railItems}
 				selectedModel={selectedModel}
 				sort={sort}
 				statesById={statesById}

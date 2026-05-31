@@ -10,7 +10,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/shared/ui/input-group";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { matchesSearchQuery } from "../lib/settings-search";
 
@@ -96,11 +96,6 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 	// Wraps the search affordance + field so an outside-press can tell whether
 	// the press landed on the search or somewhere it should fold away.
 	const searchRegionRef = useRef<HTMLDivElement>(null);
-
-	// Sidebar stays at the page substrate; the search field lifts one step so it
-	// reads as a recessed input against it.
-	const substrate = useSurface();
-	const inputLevel = Math.min(substrate + 1, 8);
 
 	// Focus the field the moment it opens so the user can type immediately.
 	useEffect(() => {
@@ -252,19 +247,17 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 							className="t-resize titlebar-no-drag absolute inset-y-0 start-0 overflow-hidden"
 							style={{ width: searchOpen ? "100%" : "0px" }}
 						>
-							<div className="relative flex h-full w-full items-center">
-								<HugeiconsIcon
-									aria-hidden="true"
-									className="pointer-events-none absolute start-2.5 text-foreground-muted"
-									icon={Search01Icon}
-									size={14}
-								/>
-								<input
+							{/* Flat/minimal frame (no shadow or glow) to match the muted
+							    fluidfunctionalism field language. The INSET ring keeps the 1px
+							    edge from being clipped by the overlay's `overflow-hidden`
+							    (an outset ring would vanish at the animating boundary). */}
+							<InputGroup appearance="minimal" className="h-8 w-full ring-inset" size="sm">
+								<InputGroupAddon align="inline-start">
+									<HugeiconsIcon aria-hidden="true" icon={Search01Icon} size={14} />
+								</InputGroupAddon>
+								<InputGroupInput
 									aria-hidden={!searchOpen}
 									aria-label={t("searchPlaceholder")}
-									// No focus ring — the open field + caret are signal enough; the
-									// accent ring on each edge read as noise while typing.
-									className={`h-8 w-full rounded-md ps-8 pe-7 text-body text-foreground caret-accent outline-none ring-1 ring-border ring-inset transition-shadow placeholder:text-foreground-muted hover:ring-border-hover ${surfaceBg(inputLevel)}`}
 									onBlur={handleSearchBlur}
 									onChange={(e) => setQuery(e.target.value)}
 									onKeyDown={(e) => {
@@ -281,18 +274,20 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 									value={query}
 								/>
 								{trimmed.length > 0 ? (
-									<button
-										aria-label={t("searchClear")}
-										className="absolute end-1.5 flex size-5 items-center justify-center rounded-full bg-transparent text-foreground-muted outline-none transition-colors hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
-										onClick={() => setQuery("")}
-										// Keep focus on the input so clearing doesn't fold the field.
-										onMouseDown={(e) => e.preventDefault()}
-										type="button"
-									>
-										<HugeiconsIcon icon={Cancel01Icon} size={12} />
-									</button>
+									<InputGroupAddon align="inline-end">
+										<button
+											aria-label={t("searchClear")}
+											className="flex size-5 items-center justify-center rounded-full bg-transparent text-foreground-muted outline-none transition-colors hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
+											onClick={() => setQuery("")}
+											// Keep focus on the input so clearing doesn't fold the field.
+											onMouseDown={(e) => e.preventDefault()}
+											type="button"
+										>
+											<HugeiconsIcon icon={Cancel01Icon} size={12} />
+										</button>
+									</InputGroupAddon>
 								) : null}
-							</div>
+							</InputGroup>
 						</div>
 					</div>
 					{toggleButton}

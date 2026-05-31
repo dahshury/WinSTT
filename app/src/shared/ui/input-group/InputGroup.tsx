@@ -2,7 +2,13 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import { Input } from "@base-ui/react/input";
 import type { ComponentPropsWithRef, HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
-import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
+import {
+	SurfaceProvider,
+	surfaceBg,
+	surfaceClasses,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
 
 type InputGroupSize = "sm" | "md";
 export type InputGroupTone = "default" | "active" | "danger" | "muted";
@@ -216,7 +222,7 @@ export function InputGroupText({ children, className, ...rest }: InputGroupTextP
 
 export interface InputGroupButtonProps extends ComponentPropsWithRef<typeof BaseButton> {
 	children: ReactNode;
-	tone?: "default" | "danger" | "ghost";
+	tone?: "default" | "danger" | "ghost" | "surface";
 }
 
 // `default` / `danger`: filled disk + accent glow ring on hover. Sized to nest
@@ -224,7 +230,9 @@ export interface InputGroupButtonProps extends ComponentPropsWithRef<typeof Base
 // `ghost`: the flat, muted fluidfunctionalism action — transparent until hover,
 // then a faint wash + the icon brightens from muted to foreground. No fill, no
 // shadow; the right pairing for a `minimal` group.
-const BUTTON_TONE: Record<NonNullable<InputGroupButtonProps["tone"]>, string> = {
+// `surface` is computed in the component (it needs the live substrate level) —
+// see InputGroupButton below.
+const BUTTON_TONE: Record<"default" | "danger" | "ghost", string> = {
 	default: [
 		"bg-accent text-white",
 		"shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.18),0_1px_2px_0_oklch(0%_0_0/0.45),0_6px_18px_-6px_var(--color-accent-glow-strong)]",
@@ -250,6 +258,21 @@ export function InputGroupButton({
 	type = "button",
 	...rest
 }: InputGroupButtonProps) {
+	// `surface`: the surfaced neutral action — its own hairline-ringed disk that
+	// lifts one step above the group's substrate (the surfaces concept) and
+	// brightens another step on hover. Unlike `ghost` (transparent until hover)
+	// it always reads as a distinct, pressable surface. The right pairing for the
+	// hotkey record button and the snippet/dictionary add button, which used to
+	// float with no surface of their own.
+	const level = useSurface();
+	const toneClass =
+		tone === "surface"
+			? cn(
+					surfaceBg(Math.min(level + 1, 8)),
+					surfaceHoverBg(Math.min(level + 2, 8)),
+					"text-foreground-secondary shadow-sm ring-1 ring-divider hover:text-foreground hover:ring-border"
+				)
+			: BUTTON_TONE[tone];
 	return (
 		<BaseButton
 			className={cn(
@@ -257,7 +280,7 @@ export function InputGroupButton({
 				"transition-[background-color,box-shadow,color] duration-200 ease-out",
 				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
 				"disabled:cursor-not-allowed disabled:opacity-40",
-				BUTTON_TONE[tone],
+				toneClass,
 				className
 			)}
 			type={type}

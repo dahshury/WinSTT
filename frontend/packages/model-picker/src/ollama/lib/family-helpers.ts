@@ -19,15 +19,22 @@ const FAMILY_REGEX = /^([a-zA-Z]+)/;
  * nameless bucket.
  */
 export function getOllamaFamily(model: OllamaModel): string {
+	// Prefer the NAME prefix (the publisher family) over `details.family` (the
+	// model ARCHITECTURE) — they differ for re-published families: SmolLM is
+	// llama-architecture, so Ollama reports `details.family="llama"`, which would
+	// mis-group an installed SmolLM under Meta instead of Hugging Face. The
+	// recommended-models list resolves by name, so name-first keeps a model in the
+	// SAME maker group before and after download. `details.family` is only the
+	// fallback for names that don't carry a usable alphabetic prefix.
+	const match = FAMILY_REGEX.exec(model.name);
+	if (match?.[1]) {
+		return match[1].toLowerCase();
+	}
 	const explicit = model.details?.family;
 	if (explicit && explicit.trim().length > 0) {
 		return explicit.toLowerCase();
 	}
-	const match = FAMILY_REGEX.exec(model.name);
-	if (!match) {
-		return "other";
-	}
-	return (match[1] ?? "other").toLowerCase();
+	return "other";
 }
 
 /** Friendly display label for a family slug — capitalized, brand-cased. */
@@ -95,7 +102,10 @@ const FAMILY_PUBLISHER: Record<string, OllamaPublisher> = {
 	wizardlm: { slug: "microsoft", label: "Microsoft" },
 };
 
-const DEFAULT_PUBLISHER: OllamaPublisher = { slug: "openrouter", label: "Community" };
+// `community` has no bundled logo on purpose — unmapped makers render a neutral
+// initials chip instead of the misleading OpenRouter "O" that `openrouter` would
+// pull in.
+const DEFAULT_PUBLISHER: OllamaPublisher = { slug: "community", label: "Community" };
 
 /**
  * Pattern-based publisher inference for the ~230 models on `ollama.com/library`.
@@ -114,7 +124,12 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 	// Google
 	{
 		publisher: { slug: "google", label: "Google" },
-		tokens: ["gemma", "paligemma"],
+		tokens: ["gemma", "paligemma", "gemini"],
+	},
+	// OpenAI — open-weight releases (family slug truncates `gpt-oss` → `gpt`)
+	{
+		publisher: { slug: "openai", label: "OpenAI" },
+		tokens: ["gpt"],
 	},
 	// Meta
 	{
@@ -126,10 +141,10 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "qwen", label: "Alibaba" },
 		tokens: ["qwen", "qwq"],
 	},
-	// Microsoft — phi family + WizardLM (Microsoft Research)
+	// Microsoft — phi family + WizardLM + Orca (Microsoft Research)
 	{
 		publisher: { slug: "microsoft", label: "Microsoft" },
-		tokens: ["phi", "wizardlm", "wizardmath", "wizardcoder", "wizardvicuna", "orca-mini"],
+		tokens: ["phi", "wizardlm", "wizardmath", "wizardcoder", "wizardvicuna", "orca"],
 	},
 	// Mistral AI
 	{
@@ -171,10 +186,50 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 		publisher: { slug: "01-ai", label: "01.AI" },
 		tokens: ["yi"],
 	},
+	// TII (Falcon)
+	{
+		publisher: { slug: "tii", label: "TII" },
+		tokens: ["falcon"],
+	},
+	// LG AI Research (EXAONE)
+	{
+		publisher: { slug: "lgai", label: "LG AI" },
+		tokens: ["exaone"],
+	},
+	// Upstage (SOLAR)
+	{
+		publisher: { slug: "upstage", label: "Upstage" },
+		tokens: ["solar"],
+	},
+	// Databricks
+	{
+		publisher: { slug: "databricks", label: "Databricks" },
+		tokens: ["dbrx"],
+	},
+	// Stability AI (`stable-code`/`stable-beluga` → family `stable`)
+	{
+		publisher: { slug: "stabilityai", label: "Stability AI" },
+		tokens: ["stablelm", "stable"],
+	},
+	// Deep Cogito
+	{
+		publisher: { slug: "deepcogito", label: "Deep Cogito" },
+		tokens: ["cogito"],
+	},
+	// Intel (`neural-chat` → family `neural`)
+	{
+		publisher: { slug: "intel", label: "Intel" },
+		tokens: ["neural"],
+	},
+	// Nexusflow
+	{
+		publisher: { slug: "nexusflow", label: "Nexusflow" },
+		tokens: ["athene", "nexusraven"],
+	},
 	// Hugging Face hosted (community)
 	{
 		publisher: { slug: "huggingface", label: "Hugging Face" },
-		tokens: ["smollm", "smolvlm", "starcoder"],
+		tokens: ["smollm", "smolvlm", "starcoder", "zephyr"],
 	},
 	// Moonshot
 	{

@@ -318,8 +318,9 @@ function withContextPrefix(systemPrompt: string, context: string): string {
 		return systemPrompt;
 	}
 	const preamble = [
-		"The CONTEXT block below describes what's currently on the user's",
-		"screen. Use it for:",
+		"The CONTEXT block below is a JSON object describing what's currently on",
+		"the user's screen (keys may include app, window, url, field, beforeCaret,",
+		"afterCaret, selection, screen, clipboard; empty ones are omitted). Use it for:",
 		"  (a) Spelling proper nouns, names, and technical terms that appear",
 		"      in the dictation. If the dictation phonetically matches a name",
 		"      that appears in the context (e.g. an email recipient), prefer",
@@ -328,7 +329,7 @@ function withContextPrefix(systemPrompt: string, context: string): string {
 		'      (per the COMPOSE rule above: "reply to this", "respond yes",',
 		'      "summarise this", "translate ...").',
 		"  (c) Code identifier recognition. When the CONTEXT contains code —",
-		'      either because "IDE context: yes" is present in the header, or',
+		'      either because the context shows "ide": true, or',
 		"      because the axHtml shows code-shaped tokens (camelCase like",
 		"      `useState`, PascalCase classes, snake_case functions, file",
 		"      paths with extensions like `auth.ts`, CLI flags like `--fix`) —",
@@ -342,17 +343,21 @@ function withContextPrefix(systemPrompt: string, context: string): string {
 		"Do not reproduce, summarise, or echo the context unless a COMPOSE",
 		"instruction asked for it. Treat it as reference, not as content to",
 		"include.",
+		"The context may be a MULTI-SPEAKER thread: a line or segment prefixed",
+		'with a name (e.g. "Alice:", "@handle", "by Bob:") denotes that',
+		'speaker, and "You:" is the user. When composing a reply, attribute',
+		"prior turns to the right speaker and write as the user.",
 		"",
-		"When a section for the text before the caret is present, the dictation is",
-		"being inserted at that caret — decide from how that text ends:",
+		'When the context has a "beforeCaret" field, the dictation is being',
+		"inserted at that caret — decide from how that text ends:",
 		"- If it ends mid-sentence (no terminal . ! ? : and not on a blank/new line),",
 		"  the dictation continues it: do not capitalize the first word (unless it is",
 		'  "I" or a proper noun) and add only the minimal joining space or punctuation',
 		"  needed to read on naturally.",
-		"- If it ends a sentence, ends with a newline, or there is no before-text,",
+		'- If it ends a sentence, ends with a newline, or there is no "beforeCaret",',
 		"  start the dictation normally with a capital letter.",
-		"Never reproduce the surrounding text. When a section for the text",
-		"after the caret is present, do not repeat words it already contains.",
+		'Never reproduce the surrounding text. When the context has an "afterCaret"',
+		"field, do not repeat words it already contains.",
 		"Output only the cleaned dictation, adjusted at its boundaries so it",
 		"stitches into place.",
 		"",
@@ -474,7 +479,7 @@ function withVocabPrefix(
  *   1. vocab prefix    — user's spelling reference list
  *   2. compose rules   — COMPOSE-vs-GENERATE rule for all dictations
  *   3. context prefix  — how to use the visible UIA snapshot, caret rules
- *   4. preset prompt   — chosen style (formal/casual/concise/...)
+ *   4. preset prompt   — chosen style (formal/friendly/concise/...)
  */
 function buildDictationSystemPrompt(presets: readonly PresetEntry[], context: string): string {
 	const vocab = getPostProcessingVocab();
@@ -2986,18 +2991,60 @@ function computePercent(completed?: number, total?: number): number | undefined 
 	return Math.max(0, Math.min(100, ratio));
 }
 
+// Record one layer's byte progress keyed by its digest. Lines without a digest
+// (manifest / verifying / writing / success) or without a positive total carry
+// no per-layer bytes, so they're ignored here — the last aggregate is reused.
+function recordLayerProgress(
+	layers: Map<string, PullLayerProgress>,
+	parsed: z.infer<typeof ollamaPullProgressSchema>
+): void {
+	if (!(parsed.digest && isPositiveNumber(parsed.total))) {
+		return;
+	}
+	const completed = typeof parsed.completed === "number" ? Math.max(0, parsed.completed) : 0;
+	layers.set(parsed.digest, { completed: Math.min(completed, parsed.total), total: parsed.total });
+}
+
+// Sum bytes across every layer seen so far → one overall completed/total. The
+// dominant GGUF blob is ~all the bytes, so tiny config/template layers no longer
+// each render as a full 0→100 sweep (the "progress replays 4 times" bug).
+function aggregatePullProgress(
+	layers: Map<string, PullLayerProgress>
+): PullLayerProgress | undefined {
+	if (layers.size === 0) {
+		return;
+	}
+	let completed = 0;
+	let total = 0;
+	for (const layer of layers.values()) {
+		completed += layer.completed;
+		total += layer.total;
+	}
+	return { completed, total };
+}
+
 function buildPullProgress(
 	model: string,
-	parsed: z.infer<typeof ollamaPullProgressSchema>
+	parsed: z.infer<typeof ollamaPullProgressSchema>,
+	layers?: Map<string, PullLayerProgress>
 ): OllamaPullProgressPayload {
+	const status = classifyPullStatus(parsed.status);
+	const aggregate = layers ? aggregatePullProgress(layers) : undefined;
+	// Once any byte progress exists, report the aggregate so the bar climbs once;
+	// success forces 100 (Ollama may not emit a final completed===total per layer).
+	const percent =
+		status === "success"
+			? 100
+			: (computePercent(aggregate?.completed, aggregate?.total) ??
+				computePercent(parsed.completed, parsed.total));
 	return llmOmitUndefined({
 		model,
-		status: classifyPullStatus(parsed.status),
+		status,
 		statusText: parsed.status,
 		digest: parsed.digest,
-		completed: parsed.completed,
-		total: parsed.total,
-		percent: computePercent(parsed.completed, parsed.total),
+		completed: aggregate?.completed ?? parsed.completed,
+		total: aggregate?.total ?? parsed.total,
+		percent,
 		error: parsed.error,
 	}) as OllamaPullProgressPayload;
 }
@@ -3031,17 +3078,30 @@ function parsePullLine(line: string): z.infer<typeof ollamaPullProgressSchema> |
 	}
 }
 
+interface PullLayerProgress {
+	completed: number;
+	total: number;
+}
+
 interface PullStreamState {
 	buffer: { value: string };
 	final: { error?: string; success: boolean };
+	// Per-digest (per-layer) byte progress, accumulated so the renderer can show
+	// ONE aggregate bar instead of a separate 0→100 sweep per blob. Ollama's
+	// /api/pull stream reports completed/total scoped to the current layer only.
+	layers: Map<string, PullLayerProgress>;
 }
 
 function applyPullLine(
 	final: PullStreamState["final"],
 	model: string,
-	parsed: z.infer<typeof ollamaPullProgressSchema>
+	parsed: z.infer<typeof ollamaPullProgressSchema>,
+	layers?: Map<string, PullLayerProgress>
 ): void {
-	const progress = buildPullProgress(model, parsed);
+	if (layers) {
+		recordLayerProgress(layers, parsed);
+	}
+	const progress = buildPullProgress(model, parsed, layers);
 	broadcastPullProgress(progress);
 	if (progress.status === "success") {
 		final.success = true;
@@ -3055,7 +3115,7 @@ function consumePullLines(state: PullStreamState, model: string): void {
 	for (const line of iterateNdjsonChunks(state.buffer)) {
 		const parsed = parsePullLine(line);
 		if (parsed) {
-			applyPullLine(state.final, model, parsed);
+			applyPullLine(state.final, model, parsed, state.layers);
 		}
 	}
 }
@@ -3093,6 +3153,7 @@ async function readPullStream(
 	const state: PullStreamState = {
 		buffer: { value: "" },
 		final: { success: false },
+		layers: new Map(),
 	};
 	await drainReaderInto(reader, decoder, state, model);
 	flushPullBuffer(state, decoder, model);
@@ -4031,6 +4092,8 @@ export const __llm_test_helpers__ = {
 	matchPullStatusPrefix,
 	computePercent,
 	buildPullProgress,
+	recordLayerProgress,
+	aggregatePullProgress,
 	parsePullLine,
 	// Additional helpers for CRAP reduction
 	readErrorText,

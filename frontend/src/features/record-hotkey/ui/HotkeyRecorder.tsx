@@ -3,7 +3,9 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
+import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
+import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import {
 	InputGroup,
 	InputGroupAddon,
@@ -33,8 +35,7 @@ export interface HotkeyRecorderProps {
 }
 
 const CHIP_BASE =
-	"inline-flex h-6 items-center rounded-[6px] px-1.5 py-px text-[11px] leading-none font-medium shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.06),inset_0_0_0_1px_oklch(100%_0_0/0.04)]";
-const CHIP_IDLE = "bg-surface-1/70 text-foreground ring-1 ring-divider/70";
+	"inline-flex h-6 items-center rounded-[6px] px-1.5 py-px text-[11px] leading-none font-medium";
 const CHIP_RECORDING = "bg-error/15 text-error ring-1 ring-error/35";
 const CHIP_HINT = "bg-transparent text-foreground-muted ring-0 italic font-normal";
 
@@ -47,6 +48,15 @@ function ComboParts({
 	recording: boolean;
 	isHint: boolean;
 }) {
+	// Idle keycaps lift one step above the input-group's substrate so each cap
+	// reads as its own surface (the surfaces concept) instead of the recessed,
+	// hard-coded `bg-surface-1` it used to use. ComboParts renders inside the
+	// group's SurfaceProvider, so useSurface() resolves to the group's level.
+	// Called before the `isHint` early return to keep the hook unconditional.
+	const chipIdle = cn(
+		surfaceBg(Math.min(useSurface() + 1, 8)),
+		"text-foreground ring-1 ring-divider"
+	);
 	if (isHint) {
 		return (
 			<motion.span
@@ -61,7 +71,7 @@ function ComboParts({
 		);
 	}
 	const parts = text.split(" + ");
-	const chipClass = recording ? CHIP_RECORDING : CHIP_IDLE;
+	const chipClass = recording ? CHIP_RECORDING : chipIdle;
 	return (
 		<motion.span className="flex items-center gap-1.5" layout transition={springs.moderate}>
 			<AnimatePresence initial={false} mode="popLayout">
@@ -100,7 +110,7 @@ function RecordingBadge({ label }: { label: string }) {
 		>
 			<motion.span
 				animate={{ opacity: [0.55, 1, 0.55], scale: [0.9, 1.1, 0.9] }}
-				className="inline-block size-1.5 rounded-full bg-error shadow-[0_0_8px_2px_oklch(59%_0.22_25/0.55)]"
+				className="inline-block size-1.5 rounded-full bg-error"
 				transition={{ duration: 1.1, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
 			/>
 			<InputGroupText className="text-error">{label}</InputGroupText>
@@ -211,7 +221,12 @@ export function HotkeyRecorder({
 							<InputGroupButton
 								aria-label={toggleLabel}
 								onClick={onToggle}
-								tone={recording ? "danger" : "default"}
+								// FF: a neutral *surfaced* disk while idle (no blue accent fill) — its
+								// own hairline-ringed surface that lifts above the field per the surfaces
+								// concept, instead of the old transparent ghost that read as "floating".
+								// Recording keeps the red "active" tone, consistent with the rest of the
+								// recording state's error-red theme.
+								tone={recording ? "danger" : "surface"}
 							>
 								<ToggleIcon recording={recording} />
 							</InputGroupButton>

@@ -1,5 +1,6 @@
 import type { FamilyKey } from "../lib/family-helpers";
 import { EMPTY_FILTER_STATE, type SttFilterState } from "../lib/filter-state";
+import type { SttSortValue } from "../lib/sort-state";
 
 /**
  * Consolidated UI / navigation state for `SttModelSelector`. The renderer
@@ -20,6 +21,9 @@ export interface SttSelectorUiState {
 	/** Controlled-open flag — kept so we can intercept friendly outside-press
 	 *  clicks (filter Popover etc.) without collapsing the picker. */
 	open: boolean;
+	/** Active global sort, or ``null`` for the default maker grouping. When set,
+	 *  the list flattens every maker group into one sorted column. */
+	sort: SttSortValue;
 }
 
 export type SttSelectorUiAction =
@@ -27,6 +31,7 @@ export type SttSelectorUiAction =
 	| { type: "toggleBundle"; baseId: string }
 	| { type: "ensureBundleExpanded"; baseId: string }
 	| { type: "setFilters"; filters: SttFilterState }
+	| { type: "setSort"; sort: SttSortValue }
 	| { type: "resetFilters" }
 	| { type: "setOpen"; open: boolean };
 
@@ -42,6 +47,7 @@ export function createInitialUiState(
 		activeRailId: selectedFamily,
 		expandedBundles: expanded,
 		filters: EMPTY_FILTER_STATE,
+		sort: null,
 		open: false,
 	};
 }
@@ -75,8 +81,15 @@ export function sttSelectorUiReducer(
 		}
 		case "setFilters":
 			return { ...state, filters: action.filters };
+		case "setSort":
+			if (state.sort === action.sort) {
+				return state;
+			}
+			return { ...state, sort: action.sort };
 		case "resetFilters":
-			return { ...state, filters: EMPTY_FILTER_STATE };
+			// Selecting a model resets both filters and sort so the next open
+			// starts from the clean grouped view.
+			return { ...state, filters: EMPTY_FILTER_STATE, sort: null };
 		case "setOpen":
 			if (state.open === action.open) {
 				return state;

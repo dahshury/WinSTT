@@ -9,14 +9,17 @@ interface SoundLibraryAddRowProps {
 }
 
 export function SoundLibraryAddRow({ label, onClick }: SoundLibraryAddRowProps): ReactNode {
+	// A clean borderless add row that picks up the same neutral hover wash as the
+	// list rows. The plus sits in the radio column (no dashed circle — dashed
+	// reads as a drop zone, which the FF language avoids).
 	return (
 		<Button
 			aria-label={label}
-			className="group flex items-center gap-3 px-3 py-2.5 text-foreground-dim transition-colors duration-150 hover:bg-surface-3/60 hover:text-foreground"
+			className="group relative z-raised flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-foreground-muted transition-colors duration-150 hover:bg-foreground/[0.05] hover:text-foreground"
 			onClick={onClick}
 		>
-			<span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-surface-3 ring-1 ring-divider-strong group-hover:ring-foreground-muted">
-				<HugeiconsIcon icon={PlusSignIcon} size={10} />
+			<span className="flex size-[15px] shrink-0 items-center justify-center text-foreground-muted transition-colors duration-150 group-hover:text-foreground">
+				<HugeiconsIcon icon={PlusSignIcon} size={13} />
 			</span>
 			<span className="font-medium text-body-sm">{label}</span>
 		</Button>

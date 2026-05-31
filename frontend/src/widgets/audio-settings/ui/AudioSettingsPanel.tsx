@@ -121,7 +121,17 @@ export function AudioSettingsPanel() {
 			{recordingMode !== "listen" && (
 				<SettingSection icon={Mic01Icon} title={t("inputDevice")}>
 					<div className="flex flex-col divide-y divide-surface-1">
-						<FormControl label={t("device")} layout="row" tooltip={t("deviceTooltip")}>
+						<FormControl
+							label={t("device")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={currentDeviceId === "default"}
+									onReset={() => update({ inputDeviceIndex: null })}
+								/>
+							}
+							layout="row"
+							tooltip={t("deviceTooltip")}
+						>
 							<ElevatedSurface className="w-52" inline>
 								<Select
 									onChange={(v) =>
@@ -138,7 +148,17 @@ export function AudioSettingsPanel() {
 						    polling detector lives in the Electron main process; the
 						    setting persists across launches. macOS + Linux supported;
 						    Windows is a documented v1.1 deferral. */}
-						<FormControl label={t("clamshellLabel")} layout="row" tooltip={t("clamshellTooltip")}>
+						<FormControl
+							label={t("clamshellLabel")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={currentClamshellId === "disabled"}
+									onReset={() => update({ clamshellMicrophone: null })}
+								/>
+							}
+							layout="row"
+							tooltip={t("clamshellTooltip")}
+						>
 							<ElevatedSurface className="w-52" inline>
 								<Select
 									onChange={(v) =>
@@ -161,7 +181,19 @@ export function AudioSettingsPanel() {
 			{showOutputDevice && (
 				<SettingSection icon={VolumeHighIcon} title={t("outputDevice")}>
 					<div className="flex flex-col divide-y divide-surface-1">
-						<FormControl label={t("outputDevice")} layout="row" tooltip={t("outputDeviceTooltip")}>
+						<FormControl
+							label={t("outputDevice")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={outputDeviceId === DEFAULT_SETTINGS.general.outputDeviceId}
+									onReset={() =>
+										updateGeneral({ outputDeviceId: DEFAULT_SETTINGS.general.outputDeviceId })
+									}
+								/>
+							}
+							layout="row"
+							tooltip={t("outputDeviceTooltip")}
+						>
 							<ElevatedSurface className="w-52" inline>
 								<Select
 									onChange={(v) => updateGeneral({ outputDeviceId: v })}
@@ -261,6 +293,14 @@ export function AudioSettingsPanel() {
 				<div className="flex flex-col divide-y divide-surface-1">
 					<FormControl
 						label={t("microphoneRelease")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={microphoneRelease === DEFAULT_SETTINGS.audio.microphoneRelease}
+								onReset={() =>
+									update({ microphoneRelease: DEFAULT_SETTINGS.audio.microphoneRelease })
+								}
+							/>
+						}
 						layout="row"
 						tooltip={t("microphoneReleaseTooltip")}
 					>

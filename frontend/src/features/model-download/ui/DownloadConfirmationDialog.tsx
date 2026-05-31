@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { formatBytes } from "@/shared/lib/format-bytes";
-import { surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import { surfaceClasses, useSurface } from "@/shared/lib/surface";
+import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 import { DownloadActions, type DownloadPhase, DownloadProgressBar } from "@/shared/ui/download";
 import { useDownloadStore } from "../model/download-store";
@@ -253,12 +254,13 @@ function DownloadConfirmationContent({
 }: DownloadConfirmationDialogProps): ReactNode {
 	// DialogShell raises the substrate by +4 for the popup; mirror that math
 	// here (this component renders the shell, so its own useSurface() reads the
-	// OUTER level). Info cards lift +1 above the popup, button hover +2 — same
-	// scheme ConfirmDialog uses, so the footer button matches the other dialogs.
+	// OUTER level) to lift the body info cards +1 above the popup. The footer
+	// dismiss button uses DialogActionButton, which derives its own +1/+2 lift
+	// from the popup surface — so it matches the other dialogs without us
+	// recomputing the level here.
 	const substrate = useSurface();
 	const popupLevel = Math.min(substrate + 4, 8);
 	const infoLevel = Math.min(popupLevel + 1, 8);
-	const buttonHover = Math.min(popupLevel + 2, 8);
 	const state = pending ? statesById[pending.modelId] : undefined;
 	const info = pending ? getModel(pending.modelId) : undefined;
 	// The precision the swap will actually load. When the user left the quant
@@ -353,10 +355,6 @@ function DownloadConfirmationContent({
 		discardQuantCache(pending.modelId, targetQuant);
 	};
 
-	// Footer cancel/dismiss button — same shape as ConfirmDialog / OptInDialog's
-	// cancel so every dialog's neutral button reads identically.
-	const dismissButtonClass = `inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-4 font-medium text-body text-foreground-secondary transition-colors duration-150 ${surfaceClasses(infoLevel)} ${surfaceHoverBg(buttonHover)}`;
-
 	return (
 		<DialogShell
 			body={
@@ -389,9 +387,9 @@ function DownloadConfirmationContent({
 			title={dialogTitle(phase)}
 			width={440}
 		>
-			<button className={dismissButtonClass} onClick={onCancel} type="button">
+			<DialogActionButton onClick={onCancel} variant="neutral">
 				{dismissLabel(phase)}
-			</button>
+			</DialogActionButton>
 			<DownloadActions
 				labels={DIALOG_ACTION_LABELS}
 				onDiscard={handleDiscard}

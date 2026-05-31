@@ -12,6 +12,7 @@ import {
 	SwitchingFromToRow,
 	SwitchingPill,
 } from "@/shared/ui/switching-trigger";
+import { publicAsset } from "../../lib/public-asset";
 import { getAuthorLabel, getFamilyConfig, variantDisplayName } from "../lib/family-helpers";
 
 export interface SttModelSelectorTriggerProps {
@@ -70,7 +71,7 @@ function AuthorChip({ family, muted = false }: { family: ModelInfo["family"]; mu
 					alt=""
 					className={`size-3 rounded-[2px] object-cover ${muted ? "opacity-60" : ""}`}
 					height={12}
-					src={config.logoSrc}
+					src={publicAsset(config.logoSrc)}
 					width={12}
 				/>
 			) : (

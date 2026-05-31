@@ -273,7 +273,7 @@ describe("isAnyModelSelected", () => {
 describe("getModelCardClassName", () => {
 	test("includes selected classes when any flag set", () => {
 		const cls = helpers.getModelCardClassName({ isSelected: true, isProviderSelected: false });
-		expect(cls).toContain("border-accent/50");
+		expect(cls).toContain("border-accent/55");
 	});
 
 	test("omits selected ring when neither flag set", () => {
@@ -284,7 +284,7 @@ describe("getModelCardClassName", () => {
 
 describe("getProviderCardClassName", () => {
 	test("selected adds accent ring", () => {
-		expect(helpers.getProviderCardClassName(true)).toContain("ring-accent/30");
+		expect(helpers.getProviderCardClassName(true)).toContain("ring-accent/40");
 	});
 
 	test("idle has base only", () => {
@@ -303,12 +303,12 @@ describe("getSelectionDotClassName", () => {
 });
 
 describe("getNonFreeBaseTextColor", () => {
-	test("foreground-secondary when fallback flag true", () => {
-		expect(helpers.getNonFreeBaseTextColor(true)).toBe("text-foreground-secondary");
+	test("returns muted foreground regardless of the fallback flag (true)", () => {
+		expect(helpers.getNonFreeBaseTextColor(true)).toBe("text-foreground-muted");
 	});
 
-	test("foreground when fallback flag false", () => {
-		expect(helpers.getNonFreeBaseTextColor(false)).toBe("text-foreground");
+	test("returns muted foreground regardless of the fallback flag (false)", () => {
+		expect(helpers.getNonFreeBaseTextColor(false)).toBe("text-foreground-muted");
 	});
 });
 
@@ -322,7 +322,7 @@ describe("getPricingBaseTextColor", () => {
 	test("non-free delegates to non-free helper", () => {
 		expect(
 			helpers.getPricingBaseTextColor({ tier: "low", label: "$0.1", className: "x" }, false)
-		).toBe("text-foreground");
+		).toBe("text-foreground-muted");
 	});
 });
 
@@ -442,10 +442,19 @@ describe("getSelectionProviderTooltip", () => {
 });
 
 describe("buildVirtualItems / appendModelEntries", () => {
-	test("flattens grouped models with single endpoint into model rows only", () => {
+	test("prefixes each maker group with a sticky header, then its model rows", () => {
 		const m1 = makeModel({ id: "openai/m1" });
 		const m2 = makeModel({ id: "openai/m2" });
 		const items = helpers.buildVirtualItems([["openai", [m1, m2]]], new Set());
+		expect(items).toHaveLength(3);
+		expect(items[0]?.type).toBe("header");
+		expect(items.slice(1).every((i) => i.type === "model")).toBe(true);
+	});
+
+	test("omits maker headers when addSectionHeaders is false (sorted view)", () => {
+		const m1 = makeModel({ id: "openai/m1" });
+		const m2 = makeModel({ id: "openai/m2" });
+		const items = helpers.buildVirtualItems([["openai", [m1, m2]]], new Set(), undefined, false);
 		expect(items).toHaveLength(2);
 		expect(items.every((i) => i.type === "model")).toBe(true);
 	});
@@ -456,10 +465,11 @@ describe("buildVirtualItems / appendModelEntries", () => {
 			endpoints: [makeEndpoint({ provider_name: "A" }), makeEndpoint({ provider_name: "B" })],
 		});
 		const items = helpers.buildVirtualItems([["openai", [m]]], new Set(["openai/multi"]));
-		expect(items).toHaveLength(2);
-		expect(items[0]?.type).toBe("model");
-		expect(items[1]?.type).toBe("providers");
-		const head = items[0];
+		expect(items).toHaveLength(3);
+		expect(items[0]?.type).toBe("header");
+		expect(items[1]?.type).toBe("model");
+		expect(items[2]?.type).toBe("providers");
+		const head = items[1];
 		if (head?.type === "model") {
 			expect(head.isExpanded).toBe(true);
 			expect(head.hasProviders).toBe(true);
@@ -511,6 +521,7 @@ describe("findIndexByModelId / findIndexByMaker / findScrollTargetIndex", () => 
 			index: 0,
 			isExpanded: false,
 			hasProviders: false,
+			sectionId: "a",
 		},
 		{
 			type: "model",
@@ -519,6 +530,7 @@ describe("findIndexByModelId / findIndexByMaker / findScrollTargetIndex", () => 
 			index: 1,
 			isExpanded: false,
 			hasProviders: false,
+			sectionId: "b",
 		},
 	];
 
@@ -736,6 +748,7 @@ describe("resolveActiveMaker", () => {
 			index: 0,
 			isExpanded: false,
 			hasProviders: false,
+			sectionId: "openai",
 		},
 		{
 			type: "model",
@@ -744,6 +757,7 @@ describe("resolveActiveMaker", () => {
 			index: 1,
 			isExpanded: false,
 			hasProviders: false,
+			sectionId: "anthropic",
 		},
 	];
 
@@ -801,6 +815,7 @@ describe("applyVirtualScrollMakerUpdate", () => {
 		index: idx,
 		isExpanded: false,
 		hasProviders: false,
+		sectionId: maker,
 	});
 
 	const makeHandle = (offsets: number[], sizes: number[]) => ({
@@ -1098,7 +1113,7 @@ describe("ModelHeaderTitleRow", () => {
 		expect(container.textContent).toContain("GPT-4o");
 	});
 
-	test("renders variant badge when variant and classes provided", () => {
+	test("does not render the variant badge — it moved to the meta line", () => {
 		const m = makeModel({ variant: "free", model_name: "GPT-4o" });
 		const variantClasses = helpers.computeVariantClasses(m);
 		const { container } = render(
@@ -1106,7 +1121,9 @@ describe("ModelHeaderTitleRow", () => {
 				<ModelHeaderTitleRow model={m} variantClasses={variantClasses} />
 			</TooltipProvider.Provider>
 		);
-		expect(container.textContent).toContain("Free");
+		// The variant token ("Free") now lives in InlineModelMeta, not the title row.
+		expect(container.textContent).not.toContain("Free");
+		expect(container.textContent).toContain("GPT-4o");
 	});
 });
 

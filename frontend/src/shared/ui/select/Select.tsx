@@ -2,13 +2,9 @@ import { Menu } from "@base-ui/react/menu";
 import { ArrowDown01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import {
-	SurfaceProvider,
-	surfaceCheckedBg,
-	surfaceClasses,
-	surfaceHighlightedBg,
-	useSurface,
-} from "@/shared/lib/surface";
+import { useRef } from "react";
+import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
+import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 
 export interface SelectOption {
 	/** Optional short badge text shown before the label (e.g. "EN", "中") */
@@ -62,11 +58,10 @@ export function Select({ options, value, onChange, "aria-label": ariaLabel }: Se
 	const triggerLevel = Math.min(substrate + 1, 8);
 	const popupLevel = Math.min(substrate + 2, 8);
 	const popupShadow = Math.max(popupLevel, 6);
-	const highlightLevel = Math.min(popupLevel + 1, 8);
-	// Checked row sits a step above hover so the current selection is
-	// instantly readable against the popup — replaces the old translucent
-	// accent tint which washed out against surface-N.
-	const checkedLevel = Math.min(popupLevel + 2, 8);
+
+	// The radio group is the `position: relative` anchor the animated
+	// selected/hover pills measure against (rows scroll inside `Menu.Popup`).
+	const radioGroupRef = useRef<HTMLDivElement | null>(null);
 
 	return (
 		<Menu.Root>
@@ -91,11 +86,18 @@ export function Select({ options, value, onChange, "aria-label": ariaLabel }: Se
 						<Menu.Popup
 							className={`select-popup min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 transition-[transform,opacity] duration-150 ease-out [max-height:min(15rem,var(--available-height))] [max-width:var(--available-width)]`}
 						>
-							<Menu.RadioGroup onValueChange={(v: string) => onChange(v)} value={value}>
+							<Menu.RadioGroup
+								className="relative"
+								onValueChange={(v: string) => onChange(v)}
+								ref={radioGroupRef}
+								value={value}
+							>
+								<MenuHighlightLayer containerRef={radioGroupRef} value={value} />
 								{options.map((opt) => (
 									<Menu.RadioItem
-										className={`mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)} ${surfaceCheckedBg(checkedLevel)} data-[checked]:font-medium data-[checked]:text-foreground data-[checked]:shadow-[inset_2px_0_0_0_var(--color-accent)]`}
+										className="relative z-raised mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[7px] text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground"
 										closeOnClick
+										data-menu-option={opt.id}
 										key={opt.id}
 										value={opt.id}
 									>

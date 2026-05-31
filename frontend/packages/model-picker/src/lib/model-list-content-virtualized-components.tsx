@@ -4,43 +4,39 @@ import { Combobox } from "@base-ui/react/combobox";
 import {
 	ArrowRight01Icon,
 	BookOpen02Icon,
-	CheckmarkCircle02Icon,
 	CpuIcon,
 	MessageOutgoing02Icon,
 	ServerStack01Icon,
+	StarIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Collapsible } from "../core/Collapsible";
+import { GroupHeader, ModelCard, NeutralHeaderIcon } from "../core/model-card";
 import { EndpointFeatureIcons } from "../ui/EndpointFeatureIcons";
 import { ModelModalityIcons } from "../ui/ModelModalityIcons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 import {
 	computeModelHeaderState,
+	FAVORITES_SECTION_ID,
 	getChevronClassName,
 	getEmptyStateBody,
 	getEmptyStateLabel,
 	getEndpointProviderSlug,
 	getExpandAriaLabel,
-	getExpandButtonClassName,
 	getFeaturedEndpoint,
-	getModelCardClassName,
 	getPricingClassName,
 	getPricingLabel,
 	getProviderCardClassName,
 	getProviderCountTooltip,
 	getSelectionDotClassName,
-	getSelectionProviderTooltip,
-	getSelectionState,
 	isPositiveNumber,
 	isProviderSelected,
-	type ModelHeaderState,
 	type ModelVariantKey,
 	resolveMakerIconSrc,
-	type SelectionState,
 	shouldRenderInlineMeta,
 	shouldShowStatsRow,
 	VARIANT_GRADIENT_MAP,
@@ -54,12 +50,16 @@ import {
 } from "./model-selector-display-utils";
 import { formatMaker, formatModelName } from "./model-selector-utils";
 import { MODEL_VARIANT_INFO } from "./model-variant-utils";
+import { publicAsset } from "./public-asset";
 
+// Quiet neutral top hairline. Once a 4px per-variant rainbow ribbon; now a
+// faint 1px structural seam (the variant meaning lives in the meta-line token).
 function VariantAccentStrip({ variant, gradient }: { variant: ModelVariantKey; gradient: string }) {
 	return (
 		<div
+			aria-hidden="true"
 			className={cn(
-				"absolute inset-x-0 top-0 h-1 rounded-t-md bg-gradient-to-r",
+				"pointer-events-none absolute inset-x-0 top-0 h-px rounded-t-md bg-gradient-to-r",
 				gradient,
 				VARIANT_GRADIENT_MAP[variant]
 			)}
@@ -174,9 +174,13 @@ interface ProviderCardProps {
 function ProviderCard({ model, endpoint, providerSlug, isSelected, onSelect }: ProviderCardProps) {
 	const pricingInfo = getPricingTier(endpoint.pricing);
 	const selectProvider = () => onSelect(model.id, providerSlug);
+	const level = Math.min(useSurface() + 1, 8);
 	return (
 		<Combobox.Item
-			className={getProviderCardClassName(isSelected)}
+			className={getProviderCardClassName(
+				isSelected,
+				cn(surfaceBg(level), surfaceHoverBg(Math.min(level + 1, 8)))
+			)}
 			onClick={selectProvider}
 			value={`${model.id}@${endpoint.provider_name}`}
 		>
@@ -259,69 +263,6 @@ function ProvidersRow({
 	);
 }
 
-function SelectedIndicatorBadge() {
-	return (
-		<div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent text-foreground">
-			<HugeiconsIcon className="size-3.5" icon={CheckmarkCircle02Icon} />
-		</div>
-	);
-}
-
-function ProviderSelectedIndicator({
-	selectedProviderName,
-}: {
-	selectedProviderName: string | undefined;
-}) {
-	return (
-		<Tooltip>
-			<TooltipTrigger
-				render={(props) => (
-					<div
-						{...(props as ComponentPropsWithoutRef<"div">)}
-						className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent"
-					>
-						<HugeiconsIcon className="size-3.5" icon={ServerStack01Icon} />
-					</div>
-				)}
-			/>
-			<TooltipContent>{getSelectionProviderTooltip(selectedProviderName)}</TooltipContent>
-		</Tooltip>
-	);
-}
-
-function IdleSelectionIndicator() {
-	return (
-		<div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-surface-secondary/50 text-foreground-dim opacity-0 transition-opacity duration-200 group-hover/card:opacity-100">
-			<HugeiconsIcon className="size-3.5" icon={CheckmarkCircle02Icon} />
-		</div>
-	);
-}
-
-const SELECTION_INDICATOR_DISPATCH: Record<
-	SelectionState["kind"],
-	(props: { selectedProviderName: string | undefined }) => ReactNode
-> = {
-	selected: () => <SelectedIndicatorBadge />,
-	provider: ({ selectedProviderName }) => (
-		<ProviderSelectedIndicator selectedProviderName={selectedProviderName} />
-	),
-	none: () => <IdleSelectionIndicator />,
-};
-
-function SelectionIndicator({
-	isSelected,
-	isProviderSelected: isProviderSel,
-	selectedProviderName,
-}: {
-	isSelected: boolean;
-	isProviderSelected: boolean;
-	selectedProviderName: string | undefined;
-}) {
-	const state = getSelectionState(isSelected, isProviderSel);
-	const renderer = SELECTION_INDICATOR_DISPATCH[state.kind];
-	return <>{renderer({ selectedProviderName })}</>;
-}
-
 export function MakerIcon({ maker }: { maker: string | undefined }) {
 	const level = Math.min(useSurface() + 1, 8);
 	const providerIcon = resolveMakerIconSrc(maker);
@@ -357,10 +298,10 @@ export function ContextChip({ contextLength }: { contextLength: number | null | 
 				render={(props) => (
 					<div
 						{...(props as ComponentPropsWithoutRef<"div">)}
-						className="flex cursor-default items-center gap-1 text-[11px] text-foreground-muted tabular-nums"
+						className="inline-flex shrink-0 cursor-default items-center gap-1 text-[11px] text-foreground-muted tabular-nums"
 					>
-						<HugeiconsIcon className="size-3 opacity-80" icon={BookOpen02Icon} />
-						<span className="font-medium">{formatContextLength(contextLength)}</span>
+						<HugeiconsIcon className="size-3 opacity-70" icon={BookOpen02Icon} />
+						<span>{formatContextLength(contextLength)}</span>
 					</div>
 				)}
 			/>
@@ -426,41 +367,96 @@ function ModalitiesChip({ modalities }: { modalities: readonly string[] | undefi
 	);
 }
 
+/** A faint middot separator between facts in the metadata line. */
+function MetaSeparator() {
+	return (
+		<span aria-hidden="true" className="text-foreground-dim/40">
+			·
+		</span>
+	);
+}
+
+/**
+ * The metadata line beneath the model name — variant, context, price, feature
+ * glyphs, and input modalities collapsed into ONE calm, left-aligned middot
+ * strip (the `CardMetaRow` pattern shared with the STT card). Replaces the old
+ * dense right-edge `divide-x` capsule so the facts read as a single scannable
+ * row, subordinate to the name by size (11px) and tone (muted) rather than a
+ * cluster of competing bordered chips.
+ */
 export function InlineModelMeta({
 	model,
 	pricingInfo,
 	hasProviders,
 	uniqueEndpoints,
 	hasEndpoints,
+	variant,
+	variantClasses,
 }: {
 	model: OpenRouterModel;
 	pricingInfo: ReturnType<typeof getPricingTier> | null;
 	hasProviders: boolean;
 	uniqueEndpoints: OpenRouterEndpoint[];
 	hasEndpoints: boolean;
+	variant?: OpenRouterModel["variant"];
+	variantClasses?: ReturnType<typeof getVariantClasses> | null;
 }) {
 	const featuredEndpoint = getFeaturedEndpoint(uniqueEndpoints, hasEndpoints, hasProviders);
 	const modalities = model.architecture?.input_modalities;
-	if (!shouldRenderInlineMeta(model.context_length, pricingInfo, featuredEndpoint, modalities)) {
+	const hasVariantToken = !!(variant && variantClasses);
+	if (
+		!(
+			hasVariantToken ||
+			shouldRenderInlineMeta(model.context_length, pricingInfo, featuredEndpoint, modalities)
+		)
+	) {
 		return null;
 	}
 
+	const facts: ReactNode[] = [];
+	const pushFact = (node: ReactNode | null) => {
+		if (!node) {
+			return;
+		}
+		if (facts.length > 0) {
+			facts.push(<MetaSeparator key={`sep-${facts.length}`} />);
+		}
+		facts.push(node);
+	};
+
+	const hasContext = isPositiveNumber(model.context_length);
+	pushFact(
+		hasVariantToken ? (
+			<VariantBadge key="variant" variant={variant} variantClasses={variantClasses} />
+		) : null
+	);
+	pushFact(hasContext ? <ContextChip contextLength={model.context_length} key="context" /> : null);
+	pushFact(pricingInfo ? <PricingChip key="price" pricingInfo={pricingInfo} /> : null);
+	pushFact(
+		featuredEndpoint ? <FeaturedEndpointChip endpoint={featuredEndpoint} key="features" /> : null
+	);
+	pushFact(
+		modalities && modalities.length > 0 ? (
+			<ModalitiesChip key="modalities" modalities={modalities} />
+		) : null
+	);
+
 	return (
 		<div
-			className={cn(
-				"inline-flex shrink-0 items-stretch overflow-hidden rounded-md border border-border bg-surface-secondary/40",
-				"divide-x divide-border [&>*]:px-1.5"
-			)}
+			className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-foreground-muted leading-tight"
 			data-slot="inline-model-meta"
 		>
-			<ContextChip contextLength={model.context_length} />
-			<PricingChip pricingInfo={pricingInfo} />
-			<FeaturedEndpointChip endpoint={featuredEndpoint} />
-			<ModalitiesChip modalities={modalities} />
+			{facts}
 		</div>
 	);
 }
 
+/**
+ * Variant token (Free / Thinking / Nitro / …). Now a QUIET neutral chip that
+ * lives in the metadata line beneath the name — not on the name row where it
+ * competed with the title. `free` keeps a muted-emerald "cheap" tint; every
+ * other variant is fully gray, so the icon shape + label carry the meaning.
+ */
 export function VariantBadge({
 	variant,
 	variantClasses,
@@ -474,10 +470,9 @@ export function VariantBadge({
 	return (
 		<span
 			className={cn(
-				"inline-flex shrink-0 items-center gap-0.5 rounded-md border px-1.5 py-0.5 font-semibold text-[10px] uppercase tracking-wide",
+				"inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-px font-medium text-[10px] uppercase tracking-wide",
 				variantClasses.bg,
-				variantClasses.text,
-				variantClasses.border
+				variantClasses.text
 			)}
 		>
 			{getVariantIcon(variant, "size-2.5")}
@@ -490,16 +485,21 @@ export function ModelDescription({ description }: { description: string | undefi
 	if (!description) {
 		return null;
 	}
+	// Rendered as a block `<span>` (not a `<p>`) because it now drops into the
+	// universal `ModelCard`'s `description` slot, which itself wraps the node in a
+	// `<p>` — a nested `<p>` is invalid HTML. The `ps-[22px]` indent is gone too:
+	// the universal card aligns the description as a column child (matching STT),
+	// so it no longer needs to hang under the name past the maker icon.
 	return (
 		<Tooltip>
 			<TooltipTrigger
 				render={(props) => (
-					<p
-						{...(props as ComponentPropsWithoutRef<"p">)}
-						className="line-clamp-2 cursor-default ps-[22px] text-[11px] text-foreground-muted leading-snug"
+					<span
+						{...(props as ComponentPropsWithoutRef<"span">)}
+						className="line-clamp-2 cursor-default text-[11px] text-foreground-muted leading-snug"
 					>
 						{description}
-					</p>
+					</span>
 				)}
 			/>
 			<TooltipContent
@@ -530,6 +530,7 @@ function ProvidersExpandButton({
 		event.stopPropagation();
 		onToggleExpanded(modelId, !isExpanded);
 	};
+	const level = Math.min(useSurface() + 1, 8);
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -538,17 +539,26 @@ function ProvidersExpandButton({
 						{...(props as ComponentPropsWithoutRef<"button">)}
 						aria-expanded={isExpanded}
 						aria-label={getExpandAriaLabel(isExpanded, providerCount)}
-						className={getExpandButtonClassName(isExpanded)}
+						className={cn(
+							"inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1 font-medium text-[10px] ring-1 transition-colors duration-150",
+							isExpanded
+								? "bg-accent/10 text-accent ring-accent/40"
+								: cn(
+										surfaceBg(level),
+										surfaceHoverBg(Math.min(level + 1, 8)),
+										"text-foreground-muted ring-divider hover:text-foreground hover:ring-border"
+									)
+						)}
 						onClick={toggleProvidersList}
 						type="button"
 					>
-						<HugeiconsIcon className="size-3.5" icon={ServerStack01Icon} />
+						<HugeiconsIcon className="size-3" icon={ServerStack01Icon} />
 						<span className="tabular-nums">{providerCount}</span>
 						<HugeiconsIcon className={getChevronClassName(isExpanded)} icon={ArrowRight01Icon} />
 					</button>
 				)}
 			/>
-			<TooltipContent className="max-w-xs" side="left">
+			<TooltipContent className="max-w-xs" side="top">
 				<p className="font-semibold text-body-sm">Hosting providers</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
 					{getProviderCountTooltip(providerCount)}
@@ -558,47 +568,25 @@ function ProvidersExpandButton({
 	);
 }
 
+/**
+ * The name line. The model name OWNS this line at full body size + semibold
+ * (`text-body`, dominant) — the variant badge has moved off it into the meta
+ * line below, so the title no longer shares a row with competing metadata. The
+ * `variantClasses` prop is accepted-but-unused (the badge is rendered in the
+ * meta line now); keeping it in the signature preserves the public API.
+ */
 export function ModelHeaderTitleRow({
 	model,
-	variantClasses,
 }: {
 	model: OpenRouterModel;
-	variantClasses: ReturnType<typeof getVariantClasses> | null;
+	variantClasses?: ReturnType<typeof getVariantClasses> | null;
 }) {
 	return (
 		<div className="flex min-w-0 flex-1 items-center gap-1.5">
 			<MakerIcon maker={model.maker} />
-			<h3 className="truncate font-semibold text-body-sm leading-tight tracking-tight">
+			<h3 className="min-w-0 truncate font-semibold text-body text-foreground leading-tight tracking-tight">
 				{formatModelName(model.model_name ?? model.name, model.maker)}
 			</h3>
-			<VariantBadge variant={model.variant} variantClasses={variantClasses} />
-		</div>
-	);
-}
-
-function ModelHeaderTrailing({
-	model,
-	state,
-	hasProviders,
-}: {
-	model: OpenRouterModel;
-	state: ModelHeaderState;
-	hasProviders: boolean;
-}) {
-	return (
-		<div className="flex shrink-0 items-center gap-1.5">
-			<InlineModelMeta
-				hasEndpoints={state.hasEndpoints}
-				hasProviders={hasProviders}
-				model={model}
-				pricingInfo={state.pricingInfo}
-				uniqueEndpoints={state.uniqueEndpoints}
-			/>
-			<SelectionIndicator
-				isProviderSelected={state.isProviderSelected}
-				isSelected={state.isSelected}
-				selectedProviderName={state.selectedProvider?.provider_name}
-			/>
 		</div>
 	);
 }
@@ -606,9 +594,10 @@ function ModelHeaderTrailing({
 interface ModelHeaderProps {
 	hasProviders: boolean;
 	isExpanded: boolean;
+	isFavorite?: ((id: string) => boolean) | undefined;
 	model: OpenRouterModel;
-	onSelectModel: (modelId: string | undefined, providerSlug?: string) => void;
 	onToggleExpanded: (modelId: string, nextOpen?: boolean) => void;
+	onToggleFavorite?: ((id: string) => void) | undefined;
 	parsedModelId: string | undefined;
 	parsedProviderSlug: string | undefined;
 }
@@ -659,25 +648,33 @@ function ModelHeader({
 	parsedModelId,
 	parsedProviderSlug,
 	onToggleExpanded,
-	onSelectModel,
+	isFavorite,
+	onToggleFavorite,
 }: ModelHeaderProps) {
 	const state = computeModelHeaderState(model, parsedModelId, parsedProviderSlug, hasProviders);
-	const selectModel = () => onSelectModel(model.id);
+	// The OpenRouter model row is now a thin adapter over the universal
+	// `ModelCard` — the SAME card the STT picker renders — so the two pickers
+	// share one visual identity. Selection still flows through the combobox value
+	// (`value={model.id}` + the root's `onValueChange`); the maker logo, formatted
+	// name, meta strip, description, provider-grid expand button, and the
+	// three-state selection indicator all map onto the card's slots. The provider
+	// grid (`item.type === "providers"`) remains a peer row owned by the list.
 	return (
-		<div className="mx-2 my-1">
-			<Combobox.Item
-				className={getModelCardClassName(state)}
-				onClick={selectModel}
-				value={model.id}
-			>
-				<ModelVariantStrip variant={model.variant} variantClasses={state.variantClasses} />
-				<div className="flex min-w-0 flex-1 flex-col gap-1 px-3 py-2.5">
-					<div className="flex items-center justify-between gap-2.5">
-						<ModelHeaderTitleRow model={model} variantClasses={state.variantClasses} />
-						<ModelHeaderTrailing hasProviders={hasProviders} model={model} state={state} />
-					</div>
-					<ModelDescription description={model.description} />
-				</div>
+		<ModelCard
+			data-model-id={model.id}
+			description={
+				model.description ? <ModelDescription description={model.description} /> : undefined
+			}
+			favorite={
+				onToggleFavorite
+					? {
+							isFavorited: isFavorite?.(model.id) ?? false,
+							label: formatModelName(model.model_name ?? model.name, model.maker),
+							onToggle: () => onToggleFavorite(model.id),
+						}
+					: undefined
+			}
+			footer={
 				<ModelHeaderProvidersButton
 					hasProviders={hasProviders}
 					isExpanded={isExpanded}
@@ -685,8 +682,76 @@ function ModelHeader({
 					onToggleExpanded={onToggleExpanded}
 					providerCount={state.uniqueEndpoints.length}
 				/>
-			</Combobox.Item>
-		</div>
+			}
+			indirectlySelected={state.isProviderSelected}
+			metaSlot={
+				<InlineModelMeta
+					hasEndpoints={state.hasEndpoints}
+					hasProviders={hasProviders}
+					model={model}
+					pricingInfo={state.pricingInfo}
+					uniqueEndpoints={state.uniqueEndpoints}
+					variant={model.variant}
+					variantClasses={state.variantClasses}
+				/>
+			}
+			name={formatModelName(model.model_name ?? model.name, model.maker)}
+			selected={state.isSelected}
+			// No leading indicator at all — selection is shown ONLY by the card's
+			// accent highlight (CARD_SELECTED), exactly like the STT picker. `false`
+			// renders nothing and (unlike null/undefined) overrides ModelCard's
+			// default check, so there's no checkbox before the name in any state.
+			selectionIndicator={false}
+			value={model.id}
+		/>
+	);
+}
+
+/** The leading icon for a maker group header: the provider's brand logo when we
+ *  have one, else a neutral chip — matching the STT picker's AuthorLabel. */
+function MakerHeaderIcon({ maker }: { maker: string }) {
+	const iconSrc = resolveMakerIconSrc(maker);
+	if (!iconSrc) {
+		return <NeutralHeaderIcon icon={CpuIcon} />;
+	}
+	return (
+		<img
+			alt=""
+			className="size-4 shrink-0 rounded-[3px] object-cover"
+			height={16}
+			src={publicAsset(iconSrc)}
+			width={16}
+		/>
+	);
+}
+
+/** The sticky section-header chrome for a group: amber star for the synthetic
+ *  Favorites group, the maker's brand logo for a real maker group. Shared by the
+ *  in-list rows AND the floating pinned-header overlay so they look identical. */
+export function SectionHeader({
+	count,
+	label,
+	sectionId,
+}: {
+	count: number;
+	label: string;
+	sectionId: string;
+}) {
+	const subtitle = `· ${count === 1 ? "1 model" : `${count} models`}`;
+	return sectionId === FAVORITES_SECTION_ID ? (
+		<GroupHeader
+			data-rail-section={sectionId}
+			icon={<NeutralHeaderIcon icon={StarIcon} tone="favorites" />}
+			label={label}
+			subtitle={subtitle}
+		/>
+	) : (
+		<GroupHeader
+			data-rail-section={sectionId}
+			icon={<MakerHeaderIcon maker={sectionId} />}
+			label={label}
+			subtitle={subtitle}
+		/>
 	);
 }
 
@@ -696,22 +761,30 @@ export function VirtualizedRow({
 	parsedProviderSlug,
 	onToggleModelExpanded,
 	onSelectModel,
+	isFavoriteModel,
+	onToggleModelFavorite,
 }: {
 	item: VirtualizedItem;
 	parsedModelId: string | undefined;
 	parsedProviderSlug: string | undefined;
 	onToggleModelExpanded: (modelId: string, nextOpen?: boolean) => void;
 	onSelectModel: (modelId: string | undefined, providerSlug?: string) => void;
+	isFavoriteModel?: ((id: string) => boolean) | undefined;
+	onToggleModelFavorite?: ((id: string) => void) | undefined;
 }) {
+	if (item.type === "header") {
+		return <SectionHeader count={item.count} label={item.label} sectionId={item.sectionId} />;
+	}
 	if (item.type === "model") {
 		return (
 			<div key={`model-${item.model.id}`}>
 				<ModelHeader
 					hasProviders={item.hasProviders}
 					isExpanded={item.isExpanded}
+					isFavorite={isFavoriteModel}
 					model={item.model}
-					onSelectModel={onSelectModel}
 					onToggleExpanded={onToggleModelExpanded}
+					onToggleFavorite={onToggleModelFavorite}
 					parsedModelId={parsedModelId}
 					parsedProviderSlug={parsedProviderSlug}
 				/>

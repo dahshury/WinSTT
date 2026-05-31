@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
@@ -10,6 +10,7 @@ import { useSoundPreview } from "../lib/use-sound-preview";
 import { isActive, type SoundLibraryItem } from "../model/recording-sound";
 import { SoundLibraryAddRow } from "./SoundLibraryAddRow";
 import { SoundLibraryEmptyState } from "./SoundLibraryEmptyState";
+import { SoundLibraryHighlight } from "./SoundLibraryHighlight";
 import { SoundLibraryRow } from "./SoundLibraryRow";
 
 type TranslatorFn = ReturnType<typeof useTranslations>;
@@ -23,6 +24,7 @@ export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {
 	const defaultName = t("soundLibraryDefaultName");
 	const [bannerError, setBannerError] = useState<string>("");
 	const [pendingDelete, setPendingDelete] = useState<SoundLibraryItem | null>(null);
+	const listRef = useRef<HTMLDivElement | null>(null);
 
 	const library = useSoundLibrary({
 		defaultName,
@@ -50,52 +52,51 @@ export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {
 	const customs = library.items.filter((it) => !it.isDefault);
 	const hasCustoms = customs.length > 0;
 
+	// Drive the gliding selected pill: which row id is active, and a key that
+	// re-arms its observers when the row set changes.
+	const selectedId = library.items.find((it) => isActive(it, library.activePath))?.id ?? "";
+	const rowsKey = library.items.map((it) => it.id).join("|");
+
+	// Drag feedback stays grayscale — the whole card edge brightens to a neutral
+	// ring; no accent, no dashed drop zone.
 	const containerClass = cn(
-		"relative overflow-hidden transition-[box-shadow,transform] duration-200 ease-out",
-		drop.dragOver ? "ring-2 ring-accent/60" : ""
+		"transition-[box-shadow] duration-200 ease-out",
+		drop.dragOver ? "ring-foreground/30" : ""
 	);
 
 	return (
 		<div className="flex flex-col gap-2">
-			<ElevatedSurface className={containerClass} inline>
+			<ElevatedSurface className={containerClass}>
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: drop target surface — interactive controls live in child rows. */}
 				{/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop target surface — interactive controls live in child rows. */}
 				<div
-					className="flex flex-col"
+					className="relative flex flex-col"
 					onDragLeave={drop.handlers.onDragLeave}
 					onDragOver={drop.handlers.onDragOver}
 					onDrop={drop.handlers.onDrop}
+					ref={listRef}
 				>
-					{library.items.map((item, idx) => (
-						<div
-							className={
-								idx === 0 || (idx === 1 && !hasCustoms) ? "" : "border-divider/60 border-t"
-							}
+					<SoundLibraryHighlight containerRef={listRef} rowsKey={rowsKey} selectedId={selectedId} />
+					{library.items.map((item) => (
+						<SoundLibraryRow
+							active={isActive(item, library.activePath)}
+							deleteLabel={t("soundLibraryDelete")}
+							isPlaying={preview.playingId === item.id}
+							item={item}
 							key={item.id}
-						>
-							<SoundLibraryRow
-								active={isActive(item, library.activePath)}
-								deleteLabel={t("soundLibraryDelete")}
-								isPlaying={preview.playingId === item.id}
-								item={item}
-								labels={{
-									active: t("soundLibraryActive"),
-									default: t("soundLibraryDefault"),
-									play: t("soundLibraryPlay"),
-									pause: t("soundLibraryStop"),
-								}}
-								onDelete={() => setPendingDelete(item)}
-								onRename={(it, newName) => library.rename(it.id, newName)}
-								onSelect={handleSelect}
-								onTogglePreview={(it) => preview.toggle(it.id, it.path)}
-								renameLabel={t("soundLibraryRename")}
-							/>
-						</div>
+							labels={{
+								play: t("soundLibraryPlay"),
+								pause: t("soundLibraryStop"),
+							}}
+							onDelete={() => setPendingDelete(item)}
+							onRename={(it, newName) => library.rename(it.id, newName)}
+							onSelect={handleSelect}
+							onTogglePreview={(it) => preview.toggle(it.id, it.path)}
+							renameLabel={t("soundLibraryRename")}
+						/>
 					))}
 					{hasCustoms ? (
-						<div className="border-divider/60 border-t">
-							<SoundLibraryAddRow label={t("soundLibraryAddSound")} onClick={handleAdd} />
-						</div>
+						<SoundLibraryAddRow label={t("soundLibraryAddSound")} onClick={handleAdd} />
 					) : (
 						<SoundLibraryEmptyState
 							addLabel={t("soundLibraryAddSound")}

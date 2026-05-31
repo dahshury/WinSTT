@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 
 const fetchSpy = mock(async () => ({
@@ -36,6 +36,19 @@ describe("useOpenRouterCatalogStore initial state", () => {
 });
 
 describe("useOpenRouterCatalogStore.scanModels", () => {
+	beforeEach(() => {
+		// The store is a process-global singleton; reset the loaded-cache flag so
+		// each test exercises a fresh fetch (scanModels now short-circuits once the
+		// catalog is already loaded).
+		useOpenRouterCatalogStore.setState({
+			error: null,
+			isLoaded: false,
+			isReachable: false,
+			isScanning: false,
+			models: [],
+		});
+	});
+
 	test("collapses overlapping calls into a single fetch", async () => {
 		fetchSpy.mockClear();
 		const { scanModels } = useOpenRouterCatalogStore.getState();
@@ -72,5 +85,17 @@ describe("useOpenRouterCatalogStore.scanModels", () => {
 		expect(state.isReachable).toBe(false);
 		expect(state.error).toContain("offline");
 		expect(state.isLoaded).toBe(true);
+	});
+
+	test("reuses the cached catalog on a plain call, refetches only when forced", async () => {
+		fetchSpy.mockClear();
+		const { scanModels } = useOpenRouterCatalogStore.getState();
+		await scanModels();
+		await scanModels();
+		// Second plain call is served from cache (no refetch / spin on reopen).
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		await scanModels(true);
+		// Forced (e.g. after saving an API key) bypasses the cache.
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 });

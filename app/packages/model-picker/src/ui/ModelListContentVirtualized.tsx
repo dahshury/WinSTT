@@ -2,10 +2,16 @@
 
 import { Combobox } from "@base-ui/react/combobox";
 import { ArrowUpDownIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { VList, type VListHandle } from "virtua";
 import type { OpenRouterModel } from "@/shared/api/models";
+import { GroupHeader, NeutralHeaderIcon } from "../core/model-card";
+// NOTE: `SectionHeader` + `findActiveVirtualIndex` are imported from their exact
+// source files, NOT the `*-test-helpers` barrel. That barrel basename has both a
+// `.ts` (live re-export) and a `.tsx` (dead monolith); Vite resolves `.ts` but
+// bun-test resolves `.tsx`, which lacks these newer exports. Explicit paths make
+// both resolvers agree on the live code.
+import { SectionHeader } from "../lib/model-list-content-virtualized-components";
 import {
 	applyScrollToMakerRequest,
 	applyVirtualScrollMakerUpdate,
@@ -14,14 +20,17 @@ import {
 	getRowKey,
 	VirtualizedRow,
 } from "../lib/model-list-content-virtualized-test-helpers";
+import { findActiveVirtualIndex } from "../lib/model-list-content-virtualized-utils";
 
 export interface ModelListContentVirtualizedProps {
 	expandedModels: Set<string>;
 	groupedModels: [string, OpenRouterModel[]][];
 	hasActiveFilters: boolean;
+	isFavoriteModel?: ((id: string) => boolean) | undefined;
 	onActiveMakerChange?: ((maker: string | null) => void) | undefined;
 	onSelectModel: (modelId: string | undefined, providerSlug?: string) => void;
 	onToggleModelExpanded: (modelId: string, nextOpen?: boolean) => void;
+	onToggleModelFavorite?: ((id: string) => void) | undefined;
 	parsedModelId: string | undefined;
 	parsedProviderSlug: string | undefined;
 	scrollToMakerRequest?:
@@ -48,20 +57,46 @@ export function ModelListContentVirtualized({
 	scrollToMakerRequest,
 	onActiveMakerChange,
 	sortHeaderLabel,
+	isFavoriteModel,
+	onToggleModelFavorite,
 }: ModelListContentVirtualizedProps): ReactNode {
 	const virtualizerHandleRef = useRef<VListHandle>(null);
+	// Section id whose header is currently pinned as the floating overlay (the
+	// in-list header unmounts under VList virtualization, so we re-render it).
+	const [stickySectionId, setStickySectionId] = useState<string | null>(null);
 
-	const virtualItems = buildVirtualItems(groupedModels, expandedModels);
+	// Favorited models collect into a pinned "Favorites" group at the top — but
+	// only in the grouped view (a global sort flattens the list, where a pinned
+	// group would be meaningless). The card star itself stays available in both.
+	// Maker section headers are added only in the grouped view (`!sortHeaderLabel`).
+	const virtualItems = buildVirtualItems(
+		groupedModels,
+		expandedModels,
+		sortHeaderLabel ? undefined : isFavoriteModel,
+		!sortHeaderLabel
+	);
+	const stickyHeaderItem =
+		stickySectionId === null
+			? undefined
+			: virtualItems.find((it) => it.type === "header" && it.sectionId === stickySectionId);
 
 	const lastNotifiedMakerRef = useRef<string | null>(null);
 	const handleVirtualScroll = (offset: number) => {
+		const handle = virtualizerHandleRef.current;
 		lastNotifiedMakerRef.current = applyVirtualScrollMakerUpdate(
-			virtualizerHandleRef.current,
+			handle,
 			virtualItems,
 			offset,
 			lastNotifiedMakerRef.current,
 			onActiveMakerChange
 		);
+		// Pin the active section's header as a floating overlay only once scrolled
+		// PAST its own header row (top item is a model/providers row) — so a header
+		// docked at the very top isn't duplicated by the overlay.
+		if (handle && virtualItems.length > 0) {
+			const top = virtualItems[findActiveVirtualIndex(handle, virtualItems.length, offset)];
+			setStickySectionId(top && top.type !== "header" ? (top.sectionId ?? null) : null);
+		}
 	};
 
 	const lastNonceRef = useRef<number | null>(null);
@@ -90,16 +125,30 @@ export function ModelListContentVirtualized({
 
 	return (
 		<Combobox.List
-			className="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
+			className="relative flex min-h-0 flex-1 flex-col overflow-hidden p-0"
 			data-slot="model-list-content"
 		>
 			{sortHeaderLabel ? (
-				<div
-					className="flex items-center gap-1.5 border-border/60 border-b px-3 py-1.5 font-semibold text-[11px] text-foreground-muted uppercase tracking-wide"
-					data-slot="model-list-sort-header"
-				>
-					<HugeiconsIcon className="size-3.5 shrink-0" icon={ArrowUpDownIcon} />
-					<span>Sorted · {sortHeaderLabel}</span>
+				// The shared `GroupHeader` chrome, identical to the STT picker's
+				// sticky section headers. No `data-rail-section`: the maker rail is
+				// hidden while a global sort is active, so the scroll-spy never looks
+				// for it (matching the STT sorted-header convention).
+				<GroupHeader
+					icon={<NeutralHeaderIcon icon={ArrowUpDownIcon} />}
+					label="Sorted"
+					subtitle={`· ${sortHeaderLabel}`}
+				/>
+			) : null}
+			{stickyHeaderItem && stickyHeaderItem.type === "header" ? (
+				// Floating pinned header — re-renders the active group's header at the
+				// top while the real in-list header is virtualized away, so groups
+				// "stick" while scrolling like the STT picker. Click-through.
+				<div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 z-raised">
+					<SectionHeader
+						count={stickyHeaderItem.count}
+						label={stickyHeaderItem.label}
+						sectionId={stickyHeaderItem.sectionId}
+					/>
 				</div>
 			) : null}
 			<VList
@@ -111,10 +160,12 @@ export function ModelListContentVirtualized({
 			>
 				{virtualItems.map((item) => (
 					<VirtualizedRow
+						isFavoriteModel={isFavoriteModel}
 						item={item}
 						key={getRowKey(item)}
 						onSelectModel={onSelectModel}
 						onToggleModelExpanded={onToggleModelExpanded}
+						onToggleModelFavorite={onToggleModelFavorite}
 						parsedModelId={parsedModelId}
 						parsedProviderSlug={parsedProviderSlug}
 					/>

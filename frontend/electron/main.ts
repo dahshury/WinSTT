@@ -118,6 +118,7 @@ import { isAllowedRendererUrl, loadRendererPage } from "./lib/renderer-url";
 import { captureMainException, initSentryMain } from "./lib/sentry-main";
 import { cleanupSound, initSound } from "./lib/sound";
 import { initSoundLibrary } from "./lib/sound-library";
+import { closeSplashWindow, createSplashWindow } from "./lib/splash-window";
 import { getStoreValue, migrateSecretsAtRest, store } from "./lib/store";
 import { SttClient } from "./ws/stt-client";
 
@@ -947,6 +948,17 @@ if (gotTheLock) {
 			if (forceOnboarding) {
 				phase("WINSTT_FORCE_ONBOARDING=1 — forcing wizard regardless of stored flag");
 			}
+			// Bridge the blank gap between launch and the first visible window
+			// with an in-app splash. The main window stays hidden until the STT
+			// server is warm (5–8 s), and the onboarding window waits on its
+			// renderer — without this the user just stares at the taskbar. Skip
+			// when launching straight to the tray (startMinimized) or under E2E
+			// (Playwright drives windows directly and an extra one trips it up).
+			const startMinimized = getStoreValue("general.startMinimized") === true;
+			if (!(isE2E || startMinimized)) {
+				createSplashWindow();
+				phase("splash window shown");
+			}
 			if (isOnboarded) {
 				createWindow();
 				phase("createWindow returned (window created hidden)");
@@ -957,7 +969,12 @@ if (gotTheLock) {
 						createWindow();
 					},
 				});
-				createOnboardingWindow();
+				const onboardingWin = createOnboardingWindow();
+				// Close the splash once onboarding actually paints (its own
+				// ready-to-show → show). The later onFinish → createWindow path
+				// shows the main window, whose showOnce() closes the splash too,
+				// but it's already gone by then — closeSplashWindow is idempotent.
+				onboardingWin.once("show", closeSplashWindow);
 				phase("onboarding window created");
 			}
 			initAutoUpdater().catch((error) => {
@@ -1457,6 +1474,48 @@ function keepWindowOnScreen(win: BrowserWindow, minVisible?: number): void {
 	}
 }
 
+/**
+ * Re-assert a frameless, fixed-size window's dimensions after every renderer
+ * load so it can't creep smaller across reloads.
+ *
+ * On Windows, a `frame: false` window shrinks by a sub-DIP rounding delta on
+ * every full renderer reload (Vite HMR full-reload in dev, a manual reload, or
+ * any `webContents.reload()`): Chromium drives the window's *content* bounds
+ * directly, and the DIP↔physical-pixel round-trip floors a pixel each time. The
+ * drift accumulates, so the window creeps "narrower and narrower" over a dev
+ * session. Neither `resizable: false` nor `minimumSize`/`maximumSize` clamps
+ * stop it — the content-bounds path bypasses BrowserWindow's size constraints
+ * entirely (electron/electron#10862 and friends).
+ *
+ * The reliable fix is to snap the size back after each load. `did-finish-load`
+ * fires on the initial load and on every subsequent reload; the trailing
+ * `setTimeout(0)` catches the shrink when it lands a tick after first paint.
+ * `setSize` resizes around the top-left corner, preserving window position.
+ * In production the renderer never reloads, so this is effectively dev-only,
+ * but it's idempotent (no-op when already at the target) and cheap to keep on.
+ *
+ * The re-assert is skipped while the window is resizable, so it never fights an
+ * intentional dynamic size — e.g. the main pill becomes resizable in listen
+ * mode and is sized by the user there; we only restore the canonical size in
+ * its normal (non-resizable) state. Always-fixed windows (settings, overlay)
+ * are never resizable, so they're always pinned.
+ */
+function pinWindowSize(win: BrowserWindow, width: number, height: number): void {
+	const reassert = (): void => {
+		if (win.isDestroyed() || win.isResizable()) {
+			return;
+		}
+		const bounds = win.getBounds();
+		if (bounds.width !== width || bounds.height !== height) {
+			win.setSize(width, height);
+		}
+	};
+	win.webContents.on("did-finish-load", () => {
+		reassert();
+		setTimeout(reassert, 0);
+	});
+}
+
 // ── Settings window fade ───────────────────────────────────────────
 // The window is pre-created hidden and reused, so a bare `show()` pops it
 // in with no motion while the close (a real destroy request the OS dresses
@@ -1511,14 +1570,17 @@ function animateSettingsOpacity(
 	}, SETTINGS_FADE_TICK_MS);
 }
 
-// Blur-to-dismiss: a click anywhere outside settings (main window, desktop,
-// another app) closes the panel — modal-style. Two guards keep it usable:
+// Blur-to-dismiss: settings closes only when focus returns to our own main
+// window — the canonical "go back to the app" gesture (the titlebar X also
+// closes it via the `close` handler). Clicking the desktop or another app
+// (focus leaves WinSTT entirely) must NOT dismiss, otherwise dragging a file
+// from the desktop into settings is impossible: grabbing the file blurs
+// settings and would close it mid-drag. Two guards keep this usable:
 //  - `settingsSuppressBlurUntil` swallows the initial post-show blur race
 //    (the click that *opened* settings sometimes trails after the show).
 //  - The deferred re-check ignores blur when focus moved to one of our own
-//    popup windows (model-picker, device-picker, tray-menu, …); those are
-//    conceptually part of the settings UI and would otherwise dismiss it
-//    the moment they steal focus.
+//    popup windows (model-picker, device-picker, tray-menu, …) or left the
+//    app entirely; those keep settings open underneath.
 const SETTINGS_BLUR_GUARD_MS = 200;
 const SETTINGS_BLUR_SETTLE_MS = 50;
 let settingsSuppressBlurUntil = 0;
@@ -1546,11 +1608,13 @@ function handleSettingsBlur(): void {
 			return;
 		}
 		const focused = BrowserWindow.getFocusedWindow();
-		// Focus left our app entirely (null) OR landed on the main window —
-		// both mean "user clicked outside settings", so dismiss.
-		// Anything else (model-picker, device-picker, tray-menu, …) is a
-		// settings-adjacent popup; keep settings open under it.
-		if (focused && focused !== mainWindow && focused !== settingsWindow) {
+		// Only dismiss when focus moved to our own main window — clicking the
+		// app behind settings. Focus leaving WinSTT entirely (null — desktop /
+		// another app) or moving to a settings-adjacent popup (model-picker,
+		// device-picker, tray-menu, …) keeps settings open. Closing on null
+		// would break drag-and-drop from the desktop, where grabbing the file
+		// blurs settings before the drop lands.
+		if (focused !== mainWindow) {
 			return;
 		}
 		dismissSettingsWindow();
@@ -1565,15 +1629,6 @@ function createSettingsWindow(): BrowserWindow {
 		...(iconPath ? { icon: iconPath } : {}),
 		width: 700,
 		height: 560,
-		// Hard-lock the size. `resizable: false` alone does NOT stop a known
-		// frameless-window quirk where each renderer reload (e.g. Vite HMR in
-		// dev) shrinks the OS window by the DWM frame extents, so it crept
-		// narrower on every reload. min == max == fixed size makes the OS clamp
-		// any such drift back to 700×560.
-		minWidth: 700,
-		maxWidth: 700,
-		minHeight: 560,
-		maxHeight: 560,
 		resizable: false,
 		frame: false,
 		show: false,
@@ -1581,6 +1636,8 @@ function createSettingsWindow(): BrowserWindow {
 		webPreferences: sharedWebPreferences,
 	});
 	protectWindowNavigation(settingsWindow);
+	// Keep the frameless window from creeping narrower on every dev reload.
+	pinWindowSize(settingsWindow, 700, 560);
 
 	const loadSettingsPromise = loadRendererPage(settingsWindow, "settings");
 	loadSettingsPromise.catch((error) => {
@@ -1599,9 +1656,10 @@ function createSettingsWindow(): BrowserWindow {
 		}
 	});
 
-	// Modal-style dismissal: clicking anywhere outside (main window, desktop,
-	// another app) blurs settings → hide. See `handleSettingsBlur` for the
-	// popup-window exemption.
+	// Dismiss only when focus returns to the main window (clicking the app
+	// behind settings). Clicking the desktop or another app keeps settings open
+	// so desktop drag-and-drop works — see `handleSettingsBlur` for the full
+	// focus-target rules.
 	settingsWindow.on("blur", handleSettingsBlur);
 
 	// If a drag left the draggable header off-screen, snap it back so the
@@ -1708,6 +1766,8 @@ function createOverlayWindow() {
 		webPreferences: { ...sharedWebPreferences, backgroundThrottling: false },
 	});
 	protectWindowNavigation(overlayWindow);
+	// Same frameless reload-shrink guard as the settings/main windows.
+	pinWindowSize(overlayWindow, 720, 240);
 
 	const loadOverlayPromise = loadRendererPage(overlayWindow, "overlay");
 	loadOverlayPromise.catch((error) => {
@@ -1756,6 +1816,8 @@ function createWindow() {
 		webPreferences: sharedWebPreferences,
 	});
 	protectWindowNavigation(mainWindow);
+	// Keep the frameless pill from creeping smaller on every dev reload.
+	pinWindowSize(mainWindow, 420, 150);
 
 	// The pill is only a stand-in for the main window's transcription
 	// surface — they must never both be on screen *while the main window is
@@ -1805,6 +1867,9 @@ function createWindow() {
 		if (startMinimized) {
 			// User has opted in to tray-only launch: skip the show entirely
 			// (no point waiting on server-ready when the window will stay hidden).
+			// No window will appear, so drop the splash now (normally not created
+			// in this mode anyway — closeSplashWindow is idempotent).
+			closeSplashWindow();
 			return;
 		}
 		// Gate show() on the backend being fully READY (recorder initialized,
@@ -1832,6 +1897,8 @@ function createWindow() {
 			// Windows may otherwise hand focus to whichever app the user had
 			// open behind it rather than to us.
 			mainWindow.focus();
+			// Hand off from the splash: the real window is now painted.
+			closeSplashWindow();
 		};
 		// Server may already be ready (parallel-warmup path) — don't wait.
 		if (serverReadyFiredOnce) {

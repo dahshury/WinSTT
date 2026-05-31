@@ -58,6 +58,8 @@ export interface SttModelSelectorViewProps {
 	popupHeightClass: string;
 	popupRef: (node: HTMLElement | null) => void;
 	popupWidthClass: string;
+	onToggleRailFavorite?: ((id: string) => void) | undefined;
+	railFavorites?: readonly string[] | undefined;
 	railItems: readonly GroupRailItem[];
 	selectedModel: ModelInfo | null;
 	sort: SttSortValue;
@@ -106,6 +108,8 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 		popupHeightClass,
 		popupRef,
 		popupWidthClass,
+		onToggleRailFavorite,
+		railFavorites,
 		railItems,
 		selectedModel,
 		sort,
@@ -185,7 +189,13 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 			searchPlaceholder="Search transcription models"
 			sidebarSlot={
 				railItems.length > 1 ? (
-					<GroupRail activeId={activeRailId} items={railItems} onClick={handleRailClick} />
+					<GroupRail
+						activeId={activeRailId}
+						favorites={railFavorites}
+						items={railItems}
+						onClick={handleRailClick}
+						onToggleFavorite={onToggleRailFavorite}
+					/>
 				) : undefined
 			}
 			trigger={

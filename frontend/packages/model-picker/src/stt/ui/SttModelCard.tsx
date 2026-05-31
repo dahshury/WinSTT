@@ -1,12 +1,9 @@
 "use client";
 
-import { Combobox } from "@base-ui/react/combobox";
-import { Slider } from "@base-ui/react/slider";
 import {
 	AlertCircleIcon,
 	BinaryCodeIcon,
 	CancelCircleIcon,
-	CheckmarkCircle02Icon,
 	CloudDownloadIcon,
 	Delete02Icon,
 	GlobeIcon,
@@ -14,7 +11,6 @@ import {
 	NeuralNetworkIcon,
 	PauseIcon,
 	PlayIcon,
-	StarIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
@@ -24,6 +20,7 @@ import { cn } from "@/shared/lib/cn";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Tooltip } from "@/shared/ui/tooltip";
+import { type MetaEntry, ModelCard } from "../../core/model-card";
 import { resolveEffectiveQuant, resolveQuantCache } from "../lib/cache-helpers";
 import { variantDisplayName } from "../lib/family-helpers";
 import { isUncomfortable } from "../lib/hardware-fit";
@@ -32,176 +29,70 @@ import { quantCacheStatus } from "../lib/pill-helpers";
 import { getQuantizationOptions } from "../lib/quantization-helpers";
 import { variantMeta } from "../lib/variant-helpers";
 
-interface AttributeSegment {
-	className: string;
-	icon?: IconSvgElement;
-	label: string;
-	tooltip: string;
-}
-
-function buildAttributeSegments(
-	model: ModelInfo,
-	state: ModelStateEntry | undefined,
-	systemInfo: SystemInfoEntry | null
-): AttributeSegment[] {
+/**
+ * The model's language support as a SINGLE meta fact — collapsing the old split
+ * between a "Multilingual" badge and a separate language list. Shows the word
+ * for the two common buckets and the explicit codes otherwise; the full roster
+ * lives in the tooltip.
+ */
+function languageMeta(model: ModelInfo): { label: string; tooltip: string } {
 	const { multilingual, englishOnly } = variantMeta(model);
-	const segments: AttributeSegment[] = [];
 	if (multilingual) {
-		segments.push({
+		return {
 			label: "Multilingual",
-			icon: GlobeIcon,
-			className: "text-sky-600 dark:text-sky-400",
-			// Spell out exactly which languages the model transcribes. The
-			// catalog fills `languages` with the full list (Whisper ~99,
-			// Canary/Parakeet ~25); fall back to the generic blurb only when
-			// the list hasn't been populated yet.
+			// The catalog fills `languages` with the full list (Whisper ~99,
+			// Canary/Parakeet ~25); fall back to the generic blurb only when the
+			// list hasn't been populated yet.
 			tooltip:
 				model.languages.length > 0
 					? `Supports ${model.languages.length} languages: ${formatLanguages(model.languages)}`
 					: "Transcribes many languages",
-		});
-	} else if (englishOnly) {
-		segments.push({
-			label: "EN only",
-			className: "text-foreground-secondary",
-			tooltip: "English only — no multilingual support",
-		});
-	} else {
-		segments.push({
-			label: model.languages.map((l) => l.toUpperCase()).join("/"),
-			className: "text-foreground-secondary",
-			tooltip: `Supports: ${model.languages.map((l) => l.toUpperCase()).join(", ")}`,
+		};
+	}
+	if (englishOnly) {
+		return { label: "English", tooltip: "English only — no multilingual support" };
+	}
+	const codes = model.languages.map((l) => l.toUpperCase());
+	return { label: codes.join("/"), tooltip: `Supports: ${codes.join(", ")}` };
+}
+
+/** The ordered facts shown under the model name: parameters, download size,
+ *  language support, and (only when relevant) the hardware-fit warning. */
+function buildMetaEntries(
+	model: ModelInfo,
+	bytes: string | null,
+	state: ModelStateEntry | undefined,
+	systemInfo: SystemInfoEntry | null
+): MetaEntry[] {
+	const entries: MetaEntry[] = [];
+	if (model.sizeLabel) {
+		entries.push({
+			key: "params",
+			icon: NeuralNetworkIcon,
+			value: model.sizeLabel,
+			tooltip: `${model.sizeLabel} parameters`,
 		});
 	}
+	if (bytes) {
+		entries.push({
+			key: "size",
+			icon: HardDriveDownloadIcon,
+			value: bytes,
+			tooltip: `Download size: ${bytes}`,
+		});
+	}
+	const lang = languageMeta(model);
+	entries.push({ key: "lang", icon: GlobeIcon, value: lang.label, tooltip: lang.tooltip });
 	if (isUncomfortable(state, systemInfo)) {
-		segments.push({
-			label: "Won't fit",
+		entries.push({
+			key: "fit",
 			icon: AlertCircleIcon,
-			className: "text-error",
+			value: "Won't fit",
 			tooltip: "May not fit comfortably on your hardware",
+			className: "text-error",
 		});
 	}
-	return segments;
-}
-
-/** Read-only segmented control of the variant's attributes. */
-function AttributeGroup({ segments }: { segments: AttributeSegment[] }) {
-	if (segments.length === 0) {
-		return null;
-	}
-	return (
-		<ButtonGroup
-			aria-label="Model attributes"
-			className="shrink-0 rounded-md ring-1 ring-border ring-inset"
-		>
-			{segments.map((seg, i) => (
-				<Tooltip content={seg.tooltip} key={seg.label} side="top">
-					<span
-						className={cn(
-							"inline-flex h-5 items-center gap-1 bg-surface-secondary/40 px-1.5 font-medium text-[10px] leading-none",
-							"first:rounded-l-[5px] last:rounded-r-[5px]",
-							i > 0 && "border-border border-l",
-							seg.className
-						)}
-					>
-						{seg.icon ? <HugeiconsIcon className="size-3" icon={seg.icon} /> : null}
-						{seg.label}
-					</span>
-				</Tooltip>
-			))}
-		</ButtonGroup>
-	);
-}
-
-interface PerfBarsProps {
-	accuracyScore: number;
-	speedScore: number;
-}
-
-/**
- * Map a 0..1 score to a Tekken/Mortal-Kombat-style health-bar colour —
- * red (worst) → amber (mid) → blue (best). Deliberately skips green so
- * "neutral / average" doesn't accidentally read as "passing".
- *
- * Piecewise RGB interpolation through two anchor stops keeps the
- * transition perceptually monotonic on dark surfaces and avoids the
- * grey-mud that a single linear yellow→blue mix would land on.
- */
-function scoreColor(score: number): string {
-	const t = Math.max(0, Math.min(1, score));
-	// Anchor colours, tuned to read on the surface-secondary track:
-	//   t=0.0  → red  (220, 60, 60)
-	//   t=0.5  → amber-yellow (230, 180, 50)
-	//   t=1.0  → blue (60, 130, 230)
-	const mix = (a: number, b: number, k: number): number => Math.round(a + (b - a) * k);
-	if (t < 0.5) {
-		const k = t * 2;
-		return `rgb(${mix(220, 230, k)}, ${mix(60, 180, k)}, ${mix(60, 50, k)})`;
-	}
-	const k = (t - 0.5) * 2;
-	return `rgb(${mix(230, 60, k)}, ${mix(180, 130, k)}, ${mix(50, 230, k)})`;
-}
-
-interface PerfBarProps {
-	label: string;
-	score: number;
-	tooltip: string;
-}
-
-/**
- * One disabled Base UI Slider acting as a coloured progress bar. Mirrors
- * the "comfortable disabled" pattern shown on the Fluid Functionalism
- * Slider docs — small, thumb hidden, indicator filled to the score, no
- * pointer interaction. Same primitive as the other Sliders in the app
- * (``@base-ui/react/slider``), kept compact via ``Slider.Root`` controlled
- * by the percent value and a fixed max of 100.
- */
-function PerfBar({ label, score, tooltip }: PerfBarProps) {
-	const pct = Math.round(score * 100);
-	return (
-		<Tooltip content={tooltip} side="top">
-			<div className="flex items-center gap-1.5">
-				<span className="w-14 text-end font-medium text-[9px] text-foreground-muted uppercase tracking-wide">
-					{label}
-				</span>
-				<Slider.Root disabled max={100} value={pct}>
-					<Slider.Control className="flex h-1.5 w-16 select-none items-center">
-						<Slider.Track className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-secondary">
-							<Slider.Indicator
-								className="rounded-full"
-								style={{ backgroundColor: scoreColor(score) }}
-							/>
-							{/* Thumb is required by Base UI's Slider for keyboard
-							    a11y registration but hidden visually — these
-							    bars are read-only "score" displays, not
-							    interactive sliders. */}
-							<Slider.Thumb className="sr-only" />
-						</Slider.Track>
-					</Slider.Control>
-				</Slider.Root>
-			</div>
-		</Tooltip>
-	);
-}
-
-/**
- * Two stacked progress bars showing relative speed and accuracy. Hidden
- * when the catalog reports the unknown-default 0.5/0.5 — drawing two
- * half-full bars on every variant would teach the user to ignore them.
- */
-function PerfBars({ speedScore, accuracyScore }: PerfBarsProps) {
-	const hasSignal = speedScore !== 0.5 || accuracyScore !== 0.5;
-	if (!hasSignal) {
-		return null;
-	}
-	const speedPct = Math.round(speedScore * 100);
-	const accPct = Math.round(accuracyScore * 100);
-	return (
-		<div className="hidden shrink-0 flex-col gap-1 sm:flex">
-			<PerfBar label="Accuracy" score={accuracyScore} tooltip={`Accuracy ${accPct}%`} />
-			<PerfBar label="Speed" score={speedScore} tooltip={`Speed ${speedPct}%`} />
-		</div>
-	);
+	return entries;
 }
 
 /** Per-(modelId, quant) live download snapshot the badge reads to flip
@@ -252,10 +143,10 @@ type BadgeIconButtonTone = "neutral" | "danger" | "primary";
  *  to avoid a nested ternary in the button render path. */
 function toneClassName(tone: BadgeIconButtonTone): string {
 	const map: Record<BadgeIconButtonTone, string> = {
-		danger: "bg-surface-secondary/40 text-foreground-muted hover:bg-error/15 hover:text-error",
-		primary: "bg-surface-secondary/40 text-accent hover:bg-accent/20",
+		danger: "bg-foreground/[0.04] text-foreground-muted hover:bg-error/15 hover:text-error",
+		primary: "bg-foreground/[0.04] text-accent hover:bg-accent/15",
 		neutral:
-			"bg-surface-secondary/40 text-foreground-muted hover:bg-surface-hover hover:text-foreground",
+			"bg-foreground/[0.04] text-foreground-muted hover:bg-foreground/[0.10] hover:text-foreground",
 	};
 	return map[tone];
 }
@@ -399,13 +290,17 @@ function QuantActionButtons({
  *  now read at a glance from the badge fill itself — the old leading
  *  status dot is gone. */
 function badgeToneForCache(state: "cached" | "partial" | "not_cached" | undefined): string {
+	// Muted semantic tints: green still means "on disk", amber "partial", but
+	// both are heavily desaturated (soft 300-shade text on a faint fill) so they
+	// sit inside the grayscale fluidfunctionalism palette instead of glowing.
+	// Not-cached is fully neutral — differentiation is "tinted vs gray".
 	if (state === "cached") {
-		return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25";
+		return "bg-emerald-500/[0.08] text-emerald-300/80 hover:bg-emerald-500/[0.14]";
 	}
 	if (state === "partial") {
-		return "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25";
+		return "bg-amber-500/[0.08] text-amber-300/80 hover:bg-amber-500/[0.14]";
 	}
-	return "bg-surface-secondary/40 text-foreground-secondary hover:bg-surface-hover";
+	return "bg-foreground/[0.04] text-foreground-muted hover:bg-foreground/[0.08]";
 }
 
 /** Percentage [0..100] to amber-fill the badge background for an
@@ -613,7 +508,7 @@ function QuantOptionButton({
 					{progressFillPct !== null && !isActive ? (
 						<span
 							aria-hidden="true"
-							className="pointer-events-none absolute inset-y-0 left-0 bg-amber-500/30 transition-[width] duration-200 ease-out motion-reduce:transition-none"
+							className="pointer-events-none absolute inset-y-0 left-0 bg-amber-500/20 transition-[width] duration-200 ease-out motion-reduce:transition-none"
 							style={{ width: `${progressFillPct}%` }}
 						/>
 					) : null}
@@ -682,57 +577,6 @@ function PrecisionGroup({
 				/>
 			))}
 		</div>
-	);
-}
-
-/**
- * Star toggle pinned to the card's right edge. Clicking it stars / unstars the
- * model, which adds / removes it from the synthetic "Favorites" group at the
- * top of the list. Mirrors the rail's favorite-star vocabulary (amber, filled
- * when active) so the two affordances read as the same gesture.
- *
- * ``preventDefault`` + ``stopPropagation`` keep the click from bubbling to the
- * enclosing ``Combobox.Item`` (which would otherwise select the model) — the
- * same guard {@link ExpandTrigger} and the per-badge buttons use.
- */
-function FavoriteToggle({
-	displayName,
-	isFavorited,
-	modelId,
-	onToggle,
-}: {
-	displayName: string;
-	isFavorited: boolean;
-	modelId: string;
-	onToggle: (modelId: string) => void;
-}) {
-	return (
-		<Tooltip content={isFavorited ? "Remove from Favorites" : "Add to Favorites"} side="top">
-			<button
-				aria-label={
-					isFavorited ? `Remove ${displayName} from favorites` : `Add ${displayName} to favorites`
-				}
-				aria-pressed={isFavorited}
-				className={cn(
-					"inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors",
-					"motion-reduce:transition-none",
-					isFavorited
-						? "text-amber-500 hover:bg-amber-500/15"
-						: "text-foreground-muted opacity-55 hover:bg-surface-hover hover:text-foreground hover:opacity-100"
-				)}
-				onClick={(e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					onToggle(modelId);
-				}}
-				type="button"
-			>
-				<HugeiconsIcon
-					className={cn("size-3.5", isFavorited && "fill-amber-500")}
-					icon={StarIcon}
-				/>
-			</button>
-		</Tooltip>
 	);
 }
 
@@ -805,56 +649,6 @@ export interface SttModelCardProps {
 	systemInfo: SystemInfoEntry | null;
 }
 
-// The list used to read as a "swimming pool" — identical translucent rows
-// melting into the popup and into each other. Each card is now a solid,
-// elevated *specimen*: a real surface step (surface-3 over the surface-2
-// popup) with a tinted depth shadow, so it reads as a discrete object. Hover
-// lifts it 1px and deepens the shadow; press settles it back with a subtle
-// scale (12-principles: transform/opacity only, ease-out ≤150ms, motion-reduce
-// guarded). The header/precision divider lives in the JSX below.
-const CARD_BASE = cn(
-	"relative mx-2 my-1.5 flex cursor-pointer flex-col gap-2 overflow-hidden rounded-lg px-3 py-2.5 outline-none",
-	"border border-border bg-surface-3 shadow-surface-2",
-	"transition-[transform,border-color,background-color,box-shadow] duration-150 ease-out",
-	"hover:-translate-y-px hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3",
-	"active:translate-y-0 active:scale-[0.99]",
-	"data-[highlighted]:border-border-hover data-[highlighted]:bg-surface-4 data-[highlighted]:shadow-surface-3",
-	"motion-reduce:transition-none motion-reduce:active:scale-100 motion-reduce:hover:translate-y-0"
-);
-/** Active selection: the fill warms to a Docker-blue tint and gains a ring.
- *  Hover/highlight keep the accent rather than falling back to the neutral
- *  surface-4 of {@link CARD_BASE}. */
-const CARD_SELECTED = cn(
-	"border-accent/55 bg-accent/[0.09] shadow-surface-3 ring-1 ring-accent/25",
-	"hover:border-accent/70 hover:bg-accent/[0.12]",
-	"data-[highlighted]:border-accent/70 data-[highlighted]:bg-accent/[0.12]"
-);
-/** Softer variant: the primary's bundle owns the selected variant but the
- *  primary itself isn't the active id. Lighter than ``CARD_SELECTED`` so the
- *  actually-selected sibling still wins the eye. */
-const CARD_SELECTED_VARIANT = cn(
-	"border-accent/30 bg-accent/[0.05]",
-	"hover:border-accent/45 hover:bg-accent/[0.08]",
-	"data-[highlighted]:border-accent/45 data-[highlighted]:bg-accent/[0.08]"
-);
-/** Bundle siblings (revealed under the chevron) recess to surface-2 so they
- *  read as tucked *under* their surface-3 primary — depth reinforces the
- *  indent rail instead of competing with it. */
-const CARD_NESTED = cn(
-	"bg-surface-2 shadow-surface-1",
-	"hover:bg-surface-3",
-	"data-[highlighted]:bg-surface-3"
-);
-
-/** Class fragment that desaturates a broken custom-model card and parks the
- *  hover-lift (a non-selectable card shouldn't feel tactile) without changing
- *  the dimensions — keeps the picker layout stable while making the
- *  unavailable state obvious. */
-const CARD_UNAVAILABLE = cn(
-	"cursor-not-allowed opacity-55",
-	"hover:-translate-y-0 hover:border-border hover:bg-surface-3 hover:shadow-surface-2"
-);
-
 export function SttModelCard({
 	model,
 	state,
@@ -873,103 +667,53 @@ export function SttModelCard({
 	siblings,
 }: SttModelCardProps) {
 	const isSelected = model.id === selectedId;
-	const isIndirectlySelected = !isSelected && hasSelectedVariant;
 	const isUnavailable = model.available === false;
 	const bytes = formatBytes(state?.estimated_bytes ?? 0);
-	const segments = buildAttributeSegments(model, state, systemInfo);
+	const metaEntries = buildMetaEntries(model, bytes, state, systemInfo);
 	// Broken custom drops surface the scanner's error verbatim — much more
 	// useful than a generic "couldn't load" toast. The label itself is
 	// already shown; the tooltip explains *why* the card is greyed out.
 	const title =
 		isUnavailable && model.errorMessage ? `Unavailable: ${model.errorMessage}` : undefined;
+	// STT is the canonical adapter over the shared universal `ModelCard`: the
+	// quant precision controls drop into the recessed `shelf`, the bundle
+	// expand chevron into `actions`, and the rest maps 1:1. All STT-specific
+	// logic (PrecisionGroup, language meta, variant naming) stays here.
 	return (
-		<Combobox.Item
-			className={cn(
-				CARD_BASE,
-				nested && CARD_NESTED,
-				isSelected && CARD_SELECTED,
-				isIndirectlySelected && CARD_SELECTED_VARIANT,
-				isUnavailable && CARD_UNAVAILABLE
-			)}
+		<ModelCard
+			actions={actions}
 			data-model-id={model.id}
-			disabled={isUnavailable}
+			errorMessage={model.errorMessage}
+			favorite={
+				onToggleFavorite
+					? {
+							isFavorited: isFavorite?.(model.id) ?? false,
+							label: model.displayName,
+							onToggle: () => onToggleFavorite(model.id),
+						}
+					: undefined
+			}
+			indirectlySelected={!isSelected && hasSelectedVariant}
+			meta={metaEntries}
+			name={variantDisplayName(model, siblings)}
+			nested={nested}
+			perf={{ accuracyScore: model.accuracyScore, speedScore: model.speedScore }}
+			selected={isSelected}
+			shelf={
+				<PrecisionGroup
+					currentQuantization={currentQuantization}
+					getDownloadSnapshot={getDownloadSnapshot}
+					isSelectedModel={isSelected}
+					model={model}
+					onDownloadAction={onDownloadAction}
+					onRequestDeleteQuant={onRequestDeleteQuant}
+					onSelect={onSelect}
+					state={state}
+				/>
+			}
 			title={title}
+			unavailable={isUnavailable}
 			value={model}
-		>
-			<div className="flex items-center justify-between gap-2.5">
-				<div className="flex min-w-0 items-center gap-2">
-					{/* Combobox.ItemIndicator renders only when the Item's value
-					    matches the root's selected value (resolved via
-					    isItemEqualToValue) — no manual `isSelected` guard
-					    needed, and it automatically picks up the canonical
-					    `data-selected` state Base UI maintains. */}
-					<Combobox.ItemIndicator className="flex shrink-0 items-center">
-						<HugeiconsIcon className="size-3.5 text-accent" icon={CheckmarkCircle02Icon} />
-					</Combobox.ItemIndicator>
-					<span className="min-w-0 truncate font-semibold text-body-sm leading-tight">
-						{variantDisplayName(model, siblings)}
-					</span>
-					{model.sizeLabel ? (
-						<Tooltip content={`${model.sizeLabel} parameters`} side="top">
-							<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-foreground-muted tabular-nums">
-								<HugeiconsIcon className="size-3" icon={NeuralNetworkIcon} />
-								{model.sizeLabel}
-							</span>
-						</Tooltip>
-					) : null}
-					{bytes ? (
-						<Tooltip content={`Download size: ${bytes}`} side="top">
-							<span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-foreground-dim tabular-nums">
-								<HugeiconsIcon className="size-3" icon={HardDriveDownloadIcon} />
-								{bytes}
-							</span>
-						</Tooltip>
-					) : null}
-					{isUnavailable ? (
-						<Tooltip content={model.errorMessage || "Unavailable"} side="top">
-							<span className="inline-flex shrink-0 items-center gap-1 rounded bg-error/15 px-1.5 py-0.5 font-medium text-[10px] text-error">
-								<HugeiconsIcon className="size-3" icon={AlertCircleIcon} />
-								Broken
-							</span>
-						</Tooltip>
-					) : null}
-				</div>
-				<div className="flex shrink-0 items-center gap-2">
-					<PerfBars accuracyScore={model.accuracyScore} speedScore={model.speedScore} />
-					<AttributeGroup segments={segments} />
-					{actions}
-					{/* Favorite star — hidden on broken custom drops (you can't
-					    star a model you can't load) and when the consumer wires
-					    no toggle handler. */}
-					{onToggleFavorite && !isUnavailable ? (
-						<FavoriteToggle
-							displayName={model.displayName}
-							isFavorited={isFavorite?.(model.id) ?? false}
-							modelId={model.id}
-							onToggle={onToggleFavorite}
-						/>
-					) : null}
-				</div>
-			</div>
-			{isUnavailable ? null : (
-				<>
-					{/* Full-bleed hairline that splits the identity header
-					    ("what it is") from the precision row ("how to get it").
-					    Negative margins cancel the card padding so the rule
-					    spans edge-to-edge. */}
-					<span aria-hidden="true" className="-mx-3 h-px bg-divider" />
-					<PrecisionGroup
-						currentQuantization={currentQuantization}
-						getDownloadSnapshot={getDownloadSnapshot}
-						isSelectedModel={isSelected}
-						model={model}
-						onDownloadAction={onDownloadAction}
-						onRequestDeleteQuant={onRequestDeleteQuant}
-						onSelect={onSelect}
-						state={state}
-					/>
-				</>
-			)}
-		</Combobox.Item>
+		/>
 	);
 }

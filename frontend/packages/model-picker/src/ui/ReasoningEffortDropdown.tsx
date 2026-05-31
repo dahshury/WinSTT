@@ -1,8 +1,26 @@
 "use client";
 
+import { SignalFull02Icon, SignalLow02Icon, SignalMedium02Icon } from "@hugeicons/core-free-icons";
+import type { IconSvgElement } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { REASONING_EFFORT_OPTIONS, type ReasoningEffort } from "../config/model-selector-options";
+
+const REASONING_EFFORT_ICONS: Record<ReasoningEffort, IconSvgElement> = {
+	low: SignalLow02Icon,
+	medium: SignalMedium02Icon,
+	high: SignalFull02Icon,
+};
+
+// The exact catalog options, lifted onto the shared `Switcher` — the sliding-pill
+// segmented control the rest of the LLM settings use (e.g. the Ollama
+// thinking-effort picker) — so every low/medium/high selector reads identically.
+const REASONING_EFFORT_SWITCHER_OPTIONS: readonly SwitcherOption<ReasoningEffort>[] =
+	REASONING_EFFORT_OPTIONS.map((option) => ({
+		...option,
+		icon: REASONING_EFFORT_ICONS[option.value],
+	}));
 
 export interface ReasoningEffortDropdownProps {
 	className?: string;
@@ -12,9 +30,10 @@ export interface ReasoningEffortDropdownProps {
 }
 
 /**
- * Three-segment radio toggle (Low / Medium / High) bound to the reasoning
- * effort axis. Rendered as a `role="radiogroup"` for screen-reader parity
- * with the surrounding settings UI.
+ * Low / Medium / High reasoning-effort control — a thin wrapper over the shared
+ * `Switcher` (animated active-segment pill on an elevated surface), so it matches
+ * the other low/medium/high selectors across the LLM settings instead of being a
+ * bespoke segmented control.
  */
 export function ReasoningEffortDropdown({
 	className,
@@ -22,44 +41,24 @@ export function ReasoningEffortDropdown({
 	onChange,
 	value,
 }: ReasoningEffortDropdownProps) {
-	const level = Math.min(useSurface() + 1, 8);
 	return (
-		<div
+		<fieldset
 			aria-label="Reasoning effort"
 			className={cn(
-				"flex w-full min-w-0 max-w-full gap-1 rounded-md border border-border bg-surface-secondary/60 p-1 shadow-inner",
-				disabled && "cursor-not-allowed opacity-60",
+				"m-0 w-full min-w-0 border-0 p-0",
+				disabled && "pointer-events-none opacity-60",
 				className
 			)}
 			data-slot="reasoning-effort-dropdown"
-			role="radiogroup"
 		>
-			{REASONING_EFFORT_OPTIONS.map((option) => {
-				const isSelected = value === option.value;
-				return (
-					// biome-ignore lint/a11y/useSemanticElements: radiogroup-of-buttons pattern; parent has role="radiogroup", a native input breaks the styled segmented control
-					<button
-						aria-checked={isSelected}
-						className={cn(
-							"relative flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-center truncate rounded-sm px-2 text-sm transition-[background-color,color,box-shadow] duration-200",
-							isSelected
-								? cn("font-semibold text-foreground shadow-md ring-1 ring-border", surfaceBg(level))
-								: "bg-transparent font-medium text-foreground-muted hover:bg-surface/60 hover:text-foreground",
-							disabled && "pointer-events-none"
-						)}
-						data-slot="reasoning-effort-option"
-						data-state={isSelected ? "selected" : "idle"}
-						disabled={disabled}
-						key={option.value}
-						onClick={() => onChange(option.value)}
-						role="radio"
-						tabIndex={isSelected ? 0 : -1}
-						type="button"
-					>
-						{option.label}
-					</button>
-				);
-			})}
-		</div>
+			<ElevatedSurface inline>
+				<Switcher
+					fullWidth
+					onChange={onChange}
+					options={REASONING_EFFORT_SWITCHER_OPTIONS}
+					value={value}
+				/>
+			</ElevatedSurface>
+		</fieldset>
 	);
 }

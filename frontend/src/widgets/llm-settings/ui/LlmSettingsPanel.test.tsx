@@ -55,15 +55,9 @@ describe("LlmSettingsPanel helpers — readLlmSnapshot", () => {
 });
 
 describe("LlmSettingsPanel helpers — buildToneOpts / buildLevelOpts", () => {
-	test("buildToneOpts returns the five tone entries with stable order", () => {
+	test("buildToneOpts returns the four tone entries with stable order", () => {
 		const opts = helpers.buildToneOpts(tStub);
-		expect(opts.map((o) => o.value)).toEqual([
-			"neutral",
-			"formal",
-			"friendly",
-			"technical",
-			"casual",
-		]);
+		expect(opts.map((o) => o.value)).toEqual(["neutral", "formal", "friendly", "technical"]);
 	});
 
 	test("each tone option has a label and icon", () => {
@@ -104,8 +98,8 @@ describe("LlmSettingsPanel helpers — presets array mutators", () => {
 	});
 
 	test("setTone replaces the existing tone", () => {
-		const out = helpers.setTone([{ key: "formal" }, { key: "summarize" }], "casual");
-		expect(out.find((p) => p.key === "casual")).toBeDefined();
+		const out = helpers.setTone([{ key: "formal" }, { key: "summarize" }], "friendly");
+		expect(out.find((p) => p.key === "friendly")).toBeDefined();
 		expect(out.find((p) => p.key === "formal")).toBeUndefined();
 		expect(out.find((p) => p.key === "summarize")).toBeDefined();
 	});

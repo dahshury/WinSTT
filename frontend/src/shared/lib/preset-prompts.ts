@@ -5,7 +5,6 @@ export type PresetKey =
 	| "formal"
 	| "friendly"
 	| "technical"
-	| "casual"
 	| "concise"
 	| "summarize"
 	| "reorder"
@@ -215,11 +214,9 @@ const RAW_PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> =
 	formal: () =>
 		"Rewrite in professional business English. Remove contractions, slang, and casual phrasing. Preserve meaning and structure.",
 	friendly: () =>
-		"Rewrite in a warm, conversational tone with approachable wording. Preserve meaning and ideas.",
+		"Rewrite in a warm, friendly, conversational tone — relaxed and approachable, with natural contractions and casual phrasing. Preserve meaning and ideas.",
 	technical: () =>
 		"Rewrite with precise technical terminology and rigorous structure. Replace vague terms with exact ones. Preserve meaning.",
-	casual: () =>
-		"Rewrite in a relaxed, conversational register with natural contractions and casual phrasing. Preserve meaning.",
 	concise: (level) => LEVELED_PROMPTS.concise[level ?? DEFAULT_LEVEL],
 	summarize: (level) => LEVELED_PROMPTS.summarize[level ?? DEFAULT_LEVEL],
 	reorder: () =>
@@ -247,7 +244,6 @@ export const TONE_GROUP = [
 	"formal",
 	"friendly",
 	"technical",
-	"casual",
 ] as const satisfies readonly PresetKey[];
 
 export const INDEPENDENT_PRESETS = [

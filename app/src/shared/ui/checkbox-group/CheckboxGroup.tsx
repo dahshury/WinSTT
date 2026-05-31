@@ -432,13 +432,13 @@ export function CheckboxItem({
 			</Checkbox.Root>
 
 			{leading ? (
-				// Leading icon color tracks the same checked/active rule as the label
-				// so a selected row's icon doesn't fade into the selection highlight.
+				// Leading icons render solid white (foreground) regardless of checked state
+				// so their thin strokes stay legible on the elevated surface substrate.
 				// The icon itself uses currentColor (no own text-* class), so this wins.
 				<span
 					className={cn(
 						"flex shrink-0 transition-colors duration-100",
-						checked || isActive ? "text-foreground" : "text-foreground-secondary"
+						"text-foreground"
 					)}
 				>
 					{leading}

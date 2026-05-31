@@ -379,9 +379,18 @@ class RecordingPipeline(Worker):
         try:
             self._event_bus.publish(AudioChunkRecorded(timestamp=self._clock.get_current_time(), chunk=chunk))
             samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(samples * samples)))
-            level = min(1.0, rms / 10000.0)
-            self._event_bus.publish(AudioLevelComputed(timestamp=self._clock.get_current_time(), level=level))
+            # The streaming resampler emits empty chunks while priming or
+            # holding back its tail (pyaudio_source._StreamingResampler.process
+            # returns b"" — happens on any mic whose native rate != 16 kHz, i.e.
+            # most real 44.1/48 kHz devices). An empty buffer carries no level:
+            # np.mean over a zero-size array warns ("Mean of empty slice" +
+            # "invalid value encountered in divide") and yields NaN. Skip the
+            # level computation for empty chunks (mirrors VADCalibrator._on_chunk),
+            # but still pass the chunk downstream — VAD/buffer tolerate empties.
+            if samples.size:
+                rms = float(np.sqrt(np.mean(samples * samples)))
+                level = min(1.0, rms / 10000.0)
+                self._event_bus.publish(AudioLevelComputed(timestamp=self._clock.get_current_time(), level=level))
             self._buffer.add_to_last_words(chunk)
             self._dispatch_chunk(chunk)
         except Exception:

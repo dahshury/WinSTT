@@ -69,3 +69,8 @@ design-system/
 /aux
 /con
 /prn
+
+# Context-awareness harness artifacts (screenshots, captured snapshots)
+scripts/context-harness/out/
+scripts/context-harness/.run.mjs
+scripts/context-harness/_*

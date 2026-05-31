@@ -83,14 +83,14 @@ export function buildDefaultCalendarPresets(
 	const lastYearEnd = endOfYear(lastYearAnchor);
 
 	return [
-		{ label: labels.today, range: { from: todayStart, to: todayEnd } },
-		{ label: labels.yesterday, range: { from: yesterdayStart, to: yesterdayEnd } },
-		{ label: labels.last7Days, range: { from: last7Start, to: todayEnd } },
-		{ label: labels.last30Days, range: { from: last30Start, to: todayEnd } },
-		{ label: labels.monthToDate, range: { from: monthToDateStart, to: todayEnd } },
-		{ label: labels.thisMonth, range: { from: thisMonthStart, to: thisMonthEnd } },
-		{ label: labels.lastMonth, range: { from: lastMonthStart, to: lastMonthEnd } },
-		{ label: labels.yearToDate, range: { from: yearToDateStart, to: todayEnd } },
-		{ label: labels.lastYear, range: { from: lastYearStart, to: lastYearEnd } },
+		{ group: "day", label: labels.today, range: { from: todayStart, to: todayEnd } },
+		{ group: "day", label: labels.yesterday, range: { from: yesterdayStart, to: yesterdayEnd } },
+		{ group: "day", label: labels.last7Days, range: { from: last7Start, to: todayEnd } },
+		{ group: "day", label: labels.last30Days, range: { from: last30Start, to: todayEnd } },
+		{ group: "month", label: labels.monthToDate, range: { from: monthToDateStart, to: todayEnd } },
+		{ group: "month", label: labels.thisMonth, range: { from: thisMonthStart, to: thisMonthEnd } },
+		{ group: "month", label: labels.lastMonth, range: { from: lastMonthStart, to: lastMonthEnd } },
+		{ group: "year", label: labels.yearToDate, range: { from: yearToDateStart, to: todayEnd } },
+		{ group: "year", label: labels.lastYear, range: { from: lastYearStart, to: lastYearEnd } },
 	];
 }

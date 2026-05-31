@@ -1,7 +1,14 @@
 "use client";
 
-import { FilterIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import {
+	ArrowUpDownIcon,
+	BookOpen02Icon,
+	CheckmarkCircle02Icon,
+	FilterIcon,
+	Tag01Icon,
+	TextFontIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { useState } from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
@@ -15,7 +22,21 @@ import {
 import { computeModelFiltersMetadata } from "../lib/model-filters-metadata";
 import type { ModelVariant } from "../lib/model-variant-utils";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "./DropdownMenu";
+import {
+	OPENROUTER_SORT_CHIP_LABEL,
+	OPENROUTER_SORT_KEYS,
+	type OpenRouterSortKey,
+	type OpenRouterSortValue,
+} from "../lib/openrouter-sort";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuGroup,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "./DropdownMenu";
 import { ParametersFilterSubmenu } from "./ParametersFilterSubmenu";
 import { VariantFilterSubmenu } from "./VariantFilterSubmenu";
 
@@ -27,15 +48,54 @@ export interface ModelFiltersMenuProps {
 	onEndpointProviderSelect: (provider: string | null) => void;
 	onMakersChange?: ((makers: string[]) => void) | undefined;
 	onParametersChange: (params: FilterableParameter[]) => void;
+	onSortChange?: ((next: OpenRouterSortValue) => void) | undefined;
 	onToggleFavorite?: ((maker: string) => void) | undefined;
 	onVariantSelect: (variant: ModelVariant | "none" | null) => void;
 	selectedEndpointProvider: string | null;
 	selectedMakers?: string[] | undefined;
 	selectedParameters: FilterableParameter[];
 	selectedVariant: ModelVariant | "none" | null;
+	sortKey?: OpenRouterSortValue | undefined;
 }
 
 const NO_PROVIDERS: readonly string[] = Object.freeze([]);
+
+/** Icon per sort dimension — kept in the UI layer so the sort lib stays
+ *  presentation-free. */
+const SORT_ICON: Record<OpenRouterSortKey, IconSvgElement> = {
+	context: BookOpen02Icon,
+	name: TextFontIcon,
+	price: Tag01Icon,
+};
+
+function SortByGroup({
+	onSortChange,
+	sortKey,
+}: {
+	onSortChange: (next: OpenRouterSortValue) => void;
+	sortKey: OpenRouterSortValue;
+}) {
+	return (
+		<DropdownMenuGroup>
+			<DropdownMenuLabel className="flex items-center gap-1.5">
+				<HugeiconsIcon className="size-3.5" icon={ArrowUpDownIcon} />
+				<span>Sort by</span>
+			</DropdownMenuLabel>
+			{OPENROUTER_SORT_KEYS.map((key) => {
+				const isOn = sortKey === key;
+				return (
+					<DropdownMenuItem key={key} onClick={() => onSortChange(isOn ? null : key)}>
+						<HugeiconsIcon className="me-2 size-4" icon={SORT_ICON[key]} />
+						<span className="flex-1">{OPENROUTER_SORT_CHIP_LABEL[key]}</span>
+						{isOn ? (
+							<HugeiconsIcon className="ms-2 size-4 text-accent" icon={CheckmarkCircle02Icon} />
+						) : null}
+					</DropdownMenuItem>
+				);
+			})}
+		</DropdownMenuGroup>
+	);
+}
 
 const TRIGGER_CLASS_BASE =
 	"inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-none border-0 bg-transparent p-0 text-foreground-secondary outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-accent";
@@ -54,6 +114,8 @@ export function ModelFiltersMenu({
 	favoriteProviders = NO_PROVIDERS as string[],
 	onToggleFavorite,
 	className,
+	sortKey = null,
+	onSortChange,
 }: ModelFiltersMenuProps) {
 	const [isOpen, setIsOpen] = useState(false);
 
@@ -61,12 +123,19 @@ export function ModelFiltersMenu({
 	const { availableVariants, variantCounts, endpointProviders, providerCounts, parameterCounts } =
 		metadata;
 
-	const activeFilterCount = computeActiveFilterCount({
-		selectedEndpointProvider,
-		selectedMakers,
-		selectedParameters,
-		selectedVariant,
-	});
+	// The trigger badge counts filters + the active sort as one combined signal.
+	const activeFilterCount =
+		computeActiveFilterCount({
+			selectedEndpointProvider,
+			selectedMakers,
+			selectedParameters,
+			selectedVariant,
+		}) + (sortKey === null ? 0 : 1);
+
+	const handleSortChange = (next: OpenRouterSortValue) => {
+		onSortChange?.(next);
+		setIsOpen(false);
+	};
 
 	const handleVariantSelect = (variant: ModelVariant | "none" | null) => {
 		onVariantSelect(variant);
@@ -96,6 +165,12 @@ export function ModelFiltersMenu({
 				side="right"
 				sideOffset={4}
 			>
+				{onSortChange ? (
+					<>
+						<SortByGroup onSortChange={handleSortChange} sortKey={sortKey} />
+						<DropdownMenuSeparator />
+					</>
+				) : null}
 				<VariantFilterSubmenu
 					availableVariants={availableVariants}
 					onVariantSelect={handleVariantSelect}

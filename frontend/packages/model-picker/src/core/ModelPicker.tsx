@@ -223,7 +223,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		<>
 			<span
 				aria-hidden="true"
-				className="pointer-events-none absolute inset-x-5 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/55 to-transparent"
+				className="pointer-events-none absolute inset-x-5 top-0 z-raised h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent"
 			/>
 			<div className="flex flex-col gap-2 border-divider border-b p-2.5">
 				{/* Input group: the filter button sits INSIDE the search

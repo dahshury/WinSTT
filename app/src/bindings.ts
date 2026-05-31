@@ -802,10 +802,8 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 }
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
- * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -814,6 +812,1200 @@ async isLaptop() : Promise<Result<boolean, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * `winstt_get_settings` — the full tree the renderer boots against (secrets opened).
+ */
+async winsttGetSettings() : Promise<WinsttSettings> {
+    return await TAURI_INVOKE("winstt_get_settings");
+},
+/**
+ * `winstt_set_settings` — merge a PARTIAL section patch, validate, diff restart-need,
+ * seal secrets, persist, restart-notify, broadcast.
+ * 
+ * The renderer sends **partial** top-level sections, not the whole tree
+ * (`collectChangedSections`), so we accept a `PartialWinsttSettings` (every section
+ * `Option`) and merge each present section over the persisted snapshot — exactly
+ * Electron's per-section `applySettings`.
+ * 
+ * On any failure the renderer's fire-and-forget save can't observe the `Err`, so we
+ * ALSO emit `settings:save-error { error }` (and still return `Err`).
+ */
+async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSettingsResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("winstt_set_settings", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `list_models` — the full 42-model RICH catalog (editorial fields the picker renders:
+ * backend / languages / description / size_label / per-quant byte sizes / accuracy+speed scores).
+ * Backed by the embedded `catalog_data.json` (see `catalog_data.rs`); the per-device quant set is
+ * CUDA-filtered. The adapter routes `STT_GET_MODEL_CATALOG` here, and the renderer's
+ * `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
+ * 
+ * NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
+ * is `list_models_with_state` (commands/runtime.rs). The WU-0 adapter currently routes BOTH
+ * `STT_GET_MODEL_CATALOG` and `STT_LIST_MODELS_WITH_STATE` → `list_models`; the latter must be
+ * repointed to `list_models_with_state` (see WU-4 libWiringNeeded note).
+ */
+async listModels() : Promise<CatalogModelInfo[]> {
+    return await TAURI_INVOKE("list_models");
+},
+/**
+ * `picker_quantizations_for` — the quant suffixes the picker should offer for a
+ * model under the current device (CUDA drops sub-fp16; others keep the full set).
+ */
+async pickerQuantizationsFor(modelId: string) : Promise<string[]> {
+    return await TAURI_INVOKE("picker_quantizations_for", { modelId });
+},
+/**
+ * `get_live_resources` — CPU/RAM/GPU host snapshot for the picker fitness hints. Returns the
+ * renderer's `LiveResourcesEntry` shape (ipc-client.ts). `forceRefresh` is accepted (and ignored
+ * for now) so the wrapper's `{ forceRefresh }` arg deserializes cleanly.
+ * SPIKE: populate via `sysinfo` (RAM/CPU) + DXGI adapter VRAM. Zeros until then — the renderer's
+ * fit assessors degrade to `unknown_footprint` (no false warnings).
+ */
+async getLiveResources(forceRefresh: boolean | null) : Promise<LiveResources> {
+    return await TAURI_INVOKE("get_live_resources", { forceRefresh });
+},
+/**
+ * `set_custom_model` — register/scan a user-supplied ONNX model directory.
+ * SPIKE: scan the directory for the family-shaped file set (encoder/decoder/...)
+ * and add it as a `Family::Custom` catalog row; the resolver treats it like any
+ * off-catalog repo. Returns the inferred catalog row on success.
+ */
+async setCustomModel(path: string) : Promise<Result<CatalogModelInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_custom_model", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_speak` — read `text` aloud (the renderer "Speak" button / dictation).
+ * Returns the request id so the renderer can correlate the `tts://chunk` stream
+ * + cancel it. Enabled-gate, source selection (local/cloud), and settings
+ * fallbacks for voice/lang/speed all live in `TtsManager::read_aloud` (mirrors
+ * the Electron `handleSpeak`). Empty `voice`/`lang` → the manager resolves them
+ * from the active source's settings.
+ */
+async ttsSpeak(text: string, voice: string | null, lang: string | null, speed: number | null) : Promise<Result<SpeakResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speak", { text, voice, lang, speed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_speak_selection` — read the current selection aloud (the read hotkey).
+ * The selected text is captured by the caller (context sidecar / clipboard) and
+ * passed in; this wraps the same source-aware synthesis path. An empty selection
+ * emits `tts:failed { reason: "No text selected" }` (mirrors Electron).
+ */
+async ttsSpeakSelection(text: string | null, voice: string | null, lang: string | null, speed: number | null) : Promise<Result<SpeakResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speak_selection", { text, voice, lang, speed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_cancel` — stop one (or, with no id / empty id, every) in-flight read. The
+ * renderer's `ttsCancel(requestId?)` sends `{ requestId: undefined }` for the
+ * cancel-all gesture (mirrors `tts.ts` `cancel(requestId?)`).
+ */
+async ttsCancel(requestId: string | null) : Promise<void> {
+    await TAURI_INVOKE("tts_cancel", { requestId });
+},
+/**
+ * `tts_cancel_all` — stop every read (STT force-stop / app exit).
+ */
+async ttsCancelAll() : Promise<void> {
+    await TAURI_INVOKE("tts_cancel_all");
+},
+/**
+ * `tts_init` — force the engine warm-up off the UI thread (download + session
+ * create / key check). Idempotent. Cloud source has no Kokoro engine to warm, so
+ * it's a no-op there (mirrors Electron `maybeWarmup` skipping cloud). Returns
+ * `{ ready }` (the renderer's `initTts` expects `{ ready: boolean }`).
+ */
+async ttsInit() : Promise<Result<TtsInitResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_init") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_list_voices` — the static 54-voice Kokoro catalog as `{ voices, languages }`
+ * (the `TtsVoiceCatalog` the renderer's `listTtsVoices` expects). NOT a bare array.
+ */
+async ttsListVoices() : Promise<VoiceCatalogPayload> {
+    return await TAURI_INVOKE("tts_list_voices");
+},
+/**
+ * `tts_list_cloud_voices` — live `GET /v2/voices` (cloned voices appear here).
+ * Returns `{ voices, error }` (`CloudTtsVoiceCatalog`); never throws across the
+ * boundary — a missing/invalid key surfaces as `{ voices: [], error }`.
+ */
+async ttsListCloudVoices() : Promise<Result<CloudVoiceCatalogPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_list_cloud_voices") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_cloud_subscription` — the ElevenLabs quota summary `{ tier, creditsExhausted }`.
+ * Defaults to `{ tier: null, creditsExhausted: false }` on a missing-scope key /
+ * request failure (never wrongly blocks cloud TTS).
+ */
+async ttsCloudSubscription() : Promise<Result<CloudSubscriptionPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_cloud_subscription") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_download_estimate` — side-effect-free estimate of what enabling local
+ * Kokoro TTS will download `{ alreadyInstalled, components, totalBytes,
+ * unavailable? }` (`TtsDownloadEstimatePayload`). Calling this never starts a
+ * download. Cloud source reports `alreadyInstalled: true` (nothing local to fetch).
+ */
+async ttsDownloadEstimate() : Promise<Result<DownloadEstimatePayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_download_estimate") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_install_pause` — cooperatively pause the engine-pack download.
+ * 
+ * The local Kokoro install is just the two model FILES (no separate engine pack),
+ * and the current downloader runs synchronously inside `warm_up`/first-synth, so
+ * there is no long-lived resumable job to pause yet. We emit `tts:install-paused`
+ * for UI parity with Electron; the partial files survive on disk and re-enabling
+ * resumes via HTTP Range automatically.
+ */
+async ttsInstallPause() : Promise<void> {
+    await TAURI_INVOKE("tts_install_pause");
+},
+/**
+ * `tts_install_resume` — resume a paused install by re-firing warm-up (which
+ * re-downloads any missing model file via HTTP Range, then loads the session).
+ * No-op for cloud.
+ */
+async ttsInstallResume() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_install_resume") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `tts_install_cancel` — cancel the install + clean up the partial download.
+ * 
+ * Emits `tts:model-download-complete { cancelled: true }` for UI parity. Partial-
+ * file removal happens lazily on the next resume (HTTP Range re-validates).
+ */
+async ttsInstallCancel() : Promise<void> {
+    await TAURI_INVOKE("tts_install_cancel");
+},
+/**
+ * `tts_preview_cloud` — play a cloud voice's FREE pre-generated sample clip
+ * (`previewUrl`) instead of synthesizing (browsing voices costs no credits). The
+ * renderer can't fetch the clip itself (CSP blocks external hosts), so the backend
+ * downloads it and streams it back as a `tts://chunk`. Mirrors `tts.ts`
+ * `handleCloudPreview` (payload `{ previewUrl }`). Returns the request id.
+ */
+async ttsPreviewCloud(previewUrl: string) : Promise<Result<SpeakResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_preview_cloud", { previewUrl }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `process_text` — dictation cleanup/compose. Composes the full system prompt
+ * (presets + context + vocab) and runs it over the configured provider.
+ * `context` is the formatted UIA fragment (may be empty).
+ */
+async processText(text: string, context: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("process_text", { text, context }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `process_transform` — apply a transform's preset body to the selection.
+ */
+async processTransform(text: string, transformId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("process_transform", { text, transformId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `scan_ollama_models` — `/api/tags` + `/api/show` capability enrich. Returns
+ * the `OllamaScanResult` the picker store consumes (`{ models, reachable,
+ * error? }`). A connection failure → `reachable: false`; an HTTP/parse error
+ * → `reachable: true` with `error` set (the daemon answered, just badly) — this
+ * drives the "Ollama not running" vs "Ollama errored" distinction in the UI.
+ */
+async scanOllamaModels() : Promise<Result<OllamaScanResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("scan_ollama_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `scan_openrouter_models` — `GET /api/v1/models` with the stored key. Returns
+ * the `OpenRouterScanResult` (`{ models, reachable, error? }`) the picker store
+ * consumes. Per-model `/endpoints` enrichment (provider rail / per-provider
+ * pricing / quant chips) is not fanned out in v1 — the renderer renders the base
+ * rows fine without it.
+ */
+async scanOpenrouterModels() : Promise<Result<OpenRouterScanResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("scan_openrouter_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ollama_detect` — locate an `ollama` executable (PATH or default install
+ * dirs). Returns `{ installed, path? }`. Mirrors `detectOllama` — the renderer's
+ * "Install Ollama" banner keys off `installed`.
+ */
+async ollamaDetect() : Promise<Result<OllamaDetectResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_detect") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ollama_start` — best-effort launch of a local `ollama serve` and poll until
+ * it binds (or times out). Returns `{ started, error? }`. Mirrors `startOllama`.
+ */
+async ollamaStart() : Promise<Result<OllamaStartResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_start") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ollama_pull` — pull a model, streaming `llm:pull-progress` for every frame.
+ * Honors the `ollama_cancel_pull` registry (polled between NDJSON frames).
+ * Returns `OllamaPullResult` (`{ success, model, cancelled?, error? }`).
+ */
+async ollamaPull(model: string) : Promise<Result<OllamaPullResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_pull", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ollama_delete` — delete a local model (`DELETE /api/delete`). Returns
+ * `OllamaDeleteResult` (`{ success, model, error? }`).
+ */
+async ollamaDelete(model: string) : Promise<Result<OllamaDeleteResultPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_delete", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `verify_credential` — the ONE renderer verify seam (`INTEGRATIONS_VERIFY`).
+ * Probes the provider's cheap GET endpoint with the user-typed key and returns
+ * `{ ok, code?, message? }` (the WinSTT taxonomy `code`). Covers OpenAI,
+ * ElevenLabs AND OpenRouter; the renderer routes all three through this channel.
+ * Side-effect-free: never persists the key. Mirrors `credentials.ts`.
+ */
+async verifyCredential(provider: string, apiKey: string) : Promise<Result<VerifyCredentialPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("verify_credential", { provider, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `verify_cloud_stt_credential` — probe the provider's cheap GET endpoint,
+ * honoring the ElevenLabs scoped-key special-case.
+ */
+async verifyCloudSttCredential(provider: string, apiKey: string) : Promise<Result<VerifyCredentialPayload, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("verify_cloud_stt_credential", { provider, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `cloud_stt_cancel` — abort an in-flight cloud transcribe (model swap / quit).
+ */
+async cloudSttCancel(requestId: string) : Promise<void> {
+    await TAURI_INVOKE("cloud_stt_cancel", { requestId });
+},
+/**
+ * `set_wake_word` — reconfigure the wake word. Empty `name` disables it.
+ */
+async setWakeWord(name: string, sensitivity: number, timeoutSeconds: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_wake_word", { name, sensitivity, timeoutSeconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `list_wake_word_presets` — built-in presets for the dropdown.
+ */
+async listWakeWordPresets() : Promise<WakeWordPresetPayload[]> {
+    return await TAURI_INVOKE("list_wake_word_presets");
+},
+/**
+ * `start_listen` — begin loopback capture on `device_index` (the positional
+ * ordinal from `loopback_list_devices`) and arm diarization when the persisted
+ * `general.speaker_diarization` setting is on.
+ * 
+ * Emits `stt:loopback-started { deviceName }` on success so the renderer's
+ * `useListenMode` shows the active device name in the listen pill. The native
+ * WASAPI loop is a compile-loop spike (see `LoopbackManager::start`); the
+ * command owns the device-name resolution + the started event.
+ */
+async startListen(deviceIndex: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_listen", { deviceIndex }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `stop_listen` — stop loopback capture + diarization. Emits
+ * `stt:loopback-stopped` so the renderer clears the listen pill. Idempotent
+ * (mirrors the Electron server, which only emits when capture was active — but
+ * the renderer's `setListening(false)` is itself idempotent, so an extra emit on
+ * an already-stopped session is harmless).
+ */
+async stopListen() : Promise<void> {
+    await TAURI_INVOKE("stop_listen");
+},
+/**
+ * `align_words` — per-word timings for a history entry (lazy on first play).
+ * Returns `[]` when the entry has no audio on disk or alignment isn't available
+ * yet (documented degrade: history playback falls back to no highlight).
+ */
+async alignWords(entryId: string) : Promise<Result<WordResultPayload[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("align_words", { entryId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `file_transcribe_enqueue` — append files to the sequential queue (drop order
+ * preserved; repeated calls accumulate). Returns the assigned row ids (the
+ * renderer correlates these with the `file:queue-*` events). The shared STT
+ * model is single-threaded, so files transcribe one at a time.
+ */
+async fileTranscribeEnqueue(files: DroppedFile[]) : Promise<string[]> {
+    return await TAURI_INVOKE("file_transcribe_enqueue", { files });
+},
+/**
+ * `file_transcribe_pause` — optional `{id}`.
+ * • with `id` → per-row manual pause.
+ * • no `id`   → PTT whole-queue auto-pause (the model is busy dictating).
+ */
+async fileTranscribePause(id: string | null) : Promise<void> {
+    await TAURI_INVOKE("file_transcribe_pause", { id });
+},
+/**
+ * `file_transcribe_resume` — optional `{id}` (symmetric with pause).
+ */
+async fileTranscribeResume(id: string | null) : Promise<void> {
+    await TAURI_INVOKE("file_transcribe_resume", { id });
+},
+/**
+ * `file_transcribe_cancel` `{id}` — drop a queued/paused row, or cancel the
+ * in-flight file (removed once its one-shot transcribe returns).
+ */
+async fileTranscribeCancel(id: string) : Promise<void> {
+    await TAURI_INVOKE("file_transcribe_cancel", { id });
+},
+/**
+ * `winstt_expand_snippets` — apply the user's snippet expansions to `text` and
+ * return the result (reading the live settings first so a fresh edit is
+ * reflected immediately). A no-op when there are no snippets. Mirrors the snippet
+ * half of `applyPostProcessing`; the recorder's paste path applies the same
+ * transform via `snippets::expand_cached` on the finalized transcription.
+ */
+async winsttExpandSnippets(text: string) : Promise<string> {
+    return await TAURI_INVOKE("winstt_expand_snippets", { text });
+},
+/**
+ * `set_winstt_model` — request a (main | realtime) model reload. The reused
+ * renderer's `sttReloadModel(kind, name)` sends `{ kind, name }`. The actual engine
+ * swap is WU-4 (lib_wiring §7, internal to TranscriptionManager); for WU-3 this
+ * kicks Handy's `initiate_model_load` so the main-model reload path is live, and
+ * returns a structural ack. Realtime-kind reloads are owned by 04_*.
+ */
+async setWinsttModel(kind: string, name: string) : Promise<void> {
+    await TAURI_INVOKE("set_winstt_model", { kind, name });
+},
+/**
+ * `winstt_call_method` — dispatch the ~3 recorder methods the renderer invokes by
+ * name (ipc-client.ts `sttCallMethod`). WinSTT bundles `wakeup()` with
+ * `set_microphone(true)` server-side; here `set_microphone(true)` starts the
+ * dictation recording through Handy's coordinator (which runs the TranscribeAction
+ * = model preload + overlay + paste pipeline) and `set_microphone(false)` stops it.
+ */
+async winsttCallMethod(method: string, args: JsonValue[] | null) : Promise<void> {
+    await TAURI_INVOKE("winstt_call_method", { method, args });
+},
+/**
+ * Emit the one-shot "engine is up" pair on startup so the renderer's connection
+ * store leaves its cold-boot "connecting" state. Call from `lib.rs setup` AFTER
+ * the managers are managed (the renderer treats connected+running as ready). The
+ * `STT_IS_CONNECTED` / server-status *invoke* shims are handled in the adapter
+ * (return true/"running"); this is the matching push so listeners also fire.
+ */
+async winsttEmitReady() : Promise<void> {
+    await TAURI_INVOKE("winstt_emit_ready");
+},
+/**
+ * `winstt_get_parameter` — the few readbacks the renderer issues (e.g. recorder
+ * state). Returns `null` for unknown keys (the renderer's `invokeOrDefault`
+ * supplies its declared fallback).
+ */
+async winsttGetParameter(parameter: string) : Promise<JsonValue> {
+    return await TAURI_INVOKE("winstt_get_parameter", { parameter });
+},
+/**
+ * `winstt_set_parameter` — the hot-swappable knob path. WU-3's slices push three:
+ * - `silence_endpoint_enabled` (bool) — PTT disables the VAD silence endpoint
+ * - `silence_timing` (bool)           — PTT disables smart-endpoint pause tuning
+ * - `is_recording` (bool)             — recorder state mirror
+ * The full AllowedParameter set (spec/openapi.yaml) covers ~40 keys also driven by
+ * other slices (model/quant/prompt/vad); each routes here. The recorder-config
+ * knobs that don't need an immediate reaction are folded into the live recorder
+ * settings; the rest are accepted as no-ops until their owning subsystem lands so
+ * the renderer's fire-and-forget `send()` never errors.
+ * 
+ * The `language` / `translate_to_english` / `initial_prompt` / `custom_words` /
+ * `word_correction_threshold` / `filter_fillers` knobs route into the persisted
+ * settings so the next `TranscriptionManager::transcribe` (which re-reads
+ * `get_settings`) picks them up live — that mirrors Electron's `set_parameter`,
+ * which forwarded these to the running recorder. `onnx_quantization` / `model`
+ * trigger a reload through the model slice and are accepted here as no-ops (the
+ * model-swap command owns the real reload).
+ */
+async winsttSetParameter(parameter: string, value: JsonValue) : Promise<void> {
+    await TAURI_INVOKE("winstt_set_parameter", { parameter, value });
+},
+/**
+ * `predownload_quant` — start a byte-level pause/resume capable download for one
+ * `(model_id, quantization)` tuple, INTO the HF cache without changing the loaded model.
+ * Emits `stt:model-download-start` immediately so the badge flips to "downloading".
+ */
+async predownloadQuant(modelId: string, quantization: string) : Promise<void> {
+    await TAURI_INVOKE("predownload_quant", { modelId, quantization });
+},
+/**
+ * `download_pause_quant` — pause the in-flight per-quant download (.partial preserved on disk for
+ * the next Range-resume). The renderer flips the badge optimistically; this confirms it.
+ */
+async downloadPauseQuant(modelId: string, quantization: string) : Promise<void> {
+    await TAURI_INVOKE("download_pause_quant", { modelId, quantization });
+},
+/**
+ * `download_resume_quant` — resume a paused per-quant download (skips already-cached files).
+ */
+async downloadResumeQuant(modelId: string, quantization: string) : Promise<void> {
+    await TAURI_INVOKE("download_resume_quant", { modelId, quantization });
+},
+/**
+ * `download_cancel_quant` — cancel an in-flight per-quant download; the current file's `.partial`
+ * is unlinked, previously-completed files are kept (delete_model_quantization wipes those too).
+ */
+async downloadCancelQuant(modelId: string, quantization: string) : Promise<void> {
+    await TAURI_INVOKE("download_cancel_quant", { modelId, quantization });
+},
+/**
+ * `delete_model_quantization` — drop just the weight files matching `quantization` from the HF
+ * cache of `model_id` (other quants intact). Re-broadcasts `stt:model-cache-changed`.
+ */
+async deleteModelQuantization(modelId: string, quantization: string) : Promise<void> {
+    await TAURI_INVOKE("delete_model_quantization", { modelId, quantization });
+},
+/**
+ * `delete_model_cache` — wipe the entire HF snapshot directory for `model_id`. Positional-string
+ * channel (`POSITIONAL_STRING_PARAM` → `{ modelId }`). Re-broadcasts cache-changed.
+ */
+async deleteModelCache(modelId: string) : Promise<void> {
+    await TAURI_INVOKE("delete_model_cache", { modelId });
+},
+/**
+ * `get_runtime_info` — the active EP + loaded-model snapshot the GPU/CPU chip and the active-model
+ * reconciliation (`useSyncActiveModel`) read. Reads the loaded model from the TranscriptionManager
+ * (falling back to the persisted `model.model` when nothing is loaded yet), and the EP from the
+ * persisted device. The real per-session provider list is a compile-loop refinement (ort exposes it
+ * at session-create); the device-derived list is correct for the shipped flavors.
+ */
+async getRuntimeInfo() : Promise<RuntimeInfoPayload> {
+    return await TAURI_INVOKE("get_runtime_info");
+},
+/**
+ * `list_models_with_state` — the `{ models, states, system_info }` payload `fetchModelsWithState`
+ * consumes (model-state-store.ts). `states[*].cache_by_quantization` is keyed per precision and the
+ * `effective_quantization` badge bridge tells the picker WHICH precision's cache state to trust.
+ * 
+ * Cache states are sourced from a REAL probe of the HuggingFace cache (the same cache the resolver
+ * downloads into) overlaid with the DownloadManager's in-flight registry; system_info is the
+ * live-resources snapshot reshaped to `SystemInfoEntry`. The effective-quant bridge keys the
+ * overall badge off the precision the loader will ACTUALLY load, so "Downloaded" never lies into a
+ * silent re-download.
+ */
+async listModelsWithState() : Promise<ModelsWithState> {
+    return await TAURI_INVOKE("list_models_with_state");
+},
+/**
+ * `assess_dictation_fit` — best-effort server fit for `(model_id, quantization, device)`. Returns
+ * `None` (client mirror covers it) until the real footprint+host math lands.
+ */
+async assessDictationFit(modelId: string, quantization: string | null, device: string | null) : Promise<FitAssessmentEntry | null> {
+    return await TAURI_INVOKE("assess_dictation_fit", { modelId, quantization, device });
+},
+/**
+ * `assess_ollama_fit` — best-effort server fit for an Ollama model of `size_bytes`. `None` until
+ * the host snapshot is wired; the renderer's `assessOllamaFitClient` mirror covers the UI.
+ */
+async assessOllamaFit(sizeBytes: number) : Promise<FitAssessmentEntry | null> {
+    return await TAURI_INVOKE("assess_ollama_fit", { sizeBytes });
+},
+/**
+ * `gpu_get_info` — the detected GPU list (drives the GPU chip + the "DirectML available?" hint).
+ * SPIKE: DXGI adapter enumeration. Empty until then (renderer shows "CPU only", which is safe).
+ */
+async gpuGetInfo() : Promise<GpuInfoEntry[]> {
+    return await TAURI_INVOKE("gpu_get_info");
+},
+/**
+ * `hotkey_register` — point the PTT/toggle binding at `accelerator` so its press/
+ * release fires the WinSTT hotkey events. WinSTT sends the accelerator as a WinSTT
+ * key string (e.g. `LCtrl+LMeta`). handy-keys' parser does NOT accept every WinSTT
+ * name (above all `LMeta`/`RMeta` — see `winstt_accel_to_handy`), so the translation
+ * to handy's token vocabulary happens inside `change_binding`, which then validates
+ * + (un)registers it. An empty accelerator is treated as "unbound" (no-op success)
+ * so the renderer's cold-boot register-then-rebind sequence can't error.
+ * 
+ * Returns whether the accelerator is now active (the renderer's `hotkeyRegister`
+ * wrapper reads a `boolean`, defaulting to `false`).
+ */
+async hotkeyRegister(accelerator: string) : Promise<boolean> {
+    return await TAURI_INVOKE("hotkey_register", { accelerator });
+},
+/**
+ * `hotkey_unregister` — drop the PTT/toggle binding's live registration. The
+ * renderer calls this on accelerator change (before re-registering the new one)
+ * and on unmount. Resolving the binding from settings and unregistering it is
+ * idempotent; a missing binding is a silent success.
+ */
+async hotkeyUnregister(accelerator: string) : Promise<void> {
+    await TAURI_INVOKE("hotkey_unregister", { accelerator });
+},
+/**
+ * `hotkey_start_recording` — begin capturing the next key combo for a rebind. Wraps
+ * Handy's key-recording listener AND installs the CaptureBridge translation so the
+ * per-key `handy-keys-event` stream becomes WinSTT's `hotkey:recording-update`
+ * {keys}. Returns whether capture started (`hotkeyStartRecording` reads a bool).
+ */
+async hotkeyStartRecording() : Promise<boolean> {
+    return await TAURI_INVOKE("hotkey_start_recording");
+},
+/**
+ * `hotkey_stop_recording` — finish combo capture. Detaches the Handy listener AND
+ * the translation bridge, re-arms the suspended PTT binding, then emits
+ * `hotkey:recording-done` { combo } with the captured peak combo (or `null` if
+ * nothing was captured / cancelled).
+ */
+async hotkeyStopRecording() : Promise<void> {
+    await TAURI_INVOKE("hotkey_stop_recording");
+},
+/**
+ * `get_audio_devices` — enumerate audio INPUT devices for the renderer's mic
+ * pickers + listen-mode device correlation. Returns `[]` on any enumeration
+ * failure (the renderer's `useInputDevices` `.catch(() => undefined)` tolerates
+ * it and falls back to system-default routing server-side).
+ */
+async getAudioDevices() : Promise<AudioDevicePayload[]> {
+    return await TAURI_INVOKE("get_audio_devices");
+},
+/**
+ * `loopback_list_devices` — enumerate WASAPI loopback-capable output devices for
+ * the listen-mode device picker. Mirrors the Electron server's
+ * `list_loopback_devices` command (returns `[]` on any failure so the renderer's
+ * `.catch` / non-array guard never trips). Off the UI thread is unnecessary —
+ * WASAPI enumeration is sub-millisecond — but errors are swallowed to `[]`.
+ */
+async loopbackListDevices() : Promise<LoopbackDevicePayload[]> {
+    return await TAURI_INVOKE("loopback_list_devices");
+},
+/**
+ * `tts_set_speed` — set the live read-aloud speed from the pill's speed control.
+ * Applies to the active read's upcoming sentences (next-sentence, natural pitch)
+ * and to every subsequent read. The persisted `tts.speed` / `tts.cloud.speed`
+ * store write is the settings command's job. Mirrors `tts.ts` `handleSetSpeed`.
+ */
+async ttsSetSpeed(speed: number) : Promise<void> {
+    await TAURI_INVOKE("tts_set_speed", { speed });
+},
+/**
+ * `tts_report_playback_started` — the window that owns the Web Audio queue (the
+ * overlay) reports that audio for `request_id` ACTUALLY started playing (the ~1s
+ * synthesis gap is over). Re-broadcast as `tts:playback-started` so a play/stop
+ * control in a queue-less window (settings) flips its spinner to a stop control.
+ * Mirrors `tts.ts` `handleReportPlaybackStarted`.
+ */
+async ttsReportPlaybackStarted(requestId: string) : Promise<void> {
+    await TAURI_INVOKE("tts_report_playback_started", { requestId });
+},
+/**
+ * `tts_report_playback_ended` — the overlay reports that audio for `request_id`
+ * has finished draining (also fires on cancel / failure). Re-broadcast as
+ * `tts:playback-ended` so a queue-less window tracks REAL playback. Mirrors
+ * `tts.ts` `handleReportPlaybackEnded`.
+ */
+async ttsReportPlaybackEnded(requestId: string) : Promise<void> {
+    await TAURI_INVOKE("tts_report_playback_ended", { requestId });
+},
+/**
+ * `ollama_fetch_library` → `LLM_FETCH_OLLAMA_LIBRARY`. Full library catalog in one shot.
+ */
+async ollamaFetchLibrary() : Promise<Result<OllamaLibraryCatalogResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_fetch_library") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ollama_fetch_tags` → `LLM_FETCH_OLLAMA_TAGS`. Pullable tags for one library model.
+ */
+async ollamaFetchTags(model: string) : Promise<Result<OllamaLibraryTagsResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_fetch_tags", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ollama_search_library` → `LLM_SEARCH_OLLAMA_LIBRARY`. Paginated search (parity; v1 renderer
+ * filters the full catalog client-side instead).
+ */
+async ollamaSearchLibrary(query: string, page: number | null) : Promise<Result<OllamaLibrarySearchResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_search_library", { query, page }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `ollama_cancel_pull` → `LLM_CANCEL_PULL_MODEL`. Flags the model's in-flight pull for the
+ * streaming drain in `ollama_pull` to abort. Returns `{ cancelled: true }` on registration.
+ */
+async ollamaCancelPull(model: string) : Promise<Result<CancelPullResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ollama_cancel_pull", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `llm_get_warmup_status` → `LLM_GET_WARMUP_STATUS`. Last warmup snapshot, or `null` while the
+ * warmup broadcaster is unwired (renderer hides the banner on `null`).
+ */
+async llmGetWarmupStatus() : Promise<Result<LlmWarmupStatus | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_get_warmup_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `verify_integration_credential` — the ONE renderer verify seam. Probes the
+ * provider's cheap GET endpoint with the user-typed (possibly unsaved) key and
+ * returns `{ ok, code?, message? }`. Side-effect-free: it never persists the key
+ * (the renderer writes `verified`/`lastVerifiedAt` back through the settings
+ * store on success). Covers OpenAI, ElevenLabs AND OpenRouter — the renderer
+ * routes all three through the single `INTEGRATIONS_VERIFY` channel.
+ */
+async verifyIntegrationCredential(provider: string, apiKey: string) : Promise<Result<VerifyCredentialResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("verify_integration_credential", { provider, apiKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `file_transcribe_clear` — remove every terminal row (the auto-clear path).
+ */
+async fileTranscribeClear() : Promise<void> {
+    await TAURI_INVOKE("file_transcribe_clear");
+},
+/**
+ * `file_transcribe_copy` `{id}` — copy a completed row's transcript to the
+ * clipboard (via the clipboard-manager plugin).
+ */
+async fileTranscribeCopy(id: string) : Promise<void> {
+    await TAURI_INVOKE("file_transcribe_copy", { id });
+},
+/**
+ * `file_transcribe_discard_all` — cancel the in-flight file and drop all rows.
+ */
+async fileTranscribeDiscardAll() : Promise<void> {
+    await TAURI_INVOKE("file_transcribe_discard_all");
+},
+/**
+ * `file_transcribe_get_active` — one-shot busy-flag read for windows mounted
+ * AFTER the edge-triggered `file:queue-active` broadcast.
+ */
+async fileTranscribeGetActive() : Promise<boolean> {
+    return await TAURI_INVOKE("file_transcribe_get_active");
+},
+/**
+ * `file_transcribe_retry` `{id}` — re-queue a terminal/paused row from scratch.
+ */
+async fileTranscribeRetry(id: string) : Promise<void> {
+    await TAURI_INVOKE("file_transcribe_retry", { id });
+},
+/**
+ * `history:list` — offset-paginated rows, newest first. `{ offset, limit }` →
+ * `{ entries, hasMore }`. Over-fetches one row to compute `hasMore` cheaply.
+ */
+async historyList(offset: number, limit: number) : Promise<Result<PaginatedHistory, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_list", { offset, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:recent` — the `n` newest rows (tray submenu / quick re-paste).
+ */
+async historyRecent(value: number | null) : Promise<Result<HistoryRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_recent", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:add` — persist a row. The renderer rarely calls this directly (the
+ * dictation coordinator owns saves), but the channel is routed so we honor it.
+ * `{ text, postProcessedText?, postProcessPrompt?, postProcessRequested? }`.
+ */
+async historyAdd(text: string | null, postProcessedText: string | null, postProcessPrompt: string | null, postProcessRequested: boolean | null) : Promise<Result<HistoryRow | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_add", { text, postProcessedText, postProcessPrompt, postProcessRequested }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:toggle` — flip a row's `saved` (pin) flag → `{ saved }` (the NEW
+ * value), or `{ saved: null }` when the row is missing.
+ */
+async historyToggle(id: number) : Promise<Result<ToggleResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_toggle", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:delete-row` — delete one row (NUMBER id) → `{ deleted }`. Routes
+ * through the manager so the WAV is unlinked + `HistoryUpdatePayload::Deleted`
+ * fires (the bridge re-emits `history:row-deleted`).
+ */
+async historyDeleteRow(id: number) : Promise<Result<DeletedResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_delete_row", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:load-audio-by-row` — WAV for a row (NUMBER id) as a data URI, or null.
+ */
+async historyLoadAudioByRow(id: number) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_load_audio_by_row", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:get-all` — every row reshaped to the legacy `TranscriptionHistoryEntry`
+ * shape (STRING id, MILLIS timestamp). Oldest-first to match the legacy
+ * electron-store's append order; the renderer's `HistoryTable` reverses it.
+ */
+async historyGetAll() : Promise<Result<TranscriptionHistoryEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_get_all") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:clear` — delete every row (and its WAV) → `{ cleared: true }`.
+ */
+async historyClear() : Promise<Result<ClearResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:delete` (STRING id) — legacy delete → `{ deleted }`.
+ */
+async historyDelete(id: string) : Promise<Result<DeletedResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `history:load-audio` (STRING id) — WAV for a legacy entry as a data URI, or null.
+ */
+async historyLoadAudio(id: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("history_load_audio", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `about_get_app_info` — version + framework/webview versions + copyright.
+ */
+async aboutGetAppInfo() : Promise<AboutAppInfo> {
+    return await TAURI_INVOKE("about_get_app_info");
+},
+/**
+ * `about_get_license` — the bundled EULA / LICENSE text.
+ */
+async aboutGetLicense() : Promise<string> {
+    return await TAURI_INVOKE("about_get_license");
+},
+/**
+ * `about_get_notices` — the bundled third-party notices.
+ */
+async aboutGetNotices() : Promise<string> {
+    return await TAURI_INVOKE("about_get_notices");
+},
+/**
+ * `diag_open_logs_folder` — return the log directory path. The polyfill opens it
+ * via the opener plugin (capability-gated). Returns an empty string only if the
+ * dir can't be resolved, which the polyfill treats as a no-op success.
+ */
+async diagOpenLogsFolder() : Promise<string> {
+    return await TAURI_INVOKE("diag_open_logs_folder");
+},
+/**
+ * `diag_save_bundle` — the full save flow. `async` so the blocking save dialog
+ * runs off the main webview message loop (Tauri commands that block must be
+ * `async` or `spawn_blocking`; the dialog plugin's `blocking_save_file` already
+ * hops to the main thread internally).
+ */
+async diagSaveBundle() : Promise<DiagSaveBundleResult> {
+    return await TAURI_INVOKE("diag_save_bundle");
+},
+/**
+ * `sound_library_add` — copy `source_path` (.wav / .mp3 only) into the managed
+ * folder under a fresh uuid filename and return its entry. Mirrors `handleAdd`.
+ */
+async soundLibraryAdd(sourcePath: string, name: string | null) : Promise<SoundLibraryAddResult> {
+    return await TAURI_INVOKE("sound_library_add", { sourcePath, name });
+},
+/**
+ * `sound_library_read_file` — read a sound file's bytes for the renderer's Web
+ * Audio preview decode. Returns `None` on any error (the renderer treats null as
+ * "couldn't load"). Mirrors `handleReadFile`.
+ */
+async soundLibraryReadFile(path: string) : Promise<number[] | null> {
+    return await TAURI_INVOKE("sound_library_read_file", { path });
+},
+/**
+ * `sound_library_remove` — delete a file, but ONLY inside the managed folder.
+ * Mirrors `handleRemove`.
+ */
+async soundLibraryRemove(path: string) : Promise<SoundLibraryRemoveResult> {
+    return await TAURI_INVOKE("sound_library_remove", { path });
+},
+/**
+ * `apply_transform` — end-to-end Transforms pipeline (renderer `applyTransform()`
+ * + the `transforms.hotkey` global-hotkey path). Delegates to
+ * [`run_transform_pipeline`] so the command and the hotkey are byte-identical.
+ * 
+ * NEVER throws past this layer — the renderer's `invokeOrDefault` would mask it
+ * and the toast would never fire.
+ */
+async applyTransform() : Promise<Result<TransformApplyResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_transform") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `apply_transform_preview` — Playground preview (renderer `runLlmPreview`).
+ * Runs `text` through the chosen feature's full composed pipeline WITHOUT
+ * touching selection / clipboard / paste. `feature` is "dictation" | "transforms";
+ * an explicit `config` overrides the feature's saved presets/modifiers/model AND
+ * provider. Mirrors `handlePreview` → `processText(text, "", feature, config)` —
+ * which routes through `runProcessText` (provider-aware), so the preview honors
+ * the selected provider exactly like the runtime path.
+ */
+async applyTransformPreview(text: string, feature: string, config: LlmPreviewConfig | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("apply_transform_preview", { text, feature, config }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `winstt_diag` — webview → backend log bridge. The secondary windows (settings /
+ * model-picker / …) are separate webviews whose console + uncaught errors are
+ * invisible to the Rust log, so a blank/non-rendering window leaves no trace. The
+ * renderer entries install `window.onerror` + an "mounted" beacon that call this,
+ * surfacing renderer crashes (the usual cause of a blank secondary window) in
+ * handy.log where we can see them. Diagnostic; harmless to keep.
+ */
+async winsttDiag(label: string, level: string, message: string) : Promise<void> {
+    await TAURI_INVOKE("winstt_diag", { label, level, message });
+},
+/**
+ * `open_window` — create-if-needed, then show + focus the labelled window.
+ * 
+ * For the anchored pickers the renderer passes the trigger's viewport rect
+ * (`x`/`y`/`width`/`height`); we convert it to a screen anchor via the CALLING
+ * window (`webview`) and place the popup. For the plain windows the rect is
+ * absent and we center + show.
+ */
+async openWindow(name: string, x: number | null, y: number | null, width: number | null, height: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_window", { name, x, y, width, height }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `close_window` — HIDE (not destroy) the labelled window so re-open keeps state.
+ */
+async closeWindow(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("close_window", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `resize_window` — set the desired footprint of the labelled window.
+ * 
+ * For the pickers the renderer's ResizeObserver reports the real content size
+ * after mount; we store it and, if the popup is currently up, re-place it so it
+ * stays glued to the same trigger with the now-correct size (and the model
+ * picker re-emits its anchor). For other dynamically-sized windows we just set
+ * the inner size.
+ */
+async resizeWindow(name: string, width: number, height: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resize_window", { name, width, height }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `anchor_window` — move the labelled window's top-left to (x, y) in logical
+ * screen px. Used to place a detached window next to its trigger directly.
+ */
+async anchorWindow(name: string, x: number, y: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("anchor_window", { name, x, y }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `onboarding_finish` — record the wizard as completed/skipped, broadcast the
+ * new settings snapshot, then hide onboarding and surface the main window.
+ * Mirrors Electron's `handleFinish` (frontend/electron/ipc/onboarding-window.ts).
+ */
+async onboardingFinish(args: OnboardingFinishArgs) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("onboarding_finish", { args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `show_tray_menu` — open the custom HTML tray menu anchored at (x, y) in
+ * logical screen px, or at the cursor when omitted. Stores the anchor so a
+ * later resize can re-anchor. Mirrors Electron's `showTrayMenuAt`.
+ */
+async showTrayMenu(x: number | null, y: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("show_tray_menu", { x, y }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `reanchor_tray_menu` — re-run placement from the stored anchor. The
+ * `tray-menu:resize` path calls this (via the resize handler) so the menu,
+ * once it knows its true content size, stays glued to the original click point
+ * instead of remaining clamped against its initial (larger) size. No-op when
+ * the menu was never shown.
+ */
+async reanchorTrayMenu() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reanchor_tray_menu") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `hide_tray_menu` — hide (not destroy) the tray menu and clear the stored
+ * anchor, matching Electron's `hideTrayMenu` (window keep-alive semantics).
+ */
+async hideTrayMenu() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("hide_tray_menu") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `sound_get_data` — serve the ACTIVE recording chime's bytes to the renderer's
+ * Web Audio preloader. Returns `None` when the chime is disabled or the file is
+ * missing/unreadable (the renderer treats null as "no sound"). Mirrors the
+ * `ipcMain.handle("sound:get-data", ...)` body in `sound.ts`.
+ */
+async soundGetData() : Promise<number[] | null> {
+    return await TAURI_INVOKE("sound_get_data");
+},
+/**
+ * `cancel_current_operation` — abort the in-flight dictation session and reset
+ * renderer state. Routes from `STT_ABORT_OPERATION` (overlay X / cancel combo).
+ * Runs the centralized cancel path, then broadcasts `stt:session-aborted` so the
+ * renderer drops its local "session active" state. Mirrors `handleAbortOperation`.
+ */
+async cancelCurrentOperation() : Promise<void> {
+    await TAURI_INVOKE("cancel_current_operation");
+},
+/**
+ * `open_custom_models_folder` — return the absolute path of the per-user
+ * custom-models directory (`<appData>/models/custom`), creating it if absent. The
+ * renderer's opener-plugin route reveals it in the OS file manager. Mirrors
+ * `getCustomModelsFolder` + `handleOpenCustomModelsFolder` in `custom-models.ts`.
+ */
+async openCustomModelsFolder() : Promise<string> {
+    return await TAURI_INVOKE("open_custom_models_folder");
+},
+/**
+ * `cancel_download` — cancel the legacy single-slot whole-model swap-download (no quantization).
+ * The renderer's `cancelDownload()` sends NO args (matches the param-less signature). This is the
+ * command the adapter's `STT_CANCEL_DOWNLOAD` channel must route to; lib.rs currently registers
+ * Handy's `commands::models::cancel_download` (which needs a `model_id` and would reject the
+ * arg-less call) — see the lib-wiring report to repoint it here. Renamed `winstt_cancel_download`
+ * to avoid the duplicate-command-name clash with Handy's during registration.
+ */
+async winsttCancelDownload() : Promise<void> {
+    await TAURI_INVOKE("winstt_cancel_download");
+},
+/**
+ * `context_playground_set_live` — flip live polling on/off. A freshly-mounted
+ * renderer sends `{ enabled: true }`, which BOTH enables live mode AND signals
+ * "renderer ready" so a capture lands promptly (re-primes the loop). Mirrors
+ * `handleSetLive`.
+ */
+async contextPlaygroundSetLive(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("context_playground_set_live", { enabled });
+},
+/**
+ * `context_playground_arm_deep` — arm a deep (all-modes) capture; the next
+ * external tick runs all four UIA modes side-by-side, then disarms. Mirrors
+ * `handleArmDeep`.
+ */
+async contextPlaygroundArmDeep() : Promise<void> {
+    await TAURI_INVOKE("context_playground_arm_deep");
+},
+/**
+ * One-shot capture (kept for parity with `debug_read_context`'s mode probe; the
+ * live loop is the primary path). Returns the full report so a caller can read
+ * it synchronously without subscribing to the push channel.
+ */
+async contextPlaygroundCapture(deep: boolean) : Promise<ContextDebugReport> {
+    return await TAURI_INVOKE("context_playground_capture", { deep });
 }
 }
 
@@ -821,9 +2013,25 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
-historyUpdatePayload: HistoryUpdatePayload
+fileTranscribeProgressPayload: FileTranscribeProgressPayload,
+historyUpdatePayload: HistoryUpdatePayload,
+realtimeStabilizedPayload: RealtimeStabilizedPayload,
+realtimeUpdatePayload: RealtimeUpdatePayload,
+speakerSegmentsPayload: SpeakerSegmentsPayload,
+ttsLifecyclePayload: TtsLifecyclePayload,
+vadSensitivityAdaptedPayload: VadSensitivityAdaptedPayload,
+wakeWordDetectedPayload: WakeWordDetectedPayload,
+wordAlignmentPayload: WordAlignmentPayload
 }>({
-historyUpdatePayload: "history-update-payload"
+fileTranscribeProgressPayload: "file-transcribe-progress-payload",
+historyUpdatePayload: "history-update-payload",
+realtimeStabilizedPayload: "realtime-stabilized-payload",
+realtimeUpdatePayload: "realtime-update-payload",
+speakerSegmentsPayload: "speaker-segments-payload",
+ttsLifecyclePayload: "tts-lifecycle-payload",
+vadSensitivityAdaptedPayload: "vad-sensitivity-adapted-payload",
+wakeWordDetectedPayload: "wake-word-detected-payload",
+wordAlignmentPayload: "word-alignment-payload"
 })
 
 /** user-defined constants **/
@@ -832,17 +2040,411 @@ historyUpdatePayload: "history-update-payload"
 
 /** user-defined types **/
 
+/**
+ * App metadata surfaced in the About panel. Field names mirror the renderer's
+ * `AboutAppInfo` interface exactly (camelCase) so the value round-trips through
+ * the electronAPI polyfill with no reshape.
+ */
+export type AboutAppInfo = { version: string; 
+/**
+ * Desktop-framework version. In the Electron build this was the Electron
+ * runtime version; in Tauri it is the Tauri framework version.
+ */
+electronVersion: string; 
+/**
+ * JS-runtime version. In Electron this was Node's version; in Tauri the
+ * closest analogue surfaced to the user is the embedded WebView version.
+ */
+nodeVersion: string; copyright: string }
 export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
+/**
+ * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
+ */
+export type AudioDevicePayload = { 
+/**
+ * cpal positional enumeration ordinal (the renderer persists this as
+ * `audio.inputDeviceIndex`).
+ */
+index: number; name: string; isDefault: boolean; 
+/**
+ * Spec-present for parity with PyAudio's enumeration; the renderer doesn't
+ * read these, so a faithful constant keeps the shape stable without a
+ * second probe per device.
+ */
+maxInputChannels: number; defaultSampleRate: number }
+export type AudioSettings = { 
+/**
+ * Mic index; `null` = system default. HOT-SWAP.
+ */
+inputDeviceIndex?: number | null; 
+/**
+ * Capture sample rate. STARTUP (CLI).
+ */
+sampleRate?: number; 
+/**
+ * Audio chunk size. STARTUP (CLI).
+ */
+bufferSize?: number; 
+/**
+ * Silero VAD sensitivity; trip threshold = `1 - value`. Range 0..1. HOT-SWAP.
+ * INVARIANT: Silero VAD must load CPU-only (CUDA deadlock).
+ */
+sileroSensitivity?: number; 
+/**
+ * Use ONNX Silero variant. STARTUP (CLI).
+ */
+sileroUseOnnx?: boolean; 
+/**
+ * Silero-based deactivity (Handy parity; config-only, no live consumer). HOT-SWAP (persist-only).
+ */
+sileroDeactivityDetection?: boolean; 
+/**
+ * WebRTC VAD aggressiveness. Range 0..3. HOT-SWAP (`set_mode`).
+ */
+webrtcSensitivity?: number; 
+/**
+ * Silence after speech before VAD stop (s). HOT-SWAP.
+ */
+postSpeechSilenceDuration?: number; 
+/**
+ * Min gap between consecutive recordings (s). HOT-SWAP.
+ */
+minGapBetweenRecordings?: number; 
+/**
+ * Pre-roll buffer captured before trigger (s). STARTUP.
+ */
+preRecordingBufferDuration?: number; 
+/**
+ * Adaptive-VAD calibration keyed by input-device name (server publishes
+ * `vad_sensitivity_adapted`). HOT-SWAP (re-applied on device switch).
+ * Zod `.catch({})`.
+ */
+sileroSensitivityByDeviceName?: Partial<{ [key in string]: number }>; 
+/**
+ * Alt mic index when laptop lid closed; `null` = disabled. STARTUP. Zod `.catch(null)`.
+ */
+clamshellMicrophone?: number | null; 
+/**
+ * Mic-stream lifecycle policy. HOT-SWAP. Zod `.catch("immediate")`.
+ */
+microphoneRelease?: MicrophoneRelease; 
+/**
+ * Tail-capture window (ms) after user stop. Range 0..2000. HOT-SWAP. Zod `.catch(0)`.
+ */
+extraRecordingBufferMs?: number }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
+/**
+ * `general.autoSubmitKey`.
+ */
+export type AutoSubmitKey = "enter" | "ctrl_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+export type CancelPullResult = { cancelled: boolean }
+/**
+ * One rich catalog row as the picker consumes it. snake_case on the wire to match
+ * `rawModelInfoSchema` (catalog-store.ts) exactly — the renderer does no remapping of the keys.
+ */
+export type CatalogModelInfo = { id: string; display_name: string; 
+/**
+ * Always `"onnx_asr"` post-torch-drop (server `_backend_from_str` defaults to it).
+ */
+backend: string; family: string; languages: string[]; supports_language_detection: boolean; size_label: string; supports_realtime: boolean; onnx_model_name: string | null; description: string; 
+/**
+ * Quant suffixes (filtered to the CUDA-compatible set on CUDA EPs; full set otherwise).
+ */
+available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>; 
+/**
+ * Shipped catalog rows are always available; custom-scan failures would set false.
+ */
+available: boolean; error_message: string; local_path: string | null; 
+/**
+ * 0..1 normalized speed score (log-scaled RTFx). 0.5 = unknown → renderer hides the bar.
+ */
+speed_score: number; 
+/**
+ * 0..1 normalized accuracy score (linear-ramped WER). 0.5 = unknown.
+ */
+accuracy_score: number }
+/**
+ * `{ cleared: true }` envelope for `history_clear`.
+ */
+export type ClearResult = { cleared: boolean }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * `{ tier, creditsExhausted }` — the `ttsCloudSubscription` wire shape.
+ */
+export type CloudSubscriptionPayload = { tier: string | null; creditsExhausted: boolean }
+/**
+ * `{ voices, error }` — the `CloudTtsVoiceCatalog` wire shape (`ttsCloudListVoices`).
+ */
+export type CloudVoiceCatalogPayload = { voices: CloudVoicePayload[]; error: string | null }
+/**
+ * One cloud voice surfaced to the renderer cloud-voice picker — the EXACT
+ * `CloudTtsVoice` wire shape (`{ id, name, language, category, previewUrl }`).
+ */
+export type CloudVoicePayload = { id: string; name: string; language: string | null; category: string; previewUrl: string | null }
+export type ContextDebugReport = { asrPromptTail: string; asrPromptTailRaw: string; capturedAt: number; contentless: boolean; contextAwarenessEnabled: boolean; deep: boolean; denied: boolean; deniedReason: string | null; durationMs: number; filteredSnapshot: ContextSnapshotView; hasCaret: boolean; isIde: boolean; isTerminal: boolean; metrics: ContextMetrics; modes?: ContextModeResult[] | null; ocrUsed: boolean; promptFragment: string; rawSnapshot: ContextSnapshotView }
+export type ContextMetrics = { axHtmlCap: number; axHtmlChars: number; denyListSize: number; focusedTextChars: number; promptFragmentChars: number; textAfterChars: number; textBeforeChars: number }
+export type ContextModeResult = { durationMs: number; 
+/**
+ * "tree" | "split" | "default" | "selection"
+ */
+mode: string; ok: boolean; snapshot: ContextSnapshotView }
+export type ContextSnapshotView = { appExe?: string | null; axHtml?: string | null; elementName: string; focusedText: string; ocrText?: string | null; textAfter?: string | null; textBefore?: string | null; url?: string | null; windowTitle: string }
+/**
+ * `customModifierSchema` — user-authored cleanup modifier. Persists the full
+ * definition even while `enabled` is false so the authored name/prompt survives
+ * a toggle.
+ */
+export type CustomModifier = { id: string; name?: string; prompt?: string; enabled?: boolean; 
+/**
+ * When true a Low/Medium/High switcher tunes the prompt's intensity hint.
+ */
+levelsEnabled?: boolean; level?: PresetLevel | null }
 export type CustomSounds = { start: boolean; stop: boolean }
+/**
+ * `{ deleted }` envelope for `history_delete` / `history_delete_row`.
+ */
+export type DeletedResult = { deleted: boolean }
+/**
+ * `model.device` — `DeviceTypeSchema` = `["auto", "cpu"]`.
+ * ONNX-only WinSTT exposes only auto-vs-CPU; the actual accelerator (DirectML
+ * vs CPU) is chosen by the packaging flavor + `device.py`'s EP probe, NOT a
+ * persisted user knob. STARTUP-ONLY (binds the ORT EP at session create).
+ */
+export type DeviceType = "auto" | "cpu"
+/**
+ * Result of `diag_save_bundle`. Field names mirror the renderer's
+ * `DiagSaveBundleResult` interface exactly; `ok` is always present, the rest are
+ * optional and skipped when absent so the JSON matches the Electron handler.
+ */
+export type DiagSaveBundleResult = { ok: boolean; cancelled?: boolean | null; error?: string | null; path?: string | null }
+/**
+ * `dictionaryEntrySchema`. `replacement` absent → vocab-bias word; present →
+ * deterministic whole-word replacement applied after LLM cleanup.
+ */
+export type DictionaryEntry = { id: string; term: string; replacement?: string | null }
+/**
+ * One install component — `{ id, label, bytes, installed }` (the estimate dialog).
+ */
+export type DownloadComponent = { id: string; label: string; bytes: number; installed: boolean }
+/**
+ * `{ alreadyInstalled, components, totalBytes, unavailable? }` —
+ * the `TtsDownloadEstimatePayload` wire shape (`ttsDownloadEstimate`).
+ */
+export type DownloadEstimatePayload = { alreadyInstalled: boolean; components: DownloadComponent[]; totalBytes: number; unavailable: boolean }
+/**
+ * One dropped file: its native path + display name (resolved renderer-side via
+ * the `getPathForFile` drag-drop bridge). Mirrors the Electron enqueue payload.
+ */
+export type DroppedFile = { filePath: string; fileName?: string }
+/**
+ * OpenRouter reasoning effort / verbosity (`low`/`medium`/`high`).
+ */
+export type EffortLevel = "low" | "medium" | "high"
 export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+/**
+ * `general.fileTranscriptionSaveLocation`. `auto` = beside source, `ask` = dialog.
+ */
+export type FileSaveLocation = "auto" | "ask"
+/**
+ * Per-file/per-chunk file-transcription progress.
+ */
+export type FileTranscribeProgressPayload = { id: string; path: string; status: string; progress: number; text: string | null; error: string | null }
+/**
+ * `general.fileTranscriptionFormat`.
+ */
+export type FileTranscriptionFormat = "txt" | "srt"
+/**
+ * Server-authoritative fit assessment — mirrors the renderer's `FitAssessmentEntry`. Returned as
+ * `Option` because the renderer has a full client-side mirror and tolerates `None`
+ * (`invokeOrDefault(..., null)`); the per-row badges render from the mirror regardless.
+ */
+export type FitAssessmentEntry = { severity: string; target: string; required_bytes: number; available_bytes: number; reasons: string[] }
+export type GeneralSettings = { 
+/**
+ * Launch on OS login. HOT-SWAP (Tauri autostart).
+ */
+autoStart?: boolean; 
+/**
+ * Close → tray instead of quit. HOT-SWAP.
+ */
+minimizeToTray?: boolean; 
+/**
+ * Start hidden in tray. HOT-SWAP.
+ */
+startMinimized?: boolean; 
+/**
+ * Duck system playback to `(100-v)%` while dictating; 0=off, 100=mute.
+ * Range 0..100, UI step 20. HOT-SWAP. Zod `.catch(0)`.
+ */
+systemAudioReductionWhileDictating?: number; 
+/**
+ * Play chime on record start/stop. HOT-SWAP.
+ */
+recordingSound?: boolean; 
+/**
+ * Active chime clip; `""` = built-in default, else absolute path. HOT-SWAP.
+ */
+recordingSoundPath?: string; 
+/**
+ * User-uploaded chime clips (copied into `userData/sounds/`). HOT-SWAP. Zod `.catch([])`.
+ */
+recordingSoundLibrary?: SoundLibraryEntry[]; 
+/**
+ * Output format for file transcription. HOT-SWAP.
+ */
+fileTranscriptionFormat?: FileTranscriptionFormat; 
+/**
+ * `auto` = beside source, `ask` = save dialog. HOT-SWAP.
+ */
+fileTranscriptionSaveLocation?: FileSaveLocation; 
+/**
+ * How a recording session starts. CONDITIONAL restart (wakeword boundary).
+ */
+recordingMode?: RecordingMode; 
+/**
+ * In toggle mode: continuous press-to-press, disable VAD/silence stop. HOT-SWAP.
+ */
+manualToggleStop?: boolean; 
+/**
+ * Re-paste last transcription — exclusive global shortcut (uiohook accel
+ * format; converted to a Tauri accelerator at registration). HOT-SWAP.
+ * Must be non-empty (Zod `.min(1).catch`).
+ */
+repasteHotkey?: string; 
+/**
+ * Loopback device index for `listen` mode; `null` = default. HOT-SWAP.
+ */
+loopbackDeviceIndex?: number | null; 
+/**
+ * Wake word in `wakeword` mode (Porcupine / openWakeWord keyword; KWS in the
+ * Rust port). CONDITIONAL restart (in wakeword mode).
+ */
+wakeWord?: string; 
+/**
+ * Wake-word detector sensitivity. Range 0..1. CONDITIONAL restart.
+ */
+wakeWordSensitivity?: number; 
+/**
+ * Seconds the gate stays armed after detection. Range 1..30. CONDITIONAL restart.
+ */
+wakeWordTimeout?: number; 
+/**
+ * Show floating recording pill. CONDITIONAL (affects effective-realtime).
+ */
+showRecordingOverlay?: boolean; 
+/**
+ * Overlay visual layout. HOT-SWAP. Zod `.catch`.
+ */
+overlayMode?: OverlayMode; 
+/**
+ * Whether/where the pill appears. HOT-SWAP. Zod `.catch`.
+ */
+overlayPosition?: OverlayPosition; 
+/**
+ * Overlay visualizer height preset. HOT-SWAP. Zod `.catch`.
+ */
+visualizerSize?: VisualizerSize; 
+/**
+ * Where live preview renders; also gates effective-realtime. CONDITIONAL. Zod `.catch`.
+ */
+liveTranscriptionDisplay?: LiveTranscriptionDisplay; 
+/**
+ * Visualizer style. HOT-SWAP.
+ */
+visualizerType?: VisualizerType; 
+/**
+ * Bars in the visualizer. Range 3..21. HOT-SWAP. Zod `.catch(9)`.
+ */
+visualizerBarCount?: number; visualizerRadialDotCount?: number; visualizerRadialRadius?: number; visualizerGridRows?: number; visualizerGridColumns?: number; visualizerGridSpeed?: number; visualizerWaveLineWidth?: number; visualizerWaveSmoothing?: number; visualizerWaveColorShift?: number; visualizerAuraShape?: VisualizerAuraShape; visualizerAuraBlur?: number; visualizerAuraBloom?: number; visualizerAuraColorShift?: number; 
+/**
+ * Read focused-window text (UIA/AX) → feed LLM cleanup. HOT-SWAP.
+ */
+contextAwareness?: boolean; 
+/**
+ * Deny-list for context capture (exe basenames / URL host suffixes). HOT-SWAP.
+ * Seeded with common password managers. Zod `.catch(<same seed>)`.
+ */
+contextDenyList?: string[]; 
+/**
+ * Per-utterance speaker diarization (~32 MB models, first-run download).
+ * HOT-SWAP (runtime toggle via diarization-toggle method).
+ */
+speakerDiarization?: boolean; 
+/**
+ * Sentry crash-reporting opt-out. STARTUP-ONLY (Sentry `init()` reads once).
+ */
+sendCrashReports?: boolean; 
+/**
+ * Opt-in pre-release auto-updates. HOT-SWAP.
+ */
+receivePrereleaseUpdates?: boolean; 
+/**
+ * First-run wizard gate (MAIN-owned). Zod `.catch(false)`.
+ */
+onboarded?: boolean; 
+/**
+ * Epoch-ms when wizard finished/skipped (MAIN-owned). Zod `.catch(null)`.
+ */
+onboardedAt?: number | null; 
+/**
+ * Which STT track the wizard picked (MAIN-owned). Zod `.catch("")`.
+ */
+onboardedTrack?: OnboardedTrack; 
+/**
+ * Output device for TTS + chimes (`MediaDeviceInfo.deviceId`; `""`=default).
+ * HOT-SWAP. Zod `.catch("")`.
+ */
+outputDeviceId?: string; 
+/**
+ * Auto-press a submit key after each paste. HOT-SWAP. Zod `.catch(false)`.
+ */
+autoSubmit?: boolean; 
+/**
+ * Which key combo to inject on auto-submit. HOT-SWAP. Zod `.catch("enter")`.
+ */
+autoSubmitKey?: AutoSubmitKey; 
+/**
+ * Cap on persisted history entries. Range 10..10000. HOT-SWAP. Zod `.catch(1000)`.
+ */
+historyMaxEntries?: number; 
+/**
+ * Auto-delete saved WAV recordings policy. HOT-SWAP. Zod `.catch("cap")`.
+ */
+recordingRetention?: RecordingRetention; 
+/**
+ * Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
+ */
+wordCorrectionThreshold?: number; 
+/**
+ * Strip filler words + collapse 3+ stutters. HOT-SWAP. Zod `.catch(true)`.
+ */
+filterFillers?: boolean; 
+/**
+ * Per-user override of the filler-word table. HOT-SWAP. Zod `.catch([])`.
+ */
+customFillerWords?: string[] }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+/**
+ * One GPU as the renderer's `GpuInfo` rows expect. `gpu_get_info` powers the device-picker /
+ * quality settings GPU chip. SPIKE: enumerate adapters via DXGI; empty list = "no GPU detected".
+ */
+export type GpuInfoEntry = { name: string; total_vram_bytes: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
+/**
+ * Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
+ * history window + paginated list. NUMBER id, epoch-SECONDS timestamp.
+ */
+export type HistoryRow = { id: number; fileName: string; timestamp: number; saved: boolean; title: string; transcriptionText: string; postProcessedText: string | null; postProcessPrompt: string | null; postProcessRequested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
+export type HotkeySettings = { 
+/**
+ * Primary PTT/toggle hotkey (uiohook accelerator). HOT-SWAP (passive).
+ * Must be non-empty (Zod `.min(1).catch`).
+ */
+pushToTalkKey?: string }
 /**
  * Result of changing keyboard implementation
  */
@@ -851,25 +2453,626 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+export type IntegrationsSettings = { openai?: ProviderIntegrationStatus; elevenlabs?: ProviderIntegrationStatus }
+export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * One language `{ code, label }`.
+ */
+export type LanguagePayload = { code: string; label: string }
+/**
+ * One GPU as the renderer's `LiveResourcesEntry.gpus` (ipc-client.ts `LiveGpuEntry`) expects it.
+ * snake_case on the wire — the renderer reads `total_vram_bytes` / `free_vram_bytes` directly.
+ */
+export type LiveGpuEntry = { name: string; total_vram_bytes: number; free_vram_bytes: number; used_vram_bytes: number; utilization_percent: number }
+/**
+ * Live host snapshot — byte-identical to the renderer's `LiveResourcesEntry` (ipc-client.ts) so
+ * the picker's client-side fit mirror (`assessDictationFitClient`) reads it verbatim. A zeroed
+ * snapshot is valid (the fit assessors degrade to `unknown_footprint`); real numbers are a
+ * compile-loop spike (`sysinfo` + DXGI VRAM) deferred to avoid adding a crate mid-port.
+ */
+export type LiveResources = { cpu_count_logical: number; cpu_count_physical: number; cpu_percent: number; gpus: LiveGpuEntry[]; ram_available_bytes: number; ram_total_bytes: number }
+/**
+ * `general.liveTranscriptionDisplay`. Also GATES whether realtime is
+ * effectively enabled (the `--enable_realtime_transcription` flag) → CONDITIONAL
+ * restart when the effective-realtime flag flips.
+ */
+export type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both"
+export type LlmDictation = 
+/**
+ * Flattened so the shared fields sit at `llm.dictation.<field>` (matches
+ * Zod's `...llmFeatureBaseShape` spread). Inner-field defaults handle a
+ * partial JSON; see the note on `LlmFeatureBase`.
+ */
+({ provider?: LlmProvider; 
+/**
+ * Ollama model name.
+ */
+model?: string; 
+/**
+ * `modelId` or `modelId@providerSlug`; `""` = Auto.
+ */
+openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: EffortLevel; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
+/**
+ * Explicit LLM config the Playground runs against (mirrors `LlmPreviewConfig` /
+ * the electron-main `FeatureLlmConfig`). Connection values (endpoint, key) are
+ * read from settings regardless, so they are NOT carried here.
+ */
+export type LlmPreviewConfig = { provider?: string; model?: string; openrouterModel?: string; openrouterFallbackModel?: string; thinkingEffort?: string; presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
+/**
+ * LLM provider for a per-feature config (`llm.dictation` / `llm.transforms`).
+ */
+export type LlmProvider = "ollama" | "openrouter" | "apple-intelligence"
+export type LlmSettings = { 
+/**
+ * Shared Ollama endpoint URL.
+ */
+endpoint?: string; 
+/**
+ * SECRET — OpenRouter API key. Encrypt at rest (see 02_settings.md).
+ */
+openrouterApiKey?: string; dictation?: LlmDictation; transforms?: LlmTransforms; 
+/**
+ * Client request timeout (ms). Range 1000..30000. Persisted but NOT applied at network layer.
+ */
+timeout?: number }
+export type LlmTransforms = ({ provider?: LlmProvider; 
+/**
+ * Ollama model name.
+ */
+model?: string; 
+/**
+ * `modelId` or `modelId@providerSlug`; `""` = Auto.
+ */
+openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: EffortLevel; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[]; 
+/**
+ * Always non-empty (Zod `.min(1).catch`). The transform's invoke hotkey.
+ */
+hotkey?: string; 
+/**
+ * User-configurable text transforms (built-ins carry `builtin: true`).
+ */
+prompts?: Transform[] }
+export type LlmWarmupModelStatus = { model: string; outcome: LlmWarmupOutcome; errorBody?: string | null }
+export type LlmWarmupOutcome = "ok" | "model-not-found" | "load-failed" | "unreachable" | "skipped" | "loading"
+export type LlmWarmupStatus = { endpoint: string; inProgress: boolean; models: LlmWarmupModelStatus[]; ollamaInstalled: boolean; reachable: boolean; timestamp: number }
+/**
+ * One local Kokoro voice — `{ id, label, language, gender }`.
+ */
+export type LocalVoicePayload = { id: string; label: string; language: string; gender: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * One loopback-capable output device, in the renderer's expected shape.
+ * 
+ * `index` is the positional ordinal in the WASAPI render-device enumeration
+ * (NOT a PyAudio host-API index — there's no PyAudio here). `start_listen`
+ * resolves it back to the endpoint id by re-enumerating in the same order.
+ */
+export type LoopbackDevicePayload = { index: number; name: string; 
+/**
+ * WASAPI render endpoints are mixed at 48 kHz on Windows; the renderer only
+ * displays this and never gates on it, so a fixed default is faithful to the
+ * shared-mode mix the loopback capture actually sees.
+ */
+defaultSampleRate: number; 
+/**
+ * Loopback capture mirrors the render mix as 2-channel; the renderer only
+ * uses this for display.
+ */
+maxOutputChannels: number; isDefault: boolean }
+/**
+ * `audio.microphoneRelease`. Consolidates Handy's
+ * `always_on_microphone` + `lazy_stream_close` + `lazy_close_timeout_seconds`
+ * into one picker; the spawn layer fans it back out into those CLI flags.
+ * HOT-SWAP (audio-source reconfigure in place).
+ */
+export type MicrophoneRelease = "always" | "immediate" | "sec_30" | "min_1" | "min_5"
+/**
+ * Per-precision cache snapshot, mirroring the renderer's `ModelCacheInfo`.
+ */
+export type ModelCacheInfo = { 
+/**
+ * "cached" | "partial" | "not_cached".
+ */
+state: string; downloaded_bytes: number; total_bytes: number; 
+/**
+ * 0.0..1.0 (1.0 when cached).
+ */
+progress: number }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
+export type ModelSettings = { 
+/**
+ * Catalog id (`tiny`…`large-v3-turbo`, onnx families) OR `<provider>:<id>`
+ * for cloud (`openai:whisper-1`, `elevenlabs:...`) OR a custom-folder id.
+ * HOT-SWAP (in-place engine swap).
+ */
+model?: string; 
+/**
+ * Realtime/live-preview model (must support realtime). HOT-SWAP.
+ */
+realtimeModel?: string; 
+/**
+ * Forced decode language (`""` = auto-detect). HOT-SWAP.
+ */
+language?: string; 
+/**
+ * CPU vs auto-GPU. STARTUP-ONLY.
+ */
+device?: DeviceType; 
+/**
+ * Transcriber engine (auto-derived from model id on load). HOT-SWAP.
+ */
+backend?: TranscriberBackend; 
+/**
+ * ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `q4`, `q4f16`,
+ * `bnb4`). Free-string (not an enum) — the catalog gates valid values per
+ * model and the server resolves `""`/`auto`. HOT-SWAP.
+ */
+onnxQuantization?: string; 
+/**
+ * Whisper decoder-bias prompt (main). HOT-SWAP (read per-utterance).
+ * INVARIANT: Canary/Cohere ignore this slot (untrained) — do not bias them.
+ */
+initialPrompt?: string; 
+/**
+ * Decoder-bias prompt for the realtime worker (build-time). HOT-SWAP.
+ */
+initialPromptRealtime?: string; 
+/**
+ * Whisper task=translate (multilingual Whisper only). HOT-SWAP. Zod `.catch(false)`.
+ */
+translateToEnglish?: boolean; 
+/**
+ * Idle-unload policy. HOT-SWAP. Zod `.catch("min5")`.
+ */
+modelUnloadTimeout?: ModelUnloadTimeout }
+/**
+ * Per-model cache + fitness state — mirrors the renderer's `ModelStateEntry` (model-state-store.ts).
+ */
+export type ModelStateEntry = { id: string; cache: ModelCacheInfo; cache_by_quantization: Partial<{ [key in string]: ModelCacheInfo }>; available_quantizations: string[]; 
+/**
+ * The precision the loader will ACTUALLY load under the current device — the badge bridge
+ * (memory project_effective_quantization_bridge). The picker keys "downloaded?" off this.
+ */
+effective_quantization: string; estimated_bytes: number; comfortable_on_gpu: boolean; comfortable_on_cpu: boolean }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+/**
+ * `model.modelUnloadTimeout`. IPC normalizes `never` → negative seconds
+ * sentinel ("keep loaded forever"), `immediately` → 0 (tear down after each
+ * transcription). HOT-SWAP (retunes the idle-unload daemon in place).
+ */
+export type ModelUnloadTimeout = "immediately" | "never" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1"
+/**
+ * The full `fetchModelsWithState` payload: `{ models, states, system_info }`.
+ */
+export type ModelsWithState = { models: CatalogModelInfo[]; states: ModelStateEntry[]; system_info: SystemInfoEntry }
+/**
+ * `OllamaDeleteResult` — `{ success, model, error? }`.
+ */
+export type OllamaDeleteResultPayload = { success: boolean; model: string; error?: string | null }
+/**
+ * `OllamaDetectResult` — `{ installed, path? }`.
+ */
+export type OllamaDetectResultPayload = { installed: boolean; path?: string | null }
+export type OllamaLibraryCatalogResult = { hits: OllamaLibraryHit[]; error?: string | null }
+export type OllamaLibraryHit = { name: string; description?: string | null; pulls?: string | null; updated?: string | null; capabilities?: string[] | null }
+export type OllamaLibrarySearchResult = { hits: OllamaLibraryHit[]; hasMore: boolean; page: number; query: string; error?: string | null }
+export type OllamaLibraryTag = { name: string; sizeBytes?: number | null; sizeLabel?: string | null; contextWindow?: string | null; quantization?: string | null; parameterSize?: string | null; isLatest?: boolean | null }
+export type OllamaLibraryTagsResult = { model: string; tags: OllamaLibraryTag[]; error?: string | null }
+/**
+ * `OllamaModelDetails` (camelCase per spec).
+ */
+export type OllamaModelDetailsPayload = { format?: string | null; family?: string | null; families?: string[] | null; parameterSize?: string | null; quantizationLevel?: string | null }
+/**
+ * `OllamaModel` (camelCase per spec). Consumed by `OllamaScanResult.models[]`.
+ */
+export type OllamaModelPayload = { name: string; size?: number | null; modifiedAt?: string | null; details?: OllamaModelDetailsPayload | null; capabilities?: string[] | null }
+/**
+ * `OllamaPullResult` — `{ success, model, cancelled?, error? }`.
+ */
+export type OllamaPullResultPayload = { success: boolean; model: string; cancelled?: boolean | null; error?: string | null }
+/**
+ * `OllamaScanResult` — the shape `useLlmCatalogStore.scanModels()` consumes.
+ */
+export type OllamaScanResultPayload = { models: OllamaModelPayload[]; reachable: boolean; error?: string | null }
+/**
+ * `{ started, error? }` — the `startOllama()` IPC result.
+ */
+export type OllamaStartResultPayload = { started: boolean; error?: string | null }
+/**
+ * `general.onboardedTrack` — which STT track the wizard picked. Empty = wizard
+ * not run. Serializes as `""` / `"local"` / `"cloud"`.
+ */
+export type OnboardedTrack = "" | "local" | "cloud"
+/**
+ * Payload the renderer sends when finishing (or skipping) the wizard. Mirrors
+ * `OnboardingWizard.handleFinish({ completed, track })`. `track` is the raw
+ * string ("" | "local" | "cloud") so the typed-enum mapping happens here.
+ */
+export type OnboardingFinishArgs = { completed: boolean; track?: string }
+/**
+ * `OpenRouterModel` (snake_case keys per spec — NOT renamed).
+ */
+export type OpenRouterModelPayload = { id: string; name: string; description?: string | null; context_length?: number | null; pricing?: JsonValue | null; provider?: string | null; maker?: string | null; model_name?: string | null; variant?: string | null; architecture?: JsonValue | null; supported_parameters?: string[] | null }
+/**
+ * `OpenRouterScanResult` — `{ models, reachable, error? }`.
+ */
+export type OpenRouterScanResultPayload = { models: OpenRouterModelPayload[]; reachable: boolean; error?: string | null }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
+/**
+ * `general.overlayMode`.
+ */
+export type OverlayMode = "floating-bottom" | "dynamic-island"
+/**
+ * `general.overlayPosition` — coarse screen-edge gate (distinct from layout style).
+ */
+export type OverlayPosition = "auto" | "none" | "top" | "bottom"
 export type OverlayPosition = "none" | "top" | "bottom"
+/**
+ * `PaginatedHistory` (camelCase `hasMore`) returned by `history_list`.
+ */
+export type PaginatedHistory = { entries: HistoryRow[]; hasMore: boolean }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+/**
+ * The partial section patch the renderer posts to `winstt_set_settings`.
+ * 
+ * The renderer (`collectChangedSections` in `features/update-settings`) diffs
+ * against its last-saved baseline and sends only the changed top-level sections
+ * (e.g. VAD calibration and device-switch-feedback post just `{ audio }` after
+ * every utterance). Every field is `Option` so an absent section deserializes
+ * to `None` (= "leave the persisted value untouched") rather than resetting to a
+ * default — the clobber the old full-`WinsttSettings` parameter caused.
+ * 
+ * Sections are always posted whole (the renderer copies the entire section
+ * value), so an `Option<Section>` round-trips losslessly.
+ */
+export type PartialWinsttSettings = { model?: ModelSettings | null; quality?: QualitySettings | null; audio?: AudioSettings | null; general?: GeneralSettings | null; hotkey?: HotkeySettings | null; dictionary?: DictionaryEntry[] | null; snippets?: SnippetEntry[] | null; llm?: LlmSettings | null; tts?: TtsSettings | null; integrations?: IntegrationsSettings | null }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * `presetEntrySchema`. `level` valid only for summarize/concise; `targetLang`
+ * valid only for translate (cross-field constraints enforced at the app layer).
+ */
+export type PresetEntry = { key: PresetKey; level?: PresetLevel | null; 
+/**
+ * English name of the target language; only meaningful for `Translate`.
+ */
+targetLang?: string | null }
+/**
+ * LLM preset key (`presetKeySchema`). Built-in cleanup modifiers.
+ * Constraints (enforced at the application layer, not by the type): no
+ * duplicate keys; ≤1 tone key (Neutral/Formal/Friendly/Technical);
+ * `level` only for Summarize/Concise; `targetLang` only for Translate.
+ */
+export type PresetKey = "neutral" | "formal" | "friendly" | "technical" | "concise" | "summarize" | "reorder" | "restructure" | "rewordForClarity" | "translate"
+/**
+ * `presetLevelSchema` — intensity for summarize/concise (and custom modifiers).
+ */
+export type PresetLevel = "light" | "medium" | "high"
+/**
+ * `providerIntegrationStatusSchema`. `api_key` is plaintext in-memory but
+ * MUST be encrypted at rest (`enc:v1:<base64>`); the persistence layer
+ * transparently encrypts on save / decrypts on read.
+ */
+export type ProviderIntegrationStatus = { 
+/**
+ * SECRET — encrypt at rest.
+ */
+apiKey?: string; 
+/**
+ * Result of the last probe; `null` = never probed.
+ */
+verified?: boolean | null; 
+/**
+ * Epoch-ms of last successful probe.
+ */
+lastVerifiedAt?: number | null }
+export type QualitySettings = { 
+/**
+ * Use main model (vs separate realtime model) for live preview. STARTUP-ONLY.
+ */
+useMainModelForRealtime?: boolean; 
+/**
+ * Pause between realtime passes (s). STARTUP-ONLY.
+ */
+realtimeProcessingPause?: number; 
+/**
+ * Delay before spinning up the realtime worker (s). STARTUP-ONLY.
+ */
+initRealtimeAfterSeconds?: number; 
+/**
+ * Early-finalize-on-silence threshold (s). STARTUP-ONLY.
+ */
+earlyTranscriptionOnSilence?: number; 
+/**
+ * Capitalize first letter of output. HOT-SWAP.
+ */
+ensureSentenceStartingUppercase?: boolean; 
+/**
+ * Append terminal period. HOT-SWAP.
+ */
+ensureSentenceEndsWithPeriod?: boolean; 
+/**
+ * DistilBERT sentence-completion classifier for endpointing. HOT-SWAP.
+ */
+smartEndpoint?: boolean; 
+/**
+ * Pause multiplier `(model+whisper)*speed`; higher = more patient.
+ * Range 0.5..3.0. HOT-SWAP.
+ */
+smartEndpointSpeed?: number; 
+/**
+ * Silence after `.!?` before stop (silence-timing fallback). Range 0.1..5.0. HOT-SWAP.
+ */
+endOfSentenceDetectionPause?: number; 
+/**
+ * Silence after `...` before stop. Range 0.1..10.0. HOT-SWAP.
+ */
+midSentenceDetectionPause?: number; 
+/**
+ * Silence after no-terminator speech before stop. Range 0.1..5.0. HOT-SWAP.
+ */
+unknownSentenceDetectionPause?: number }
+/**
+ * Realtime preview after stabilization (committed-watermark accumulator).
+ */
+export type RealtimeStabilizedPayload = { text: string }
+/**
+ * Raw realtime preview (pre-stabilization) — drives the noise-break heuristic.
+ */
+export type RealtimeUpdatePayload = { text: string }
+/**
+ * `general.recordingMode`. CONDITIONAL restart: only crossing into/out of
+ * `wakeword` (or changing wakeword config while in it) restarts the engine.
+ */
+export type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword"
+/**
+ * `general.recordingRetention`. `never` = keep all; `cap` = oldest beyond
+ * historyMaxEntries; days3/weeks2/months3 = absolute age cutoff.
+ */
+export type RecordingRetention = "never" | "cap" | "days_3" | "weeks_2" | "months_3"
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+/**
+ * Active-runtime snapshot — byte-identical to the renderer's `RuntimeInfoPayload` (ipc-client.ts):
+ * drives the GPU/CPU chip + the `useSyncActiveModel` reconciliation.
+ */
+export type RuntimeInfoPayload = { 
+/**
+ * "cpu" | "directml" | "cuda" | "auto" (the resolved EP label).
+ */
+device: string; is_gpu: boolean; 
+/**
+ * The currently-loaded MAIN model id (`None` until a model loads).
+ */
+model: string | null; 
+/**
+ * Active ORT execution providers (e.g. ["DmlExecutionProvider","CPUExecutionProvider"]).
+ */
+providers: string[]; 
+/**
+ * The currently-loaded REALTIME model id (`None` when realtime isn't loaded).
+ */
+realtime_model: string | null }
 export type SecretMap = Partial<{ [key in string]: string }>
+/**
+ * Result of `winstt_set_settings`: whether the change requires an engine
+ * restart, and which dot-paths drove that decision (for diagnostics / UI).
+ */
+export type SetSettingsResult = { needsRestart: boolean; changedStartupKeys: string[] }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+/**
+ * `snippetEntrySchema` — text-expansion pair.
+ */
+export type SnippetEntry = { id: string; trigger: string; expansion: string }
+/**
+ * Result of `sound_library_add` (matches `SoundLibraryAddResult`).
+ */
+export type SoundLibraryAddResult = { ok: boolean; entry?: SoundLibraryEntry | null; error?: string | null }
+/**
+ * `soundLibraryEntrySchema` — one user-uploaded recording-chime clip.
+ */
+export type SoundLibraryEntry = { id: string; name: string; 
+/**
+ * Absolute path on disk under `userData/sounds/`.
+ */
+path: string }
+/**
+ * One persisted library entry surfaced to the renderer (matches `SoundLibraryEntryDTO`).
+ */
+export type SoundLibraryEntry = { id: string; name: string; path: string }
+/**
+ * Result of `sound_library_remove` (matches `SoundLibraryRemoveResult`).
+ */
+export type SoundLibraryRemoveResult = { ok: boolean; error?: string | null }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * Result of a speak/preview start — the request id the renderer correlates the
+ * `tts://chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
+ * `ipc-client.ts` (`{ requestId }`).
+ */
+export type SpeakResult = { requestId: string }
+/**
+ * Diarized speaker segments for a listen-mode window.
+ */
+export type SpeakerSegment = { speaker: number; start: number; end: number; text: string }
+export type SpeakerSegmentsPayload = { segments: SpeakerSegment[] }
+/**
+ * System snapshot for fitness heuristics — mirrors the renderer's `SystemInfoEntry`.
+ */
+export type SystemInfoEntry = { total_ram_bytes: number; gpus: SystemInfoGpu[] }
+/**
+ * One GPU as the renderer's `SystemInfoEntry.gpus` expects it.
+ */
+export type SystemInfoGpu = { name: string; total_vram_bytes: number }
+/**
+ * Ollama thinking budget — mirrors Ollama's `ThinkValue` (`off` → `think:false`).
+ */
+export type ThinkingEffort = "off" | "low" | "medium" | "high"
+/**
+ * `{ saved }` envelope for `history_toggle`. `null` when the row is missing.
+ */
+export type ToggleResult = { saved: boolean | null }
+/**
+ * `model.backend` — `TranscriberBackendSchema`.
+ * NOTE(port): the Rust engine (slice 03) is a single unified `ort` runtime, so
+ * `faster_whisper` is effectively a legacy default that the load path maps to
+ * the ONNX engine. Kept for settings round-trip parity with persisted JSON.
+ */
+export type TranscriberBackend = "faster_whisper" | "onnx_asr"
+/**
+ * Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
+ * + the settings panel sync. STRING id, epoch-MILLIS timestamp.
+ */
+export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null }
+/**
+ * `transformSchema` — a single user-configurable text transform.
+ * `builtin: true` entries show a Reset action instead of Delete in the UI.
+ */
+export type Transform = { id: string; name?: string; prompt?: string; hotkey?: string; builtin?: boolean }
+/**
+ * Returned by `apply_transform` and mirrored on the `transforms:applied` event.
+ * Field shape matches the renderer's `TransformApplyResult` exactly so the
+ * `invokeOrDefault` round-trip + the toast's `onTransformApplied` reshape are
+ * both identities.
+ */
+export type TransformApplyResult = { before: string; after: string; source: TransformSource }
+/**
+ * The selection source the capture resolved. Mirrors WinSTT's
+ * `ApplyResult.source` ("uia" | "clipboard" | "empty").
+ */
+export type TransformSource = "uia" | "clipboard" | "empty"
+export type TtsCloud = { 
+/**
+ * ElevenLabs account voice_id.
+ */
+voice?: string; model?: string; 
+/**
+ * 0..1.
+ */
+stability?: number; 
+/**
+ * 0..1.
+ */
+similarity?: number; 
+/**
+ * 0..1.
+ */
+style?: number; 
+/**
+ * 0.7..1.2.
+ */
+speed?: number; speakerBoost?: boolean }
+/**
+ * `{ ready }` — the `initTts` result shape (`{ ready: boolean }`).
+ */
+export type TtsInitResult = { ready: boolean }
+/**
+ * TTS lifecycle event (started / completed / failed / download-progress).
+ */
+export type TtsLifecyclePayload = { requestId: string; 
+/**
+ * "started" | "completed" | "failed" | "download-progress"
+ */
+phase: string; message: string | null; 
+/**
+ * 0.0..1.0 for download-progress.
+ */
+progress: number | null }
+export type TtsSettings = { enabled?: boolean; 
+/**
+ * Kokoro voice catalog id.
+ */
+voice?: string; lang?: string; 
+/**
+ * 0.5..2.0 multiplier.
+ */
+speed?: number; 
+/**
+ * Read-selection-aloud hotkey. Must be non-empty (Zod `.min(1).catch`).
+ */
+hotkey?: string; 
+/**
+ * Local Kokoro vs cloud ElevenLabs.
+ */
+source?: TtsSource; cloud?: TtsCloud }
+/**
+ * `tts.source` — local Kokoro vs cloud ElevenLabs.
+ */
+export type TtsSource = "local" | "cloud"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * Per-device VAD sensitivity calibration result (renderer persists it).
+ */
+export type VadSensitivityAdaptedPayload = { deviceId: string; sensitivity: number }
+/**
+ * Verify-credential outcome surfaced to the renderer.
+ */
+export type VerifyCredentialPayload = { ok: boolean; code: string | null; message: string | null }
+/**
+ * Verify-credential outcome — `{ ok, code?, message? }`. The renderer's
+ * verify-credentials feature reads `code === "network"` to split offline from
+ * invalid, so `code` MUST be the WinSTT taxonomy string.
+ */
+export type VerifyCredentialPayload = { ok: boolean; code?: string | null; message?: string | null }
+/**
+ * Verify-credential outcome surfaced to the renderer. Field names match the
+ * WinSTT `VerifyResponse` interface (`{ ok, code?, message? }`) so the
+ * verify-credentials feature + IntegrationsSettingsPanel consume it unchanged.
+ * `code` is the WinSTT error taxonomy string — `network` maps to the "offline"
+ * pill, anything else to "invalid".
+ */
+export type VerifyCredentialResponse = { ok: boolean; code?: string | null; message?: string | null }
+/**
+ * `general.visualizerAuraShape`.
+ */
+export type VisualizerAuraShape = "circle" | "line"
+/**
+ * `general.visualizerSize` — overlay visualizer height preset.
+ */
+export type VisualizerSize = "xs" | "sm" | "md" | "lg" | "xl"
+/**
+ * `general.visualizerType`.
+ */
+export type VisualizerType = "bar" | "grid" | "radial" | "wave" | "aura"
+/**
+ * `{ voices, languages }` — the `TtsVoiceCatalog` wire shape (`listTtsVoices`).
+ */
+export type VoiceCatalogPayload = { voices: LocalVoicePayload[]; languages: LanguagePayload[] }
+/**
+ * Wake-word detected (INACTIVE → LISTENING transition cue).
+ */
+export type WakeWordDetectedPayload = { word: string; wordIndex: number }
+/**
+ * One wake-word preset for the renderer dropdown.
+ */
+export type WakeWordPresetPayload = { name: string; phrase: string }
 export type WhisperAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
+/**
+ * The complete WinSTT settings tree, nested by the 9 settings tabs, ported
+ * 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON
+ * the reused React renderer expects.
+ * 
+ * Persisted via the Tauri store (one JSON value). Secrets are encrypted at
+ * rest by the persistence layer — they are plaintext on this struct.
+ */
+export type WinsttSettings = { model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings; 
+/**
+ * `[]` default; Zod `.catch([])` (pre-v10 entries fail the parser → wiped).
+ */
+dictionary?: DictionaryEntry[]; snippets?: SnippetEntry[]; llm?: LlmSettings; tts?: TtsSettings; integrations?: IntegrationsSettings }
+export type WordAlignmentPayload = { entryId: string; words: WordTiming[] }
+/**
+ * One word with start/end seconds (the renderer's highlight sweep input).
+ */
+export type WordResultPayload = { text: string; start: number; end: number }
+/**
+ * One word with start/end seconds — the `align_words` result for history playback.
+ */
+export type WordTiming = { text: string; start: number; end: number }
 
 /** tauri-specta globals **/
 

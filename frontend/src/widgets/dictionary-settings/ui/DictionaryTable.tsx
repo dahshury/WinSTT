@@ -1,5 +1,5 @@
 import { Form } from "@base-ui/react/form";
-import { Delete02Icon } from "@hugeicons/core-free-icons";
+import { Delete02Icon, PlusSignIcon, TextIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type FormEvent, useState } from "react";
 import { useTranslations } from "use-intl";
@@ -7,6 +7,12 @@ import { addDictionaryEntrySchema, type DictionaryEntry } from "@/shared/config/
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { FormControl } from "@/shared/ui/form-control";
+import {
+	InputGroup,
+	InputGroupAddon,
+	InputGroupButton,
+	InputGroupInput,
+} from "@/shared/ui/input-group";
 import {
 	Table,
 	TableBody,
@@ -16,7 +22,6 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/shared/ui/table";
-import { TextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 // Cap the entry list so it scrolls inside its own frame rather than growing
@@ -55,11 +60,22 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 
 	return (
 		<div className="flex flex-col gap-3">
-			<Form className="flex items-end gap-2" onSubmit={handleSubmit}>
-				<div className="flex-1">
-					<FormControl error={termError} label={t("term")}>
-						<TextField
-							error={!!termError}
+			{/* Add-a-term row: the term lives in an input-group whose trailing
+			    slot holds the Add button, so the field + its action read as one
+			    control (the fluidfunctionalism input-group recipe). */}
+			<Form onSubmit={handleSubmit}>
+				<FormControl error={termError} label={t("term")}>
+					<InputGroup
+						appearance="elevated"
+						className="h-9"
+						size="sm"
+						tone={termError ? "danger" : "default"}
+					>
+						<InputGroupAddon align="inline-start">
+							<HugeiconsIcon aria-hidden="true" icon={TextIcon} size={14} />
+						</InputGroupAddon>
+						<InputGroupInput
+							aria-invalid={!!termError}
 							name="term"
 							onChange={(event) => {
 								setTerm(event.target.value);
@@ -70,15 +86,18 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 							placeholder={t("termPlaceholder")}
 							value={term}
 						/>
-					</FormControl>
-				</div>
-				<Button
-					className="mb-3 h-8 rounded-md bg-accent px-3 font-medium text-black text-body transition-colors duration-150 hover:bg-accent-hover"
-					disabled={isAddDisabled}
-					type="submit"
-				>
-					{tc("add")}
-				</Button>
+						<InputGroupAddon align="inline-end">
+							<InputGroupButton
+								aria-label={tc("add")}
+								disabled={isAddDisabled}
+								tone="surface"
+								type="submit"
+							>
+								<HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2.25} />
+							</InputGroupButton>
+						</InputGroupAddon>
+					</InputGroup>
+				</FormControl>
 			</Form>
 			{/* Scroll lives on this OUTER frame so the Table's inner
 			    proximity-hover container scrolls as one unit within it and the
@@ -129,10 +148,11 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 						title={t("clearTitle")}
 					/>
 					<Button
-						className="h-7 self-end rounded-md border border-error bg-transparent px-2.5 font-medium text-error text-xs transition-colors duration-150 hover:bg-error-dim"
+						className="h-7 gap-1.5 self-end rounded-md bg-error-dim/40 px-2.5 font-medium text-error text-xs ring-1 ring-error/25 transition-colors duration-150 hover:bg-error-dim/70 hover:ring-error/40 disabled:opacity-50"
 						disabled={entries.length === 0}
 						onClick={() => setClearConfirmOpen(true)}
 					>
+						<HugeiconsIcon aria-hidden="true" icon={Delete02Icon} size={14} />
 						{tc("deleteAll")}
 					</Button>
 				</>

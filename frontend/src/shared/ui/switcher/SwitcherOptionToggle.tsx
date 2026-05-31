@@ -51,18 +51,20 @@ export function SwitcherOptionToggle<T extends string>({
 		if (isSelected || isHovered) {
 			return "text-foreground";
 		}
-		// foreground-dim (oklch 38%) is barely legible against the elevated
-		// switcher substrate; -muted (55%) keeps the unselected options
-		// clearly readable while still ranking visually below the
-		// selected/hovered label.
-		return "text-foreground-muted";
+		// Unselected options sit on the elevated switcher substrate (up to
+		// surface-7 inside a nested ElevatedSurface, e.g. the modifier level
+		// switcher), where -muted (oklch 55%) still reads as faint and blends
+		// into the track. -secondary (73%) keeps unmarked choices clearly
+		// legible; the selected/hovered label stays ahead via full -foreground +
+		// semibold + the lifted pill.
+		return "text-foreground-secondary";
 	})();
 	const toggleEl = (
 		<Toggle
 			className={cn(
 				"relative z-raised inline-flex items-center justify-center gap-1.5 bg-transparent px-3 py-1 font-medium text-body-sm outline-none transition-colors focus-visible:outline-none",
 				textClass,
-				option.disabled && "cursor-not-allowed opacity-40",
+				option.disabled && "cursor-not-allowed opacity-60",
 				fullWidth && "flex-1"
 			)}
 			data-switcher-index={dataIndex}

@@ -23,6 +23,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use tokio::sync::Semaphore;
 
 const OLLAMA_BASE: &str = "https://ollama.com";
 const USER_AGENT: &str = "WinSTT/1.0 (+https://github.com/dahshury/WinSTT)";
@@ -31,6 +32,16 @@ const CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 // Full library catalog rarely changes — hold it for an hour. Per-tag pages keep the shorter TTL.
 const CATALOG_TTL: Duration = Duration::from_secs(60 * 60);
 const PAGE_SIZE: usize = 20;
+
+// ── Burst control ────────────────────────────────────────────────────────────────
+// ollama.com sits behind Cloudflare, which resets excess concurrent connections
+// from one client and stalls the queued ones past the timeout. Browsing the library
+// fires many tag scrapes at once (one renderer `invoke` per row), so a single
+// request always succeeds while the burst fails. Cap concurrency and retry the
+// transient drops with backoff — mirrors `electron/ipc/ollama-registry.ts`.
+const MAX_CONCURRENT_FETCHES: usize = 3;
+const MAX_FETCH_RETRIES: u32 = 2;
+const RETRY_BACKOFF_MS: u64 = 400;
 
 // ── Payload types (mirror spec/openapi.yaml) ────────────────────────────────────
 
@@ -175,22 +186,50 @@ fn cache_set_catalog(value: OllamaLibraryCatalogResult) {
 
 // ── HTTP fetcher ────────────────────────────────────────────────────────────────
 
-async fn fetch_html(url: &str) -> Result<String, String> {
-    let client = reqwest::Client::builder()
+// One shared client (connection pooling + consistent TLS) and one shared slot
+// pool across catalog/search/tags scrapes.
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
-        .map_err(|e| e.to_string())?;
-    let res = client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, USER_AGENT)
-        .header(reqwest::header::ACCEPT, "text/html")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("Ollama returned HTTP {}", res.status().as_u16()));
+        .expect("failed to build reqwest client")
+});
+static FETCH_GATE: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(MAX_CONCURRENT_FETCHES));
+
+/// Retry only the burst-induced transients — connection resets and timeouts.
+/// HTTP-status errors are deterministic, so re-hitting them just wastes time.
+fn is_retryable_fetch_error(err: &reqwest::Error) -> bool {
+    err.is_connect() || err.is_timeout() || err.is_request()
+}
+
+async fn fetch_html(url: &str) -> Result<String, String> {
+    let _permit = FETCH_GATE.acquire().await.map_err(|e| e.to_string())?;
+    let mut attempt: u32 = 0;
+    loop {
+        let send_result = HTTP_CLIENT
+            .get(url)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .header(reqwest::header::ACCEPT, "text/html")
+            .header(reqwest::header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+            .send()
+            .await;
+        match send_result {
+            Ok(res) => {
+                if !res.status().is_success() {
+                    return Err(format!("Ollama returned HTTP {}", res.status().as_u16()));
+                }
+                return res.text().await.map_err(|e| e.to_string());
+            }
+            Err(err) => {
+                if attempt >= MAX_FETCH_RETRIES || !is_retryable_fetch_error(&err) {
+                    return Err(err.to_string());
+                }
+                let backoff = RETRY_BACKOFF_MS * (1u64 << attempt);
+                tokio::time::sleep(Duration::from_millis(backoff)).await;
+                attempt += 1;
+            }
+        }
     }
-    res.text().await.map_err(|e| e.to_string())
 }
 
 /// Minimal percent-encode for the search query (component, not full URL). Mirrors
@@ -235,8 +274,11 @@ fn non_empty(s: String) -> Option<String> {
 
 // ── Search-page parser ──────────────────────────────────────────────────────────
 
+// ollama.com appends utility classes after `group w-full` (e.g. `space-y-5`), so
+// match the class prefix tolerantly — the strict `group w-full">` form silently
+// matched zero models after a site markup change, emptying the library browse.
 static SEARCH_HIT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"<a\s+href="/library/([^"]+)"\s+class="group w-full">"#).unwrap());
+    Lazy::new(|| Regex::new(r#"<a\s+href="/library/([^"]+)"\s+class="group w-full[^"]*">"#).unwrap());
 static TITLE_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"title="([^"]+)""#).unwrap());
 static DESCRIPTION_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?s)<p[^>]*class="[^"]*max-w-lg[^"]*"[^>]*>(.*?)</p>"#).unwrap());
@@ -318,8 +360,9 @@ static CONTEXT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)([\d.]+[KMB])\s*context\s*window"#).unwrap());
 static QUANT_TOKEN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)($|[-:_])"#).unwrap());
+// Optional `e` prefix captures Gemma 3n/4 MatFormer "effective" sizes (`e2b`).
 static PARAM_TOKEN_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?:^|[-:_])(\d+(?:\.\d+)?[mMbB])($|[-:_])"#).unwrap());
+    Lazy::new(|| Regex::new(r#"(?:^|[-:_])(e?\d+(?:\.\d+)?[mMbB])($|[-:_])"#).unwrap());
 static LATEST_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)text-blue-600[^>]*>latest<"#).unwrap());
 
 fn size_multiplier(unit: &str) -> u64 {

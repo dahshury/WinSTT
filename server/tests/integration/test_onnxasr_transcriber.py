@@ -126,6 +126,33 @@ class TestOnnxAsrTranscriber:
         # Texts are stripped and space-joined — empty/whitespace segments are dropped.
         assert result.text == "hello world again"
 
+    def test_transcribe_caps_aed_segments_below_whisper_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Cohere / Canary AED engines must get a much shorter ``max_speech_duration_s``.
+
+        AED merged-decoders early-EOS on long chunks (losing everything after
+        the first sentence — catastrophic under the ``<|unklang|>``
+        auto-language token), so they're capped well below Whisper's 29 s mel
+        window. See ``_VAD_MAX_SPEECH_DURATION_S_AED``.
+        """
+        from src.recorder.infrastructure import onnx_decoder_patches
+        from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber
+
+        fake_model, _fake_vad, _fake_adapter = _install_fake_onnx_asr(monkeypatch)
+        # Make the engine look like Cohere to the AED detector.
+        monkeypatch.setattr(onnx_decoder_patches, "is_cohere_engine", lambda _m: True)
+
+        transcriber = OnnxAsrTranscriber(model_name="cohere-transcribe")
+        transcriber.transcribe(np.zeros(16_000, dtype=np.float32), language="")
+
+        fake_model.with_vad.assert_called_once()
+        _call_args, call_kwargs = fake_model.with_vad.call_args
+        assert call_kwargs.get("max_speech_duration_s") == pytest.approx(
+            OnnxAsrTranscriber._VAD_MAX_SPEECH_DURATION_S_AED
+        )
+        assert call_kwargs["max_speech_duration_s"] < OnnxAsrTranscriber._VAD_MAX_SPEECH_DURATION_S
+        # AED engines stay unbatched (batch_size=1) — see the pad_list silence-loop note.
+        assert call_kwargs.get("batch_size") == 1
+
     def test_transcribe_omits_language_when_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An empty language string must not be forwarded as ``language=""`` to onnx-asr."""
         from src.recorder.infrastructure.onnxasr_transcriber import OnnxAsrTranscriber

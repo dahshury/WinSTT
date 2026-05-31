@@ -1,6 +1,11 @@
 import { TextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
-import { DEFAULT_SETTINGS, SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingResetButton,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -50,6 +55,16 @@ export function DictionarySettingsPanel() {
 				    pass missed. Lower = stricter; 0.18 is the reference default. */}
 				<FormControl
 					label={t("thresholdLabel")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={threshold === DEFAULT_SETTINGS.general.wordCorrectionThreshold}
+							onReset={() =>
+								updateGeneralSettings({
+									wordCorrectionThreshold: DEFAULT_SETTINGS.general.wordCorrectionThreshold,
+								})
+							}
+						/>
+					}
 					layout="row"
 					tooltip={`${t("thresholdTooltip")} ${t("thresholdCaption")}`}
 				>

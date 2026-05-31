@@ -13,8 +13,17 @@ library lacks safeguards that transcribe-rs ships by default.
    port the same constant. After 8 identical tokens we force the row to
    EOS so the existing ``.all()`` stop condition fires.
 
-2. **Cohere consecutive-repeat guard.** Same fix at
-   ``CohereAsr._decoding``; same constant.
+2. **Cohere consecutive-repeat guard + fp16 KV-cache dtype fix.** Same
+   repeat-guard at ``CohereAsr._decoding`` (same constant). Additionally,
+   the bundled ``CohereAsr._create_empty_state`` hardcodes ``np.float32``
+   for the empty KV-cache and ``_decode_step`` asserts float32 logits —
+   both wrong for the fp16 decoder exports (``_fp16`` / ``_q4f16``) that
+   the default Windows GPU (DirectML) build resolves ``auto`` quant to.
+   A float32 empty cache trips ORT's input type check on the very first
+   decode step ("Unexpected input data type. Actual: (tensor(float)),
+   expected: (tensor(float16))"). We patch ``_create_empty_state`` to
+   seed empties with the decoder's REAL past-input dtype and reimplement
+   ``_decode_step`` to promote fp16 logits to float32.
 
 3. **Whisper suppress_non_speech_tokens + suppress_blank + no_speech_thold.**
    ``WhisperHf._decoding`` is pure greedy. The whisper.cpp default
@@ -297,11 +306,26 @@ def _canary_aed_decoding_patched(
         )
 
 
-# ── Patch 2 — Cohere consecutive-repeat guard ──────────────────────────
+# ── Patch 2 — Cohere consecutive-repeat guard + fp16 KV-cache dtype fix ─
+
+
+#: ORT ``NodeArg.type`` strings → numpy scalar type. Only the float family
+#: is relevant here (the KV-cache tensors); anything else defaults to
+#: float32 — the historical assumption that held before fp16 / q4f16
+#: decoders were supported.
+_ORT_TENSOR_TYPE_TO_NP: dict[str, type] = {
+    "tensor(float)": np.float32,
+    "tensor(float16)": np.float16,
+}
 
 
 def _patch_cohere_decoder() -> None:
-    """Reassign ``CohereAsr._decoding`` with a repeat-guarded version."""
+    """Reassign ``CohereAsr`` decode methods.
+
+    Installs the repeat-guarded ``_decoding`` plus the fp16 KV-cache dtype
+    fix (``_create_empty_state`` / ``_decode_step``). All three go in
+    together under a single idempotency guard.
+    """
     try:
         from onnx_asr.models import cohere_asr as _cohere
     except ImportError:
@@ -318,10 +342,84 @@ def _patch_cohere_decoder() -> None:
 
     target._decoding = _cohere_decoding_patched
     target._decoding._winstt_patched = True
+    target._create_empty_state = _cohere_create_empty_state_patched
+    target._decode_step = _cohere_decode_step_patched
     logger.info(
-        "Patched CohereAsr._decoding with max_consecutive_repeats=%d",
+        "Patched CohereAsr._decoding (max_consecutive_repeats=%d) + "
+        "_create_empty_state/_decode_step (fp16 KV-cache dtype fix)",
         MAX_CONSECUTIVE_REPEATS,
     )
+
+
+def _cohere_create_empty_state_patched(self: Any, batch_size: int) -> dict[str, Any]:  # noqa: ANN401
+    """KV-cache empty-state allocator that honours the decoder's REAL dtype.
+
+    The bundled ``CohereAsr._create_empty_state`` hardcodes ``np.float32``.
+    The onnx-community export ships fp16 decoders (``_fp16`` / ``_q4f16``)
+    whose ``past_key_values.*`` inputs are declared ``tensor(float16)`` — a
+    float32 empty cache trips ORT's input type check on the very first
+    decode step ("Unexpected input data type. Actual: (tensor(float)),
+    expected: (tensor(float16))"). We read the past-input dtype off the
+    decoder session (lazily cached on the instance) and seed empties with
+    it.
+    """
+    from onnxruntime import OrtValue
+
+    dtype = getattr(self, "_winstt_past_np_dtype", None)
+    if dtype is None:
+        first_past = next(i for i in self._decoder.get_inputs() if i.name.startswith("past_key_values."))
+        dtype = _ORT_TENSOR_TYPE_TO_NP.get(first_past.type or "", np.float32)
+        self._winstt_past_np_dtype = dtype
+    empty = np.zeros((batch_size, self._num_heads, 0, self._head_dim), dtype=dtype)
+    return {name: OrtValue.ortvalue_from_numpy(empty) for name in self._past_input_names}
+
+
+def _cohere_decode_step_patched(
+    self: Any,  # noqa: ANN401
+    input_ids: npt.NDArray[np.int64],
+    attention_mask: npt.NDArray[np.int64],
+    position_ids: npt.NDArray[np.int64],
+    encoder_out: Any,  # noqa: ANN401 — OrtValue
+    prev_state: dict[str, Any],
+) -> tuple[npt.NDArray[np.float32], dict[str, Any]]:
+    """Run one decoder pass; promote fp16 logits to float32.
+
+    Faithful reimplementation of the bundled ``CohereAsr._decode_step``
+    plus the fp16-logits cast. The bundled version asserts
+    ``is_float32_array(logits)`` BEFORE any cast, so an fp16 decoder
+    (``_fp16`` / ``_q4f16``) raises ``AssertionError`` even once the
+    empty-state dtype is corrected. We promote float16 logits to float32
+    (the greedy argmax / logprob math downstream needs float32) and
+    return. The ``present.*`` KV outputs stay device-resident OrtValues in
+    the decoder's native dtype, so the next step feeds them back without a
+    further mismatch.
+    """
+    binding = self._decoder.io_binding()
+    binding.bind_cpu_input("input_ids", input_ids)
+    binding.bind_cpu_input("attention_mask", attention_mask)
+    binding.bind_cpu_input("position_ids", position_ids)
+    binding.bind_cpu_input("num_logits_to_keep", np.array(1, dtype=np.int64))
+    binding.bind_ortvalue_input("encoder_hidden_states", encoder_out)
+    for name in self._past_input_names:
+        binding.bind_ortvalue_input(name, prev_state[name])
+    binding.bind_output("logits")
+    for name in self._present_output_names:
+        binding.bind_output(name, self._device_type, self._device_id)
+
+    self._decoder.run_with_iobinding(binding)
+    outputs = binding.get_outputs()
+    logits = outputs[0].numpy()
+    if logits.dtype != np.float32:
+        logits = logits.astype(np.float32)
+
+    # outputs layout: [logits, present.0.dec.k, present.0.dec.v, present.0.enc.k, present.0.enc.v, ...]
+    next_state: dict[str, Any] = {}
+    for past_name, _present_name, ort_val in zip(
+        self._past_input_names, self._present_output_names, outputs[1:], strict=True
+    ):
+        # ``past_key_values.N.{decoder|encoder}.{key|value}`` ↔ ``present.N.{...}``
+        next_state[past_name] = ort_val
+    return logits, next_state
 
 
 def _cohere_decoding_patched(

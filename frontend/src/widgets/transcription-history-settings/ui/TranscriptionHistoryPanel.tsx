@@ -7,7 +7,12 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
-import { SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingResetButton,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import { clearTranscriptionHistory } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
@@ -111,6 +116,14 @@ export function TranscriptionHistoryPanel() {
 				<div className="flex flex-col divide-y divide-surface-1">
 					<FormControl
 						label={t("historyMaxEntries")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={historyMaxEntries === DEFAULT_SETTINGS.general.historyMaxEntries}
+								onReset={() =>
+									updateGeneral({ historyMaxEntries: DEFAULT_SETTINGS.general.historyMaxEntries })
+								}
+							/>
+						}
 						layout="row"
 						tooltip={`${t("historyMaxEntriesTooltip")} ${t("historyMaxEntriesCaption")}`}
 					>
@@ -124,7 +137,21 @@ export function TranscriptionHistoryPanel() {
 							/>
 						</ElevatedSurface>
 					</FormControl>
-					<FormControl label={t("retention")} layout="row" tooltip={t("retentionTooltip")}>
+					<FormControl
+						label={t("retention")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={recordingRetention === DEFAULT_SETTINGS.general.recordingRetention}
+								onReset={() =>
+									updateGeneral({
+										recordingRetention: DEFAULT_SETTINGS.general.recordingRetention,
+									})
+								}
+							/>
+						}
+						layout="row"
+						tooltip={t("retentionTooltip")}
+					>
 						<ElevatedSurface className="w-52" inline>
 							<Select
 								onChange={(v) => updateGeneral({ recordingRetention: v as RetentionValue })}

@@ -3,7 +3,6 @@ import {
 	AppleIcon,
 	BookOpen01Icon,
 	ComputerIcon,
-	HappyIcon,
 	LockIcon,
 	PencilIcon,
 	SignalFull02Icon,
@@ -34,7 +33,6 @@ const TONE_ICONS: Readonly<Record<ToneKey, IconSvgElement>> = {
 	formal: Suit01Icon,
 	friendly: WavingHand01Icon,
 	technical: BookOpen01Icon,
-	casual: HappyIcon,
 };
 
 type TranslateFn = ReturnType<typeof useTranslations>;
@@ -101,7 +99,6 @@ export const PRESET_LABEL_KEY = {
 	formal: "presetFormal",
 	friendly: "presetFriendly",
 	technical: "presetTechnical",
-	casual: "presetCasual",
 	concise: "presetConcise",
 	summarize: "presetSummarize",
 	reorder: "presetReorder",

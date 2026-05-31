@@ -23,7 +23,10 @@ const {
 	fetchOllamaLibraryCatalog,
 	fetchOllamaLibraryTags,
 	resetCachesForTests,
+	setRetryBackoffForTests,
 } = __ollama_registry_test_helpers__;
+
+const TAG_ROW_HTML = '<a href="/library/x:1" class="md:hidden flex flex-col"><span>x:1</span></a>';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -363,6 +366,100 @@ describe("fetchOllamaLibraryTags", () => {
 		});
 		const result = await fetchOllamaLibraryTags("foo");
 		expect(result.error).toBe("dns failure");
+	});
+});
+
+describe("fetch concurrency gate", () => {
+	beforeEach(() => {
+		resetCachesForTests();
+	});
+	afterEach(() => {
+		globalThis.fetch = ORIGINAL_FETCH;
+		resetCachesForTests();
+	});
+
+	it("never runs more than the concurrency cap of scrapes at once", async () => {
+		let inFlight = 0;
+		let maxInFlight = 0;
+		mockFetch(async () => {
+			inFlight += 1;
+			maxInFlight = Math.max(maxInFlight, inFlight);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			inFlight -= 1;
+			return htmlResponse(TAG_ROW_HTML);
+		});
+
+		// Eight distinct models fired in one tick — each scrapes its own tag
+		// page (distinct cache keys, so nothing collapses). The gate must hold
+		// the in-flight count at the cap (3) instead of letting all eight hit
+		// Cloudflare at once, which is what produced the `fetch failed` burst.
+		const models = ["a", "b", "c", "d", "e", "f", "g", "h"];
+		await Promise.all(models.map((m) => fetchOllamaLibraryTags(m)));
+
+		expect(maxInFlight).toBe(3);
+	});
+});
+
+describe("fetch retry", () => {
+	beforeEach(() => {
+		resetCachesForTests();
+		setRetryBackoffForTests(0);
+	});
+	afterEach(() => {
+		globalThis.fetch = ORIGINAL_FETCH;
+		resetCachesForTests();
+	});
+
+	it("retries a transient `fetch failed` and then succeeds", async () => {
+		let calls = 0;
+		mockFetch(async () => {
+			calls += 1;
+			if (calls === 1) {
+				throw new Error("fetch failed");
+			}
+			return htmlResponse(TAG_ROW_HTML);
+		});
+		const result = await fetchOllamaLibraryTags("foo");
+		expect(calls).toBe(2);
+		expect(result.error).toBeUndefined();
+		expect(result.tags).toHaveLength(1);
+	});
+
+	it("retries a timeout abort and then succeeds", async () => {
+		let calls = 0;
+		mockFetch(async () => {
+			calls += 1;
+			if (calls === 1) {
+				throw new DOMException("This operation was aborted", "AbortError");
+			}
+			return htmlResponse(TAG_ROW_HTML);
+		});
+		const result = await fetchOllamaLibraryTags("bar");
+		expect(calls).toBe(2);
+		expect(result.tags).toHaveLength(1);
+	});
+
+	it("does not retry a deterministic HTTP error", async () => {
+		let calls = 0;
+		mockFetch(async () => {
+			calls += 1;
+			return errorResponse(500);
+		});
+		const result = await fetchOllamaLibraryTags("qux");
+		expect(calls).toBe(1);
+		expect(result.error).toContain("HTTP 500");
+	});
+
+	it("gives up after exhausting retries on a persistent transient", async () => {
+		let calls = 0;
+		mockFetch(async () => {
+			calls += 1;
+			throw new Error("fetch failed");
+		});
+		const result = await fetchOllamaLibraryTags("baz");
+		// initial attempt + MAX_FETCH_RETRIES (2)
+		expect(calls).toBe(3);
+		expect(result.error).toBe("fetch failed");
 	});
 });
 

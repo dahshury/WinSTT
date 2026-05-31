@@ -82,20 +82,24 @@ interface PricingTierResult {
 	tier: "free" | "low" | "medium" | "high";
 }
 
+// fluidfunctionalism: pricing is a MAGNITUDE, not four competing hues. Free is a
+// genuine "cheap" signal → muted emerald; every paid tier collapses to one
+// neutral muted scale (the actual $/M numbers in the label carry the precise
+// magnitude, so a low/medium/high colour ramp is redundant noise).
 const FREE_PRICING_RESULT: PricingTierResult = {
 	label: "Free",
 	tier: "free",
-	className: "text-emerald-600 dark:text-emerald-400",
+	className: "text-emerald-300/80",
 };
 
 function classifyAvgCost(avgCost: number): Omit<PricingTierResult, "label"> {
 	if (avgCost < 1) {
-		return { tier: "low", className: "text-green-600 dark:text-green-400" };
+		return { tier: "low", className: "text-foreground-muted" };
 	}
 	if (avgCost < 10) {
-		return { tier: "medium", className: "text-amber-600 dark:text-amber-400" };
+		return { tier: "medium", className: "text-foreground-muted" };
 	}
-	return { tier: "high", className: "text-rose-600 dark:text-rose-400" };
+	return { tier: "high", className: "text-foreground-muted" };
 }
 
 export function getPricingTier(pricing: OpenRouterPricing | undefined): PricingTierResult {

@@ -104,7 +104,7 @@ describe("groupOllamaModelsByPublisher", () => {
 	it("falls back to Community for unrecognised families", () => {
 		const models = [model("mystery:1b", "mystery")];
 		const groups = groupOllamaModelsByPublisher(models);
-		expect(groups[0]?.[0]).toBe("openrouter");
+		expect(groups[0]?.[0]).toBe("community");
 		expect(getOllamaPublisherBySlug(groups[0]?.[0] ?? "").label).toBe("Community");
 	});
 });

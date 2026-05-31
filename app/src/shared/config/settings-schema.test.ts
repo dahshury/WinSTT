@@ -584,13 +584,12 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 		expect(out.openrouterFallbackModel).toBe("");
 	});
 
-	test("dictation.presets enum accepts each of the ten canonical preset keys", () => {
+	test("dictation.presets enum accepts each of the canonical preset keys", () => {
 		for (const p of [
 			"neutral",
 			"formal",
 			"friendly",
 			"technical",
-			"casual",
 			"concise",
 			"summarize",
 			"reorder",
@@ -610,7 +609,7 @@ describe("llmSettingsSchema defaults (lock-down)", () => {
 	test("dictation.presets rejects two tone keys together", () => {
 		expect(() =>
 			llmSettingsSchema.parse({
-				dictation: { presets: [{ key: "formal" }, { key: "casual" }] },
+				dictation: { presets: [{ key: "formal" }, { key: "friendly" }] },
 			})
 		).toThrow();
 	});

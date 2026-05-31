@@ -234,19 +234,33 @@ function stripQueryAndFragment(hostPart: string): string {
 }
 
 /**
- * Format the snapshot into a compact prompt fragment for the LLM cleanup
- * step. Returns "" when no context is available, so callers can blindly
- * concatenate without checking. The two caret labels are exact literal
- * phrases the system-prompt's continuation clause matches against — don't
- * reword them or split them across lines.
+ * Format the snapshot into a flat JSON object the LLM cleanup step reads as
+ * structured context. Keys (all optional, emitted only when non-empty):
+ * app, ide, url, window, field, selection, beforeCaret / afterCaret (or
+ * fieldText), screen, screenOcr, clipboard, note. Empty fields are omitted
+ * entirely (never null). Returns "" when nothing was captured, so callers can
+ * blindly concatenate. The KEY NAMES are the contract the system prompt's
+ * rules reference (see `withContextPrefix` in electron/ipc/llm.ts) — keep the
+ * two in sync.
  */
 export function formatContextForPrompt(snapshot: WindowContextSnapshot): string {
 	const sections = buildPromptSections(snapshot);
-	return sections.filter(sectionHasValue).map(renderSection).join("\n");
+	const context: Record<string, string | boolean> = {};
+	for (const section of sections) {
+		if (section.value.length === 0) {
+			continue;
+		}
+		// `ide` is a presence flag — its section carries "yes", emit a boolean.
+		context[section.key] = section.key === "ide" ? true : section.value;
+	}
+	if (Object.keys(context).length === 0) {
+		return "";
+	}
+	return JSON.stringify(context, null, 2);
 }
 
 interface PromptSection {
-	readonly format: (value: string) => string;
+	readonly key: string;
 	readonly value: string;
 }
 
@@ -258,14 +272,6 @@ function collapseBlankLines(raw: string | undefined): string {
 
 function trimOrEmpty(raw: string | undefined): string {
 	return (raw ?? "").trim();
-}
-
-function sectionHasValue(section: PromptSection): boolean {
-	return section.value.length > 0;
-}
-
-function renderSection(section: PromptSection): string {
-	return section.format(section.value);
 }
 
 function ideMarkerFor(snapshot: WindowContextSnapshot): string {
@@ -310,14 +316,11 @@ function focusedFieldIsRich(snapshot: WindowContextSnapshot): boolean {
  *  field. Always safe to include: short, no scraped body content. */
 function buildMetadataSections(snapshot: WindowContextSnapshot): readonly PromptSection[] {
 	return [
-		{ value: trimOrEmpty(snapshot.appExe), format: (v) => `App: ${v}` },
-		{
-			value: ideMarkerFor(snapshot),
-			format: () => "IDE context: yes (treat visible content as code)",
-		},
-		{ value: trimOrEmpty(snapshot.url), format: (v) => `URL: ${v}` },
-		{ value: snapshot.windowTitle.trim(), format: (v) => `Window: ${v}` },
-		{ value: snapshot.elementName.trim(), format: (v) => `Focused field: ${v}` },
+		{ key: "app", value: trimOrEmpty(snapshot.appExe) },
+		{ key: "ide", value: ideMarkerFor(snapshot) },
+		{ key: "url", value: trimOrEmpty(snapshot.url) },
+		{ key: "window", value: snapshot.windowTitle.trim() },
+		{ key: "field", value: snapshot.elementName.trim() },
 	];
 }
 
@@ -331,9 +334,8 @@ const CLIPBOARD_LLM_MAX = 2000;
  *  thus filtered out) when nothing was selected. */
 function buildSelectedTextSection(snapshot: WindowContextSnapshot): PromptSection {
 	return {
+		key: "selection",
 		value: clipHead(cleanCaret(snapshot.selectedText), SELECTED_TEXT_LLM_MAX),
-		format: (v) =>
-			`Selected text (the user highlighted this — likely the thing they're acting on):\n${v}`,
 	};
 }
 
@@ -342,9 +344,8 @@ function buildSelectedTextSection(snapshot: WindowContextSnapshot): PromptSectio
  *  paste), but flagged "use only if relevant" so the LLM can ignore stale copies. */
 function buildClipboardSection(snapshot: WindowContextSnapshot): PromptSection {
 	return {
+		key: "clipboard",
 		value: clipHead(cleanCaret(snapshot.clipboardText), CLIPBOARD_LLM_MAX),
-		format: (v) =>
-			`Clipboard contents (the user recently copied this — use only if relevant):\n${v}`,
 	};
 }
 
@@ -363,9 +364,8 @@ function buildPromptSections(snapshot: WindowContextSnapshot): readonly PromptSe
 			...meta,
 			selected,
 			{
-				value: "terminal",
-				format: () =>
-					"Terminal/console focused — scrollback omitted (no clean prior text available).",
+				key: "note",
+				value: "Terminal/console focused — scrollback omitted (no clean prior text available).",
 			},
 			clip,
 		];
@@ -402,30 +402,22 @@ function buildFallbackTreeSection(snapshot: WindowContextSnapshot): PromptSectio
 	// UIA — their real content is painted to <canvas>. Skip the tree entirely so
 	// we don't leak menu/panel labels; the OCR section carries these instead.
 	if (isCanvasSurface(snapshot.appExe, snapshot.url)) {
-		return { value: "", format: (v) => v };
+		return { key: "screen", value: "" };
 	}
 	const pruned = pruneAxHtmlForLlm(snapshot.axHtml);
 	if (pruned.length > 0) {
-		return {
-			value: pruned,
-			format: (v) =>
-				`Surrounding content (pruned from the UI — the item you're acting on; DO NOT echo, only use for reference):\n${v}`,
-		};
+		return { key: "screen", value: pruned };
 	}
-	// axHtml goes BEFORE the caret labels so the LLM sees the broader "what is on
-	// screen" picture first, then the immediate insertion point. Fenced so the
-	// model treats the inner tags as data, not markdown / nested instructions.
-	return {
-		value: trimOrEmpty(snapshot.axHtml),
-		format: (v) => `Visible UI (XML — DO NOT echo, only use for reference):\n${v}`,
-	};
+	// Fall back to the raw axHtml when the pruner couldn't isolate the focused
+	// item — handed to the LLM as the `screen` field (reference only; the system
+	// prompt instructs it not to echo the context).
+	return { key: "screen", value: trimOrEmpty(snapshot.axHtml) };
 }
 
 function buildOcrSection(snapshot: WindowContextSnapshot): PromptSection {
 	return {
+		key: "screenOcr",
 		value: collapseBlankLines(snapshot.ocrText),
-		format: (v) =>
-			`Screen text (OCR — approximate, no reliable reading order; the structured fields above were empty so this is the only context):\n${v}`,
 	};
 }
 
@@ -437,8 +429,8 @@ function buildContentSections(snapshot: WindowContextSnapshot): readonly PromptS
 	}
 	return [
 		{
+			key: "fieldText",
 			value: cleanCaret(snapshot.focusedText),
-			format: (v) => `Visible content:\n${v}`,
 		},
 	];
 }
@@ -449,15 +441,16 @@ function isCaretMode(before: string, after: string): boolean {
 
 /**
  * Backstop caps for the caret context handed to the LLM. The native helper
- * already bounds capture at CARET_BEFORE_CHARS=4000 / CARET_AFTER_CHARS=1000
- * (winstt-context.c) — these are deliberately set ABOVE those so a normal
- * email/message is NEVER cropped here; they only fire if some other path (a
- * future capture source, a non-native test, a pathological field) produces a
- * giant string, keeping the dictation prompt bounded. `before` keeps its TAIL
- * (the text nearest the caret is the highest-signal continuation context);
- * `after` keeps its HEAD (the text the output sits in front of).
+ * bounds capture at CARET_BEFORE_CHARS=21000 / CARET_AFTER_CHARS=2000
+ * (winstt-context.c) — these match that BEFORE budget (24000 ≥ 21000) and the
+ * AFTER budget (2000) so a deep thread / ~100-turn chat / very long email is
+ * NEVER cropped here; they only fire if some other path (a future capture
+ * source, a non-native test, a pathological field) produces a giant string,
+ * keeping the dictation prompt bounded. `before` keeps its TAIL (the text
+ * nearest the caret is the highest-signal continuation context); `after` keeps
+ * its HEAD (the text the output sits in front of).
  */
-const CARET_BEFORE_LLM_MAX = 6000;
+const CARET_BEFORE_LLM_MAX = 24_000;
 const CARET_AFTER_LLM_MAX = 2000;
 
 function clipTail(value: string, max: number): string {
@@ -470,16 +463,8 @@ function clipHead(value: string, max: number): string {
 
 function buildCaretSections(before: string, after: string): readonly PromptSection[] {
 	return [
-		{
-			value: clipTail(before, CARET_BEFORE_LLM_MAX),
-			format: (v) =>
-				`Text immediately before the caret (your cleaned output will be inserted directly after this — continue it, do not repeat it):\n${v}`,
-		},
-		{
-			value: clipHead(after, CARET_AFTER_LLM_MAX),
-			format: (v) =>
-				`Text immediately after the caret (your output will sit directly before this — do not repeat it):\n${v}`,
-		},
+		{ key: "beforeCaret", value: clipTail(before, CARET_BEFORE_LLM_MAX) },
+		{ key: "afterCaret", value: clipHead(after, CARET_AFTER_LLM_MAX) },
 	];
 }
 

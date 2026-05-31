@@ -431,6 +431,109 @@ def test_cohere_decoder_repeat_guard_fires() -> None:
     assert len(row) < 50
 
 
+# ── Cohere fp16 KV-cache dtype fix ──────────────────────────────────────
+
+
+class _NodeArg:
+    """Minimal stand-in for an ORT ``NodeArg`` (``.name`` + ``.type``)."""
+
+    def __init__(self, name: str, type_str: str) -> None:
+        self.name = name
+        self.type = type_str
+
+
+def _build_fake_cohere_for_empty_state(past_type: str) -> Any:  # noqa: ANN401
+    fake = MagicMock(spec=[])
+    names = ["past_key_values.0.decoder.key", "past_key_values.0.encoder.value"]
+    decoder = MagicMock()
+    decoder.get_inputs.return_value = [
+        _NodeArg("input_ids", "tensor(int64)"),
+        *[_NodeArg(n, past_type) for n in names],
+    ]
+    fake._decoder = decoder
+    fake._num_heads = 8
+    fake._head_dim = 128
+    fake._past_input_names = names
+    return fake
+
+
+def test_cohere_empty_state_matches_fp16_decoder_dtype() -> None:
+    """fp16 decoders declare float16 KV inputs — empties must match.
+
+    The bug: hardcoded float32 empties tripped ORT's input type check on
+    the very first decode step ("Unexpected input data type. Actual:
+    (tensor(float)), expected: (tensor(float16))").
+    """
+    fake = _build_fake_cohere_for_empty_state("tensor(float16)")
+    state = patches._cohere_create_empty_state_patched(fake, 1)
+    assert set(state) == set(fake._past_input_names)
+    for ort_val in state.values():
+        assert ort_val.numpy().dtype == np.float16
+    # dtype is cached on the instance for subsequent steps.
+    assert fake._winstt_past_np_dtype is np.float16
+
+
+def test_cohere_empty_state_matches_fp32_decoder_dtype() -> None:
+    fake = _build_fake_cohere_for_empty_state("tensor(float)")
+    state = patches._cohere_create_empty_state_patched(fake, 1)
+    for ort_val in state.values():
+        assert ort_val.numpy().dtype == np.float32
+
+
+def test_cohere_empty_state_defaults_to_fp32_for_unknown_dtype() -> None:
+    """Anything outside the float family falls back to the historical fp32."""
+    fake = _build_fake_cohere_for_empty_state("tensor(bfloat16)")
+    state = patches._cohere_create_empty_state_patched(fake, 1)
+    for ort_val in state.values():
+        assert ort_val.numpy().dtype == np.float32
+
+
+def _build_fake_cohere_for_decode_step(logits_dtype: type) -> Any:  # noqa: ANN401
+    from onnxruntime import OrtValue
+
+    fake = MagicMock(spec=[])
+    fake._past_input_names = ["past_key_values.0.decoder.key"]
+    fake._present_output_names = ["present.0.decoder.key"]
+    fake._device_type = "cpu"
+    fake._device_id = 0
+    logits = OrtValue.ortvalue_from_numpy(np.zeros((1, 1, 10), dtype=logits_dtype))
+    present = OrtValue.ortvalue_from_numpy(np.zeros((1, 8, 1, 128), dtype=np.float16))
+    binding = MagicMock()
+    binding.get_outputs.return_value = [logits, present]
+    decoder = MagicMock()
+    decoder.io_binding.return_value = binding
+    fake._decoder = decoder
+    return fake
+
+
+def test_cohere_decode_step_promotes_fp16_logits() -> None:
+    """fp16 decoders emit float16 logits; argmax/logprob math needs float32."""
+    fake = _build_fake_cohere_for_decode_step(np.float16)
+    logits, next_state = patches._cohere_decode_step_patched(
+        fake,
+        input_ids=np.zeros((1, 1), dtype=np.int64),
+        attention_mask=np.ones((1, 1), dtype=np.int64),
+        position_ids=np.zeros((1, 1), dtype=np.int64),
+        encoder_out=None,
+        prev_state={"past_key_values.0.decoder.key": None},
+    )
+    assert logits.dtype == np.float32
+    assert set(next_state) == {"past_key_values.0.decoder.key"}
+
+
+def test_cohere_decode_step_keeps_fp32_logits() -> None:
+    fake = _build_fake_cohere_for_decode_step(np.float32)
+    logits, _ = patches._cohere_decode_step_patched(
+        fake,
+        input_ids=np.zeros((1, 1), dtype=np.int64),
+        attention_mask=np.ones((1, 1), dtype=np.int64),
+        position_ids=np.zeros((1, 1), dtype=np.int64),
+        encoder_out=None,
+        prev_state={"past_key_values.0.decoder.key": None},
+    )
+    assert logits.dtype == np.float32
+
+
 # ── Whisper suppression / no-speech / blank guards ─────────────────────
 
 

@@ -706,7 +706,7 @@ export interface components {
         };
         LlmDictationConfig: components["schemas"]["LlmFeatureConfig"] & {
             /**
-             * @description Ordered list of cleanup presets to apply to dictated text. At most one tone preset (neutral/formal/friendly/technical/casual) may appear. `level` is only valid for `summarize` and `concise`.
+             * @description Ordered list of cleanup presets to apply to dictated text. At most one tone preset (neutral/formal/friendly/technical) may appear. `level` is only valid for `summarize` and `concise`.
              * @default [
              *       {
              *         "key": "neutral"
@@ -758,7 +758,7 @@ export interface components {
             builtin: boolean;
         };
         /** @enum {string} */
-        LlmPresetKey: "neutral" | "formal" | "friendly" | "technical" | "casual" | "concise" | "summarize" | "reorder" | "restructure" | "rewordForClarity";
+        LlmPresetKey: "neutral" | "formal" | "friendly" | "technical" | "concise" | "summarize" | "reorder" | "restructure" | "rewordForClarity";
         /**
          * @description Intensity level for presets that support it (`summarize`, `concise`).
          * @enum {string}

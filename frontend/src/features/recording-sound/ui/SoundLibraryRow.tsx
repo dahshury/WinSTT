@@ -1,13 +1,8 @@
-import {
-	CheckmarkCircle02Icon,
-	Delete02Icon,
-	PauseIcon,
-	PencilEdit01Icon,
-	PlayIcon,
-} from "@hugeicons/core-free-icons";
+import { Delete02Icon, PauseIcon, PencilEdit01Icon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type KeyboardEvent, type ReactNode, useId, useState } from "react";
 import { cn } from "@/shared/lib/cn";
+import { fontWeights } from "@/shared/lib/font-weight";
 import { Button } from "@/shared/ui/button";
 import { TextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -20,8 +15,6 @@ interface SoundLibraryRowProps {
 	isPlaying: boolean;
 	item: SoundLibraryItem;
 	labels: {
-		active: string;
-		default: string;
 		pause: string;
 		play: string;
 	};
@@ -36,19 +29,22 @@ interface RowRadioProps {
 	active: boolean;
 }
 
+/**
+ * fluidfunctionalism radio glyph: a thin neutral ring that simply vanishes when
+ * selected, leaving a solid foreground dot. No accent, no glow, no fill —
+ * selection is carried by the gliding pill behind the row plus this dot.
+ */
 function RowRadio({ active }: RowRadioProps): ReactNode {
 	return (
 		<span
 			className={cn(
-				"relative flex size-4 shrink-0 items-center justify-center rounded-full ring-1 transition-[box-shadow,background-color] duration-150",
-				active
-					? "bg-accent/15 shadow-[0_0_0_3px] shadow-accent/15 ring-accent"
-					: "bg-surface-3 ring-divider-strong group-hover:ring-foreground-muted"
+				"relative flex size-[15px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-solid transition-[border-color] duration-150",
+				active ? "border-transparent" : "border-foreground/30 group-hover:border-foreground/55"
 			)}
 		>
 			<span
 				className={cn(
-					"size-1.5 rounded-full bg-accent transition-transform duration-150",
+					"size-[7px] rounded-full bg-foreground transition-transform duration-150 ease-out",
 					active ? "scale-100" : "scale-0"
 				)}
 			/>
@@ -62,16 +58,21 @@ interface PlayButtonProps {
 	onClick: () => void;
 }
 
+/**
+ * Ghost transport control. Idle is a muted icon that picks up a faint neutral
+ * wash on hover; playing settles into a soft neutral chip so the active sound
+ * reads without a drop of color. `active:scale-95` gives the press a physical tap.
+ */
 function PlayButton({ isPlaying, labels, onClick }: PlayButtonProps): ReactNode {
 	return (
 		<Tooltip content={isPlaying ? labels.pause : labels.play}>
 			<Button
 				aria-label={isPlaying ? labels.pause : labels.play}
 				className={cn(
-					"flex size-8 shrink-0 items-center justify-center rounded-full transition-[background-color,transform] duration-150",
+					"flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-150 active:scale-95",
 					isPlaying
-						? "bg-accent text-on-accent shadow-[0_0_0_3px] shadow-accent/20"
-						: "bg-surface-4 text-foreground hover:bg-surface-5 active:scale-95"
+						? "bg-foreground/15 text-foreground hover:bg-foreground/25"
+						: "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground"
 				)}
 				onClick={(e) => {
 					e.stopPropagation();
@@ -146,19 +147,11 @@ interface RowMetaProps {
 	active: boolean;
 	editing: boolean;
 	item: SoundLibraryItem;
-	labels: { active: string; default: string };
 	onCommit: (next: string) => void;
 	onEditingChange: (editing: boolean) => void;
 }
 
-function RowMeta({
-	editing,
-	active,
-	item,
-	labels,
-	onCommit,
-	onEditingChange,
-}: RowMetaProps): ReactNode {
+function RowMeta({ active, editing, item, onCommit, onEditingChange }: RowMetaProps): ReactNode {
 	if (editing) {
 		return (
 			<RowMetaEditor
@@ -169,36 +162,48 @@ function RowMeta({
 		);
 	}
 
+	// Selection drives the same weight + tone shift the FF radio/checkbox labels
+	// use: muted by default, foreground + semibold when active.
 	return (
 		<div className="flex min-w-0 flex-1 items-center gap-2">
-			<span className="truncate font-medium text-body text-foreground" title={item.name}>
+			<span
+				className={cn(
+					"truncate text-body transition-[color,font-variation-settings] duration-150",
+					active ? "text-foreground" : "text-foreground-muted"
+				)}
+				style={{ fontVariationSettings: active ? fontWeights.semibold : fontWeights.normal }}
+				title={item.name}
+			>
 				{item.name}
 			</span>
-			{item.isDefault ? <Chip>{labels.default}</Chip> : null}
-			{active ? <Chip variant="accent">{labels.active}</Chip> : null}
 		</div>
 	);
 }
 
-interface ChipProps {
-	children: ReactNode;
-	variant?: "default" | "accent";
+interface RowActionButtonProps {
+	className?: string;
+	icon: typeof PencilEdit01Icon;
+	label: string;
+	onClick: () => void;
 }
 
-function Chip({ children, variant = "default" }: ChipProps): ReactNode {
-	const classes =
-		variant === "accent"
-			? "border-accent/40 bg-accent/15 text-accent"
-			: "border-divider-strong bg-surface-4 text-foreground-dim";
+function RowActionButton({ className, icon, label, onClick }: RowActionButtonProps): ReactNode {
 	return (
-		<span
-			className={cn(
-				"inline-flex items-center rounded-sm border px-1.5 py-px font-mono font-semibold text-[9px] uppercase leading-none tracking-wider",
-				classes
-			)}
-		>
-			{children}
-		</span>
+		<Tooltip content={label}>
+			<Button
+				aria-label={label}
+				className={cn(
+					"flex size-7 items-center justify-center rounded-md text-foreground-dim transition-colors duration-150 active:scale-95",
+					className
+				)}
+				onClick={(e) => {
+					e.stopPropagation();
+					onClick();
+				}}
+			>
+				<HugeiconsIcon icon={icon} size={13} />
+			</Button>
+		</Tooltip>
 	);
 }
 
@@ -220,13 +225,16 @@ export function SoundLibraryRow({
 	const radioId = useId();
 
 	return (
+		// Transparent row: the selected state is the gliding neutral pill rendered
+		// behind the list (SoundLibraryHighlight). `z-raised` lifts the row's
+		// content above that pill; the hover wash is a plain CSS pill, suppressed
+		// while active so it never double-paints over the selected pill.
 		<div
 			className={cn(
-				"group relative flex items-center gap-3 transition-colors duration-150",
-				active
-					? "bg-gradient-to-r from-accent/8 via-accent/3 to-transparent"
-					: "hover:bg-surface-3/60"
+				"group relative z-raised rounded-lg transition-colors duration-150",
+				active ? "" : "hover:bg-foreground/[0.05]"
 			)}
+			data-sound-row={item.id}
 		>
 			<input
 				aria-label={item.name}
@@ -238,18 +246,12 @@ export function SoundLibraryRow({
 				type="radio"
 			/>
 			<label
-				className="absolute inset-0 cursor-pointer rounded-md peer-focus-visible:ring-2 peer-focus-visible:ring-accent"
+				className="absolute inset-0 cursor-pointer rounded-lg peer-focus-visible:ring-2 peer-focus-visible:ring-accent"
 				htmlFor={radioId}
 			>
 				<span className="sr-only">{item.name}</span>
 			</label>
 			<div className="pointer-events-none relative flex w-full items-center gap-3 px-3 py-2.5">
-				{active ? (
-					<span
-						aria-hidden="true"
-						className="absolute top-1/2 left-0 h-7 w-[2px] -translate-y-1/2 rounded-r-full bg-accent shadow-[0_0_8px] shadow-accent/60"
-					/>
-				) : null}
 				<RowRadio active={active} />
 				<div className="pointer-events-auto">
 					<PlayButton
@@ -262,7 +264,6 @@ export function SoundLibraryRow({
 					active={active}
 					editing={editing}
 					item={item}
-					labels={{ active: labels.active, default: labels.default }}
 					onCommit={(next) => onRename?.(item, next)}
 					onEditingChange={setEditing}
 				/>
@@ -275,39 +276,19 @@ export function SoundLibraryRow({
 					)}
 				>
 					{canRename ? (
-						<Tooltip content={renameLabel}>
-							<Button
-								aria-label={renameLabel}
-								className="flex size-7 items-center justify-center rounded-md text-foreground-dim transition-colors duration-150 hover:bg-surface-4 hover:text-foreground"
-								onClick={(e) => {
-									e.stopPropagation();
-									setEditing(true);
-								}}
-							>
-								<HugeiconsIcon icon={PencilEdit01Icon} size={13} />
-							</Button>
-						</Tooltip>
+						<RowActionButton
+							className="hover:bg-foreground/10 hover:text-foreground"
+							icon={PencilEdit01Icon}
+							label={renameLabel}
+							onClick={() => setEditing(true)}
+						/>
 					) : null}
 					{canDelete ? (
-						<Tooltip content={deleteLabel}>
-							<Button
-								aria-label={deleteLabel}
-								className="flex size-7 items-center justify-center rounded-md text-foreground-dim transition-colors duration-150 hover:bg-error/15 hover:text-error"
-								onClick={(e) => {
-									e.stopPropagation();
-									onDelete?.(item);
-								}}
-							>
-								<HugeiconsIcon icon={Delete02Icon} size={13} />
-							</Button>
-						</Tooltip>
-					) : null}
-					{item.isDefault && active ? (
-						<HugeiconsIcon
-							aria-hidden="true"
-							className="mr-1 text-accent"
-							icon={CheckmarkCircle02Icon}
-							size={14}
+						<RowActionButton
+							className="hover:bg-error/15 hover:text-error"
+							icon={Delete02Icon}
+							label={deleteLabel}
+							onClick={() => onDelete?.(item)}
 						/>
 					) : null}
 				</div>

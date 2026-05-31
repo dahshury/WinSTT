@@ -86,7 +86,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 				<div className="w-1/3">
 					<FormControl error={errors.trigger} label={t("trigger")}>
 						<InputGroup
-							appearance="minimal"
+							appearance="elevated"
 							className="h-9"
 							size="sm"
 							tone={errors.trigger ? "danger" : "default"}
@@ -115,7 +115,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 				<div className="flex-1">
 					<FormControl error={errors.expansion} label={t("expansion")}>
 						<InputGroup
-							appearance="minimal"
+							appearance="elevated"
 							className="h-9"
 							size="sm"
 							tone={errors.expansion ? "danger" : "default"}
@@ -142,7 +142,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 								<InputGroupButton
 									aria-label={tc("add")}
 									disabled={isAddDisabled}
-									tone="ghost"
+									tone="surface"
 									type="submit"
 								>
 									<HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2.25} />
@@ -203,7 +203,7 @@ export function SnippetsTable({ entries, onAdd, onRemove, onClearAll }: Snippets
 						title={t("clearTitle")}
 					/>
 					<Button
-						className="h-7 gap-1.5 self-end rounded-md bg-error px-2.5 font-medium text-white text-xs transition-colors duration-150 hover:bg-error/90"
+						className="h-7 gap-1.5 self-end rounded-md bg-error-dim/40 px-2.5 font-medium text-error text-xs ring-1 ring-error/25 transition-colors duration-150 hover:bg-error-dim/70 hover:ring-error/40 disabled:opacity-50"
 						disabled={entries.length === 0}
 						onClick={() => setClearConfirmOpen(true)}
 					>

@@ -66,7 +66,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 			<Form onSubmit={handleSubmit}>
 				<FormControl error={termError} label={t("term")}>
 					<InputGroup
-						appearance="minimal"
+						appearance="elevated"
 						className="h-9"
 						size="sm"
 						tone={termError ? "danger" : "default"}
@@ -90,7 +90,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 							<InputGroupButton
 								aria-label={tc("add")}
 								disabled={isAddDisabled}
-								tone="ghost"
+								tone="surface"
 								type="submit"
 							>
 								<HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2.25} />
@@ -148,7 +148,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 						title={t("clearTitle")}
 					/>
 					<Button
-						className="h-7 gap-1.5 self-end rounded-md bg-error px-2.5 font-medium text-white text-xs transition-colors duration-150 hover:bg-error/90"
+						className="h-7 gap-1.5 self-end rounded-md bg-error-dim/40 px-2.5 font-medium text-error text-xs ring-1 ring-error/25 transition-colors duration-150 hover:bg-error-dim/70 hover:ring-error/40 disabled:opacity-50"
 						disabled={entries.length === 0}
 						onClick={() => setClearConfirmOpen(true)}
 					>

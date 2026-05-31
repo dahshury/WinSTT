@@ -734,6 +734,23 @@ class OnnxAsrTranscriber(ITranscriber):
     # produced identical 66-segment output on the 30-min reference file —
     # the duration cap is the binding constraint).
     _VAD_MIN_SILENCE_MS = 2000.0
+    # AED merged-decoders (Cohere, Canary) are NOT Whisper: no fixed mel
+    # window, trained on short utterances. Fed a long clip they emit EOS after
+    # roughly the first ~13-15 s of speech and DROP the rest. A single 30 s
+    # decode yields only ~half the words even with an explicit language, and
+    # collapses to one sentence under the ``<|unklang|>`` auto-language token
+    # the default (language="") path uses. Measured on a 30 s Arabic dictation:
+    # cliff at ~17 s; explicit-lang single-pass 39/74 words; unklang VAD-slice
+    # 5/74; VAD-chunked recovers the full ~74. This is INHERENT to the model,
+    # not a WinSTT bug — reproduced with the decoder patches disabled and on
+    # both fp16 and fp32. Cohere's own model card recommends running "a VAD
+    # before the model"; its reference WebGPU demo single-passes (so it
+    # truncates long audio too). So we do exactly what the card says — Silero
+    # VAD before the model — but cap chunks below the ~16 s reliable single-
+    # decode window so each piece decodes in full and merges back.
+    # Whisper/Moonshine keep the 29 s window. See
+    # ``memory/project_cohere_unklang_long_segment_truncation.md``.
+    _VAD_MAX_SPEECH_DURATION_S_AED = 10.0
 
     def __init__(
         self,
@@ -1138,15 +1155,19 @@ class OnnxAsrTranscriber(ITranscriber):
         # ``batch_size=1`` makes ``pad_list`` pad each segment to itself →
         # no spurious silence. Free for dictation (≤ a handful of chunks).
         responsive = on_chunk is not None
-        unbatched = (
-            responsive
-            or onnx_decoder_patches.is_cohere_engine(self._model)
-            or onnx_decoder_patches.is_canary_aed_engine(self._model)
+        is_aed = onnx_decoder_patches.is_cohere_engine(self._model) or onnx_decoder_patches.is_canary_aed_engine(
+            self._model
         )
+        unbatched = responsive or is_aed
         cache_key = (merge, unbatched)
         adapter = self._vad_adapters.get(cache_key)
         if adapter is None:
-            vad_kwargs: dict[str, Any] = {"max_speech_duration_s": self._VAD_MAX_SPEECH_DURATION_S}
+            # AED merged-decoders early-EOS on long chunks (see
+            # ``_VAD_MAX_SPEECH_DURATION_S_AED``); everyone else keeps Whisper's
+            # 29 s window. Engine identity is fixed for this transcriber's
+            # lifetime, so the cap is constant per ``cache_key``.
+            max_speech = self._VAD_MAX_SPEECH_DURATION_S_AED if is_aed else self._VAD_MAX_SPEECH_DURATION_S
+            vad_kwargs: dict[str, Any] = {"max_speech_duration_s": max_speech}
             if merge:
                 vad_kwargs["min_silence_duration_ms"] = self._VAD_MIN_SILENCE_MS
             if unbatched:

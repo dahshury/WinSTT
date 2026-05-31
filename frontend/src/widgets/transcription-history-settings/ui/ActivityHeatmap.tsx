@@ -2,10 +2,12 @@ import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import {
 	buildDefaultCalendarPresets,
 	CalendarHeatmap,
 	type CalendarPreset,
+	type CalendarPresetGroup,
 	type CalendarSystemId,
 	type DateRange,
 } from "@/shared/ui/calendar-heatmap";
@@ -41,6 +43,11 @@ const VARIANT_CLASSES: string[] = [
 	"bg-teal hover:bg-teal text-white",
 ];
 const LEGEND_CLASSES = [EMPTY_CLASS, ...VARIANT_CLASSES];
+
+// Render order for the preset clusters below the calendar. Grouping the nine
+// shortcuts by time scale (day / month / year) turns one ragged wrap-row into
+// three tidy segmented controls.
+const PRESET_GROUP_ORDER: CalendarPresetGroup[] = ["day", "month", "year"];
 
 function buildDayStats(entries: TranscriptionHistoryEntry[]): Map<string, DayStat> {
 	const stats = new Map<string, DayStat>();
@@ -180,6 +187,19 @@ export function ActivityHeatmap({ entries, onRangeChange, selectedRange }: Activ
 		);
 	};
 
+	const applyPreset = (preset: CalendarPreset) => {
+		onRangeChange(preset.range);
+		const target = preset.range.from ?? preset.range.to;
+		if (target) {
+			setMonth(target);
+		}
+	};
+
+	const presetGroups = PRESET_GROUP_ORDER.map((group) => ({
+		group,
+		items: presets.filter((preset) => preset.group === group),
+	})).filter((entry) => entry.items.length > 0);
+
 	return (
 		<div className="flex w-full flex-col gap-3">
 			<div className="flex flex-wrap items-center justify-between gap-3">
@@ -228,36 +248,30 @@ export function ActivityHeatmap({ entries, onRangeChange, selectedRange }: Activ
 				weekStartsOn={0}
 			/>
 
-			<div className="border-border border-t pt-3">
-				<div className="flex flex-wrap items-center gap-1.5">
-					{presets.map((preset) => {
-						const active = isPresetActive(preset);
-						return (
-							<button
-								className={cn(
-									"inline-flex h-7 items-center justify-center rounded-md border px-2.5 font-medium text-xs-tight transition-colors",
-									active
-										? "border-teal/60 bg-teal/15 text-foreground shadow-surface-1"
-										: cn(
-												"border-border text-foreground-secondary hover:border-foreground-muted/40 hover:bg-surface-hover hover:text-foreground",
-												panelBg
-											)
-								)}
-								key={preset.label}
-								onClick={() => {
-									onRangeChange(preset.range);
-									const target = preset.range.from ?? preset.range.to;
-									if (target) {
-										setMonth(target);
-									}
-								}}
-								type="button"
-							>
-								{preset.label}
-							</button>
-						);
-					})}
-				</div>
+			<div className="flex flex-col items-center gap-2 border-border border-t pt-3">
+				{presetGroups.map(({ group, items }) => (
+					<ButtonGroup connected key={group}>
+						{items.map((preset) => {
+							const active = isPresetActive(preset);
+							return (
+								<button
+									aria-pressed={active}
+									className={cn(
+										"inline-flex h-7 items-center justify-center px-3 font-medium text-xs-tight transition-colors",
+										active
+											? "bg-teal text-white"
+											: "text-foreground-secondary hover:bg-surface-hover hover:text-foreground"
+									)}
+									key={preset.label}
+									onClick={() => applyPreset(preset)}
+									type="button"
+								>
+									{preset.label}
+								</button>
+							);
+						})}
+					</ButtonGroup>
+				))}
 			</div>
 
 			<div className="flex items-center justify-end gap-1.5 text-foreground-muted text-xs-tight">

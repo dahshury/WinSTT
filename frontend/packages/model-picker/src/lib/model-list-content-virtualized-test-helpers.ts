@@ -12,6 +12,7 @@ import {
 	PricingChip,
 	ProviderStatChip,
 	ProviderStatsRow,
+	SectionHeader,
 	VariantBadge,
 	VirtualizedRow,
 } from "./model-list-content-virtualized-components";
@@ -74,7 +75,9 @@ export {
 	applyVirtualScrollMakerUpdate,
 	buildVirtualItems,
 	EmptyState,
+	findActiveVirtualIndex,
 	getRowKey,
+	SectionHeader,
 	type VirtualizedItem,
 	VirtualizedRow,
 };

@@ -37,9 +37,9 @@ describe("DictionaryTable", () => {
 
 	test("the Add button is disabled when term is empty", () => {
 		renderWith({});
-		const buttons = screen.getAllByRole("button");
-		const addBtn = buttons.find((b) => (b.textContent ?? "").trim().toLowerCase() === "add");
-		expect(addBtn).toBeDefined();
+		// The Add action now lives in the input-group's trailing slot as an
+		// icon button, so it's found by its accessible name, not its text.
+		const addBtn = screen.getByRole("button", { name: /add/i });
 		expect((addBtn as HTMLButtonElement).disabled).toBe(true);
 	});
 

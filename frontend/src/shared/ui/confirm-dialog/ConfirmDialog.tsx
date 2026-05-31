@@ -1,7 +1,5 @@
-import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { ReactNode } from "react";
-import { surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
-import { Button } from "@/shared/ui/button";
+import { DialogActionButton, DialogClose } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 
 export interface ConfirmDialogProps {
@@ -17,43 +15,27 @@ export interface ConfirmDialogProps {
 }
 
 export function ConfirmDialog({
-	open,
-	onOpenChange,
-	title,
-	description,
-	confirmLabel = "Delete",
 	cancelLabel = "Cancel",
+	confirmLabel = "Delete",
+	description,
 	onConfirm,
+	onOpenChange,
+	open,
+	title,
 }: ConfirmDialogProps) {
-	// DialogShell installs a SurfaceProvider at `substrate + 4`. We re-read it
-	// here so the cancel button lifts one level above the popup (hover +2).
-	const substrate = useSurface();
-	const popupLevel = Math.min(substrate + 4, 8);
-	const buttonLevel = Math.min(popupLevel + 1, 8);
-	const buttonHover = Math.min(popupLevel + 2, 8);
-
 	return (
 		<DialogShell description={description} onOpenChange={onOpenChange} open={open} title={title}>
-			<AlertDialog.Close
-				render={
-					<Button
-						className={`h-8 rounded-md ${surfaceClasses(buttonLevel)} px-4 font-medium text-body text-foreground-secondary transition-colors duration-150 ${surfaceHoverBg(buttonHover)}`}
-					>
-						{cancelLabel}
-					</Button>
-				}
+			{/* Both footer buttons wrap in DialogClose so Base UI auto-closes via its
+			    `close-press` reason — no manual `onOpenChange(false)`. The confirm
+			    button additionally runs `onConfirm` before the close. */}
+			<DialogClose
+				render={<DialogActionButton variant="neutral">{cancelLabel}</DialogActionButton>}
 			/>
-			{/* Wrap the confirm action in AlertDialog.Close so the dialog
-			    auto-closes on click via Base UI's `close-press` reason — no
-			    manual `onOpenChange(false)` needed. */}
-			<AlertDialog.Close
+			<DialogClose
 				render={
-					<Button
-						className="h-8 rounded-md bg-error px-4 font-medium text-body text-white transition-colors duration-150 hover:bg-error-dim"
-						onClick={onConfirm}
-					>
+					<DialogActionButton onClick={onConfirm} variant="danger">
 						{confirmLabel}
-					</Button>
+					</DialogActionButton>
 				}
 			/>
 		</DialogShell>

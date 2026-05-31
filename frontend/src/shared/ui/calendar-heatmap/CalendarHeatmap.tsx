@@ -19,7 +19,12 @@ export interface DateRange {
 	to: Date | null;
 }
 
+/** Time-scale bucket a preset belongs to, used to lay presets out in tidy,
+ * semantically-grouped clusters instead of one ragged row. */
+export type CalendarPresetGroup = "day" | "month" | "year";
+
 export interface CalendarPreset {
+	group?: CalendarPresetGroup;
 	label: string;
 	range: DateRange;
 }

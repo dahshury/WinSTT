@@ -29,6 +29,7 @@ const PROVIDER_ICONS: Record<string, string> = {
 	essentialai: "/provider-icons/essentialai.png",
 	google: "/provider-icons/google.svg",
 	gryphe: "/provider-icons/gryphe.png",
+	huggingface: "/provider-icons/huggingface.svg",
 	"ibm-granite": "/provider-icons/ibm-granite.webp",
 	inception: "/provider-icons/inception.png",
 	inflection: "/provider-icons/inflection.png",
@@ -119,12 +120,22 @@ function normalizeProviderName(provider: string): string {
 	return normalized;
 }
 
-function getProviderIcon(provider: string | null | undefined): string | null {
+export function getProviderIcon(provider: string | null | undefined): string | null {
 	if (!provider) {
 		return null;
 	}
 	const normalized = normalizeProviderName(provider);
 	return PROVIDER_ICONS[normalized] || null;
+}
+
+/**
+ * Like {@link getProviderIconWithFallback} but returns `null` (renderer-root
+ * resolved when found) when the maker has no bundled logo — so callers can render
+ * a neutral initials chip instead of the misleading OpenRouter "O" fallback.
+ */
+export function resolveProviderIcon(provider: string | null | undefined): string | null {
+	const path = getProviderIcon(provider);
+	return path ? publicAsset(path) : null;
 }
 
 /**

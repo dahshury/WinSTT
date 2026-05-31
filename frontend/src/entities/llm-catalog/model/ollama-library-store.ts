@@ -42,10 +42,13 @@ export function shouldSkipCatalogLoad(state: { isLoaded: boolean; isLoading: boo
 	return state.isLoaded || state.isLoading;
 }
 
-/** True when there is a non-error cached tag list — used to gate `fetchTags`
- *  so the picker doesn't re-hit ollama-registry for every accordion expand. */
+/** Gate for `fetchTags` so the picker doesn't re-hit ollama-registry. Skips when
+ *  a fetch is already IN-FLIGHT (dedupes the burst of cards requesting the same
+ *  base before any resolves — this was firing N concurrent scrapes per base, e.g.
+ *  the same model fetched 5×) or when a non-error list is already cached. An
+ *  errored entry is still allowed to retry. */
 export function shouldSkipTagsFetch(existing: TagsState | undefined): boolean {
-	return Boolean(existing?.tags.length && !existing.error);
+	return Boolean(existing?.isLoading || (existing?.tags.length && !existing.error));
 }
 
 function buildCatalogReadyState(result: {

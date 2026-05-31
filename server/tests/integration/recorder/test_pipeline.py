@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import struct
 import time
+import warnings
 
 from src.building_blocks.clock import Clock
 from src.building_blocks.event_bus import EventBus
@@ -11,6 +12,8 @@ from src.recorder.application.pipeline import RecordingPipeline
 from src.recorder.domain.audio_buffer import AudioBuffer
 from src.recorder.domain.config import RecorderConfig
 from src.recorder.domain.events import (
+    AudioChunkRecorded,
+    AudioLevelComputed,
     NoAudioDetected,
     RecordingStarted,
     RecordingStopped,
@@ -804,6 +807,35 @@ class TestRecordingPipeline:
         pipeline._handle_chunk(bad_chunk)
 
         # No exception propagated; state unchanged.
+        assert sm.state == RecorderState.INACTIVE
+
+    def test_handle_chunk_skips_level_for_empty_chunk(self) -> None:
+        """An empty chunk computes no level and emits no numpy "Mean of empty slice" warning.
+
+        The streaming resampler (pyaudio_source._StreamingResampler) returns
+        b"" while priming / holding back its tail — routine on any mic whose
+        native rate != 16 kHz. _handle_chunk must not run np.mean over the
+        resulting zero-size buffer (which warns and yields a NaN level); it
+        skips the AudioLevelComputed publish but still forwards the chunk.
+        """
+        clock = Clock.fixed_clock(1000.0)
+        pipeline, event_bus, sm, _buf, _vad = self._make_pipeline_with_clock(clock)
+
+        levels: list[object] = []
+        chunks: list[object] = []
+        event_bus.subscribe(AudioLevelComputed, levels.append)
+        event_bus.subscribe(AudioChunkRecorded, chunks.append)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            pipeline._handle_chunk(b"")
+
+        # No RuntimeWarning ("Mean of empty slice" / "invalid value in divide").
+        assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == []
+        # No spurious (NaN) level event for the empty chunk...
+        assert levels == []
+        # ...but the chunk still flows downstream (passthrough preserved).
+        assert len(chunks) == 1
         assert sm.state == RecorderState.INACTIVE
 
     def test_dispatch_chunk_routes_to_recording_branch(self) -> None:

@@ -26,6 +26,16 @@ export interface FeatureIconConfig {
 	textClass: string;
 }
 
+// fluidfunctionalism: capability glyphs are NEUTRAL. Each feature reads from its
+// icon SHAPE + tooltip (wrench=tools, brain=reasoning, code=structured, …), so
+// every chip shares one muted gray treatment instead of a seven-hue rainbow. The
+// provider sub-cards stay calmly grayscale; color is reserved for selection.
+const NEUTRAL_FEATURE_CHROME = {
+	bgClass: "bg-foreground/[0.04]",
+	textClass: "text-foreground-muted",
+	borderClass: "border-border/60",
+} as const;
+
 const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 	tools: {
 		icon: <HugeiconsIcon className="size-3" icon={Wrench01Icon} />,
@@ -34,9 +44,7 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "FN",
 		description:
 			"Supports function/tool calling. The model can execute functions, call APIs, and use external tools to perform actions beyond text generation.",
-		bgClass: "bg-blue-500/10 dark:bg-blue-500/15",
-		textClass: "text-blue-600 dark:text-blue-400",
-		borderClass: "border-blue-500/20",
+		...NEUTRAL_FEATURE_CHROME,
 	},
 	parallel_tool_calls: {
 		icon: <HugeiconsIcon className="size-3" icon={Layers01Icon} />,
@@ -45,9 +53,7 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "||",
 		description:
 			"Supports parallel tool calls. The model can execute multiple tools simultaneously instead of sequentially, improving response speed.",
-		bgClass: "bg-indigo-500/10 dark:bg-indigo-500/15",
-		textClass: "text-indigo-600 dark:text-indigo-400",
-		borderClass: "border-indigo-500/20",
+		...NEUTRAL_FEATURE_CHROME,
 	},
 	reasoning: {
 		icon: <HugeiconsIcon className="size-3" icon={Brain01Icon} />,
@@ -56,9 +62,7 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "R",
 		description:
 			"Supports reasoning output. The model can show its step-by-step thinking process and explain how it arrives at conclusions.",
-		bgClass: "bg-purple-500/10 dark:bg-purple-500/15",
-		textClass: "text-purple-600 dark:text-purple-400",
-		borderClass: "border-purple-500/20",
+		...NEUTRAL_FEATURE_CHROME,
 	},
 	include_reasoning: {
 		icon: <HugeiconsIcon className="size-3" icon={SparklesIcon} />,
@@ -67,9 +71,7 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "+R",
 		description:
 			"Can include reasoning in response. The model can optionally include its internal reasoning process in the output when requested.",
-		bgClass: "bg-violet-500/10 dark:bg-violet-500/15",
-		textClass: "text-violet-600 dark:text-violet-400",
-		borderClass: "border-violet-500/20",
+		...NEUTRAL_FEATURE_CHROME,
 	},
 	structured_outputs: {
 		icon: <HugeiconsIcon className="size-3" icon={CodeIcon} />,
@@ -78,9 +80,7 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "{}",
 		description:
 			"Supports structured output schema. The model can return data in a predefined JSON schema format, ensuring consistent output structure.",
-		bgClass: "bg-emerald-500/10 dark:bg-emerald-500/15",
-		textClass: "text-emerald-600 dark:text-emerald-400",
-		borderClass: "border-emerald-500/20",
+		...NEUTRAL_FEATURE_CHROME,
 	},
 	response_format: {
 		icon: <HugeiconsIcon className="size-3" icon={BubbleChatIcon} />,
@@ -89,9 +89,7 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "JS",
 		description:
 			"Supports JSON response format. The model can return responses in valid JSON format, useful for programmatic integration.",
-		bgClass: "bg-teal-500/10 dark:bg-teal-500/15",
-		textClass: "text-teal-600 dark:text-teal-400",
-		borderClass: "border-teal-500/20",
+		...NEUTRAL_FEATURE_CHROME,
 	},
 	web_search_options: {
 		icon: <HugeiconsIcon className="size-3" icon={GlobeIcon} />,
@@ -100,9 +98,7 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "WEB",
 		description:
 			"Supports web search capabilities. The model can search the internet to find current information and answer questions with up-to-date data.",
-		bgClass: "bg-orange-500/10 dark:bg-orange-500/15",
-		textClass: "text-orange-600 dark:text-orange-400",
-		borderClass: "border-orange-500/20",
+		...NEUTRAL_FEATURE_CHROME,
 	},
 };
 
@@ -189,9 +185,7 @@ function buildQuantizationFeature(quantLabel: string): {
 			label: quantLabel,
 			shortLabel: quantLabel,
 			description: `Quantization: ${quantLabel}. This provider serves the model with ${quantLabel} quantization, which reduces model size and improves inference speed while maintaining acceptable quality.`,
-			bgClass: "bg-amber-500/10 dark:bg-amber-500/15",
-			textClass: "text-amber-600 dark:text-amber-400",
-			borderClass: "border-amber-500/20",
+			...NEUTRAL_FEATURE_CHROME,
 		},
 	};
 }

@@ -1,7 +1,11 @@
-import { AlertDialog } from "@base-ui/react/alert-dialog";
 import type { ReactNode } from "react";
-import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
-import { dialogAnimation } from "@/shared/ui/dialog-animation";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogTitle,
+} from "@/shared/ui/dialog";
 
 export interface DialogShellProps {
 	/** Optional rich body rendered BETWEEN the description and the footer —
@@ -21,49 +25,33 @@ export interface DialogShellProps {
 	width?: number;
 }
 
-/** Shared `AlertDialog` skeleton — backdrop + portal + surface-aware popup + title +
- *  description (+ optional body) + footer. The single source of the app's confirm /
- *  dialog look: `ConfirmDialog`, `OptInDialog`, the model-picker delete confirm, and
- *  the model-download dialog all render through it so they share one surface, radius,
- *  padding, typography, backdrop, and z-confirm stacking. Callers differ only in width,
- *  body content, button colors, and escape-key behavior — all kept caller-side. */
+/** Shared confirm/dialog skeleton — title + description (+ optional body) + footer
+ *  on the app's standard alert-dialog chrome. The single source of the
+ *  confirm / opt-in look: `ConfirmDialog`, `OptInDialog`, the model-picker delete
+ *  confirm, and the model-download dialog all render through it, so they share one
+ *  surface, radius, padding, typography, backdrop, and `z-confirm` stacking.
+ *
+ *  A thin wrapper over the shared {@link Dialog} primitive in `alert` mode
+ *  (AlertDialog semantics: `role="alertdialog"`, focus-trap, Esc dismiss). Callers
+ *  differ only in width, body content, button colors, and escape-key behavior —
+ *  all kept caller-side. */
 export function DialogShell({
-	open,
-	onOpenChange,
-	title,
-	description,
 	body,
 	children,
+	description,
+	onOpenChange,
+	open,
+	title,
 	width = 360,
 }: DialogShellProps) {
-	const substrate = useSurface();
-	const popupLevel = Math.min(substrate + 4, 8);
-	const popupShadow = Math.max(popupLevel, 7);
 	return (
-		<AlertDialog.Root onOpenChange={onOpenChange} open={open}>
-			<AlertDialog.Portal>
-				<AlertDialog.Backdrop
-					className={`${dialogAnimation.backdrop} fixed inset-0 z-confirm-backdrop bg-black/60 backdrop-blur-sm`}
-				/>
-				<SurfaceProvider value={popupLevel}>
-					<AlertDialog.Popup
-						className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-confirm flex max-w-[90vw] flex-col gap-4 rounded-xl ${surfaceClasses(popupLevel, popupShadow)} p-6 outline-none`}
-						style={{ width }}
-					>
-						<AlertDialog.Title className="m-0 font-sans font-semibold text-[15px] text-foreground">
-							{title}
-						</AlertDialog.Title>
-						<AlertDialog.Description
-							className="m-0 whitespace-pre-line font-sans text-body text-foreground-muted leading-relaxed"
-							render={<div />}
-						>
-							{description}
-						</AlertDialog.Description>
-						{body}
-						<div className="mt-1 flex justify-end gap-2">{children}</div>
-					</AlertDialog.Popup>
-				</SurfaceProvider>
-			</AlertDialog.Portal>
-		</AlertDialog.Root>
+		<Dialog alert onOpenChange={onOpenChange} open={open}>
+			<DialogContent width={width}>
+				<DialogTitle>{title}</DialogTitle>
+				<DialogDescription render={<div />}>{description}</DialogDescription>
+				{body}
+				<DialogFooter className="mt-1">{children}</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }

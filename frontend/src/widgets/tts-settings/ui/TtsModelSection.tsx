@@ -2,6 +2,7 @@ import { AiCloud01Icon, CpuIcon, LockIcon, VolumeHighIcon } from "@hugeicons/cor
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
+	SettingResetButton,
 	SettingSection,
 	useSettingsStore,
 	useSettingsTabStore,
@@ -387,6 +388,12 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 					>
 						<FormControl
 							label={tIntegrations("sourceLabel")}
+							labelTrailing={
+								<SettingResetButton
+									isDefault={effectiveSource === DEFAULT_SETTINGS.tts.source}
+									onReset={() => handleSourceChange(DEFAULT_SETTINGS.tts.source)}
+								/>
+							}
 							layout="row"
 							tooltip={tIntegrations("sourceTooltip")}
 						>

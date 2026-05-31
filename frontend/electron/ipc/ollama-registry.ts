@@ -32,6 +32,27 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 const PAGE_SIZE = 20;
 
+// ── Burst control ─────────────────────────────────────────────────────
+// ollama.com sits behind Cloudflare, which resets excess concurrent
+// connections from one client (undici surfaces this as `fetch failed`) and
+// stalls the queued ones past the timeout (`This operation was aborted`).
+// Browsing the library mounts many rows at once — each scraping its own tag
+// page — so a single request always succeeds while the burst fails. Cap how
+// many scrapes run at once and retry the transient drops with backoff. A
+// browser-like UA is sent below for good measure (Cloudflare can be picky on
+// HTML routes), though empirically the WinSTT UA alone passes.
+const MAX_CONCURRENT_FETCHES = 3;
+const MAX_FETCH_RETRIES = 2;
+const RETRY_BACKOFF_MS = 400;
+const RETRYABLE_CAUSE_CODES = new Set([
+	"ECONNRESET",
+	"ECONNREFUSED",
+	"ETIMEDOUT",
+	"EAI_AGAIN",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_SOCKET",
+]);
+
 interface CacheEntry<T> {
 	expiresAt: number;
 	value: T;
@@ -83,19 +104,114 @@ function throwHttpError(status: number): never {
 	throw new Error(`Ollama returned HTTP ${status}`);
 }
 
-async function fetchHtml(url: string): Promise<string> {
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+
+// ── Bounded-concurrency gate ──────────────────────────────────────────
+// One shared slot pool across catalog/search/tags scrapes. A library browse
+// can fire 20+ tag fetches in a single tick; without this they'd all hit
+// Cloudflare at once and get reset/stalled. Slots are handed directly to the
+// next waiter on release so the pool never over- or under-counts.
+
+let activeFetches = 0;
+const fetchWaiters: Array<() => void> = [];
+// Mutable so tests can zero the backoff and keep the retry suite instant.
+let retryBackoffMs = RETRY_BACKOFF_MS;
+
+function acquireFetchSlot(): Promise<void> {
+	if (activeFetches < MAX_CONCURRENT_FETCHES) {
+		activeFetches += 1;
+		return Promise.resolve();
+	}
+	return new Promise<void>((resolve) => {
+		fetchWaiters.push(resolve);
+	});
+}
+
+function releaseFetchSlot(): void {
+	const next = fetchWaiters.shift();
+	if (next) {
+		// Transfer the slot straight to the waiter — `activeFetches` stays put.
+		next();
+		return;
+	}
+	activeFetches -= 1;
+}
+
+function causeCode(err: unknown): string | null {
+	if (!(err instanceof Error && err.cause) || typeof err.cause !== "object") {
+		return null;
+	}
+	const code = (err.cause as { code?: unknown }).code;
+	return typeof code === "string" ? code : null;
+}
+
+// Retry only the burst-induced transients — the timeout abort (`AbortError`)
+// and undici's connection-level `fetch failed`/reset. HTTP-status throws and
+// parser errors are deterministic, so re-hitting them just wastes time.
+function isRetryableFetchError(err: unknown): boolean {
+	if (!(err instanceof Error)) {
+		return false;
+	}
+	if (err.name === "AbortError" || err.name === "TimeoutError" || err.message === "fetch failed") {
+		return true;
+	}
+	const code = causeCode(err);
+	return code !== null && RETRYABLE_CAUSE_CODES.has(code);
+}
+
+async function fetchHtmlOnce(url: string): Promise<string> {
 	const controller = new AbortController();
 	const timer = abortAfter(controller, REQUEST_TIMEOUT_MS);
-	const fetched = fetch(url, {
-		headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
-		signal: controller.signal,
-	}).then(readOk);
-	return await fetched.finally(() => clearTimeout(timer));
+	try {
+		const res = await fetch(url, {
+			headers: {
+				"User-Agent": USER_AGENT,
+				Accept: "text/html",
+				"Accept-Language": "en-US,en;q=0.9",
+			},
+			signal: controller.signal,
+		});
+		return await readOk(res);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function fetchHtmlWithRetry(url: string): Promise<string> {
+	let lastError: unknown;
+	for (let attempt = 0; attempt <= MAX_FETCH_RETRIES; attempt += 1) {
+		try {
+			return await fetchHtmlOnce(url);
+		} catch (err) {
+			lastError = err;
+			if (attempt === MAX_FETCH_RETRIES || !isRetryableFetchError(err)) {
+				throw err;
+			}
+			await delay(retryBackoffMs * 2 ** attempt);
+		}
+	}
+	throw lastError;
+}
+
+async function fetchHtml(url: string): Promise<string> {
+	await acquireFetchSlot();
+	try {
+		return await fetchHtmlWithRetry(url);
+	} finally {
+		releaseFetchSlot();
+	}
 }
 
 // ── Search-page parser ────────────────────────────────────────────────
 
-const SEARCH_HIT_RE = /<a\s+href="\/library\/([^"]+)"\s+class="group w-full">/g;
+// ollama.com appends utility classes after `group w-full` (e.g. `space-y-5`), so
+// match the class prefix tolerantly — the strict `group w-full">` form silently
+// matched zero models after a site markup change, emptying the library browse.
+const SEARCH_HIT_RE = /<a\s+href="\/library\/([^"]+)"\s+class="group w-full[^"]*">/g;
 const TITLE_ATTR_RE = /title="([^"]+)"/;
 const DESCRIPTION_RE = /<p[^>]*class="[^"]*max-w-lg[^"]*"[^>]*>([\s\S]*?)<\/p>/;
 const PULLS_RE = /<span[^>]*>([\d.,]+[KMB]?)\s*Pulls?<\/span>/i;
@@ -245,7 +361,8 @@ const TAG_ANCHOR_RE = /<a\s+href="\/library\/([^"]+:[^"]+)"\s+class="md:hidden[^
 const SIZE_RE = /([\d.]+)\s*(KB|MB|GB|TB)/i;
 const CONTEXT_RE = /([\d.]+[KMB])\s*context\s*window/i;
 const QUANT_TOKEN_RE = /(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)(?=$|[-:_])/i;
-const PARAM_TOKEN_RE = /(?:^|[-:_])(\d+(?:\.\d+)?[mMbB])(?=$|[-:_])/;
+// Optional `e` prefix captures Gemma 3n/4 MatFormer "effective" sizes (`e2b`).
+const PARAM_TOKEN_RE = /(?:^|[-:_])(e?\d+(?:\.\d+)?[mMbB])(?=$|[-:_])/;
 const LATEST_TAG_RE = /text-blue-600[^>]*>latest</i;
 
 interface SizeInfo {
@@ -451,7 +568,7 @@ async function searchOrFail(
 
 function recordSearchFailure(query: string, page: number, err: unknown): OllamaLibrarySearchResult {
 	const message = describeError(err, "Failed to reach ollama.com");
-	dbg("ollama-registry: search failed", { query, page, error: message });
+	dbg("ollama-registry: search failed", { query, page, error: message, cause: causeCode(err) });
 	return emptySearchResult(page, query, message);
 }
 
@@ -485,7 +602,7 @@ async function scrapeCatalog(): Promise<OllamaLibraryCatalogResult> {
 
 function recordCatalogFailure(err: unknown): OllamaLibraryCatalogResult {
 	const message = describeError(err, "Failed to reach ollama.com");
-	dbg("ollama-registry: catalog fetch failed", { error: message });
+	dbg("ollama-registry: catalog fetch failed", { error: message, cause: causeCode(err) });
 	return emptyCatalogResult(message);
 }
 
@@ -521,7 +638,7 @@ async function scrapeTags(model: string, cacheKey: string): Promise<OllamaLibrar
 
 function recordTagsFailure(model: string, err: unknown): OllamaLibraryTagsResult {
 	const message = describeError(err, "Failed to reach ollama.com");
-	dbg("ollama-registry: tags fetch failed", { model, error: message });
+	dbg("ollama-registry: tags fetch failed", { model, error: message, cause: causeCode(err) });
 	return emptyTagsResult(model, message);
 }
 
@@ -621,6 +738,13 @@ function resetCachesForTests(): void {
 	searchCache.clear();
 	tagsCache.clear();
 	catalogCache = null;
+	activeFetches = 0;
+	fetchWaiters.length = 0;
+	retryBackoffMs = RETRY_BACKOFF_MS;
+}
+
+function setRetryBackoffForTests(ms: number): void {
+	retryBackoffMs = ms;
 }
 
 // Test-only exports for the parser internals — pure functions, no IPC.
@@ -636,4 +760,5 @@ export const __ollama_registry_test_helpers__ = {
 	fetchOllamaLibraryCatalog,
 	fetchOllamaLibraryTags,
 	resetCachesForTests,
+	setRetryBackoffForTests,
 };

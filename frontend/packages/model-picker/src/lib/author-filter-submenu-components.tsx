@@ -28,7 +28,7 @@ export function SelectedCountBadge({ count }: CountBadgeProps) {
 		return null;
 	}
 	return (
-		<span className="ml-auto rounded-full bg-accent px-1.5 py-0.5 text-foreground text-xs-tight">
+		<span className="ml-auto rounded-full bg-foreground/[0.10] px-1.5 py-0.5 text-foreground-secondary text-xs-tight tabular-nums">
 			{count}
 		</span>
 	);

@@ -35,8 +35,8 @@ describe("createContextCapture", () => {
 		});
 		cap.capture();
 		const out = await cap.consume();
-		expect(out).toContain("Window: Editor");
-		expect(out).toContain("Focused field: Body");
+		expect(out).toContain('"window": "Editor"');
+		expect(out).toContain('"field": "Body"');
 		expect(out).toContain("Dear Dr. Aljarbou,");
 	});
 
@@ -75,7 +75,7 @@ describe("createContextCapture", () => {
 		cap.capture();
 		cap.capture();
 		const out = await cap.consume();
-		expect(out).toContain("Window: Second");
+		expect(out).toContain('"window": "Second"');
 	});
 
 	test("clear discards a pending snapshot", async () => {
@@ -115,7 +115,7 @@ describe("createContextCapture", () => {
 		});
 		cap.capture();
 		const out = await cap.consume();
-		expect(out).toContain("Window: 1Password — Vault");
+		expect(out).toContain('"window": "1Password — Vault"');
 		expect(out).not.toContain("supersecret");
 		expect(out).not.toContain("<edit>");
 		expect(out).not.toContain("App: 1password.exe");
@@ -136,8 +136,8 @@ describe("createContextCapture", () => {
 		});
 		cap.capture();
 		const out = await cap.consume();
-		expect(out).toContain("App: chrome.exe");
-		expect(out).toContain("URL: mail.google.com");
+		expect(out).toContain('"app": "chrome.exe"');
+		expect(out).toContain('"url": "mail.google.com"');
 	});
 
 	test("deny-list URL host-suffix match strips sensitive fields", async () => {
@@ -351,7 +351,7 @@ describe("createContextCapture — onSnapshotReady / onSnapshotCleared", () => {
 		cap.capture();
 		await Promise.resolve();
 		await Promise.resolve();
-		expect(await cap.consume()).toContain("Window: Editor");
+		expect(await cap.consume()).toContain('"window": "Editor"');
 	});
 
 	test("a throwing onSnapshotReady consumer does NOT escape as an unhandled rejection", async () => {
@@ -420,7 +420,7 @@ describe("createContextCapture — onSnapshotReady / onSnapshotCleared", () => {
 			await new Promise<void>((r) => setTimeout(r, 5));
 			expect(unhandled).toEqual([]);
 			// consume() still works after the consumer threw.
-			expect(await cap.consume()).toContain("Window: Editor");
+			expect(await cap.consume()).toContain('"window": "Editor"');
 		} finally {
 			process.off("unhandledRejection", onUnhandled);
 		}
@@ -472,7 +472,7 @@ describe("createContextCapture — consume-time deny-list & redaction", () => {
 		cap.capture();
 		denyList = ["outlook.exe"]; // user edits the list mid-recording
 		const out = await cap.consume();
-		expect(out).toContain("Window: Outlook");
+		expect(out).toContain('"window": "Outlook"');
 		expect(out).not.toContain("private email body");
 		expect(out).not.toContain("App: outlook.exe");
 	});
@@ -491,7 +491,7 @@ describe("createContextCapture — consume-time deny-list & redaction", () => {
 		});
 		cap.capture();
 		const out = await cap.consume();
-		expect(out).toContain("Window: Secret Game");
+		expect(out).toContain('"window": "Secret Game"');
 		expect(out).not.toContain("TOP SECRET screen text");
 		expect(out).not.toContain("Screen text");
 	});
@@ -547,7 +547,7 @@ describe("createContextCapture — consume-time deny-list & redaction", () => {
 		cap.capture();
 		cap.capture(); // overwrite → fireCleared with no callback, must not throw
 		const out = await cap.consume(); // consume → fireCleared with no callback
-		expect(out).toContain("Window: Editor");
+		expect(out).toContain('"window": "Editor"');
 		// clear() on the now-empty state is a no-op (no fireCleared).
 		expect(() => cap.clear()).not.toThrow();
 	});

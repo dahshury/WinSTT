@@ -30,6 +30,16 @@ interface ModalityIconConfig {
  * `embeddings`). The chips reuse the same styling cadence as
  * `EndpointFeatureIcons` so embedding rows and chat rows feel coherent.
  */
+// fluidfunctionalism: modality glyphs are NEUTRAL. The icon SHAPE (and its
+// tooltip) carries the meaning — text/image/audio/video/file each read at a
+// glance from the glyph alone — so every chip shares one muted gray treatment
+// instead of a six-hue rainbow. Keeps the meta row calmly grayscale.
+const NEUTRAL_GLYPH_CHROME = {
+	bgClass: "bg-foreground/[0.04]",
+	textClass: "text-foreground-muted",
+	borderClass: "border-border/60",
+} as const;
+
 const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 	text: {
 		icon: <HugeiconsIcon className="size-3" icon={TextIcon} />,
@@ -37,9 +47,7 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		label: "Text",
 		shortLabel: "TXT",
 		description: "Accepts plain text as input.",
-		bgClass: "bg-sky-500/10 dark:bg-sky-500/15",
-		textClass: "text-sky-600 dark:text-sky-400",
-		borderClass: "border-sky-500/20",
+		...NEUTRAL_GLYPH_CHROME,
 	},
 	image: {
 		icon: <HugeiconsIcon className="size-3" icon={Image01Icon} />,
@@ -47,9 +55,7 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		label: "Image",
 		shortLabel: "IMG",
 		description: "Accepts images as input (vision / multimodal).",
-		bgClass: "bg-fuchsia-500/10 dark:bg-fuchsia-500/15",
-		textClass: "text-fuchsia-600 dark:text-fuchsia-400",
-		borderClass: "border-fuchsia-500/20",
+		...NEUTRAL_GLYPH_CHROME,
 	},
 	audio: {
 		icon: <HugeiconsIcon className="size-3" icon={Mic01Icon} />,
@@ -57,9 +63,7 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		label: "Audio",
 		shortLabel: "AUD",
 		description: "Accepts audio as input.",
-		bgClass: "bg-amber-500/10 dark:bg-amber-500/15",
-		textClass: "text-amber-600 dark:text-amber-400",
-		borderClass: "border-amber-500/20",
+		...NEUTRAL_GLYPH_CHROME,
 	},
 	video: {
 		icon: <HugeiconsIcon className="size-3" icon={Video01Icon} />,
@@ -67,9 +71,7 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		label: "Video",
 		shortLabel: "VID",
 		description: "Accepts video frames as input.",
-		bgClass: "bg-rose-500/10 dark:bg-rose-500/15",
-		textClass: "text-rose-600 dark:text-rose-400",
-		borderClass: "border-rose-500/20",
+		...NEUTRAL_GLYPH_CHROME,
 	},
 	file: {
 		icon: <HugeiconsIcon className="size-3" icon={File01Icon} />,
@@ -77,9 +79,7 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		label: "File",
 		shortLabel: "FILE",
 		description: "Accepts file attachments (PDF, docs, …) as input.",
-		bgClass: "bg-slate-500/10 dark:bg-slate-500/15",
-		textClass: "text-slate-600 dark:text-slate-400",
-		borderClass: "border-slate-500/20",
+		...NEUTRAL_GLYPH_CHROME,
 	},
 	embeddings: {
 		icon: <HugeiconsIcon className="size-3" icon={GridIcon} />,
@@ -87,9 +87,7 @@ const MODALITY_ICONS: Record<string, ModalityIconConfig> = {
 		label: "Embeddings",
 		shortLabel: "EMB",
 		description: "Produces dense vector embeddings as output.",
-		bgClass: "bg-violet-500/10 dark:bg-violet-500/15",
-		textClass: "text-violet-600 dark:text-violet-400",
-		borderClass: "border-violet-500/20",
+		...NEUTRAL_GLYPH_CHROME,
 	},
 };
 

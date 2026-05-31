@@ -39,6 +39,7 @@
     "crap:gate": "bun run scripts/crap-gate.ts reports/crap-baseline.json reports/crap.json",
     "coverage:gate": "bun run scripts/coverage-gate.ts",
     "native:build": "node scripts/native/build-winstt-paste.cjs && node scripts/native/build-winstt-context.cjs && node scripts/native/build-winstt-ocr.cjs",
+    "context:harness": "bun build scripts/context-harness/run.ts --target=node --outfile=scripts/context-harness/.run.mjs --external playwright && node scripts/context-harness/.run.mjs",
     "splash:generate": "node scripts/generate-splash-bmp.cjs",
     "electron:compile:main": "tsup --config tsup.config.ts",
     "electron:compile": "rm -rf dist-electron && bun run electron:compile:main",

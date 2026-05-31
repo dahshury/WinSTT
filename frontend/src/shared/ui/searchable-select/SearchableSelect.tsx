@@ -2,14 +2,8 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
-import {
-	SurfaceProvider,
-	surfaceBg,
-	surfaceClasses,
-	surfaceHighlightedBg,
-	surfaceSelectedBg,
-	useSurface,
-} from "@/shared/lib/surface";
+import { SurfaceProvider, surfaceBg, surfaceClasses, useSurface } from "@/shared/lib/surface";
+import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import type { SelectOption } from "@/shared/ui/select";
 import "./searchable-select.css";
 
@@ -167,20 +161,17 @@ function GroupHeader({
 // the row is indented a touch so it reads as nested under its header.
 function Row({
 	grouped,
-	highlightLevel,
 	item,
 	renderItemTrailing,
-	selectedLevel,
 }: {
 	grouped?: boolean | undefined;
-	highlightLevel: number;
 	item: SelectOption;
 	renderItemTrailing?: ((option: SelectOption) => ReactNode) | undefined;
-	selectedLevel: number;
 }) {
 	return (
 		<Combobox.Item
-			className={`searchable-select-item mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs py-[7px] pe-2.5 text-body text-foreground leading-normal outline-none data-[disabled]:cursor-not-allowed ${grouped ? "ps-5" : "ps-2.5"} ${surfaceHighlightedBg(highlightLevel)} ${surfaceSelectedBg(selectedLevel)} data-[selected]:font-medium data-[selected]:text-foreground data-[selected]:shadow-[inset_2px_0_0_0_var(--color-accent)]`}
+			className={`searchable-select-item relative z-raised mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs py-[7px] pe-2.5 text-body text-foreground leading-normal outline-none data-[disabled]:cursor-not-allowed ${grouped ? "ps-5" : "ps-2.5"} data-[selected]:font-medium data-[selected]:text-foreground`}
+			data-menu-option={item.id}
 			disabled={item.disabled}
 			value={item}
 		>
@@ -228,11 +219,10 @@ export function SearchableSelect({
 	const inputLevel = Math.min(substrate + 1, 8);
 	const popupLevel = Math.min(substrate + 2, 8);
 	const popupShadow = Math.max(popupLevel, 6);
-	const highlightLevel = Math.min(popupLevel + 1, 8);
-	// Selected row sits a step above hover so the current selection is
-	// instantly readable against the popup — replaces the old translucent
-	// accent tint which washed out against surface-N.
-	const selectedLevel = Math.min(popupLevel + 2, 8);
+
+	// The popup is the `position: relative` scroll container the animated
+	// selected/hover pills measure against (rows scroll inside it).
+	const popupRef = useRef<HTMLDivElement | null>(null);
 
 	// Measure the rendered badge/icon decoration so the input gets exactly
 	// the right left-padding, regardless of how wide the badge text is
@@ -316,8 +306,10 @@ export function SearchableSelect({
 						sideOffset={4}
 					>
 						<Combobox.Popup
-							className={`searchable-select-popup w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(15rem,var(--available-height))]`}
+							className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(15rem,var(--available-height))]`}
+							ref={popupRef}
 						>
+							<MenuHighlightLayer containerRef={popupRef} value={value} />
 							<Combobox.Empty className="searchable-select-empty">No results found.</Combobox.Empty>
 							<Combobox.List className="outline-none">
 								{groups
@@ -337,24 +329,16 @@ export function SearchableSelect({
 													{group.items.map((item) => (
 														<Row
 															grouped
-															highlightLevel={highlightLevel}
 															item={item}
 															key={item.id}
 															renderItemTrailing={renderItemTrailing}
-															selectedLevel={selectedLevel}
 														/>
 													))}
 												</Combobox.Group>
 											);
 										}
 									: (item: SelectOption) => (
-											<Row
-												highlightLevel={highlightLevel}
-												item={item}
-												key={item.id}
-												renderItemTrailing={renderItemTrailing}
-												selectedLevel={selectedLevel}
-											/>
+											<Row item={item} key={item.id} renderItemTrailing={renderItemTrailing} />
 										)}
 							</Combobox.List>
 						</Combobox.Popup>

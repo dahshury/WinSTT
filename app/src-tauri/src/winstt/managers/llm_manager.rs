@@ -424,6 +424,7 @@ impl LlmManager {
         let mut stream = resp.bytes_stream();
         let mut success = false;
         let mut last_error: Option<String> = None;
+        let mut layers = PullLayers::default();
 
         loop {
             if is_cancelled() {
@@ -448,7 +449,7 @@ impl LlmManager {
                 if trimmed.is_empty() {
                     continue;
                 }
-                if let Some((status, payload)) = parse_pull_line(model, trimmed) {
+                if let Some((status, payload)) = parse_pull_line(model, trimmed, &mut layers) {
                     if status == "success" {
                         success = true;
                     }
@@ -469,7 +470,7 @@ impl LlmManager {
         // Drain any trailing partial frame.
         let trimmed = buf.trim();
         if !trimmed.is_empty() {
-            if let Some((status, payload)) = parse_pull_line(model, trimmed) {
+            if let Some((status, payload)) = parse_pull_line(model, trimmed, &mut layers) {
                 if status == "success" {
                     success = true;
                 }
@@ -834,8 +835,48 @@ fn classify_pull_status(status_text: &str) -> &'static str {
     }
 }
 
-/// Parse one NDJSON pull frame into `(coalesced_status, OllamaPullProgress json)`.
-fn parse_pull_line(model: &str, line: &str) -> Option<(&'static str, serde_json::Value)> {
+/// Per-digest (per-layer) byte accumulator for a single pull. Ollama's
+/// `/api/pull` stream reports `completed`/`total` scoped to the layer it's
+/// currently fetching, so naively emitting that ratio makes the bar sweep
+/// 0→100 once per blob. Summing across layers yields ONE overall bar (the
+/// dominant GGUF blob is ~all the bytes, so tiny config/template layers no
+/// longer each flash a full sweep).
+#[derive(Default)]
+struct PullLayers {
+    by_digest: std::collections::HashMap<String, (i64, i64)>,
+}
+
+impl PullLayers {
+    fn record(&mut self, digest: Option<&str>, completed: Option<i64>, total: Option<i64>) {
+        if let (Some(d), Some(t)) = (digest, total) {
+            if t > 0 {
+                let c = completed.unwrap_or(0).clamp(0, t);
+                self.by_digest.insert(d.to_string(), (c, t));
+            }
+        }
+    }
+
+    fn aggregate(&self) -> Option<(i64, i64)> {
+        if self.by_digest.is_empty() {
+            return None;
+        }
+        let (mut completed, mut total) = (0i64, 0i64);
+        for (c, t) in self.by_digest.values() {
+            completed += c;
+            total += t;
+        }
+        Some((completed, total))
+    }
+}
+
+/// Parse one NDJSON pull frame into `(coalesced_status, OllamaPullProgress json)`,
+/// folding the layer's bytes into `layers` so the emitted `percent`/`completed`/
+/// `total` reflect the whole pull rather than just the current blob.
+fn parse_pull_line(
+    model: &str,
+    line: &str,
+    layers: &mut PullLayers,
+) -> Option<(&'static str, serde_json::Value)> {
     let json: serde_json::Value = serde_json::from_str(line).ok()?;
     let status_text = json.get("status").and_then(|s| s.as_str()).unwrap_or("");
     let status = classify_pull_status(status_text);
@@ -843,13 +884,23 @@ fn parse_pull_line(model: &str, line: &str) -> Option<(&'static str, serde_json:
     let total = json.get("total").and_then(serde_json::Value::as_i64);
     let digest = json.get("digest").and_then(|d| d.as_str());
     let error = json.get("error").and_then(|e| e.as_str());
+
+    layers.record(digest, completed, total);
+    // Report aggregate bytes once any layer is known; `success` forces a full
+    // bar (a layer may not emit a final completed==total frame).
+    let (agg_completed, agg_total) = match (status, layers.aggregate()) {
+        ("success", Some((_, t))) => (Some(t), Some(t)),
+        (_, Some((c, t))) => (Some(c), Some(t)),
+        (_, None) => (completed, total),
+    };
+
     let payload = pull_progress_json(
         model,
         status,
         Some(status_text),
         digest,
-        completed,
-        total,
+        agg_completed,
+        agg_total,
         error,
     );
     Some((status, payload))
@@ -1022,6 +1073,54 @@ mod tests {
         assert_eq!(v.get("percent").and_then(|p| p.as_f64()), Some(50.0));
         assert_eq!(v.get("status").and_then(|s| s.as_str()), Some("downloading"));
         assert_eq!(v.get("model").and_then(|s| s.as_str()), Some("m"));
+    }
+
+    #[test]
+    fn pull_layers_sum_across_digests() {
+        let mut layers = PullLayers::default();
+        layers.record(Some("sha256:a"), Some(50), Some(100));
+        layers.record(Some("sha256:b"), Some(200), Some(400));
+        assert_eq!(layers.aggregate(), Some((250, 500)));
+    }
+
+    #[test]
+    fn pull_layers_clamp_and_ignore_undigested() {
+        let mut layers = PullLayers::default();
+        layers.record(Some("sha256:x"), Some(250), Some(100)); // clamp to 100
+        layers.record(None, Some(10), Some(20)); // no digest → ignored
+        layers.record(Some("sha256:y"), Some(5), None); // no total → ignored
+        assert_eq!(layers.aggregate(), Some((100, 100)));
+    }
+
+    #[test]
+    fn parse_pull_line_reports_aggregate_not_per_layer() {
+        // A tiny config layer completes first, then the dominant blob appears at 0 bytes.
+        let mut layers = PullLayers::default();
+        let cfg = serde_json::json!({
+            "status": "pulling cfg", "digest": "sha256:cfg", "total": 1000, "completed": 1000
+        })
+        .to_string();
+        let gguf = serde_json::json!({
+            "status": "pulling gguf", "digest": "sha256:gguf", "total": 4_000_000_000i64, "completed": 0
+        })
+        .to_string();
+        parse_pull_line("m", &cfg, &mut layers);
+        let (_, payload) = parse_pull_line("m", &gguf, &mut layers).unwrap();
+        // Per-layer math would have flashed 100 (cfg) then 0 (gguf); aggregate ≈ 0.
+        assert!(payload.get("percent").and_then(|p| p.as_f64()).unwrap() < 1.0);
+    }
+
+    #[test]
+    fn parse_pull_line_success_forces_full_bar() {
+        let mut layers = PullLayers::default();
+        let dl = serde_json::json!({
+            "status": "pulling gguf", "digest": "sha256:gguf", "total": 100, "completed": 40
+        })
+        .to_string();
+        parse_pull_line("m", &dl, &mut layers);
+        let success = serde_json::json!({ "status": "success" }).to_string();
+        let (_, payload) = parse_pull_line("m", &success, &mut layers).unwrap();
+        assert_eq!(payload.get("percent").and_then(|p| p.as_f64()), Some(100.0));
     }
 
     #[test]

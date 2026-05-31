@@ -1,7 +1,5 @@
-import { Dialog } from "@base-ui/react/dialog";
 import type { ReactNode } from "react";
-import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
-import { dialogAnimation } from "@/shared/ui/dialog-animation";
+import { Dialog, DialogContent } from "@/shared/ui/dialog";
 
 export interface ModalProps {
 	children: ReactNode;
@@ -9,12 +7,14 @@ export interface ModalProps {
 	onClose: () => void;
 }
 
-export function Modal({ isOpen, onClose, children }: ModalProps) {
-	const substrate = useSurface();
-	const popupLevel = Math.min(substrate + 4, 8);
-	const popupShadow = Math.max(popupLevel, 7);
+/** Free-form modal — the content owns its own width, padding, and layout (the
+ *  model picker, LLM panels, …). A thin wrapper over the shared {@link Dialog}
+ *  primitive in its `fluid`, unpadded mode: content-driven size, `overflow-hidden`
+ *  rounded popup, `z-modal` stacking. Shares one popup-chrome / animation /
+ *  surface path with every other dialog in the app. */
+export function Modal({ children, isOpen, onClose }: ModalProps) {
 	return (
-		<Dialog.Root
+		<Dialog
 			onOpenChange={(open) => {
 				if (!open) {
 					onClose();
@@ -22,18 +22,9 @@ export function Modal({ isOpen, onClose, children }: ModalProps) {
 			}}
 			open={isOpen}
 		>
-			<Dialog.Portal>
-				<Dialog.Backdrop
-					className={`${dialogAnimation.backdrop} fixed inset-0 z-modal-backdrop bg-black/60 backdrop-blur-sm`}
-				/>
-				<SurfaceProvider value={popupLevel}>
-					<Dialog.Popup
-						className={`${dialogAnimation.popup} fixed top-1/2 left-1/2 z-modal overflow-hidden overscroll-contain rounded-xl ${surfaceClasses(popupLevel, popupShadow)} outline-none`}
-					>
-						{children}
-					</Dialog.Popup>
-				</SurfaceProvider>
-			</Dialog.Portal>
-		</Dialog.Root>
+			<DialogContent className="overflow-hidden overscroll-contain" fluid padded={false}>
+				{children}
+			</DialogContent>
+		</Dialog>
 	);
 }

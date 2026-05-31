@@ -225,9 +225,9 @@ describe("llm pure helpers", () => {
 		// split read (readWindowContextSplit) actually changes behavior.
 		const out = helpers.withContextPrefix("SYS", "Window: X");
 		const lower = out.toLowerCase();
-		expect(lower).toContain("before the caret");
+		expect(lower).toContain("beforecaret");
 		expect(lower).toContain("continue");
-		expect(lower).toContain("after the caret");
+		expect(lower).toContain("aftercaret");
 		// Boundary invariants still hold.
 		expect(out).toContain("<context>");
 		expect(out).toContain("</context>");
@@ -965,6 +965,80 @@ describe("computePercent", () => {
 
 	test("clamps to 100 maximum", () => {
 		expect(helpers.computePercent(200, 100)).toBe(100);
+	});
+});
+
+// ── aggregatePullProgress (single overall bar, not per-layer 0→100) ────
+
+describe("aggregatePullProgress + buildPullProgress", () => {
+	test("returns undefined when no layers are known", () => {
+		expect(helpers.aggregatePullProgress(new Map())).toBeUndefined();
+	});
+
+	test("sums completed/total across layers", () => {
+		const layers = new Map([
+			["sha256:a", { completed: 50, total: 100 }],
+			["sha256:b", { completed: 200, total: 400 }],
+		]);
+		expect(helpers.aggregatePullProgress(layers)).toEqual({ completed: 250, total: 500 });
+	});
+
+	test("recordLayerProgress clamps completed to the layer total", () => {
+		const layers = new Map<string, { completed: number; total: number }>();
+		helpers.recordLayerProgress(layers, {
+			status: "pulling x",
+			digest: "sha256:x",
+			total: 100,
+			completed: 250,
+		});
+		expect(helpers.aggregatePullProgress(layers)).toEqual({ completed: 100, total: 100 });
+	});
+
+	test("recordLayerProgress ignores lines without a digest or total", () => {
+		const layers = new Map<string, { completed: number; total: number }>();
+		helpers.recordLayerProgress(layers, { status: "pulling manifest" });
+		helpers.recordLayerProgress(layers, { status: "verifying sha256 digest", digest: "sha256:z" });
+		expect(layers.size).toBe(0);
+	});
+
+	test("a finished tiny layer does NOT report 100% while the dominant blob is barely started", () => {
+		const layers = new Map<string, { completed: number; total: number }>();
+		// Tiny config layer fully downloaded first…
+		helpers.recordLayerProgress(layers, {
+			status: "pulling cfg",
+			digest: "sha256:cfg",
+			total: 1000,
+			completed: 1000,
+		});
+		// …then the dominant GGUF blob appears with 0 bytes in.
+		helpers.recordLayerProgress(layers, {
+			status: "pulling gguf",
+			digest: "sha256:gguf",
+			total: 4_000_000_000,
+			completed: 0,
+		});
+		const progress = helpers.buildPullProgress(
+			"qwen2.5:3b",
+			{ status: "pulling gguf", digest: "sha256:gguf", total: 4_000_000_000, completed: 0 },
+			layers
+		);
+		// Per-layer math would have flashed 100 (cfg) then snapped to 0 (gguf).
+		expect(progress.percent).toBeLessThan(1);
+	});
+
+	test("success forces percent=100 even without a final per-layer line", () => {
+		const progress = helpers.buildPullProgress("m", { status: "success" }, new Map());
+		expect(progress.percent).toBe(100);
+	});
+
+	test("falls back to per-line percent when no layers map is provided", () => {
+		const progress = helpers.buildPullProgress("m", {
+			status: "pulling x",
+			digest: "sha256:x",
+			total: 100,
+			completed: 25,
+		});
+		expect(progress.percent).toBe(25);
 	});
 });
 

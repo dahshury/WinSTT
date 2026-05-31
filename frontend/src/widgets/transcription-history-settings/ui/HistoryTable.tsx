@@ -47,8 +47,11 @@ interface HistoryTableProps {
 // divider + meta strip lands around this height.
 const ROW_HEIGHT_HINT_PX = 104;
 // Cap the visible body so the table doesn't crowd out the rest of the panel;
-// anything beyond this scrolls.
-const MAX_BODY_HEIGHT_PX = 460;
+// anything beyond this scrolls. Generous so the transcription list reads as a
+// roomy, dedicated scroll region rather than a cramped box; the body
+// deliberately omits `overscroll-contain` so reaching either end chains the
+// wheel to the page's ScrollArea instead of trapping the scroll.
+const MAX_BODY_HEIGHT_PX = 560;
 // Below this row count, render directly (cheaper than VList's bookkeeping);
 // at/above it, virtualize so the ContextMenu.Root count stays bounded.
 const VIRTUALIZE_THRESHOLD = 50;
@@ -537,7 +540,7 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 		);
 	} else if (sorted.length < VIRTUALIZE_THRESHOLD) {
 		body = (
-			<div className="overflow-y-auto overscroll-contain" style={{ maxHeight: MAX_BODY_HEIGHT_PX }}>
+			<div className="overflow-y-auto" style={{ maxHeight: MAX_BODY_HEIGHT_PX }}>
 				{rows}
 			</div>
 		);

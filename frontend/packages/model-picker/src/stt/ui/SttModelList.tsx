@@ -1,21 +1,29 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import { FolderOpenIcon, ServerStack01Icon, StarIcon } from "@hugeicons/core-free-icons";
+import {
+	ArrowUpDownIcon,
+	FolderOpenIcon,
+	ServerStack01Icon,
+	StarIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import { openCustomModelsFolder } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
+import { publicAsset } from "../../lib/public-asset";
 import {
 	bundleVariants,
 	type FamilyKey,
 	getAuthorLabel,
 	getFamilyConfig,
 	isFavoritesGroup,
+	isSortedGroup,
 	type SttListGroup,
 } from "../lib/family-helpers";
+import { STT_SORT_HEADER_LABEL, type SttSortKey } from "../lib/sort-state";
 import { type QuantDownloadAction, type QuantDownloadSnapshot, SttModelCard } from "./SttModelCard";
 import { SttVariantBundle } from "./SttVariantBundle";
 
@@ -49,6 +57,10 @@ export interface SttModelListProps {
 	/** Star / unstar a model — drives the synthetic Favorites group. */
 	onToggleFavorite: (modelId: string) => void;
 	selectedId: string | undefined;
+	/** Active global sort key, or ``null`` in the default grouped view. When set
+	 *  the list renders a single flat "Sorted by …" column instead of the
+	 *  per-maker groups. */
+	sortKey: SttSortKey | null;
 	statesById: Record<string, ModelStateEntry>;
 	systemInfo: SystemInfoEntry | null;
 	/** Total filtered model count — read aloud via Combobox.Status. */
@@ -68,11 +80,11 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 					alt={`${author} logo`}
 					className="size-4 shrink-0 rounded-[3px] object-cover"
 					height={16}
-					src={config.logoSrc}
+					src={publicAsset(config.logoSrc)}
 					width={16}
 				/>
 			) : (
-				<span className={`flex size-4 items-center justify-center rounded ${config.chip}`}>
+				<span className="flex size-4 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted">
 					<HugeiconsIcon className="size-3" icon={config.icon} />
 				</span>
 			)}
@@ -96,8 +108,8 @@ function FavoritesLabel({ count }: { count: number }) {
 			className="sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm"
 			data-rail-section="favorites"
 		>
-			<span className="flex size-4 items-center justify-center rounded bg-amber-500/15 text-amber-500">
-				<HugeiconsIcon className="size-3 fill-amber-500" icon={StarIcon} />
+			<span className="flex size-4 items-center justify-center rounded bg-amber-400/[0.12] text-amber-400">
+				<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
 			</span>
 			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
 				Favorites
@@ -172,6 +184,75 @@ function FavoritesGroup({
 }
 
 /**
+ * Header for the synthetic flat "Sorted" group. Same sticky-label chrome as
+ * {@link AuthorLabel} / {@link FavoritesLabel} and spells out the active
+ * dimension + direction, e.g. "Sorted · Speed · fastest first".
+ */
+function SortedLabel({ sortKey }: { sortKey: SttSortKey | null }) {
+	// No `data-rail-section`: the maker rail is hidden while sorting, so we keep
+	// the scroll-spy from latching onto this header and leaving the rail with no
+	// active tile once the sort is cleared.
+	return (
+		<Combobox.GroupLabel className="sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm">
+			<span className="flex size-4 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted">
+				<HugeiconsIcon className="size-3" icon={ArrowUpDownIcon} />
+			</span>
+			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
+				Sorted
+			</span>
+			{sortKey ? (
+				<span className="text-[10px] text-foreground-dim">· {STT_SORT_HEADER_LABEL[sortKey]}</span>
+			) : null}
+		</Combobox.GroupLabel>
+	);
+}
+
+/**
+ * The flat, globally-sorted column shown while a sort is active. Like
+ * {@link FavoritesGroup} it renders every model as a FLAT card (NOT bundled) —
+ * bundling would re-group variants and break the global ordering, and it would
+ * hide a fast/small sibling under a chevron. ``siblings={items}`` keeps the size
+ * token on names that would otherwise collide.
+ */
+function SortedGroup({
+	currentQuantization,
+	getDownloadSnapshot,
+	isFavorite,
+	items,
+	onDownloadAction,
+	onRequestDeleteQuant,
+	onSelect,
+	onToggleFavorite,
+	selectedId,
+	sortKey,
+	statesById,
+	systemInfo,
+}: FavoritesGroupProps & { sortKey: SttSortKey | null }) {
+	return (
+		<Combobox.Group className="flex flex-col" items={items}>
+			<SortedLabel sortKey={sortKey} />
+			{items.map((model) => (
+				<SttModelCard
+					currentQuantization={currentQuantization}
+					getDownloadSnapshot={getDownloadSnapshot}
+					isFavorite={isFavorite}
+					key={model.id}
+					model={model}
+					onDownloadAction={onDownloadAction}
+					onRequestDeleteQuant={onRequestDeleteQuant}
+					onSelect={onSelect}
+					onToggleFavorite={onToggleFavorite}
+					selectedId={selectedId}
+					siblings={items}
+					state={statesById[model.id]}
+					systemInfo={systemInfo}
+				/>
+			))}
+		</Combobox.Group>
+	);
+}
+
+/**
  * Footer row for the "custom" family group: a CTA that opens the on-disk
  * drop folder. Lives inside the group so it scrolls with the custom-models
  * section and stays out of the way for users who don't use custom models.
@@ -188,9 +269,9 @@ function OpenCustomModelsFolderRow() {
 	return (
 		<button
 			className={cn(
-				"mx-2 my-1 flex cursor-pointer items-center gap-2 rounded-md border border-border border-dashed",
-				"bg-surface-secondary/30 px-3 py-2.5 text-foreground-secondary text-sm outline-none transition-colors",
-				"hover:border-border-hover hover:bg-surface-hover/50 hover:text-foreground"
+				"mx-2 my-1 flex cursor-pointer items-center gap-2 rounded-lg",
+				"bg-foreground/[0.03] px-3 py-2.5 text-foreground-secondary text-sm outline-none transition-colors",
+				"hover:bg-foreground/[0.06] hover:text-foreground"
 			)}
 			onClick={handleOpen}
 			type="button"
@@ -232,6 +313,7 @@ export function SttModelList({
 	expandedBundles,
 	onToggleExpanded,
 	onToggleFavorite,
+	sortKey,
 	visibleModelCount,
 }: SttModelListProps) {
 	return (
@@ -249,6 +331,28 @@ export function SttModelList({
 			</Combobox.Empty>
 			<Combobox.List className="p-0 pb-2">
 				{(group: SttListGroup) => {
+					// An active sort flattens every maker into one ordered column —
+					// rendered solo (the selector hands us just this group + hides
+					// the rail), so there are no per-maker headers to fight with.
+					if (isSortedGroup(group.value)) {
+						return (
+							<SortedGroup
+								currentQuantization={currentQuantization}
+								getDownloadSnapshot={getDownloadSnapshot}
+								isFavorite={isFavorite}
+								items={group.items}
+								key={group.value}
+								onDownloadAction={onDownloadAction}
+								onRequestDeleteQuant={onRequestDeleteQuant}
+								onSelect={onSelect}
+								onToggleFavorite={onToggleFavorite}
+								selectedId={selectedId}
+								sortKey={sortKey}
+								statesById={statesById}
+								systemInfo={systemInfo}
+							/>
+						);
+					}
 					// The synthetic Favorites group is maker-agnostic and flat —
 					// rendered ahead of (and separately from) the per-maker groups.
 					if (isFavoritesGroup(group.value)) {

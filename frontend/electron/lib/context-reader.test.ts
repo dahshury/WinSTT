@@ -465,7 +465,7 @@ describe("formatContextForPrompt", () => {
 			elementName: "",
 			focusedText: "",
 		});
-		expect(result).toBe("Window: Slack");
+		expect(result).toBe(JSON.stringify({ window: "Slack" }, null, 2));
 	});
 
 	test("collapses runs of blank lines in focused text", () => {
@@ -474,7 +474,7 @@ describe("formatContextForPrompt", () => {
 			elementName: "",
 			focusedText: "alpha\n\n\n\nbeta",
 		});
-		expect(result).toContain("alpha\nbeta");
+		expect(JSON.parse(result)).toEqual({ fieldText: "alpha\nbeta" });
 	});
 
 	test("emits all three sections when all set", () => {
@@ -483,8 +483,8 @@ describe("formatContextForPrompt", () => {
 			elementName: "Subject",
 			focusedText: "Project Nighthawk",
 		});
-		expect(result).toContain("Window: Mail");
-		expect(result).toContain("Focused field: Subject");
+		expect(result).toContain('"window": "Mail"');
+		expect(result).toContain('"field": "Subject"');
 		expect(result).toContain("Project Nighthawk");
 	});
 });

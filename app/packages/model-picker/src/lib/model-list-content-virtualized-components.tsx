@@ -4,42 +4,39 @@ import { Combobox } from "@base-ui/react/combobox";
 import {
 	ArrowRight01Icon,
 	BookOpen02Icon,
-	CheckmarkCircle02Icon,
 	CpuIcon,
 	MessageOutgoing02Icon,
 	ServerStack01Icon,
+	StarIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Collapsible } from "../core/Collapsible";
+import { GroupHeader, ModelCard, NeutralHeaderIcon } from "../core/model-card";
 import { EndpointFeatureIcons } from "../ui/EndpointFeatureIcons";
 import { ModelModalityIcons } from "../ui/ModelModalityIcons";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
 import {
 	computeModelHeaderState,
+	FAVORITES_SECTION_ID,
 	getChevronClassName,
 	getEmptyStateBody,
 	getEmptyStateLabel,
 	getEndpointProviderSlug,
 	getExpandAriaLabel,
-	getExpandButtonClassName,
 	getFeaturedEndpoint,
-	getModelCardClassName,
 	getPricingClassName,
 	getPricingLabel,
 	getProviderCardClassName,
 	getProviderCountTooltip,
 	getSelectionDotClassName,
-	getSelectionProviderTooltip,
-	getSelectionState,
 	isPositiveNumber,
 	isProviderSelected,
 	type ModelVariantKey,
 	resolveMakerIconSrc,
-	type SelectionState,
 	shouldRenderInlineMeta,
 	shouldShowStatsRow,
 	VARIANT_GRADIENT_MAP,
@@ -53,6 +50,7 @@ import {
 } from "./model-selector-display-utils";
 import { formatMaker, formatModelName } from "./model-selector-utils";
 import { MODEL_VARIANT_INFO } from "./model-variant-utils";
+import { publicAsset } from "./public-asset";
 
 // Quiet neutral top hairline. Once a 4px per-variant rainbow ribbon; now a
 // faint 1px structural seam (the variant meaning lives in the meta-line token).
@@ -176,9 +174,13 @@ interface ProviderCardProps {
 function ProviderCard({ model, endpoint, providerSlug, isSelected, onSelect }: ProviderCardProps) {
 	const pricingInfo = getPricingTier(endpoint.pricing);
 	const selectProvider = () => onSelect(model.id, providerSlug);
+	const level = Math.min(useSurface() + 1, 8);
 	return (
 		<Combobox.Item
-			className={getProviderCardClassName(isSelected)}
+			className={getProviderCardClassName(
+				isSelected,
+				cn(surfaceBg(level), surfaceHoverBg(Math.min(level + 1, 8)))
+			)}
 			onClick={selectProvider}
 			value={`${model.id}@${endpoint.provider_name}`}
 		>
@@ -259,69 +261,6 @@ function ProvidersRow({
 			/>
 		</Collapsible>
 	);
-}
-
-function SelectedIndicatorBadge() {
-	return (
-		<div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent text-foreground">
-			<HugeiconsIcon className="size-3.5" icon={CheckmarkCircle02Icon} />
-		</div>
-	);
-}
-
-function ProviderSelectedIndicator({
-	selectedProviderName,
-}: {
-	selectedProviderName: string | undefined;
-}) {
-	return (
-		<Tooltip>
-			<TooltipTrigger
-				render={(props) => (
-					<div
-						{...(props as ComponentPropsWithoutRef<"div">)}
-						className="flex size-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent"
-					>
-						<HugeiconsIcon className="size-3.5" icon={ServerStack01Icon} />
-					</div>
-				)}
-			/>
-			<TooltipContent>{getSelectionProviderTooltip(selectedProviderName)}</TooltipContent>
-		</Tooltip>
-	);
-}
-
-function IdleSelectionIndicator() {
-	return (
-		<div className="flex size-5 shrink-0 items-center justify-center rounded-full bg-surface-secondary/50 text-foreground-dim opacity-0 transition-opacity duration-200 group-hover/card:opacity-100">
-			<HugeiconsIcon className="size-3.5" icon={CheckmarkCircle02Icon} />
-		</div>
-	);
-}
-
-const SELECTION_INDICATOR_DISPATCH: Record<
-	SelectionState["kind"],
-	(props: { selectedProviderName: string | undefined }) => ReactNode
-> = {
-	selected: () => <SelectedIndicatorBadge />,
-	provider: ({ selectedProviderName }) => (
-		<ProviderSelectedIndicator selectedProviderName={selectedProviderName} />
-	),
-	none: () => <IdleSelectionIndicator />,
-};
-
-function SelectionIndicator({
-	isSelected,
-	isProviderSelected: isProviderSel,
-	selectedProviderName,
-}: {
-	isSelected: boolean;
-	isProviderSelected: boolean;
-	selectedProviderName: string | undefined;
-}) {
-	const state = getSelectionState(isSelected, isProviderSel);
-	const renderer = SELECTION_INDICATOR_DISPATCH[state.kind];
-	return <>{renderer({ selectedProviderName })}</>;
 }
 
 export function MakerIcon({ maker }: { maker: string | undefined }) {
@@ -546,16 +485,21 @@ export function ModelDescription({ description }: { description: string | undefi
 	if (!description) {
 		return null;
 	}
+	// Rendered as a block `<span>` (not a `<p>`) because it now drops into the
+	// universal `ModelCard`'s `description` slot, which itself wraps the node in a
+	// `<p>` — a nested `<p>` is invalid HTML. The `ps-[22px]` indent is gone too:
+	// the universal card aligns the description as a column child (matching STT),
+	// so it no longer needs to hang under the name past the maker icon.
 	return (
 		<Tooltip>
 			<TooltipTrigger
 				render={(props) => (
-					<p
-						{...(props as ComponentPropsWithoutRef<"p">)}
-						className="line-clamp-2 cursor-default ps-[22px] text-[11px] text-foreground-muted leading-snug"
+					<span
+						{...(props as ComponentPropsWithoutRef<"span">)}
+						className="line-clamp-2 cursor-default text-[11px] text-foreground-muted leading-snug"
 					>
 						{description}
-					</p>
+					</span>
 				)}
 			/>
 			<TooltipContent
@@ -586,6 +530,7 @@ function ProvidersExpandButton({
 		event.stopPropagation();
 		onToggleExpanded(modelId, !isExpanded);
 	};
+	const level = Math.min(useSurface() + 1, 8);
 	return (
 		<Tooltip>
 			<TooltipTrigger
@@ -594,17 +539,26 @@ function ProvidersExpandButton({
 						{...(props as ComponentPropsWithoutRef<"button">)}
 						aria-expanded={isExpanded}
 						aria-label={getExpandAriaLabel(isExpanded, providerCount)}
-						className={getExpandButtonClassName(isExpanded)}
+						className={cn(
+							"inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1 font-medium text-[10px] ring-1 transition-colors duration-150",
+							isExpanded
+								? "bg-accent/10 text-accent ring-accent/40"
+								: cn(
+										surfaceBg(level),
+										surfaceHoverBg(Math.min(level + 1, 8)),
+										"text-foreground-muted ring-divider hover:text-foreground hover:ring-border"
+									)
+						)}
 						onClick={toggleProvidersList}
 						type="button"
 					>
-						<HugeiconsIcon className="size-3.5" icon={ServerStack01Icon} />
+						<HugeiconsIcon className="size-3" icon={ServerStack01Icon} />
 						<span className="tabular-nums">{providerCount}</span>
 						<HugeiconsIcon className={getChevronClassName(isExpanded)} icon={ArrowRight01Icon} />
 					</button>
 				)}
 			/>
-			<TooltipContent className="max-w-xs" side="left">
+			<TooltipContent className="max-w-xs" side="top">
 				<p className="font-semibold text-body-sm">Hosting providers</p>
 				<p className="text-foreground-muted text-xs-tight leading-relaxed">
 					{getProviderCountTooltip(providerCount)}
@@ -640,9 +594,10 @@ export function ModelHeaderTitleRow({
 interface ModelHeaderProps {
 	hasProviders: boolean;
 	isExpanded: boolean;
+	isFavorite?: ((id: string) => boolean) | undefined;
 	model: OpenRouterModel;
-	onSelectModel: (modelId: string | undefined, providerSlug?: string) => void;
 	onToggleExpanded: (modelId: string, nextOpen?: boolean) => void;
+	onToggleFavorite?: ((id: string) => void) | undefined;
 	parsedModelId: string | undefined;
 	parsedProviderSlug: string | undefined;
 }
@@ -693,45 +648,33 @@ function ModelHeader({
 	parsedModelId,
 	parsedProviderSlug,
 	onToggleExpanded,
-	onSelectModel,
+	isFavorite,
+	onToggleFavorite,
 }: ModelHeaderProps) {
 	const state = computeModelHeaderState(model, parsedModelId, parsedProviderSlug, hasProviders);
-	const selectModel = () => onSelectModel(model.id);
+	// The OpenRouter model row is now a thin adapter over the universal
+	// `ModelCard` — the SAME card the STT picker renders — so the two pickers
+	// share one visual identity. Selection still flows through the combobox value
+	// (`value={model.id}` + the root's `onValueChange`); the maker logo, formatted
+	// name, meta strip, description, provider-grid expand button, and the
+	// three-state selection indicator all map onto the card's slots. The provider
+	// grid (`item.type === "providers"`) remains a peer row owned by the list.
 	return (
-		<div className="mx-2 my-1">
-			<Combobox.Item
-				className={getModelCardClassName(state)}
-				onClick={selectModel}
-				value={model.id}
-			>
-				<ModelVariantStrip variant={model.variant} variantClasses={state.variantClasses} />
-				<div className="flex min-w-0 flex-1 flex-col gap-1.5 px-3 py-2.5">
-					{/* Name line — the title is dominant; only the selection indicator
-					    shares this row (accent is reserved for selection). */}
-					<div className="flex items-center justify-between gap-2.5">
-						<ModelHeaderTitleRow model={model} />
-						<SelectionIndicator
-							isProviderSelected={state.isProviderSelected}
-							isSelected={state.isSelected}
-							selectedProviderName={state.selectedProvider?.provider_name}
-						/>
-					</div>
-					{/* Meta line — variant / context / price / features / modalities as
-					    one calm middot strip, indented to align under the name (past the
-					    maker icon) and subordinate to it in size + tone. */}
-					<div className="ps-[22px]">
-						<InlineModelMeta
-							hasEndpoints={state.hasEndpoints}
-							hasProviders={hasProviders}
-							model={model}
-							pricingInfo={state.pricingInfo}
-							uniqueEndpoints={state.uniqueEndpoints}
-							variant={model.variant}
-							variantClasses={state.variantClasses}
-						/>
-					</div>
-					<ModelDescription description={model.description} />
-				</div>
+		<ModelCard
+			data-model-id={model.id}
+			description={
+				model.description ? <ModelDescription description={model.description} /> : undefined
+			}
+			favorite={
+				onToggleFavorite
+					? {
+							isFavorited: isFavorite?.(model.id) ?? false,
+							label: formatModelName(model.model_name ?? model.name, model.maker),
+							onToggle: () => onToggleFavorite(model.id),
+						}
+					: undefined
+			}
+			footer={
 				<ModelHeaderProvidersButton
 					hasProviders={hasProviders}
 					isExpanded={isExpanded}
@@ -739,8 +682,76 @@ function ModelHeader({
 					onToggleExpanded={onToggleExpanded}
 					providerCount={state.uniqueEndpoints.length}
 				/>
-			</Combobox.Item>
-		</div>
+			}
+			indirectlySelected={state.isProviderSelected}
+			metaSlot={
+				<InlineModelMeta
+					hasEndpoints={state.hasEndpoints}
+					hasProviders={hasProviders}
+					model={model}
+					pricingInfo={state.pricingInfo}
+					uniqueEndpoints={state.uniqueEndpoints}
+					variant={model.variant}
+					variantClasses={state.variantClasses}
+				/>
+			}
+			name={formatModelName(model.model_name ?? model.name, model.maker)}
+			selected={state.isSelected}
+			// No leading indicator at all — selection is shown ONLY by the card's
+			// accent highlight (CARD_SELECTED), exactly like the STT picker. `false`
+			// renders nothing and (unlike null/undefined) overrides ModelCard's
+			// default check, so there's no checkbox before the name in any state.
+			selectionIndicator={false}
+			value={model.id}
+		/>
+	);
+}
+
+/** The leading icon for a maker group header: the provider's brand logo when we
+ *  have one, else a neutral chip — matching the STT picker's AuthorLabel. */
+function MakerHeaderIcon({ maker }: { maker: string }) {
+	const iconSrc = resolveMakerIconSrc(maker);
+	if (!iconSrc) {
+		return <NeutralHeaderIcon icon={CpuIcon} />;
+	}
+	return (
+		<img
+			alt=""
+			className="size-4 shrink-0 rounded-[3px] object-cover"
+			height={16}
+			src={publicAsset(iconSrc)}
+			width={16}
+		/>
+	);
+}
+
+/** The sticky section-header chrome for a group: amber star for the synthetic
+ *  Favorites group, the maker's brand logo for a real maker group. Shared by the
+ *  in-list rows AND the floating pinned-header overlay so they look identical. */
+export function SectionHeader({
+	count,
+	label,
+	sectionId,
+}: {
+	count: number;
+	label: string;
+	sectionId: string;
+}) {
+	const subtitle = `· ${count === 1 ? "1 model" : `${count} models`}`;
+	return sectionId === FAVORITES_SECTION_ID ? (
+		<GroupHeader
+			data-rail-section={sectionId}
+			icon={<NeutralHeaderIcon icon={StarIcon} tone="favorites" />}
+			label={label}
+			subtitle={subtitle}
+		/>
+	) : (
+		<GroupHeader
+			data-rail-section={sectionId}
+			icon={<MakerHeaderIcon maker={sectionId} />}
+			label={label}
+			subtitle={subtitle}
+		/>
 	);
 }
 
@@ -750,22 +761,30 @@ export function VirtualizedRow({
 	parsedProviderSlug,
 	onToggleModelExpanded,
 	onSelectModel,
+	isFavoriteModel,
+	onToggleModelFavorite,
 }: {
 	item: VirtualizedItem;
 	parsedModelId: string | undefined;
 	parsedProviderSlug: string | undefined;
 	onToggleModelExpanded: (modelId: string, nextOpen?: boolean) => void;
 	onSelectModel: (modelId: string | undefined, providerSlug?: string) => void;
+	isFavoriteModel?: ((id: string) => boolean) | undefined;
+	onToggleModelFavorite?: ((id: string) => void) | undefined;
 }) {
+	if (item.type === "header") {
+		return <SectionHeader count={item.count} label={item.label} sectionId={item.sectionId} />;
+	}
 	if (item.type === "model") {
 		return (
 			<div key={`model-${item.model.id}`}>
 				<ModelHeader
 					hasProviders={item.hasProviders}
 					isExpanded={item.isExpanded}
+					isFavorite={isFavoriteModel}
 					model={item.model}
-					onSelectModel={onSelectModel}
 					onToggleExpanded={onToggleModelExpanded}
+					onToggleFavorite={onToggleModelFavorite}
 					parsedModelId={parsedModelId}
 					parsedProviderSlug={parsedProviderSlug}
 				/>

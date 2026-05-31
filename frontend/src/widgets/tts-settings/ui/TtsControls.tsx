@@ -45,7 +45,17 @@ export function TtsControls({
 }: TtsControlsProps) {
 	return (
 		<>
-			<FormControl label={t("voice")} layout="row" tooltip={voicePlaceholder}>
+			<FormControl
+				label={t("voice")}
+				labelTrailing={
+					<SettingResetButton
+						isDefault={voice === DEFAULT_SETTINGS.tts.voice}
+						onReset={() => onVoiceChange(DEFAULT_SETTINGS.tts.voice)}
+					/>
+				}
+				layout="row"
+				tooltip={voicePlaceholder}
+			>
 				<ElevatedSurface className="w-52" inline>
 					<SearchableSelect
 						groups={voiceGroups}

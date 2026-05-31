@@ -271,7 +271,19 @@ function InitialPromptField({
 	// a flat hardcoded surface. (See `project_surface_elevation_convention`.)
 	const inputLevel = Math.min(useSurface() + 1, 8);
 	return (
-		<FormControl label={t("initialPrompt")} tooltip={t("initialPromptTooltip")}>
+		<FormControl
+			label={t("initialPrompt")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={draft === DEFAULT_SETTINGS.model.initialPrompt}
+					onReset={() => {
+						setDraft(DEFAULT_SETTINGS.model.initialPrompt);
+						onCommit(DEFAULT_SETTINGS.model.initialPrompt);
+					}}
+				/>
+			}
+			tooltip={t("initialPromptTooltip")}
+		>
 			<textarea
 				aria-label={t("initialPrompt")}
 				className={cn(
@@ -352,7 +364,16 @@ function MainModelSection({
 					tIntegrations={tIntegrations}
 				/>
 				{sections.language && (
-					<FormControl label={t("language")} layout="row">
+					<FormControl
+						label={t("language")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={(settings?.language ?? "en") === DEFAULT_SETTINGS.model.language}
+								onReset={() => update({ language: DEFAULT_SETTINGS.model.language })}
+							/>
+						}
+						layout="row"
+					>
 						<ElevatedSurface className="w-52" inline>
 							<SearchableSelect
 								onChange={(v) => update({ language: v })}
@@ -382,6 +403,17 @@ function MainModelSection({
 								onCheckedChange={(v) => update({ translateToEnglish: v })}
 							/>
 						}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={
+									(settings?.translateToEnglish ?? false) ===
+									DEFAULT_SETTINGS.model.translateToEnglish
+								}
+								onReset={() =>
+									update({ translateToEnglish: DEFAULT_SETTINGS.model.translateToEnglish })
+								}
+							/>
+						}
 						tooltip={t("translateToEnglishTooltip")}
 					/>
 				)}
@@ -395,6 +427,17 @@ function MainModelSection({
 				{sections.unloadTimeout && (
 					<FormControl
 						label={t("modelUnloadTimeout")}
+						labelTrailing={
+							<SettingResetButton
+								isDefault={
+									(settings?.modelUnloadTimeout ?? "min5") ===
+									DEFAULT_SETTINGS.model.modelUnloadTimeout
+								}
+								onReset={() =>
+									update({ modelUnloadTimeout: DEFAULT_SETTINGS.model.modelUnloadTimeout })
+								}
+							/>
+						}
 						layout="row"
 						tooltip={t("modelUnloadTimeoutTooltip")}
 					>

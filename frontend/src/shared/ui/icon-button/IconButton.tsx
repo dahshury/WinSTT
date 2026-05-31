@@ -30,8 +30,12 @@ export function IconButton({
 			<Button
 				aria-label={ariaLabel}
 				className={cn(
-					"size-7 rounded-full bg-transparent p-0 text-foreground-muted hover:text-foreground-secondary",
-					surfaceHoverBg(hoverLevel),
+					"size-7 rounded-full bg-transparent p-0 text-foreground-muted",
+					// Disabled buttons keep no hover affordance — `:hover` still
+					// matches a disabled <button>, so gate the hover styles off
+					// rather than letting them light up a non-interactive control.
+					!disabled && "hover:text-foreground-secondary",
+					!disabled && surfaceHoverBg(hoverLevel),
 					className
 				)}
 				disabled={disabled}

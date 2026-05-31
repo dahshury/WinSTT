@@ -1,9 +1,12 @@
 "use client";
 
+import { StarIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useRef, useState } from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
-import { GroupRail, type GroupRailItem } from "../core/GroupRail";
+import { GroupRail, type GroupRailItem, RailIconChip } from "../core/GroupRail";
+import { useFavoriteSet } from "../core/use-favorite-set";
 import { ModelPicker } from "../core/ModelPicker";
 import { isReasoningModel } from "../lib/model-selector-display-utils";
 import { formatMaker } from "../lib/model-selector-utils";
@@ -22,7 +25,9 @@ import {
 } from "../lib/openrouter-model-selector-test-helpers";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
 import { OPENROUTER_SORT_HEADER_LABEL, type OpenRouterSortValue } from "../lib/openrouter-sort";
-import { getProviderIconWithFallback } from "../lib/provider-icons";
+import { FAVORITES_SECTION_ID } from "../lib/model-list-content-virtualized-utils";
+import { publicAsset } from "../lib/public-asset";
+import { getProviderIcon } from "../lib/provider-icons";
 import { useModelSelectorClickTracking } from "../lib/use-model-selector-click-tracking";
 import { useModelSelectorFilters } from "../lib/use-model-selector-filters";
 import type { OpenRouterModelSelectorProps } from "../model/openrouter-model-selector.types";
@@ -118,6 +123,12 @@ export function OpenRouterModelSelector({
 		setScrollToMakerRequest,
 	} = useModelSelectorState();
 	const lastClickTargetRef = useModelSelectorClickTracking();
+	// Per-MODEL favorites (the amber card star), alongside the per-MAKER `favorites`
+	// from useModelSelectorState (the rail). Mirrors the STT / Ollama model-favorite
+	// gesture so the star reads identically across every picker.
+	const { isFavorite: isFavoriteModel, toggleFavorite: toggleModelFavorite } = useFavoriteSet(
+		"winstt:openrouter-favorite-models"
+	);
 	const popupRef = useRef<HTMLElement | null>(null);
 
 	const {
@@ -258,23 +269,50 @@ export function OpenRouterModelSelector({
 
 	const comboboxFilter = () => true;
 
-	const railItems: GroupRailItem[] = railProviders.map((maker) => {
-		const iconSrc = getProviderIconWithFallback(maker);
+	const makerRailItems: GroupRailItem[] = railProviders.map((maker) => {
+		const iconSrc = getProviderIcon(maker);
 		return {
 			id: maker,
 			label: formatMaker(maker),
 			badge: groupedModelsAll.find(([m]) => m === maker)?.[1].length,
+			// Real brand logo when we have one, else a neutral letter chip
+			// (GroupRail's FallbackInitial) — matching the STT rail, instead of
+			// repeating the OpenRouter logo for every maker without an icon.
 			icon: iconSrc ? (
 				<img
 					alt=""
 					className="size-5 rounded-[3px] object-cover"
 					height={20}
-					src={iconSrc}
+					src={publicAsset(iconSrc)}
 					width={20}
 				/>
 			) : undefined,
 		};
 	});
+	// Favorited MODELS get a pinned "Favorites" tile at the top of the rail that
+	// jumps to the Favorites group in the list — the same model-favorites shortcut
+	// STT / Ollama show. Distinct from the per-MAKER favorites partition below.
+	const favoriteModelCount = groupedModelsAll.reduce(
+		(sum, [, models]) => sum + models.filter((m) => isFavoriteModel(m.id)).length,
+		0
+	);
+	const railItems: GroupRailItem[] =
+		favoriteModelCount > 0
+			? [
+					{
+						id: FAVORITES_SECTION_ID,
+						label: "Favorites",
+						pinned: true,
+						badge: favoriteModelCount,
+						icon: (
+							<RailIconChip tone="favorite">
+								<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
+							</RailIconChip>
+						),
+					},
+					...makerRailItems,
+				]
+			: makerRailItems;
 
 	// A global sort flattens the makers into one column, so the maker rail (and
 	// its scroll-spy) no longer maps to anything — hide it while sorting.
@@ -294,9 +332,11 @@ export function OpenRouterModelSelector({
 			expandedModels={expandedModels}
 			groupedModels={groupedModelsAll}
 			hasActiveFilters={hasActiveFilters}
+			isFavoriteModel={isFavoriteModel}
 			onActiveMakerChange={setActiveProvider}
 			onSelectModel={handleSelectModel}
 			onToggleModelExpanded={toggleModelExpanded}
+			onToggleModelFavorite={toggleModelFavorite}
 			parsedModelId={parsedModelId}
 			parsedProviderSlug={parsedProviderSlug}
 			scrollToMakerRequest={scrollToMakerRequest}

@@ -15,7 +15,7 @@ import {
 } from "@/entities/setting";
 import { useLoopbackDevices } from "@/features/listen-mode";
 import { SoundLibrary } from "@/features/recording-sound";
-import { LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
+import { DEFAULT_LOCALE, LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
@@ -113,7 +113,17 @@ function LoopbackControl({
 	handleLoopbackChange,
 }: LoopbackControlProps): ReactNode {
 	return (
-		<FormControl label={t("loopbackDevice")} layout="row" tooltip={t("loopbackDeviceTooltip")}>
+		<FormControl
+			label={t("loopbackDevice")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={currentLoopbackId === "default"}
+					onReset={() => handleLoopbackChange("default")}
+				/>
+			}
+			layout="row"
+			tooltip={t("loopbackDeviceTooltip")}
+		>
 			<ElevatedSurface className="w-52" inline>
 				<Select onChange={handleLoopbackChange} options={loopbackOpts} value={currentLoopbackId} />
 			</ElevatedSurface>
@@ -130,7 +140,21 @@ interface MuteSystemAudioControlProps {
 function MuteSystemAudioControl({ general, t, update }: MuteSystemAudioControlProps): ReactNode {
 	const level = muteLevel(general);
 	return (
-		<FormControl label={t("muteSystemAudio")} tooltip={t("muteSystemAudioTooltip")}>
+		<FormControl
+			label={t("muteSystemAudio")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={level === DEFAULT_SETTINGS.general.systemAudioReductionWhileDictating}
+					onReset={() =>
+						update({
+							systemAudioReductionWhileDictating:
+								DEFAULT_SETTINGS.general.systemAudioReductionWhileDictating,
+						})
+					}
+				/>
+			}
+			tooltip={t("muteSystemAudioTooltip")}
+		>
 			<ElevatedSurface inline>
 				<Slider
 					aria-label={t("muteSystemAudio")}
@@ -184,6 +208,14 @@ function SpeakerDiarizationControl({
 						onCheckedChange={(v) => update({ speakerDiarization: v })}
 					/>
 				</div>
+			}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
+					onReset={() =>
+						update({ speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization })
+					}
+				/>
 			}
 			tooltip={t("speakerDiarizationTooltip")}
 		/>
@@ -242,6 +274,12 @@ function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControl
 					onCheckedChange={(v) => update({ manualToggleStop: v })}
 				/>
 			}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={enabled === DEFAULT_SETTINGS.general.manualToggleStop}
+					onReset={() => update({ manualToggleStop: DEFAULT_SETTINGS.general.manualToggleStop })}
+				/>
+			}
 			tooltip={t("manualToggleStopTooltip")}
 		/>
 	);
@@ -250,7 +288,17 @@ function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControl
 function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode {
 	const options = buildWakeWordOptions();
 	return (
-		<FormControl label={t("wakeWord")} layout="row" tooltip={t("wakeWordTooltip")}>
+		<FormControl
+			label={t("wakeWord")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={value === DEFAULT_SETTINGS.general.wakeWord}
+					onReset={() => update({ wakeWord: DEFAULT_SETTINGS.general.wakeWord })}
+				/>
+			}
+			layout="row"
+			tooltip={t("wakeWordTooltip")}
+		>
 			<ElevatedSurface className="w-52" inline>
 				<Select
 					aria-label={t("wakeWord")}
@@ -339,7 +387,20 @@ function RecordingSection({
 	return (
 		<SettingSection icon={Mic01Icon} title={t("recording")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl label={t("recordingMode")} tooltip={t("recordingModeTooltip")}>
+				<FormControl
+					label={t("recordingMode")}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={recordingMode === DEFAULT_SETTINGS.general.recordingMode}
+							onReset={() =>
+								update(
+									recordingModePatch(DEFAULT_SETTINGS.general.recordingMode, general?.wakeWord)
+								)
+							}
+						/>
+					}
+					tooltip={t("recordingModeTooltip")}
+				>
 					{/* Hero control — sets the design template for every other
 					    interactive group on the tab. Same ElevatedSurface wraps
 					    them all so the tab reads as one consistent language. */}
@@ -395,6 +456,19 @@ function RecordingSection({
 								onCheckedChange={(v) => update({ recordingSound: v })}
 							/>
 						}
+						labelTrailing={
+							recordingSoundEnabled ? (
+								<SettingResetButton
+									isDefault={
+										(general?.recordingSoundPath ?? "") ===
+										DEFAULT_SETTINGS.general.recordingSoundPath
+									}
+									onReset={() =>
+										update({ recordingSoundPath: DEFAULT_SETTINGS.general.recordingSoundPath })
+									}
+								/>
+							) : undefined
+						}
 						tooltip={t("soundLibraryTooltip")}
 					>
 						{recordingSoundEnabled ? <SoundLibrary t={t} tCommon={tc} /> : null}
@@ -434,6 +508,22 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 							}
 						/>
 					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								flags.autoStart === DEFAULT_SETTINGS.general.autoStart &&
+								flags.startMinimized === DEFAULT_SETTINGS.general.startMinimized &&
+								flags.minimizeToTray === DEFAULT_SETTINGS.general.minimizeToTray
+							}
+							onReset={() =>
+								update({
+									autoStart: DEFAULT_SETTINGS.general.autoStart,
+									startMinimized: DEFAULT_SETTINGS.general.startMinimized,
+									minimizeToTray: DEFAULT_SETTINGS.general.minimizeToTray,
+								})
+							}
+						/>
+					}
 					tooltip={t("startOnLoginTooltip")}
 				/>
 				<FormControl
@@ -442,6 +532,14 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 						<Toggle
 							checked={flags.sendCrashReports}
 							onCheckedChange={(v) => update({ sendCrashReports: v })}
+						/>
+					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={flags.sendCrashReports === DEFAULT_SETTINGS.general.sendCrashReports}
+							onReset={() =>
+								update({ sendCrashReports: DEFAULT_SETTINGS.general.sendCrashReports })
+							}
 						/>
 					}
 					tooltip={t("sendCrashReportsTooltip")}
@@ -547,7 +645,17 @@ interface LanguageControlProps {
 
 function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactNode {
 	return (
-		<FormControl label={t("language")} layout="row" tooltip={t("languageTooltip")}>
+		<FormControl
+			label={t("language")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={locale === DEFAULT_LOCALE}
+					onReset={() => setLocale(DEFAULT_LOCALE)}
+				/>
+			}
+			layout="row"
+			tooltip={t("languageTooltip")}
+		>
 			<ElevatedSurface className="w-52" inline>
 				<SearchableSelect
 					onChange={(v) => pickLocale(v, setLocale)}
@@ -572,6 +680,16 @@ function OverlayControl({ t, isListenMode, general, update }: OverlayControlProp
 		<FormControl
 			disabled={isListenMode}
 			label={t("showRecordingOverlay")}
+			labelTrailing={
+				isListenMode ? undefined : (
+					<SettingResetButton
+						isDefault={idx === overlaySliderToIndex(DEFAULT_SETTINGS.general)}
+						onReset={() =>
+							update(overlaySliderPatch(overlaySliderToIndex(DEFAULT_SETTINGS.general), general))
+						}
+					/>
+				)
+			}
 			tooltip={t("showRecordingOverlayTooltip")}
 		>
 			<ElevatedSurface
@@ -613,7 +731,18 @@ function OverlayModeControl({
 		}
 	};
 	return (
-		<FormControl label={t("overlayMode")} tooltip={t("overlayModeTooltip")}>
+		<FormControl
+			label={t("overlayMode")}
+			labelTrailing={
+				subDisabled ? undefined : (
+					<SettingResetButton
+						isDefault={value === DEFAULT_SETTINGS.general.overlayMode}
+						onReset={() => update({ overlayMode: DEFAULT_SETTINGS.general.overlayMode })}
+					/>
+				)
+			}
+			tooltip={t("overlayModeTooltip")}
+		>
 			<ElevatedSurface className={subDisabled ? "pointer-events-none opacity-40" : undefined}>
 				<Switcher fullWidth onChange={onChange} options={options} value={value} />
 			</ElevatedSurface>
@@ -655,6 +784,16 @@ function LiveTranscriptionDisplayControl({
 	return (
 		<FormControl
 			label={t("liveTranscriptionDisplay")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={stored === DEFAULT_SETTINGS.general.liveTranscriptionDisplay}
+					onReset={() =>
+						update({
+							liveTranscriptionDisplay: DEFAULT_SETTINGS.general.liveTranscriptionDisplay,
+						})
+					}
+				/>
+			}
 			tooltip={t("liveTranscriptionDisplayTooltip")}
 		>
 			<ElevatedSurface>
@@ -688,7 +827,16 @@ function VisualizerTypeControl({ t, general, update }: VisualizerTypeControlProp
 	const value = general?.visualizerType ?? "bar";
 	const options = buildVisualizerTypeSwitcherOptions(t);
 	return (
-		<FormControl label={t("visualizerType")} tooltip={t("visualizerTypeTooltip")}>
+		<FormControl
+			label={t("visualizerType")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={value === DEFAULT_SETTINGS.general.visualizerType}
+					onReset={() => pickVisualizerType(DEFAULT_SETTINGS.general.visualizerType, update)}
+				/>
+			}
+			tooltip={t("visualizerTypeTooltip")}
+		>
 			<ElevatedSurface>
 				<Switcher
 					fullWidth
@@ -930,7 +1078,16 @@ function VisualizerAuraShapeControl({
 	const value = general?.visualizerAuraShape ?? DEFAULT_SETTINGS.general.visualizerAuraShape;
 	const options = buildAuraShapeSwitcherOptions(t);
 	return (
-		<FormControl label={t("visualizerAuraShape")} tooltip={t("visualizerAuraShapeTooltip")}>
+		<FormControl
+			label={t("visualizerAuraShape")}
+			labelTrailing={
+				<SettingResetButton
+					isDefault={value === DEFAULT_SETTINGS.general.visualizerAuraShape}
+					onReset={() => pickAuraShape(DEFAULT_SETTINGS.general.visualizerAuraShape, update)}
+				/>
+			}
+			tooltip={t("visualizerAuraShapeTooltip")}
+		>
 			<ElevatedSurface>
 				<Switcher
 					fullWidth

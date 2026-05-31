@@ -109,7 +109,17 @@ export function CloudTtsControls({
 
 	return (
 		<>
-			<FormControl label={t("cloudVoice")} layout="row" tooltip={t("cloudVoiceCaption")}>
+			<FormControl
+				label={t("cloudVoice")}
+				labelTrailing={
+					<SettingResetButton
+						isDefault={cloud.voice === CLOUD_DEFAULTS.voice}
+						onReset={() => patchCloud({ voice: CLOUD_DEFAULTS.voice })}
+					/>
+				}
+				layout="row"
+				tooltip={t("cloudVoiceCaption")}
+			>
 				<ElevatedSurface className="w-52" inline>
 					<SearchableSelect
 						groups={groups}
@@ -148,7 +158,17 @@ export function CloudTtsControls({
 					/>
 				</ElevatedSurface>
 			</FormControl>
-			<FormControl label={t("cloudModel")} layout="row" tooltip={t("cloudModelCaption")}>
+			<FormControl
+				label={t("cloudModel")}
+				labelTrailing={
+					<SettingResetButton
+						isDefault={cloud.model === CLOUD_DEFAULTS.model}
+						onReset={() => patchCloud({ model: CLOUD_DEFAULTS.model })}
+					/>
+				}
+				layout="row"
+				tooltip={t("cloudModelCaption")}
+			>
 				<ElevatedSurface className="w-52" inline>
 					<Select
 						aria-label={t("cloudModel")}
@@ -253,6 +273,12 @@ export function CloudTtsControls({
 						aria-label={t("speakerBoost")}
 						checked={cloud.speakerBoost}
 						onCheckedChange={(v) => patchCloud({ speakerBoost: v })}
+					/>
+				}
+				labelTrailing={
+					<SettingResetButton
+						isDefault={cloud.speakerBoost === CLOUD_DEFAULTS.speakerBoost}
+						onReset={() => patchCloud({ speakerBoost: CLOUD_DEFAULTS.speakerBoost })}
 					/>
 				}
 				tooltip={t("speakerBoostCaption")}

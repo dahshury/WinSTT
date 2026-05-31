@@ -242,7 +242,7 @@ export function CheckboxGroup({
 											height: endRect.top + endRect.height - startRect.top,
 											opacity: isHoveringOther ? 0.8 : 1,
 										}}
-										className="pointer-events-none absolute rounded-sm bg-accent/20 ring-1 ring-accent/40 ring-inset"
+										className="pointer-events-none absolute rounded-lg bg-foreground/[0.09]"
 										exit={{ opacity: 0, transition: { duration: 0.12 } }}
 										initial={false}
 										key={`group-${group.id}`}
@@ -262,7 +262,7 @@ export function CheckboxGroup({
 										height: activeRect.height,
 										opacity: 1,
 									}}
-									className="pointer-events-none absolute rounded-sm bg-foreground/[0.06] ring-1 ring-divider ring-inset"
+									className="pointer-events-none absolute rounded-lg bg-foreground/[0.06]"
 									exit={{ opacity: 0, transition: { duration: 0.06 } }}
 									initial={{
 										top: activeRect.top,
@@ -286,7 +286,7 @@ export function CheckboxGroup({
 										width: focusRect.width + 4,
 										height: focusRect.height + 4,
 									}}
-									className="pointer-events-none absolute z-overlay rounded-sm border border-accent"
+									className="pointer-events-none absolute z-overlay rounded-[10px] border border-accent"
 									exit={{ opacity: 0, transition: { duration: 0.06 } }}
 									initial={false}
 									transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
@@ -365,7 +365,7 @@ export function CheckboxItem({
 		<label
 			aria-disabled={disabled || undefined}
 			className={cn(
-				"relative z-raised flex min-w-0 items-center gap-2.5 rounded-sm px-3 py-2 outline-none",
+				"relative z-raised flex min-w-0 items-center gap-2.5 rounded-lg px-3 py-1.5 outline-none",
 				disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
 				className
 			)}
@@ -383,13 +383,13 @@ export function CheckboxItem({
 			>
 				<span
 					className={cn(
-						"absolute inset-0 rounded-[5px] border-[1.5px] border-solid shadow-[inset_0_1px_2px_rgb(0_0_0/0.25)] transition-[border-color,background-color,box-shadow] duration-100",
-						// Filled accent box with no inner shadow when checked.
-						checked && "border-transparent bg-accent shadow-none",
-						// Brighter edge on hover/keyboard focus so the unchecked
-						// box pops against the bright elevated substrate.
-						!checked && isActive && "border-foreground/45 bg-surface-1",
-						!(checked || isActive) && "border-foreground/25 bg-surface-1"
+						"absolute inset-0 rounded-[5px] border-[1.5px] border-solid transition-colors duration-[80ms]",
+						// Checked = no box at all; the foreground-coloured check carries the state.
+						checked && "border-transparent",
+						// Stronger edge on hover / keyboard focus so the unchecked
+						// box outline stays visible against the substrate.
+						!checked && isActive && "border-border-strong",
+						!(checked || isActive) && "border-border"
 					)}
 				/>
 				{/* `AnimatePresence initial={false}` suppresses the very-first-paint
@@ -401,27 +401,27 @@ export function CheckboxItem({
 						<Checkbox.Indicator keepMounted={true}>
 							<motion.svg
 								animate={{ opacity: 1 }}
-								className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white"
+								className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-foreground"
 								exit={{ opacity: 1 }}
 								fill="none"
-								height={14}
+								height={18}
 								initial={{ opacity: 1 }}
 								stroke="currentColor"
 								strokeLinecap="round"
 								strokeLinejoin="round"
-								strokeWidth={2.4}
+								strokeWidth={2}
 								viewBox="0 0 24 24"
-								width={14}
+								width={18}
 							>
 								<motion.path
 									animate={{
 										pathLength: 1,
-										transition: { duration: 0.12, ease: "easeOut" },
+										transition: { duration: 0.08, ease: "easeOut" },
 									}}
 									d="M6 12L10 16L18 8"
 									exit={{
 										pathLength: 0,
-										transition: { duration: 0.06, ease: "easeIn" },
+										transition: { duration: 0.04, ease: "easeIn" },
 									}}
 									initial={{ pathLength: 0 }}
 								/>

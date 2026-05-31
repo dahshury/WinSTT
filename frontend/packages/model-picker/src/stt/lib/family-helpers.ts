@@ -300,11 +300,19 @@ export function groupModelsByAuthor(models: readonly ModelInfo[]): AuthorGroup[]
  */
 export const FAVORITES_GROUP_VALUE = "favorites";
 
-/** A picker list group is either a real maker family or the synthetic
- *  "favorites" aggregate pinned to the top. */
-export type SttGroupValue = FamilyKey | typeof FAVORITES_GROUP_VALUE;
+/**
+ * Synthetic group value for the flat, globally-sorted view. Like
+ * {@link FAVORITES_GROUP_VALUE} it is NOT a {@link FamilyKey} — it holds every
+ * surviving model in one bucket so an active sort isn't fragmented across the
+ * per-maker groups (and the maker rail is suppressed while it's shown).
+ */
+export const SORTED_GROUP_VALUE = "__sorted__";
 
-/** Widened {@link AuthorGroup} that also admits the synthetic favorites group. */
+/** A picker list group is a real maker family, the synthetic "favorites"
+ *  aggregate pinned to the top, or the synthetic flat "sorted" column. */
+export type SttGroupValue = FamilyKey | typeof FAVORITES_GROUP_VALUE | typeof SORTED_GROUP_VALUE;
+
+/** Widened {@link AuthorGroup} that also admits the synthetic groups. */
 export interface SttListGroup {
 	items: ModelInfo[];
 	value: SttGroupValue;
@@ -313,6 +321,11 @@ export interface SttListGroup {
 /** Narrowing helper — true for the synthetic favorites group. */
 export function isFavoritesGroup(value: SttGroupValue): value is typeof FAVORITES_GROUP_VALUE {
 	return value === FAVORITES_GROUP_VALUE;
+}
+
+/** Narrowing helper — true for the synthetic flat "sorted" group. */
+export function isSortedGroup(value: SttGroupValue): value is typeof SORTED_GROUP_VALUE {
+	return value === SORTED_GROUP_VALUE;
 }
 
 /**

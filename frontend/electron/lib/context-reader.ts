@@ -35,14 +35,16 @@ const OCR_TIMEOUT_MS = 3000;
 /**
  * Cap on raw stdout bytes from the helper.
  *
- * The legacy modes (default / --selection / --split) emit at most
- * ~10KB. The new `--tree` mode caps axHtml at 150K chars, which after
- * JSON escaping (quotes, newlines, the occasional `\u00xx`) and the
- * surrounding envelope can reach ~600KB worst-case. 1MB gives a safety
- * margin without committing real memory until the spawn actually
- * produces that much output.
+ * `--tree` caps axHtml at 150K chars (~600KB escaped). The bigger driver now
+ * is the caret/focused context: at MAX_CONTEXT_CHARS=24000 (native helper) the
+ * three text fields are ~96KB raw each and up to ~768KB each after JSON escape,
+ * so worst-case stdout is ~2.7MB. 1MB is NOT enough — on overflow execFile
+ * errors with ERR_CHILD_PROCESS_STDIO_MAXBUFFER and the snapshot silently
+ * degrades to EMPTY_CONTEXT (all context dropped). 4MB clears the worst case
+ * with margin; memory isn't committed until the spawn actually produces it.
+ * (Mirrors the same fix in electron/ipc/clamshell.ts.)
  */
-const MAX_BUFFER_BYTES = 1024 * 1024;
+const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 
 function binaryCandidate(exe: string): string {
 	if (app.isPackaged) {

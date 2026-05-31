@@ -24,13 +24,8 @@ import {
 } from "@/features/model-download";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
-import {
-	SurfaceProvider,
-	surfaceClasses,
-	surfaceHighlightedBg,
-	surfaceHoverBg,
-	useSurface,
-} from "@/shared/lib/surface";
+import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import type { SelectOption } from "@/shared/ui/select";
 import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -76,7 +71,8 @@ function FooterMenuChip({
 	const hoverLevel = Math.min(substrate + 2, 8);
 	const popupLevel = Math.min(substrate + 2, 8);
 	const popupShadow = Math.max(popupLevel, 6);
-	const highlightLevel = Math.min(popupLevel + 1, 8);
+	// `position: relative` anchor for the animated selected/hover pills.
+	const radioGroupRef = useRef<HTMLDivElement | null>(null);
 	return (
 		<Menu.Root>
 			<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
@@ -111,11 +107,18 @@ function FooterMenuChip({
 						<Menu.Popup
 							className={`select-popup min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 transition-[transform,opacity] duration-150 ease-out [max-height:min(15rem,var(--available-height))] [max-width:var(--available-width)]`}
 						>
-							<Menu.RadioGroup onValueChange={onChange} value={value}>
+							<Menu.RadioGroup
+								className="relative"
+								onValueChange={onChange}
+								ref={radioGroupRef}
+								value={value}
+							>
+								<MenuHighlightLayer containerRef={radioGroupRef} value={value} />
 								{options.map((opt) => (
 									<Menu.RadioItem
-										className={`mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[6px] text-body text-foreground leading-normal outline-none ${surfaceHighlightedBg(highlightLevel)} data-[checked]:text-accent`}
+										className="relative z-raised mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs px-2.5 py-[6px] text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground"
 										closeOnClick
+										data-menu-option={opt.id}
 										key={opt.id}
 										value={opt.id}
 									>

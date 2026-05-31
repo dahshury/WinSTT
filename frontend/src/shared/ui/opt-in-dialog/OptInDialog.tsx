@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
-import { surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
-import { Button } from "@/shared/ui/button";
+import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
 
 export interface OptInDialogProps {
@@ -23,17 +22,18 @@ export interface OptInDialogProps {
  *     red); the user is consenting to a feature, not deleting anything.
  *   - Closing via Escape / backdrop click is treated as cancel, not
  *     confirm — flipping the toggle back to off requires an explicit
- *     button press.
+ *     button press. So the buttons drive their handlers directly rather
+ *     than wrapping in DialogClose.
  */
 export function OptInDialog({
-	open,
-	onOpenChange,
-	title,
 	body,
-	confirmLabel,
 	cancelLabel,
-	onConfirm,
+	confirmLabel,
 	onCancel,
+	onConfirm,
+	onOpenChange,
+	open,
+	title,
 }: OptInDialogProps) {
 	const handleConfirm = () => {
 		onConfirm();
@@ -44,13 +44,6 @@ export function OptInDialog({
 		onCancel();
 		onOpenChange(false);
 	};
-
-	// Match ConfirmDialog's cancel-button substrate lift so the two dialogs
-	// look identical from the same parent substrate.
-	const substrate = useSurface();
-	const popupLevel = Math.min(substrate + 4, 8);
-	const buttonLevel = Math.min(popupLevel + 1, 8);
-	const buttonHover = Math.min(popupLevel + 2, 8);
 
 	return (
 		<DialogShell
@@ -66,18 +59,12 @@ export function OptInDialog({
 			title={title}
 			width={460}
 		>
-			<Button
-				className={`h-8 rounded-md ${surfaceClasses(buttonLevel)} px-4 font-medium text-body text-foreground-secondary transition-colors duration-150 ${surfaceHoverBg(buttonHover)}`}
-				onClick={handleCancel}
-			>
+			<DialogActionButton onClick={handleCancel} variant="neutral">
 				{cancelLabel}
-			</Button>
-			<Button
-				className="h-8 rounded-md bg-accent px-4 font-medium text-body text-white transition-colors duration-150 hover:bg-accent-dim"
-				onClick={handleConfirm}
-			>
+			</DialogActionButton>
+			<DialogActionButton onClick={handleConfirm} variant="accent">
 				{confirmLabel}
-			</Button>
+			</DialogActionButton>
 		</DialogShell>
 	);
 }

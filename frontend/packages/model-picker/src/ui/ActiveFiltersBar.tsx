@@ -63,7 +63,7 @@ export function ActiveFiltersBar({
 		<section
 			aria-label="Active filters"
 			className={cn(
-				"flex flex-wrap items-center gap-2 border-border border-b px-2 py-1.5",
+				"flex flex-wrap items-center gap-1.5 border-border/60 border-b px-2 py-2",
 				className
 			)}
 			data-has-filters

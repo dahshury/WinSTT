@@ -6,6 +6,7 @@ import {
 	getUniqueEndpoints,
 	getVariantClasses,
 } from "./model-selector-display-utils";
+import { formatMaker } from "./model-selector-utils";
 import { getProviderIconWithFallback } from "./provider-icons";
 
 type ModelVariantKey = NonNullable<OpenRouterModel["variant"]>;
@@ -166,14 +167,16 @@ export function getModelCardClassName(flags: SelectionFlags): string {
 }
 
 const PROVIDER_CARD_BASE_CLASSES = cn(
-	"group/provider relative flex h-full cursor-pointer flex-col gap-1 rounded-md border p-2 transition-[color,background-color,border-color,box-shadow] duration-200",
-	"border-border/50 bg-surface-secondary/40",
-	"hover:border-border-hover hover:bg-surface-hover/70 hover:shadow-sm"
+	"group/provider relative flex h-full cursor-pointer flex-col gap-1 rounded-md p-2 ring-1 ring-divider transition-[color,background-color,box-shadow] duration-200",
+	"hover:shadow-sm hover:ring-border"
 );
-const PROVIDER_CARD_SELECTED_CLASSES = "border-accent/50 bg-accent/10 ring-1 ring-accent/30";
+const PROVIDER_CARD_SELECTED_CLASSES = "bg-accent/10 ring-1 ring-accent/40";
 
-export function getProviderCardClassName(isSelected: boolean): string {
-	return cn(PROVIDER_CARD_BASE_CLASSES, isSelected && PROVIDER_CARD_SELECTED_CLASSES);
+// `idleSurface` carries the substrate-relative surfaceBg/hover the caller computes
+// from `useSurface()` (this helper can't call hooks) so each provider card reads
+// as its OWN lifted surface instead of a flat token that blends into the popup bg.
+export function getProviderCardClassName(isSelected: boolean, idleSurface = ""): string {
+	return cn(PROVIDER_CARD_BASE_CLASSES, isSelected ? PROVIDER_CARD_SELECTED_CLASSES : idleSurface);
 }
 
 const SELECTION_DOT_BASE =
@@ -238,7 +241,9 @@ export function getExpandAriaLabel(isExpanded: boolean, providerCount: number): 
 
 const EXPAND_BUTTON_BASE = cn(
 	"flex w-11 shrink-0 flex-col items-center justify-center gap-0.5 self-stretch border-border border-s font-medium text-[10px] transition-colors duration-150",
-	"text-foreground-muted hover:bg-accent/10 hover:text-accent active:bg-accent/15"
+	// Idle hover is neutral (FF: accent is reserved for the active/expanded state
+	// + selection + focus). The expanded state below carries the lone accent.
+	"text-foreground-muted hover:bg-foreground/[0.08] hover:text-foreground active:bg-foreground/[0.10]"
 );
 
 export function getExpandButtonClassName(isExpanded: boolean): string {
@@ -275,6 +280,12 @@ export function getSelectionProviderTooltip(selectedProviderName: string | undef
 	return selectedProviderName ? `Provider: ${selectedProviderName}` : "Provider selected";
 }
 
+/** Synthetic section id for the pinned "Favorites" group of starred models —
+ *  matches the Favorites rail tile id so the scroll-spy + click-to-jump align,
+ *  and is distinct from any real maker slug so maker jump/highlight is unaffected
+ *  by the favorites group's REPEATED model rows. */
+export const FAVORITES_SECTION_ID = "__favorites__";
+
 export type VirtualizedItem =
 	| {
 			type: "model";
@@ -283,6 +294,9 @@ export type VirtualizedItem =
 			index: number;
 			isExpanded: boolean;
 			hasProviders: boolean;
+			// Optional only so hand-built test fixtures stay valid; buildVirtualItems
+			// always sets it (= maker slug, or FAVORITES_SECTION_ID).
+			sectionId?: string | undefined;
 	  }
 	| {
 			type: "providers";
@@ -290,18 +304,104 @@ export type VirtualizedItem =
 			endpoints: OpenRouterEndpoint[];
 			isOpen: boolean;
 			index: number;
+			sectionId?: string | undefined;
+	  }
+	| {
+			type: "header";
+			sectionId: string;
+			label: string;
+			count: number;
+			index: number;
 	  };
+
+/** Collect the distinct favorited models across all maker groups, in order. */
+function collectFavoriteModels(
+	groupedModels: [string, OpenRouterModel[]][],
+	isFavoriteModel: (id: string) => boolean
+): OpenRouterModel[] {
+	const favorites: OpenRouterModel[] = [];
+	const seen = new Set<string>();
+	for (const [, makerModels] of groupedModels) {
+		for (const model of makerModels) {
+			if (isFavoriteModel(model.id) && !seen.has(model.id)) {
+				seen.add(model.id);
+				favorites.push(model);
+			}
+		}
+	}
+	return favorites;
+}
+
+/** Push a sticky section header item (the Favorites group or a maker group). */
+function pushSectionHeader(
+	items: VirtualizedItem[],
+	index: number,
+	sectionId: string,
+	label: string,
+	count: number
+): void {
+	items.push({ type: "header", sectionId, label, count, index });
+}
+
+/** Append every model (+ its providers row) of a group; returns the next index. */
+function appendGroupModels(
+	items: VirtualizedItem[],
+	startIndex: number,
+	models: OpenRouterModel[],
+	groupIndex: number,
+	expandedModels: Set<string>,
+	sectionId: string
+): number {
+	let index = startIndex;
+	for (const model of models) {
+		index = appendModelEntries(items, index, model, groupIndex, expandedModels, sectionId);
+	}
+	return index;
+}
 
 export function buildVirtualItems(
 	groupedModels: [string, OpenRouterModel[]][],
-	expandedModels: Set<string>
+	expandedModels: Set<string>,
+	isFavoriteModel?: (id: string) => boolean,
+	// Per-maker section headers are only meaningful in the grouped view. While a
+	// global sort is active the list is one flat `SORTED_GROUP_KEY` group, so the
+	// caller passes `false` to avoid a spurious header beside the "Sorted" one.
+	addSectionHeaders = true
 ): VirtualizedItem[] {
 	const items: VirtualizedItem[] = [];
 	let globalIndex = 0;
-	for (const [groupIndex, [, makerModels]] of groupedModels.entries()) {
-		for (const model of makerModels) {
-			globalIndex = appendModelEntries(items, globalIndex, model, groupIndex, expandedModels);
+	// Favorited models are REPEATED in a "Favorites" group pinned to the top (the
+	// STT/Ollama pattern) — they keep their normal per-maker row too, and carry
+	// sectionId=FAVORITES_SECTION_ID so the maker scroll-spy never confuses them.
+	if (isFavoriteModel) {
+		const favorites = collectFavoriteModels(groupedModels, isFavoriteModel);
+		if (favorites.length > 0) {
+			pushSectionHeader(items, globalIndex, FAVORITES_SECTION_ID, "Favorites", favorites.length);
+			globalIndex = appendGroupModels(
+				items,
+				globalIndex + 1,
+				favorites,
+				-1,
+				expandedModels,
+				FAVORITES_SECTION_ID
+			);
 		}
+	}
+	for (const [groupIndex, [maker, makerModels]] of groupedModels.entries()) {
+		// One sticky maker header per group (grouped view only) — matches the STT
+		// per-family header so the author is named once at the top of its group.
+		if (addSectionHeaders) {
+			pushSectionHeader(items, globalIndex, maker, formatMaker(maker), makerModels.length);
+			globalIndex += 1;
+		}
+		globalIndex = appendGroupModels(
+			items,
+			globalIndex,
+			makerModels,
+			groupIndex,
+			expandedModels,
+			maker
+		);
 	}
 	return items;
 }
@@ -311,7 +411,8 @@ export function appendModelEntries(
 	startIndex: number,
 	model: OpenRouterModel,
 	groupIndex: number,
-	expandedModels: Set<string>
+	expandedModels: Set<string>,
+	sectionId?: string
 ): number {
 	const isExpanded = expandedModels.has(model.id);
 	const uniqueEndpoints = getCachedUniqueEndpoints(model);
@@ -324,6 +425,7 @@ export function appendModelEntries(
 		index: nextIndex,
 		isExpanded: isExpanded && hasProviders,
 		hasProviders,
+		sectionId,
 	});
 	nextIndex += 1;
 	if (hasProviders) {
@@ -333,6 +435,7 @@ export function appendModelEntries(
 			endpoints: uniqueEndpoints,
 			isOpen: isExpanded,
 			index: nextIndex,
+			sectionId,
 		});
 		nextIndex += 1;
 	}
@@ -368,7 +471,7 @@ export function findIndexByModelId(items: VirtualizedItem[], modelId: string | u
 }
 
 export function findIndexByMaker(items: VirtualizedItem[], maker: string): number {
-	return items.findIndex((item) => item.type === "model" && item.model.maker === maker);
+	return items.findIndex((item) => item.sectionId === maker);
 }
 
 export interface ScrollRequest {
@@ -445,12 +548,15 @@ export function shouldRenderInlineMeta(
 }
 
 export function getRowKey(item: VirtualizedItem): string {
+	if (item.type === "header") {
+		return `header-${item.sectionId}`;
+	}
 	const prefix = item.type === "model" ? "model" : "providers";
 	return `${prefix}-${item.model.id}`;
 }
 
 export function resolveActiveMaker(items: VirtualizedItem[], idx: number): string | null {
-	return items[idx]?.model.maker ?? null;
+	return items[idx]?.sectionId ?? null;
 }
 
 export function shouldNotifyMaker(nextMaker: string | null, lastMaker: string | null): boolean {

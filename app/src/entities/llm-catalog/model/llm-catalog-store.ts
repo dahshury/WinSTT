@@ -23,17 +23,45 @@ interface PullState {
  * /api/pull, which picks up from the existing blobs (or starts fresh if
  * Ollama GC'd them — either way the user ends up with the model).
  *
- * We track this in-memory only. After an app restart the paused state
- * disappears from the UI; the partial blobs are still on disk, so the
- * user just sees the model as "not installed" and can pull it (which
- * still resumes from disk). Persisting across restarts isn't worth the
- * complexity for what's essentially a recovery hint.
+ * Persisted to localStorage (renderer only) so a paused download still reads as
+ * "partial / resume" after the settings window closes — otherwise the partial
+ * blobs sit on disk but the UI shows "not installed", which users read as a bug.
+ * Stale entries self-correct: a model that actually finished shows as installed
+ * (cached wins over partial), and a re-pull resumes from disk either way.
  */
 export interface PausedPullState {
 	pausedAt: number;
 	/** Last known progress before the cancel landed — used to render the
 	 *  dimmed progress bar so the user can see "I was at 60% before stopping". */
 	progress: OllamaPullProgress;
+}
+
+const PAUSED_PULLS_STORAGE_KEY = "winstt:ollama-paused-pulls";
+
+/** Load persisted paused pulls — renderer only (gated on `electronAPI` so the
+ *  bun:test environment, which has a localStorage but no bridge, starts clean). */
+function loadPersistedPausedPulls(): Record<string, PausedPullState> {
+	if (typeof window === "undefined" || window.electronAPI == null || !window.localStorage) {
+		return {};
+	}
+	try {
+		const raw = window.localStorage.getItem(PAUSED_PULLS_STORAGE_KEY);
+		const parsed: unknown = raw ? JSON.parse(raw) : null;
+		return parsed && typeof parsed === "object" ? (parsed as Record<string, PausedPullState>) : {};
+	} catch {
+		return {};
+	}
+}
+
+function persistPausedPulls(pausedPulls: Record<string, PausedPullState>): void {
+	if (typeof window === "undefined" || window.electronAPI == null || !window.localStorage) {
+		return;
+	}
+	try {
+		window.localStorage.setItem(PAUSED_PULLS_STORAGE_KEY, JSON.stringify(pausedPulls));
+	} catch {
+		// Best-effort hint — ignore quota / serialization failures.
+	}
 }
 
 interface LlmCatalogState {
@@ -213,7 +241,7 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	isReachable: false,
 	error: null,
 	pulls: {},
-	pausedPulls: {},
+	pausedPulls: loadPersistedPausedPulls(),
 	setModels: (models) => set({ models, isLoaded: true, error: null }),
 	setScanning: (scanning) => set({ isScanning: scanning }),
 	setError: (error) => set({ error, isLoaded: true }),
@@ -246,6 +274,17 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		return { success: result.success, error: result.error };
 	},
 	cancelPull: async (model) => {
+		// Optimistically move the active pull into pausedPulls so the badge flips to
+		// "partial" immediately. Ollama doesn't reliably emit a trailing "cancelled"
+		// progress frame on abort, so we can't depend on `applyCancelled` firing.
+		const { pulls, pausedPulls } = get();
+		const existing = pulls[model];
+		if (existing) {
+			set({
+				pulls: withoutKey(pulls, model),
+				pausedPulls: recordPausedSnapshot(pausedPulls, model, existing.progress),
+			});
+		}
 		await cancelOllamaModelPull(model);
 	},
 	/**
@@ -282,4 +321,14 @@ if (typeof window !== "undefined" && window.electronAPI != null) {
 	onLlmCatalog((models) => useLlmCatalogStore.getState().setModels(models));
 	// Stryker disable next-line ArrowFunction
 	onOllamaPullProgress((progress) => useLlmCatalogStore.getState().setPullProgress(progress));
+	// Persist paused pulls (only) when they change, so partial downloads survive a
+	// settings-window close. Change-detected by reference so frequent active-pull
+	// progress frames don't thrash localStorage.
+	let lastPaused = useLlmCatalogStore.getState().pausedPulls;
+	useLlmCatalogStore.subscribe((state) => {
+		if (state.pausedPulls !== lastPaused) {
+			lastPaused = state.pausedPulls;
+			persistPausedPulls(state.pausedPulls);
+		}
+	});
 }
