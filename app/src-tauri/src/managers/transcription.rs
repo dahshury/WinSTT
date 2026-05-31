@@ -527,7 +527,16 @@ impl TranscriptionManager {
                 let _ = self_clone.unload_model();
             }
             let desired = self_clone.desired_model_id();
-            let result = if crate::winstt::catalog::find(&desired).is_some() {
+            let result = if crate::winstt::cloud_stt::provider_of(&desired).is_some() {
+                // Cloud STT id (provider:model): no local engine. Mark it current + ready so
+                // transcribe() routes to CloudSttManager; never call the local loader.
+                {
+                    let mut current = self_clone.current_model_id.lock().unwrap();
+                    *current = Some(desired.clone());
+                }
+                self_clone.touch_activity();
+                Ok(())
+            } else if crate::winstt::catalog::find(&desired).is_some() {
                 self_clone.load_winstt_model(&desired)
             } else {
                 self_clone.load_model(&desired)
@@ -704,6 +713,57 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
+        // ── Cloud STT route ──────────────────────────────────────────────
+        // When the selected model carries a cloud prefix (openai:/elevenlabs:), there is NO
+        // local engine — ship the captured audio to the provider via CloudSttManager instead.
+        // Mirrors the Electron RemoteTranscriber path (frontend/electron/ipc/stt-cloud.ts).
+        {
+            let desired = self.desired_model_id();
+            if crate::winstt::cloud_stt::provider_of(&desired).is_some() {
+                let cloud = self
+                    .app_handle
+                    .state::<std::sync::Arc<crate::winstt::managers::CloudSttManager>>()
+                    .inner()
+                    .clone();
+                let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
+                let language = {
+                    let l = ws.model.language.trim();
+                    if l.is_empty() || l == "auto" {
+                        None
+                    } else if l == "zh-Hans" || l == "zh-Hant" {
+                        Some("zh".to_string())
+                    } else {
+                        Some(l.to_string())
+                    }
+                };
+                let settings = get_settings(&self.app_handle);
+                let text = tauri::async_runtime::block_on(cloud.transcribe_samples(&desired, &audio, language))
+                    .map_err(|e| anyhow::anyhow!("Cloud STT failed ({}): {}", e.code.as_str(), e.message))?;
+                // Cloud is never Whisper -> apply the WinSTT dictionary correction + filler filter.
+                let dict: Vec<String> = ws
+                    .dictionary
+                    .iter()
+                    .map(|d| d.term.clone())
+                    .filter(|t| !t.trim().is_empty())
+                    .collect();
+                let corrected = if dict.is_empty() {
+                    text
+                } else {
+                    apply_custom_words(&text, &dict, ws.general.word_correction_threshold)
+                };
+                let filler = if ws.general.filter_fillers && !ws.general.custom_filler_words.is_empty() {
+                    Some(ws.general.custom_filler_words.clone())
+                } else if ws.general.filter_fillers {
+                    None
+                } else {
+                    Some(Vec::new())
+                };
+                let filtered = filter_transcription_output(&corrected, &settings.app_language, &filler);
+                self.maybe_unload_immediately("cloud transcription");
+                return Ok(filtered);
+            }
+        }
+
         // Check if model is loaded, if not try to load it
         {
             // If the model is loading, wait for it to complete.
@@ -720,6 +780,36 @@ impl TranscriptionManager {
 
         // Get current settings for configuration
         let settings = get_settings(&self.app_handle);
+
+        // WinSTT dictionary bridge: the picker's dictionary (custom words) + fuzzy threshold +
+        // filler list live in the WinSTT settings store, NOT Handy's `settings.custom_words`.
+        // Read them here so the real fuzzy matcher + filler filter run on the user's ACTUAL list
+        // (mirrors Electron set_parameter forwarding custom_words/threshold/filler to the recorder).
+        let (winstt_custom_words, winstt_word_threshold, winstt_filler_words): (
+            Vec<String>,
+            f64,
+            Option<Vec<String>>,
+        ) = {
+            let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
+            let custom_words: Vec<String> = ws
+                .dictionary
+                .iter()
+                .map(|d| d.term.clone())
+                .filter(|t| !t.trim().is_empty())
+                .collect();
+            let threshold = ws.general.word_correction_threshold;
+            // filter_fillers off -> Some([]) (no patterns); on+empty -> None (language default table).
+            let filler = if ws.general.filter_fillers {
+                if ws.general.custom_filler_words.is_empty() {
+                    None
+                } else {
+                    Some(ws.general.custom_filler_words.clone())
+                }
+            } else {
+                Some(Vec::new())
+            };
+            (custom_words, threshold, filler)
+        };
 
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.
@@ -977,21 +1067,17 @@ impl TranscriptionManager {
             .map(|info| matches!(info.engine_type, EngineType::Whisper))
             .unwrap_or(false);
 
-        let corrected_result = if !settings.custom_words.is_empty() && !is_whisper {
-            apply_custom_words(
-                &result.text,
-                &settings.custom_words,
-                settings.word_correction_threshold,
-            )
+        let corrected_result = if !winstt_custom_words.is_empty() && !is_whisper {
+            apply_custom_words(&result.text, &winstt_custom_words, winstt_word_threshold)
         } else {
             result.text
         };
 
-        // Filter out filler words and hallucinations
+        // Filter out filler words and hallucinations (WinSTT filler list / language default).
         let filtered_result = filter_transcription_output(
             &corrected_result,
             &settings.app_language,
-            &settings.custom_filler_words,
+            &winstt_filler_words,
         );
 
         let et = std::time::Instant::now();

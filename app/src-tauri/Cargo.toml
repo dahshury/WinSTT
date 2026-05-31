@@ -85,7 +85,7 @@ tokenizers = { version = "0.22.1", default-features = false, features = ["onig"]
 ollama-rs = "0.3.4"              # native Ollama /api/* (pull progress not OpenAI-compatible)
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
 keyring = "4.0.1"                # encrypted API keys at rest
-symphonia = { version = "0.6.0", default-features = false, features = ["wav", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
+symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
 half = "2"                       # f16 tensor element type (matches ort's half)
 # sherpa-onnx ships only /MT (static-CRT) Windows libs; the `static` default clashes with Rust's /MD

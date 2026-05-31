@@ -153,6 +153,11 @@ pub mod tray_menu;
 /// collect_commands![] IN PLACE OF `windows::onboarding_finish`.
 pub mod onboarding;
 
+/// Snippet expansion: `winstt_expand_snippets` (read-only preview/playground seam) +
+/// `install_snippet_reload_bridge` setup hook that keeps the snippet cache warm from
+/// settings:changed. CRUD rides the settings tree (no dedicated command).
+pub mod snippets;
+
 /// The specta-typed events the WinSTT port emits (registered in
 /// `collect_events![]`). Re-exported here so lib.rs has one import site.
 pub mod events;

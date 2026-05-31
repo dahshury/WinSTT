@@ -379,6 +379,15 @@ pub(crate) async fn process_transcription_output(
         post_processed_text = Some(final_text.clone());
     }
 
+    // WinSTT snippet expansion: deterministic fuzzy trigger→expansion on the finalized
+    // text — the LAST step before paste (mirrors applyPostProcessing's replaceWithSnippets,
+    // after dictionary correction). Uses the warm in-memory cache; no-op when no snippets.
+    let expanded = crate::winstt::snippets::expand_cached(&final_text);
+    if expanded != final_text {
+        final_text = expanded;
+        post_processed_text = Some(final_text.clone());
+    }
+
     ProcessedTranscription {
         final_text,
         post_processed_text,

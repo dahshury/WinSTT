@@ -195,6 +195,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(crate::winstt::commands::tray_menu::TrayMenuAnchor::default());
     winstt::commands::history::install_history_event_bridge(app_handle);
     winstt::commands::tray_menu::install_tray_menu_lifecycle(app_handle);
+    // Snippet expansion cache: warm at startup + rebuild on every settings:changed.
+    winstt::commands::snippets::install_snippet_reload_bridge(app_handle);
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -498,6 +500,7 @@ pub fn run(cli_args: CliArgs) {
             winstt::commands::file_transcribe::file_transcribe_resume,
             winstt::commands::file_transcribe::file_transcribe_cancel,
             // ── frontend-port slice commands (10_frontend_port_plan.md WU-3..13) ──
+            winstt::commands::snippets::winstt_expand_snippets,
             winstt::commands::dictation::set_winstt_model,
             winstt::commands::dictation::winstt_call_method,
             winstt::commands::dictation::winstt_emit_ready,

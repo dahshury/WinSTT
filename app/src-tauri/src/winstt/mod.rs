@@ -34,6 +34,10 @@ pub mod endpointing;
 /// RealtimeSTT-faithful preview stabilizer + committed-watermark accumulator.
 pub mod realtime_stabilizer;
 
+/// Deterministic snippet / text-expansion engine (fuzzy trigger→expansion with
+/// Jaro-Winkler + double-metaphone gates). Applied as the LAST post-processing step before paste.
+pub mod snippets;
+
 // ───────────────────────── WAVE 2 — reqwest / windows-feature ─────────────────────────
 /// All-Rust LLM post-processing: prompt composition + Ollama NDJSON streaming + CoT salvage.
 pub mod llm;
