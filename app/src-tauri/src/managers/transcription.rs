@@ -71,14 +71,15 @@ fn engine_kind_for(entry: &crate::winstt::catalog::ModelEntry) -> Option<crate::
     // clean "no Rust engine yet" error instead of silent garbage. Expand as each is spiked.
     //   WhisperHf     — proven (whisper-tiny/.en, lite-whisper-128mel, crisper) via the resolver.
     //   SenseVoiceCtc — proven (sense-voice-small) transcribes JFK with ITN punctuation.
-    //   NemoAed       — proven (canary-180m-flash) full JFK w/ PnC: NeMo 128-mel featurizer
-    //                   (per-feature norm) + decoder_mems carry.
-    // PENDING (drafted in stt::families): NemoCtc/Rnnt/Tdt (parakeet — wire the NeMo featurizer
-    //   into Ctc/Transducer + validate the transducer decode), GigaAM (own featurizer, ru),
-    //   Cohere (128-mel + fp16 KV), Kaldi/zipformer (sherpa glob), Dolphin/T-One (non-en audio).
+    //   NemoAed       — proven (canary-180m-flash) full JFK w/ PnC: NeMo featurizer + mems carry.
+    //   NemoCtc       — proven (parakeet-ctc-0.6b) JFK; NeMo featurizer reads mel count from the
+    //                   model (parakeet=80, canary=128) + CTC greedy collapse.
+    // PENDING (drafted in stt::families): NemoRnnt/Tdt (parakeet transducer — wire NeMo featurizer
+    //   + validate the transducer state carry), GigaAM (own featurizer, ru), Cohere (128-mel +
+    //   fp16 KV), Kaldi/zipformer (sherpa glob), Dolphin/T-One (non-en audio).
     let validated = matches!(
         kind,
-        EngineKind::WhisperHf | EngineKind::SenseVoiceCtc | EngineKind::NemoAed
+        EngineKind::WhisperHf | EngineKind::SenseVoiceCtc | EngineKind::NemoAed | EngineKind::NemoCtc
     );
     if validated {
         Some(kind)

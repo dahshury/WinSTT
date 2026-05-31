@@ -444,7 +444,8 @@ mod frontend {
 	const NEMO_LOG_GUARD: f32 = 5.960_464_5e-8; // 2^-24
 
 	/// Slaney-normalized mel filterbank `(n_fft/2+1, n_mels)` for NeMo/Cohere (fmin=0, fmax=sr/2).
-	pub fn build_nemo_mel_filterbank() -> Array2<f32> {
+	/// `n_mels` varies per NeMo model (parakeet-ctc=80, canary=128) — read from the model input.
+	pub fn build_nemo_mel_filterbank(n_mels: usize) -> Array2<f32> {
 		let n_freqs = NEMO_N_FFT / 2 + 1; // 257
 		let fmax = SAMPLE_RATE as f32 / 2.0;
 		let all_freqs: Vec<f32> = (0..n_freqs).map(|i| fmax * i as f32 / (n_freqs - 1) as f32).collect();
@@ -472,12 +473,12 @@ mod frontend {
 		};
 		let m_min = hz_to_mel(0.0);
 		let m_max = hz_to_mel(fmax);
-		let m_pts: Vec<f32> = (0..NEMO_N_MELS + 2)
-			.map(|i| mel_to_hz(m_min + (m_max - m_min) * i as f32 / (NEMO_N_MELS + 1) as f32))
+		let m_pts: Vec<f32> = (0..n_mels + 2)
+			.map(|i| mel_to_hz(m_min + (m_max - m_min) * i as f32 / (n_mels + 1) as f32))
 			.collect();
-		let mut fb = Array2::<f32>::zeros((n_freqs, NEMO_N_MELS));
+		let mut fb = Array2::<f32>::zeros((n_freqs, n_mels));
 		for f in 0..n_freqs {
-			for m in 0..NEMO_N_MELS {
+			for m in 0..n_mels {
 				let lower = m_pts[m];
 				let center = m_pts[m + 1];
 				let upper = m_pts[m + 2];
@@ -495,10 +496,11 @@ mod frontend {
 	/// model's `features_lens`). The engine transposes to `(1, 128, T)` for `audio_signal`.
 	pub fn nemo_features(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
 		use std::f32::consts::PI;
+		let n_mels = fbanks.ncols(); // 80 or 128 — whatever the model declared
 		let n = samples.len();
 		let num_frames = n / NEMO_HOP; // == features_lens (waveforms_lens // hop)
 		if num_frames == 0 {
-			return Array2::<f32>::zeros((0, NEMO_N_MELS));
+			return Array2::<f32>::zeros((0, n_mels));
 		}
 		// 1. pre-emphasis y[i] = x[i] - 0.97*x[i-1], y[0] = x[0].
 		let mut y = vec![0f32; n];
@@ -518,7 +520,7 @@ mod frontend {
 		}
 		// 4. frame (len n_fft, hop) → window → power spectrum → mel → log(x + 2^-24).
 		let n_freqs = NEMO_N_FFT / 2 + 1;
-		let mut log_mel = Array2::<f32>::zeros((num_frames, NEMO_N_MELS));
+		let mut log_mel = Array2::<f32>::zeros((num_frames, n_mels));
 		let mut frame = vec![0f32; NEMO_N_FFT];
 		for t in 0..num_frames {
 			let start = t * NEMO_HOP;
@@ -526,7 +528,7 @@ mod frontend {
 				*slot = padded.get(start + i).copied().unwrap_or(0.0) * window[i];
 			}
 			let power = rfft_power(&frame, NEMO_N_FFT, n_freqs);
-			for m in 0..NEMO_N_MELS {
+			for m in 0..n_mels {
 				let mut acc = 0f32;
 				for (f, &p) in power.iter().enumerate() {
 					acc += p * fbanks[[f, m]];
@@ -535,7 +537,7 @@ mod frontend {
 			}
 		}
 		// 5. per-feature (per mel bin) normalization over time: (x-mean)/(sqrt(unbiased var)+1e-5).
-		for m in 0..NEMO_N_MELS {
+		for m in 0..n_mels {
 			let mut mean = 0f32;
 			for t in 0..num_frames {
 				mean += log_mel[[t, m]];
@@ -854,13 +856,16 @@ impl Transcriber for SenseVoiceEngine {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Which kaldi/nemo front-end + CMVN a generic CTC engine uses.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum CtcFrontend {
 	/// 80-dim kaldi fbank + per-bin CMVN read from ONNX metadata (Dolphin).
 	KaldiWithMetaCmvn,
-	/// NeMo/GigaAM mel front-end — the encoder consumes `features` directly. We compute the
-	/// shared 80-mel log-fbank as a stand-in; exact NeMo mel (per_feature norm) is a SPIKE item.
+	/// GigaAM mel front-end (80-mel kaldi stand-in; GigaAM's own featurizer is a SPIKE item — it's
+	/// Russian-only so can't be validated with the English jfk clip).
 	NemoMel,
+	/// PROVEN NeMo 128-mel log-mel featurizer (per-feature norm) — parakeet/fastconformer CTC.
+	/// Same featurizer that validated Canary (NemoAed). Uses `frontend::nemo_features`.
+	NemoMel128,
 }
 
 pub struct CtcEngine {
@@ -903,7 +908,15 @@ impl CtcEngine {
 				let invstd = parse_float_vec(meta.get("invstd").map(String::as_str).unwrap_or(""));
 				(0, mean, invstd)
 			}
-			CtcFrontend::NemoMel => (vocab.blank_idx, Vec::new(), Vec::new()),
+			CtcFrontend::NemoMel | CtcFrontend::NemoMel128 => (vocab.blank_idx, Vec::new(), Vec::new()),
+		};
+
+		// NeMo CTC uses the proven Slaney bank at the model's declared mel count (parakeet-ctc=80,
+		// fastconformer=80, etc., read from `audio_signal`); Dolphin/GigaAM use the 80-mel kaldi bank.
+		let mel_fb = if frontend == CtcFrontend::NemoMel128 {
+			frontend::build_nemo_mel_filterbank(feat_dim_of(&session, &feat_input))
+		} else {
+			frontend::build_mel_filterbank()
 		};
 
 		Ok(CtcEngine {
@@ -911,7 +924,7 @@ impl CtcEngine {
 			vocab,
 			kind: cfg.kind,
 			frontend,
-			mel_fb: frontend::build_mel_filterbank(),
+			mel_fb,
 			cmvn_mean,
 			cmvn_invstd,
 			blank_id,
@@ -924,6 +937,10 @@ impl CtcEngine {
 	}
 
 	fn features_for(&self, audio: &[f32]) -> Array2<f32> {
+		if self.frontend == CtcFrontend::NemoMel128 {
+			// NeMo 128-mel featurizer w/ per-feature norm (proven on Canary) — no extra CMVN.
+			return frontend::nemo_features(audio, &self.mel_fb);
+		}
 		let mut fbank = frontend::compute_fbank(audio, &self.mel_fb);
 		if matches!(self.frontend, CtcFrontend::KaldiWithMetaCmvn) && !self.cmvn_mean.is_empty() {
 			frontend::apply_dolphin_cmvn(&mut fbank, &self.cmvn_mean, &self.cmvn_invstd);
@@ -970,7 +987,7 @@ impl Transcriber for CtcEngine {
 					n_frames as i64,
 				)
 			}
-			CtcFrontend::NemoMel => {
+			CtcFrontend::NemoMel | CtcFrontend::NemoMel128 => {
 				// (T, feat) → (feat, T) → (1, feat, T). `.t()` is an F-order view; force a
 				// C-contiguous owned copy before reshaping (into_shape_with_order rejects F-order).
 				let t = features.t().as_standard_layout().into_owned();
@@ -1651,6 +1668,8 @@ impl CanaryEngine {
 	pub fn load(cfg: &EngineConfig) -> SttResult<CanaryEngine> {
 		let encoder = build_session(file(&cfg.resolved, "encoder")?, &cfg.providers)?;
 		let decoder = build_session(file(&cfg.resolved, "decoder")?, &cfg.providers)?;
+		// Canary declares 128-mel `audio_signal`; read it before `encoder` is moved into the struct.
+		let mel_fb = frontend::build_nemo_mel_filterbank(feat_dim_of(&encoder, "audio_signal"));
 		// Load with `▁→space` (matches `_AsrWithDecoding.__init__`): the prompt's `" "` slot resolves
 		// to the `▁`-origin token, and the decode appends already-spaced symbols.
 		let vocab = Vocab::load(file(&cfg.resolved, "vocab")?, false, true)?;
@@ -1685,7 +1704,7 @@ impl CanaryEngine {
 			transcribe_input,
 			eos_token_id,
 			max_sequence_length: 1024,
-			mel_fb: frontend::build_nemo_mel_filterbank(),
+			mel_fb,
 			model_name: cfg.model_name.clone(),
 			providers: providers_to_strings(&cfg.providers),
 		})
@@ -1833,9 +1852,10 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
 	let engine: Box<dyn Transcriber> = match cfg.kind {
 		EngineKind::SenseVoiceCtc => Box::new(SenseVoiceEngine::load(&cfg)?),
 		EngineKind::DolphinCtc => Box::new(CtcEngine::load(&cfg, CtcFrontend::KaldiWithMetaCmvn)?),
-		EngineKind::NemoCtc | EngineKind::GigaamCtc => {
-			Box::new(CtcEngine::load(&cfg, CtcFrontend::NemoMel)?)
-		}
+		// NeMo CTC (parakeet/fastconformer) uses the PROVEN 128-mel featurizer; GigaAM CTC keeps
+		// the 80-mel stand-in (its own featurizer is a separate, ru-only spike).
+		EngineKind::NemoCtc => Box::new(CtcEngine::load(&cfg, CtcFrontend::NemoMel128)?),
+		EngineKind::GigaamCtc => Box::new(CtcEngine::load(&cfg, CtcFrontend::NemoMel)?),
 		EngineKind::KaldiTransducer => {
 			Box::new(TransducerEngine::load(&cfg, TransducerKind::KaldiStateless)?)
 		}
@@ -1905,6 +1925,21 @@ fn node_past_shape(session: &Session, prefix: &str) -> Option<(usize, usize, boo
 		.unwrap_or(128) as usize;
 	let is_fp16 = matches!(ty.tensor_type(), Some(ort::value::TensorElementType::Float16));
 	Some((num_heads, head_dim, is_fp16))
+}
+
+/// Feature-dim (mel bins) declared by a model input shaped `(batch, FEAT, time)` — e.g.
+/// NeMo `audio_signal`. NeMo varies (parakeet-ctc=80, canary=128); read it from the graph so
+/// the featurizer builds the matching filterbank. Falls back to 128 when dynamic/unknown.
+fn feat_dim_of(session: &Session, name: &str) -> usize {
+	session
+		.inputs()
+		.iter()
+		.find(|i| i.name() == name)
+		.and_then(|i| i.dtype().tensor_shape())
+		.and_then(|s| s.get(1).copied())
+		.filter(|&d| d > 0)
+		.map(|d| d as usize)
+		.unwrap_or(128)
 }
 
 /// `(layers, hidden)` from a named input's declared `(layers, batch, seq, hidden)` shape.
