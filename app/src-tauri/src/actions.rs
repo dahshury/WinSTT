@@ -741,6 +741,23 @@ impl ShortcutAction for CancelAction {
     }
 }
 
+// Transform Action (WinSTT transforms.hotkey, default LCtrl+LShift+T): capture selection ->
+// transform over the configured provider -> paste-replace -> emit transforms:applied.
+struct TransformAction;
+
+impl ShortcutAction for TransformAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        // Single-shot on press. run_transform_pipeline does its own enabled-gate + failure
+        // events and never errors past its boundary; spawn so the shortcut thread isn't
+        // blocked by the LLM round-trip.
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = crate::winstt::commands::transforms::run_transform_pipeline(&app).await;
+        });
+    }
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -784,6 +801,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "test".to_string(),
         Arc::new(TestAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "transforms".to_string(),
+        Arc::new(TransformAction) as Arc<dyn ShortcutAction>,
     );
     map
 });

@@ -754,6 +754,16 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
     bindings.insert(
+        "transforms".to_string(),
+        ShortcutBinding {
+            id: "transforms".to_string(),
+            name: "Transform Selection".to_string(),
+            description: "Rewrites the selected text with the configured LLM.".to_string(),
+            default_binding: "LCtrl+LShift+T".to_string(),
+            current_binding: "LCtrl+LShift+T".to_string(),
+        },
+    );
+    bindings.insert(
         "cancel".to_string(),
         ShortcutBinding {
             id: "cancel".to_string(),

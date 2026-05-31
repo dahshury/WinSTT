@@ -701,6 +701,25 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
 
+            // WinSTT transforms global hotkey: arm `llm.transforms.hotkey` only while the
+            // feature is enabled (mirrors transform-hotkeys.ts). The accelerator lives in the
+            // WinSTT settings tree, so re-point the `transforms` binding at it here.
+            {
+                let ws = crate::winstt::commands::settings::read_settings(&app_handle);
+                let t = &ws.llm.transforms;
+                let hotkey = t.hotkey.trim().to_string();
+                if t.enabled && !hotkey.is_empty() {
+                    if let Err(e) =
+                        crate::shortcut::change_binding(app_handle.clone(), "transforms".to_string(), hotkey)
+                    {
+                        log::warn!("Failed to register transforms hotkey: {e}");
+                    }
+                } else {
+                    let b = crate::settings::get_stored_binding(&app_handle, "transforms");
+                    let _ = crate::shortcut::unregister_shortcut(&app_handle, b);
+                }
+            }
+
             // Pre-warm GPU/accelerator enumeration on a background thread.
             // The first call into transcribe_rs::whisper_cpp::gpu::list_gpu_devices
             // loads the Metal/Vulkan backend and probes devices, which can take
