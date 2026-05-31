@@ -808,3 +808,12 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map
 });
+
+/// Start one dictation cycle from a wakeword hit. A wake-word detection acts exactly like a
+/// toggle-press of the transcribe action: it begins a recording cycle that the recorder's
+/// silence-endpoint stops. Bound to the `wake_word_detected` event in `initialize_core_logic`.
+pub fn start_dictation_from_wakeword(app: &AppHandle) {
+    if let Some(coord) = app.try_state::<crate::TranscriptionCoordinator>() {
+        coord.send_input("transcribe", "", true, false);
+    }
+}

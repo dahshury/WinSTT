@@ -145,6 +145,19 @@ fn create_audio_recorder(
                 let level = levels.iter().copied().fold(0.0_f32, f32::max).clamp(0.0, 1.0);
                 crate::winstt::commands::dictation::SttEvents::audio_level(&app_handle, level);
             }
+        })
+        .with_chunk_callback({
+            // Wakeword tap: feed every 16k frame to the WakeWordManager. feed_chunk is
+            // internally gated (no-op unless armed + a detector is built), so this is free
+            // when wakeword mode is off. On a hit, the manager emits `wake_word_detected`.
+            let app_handle = app_handle.clone();
+            move |frame: &[f32]| {
+                if let Some(wm) = app_handle
+                    .try_state::<std::sync::Arc<crate::winstt::managers::WakeWordManager>>()
+                {
+                    let _ = wm.feed_chunk(frame);
+                }
+            }
         });
 
     Ok(recorder)

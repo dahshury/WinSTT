@@ -197,6 +197,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     winstt::commands::tray_menu::install_tray_menu_lifecycle(app_handle);
     // Snippet expansion cache: warm at startup + rebuild on every settings:changed.
     winstt::commands::snippets::install_snippet_reload_bridge(app_handle);
+    // Wakeword → dictation: a wake_word_detected hit (emitted by WakeWordManager.feed_chunk
+    // off the live mic tap) starts one dictation cycle, exactly like a toggle-press.
+    {
+        use tauri::Listener;
+        let app_for_ww = app_handle.clone();
+        app_handle.listen("wake_word_detected", move |_event| {
+            crate::actions::start_dictation_from_wakeword(&app_for_ww);
+        });
+    }
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command

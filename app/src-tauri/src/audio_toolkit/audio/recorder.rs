@@ -36,6 +36,9 @@ pub struct AudioRecorder {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    /// Raw-16k mono tap fired on EVERY resampled frame (independent of `recording`), so the
+    /// wakeword detector can listen while idle. None = no-op (free when no wakeword armed).
+    chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
 }
 
 impl AudioRecorder {
@@ -46,6 +49,7 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            chunk_cb: None,
         })
     }
 
@@ -59,6 +63,14 @@ impl AudioRecorder {
         F: Fn(Vec<f32>) + Send + Sync + 'static,
     {
         self.level_cb = Some(Arc::new(cb));
+        self
+    }
+
+    pub fn with_chunk_callback<F>(mut self, cb: F) -> Self
+    where
+        F: Fn(&[f32]) + Send + Sync + 'static,
+    {
+        self.chunk_cb = Some(Arc::new(cb));
         self
     }
 
@@ -83,6 +95,7 @@ impl AudioRecorder {
         let vad = self.vad.clone();
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        let chunk_cb = self.chunk_cb.clone();
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -159,7 +172,7 @@ impl AudioRecorder {
                 Ok((stream, sample_rate)) => {
                     let _ = init_tx.send(Ok(()));
                     // Keep the stream alive while we process samples.
-                    run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, stop_flag);
+                    run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, chunk_cb, stop_flag);
                     drop(stream);
                 }
                 Err(error_message) => {
@@ -398,6 +411,7 @@ fn run_consumer(
     sample_rx: mpsc::Receiver<AudioChunk>,
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
+    chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
     stop_flag: Arc<AtomicBool>,
 ) {
     let mut frame_resampler = FrameResampler::new(
@@ -461,6 +475,11 @@ fn run_consumer(
 
         // ---------- existing pipeline ------------------------------------ //
         frame_resampler.push(&raw, &mut |frame: &[f32]| {
+            // Wakeword tap: fire on EVERY 16k frame regardless of `recording` so the detector
+            // listens while idle. No-op (free) unless a wakeword is armed.
+            if let Some(cb) = &chunk_cb {
+                cb(frame);
+            }
             handle_frame(frame, recording, &vad, &mut processed_samples)
         });
 
