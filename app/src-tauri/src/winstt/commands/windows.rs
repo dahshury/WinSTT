@@ -270,8 +270,7 @@ pub struct OnboardingFinishArgs {
 /// `onboarding_finish` — hide the onboarding window and show main. Persisting
 /// the `general.onboarded` flag rides the existing settings command; this
 /// command only handles the window transition (mirrors ONBOARDING_FINISH).
-#[tauri::command]
-#[specta::specta]
+#[allow(dead_code)] // superseded by winstt::commands::onboarding::onboarding_finish (de-command'd to avoid dup name)
 pub fn onboarding_finish(app: AppHandle, _args: OnboardingFinishArgs) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("onboarding") {
         let _ = window.hide();

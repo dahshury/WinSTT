@@ -445,10 +445,12 @@ pub async fn history_clear(
         let mut stmt = conn
             .prepare("SELECT id FROM transcription_history ORDER BY id ASC")
             .map_err(|e| e.to_string())?;
-        stmt.query_map([], |row| row.get::<_, i64>(0))
+        let collected = stmt
+            .query_map([], |row| row.get::<_, i64>(0))
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        collected
     };
     for id in ids {
         // Best-effort: a row vanishing under us (concurrent delete) is not fatal.

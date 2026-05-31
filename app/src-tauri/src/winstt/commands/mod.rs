@@ -70,6 +70,8 @@ pub mod audio_devices;
 pub mod wordts;
 pub mod file_transcribe;
 pub mod context;
+/// Recording-sound library: sound_library_add / sound_library_read_file / sound_library_remove.
+pub mod sound;
 
 // ── slice: history (app/PORT/10_frontend_port_plan.md §6 — WU-10) ──
 /// History command surface: backs BOTH the dedicated history window (SQLite-store

@@ -535,7 +535,7 @@ impl FileTranscribeManager {
     /// Terminal transition for the in-flight row, then advance the pump. A row
     /// canceled mid-transcribe (status flipped to Canceled by `cancel`) is
     /// removed instead of marked complete/error.
-    fn finish(&self, id: &str, status: QueueStatus, text: Option<&str>, error: Option<&str>) {
+    fn finish(self: &Arc<Self>, id: &str, status: QueueStatus, text: Option<&str>, error: Option<&str>) {
         {
             let mut st = self.lock_state();
             if let Some(pos) = st.items.iter().position(|it| it.id == id) {

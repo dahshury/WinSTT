@@ -96,8 +96,7 @@ pub fn delete_model_cache(downloads: State<'_, Arc<DownloadManager>>, model_id: 
 }
 
 /// `cancel_download` — cancel the legacy single-slot whole-model swap-download (no quantization).
-#[tauri::command]
-#[specta::specta]
+#[allow(dead_code)] // dup of Handy's commands::models::cancel_download (de-command'd to avoid dup name)
 pub fn cancel_download(downloads: State<'_, Arc<DownloadManager>>) {
     downloads.cancel_download();
 }
