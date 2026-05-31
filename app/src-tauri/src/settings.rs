@@ -942,9 +942,16 @@ pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {
 pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
     let bindings = get_bindings(app);
 
-    let binding = bindings.get(id).unwrap().clone();
-
-    binding
+    // Fall back to a benign empty binding when `id` is absent from the persisted store
+    // (e.g. a newly-added binding whose default predates the user's settings_store.json).
+    // The previous `.unwrap()` here panicked the whole app at startup in that case.
+    bindings.get(id).cloned().unwrap_or_else(|| ShortcutBinding {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: String::new(),
+        default_binding: String::new(),
+        current_binding: String::new(),
+    })
 }
 
 pub fn get_history_limit(app: &AppHandle) -> usize {

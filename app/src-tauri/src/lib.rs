@@ -723,10 +723,10 @@ pub fn run(cli_args: CliArgs) {
                     {
                         log::warn!("Failed to register transforms hotkey: {e}");
                     }
-                } else {
-                    let b = crate::settings::get_stored_binding(&app_handle, "transforms");
-                    let _ = crate::shortcut::unregister_shortcut(&app_handle, b);
                 }
+                // Disabled: do nothing. The binding isn't registered until `initialize_shortcuts`
+                // runs (frontend-driven, after this hook); when disabled, run_transform_pipeline
+                // gates itself to a no-op, so an idle combo capture is harmless.
             }
 
             // Pre-warm GPU/accelerator enumeration on a background thread.
