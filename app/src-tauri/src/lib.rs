@@ -166,6 +166,26 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
 
+    // ── WinSTT managers (lib_wiring.md §2) ──
+    {
+        use crate::winstt::managers::{
+            CloudSttManager, ContextManager, DiarizationManager, FileTranscribeManager,
+            LlmManager, LoopbackManager, TtsManager, WakeWordManager, WordAligner,
+        };
+        app_handle.manage(Arc::new(LlmManager::new(app_handle)));
+        app_handle.manage(Arc::new(CloudSttManager::new(app_handle)));
+        app_handle.manage(Arc::new(ContextManager::new(app_handle)));
+        app_handle.manage(Arc::new(TtsManager::new(app_handle)));
+        app_handle.manage(Arc::new(WakeWordManager::new(app_handle)));
+        app_handle.manage(Arc::new(DiarizationManager::new(app_handle)));
+        app_handle.manage(Arc::new(LoopbackManager::new(app_handle)));
+        app_handle.manage(Arc::new(WordAligner::new(app_handle, model_manager.clone())));
+        app_handle.manage(Arc::new(FileTranscribeManager::new(
+            app_handle,
+            transcription_manager.clone(),
+        )));
+    }
+
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
     // after permissions are confirmed (on macOS) or after onboarding completes.
@@ -427,8 +447,59 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
+            // ── WinSTT commands (lib_wiring.md §3) ──
+            winstt::commands::settings::winstt_get_settings,
+            winstt::commands::settings::winstt_set_settings,
+            winstt::commands::stt::list_models,
+            winstt::commands::stt::picker_quantizations_for,
+            winstt::commands::stt::get_live_resources,
+            winstt::commands::stt::set_custom_model,
+            winstt::commands::tts::tts_speak,
+            winstt::commands::tts::tts_speak_selection,
+            winstt::commands::tts::tts_cancel,
+            winstt::commands::tts::tts_cancel_all,
+            winstt::commands::tts::tts_init,
+            winstt::commands::tts::tts_list_voices,
+            winstt::commands::tts::tts_list_cloud_voices,
+            winstt::commands::tts::tts_cloud_subscription,
+            winstt::commands::tts::tts_download_estimate,
+            winstt::commands::tts::tts_install_pause,
+            winstt::commands::tts::tts_install_resume,
+            winstt::commands::tts::tts_install_cancel,
+            winstt::commands::tts::tts_preview_cloud,
+            winstt::commands::llm::process_text,
+            winstt::commands::llm::process_transform,
+            winstt::commands::llm::scan_ollama_models,
+            winstt::commands::llm::scan_openrouter_models,
+            winstt::commands::llm::ollama_detect,
+            winstt::commands::llm::ollama_start,
+            winstt::commands::llm::ollama_pull,
+            winstt::commands::llm::ollama_delete,
+            winstt::commands::llm::verify_credential,
+            winstt::commands::cloud_stt::verify_cloud_stt_credential,
+            winstt::commands::cloud_stt::cloud_stt_cancel,
+            winstt::commands::wakeword::set_wake_word,
+            winstt::commands::wakeword::list_wake_word_presets,
+            winstt::commands::listen::start_listen,
+            winstt::commands::listen::stop_listen,
+            winstt::commands::wordts::align_words,
+            winstt::commands::file_transcribe::file_transcribe_enqueue,
+            winstt::commands::file_transcribe::file_transcribe_pause,
+            winstt::commands::file_transcribe::file_transcribe_resume,
+            winstt::commands::file_transcribe::file_transcribe_cancel,
+            // debug_read_context is #[cfg(feature = "context-playground")]-gated — wire later behind that feature.
         ])
-        .events(collect_events![managers::history::HistoryUpdatePayload,]);
+        .events(collect_events![
+            managers::history::HistoryUpdatePayload,
+            winstt::commands::events::RealtimeStabilizedPayload,
+            winstt::commands::events::RealtimeUpdatePayload,
+            winstt::commands::events::WakeWordDetectedPayload,
+            winstt::commands::events::SpeakerSegmentsPayload,
+            winstt::commands::events::WordAlignmentPayload,
+            winstt::commands::events::VadSensitivityAdaptedPayload,
+            winstt::commands::events::TtsLifecyclePayload,
+            winstt::commands::events::FileTranscribeProgressPayload,
+        ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     specta_builder
