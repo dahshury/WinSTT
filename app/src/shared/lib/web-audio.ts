@@ -20,11 +20,18 @@ function warnDecodeFailure(): null {
 }
 
 /**
- * Slice a Uint8Array's view of its underlying buffer into a clean ArrayBuffer.
- * Electron IPC delivers Buffer as Uint8Array; the raw `data.buffer` may include
- * unrelated bytes (offset/extra capacity), so we slice the relevant window.
+ * Slice binary IPC data into a clean ArrayBuffer.
+ * Electron delivered Buffer as Uint8Array; Tauri serializes Rust `Vec<u8>` as a
+ * plain `number[]` (no `.buffer`). Accept both (plus ArrayBuffer) so binary
+ * commands like `sound:get-data` don't throw `undefined.slice` and crash the page.
  */
-export function toArrayBuffer(data: Uint8Array): ArrayBuffer {
+export function toArrayBuffer(data: Uint8Array | number[] | ArrayBuffer): ArrayBuffer {
+	if (data instanceof ArrayBuffer) {
+		return data;
+	}
+	if (Array.isArray(data)) {
+		return Uint8Array.from(data).buffer;
+	}
 	return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
 }
 
@@ -32,7 +39,10 @@ export function toArrayBuffer(data: Uint8Array): ArrayBuffer {
  * Decode WAV bytes via the supplied AudioContext. Returns null on failure
  * (after logging) so the caller can simply assign the result. CC=1.
  */
-export function decodeWav(ctx: AudioContext, data: Uint8Array): Promise<AudioBuffer | null> {
+export function decodeWav(
+	ctx: AudioContext,
+	data: Uint8Array | number[] | ArrayBuffer,
+): Promise<AudioBuffer | null> {
 	return ctx.decodeAudioData(toArrayBuffer(data)).catch(warnDecodeFailure);
 }
 

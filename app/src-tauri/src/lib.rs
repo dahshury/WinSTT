@@ -278,7 +278,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                 cancel_current_operation(app);
             }
             "quit" => {
-                app.exit(0);
+                log::info!("Quit selected from tray — exiting.");
+                std::process::exit(0);
             }
             id if id.starts_with("model_select:") => {
                 let model_id = id.strip_prefix("model_select:").unwrap().to_string();
@@ -710,6 +711,12 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
 
+            // Register the global hotkeys at startup. The WinSTT renderer (ported from Electron,
+            // where shortcuts lived in main.ts) never calls `initialize_shortcuts`, so without this
+            // the dictation/cancel hotkeys are NEVER registered and pressing them does nothing.
+            // Must run BEFORE the transforms hook below so HandyKeysState is initialized first.
+            crate::shortcut::init_shortcuts(&app_handle);
+
             // WinSTT transforms global hotkey: arm `llm.transforms.hotkey` only while the
             // feature is enabled (mirrors transform-hotkeys.ts). The accelerator lives in the
             // WinSTT settings tree, so re-point the `transforms` binding at it here.
@@ -762,6 +769,16 @@ pub fn run(cli_args: CliArgs) {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
+                // Closing the MAIN pill quits the whole app (the user expects X to close it,
+                // not silently hide-to-tray). std::process::exit guarantees termination even if
+                // a background thread (wakeword tap / idle watcher / ORT) would stall a graceful
+                // app.exit — fixing the "unquittable / stuck in tray" complaint.
+                if window.label() == "main" {
+                    log::info!("Main window closed — exiting.");
+                    std::process::exit(0);
+                }
+                // Secondary windows (settings / pickers / overlay) just hide so the app keeps
+                // running for the hotkey.
                 api.prevent_close();
                 let _res = window.hide();
 

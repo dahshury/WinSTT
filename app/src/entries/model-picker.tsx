@@ -4,6 +4,10 @@ import { HtmlLang } from "@/app/layouts/HtmlLang";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import "@/app/styles/fonts.css";
 import "@/app/styles/globals.css";
+import { useConnectionListener } from "@/features/connect-server";
+import { useDownloadListener } from "@/features/model-download";
+import { useSyncActiveModel } from "@/features/sync-active-model";
+import { useSyncSettings } from "@/features/update-settings";
 import { ModelPickerPage } from "@/views/model-picker";
 
 const container = document.getElementById("root");
@@ -11,12 +15,28 @@ if (!container) {
 	throw new Error("[model-picker] #root element missing");
 }
 
+/**
+ * Model-picker data bootstrap. Like the settings window, this is a separate webview that does
+ * NOT mount the main `IpcProvider` (which would also run main-only action hooks). It still needs
+ * the settings store hydrated (`useSyncSettings` -> `settingsLoad`) so the picker knows the
+ * selected model/device, plus the active-model + download + connection listeners for the badges.
+ * Without this the store never hydrates (Tauri webviews don't share localStorage) and the picker
+ * renders empty/blank. The catalog list self-loads via the catalog store.
+ */
+function ModelPickerBootstrap() {
+	useSyncSettings();
+	useSyncActiveModel();
+	useDownloadListener();
+	useConnectionListener();
+	return <ModelPickerPage />;
+}
+
 createRoot(container).render(
 	<StrictMode>
 		<HtmlLang />
 		<Suspense fallback={null}>
 			<IntlProvider>
-				<ModelPickerPage />
+				<ModelPickerBootstrap />
 			</IntlProvider>
 		</Suspense>
 	</StrictMode>

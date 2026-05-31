@@ -635,13 +635,15 @@ pub fn open_window(
     width: Option<f64>,
     height: Option<f64>,
 ) -> Result<(), String> {
+    log::info!("open_window('{name}') invoked");
     // Resolve the static label so it can key the picker-state map / emit.
     let label: &'static str = match spec_for(&name) {
         Some(spec) => spec.label,
         None => return Err(format!("unknown window '{name}'")),
     };
 
-    let window = ensure_window(&app, label)?;
+    let window = ensure_window(&app, label)
+        .inspect_err(|e| log::error!("open_window('{name}') ensure_window failed: {e}"))?;
 
     if is_picker(label) {
         // Picker open is a TOGGLE: a second open while visible closes it (the
