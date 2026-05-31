@@ -49,11 +49,11 @@ const PTT_BINDING: &str = "transcribe";
 
 /// `hotkey_register` — point the PTT/toggle binding at `accelerator` so its press/
 /// release fires the WinSTT hotkey events. WinSTT sends the accelerator as a WinSTT
-/// key string (e.g. `LCtrl+LMeta`); handy-keys' `parse_single`/`Key::from_str`
-/// accept those WinSTT names verbatim (lctrl/lmeta/rshift/space/r…), so
-/// `change_binding` validates + (un)registers it directly. An empty accelerator is
-/// treated as "unbound" (no-op success) so the renderer's cold-boot
-/// register-then-rebind sequence can't error.
+/// key string (e.g. `LCtrl+LMeta`). handy-keys' parser does NOT accept every WinSTT
+/// name (above all `LMeta`/`RMeta` — see `winstt_accel_to_handy`), so the translation
+/// to handy's token vocabulary happens inside `change_binding`, which then validates
+/// + (un)registers it. An empty accelerator is treated as "unbound" (no-op success)
+/// so the renderer's cold-boot register-then-rebind sequence can't error.
 ///
 /// Returns whether the accelerator is now active (the renderer's `hotkeyRegister`
 /// wrapper reads a `boolean`, defaulting to `false`).
@@ -302,6 +302,63 @@ fn handy_key_to_winstt_name(key: &str) -> String {
     }
 }
 
+/// Translate a WinSTT accelerator string (Electron/keycodes.ts display names, e.g.
+/// `LCtrl+LMeta`, `LMeta+LShift+E`, `LCtrl+LShift+V`) into the token vocabulary that
+/// handy-keys' parser accepts. This is the INVERSE of `handy_string_to_winstt_names`,
+/// and is applied at the single chokepoint `shortcut::change_binding`.
+///
+/// Why it is MANDATORY: the renderer persists hotkeys with WinSTT names, where the
+/// Windows key is `LMeta`/`RMeta`. handy-keys' `Modifiers::parse_single` has NO
+/// `lmeta`/`rmeta` token (it wants `super_left` / `meta_left` / `lcmd`), so an
+/// un-translated `LMeta` falls through to `Key::from_str` → `Unknown key: LMeta` and
+/// the WHOLE binding fails to register — silently killing the PTT/dictation hotkey
+/// (`LCtrl+LMeta`) and the TTS read-aloud hotkey (`LMeta+LShift+E`). A few named keys
+/// also differ (`ArrowLeft` vs handy `left`; WinSTT `Delete` is handy `forwarddelete`,
+/// WinSTT `Backspace` is handy `backspace`/`delete`), so map those too. Every other
+/// token (letters, digits, Space, Tab, Enter, Escape, F-keys, punctuation, and the
+/// already-sided `LCtrl`/`LShift`/`LAlt` which handy DOES know) is a valid handy token
+/// once lowercased and passes through. Idempotent (handy-canonical input is unchanged).
+pub fn winstt_accel_to_handy(accel: &str) -> String {
+    accel
+        .split('+')
+        .filter_map(|tok| {
+            let t = tok.trim();
+            if t.is_empty() {
+                return None;
+            }
+            Some(
+                match t.to_ascii_lowercase().as_str() {
+                    // Modifiers → handy side-aware canonical names.
+                    "lctrl" | "ctrl_left" => "ctrl_left",
+                    "rctrl" | "ctrl_right" => "ctrl_right",
+                    "ctrl" | "control" => "ctrl",
+                    "lshift" | "shift_left" => "shift_left",
+                    "rshift" | "shift_right" => "shift_right",
+                    "shift" => "shift",
+                    "lalt" | "alt_left" => "alt_left",
+                    "ralt" | "alt_right" | "altgr" => "alt_right",
+                    "alt" | "opt" | "option" => "alt",
+                    // THE FIX: WinSTT `LMeta`/`RMeta` (Windows key) → handy's `super_*`.
+                    "lmeta" | "super_left" | "meta_left" | "lcmd" => "super_left",
+                    "rmeta" | "super_right" | "meta_right" | "rcmd" => "super_right",
+                    "meta" | "super" | "win" | "windows" | "cmd" | "command" => "super",
+                    // Named keys whose WinSTT display name differs from handy's token.
+                    "arrowleft" => "left",
+                    "arrowright" => "right",
+                    "arrowup" => "up",
+                    "arrowdown" => "down",
+                    "delete" => "forwarddelete",
+                    // Letters/digits/Space/Tab/Enter/Escape/Backspace/F-keys/punctuation
+                    // are valid handy tokens once lowercased — pass through verbatim.
+                    other => other,
+                }
+                .to_string(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// `hotkey_start_recording` — begin capturing the next key combo for a rebind. Wraps
 /// Handy's key-recording listener AND installs the CaptureBridge translation so the
 /// per-key `handy-keys-event` stream becomes WinSTT's `hotkey:recording-update`
@@ -388,7 +445,42 @@ impl HotkeyEvents {
 
 #[cfg(test)]
 mod tests {
-    use super::{handy_key_to_winstt_name, handy_string_to_winstt_names};
+    use super::{handy_key_to_winstt_name, handy_string_to_winstt_names, winstt_accel_to_handy};
+
+    #[test]
+    fn lmeta_combo_translates_to_handy_super() {
+        // The actual bug: `LCtrl+LMeta` (default PTT) must become a combo handy-keys
+        // parses (modifiers-only super_left), NOT leave `LMeta` as an unknown key.
+        assert_eq!(winstt_accel_to_handy("LCtrl+LMeta"), "ctrl_left+super_left");
+        // TTS read-aloud default `LMeta+LShift+E`.
+        assert_eq!(
+            winstt_accel_to_handy("LMeta+LShift+E"),
+            "super_left+shift_left+e"
+        );
+    }
+
+    #[test]
+    fn winstt_accel_roundtrips_through_handy_names() {
+        // winstt_accel_to_handy is the inverse of handy_string_to_winstt_names.
+        for combo in ["LCtrl+LMeta", "LCtrl+LShift+V", "RCtrl+V", "LCtrl+LShift+R"] {
+            let handy = winstt_accel_to_handy(combo);
+            let back = handy_string_to_winstt_names(&handy).join("+");
+            assert_eq!(back, combo, "round-trip failed for {combo}");
+        }
+    }
+
+    #[test]
+    fn winstt_accel_is_idempotent_on_handy_canonical() {
+        let once = winstt_accel_to_handy("LCtrl+LMeta");
+        assert_eq!(winstt_accel_to_handy(&once), once);
+    }
+
+    #[test]
+    fn winstt_accel_maps_divergent_key_names() {
+        assert_eq!(winstt_accel_to_handy("LCtrl+ArrowUp"), "ctrl_left+up");
+        assert_eq!(winstt_accel_to_handy("Delete"), "forwarddelete");
+        assert_eq!(winstt_accel_to_handy("LCtrl+Space"), "ctrl_left+space");
+    }
 
     #[test]
     fn default_ptt_combo_roundtrips_to_winstt_names() {

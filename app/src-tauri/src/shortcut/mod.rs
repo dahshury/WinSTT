@@ -115,6 +115,13 @@ pub fn change_binding(
         return Err("Binding cannot be empty".to_string());
     }
 
+    // WinSTT fork: the renderer sends accelerators in WinSTT/Electron key names
+    // (`LCtrl+LMeta`, `LMeta+LShift+E`, …). handy-keys' parser rejects `LMeta`/`RMeta`
+    // (it wants `super_left`), so translate to its token vocabulary at this single
+    // chokepoint — covering every path (PTT register, TTS, transforms, settings-rebind).
+    // Without this the PTT/TTS hotkeys silently fail to register. Idempotent.
+    let binding = crate::winstt::commands::hotkey::winstt_accel_to_handy(&binding);
+
     let mut settings = settings::get_settings(&app);
 
     // Get the binding to modify, or create it from defaults if it doesn't exist
