@@ -74,12 +74,21 @@ fn engine_kind_for(entry: &crate::winstt::catalog::ModelEntry) -> Option<crate::
     //   NemoAed       — proven (canary-180m-flash) full JFK w/ PnC: NeMo featurizer + mems carry.
     //   NemoCtc       — proven (parakeet-ctc-0.6b) JFK; NeMo featurizer reads mel count from the
     //                   model (parakeet=80, canary=128) + CTC greedy collapse.
-    // PENDING (drafted in stt::families): NemoRnnt/Tdt (parakeet transducer — wire NeMo featurizer
-    //   + validate the transducer state carry), GigaAM (own featurizer, ru), Cohere (128-mel +
-    //   fp16 KV), Kaldi/zipformer (sherpa glob), Dolphin/T-One (non-en audio).
+    //   NemoTdt       — proven (parakeet-tdt-0.6b-v3) full JFK w/ PnC: transducer + predictor LSTM
+    //                   state carry (input/output_states_1/2, advance on non-blank) + int32 targets
+    //                   + TDT duration split.
+    //   NemoRnnt      — same TransducerEngine path as NemoTdt minus the duration split (strict
+    //                   subset) → validated by extension.
+    // PENDING (drafted in stt::families): GigaAM (own featurizer, ru), Cohere (128-mel + fp16 KV),
+    //   Kaldi/zipformer (sherpa glob), Dolphin/T-One (non-en audio), Moonshine (own engine file).
     let validated = matches!(
         kind,
-        EngineKind::WhisperHf | EngineKind::SenseVoiceCtc | EngineKind::NemoAed | EngineKind::NemoCtc
+        EngineKind::WhisperHf
+            | EngineKind::SenseVoiceCtc
+            | EngineKind::NemoAed
+            | EngineKind::NemoCtc
+            | EngineKind::NemoTdt
+            | EngineKind::NemoRnnt
     );
     if validated {
         Some(kind)

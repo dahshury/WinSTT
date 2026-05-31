@@ -1053,6 +1053,10 @@ enum TransducerKind {
 	NemoTdt,
 }
 
+/// NeMo RNN-T/TDT predictor LSTM state `(output_states_1, output_states_2)` carried across emitted
+/// tokens. Updated only on a non-blank emission (Kaldi-stateless transducers don't use it).
+type NemoState = (ArrayD<f32>, ArrayD<f32>);
+
 pub struct TransducerEngine {
 	encoder: Session,
 	decoder: Session,
@@ -1089,6 +1093,13 @@ impl TransducerEngine {
 			TransducerKind::KaldiStateless => 1,
 			TransducerKind::NemoRnnt | TransducerKind::NemoTdt => 10,
 		};
+		// NeMo transducer uses the proven Slaney featurizer at the model's declared mel count;
+		// Kaldi/zipformer uses the 80-mel kaldi fbank. Read before `encoder` is moved into the struct.
+		let mel_fb = if matches!(tkind, TransducerKind::KaldiStateless) {
+			frontend::build_mel_filterbank()
+		} else {
+			frontend::build_nemo_mel_filterbank(feat_dim_of(&encoder, "audio_signal"))
+		};
 
 		Ok(TransducerEngine {
 			encoder,
@@ -1101,7 +1112,7 @@ impl TransducerEngine {
 			blank_id,
 			max_tokens_per_step,
 			context_size: 2,
-			mel_fb: frontend::build_mel_filterbank(),
+			mel_fb,
 			use_kaldi_fbank: matches!(tkind, TransducerKind::KaldiStateless),
 			model_name: cfg.model_name.clone(),
 			providers: providers_to_strings(&cfg.providers),
@@ -1110,7 +1121,11 @@ impl TransducerEngine {
 
 	/// Run the encoder → `(encoder_out (T, D), T_len)`.
 	fn encode(&mut self, audio: &[f32]) -> SttResult<(Array2<f32>, usize)> {
-		let fbank = frontend::compute_fbank(audio, &self.mel_fb);
+		let fbank = if self.use_kaldi_fbank {
+			frontend::compute_fbank(audio, &self.mel_fb)
+		} else {
+			frontend::nemo_features(audio, &self.mel_fb)
+		};
 		let t = fbank.nrows();
 		if t == 0 {
 			return Ok((Array2::zeros((0, 0)), 0));
@@ -1164,21 +1179,43 @@ impl TransducerEngine {
 		Ok((enc2, t_len.min(enc_rows)))
 	}
 
-	/// Run decoder+joiner for ONE encoder frame → `(logits Vec<f32>, step, ())`.
-	/// `step` is the TDT duration (>0) or -1 for RNN-T/Kaldi (caller advances by 1).
+	/// Run decoder+joiner for ONE encoder frame → `(logits, step, new_state?)`.
+	/// `step` is the TDT duration (>0) or -1 for RNN-T/Kaldi (caller advances by 1). `new_state`
+	/// is the freshly-advanced NeMo predictor state (None for Kaldi); the caller keeps it only on
+	/// a non-blank emission.
 	fn decode_frame(
 		&mut self,
 		prev_tokens: &[i64],
+		prev_state: Option<&NemoState>,
 		enc_frame: &Array1<f32>,
-	) -> SttResult<(Vec<f32>, i64)> {
+	) -> SttResult<(Vec<f32>, i64, Option<NemoState>)> {
 		match self.tkind {
-			TransducerKind::KaldiStateless => self.decode_frame_kaldi(prev_tokens, enc_frame),
+			TransducerKind::KaldiStateless => {
+				let (v, step) = self.decode_frame_kaldi(prev_tokens, enc_frame)?;
+				Ok((v, step, None))
+			}
 			TransducerKind::NemoRnnt => {
-				let v = self.decode_frame_nemo(prev_tokens, enc_frame)?;
-				Ok((v, -1))
+				let owned;
+				let st = match prev_state {
+					Some(s) => s,
+					None => {
+						owned = self.create_nemo_state();
+						&owned
+					}
+				};
+				let (v, ns) = self.decode_frame_nemo(prev_tokens, st, enc_frame)?;
+				Ok((v, -1, Some(ns)))
 			}
 			TransducerKind::NemoTdt => {
-				let v = self.decode_frame_nemo(prev_tokens, enc_frame)?;
+				let owned;
+				let st = match prev_state {
+					Some(s) => s,
+					None => {
+						owned = self.create_nemo_state();
+						&owned
+					}
+				};
+				let (v, ns) = self.decode_frame_nemo(prev_tokens, st, enc_frame)?;
 				// joint output is [vocab | duration]; split.
 				let (vocab_part, dur_part) = v.split_at(self.vocab_size.min(v.len()));
 				let step = if dur_part.is_empty() {
@@ -1186,7 +1223,7 @@ impl TransducerEngine {
 				} else {
 					argmax_1d(dur_part).0 as i64
 				};
-				Ok((vocab_part.to_vec(), step))
+				Ok((vocab_part.to_vec(), step, Some(ns)))
 			}
 		}
 	}
@@ -1232,17 +1269,20 @@ impl TransducerEngine {
 		Ok((logit.iter().copied().collect(), -1))
 	}
 
+	/// NeMo fused decoder_joint for ONE frame: feeds the stateful predictor states and returns the
+	/// joint logits + the NEW `(output_states_1, output_states_2)` (port of nemo.py
+	/// `NemoConformerRnnt._decode`). The caller updates the carried state only on a non-blank
+	/// emission (see `transcribe`).
 	fn decode_frame_nemo(
 		&mut self,
 		prev_tokens: &[i64],
+		prev_state: &NemoState,
 		enc_frame: &Array1<f32>,
-	) -> SttResult<Vec<f32>> {
-		// NeMo fused decoder_joint: encoder_outputs=(1,D,1), targets=[[last|blank]], target_length=[1],
-		// plus the predictor states. We keep zero-state per frame (parity-acceptable for a first
-		// green build; the true stateful carry is a SPIKE item — see note below).
+	) -> SttResult<(Vec<f32>, NemoState)> {
 		let last = prev_tokens.last().copied().unwrap_or(self.blank_id);
-		let targets = tensor_i64((1, 1), vec![last])?;
-		let target_length = tensor_i64_1d(vec![1i64])?;
+		// NeMo decoder_joint declares `targets`/`target_length` as INT32 (ORT rejects int64).
+		let targets = tensor_i32((1, 1), vec![last as i32])?;
+		let target_length = tensor_i32_1d(vec![1i32])?;
 		// encoder_outputs (1, D, 1)
 		let d = enc_frame.len();
 		let enc3 = enc_frame
@@ -1252,20 +1292,34 @@ impl TransducerEngine {
 			.to_owned();
 		let enc_tensor = Tensor::from_array(enc3)
 			.map_err(|e| SttError::Inference(format!("nemo enc tensor: {e}")))?;
+		let st1 = Tensor::from_array(prev_state.0.clone())
+			.map_err(|e| SttError::Inference(format!("nemo state1: {e}")))?;
+		let st2 = Tensor::from_array(prev_state.1.clone())
+			.map_err(|e| SttError::Inference(format!("nemo state2: {e}")))?;
 
-		// SPIKE: input_states_1/2 zero-seeded from decoder input shapes; their carry across frames
-		// (the stateful RNN-T predictor) is what the spike must wire through. Zero-state here keeps
-		// the loop COMPILING and producing output; correctness of long utterances needs the carry.
 		let outputs = self
 			.decoder
 			.run(ort::inputs![
 				"encoder_outputs" => enc_tensor,
 				"targets" => targets,
 				"target_length" => target_length,
+				"input_states_1" => st1,
+				"input_states_2" => st2,
 			])
 			.map_err(|e| SttError::Inference(format!("nemo decoder_joint run: {e}")))?;
 		let joint = out_to_f32(&outputs["outputs"])?;
-		Ok(joint.iter().copied().collect())
+		let ns1 = out_to_f32(&outputs["output_states_1"])?;
+		let ns2 = out_to_f32(&outputs["output_states_2"])?;
+		drop(outputs);
+		Ok((joint.iter().copied().collect(), (ns1, ns2)))
+	}
+
+	/// Zero predictor state `(input_states_1, input_states_2)` (NeMo RNN-T/TDT only).
+	fn create_nemo_state(&self) -> NemoState {
+		(
+			ArrayD::<f32>::zeros(ndarray::IxDyn(&input_state_shape(&self.decoder, "input_states_1"))),
+			ArrayD::<f32>::zeros(ndarray::IxDyn(&input_state_shape(&self.decoder, "input_states_2"))),
+		)
 	}
 }
 
@@ -1295,15 +1349,24 @@ impl Transcriber for TransducerEngine {
 		let mut tokens: Vec<i64> = Vec::new();
 		let mut t = 0usize;
 		let mut emitted = 0usize;
+		// NeMo predictor state (None for stateless Kaldi). Updated only on non-blank emission
+		// (port of onnx-asr asr.py `_AsrWithTransducerDecoding._decoding`).
+		let mut prev_state: Option<NemoState> = match self.tkind {
+			TransducerKind::KaldiStateless => None,
+			_ => Some(self.create_nemo_state()),
+		};
 		while t < t_len {
 			let frame = encoder_out.index_axis(Axis(0), t).to_owned();
-			let (logits, step) = self.decode_frame(&tokens, &frame)?;
+			let (logits, step, new_state) = self.decode_frame(&tokens, prev_state.as_ref(), &frame)?;
 			let (best, _) = argmax_1d(&logits);
 			let token = best as i64;
 
 			if token != self.blank_id {
 				tokens.push(token);
 				emitted += 1;
+				if let Some(ns) = new_state {
+					prev_state = Some(ns); // advance the predictor only when a token is emitted
+				}
 			}
 			if step > 0 {
 				t += step as usize;
@@ -1942,6 +2005,19 @@ fn feat_dim_of(session: &Session, name: &str) -> usize {
 		.unwrap_or(128)
 }
 
+/// Zero-init shape `[dim0, 1, dim2]` for a NeMo RNN-T predictor state input (`input_states_1/2`,
+/// declared `(num_layers, batch, hidden)`). Mirrors onnx-asr `_create_state`.
+fn input_state_shape(session: &Session, name: &str) -> Vec<usize> {
+	let dims = session
+		.inputs()
+		.iter()
+		.find(|i| i.name() == name)
+		.and_then(|i| i.dtype().tensor_shape());
+	let d0 = dims.and_then(|s| s.first().copied()).filter(|&d| d > 0).unwrap_or(1) as usize;
+	let d2 = dims.and_then(|s| s.get(2).copied()).filter(|&d| d > 0).unwrap_or(640) as usize;
+	vec![d0, 1, d2]
+}
+
 /// `(layers, hidden)` from a named input's declared `(layers, batch, seq, hidden)` shape.
 fn node_input_outer_inner(session: &Session, name: &str) -> Option<(usize, usize)> {
 	let inp = session.inputs().iter().find(|i| i.name() == name)?;
@@ -2166,6 +2242,12 @@ fn tensor_i64_1d(data: Vec<i64>) -> SttResult<Tensor<i64>> {
 fn tensor_i32_1d(data: Vec<i32>) -> SttResult<Tensor<i32>> {
 	let arr = ndarray::Array1::from_vec(data);
 	Tensor::from_array(arr).map_err(|e| SttError::Inference(format!("i32 1d tensor: {e}")))
+}
+
+fn tensor_i32(shape: (usize, usize), data: Vec<i32>) -> SttResult<Tensor<i32>> {
+	let arr = ndarray::Array2::from_shape_vec(shape, data)
+		.map_err(|e| SttError::Inference(format!("i32 array: {e}")))?;
+	Tensor::from_array(arr).map_err(|e| SttError::Inference(format!("i32 tensor: {e}")))
 }
 
 fn push_tensor<T>(inputs: &mut Vec<NamedInput>, name: &'static str, tensor: Tensor<T>)
