@@ -168,7 +168,7 @@ export const generalSettingsSchema = z.object({
 	// to (100 - value)% of the previous level. The UI constrains this to
 	// multiples of 20; `.catch(0)` covers older builds that persisted the
 	// legacy boolean (migrated in electron/lib/store.ts).
-	systemAudioReductionWhileDictating: z.number().int().min(0).max(100).default(0).catch(0),
+	systemAudioReductionWhileDictating: z.number().int().min(0).max(100).default(60).catch(60),
 	recordingSound: z.boolean().default(true),
 	// Active recording sound. Empty string = built-in default. Otherwise the
 	// absolute path of an entry in `recordingSoundLibrary`.

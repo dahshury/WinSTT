@@ -931,7 +931,7 @@ impl Default for GeneralSettings {
             auto_start: false,
             minimize_to_tray: true,
             start_minimized: false,
-            system_audio_reduction_while_dictating: 0,
+            system_audio_reduction_while_dictating: 60,
             recording_sound: true,
             recording_sound_path: String::new(),
             recording_sound_library: Vec::new(),
