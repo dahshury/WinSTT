@@ -54,6 +54,9 @@ rdev = { git = "https://github.com/rustdesk-org/rdev" }
 cpal = "0.16.0"
 anyhow = "1.0.95"
 rubato = "0.16.2"
+# Real RAM detection for the model-download fitness heuristics (the "RAM: unknown"
+# fix). Already in the dep graph transitively; pinned to the same version.
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"

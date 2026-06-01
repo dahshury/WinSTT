@@ -11297,6 +11297,7 @@ dependencies = [
  "specta-typescript",
  "strsim",
  "symphonia 0.6.0",
+ "sysinfo",
  "tar",
  "tauri",
  "tauri-build",

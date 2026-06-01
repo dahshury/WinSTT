@@ -207,7 +207,15 @@ fn cache_info_from(state: CacheState, downloaded: u64, total: u64) -> ModelCache
 /// Live system snapshot for the fitness fields. SPIKE: `sysinfo` for RAM + DXGI for VRAM. Zeros are
 /// a valid "unknown" answer (the fit heuristics skip warnings when RAM/VRAM read 0).
 fn system_info_snapshot() -> SystemInfoEntry {
-    SystemInfoEntry::default()
+    // Real total RAM via sysinfo (fixes the model-download dialog's "RAM: unknown").
+    // VRAM/DXGI GPU detection is still deferred → `gpus` stays empty (GPU fitness reads 0,
+    // which the heuristics treat as "unknown" and skip — safe).
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    SystemInfoEntry {
+        total_ram_bytes: sys.total_memory(), // bytes in sysinfo 0.30+
+        ..SystemInfoEntry::default()
+    }
 }
 
 /// Server-authoritative fit assessment — mirrors the renderer's `FitAssessmentEntry`. Returned as

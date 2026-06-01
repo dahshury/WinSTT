@@ -37,6 +37,9 @@ pub fn predownload_quant(
     model_id: String,
     quantization: String,
 ) {
+    // DIAGNOSTIC: trace the download trigger (the reported "clicking download does nothing /
+    // resets the selector" — confirms the command is actually reached + with what args).
+    log::info!("[download] predownload_quant requested: model='{model_id}' quant='{quantization}'");
     downloads.predownload_quant(model_id, quantization);
 }
 

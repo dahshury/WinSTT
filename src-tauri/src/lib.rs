@@ -193,6 +193,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     }
     // Tray-menu placement state + the custom-HTML-tray + history live-event bridge.
     app_handle.manage(crate::winstt::commands::tray_menu::TrayMenuAnchor::default());
+    // Hotkey combo-recorder state. hotkey_start_recording/stop + the per-key
+    // translation all do `app.try_state::<CaptureBridge>()` — without managing it here
+    // that returns None, so the capture listener is never installed and pressing keys
+    // during a hotkey rebind records NOTHING. (This is why "changing a hotkey doesn't
+    // record the keys".) Must be managed before hotkey_start_recording runs.
+    app_handle.manage(crate::winstt::commands::hotkey::CaptureBridge::default());
     winstt::commands::history::install_history_event_bridge(app_handle);
     winstt::commands::tray_menu::install_tray_menu_lifecycle(app_handle);
     // Snippet expansion cache: warm at startup + rebuild on every settings:changed.
@@ -244,63 +250,25 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             .unwrap(),
         )
         .tooltip(tray::tray_tooltip())
-        .show_menu_on_left_click(true)
         .icon_as_template(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "settings" => {
-                show_main_window(app);
+        // WinSTT uses its OWN transparent HTML tray menu (views/tray-menu), NOT Handy's
+        // native OS context menu (the user's complaint: "tray menu matches Handy not my
+        // Electron menu"). No native menu is attached (see tray.rs::update_tray_menu),
+        // and any tray click TOGGLES the custom HTML tray window at the cursor. The
+        // WinSTT TrayMenu renderer drives settings/quit/model-select/etc. via its own IPC.
+        .on_tray_icon_event(|tray_handle, event| {
+            if let tauri::tray::TrayIconEvent::Click {
+                button_state: tauri::tray::MouseButtonState::Up,
+                position,
+                ..
+            } = event
+            {
+                crate::winstt::commands::tray_menu::toggle_tray_menu_at_physical(
+                    tray_handle.app_handle(),
+                    position.x,
+                    position.y,
+                );
             }
-            "check_updates" => {
-                let settings = settings::get_settings(app);
-                if settings.update_checks_enabled {
-                    show_main_window(app);
-                    let _ = app.emit("check-for-updates", ());
-                }
-            }
-            "copy_last_transcript" => {
-                tray::copy_last_transcript(app);
-            }
-            "unload_model" => {
-                let transcription_manager = app.state::<Arc<TranscriptionManager>>();
-                if !transcription_manager.is_model_loaded() {
-                    log::warn!("No model is currently loaded.");
-                    return;
-                }
-                match transcription_manager.unload_model() {
-                    Ok(()) => log::info!("Model unloaded via tray."),
-                    Err(e) => log::error!("Failed to unload model via tray: {}", e),
-                }
-            }
-            "cancel" => {
-                use crate::utils::cancel_current_operation;
-
-                // Use centralized cancellation that handles all operations
-                cancel_current_operation(app);
-            }
-            "quit" => {
-                log::info!("Quit selected from tray — exiting.");
-                std::process::exit(0);
-            }
-            id if id.starts_with("model_select:") => {
-                let model_id = id.strip_prefix("model_select:").unwrap().to_string();
-                let current_model = settings::get_settings(app).selected_model;
-                if model_id == current_model {
-                    return;
-                }
-                let app_clone = app.clone();
-                std::thread::spawn(move || {
-                    match commands::models::switch_active_model(&app_clone, &model_id) {
-                        Ok(()) => {
-                            log::info!("Model switched to {} via tray.", model_id);
-                        }
-                        Err(e) => {
-                            log::error!("Failed to switch model via tray: {}", e);
-                        }
-                    }
-                    tray::update_tray_menu(&app_clone, &tray::TrayIconState::Idle, None);
-                });
-            }
-            _ => {}
         })
         .build(app_handle)
         .unwrap();

@@ -218,7 +218,12 @@ pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&
     };
 
     let tray = app.state::<TrayIcon>();
-    let _ = tray.set_menu(Some(menu));
+    // Do NOT attach the native menu: WinSTT shows its own transparent HTML tray menu
+    // (lib.rs `on_tray_icon_event` → toggle_tray_menu_at_physical). Attaching a native
+    // menu here would make Windows pop IT on right-click instead of our menu. We still
+    // build it above (cheap, infrequent) to keep the translation/label code in one place,
+    // but drop it unused. The icon/template/tooltip updates below still apply.
+    let _ = menu;
     let _ = tray.set_icon_as_template(true);
     let _ = tray.set_tooltip(Some(version_label));
 }
