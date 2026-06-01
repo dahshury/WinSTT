@@ -452,7 +452,13 @@ fn center_window(app: &AppHandle, window: &tauri::WebviewWindow, center_on_main:
                     .unwrap_or((420.0, 150.0));
                 let x = (mx + (mw - w) / 2.0).round();
                 let y = (my + (mh - h) / 2.0).round();
-                let _ = window.set_position(LogicalPosition::new(x, y));
+                // CLAMP into the monitor the pill is on. These windows are frameless
+                // (no titlebar to drag them back), so a window centered on a pill near a
+                // screen edge MUST NOT spill off-screen — clamp the top-left so the whole
+                // window stays inside the work area.
+                let work = work_area_for_point(app, (mx + mw / 2.0, my + mh / 2.0));
+                let (cx, cy) = clamp_into_work_area(x, y, w, h, work);
+                let _ = window.set_position(LogicalPosition::new(cx, cy));
                 return;
             }
         }
@@ -462,7 +468,18 @@ fn center_window(app: &AppHandle, window: &tauri::WebviewWindow, center_on_main:
     let (wx, wy, ww, wh) = work_area_for_point(app, (0.0, 0.0));
     let x = (wx + (ww - w) / 2.0).round();
     let y = (wy + (wh - h) / 2.0).round();
-    let _ = window.set_position(LogicalPosition::new(x, y));
+    let (cx, cy) = clamp_into_work_area(x, y, w, h, (wx, wy, ww, wh));
+    let _ = window.set_position(LogicalPosition::new(cx, cy));
+}
+
+/// Clamp a window's top-left so the ENTIRE window (w×h) stays inside the work area
+/// `(wx, wy, ww, wh)`. Prevents a frameless window from landing partly/fully
+/// off-screen where it can't be dragged back.
+fn clamp_into_work_area(x: f64, y: f64, w: f64, h: f64, work: (f64, f64, f64, f64)) -> (f64, f64) {
+    let (wx, wy, ww, wh) = work;
+    let max_x = (wx + ww - w).max(wx);
+    let max_y = (wy + wh - h).max(wy);
+    (x.clamp(wx, max_x), y.clamp(wy, max_y))
 }
 
 // ── Picker geometry (ported from the Electron pickers) ──────────────────────

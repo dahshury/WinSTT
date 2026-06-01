@@ -479,6 +479,13 @@ impl ShortcutAction for TranscribeAction {
             // winstt/commands/dictation.rs::SttEvents for the byte-identical shapes.
             crate::winstt::commands::dictation::SttEvents::recording_start(app);
             crate::winstt::commands::dictation::SttEvents::vad_start(app);
+            // Play the recording chime (Electron `playRecordingSound()` on hotkey-start).
+            // Nothing else emitted `sound:play`, so the renderer's useRecordingSound never
+            // fired → no chime. The renderer no-ops if the sound is disabled/unloaded
+            // (sound:get-data returned null), so emitting unconditionally is safe. Listen
+            // mode goes through loopback_manager (not this path), matching Electron's
+            // "suppressed in listen mode".
+            let _ = app.emit("sound:play", ());
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {

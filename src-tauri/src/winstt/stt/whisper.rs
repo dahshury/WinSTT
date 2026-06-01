@@ -737,7 +737,12 @@ fn execution_providers(providers: &[Accelerator]) -> Vec<ExecutionProviderDispat
 	for acc in providers {
 		match acc {
 			Accelerator::DirectMl => {
-				#[cfg(all(windows, feature = "directml"))]
+				// DirectML is compiled in on Windows via transcribe-rs's `ort-directml`
+				// feature (NOT a winstt crate feature). The old `feature = "directml"` gate
+				// referenced a winstt feature that doesn't exist → cfg ALWAYS false → DirectML
+				// was never registered → Whisper silently ran on CPU (~10s for a short clip).
+				// Gate on the OS only, mirroring families.rs.
+				#[cfg(windows)]
 				{
 					out.push(ort::ep::DirectML::default().build());
 				}
