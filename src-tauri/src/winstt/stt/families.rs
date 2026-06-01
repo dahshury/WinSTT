@@ -1486,7 +1486,7 @@ impl CohereEngine {
 			past_is_fp16,
 			eos_token_id,
 			max_decode_length: 1024,
-			mel_fb: frontend::build_mel_filterbank(),
+			mel_fb: frontend::build_nemo_mel_filterbank(128),
 			model_name: cfg.model_name.clone(),
 			providers: providers_to_strings(&cfg.providers),
 		})
@@ -1531,9 +1531,11 @@ impl CohereEngine {
 	/// Encode → owned `(T, 1024)` last_hidden_state (we keep it host-side as f32; the engine is
 	/// CPU-forced so device IoBinding is not required for correctness).
 	fn encode(&mut self, audio: &[f32]) -> SttResult<Array2<f32>> {
-		// SPIKE: replace with the 128-bin time-first Cohere mel. Placeholder: 80-mel kaldi fbank
-		// padded/passed as (1, T, feat). Mechanism is correct; numerics need the real mel.
-		let fbank = frontend::compute_fbank(audio, &self.mel_fb);
+		// Cohere (Conformer AED) uses the SAME 128-mel time-first featurizer as NeMo
+		// (Slaney 128-mel, preemphasis 0.97, n_fft=512/win=400/hop=160 Hann, per-feature
+		// norm over time) — faithful to onnx-asr's Cohere featurizer. The old 80-mel kaldi
+		// `compute_fbank` placeholder produced wrong numerics → garbled Cohere output.
+		let fbank = frontend::nemo_features(audio, &self.mel_fb);
 		let t = fbank.nrows();
 		let feat_dim = fbank.ncols();
 		let x = fbank
