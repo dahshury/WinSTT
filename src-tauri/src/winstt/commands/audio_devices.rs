@@ -57,8 +57,23 @@ const WINSTT_INPUT_CHANNELS: i32 = 1;
 fn map_input_devices() -> Vec<AudioDevicePayload> {
     let devices = match list_input_devices() {
         Ok(d) => d,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            log::warn!("[devices] list_input_devices failed: {e}");
+            return Vec::new();
+        }
     };
+    // DIAGNOSTIC: log every cpal INPUT device so we can see whether a hot-plugged mic (e.g.
+    // a Bluetooth headset) is enumerated. NB: a BT headset's mic exists as an input device
+    // ONLY in HFP/Hands-Free mode — in A2DP (music) mode Windows exposes NO mic input, so
+    // cpal (correctly) won't list it until it switches to HFP.
+    log::info!(
+        "[devices] cpal input devices: [{}]",
+        devices
+            .iter()
+            .map(|d| format!("{}:{}{}", d.index, d.name, if d.is_default { "*" } else { "" }))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     devices
         .into_iter()
         .filter_map(|d| {

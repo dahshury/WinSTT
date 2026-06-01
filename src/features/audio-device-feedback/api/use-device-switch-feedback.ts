@@ -71,10 +71,15 @@ export function useDeviceSwitchFeedback(): void {
 		if (devices.length === 0) {
 			return;
 		}
+		// `AudioDevice.index` is a NUMBER (i32 from the backend AudioDevicePayload) and
+		// `savedIndex` is a number too — compare via String() on BOTH so a number/string
+		// mismatch can't make this silently never match (the earlier `=== String(savedIndex)`
+		// bug compared number-vs-string → always false → the mic selection never reached the
+		// recorder).
 		const name =
 			savedIndex == null
 				? "default"
-				: devices.find((d) => d.index === String(savedIndex))?.name;
+				: devices.find((d) => String(d.index) === String(savedIndex))?.name;
 		if (!name || name === lastSyncedMicRef.current) {
 			return;
 		}
