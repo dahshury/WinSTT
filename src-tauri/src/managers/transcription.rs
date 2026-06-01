@@ -713,6 +713,27 @@ impl TranscriptionManager {
             return Ok(String::new());
         }
 
+        // ── SILENCE GATE (all engine paths: cloud / transcribe-rs / winstt-catalog) ──
+        // A recording can be NON-empty yet pure silence — e.g. a Bluetooth headset mic in
+        // A2DP mode, or a muted/wrong device — giving tens of thousands of ~0.0 samples.
+        // Fed to Whisper, silence makes the greedy decoder HALLUCINATE hundreds of garbage
+        // tokens until it exhausts max_length (the observed ">12s wall of garbled
+        // multilingual text"). Reject it here like the empty case: an empty result makes
+        // the caller emit `no_audio_detected` (actions.rs), so the user sees the honest
+        // "no audio detected" pill instead of garbage. Peak (not RMS) cleanly separates a
+        // dead 0.000 device from real speech (typically >0.05); 0.005 leaves headroom for
+        // quiet-but-real input. Audio here is RAW (pre-`peak_normalize`).
+        let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        const SILENCE_PEAK_THRESHOLD: f32 = 0.005;
+        if peak < SILENCE_PEAK_THRESHOLD {
+            debug!(
+                "Recording peak amplitude {:.6} below silence threshold {} — treating as no audio (skipping decode)",
+                peak, SILENCE_PEAK_THRESHOLD
+            );
+            self.maybe_unload_immediately("silent audio");
+            return Ok(String::new());
+        }
+
         // ── Cloud STT route ──────────────────────────────────────────────
         // When the selected model carries a cloud prefix (openai:/elevenlabs:), there is NO
         // local engine — ship the captured audio to the provider via CloudSttManager instead.

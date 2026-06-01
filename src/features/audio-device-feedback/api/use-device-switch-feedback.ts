@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
 import { useInputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
@@ -55,6 +56,33 @@ export function useDeviceSwitchFeedback(): void {
 	const savedIndex = useSettingsStore((s) => s.settings.audio?.inputDeviceIndex);
 	const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
 	const { devices, refresh } = useInputDevices();
+	const lastSyncedMicRef = useRef<string | null>(null);
+
+	// Bridge the renderer's `audio.inputDeviceIndex` selection to the BACKEND recorder's
+	// `selected_microphone`. These are SEPARATE settings stores: the device pickers write
+	// `inputDeviceIndex` (winstt-settings) but `get_effective_microphone_device` reads
+	// `selected_microphone` (the cpal device NAME, in the handy store). Without this bridge,
+	// picking a mic in the UI never reaches the recorder — the symptom that left a silent
+	// Bluetooth headset selected. The device list comes from `audioGetDevices()` (cpal), so
+	// `device.name` matches what the backend expects. `set_selected_microphone` also restarts
+	// the input stream, so guard on the RESOLVED name to avoid a restart on every device
+	// refresh. Also syncs on startup → the persisted selection takes effect immediately.
+	useEffect(() => {
+		if (devices.length === 0) {
+			return;
+		}
+		const name =
+			savedIndex == null
+				? "default"
+				: devices.find((d) => d.index === String(savedIndex))?.name;
+		if (!name || name === lastSyncedMicRef.current) {
+			return;
+		}
+		lastSyncedMicRef.current = name;
+		invoke("set_selected_microphone", { deviceName: name }).catch((e) =>
+			console.error("set_selected_microphone failed:", e)
+		);
+	}, [devices, savedIndex]);
 
 	useEffect(() => {
 		const unsub = onDeviceSwitchFailed(({ errorMessage, fallbackIndex }) => {
