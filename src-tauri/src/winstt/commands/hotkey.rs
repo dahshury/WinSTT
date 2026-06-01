@@ -262,6 +262,13 @@ fn handy_string_to_winstt_names(handy: &str) -> Vec<String> {
             "super" | "super_left" | "command" | "command_left" | "cmd" | "meta" | "win"
             | "lmeta" => mods.push((6, "LMeta".into())),
             "super_right" | "command_right" | "rmeta" => mods.push((7, "RMeta".into())),
+            // Mouse buttons: the hotkey recorder is KEYBOARD-ONLY (a dictation hotkey can't
+            // be a mouse click). handy-keys can surface MouseLeft/Right/Middle/X1/X2 (its
+            // global hook sees the mouse too), so DROP them — otherwise a stray left-click
+            // during capture gets recorded as the combo (user-reported "captured mouse left").
+            "mouseleft" | "leftclick" | "lmb" | "mouse1" | "mouseright" | "rightclick" | "rmb"
+            | "mouse2" | "mousemiddle" | "middleclick" | "mmb" | "mouse3" | "mousex1" | "mouse4"
+            | "xbutton1" | "back" | "mousex2" | "mouse5" | "xbutton2" | "forward" => {}
             // Otherwise it's the main key — translate to its WinSTT display name.
             other => key = Some(handy_key_to_winstt_name(other)),
         }
