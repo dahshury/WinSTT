@@ -1,7 +1,12 @@
 import {
+	Clock01Icon,
+	ComputerIcon,
 	DashboardCircleIcon,
+	FlashIcon,
+	InfinityIcon,
 	KeyboardIcon,
 	Mic01Icon,
+	MicOff01Icon,
 	VolumeHighIcon,
 } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
@@ -56,9 +61,9 @@ export function AudioSettingsPanel() {
 		const defaultLabel = defaultDevice
 			? `${t("systemDefault")} (${defaultDevice.name})`
 			: t("systemDefault");
-		const opts: SelectOption[] = [{ id: "default", label: defaultLabel }];
+		const opts: SelectOption[] = [{ id: "default", label: defaultLabel, icon: ComputerIcon }];
 		for (const d of devices) {
-			opts.push({ id: String(d.index), label: d.name });
+			opts.push({ id: String(d.index), label: d.name, icon: Mic01Icon });
 		}
 		return opts;
 	})();
@@ -67,9 +72,11 @@ export function AudioSettingsPanel() {
 	// instead of "default" — null = feature off (don't poll), whereas a
 	// configured index = mic to swap to when the lid closes.
 	const clamshellOptions: SelectOption[] = (() => {
-		const opts: SelectOption[] = [{ id: "disabled", label: t("clamshellDisabled") }];
+		const opts: SelectOption[] = [
+			{ id: "disabled", label: t("clamshellDisabled"), icon: MicOff01Icon },
+		];
 		for (const d of devices) {
-			opts.push({ id: String(d.index), label: d.name });
+			opts.push({ id: String(d.index), label: d.name, icon: Mic01Icon });
 		}
 		return opts;
 	})();
@@ -80,11 +87,11 @@ export function AudioSettingsPanel() {
 		audio?.clamshellMicrophone == null ? "disabled" : String(audio.clamshellMicrophone);
 	const microphoneRelease = audio?.microphoneRelease ?? DEFAULT_SETTINGS.audio.microphoneRelease;
 	const microphoneReleaseOptions: SelectOption[] = [
-		{ id: "always", label: t("microphoneReleaseAlways") },
-		{ id: "immediate", label: t("microphoneReleaseImmediate") },
-		{ id: "sec30", label: t("microphoneReleaseSec30") },
-		{ id: "min1", label: t("microphoneReleaseMin1") },
-		{ id: "min5", label: t("microphoneReleaseMin5") },
+		{ id: "always", label: t("microphoneReleaseAlways"), icon: InfinityIcon },
+		{ id: "immediate", label: t("microphoneReleaseImmediate"), icon: FlashIcon },
+		{ id: "sec30", label: t("microphoneReleaseSec30"), icon: Clock01Icon },
+		{ id: "min1", label: t("microphoneReleaseMin1"), icon: Clock01Icon },
+		{ id: "min5", label: t("microphoneReleaseMin5"), icon: Clock01Icon },
 	];
 
 	// Renderer-side audio-output picker. Visible only when either the
@@ -102,7 +109,7 @@ export function AudioSettingsPanel() {
 		const defaultLabel = defaultOutputDevice
 			? `${t("systemDefault")} (${defaultOutputDevice.label})`
 			: t("systemDefault");
-		const opts: SelectOption[] = [{ id: "", label: defaultLabel }];
+		const opts: SelectOption[] = [{ id: "", label: defaultLabel, icon: ComputerIcon }];
 		for (const d of outputDevices) {
 			// Skip the "default" sentinel — Chromium emits a dedicated row
 			// for it before the real default device. The empty string above
@@ -110,7 +117,7 @@ export function AudioSettingsPanel() {
 			if (d.deviceId === "default" || d.deviceId === "") {
 				continue;
 			}
-			opts.push({ id: d.deviceId, label: d.label });
+			opts.push({ id: d.deviceId, label: d.label, icon: VolumeHighIcon });
 		}
 		return opts;
 	})();

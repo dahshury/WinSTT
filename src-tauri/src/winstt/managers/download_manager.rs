@@ -26,10 +26,11 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Semaphore;
 
 use crate::winstt::catalog;
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
@@ -53,12 +54,31 @@ fn key(model: &str, quant: &str) -> String {
     format!("{model}@{quant}")
 }
 
+/// How long a cached HF-scan result stays fresh before the next `cache_snapshot_async` re-scans.
+/// Short enough that a download landing outside our own broadcast (e.g. a manual cache edit) still
+/// surfaces within a couple seconds; long enough that the picker's rapid back-to-back
+/// `list_models_with_state` calls (mount + focus + every keystroke filter) reuse one fs scan.
+const CACHE_SCAN_TTL: Duration = Duration::from_millis(2000);
+
+/// Max concurrent per-quant download workers (audit #17). "Download all" / rapid quant toggling
+/// would otherwise fan out one OS thread per quant, each holding a blocking HF client + a nested
+/// `block_on`. Two permits keep two transfers saturating the link without unbounded thread/socket
+/// pressure; the rest queue on the semaphore.
+const MAX_CONCURRENT_DOWNLOADS: usize = 2;
+
 pub struct DownloadManager {
     app: AppHandle,
     /// In-flight downloads keyed by `model@quant`.
     inflight: Mutex<BTreeMap<String, Arc<DownloadHandle>>>,
     /// Legacy single-slot whole-model download cancel flag (the no-quantization path).
     legacy_cancel: AtomicBool,
+    /// Short-TTL memo of the raw HF cache scan (audit #7): the picker fires `list_models_with_state`
+    /// repeatedly, and each call otherwise re-walks the whole HF cache. Holds the catalog-wide probe
+    /// result + when it was taken; invalidated by `emit_cache_changed` (a download landed) so a fresh
+    /// badge is never stale past a real cache mutation.
+    scan_memo: Mutex<Option<(Instant, BTreeMap<String, cache_probe::ModelQuantCache>)>>,
+    /// Bounds concurrent download workers so "download all" can't spawn unbounded blocking threads.
+    download_slots: Arc<Semaphore>,
 }
 
 impl DownloadManager {
@@ -67,6 +87,8 @@ impl DownloadManager {
             app: app.clone(),
             inflight: Mutex::new(BTreeMap::new()),
             legacy_cancel: AtomicBool::new(false),
+            scan_memo: Mutex::new(None),
+            download_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS)),
         }
     }
 
@@ -123,9 +145,19 @@ impl DownloadManager {
         self.emit_cache_changed(model);
     }
 
-    /// `stt:model-cache-changed` — drives `onModelCacheChanged` → model-state refetch.
+    /// `stt:model-cache-changed` — drives `onModelCacheChanged` → model-state refetch. Also drops
+    /// the cached scan memo (audit #7) so the very next `list_models_with_state` re-walks the cache
+    /// and reflects the just-changed on-disk state instead of a stale snapshot.
     pub fn emit_cache_changed(&self, model: &str) {
+        self.invalidate_scan_memo();
         let _ = self.app.emit("stt:model-cache-changed", json!({ "modelId": model }));
+    }
+
+    /// Drop the memoized HF cache scan so the next probe re-walks the cache.
+    pub fn invalidate_scan_memo(&self) {
+        if let Ok(mut memo) = self.scan_memo.lock() {
+            *memo = None;
+        }
     }
 
     // ── Per-quant download control (predownload / pause / resume / cancel) ──
@@ -225,15 +257,52 @@ impl DownloadManager {
 
     // ── Cache probe (overlay for list_models_with_state) ──
 
-    /// Probe the HF cache for `models` (catalog `(id, family, onnx_name, quantizations)`), returning
-    /// `model_id → quant → ModelCacheInfo-shaped triple`. Blocking shim over the async probe (the
-    /// runtime command runs off the async pump). In-flight downloads are reflected by overlaying the
-    /// keyed registry on top (a downloading quant that isn't fully cached yet reads `partial`).
+    /// Async cache probe (audit #7: the picker-open hot path). `await`s the HF cache scan directly
+    /// instead of blocking the command thread, memoizes the raw catalog-wide probe for a short TTL
+    /// (so the picker's repeated `list_models_with_state` calls reuse one fs walk), then overlays the
+    /// in-flight registry. The TTL memo is dropped by `emit_cache_changed` whenever a download lands.
+    pub async fn cache_snapshot_async(
+        &self,
+        models: &[ProbeModel],
+    ) -> BTreeMap<String, BTreeMap<String, (CacheState, u64, u64)>> {
+        // Fast path: a fresh memo within the TTL → skip the fs scan entirely.
+        if let Some(probed) = self.fresh_scan_memo() {
+            return self.overlay_inflight(models, &probed);
+        }
+        // Miss / stale → one real scan, then memoize.
+        let probed = cache_probe::probe_cache(models).await;
+        if let Ok(mut memo) = self.scan_memo.lock() {
+            *memo = Some((Instant::now(), probed.clone()));
+        }
+        self.overlay_inflight(models, &probed)
+    }
+
+    /// Blocking shim retained for any non-async caller (signature-stable). Prefer
+    /// `cache_snapshot_async` — this one blocks the calling thread on the probe.
     pub fn cache_snapshot(
         &self,
         models: &[ProbeModel],
     ) -> BTreeMap<String, BTreeMap<String, (CacheState, u64, u64)>> {
         let probed = tauri::async_runtime::block_on(cache_probe::probe_cache(models));
+        self.overlay_inflight(models, &probed)
+    }
+
+    /// Return the memoized probe if it's still within the TTL, else `None`.
+    fn fresh_scan_memo(&self) -> Option<BTreeMap<String, cache_probe::ModelQuantCache>> {
+        let memo = self.scan_memo.lock().ok()?;
+        match memo.as_ref() {
+            Some((taken, probed)) if taken.elapsed() < CACHE_SCAN_TTL => Some(probed.clone()),
+            _ => None,
+        }
+    }
+
+    /// Overlay the in-flight download registry on a raw probe: a downloading quant that isn't already
+    /// fully cached reads `partial` so the badge shows "downloading" rather than a stale `not_cached`.
+    fn overlay_inflight(
+        &self,
+        models: &[ProbeModel],
+        probed: &BTreeMap<String, cache_probe::ModelQuantCache>,
+    ) -> BTreeMap<String, BTreeMap<String, (CacheState, u64, u64)>> {
         let mut out: BTreeMap<String, BTreeMap<String, (CacheState, u64, u64)>> = BTreeMap::new();
         let inflight = self.inflight.lock().expect("download registry poisoned");
         for m in models {
@@ -245,9 +314,6 @@ impl DownloadManager {
                     .get(q)
                     .copied()
                     .unwrap_or((CacheState::NotCached, 0, 0));
-                // If a download is in-flight for this (model, quant) and it isn't already fully
-                // cached, surface `partial` so the badge shows "downloading" rather than the stale
-                // not_cached (the live progress events carry the real fraction).
                 if entry.0 != CacheState::Cached && inflight.contains_key(&key(&m.id, q)) {
                     entry.0 = CacheState::Partial;
                 }
@@ -265,6 +331,25 @@ impl DownloadManager {
     /// honoring `paused`/`cancelled` at file boundaries. On cancel the in-flight `.incomplete`
     /// markers are left for hf-hub to resume from; on success the badge flips to "Downloaded".
     fn run_quant_download(&self, model: String, quantization: String, handle: Arc<DownloadHandle>) {
+        if handle.cancelled.load(Ordering::Acquire) {
+            self.finish_quant(&model, &quantization, true);
+            return;
+        }
+
+        // Bound concurrency (audit #17): acquire one of the shared download permits before doing any
+        // network I/O (plan + stream). "Download all" / rapid quant toggling queues here instead of
+        // fanning out one blocking HF client per quant. The permit (`_slot`) is held for the whole
+        // worker and released when this fn returns (on every path: success, cancel, error). We block
+        // on the acquire from this dedicated worker thread (never a runtime worker), so it's valid;
+        // `acquire_owned` only fails if the semaphore is closed, which we never do.
+        let _slot = match tauri::async_runtime::block_on(self.download_slots.clone().acquire_owned()) {
+            Ok(permit) => permit,
+            Err(_) => {
+                self.finish_quant(&model, &quantization, true);
+                return;
+            }
+        };
+        // A cancel may have arrived while queued for a permit — re-check before spending the slot.
         if handle.cancelled.load(Ordering::Acquire) {
             self.finish_quant(&model, &quantization, true);
             return;

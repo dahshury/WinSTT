@@ -148,7 +148,22 @@ fn derive_block(key: &[u8; 32], counter: u64) -> [u8; 32] {
 ///   * `USER` / `HOSTNAME` (POSIX fallback for dev on non-Windows).
 /// A fixed domain-separation salt prevents the key from colliding with any other
 /// SHA-256 use of the same identity strings.
+///
+/// MEMOIZED (audit #17): the key is process-stable (proven by
+/// `machine_key_is_stable_within_process`), and deriving it spawns `reg.exe` on
+/// Windows to read the `MachineGuid`. Without the cache that subprocess ran up to
+/// 3× per settings read (once per sealed secret). A `OnceLock` computes it exactly
+/// once per process; every later read is a cheap copy.
 fn machine_key() -> [u8; 32] {
+    use std::sync::OnceLock;
+    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+    *KEY.get_or_init(derive_machine_key)
+}
+
+/// Compute the per-machine+user key from OS identity. Separated from `machine_key`
+/// so the `OnceLock` memoizes the (subprocess-spawning) derivation while the public
+/// `machine_key` stays a pure cheap accessor.
+fn derive_machine_key() -> [u8; 32] {
     const SALT: &str = "winstt::secret-storage::v1";
     let mut h = Sha256::new();
     h.update(SALT.as_bytes());

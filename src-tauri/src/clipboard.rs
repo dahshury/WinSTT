@@ -6,7 +6,7 @@ use enigo::{Direction, Enigo, Key, Keyboard};
 use log::info;
 use std::process::Command;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "linux")]
@@ -588,13 +588,52 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+/// Dictation paste: append the trailing space (if enabled) and honor the auto-submit Enter.
+/// This is the normal "insert at caret" path. Runs on the calling thread — callers off the
+/// main thread MUST schedule it via [`paste_on_main_thread`] (input synthesis is a main-thread
+/// concern, the discipline `actions.rs` keeps).
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
+    paste_inner(text, app_handle, false)
+}
+
+/// In-place REPLACE paste (the Transforms pipeline): paste over the still-highlighted selection
+/// WITHOUT the dictation niceties — NO trailing space and NO auto-submit Enter, which would
+/// corrupt a rewrite-in-place (the user didn't dictate a new line, they rewrote existing text).
+/// Otherwise identical to [`paste`] (clipboard sandwich + configured paste method).
+pub fn paste_replace(text: String, app_handle: AppHandle) -> Result<(), String> {
+    paste_inner(text, app_handle, true)
+}
+
+/// Schedule a paste on the MAIN thread (input synthesis must not run on an async-runtime worker —
+/// the discipline `actions.rs` keeps but `transforms.rs` previously broke by pasting straight off
+/// `spawn`/`spawn_blocking`). `replace` picks the replace-mode variant (no trailing space / no
+/// auto-submit). Returns `Err` only if the closure couldn't be scheduled; the paste's own result
+/// is logged inside the closure (the caller is off-thread and can't await it).
+pub fn paste_on_main_thread(app_handle: &AppHandle, text: String, replace: bool) -> Result<(), String> {
+    let app_for_paste = app_handle.clone();
+    app_handle
+        .run_on_main_thread(move || {
+            let result = if replace {
+                paste_replace(text, app_for_paste.clone())
+            } else {
+                paste(text, app_for_paste.clone())
+            };
+            if let Err(e) = result {
+                log::error!("paste on main thread failed: {e}");
+                let _ = app_for_paste.emit("paste-error", ());
+            }
+        })
+        .map_err(|e| format!("failed to schedule paste on main thread: {e}"))
+}
+
+fn paste_inner(text: String, app_handle: AppHandle, replace_mode: bool) -> Result<(), String> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
 
-    // Append trailing space if setting is enabled
-    let text = if settings.append_trailing_space {
+    // Append trailing space if enabled — SKIPPED in replace mode (an in-place rewrite must not
+    // gain a stray trailing space the original selection didn't have).
+    let text = if settings.append_trailing_space && !replace_mode {
         format!("{} ", text)
     } else {
         text
@@ -646,7 +685,10 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         }
     }
 
-    if should_send_auto_submit(settings.auto_submit, paste_method) {
+    // Auto-submit (Enter) is a DICTATION affordance — SKIPPED in replace mode so a Transforms
+    // rewrite-in-place doesn't fire a spurious Enter (submitting the form / inserting a newline
+    // the user never asked for).
+    if !replace_mode && should_send_auto_submit(settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
         send_return_key(&mut enigo, settings.auto_submit_key)?;
     }

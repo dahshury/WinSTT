@@ -594,7 +594,6 @@ fn strip_markdown_fences(content: &str) -> String {
 /// Extract `final` channel text from an OpenAI-harmony stream that leaked
 /// into content. Mirrors extractHarmonyAnswer + collectHarmonyAnalysisChunks.
 pub fn extract_harmony_answer(content: &str) -> Option<Leakage> {
-    let final_marker = "<|channel|>";
     // Find a `final` channel message segment.
     let lower = content;
     let final_text = harmony_segment(lower, "final")?;

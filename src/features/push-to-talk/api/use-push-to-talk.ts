@@ -7,7 +7,6 @@ import {
 	onHotkeyReleased,
 	onRecordingStop,
 	onSttSessionAborted,
-	sttCallMethod,
 	sttSetParameter,
 } from "@/shared/api/ipc-client";
 import { useHotkeyStore } from "../model/hotkey-store";
@@ -89,6 +88,13 @@ export function usePushToTalk(): void {
 	}, [recordingMode, manualToggleStop]);
 
 	// Press handler — refs let us avoid re-subscribing when mode changes.
+	//
+	// SINGLE AUTHORITY: the BACKEND (shortcut/handler.rs) now dispatches the recorder for
+	// ptt/toggle directly on the hotkey thread — the renderer does NOT call
+	// `set_microphone` for ptt/toggle anymore (that was the double-dispatch the Stage
+	// machine had to dedupe). This handler updates UI state ONLY (pressed/active pill) and
+	// still pushes the recorder-CONFIG knobs (silence-endpoint disables for PTT). listen &
+	// wakeword stay server-driven (decidePressAction returns null for them).
 	useEffect(
 		() =>
 			onHotkeyPressed(() => {
@@ -103,26 +109,24 @@ export function usePushToTalk(): void {
 					setActive(decision.micOn);
 				}
 				// PTT hard invariant: the key release is the ONLY thing that ends
-				// a PTT recording. Re-assert the server's auto-stop disables at the
+				// a PTT recording. Re-assert the recorder's auto-stop disables at the
 				// exact instant the recording starts so NEITHER the VAD silence
 				// endpoint NOR the smart-endpoint pause tuning can fire mid-hold —
-				// the "pastes before I lift my finger" bug. This is race-free where
-				// the mount/connect sync is not: at press time the mode is stably
-				// "ptt" and the server is connected+ready (you can't be recording
-				// otherwise), so the push can't be dropped by the cold-boot
-				// not-ready/not-connected gates that silently swallowed the mount
-				// effect. Deduped downstream (electron-main) → one push per session,
-				// not per-press. See memory/project_ptt_silence_endpoint_sync_race.md.
+				// the "pastes before I lift my finger" bug. This is a recorder-CONFIG
+				// knob (sttSetParameter), NOT a mic dispatch — the backend owns the
+				// actual start/stop now. See memory/project_ptt_silence_endpoint_sync_race.md.
 				if (mode === "ptt" && decision.micOn) {
 					sttSetParameter("silence_endpoint_enabled", false);
 					sttSetParameter("silence_timing", false);
 				}
-				sttCallMethod("set_microphone", [decision.micOn]);
+				// NOTE: no `sttCallMethod("set_microphone", …)` here — the backend's
+				// handler.rs already routed this press into the coordinator.
 			}),
 		[setPressed, setActive]
 	);
 
-	// Release handler.
+	// Release handler — UI state ONLY. The backend handler.rs stops the recorder on the PTT
+	// key release; the renderer no longer issues `set_microphone(false)`.
 	useEffect(
 		() =>
 			onHotkeyReleased(() => {
@@ -131,9 +135,8 @@ export function usePushToTalk(): void {
 					return;
 				}
 				setPressed(false);
-				if (shouldReleaseMicOnUp(mode)) {
-					sttCallMethod("set_microphone", [false]);
-				}
+				// NOTE: no `set_microphone(false)` here — see press handler. The PTT-release
+				// decision (`shouldReleaseMicOnUp`) is now enforced backend-side in handler.rs.
 			}),
 		[setPressed]
 	);

@@ -264,14 +264,6 @@ fn strip_tags(s: &str) -> String {
     decode_entities(&TAG_STRIP_RE.replace_all(s, "")).trim().to_string()
 }
 
-fn non_empty(s: String) -> Option<String> {
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
-}
-
 // ── Search-page parser ──────────────────────────────────────────────────────────
 
 // ollama.com appends utility classes after `group w-full` (e.g. `space-y-5`), so

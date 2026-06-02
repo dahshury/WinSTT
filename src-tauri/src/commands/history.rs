@@ -101,6 +101,7 @@ pub async fn retry_history_entry_transcription(
             transcription,
             processed.post_processed_text,
             processed.post_process_prompt,
+            processed.llm_meta,
         )
         .map(|_| ())
         .map_err(|e| e.to_string())

@@ -61,6 +61,14 @@ pub struct TranscriptionHistoryEntry {
     pub original_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_model: Option<String>,
+    /// LLM post-processing wall-time in ms (the footer's "processing time"),
+    /// when an LLM ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_processing_ms: Option<i64>,
+    /// LLM generation speed (output tokens / processing second), when the
+    /// provider reported token usage and the pass took a measurable duration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_tokens_per_second: Option<f64>,
 }
 
 /// Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
@@ -145,6 +153,15 @@ fn to_transcription_entry(mgr: &HistoryManager, entry: &DbHistoryEntry) -> Trans
             None
         }
     };
+    // Reshape the stored LLM telemetry JSON (`{model, processingMs, tokens}`)
+    // into the footer's model / processing-time / speed chips. tokens/s is
+    // computed here so the renderer only formats; it's omitted when the
+    // provider reported no tokens or the pass was sub-millisecond.
+    let meta = entry.llm_meta.as_deref().map(parse_llm_meta).unwrap_or_default();
+    let llm_tokens_per_second = match (meta.tokens, meta.processing_ms) {
+        (Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => Some(tokens as f64 / (ms as f64 / 1000.0)),
+        _ => None,
+    };
     TranscriptionHistoryEntry {
         id: entry.id.to_string(),
         word_count: count_words(&text),
@@ -155,9 +172,33 @@ fn to_transcription_entry(mgr: &HistoryManager, entry: &DbHistoryEntry) -> Trans
         duration_ms: 0,
         audio_file_path,
         original_text,
-        // The DB has no LLM-model column; `post_process_prompt` is the closest
-        // signal but isn't the model id, so omit (renderer hides the chip).
-        llm_model: None,
+        llm_model: meta.model,
+        llm_processing_ms: meta.processing_ms,
+        llm_tokens_per_second,
+    }
+}
+
+/// Parsed `llm_meta` telemetry. All fields optional so a malformed / partial
+/// blob degrades to "no chips" rather than failing the whole list.
+#[derive(Default)]
+struct LlmMeta {
+    model: Option<String>,
+    processing_ms: Option<i64>,
+    tokens: Option<i64>,
+}
+
+fn parse_llm_meta(raw: &str) -> LlmMeta {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return LlmMeta::default();
+    };
+    LlmMeta {
+        model: value
+            .get("model")
+            .and_then(|m| m.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty()),
+        processing_ms: value.get("processingMs").and_then(|m| m.as_i64()),
+        tokens: value.get("tokens").and_then(|t| t.as_i64()),
     }
 }
 
@@ -242,6 +283,7 @@ fn map_db_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbHistoryEntry> {
         post_processed_text: row.get("post_processed_text")?,
         post_process_prompt: row.get("post_process_prompt")?,
         post_process_requested: row.get("post_process_requested")?,
+        llm_meta: row.get("llm_meta")?,
     })
 }
 
@@ -263,7 +305,7 @@ pub async fn history_list(
     let mut stmt = conn
         .prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
-             post_processed_text, post_process_prompt, post_process_requested \
+             post_processed_text, post_process_prompt, post_process_requested, llm_meta \
              FROM transcription_history ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )
         .map_err(|e| e.to_string())?;
@@ -291,7 +333,7 @@ pub async fn history_recent(app: AppHandle, value: Option<i64>) -> Result<Vec<Hi
     let mut stmt = conn
         .prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
-             post_processed_text, post_process_prompt, post_process_requested \
+             post_processed_text, post_process_prompt, post_process_requested, llm_meta \
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -395,6 +437,8 @@ pub async fn history_add(
             post_process_requested.unwrap_or(false),
             post_processed_text,
             post_process_prompt,
+            // Manual renderer-driven add — no LLM telemetry to attach.
+            None,
         )
         .map_err(|e| e.to_string())?;
     Ok(Some(to_history_row(&entry)))
@@ -415,7 +459,7 @@ pub async fn history_get_all(
     let mut stmt = conn
         .prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
-             post_processed_text, post_process_prompt, post_process_requested \
+             post_processed_text, post_process_prompt, post_process_requested, llm_meta \
              FROM transcription_history ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;

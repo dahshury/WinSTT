@@ -11,6 +11,13 @@
 //
 // HARD RULE: new files only. The orchestrator adds `pub mod managers;` to
 // `winstt/mod.rs` and the `.manage(...)` / `collect_commands!` wiring to lib.rs.
+//
+// DUAL-MANAGER BOUNDARY: `winstt/managers/` = WinSTT feature subsystems (cloud STT,
+// TTS, diarization, wakeword, LLM, realtime, context, file-transcribe, downloads);
+// `crate::managers/` = the inherited Handy pipeline core (audio, model, transcription,
+// history). The dependency edge is one-way — these feature managers reuse the core
+// (e.g. `loopback_manager` drives `crate::managers::transcription::TranscriptionManager`),
+// never the reverse.
 
 pub mod llm_manager;
 pub mod cloud_stt_manager;
@@ -25,6 +32,10 @@ pub mod file_transcribe_manager;
 /// Per-quant streaming download manager (predownload/pause/resume/cancel/delete +
 /// the stt:model-download-* / stt:model-cache-changed broadcasts).
 pub mod download_manager;
+// ── slice: realtime streaming transcription (live-preview worker) ──
+/// Daemon worker that decodes a growing window of the in-flight recording for the live
+/// preview, driving the RealtimeAccumulator (committed-watermark + RealtimeSTT stabilizer).
+pub mod realtime_manager;
 
 pub use cloud_stt_manager::CloudSttManager;
 pub use context_manager::ContextManager;
@@ -33,6 +44,7 @@ pub use download_manager::DownloadManager;
 pub use file_transcribe_manager::FileTranscribeManager;
 pub use llm_manager::LlmManager;
 pub use loopback_manager::LoopbackManager;
+pub use realtime_manager::RealtimeManager;
 pub use tts_manager::TtsManager;
 pub use wakeword_manager::WakeWordManager;
 pub use word_aligner::WordAligner;

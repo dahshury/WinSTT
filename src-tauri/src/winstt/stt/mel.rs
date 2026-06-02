@@ -28,6 +28,10 @@
 #![allow(dead_code)]
 
 use std::f32::consts::PI;
+use std::sync::Arc;
+
+use rustfft::num_complex::Complex;
+use rustfft::{Fft, FftPlanner};
 
 /// Whisper fixed-window / STFT constants (identical to onnx-asr + openai-whisper).
 pub const SAMPLE_RATE: usize = 16_000;
@@ -55,6 +59,13 @@ pub struct MelExtractor {
 	fbanks: Vec<f32>,
 	/// Periodic Hann window of length WIN_LENGTH (`hann(WIN_LENGTH+1)[:-1]`).
 	window: [f32; WIN_LENGTH],
+	/// Reusable forward-FFT plan (size N_FFT) for the per-frame power spectrum. Replaces the
+	/// previous naive O(n_fft·n_freqs) DFT, which DOMINATED decode time: 3000 frames × 200 bins
+	/// × 400 samples of `cos`+`sin` per utterance (~240M transcendental calls). The Whisper window
+	/// is ALWAYS 3000 frames, so even a 2 s sentence paid the full fixed cost — the reason short
+	/// dictations weren't instant and realtime ticks never finished. rustfft is exact to the DFT
+	/// within f32 precision, so the mel features (and transcript) are unchanged.
+	fft: Arc<dyn Fft<f32>>,
 }
 
 impl MelExtractor {
@@ -76,7 +87,8 @@ impl MelExtractor {
 		for (n, w) in window.iter_mut().enumerate() {
 			*w = 0.5 * (1.0 - (2.0 * PI * n as f32 / WIN_LENGTH as f32).cos());
 		}
-		Self { n_mels, fbanks: fb, window }
+		let fft = FftPlanner::<f32>::new().plan_fft_forward(N_FFT);
+		Self { n_mels, fbanks: fb, window, fft }
 	}
 
 	/// Compute log-mel features for one mono 16 kHz utterance.
@@ -104,34 +116,30 @@ impl MelExtractor {
 
 		let n_mels = self.n_mels;
 		let mut features = vec![0.0f32; n_mels * N_FRAMES];
-		// Per-frame windowed real input scratch (imaginary part is always 0 for real PCM).
-		let mut frame_re = vec![0.0f32; N_FFT];
+		// Per-frame complex FFT buffer (re = windowed sample, im = 0 for real PCM) + reusable
+		// scratch — the forward FFT plan (self.fft) replaces the old naive per-bin DFT.
+		let mut buffer = vec![Complex::<f32>::new(0.0, 0.0); N_FFT];
+		let mut scratch = vec![Complex::<f32>::new(0.0, 0.0); self.fft.get_inplace_scratch_len()];
 		// log10 mel, time-major (t, mel); transposed to (mel, t) at the end.
 		let mut log_mel = vec![0.0f32; n_mels * N_FRAMES];
 		let mut global_max = f32::NEG_INFINITY;
 
 		for t in 0..N_FRAMES {
 			let start = t * HOP_LENGTH;
-			// Windowed frame. WIN_LENGTH == N_FFT (400 == 400) so there is no symmetric
-			// window pad — the whole frame is windowed directly.
+			// Windowed frame into the complex buffer. WIN_LENGTH == N_FFT (400 == 400) so there is
+			// no symmetric window pad — the whole frame is windowed directly.
 			for i in 0..N_FFT {
 				let s = padded.get(start + i).copied().unwrap_or(0.0);
-				frame_re[i] = s * self.window[i];
+				buffer[i] = Complex::new(s * self.window[i], 0.0);
 			}
-			// Naive real-input DFT magnitude² for the first N_FREQS bins (drops Nyquist,
-			// matching rfft[:, :-1]). N_FFT = 400 is small; dependency-free and the same
-			// cost class as numpy.fft.rfft here. (A radix FFT is a later optimization.)
+			// Real-input FFT → |X[k]|² for the first N_FREQS bins (drops Nyquist, matching
+			// rfft[:, :-1]). Numerically identical to the previous naive DFT within f32 precision,
+			// but O(n_fft·log n_fft) and free of the per-sample cos/sin that dominated decode time.
+			self.fft.process_with_scratch(&mut buffer, &mut scratch);
 			let mut power = [0.0f32; N_FREQS];
 			for (f, p) in power.iter_mut().enumerate() {
-				let mut re = 0.0f32;
-				let mut im = 0.0f32;
-				let ang_step = -2.0 * PI * f as f32 / N_FFT as f32;
-				for (n, &x) in frame_re.iter().enumerate() {
-					let ang = ang_step * n as f32;
-					re += x * ang.cos();
-					im += x * ang.sin();
-				}
-				*p = re * re + im * im;
+				let c = buffer[f];
+				*p = c.re * c.re + c.im * c.im;
 			}
 			// Mel projection: spectrum (N_FREQS) · fbanks (N_FREQS, n_mels) → (n_mels).
 			for m in 0..n_mels {

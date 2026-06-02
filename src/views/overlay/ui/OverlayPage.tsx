@@ -849,12 +849,18 @@ function FloatingBottomPill({
 }: FloatingPillProps) {
 	const { isSpeaking, isThinking, showBubble, stickyShow } = flags;
 	return (
-		// Floating-bottom keeps `domAnimation` (no layout animations). The
-		// text bubble carries a `layout` prop for historical reasons; under
-		// `domMax` it would activate framer's layout-tween system and the
-		// bubble's per-line growth would suddenly animate every keystroke —
-		// the "weird expansion" we don't want. `domAnimation` ignores
-		// `layout`, restoring the pre-DynamicIsland floating-pill behavior.
+		// Floating-bottom must NOT layout-animate the bubble — so the bubble
+		// carries no `layout` prop. The earlier code relied on this
+		// `domAnimation` wrapper to neutralize a `layout` prop, but that is
+		// false here: motion's feature registry is GLOBAL (LazyMotion's
+		// `features` merge into one shared definitions object via
+		// `loadFeatures`; the context only carries `renderer`/`strict`). The
+		// always-mounted `TtsIslandLayer` loads `domMax` (= domAnimation +
+		// drag + layout), so the layout-projection feature is active app-wide
+		// regardless of this wrapper. With `layout` on the bubble, Framer
+		// FLIP-scales the box as text wraps to a new line — the scaleY tween
+		// visibly STRETCHES the text inside (the bug). Letting the box grow by
+		// natural reflow keeps the text crisp, matching the Electron pill.
 		<LazyMotion features={domAnimation} strict>
 			<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
 				{/* `relative` wrapper anchors the absolute-positioned X cancel
@@ -863,9 +869,9 @@ function FloatingBottomPill({
 				    transparent margin to the right of the pill. */}
 				<div className="relative flex flex-col items-center gap-1">
 					{/* TEXT BUBBLE — appears with first transcribed word or
-					    when LLM is thinking. `layout` smooths the height
-					    growth as new lines wrap via Framer's FLIP, so the
-					    1→N line transition no longer pops. */}
+					    when LLM is thinking. Grows by natural reflow as lines
+					    wrap; deliberately NO `layout` prop (see the note above
+					    — FLIP would scaleY-stretch the text inside the box). */}
 					<AnimatePresence>
 						{showBubble && (
 							<m.div
@@ -874,7 +880,6 @@ function FloatingBottomPill({
 								exit="exit"
 								initial="initial"
 								key="text-bubble"
-								layout
 								variants={bubbleVariants}
 							>
 								{/* Brand-accent hairline — single Docker-blue
@@ -1064,18 +1069,20 @@ export function OverlayPage() {
 	const text = realtime.trim() || ephemeral?.text || "";
 	const hasText = text.length > 0;
 	const showText = showLiveTranscription && hasText;
-	// Pill mount is gated strictly on transcribed text (or LLM thinking).
-	// VAD pre-mount was removed so the pill lands on the same paint as the
-	// first word — `hasText` (the raw text presence) is used instead of
-	// `showText` so that users who've hidden in-pill transcription still
-	// get the visualizer the moment the model emits its first token.
+	// The visualizer chip is the recording "instrument": it must appear the
+	// MOMENT recording starts and animate from the mic level — exactly like
+	// Handy's RecordingOverlay (bars render purely on state==='recording',
+	// fed by mic-level, never on transcribed text), and like our own
+	// dynamic-island mode (which already mounts on `isRecordingActive`).
+	// Gating on `hasText` kept the floating-bottom pill invisible for the
+	// whole session because the Tauri port has no realtime token feed yet, so
+	// `hasText` stays false until the final result (which simultaneously ends
+	// the session). The text BUBBLE stays gated on text via `showBubble`
+	// below, so this only un-gates the chip — no empty bubble flashes.
 	//
-	// `isRecordingActive` guards against painting stale state from a prior
-	// session in the brief window between the main process calling
-	// `showOverlay()` and STT_RECORDING_START arriving. `isThinking`
-	// bypasses it so the pill survives the recording → LLM-thinking
+	// `isThinking` keeps the pill alive across the recording → LLM-thinking
 	// transition (when `isRecordingActive` has already flipped off).
-	const sessionShouldShow = (isRecordingActive && hasText) || isThinking;
+	const sessionShouldShow = isRecordingActive || isThinking;
 	// Sticky once-on: hold the pill mounted for the rest of the session even
 	// if `currentRealtime` momentarily empties between realtime chunks.
 	// Without this, the AnimatePresence around chip + bubble unmounts on every

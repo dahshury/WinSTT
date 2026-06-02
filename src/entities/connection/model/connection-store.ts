@@ -20,11 +20,12 @@ export interface RuntimeInfo {
 
 interface ConnectionState {
 	connectionStatus: ConnectionStatus;
-	gpuInfo: GpuInfo | null;
+	/** GPU list returned by `gpu_get_info`. Empty array = no GPU detected. */
+	gpuInfo: GpuInfo[];
 	runtimeInfo: RuntimeInfo | null;
 	serverStatus: ServerStatus;
 	setConnectionStatus: (status: ConnectionStatus) => void;
-	setGpuInfo: (info: GpuInfo | null) => void;
+	setGpuInfo: (info: GpuInfo[]) => void;
 	setRuntimeInfo: (info: RuntimeInfo | null) => void;
 	setServerStatus: (status: ServerStatus) => void;
 }
@@ -37,7 +38,7 @@ export const useConnectionStore = create<ConnectionState>()((set) => ({
 	// this state holds until either we connect or the renderer is closed.
 	connectionStatus: "connecting",
 	serverStatus: "idle",
-	gpuInfo: null,
+	gpuInfo: [],
 	runtimeInfo: null,
 	setConnectionStatus: (status) => set({ connectionStatus: status }),
 	setServerStatus: (status) => set({ serverStatus: status }),

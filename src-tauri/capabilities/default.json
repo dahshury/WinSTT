@@ -4,6 +4,7 @@
   "description": "Capabilities for the app",
   "windows": [
     "main",
+    "splash",
     "settings",
     "overlay",
     "tray-menu",
@@ -11,8 +12,7 @@
     "device-picker",
     "onboarding",
     "history",
-    "context-playground",
-    "recording_overlay"
+    "context-playground"
   ],
   "permissions": [
     "core:default",

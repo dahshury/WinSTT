@@ -1,4 +1,3 @@
-use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
@@ -14,7 +13,12 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
-use crate::winstt::stt::Transcriber as WinsttTranscriber;
+// The ONLY `crate::winstt::*` symbols this inherited Handy core names (audit #14): the engine
+// type (`Transcriber`) the `LoadedEngine::Winstt` arm boxes, and the backend trait surface the
+// core delegates every WinSTT-specific step to. All WinSTT logic lives behind `SttBackend`.
+use crate::winstt::stt::{
+    BackendRoute, SttBackend, Transcriber as WinsttTranscriber, WinsttSttBackend,
+};
 use transcribe_rs::{
     onnx::{
         canary::CanaryModel,
@@ -53,78 +57,22 @@ enum LoadedEngine {
     Winstt(Box<dyn WinsttTranscriber>),
 }
 
-/// Catalog family → engine decode archetype. Returns `None` for families whose engine isn't
-/// dispatched by `stt::build_engine` yet (Moonshine/Cohere/NeMo/Kaldi/GigaAM/T-One/Dolphin/
-/// SenseVoice live in `stt::families` but aren't wired) so the swap surfaces a precise error
-/// instead of silently doing nothing.
-fn engine_kind_for(entry: &crate::winstt::catalog::ModelEntry) -> Option<crate::winstt::stt::EngineKind> {
-    use crate::winstt::stt::EngineKind;
-    let kind = crate::winstt::stt::cache_probe::engine_kind_for(
-        entry.id,
-        family_policy_slug(entry.family),
-        entry.onnx_model_name,
-    );
-    // Gate on the resolved ENGINE KIND (not just family) — `Family::Nemo` spans both the
-    // validated Canary (NemoAed) and the still-unvalidated parakeet CTC/TDT, so kind-level
-    // gating lets Canary go live while parakeet stays disabled. Only kinds whose ONNX
-    // numerics are spike-proven (transcribe JFK correctly) are enabled; the rest return a
-    // clean "no Rust engine yet" error instead of silent garbage. Expand as each is spiked.
-    //   WhisperHf     — proven (whisper-tiny/.en, lite-whisper-128mel, crisper) via the resolver.
-    //   SenseVoiceCtc — proven (sense-voice-small) transcribes JFK with ITN punctuation.
-    //   NemoAed       — proven (canary-180m-flash) full JFK w/ PnC: NeMo featurizer + mems carry.
-    //   NemoCtc       — proven (parakeet-ctc-0.6b) JFK; NeMo featurizer reads mel count from the
-    //                   model (parakeet=80, canary=128) + CTC greedy collapse.
-    //   NemoTdt       — proven (parakeet-tdt-0.6b-v3) full JFK w/ PnC: transducer + predictor LSTM
-    //                   state carry (input/output_states_1/2, advance on non-blank) + int32 targets
-    //                   + TDT duration split.
-    //   NemoRnnt      — same TransducerEngine path as NemoTdt minus the duration split (strict
-    //                   subset) → validated by extension.
-    // PENDING (drafted in stt::families): GigaAM (own featurizer, ru), Cohere (128-mel + fp16 KV),
-    //   Kaldi/zipformer (sherpa glob), Dolphin/T-One (non-en audio), Moonshine (own engine file).
-    let validated = matches!(
-        kind,
-        EngineKind::WhisperHf
-            | EngineKind::SenseVoiceCtc
-            | EngineKind::NemoAed
-            | EngineKind::NemoCtc
-            | EngineKind::NemoTdt
-            | EngineKind::NemoRnnt
-    );
-    if validated {
-        Some(kind)
-    } else {
-        None
-    }
+/// What a single decode produced inside the panic-guarded closure. The transcribe-rs (GGML)
+/// arms return a `Raw` `TranscriptionResult` that the core still post-processes (custom words +
+/// filler). The WinSTT arm's decode is owned by [`crate::winstt::stt::SttBackend::decode`], which
+/// ALSO does the WinSTT-arm post-processing — so it returns a `Final` string the core must NOT
+/// post-process again (avoids double-processing; audit #14 risk 3).
+enum TranscribeOutcome {
+    /// transcribe-rs arm — core applies its generic custom-words + filler post-processing.
+    Raw(transcribe_rs::TranscriptionResult),
+    /// WinSTT arm — already fully post-processed by the backend; pass through verbatim.
+    Final(String),
 }
 
-/// Catalog family → the policy slug string the `stt` helpers key on (mirrors the Python
-/// `family` strings used by `resolve_quantization_auto` / `override_dml_to_cpu_for_family`).
-fn family_policy_slug(family: crate::winstt::catalog::Family) -> &'static str {
-    use crate::winstt::catalog::Family;
-    match family {
-        Family::Whisper => "whisper",
-        Family::Moonshine => "moonshine",
-        Family::Cohere => "cohere",
-        Family::Nemo => "nemo",
-        Family::SenseVoice => "sense_voice",
-        Family::GigaAm => "gigaam",
-        Family::Kaldi => "kaldi",
-        Family::TOne => "t-one",
-        Family::Dolphin => "dolphin",
-        Family::Custom => "custom",
-    }
-}
-
-/// Peak-normalize to 0.95 — the single audio-conditioning chokepoint the WinSTT engines expect
-/// (mirrors Python `_peak_normalize`; the `Transcriber` contract says the caller conditions).
-fn peak_normalize(audio: &[f32]) -> Vec<f32> {
-    let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
-    if peak <= 0.0 {
-        return audio.to_vec();
-    }
-    let g = 0.95 / peak;
-    audio.iter().map(|&x| x * g).collect()
-}
+// The WinSTT-specific helpers `engine_kind_for`, `family_policy_slug`, `normalize_winstt_language`,
+// and `peak_normalize` used to live HERE in the inherited Handy core. They were moved into
+// `crate::winstt::stt::backend` (audit #14) — the core now reaches them only through the
+// `SttBackend` trait, restoring the one-way dependency edge (winstt → core, never the reverse).
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
 /// Ensures the loading flag is always reset, even on early returns or panics.
@@ -141,6 +89,16 @@ impl Drop for LoadingGuard {
     }
 }
 
+/// RAII guard that clears the `warming` flag on drop — so a post-swap warmup decode
+/// always clears its in-progress marker, even on an early return or a caught panic.
+struct WarmingGuard<'a>(&'a AtomicBool);
+
+impl Drop for WarmingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 #[derive(Clone)]
 pub struct TranscriptionManager {
     engine: Arc<Mutex<Option<LoadedEngine>>>,
@@ -152,6 +110,18 @@ pub struct TranscriptionManager {
     watcher_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     is_loading: Arc<Mutex<bool>>,
     loading_condvar: Arc<Condvar>,
+    /// True while a post-swap kernel WARMUP decode is running. Distinct from `is_loading`
+    /// (which gates real loads): a real decode does NOT wait on `warming`, so the user's
+    /// dictation can preempt a cold warmup instead of being serialized behind it. A racing
+    /// `transcribe()` simply wins the engine mutex; warmup `try_lock`s and yields when the
+    /// engine is busy.
+    warming: Arc<AtomicBool>,
+    /// The WinSTT-owned STT backend (audit #14). Every WinSTT-specific load/decode/cloud step
+    /// (catalog resolve+build, the unified ort engine decode + post-processing, the cloud
+    /// round-trip, language/dictionary/filler from the picker store) is delegated here so this
+    /// inherited Handy core stops reaching sideways into `crate::winstt::*` — restoring the
+    /// one-way dependency edge that keeps upstream Handy merges of this file tractable.
+    backend: Arc<dyn SttBackend>,
 }
 
 impl TranscriptionManager {
@@ -166,6 +136,8 @@ impl TranscriptionManager {
             watcher_handle: Arc::new(Mutex::new(None)),
             is_loading: Arc::new(Mutex::new(false)),
             loading_condvar: Arc::new(Condvar::new()),
+            warming: Arc::new(AtomicBool::new(false)),
+            backend: Arc::new(WinsttSttBackend),
         };
 
         // Start the idle watcher
@@ -494,9 +466,7 @@ impl TranscriptionManager {
     /// The model the user actually selected. The WinSTT picker (`winstt_settings.model.model`)
     /// is the source of truth; fall back to Handy's `selected_model` (cloud ids / first-run).
     fn desired_model_id(&self) -> String {
-        let winstt = crate::winstt::commands::settings::read_settings(&self.app_handle)
-            .model
-            .model;
+        let winstt = self.backend.selected_model_id(&self.app_handle);
         if !winstt.trim().is_empty() {
             winstt
         } else {
@@ -522,26 +492,10 @@ impl TranscriptionManager {
         drop(is_loading);
         let self_clone = self.clone();
         thread::spawn(move || {
-            // Free the previous engine's ORT sessions before loading the next (Windows DLL race).
-            if self_clone.is_model_loaded() {
-                let _ = self_clone.unload_model();
-            }
             let desired = self_clone.desired_model_id();
-            let result = if crate::winstt::cloud_stt::provider_of(&desired).is_some() {
-                // Cloud STT id (provider:model): no local engine. Mark it current + ready so
-                // transcribe() routes to CloudSttManager; never call the local loader.
-                {
-                    let mut current = self_clone.current_model_id.lock().unwrap();
-                    *current = Some(desired.clone());
-                }
-                self_clone.touch_activity();
-                Ok(())
-            } else if crate::winstt::catalog::find(&desired).is_some() {
-                self_clone.load_winstt_model(&desired)
-            } else {
-                self_clone.load_model(&desired)
-            };
-            if let Err(e) = result {
+            // Failure-atomic: dispatch_load does NOT unload up front — a failed resolve/build
+            // leaves the previous engine resident (re-emitting loading_completed for it).
+            if let Err(e) = self_clone.dispatch_load(&desired) {
                 error!("Failed to load model '{}': {}", desired, e);
             }
             let mut is_loading = self_clone.is_loading.lock().unwrap();
@@ -550,113 +504,234 @@ impl TranscriptionManager {
         });
     }
 
-    /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT spike
-    /// path). Resolves the catalog entry → effective quant + provider list (device/quant
-    /// settings + family policy) → HF file set → `winstt::stt::build_engine`. Deliberately
-    /// bypasses Handy's transcribe-rs `ModelManager` registry (a different id namespace).
-    fn load_winstt_model(&self, model_id: &str) -> Result<()> {
-        use crate::winstt::catalog::Family;
-        use crate::winstt::settings_schema::DeviceType;
-        use crate::winstt::stt::resolver::{self, ResolveRequest};
-        use crate::winstt::stt::{self, Accelerator, EngineConfig, Quantization};
+    /// Dispatch a load to the right backend by id namespace, FAILURE-ATOMICALLY: never unload the
+    /// currently-resident engine up front. Cloud ids have no local engine (mark current + free any
+    /// local engine, since the switch to cloud can't fail). WinSTT-catalog ids go through
+    /// `load_winstt_model`, which resolves the file set OFFLINE first and only unloads the old
+    /// engine once that succeeds (the Windows DLL race forbids two live ort sessions). transcribe-rs
+    /// ids go through `load_model`, which builds-then-installs (overwriting the old engine) — GGML,
+    /// no session race. On any error, the previously-loaded model is still resident, so we re-emit
+    /// `loading_completed` for it so the picker chip clears on a model the user can still dictate with.
+    fn dispatch_load(&self, model_id: &str) -> Result<()> {
+        // Snapshot the still-resident model BEFORE attempting the swap, for the rollback re-emit.
+        let previous = self.get_current_model();
 
-        let load_start = std::time::Instant::now();
-        let entry = crate::winstt::catalog::find(model_id)
-            .ok_or_else(|| anyhow::anyhow!("model '{}' not in WinSTT catalog", model_id))?;
-        let family_slug = family_policy_slug(entry.family);
-        let kind = engine_kind_for(entry).ok_or_else(|| {
-            anyhow::anyhow!(
-                "model '{}' (family {:?}) has no Rust engine yet — only the Whisper family is wired",
-                model_id,
-                entry.family
-            )
-        })?;
-
-        let settings = crate::winstt::commands::settings::read_settings(&self.app_handle);
-
-        // device → primary accelerator (CPU vs the shipped GPU flavor)
-        let primary = match settings.model.device {
-            DeviceType::Cpu => Accelerator::Cpu,
-            DeviceType::Auto => {
-                if cfg!(windows) {
-                    Accelerator::DirectMl
-                } else {
-                    Accelerator::Cpu
+        let result = match self.backend.route_of(model_id) {
+            BackendRoute::Cloud => {
+                // Cloud STT id (provider:model): no local engine. Free any resident local engine
+                // and mark the cloud id current + ready so transcribe() routes to the backend's
+                // cloud method.
+                if self.is_model_loaded() {
+                    let _ = self.unload_model();
                 }
+                {
+                    let mut current = self.current_model_id.lock().unwrap();
+                    *current = Some(model_id.to_string());
+                }
+                self.touch_activity();
+                Ok(())
             }
+            BackendRoute::Catalog => self.load_winstt_model(model_id),
+            BackendRoute::None => self.load_model(model_id),
         };
 
-        // requested quant from settings; auto-resolve the int8-preferred / fp16 policy
-        let requested =
-            Quantization::parse(settings.model.onnx_quantization.trim()).unwrap_or(Quantization::Default);
-        let available: Vec<Quantization> = entry
-            .available_quantizations
-            .iter()
-            .filter_map(|s| Quantization::parse(s))
-            .collect();
-        let effective =
-            stt::resolve_quantization_auto(requested, primary, family_slug, entry.param_count, Some(&available));
+        if result.is_err() {
+            self.reemit_resident_after_failed_swap(previous.as_deref());
+        }
+        result
+    }
 
-        // provider list (primary + CPU fallback), then the DML-incompatible-family override.
-        let providers = match primary {
-            Accelerator::Cpu => vec![Accelerator::Cpu],
-            other => vec![other, Accelerator::Cpu],
+    /// After a FAILED swap, re-emit `loading_completed` for the model still resident (if any) so
+    /// the renderer's picker clears its "Switching…" chip on a model the user can still dictate
+    /// with — rather than being stuck on the failed target. No-op when nothing is loaded.
+    fn reemit_resident_after_failed_swap(&self, previous: Option<&str>) {
+        if !self.is_model_loaded() {
+            return; // genuinely nothing resident (e.g. cold first-load failure)
+        }
+        let model_id = match self.get_current_model().or_else(|| previous.map(str::to_string)) {
+            Some(id) => id,
+            None => return,
         };
-        let providers = stt::override_dml_to_cpu_for_family(providers, family_slug);
-
-        // emit loading_started (parity with the Handy path's event surface)
+        // Best-effort display name (catalog → display, else the raw id).
+        let model_name = self.backend.display_name_for(&model_id);
         let _ = self.app_handle.emit(
             "model-state-changed",
             ModelStateEvent {
-                event_type: "loading_started".to_string(),
-                model_id: Some(model_id.to_string()),
-                model_name: Some(entry.display_name.to_string()),
+                event_type: "loading_completed".to_string(),
+                model_id: Some(model_id),
+                model_name: Some(model_name),
                 error: None,
             },
         );
+    }
 
-        // resolve the on-disk file set (cache-first; one network refetch if a shard is missing)
-        let req = ResolveRequest {
-            model_id: entry.onnx_model_name.to_string(),
-            kind,
-            effective_quant: effective,
-            local_dir: None,
-            local_files_only: true,
+    /// Synchronous load to a SPECIFIC `model_id` (the picker's choice, threaded through from
+    /// `set_winstt_model` → `perform_model_swap`) that RETURNS the real load error so the swap
+    /// orchestrator can emit `stt:model-swap-failed` (rollback + toast) instead of swallowing it.
+    /// Mirrors Handy's `switch_active_model(model_id)` + the body of `initiate_model_load`, but
+    /// blocking and id-EXPLICIT — it must NOT re-read settings (the renderer's persist of
+    /// `model.model` is debounced, so a re-read would load the stale/default "tiny" and "succeed").
+    /// Runs on the swap orchestrator's own thread, so it never blocks the Tauri command thread.
+    pub fn load_model_blocking(&self, model_id: &str) -> std::result::Result<(), String> {
+        {
+            let mut is_loading = self.is_loading.lock().unwrap();
+            if *is_loading {
+                return Err("Model load already in progress".to_string());
+            }
+            *is_loading = true;
+        }
+        // FAILURE-ATOMIC: dispatch_load never unloads the resident engine up front — a failed
+        // resolve/build leaves the previous model dictatable (and re-emits its loading_completed),
+        // instead of the old unload-first path that left NOTHING loaded on a network blip.
+        let outcome: Result<()> = self.dispatch_load(model_id);
+        {
+            let mut is_loading = self.is_loading.lock().unwrap();
+            *is_loading = false;
+            self.loading_condvar.notify_all();
+        }
+        // Warm the freshly-loaded engine so the first post-swap decode isn't cold (DML kernel JIT) —
+        // but do it on a DETACHED thread so the swap completes (chip clears) on LOAD, not after the
+        // cold warm-decode. (TranscriptionManager is Clone — the clone shares the Arc'd state.)
+        if outcome.is_ok() {
+            let me = self.clone();
+            thread::spawn(move || me.warmup());
+        }
+        outcome.map_err(|e| {
+            error!("Failed to load model '{model_id}': {e}");
+            e.to_string()
+        })
+    }
+
+    /// Eagerly compile the loaded engine's kernels with a dummy 1s-silence decode so the FIRST
+    /// real PTT decode is WARM — no cold DirectML kernel JIT serialized on the release path (the
+    /// dominant cause of the port feeling ~10x slower than Electron on the first dictation). Mirrors
+    /// the Electron server's `RecorderService.warmup` (decodes `np.zeros(16000)` at boot). Only the
+    /// WinSTT ort/DirectML engine pays cold-JIT; the transcribe-rs (GGML) engines don't, so we warm
+    /// just that arm. Best-effort: a warmup failure must never break dictation.
+    pub fn warmup(&self) {
+        // Wait out any in-flight LOAD (we must not warm a half-built engine), but do NOT hold
+        // `is_loading` for the warm decode — that was the bug: a real dictation that raced in
+        // WAITED on transcribe()'s loading condvar even though the engine was fully loaded and
+        // ready, serializing the user's decode behind a cold ~1s warmup. Instead we only set the
+        // separate `warming` flag and yield the engine to any real decode via `try_lock`.
+        {
+            let mut is_loading = self.is_loading.lock().unwrap();
+            while *is_loading {
+                is_loading = self.loading_condvar.wait(is_loading).unwrap();
+            }
+        }
+        if !self.is_model_loaded() {
+            return; // cloud id, or load failed — nothing local to warm
+        }
+
+        self.warming.store(true, Ordering::SeqCst);
+        // Clear `warming` on EVERY exit path (early return / panic) via RAII.
+        let _warming_guard = WarmingGuard(&self.warming);
+
+        // PREEMPTABLE: grab the engine with `try_lock`, NOT a blocking `lock()`. If a real
+        // transcribe() already holds it, the warmup yields (the user's decode IS the warmup) —
+        // it never blocks the dictation path. Hold the lock for the dummy decode itself; a real
+        // decode that arrives after we grab the lock waits only on the engine mutex (not the
+        // load condvar), and there's nothing to gain by warming twice.
+        let mut engine_guard = match self.engine.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                debug!("[stt] warmup yielded — a real decode is using the engine");
+                return;
+            }
+            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
         };
-        let emit_failed = |msg: &str| {
+        // Decode dummy silence DIRECTLY (the backend's warmup bypasses the RMS silence-gate that
+        // would reject all-zeros). Keep the engine IN the guard — a panic is caught and the engine
+        // is left resident (matching transcribe()'s catch_unwind discipline; only differs in that
+        // we don't take() it out). The WinSTT-specific dummy-decode body lives in the backend
+        // (audit #14); this core owns only the `try_lock` preemption + `catch_unwind`.
+        if let Some(LoadedEngine::Winstt(e)) = engine_guard.as_mut() {
+            let backend = self.backend.clone();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                backend.warmup(e.as_mut());
+            }));
+        }
+        drop(engine_guard);
+        self.touch_activity();
+        log::info!("[stt] engine warmup complete");
+    }
+
+    /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT spike
+    /// path). The WinSTT-specific work — catalog resolution, effective-quant + provider-list
+    /// policy, the offline HF file-set resolve, and the engine build — is owned by the
+    /// [`SttBackend`] (audit #14). This core keeps ONLY the generic engine-lifecycle
+    /// orchestration: the `model-state-changed` events, the failure-atomic unload-AFTER-resolve
+    /// ordering (no two live ORT sessions), and installing the built engine into the mutex.
+    ///
+    /// TWO-PHASE (failure-atomic): `resolve_catalog` resolves the file set OFFLINE without
+    /// building any ORT session or touching the resident engine. ONLY once that succeeds do we
+    /// free the old engine (the Windows DLL race forbids two live ort sessions) and `build_resolved`
+    /// the new one. A failed resolve returns `Err` with the old engine STILL RESIDENT — the caller
+    /// re-emits `loading_completed` for it so the picker chip clears on a model the user can still
+    /// dictate with.
+    fn load_winstt_model(&self, model_id: &str) -> Result<()> {
+        let load_start = std::time::Instant::now();
+
+        // Best-effort display name (catalog → display, else raw id) for the events. The backend's
+        // `resolve_catalog`/`build_resolved` return the authoritative name in the spec, but the
+        // `loading_started`/`loading_failed`-on-resolve events fire before/around that, so derive
+        // it up front from the same catalog source.
+        let display_name = self.backend.display_name_for(model_id);
+
+        let emit_failed = |msg: &str, model_name: &str| {
             let _ = self.app_handle.emit(
                 "model-state-changed",
                 ModelStateEvent {
                     event_type: "loading_failed".to_string(),
                     model_id: Some(model_id.to_string()),
-                    model_name: Some(entry.display_name.to_string()),
+                    model_name: Some(model_name.to_string()),
                     error: Some(msg.to_string()),
                 },
             );
         };
-        let resolved = tauri::async_runtime::block_on(resolver::resolve(&req)).map_err(|e| {
-            let msg = format!("resolve {}: {}", model_id, e);
-            emit_failed(&msg);
-            anyhow::anyhow!(msg)
-        })?;
 
-        let whisper_fp16_workaround =
-            matches!(entry.family, Family::Whisper) && effective == Quantization::Fp16;
+        // emit loading_started (parity with the Handy path's event surface) — BEFORE the resolve,
+        // matching the original ordering so the picker chip shows "Switching…" immediately.
+        let _ = self.app_handle.emit(
+            "model-state-changed",
+            ModelStateEvent {
+                event_type: "loading_started".to_string(),
+                model_id: Some(model_id.to_string()),
+                model_name: Some(display_name.clone()),
+                error: None,
+            },
+        );
 
-        let cfg = EngineConfig {
-            model_name: model_id.to_string(),
-            family: family_slug.to_string(),
-            kind,
-            resolved,
-            providers,
-            whisper_fp16_workaround,
+        // PHASE 1 — offline resolve (no ORT session, leaves the resident engine untouched). On
+        // failure the old engine is still resident; emit loading_failed with the best-effort name.
+        let spec = match self.backend.resolve_catalog(&self.app_handle, model_id) {
+            Ok(spec) => spec,
+            Err(e) => {
+                let msg = e.to_string();
+                emit_failed(&msg, &display_name);
+                return Err(e);
+            }
         };
 
-        let engine = stt::build_engine(cfg).map_err(|e| {
-            let msg = format!("build WinSTT engine for {}: {}", model_id, e);
-            emit_failed(&msg);
-            anyhow::anyhow!(msg)
-        })?;
+        // FAILURE-ATOMIC SWAP: now that the file set is verified present on disk (resolve
+        // succeeded), the build is essentially guaranteed — so it's safe to free the OLD engine's
+        // ORT sessions HERE. We CANNOT build the new one first (the Windows DLL race forbids two
+        // live ort sessions). If resolve had failed we'd have returned above with the old engine
+        // still resident.
+        if self.is_model_loaded() {
+            let _ = self.unload_model();
+        }
+
+        // PHASE 2 — build the engine from the resolved spec.
+        let (engine, display_name) = match self.backend.build_resolved(spec) {
+            Ok(built) => built,
+            Err(e) => {
+                let msg = e.to_string();
+                emit_failed(&msg, &display_name);
+                return Err(e);
+            }
+        };
 
         {
             let mut guard = self.lock_engine();
@@ -673,15 +748,13 @@ impl TranscriptionManager {
             ModelStateEvent {
                 event_type: "loading_completed".to_string(),
                 model_id: Some(model_id.to_string()),
-                model_name: Some(entry.display_name.to_string()),
+                model_name: Some(display_name),
                 error: None,
             },
         );
         info!(
-            "Loaded WinSTT model '{}' ({:?}/{:?}) in {}ms",
+            "Loaded WinSTT model '{}' in {}ms",
             model_id,
-            kind,
-            effective,
             load_start.elapsed().as_millis()
         );
         Ok(())
@@ -714,78 +787,58 @@ impl TranscriptionManager {
         }
 
         // ── SILENCE GATE (all engine paths: cloud / transcribe-rs / winstt-catalog) ──
-        // A recording can be NON-empty yet pure silence — e.g. a Bluetooth headset mic in
-        // A2DP mode, or a muted/wrong device. Fed to Whisper, silence makes the greedy
-        // decoder HALLUCINATE hundreds of garbage tokens until max_length (the observed
-        // ">12s wall of garbled multilingual text"). Reject it like the empty case: an empty
-        // result makes the caller emit `no_audio_detected` (actions.rs) → honest "no audio"
-        // pill, not garbage.
+        // A recording can be NON-empty yet carry NO actual audio — e.g. a Bluetooth
+        // headset mic in A2DP mode, or a muted/virtual device. Such a dead device emits a
+        // constant DC offset (raw |peak| nonzero) with ZERO real signal energy. Fed to
+        // Whisper, that silence makes the greedy decoder HALLUCINATE hundreds of garbage
+        // tokens until max_length (the observed ">12s wall of garbled multilingual text").
+        // Reject ONLY that signature: an empty result makes the caller emit
+        // `no_audio_detected` (actions.rs) → honest "no audio" pill, not garbage.
         //
-        // Use DC-IMMUNE RMS, not raw peak: a dead A2DP headset mic emits a constant DC offset
-        // (raw |peak| nonzero) with ZERO actual audio — the FFT/spectrum reads 0.000 but a
-        // raw-peak gate is fooled and lets it through. Removing the mean (DC) and taking RMS
-        // measures real signal energy. Real speech RMS is ~0.01–0.1; silence/DC ≈ 0. Audio
-        // here is RAW (pre-`peak_normalize`). The rms is logged so the threshold is tunable.
+        // SCOPED, not a blanket amplitude floor: the previous `rms < 0.0025` floor also
+        // dropped genuinely quiet speech (a soft talker / distant mic). Instead trip only on
+        // the DC-dominated dead-device fingerprint — vanishing AC energy (DC-immune RMS) AND
+        // a DC offset that dwarfs whatever AC remains. Real (even quiet) speech has AC > DC
+        // and an RMS well above the noise floor; a dead virtual mic has AC ≈ 0 with a large
+        // constant |mean|. Audio here is RAW (pre-`peak_normalize`).
         let n = audio.len() as f32;
         let mean = audio.iter().copied().sum::<f32>() / n;
         let rms = (audio.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / n).sqrt();
-        const SILENCE_RMS_THRESHOLD: f32 = 0.0025;
-        log::info!("[silence-gate] rms={rms:.6} mean={mean:.6} (threshold {SILENCE_RMS_THRESHOLD})");
-        if rms < SILENCE_RMS_THRESHOLD {
-            debug!("Recording RMS {rms:.6} below silence threshold — no audio (skipping decode)");
+        // AC floor: below this there is no decodable speech energy at all. DC-dominated:
+        // the constant offset is at least an order of magnitude above the AC RMS, i.e. the
+        // signal is "all offset, no audio" — the dead/virtual-mic fingerprint.
+        const SILENCE_AC_FLOOR: f32 = 0.0008;
+        const DC_DOMINANCE_RATIO: f32 = 10.0;
+        let dc_dominated = mean.abs() > rms * DC_DOMINANCE_RATIO;
+        log::debug!(
+            "[silence-gate] rms={rms:.6} mean={mean:.6} dc_dominated={dc_dominated} \
+             (ac_floor {SILENCE_AC_FLOOR})"
+        );
+        if rms < SILENCE_AC_FLOOR && dc_dominated {
+            debug!(
+                "Recording RMS {rms:.6} with DC offset {mean:.6} matches dead/virtual-mic \
+                 signature — no audio (skipping decode)"
+            );
             self.maybe_unload_immediately("silent audio");
             return Ok(String::new());
         }
 
+        // The user's selected model (WinSTT picker is the source of truth; falls back to Handy's
+        // `selected_model` for cloud ids / first-run). `desired_model_id` reads the picker store
+        // through the backend (audit #14) — the core no longer touches `WinsttSettings` directly.
+        let desired = self.desired_model_id();
+
         // ── Cloud STT route ──────────────────────────────────────────────
         // When the selected model carries a cloud prefix (openai:/elevenlabs:), there is NO
-        // local engine — ship the captured audio to the provider via CloudSttManager instead.
-        // Mirrors the Electron RemoteTranscriber path (frontend/electron/ipc/stt-cloud.ts).
-        {
-            let desired = self.desired_model_id();
-            if crate::winstt::cloud_stt::provider_of(&desired).is_some() {
-                let cloud = self
-                    .app_handle
-                    .state::<std::sync::Arc<crate::winstt::managers::CloudSttManager>>()
-                    .inner()
-                    .clone();
-                let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
-                let language = {
-                    let l = ws.model.language.trim();
-                    if l.is_empty() || l == "auto" {
-                        None
-                    } else if l == "zh-Hans" || l == "zh-Hant" {
-                        Some("zh".to_string())
-                    } else {
-                        Some(l.to_string())
-                    }
-                };
-                let settings = get_settings(&self.app_handle);
-                let text = tauri::async_runtime::block_on(cloud.transcribe_samples(&desired, &audio, language))
-                    .map_err(|e| anyhow::anyhow!("Cloud STT failed ({}): {}", e.code.as_str(), e.message))?;
-                // Cloud is never Whisper -> apply the WinSTT dictionary correction + filler filter.
-                let dict: Vec<String> = ws
-                    .dictionary
-                    .iter()
-                    .map(|d| d.term.clone())
-                    .filter(|t| !t.trim().is_empty())
-                    .collect();
-                let corrected = if dict.is_empty() {
-                    text
-                } else {
-                    apply_custom_words(&text, &dict, ws.general.word_correction_threshold)
-                };
-                let filler = if ws.general.filter_fillers && !ws.general.custom_filler_words.is_empty() {
-                    Some(ws.general.custom_filler_words.clone())
-                } else if ws.general.filter_fillers {
-                    None
-                } else {
-                    Some(Vec::new())
-                };
-                let filtered = filter_transcription_output(&corrected, &settings.app_language, &filler);
-                self.maybe_unload_immediately("cloud transcription");
-                return Ok(filtered);
-            }
+        // local engine — ship the captured audio to the provider. The WinSTT-specific round-trip
+        // (CloudSttManager call + the nested-runtime block_in_place/block_on branch + the cloud
+        // dictionary/filler post-processing) is owned by the backend (audit #14). The core only
+        // decides to take the cloud path here — BEFORE the engine lock, since cloud ids have no
+        // LoadedEngine — and unloads any resident local engine after.
+        if self.backend.route_of(&desired) == BackendRoute::Cloud {
+            let filtered = self.backend.cloud_transcribe(&self.app_handle, &desired, &audio)?;
+            self.maybe_unload_immediately("cloud transcription");
+            return Ok(filtered);
         }
 
         // Check if model is loaded, if not try to load it
@@ -802,96 +855,48 @@ impl TranscriptionManager {
             }
         }
 
-        // Get current settings for configuration
+        // AppSettings is still the source for the transcribe-rs (GGML) Whisper arm's
+        // `translate_to_english` / `custom_words` (initial-prompt seed) and for `app_language`
+        // (the final filler-filter locale). Read it ONCE here. LANGUAGE is NOT read from here —
+        // it lives solely in WinsttSettings.model.language, read via the backend (see below).
         let settings = get_settings(&self.app_handle);
 
-        // WinSTT dictionary bridge: the picker's dictionary (custom words) + fuzzy threshold +
-        // filler list live in the WinSTT settings store, NOT Handy's `settings.custom_words`.
-        // Read them here so the real fuzzy matcher + filler filter run on the user's ACTUAL list
-        // (mirrors Electron set_parameter forwarding custom_words/threshold/filler to the recorder).
-        let (winstt_custom_words, winstt_word_threshold, winstt_filler_words): (
-            Vec<String>,
-            f64,
-            Option<Vec<String>>,
-        ) = {
-            let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
-            let custom_words: Vec<String> = ws
-                .dictionary
-                .iter()
-                .map(|d| d.term.clone())
-                .filter(|t| !t.trim().is_empty())
-                .collect();
-            let threshold = ws.general.word_correction_threshold;
-            // filter_fillers off -> Some([]) (no patterns); on+empty -> None (language default table).
-            let filler = if ws.general.filter_fillers {
-                if ws.general.custom_filler_words.is_empty() {
-                    None
-                } else {
-                    Some(ws.general.custom_filler_words.clone())
-                }
-            } else {
-                Some(Vec::new())
-            };
-            (custom_words, threshold, filler)
-        };
-
-        // Validate selected language against the model's supported languages.
-        // If the language isn't supported, fall back to "auto" to prevent errors.
-        let validated_language = if settings.selected_language == "auto" {
+        // Language is owned by ONE store: WinsttSettings.model.language (the picker is the source
+        // of truth, read through the backend — audit #14). Validate it against the selected model's
+        // supported languages, falling back to auto-detect if unsupported. (WinSTT-catalog models
+        // aren't in `model_manager` — its lookup returns None → "supports everything" → the picker
+        // already constrained the UI.)
+        let picker_language = self.backend.picker_language(&self.app_handle);
+        let raw_language = picker_language.trim();
+        let validated_language = if raw_language.is_empty() || raw_language == "auto" {
             "auto".to_string()
         } else {
             let is_supported = self
                 .model_manager
-                .get_model_info(&settings.selected_model)
+                .get_model_info(&desired)
                 .map(|info| {
                     info.supported_languages.is_empty()
-                        || info
-                            .supported_languages
-                            .contains(&settings.selected_language)
+                        || info.supported_languages.contains(&raw_language.to_string())
                 })
                 .unwrap_or(true);
 
             if is_supported {
-                settings.selected_language.clone()
+                raw_language.to_string()
             } else {
                 warn!(
                     "Language '{}' not supported by current model, falling back to auto-detect",
-                    settings.selected_language
+                    raw_language
                 );
                 "auto".to_string()
             }
         };
 
-        // WinSTT engine inputs come from the WinSTT settings store (the picker's source of
-        // truth), not Handy's settings — derive them once here so the catch_unwind closure
-        // stays free of `self` borrows. Ignored by the transcribe-rs engine arms.
-        let winstt_opts = {
-            let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
-            let language = {
-                let l = ws.model.language.trim();
-                if l.is_empty() || l == "auto" {
-                    None
-                } else if l == "zh-Hans" || l == "zh-Hant" {
-                    Some("zh".to_string())
-                } else {
-                    Some(l.to_string())
-                }
-            };
-            let initial_prompt_text = {
-                let p = ws.model.initial_prompt.trim();
-                if p.is_empty() {
-                    None
-                } else {
-                    Some(p.to_string())
-                }
-            };
-            crate::winstt::stt::TranscribeOptions {
-                language,
-                translate: ws.model.translate_to_english,
-                initial_prompt_text,
-                ..Default::default()
-            }
-        };
+        // The WinSTT-arm engine inputs (language / translate / initial-prompt) AND that arm's
+        // post-processing (custom words + filler) are owned by the backend's `decode` (audit #14),
+        // which reads them from the picker store itself — so there is no `winstt_opts` to build
+        // here anymore. Handles the backend's `decode` needs are captured into the closure below.
+        let backend = self.backend.clone();
+        let app_handle = self.app_handle.clone();
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -915,7 +920,17 @@ impl TranscriptionManager {
             drop(engine_guard);
 
             let transcribe_result = catch_unwind(AssertUnwindSafe(
-                || -> Result<transcribe_rs::TranscriptionResult> {
+                || -> Result<TranscribeOutcome> {
+                    // WinSTT arm — the backend owns the decode AND the post-processing, returning
+                    // the FINAL text (audit #14 risk 3: the core must NOT post-process it again).
+                    // Borrow `&mut dyn Transcriber` from the engine the core already took out of the
+                    // mutex; the backend never locks it.
+                    if let LoadedEngine::Winstt(winstt_engine) = &mut engine {
+                        return backend
+                            .decode(&app_handle, winstt_engine.as_mut(), &audio)
+                            .map(TranscribeOutcome::Final);
+                    }
+                    // transcribe-rs (GGML) arms — produce a Raw result the core post-processes.
                     match &mut engine {
                         LoadedEngine::Whisper(whisper_engine) => {
                             let whisper_language = if validated_language == "auto" {
@@ -1020,17 +1035,13 @@ impl TranscriptionManager {
                                 .transcribe(&audio, &options)
                                 .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                         }
-                        LoadedEngine::Winstt(winstt_engine) => {
-                            let conditioned = peak_normalize(&audio);
-                            winstt_engine
-                                .transcribe(&conditioned, &winstt_opts)
-                                .map(|t| transcribe_rs::TranscriptionResult {
-                                    text: t.text,
-                                    segments: None,
-                                })
-                                .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e))
-                        }
+                        // The WinSTT arm was handled by the early `return` above (backend.decode);
+                        // it cannot reach this transcribe-rs match.
+                        LoadedEngine::Winstt(_) => unreachable!(
+                            "WinSTT arm is dispatched to backend.decode before the transcribe-rs match"
+                        ),
                     }
+                    .map(TranscribeOutcome::Raw)
                 },
             ));
 
@@ -1083,26 +1094,24 @@ impl TranscriptionManager {
             }
         };
 
-        // Apply word correction if custom words are configured.
-        // Skip for Whisper models since custom words are already passed as initial_prompt.
-        let is_whisper = self
-            .model_manager
-            .get_model_info(&settings.selected_model)
-            .map(|info| matches!(info.engine_type, EngineType::Whisper))
-            .unwrap_or(false);
-
-        let corrected_result = if !winstt_custom_words.is_empty() && !is_whisper {
-            apply_custom_words(&result.text, &winstt_custom_words, winstt_word_threshold)
-        } else {
-            result.text
+        // Post-processing. The WinSTT arm already post-processed inside `backend.decode` (audit
+        // #14 risk 3: do NOT post-process it again). Only the Raw (transcribe-rs) arms run the
+        // core's generic custom-words + filler pass below.
+        let filtered_result = match result {
+            TranscribeOutcome::Final(text) => text,
+            TranscribeOutcome::Raw(raw) => {
+                // The WinSTT-picker post-processing (dictionary custom-words + filler) is owned by
+                // the backend (audit #14). Skip the custom-words correction for (transcribe-rs)
+                // Whisper since those custom words are already passed as the initial_prompt.
+                let is_whisper = self
+                    .model_manager
+                    .get_model_info(&desired)
+                    .map(|info| matches!(info.engine_type, EngineType::Whisper))
+                    .unwrap_or(false);
+                self.backend
+                    .postprocess_transcribe_rs(&self.app_handle, &raw.text, is_whisper)
+            }
         };
-
-        // Filter out filler words and hallucinations (WinSTT filler list / language default).
-        let filtered_result = filter_transcription_output(
-            &corrected_result,
-            &settings.app_language,
-            &winstt_filler_words,
-        );
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1127,6 +1136,76 @@ impl TranscriptionManager {
         self.maybe_unload_immediately("transcription");
 
         Ok(final_result)
+    }
+
+    /// Realtime live-preview decode: ONE raw pass for the live transcription overlay.
+    ///
+    /// Ported from the Electron server's `_transcribe_realtime_window` /
+    /// `_safe_transcribe` (recorder_service.py:2765-2781). Key contract:
+    ///
+    /// * NON-BLOCKING on the engine — `try_lock` only. If the engine mutex is contended
+    ///   (a batch decode holds it) OR no engine is loaded (`None`, or `take()`n out mid-batch),
+    ///   return `None` immediately. Blocking here would stall the final batch decode on PTT
+    ///   release (the worst-case latency the spec calls out). A skipped tick is normal: the
+    ///   worker simply publishes nothing this iteration and tries again.
+    /// * PEEK, never `take()` — the guard borrows the engine in place via `match &mut *guard`,
+    ///   so a racing batch `transcribe()`'s `engine_guard.take()` still works the instant this
+    ///   releases the lock. The lock is held only for the decode itself, which is acceptable
+    ///   precisely because the worker bails (returns `None`) the moment a batch decode wants it.
+    /// * WinSTT (ort/whisper-DML) engine ONLY — realtime is whisper/ort for now (single
+    ///   shared engine; there is NO separate realtime engine). Any other `LoadedEngine` arm
+    ///   returns `None`.
+    /// * RAW text only — no silence gate, no history, no custom-words/filler/post-processing.
+    ///   The stabilizer + assembly happen in the realtime worker.
+    /// * `catch_unwind` around the decode (mirrors the batch path) so a realtime panic can't
+    ///   poison the worker; returns `None` on panic.
+    ///
+    /// REUSES THE MAIN ENGINE: there is deliberately no second realtime engine in this port —
+    /// do not wire one. The Electron server's separate realtime transcriber maps to this single
+    /// in-proc engine, shared with the batch path under the same mutex.
+    pub fn transcribe_realtime(&self, audio: &[f32], language: Option<&str>) -> Option<String> {
+        if audio.is_empty() {
+            return None;
+        }
+        // Non-blocking: bail the instant the engine is busy (batch decode), but RECOVER
+        // from poison instead of treating it like contention. The previous `Err(_) =>
+        // return None` collapsed `Poisoned` into the WouldBlock case, so a single panic
+        // (which poisons the mutex) wedged live preview forever — every subsequent tick
+        // saw a poisoned lock and returned None. Mirror `lock_engine`: WouldBlock skips
+        // the tick (a batch decode owns the lock), Poisoned is recovered via
+        // `into_inner()` so realtime keeps working after a one-off panic.
+        let mut guard = match self.engine.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::WouldBlock) => return None, // batch decode owns it — skip
+            Err(std::sync::TryLockError::Poisoned(p)) => {
+                warn!("Engine mutex poisoned by a previous panic, recovering (realtime)");
+                p.into_inner()
+            }
+        };
+
+        // The WinSTT-arm realtime decode (peak-normalize + configured-language opts) is owned by
+        // the backend (audit #14). The core keeps only the `try_lock` non-blocking + poison
+        // recovery + `catch_unwind` discipline. The backend borrows `&mut dyn Transcriber` in
+        // place (PEEK, never `take()`); it must NOT lock the mutex.
+        let backend = self.backend.clone();
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match &mut *guard {
+                Some(LoadedEngine::Winstt(e)) => {
+                    backend.decode_realtime(e.as_mut(), audio, language)
+                }
+                // No engine loaded, taken out by a batch decode, or a non-ort engine arm:
+                // realtime is whisper/ort-only for now.
+                _ => None,
+            }
+        }));
+
+        match decoded {
+            Ok(text) => text,
+            Err(_) => {
+                warn!("Realtime decode panicked — skipping tick");
+                None
+            }
+        }
     }
 }
 
@@ -1247,5 +1326,28 @@ impl Drop for TranscriptionManager {
                 debug!("Idle watcher thread joined successfully");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // NOTE: the WinSTT language-normalization unit test moved with `normalize_winstt_language` to
+    // `crate::winstt::stt::backend` (audit #14). The source-level guard below stays here because
+    // it asserts a property of THIS file's text.
+
+    /// Single-store-per-field guard (audit finding "Dual settings source-of-truth"): the
+    /// transcribe path must read `language` from WinsttSettings.model.language ONLY, never
+    /// from the AppSettings language field. This source-level assertion fails if the removed
+    /// dual read is reintroduced into this file's hot path. The forbidden identifier is
+    /// assembled at runtime so the test's own source doesn't trip the check.
+    #[test]
+    fn transcribe_path_does_not_read_appsettings_language() {
+        let src = include_str!("transcription.rs");
+        let forbidden = format!("selected_{}", "language");
+        assert!(
+            !src.contains(&forbidden),
+            "transcription.rs must not read the AppSettings language field — language is owned \
+             solely by WinsttSettings.model.language (see crate::winstt::stt::backend)"
+        );
     }
 }

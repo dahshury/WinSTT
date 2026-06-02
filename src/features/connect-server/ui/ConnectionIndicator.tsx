@@ -88,6 +88,6 @@ export function ConnectionIndicator() {
 	// runtimeIsGpu is non-null here per resolveConnectionChip's contract;
 	// fall back to gpuInfo.name only for display.
 	const isGpu = runtimeIsGpu === true;
-	const displayName = isGpu ? (gpuInfo?.name ?? "GPU") : "CPU";
+	const displayName = isGpu ? (gpuInfo[0]?.name ?? "GPU") : "CPU";
 	return <GpuChip gpuName={displayName} isGpu={isGpu} t={t} />;
 }

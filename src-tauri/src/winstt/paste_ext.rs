@@ -1,4 +1,10 @@
-// DRAFT PORT — not yet compiled. Source: frontend/electron/native/src/winstt-paste.c
+#![allow(dead_code)]
+// STUB: not yet wired — the terminal-detection tables and breaker/pacing math
+// below are fully implemented + unit-tested, but no paste path consults this
+// module yet (the Win32 foreground probe further down is still a sketch). The
+// `dead_code` allow keeps the compiled-but-unused symbols quiet until wiring.
+//
+// PORT IMPL — Source: frontend/electron/native/src/winstt-paste.c
 // + frontend/electron/lib/paste.ts
 //
 // Terminal-aware paste extension. Handy's `clipboard.rs::paste` already does

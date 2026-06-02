@@ -1,5 +1,11 @@
-// DRAFT PORT — not yet compiled.
-// Sources:
+#![allow(dead_code)]
+// STUB: not yet wired — the pure endpoint/noise-break logic below is fully
+// implemented + unit-tested, but it is NOT yet hooked into the recorder
+// pipeline (no caller computes preview pauses through `compute_pause` /
+// `should_fire_noise_break` yet). The `dead_code` allow keeps the compiled-but-
+// unused symbols quiet until the wiring lands (PORT/04_*.md).
+//
+// PORT IMPL — Sources:
 //   - server/src/stt_server/text_processing.py  (the dynamic-silence formula)
 //   - server/src/recorder/infrastructure/distilbert_classifier.py  (classifier)
 //   - server/src/recorder/application/pipeline.py  (silence_endpoint_enabled gate)
@@ -107,8 +113,7 @@ fn ends_with_ellipsis(t: &str) -> bool {
     }
     // Python: len(t) > 1 and t[:-1].endswith("...") — i.e. "...X" where the
     // last char is a single trailing token after the ellipsis (e.g. "...'").
-    let mut chars = t.chars();
-    if chars.clone().count() <= 1 {
+    if t.chars().count() <= 1 {
         return false;
     }
     // Drop the final char and test for a trailing "...".

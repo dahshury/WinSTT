@@ -1,3 +1,9 @@
+import {
+	Calendar03Icon,
+	ChartBarLineIcon,
+	ChartLineData01Icon,
+	Timer01Icon,
+} from "@hugeicons/core-free-icons";
 import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
@@ -151,14 +157,14 @@ export function ActivityHeatmap({ entries, onRangeChange, selectedRange }: Activ
 	};
 
 	const metricOptions = [
-		{ id: "transcriptions", label: t("heatmapMetricTranscriptions") },
-		{ id: "words", label: t("heatmapMetricWords") },
-		{ id: "wpm", label: t("heatmapMetricWpm") },
+		{ id: "transcriptions", label: t("heatmapMetricTranscriptions"), icon: ChartBarLineIcon },
+		{ id: "words", label: t("heatmapMetricWords"), icon: ChartLineData01Icon },
+		{ id: "wpm", label: t("heatmapMetricWpm"), icon: Timer01Icon },
 	];
 
 	const calendarOptions = [
-		{ id: "gregorian", label: t("heatmapCalendarGregorian") },
-		{ id: "hijri", label: t("heatmapCalendarHijri") },
+		{ id: "gregorian", label: t("heatmapCalendarGregorian"), icon: Calendar03Icon },
+		{ id: "hijri", label: t("heatmapCalendarHijri"), icon: Calendar03Icon },
 	];
 
 	const presets = buildDefaultCalendarPresets({

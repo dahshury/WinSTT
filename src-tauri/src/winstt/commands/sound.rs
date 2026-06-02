@@ -49,6 +49,9 @@ fn next_sound_id() -> String {
 /// One persisted library entry surfaced to the renderer (matches `SoundLibraryEntryDTO`).
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+// Structurally identical to `settings_schema::SoundLibraryEntry` (the persisted-schema
+// source of truth, which keeps the canonical TS name); suffix this command-result copy.
+#[specta(rename = "SoundLibraryEntryResult")]
 pub struct SoundLibraryEntry {
     pub id: String,
     pub name: String,

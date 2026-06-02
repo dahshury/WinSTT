@@ -21,8 +21,11 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_int};
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Kokoro v1.0 max phoneme sequence length (the voice-pack first axis size).
 /// Token sequences longer than this overflow the style-vector index → reject.
@@ -128,11 +131,15 @@ impl Phonemizer for EspeakCliPhonemizer {
             return Ok(String::new());
         }
         let espeak_lang = espeak_lang_for(lang);
-        let output = Command::new(&self.binary)
-            .arg("-q")
-            .arg("--ipa=3")
-            .arg("-v")
-            .arg(espeak_lang)
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("-q").arg("--ipa=3").arg("-v").arg(espeak_lang);
+        // If we can resolve an espeak-ng-data dir (e.g. the espeakng_loader
+        // bundle), point the CLI at it via `--path=<dir containing espeak-ng-data>`
+        // so a CLI that lacks compiled-in data still finds the dictionaries.
+        if let Some((_, Some(data_dir))) = resolve_espeak_lib() {
+            cmd.arg(format!("--path={}", data_dir.display()));
+        }
+        let output = cmd
             .arg("--")
             .arg(trimmed)
             .output()
@@ -191,9 +198,12 @@ pub fn clean_espeak_ipa(raw: &str) -> String {
 /// the env override lets portable installs ship their own and CI point at a
 /// fixture. Returns the bare name (resolved against PATH) by default.
 fn espeak_binary() -> String {
-    if let Ok(p) = std::env::var("WINSTT_ESPEAK_NG") {
-        if !p.trim().is_empty() {
-            return p;
+    // `ESPEAK_NG_BIN` / `WINSTT_ESPEAK_NG` point at a CLI `espeak-ng[.exe]`.
+    for var in ["ESPEAK_NG_BIN", "WINSTT_ESPEAK_NG"] {
+        if let Ok(p) = std::env::var(var) {
+            if !p.trim().is_empty() {
+                return p;
+            }
         }
     }
     // `espeak-ng` resolves `espeak-ng.exe` on Windows via std's PATHEXT handling.
@@ -220,6 +230,417 @@ pub fn espeak_lang_for(lang: &str) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// In-process espeak-ng FFI backend (the FAST + PARITY path)
+// ---------------------------------------------------------------------------
+//
+// The Electron app does NOT shell out to an `espeak-ng` CLI — it loads the
+// espeak-ng SHARED LIBRARY (`espeak-ng.dll`, shipped by the `espeakng_loader`
+// PyPI package) and calls `espeak_TextToPhonemes` IN-PROCESS via ctypes (see
+// `phonemizer/backend/espeak/{wrapper,api}.py` + `kokoro_onnx/tokenizer.py`).
+// We do the exact same thing here so we get (a) byte-identical phonemes to the
+// Python path and (b) zero per-sentence process-spawn overhead (the CLI shell
+// dominated short-sentence latency — a fresh Windows process per sentence).
+//
+// espeak's C API uses global state and is NOT thread-safe / not re-entrant
+// (api.py copies the whole .dll per instance to dodge this). We serialize every
+// call behind one process-wide `Mutex` (mirrors the Python `_synth_lock`).
+//
+// Invocation parity (kokoro_onnx → phonemizer → wrapper.text_to_phonemes):
+//   espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS=0x02, buflen=0, data_path, 0)
+//   espeak_SetVoiceByName("en-us")
+//   loop: espeak_TextToPhonemes(&text_ptr, textmode=1 /*UTF8*/,
+//                               phonememode = ('_' << 8) | 0x02 /*IPA*/)
+//         until *text_ptr == NULL
+// → the `_`-separated IPA string, which `clean_espeak_ipa` collapses (same as
+//   the CLI `--ipa=3` output the existing cleaner already handles).
+
+/// espeak-ng `espeak_Initialize` audio-output mode: AUDIO_OUTPUT_SYNCHRONOUS.
+const ESPEAK_AUDIO_OUTPUT_SYNCHRONOUS: c_int = 0x02;
+/// `espeak_TextToPhonemes` text mode: input is UTF-8 (`espeakCHARS_UTF8`).
+const ESPEAK_CHARS_UTF8: c_int = 1;
+/// `espeak_TextToPhonemes` phoneme mode: IPA (0x02), separated by `'_'` in the
+/// high byte — matches `phonemizer`'s non-tie path (`ord('_') << 8 | 0x02`).
+const ESPEAK_PHONEMES_IPA: c_int = (b'_' as c_int) << 8 | 0x02;
+
+/// The espeak-ng C entry points we bind (subset of `speak_lib.h`).
+struct EspeakSyms {
+    /// `int espeak_Initialize(espeak_AUDIO_OUTPUT, int buflength, const char* path, int options)`
+    initialize: unsafe extern "C" fn(c_int, c_int, *const c_char, c_int) -> c_int,
+    /// `espeak_ERROR espeak_SetVoiceByName(const char* name)` (0 == EE_OK).
+    set_voice_by_name: unsafe extern "C" fn(*const c_char) -> c_int,
+    /// `const char* espeak_TextToPhonemes(const void** textptr, int textmode, int phonememode)`
+    text_to_phonemes: unsafe extern "C" fn(*mut *const c_char, c_int, c_int) -> *const c_char,
+}
+
+/// Loaded espeak-ng shared library + symbols + the voice currently selected.
+struct EspeakLib {
+    // Keep the library alive for the lifetime of the symbols (Drop order: syms
+    // borrow nothing from `_lib` after resolution, but we hold it so the .dll
+    // stays mapped while we call into it).
+    _lib: libloading::Library,
+    syms: EspeakSyms,
+    /// espeak voice name currently set (we skip a redundant SetVoiceByName).
+    current_voice: Option<String>,
+}
+
+// SAFETY: every method that touches espeak's global C state runs under the
+// outer `Mutex<Option<EspeakLib>>`, so the raw fn pointers are never called
+// concurrently. The library handle itself is `Send`/`Sync` via libloading.
+unsafe impl Send for EspeakLib {}
+
+impl EspeakLib {
+    /// dlopen the espeak-ng shared lib at `lib_path`, resolve symbols, and run
+    /// `espeak_Initialize` with `data_dir` (the directory that CONTAINS
+    /// `espeak-ng-data`). Returns the ready library on success.
+    fn load(lib_path: &Path, data_dir: Option<&Path>) -> PhonemizeResult<Self> {
+        // Tauri's `resource_dir()` returns `\\?\…` verbatim paths; espeak-ng's C
+        // path code joins with `/` and can't open those (the prefix disables
+        // separator normalization), so clean the lib path before dlopen.
+        let lib_path = strip_unc_prefix(lib_path);
+        // espeak-ng's C library calls `exit(1)` — taking down the WHOLE process —
+        // when it can't load `phontab`. So resolve the real data-home dir (the
+        // one that DIRECTLY contains `phontab`) up front and REFUSE to init when
+        // it's missing, degrading to "TTS unavailable" instead of crashing.
+        let Some(data_home) = data_dir.and_then(resolve_espeak_data_home) else {
+            return Err(PhonemizeError::EspeakUnavailable(format!(
+                "espeak-ng data (phontab) not found for {data_dir:?}; refusing to \
+                 init (espeak-ng exit(1)s the process on missing phoneme data)"
+            )));
+        };
+        // SAFETY: loading a trusted, app-shipped DLL; symbol signatures match
+        // speak_lib.h (verified against phonemizer's ctypes bindings in api.py).
+        unsafe {
+            let lib = libloading::Library::new(&lib_path).map_err(|e| {
+                PhonemizeError::EspeakUnavailable(format!(
+                    "dlopen {} failed: {e}",
+                    lib_path.display()
+                ))
+            })?;
+            let initialize = *lib
+                .get::<unsafe extern "C" fn(c_int, c_int, *const c_char, c_int) -> c_int>(
+                    b"espeak_Initialize\0",
+                )
+                .map_err(|e| {
+                    PhonemizeError::EspeakUnavailable(format!("espeak_Initialize: {e}"))
+                })?;
+            let set_voice_by_name = *lib
+                .get::<unsafe extern "C" fn(*const c_char) -> c_int>(b"espeak_SetVoiceByName\0")
+                .map_err(|e| {
+                    PhonemizeError::EspeakUnavailable(format!("espeak_SetVoiceByName: {e}"))
+                })?;
+            let text_to_phonemes = *lib
+                .get::<unsafe extern "C" fn(*mut *const c_char, c_int, c_int) -> *const c_char>(
+                    b"espeak_TextToPhonemes\0",
+                )
+                .map_err(|e| {
+                    PhonemizeError::EspeakUnavailable(format!("espeak_TextToPhonemes: {e}"))
+                })?;
+
+            // This espeak-ng build sets `path_home = path` DIRECTLY (it does not
+            // append `espeak-ng-data`) — the same convention as the Electron
+            // `espeakng_loader` + phonemizer, which init with `get_data_path()`
+            // (the `espeak-ng-data` dir itself). `data_home` already points AT
+            // that dir (it holds `phontab`), so pass it verbatim.
+            let data_c = CString::new(data_home.to_string_lossy().as_bytes()).map_err(|_| {
+                PhonemizeError::EspeakUnavailable("data path contained a NUL byte".into())
+            })?;
+            // returns the sample rate (>0) on success, or -1 (EE_INTERNAL_ERROR).
+            let rate = initialize(ESPEAK_AUDIO_OUTPUT_SYNCHRONOUS, 0, data_c.as_ptr(), 0);
+            if rate <= 0 {
+                return Err(PhonemizeError::EspeakFailed(format!(
+                    "espeak_Initialize returned {rate} (data home {})",
+                    data_home.display()
+                )));
+            }
+            Ok(Self {
+                _lib: lib,
+                syms: EspeakSyms {
+                    initialize,
+                    set_voice_by_name,
+                    text_to_phonemes,
+                },
+                current_voice: None,
+            })
+        }
+    }
+
+    /// Select `voice` (an espeak voice name like `en-us`) if not already active.
+    fn set_voice(&mut self, voice: &str) -> PhonemizeResult<()> {
+        if self.current_voice.as_deref() == Some(voice) {
+            return Ok(());
+        }
+        let c_voice = CString::new(voice)
+            .map_err(|_| PhonemizeError::EspeakFailed("voice name had a NUL byte".into()))?;
+        // SAFETY: serialized by the outer Mutex; pointer valid for the call.
+        let err = unsafe { (self.syms.set_voice_by_name)(c_voice.as_ptr()) };
+        if err != 0 {
+            return Err(PhonemizeError::EspeakFailed(format!(
+                "espeak_SetVoiceByName('{voice}') → {err}"
+            )));
+        }
+        self.current_voice = Some(voice.to_string());
+        Ok(())
+    }
+
+    /// Phonemize `text` for the already-selected voice, returning the raw
+    /// `_`-separated IPA string (caller runs `clean_espeak_ipa`). Mirrors
+    /// `EspeakWrapper.text_to_phonemes`: loop until the text pointer is NULL.
+    fn text_to_phonemes(&self, text: &str) -> PhonemizeResult<String> {
+        let c_text = CString::new(text)
+            .map_err(|_| PhonemizeError::EspeakFailed("text had a NUL byte".into()))?;
+        // espeak advances this pointer through the buffer; NULL when done.
+        let mut text_ptr: *const c_char = c_text.as_ptr();
+        let mut out = String::new();
+        // SAFETY: serialized by the outer Mutex; `text_ptr` stays valid because
+        // `c_text` outlives the loop, and espeak only reads through it.
+        unsafe {
+            // Bound the loop defensively (espeak returns chunks; a sane sentence
+            // is < a few hundred chunks). Prevents a hang on a pathological lib.
+            for _ in 0..100_000 {
+                if text_ptr.is_null() {
+                    break;
+                }
+                let ph = (self.syms.text_to_phonemes)(
+                    &mut text_ptr,
+                    ESPEAK_CHARS_UTF8,
+                    ESPEAK_PHONEMES_IPA,
+                );
+                if !ph.is_null() {
+                    let chunk = CStr::from_ptr(ph).to_string_lossy();
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str(&chunk);
+                }
+                if text_ptr.is_null() {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// In-process espeak-ng phonemizer (the default). Lazily dlopens the espeak-ng
+/// shared library on first use and reuses it for every sentence (no spawn).
+pub struct EspeakLibPhonemizer {
+    inner: Mutex<EspeakLibState>,
+}
+
+enum EspeakLibState {
+    /// Not yet loaded; carries the resolved (lib_path, data_dir) to try.
+    Pending { lib_path: PathBuf, data_dir: Option<PathBuf> },
+    /// Loaded + initialized.
+    Loaded(EspeakLib),
+    /// Load was attempted and failed — remember so we don't retry every call.
+    Failed,
+}
+
+impl EspeakLibPhonemizer {
+    /// Build from a resolved library + data dir (the dir CONTAINING
+    /// `espeak-ng-data`, or None to let espeak use its built-in default).
+    pub fn new(lib_path: PathBuf, data_dir: Option<PathBuf>) -> Self {
+        Self {
+            inner: Mutex::new(EspeakLibState::Pending { lib_path, data_dir }),
+        }
+    }
+
+    /// Resolve the espeak-ng shared library + data dir from the environment and
+    /// common install locations (incl. the Electron app's `espeakng_loader`
+    /// bundle), if any. Returns None when no shared lib can be found.
+    pub fn discover() -> Option<Self> {
+        let (lib_path, data_dir) = resolve_espeak_lib()?;
+        Some(Self::new(lib_path, data_dir))
+    }
+
+    /// Run `f` against the loaded library, loading it on first use.
+    fn with_lib<T>(
+        &self,
+        f: impl FnOnce(&mut EspeakLib) -> PhonemizeResult<T>,
+    ) -> PhonemizeResult<T> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| PhonemizeError::EspeakFailed("espeak lib mutex poisoned".into()))?;
+        // Promote Pending → Loaded/Failed once.
+        if let EspeakLibState::Pending { lib_path, data_dir } = &*guard {
+            let lib_path = lib_path.clone();
+            let data_dir = data_dir.clone();
+            match EspeakLib::load(&lib_path, data_dir.as_deref()) {
+                Ok(lib) => *guard = EspeakLibState::Loaded(lib),
+                Err(e) => {
+                    *guard = EspeakLibState::Failed;
+                    return Err(e);
+                }
+            }
+        }
+        match &mut *guard {
+            EspeakLibState::Loaded(lib) => f(lib),
+            EspeakLibState::Failed => {
+                Err(PhonemizeError::EspeakUnavailable("espeak-ng shared lib unavailable".into()))
+            }
+            EspeakLibState::Pending { .. } => unreachable!("promoted above"),
+        }
+    }
+}
+
+impl Phonemizer for EspeakLibPhonemizer {
+    fn phonemize(&self, text: &str, lang: &str) -> PhonemizeResult<String> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
+        let espeak_lang = espeak_lang_for(lang);
+        self.with_lib(|lib| {
+            lib.set_voice(espeak_lang)?;
+            let raw = lib.text_to_phonemes(trimmed)?;
+            Ok(clean_espeak_ipa(&raw))
+        })
+    }
+
+    fn is_available(&self) -> bool {
+        // Probe by actually loading the lib (cached after the first attempt).
+        self.with_lib(|_| Ok(())).is_ok()
+    }
+}
+
+/// Resolve the espeak-ng shared library path + the directory CONTAINING
+/// `espeak-ng-data`. Precedence (parity with `phonemizer`'s lookup):
+///   1. `ESPEAK_NG_LIBRARY` / `PHONEMIZER_ESPEAK_LIBRARY` / `WINSTT_ESPEAK_LIB`
+///      explicit shared-lib path (+ `ESPEAK_DATA_PATH` / `PHONEMIZER_ESPEAK_DATA_PATH`).
+///   2. The Electron app's `espeakng_loader` bundle under
+///      `%LOCALAPPDATA%/winstt/tts/runtime/espeakng_loader/` (what ships today).
+///   3. Common system install dirs (`C:\Program Files\eSpeak NG\`, PATH).
+/// Returns None if no shared lib is found (caller falls back to CLI / null).
+pub fn resolve_espeak_lib() -> Option<(PathBuf, Option<PathBuf>)> {
+    let lib_name = espeak_shared_lib_name();
+
+    // (1) explicit lib path override.
+    for var in ["ESPEAK_NG_LIBRARY", "PHONEMIZER_ESPEAK_LIBRARY", "WINSTT_ESPEAK_LIB"] {
+        if let Ok(p) = std::env::var(var) {
+            let p = p.trim();
+            if !p.is_empty() && Path::new(p).exists() {
+                return Some((PathBuf::from(p), explicit_data_dir(Path::new(p))));
+            }
+        }
+    }
+
+    // Candidate dirs that may contain the shared lib (+ its espeak-ng-data).
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    // (2) the Electron espeakng_loader bundle (the file actually present today).
+    if let Some(local) = local_app_data() {
+        dirs.push(local.join("winstt/tts/runtime/espeakng_loader"));
+    }
+    // also honor an explicit data-path env that points at espeakng_loader.
+    if let Ok(dp) = std::env::var("ESPEAK_DATA_PATH") {
+        let dp = PathBuf::from(dp);
+        // dp may be the espeak-ng-data dir itself or its parent; try the parent.
+        if let Some(parent) = dp.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+        dirs.push(dp);
+    }
+    // (3) common Windows install locations.
+    dirs.push(PathBuf::from(r"C:\Program Files\eSpeak NG"));
+    dirs.push(PathBuf::from(r"C:\Program Files (x86)\eSpeak NG"));
+
+    for dir in dirs {
+        let lib = dir.join(&lib_name);
+        if lib.exists() {
+            return Some((lib, espeak_data_dir_for(&dir)));
+        }
+    }
+    None
+}
+
+/// The espeak-ng shared-lib filename for the current platform.
+fn espeak_shared_lib_name() -> String {
+    #[cfg(windows)]
+    {
+        "espeak-ng.dll".to_string()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "libespeak-ng.dylib".to_string()
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        "libespeak-ng.so".to_string()
+    }
+}
+
+/// The data dir to pass to `espeak_Initialize` (the parent of `espeak-ng-data`).
+/// `espeakng_loader` ships `espeak-ng-data` right beside the lib, so the lib's
+/// own directory is the correct parent.
+fn espeak_data_dir_for(lib_dir: &Path) -> Option<PathBuf> {
+    if lib_dir.join("espeak-ng-data").is_dir() {
+        Some(lib_dir.to_path_buf())
+    } else {
+        None
+    }
+}
+
+/// The directory espeak-ng must use as its data home — the one that DIRECTLY
+/// contains `phontab`. This espeak-ng build sets `path_home = path` without
+/// appending `espeak-ng-data` (matching the Electron `espeakng_loader` +
+/// phonemizer, which init with `get_data_path()` = the `espeak-ng-data` dir
+/// itself). The resolver hands us either that dir or its parent (the lib dir,
+/// with `espeak-ng-data` beside it), so accept both. Returns None when `phontab`
+/// can't be located — the caller MUST NOT then call `espeak_Initialize`, which
+/// `exit(1)`s the whole process on missing phoneme data.
+fn resolve_espeak_data_home(data_dir: &Path) -> Option<PathBuf> {
+    let base = strip_unc_prefix(data_dir);
+    if base.join("phontab").is_file() {
+        return Some(base);
+    }
+    let nested = base.join("espeak-ng-data");
+    if nested.join("phontab").is_file() {
+        return Some(nested);
+    }
+    None
+}
+
+/// Strip Windows' `\\?\` verbatim (extended-length) path prefix. espeak-ng's C
+/// code joins paths with `/`, which a `\\?\` path rejects (the prefix disables
+/// separator normalization), so paths from Tauri's `resource_dir()` must be
+/// cleaned before crossing into espeak. No-op on non-prefixed paths.
+fn strip_unc_prefix(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        // UNC form: `\\?\UNC\server\share` → `\\server\share`.
+        if let Some(unc) = rest.strip_prefix(r"UNC\") {
+            return PathBuf::from(format!(r"\\{unc}"));
+        }
+        return PathBuf::from(rest);
+    }
+    p.to_path_buf()
+}
+
+/// Derive the data dir for an explicit lib path, honoring `ESPEAK_DATA_PATH` /
+/// `PHONEMIZER_ESPEAK_DATA_PATH`, else the lib's own directory.
+fn explicit_data_dir(lib_path: &Path) -> Option<PathBuf> {
+    for var in ["ESPEAK_DATA_PATH", "PHONEMIZER_ESPEAK_DATA_PATH"] {
+        if let Ok(dp) = std::env::var(var) {
+            let dp = PathBuf::from(dp.trim());
+            if dp.join("espeak-ng-data").is_dir() {
+                return Some(dp);
+            }
+            if let Some(parent) = dp.parent() {
+                if parent.join("espeak-ng-data").is_dir() {
+                    return Some(parent.to_path_buf());
+                }
+            }
+        }
+    }
+    lib_path.parent().and_then(|d| espeak_data_dir_for(d))
+}
+
+/// `%LOCALAPPDATA%` (Windows) — used to find the espeakng_loader bundle.
+fn local_app_data() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+}
+
+// ---------------------------------------------------------------------------
 // Null backend (deterministic, no native dep) — test + degraded fallback
 // ---------------------------------------------------------------------------
 
@@ -241,15 +662,25 @@ impl Phonemizer for NullPhonemizer {
     }
 }
 
-/// Pick the best available phonemizer: espeak-ng if present, else the null
-/// fallback. The host calls this once at engine warm-up and keeps the choice.
+/// Pick the best available phonemizer, in preference order:
+///   1. `EspeakLibPhonemizer` — in-process espeak-ng shared lib (the Electron
+///      path; byte-identical phonemes, NO per-sentence subprocess). This is the
+///      fast + parity default whenever the espeak-ng .dll/.so is discoverable.
+///   2. `EspeakCliPhonemizer` — a system `espeak-ng` CLI binary, if one exists
+///      (process-separated; slower on short sentences but still correct G2P).
+///   3. `NullPhonemizer` — deterministic degraded fallback (poor pronunciation).
+/// The host calls this once at engine warm-up and keeps the choice.
 pub fn default_phonemizer() -> Box<dyn Phonemizer> {
-    let espeak = EspeakCliPhonemizer::default();
-    if espeak.is_available() {
-        Box::new(espeak)
-    } else {
-        Box::new(NullPhonemizer)
+    if let Some(lib) = EspeakLibPhonemizer::discover() {
+        if lib.is_available() {
+            return Box::new(lib);
+        }
     }
+    let cli = EspeakCliPhonemizer::default();
+    if cli.is_available() {
+        return Box::new(cli);
+    }
+    Box::new(NullPhonemizer)
 }
 
 // ---------------------------------------------------------------------------
@@ -440,5 +871,41 @@ mod tests {
     #[test]
     fn null_phonemizer_is_always_available() {
         assert!(NullPhonemizer.is_available());
+    }
+
+    #[test]
+    fn espeak_shared_lib_name_is_platform_correct() {
+        let name = espeak_shared_lib_name();
+        #[cfg(windows)]
+        assert_eq!(name, "espeak-ng.dll");
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert_eq!(name, "libespeak-ng.so");
+        #[cfg(target_os = "macos")]
+        assert_eq!(name, "libespeak-ng.dylib");
+    }
+
+    #[test]
+    fn espeak_data_dir_for_requires_espeak_ng_data_subdir() {
+        let dir = std::env::temp_dir();
+        // A random temp dir has no espeak-ng-data → None.
+        assert!(espeak_data_dir_for(&dir).is_none());
+        // Create one and confirm it's detected.
+        let probe = dir.join(format!("winstt_espeak_probe_{}", std::process::id()));
+        let data = probe.join("espeak-ng-data");
+        std::fs::create_dir_all(&data).unwrap();
+        assert_eq!(espeak_data_dir_for(&probe), Some(probe.clone()));
+        let _ = std::fs::remove_dir_all(&probe);
+    }
+
+    #[test]
+    fn lib_phonemizer_pending_then_failed_on_bad_path() {
+        // A non-existent lib path → is_available() false, no panic, cached Failed.
+        let p = EspeakLibPhonemizer::new(
+            PathBuf::from("Z:/definitely/missing/espeak-ng.dll"),
+            None,
+        );
+        assert!(!p.is_available());
+        // Second call must also be false (Failed state is sticky).
+        assert!(p.phonemize("hello", "en-us").is_err());
     }
 }

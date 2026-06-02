@@ -63,7 +63,20 @@ fn build_system_prompt(prompt_template: &str) -> String {
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+/// Telemetry captured while the LLM post-processes a transcription, surfaced in
+/// the history footer (model + how long it took + generation speed). `model` is
+/// the configured model id (the renderer derives the maker logo from it);
+/// `completion_tokens` is `None` when the provider didn't report `usage`.
+pub(crate) struct PostProcessMeta {
+    pub model: String,
+    pub duration_ms: i64,
+    pub completion_tokens: Option<i64>,
+}
+
+async fn post_process_transcription(
+    settings: &AppSettings,
+    transcription: &str,
+) -> Option<(String, PostProcessMeta)> {
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
         None => {
@@ -141,6 +154,16 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         _ => (None, None),
     };
 
+    // Wall-clock for the LLM round-trip — the footer's "processing time", and
+    // the denominator for tokens/s. Started right before the request so it
+    // excludes the (negligible) prompt assembly above.
+    let started = Instant::now();
+    let build_meta = |completion_tokens: Option<i64>| PostProcessMeta {
+        model: model.clone(),
+        duration_ms: started.elapsed().as_millis() as i64,
+        completion_tokens,
+    };
+
     if provider.supports_structured_output {
         debug!("Using structured outputs for provider '{}'", provider.id);
 
@@ -174,7 +197,9 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 "Apple Intelligence post-processing succeeded. Output length: {} chars",
                                 result.len()
                             );
-                            Some(result)
+                            // Apple Intelligence runs on-device via Swift APIs and
+                            // exposes no token usage — report model + duration only.
+                            Some((result, build_meta(None)))
                         }
                     }
                     Err(err) => {
@@ -216,7 +241,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         )
         .await
         {
-            Ok(Some(content)) => {
+            Ok((Some(content), tokens)) => {
                 // Parse the JSON response to extract the transcription field
                 match serde_json::from_str::<serde_json::Value>(&content) {
                     Ok(json) => {
@@ -229,10 +254,10 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 provider.id,
                                 result.len()
                             );
-                            return Some(result);
+                            return Some((result, build_meta(tokens)));
                         } else {
                             error!("Structured output response missing 'transcription' field");
-                            return Some(strip_invisible_chars(&content));
+                            return Some((strip_invisible_chars(&content), build_meta(tokens)));
                         }
                     }
                     Err(e) => {
@@ -240,11 +265,11 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                             "Failed to parse structured output JSON: {}. Returning raw content.",
                             e
                         );
-                        return Some(strip_invisible_chars(&content));
+                        return Some((strip_invisible_chars(&content), build_meta(tokens)));
                     }
                 }
             }
-            Ok(None) => {
+            Ok((None, _)) => {
                 error!("LLM API response has no content");
                 return None;
             }
@@ -272,16 +297,16 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
     )
     .await
     {
-        Ok(Some(content)) => {
+        Ok((Some(content), tokens)) => {
             let content = strip_invisible_chars(&content);
             debug!(
                 "LLM post-processing succeeded for provider '{}'. Output length: {} chars",
                 provider.id,
                 content.len()
             );
-            Some(content)
+            Some((content, build_meta(tokens)))
         }
-        Ok(None) => {
+        Ok((None, _)) => {
             error!("LLM API response has no content");
             None
         }
@@ -297,21 +322,24 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
 }
 
 async fn maybe_convert_chinese_variant(
-    settings: &AppSettings,
+    selected_language: &str,
     transcription: &str,
 ) -> Option<String> {
-    // Check if language is set to Simplified or Traditional Chinese
-    let is_simplified = settings.selected_language == "zh-Hans";
-    let is_traditional = settings.selected_language == "zh-Hant";
+    // Check if language is set to Simplified or Traditional Chinese. The language is sourced
+    // from WinsttSettings.model.language (the single language store) by the caller — AppSettings
+    // .selected_language is no longer written by the WinSTT renderer, so reading it here would
+    // mean this zh-variant conversion never fired.
+    let is_simplified = selected_language == "zh-Hans";
+    let is_traditional = selected_language == "zh-Hant";
 
     if !is_simplified && !is_traditional {
-        debug!("selected_language is not Simplified or Traditional Chinese; skipping translation");
+        debug!("language is not Simplified or Traditional Chinese; skipping translation");
         return None;
     }
 
     debug!(
         "Starting Chinese translation using OpenCC for language: {}",
-        settings.selected_language
+        selected_language
     );
 
     // Use OpenCC to convert based on selected language
@@ -344,6 +372,11 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    /// JSON telemetry of the LLM pass (`{model, processingMs, tokens}`), or
+    /// `None` when no LLM ran (raw transcript, Chinese-variant convert, or
+    /// snippet-only expansion). Persisted to `transcription_history.llm_meta`
+    /// and reshaped into the history footer's model/duration/speed chips.
+    pub llm_meta: Option<String>,
 }
 
 pub(crate) async fn process_transcription_output(
@@ -355,15 +388,34 @@ pub(crate) async fn process_transcription_output(
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
+    let mut llm_meta: Option<String> = None;
 
-    if let Some(converted_text) = maybe_convert_chinese_variant(&settings, transcription).await {
+    // Source the language from the single store (WinsttSettings.model.language). AppSettings
+    // .selected_language is no longer written by the renderer, so the zh-variant convert reads
+    // the canonical picker value.
+    let selected_language = crate::winstt::commands::settings::read_settings(app)
+        .model
+        .language;
+    if let Some(converted_text) =
+        maybe_convert_chinese_variant(&selected_language, transcription).await
+    {
         final_text = converted_text;
     }
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
+        if let Some((processed_text, meta)) =
+            post_process_transcription(&settings, &final_text).await
+        {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
+            // Stash the model/timing/tokens for the history footer. `tokens`
+            // serializes to null when the provider reported no usage.
+            llm_meta = serde_json::to_string(&serde_json::json!({
+                "model": meta.model,
+                "processingMs": meta.duration_ms,
+                "tokens": meta.completion_tokens,
+            }))
+            .ok();
 
             if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
                 if let Some(prompt) = settings
@@ -392,6 +444,7 @@ pub(crate) async fn process_transcription_output(
         final_text,
         post_processed_text,
         post_process_prompt,
+        llm_meta,
     }
 }
 
@@ -641,6 +694,7 @@ impl ShortcutAction for TranscribeAction {
                                     post_process,
                                     processed.post_processed_text.clone(),
                                     processed.post_process_prompt.clone(),
+                                    processed.llm_meta.clone(),
                                 ) {
                                     error!("Failed to save history entry: {}", err);
                                 }
@@ -706,6 +760,7 @@ impl ShortcutAction for TranscribeAction {
                                     file_name,
                                     String::new(),
                                     post_process,
+                                    None,
                                     None,
                                     None,
                                 ) {

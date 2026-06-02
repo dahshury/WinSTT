@@ -1,4 +1,12 @@
-import { AiMagicIcon, AiSettingIcon, CpuIcon, SpeechToTextIcon } from "@hugeicons/core-free-icons";
+import {
+	AiMagicIcon,
+	AiSettingIcon,
+	CpuIcon,
+	FlashIcon,
+	InfinityIcon,
+	SpeechToTextIcon,
+	Timer01Icon,
+} from "@hugeicons/core-free-icons";
 import { isRealtimeViable, SttModelSelector } from "@picker";
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
@@ -456,13 +464,13 @@ function MainModelSection({
 									})
 								}
 								options={[
-									{ id: "immediately", label: t("modelUnloadImmediately") },
-									{ id: "never", label: t("modelUnloadNever") },
-									{ id: "min2", label: t("modelUnloadMin2") },
-									{ id: "min5", label: t("modelUnloadMin5") },
-									{ id: "min10", label: t("modelUnloadMin10") },
-									{ id: "min15", label: t("modelUnloadMin15") },
-									{ id: "hour1", label: t("modelUnloadHour1") },
+									{ id: "immediately", label: t("modelUnloadImmediately"), icon: FlashIcon },
+									{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
+									{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
+									{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
+									{ id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
+									{ id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
+									{ id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
 								]}
 								value={settings?.modelUnloadTimeout ?? "min5"}
 							/>

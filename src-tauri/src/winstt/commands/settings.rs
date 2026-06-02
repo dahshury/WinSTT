@@ -133,12 +133,13 @@ pub fn read_settings(app: &AppHandle) -> WinsttSettings {
 }
 
 /// Read the persisted settings WITHOUT opening secrets (the on-disk form, where the
-/// three secret fields are still sealed envelopes). Used only internally by the
-/// save path's old→new diff so the secret fields compare like-for-like (a sealed
-/// envelope vs. another sealed envelope) rather than triggering a spurious
-/// "changed" on every save. Mirrors `snapshotSettings` decrypting before the diff —
-/// here we keep BOTH sides sealed, which is equivalent for equality.
-fn read_settings_raw(app: &AppHandle) -> WinsttSettings {
+/// three secret fields are still sealed envelopes). Originally the save path's
+/// old→new diff helper (so sealed secret fields compare like-for-like rather than
+/// triggering a spurious "changed" on every save, mirroring `snapshotSettings`), it
+/// is now ALSO the secret-agnostic reader for the hot recording/realtime loops
+/// (`realtime_manager`, `recording_mode`) — those must NOT trigger per-tick secret
+/// decryption (reg.exe spawns), so they read raw. Hence `pub(crate)`.
+pub(crate) fn read_settings_raw(app: &AppHandle) -> WinsttSettings {
     let Ok(store) = app.store(store_path()) else {
         return WinsttSettings::default();
     };
@@ -146,6 +147,13 @@ fn read_settings_raw(app: &AppHandle) -> WinsttSettings {
         Some(value) => serde_json::from_value(value).unwrap_or_default(),
         None => WinsttSettings::default(),
     }
+}
+
+/// The current recording mode, read cheaply from the in-memory settings store (NO secret
+/// decryption). Used on the hotkey thread to decide whether to dispatch the recorder in-process
+/// (PTT) vs leaving it renderer/server-driven — so the press path stays fast.
+pub fn recording_mode(app: &AppHandle) -> RecordingMode {
+    read_settings_raw(app).general.recording_mode
 }
 
 /// Open (decrypt) the three secret fields on a settings tree in place. Idempotent
@@ -388,7 +396,10 @@ fn realtime_effective_changed(prev: &WinsttSettings, next: &WinsttSettings) -> b
 /// `isRealtimeEnabled({ showRecordingOverlay, liveTranscriptionDisplay })` ported
 /// from shared/lib/realtime-enabled.ts. The pill path ("in-pill"/"both") gates on
 /// the overlay being shown; in-app/both always render.
-fn effective_realtime(settings: &WinsttSettings) -> bool {
+///
+/// Public so the realtime worker (winstt::managers::realtime_manager) gates its decode
+/// loop on the SAME source of truth instead of duplicating the branch logic.
+pub fn effective_realtime(settings: &WinsttSettings) -> bool {
     let overlay = settings.general.show_recording_overlay;
     match settings.general.live_transcription_display {
         LiveTranscriptionDisplay::None => false,

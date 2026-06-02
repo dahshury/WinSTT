@@ -15,9 +15,9 @@ pub mod portable;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod splash;
 mod transcription_coordinator;
 mod tray;
-mod tray_i18n;
 mod utils;
 pub mod winstt;
 
@@ -86,12 +86,28 @@ fn build_console_filter() -> env_filter::Filter {
 }
 
 fn show_main_window(app: &AppHandle) {
+    // Hand off from the splash: the real window is about to be visible. Idempotent
+    // and a no-op if the page-load handler already closed it (mirrors Electron's
+    // showOnce → closeSplashWindow).
+    splash::close_splash_window(app);
     if let Some(main_window) = app.get_webview_window("main") {
         if let Err(e) = main_window.unminimize() {
             log::error!("Failed to unminimize webview window: {}", e);
         }
         if let Err(e) = main_window.show() {
             log::error!("Failed to show webview window: {}", e);
+        }
+        // Force the pill ABOVE every other app's window. On Windows `set_focus()`
+        // alone is unreliable when another process owns the foreground
+        // (SetForegroundWindow is restricted to the foreground-owning process), so
+        // the window comes up *behind* whatever the user was typing into — the
+        // reported "doesn't get above the others" bug. Briefly toggling
+        // always-on-top reliably raises it; the pill isn't an always-on-top window,
+        // so we drop the flag again immediately after.
+        #[cfg(target_os = "windows")]
+        {
+            let _ = main_window.set_always_on_top(true);
+            let _ = main_window.set_always_on_top(false);
         }
         if let Err(e) = main_window.set_focus() {
             log::error!("Failed to focus webview window: {}", e);
@@ -169,12 +185,27 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Seed WinSTT settings defaults BEFORE managers read them (first-run materialization).
     winstt::commands::settings::seed_defaults(app_handle);
 
+    // Point the TTS phonemizer at the BUNDLED espeak-ng (src-tauri/resources/espeakng_loader/,
+    // shipped via tauri.conf `resources/**/*`) for PACKAGED builds — the in-process FFI resolver
+    // (phonemize.rs::resolve_espeak_lib) reads ESPEAK_NG_LIBRARY first and finds espeak-ng-data as
+    // the lib's sibling. Dev already resolves the %LOCALAPPDATA% extraction, so this only fills the
+    // shipping gap; best-effort — if the resource isn't present we leave it to the resolver's tiers.
+    if std::env::var_os("ESPEAK_NG_LIBRARY").is_none() {
+        if let Ok(res_dir) = app_handle.path().resource_dir() {
+            let lib = res_dir.join("resources/espeakng_loader/espeak-ng.dll");
+            if lib.exists() {
+                std::env::set_var("ESPEAK_NG_LIBRARY", &lib);
+                log::info!("[tts] using bundled espeak-ng at {}", lib.display());
+            }
+        }
+    }
+
     // ── WinSTT managers (lib_wiring.md §2) ──
     {
         use crate::winstt::managers::{
             CloudSttManager, ContextManager, DiarizationManager, DownloadManager,
-            FileTranscribeManager, LlmManager, LoopbackManager, TtsManager, WakeWordManager,
-            WordAligner,
+            FileTranscribeManager, LlmManager, LoopbackManager, RealtimeManager, TtsManager,
+            WakeWordManager, WordAligner,
         };
         app_handle.manage(Arc::new(LlmManager::new(app_handle)));
         app_handle.manage(Arc::new(CloudSttManager::new(app_handle)));
@@ -190,6 +221,19 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         )));
         // C4 fix: DownloadManager MUST be managed or the 6 download commands panic on State injection.
         app_handle.manage(Arc::new(DownloadManager::new(app_handle)));
+
+        // ── Realtime streaming transcription worker ──
+        // Reuses the MAIN transcription engine (single-engine port — no separate realtime
+        // engine) + the recording manager's live-audio mirror. Spawn the daemon thread ONCE
+        // here (like the idle-unload watcher); it idles cheaply unless a recording is active
+        // AND effective-realtime is enabled.
+        let realtime_manager = Arc::new(RealtimeManager::new(
+            app_handle.clone(),
+            transcription_manager.clone(),
+            recording_manager.clone(),
+        ));
+        realtime_manager.start();
+        app_handle.manage(realtime_manager);
     }
     // Tray-menu placement state + the custom-HTML-tray + history live-event bridge.
     app_handle.manage(crate::winstt::commands::tray_menu::TrayMenuAnchor::default());
@@ -253,21 +297,42 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         .icon_as_template(true)
         // WinSTT uses its OWN transparent HTML tray menu (views/tray-menu), NOT Handy's
         // native OS context menu (the user's complaint: "tray menu matches Handy not my
-        // Electron menu"). No native menu is attached (see tray.rs::update_tray_menu),
-        // and any tray click TOGGLES the custom HTML tray window at the cursor. The
-        // WinSTT TrayMenu renderer drives settings/quit/model-select/etc. via its own IPC.
+        // Electron menu"). No native menu is attached (see tray.rs::update_tray_menu).
+        //
+        // Click routing mirrors the Electron tray (electron/ipc/tray.ts):
+        //   - LEFT click / DOUBLE click → show + raise the main window
+        //     (`tray.on("click", () => win.show())`).
+        //   - RIGHT click → toggle the custom HTML tray menu at the cursor
+        //     (`tray.on("right-click", … showTrayMenuAt)`).
+        // Previously ANY click toggled the menu, so a left/double-click popped the menu
+        // instead of showing the app — the reported bug.
         .on_tray_icon_event(|tray_handle, event| {
-            if let tauri::tray::TrayIconEvent::Click {
-                button_state: tauri::tray::MouseButtonState::Up,
-                position,
-                ..
-            } = event
-            {
-                crate::winstt::commands::tray_menu::toggle_tray_menu_at_physical(
-                    tray_handle.app_handle(),
-                    position.x,
-                    position.y,
-                );
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+                | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    show_main_window(tray_handle.app_handle());
+                }
+                TrayIconEvent::Click {
+                    button: MouseButton::Right,
+                    button_state: MouseButtonState::Up,
+                    position,
+                    ..
+                } => {
+                    crate::winstt::commands::tray_menu::toggle_tray_menu_at_physical(
+                        tray_handle.app_handle(),
+                        position.x,
+                        position.y,
+                    );
+                }
+                _ => {}
             }
         })
         .build(app_handle)
@@ -301,8 +366,23 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let _ = autostart_manager.disable();
     }
 
-    // Create the recording overlay window (hidden by default)
-    utils::create_recording_overlay(app_handle);
+    // AUDIT #9: Handy's separate `recording_overlay` window is no longer created — the
+    // WinSTT recording pill is the React `overlay` WebviewWindow, and every show path
+    // already redirected to it (see overlay.rs). The old window could never appear yet
+    // still received per-frame mic levels no renderer listened to.
+
+    // Eagerly load + WARM the STT engine at boot so the user's FIRST PTT decode is warm — no
+    // model-load + cold DirectML-kernel JIT serialized after release (the ~10x first-dictation
+    // gap vs the Electron app, whose server warms at boot). Off-thread so setup isn't blocked;
+    // `initiate_model_load` is idempotent (a later PTT-press load is a no-op) and `warmup` skips
+    // cleanly for cloud ids / failed loads. Mirrors the Electron server's boot `recorder.warmup()`.
+    {
+        let tm = transcription_manager.clone();
+        std::thread::spawn(move || {
+            tm.initiate_model_load(); // spawns its own background load thread
+            tm.warmup(); // waits out that load, then dummy-decodes to compile kernels
+        });
+    }
 }
 
 #[tauri::command]
@@ -324,16 +404,11 @@ fn show_main_window_command(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(cli_args: CliArgs) {
-    // Detect portable mode before anything else
-    portable::init();
-
-    // Parse console logging directives from RUST_LOG, falling back to info-level logging
-    // when the variable is unset
-    let console_filter = build_console_filter();
-
-    let specta_builder = Builder::<tauri::Wry>::new()
+/// Build the tauri-specta `Builder` with the full command + event registry.
+/// Single source of truth for both `run()` (which mounts it on the live app) and
+/// the `export_bindings` test (which calls `.export(...)` without starting the app).
+pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             shortcut::change_binding,
             shortcut::reset_binding,
@@ -387,6 +462,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,
             show_main_window_command,
+            tray::copy_last_transcript,
             commands::cancel_operation,
             commands::is_portable,
             commands::get_app_dir_path,
@@ -538,6 +614,7 @@ pub fn run(cli_args: CliArgs) {
             winstt::commands::windows::winstt_diag,
             winstt::commands::windows::open_window,
             winstt::commands::windows::close_window,
+            winstt::commands::windows::close_self_window,
             winstt::commands::windows::resize_window,
             winstt::commands::windows::anchor_window,
             winstt::commands::onboarding::onboarding_finish,
@@ -563,7 +640,20 @@ pub fn run(cli_args: CliArgs) {
             winstt::commands::events::VadSensitivityAdaptedPayload,
             winstt::commands::events::TtsLifecyclePayload,
             winstt::commands::events::FileTranscribeProgressPayload,
-        ]);
+        ])
+}
+
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run(cli_args: CliArgs) {
+    // Detect portable mode before anything else
+    portable::init();
+
+    // Parse console logging directives from RUST_LOG, falling back to info-level logging
+    // when the variable is unset
+    let console_filter = build_console_filter();
+
+    let specta_builder = make_specta_builder();
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     specta_builder
@@ -644,9 +734,21 @@ pub fn run(cli_args: CliArgs) {
         .setup(move |app| {
             specta_builder.mount_events(app);
 
+            // Show the startup splash the instant setup begins — BEFORE the slow
+            // path (initialize_core_logic + prewarm_windows building all 8
+            // secondary WebView2 windows + Enigo init) and before the main pill
+            // paints. Ported from the Electron in-app splash (splash-window.ts);
+            // closed by the main window's on_page_load(Finished) below (with a
+            // 30 s backstop inside create_splash_window).
+            let app_handle_for_splash = app.handle().clone();
+            if !cli_args.start_hidden {
+                splash::create_splash_window(&app_handle_for_splash);
+            }
+
             // Create main window programmatically so we can set data_directory
             // for portable mode (redirects WebView2 cache to portable Data dir)
             // WinSTT main window: 420x150 frameless floating pill (windows.rs WINDOW_SPECS[main]).
+            let app_handle_for_page_load = app.handle().clone();
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title("WinSTT")
@@ -655,6 +757,14 @@ pub fn run(cli_args: CliArgs) {
                     .resizable(false)
                     .decorations(false)
                     .maximizable(false)
+                    // Hand off from the splash the moment the main pill's page
+                    // finishes loading (the renderer has painted), mirroring the
+                    // Electron `showOnce` → `closeSplashWindow`. Idempotent.
+                    .on_page_load(move |_w, payload| {
+                        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                            splash::close_splash_window(&app_handle_for_page_load);
+                        }
+                    })
                     .visible(false);
 
             if let Some(data_dir) = portable::data_dir() {
@@ -685,13 +795,6 @@ pub fn run(cli_args: CliArgs) {
             // the dictation/cancel hotkeys are NEVER registered and pressing them does nothing.
             // Must run BEFORE the transforms hook below so HandyKeysState is initialized first.
             crate::shortcut::init_shortcuts(&app_handle);
-
-            // Pre-create every secondary window (hidden) here in setup. Building a webview
-            // lazily inside the `open_window` command hangs on Windows (WebView2 needs the
-            // main-thread message loop the sync command blocks) → blank windows. Creating
-            // them at startup, off the command path, makes `open_window` a pure show().
-            // Mirrors Handy's eager-create + show/hide model.
-            winstt::commands::windows::prewarm_windows(&app_handle);
 
             // Initialize Enigo (keyboard simulation used to PASTE the transcription) at
             // startup. On macOS this needs accessibility permission so Handy left it to a
@@ -756,22 +859,61 @@ pub fn run(cli_args: CliArgs) {
                 show_main_window(&app_handle);
             }
 
+            // AUDIT #6: prewarm the secondary windows AFTER showing the pill so first
+            // paint isn't blocked by building 8 WebView2 instances. `prewarm_windows`
+            // builds `overlay` + `tray-menu` eagerly and defers the rest onto an idle
+            // `run_on_main_thread` callback (still eager, just off the critical path —
+            // NOT lazy-build-inside-open_window, which hangs on Windows). The webviews
+            // must still be pre-built so `open_window` is a pure show().
+            winstt::commands::windows::prewarm_windows(&app_handle);
+
             Ok(())
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 // Closing the MAIN pill quits the whole app (the user expects X to close it,
-                // not silently hide-to-tray). std::process::exit guarantees termination even if
-                // a background thread (wakeword tap / idle watcher / ORT) would stall a graceful
-                // app.exit — fixing the "unquittable / stuck in tray" complaint.
+                // not silently hide-to-tray — KEEP quit-on-X, do NOT hide-to-tray).
+                //
+                // AUDIT #18: route through `app.exit(0)` rather than `std::process::exit(0)`.
+                // `app.exit(0)` runs Tauri's graceful shutdown (RunEvent::ExitRequested →
+                // Exit) so the store plugin / history DB get a chance to flush — a raw
+                // `process::exit` skipped all of that. A background thread (wakeword tap /
+                // idle watcher / ORT) could in theory stall the graceful path, so a bounded
+                // watchdog thread escalates to a hard `process::exit(0)` if the graceful exit
+                // hasn't terminated the process within the deadline. Mirrors the Electron
+                // app.exit(0)+watchdog pattern. (No blocking joins are added to any Drop.)
                 if window.label() == "main" {
                     log::info!("Main window closed — exiting.");
-                    std::process::exit(0);
+                    // Watchdog: if graceful shutdown stalls, force-terminate. 3 s is far
+                    // longer than a healthy store/DB flush but short enough not to feel hung.
+                    std::thread::spawn(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(3000));
+                        log::warn!("Graceful exit stalled past 3s — forcing process exit.");
+                        std::process::exit(0);
+                    });
+                    window.app_handle().exit(0);
+                    return;
                 }
                 // Secondary windows (settings / pickers / overlay) just hide so the app keeps
                 // running for the hotkey.
                 api.prevent_close();
+
+                // Native close of Settings (Alt+F4 etc.) bypasses close_self_window. Release
+                // the pill's modal input lock BEFORE hiding so Windows reactivates the pill
+                // as the modal goes away (otherwise it drops behind other apps and looks
+                // closed), then raise it. See close_self_window for the ordering rationale.
+                let main_for_modal = if window.label() == "settings" {
+                    window.app_handle().get_webview_window("main")
+                } else {
+                    None
+                };
+                if let Some(main) = &main_for_modal {
+                    let _ = main.set_enabled(true);
+                }
                 let _res = window.hide();
+                if let Some(main) = &main_for_modal {
+                    let _ = main.set_focus();
+                }
 
                 #[cfg(target_os = "macos")]
                 {
@@ -807,4 +949,23 @@ pub fn run(cli_args: CliArgs) {
             }
             let _ = (app, event); // suppress unused warnings on non-macOS
         });
+}
+
+#[cfg(test)]
+mod bindings_export_tests {
+    use super::make_specta_builder;
+    use specta_typescript::{BigIntExportBehavior, Typescript};
+
+    /// Regenerates `src/bindings.ts` from the live command/event registry.
+    /// Run `cargo test` to refresh it; CI re-runs this then `git diff --exit-code
+    /// src/bindings.ts` asserts the checked-in file is up to date.
+    #[test]
+    fn export_bindings() {
+        make_specta_builder()
+            .export(
+                Typescript::default().bigint(BigIntExportBehavior::Number),
+                "../src/bindings.ts",
+            )
+            .expect("Failed to export typescript bindings");
+    }
 }

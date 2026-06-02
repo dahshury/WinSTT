@@ -30,23 +30,26 @@
 // is byte-identical here: same decoder graph, only the encoder is the low-rank/factorized
 // variant which loads as-is.
 //
-// PERF NOTE (SPIKE): the Python reference binds past/present KV device-side via IoBinding to
-// avoid host round-trips per step. ort 2.0.0-rc.12 ships an IoBinding API
-// (session/io_binding.rs) but this impl uses the host-copy `Session::run` path
-// (correct-first; the spec-sanctioned escape hatch in 03_stt_engine.md §12) and carries
-// present→past forward host-side as owned tensors. The hot loop is isolated in
-// `decode_greedy` so the IoBinding upgrade is a localized swap once the spike confirms perf.
+// PERF/CORRECTNESS NOTE: decode binds the encoder output + past/present KV **device-resident**
+// via ort's IoBinding (session/io_binding.rs), faithful to onnx-asr `_hf.py` `_encode`/`_decode`
+// (`bind_ortvalue_input` / `bind_output(..., device)`). The earlier host-copy `Session::run` path
+// `.to_vec()`'d the encoder output AND every present.* KV back to host every token and re-fed them
+// — on DirectML that host↔device round-trip per layer per step was both catastrophically slow
+// (~14s vs 2.5s CPU for whisper-tiny on the JFK clip) AND *corrupted* the cache (DML produced pure
+// token garbage). Keeping them on-device fixes both: only `input_ids` (1 token) goes host→device and
+// `logits` comes host-side for argmax — exactly as the Python reference does. A fresh binding is
+// created per step (mirrors onnx-asr's per-`_decode` `io_binding()`); the device present.* outputs
+// are extracted as session-owned `DynValue`s (survive the binding drop) and rebound next step.
 
 #![allow(dead_code)]
 
-use std::borrow::Cow;
 use std::path::Path;
 
 use ort::ep::ExecutionProviderDispatch;
-use ort::memory::Allocator;
+use ort::memory::{AllocationDevice, Allocator, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::builder::GraphOptimizationLevel;
-use ort::session::{Session, SessionInputValue};
-use ort::value::{Tensor, TensorRef, ValueType};
+use ort::session::Session;
+use ort::value::{DynValue, Tensor, ValueType};
 
 use super::mel::{HOP_LENGTH, MelExtractor};
 use super::whisper_tokenizer::WhisperTokenizer;
@@ -80,6 +83,11 @@ pub struct WhisperEngine {
 	/// empty unless this is a `*_timestamped` export. Mirrors `_hf.py`
 	/// `_cross_attention_output_names` (sorted by trailing integer layer index).
 	cross_attn_names: Vec<String>,
+	/// Device the sessions run on, for binding the encoder output + KV-cache device-resident
+	/// (mirrors onnx-asr `_hf.py` `get_onnx_device`). `CPU` when no GPU EP is active; then
+	/// IoBinding simply binds host memory (still correct, ~same speed as the old host path).
+	device: AllocationDevice,
+	device_id: i32,
 	ready: bool,
 }
 
@@ -184,6 +192,7 @@ impl WhisperEngine {
 		}
 
 		let providers = cfg.providers.iter().map(provider_label).collect();
+		let (device, device_id) = device_for_providers(&cfg.providers);
 
 		Ok(Self {
 			model_name: cfg.model_name.clone(),
@@ -197,30 +206,50 @@ impl WhisperEngine {
 			has_use_cache_branch,
 			has_cross_attention,
 			cross_attn_names,
+			device,
+			device_id,
 			ready: true,
 		})
 	}
 
-	/// Encode mel features once → `last_hidden_state` carried host-side as (shape, f32 data).
-	fn encode(&mut self, audio: &[f32]) -> SttResult<(Vec<i64>, Vec<f32>)> {
+	/// Encode mel features once → **device-resident** `last_hidden_state` (`bind_output_to_device`,
+	/// never copied to host). Mirrors onnx-asr `_hf.py::_encode`. The returned `DynValue` is rebound
+	/// as the decoder's `encoder_hidden_states` every step with no host round-trip.
+	fn encode(&mut self, audio: &[f32]) -> SttResult<DynValue> {
 		let (feats, n_mels, n_frames) = self.mel.extract(audio);
 		// input_features: (1, n_mels, T).
 		let input = Tensor::from_array(([1usize, n_mels, n_frames], feats.into_boxed_slice()))
 			.map_err(|e| SttError::Inference(format!("encoder input tensor: {e}")))?;
-		let inputs: Vec<(Cow<'_, str>, SessionInputValue<'_>)> =
-			vec![(Cow::Borrowed("input_features"), SessionInputValue::from(input))];
-		let outputs = self
+		let dev_mem = self.device_mem()?;
+		let mut binding = self
 			.encoder
-			.run(inputs)
-			.map_err(|e| SttError::Inference(format!("encoder run: {e}")))?;
-		let hidden = outputs
-			.get("last_hidden_state")
-			.ok_or_else(|| SttError::Inference("encoder produced no last_hidden_state".into()))?;
-		let (shape, data) = hidden
-			.try_extract_tensor::<f32>()
-			.map_err(|e| SttError::Inference(format!("encoder output extract: {e}")))?;
-		let shape_i64: Vec<i64> = shape.to_vec();
-		Ok((shape_i64, data.to_vec()))
+			.create_binding()
+			.map_err(|e| SttError::Inference(format!("encoder binding: {e}")))?;
+		binding
+			.bind_input("input_features", &input)
+			.map_err(|e| SttError::Inference(format!("bind input_features: {e}")))?;
+		binding
+			.bind_output_to_device("last_hidden_state", &dev_mem)
+			.map_err(|e| SttError::Inference(format!("bind last_hidden_state: {e}")))?;
+		let mut outputs = self
+			.encoder
+			.run_binding(&binding)
+			.map_err(|e| SttError::Inference(format!("encoder run_binding: {e}")))?;
+		// DML/CUDA run_binding is async w.r.t. the device stream — block until the encoder output is
+		// actually written before we hand the device value to the decoder (else we read stale memory).
+		binding
+			.synchronize_outputs()
+			.map_err(|e| SttError::Inference(format!("encoder synchronize: {e}")))?;
+		outputs
+			.remove("last_hidden_state")
+			.ok_or_else(|| SttError::Inference("encoder produced no last_hidden_state".into()))
+	}
+
+	/// Device `MemoryInfo` for binding the encoder output + KV-cache resident on the session's
+	/// device (CPU when no GPU EP). Cheap to build; one per encode + one per decode call.
+	fn device_mem(&self) -> SttResult<MemoryInfo> {
+		MemoryInfo::new(self.device, self.device_id, AllocatorType::Device, MemoryType::Default)
+			.map_err(|e| SttError::Inference(format!("device mem info: {e}")))
 	}
 
 	/// Build the static decoder prompt for one utterance (mirrors `_base.py`).
@@ -251,9 +280,9 @@ impl WhisperEngine {
 	}
 
 	/// Short 3-token decode from `[sot]`; position-1 argmax = detected language token.
-	fn detect_language(&mut self, enc_shape: &[i64], enc_data: &[f32]) -> SttResult<i64> {
+	fn detect_language(&mut self, encoder_out: &DynValue) -> SttResult<i64> {
 		let prompt = vec![self.tokenizer.bos_token_id];
-		let tokens = self.decode_greedy(enc_shape, enc_data, prompt, 3)?;
+		let tokens = self.decode_greedy(encoder_out, prompt, 3)?;
 		Ok(*tokens.get(1).unwrap_or(&self.tokenizer.eos_token_id))
 	}
 
@@ -261,12 +290,11 @@ impl WhisperEngine {
 	/// (prompt + generated incl. trailing eos). Port of `_hf.py::_decoding` / `_decode`.
 	fn decode_greedy(
 		&mut self,
-		enc_shape: &[i64],
-		enc_data: &[f32],
+		encoder_out: &DynValue,
 		prompt: Vec<i64>,
 		max_length: usize,
 	) -> SttResult<Vec<i64>> {
-		let (tokens, _) = self.decode_inner(enc_shape, enc_data, prompt, max_length, false)?;
+		let (tokens, _) = self.decode_inner(encoder_out, prompt, max_length, false)?;
 		Ok(tokens)
 	}
 
@@ -278,12 +306,11 @@ impl WhisperEngine {
 	/// Requires `self.has_cross_attention`; callers gate on `supports_word_timestamps()`.
 	fn decode_with_cross_attn(
 		&mut self,
-		enc_shape: &[i64],
-		enc_data: &[f32],
+		encoder_out: &DynValue,
 		prompt: Vec<i64>,
 		max_length: usize,
 	) -> SttResult<(Vec<i64>, CrossAttentions)> {
-		let (tokens, attn) = self.decode_inner(enc_shape, enc_data, prompt, max_length, true)?;
+		let (tokens, attn) = self.decode_inner(encoder_out, prompt, max_length, true)?;
 		let attn = attn.ok_or_else(|| {
 			SttError::Inference("cross-attention requested but decoder produced none".into())
 		})?;
@@ -295,20 +322,33 @@ impl WhisperEngine {
 	/// token axis, returning the stacked `(num_layers, num_heads, num_dec_tokens, num_enc_frames)`.
 	fn decode_inner(
 		&mut self,
-		enc_shape: &[i64],
-		enc_data: &[f32],
+		encoder_out: &DynValue,
 		prompt: Vec<i64>,
 		max_length: usize,
 		collect_cross_attn: bool,
 	) -> SttResult<(Vec<i64>, Option<CrossAttentions>)> {
 		let eos = self.tokenizer.eos_token_id;
 		let mut tokens = prompt;
-		// Carried KV cache host-side: name → (shape, data). Empty (0,H,0,D) on step 0.
-		let mut past: Vec<(Vec<i64>, Vec<f32>)> = self
-			.kv_dims
+
+		// Device memory for the KV-cache + encoder output (resident); logits/cross-attn come back
+		// to host. `device_mem` is CPU when no GPU EP, so this path is correct + ~free on CPU too.
+		let dev_mem = self.device_mem()?;
+		let cpu_mem = MemoryInfo::new(AllocationDevice::CPU, 0, AllocatorType::Device, MemoryType::CPUOutput)
+			.map_err(|e| SttError::Inference(format!("cpu mem info: {e}")))?;
+		// `present.*` output names, parallel to `past_kv_names` (canonical layer order).
+		let present_names: Vec<String> = self
+			.past_kv_names
 			.iter()
-			.map(|&(h, d)| (vec![0i64, h, 0, d], Vec::<f32>::new()))
+			.map(|n| n.replace("past_key_values.", "present."))
 			.collect();
+
+		// Carried KV cache as DEVICE-resident OrtValues, parallel to `past_kv_names`. `None` = the
+		// (0,H,0,D) empty cache (step 0 / use_cache_branch=False; onnx-asr `_create_state`); from
+		// step 1 each entry is a `present.*` device output of the previous step. The cross-attn
+		// (encoder) KV is computed once at step 0 and reused, so its `present.*` returns empty on
+		// cached steps → we keep the prior value ("keep prev when present is 0-length", `_hf.py`).
+		// (`DynValue` isn't `Clone`, so build the all-`None` vec without the `vec![None; n]` repeat.)
+		let mut past: Vec<Option<DynValue>> = (0..self.past_kv_names.len()).map(|_| None).collect();
 
 		let want_attn = collect_cross_attn && self.has_cross_attention && !self.cross_attn_names.is_empty();
 		// Per-layer running buffers: each entry is (heads, dec_step_len, enc_frames) FLAT data, one
@@ -320,11 +360,10 @@ impl WhisperEngine {
 		let mut ca_heads = 0usize;
 		let mut ca_frames = 0usize;
 
-		let enc_shape_usize: Vec<usize> = enc_shape.iter().map(|&d| d.max(0) as usize).collect();
 		let total_steps = max_length.saturating_sub(tokens.len());
 
 		for _ in 0..total_steps {
-			let use_cache = past.iter().any(|(s, _)| s.first().copied().unwrap_or(0) != 0);
+			let use_cache = past.iter().any(|p| p.is_some());
 
 			// input_ids: full prompt on step 0, else only the last token.
 			let (id_data, id_len): (Vec<i64>, usize) = if use_cache {
@@ -334,48 +373,96 @@ impl WhisperEngine {
 			};
 			let input_ids = Tensor::from_array(([1usize, id_len], id_data.into_boxed_slice()))
 				.map_err(|e| SttError::Inference(format!("decoder input_ids: {e}")))?;
-			let enc_hidden = TensorRef::from_array_view((enc_shape_usize.clone(), enc_data))
-				.map_err(|e| SttError::Inference(format!("decoder enc_hidden: {e}")))?;
-
-			let mut named: Vec<(Cow<'_, str>, SessionInputValue<'_>)> = Vec::with_capacity(self.past_kv_names.len() + 3);
-			named.push((Cow::Borrowed("input_ids"), SessionInputValue::from(input_ids)));
-			named.push((Cow::Borrowed("encoder_hidden_states"), SessionInputValue::from(enc_hidden)));
-			if self.has_use_cache_branch {
-				// Whisper merged decoders declare use_cache_branch as a bool tensor.
-				let flag = Tensor::from_array(([1usize], vec![use_cache].into_boxed_slice()))
-					.map_err(|e| SttError::Inference(format!("use_cache_branch: {e}")))?;
-				named.push((Cow::Borrowed("use_cache_branch"), SessionInputValue::from(flag)));
-			}
-			// past_key_values.* : each carried-forward (or empty) cache tensor.
-			// Build owned tensors; keep them alive in a side vec so the SessionInputValues
-			// (which borrow nothing for owned values) are valid through run().
-			for (i, name) in self.past_kv_names.iter().enumerate() {
-				let (shape, data) = &past[i];
-				let usize_shape: Vec<usize> = shape.iter().map(|&x| x.max(0) as usize).collect();
-				let num_elem: usize = usize_shape.iter().product();
-				let val: SessionInputValue<'_> = if num_elem == 0 {
-					// Empty past (step 0): the merged decoder's use_cache_branch=False path
-					// needs the (0, num_heads, 0, head_dim) empty cache (onnx-asr _create_state).
-					// from_array's raw-data path REJECTS any 0-sized dim ("dimension #N must be
-					// >= 1"); the allocator-backed ctor accepts 0-element tensors (= np.zeros).
-					let t = Tensor::<f32>::new(&Allocator::default(), usize_shape)
-						.map_err(|e| SttError::Inference(format!("empty past kv {name}: {e}")))?;
-					SessionInputValue::from(t)
-				} else {
-					let t = Tensor::from_array((usize_shape, data.clone().into_boxed_slice()))
-						.map_err(|e| SttError::Inference(format!("past kv {name}: {e}")))?;
-					SessionInputValue::from(t)
-				};
-				named.push((Cow::Owned(name.clone()), val));
+			// Whisper merged decoders declare use_cache_branch as a bool tensor.
+			let cache_flag = if self.has_use_cache_branch {
+				Some(
+					Tensor::from_array(([1usize], vec![use_cache].into_boxed_slice()))
+						.map_err(|e| SttError::Inference(format!("use_cache_branch: {e}")))?,
+				)
+			} else {
+				None
+			};
+			// Empty (0,H,0,D) host tensors for any `None` past entry (step 0). The allocator-backed
+			// ctor accepts 0-element tensors (`from_array`'s raw-data path rejects 0-sized dims).
+			// Held in this Vec so they outlive the binding through `run_binding`.
+			let mut empties: Vec<Tensor<f32>> = Vec::new();
+			for (i, p) in past.iter().enumerate() {
+				if p.is_none() {
+					let (h, d) = self.kv_dims[i];
+					let shape = [0usize, h.max(0) as usize, 0usize, d.max(0) as usize];
+					let t = Tensor::<f32>::new(&Allocator::default(), shape)
+						.map_err(|e| SttError::Inference(format!("empty past kv: {e}")))?;
+					empties.push(t);
+				}
 			}
 
-			let outputs = self
+			// Fresh binding per step (mirrors onnx-asr's per-`_decode` `io_binding()`): bind the
+			// changing inputs + the device-resident encoder output / KV; bind logits to host and
+			// present.* to the device so the cache never round-trips through the CPU.
+			let mut binding = self
 				.decoder
-				.run(named)
-				.map_err(|e| SttError::Inference(format!("decoder run: {e}")))?;
+				.create_binding()
+				.map_err(|e| SttError::Inference(format!("decoder binding: {e}")))?;
+			binding
+				.bind_input("input_ids", &input_ids)
+				.map_err(|e| SttError::Inference(format!("bind input_ids: {e}")))?;
+			binding
+				.bind_input("encoder_hidden_states", encoder_out)
+				.map_err(|e| SttError::Inference(format!("bind encoder_hidden_states: {e}")))?;
+			if let Some(flag) = &cache_flag {
+				binding
+					.bind_input("use_cache_branch", flag)
+					.map_err(|e| SttError::Inference(format!("bind use_cache_branch: {e}")))?;
+			}
+			// past_key_values.* : device value carried from prev step, else the empty host tensor.
+			let mut empty_iter = empties.iter();
+			for (i, name) in self.past_kv_names.iter().enumerate() {
+				match &past[i] {
+					Some(v) => binding
+						.bind_input(name.as_str(), v)
+						.map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?,
+					None => {
+						let t = empty_iter.next().expect("one empty tensor per None past entry");
+						binding
+							.bind_input(name.as_str(), t)
+							.map_err(|e| SttError::Inference(format!("bind empty {name}: {e}")))?;
+					}
+				}
+			}
+			// outputs: logits → host (argmax); present.* → device (carried); cross_attn → host.
+			binding
+				.bind_output_to_device("logits", &cpu_mem)
+				.map_err(|e| SttError::Inference(format!("bind logits: {e}")))?;
+			for pname in &present_names {
+				binding
+					.bind_output_to_device(pname.as_str(), &dev_mem)
+					.map_err(|e| SttError::Inference(format!("bind {pname}: {e}")))?;
+			}
+			// cross_attentions.* exist only on `*_timestamped` exports. ORT's RunWithBinding requires
+			// EVERY graph output bound, so bind them whenever the export declares them — to host
+			// (cpu_mem) when we'll collect them for word timestamps, else to device (computed by the
+			// graph anyway, never copied back) just to satisfy the all-outputs-bound contract.
+			let ca_mem = if want_attn { &cpu_mem } else { &dev_mem };
+			for name in &self.cross_attn_names {
+				binding
+					.bind_output_to_device(name.as_str(), ca_mem)
+					.map_err(|e| SttError::Inference(format!("bind {name}: {e}")))?;
+			}
 
-			// logits: (1, seq, vocab) → argmax of the LAST position. Scoped so the
-			// borrow of `outputs` ends before the present→past carry borrows it again.
+			let mut outputs = self
+				.decoder
+				.run_binding(&binding)
+				.map_err(|e| SttError::Inference(format!("decoder run_binding: {e}")))?;
+			// DML/CUDA run_binding is async w.r.t. the device stream. The Python reference implicitly
+			// syncs every step (`.numpy()` on logits); we must too, or the host logits read + the
+			// carried device `present.*` race the still-running kernels → stale data (first call slow
+			// enough to mask it, warm calls corrupt). One sync per step matches onnx-asr.
+			binding
+				.synchronize_outputs()
+				.map_err(|e| SttError::Inference(format!("decoder synchronize: {e}")))?;
+
+			// logits: (1, seq, vocab) → argmax of the LAST position (host). Scoped so the borrow of
+			// `outputs` ends before the present→past `remove`s take it mutably.
 			let mut next: i64 = {
 				let logits = outputs
 					.get("logits")
@@ -396,7 +483,7 @@ impl WhisperEngine {
 				next = eos;
 			}
 
-			// Collect this step's cross-attention BEFORE the present→past carry drops `outputs`.
+			// Collect this step's cross-attention (host) BEFORE the present→past `remove`s.
 			// Each `cross_attentions.{i}` output is (batch=1, num_heads, dec_step_len, enc_frames)
 			// where dec_step_len == id_len (the number of decoder tokens fed THIS step — the full
 			// prompt on step 0, then 1 thereafter). We store the FLAT (heads*dec_step_len*frames)
@@ -420,22 +507,19 @@ impl WhisperEngine {
 				}
 			}
 
-			// Carry present.* → past.* (the "keep prev when present is 0-length" zip merge).
-			let mut new_past: Vec<(Vec<i64>, Vec<f32>)> = Vec::with_capacity(self.past_kv_names.len());
-			for (i, name) in self.past_kv_names.iter().enumerate() {
-				let present_name = name.replace("past_key_values.", "present.");
-				let mut carried: Option<(Vec<i64>, Vec<f32>)> = None;
-				if let Some(v) = outputs.get(present_name.as_str()) {
-					if let Ok((s, d)) = v.try_extract_tensor::<f32>() {
-						if s.first().copied().unwrap_or(0) != 0 {
-							carried = Some((s.to_vec(), d.to_vec()));
-						}
+			// Carry present.* → past.* as DEVICE values (keep prev when present is 0-length, i.e.
+			// the reused cross-attn/encoder KV). Extracted values are session-owned and survive the
+			// binding drop, so they rebind next step with no host round-trip.
+			for (i, pname) in present_names.iter().enumerate() {
+				if let Some(v) = outputs.remove(pname.as_str()) {
+					if first_dim(&v) != 0 {
+						past[i] = Some(v);
 					}
+					// else: present empty → keep the existing past[i] (reused encoder KV).
 				}
-				new_past.push(carried.unwrap_or_else(|| past[i].clone()));
 			}
 			drop(outputs);
-			past = new_past;
+			drop(binding);
 
 			tokens.push(next);
 			if next == eos {
@@ -559,14 +643,14 @@ impl Transcriber for WhisperEngine {
 		if audio.is_empty() {
 			return Ok(Transcription::default());
 		}
-		let (enc_shape, enc_data) = self.encode(audio)?;
+		let encoder_out = self.encode(audio)?;
 
 		// Resolve the language slot for multilingual + no-language via the 3-token detect.
 		let mut prompt = self.build_prompt(opts);
 		if self.tokenizer.is_multilingual {
 			let no_lang = opts.language.as_deref().map(|l| l.is_empty()).unwrap_or(true);
 			if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
-				let lang_tok = self.detect_language(&enc_shape, &enc_data)?;
+				let lang_tok = self.detect_language(&encoder_out)?;
 				prompt[1] = lang_tok;
 			}
 		}
@@ -581,7 +665,7 @@ impl Transcriber for WhisperEngine {
 		if want_words {
 			let prompt_length = prompt.len();
 			let (tokens, cross_attn) =
-				self.decode_with_cross_attn(&enc_shape, &enc_data, prompt, MAX_LENGTH)?;
+				self.decode_with_cross_attn(&encoder_out, prompt, MAX_LENGTH)?;
 			let text = self.tokenizer.decode_text(&tokens);
 			let segments = if opts.return_timestamps { Some(self.to_segments(&tokens)) } else { None };
 			// num_audio_frames = num_samples // HOP_LENGTH (pre 2× encoder downsample). The aligner
@@ -625,7 +709,7 @@ impl Transcriber for WhisperEngine {
 			}
 		}
 
-		let tokens = self.decode_greedy(&enc_shape, &enc_data, prompt, max_length)?;
+		let tokens = self.decode_greedy(&encoder_out, prompt, max_length)?;
 		// Strip the injected initial-prompt prefix before decode.
 		let tokens: &[i64] = if prefix_len > 0 && prefix_len <= tokens.len() {
 			&tokens[prefix_len..]
@@ -773,6 +857,27 @@ fn provider_label(a: &Accelerator) -> String {
 		Accelerator::OpenVino => "OpenVINOExecutionProvider",
 	}
 	.to_string()
+}
+
+/// The `AllocationDevice` (+ id) the sessions run on, for IoBinding the encoder output + KV-cache
+/// resident on it (mirrors onnx-asr `_hf.py` `get_onnx_device`). Derived from the FIRST requested
+/// accelerator: DirectML/CUDA → that device; everything else (incl. Rocm/CoreML/OpenVINO, which
+/// `execution_providers` routes to a CPU fallback) → CPU, where IoBinding just binds host memory.
+fn device_for_providers(providers: &[Accelerator]) -> (AllocationDevice, i32) {
+	match providers.first() {
+		Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
+		Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
+		_ => (AllocationDevice::CPU, 0),
+	}
+}
+
+/// First (batch) dimension of a tensor value's runtime shape, read from metadata (no host copy).
+/// Used to detect the empty `present.*` outputs (shape[0]==0) that mean "reuse the prior KV".
+fn first_dim(v: &DynValue) -> i64 {
+	match v.dtype() {
+		ValueType::Tensor { shape, .. } => shape.first().copied().unwrap_or(0),
+		_ => 0,
+	}
 }
 
 /// Read (num_heads, head_dim) for a past_key_values input from the declared graph dims.

@@ -212,21 +212,25 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 			    h-14 band gives the column a title region. Draggable for window move;
 			    opening search tweens a field over the wordmark. */}
 			{collapsed ? (
-				<div className="titlebar-drag flex flex-col items-center gap-1 px-2 pt-2.5 pb-1">
+				<div className="flex flex-col items-center gap-1 px-2 pb-1">
+					{/* Dedicated window-move handle. It must be its OWN element, never a
+					    wrapper around the buttons: an interactive control can't live inside
+					    an `-webkit-app-region: drag` region because on touch devices the OS
+					    caption path swallows the tap before the `no-drag` carve-out is
+					    consulted, leaving the button unclickable by touch (Tauri #4746). A
+					    short full-width strip keeps the rail draggable while the buttons
+					    below sit on plain client pixels. */}
+					<div aria-hidden="true" className="titlebar-drag h-2.5 w-full shrink-0" />
 					{searchButton}
 					{toggleButton}
 				</div>
 			) : (
-				<div
-					className={cn(
-						"flex h-14 shrink-0 items-center gap-2 px-3",
-						// While the field is open the header must NOT be an OS drag region:
-						// drag regions swallow pointer events, so a press in the header gutter
-						// (even one pixel to the right of the field) never reached the
-						// outside-press listener and the field wouldn't dismiss.
-						searchOpen ? "titlebar-no-drag" : "titlebar-drag"
-					)}
-				>
+				// The header itself is NOT a drag region — only the wordmark below is
+				// (see its note). Keeping the buttons off any `drag` region is what makes
+				// them tappable on touch (Tauri #4746), and a neutral header also means a
+				// press in the gutter while the field is open reaches the outside-press
+				// listener that folds the field away.
+				<div className="flex h-14 shrink-0 items-center gap-2 px-3">
 					<div
 						className="relative flex h-8 min-w-0 flex-1 items-center gap-2"
 						ref={searchRegionRef}
@@ -234,7 +238,11 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 						{searchOpen ? null : (
 							<>
 								{searchButton}
-								<span className="min-w-0 flex-1 truncate font-semibold text-foreground text-title tracking-[-0.01em]">
+								{/* The wordmark doubles as the window-move handle (`drag`). It
+								    sits between the buttons, so they keep their own plain client
+								    pixels and stay tappable on touch — see the collapsed-header
+								    note and Tauri #4746. */}
+								<span className="titlebar-drag min-w-0 flex-1 truncate font-semibold text-foreground text-title tracking-[-0.01em]">
 									{t("title")}
 								</span>
 							</>

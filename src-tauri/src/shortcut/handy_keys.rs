@@ -132,6 +132,13 @@ impl HandyKeysState {
                         binding_id, hotkey_string, event.state
                     );
                     let is_pressed = event.state == HotkeyState::Pressed;
+                    // The low-level hook can't block the *leading* key of a chord, so a
+                    // Win/Super-based hotkey (e.g. the default `ctrl+super` PTT combo) leaks
+                    // a lone Win press to the shell and pops the Start menu, stealing focus
+                    // from the user's app. Disguise it the instant the combo fires.
+                    if is_pressed {
+                        suppress_start_menu_for_win_combo(hotkey_string);
+                    }
                     handle_shortcut_event(&app, binding_id, hotkey_string, is_pressed);
                 }
             }
@@ -408,6 +415,84 @@ fn modifiers_to_strings(modifiers: handy_keys::Modifiers) -> Vec<String> {
     result
 }
 
+/// True when a handy-canonical hotkey string uses the Win/Super (Cmd) key.
+/// Tokens are handy-canonical (`super`, `super_left`, `super_right`) after the
+/// `winstt_accel_to_handy` translation, but we accept the broader vocabulary too
+/// so a directly-registered combo can't slip through.
+#[cfg(target_os = "windows")]
+fn hotkey_uses_win_key(hotkey_string: &str) -> bool {
+    hotkey_string.split('+').any(|tok| {
+        matches!(
+            tok.trim().to_ascii_lowercase().as_str(),
+            "super"
+                | "super_left"
+                | "super_right"
+                | "win"
+                | "windows"
+                | "meta"
+                | "cmd"
+                | "command"
+                | "lmeta"
+                | "rmeta"
+        )
+    })
+}
+
+/// Disguise a Win/Super hotkey press so Windows doesn't open the Start menu.
+///
+/// Windows opens the Start menu on Win-key *release* whenever the shell saw a lone
+/// Win press (Win down → Win up with nothing in between). A low-level keyboard hook
+/// can only block a chord once it is *complete*, so the leading Win key (or a Win
+/// key pressed before its partner) always leaks to the OS — and on release the
+/// Start menu pops up and steals focus, so dictation pastes into Start instead of
+/// the user's app. This is why the default `ctrl+super` PTT hotkey appeared to "do
+/// nothing" while `ctrl+space` worked.
+///
+/// The fix is the same "disguise key" trick AutoHotkey uses for remapped Win keys:
+/// inject a benign keystroke while the Win key is still held, so the shell sees
+/// "Win + something" and no longer treats it as a lone tap. We use virtual-key
+/// `0xE8`, which is officially unassigned — apps ignore it, and crucially
+/// handy-keys' own hook ignores it too (`vk_to_modifier`/`vk_to_key` return `None`),
+/// so it can never trigger a spurious hotkey release. Injected on press, while the
+/// user is still holding the combo (PTT) — empirically suppresses the menu in both
+/// Win-first and Ctrl-first orderings.
+#[cfg(target_os = "windows")]
+fn suppress_start_menu_for_win_combo(hotkey_string: &str) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY,
+    };
+
+    if !hotkey_uses_win_key(hotkey_string) {
+        return;
+    }
+
+    /// Officially-unassigned virtual key, used purely as an inert "disguise".
+    const VK_DISGUISE: u16 = 0xE8;
+
+    let mk = |flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(VK_DISGUISE),
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = [mk(KEYBD_EVENT_FLAGS(0)), mk(KEYEVENTF_KEYUP)];
+    // SAFETY: `inputs` is a valid, correctly-sized array of INPUT for SendInput.
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+/// Non-Windows builds never see the Win/Start-menu interaction.
+#[cfg(not(target_os = "windows"))]
+fn suppress_start_menu_for_win_combo(_hotkey_string: &str) {}
+
 /// Validate a shortcut string for the HandyKeys implementation.
 /// HandyKeys is more permissive: allows modifier-only combos and the fn key.
 pub fn validate_shortcut(raw: &str) -> Result<(), String> {
@@ -546,4 +631,32 @@ pub fn stop_handy_keys_recording(app: AppHandle) -> Result<(), String> {
         .try_state::<HandyKeysState>()
         .ok_or("HandyKeysState not initialized")?;
     state.stop_recording()
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::hotkey_uses_win_key;
+
+    #[test]
+    fn detects_win_combos() {
+        // The default PTT combo (`LCtrl+LMeta` → handy `ctrl_left+super_left`) and
+        // the TTS read-aloud combo (`LMeta+LShift+E`) both ride the Win key.
+        assert!(hotkey_uses_win_key("ctrl_left+super_left"));
+        assert!(hotkey_uses_win_key("super_left+shift_left+e"));
+        assert!(hotkey_uses_win_key("super")); // modifier-only
+        assert!(hotkey_uses_win_key("super_right"));
+        // Broader vocab a directly-registered combo might use.
+        assert!(hotkey_uses_win_key("win+a"));
+        assert!(hotkey_uses_win_key("meta+space"));
+    }
+
+    #[test]
+    fn ignores_non_win_combos() {
+        // The working `ctrl+space` workaround and other non-Win hotkeys must NOT
+        // inject the disguise keystroke.
+        assert!(!hotkey_uses_win_key("ctrl_left+space"));
+        assert!(!hotkey_uses_win_key("ctrl_left+shift_left+v"));
+        assert!(!hotkey_uses_win_key("alt_left+r"));
+        assert!(!hotkey_uses_win_key("f1"));
+    }
 }

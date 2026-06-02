@@ -161,9 +161,7 @@ export function ModelPickerWindow() {
 	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
 	useEffect(() => {
 		gpuGetInfo().then((info) => {
-			if (info) {
-				setGpuInfo(info);
-			}
+			setGpuInfo(info);
 		});
 	}, [setGpuInfo]);
 
@@ -195,7 +193,7 @@ export function ModelPickerWindow() {
 		refreshLive();
 	}, [refreshModelState, refreshLive]);
 
-	const gpuAvailable = gpuInfo?.available ?? true;
+	const gpuAvailable = gpuInfo.length > 0;
 	const currentQuantization = (modelSettings?.onnxQuantization ?? "") as OnnxQuantization;
 	const deviceValue = gpuAvailable ? (modelSettings?.device ?? "auto") : "cpu";
 	// This detached window doesn't mount the global IPC listener, so subscribe

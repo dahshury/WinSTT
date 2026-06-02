@@ -49,9 +49,7 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	// Detect GPU on startup
 	useEffect(() => {
 		gpuGetInfo().then((info) => {
-			if (info) {
-				setGpuInfo(info);
-			}
+			setGpuInfo(info);
 		});
 	}, [setGpuInfo]);
 

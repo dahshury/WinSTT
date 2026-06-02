@@ -45,3 +45,15 @@ result
 
 # WinSTT reference clone (not part of the fork)
 examples/WinSTT/
+.i18n-work/
+
+# Reference example clones (embedded repos, not part of the fork) — keep only
+# the Electron app, which IS part of this repo.
+examples/*
+!examples/winstt-electron/
+
+# Custom cargo target dirs (spike / moon / verify builds). `/target/` is already
+# ignored above; these are alternate build outputs that must never be committed.
+target-moon/
+target-spike/
+target-verify*/

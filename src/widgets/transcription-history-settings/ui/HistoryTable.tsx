@@ -1,18 +1,21 @@
-import { ContextMenu } from "@base-ui/react/context-menu";
+import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import {
+	AiBrain02Icon,
 	Clock01Icon,
 	Copy01Icon,
 	CopyCheckIcon,
 	CpuIcon,
 	DashboardSpeed02Icon,
 	Delete02Icon,
+	FlashIcon,
+	HourglassIcon,
 	PauseIcon,
 	PlayIcon,
 	StopWatchIcon,
 	TextFontIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { VList } from "virtua";
 import { useSettingsStore } from "@/entities/setting";
@@ -25,17 +28,24 @@ import {
 } from "@/shared/api/ipc-client";
 import { Z_INDEX } from "@/shared/config/z-index";
 import { cn } from "@/shared/lib/cn";
+import { makerFromModelId, resolveProviderIcon } from "@/shared/lib/provider-icons";
 import {
 	SurfaceProvider,
 	surfaceBg,
 	surfaceClasses,
-	surfaceHighlightedBg,
+	surfaceHoverBg,
 	useSurface,
 } from "@/shared/lib/surface";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { formatDuration, formatWpm, wordsPerMinute } from "../lib/word-stats";
+import {
+	formatDuration,
+	formatProcessingDuration,
+	formatTokensPerSecond,
+	formatWpm,
+	wordsPerMinute,
+} from "../lib/word-stats";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
 
 interface HistoryTableProps {
@@ -43,9 +53,9 @@ interface HistoryTableProps {
 }
 
 // Initial size estimate only — virtua re-measures every mounted row, so rows
-// whose transcripts wrap to several lines self-correct. A short transcript +
-// divider + meta strip lands around this height.
-const ROW_HEIGHT_HINT_PX = 104;
+// whose transcripts wrap to several lines self-correct. A short transcript card
+// (body + recessed meta shelf) plus its inter-card padding lands around here.
+const ROW_HEIGHT_HINT_PX = 120;
 // Cap the visible body so the table doesn't crowd out the rest of the panel;
 // anything beyond this scrolls. Generous so the transcription list reads as a
 // roomy, dedicated scroll region rather than a cramped box; the body
@@ -53,10 +63,8 @@ const ROW_HEIGHT_HINT_PX = 104;
 // wheel to the page's ScrollArea instead of trapping the scroll.
 const MAX_BODY_HEIGHT_PX = 560;
 // Below this row count, render directly (cheaper than VList's bookkeeping);
-// at/above it, virtualize so the ContextMenu.Root count stays bounded.
+// at/above it, virtualize so the mounted-row count stays bounded.
 const VIRTUALIZE_THRESHOLD = 50;
-const MENU_SURFACE_LEVEL = 6;
-const MENU_SHADOW_LEVEL = 7;
 
 function formatTimestamp(ms: number): string {
 	// Abbreviated on purpose — the year is dropped and the hour is non-padded so
@@ -71,7 +79,6 @@ function formatTimestamp(ms: number): string {
 
 interface HistoryRowProps {
 	copyLabel: string;
-	copyOriginalLabel: string;
 	entry: TranscriptionHistoryEntry;
 }
 
@@ -342,9 +349,194 @@ function DeleteButton({ entryId }: { entryId: string }) {
 	);
 }
 
+/**
+ * Toggles a row's transcript between the AI-edited final text and the raw
+ * pre-LLM original. Only mounted for entries that actually carried an LLM
+ * post-process step (``originalText`` present). The glyph doubles as a state
+ * indicator: the brain (accent) when the AI version is showing, the text glyph
+ * when the original is showing — so the row reads as AI-touched at a glance.
+ * The label describes the action the click performs, matching the copy
+ * button's icon-swap convention above.
+ */
+function SwapButton({
+	onToggle,
+	showOriginal,
+	showOriginalLabel,
+	showProcessedLabel,
+}: {
+	onToggle: () => void;
+	showOriginal: boolean;
+	showOriginalLabel: string;
+	showProcessedLabel: string;
+}) {
+	const label = showOriginal ? showProcessedLabel : showOriginalLabel;
+	return (
+		<Tooltip content={label}>
+			<button
+				aria-label={label}
+				aria-pressed={showOriginal}
+				className="relative inline-flex size-7 items-center justify-center text-foreground-muted transition-[color,background-color,transform] hover:bg-surface-hover hover:text-foreground active:scale-95"
+				onClick={onToggle}
+				type="button"
+			>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"absolute size-3.5 text-accent transition-[opacity,transform] duration-200 ease-out",
+						showOriginal ? "scale-50 opacity-0" : "scale-100 opacity-100"
+					)}
+					icon={AiBrain02Icon}
+				/>
+				<HugeiconsIcon
+					aria-hidden="true"
+					className={cn(
+						"absolute size-3.5 transition-[opacity,transform] duration-200 ease-out",
+						showOriginal ? "scale-100 opacity-100" : "scale-50 opacity-0"
+					)}
+					icon={TextFontIcon}
+				/>
+			</button>
+		</Tooltip>
+	);
+}
+
+/**
+ * Reveals a row's complete transcript in a hover/focus popup — the same Base UI
+ * Tooltip surface the feature demos use — for transcripts the row clamps to four
+ * lines. Read-only on purpose: the copy button already copies the full text, so
+ * this popup just lifts the truncation cap for reading. Wraps the clamped
+ * paragraph as its own trigger (no separate affordance), so hovering the "…"
+ * text itself opens it.
+ */
+function FullTranscriptHover({
+	children,
+	label,
+	text,
+}: {
+	children: ReactElement;
+	label: string;
+	text: string;
+}) {
+	const substrate = useSurface();
+	const popupLevel = Math.min(substrate + 2, 8);
+	const popupShadow = Math.max(popupLevel, 6);
+	return (
+		<TooltipPrimitive.Root>
+			<TooltipPrimitive.Trigger render={children} />
+			<TooltipPrimitive.Portal>
+				<SurfaceProvider value={popupLevel}>
+					<TooltipPrimitive.Positioner
+						side="top"
+						sideOffset={8}
+						style={{ zIndex: Z_INDEX.tooltip }}
+					>
+						<TooltipPrimitive.Popup
+							aria-label={label}
+							className={cn(
+								"max-w-[min(28rem,calc(100vw-2rem))] origin-(--transform-origin) rounded-lg p-3 transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+								surfaceClasses(popupLevel, popupShadow)
+							)}
+						>
+							<div className="max-h-[40vh] select-text overflow-y-auto whitespace-pre-wrap break-words text-body text-foreground leading-relaxed">
+								{text}
+							</div>
+						</TooltipPrimitive.Popup>
+					</TooltipPrimitive.Positioner>
+				</SurfaceProvider>
+			</TooltipPrimitive.Portal>
+		</TooltipPrimitive.Root>
+	);
+}
+
+interface RowTranscriptProps {
+	activeIndex: number;
+	displayText: string;
+	viewFullLabel: string;
+	words: WordTiming[] | null;
+}
+
+/**
+ * Renders a row's transcript body. At rest the text is clamped to four lines
+ * (CSS `-webkit-line-clamp`, which appends the trailing "…"); when it actually
+ * overflows that cap we attach a hover popup with the full text. During
+ * playback the word-timed spans render UNclamped instead, so the highlight
+ * sweep never scrolls out of view — playback is transient and reads top-down.
+ */
+function RowTranscript({ activeIndex, displayText, viewFullLabel, words }: RowTranscriptProps) {
+	const [clamped, setClamped] = useState(false);
+	const showWords = words !== null && words.length > 0;
+
+	// Toggling `clamped` swaps the returned root element (plain <p> ↔ tooltip
+	// wrapper), which REMOUNTS the paragraph. A callback ref re-attaches the
+	// ResizeObserver to whichever <p> is currently live — a useEffect+useRef
+	// would leave the observer bound to the detached node and flip-flop. Each
+	// transition measures the actually-attached node, so it converges.
+	const observerRef = useRef<ResizeObserver | null>(null);
+	const measureRef = useCallback(
+		(node: HTMLParagraphElement | null) => {
+			observerRef.current?.disconnect();
+			observerRef.current = null;
+			if (!node || showWords) {
+				setClamped(false);
+				return;
+			}
+			// line-clamp keeps clientHeight at the 4-line cap while scrollHeight
+			// grows with the full content — the gap is the truncation signal.
+			const measure = () => setClamped(node.scrollHeight - node.clientHeight > 1);
+			measure();
+			if (typeof ResizeObserver !== "undefined") {
+				const observer = new ResizeObserver(measure);
+				observer.observe(node);
+				observerRef.current = observer;
+			}
+		},
+		// `displayText` is a dep so swapping original↔AI re-measures: the ref
+		// identity changes, React re-runs it on the same node, and the new text's
+		// overflow is re-evaluated (a short AI text may not clamp while its longer
+		// original does, or vice versa).
+		[displayText, showWords]
+	);
+
+	const paragraph = (
+		<p
+			className={cn(
+				"mt-0.5 min-w-0 flex-1 select-text whitespace-pre-wrap break-words text-body text-foreground leading-relaxed",
+				!showWords && "line-clamp-4"
+			)}
+			ref={measureRef}
+		>
+			{showWords && words
+				? words.map((word, index) => (
+						<Fragment key={`${word.start}-${index}`}>
+							{index > 0 ? " " : null}
+							<span
+								className={
+									index === activeIndex ? "rounded-[3px] bg-accent/25 text-foreground" : undefined
+								}
+							>
+								{word.text}
+							</span>
+						</Fragment>
+					))
+				: displayText}
+		</p>
+	);
+
+	if (showWords || !clamped) {
+		return paragraph;
+	}
+	return (
+		<FullTranscriptHover label={viewFullLabel} text={displayText}>
+			{paragraph}
+		</FullTranscriptHover>
+	);
+}
+
 interface MetaLabels {
 	duration: string;
 	model: string;
+	processing: string;
+	speed: string;
 	time: string;
 	words: string;
 	wpm: string;
@@ -353,25 +545,41 @@ interface MetaLabels {
 interface HistoryRowFullProps extends HistoryRowProps {
 	labels: MetaLabels;
 	outputDeviceId: string;
+	viewFullLabel: string;
+	viewOriginalLabel: string;
+	viewProcessedLabel: string;
 }
 
 function HistoryRow({
 	entry,
 	copyLabel,
-	copyOriginalLabel,
 	labels,
 	outputDeviceId,
+	viewFullLabel,
+	viewOriginalLabel,
+	viewProcessedLabel,
 }: HistoryRowFullProps) {
 	const playback = useHistoryPlayback(entry.id, Boolean(entry.audioFilePath), outputDeviceId);
 	const hasOriginal = entry.originalText !== undefined && entry.originalText.length > 0;
+	// Each entry is its own elevated card, one surface step above the list it sits
+	// in (FF surfaces: substrate flows through context, lift +1). The meta footer
+	// then recesses BACK to the list surface (`cardLevel - 1`) so it reads as a
+	// distinct ledge under the card body — the STT model card's recessed-shelf idea.
+	const cardLevel = Math.min(useSurface() + 1, 8);
+	// Per-row view toggle for LLM-processed entries; resets implicitly because
+	// each row is keyed by entry.id. Defaults to the AI-edited final text.
+	const [showOriginal, setShowOriginal] = useState(false);
+	const displayText = showOriginal && entry.originalText ? entry.originalText : entry.text;
 	const wpm = wordsPerMinute(entry.wordCount, entry.durationMs);
 	// Icon + bare value, reusing the summary tiles' stat icons (words / duration
 	// / wpm) so a row reads as part of the same family. Dropping the inline text
 	// labels keeps the strip on ONE line; the icon + hover title carry meaning.
-	// Optional parts (wpm, model) drop out cleanly when absent.
+	// Optional parts (wpm, the LLM trio) drop out cleanly when absent. `logo`
+	// swaps the glyph for a maker brand mark (the model chip).
 	const meta: {
 		icon: IconSvgElement;
 		key: string;
+		logo?: string | null;
 		title: string;
 		truncate?: boolean;
 		value: string;
@@ -388,116 +596,122 @@ function HistoryRow({
 	if (wpm > 0) {
 		meta.push({ icon: DashboardSpeed02Icon, key: "wpm", title: labels.wpm, value: formatWpm(wpm) });
 	}
+	// LLM post-processing telemetry, grouped at the end of the strip: which model
+	// (branded with its maker logo when one is bundled, else the CPU glyph), how
+	// long the pass took, and its generation speed. Each chip is independent —
+	// e.g. tokens/s drops out when the provider reported no usage.
 	if (entry.llmModel) {
 		// Title carries the full model id so truncation stays inspectable on hover.
 		meta.push({
 			icon: CpuIcon,
 			key: "model",
+			logo: resolveProviderIcon(makerFromModelId(entry.llmModel)),
 			title: entry.llmModel,
 			truncate: true,
 			value: entry.llmModel,
 		});
 	}
+	const processing =
+		entry.llmProcessingMs !== undefined ? formatProcessingDuration(entry.llmProcessingMs) : null;
+	if (processing) {
+		meta.push({
+			icon: HourglassIcon,
+			key: "processing",
+			title: labels.processing,
+			value: processing,
+		});
+	}
+	const speed =
+		entry.llmTokensPerSecond !== undefined ? formatTokensPerSecond(entry.llmTokensPerSecond) : null;
+	if (speed) {
+		meta.push({ icon: FlashIcon, key: "speed", title: labels.speed, value: speed });
+	}
 	return (
-		<ContextMenu.Root>
-			<ContextMenu.Trigger
-				render={
-					<div className="border-border border-b px-3.5 py-3 transition-colors duration-100 hover:bg-surface-hover" />
-				}
-			>
-				<div className="flex items-start gap-3">
-					{entry.audioFilePath ? (
-						<PlayButton
-							loading={playback.loading}
-							onToggle={playback.toggle}
-							playing={playback.playing}
-						/>
-					) : null}
-					<p className="mt-0.5 min-w-0 flex-1 select-text whitespace-pre-wrap break-words text-body text-foreground leading-relaxed">
-						{playback.words
-							? playback.words.map((word, index) => (
-									<Fragment key={`${word.start}-${index}`}>
-										{index > 0 ? " " : null}
-										<span
-											className={
-												index === playback.activeIndex
-													? "rounded-[3px] bg-accent/25 text-foreground"
-													: undefined
-											}
-										>
-											{word.text}
-										</span>
-									</Fragment>
-								))
-							: entry.text}
-					</p>
-					<ButtonGroup
-						aria-label={copyLabel}
-						className="shrink-0 self-start"
-						connected
-						orientation="vertical"
-					>
-						<CopyButton label={copyLabel} text={entry.text} />
-						<DeleteButton entryId={entry.id} />
-					</ButtonGroup>
-				</div>
-				<div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 border-border/60 border-t pt-2 text-foreground-secondary text-xs-tight">
-					{meta.map((part) => (
-						<span
-							className="inline-flex min-w-0 items-center gap-1 tabular-nums"
-							key={part.key}
-							title={part.title}
-						>
-							<HugeiconsIcon
-								aria-hidden="true"
-								className="size-3.5 shrink-0 text-foreground-muted"
-								icon={part.icon}
-								strokeWidth={1.75}
+		// Per-card padding wrapper: virtua measures the border-box (margins are
+		// NOT counted), so the inter-card gap lives here as padding, never as a
+		// margin on the card itself.
+		<div className="px-2 py-1">
+			<SurfaceProvider value={cardLevel}>
+				<div
+					className={cn(
+						"flex flex-col gap-2.5 overflow-hidden rounded-xl border border-border px-3.5 py-3",
+						surfaceClasses(cardLevel, Math.max(cardLevel - 1, 1)),
+						"transition-colors duration-150",
+						surfaceHoverBg(Math.min(cardLevel + 1, 8)),
+						"hover:border-border-hover"
+					)}
+				>
+					<div className="flex items-start gap-3">
+						{entry.audioFilePath ? (
+							<PlayButton
+								loading={playback.loading}
+								onToggle={playback.toggle}
+								playing={playback.playing}
 							/>
-							<span className={part.truncate ? "max-w-[10rem] truncate" : "whitespace-nowrap"}>
-								{part.value}
-							</span>
-						</span>
-					))}
-				</div>
-			</ContextMenu.Trigger>
-			<ContextMenu.Portal>
-				<SurfaceProvider value={MENU_SURFACE_LEVEL}>
-					<ContextMenu.Positioner style={{ zIndex: Z_INDEX.popover }}>
-						<ContextMenu.Popup
-							className={cn(
-								"min-w-[12rem] overflow-hidden rounded-md p-1 font-sans text-body text-foreground transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
-								surfaceClasses(MENU_SURFACE_LEVEL, MENU_SHADOW_LEVEL)
-							)}
+						) : null}
+						<RowTranscript
+							activeIndex={playback.activeIndex}
+							displayText={displayText}
+							viewFullLabel={viewFullLabel}
+							words={playback.words}
+						/>
+						<ButtonGroup
+							aria-label={copyLabel}
+							className="shrink-0 self-start"
+							connected
+							orientation="vertical"
 						>
-							<ContextMenu.Item
-								className={cn(
-									"flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[disabled]:pointer-events-none data-[highlighted]:text-foreground data-[disabled]:opacity-50",
-									surfaceHighlightedBg(MENU_SURFACE_LEVEL + 1)
-								)}
-								onClick={() => copyEntryText(entry.text)}
+							{hasOriginal ? (
+								<SwapButton
+									onToggle={() => setShowOriginal((prev) => !prev)}
+									showOriginal={showOriginal}
+									showOriginalLabel={viewOriginalLabel}
+									showProcessedLabel={viewProcessedLabel}
+								/>
+							) : null}
+							<CopyButton label={copyLabel} text={displayText} />
+							<DeleteButton entryId={entry.id} />
+						</ButtonGroup>
+					</div>
+					{/* Recessed meta shelf: full-bleed to the card's bottom + side edges
+					    (negative margins MUST match the card's px-3.5/py-3), split off by a
+					    hairline, and stepped DOWN one surface so it reads as a ledge. */}
+					<div
+						className={cn(
+							"-mx-3.5 -mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-divider border-t px-3.5 pt-2.5 pb-3 text-foreground-secondary text-xs-tight",
+							surfaceBg(Math.max(cardLevel - 1, 1))
+						)}
+					>
+						{meta.map((part) => (
+							<span
+								className="inline-flex min-w-0 items-center gap-1 tabular-nums"
+								key={part.key}
+								title={part.title}
 							>
-								{copyLabel}
-							</ContextMenu.Item>
-							<ContextMenu.Item
-								className={cn(
-									"flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-body outline-none data-[disabled]:pointer-events-none data-[highlighted]:text-foreground data-[disabled]:opacity-50",
-									surfaceHighlightedBg(MENU_SURFACE_LEVEL + 1)
+								{part.logo ? (
+									<img
+										alt=""
+										aria-hidden="true"
+										className="size-3.5 shrink-0 rounded-[3px] object-contain"
+										src={part.logo}
+									/>
+								) : (
+									<HugeiconsIcon
+										aria-hidden="true"
+										className="size-3.5 shrink-0 text-foreground-muted"
+										icon={part.icon}
+										strokeWidth={1.75}
+									/>
 								)}
-								disabled={!hasOriginal}
-								onClick={() => {
-									if (entry.originalText) {
-										copyEntryText(entry.originalText);
-									}
-								}}
-							>
-								{copyOriginalLabel}
-							</ContextMenu.Item>
-						</ContextMenu.Popup>
-					</ContextMenu.Positioner>
-				</SurfaceProvider>
-			</ContextMenu.Portal>
-		</ContextMenu.Root>
+								<span className={part.truncate ? "max-w-[10rem] truncate" : "whitespace-nowrap"}>
+									{part.value}
+								</span>
+							</span>
+						))}
+					</div>
+				</div>
+			</SurfaceProvider>
+		</div>
 	);
 }
 
@@ -511,10 +725,14 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 	// Most recent first; entries are stored chronologically by the main process.
 	const sorted = [...entries].reverse();
 	const copyLabel = t("copy");
-	const copyOriginalLabel = t("copyOriginal");
+	const viewFullLabel = t("viewFull");
+	const viewOriginalLabel = t("viewOriginal");
+	const viewProcessedLabel = t("viewProcessed");
 	const labels: MetaLabels = {
 		duration: t("colDuration"),
 		model: t("colModel"),
+		processing: t("colProcessing"),
+		speed: t("colSpeed"),
 		time: t("colTime"),
 		wpm: t("colWpm"),
 		words: t("colWords"),
@@ -523,11 +741,13 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 	const rows = sorted.map((entry) => (
 		<HistoryRow
 			copyLabel={copyLabel}
-			copyOriginalLabel={copyOriginalLabel}
 			entry={entry}
 			key={entry.id}
 			labels={labels}
 			outputDeviceId={outputDeviceId}
+			viewFullLabel={viewFullLabel}
+			viewOriginalLabel={viewOriginalLabel}
+			viewProcessedLabel={viewProcessedLabel}
 		/>
 	));
 
@@ -559,7 +779,7 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 
 	return (
 		<SurfaceProvider value={level}>
-			<div className={cn("overflow-hidden rounded-md border border-border", surfaceBg(level))}>
+			<div className={cn("overflow-hidden rounded-xl border border-border", surfaceBg(level))}>
 				{body}
 			</div>
 		</SurfaceProvider>

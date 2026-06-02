@@ -141,10 +141,10 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		}
 	},
 	cancelDownload: () => {
-		ipcCancelDownload();
+		void ipcCancelDownload().catch((e) => console.error("model download cancel failed", e));
 	},
 	discardCache: (modelId: string) => {
-		ipcDeleteModelCache(modelId);
+		void ipcDeleteModelCache(modelId).catch((e) => console.error("model cache delete failed", e));
 	},
 	discardQuantCache: (modelId: string, quantization: string) => {
 		// Drop the local snapshot synchronously so the badge's
@@ -159,7 +159,9 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			delete next[quantKey(modelId, quantization)];
 			return { quantDownloads: next };
 		});
-		ipcDeleteModelQuantization(modelId, quantization);
+		void ipcDeleteModelQuantization(modelId, quantization).catch((e) =>
+			console.error("model quant delete failed", e),
+		);
 	},
 	predownloadQuant: (modelId: string, quantization: string) => {
 		// Seed the entry so the badge flips to "downloading" instantly
@@ -178,10 +180,14 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 				},
 			},
 		}));
-		ipcPredownloadModelQuant(modelId, quantization);
+		void ipcPredownloadModelQuant(modelId, quantization).catch((e) =>
+			console.error("model quant predownload failed", e),
+		);
 	},
 	pauseQuantDownload: (modelId: string, quantization: string) => {
-		ipcPauseModelDownload(modelId, quantization);
+		void ipcPauseModelDownload(modelId, quantization).catch((e) =>
+			console.error("model download pause failed", e),
+		);
 	},
 	pauseQuantEntry: (modelId: string, quantization: string) => {
 		set((s) => {
@@ -206,10 +212,14 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 				quantDownloads: { ...s.quantDownloads, [key]: { ...entry, paused: false } },
 			};
 		});
-		ipcResumeModelDownload(modelId, quantization);
+		void ipcResumeModelDownload(modelId, quantization).catch((e) =>
+			console.error("model download resume failed", e),
+		);
 	},
 	cancelQuantDownload: (modelId: string, quantization: string) => {
-		ipcCancelModelDownloadQuant(modelId, quantization);
+		void ipcCancelModelDownloadQuant(modelId, quantization).catch((e) =>
+			console.error("model quant cancel failed", e),
+		);
 	},
 	setQuantDownloadProgress: (modelId, quantization, payload) => {
 		set((s) => {

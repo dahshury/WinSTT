@@ -849,12 +849,18 @@ function FloatingBottomPill({
 }: FloatingPillProps) {
 	const { isSpeaking, isThinking, showBubble, stickyShow } = flags;
 	return (
-		// Floating-bottom keeps `domAnimation` (no layout animations). The
-		// text bubble carries a `layout` prop for historical reasons; under
-		// `domMax` it would activate framer's layout-tween system and the
-		// bubble's per-line growth would suddenly animate every keystroke —
-		// the "weird expansion" we don't want. `domAnimation` ignores
-		// `layout`, restoring the pre-DynamicIsland floating-pill behavior.
+		// Floating-bottom must NOT layout-animate the bubble — so the bubble
+		// carries no `layout` prop. The earlier code relied on this
+		// `domAnimation` wrapper to neutralize a `layout` prop, but that is
+		// false here: motion's feature registry is GLOBAL (LazyMotion's
+		// `features` merge into one shared definitions object via
+		// `loadFeatures`; the context only carries `renderer`/`strict`). The
+		// always-mounted `TtsIslandLayer` loads `domMax` (= domAnimation +
+		// drag + layout), so the layout-projection feature is active app-wide
+		// regardless of this wrapper. With `layout` on the bubble, Framer
+		// FLIP-scales the box as text wraps to a new line — the scaleY tween
+		// visibly STRETCHES the text inside (the bug). Letting the box grow by
+		// natural reflow keeps the text crisp, matching the Electron pill.
 		<LazyMotion features={domAnimation} strict>
 			<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
 				{/* `relative` wrapper anchors the absolute-positioned X cancel
@@ -863,9 +869,9 @@ function FloatingBottomPill({
 				    transparent margin to the right of the pill. */}
 				<div className="relative flex flex-col items-center gap-1">
 					{/* TEXT BUBBLE — appears with first transcribed word or
-					    when LLM is thinking. `layout` smooths the height
-					    growth as new lines wrap via Framer's FLIP, so the
-					    1→N line transition no longer pops. */}
+					    when LLM is thinking. Grows by natural reflow as lines
+					    wrap; deliberately NO `layout` prop (see the note above
+					    — FLIP would scaleY-stretch the text inside the box). */}
 					<AnimatePresence>
 						{showBubble && (
 							<m.div
@@ -874,7 +880,6 @@ function FloatingBottomPill({
 								exit="exit"
 								initial="initial"
 								key="text-bubble"
-								layout
 								variants={bubbleVariants}
 							>
 								{/* Brand-accent hairline — single Docker-blue

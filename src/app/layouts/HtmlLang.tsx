@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { installElectronTauriAdapter } from "@/shared/api/electron-tauri-adapter";
 import { useLocaleStore } from "@/shared/i18n";
+import { installScrollbarAutoHide } from "@/shared/lib/scrollbar-autohide";
 
 // Every one of the 9 window entries imports HtmlLang, so installing the
 // `window.electronAPI` → Tauri polyfill here (a module-load side-effect, before
@@ -8,6 +9,10 @@ import { useLocaleStore } from "@/shared/i18n";
 // the main window (which also installs it via IpcProvider). Install is
 // idempotent, so the double-install from main is harmless.
 installElectronTauriAdapter();
+
+// Same single-mount trick for app-wide auto-hiding scrollbars: every window
+// gets the "reveal the native bar only while scrolling" listener. Idempotent.
+installScrollbarAutoHide();
 
 /** Keeps the <html lang="…"> attribute in sync with the selected locale. */
 export function HtmlLang() {

@@ -18,6 +18,9 @@ use crate::winstt::managers::CloudSttManager;
 /// Verify-credential outcome surfaced to the renderer.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+// `llm::VerifyCredentialPayload` is the single renderer verify seam and keeps the
+// canonical TS name; suffix this cloud-STT-specific copy to break the collision.
+#[specta(rename = "CloudSttVerifyPayload")]
 pub struct VerifyCredentialPayload {
     pub ok: bool,
     pub code: Option<String>,

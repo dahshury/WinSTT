@@ -68,9 +68,8 @@ pub fn picker_accelerator(app: &AppHandle) -> Accelerator {
 /// `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
 ///
 /// NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
-/// is `list_models_with_state` (commands/runtime.rs). The WU-0 adapter currently routes BOTH
-/// `STT_GET_MODEL_CATALOG` and `STT_LIST_MODELS_WITH_STATE` → `list_models`; the latter must be
-/// repointed to `list_models_with_state` (see WU-4 libWiringNeeded note).
+/// is `list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
+/// here and `STT_LIST_MODELS_WITH_STATE` → `list_models_with_state` (electron-tauri-adapter.ts ROUTE).
 #[tauri::command]
 #[specta::specta]
 pub fn list_models(app: AppHandle) -> Vec<CatalogModelInfo> {

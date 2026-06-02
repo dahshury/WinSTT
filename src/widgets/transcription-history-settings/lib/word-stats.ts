@@ -195,3 +195,35 @@ export function formatWpm(value: number): string {
 	}
 	return value.toFixed(value >= 100 ? 0 : 1);
 }
+
+/**
+ * LLM post-processing wall-time. Unlike {@link formatDuration} (audio length,
+ * mm:ss) this keeps sub-second precision because cleanup passes are usually
+ * fast: `<1s` shows millis, `1–10s` shows one decimal, beyond that whole
+ * seconds. Returns `null` for non-positive input so the caller drops the chip.
+ */
+export function formatProcessingDuration(ms: number): string | null {
+	if (!Number.isFinite(ms) || ms <= 0) {
+		return null;
+	}
+	if (ms < 1000) {
+		return `${Math.round(ms)}ms`;
+	}
+	if (ms < 10_000) {
+		return `${(ms / 1000).toFixed(1)}s`;
+	}
+	return `${Math.round(ms / 1000)}s`;
+}
+
+/**
+ * LLM generation speed as `"<n> tok/s"`. One decimal under 10 tok/s, whole
+ * numbers above. Returns `null` for non-positive input so the caller drops the
+ * chip (the provider reported no usable token count).
+ */
+export function formatTokensPerSecond(value: number): string | null {
+	if (!Number.isFinite(value) || value <= 0) {
+		return null;
+	}
+	const n = value >= 10 ? Math.round(value).toString() : value.toFixed(1);
+	return `${n} tok/s`;
+}

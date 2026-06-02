@@ -32,7 +32,7 @@ import {
 	buildOverlayModeSwitcherOptions,
 	buildRecordingModeOptions,
 	buildVisualizerTypeSwitcherOptions,
-	buildWakeWordOptions,
+	buildWakeWordGroups,
 	computeDisplayFlags,
 	effectiveLiveDisplay,
 	flagsToLiveDisplay,
@@ -59,31 +59,32 @@ import {
 	sensitivityToIndex,
 } from "../lib/general-settings-panel-test-helpers";
 
-// Short label shown in the picker chip — same shape as the OS keyboard-
-// indicator: native-script abbreviation when one exists, ISO code
-// upper-case otherwise. Keep entries in sync with LOCALES in
-// shared/i18n/config.ts when adding a new locale baseline.
+// Country-code chip shown in the language picker — the ISO 3166-1 alpha-2
+// country most associated with each locale (English → US per the product
+// spec; the rest use the language's canonical/origin country). Text only, no
+// flag image. Keep entries in sync with LOCALES in shared/i18n/config.ts when
+// adding a new locale baseline.
 const LOCALE_BADGE: Record<Locale, string> = {
-	en: "EN",
-	ar: "ع",
-	bg: "БГ",
-	cs: "CS",
+	en: "US",
+	ar: "SA",
+	bg: "BG",
+	cs: "CZ",
 	de: "DE",
 	es: "ES",
 	fr: "FR",
-	he: "עב",
-	hi: "हि",
+	he: "IL",
+	hi: "IN",
 	it: "IT",
-	ja: "日",
-	ko: "한",
+	ja: "JP",
+	ko: "KR",
 	pl: "PL",
 	pt: "PT",
-	ru: "РУ",
-	sv: "SV",
+	ru: "RU",
+	sv: "SE",
 	tr: "TR",
-	uk: "УК",
-	vi: "VI",
-	zh: "中",
+	uk: "UA",
+	vi: "VN",
+	zh: "CN",
 };
 
 const LANGUAGE_OPTIONS: SelectOption[] = LOCALES.map((code) => ({
@@ -286,7 +287,7 @@ function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControl
 }
 
 function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode {
-	const options = buildWakeWordOptions();
+	const groups = buildWakeWordGroups();
 	return (
 		<FormControl
 			label={t("wakeWord")}
@@ -302,8 +303,8 @@ function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode 
 			<ElevatedSurface className="w-52" inline>
 				<Select
 					aria-label={t("wakeWord")}
+					groups={groups}
 					onChange={(v) => update({ wakeWord: v })}
-					options={options}
 					value={value}
 				/>
 			</ElevatedSurface>

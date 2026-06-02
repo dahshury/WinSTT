@@ -27,7 +27,7 @@ use crate::winstt::catalog::{self, Accelerator, Family};
 /// Raw catalog.json row (editorial source of truth). `wer`/`rtfx` are present on every shipped row
 /// (asserted upstream); the rest map 1:1 to the renderer's `rawModelInfoSchema`.
 #[derive(Clone, Debug, Deserialize)]
-struct RawCatalogEntry {
+pub(crate) struct RawCatalogEntry {
     id: String,
     display_name: String,
     family: String,
@@ -278,7 +278,7 @@ pub fn catalog_rows(accel: Accelerator) -> Vec<CatalogModelInfo> {
 
 /// Build one model's cache+fitness state. `cache_states` supplies any per-quant snapshots already
 /// known to the download manager (in-flight / verified on disk); absent precisions read not_cached.
-pub fn to_state_entry(
+pub(crate) fn to_state_entry(
     entry: &RawCatalogEntry,
     accel: Accelerator,
     sys: &SystemInfoEntry,

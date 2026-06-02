@@ -15,6 +15,6 @@ interface SettingsTabState {
 }
 
 export const useSettingsTabStore = create<SettingsTabState>((set) => ({
-	activeTab: "general",
+	activeTab: "recording",
 	setActiveTab: (tab) => set({ activeTab: tab }),
 }));

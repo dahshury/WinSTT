@@ -4,24 +4,14 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { SurfaceProvider, surfaceBg, surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
-import type { SelectOption } from "@/shared/ui/select";
+import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 import "./searchable-select.css";
 
-/**
- * A labelled section of options rendered with a sticky header — the
- * grouped-mode counterpart of a flat `options` list. Mirrors the grouping
- * the STT model selector uses (Base UI `Combobox.Group` + `GroupLabel`):
- * the TTS voice picker passes one group per country.
- */
-export interface SelectOptionGroup {
-	/** Optional short code shown as a badge at the header's trailing edge (e.g. "US"). */
-	badge?: string;
-	/** Sticky header text for the section (e.g. "English (US)"). */
-	label: string;
-	options: readonly SelectOption[];
-	/** Stable group identity — also the Base UI group key. */
-	value: string;
-}
+// `SelectOptionGroup` now lives alongside `SelectOption` in `select/Select.tsx`
+// (the more primitive layer, so the Menu-based `Select` can use it too without
+// a circular import). Re-exported here so existing imports from
+// `@/shared/ui/searchable-select` keep working.
+export type { SelectOptionGroup } from "@/shared/ui/select";
 
 export interface SearchableSelectProps {
 	/**
@@ -111,13 +101,20 @@ function StopBubble({ children, className }: { children: ReactNode; className?: 
 	);
 }
 
-function OptionIcon({ icon }: { icon: NonNullable<SelectOption["icon"]> }) {
+function OptionIcon({
+	active,
+	icon,
+}: {
+	active?: boolean;
+	icon: NonNullable<SelectOption["icon"]>;
+}) {
 	return (
 		<HugeiconsIcon
 			aria-hidden="true"
 			className="pointer-events-none shrink-0 text-foreground-muted"
 			icon={icon}
-			size={14}
+			size={16}
+			strokeWidth={active ? 2 : 1.5}
 		/>
 	);
 }
@@ -148,7 +145,7 @@ function GroupHeader({
 		<Combobox.GroupLabel
 			className={`sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b px-2.5 py-1.5 ${surfaceBg(level)}`}
 		>
-			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
+			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[11px] text-foreground-muted uppercase tracking-[0.12em]">
 				{label}
 			</span>
 			{badge ? <Badge text={badge} /> : null}
@@ -163,14 +160,16 @@ function Row({
 	grouped,
 	item,
 	renderItemTrailing,
+	value,
 }: {
 	grouped?: boolean | undefined;
 	item: SelectOption;
 	renderItemTrailing?: ((option: SelectOption) => ReactNode) | undefined;
+	value: string;
 }) {
 	return (
 		<Combobox.Item
-			className={`searchable-select-item relative z-raised mx-1 flex cursor-default select-none items-center gap-1.5 rounded-xs py-[7px] pe-2.5 text-body text-foreground leading-normal outline-none data-[disabled]:cursor-not-allowed ${grouped ? "ps-5" : "ps-2.5"} data-[selected]:font-medium data-[selected]:text-foreground`}
+			className={`searchable-select-item relative z-raised mx-1 flex cursor-default select-none items-center gap-2 rounded-xs py-2 pe-2 text-body text-foreground leading-normal outline-none data-[disabled]:cursor-not-allowed ${grouped ? "ps-4" : "ps-2"} data-[selected]:font-medium data-[selected]:text-foreground`}
 			data-menu-option={item.id}
 			disabled={item.disabled}
 			value={item}
@@ -181,7 +180,7 @@ function Row({
 				</Combobox.ItemIndicator>
 			</span>
 			{!grouped && item.badge ? <Badge text={item.badge} /> : null}
-			{item.icon ? <OptionIcon icon={item.icon} /> : null}
+			{item.icon ? <OptionIcon active={item.id === value} icon={item.icon} /> : null}
 			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
 				{item.label}
 			</span>
@@ -277,7 +276,7 @@ export function SearchableSelect({
 						ref={decorationRef}
 					>
 						{selected?.badge ? <Badge text={selected.badge} /> : null}
-						{selected?.icon ? <OptionIcon icon={selected.icon} /> : null}
+						{selected?.icon ? <OptionIcon active icon={selected.icon} /> : null}
 					</span>
 				) : null}
 				<Combobox.Input
@@ -332,13 +331,19 @@ export function SearchableSelect({
 															item={item}
 															key={item.id}
 															renderItemTrailing={renderItemTrailing}
+															value={value}
 														/>
 													))}
 												</Combobox.Group>
 											);
 										}
 									: (item: SelectOption) => (
-											<Row item={item} key={item.id} renderItemTrailing={renderItemTrailing} />
+											<Row
+												item={item}
+												key={item.id}
+												renderItemTrailing={renderItemTrailing}
+												value={value}
+											/>
 										)}
 							</Combobox.List>
 						</Combobox.Popup>

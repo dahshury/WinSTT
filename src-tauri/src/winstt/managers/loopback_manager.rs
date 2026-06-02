@@ -36,7 +36,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
-use crate::audio_toolkit::vad::{SileroVad, VoiceActivityDetector};
+use crate::audio_toolkit::vad::{
+    SileroVad, SmoothedVad, VoiceActivityDetector, VAD_FRAME_SAMPLES, VAD_SPEECH_THRESHOLD,
+};
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::commands::listen_events::{emit_speaker_segments, EmitSpeakerSegment};
@@ -49,14 +51,17 @@ use crate::winstt::managers::DiarizationManager;
 /// a sentence mid-stream. Bit-faithful to the server.
 const POST_SPEECH_SILENCE_DURATION: f64 = 2.0;
 
-/// Silero VAD speech threshold — same value the mic recorder uses
-/// (`create_audio_recorder` in managers/audio.rs), so loopback and mic gate on
-/// the same sensitivity.
-const VAD_THRESHOLD: f32 = 0.3;
+// VAD sensitivity (`VAD_SPEECH_THRESHOLD`) and the 30 ms frame size
+// (`VAD_FRAME_SAMPLES`) are shared with the mic path from `audio_toolkit::vad` so
+// the two pipelines can't drift apart.
 
-/// Silero frame size at 16 kHz (30 ms). The capture side already emits 30 ms
-/// frames; the consumer re-frames defensively in case a partial frame arrives.
-const VAD_FRAME_SAMPLES: usize = (WHISPER_SAMPLE_RATE as usize) * 30 / 1000;
+/// SmoothedVad onset/hangover/prefill frame counts — same tuning the mic recorder
+/// applies (`create_audio_recorder` in managers/audio.rs wraps SileroVad in
+/// `SmoothedVad::new(.., 15, 15, 2)`), so loopback gets the SAME onset debounce +
+/// hangover tail instead of the bare per-frame Silero decision it used before.
+const VAD_PREFILL_FRAMES: usize = 15;
+const VAD_HANGOVER_FRAMES: usize = 15;
+const VAD_ONSET_FRAMES: usize = 2;
 
 /// Minimum speech (samples) before a flush is worth transcribing — drops sub-VAD
 /// blips (a single click / notification chime) that would otherwise spawn an
@@ -116,10 +121,19 @@ impl LoopbackManager {
         }
 
         // Build the VAD up front so a missing model fails the start cleanly
-        // (before we open the audio backend).
+        // (before we open the audio backend). Wrap Silero in SmoothedVad with the
+        // SAME prefill/hangover/onset tuning the mic recorder uses so listen-mode
+        // endpointing matches dictation (onset debounce + hangover tail), not a raw
+        // per-frame decision.
         let vad_path = self.vad_path()?;
-        let vad = SileroVad::new(&vad_path, VAD_THRESHOLD)
+        let silero = SileroVad::new(&vad_path, VAD_SPEECH_THRESHOLD)
             .map_err(|e| format!("failed to create Silero VAD: {e}"))?;
+        let vad: Box<dyn VoiceActivityDetector> = Box::new(SmoothedVad::new(
+            Box::new(silero),
+            VAD_PREFILL_FRAMES,
+            VAD_HANGOVER_FRAMES,
+            VAD_ONSET_FRAMES,
+        ));
 
         self.stop_flag.store(false, Ordering::Release);
 
@@ -195,7 +209,7 @@ fn consumer_loop(
     app: AppHandle,
     rx: Receiver<Vec<f32>>,
     stop_flag: Arc<AtomicBool>,
-    mut vad: SileroVad,
+    mut vad: Box<dyn VoiceActivityDetector>,
 ) {
     // How many consecutive silence frames close an utterance.
     let silence_frames_to_end =

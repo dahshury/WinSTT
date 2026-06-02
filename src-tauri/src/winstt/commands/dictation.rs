@@ -77,13 +77,13 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
                 apply_endpoint_flag(&rm, &parameter, value.as_bool().unwrap_or(false));
             }
         }
-        // Live transcription knobs — persist them so the next transcribe re-reads
-        // them (TranscriptionManager::transcribe calls get_settings each pass).
-        "language" => {
-            if let Some(lang) = value.as_str() {
-                apply_language(&app, lang);
-            }
-        }
+        // `language` is owned SOLELY by WinsttSettings.model.language now — the renderer
+        // persists it via `winstt_set_settings`, and TranscriptionManager::transcribe reads
+        // it from there. The old AppSettings `selected_language` write was a second source of
+        // truth that different transcribe() arms read inconsistently; it's been removed. Accept
+        // the live `set_parameter("language", …)` as a no-op so the renderer's fire-and-forget
+        // send never errors (Electron's was best-effort too).
+        "language" => {}
         "translate_to_english" => {
             apply_translate(&app, value.as_bool().unwrap_or(false));
         }
@@ -104,16 +104,6 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
         // fire-and-forget (Electron's set_parameter was also best-effort).
         _ => {}
     }
-}
-
-/// Persist the selected language so the next transcribe pass uses it.
-/// `TranscriptionManager::transcribe` re-reads `get_settings` each pass, so a live
-/// write here takes effect on the very next utterance (matches Electron's
-/// `set_parameter("language", …)` forwarding to the running recorder).
-fn apply_language(app: &AppHandle, language: &str) {
-    let mut settings = crate::settings::get_settings(app);
-    settings.selected_language = language.to_string();
-    crate::settings::write_settings(app, settings);
 }
 
 /// Persist the translate-to-English flag.
@@ -248,14 +238,14 @@ fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
 #[tauri::command]
 #[specta::specta]
 pub fn set_winstt_model(app: AppHandle, kind: String, name: String) {
-    let _ = name;
     if kind == "realtime" {
         // SPIKE (04_*): realtime worker model rebuild — owned by the realtime slice.
         return;
     }
-    if let Some(tm) = app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>() {
-        tm.initiate_model_load();
-    }
+    // Drive the FULL swap lifecycle (started → load → completed/failed + runtime-info push) so the
+    // picker's "Switching…" chip resolves and a FAILED load surfaces as `stt:model-swap-failed`
+    // (rollback + toast) instead of being swallowed → the renderer silently adopting runtime "tiny".
+    crate::winstt::commands::swap_events::perform_model_swap(&app, &kind, &name);
 }
 
 // ── STT lifecycle / level EVENT emitters (MISSING set — WU-3) ───────────────────
@@ -337,6 +327,15 @@ impl SttEvents {
     /// ORDERING (risk §6): emit `realtime-stabilized` BEFORE `realtime-update`.
     pub fn realtime_text(app: &AppHandle, text: &str) {
         let _ = app.emit("realtime-update", serde_json::json!({ "text": text }));
+    }
+
+    /// `realtime-stabilized` — the UI-safe MONOTONIC live preview (stabilizer output).
+    /// Emitted BEFORE `realtime-update` on every realtime tick (mirrors RealtimeSTT's
+    /// `on_realtime_transcription_stabilized` → `..._update` ordering in
+    /// recorder_service.py:2852-2853). The renderer's live-preview pane consumes this;
+    /// `realtime-update` carries the raw assembled text for noise-break/logging consumers.
+    pub fn realtime_stabilized(app: &AppHandle, text: &str) {
+        let _ = app.emit("realtime-stabilized", serde_json::json!({ "text": text }));
     }
 
     /// `stt:session-aborted` — a user-initiated cancel just landed. The renderer

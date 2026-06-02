@@ -390,6 +390,10 @@ export const IPC = {
 	HISTORY_ROW_DELETED: "history:row-deleted",
 	HISTORY_ROW_TOGGLED: "history:row-toggled",
 
+	// Transcript quick-actions (renderer → main) — the tray menu's "Copy Last
+	// Transcript". Reads the history DB directly, so it works while offline.
+	TRANSCRIPT_COPY_LAST: "transcript:copy-last",
+
 	// Diagnostics bundle (renderer → main)
 	DIAG_OPEN_LOGS_FOLDER: "diag:open-logs-folder",
 	DIAG_SAVE_BUNDLE: "diag:save-bundle",
@@ -704,6 +708,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.STT_DIARIZATION_TOGGLE_COMPLETED]: ["on"],
 	[IPC.STT_DIARIZATION_TOGGLE_FAILED]: ["on"],
 	[IPC.STT_RESTART_REQUIRED]: ["on"],
+
+	// Transcript quick-actions (renderer → main)
+	[IPC.TRANSCRIPT_COPY_LAST]: ["invoke"],
 
 	// Diagnostics bundle (renderer → main)
 	[IPC.DIAG_OPEN_LOGS_FOLDER]: ["invoke"],

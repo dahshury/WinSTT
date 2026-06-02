@@ -472,12 +472,19 @@
 		will-change: width, height;
 	}
 
-	/* Scrollbar
-	   The thumb deliberately uses a foreground (not border) token: --color-border
-	   sits at the same 19% lightness as --color-surface-elevated, so a border-
-	   colored thumb is invisible inside dropdown popups (Select, FooterMenuChip,
-	   any Base UI Menu.Popup). foreground-dim contrasts against every step of
-	   the surface elevation scale. */
+	/* Scrollbar — auto-hiding, app-wide (matches the settings ScrollArea).
+	   The thumb is invisible at rest and only painted while its element is
+	   actively being scrolled: `installScrollbarAutoHide` stamps
+	   `data-scrollbar-visible` on the scrolled element for ~700ms after each
+	   scroll tick, and the `[data-scrollbar-visible]` rules below light the bar.
+	   On WebView2 / Chromium ≥121 the standard `scrollbar-*` properties win and
+	   the `::-webkit-scrollbar` block is inert — it's kept as a fallback for
+	   older engines (which also resolve hover-to-reveal). The thumb uses a
+	   foreground (not border) token: --color-border sits at the same 19%
+	   lightness as --color-surface-elevated, so a border-colored thumb would be
+	   invisible inside dropdown popups (Select, FooterMenuChip, any Base UI
+	   Menu.Popup); foreground-dim contrasts against every step of the surface
+	   elevation scale. */
 	::-webkit-scrollbar {
 		width: 8px;
 		height: 8px;
@@ -488,18 +495,28 @@
 	}
 
 	::-webkit-scrollbar-thumb {
-		background: var(--color-foreground-dim);
+		background: transparent;
 		border-radius: 999px;
 	}
 
+	[data-scrollbar-visible]::-webkit-scrollbar-thumb,
 	::-webkit-scrollbar-thumb:hover {
+		background: var(--color-foreground-dim);
+	}
+
+	[data-scrollbar-visible]::-webkit-scrollbar-thumb:hover {
 		background: var(--color-foreground-muted);
 	}
 
-	/* Firefox / standards-track equivalent */
+	/* Firefox / standards-track (and Chromium ≥121, which prefers these over the
+	   -webkit- pseudo-elements). Transparent at rest; revealed while scrolling. */
 	* {
-		scrollbar-color: var(--color-foreground-dim) transparent;
+		scrollbar-color: transparent transparent;
 		scrollbar-width: thin;
+	}
+
+	[data-scrollbar-visible] {
+		scrollbar-color: var(--color-foreground-dim) transparent;
 	}
 
 	/* Hide native number input spinners */

@@ -1,7 +1,10 @@
 import type { components } from "@spec/schema";
+import type { AudioDevicePayload, GpuInfoEntry } from "@/bindings";
 
-export type AudioDevice = components["schemas"]["AudioDevice"];
-export type GpuInfo = components["schemas"]["GpuInfo"];
+// Re-exported from the Rust contract (bindings.ts) so consumers get the real
+// wire shape instead of the deleted Python server's OpenAPI spec.
+export type { AudioDevicePayload as AudioDevice };
+export type { GpuInfoEntry as GpuInfo };
 export type ServerStatus = components["schemas"]["ServerStatus"];
 export type AllowedParameter = components["schemas"]["AllowedParameter"];
 export type AllowedMethod = components["schemas"]["AllowedMethod"];

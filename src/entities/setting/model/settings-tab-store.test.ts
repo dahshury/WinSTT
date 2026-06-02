@@ -7,20 +7,20 @@ import { useSettingsTabStore } from "./settings-tab-store";
 const INITIAL_STATE = useSettingsTabStore.getInitialState();
 
 beforeEach(() => {
-	useSettingsTabStore.setState({ activeTab: "general" });
+	useSettingsTabStore.setState({ activeTab: "recording" });
 });
 
 describe("useSettingsTabStore", () => {
-	test("initial state defaults to the 'general' tab", () => {
-		expect(useSettingsTabStore.getState().activeTab).toBe("general");
+	test("initial state defaults to the 'recording' tab", () => {
+		expect(useSettingsTabStore.getState().activeTab).toBe("recording");
 	});
 
-	test("factory initial-state literal is 'general' (mutation guard)", () => {
+	test("factory initial-state literal is 'recording' (mutation guard)", () => {
 		// Reads the snapshot captured before any setState. Mutating the literal
-		// in the source ("general" → "") would slip past the beforeEach reset,
+		// in the source ("recording" → "") would slip past the beforeEach reset,
 		// so we assert the real default here. The settings sidebar opens on the
-		// General tab; any other default would land users on the wrong panel.
-		expect(INITIAL_STATE.activeTab).toBe("general");
+		// Recording tab; any other default would land users on the wrong panel.
+		expect(INITIAL_STATE.activeTab).toBe("recording");
 	});
 
 	test("setActiveTab replaces the activeTab field", () => {

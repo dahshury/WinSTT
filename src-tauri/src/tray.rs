@@ -1,12 +1,7 @@
 use crate::managers::history::{HistoryEntry, HistoryManager};
-use crate::managers::model::ModelManager;
-use crate::managers::transcription::TranscriptionManager;
-use crate::settings;
-use crate::tray_i18n::get_tray_translations;
 use log::{error, info, warn};
 use std::sync::Arc;
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Manager, Theme};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -94,140 +89,23 @@ fn version_label() -> String {
 }
 
 pub fn update_tray_menu(app: &AppHandle, state: &TrayIconState, locale: Option<&str>) {
-    let settings = settings::get_settings(app);
-
-    let locale = locale.unwrap_or(&settings.app_language);
-    let strings = get_tray_translations(Some(locale.to_string()));
-
-    // Platform-specific accelerators
-    #[cfg(target_os = "macos")]
-    let (settings_accelerator, quit_accelerator) = (Some("Cmd+,"), Some("Cmd+Q"));
-    #[cfg(not(target_os = "macos"))]
-    let (settings_accelerator, quit_accelerator) = (Some("Ctrl+,"), Some("Ctrl+Q"));
-
-    // Create common menu items
-    let version_label = version_label();
-    let version_i = MenuItem::with_id(app, "version", &version_label, false, None::<&str>)
-        .expect("failed to create version item");
-    let settings_i = MenuItem::with_id(
-        app,
-        "settings",
-        &strings.settings,
-        true,
-        settings_accelerator,
-    )
-    .expect("failed to create settings item");
-    let check_updates_i = MenuItem::with_id(
-        app,
-        "check_updates",
-        &strings.check_updates,
-        settings.update_checks_enabled,
-        None::<&str>,
-    )
-    .expect("failed to create check updates item");
-    let copy_last_transcript_i = MenuItem::with_id(
-        app,
-        "copy_last_transcript",
-        &strings.copy_last_transcript,
-        true,
-        None::<&str>,
-    )
-    .expect("failed to create copy last transcript item");
-    let model_loaded = app.state::<Arc<TranscriptionManager>>().is_model_loaded();
-    let quit_i = MenuItem::with_id(app, "quit", &strings.quit, true, quit_accelerator)
-        .expect("failed to create quit item");
-    let separator = || PredefinedMenuItem::separator(app).expect("failed to create separator");
-
-    // Build model submenu — label is the active model name
-    let model_manager = app.state::<Arc<ModelManager>>();
-    let models = model_manager.get_available_models();
-    let current_model_id = &settings.selected_model;
-
-    let mut downloaded: Vec<_> = models.into_iter().filter(|m| m.is_downloaded).collect();
-    downloaded.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let submenu_label = downloaded
-        .iter()
-        .find(|m| m.id == *current_model_id)
-        .map(|m| m.name.clone())
-        .unwrap_or_else(|| strings.model.clone());
-
-    let model_submenu = {
-        let submenu = Submenu::with_id(app, "model_submenu", &submenu_label, true)
-            .expect("failed to create model submenu");
-
-        for model in &downloaded {
-            let is_active = model.id == *current_model_id;
-            let item_id = format!("model_select:{}", model.id);
-            let item =
-                CheckMenuItem::with_id(app, &item_id, &model.name, true, is_active, None::<&str>)
-                    .expect("failed to create model item");
-            let _ = submenu.append(&item);
-        }
-
-        submenu
-    };
-
-    let unload_model_i = MenuItem::with_id(
-        app,
-        "unload_model",
-        &strings.unload_model,
-        model_loaded,
-        None::<&str>,
-    )
-    .expect("failed to create unload model item");
-
-    let menu = match state {
-        TrayIconState::Recording | TrayIconState::Transcribing => {
-            let cancel_i = MenuItem::with_id(app, "cancel", &strings.cancel, true, None::<&str>)
-                .expect("failed to create cancel item");
-            Menu::with_items(
-                app,
-                &[
-                    &version_i,
-                    &separator(),
-                    &cancel_i,
-                    &separator(),
-                    &copy_last_transcript_i,
-                    &separator(),
-                    &settings_i,
-                    &check_updates_i,
-                    &separator(),
-                    &quit_i,
-                ],
-            )
-            .expect("failed to create menu")
-        }
-        TrayIconState::Idle => Menu::with_items(
-            app,
-            &[
-                &version_i,
-                &separator(),
-                &copy_last_transcript_i,
-                &separator(),
-                &model_submenu,
-                &unload_model_i,
-                &separator(),
-                &settings_i,
-                &check_updates_i,
-                &separator(),
-                &quit_i,
-            ],
-        )
-        .expect("failed to create menu"),
-    };
+    // AUDIT #19: WinSTT shows its OWN transparent HTML tray menu (lib.rs
+    // `on_tray_icon_event` → toggle_tray_menu_at_physical; labels are translated in the
+    // renderer). Handy's native OS context menu is NOT attached — and previously this
+    // function still BUILT every MenuItem/Submenu/CheckMenuItem (looping all downloaded
+    // models) on every state transition only to drop it with `let _ = menu;`. That whole
+    // construction block has been removed; only the icon-template + tooltip refresh
+    // remain (the state/locale args are kept for signature stability and future use).
+    let _ = state;
+    let _ = locale;
 
     let tray = app.state::<TrayIcon>();
-    // Do NOT attach the native menu: WinSTT shows its own transparent HTML tray menu
-    // (lib.rs `on_tray_icon_event` → toggle_tray_menu_at_physical). Attaching a native
-    // menu here would make Windows pop IT on right-click instead of our menu. We still
-    // build it above (cheap, infrequent) to keep the translation/label code in one place,
-    // but drop it unused. The icon/template/tooltip updates below still apply.
-    let _ = menu;
     let _ = tray.set_icon_as_template(true);
-    let _ = tray.set_tooltip(Some(version_label));
+    let _ = tray.set_tooltip(Some(version_label()));
 }
 
+// The post-processed text wins over the raw transcription when present (matches
+// what the user sees in the history pane). Shared by `copy_last_transcript` and tests.
 fn last_transcript_text(entry: &HistoryEntry) -> &str {
     entry
         .post_processed_text
@@ -244,35 +122,43 @@ pub fn set_tray_visibility(app: &AppHandle, visible: bool) {
     }
 }
 
-pub fn copy_last_transcript(app: &AppHandle) {
+/// Copy the most recent *completed* transcription to the system clipboard. Invoked
+/// by the HTML tray menu's "Copy Last Transcript" item. Reads the history DB directly,
+/// so it works whether or not the STT server is connected. Returns `false` when there's
+/// no completed entry, its text is empty, or the clipboard write fails (the menu can
+/// surface that), `true` once the text lands on the clipboard.
+#[tauri::command]
+#[specta::specta]
+pub fn copy_last_transcript(app: AppHandle) -> bool {
     let history_manager = app.state::<Arc<HistoryManager>>();
     let entry = match history_manager.get_latest_completed_entry() {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             warn!("No completed transcription history entries available for tray copy.");
-            return;
+            return false;
         }
         Err(err) => {
             error!(
                 "Failed to fetch last completed transcription entry: {}",
                 err
             );
-            return;
+            return false;
         }
     };
 
     let text = last_transcript_text(&entry);
     if text.trim().is_empty() {
         warn!("Last completed transcription is empty; skipping tray copy.");
-        return;
+        return false;
     }
 
     if let Err(err) = app.clipboard().write_text(text) {
         error!("Failed to copy last transcript to clipboard: {}", err);
-        return;
+        return false;
     }
 
     info!("Copied last transcript to clipboard via tray.");
+    true
 }
 
 #[cfg(test)]
@@ -291,6 +177,7 @@ mod tests {
             post_processed_text: post_processed.map(|text| text.to_string()),
             post_process_prompt: None,
             post_process_requested: false,
+            llm_meta: None,
         }
     }
 

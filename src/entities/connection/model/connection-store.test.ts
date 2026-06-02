@@ -10,7 +10,7 @@ beforeEach(() => {
 	useConnectionStore.setState({
 		connectionStatus: "disconnected",
 		serverStatus: "idle",
-		gpuInfo: null,
+		gpuInfo: [],
 	});
 });
 
@@ -19,7 +19,7 @@ describe("useConnectionStore", () => {
 		const state = useConnectionStore.getState();
 		expect(state.connectionStatus).toBe("disconnected");
 		expect(state.serverStatus).toBe("idle");
-		expect(state.gpuInfo).toBeNull();
+		expect(state.gpuInfo).toEqual([]);
 	});
 
 	test("store factory's initial state has the documented literals (mutation guard)", () => {
@@ -34,7 +34,7 @@ describe("useConnectionStore", () => {
 		// is the real, intentional default.
 		expect(INITIAL_STATE.connectionStatus).toBe("connecting");
 		expect(INITIAL_STATE.serverStatus).toBe("idle");
-		expect(INITIAL_STATE.gpuInfo).toBeNull();
+		expect(INITIAL_STATE.gpuInfo).toEqual([]);
 	});
 
 	test("setConnectionStatus updates the connectionStatus field only", () => {
@@ -51,10 +51,12 @@ describe("useConnectionStore", () => {
 		expect(state.connectionStatus).toBe("disconnected");
 	});
 
-	test("setGpuInfo accepts an object or null", () => {
-		useConnectionStore.getState().setGpuInfo({ name: "RTX 4090", available: true });
-		expect(useConnectionStore.getState().gpuInfo?.name).toBe("RTX 4090");
-		useConnectionStore.getState().setGpuInfo(null);
-		expect(useConnectionStore.getState().gpuInfo).toBeNull();
+	test("setGpuInfo accepts an array or empty array", () => {
+		useConnectionStore
+			.getState()
+			.setGpuInfo([{ name: "RTX 4090", total_vram_bytes: 24_000_000_000 }]);
+		expect(useConnectionStore.getState().gpuInfo[0]?.name).toBe("RTX 4090");
+		useConnectionStore.getState().setGpuInfo([]);
+		expect(useConnectionStore.getState().gpuInfo).toEqual([]);
 	});
 });

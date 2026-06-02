@@ -30,21 +30,45 @@ pub fn handle_shortcut_event(
     hotkey_string: &str,
     is_pressed: bool,
 ) {
-    // WinSTT port fork (WU-3 dictation): the transcribe binding's accelerator does
-    // NOT drive the TranscribeAction directly. Instead the press/release of the
-    // registered accelerator is surfaced to the renderer as the plain
-    // `hotkey:pressed` / `hotkey:released` events; the renderer's usePushToTalk then
-    // decides (per recording mode) whether to issue `set_microphone(true/false)`
-    // (winstt_call_method), which routes back through the coordinator. This keeps
-    // the renderer as the single source of truth for the 4 modes (ptt / toggle /
-    // listen / wakeword) — listen & wakeword are server-driven and the renderer
-    // deliberately suppresses set_microphone for them, so routing the hotkey
-    // straight into the coordinator here would wrongly start a mic recording in
-    // those modes AND double-record in ptt/toggle (the renderer ALSO calls
-    // set_microphone). Emitting the events instead is the byte-compatible WinSTT
-    // behaviour (frontend/electron/ipc/hotkey.ts → onHotkeyPressed/Released).
+    // WinSTT port: the BACKEND is the single authority for hotkey dispatch (Handy-style).
+    // The transcribe binding's accelerator drives the recorder DIRECTLY on the hotkey thread —
+    // both PTT and TOGGLE branch straight into the coordinator here, killing the WebView2
+    // round-trip that was the "~2s from hotkey to listening" bug AND the double-dispatch that
+    // relied on the Stage machine deduping a race (the renderer used to ALSO call set_microphone
+    // for ptt/toggle). The `hotkey:pressed` / `hotkey:released` events below are now PURELY for
+    // renderer UI state (pressed/active pill); the renderer no longer issues set_microphone for
+    // ptt/toggle (see use-push-to-talk.ts). LISTEN & WAKEWORD stay renderer/server-driven — they
+    // transcribe SYSTEM audio / fire on a wake event, not the mic hotkey, so we must NOT start a
+    // mic recording for them here; the renderer/loopback path owns those. Mode is read once from
+    // the in-memory store (no secret-decrypt) so the press path stays fast.
     if is_transcribe_binding(binding_id) {
         use crate::winstt::commands::hotkey::HotkeyEvents;
+        use crate::winstt::settings_schema::RecordingMode;
+
+        match crate::winstt::commands::settings::recording_mode(app) {
+            // PTT: press starts, release stops (the key hold IS the recording boundary).
+            RecordingMode::Ptt => {
+                if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
+                    coordinator.send_input("transcribe", "", is_pressed, true);
+                }
+            }
+            // TOGGLE: only the PRESS matters — the coordinator's Stage machine flips
+            // Idle↔Recording on each `is_pressed:true, push_to_talk:false` (start on the first
+            // press, stop on the next). Releases are ignored so a hold doesn't toggle twice.
+            RecordingMode::Toggle => {
+                if is_pressed {
+                    if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
+                        coordinator.send_input("transcribe", "", true, false);
+                    }
+                }
+            }
+            // LISTEN / WAKEWORD: server-driven (system-audio loopback / wake event). The mic
+            // hotkey must NOT start a recording for them — leave dispatch to the renderer/server.
+            RecordingMode::Listen | RecordingMode::Wakeword => {}
+        }
+
+        // UI-only: the renderer's hotkey store reflects pressed/active for the pill. No
+        // set_microphone is issued by the renderer for ptt/toggle anymore (single authority).
         if is_pressed {
             HotkeyEvents::pressed(app);
         } else {

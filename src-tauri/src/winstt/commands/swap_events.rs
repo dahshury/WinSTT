@@ -137,15 +137,13 @@ pub fn perform_model_swap(app: &AppHandle, kind: &str, name: &str) {
     let kind = kind.to_string();
     let name = name.to_string();
     std::thread::spawn(move || {
-        // Kick Handy's model-load worker. `initiate_model_load` reads the persisted selection (the
-        // renderer already wrote it) and rebuilds the engine session in the background.
+        // Load the REQUESTED model synchronously and observe the real result. We pass `name`
+        // explicitly (NOT re-reading settings) because the renderer's persist of `model.model` is
+        // debounced ~300ms — re-reading here would load the stale/default "tiny" and "succeed".
         let load_result: Result<(), String> = match app
             .try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
         {
-            Some(tm) => {
-                tm.initiate_model_load();
-                Ok(())
-            }
+            Some(tm) => tm.load_model_blocking(&name),
             None => Err("transcription manager not initialized".to_string()),
         };
 

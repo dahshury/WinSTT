@@ -39,6 +39,19 @@ pub struct AudioRecorder {
     /// Raw-16k mono tap fired on EVERY resampled frame (independent of `recording`), so the
     /// wakeword detector can listen while idle. None = no-op (free when no wakeword armed).
     chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
+    /// Live snapshot MIRROR of `processed_samples` (the in-flight 16 kHz recording buffer),
+    /// kept in sync TAIL-ONLY by run_consumer so the realtime worker can read a growing window
+    /// of the current recording WITHOUT touching the wakeword `chunk_cb` slot (single, taken) or
+    /// the batch Cmd::Stop drain. Cleared on Cmd::Start, mem::take'd-equivalent on Stop (the
+    /// mirror keeps the last recording until the next Start clears it). Always allocated so
+    /// `snapshot_recorded` can clone it; `None` is never used at runtime but keeps run_consumer
+    /// agnostic. See project memory: realtime streaming port.
+    live_audio: Arc<Mutex<Vec<f32>>>,
+    /// Gate for the `live_audio` mirror: run_consumer only grows the mirror while this is true.
+    /// The recording manager flips it per recording based on `effective_realtime` so we never
+    /// pay the second-copy memory + per-chunk extend when the live preview is off. Defaults to
+    /// `false`; the manager sets it before the first frame of a realtime recording.
+    realtime_enabled: Arc<AtomicBool>,
 }
 
 impl AudioRecorder {
@@ -50,7 +63,17 @@ impl AudioRecorder {
             vad: None,
             level_cb: None,
             chunk_cb: None,
+            live_audio: Arc::new(Mutex::new(Vec::new())),
+            realtime_enabled: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Enable/disable the realtime `live_audio` mirror at runtime. When `false`, run_consumer
+    /// skips the per-chunk extend entirely (no second copy of the recording). Cheap, lock-free;
+    /// safe to flip from any thread. The recording manager calls this per recording based on
+    /// whether the live preview is actually shown (`effective_realtime`).
+    pub fn set_realtime_enabled(&self, enabled: bool) {
+        self.realtime_enabled.store(enabled, Ordering::Relaxed);
     }
 
     pub fn with_vad(mut self, vad: Box<dyn VoiceActivityDetector>) -> Self {
@@ -96,6 +119,11 @@ impl AudioRecorder {
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
         let chunk_cb = self.chunk_cb.clone();
+        // Clone the live-audio mirror handle so the realtime worker (via snapshot_recorded)
+        // and run_consumer share the SAME buffer.
+        let live_audio = Some(self.live_audio.clone());
+        // Clone the realtime gate so run_consumer can skip the mirror extend when off.
+        let realtime_enabled = self.realtime_enabled.clone();
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -172,7 +200,17 @@ impl AudioRecorder {
                 Ok((stream, sample_rate)) => {
                     let _ = init_tx.send(Ok(()));
                     // Keep the stream alive while we process samples.
-                    run_consumer(sample_rate, vad, sample_rx, cmd_rx, level_cb, chunk_cb, stop_flag);
+                    run_consumer(
+                        sample_rate,
+                        vad,
+                        sample_rx,
+                        cmd_rx,
+                        level_cb,
+                        chunk_cb,
+                        live_audio,
+                        realtime_enabled,
+                        stop_flag,
+                    );
                     drop(stream);
                 }
                 Err(error_message) => {
@@ -232,6 +270,31 @@ impl AudioRecorder {
         }
         self.device = None;
         Ok(())
+    }
+
+    /// Clone the current in-flight 16 kHz mono recording buffer (the live mirror that
+    /// run_consumer keeps tail-synced with `processed_samples`). Returns an empty Vec if nothing
+    /// has been captured since the last Cmd::Start. O(N) clone — kept for back-compat; the
+    /// realtime worker uses `snapshot_from` (O(new samples)) instead.
+    pub fn snapshot_recorded(&self) -> Vec<f32> {
+        self.live_audio.lock().unwrap().clone()
+    }
+
+    /// Snapshot only the TAIL of the live recording mirror past `offset` samples, plus the
+    /// current total length. Returns `(total_len, tail)` where `tail == live_audio[offset..]`
+    /// (an empty Vec when `offset >= total_len`). The realtime worker passes its committed-frame
+    /// watermark as `offset` and never reads audio before it, so the clone is O(new samples)
+    /// instead of O(N) — eliminating the O(N²)-per-utterance full-buffer clone on every tick.
+    /// Indices the caller derives from absolute frame numbers must be re-based by `offset`.
+    pub fn snapshot_from(&self, offset: usize) -> (usize, Vec<f32>) {
+        let mirror = self.live_audio.lock().unwrap();
+        let total = mirror.len();
+        let tail = if offset < total {
+            mirror[offset..].to_vec()
+        } else {
+            Vec::new()
+        };
+        (total, tail)
     }
 
     fn build_stream<T>(
@@ -412,6 +475,12 @@ fn run_consumer(
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
+    // Live snapshot mirror of `processed_samples` for the realtime worker (tail-synced below).
+    // `None` makes the sync a no-op (free); the recorder always passes `Some(...)`.
+    live_audio: Option<Arc<Mutex<Vec<f32>>>>,
+    // Runtime gate: only grow `live_audio` while this is true (set per recording from
+    // `effective_realtime`). When off, the mirror extend is skipped entirely → no second copy.
+    realtime_enabled: Arc<AtomicBool>,
     stop_flag: Arc<AtomicBool>,
 ) {
     let mut frame_resampler = FrameResampler::new(
@@ -483,12 +552,34 @@ fn run_consumer(
             handle_frame(frame, recording, &vad, &mut processed_samples)
         });
 
+        // ---------- realtime live-audio mirror (tail-sync) --------------- //
+        // Mirror only the NEW tail of `processed_samples` into the shared buffer so the realtime
+        // worker can read a growing window of the active recording. O(new samples), NOT a full
+        // clone per chunk. Gated on `recording` so the idle wakeword path never grows it, AND on
+        // `realtime_enabled` so we skip the second copy entirely when the live preview is off
+        // (the common dictation case). The batch path (Cmd::Stop drain + mem::take below) is
+        // byte-identical — this only reads `processed_samples`.
+        if recording && realtime_enabled.load(Ordering::Relaxed) {
+            if let Some(mirror) = &live_audio {
+                let mut m = mirror.lock().unwrap();
+                let mirrored = m.len();
+                if processed_samples.len() > mirrored {
+                    m.extend_from_slice(&processed_samples[mirrored..]);
+                }
+            }
+        }
+
         // non-blocking check for a command
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 Cmd::Start => {
                     stop_flag.store(false, Ordering::Relaxed);
                     processed_samples.clear();
+                    // Clear the realtime mirror in lock-step so the worker's first snapshot of
+                    // the new recording starts empty (no stale tail from the previous take).
+                    if let Some(mirror) = &live_audio {
+                        mirror.lock().unwrap().clear();
+                    }
                     recording = true;
                     visualizer.reset();
                     if let Some(v) = &vad {

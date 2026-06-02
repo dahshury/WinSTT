@@ -234,28 +234,64 @@ impl AudioRecordingManager {
             settings.selected_microphone.as_ref()
         };
 
-        // Some Windows hosts default to a SILENT virtual/loopback input ("WO Mic",
-        // "Stereo Mix", "CABLE", …). Falling back to it yields level=0.00 → a dead
-        // visualizer + no captured audio. When no device is explicitly chosen, prefer
-        // a real physical input over these. (Returning None here would make the caller
-        // fall back to cpal's default, which on this machine IS the silent virtual mic.)
+        // Some Windows hosts expose SILENT virtual/loopback inputs ("WO Mic",
+        // "Stereo Mix", "Voicemeeter", …). When "Default" is selected we honor the OS
+        // default input first; only if THAT is one of these known-silent virtual
+        // endpoints do we fall through to the first real physical input (level=0.00 on
+        // a silent default → a dead visualizer + no captured audio).
+        //
+        // The blocklist matches WHOLE WORDS / identities, not bare substrings: a naked
+        // "cable" / "aggregate" substring rejected legitimate products (e.g. a USB
+        // device whose name contains "Cable") and every macOS "Aggregate Device", so
+        // those two are matched as standalone tokens (or known full product names)
+        // rather than anywhere-in-the-string.
         fn is_likely_virtual(name: &str) -> bool {
             let lower = name.to_lowercase();
-            [
-                "stereo mix", "what u hear", "wo mic", "loopback", "virtual",
-                "aggregate", "wavetable", "stereo out", "mono mix", "voicemeeter", "cable",
-            ]
-            .iter()
-            .any(|p| lower.contains(p))
+            // Phrase markers that are unambiguous as substrings (no false positives on
+            // real hardware names).
+            const SUBSTRING_MARKERS: &[&str] = &[
+                "stereo mix",
+                "what u hear",
+                "wo mic",
+                "loopback",
+                "wavetable",
+                "stereo out",
+                "mono mix",
+                "voicemeeter",
+                "vb-audio",
+                "vb-cable",
+            ];
+            if SUBSTRING_MARKERS.iter().any(|p| lower.contains(p)) {
+                return true;
+            }
+            // Whole-word markers: split on non-alphanumeric so "cable" / "aggregate" /
+            // "virtual" only match as standalone tokens, not as a slice of a larger
+            // word inside a real product name.
+            const WORD_MARKERS: &[&str] = &["cable", "aggregate", "virtual"];
+            lower
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|tok| WORD_MARKERS.contains(&tok))
         }
 
         match list_input_devices() {
             Ok(devices) => {
-                // explicit selection by name → first non-virtual → first → cpal default
-                let chosen = device_name
-                    .and_then(|name| devices.iter().position(|d| d.name == *name))
-                    .or_else(|| devices.iter().position(|d| !is_likely_virtual(&d.name)))
-                    .or_else(|| (!devices.is_empty()).then_some(0usize));
+                let chosen = if let Some(name) = device_name {
+                    // Explicit by-name selection ALWAYS wins — even if it looks virtual,
+                    // the user picked it deliberately.
+                    devices.iter().position(|d| d.name == *name)
+                } else {
+                    // "Default" selected → honor the OS default input first…
+                    devices
+                        .iter()
+                        .position(|d| d.is_default && !is_likely_virtual(&d.name))
+                        // …only if the OS default is a known-silent virtual device do we
+                        // fall through to the first real physical input…
+                        .or_else(|| devices.iter().position(|d| !is_likely_virtual(&d.name)))
+                        // …and last resort: the OS default even if virtual (better than
+                        // nothing — keeps parity with cpal's own default fallback).
+                        .or_else(|| devices.iter().position(|d| d.is_default))
+                        .or_else(|| (!devices.is_empty()).then_some(0usize))
+                };
                 chosen.and_then(|i| devices.into_iter().nth(i)).map(|d| d.device)
             }
             Err(e) => {
@@ -537,6 +573,42 @@ impl AudioRecordingManager {
             *self.state.lock().unwrap(),
             RecordingState::Recording { .. }
         )
+    }
+
+    /// Snapshot the in-flight 16 kHz mono recording buffer (a clone of the recorder's live
+    /// mirror) for the realtime worker's growing-window decode. Returns an empty Vec when no
+    /// recorder is open. Side-effect-free: reads the mirror, never touches the batch buffer.
+    /// O(N) — prefer `snapshot_audio_from` on the hot per-tick path.
+    pub fn snapshot_audio(&self) -> Vec<f32> {
+        self.recorder
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|rec| rec.snapshot_recorded())
+            .unwrap_or_default()
+    }
+
+    /// Snapshot only the recording-mirror tail past `offset` samples, plus the current total
+    /// length: `(total_len, tail)` where `tail == mirror[offset..]`. The realtime worker passes
+    /// its committed-frame watermark so each tick clones O(new samples) instead of O(N) (kills
+    /// the O(N²)-per-utterance full-buffer clone). Returns `(0, empty)` when no recorder is open.
+    pub fn snapshot_audio_from(&self, offset: usize) -> (usize, Vec<f32>) {
+        self.recorder
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|rec| rec.snapshot_from(offset))
+            .unwrap_or((0, Vec::new()))
+    }
+
+    /// Enable/disable the recorder's realtime `live_audio` mirror. When disabled, the recorder
+    /// skips the per-chunk second-copy extend entirely. The realtime worker flips this per
+    /// recording based on `effective_realtime` so plain dictation never pays the mirror cost.
+    /// No-op when no recorder is open (the gate is re-applied on the next worker tick).
+    pub fn set_realtime_enabled(&self, enabled: bool) {
+        if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            rec.set_realtime_enabled(enabled);
+        }
     }
 
     /// Cancel any ongoing recording without returning audio samples

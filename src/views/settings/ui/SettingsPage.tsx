@@ -3,13 +3,14 @@ import {
 	AiChat02Icon,
 	Cancel01Icon,
 	ChartHistogramIcon,
-	CpuChargeIcon,
+	DashboardCircleIcon,
 	InformationCircleIcon,
+	KeyboardIcon,
+	MagicWand01Icon,
 	Mic01Icon,
-	Note01Icon,
 	PlugSocketIcon,
-	SlidersHorizontalIcon,
 	TextIcon,
+	VolumeHighIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useTranslations } from "use-intl";
@@ -23,22 +24,21 @@ import { windowCloseSelf } from "@/shared/api/ipc-client";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { AboutSettingsPanel } from "@/widgets/about-settings";
-import { AudioSettingsPanel } from "@/widgets/audio-settings";
+import { AppearanceSettingsPanel } from "@/widgets/appearance-settings";
 import { DictionarySettingsPanel } from "@/widgets/dictionary-settings";
-import { GeneralSettingsPanel } from "@/widgets/general-settings";
 import { IntegrationsSettingsPanel } from "@/widgets/integrations-settings";
 import { LlmSettingsPanel } from "@/widgets/llm-settings";
 import { ModelSettingsPanel } from "@/widgets/model-settings";
 import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
-import { QualitySettingsPanel } from "@/widgets/quality-settings";
+import { OutputSettingsPanel } from "@/widgets/output-settings";
+import { ProcessingExtrasPanel } from "@/widgets/processing-extras";
+import { RecordingSettingsPanel } from "@/widgets/recording-settings";
+import { ShortcutsSettingsPanel } from "@/widgets/shortcuts-settings";
 import { SnippetsSettingsPanel } from "@/widgets/snippets-settings";
 import { TranscriptionHistoryPanel } from "@/widgets/transcription-history-settings";
 import { TtsModelSection } from "@/widgets/tts-settings";
 import { useSettingsSearchKeywords } from "../lib/settings-search";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
-
-const llmSettingsSlot = <LlmSettingsPanel />;
-const ttsSettingsSlot = <TtsModelSection />;
 
 /**
  * Host for the LLM Ollama model-picker modal. The dialog is a widget, so it
@@ -94,11 +94,11 @@ export function SettingsPage() {
 
 	const links: SidebarLink[] = [
 		{
-			key: "general",
-			label: t("tabGeneral"),
-			icon: SlidersHorizontalIcon,
-			tooltip: t("tabGeneralTooltip"),
-			keywords: keywords.general,
+			key: "recording",
+			label: t("tabRecording"),
+			icon: Mic01Icon,
+			tooltip: t("tabRecordingTooltip"),
+			keywords: keywords.recording,
 		},
 		{
 			key: "model",
@@ -108,33 +108,40 @@ export function SettingsPage() {
 			keywords: keywords.model,
 		},
 		{
-			key: "audio",
-			label: t("tabAudio"),
-			icon: Mic01Icon,
-			tooltip: t("tabAudioTooltip"),
-			keywords: keywords.audio,
+			key: "processing",
+			label: t("tabProcessing"),
+			icon: MagicWand01Icon,
+			tooltip: t("tabProcessingTooltip"),
+			keywords: keywords.processing,
 		},
 		{
-			key: "quality",
-			label: t("tabProcessing"),
-			icon: CpuChargeIcon,
-			tooltip: t("tabProcessingTooltip"),
-			keywords: keywords.quality,
+			key: "vocabulary",
+			label: t("tabVocabulary"),
+			icon: TextIcon,
+			tooltip: t("tabVocabularyTooltip"),
+			keywords: keywords.vocabulary,
+		},
+		{
+			key: "output",
+			label: t("tabOutput"),
+			icon: VolumeHighIcon,
+			tooltip: t("tabOutputTooltip"),
+			keywords: keywords.output,
 			groupEnd: true,
 		},
 		{
-			key: "dictionary",
-			label: t("tabDictionary"),
-			icon: TextIcon,
-			tooltip: t("tabDictionaryTooltip"),
-			keywords: keywords.dictionary,
+			key: "shortcuts",
+			label: t("tabShortcuts"),
+			icon: KeyboardIcon,
+			tooltip: t("tabShortcutsTooltip"),
+			keywords: keywords.shortcuts,
 		},
 		{
-			key: "snippets",
-			label: t("tabSnippets"),
-			icon: Note01Icon,
-			tooltip: t("tabSnippetsTooltip"),
-			keywords: keywords.snippets,
+			key: "appearance",
+			label: t("tabAppearance"),
+			icon: DashboardCircleIcon,
+			tooltip: t("tabAppearanceTooltip"),
+			keywords: keywords.appearance,
 			groupEnd: true,
 		},
 		{
@@ -151,7 +158,6 @@ export function SettingsPage() {
 			icon: PlugSocketIcon,
 			tooltip: t("tabIntegrationsTooltip"),
 			keywords: keywords.integrations,
-			groupEnd: true,
 		},
 		{
 			key: "about",
@@ -180,7 +186,16 @@ export function SettingsPage() {
 						    Lifts to surface-3 (a clear ~8% step above the surface-1 sidebar) so
 						    the colour difference is obvious; nested SettingSection controls lift
 						    from there as usual. */}
-						<div className="min-w-0 flex-1 py-2.5 ps-2 pe-2.5">
+						<div className="relative min-w-0 flex-1 py-2.5 ps-2 pe-2.5">
+							{/* Drag strip — the thin surface-1 margin above the content card. The
+							    window is frameless, so this gives the right (content) side a grab
+							    handle that lines up with the sidebar's own top drag strip, making
+							    the whole top edge draggable. The close button opts out via
+							    titlebar-no-drag. */}
+							<div
+								aria-hidden="true"
+								className="titlebar-drag absolute inset-x-0 top-0 z-titlebar h-2.5"
+							/>
 							<Elevated
 								className="relative flex h-full flex-col overflow-hidden rounded-xl ring-1 ring-divider-strong"
 								offset={2}
@@ -191,7 +206,7 @@ export function SettingsPage() {
 								    very top-right corner, above the scrolling content. */}
 								<button
 									aria-label={t("close")}
-									className="titlebar-no-drag group absolute end-1.5 top-1.5 z-raised flex size-7 items-center justify-center rounded-md bg-transparent text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-white focus-visible:ring-2 focus-visible:ring-accent"
+									className="titlebar-no-drag group absolute end-1.5 top-1.5 z-raised flex size-7 items-center justify-center rounded-full bg-surface-4 text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-white focus-visible:ring-2 focus-visible:ring-accent"
 									onClick={windowCloseSelf}
 									type="button"
 								>
@@ -209,23 +224,29 @@ export function SettingsPage() {
 									verticalScrollbarClassName="mt-9 mb-3 me-1"
 									viewportClassName="px-6 pt-9 pb-6"
 								>
-									<Tabs.Panel value="general">
-										<GeneralSettingsPanel />
+									<Tabs.Panel value="recording">
+										<RecordingSettingsPanel />
 									</Tabs.Panel>
 									<Tabs.Panel value="model">
-										<ModelSettingsPanel llmSlot={llmSettingsSlot} ttsSlot={ttsSettingsSlot} />
+										<ModelSettingsPanel />
 									</Tabs.Panel>
-									<Tabs.Panel value="audio">
-										<AudioSettingsPanel />
+									<Tabs.Panel value="processing">
+										<LlmSettingsPanel />
+										<ProcessingExtrasPanel />
 									</Tabs.Panel>
-									<Tabs.Panel value="quality">
-										<QualitySettingsPanel />
-									</Tabs.Panel>
-									<Tabs.Panel value="dictionary">
+									<Tabs.Panel value="vocabulary">
 										<DictionarySettingsPanel />
-									</Tabs.Panel>
-									<Tabs.Panel value="snippets">
 										<SnippetsSettingsPanel />
+									</Tabs.Panel>
+									<Tabs.Panel value="output">
+										<OutputSettingsPanel />
+										<TtsModelSection />
+									</Tabs.Panel>
+									<Tabs.Panel value="shortcuts">
+										<ShortcutsSettingsPanel />
+									</Tabs.Panel>
+									<Tabs.Panel value="appearance">
+										<AppearanceSettingsPanel />
 									</Tabs.Panel>
 									<Tabs.Panel value="history">
 										<TranscriptionHistoryPanel />

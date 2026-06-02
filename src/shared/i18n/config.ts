@@ -33,10 +33,10 @@ export const LOCALES = [
 export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "en";
 
-// RTL languages need a `dir="rtl"` attribute on the root element. Pulled
-// in by IntlProvider so newly seeded RTL baselines (he) render correctly
-// without a separate code change.
-export const RTL_LOCALES: ReadonlySet<Locale> = new Set(["ar", "he"]);
+// NOTE: the UI is intentionally LEFT-TO-RIGHT for every locale. RTL languages
+// (Arabic, Hebrew) get translated strings but the layout never mirrors — see
+// IntlProvider, which pins `<html dir="ltr">`. So there is deliberately no
+// RTL_LOCALES set here.
 
 const LOCALE_SEPARATOR_RE = /[-_]/;
 

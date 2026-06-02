@@ -15,6 +15,8 @@ import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { DialogDescription, DialogTitle } from "@/shared/ui/dialog";
+import { IconButton } from "@/shared/ui/icon-button";
 import { Modal } from "@/shared/ui/modal";
 import { Spinner } from "@/shared/ui/spinner";
 import { Switcher } from "@/shared/ui/switcher";
@@ -339,23 +341,18 @@ interface DialogHeaderProps {
 }
 
 function DialogHeader({ t, tc, onClose }: DialogHeaderProps) {
-	const closeBg = surfaceBg(Math.min(useSurface() + 2, 8));
 	return (
 		<div className="flex items-start justify-between gap-3">
 			<div className="min-w-0 flex-1">
-				<h2 className="font-semibold text-foreground text-lg">{t("manageModelsTitle")}</h2>
-				<p className="mt-1 text-foreground-secondary text-sm">{t("manageModelsDescription")}</p>
+				<DialogTitle>{t("manageModelsTitle")}</DialogTitle>
+				<DialogDescription className="mt-1">{t("manageModelsDescription")}</DialogDescription>
 			</div>
-			<Button
+			<IconButton
 				aria-label={tc("close")}
-				className={cn(
-					"size-8 shrink-0 rounded-md border border-border text-foreground-secondary transition-colors hover:bg-surface-hover",
-					closeBg
-				)}
+				className="shrink-0"
+				icon={<HugeiconsIcon icon={Cancel01Icon} size={14} />}
 				onClick={onClose}
-			>
-				<HugeiconsIcon icon={Cancel01Icon} size={14} />
-			</Button>
+			/>
 		</div>
 	);
 }

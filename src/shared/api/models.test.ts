@@ -8,6 +8,7 @@ describe("models type aliases", () => {
 			name: "Microphone",
 			isDefault: true,
 			maxInputChannels: 2,
+			defaultSampleRate: 44100,
 		};
 		expect(dev.index).toBe(0);
 	});
@@ -15,9 +16,9 @@ describe("models type aliases", () => {
 	test("GpuInfo accepts a typical shape", () => {
 		const gpu: GpuInfo = {
 			name: "RTX 4090",
-			available: true,
+			total_vram_bytes: 24_000_000_000,
 		};
-		expect(gpu.available).toBe(true);
+		expect(gpu.total_vram_bytes).toBe(24_000_000_000);
 	});
 
 	test("ServerStatus accepts canonical values", () => {

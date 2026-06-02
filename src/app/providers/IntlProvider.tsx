@@ -2,7 +2,6 @@ import { type ReactNode, useEffect } from "react";
 import { IntlProvider as UseIntlProvider } from "use-intl/react";
 import { getSystemLocale } from "@/shared/api/ipc-client";
 import { messages, pickLocaleFromSystem, useLocaleStore } from "@/shared/i18n";
-import { RTL_LOCALES } from "@/shared/i18n/config";
 
 const LOCALE_STORAGE_KEY = "winstt-locale";
 
@@ -38,17 +37,16 @@ export function IntlProvider({ children }: { children: ReactNode }) {
 		};
 	}, [setLocale]);
 
-	// Apply <html dir="rtl"> when the active locale is right-to-left so
-	// flex / margin / icon-position CSS flips automatically. Reverts to
-	// "ltr" on cleanup so a locale switch back to LTR also takes effect.
-	// Guarded on `typeof document` so Bun's SSR-ish test envs (where
-	// `document` may be missing) stay no-op.
+	// The UI layout stays LEFT-TO-RIGHT for every locale by design — RTL
+	// languages (Arabic, Hebrew) are translated in place but must NOT mirror
+	// the interface. We still set `lang` for accessibility / hyphenation, but
+	// `dir` is pinned to "ltr". Guarded on `typeof document` so Bun's SSR-ish
+	// test envs (where `document` may be missing) stay no-op.
 	useEffect(() => {
 		if (typeof document === "undefined") {
 			return;
 		}
-		const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
-		document.documentElement.setAttribute("dir", dir);
+		document.documentElement.setAttribute("dir", "ltr");
 		document.documentElement.setAttribute("lang", locale);
 	}, [locale]);
 

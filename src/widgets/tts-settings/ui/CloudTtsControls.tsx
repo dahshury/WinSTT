@@ -1,3 +1,4 @@
+import { SparklesIcon } from "@hugeicons/core-free-icons";
 import type { useTranslations } from "use-intl";
 import { DEFAULT_SETTINGS, SettingResetButton, useSettingsStore } from "@/entities/setting";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
@@ -36,6 +37,7 @@ export interface CloudTtsControlsProps {
 const MODEL_OPTIONS: SelectOption[] = CLOUD_TTS_MODELS.map((m) => ({
 	id: m.id,
 	label: m.displayName,
+	icon: SparklesIcon,
 }));
 
 // Voice-settings sliders all share the 0..1 range with a 5%-step grid, shown

@@ -436,6 +436,16 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Copy the most recent *completed* transcription to the system clipboard. Invoked
+ * by the HTML tray menu's "Copy Last Transcript" item. Reads the history DB directly,
+ * so it works whether or not the STT server is connected. Returns `false` when there's
+ * no completed entry, its text is empty, or the clipboard write fails (the menu can
+ * surface that), `true` once the text lands on the clipboard.
+ */
+async copyLastTranscript() : Promise<boolean> {
+    return await TAURI_INVOKE("copy_last_transcript");
+},
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
 },
@@ -726,7 +736,7 @@ async getClamshellMicrophone() : Promise<Result<string, string>> {
 async isRecording() : Promise<boolean> {
     return await TAURI_INVOKE("is_recording");
 },
-async setModelUnloadTimeout(timeout: ModelUnloadTimeout) : Promise<void> {
+async setModelUnloadTimeout(timeout: ModelUnloadTimeoutLegacy) : Promise<void> {
     await TAURI_INVOKE("set_model_unload_timeout", { timeout });
 },
 async getModelLoadStatus() : Promise<Result<ModelLoadStatus, string>> {
@@ -745,7 +755,7 @@ async unloadModelManually() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getHistoryEntries(cursor: number | null, limit: number | null) : Promise<Result<PaginatedHistory, string>> {
+async getHistoryEntries(cursor: number | null, limit: number | null) : Promise<Result<PaginatedHistoryLegacy, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_history_entries", { cursor, limit }) };
 } catch (e) {
@@ -847,9 +857,8 @@ async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSet
  * `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
  * 
  * NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
- * is `list_models_with_state` (commands/runtime.rs). The WU-0 adapter currently routes BOTH
- * `STT_GET_MODEL_CATALOG` and `STT_LIST_MODELS_WITH_STATE` → `list_models`; the latter must be
- * repointed to `list_models_with_state` (see WU-4 libWiringNeeded note).
+ * is `list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
+ * here and `STT_LIST_MODELS_WITH_STATE` → `list_models_with_state` (electron-tauri-adapter.ts ROUTE).
  */
 async listModels() : Promise<CatalogModelInfo[]> {
     return await TAURI_INVOKE("list_models");
@@ -1162,7 +1171,7 @@ async verifyCredential(provider: string, apiKey: string) : Promise<Result<Verify
  * `verify_cloud_stt_credential` — probe the provider's cheap GET endpoint,
  * honoring the ElevenLabs scoped-key special-case.
  */
-async verifyCloudSttCredential(provider: string, apiKey: string) : Promise<Result<VerifyCredentialPayload, string>> {
+async verifyCloudSttCredential(provider: string, apiKey: string) : Promise<Result<CloudSttVerifyPayload, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("verify_cloud_stt_credential", { provider, apiKey }) };
 } catch (e) {
@@ -1396,9 +1405,22 @@ async getRuntimeInfo() : Promise<RuntimeInfoPayload> {
  * live-resources snapshot reshaped to `SystemInfoEntry`. The effective-quant bridge keys the
  * overall badge off the precision the loader will ACTUALLY load, so "Downloaded" never lies into a
  * silent re-download.
+ * 
+ * Async (audit #7): this `await`s the HF cache scan via `DownloadManager::cache_snapshot_async`
+ * rather than `block_on`-ing it on the command thread, so the whole-catalog cache walk (the Rust
+ * re-incarnation of the documented Python `list_models_onnx_parse_loop_starvation` bug) no longer
+ * blocks the IPC pump. The scan is memoized with a short TTL (invalidated on `model-cache-changed`)
+ * so the picker's repeated calls reuse one walk, and the per-`.onnx` external-data verify was moved
+ * off this list path (it runs lazily on load only). Async Tauri commands register identically in
+ * `generate_handler!` — no `lib.rs` change is needed.
  */
-async listModelsWithState() : Promise<ModelsWithState> {
-    return await TAURI_INVOKE("list_models_with_state");
+async listModelsWithState() : Promise<Result<ModelsWithState, null>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_models_with_state") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * `assess_dictation_fit` — best-effort server fit for `(model_id, quantization, device)`. Returns
@@ -1863,6 +1885,23 @@ async closeWindow(name: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * `close_self_window` — hide the CALLING window (resolved from its own webview
+ * label), the Rust-side equivalent of the renderer's `getCurrentWindow().hide()`.
+ * The self-closing secondary windows (settings / onboarding) route their close
+ * button here instead of a bare webview hide so the Settings modal can release the
+ * pill's input lock as it closes — the renderer hide path never reached Rust, so
+ * the pill would otherwise stay disabled forever. For non-settings callers this is
+ * a plain hide, identical to the old behaviour.
+ */
+async closeSelfWindow() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("close_self_window") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * `resize_window` — set the desired footprint of the labelled window.
  * 
  * For the pickers the renderer's ResizeObserver reports the real content size
@@ -2056,7 +2095,7 @@ electronVersion: string;
  * closest analogue surfaced to the user is the embedded WebView version.
  */
 nodeVersion: string; copyright: string }
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number }
+export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeoutLegacy; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
@@ -2133,11 +2172,11 @@ microphoneRelease?: MicrophoneRelease;
  * Tail-capture window (ms) after user stop. Range 0..2000. HOT-SWAP. Zod `.catch(0)`.
  */
 extraRecordingBufferMs?: number }
-export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 /**
  * `general.autoSubmitKey`.
  */
 export type AutoSubmitKey = "enter" | "ctrl_enter"
+export type AutoSubmitKeyLegacy = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type CancelPullResult = { cancelled: boolean }
@@ -2171,6 +2210,10 @@ accuracy_score: number }
  */
 export type ClearResult = { cleared: boolean }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * Verify-credential outcome surfaced to the renderer.
+ */
+export type CloudSttVerifyPayload = { ok: boolean; code: string | null; message: string | null }
 /**
  * `{ tier, creditsExhausted }` — the `ttsCloudSubscription` wire shape.
  */
@@ -2432,7 +2475,13 @@ export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number 
  * quality settings GPU chip. SPIKE: enumerate adapters via DXGI; empty list = "no GPU detected".
  */
 export type GpuInfoEntry = { name: string; total_vram_bytes: number }
-export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
+export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean; 
+/**
+ * JSON telemetry of the LLM pass (`{model, processingMs, tokens}`), or
+ * `None` when no LLM ran. Carried verbatim; parsed by the renderer-facing
+ * mapping in `winstt::commands::history`.
+ */
+llm_meta: string | null }
 /**
  * Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
  * history window + paginated list. NUMBER id, epoch-SECONDS timestamp.
@@ -2637,13 +2686,13 @@ export type ModelStateEntry = { id: string; cache: ModelCacheInfo; cache_by_quan
  * (memory project_effective_quantization_bridge). The picker keys "downloaded?" off this.
  */
 effective_quantization: string; estimated_bytes: number; comfortable_on_gpu: boolean; comfortable_on_cpu: boolean }
-export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 /**
  * `model.modelUnloadTimeout`. IPC normalizes `never` → negative seconds
  * sentinel ("keep loaded forever"), `immediately` → 0 (tear down after each
  * transcription). HOT-SWAP (retunes the idle-unload daemon in place).
  */
 export type ModelUnloadTimeout = "immediately" | "never" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1"
+export type ModelUnloadTimeoutLegacy = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 /**
  * The full `fetchModelsWithState` payload: `{ models, states, system_info }`.
  */
@@ -2709,12 +2758,12 @@ export type OverlayMode = "floating-bottom" | "dynamic-island"
  * `general.overlayPosition` — coarse screen-edge gate (distinct from layout style).
  */
 export type OverlayPosition = "auto" | "none" | "top" | "bottom"
-export type OverlayPosition = "none" | "top" | "bottom"
+export type OverlayPositionLegacy = "none" | "top" | "bottom"
 /**
  * `PaginatedHistory` (camelCase `hasMore`) returned by `history_list`.
  */
 export type PaginatedHistory = { entries: HistoryRow[]; hasMore: boolean }
-export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+export type PaginatedHistoryLegacy = { entries: HistoryEntry[]; has_more: boolean }
 /**
  * The partial section patch the renderer posts to `winstt_set_settings`.
  * 
@@ -2870,7 +2919,7 @@ export type SnippetEntry = { id: string; trigger: string; expansion: string }
 /**
  * Result of `sound_library_add` (matches `SoundLibraryAddResult`).
  */
-export type SoundLibraryAddResult = { ok: boolean; entry?: SoundLibraryEntry | null; error?: string | null }
+export type SoundLibraryAddResult = { ok: boolean; entry?: SoundLibraryEntryResult | null; error?: string | null }
 /**
  * `soundLibraryEntrySchema` — one user-uploaded recording-chime clip.
  */
@@ -2882,7 +2931,7 @@ path: string }
 /**
  * One persisted library entry surfaced to the renderer (matches `SoundLibraryEntryDTO`).
  */
-export type SoundLibraryEntry = { id: string; name: string; path: string }
+export type SoundLibraryEntryResult = { id: string; name: string; path: string }
 /**
  * Result of `sound_library_remove` (matches `SoundLibraryRemoveResult`).
  */
@@ -2926,7 +2975,17 @@ export type TranscriberBackend = "faster_whisper" | "onnx_asr"
  * Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
  * + the settings panel sync. STRING id, epoch-MILLIS timestamp.
  */
-export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null }
+export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null; 
+/**
+ * LLM post-processing wall-time in ms (the footer's "processing time"),
+ * when an LLM ran.
+ */
+llmProcessingMs?: number | null; 
+/**
+ * LLM generation speed (output tokens / processing second), when the
+ * provider reported token usage and the pass took a measurable duration.
+ */
+llmTokensPerSecond?: number | null }
 /**
  * `transformSchema` — a single user-configurable text transform.
  * `builtin: true` entries show a Reset action instead of Delete in the UI.
@@ -3007,10 +3066,6 @@ export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "x
  * Per-device VAD sensitivity calibration result (renderer persists it).
  */
 export type VadSensitivityAdaptedPayload = { deviceId: string; sensitivity: number }
-/**
- * Verify-credential outcome surfaced to the renderer.
- */
-export type VerifyCredentialPayload = { ok: boolean; code: string | null; message: string | null }
 /**
  * Verify-credential outcome — `{ ok, code?, message? }`. The renderer's
  * verify-credentials feature reads `code === "network"` to split offline from

@@ -1,3 +1,3 @@
-import type { components } from "@spec/schema";
+import type { AudioDevicePayload } from "@/bindings";
 
-export type AudioDevice = components["schemas"]["AudioDevice"];
+export type { AudioDevicePayload as AudioDevice };

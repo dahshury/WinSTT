@@ -12,7 +12,7 @@ import { useSettingsStore } from "@/entities/setting";
 import { windowOpenSettings } from "@/shared/api/ipc-client";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
-import type { SelectOption } from "@/shared/ui/select";
+import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 
 interface CloudModelSelectProps {
 	/**
@@ -46,13 +46,18 @@ export function CloudModelSelect({
 		(provider) => integrations[provider].apiKey.trim().length > 0
 	);
 
-	const options: SelectOption[] = availableProviders.flatMap((provider) =>
-		CLOUD_CATALOG[provider].map((m) => ({
+	// One group per configured provider (header = provider name + 4-char badge);
+	// the flat list is kept only for the self-heal / valid-selection checks.
+	const groups: SelectOptionGroup[] = availableProviders.map((provider) => ({
+		value: provider,
+		label: providerDisplayName(provider),
+		badge: providerDisplayName(provider).slice(0, 4).toUpperCase(),
+		options: CLOUD_CATALOG[provider].map((m) => ({
 			id: `${provider}:${m.id}`,
 			label: m.displayName,
-			badge: providerDisplayName(provider).slice(0, 4).toUpperCase(),
-		}))
-	);
+		})),
+	}));
+	const options: SelectOption[] = groups.flatMap((g) => [...g.options]);
 
 	// Self-heal: when the persisted cloud model is no longer a selectable option
 	// (e.g. a model dropped from the catalog after an @ai-sdk bump, or an empty
@@ -87,8 +92,8 @@ export function CloudModelSelect({
 			<ElevatedSurface inline>
 				<SearchableSelect
 					defaultOpen={defaultOpen}
+					groups={groups}
 					onChange={onSelect}
-					options={options}
 					placeholder={t("cloudModels")}
 					value={selectedId}
 				/>

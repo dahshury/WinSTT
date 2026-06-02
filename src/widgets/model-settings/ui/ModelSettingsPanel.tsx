@@ -1,4 +1,13 @@
-import { AiMagicIcon, AiSettingIcon, CpuIcon, SpeechToTextIcon } from "@hugeicons/core-free-icons";
+import {
+	AiMagicIcon,
+	AiSettingIcon,
+	CpuIcon,
+	FlashIcon,
+	InfinityIcon,
+	SpeechToTextIcon,
+	Timer01Icon,
+	UserMultiple02Icon,
+} from "@hugeicons/core-free-icons";
 import { isRealtimeViable, SttModelSelector } from "@picker";
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
@@ -16,6 +25,7 @@ import {
 	DEFAULT_SETTINGS,
 	SettingResetButton,
 	SettingSection,
+	useDiarizationToggleStore,
 	useSettingsStore,
 	useSettingsTabStore,
 } from "@/entities/setting";
@@ -42,6 +52,7 @@ import { NumberStepper } from "@/shared/ui/number-stepper";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
+import { Spinner } from "@/shared/ui/spinner";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -49,11 +60,6 @@ import { useLockLlmTranslate } from "../model/use-lock-llm-translate";
 import { useLockRealtimeToMain } from "../model/use-lock-realtime-to-main";
 import { useStaleModelFallback } from "../model/use-stale-model-fallback";
 import { useSwapProgress } from "../model/use-swap-progress";
-
-export interface ModelSettingsPanelProps {
-	llmSlot?: ReactNode;
-	ttsSlot?: ReactNode;
-}
 
 type TFn = ReturnType<typeof useTranslations>;
 
@@ -456,13 +462,13 @@ function MainModelSection({
 									})
 								}
 								options={[
-									{ id: "immediately", label: t("modelUnloadImmediately") },
-									{ id: "never", label: t("modelUnloadNever") },
-									{ id: "min2", label: t("modelUnloadMin2") },
-									{ id: "min5", label: t("modelUnloadMin5") },
-									{ id: "min10", label: t("modelUnloadMin10") },
-									{ id: "min15", label: t("modelUnloadMin15") },
-									{ id: "hour1", label: t("modelUnloadHour1") },
+									{ id: "immediately", label: t("modelUnloadImmediately"), icon: FlashIcon },
+									{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
+									{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
+									{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
+									{ id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
+									{ id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
+									{ id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
 								]}
 								value={settings?.modelUnloadTimeout ?? "min5"}
 							/>
@@ -785,7 +791,64 @@ function SwapDialogs({
 	);
 }
 
-export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps = {}) {
+/**
+ * Speaker diarization, copied verbatim from the General-settings panel (it now
+ * lives on the Model tab — the recognition engine — instead of General). The
+ * parent gates it to render only in Listen mode (`general.recordingMode ===
+ * 'listen'`), matching the original gate.
+ *
+ * Diarization is toggled at runtime (no server restart). The server pushes
+ * started/completed/failed; `useDiarizationToggleStore` tracks the in-flight
+ * window. Driven purely by broadcast IPC so it works in the settings window (its
+ * own BrowserWindow, no connection store there). The optimistic-revert on
+ * failure is performed in the toggle-store's IPC listener
+ * (`diarization-toggle-store.ts`) so the failure handler owns the lifecycle
+ * directly — no effect-in-render needed here.
+ *
+ * The persisted key (`general.speakerDiarization`) stays in the `general` slice
+ * and is read/written via `updateGeneralSettings` — only the visual home moved.
+ */
+function SpeakerDiarizationSection(): ReactNode {
+	const tGeneral = useTranslations("general");
+	const enabled = useSettingsStore((s) => s.settings.general?.speakerDiarization ?? false);
+	const update = useSettingsStore((s) => s.updateGeneralSettings);
+	const pending = useDiarizationToggleStore((s) => s.pending);
+
+	return (
+		<SettingSection icon={UserMultiple02Icon} title={tGeneral("speakerDiarization")}>
+			<FormControl
+				label={tGeneral("speakerDiarization")}
+				labelAddon={
+					<div className="flex items-center gap-2">
+						{pending ? (
+							<Spinner
+								aria-label={tGeneral("speakerDiarization")}
+								className="size-3.5 text-foreground-muted"
+							/>
+						) : null}
+						<Toggle
+							aria-label={tGeneral("speakerDiarization")}
+							checked={enabled}
+							disabled={pending}
+							onCheckedChange={(v) => update({ speakerDiarization: v })}
+						/>
+					</div>
+				}
+				labelTrailing={
+					<SettingResetButton
+						isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
+						onReset={() =>
+							update({ speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization })
+						}
+					/>
+				}
+				tooltip={tGeneral("speakerDiarizationTooltip")}
+			/>
+		</SettingSection>
+	);
+}
+
+export function ModelSettingsPanel() {
 	const settings = useSettingsStore((s) => s.settings.model);
 	const update = useSettingsStore((s) => s.updateModelSettings);
 	const quality = useSettingsStore((s) => s.settings.quality);
@@ -818,7 +881,7 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 		liveTranscriptionDisplay,
 	});
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
-	const gpuAvailable = gpuInfo?.available ?? true;
+	const gpuAvailable = gpuInfo.length > 0;
 	const t = useTranslations("model");
 	const deviceOpts = buildDeviceOpts(t, gpuAvailable);
 	const deviceValue: DeviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
@@ -1038,8 +1101,11 @@ export function ModelSettingsPanel({ llmSlot, ttsSlot }: ModelSettingsPanelProps
 					update={update}
 				/>
 			)}
-			{llmSlot}
-			{ttsSlot}
+			{/* Speaker diarization — gated to Listen mode (plain cross-tab read of
+			    `general.recordingMode`), matching the original General-tab gate.
+			    Persists to `general.speakerDiarization`; the runtime toggle wiring
+			    lives in the diarization toggle store. */}
+			{isListenMode ? <SpeakerDiarizationSection /> : null}
 			<SwapDialogs
 				controller={controller}
 				getModel={getModel}

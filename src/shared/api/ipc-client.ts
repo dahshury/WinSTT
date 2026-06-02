@@ -32,6 +32,51 @@ const noop = () => {
 
 type FallbackValue<T> = T | (() => T);
 
+/**
+ * Critical flows where a backend ERROR must NOT be silently flattened into the
+ * caller's fallback — a swallowed rejection there is indistinguishable from
+ * "no value", which is exactly how the "download stuck at 0% / RAM unknown"
+ * failures shipped unreported (see HANDY_VS_WINSTT_AUDIT.md #13).
+ *
+ * Two tiers, because the right "surface it" action depends on the flow:
+ *
+ *  - REJECT tier: the download / per-quant-cache mutations, the live
+ *    model-state read, and model reload/swap. On a backend error we log a
+ *    distinct `console.error` AND re-reject so the failure is a real,
+ *    catchable signal — not a lookalike fallback. (NB: several call sites are
+ *    fire-and-forget today; see signature_changes / cross_file_risks — they
+ *    need a `.catch` added so the rejection is consumed, not unhandled.)
+ *
+ *  - LOG-ONLY tier: high-blast-radius reads (e.g. `settingsLoad`, used by many
+ *    windows with `.then(...)` and no `.catch`). Re-rejecting these would break
+ *    settings hydration on a transient error, so we surface the failure loudly
+ *    via `console.error` but STILL return the fallback — observable, but tolerant.
+ *
+ * The benign `undefined` path (a void command, or an unwired feature) always
+ * resolves to the fallback regardless of tier — only the THROW path is treated
+ * as critical. Channels in neither set stay fully tolerant (silent fallback).
+ */
+const CRITICAL_REJECT_CHANNELS: ReadonlySet<string> = new Set<string>([
+	IPC.STT_PREDOWNLOAD_QUANT,
+	IPC.STT_DOWNLOAD_PAUSE,
+	IPC.STT_DOWNLOAD_RESUME,
+	IPC.STT_DOWNLOAD_CANCEL_QUANT,
+	IPC.STT_CANCEL_DOWNLOAD,
+	IPC.STT_DELETE_MODEL_QUANTIZATION,
+	IPC.STT_DELETE_MODEL_CACHE,
+	IPC.STT_RELOAD_MODEL,
+]);
+
+const CRITICAL_LOG_ONLY_CHANNELS: ReadonlySet<string> = new Set<string>([
+	IPC.SETTINGS_LOAD,
+	IPC.SETTINGS_SAVE,
+	// model-state read: the caller (`model-state-store.refresh`) inspects the
+	// resolved payload and falls through to a backed-off `scheduleRetry()` on a
+	// timeout/malformed result. Re-rejecting here would skip that retry path, so
+	// surface the failure loudly (console.error) but STILL return the fallback.
+	IPC.STT_LIST_MODELS_WITH_STATE,
+]);
+
 // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent —
 // the `typeof window !== "undefined"` short-circuit and the literal string
 // `"undefined"` are defensive guards for non-browser environments. Under
@@ -151,8 +196,8 @@ async function invokeOrDefault<T>(
 	try {
 		const value = await invoke<T | undefined>(channel, ...args);
 		return value === undefined ? resolveFallback(fallback) : value;
-	} catch {
-		return resolveFallback(fallback);
+	} catch (err) {
+		return handleInvokeError(channel, fallback, err);
 	}
 }
 
@@ -164,9 +209,32 @@ async function invokeSecureOrDefault<T>(
 	try {
 		const value = await invokeSecure<T | undefined>(channel, payload);
 		return value === undefined ? resolveFallback(fallback) : value;
-	} catch {
-		return resolveFallback(fallback);
+	} catch (err) {
+		// Mirror invokeOrDefault. None of today's secure channels are critical, but
+		// the shared classifier keeps a future critical secure channel from
+		// regressing into a silent fallback.
+		return handleInvokeError(channel, fallback, err);
 	}
+}
+
+/**
+ * Decide what a rejected critical-channel invoke does. REJECT-tier channels
+ * re-throw (the failure is a catchable signal); LOG-ONLY channels (and a future
+ * tier addition) surface the error but still resolve the fallback; everything
+ * else stays silently tolerant. Centralised so `invokeOrDefault` and
+ * `invokeSecureOrDefault` can't drift.
+ */
+function handleInvokeError<T>(channel: string, fallback: FallbackValue<T>, err: unknown): T {
+	if (CRITICAL_REJECT_CHANNELS.has(channel)) {
+		console.error(`[ipc] critical invoke "${channel}" failed:`, err);
+		throw err;
+	}
+	if (CRITICAL_LOG_ONLY_CHANNELS.has(channel)) {
+		// Surfaced (no longer silent) but tolerant — re-rejecting a high-fan-out
+		// read would break consumers that only `.then(...)` it.
+		console.error(`[ipc] critical invoke "${channel}" failed (tolerated):`, err);
+	}
+	return resolveFallback(fallback);
 }
 
 function on(channel: string, callback: (...args: unknown[]) => void): () => void {
@@ -250,7 +318,7 @@ export const hotkeyStopRecording = () => send(IPC.HOTKEY_STOP_RECORDING);
 export const autostartSet = (enabled: boolean) => send(IPC.AUTOSTART_SET, { enabled });
 export const autostartGet = () => invokeOrDefault<boolean>(IPC.AUTOSTART_GET, false);
 export const audioGetDevices = () => invokeOrDefault<AudioDevice[]>(IPC.AUDIO_GET_DEVICES, []);
-export const gpuGetInfo = () => invokeOrDefault<GpuInfo | null>(IPC.GPU_GET_INFO, null);
+export const gpuGetInfo = () => invokeOrDefault<GpuInfo[]>(IPC.GPU_GET_INFO, []);
 export const getSystemLocale = () => invokeOrDefault<string>(IPC.APP_GET_SYSTEM_LOCALE, "");
 
 // Settings
@@ -870,6 +938,16 @@ export interface TranscriptionHistoryEntry {
 	 * like `qwen2.5:7b`). Omitted when no LLM ran.
 	 */
 	llmModel?: string;
+	/**
+	 * LLM post-processing wall-time in ms (the history footer's "processing
+	 * time"). Omitted when no LLM ran.
+	 */
+	llmProcessingMs?: number;
+	/**
+	 * LLM generation speed (output tokens / processing second). Omitted when no
+	 * LLM ran or the provider didn't report token usage.
+	 */
+	llmTokensPerSecond?: number;
 	/** Pre-LLM text (post-processing applied). Omitted when no LLM ran. */
 	originalText?: string;
 	/** Final text (after LLM correction if configured). */
@@ -1500,6 +1578,13 @@ export interface SpeakerSegmentPayload {
 
 export const onSpeakerSegments = (cb: (segments: SpeakerSegmentPayload[]) => void) =>
 	onTyped(IPC.STT_SPEAKER_SEGMENTS, (d: { segments: SpeakerSegmentPayload[] }) => d.segments, cb);
+
+// ── Transcript quick-actions ─────────────────────────────────────────
+// Copy the most recent completed transcription to the clipboard (tray menu).
+// Resolves `true` once the text is on the clipboard, `false` when there's no
+// completed entry / it's empty / the clipboard write fails.
+export const copyLastTranscript = (): Promise<boolean> =>
+	invokeOrDefault<boolean>(IPC.TRANSCRIPT_COPY_LAST, false);
 
 // ── Diagnostics ──────────────────────────────────────────────────────
 // Open the userData folder in the OS file explorer. Returns `{ ok, error? }`

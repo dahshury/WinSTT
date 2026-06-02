@@ -412,22 +412,279 @@ mod frontend {
 		out
 	}
 
-	/// Naive O(n_fft·n_freqs) real-FFT power spectrum. The frame is length `win`(=400) padded to
-	/// `n_fft`(=400, equal here) — a direct DFT is correct and deterministic for parity; the spike
-	/// can swap in a radix-2 FFT for speed (SPIKE: optimize, numerics already exact).
+	/// Real-input power spectrum |X[k]|² for the first `n_freqs` bins, via a cached forward-FFT plan
+	/// (rustfft). Numerically identical to the previous naive DFT (same forward sign convention
+	/// X[k]=Σ x[n]·e^{-2πi kn/N}), but O(n_fft·log n_fft) instead of O(n_fft·n_freqs) — the naive
+	/// version (200 bins × 400 samples × ~1100 frames ≈ 176M cos/sin per clip) DOMINATED every
+	/// non-Whisper featurizer. This FFT swap gave ~8× per-family speedup, validated against onnx-asr
+	/// at lowest quant (whisper/sense_voice/nemo/cohere/kaldi/dolphin/gigaam/t-one all byte-identical
+	/// + within/under 1.3× onnx-asr). One plan is cached per distinct n_fft (400 for compute_fbank,
+	/// 512 for nemo_features) in a thread-local — rfft_power is a free fn with no struct to hold it.
 	fn rfft_power(frame: &[f32], n_fft: usize, n_freqs: usize) -> Vec<f32> {
-		let mut out = vec![0f32; n_freqs];
-		let two_pi = 2.0 * std::f32::consts::PI;
-		for (k, slot) in out.iter_mut().enumerate() {
-			let mut re = 0f32;
-			let mut im = 0f32;
-			let wk = two_pi * (k as f32) / (n_fft as f32);
-			for (n, &x) in frame.iter().enumerate() {
-				let ang = wk * (n as f32);
-				re += x * ang.cos();
-				im -= x * ang.sin();
+		use std::cell::RefCell;
+		use std::collections::HashMap;
+		use std::sync::Arc;
+
+		use rustfft::num_complex::Complex32;
+		use rustfft::{Fft, FftPlanner};
+
+		thread_local! {
+			static PLANS: RefCell<HashMap<usize, Arc<dyn Fft<f32>>>> = RefCell::new(HashMap::new());
+		}
+		let fft = PLANS.with(|plans| {
+			plans
+				.borrow_mut()
+				.entry(n_fft)
+				.or_insert_with(|| FftPlanner::<f32>::new().plan_fft_forward(n_fft))
+				.clone()
+		});
+		let mut buf: Vec<Complex32> = (0..n_fft)
+			.map(|i| Complex32::new(frame.get(i).copied().unwrap_or(0.0), 0.0))
+			.collect();
+		fft.process(&mut buf);
+		buf.into_iter().take(n_freqs).map(|c| c.re * c.re + c.im * c.im).collect()
+	}
+
+	// ── Kaldi 80-mel fbank featurizer (KaldiPreprocessorNumpy, kaldi branch) ───────────────
+	// EXACT port of onnx-asr preprocessors/numpy_preprocessor.py::KaldiPreprocessorNumpy with
+	// name="kaldi": n_fft=512, win=400, hop=160, 80 mels, snip_edges=False, remove_dc_offset=True,
+	// preemphasis=0.97, window = numpy.hanning(400)^0.85 (povey). Filterbank from
+	// preprocessors/kaldi.py: melscale_fbanks(257, low_freq=20, high_freq=-400→7600, 80,
+	// sr=16000, mel_scale="kaldi") — kaldi mel scale (1127*ln(1+f/700)), HTK-style triangles in
+	// mel space, fmax=sr/2-400=7600, NO slaney normalization.
+	//
+	// Used by Dolphin (EngineKind::DolphinCtc / CtcFrontend::KaldiWithMetaCmvn) for the filterbank
+	// AND by the Vosk/zipformer transducers for the FRAME PROCESSING (they pair `compute_kaldi_fbank`
+	// with their own HTK-mel filterbank — `build_zipformer_mel_filterbank` below). SEPARATE from the
+	// SenseVoice `compute_fbank`/`build_mel_filterbank` (Hamming/n_fft=400/snip_edges=True) which
+	// other families share — do NOT merge them.
+	pub const KALDI_N_FFT: usize = 512;
+	pub const KALDI_WIN: usize = 400;
+	pub const KALDI_HOP: usize = 160;
+	pub const KALDI_N_MELS: usize = 80;
+	pub const KALDI_F_MIN: f32 = 20.0;
+	// high_freq=-400 → f_max += sr/2 → 7600 (CRITICAL: 8000 gives corr=0.26 garbage; 7600 matches
+	// fbanks.npz['kaldi'] = sr/2 - 400).
+	pub const KALDI_F_MAX: f32 = 7600.0;
+	pub const KALDI_PRE_EMPHASIS: f32 = 0.97;
+
+	/// kaldi mel scale: `1127 * ln(1 + f/700)` (preprocessors/fbanks.py::_hz_to_mel, "kaldi").
+	#[inline]
+	fn kaldi_hz_to_mel(f: f32) -> f32 {
+		1127.0 * (1.0 + f / 700.0).ln()
+	}
+
+	/// Kaldi 80-mel triangular filterbank `(n_fft/2+1=257, 80)`. Port of `melscale_fbanks` with
+	/// `mel_scale="kaldi"`: all bin frequencies AND the 82 mel vertices live in kaldi-mel space;
+	/// triangles `max(0, min(up_slope, down_slope))`; NO slaney area normalization (peaks ≈ 1).
+	/// Used by Dolphin (CtcFrontend::KaldiWithMetaCmvn).
+	pub fn build_kaldi_mel_filterbank() -> Array2<f32> {
+		let n_freqs = KALDI_N_FFT / 2 + 1; // 257
+		// all_freqs = linspace(0, sample_rate//2, n_freqs) = linspace(0, 8000, 257).
+		let all_freqs_mel: Vec<f32> = (0..n_freqs)
+			.map(|i| {
+				let hz = (SAMPLE_RATE as f32 / 2.0) * (i as f32) / ((n_freqs - 1) as f32);
+				kaldi_hz_to_mel(hz)
+			})
+			.collect();
+		let m_min = kaldi_hz_to_mel(KALDI_F_MIN);
+		let m_max = kaldi_hz_to_mel(KALDI_F_MAX);
+		// m_pts = linspace(m_min, m_max, n_mels+2) — kept in mel space (kaldi branch does NOT
+		// convert back to hz).
+		let m_pts: Vec<f32> = (0..KALDI_N_MELS + 2)
+			.map(|i| m_min + (m_max - m_min) * (i as f32) / ((KALDI_N_MELS + 1) as f32))
+			.collect();
+
+		let mut fb = Array2::<f32>::zeros((n_freqs, KALDI_N_MELS));
+		for (f, &mel) in all_freqs_mel.iter().enumerate() {
+			for m in 0..KALDI_N_MELS {
+				let up = (mel - m_pts[m]) / (m_pts[m + 1] - m_pts[m]);
+				let down = (m_pts[m + 2] - mel) / (m_pts[m + 2] - m_pts[m + 1]);
+				fb[[f, m]] = up.min(down).max(0.0);
 			}
-			*slot = re * re + im * im;
+		}
+		fb
+	}
+
+	/// HTK triangular mel filterbank `(n_fft/2+1=257, 80)` for the Vosk/zipformer Kaldi preprocessor —
+	/// fmin=20, fmax=7600, n_fft=512. Same `compute_kaldi_fbank` frame pipeline, but the Vosk/icefall
+	/// zipformer packs were validated bit-exact against onnx-asr's precomputed `fbanks.npz["kaldi"]`
+	/// using the HTK mel scale (`2595*log10(1+f/700)`, max abs error 3.8e-3 — a float32 generation
+	/// artifact, negligible after the log-mel/transducer stage; verified by the zipformer-en spike).
+	/// Kept SEPARATE from `build_kaldi_mel_filterbank` (kaldi-mel-scale, Dolphin) so each validated
+	/// family uses exactly the bank it was decode-validated with.
+	pub fn build_zipformer_mel_filterbank() -> Array2<f32> {
+		let n_freqs = KALDI_N_FFT / 2 + 1; // 257
+		let all_freqs: Vec<f32> = (0..n_freqs)
+			.map(|i| (SAMPLE_RATE as f32 / 2.0) * (i as f32) / ((n_freqs - 1) as f32))
+			.collect();
+		// HTK hz↔mel (base-10), identical knee to `_build_mel_filterbank` but with fmin=20/fmax=7600.
+		let hz_to_mel = |f: f32| 2595.0 * (1.0 + f / 700.0).log10();
+		let mel_to_hz = |m: f32| 700.0 * (10f32.powf(m / 2595.0) - 1.0);
+		let m_min = hz_to_mel(KALDI_F_MIN);
+		let m_max = hz_to_mel(KALDI_F_MAX);
+		let f_pts: Vec<f32> = (0..KALDI_N_MELS + 2)
+			.map(|i| mel_to_hz(m_min + (m_max - m_min) * (i as f32) / ((KALDI_N_MELS + 1) as f32)))
+			.collect();
+		let mut fb = Array2::<f32>::zeros((n_freqs, KALDI_N_MELS));
+		for f in 0..n_freqs {
+			for m in 0..KALDI_N_MELS {
+				let lower = f_pts[m];
+				let center = f_pts[m + 1];
+				let upper = f_pts[m + 2];
+				let up = (all_freqs[f] - lower) / (center - lower);
+				let down = (upper - all_freqs[f]) / (upper - center);
+				fb[[f, m]] = up.min(down).max(0.0);
+			}
+		}
+		fb
+	}
+
+	/// Kaldi log-mel fbank → `(T, 80)`. Port of `KaldiPreprocessorNumpy.__call__` (kaldi/snip_edges
+	/// =False). Steps:
+	///  1. symmetric-pad samples: pad_left = win//2 - hop//2 = 120, pad_right = win//2 = 200
+	///     (np.pad mode="symmetric" — mirror including the edge sample).
+	///  2. num_frames = (orig_len + hop//2) // hop  (features_lens).
+	///  3. per 400-sample frame: subtract frame mean (DC removal), then pre-emphasis
+	///     `f[i] - 0.97*f[i-1]` with f[-1]==f[0] (np.pad edge), then ×window (hanning(400)^0.85).
+	///  4. rfft power at n_fft=512 → 257 bins.
+	///  5. mel = power · fb ; log(max(mel, f32::EPSILON)).
+	///
+	/// `fbanks` is the caller's filterbank: Dolphin passes `build_kaldi_mel_filterbank` (kaldi mel
+	/// scale); Vosk/zipformer pass `build_zipformer_mel_filterbank` (HTK mel scale). The frame
+	/// pipeline is identical for both (validated bit-exact against onnx-asr in each port).
+	pub fn compute_kaldi_fbank(samples: &[f32], fbanks: &Array2<f32>) -> Array2<f32> {
+		if samples.is_empty() {
+			return Array2::<f32>::zeros((0, KALDI_N_MELS));
+		}
+		let orig_len = samples.len();
+		let pad_left = KALDI_WIN / 2 - KALDI_HOP / 2; // 120
+		let pad_right = KALDI_WIN / 2; // 200
+		let padded = symmetric_pad(samples, pad_left, pad_right);
+
+		// features_lens = (orig_len + hop//2) // hop.
+		let num_frames = (orig_len + KALDI_HOP / 2) / KALDI_HOP;
+		if num_frames == 0 {
+			return Array2::<f32>::zeros((0, KALDI_N_MELS));
+		}
+
+		// povey window: numpy.hanning(400) = 0.5 - 0.5*cos(2πn/399), raised to 0.85.
+		let window: Vec<f32> = (0..KALDI_WIN)
+			.map(|n| {
+				let h = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * n as f32 / (KALDI_WIN as f32 - 1.0)).cos();
+				h.powf(0.85)
+			})
+			.collect();
+
+		let n_freqs = KALDI_N_FFT / 2 + 1; // 257
+		let eps = f32::EPSILON;
+		let mut out = Array2::<f32>::zeros((num_frames, KALDI_N_MELS));
+		// 512-long FFT frame: windowed 400 samples in [0,400), zeros in [400,512).
+		let mut frame = vec![0f32; KALDI_N_FFT];
+		let mut raw = vec![0f32; KALDI_WIN];
+		for t in 0..num_frames {
+			let start = t * KALDI_HOP;
+			// gather the 400-sample frame from the symmetric-padded buffer.
+			for i in 0..KALDI_WIN {
+				raw[i] = padded.get(start + i).copied().unwrap_or(0.0);
+			}
+			// 1. DC removal: subtract the frame mean.
+			let mean: f32 = raw.iter().sum::<f32>() / KALDI_WIN as f32;
+			for v in raw.iter_mut() {
+				*v -= mean;
+			}
+			// 2. pre-emphasis on the DC-removed frame: f[i] - 0.97*f[i-1], f[-1]==f[0] (edge).
+			//    + window. Compute back-to-front so f[i-1] is still the pre-emphasis input.
+			for i in (0..KALDI_WIN).rev() {
+				let prev = if i == 0 { raw[0] } else { raw[i - 1] };
+				frame[i] = (raw[i] - KALDI_PRE_EMPHASIS * prev) * window[i];
+			}
+			// zero the FFT tail (only [400,512) — set once, but be safe across frames).
+			for slot in frame.iter_mut().take(KALDI_N_FFT).skip(KALDI_WIN) {
+				*slot = 0.0;
+			}
+			// 3. power spectrum → mel → log.
+			let power = rfft_power(&frame, KALDI_N_FFT, n_freqs);
+			for m in 0..KALDI_N_MELS {
+				let mut acc = 0f32;
+				for (f, &p) in power.iter().enumerate() {
+					acc += p * fbanks[[f, m]];
+				}
+				out[[t, m]] = acc.max(eps).ln();
+			}
+		}
+		out
+	}
+
+	/// Symmetric (mirror) padding of a 1-D signal: `np.pad(x, (pad_left, pad_right), mode="symmetric")`.
+	/// numpy "symmetric" reflects INCLUDING the edge sample (unlike "reflect"). For pad_left/right that
+	/// don't exceed the signal length (120/200 vs ≥400-sample clips) a single reflection suffices.
+	fn symmetric_pad(samples: &[f32], pad_left: usize, pad_right: usize) -> Vec<f32> {
+		let n = samples.len();
+		let mut out = Vec::with_capacity(n + pad_left + pad_right);
+		// left: samples[pad_left-1], samples[pad_left-2], …, samples[0]  (mirror incl. edge).
+		for i in (0..pad_left).rev() {
+			out.push(samples[i.min(n - 1)]);
+		}
+		out.extend_from_slice(samples);
+		// right: samples[n-1], samples[n-2], …  (mirror incl. edge).
+		for i in 0..pad_right {
+			let idx = n.saturating_sub(1).saturating_sub(i);
+			out.push(samples[idx]);
+		}
+		out
+	}
+
+	// ── GigaAM v3 64-mel log featurizer (GigaamPreprocessorNumpy, version="v3") ────────────
+	// onnx-asr preprocessors/numpy_preprocessor.py::GigaamPreprocessorNumpy with name="gigaam_v3":
+	//   n_fft = sr//50 = 320, win_length = n_fft = 320, hop = sr//100 = 160; NO reflect padding
+	//   (the v2 branch pads, v3 does NOT); NO pre-emphasis; periodic-Hann-like window of length 320
+	//   loaded from fbanks.npz ("gigaam_v3_window") — NOT analytic Hamming/Hanning; 64-mel HTK
+	//   filterbank [161,64] also loaded from fbanks.npz ("gigaam_v3"). Spectrum = |rfft(win·frame,320)|^2
+	//   (161 bins) → mel = spectrum @ fbanks → log(clip(mel, 1e-9, 1e9)). Output transposed to (64,T).
+	//   features_lens = (waveforms_lens - win_length)//hop + 1.
+	// The exact window + filterbank are embedded (super::super::gigaam_v3_consts) for bit-exact parity;
+	// they are fp16-quantized HTK/periodic-Hann (≈0.0019 off the analytic forms — below the int8 noise
+	// floor, but we ship the stored bytes to be faithful to onnx-asr). SEPARATE featurizer — does NOT
+	// touch the 80-mel kaldi `compute_fbank` or the 128-mel `nemo_features` used by other families.
+	pub const GIGAAM_V3_N_FFT: usize = 320;
+	pub const GIGAAM_V3_WIN: usize = 320;
+	pub const GIGAAM_V3_HOP: usize = 160;
+	pub const GIGAAM_V3_N_MELS: usize = 64;
+	const GIGAAM_V3_N_FREQS: usize = GIGAAM_V3_N_FFT / 2 + 1; // 161
+	const GIGAAM_V3_CLAMP_MIN: f32 = 1e-9;
+	const GIGAAM_V3_CLAMP_MAX: f32 = 1e9;
+
+	/// GigaAM v3 featurizer → `(T, 64)` log-mel (row-major time-first; the engine transposes to
+	/// `(1, 64, T)` for `features` / `audio_signal`). `T = 1 + (n - 320)//160`. No normalization
+	/// (GigaAM normalizes inside the ONNX graph, unlike NeMo's preprocessor-side CMVN).
+	pub fn gigaam_v3_features(samples: &[f32]) -> Array2<f32> {
+		let n = samples.len();
+		if n < GIGAAM_V3_WIN {
+			return Array2::<f32>::zeros((0, GIGAAM_V3_N_MELS));
+		}
+		let num_frames = 1 + (n - GIGAAM_V3_WIN) / GIGAAM_V3_HOP;
+		let window = &super::super::gigaam_v3_consts::GIGAAM_V3_WINDOW; // [320]
+		let fbanks = &super::super::gigaam_v3_consts::GIGAAM_V3_FB; // [161][64]
+
+		let mut out = Array2::<f32>::zeros((num_frames, GIGAAM_V3_N_MELS));
+		let mut frame = vec![0f32; GIGAAM_V3_WIN];
+		for t in 0..num_frames {
+			let start = t * GIGAAM_V3_HOP;
+			// window the 320-sample frame (no pre-emphasis, no DC removal).
+			for (i, slot) in frame.iter_mut().enumerate() {
+				*slot = samples[start + i] * window[i];
+			}
+			// |rfft|^2 → 161-bin power spectrum (frame len == n_fft, so no zero-pad needed).
+			let power = rfft_power(&frame, GIGAAM_V3_N_FFT, GIGAAM_V3_N_FREQS);
+			// mel = power @ fbanks (161×64), then log(clip(mel, 1e-9, 1e9)).
+			for m in 0..GIGAAM_V3_N_MELS {
+				let mut acc = 0f32;
+				for (f, &p) in power.iter().enumerate() {
+					acc += p * fbanks[f][m];
+				}
+				out[[t, m]] = acc.clamp(GIGAAM_V3_CLAMP_MIN, GIGAAM_V3_CLAMP_MAX).ln();
+			}
 		}
 		out
 	}
@@ -857,12 +1114,14 @@ impl Transcriber for SenseVoiceEngine {
 
 /// Which kaldi/nemo front-end + CMVN a generic CTC engine uses.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum CtcFrontend {
+pub(crate) enum CtcFrontend {
 	/// 80-dim kaldi fbank + per-bin CMVN read from ONNX metadata (Dolphin).
 	KaldiWithMetaCmvn,
-	/// GigaAM mel front-end (80-mel kaldi stand-in; GigaAM's own featurizer is a SPIKE item — it's
-	/// Russian-only so can't be validated with the English jfk clip).
-	NemoMel,
+	/// GigaAM v3 64-mel log featurizer (n_fft=320/win=320/hop=160, periodic-Hann window, no
+	/// pre-emphasis, log clamp(1e-9,1e9)) — `frontend::gigaam_v3_features`. Channel-major `features`
+	/// input (1,64,T); CTC frames >= encoder_out_lens=(features_lens-1)//4+1 are masked before
+	/// greedy collapse (onnx-asr asr.py:348). Faithful to onnx_asr GigaamPreprocessorNumpy("gigaam_v3").
+	GigaamV3,
 	/// PROVEN NeMo 128-mel log-mel featurizer (per-feature norm) — parakeet/fastconformer CTC.
 	/// Same featurizer that validated Canary (NemoAed). Uses `frontend::nemo_features`.
 	NemoMel128,
@@ -878,6 +1137,10 @@ pub struct CtcEngine {
 	cmvn_mean: Vec<f32>,
 	cmvn_invstd: Vec<f32>,
 	blank_id: i64,
+	// Encoder subsampling factor: CTC frames >= (features_lens-1)//factor+1 are masked before the
+	// greedy collapse (GigaAM v3 = 4 from config.json; others leave it 1 → no extra masking since
+	// the CTC output already has T'==encoder_out_lens for kaldi/nemo single-frame models).
+	subsampling_factor: usize,
 	// I/O names resolved at load (Dolphin output is misnamed `lob_probs`, resolved by rank).
 	feat_input: String,
 	len_input: String,
@@ -887,7 +1150,7 @@ pub struct CtcEngine {
 }
 
 impl CtcEngine {
-	pub fn load(cfg: &EngineConfig, frontend: CtcFrontend) -> SttResult<CtcEngine> {
+	pub(crate) fn load(cfg: &EngineConfig, frontend: CtcFrontend) -> SttResult<CtcEngine> {
 		let model_path = file(&cfg.resolved, "model")?;
 		let vocab_path = file(&cfg.resolved, "vocab")?;
 		let session = build_session(model_path, &cfg.providers)?;
@@ -900,7 +1163,7 @@ impl CtcEngine {
 		let (feat_input, len_input) = pick_feat_len_inputs(&inputs);
 		let logits_output = pick_logits_output(&session, &outputs);
 
-		// Dolphin blank is 0; metadata CMVN.
+		// Dolphin blank is 0; metadata CMVN. GigaAM v3 blank is the vocab `<blk>` (256).
 		let (blank_id, cmvn_mean, cmvn_invstd) = match frontend {
 			CtcFrontend::KaldiWithMetaCmvn => {
 				let meta = read_custom_metadata(&session)?;
@@ -908,15 +1171,29 @@ impl CtcEngine {
 				let invstd = parse_float_vec(meta.get("invstd").map(String::as_str).unwrap_or(""));
 				(0, mean, invstd)
 			}
-			CtcFrontend::NemoMel | CtcFrontend::NemoMel128 => (vocab.blank_idx, Vec::new(), Vec::new()),
+			CtcFrontend::GigaamV3 | CtcFrontend::NemoMel128 => {
+				(vocab.blank_idx, Vec::new(), Vec::new())
+			}
 		};
 
-		// NeMo CTC uses the proven Slaney bank at the model's declared mel count (parakeet-ctc=80,
-		// fastconformer=80, etc., read from `audio_signal`); Dolphin/GigaAM use the 80-mel kaldi bank.
-		let mel_fb = if frontend == CtcFrontend::NemoMel128 {
-			frontend::build_nemo_mel_filterbank(feat_dim_of(&session, &feat_input))
-		} else {
-			frontend::build_mel_filterbank()
+		// Per-frontend filterbank:
+		//   * NeMo128 → proven Slaney bank at the model's declared mel count (parakeet/fastconformer).
+		//   * KaldiWithMetaCmvn (Dolphin) → the kaldi 80-mel bank (n_fft=512, fmin=20, fmax=7600,
+		//     kaldi mel scale, NO slaney norm) matching onnx-asr's KaldiPreprocessorNumpy.
+		//   * GigaamV3 → embedded 64-mel bank (built into `gigaam_v3_features`, so mel_fb is unused).
+		let mel_fb = match frontend {
+			CtcFrontend::NemoMel128 => {
+				frontend::build_nemo_mel_filterbank(feat_dim_of(&session, &feat_input))
+			}
+			CtcFrontend::KaldiWithMetaCmvn => frontend::build_kaldi_mel_filterbank(),
+			CtcFrontend::GigaamV3 => frontend::build_mel_filterbank(),
+		};
+
+		// GigaAM v3 sub-samples ×4 in the encoder (config.json subsampling_factor) → CTC masks
+		// trailing padded frames before greedy collapse. Other CTC families don't pad → factor 1.
+		let subsampling_factor = match frontend {
+			CtcFrontend::GigaamV3 => 4,
+			_ => 1,
 		};
 
 		Ok(CtcEngine {
@@ -928,6 +1205,7 @@ impl CtcEngine {
 			cmvn_mean,
 			cmvn_invstd,
 			blank_id,
+			subsampling_factor,
 			feat_input,
 			len_input,
 			logits_output,
@@ -937,15 +1215,34 @@ impl CtcEngine {
 	}
 
 	fn features_for(&self, audio: &[f32]) -> Array2<f32> {
-		if self.frontend == CtcFrontend::NemoMel128 {
-			// NeMo 128-mel featurizer w/ per-feature norm (proven on Canary) — no extra CMVN.
-			return frontend::nemo_features(audio, &self.mel_fb);
+		match self.frontend {
+			CtcFrontend::GigaamV3 => {
+				// GigaAM v3 64-mel log featurizer (embedded window + filterbank) — no CMVN, no norm.
+				frontend::gigaam_v3_features(audio)
+			}
+			CtcFrontend::NemoMel128 => {
+				// NeMo 128-mel featurizer w/ per-feature norm (proven on Canary) — no extra CMVN.
+				frontend::nemo_features(audio, &self.mel_fb)
+			}
+			CtcFrontend::KaldiWithMetaCmvn => {
+				// Dolphin: kaldi 80-mel fbank (symmetric-pad, n_fft=512, povey window, per-frame DC
+				// removal + pre-emphasis) — onnx-asr KaldiPreprocessorNumpy — then per-mel-bin CMVN
+				// `(fbank - mean) * invstd` from the ONNX metadata (dolphin.py::_encode).
+				let mut fbank = frontend::compute_kaldi_fbank(audio, &self.mel_fb);
+				if !self.cmvn_mean.is_empty() {
+					frontend::apply_dolphin_cmvn(&mut fbank, &self.cmvn_mean, &self.cmvn_invstd);
+				}
+				fbank
+			}
 		}
-		let mut fbank = frontend::compute_fbank(audio, &self.mel_fb);
-		if matches!(self.frontend, CtcFrontend::KaldiWithMetaCmvn) && !self.cmvn_mean.is_empty() {
-			frontend::apply_dolphin_cmvn(&mut fbank, &self.cmvn_mean, &self.cmvn_invstd);
+	}
+
+	/// `encoder_out_lens = (features_lens - 1) // subsampling_factor + 1` (onnx-asr GigaamV2Ctc._encode).
+	fn encoder_out_len(&self, features_lens: usize) -> usize {
+		if features_lens == 0 {
+			return 0;
 		}
-		fbank
+		(features_lens - 1) / self.subsampling_factor + 1
 	}
 }
 
@@ -975,7 +1272,7 @@ impl Transcriber for CtcEngine {
 		let feat_dim = features.ncols();
 
 		// Dolphin: x is (N, T, 80) time-major. NeMo/GigaAM: features (N, feat, T) channel-major.
-		// We feed the kaldi-style (1, T, 80) for Dolphin; for NeMo we transpose to (1, feat, T).
+		// We feed the kaldi-style (1, T, 80) for Dolphin; for NeMo/GigaAM we transpose to (1, feat, T).
 		let (tensor, len_val) = match self.frontend {
 			CtcFrontend::KaldiWithMetaCmvn => {
 				let x = features
@@ -987,7 +1284,7 @@ impl Transcriber for CtcEngine {
 					n_frames as i64,
 				)
 			}
-			CtcFrontend::NemoMel | CtcFrontend::NemoMel128 => {
+			CtcFrontend::GigaamV3 | CtcFrontend::NemoMel128 => {
 				// (T, feat) → (feat, T) → (1, feat, T). `.t()` is an F-order view; force a
 				// C-contiguous owned copy before reshaping (into_shape_with_order rejects F-order).
 				let t = features.t().as_standard_layout().into_owned();
@@ -1002,6 +1299,11 @@ impl Transcriber for CtcEngine {
 			}
 		};
 		let len_tensor = tensor_i64_1d(vec![len_val])?;
+		// encoder_out_lens (= (features_lens-1)//subsampling+1) — computed before the &mut session
+		// borrow so the post-run masking can use it without re-borrowing self.
+		let enc_len_unclamped = self.encoder_out_len(n_frames);
+		let blank_id = self.blank_id;
+		let logits_output = self.logits_output.clone();
 
 		let outputs = self
 			.session
@@ -1011,13 +1313,21 @@ impl Transcriber for CtcEngine {
 			])
 			.map_err(|e| SttError::Inference(format!("ctc run: {e}")))?;
 
-		let logits = out_to_f32(&outputs[self.logits_output.as_str()])?;
+		let logits = out_to_f32(&outputs[logits_output.as_str()])?;
 		let logits3 = logits
 			.into_dimensionality::<ndarray::Ix3>()
 			.map_err(|e| SttError::Inference(format!("ctc logits dim: {e}")))?;
 		let frame_logits = logits3.index_axis_move(Axis(0), 0); // (T', vocab)
-		let ids = argmax_last_axis_2d(frame_logits.view());
-		let collapsed = ctc_greedy_collapse(&ids, self.blank_id);
+		let mut ids = argmax_last_axis_2d(frame_logits.view());
+		// Mask CTC frames >= encoder_out_lens before the greedy collapse — onnx-asr asr.py:348 builds
+		// `batch_mask` from encoder_out_lens, so trailing padded encoder frames cannot emit spurious
+		// tokens. We force those frames to the blank id (collapse drops blanks). subsampling_factor==1
+		// (kaldi/dolphin) makes this a no-op.
+		let enc_len = enc_len_unclamped.min(ids.len());
+		for id in ids.iter_mut().skip(enc_len) {
+			*id = blank_id;
+		}
+		let collapsed = ctc_greedy_collapse(&ids, blank_id);
 
 		let syms: Vec<&str> = collapsed
 			.iter()
@@ -1044,18 +1354,33 @@ impl Transcriber for CtcEngine {
 // real export and tightens the fallbacks. The control flow + tensor shapes are exact.
 
 #[derive(Clone, Copy, PartialEq)]
-enum TransducerKind {
+pub(crate) enum TransducerKind {
 	/// icefall/Kaldi stateless-2-context: decoder cached by `(-1, blank, *ctx)[-2:]`.
 	KaldiStateless,
 	/// NeMo RNN-T: stateful predictor `(input_states_1, input_states_2)`, RNN-T (step always 1).
 	NemoRnnt,
 	/// NeMo TDT: like RNN-T but joint emits `[vocab | duration]` → step = argmax(duration head).
 	NemoTdt,
+	/// GigaAM v3 E2E RNN-T (gigaam.py GigaamV2Rnnt): separate decoder (`x`/`h.1`/`c.1`→`dec`/`h`/`c`)
+	/// + joiner (`enc`(1,768,1)/`dec`(1,320,1)→`joint`). LSTM predictor state (h,c) of width 320,
+	/// cached `dec` reused across blank frames (re-run decoder only on a token emission). blank=1024,
+	/// max_tokens_per_step=3 (config.json). 64-mel `gigaam_v3_features` front-end; encoder outputs
+	/// `encoded`(1,768,T')/`encoded_len`.
+	GigaamRnnt,
 }
 
 /// NeMo RNN-T/TDT predictor LSTM state `(output_states_1, output_states_2)` carried across emitted
 /// tokens. Updated only on a non-blank emission (Kaldi-stateless transducers don't use it).
 type NemoState = (ArrayD<f32>, ArrayD<f32>);
+
+/// GigaAM RNN-T predictor cache: the LSTM `(h, c)` state (each `(1,1,320)`) PLUS the cached decoder
+/// output `dec` `(1,1,320)`. Mirrors onnx-asr's `prev_state[:] = (dec, h, c)` caching: `dec` is reused
+/// while frames produce blanks; `(h, c)` advance only when the decoder is re-run after a token.
+struct GigaamPredState {
+	dec: ArrayD<f32>,
+	h: ArrayD<f32>,
+	c: ArrayD<f32>,
+}
 
 pub struct TransducerEngine {
 	encoder: Session,
@@ -1075,15 +1400,17 @@ pub struct TransducerEngine {
 }
 
 impl TransducerEngine {
-	pub fn load(cfg: &EngineConfig, tkind: TransducerKind) -> SttResult<TransducerEngine> {
+	pub(crate) fn load(cfg: &EngineConfig, tkind: TransducerKind) -> SttResult<TransducerEngine> {
 		let encoder = build_session(file(&cfg.resolved, "encoder")?, &cfg.providers)?;
 		let decoder_key = match tkind {
-			TransducerKind::KaldiStateless => "decoder",
+			TransducerKind::KaldiStateless | TransducerKind::GigaamRnnt => "decoder",
 			TransducerKind::NemoRnnt | TransducerKind::NemoTdt => "decoder_joint",
 		};
 		let decoder = build_session(file(&cfg.resolved, decoder_key)?, &cfg.providers)?;
 		let joiner = match tkind {
 			TransducerKind::KaldiStateless => Some(build_session(file(&cfg.resolved, "joiner")?, &cfg.providers)?),
+			// GigaAM ships its joiner under the `joint` key (gigaam.py `_get_model_files`).
+			TransducerKind::GigaamRnnt => Some(build_session(file(&cfg.resolved, "joint")?, &cfg.providers)?),
 			_ => None,
 		};
 		let vocab = Vocab::load(file(&cfg.resolved, "vocab")?, false, true)?;
@@ -1092,13 +1419,17 @@ impl TransducerEngine {
 		let max_tokens_per_step = match tkind {
 			TransducerKind::KaldiStateless => 1,
 			TransducerKind::NemoRnnt | TransducerKind::NemoTdt => 10,
+			// GigaAM v3 config.json max_tokens_per_step = 3.
+			TransducerKind::GigaamRnnt => 3,
 		};
-		// NeMo transducer uses the proven Slaney featurizer at the model's declared mel count;
-		// Kaldi/zipformer uses the 80-mel kaldi fbank. Read before `encoder` is moved into the struct.
-		let mel_fb = if matches!(tkind, TransducerKind::KaldiStateless) {
-			frontend::build_mel_filterbank()
-		} else {
-			frontend::build_nemo_mel_filterbank(feat_dim_of(&encoder, "audio_signal"))
+		// NeMo transducer uses the proven 128-mel Slaney featurizer (read mel count from audio_signal);
+		// Vosk/zipformer uses the 80-mel kaldi fbank with the HTK-mel bank (`build_zipformer_mel_
+		// filterbank`); GigaAM v3 uses its own embedded 64-mel featurizer. Read before `encoder` is
+		// moved into the struct.
+		let mel_fb = match tkind {
+			TransducerKind::KaldiStateless => frontend::build_zipformer_mel_filterbank(),
+			TransducerKind::GigaamRnnt => Array2::<f32>::zeros((0, 0)), // unused (embedded featurizer)
+			_ => frontend::build_nemo_mel_filterbank(feat_dim_of(&encoder, "audio_signal")),
 		};
 
 		Ok(TransducerEngine {
@@ -1121,10 +1452,11 @@ impl TransducerEngine {
 
 	/// Run the encoder → `(encoder_out (T, D), T_len)`.
 	fn encode(&mut self, audio: &[f32]) -> SttResult<(Array2<f32>, usize)> {
-		let fbank = if self.use_kaldi_fbank {
-			frontend::compute_fbank(audio, &self.mel_fb)
-		} else {
-			frontend::nemo_features(audio, &self.mel_fb)
+		let fbank = match self.tkind {
+			// Vosk/zipformer Kaldi transducer: 80-mel kaldi fbank with the HTK-mel bank.
+			TransducerKind::KaldiStateless => frontend::compute_kaldi_fbank(audio, &self.mel_fb),
+			TransducerKind::GigaamRnnt => frontend::gigaam_v3_features(audio),
+			_ => frontend::nemo_features(audio, &self.mel_fb),
 		};
 		let t = fbank.nrows();
 		if t == 0 {
@@ -1139,6 +1471,14 @@ impl TransducerEngine {
 					.into_shape_with_order((1, t, feat_dim))
 					.map_err(|e| SttError::Inference(format!("kaldi enc reshape: {e}")))?;
 				(x, "x_lens", "x", "encoder_out", "encoder_out_lens")
+			}
+			TransducerKind::GigaamRnnt => {
+				// (1, 64, T). GigaAM encoder: audio_signal/length → encoded(1,768,T')/encoded_len.
+				let tr = fbank.t().as_standard_layout().into_owned();
+				let x = tr
+					.into_shape_with_order((1, feat_dim, t))
+					.map_err(|e| SttError::Inference(format!("gigaam enc reshape: {e}")))?;
+				(x, "length", "audio_signal", "encoded", "encoded_len")
 			}
 			TransducerKind::NemoRnnt | TransducerKind::NemoTdt => {
 				// (1, feat, T). Force C-contiguous after the transpose (see NemoMel note above).
@@ -1225,6 +1565,11 @@ impl TransducerEngine {
 				};
 				Ok((vocab_part.to_vec(), step, Some(ns)))
 			}
+			// GigaAM RNN-T decodes via the dedicated `transcribe_gigaam` (decoder-output caching +
+			// distinct decoder/joiner I/O); the generic per-frame `decode_frame` is never reached.
+			TransducerKind::GigaamRnnt => Err(SttError::Unsupported(
+				"gigaam rnnt uses transcribe_gigaam, not the generic decode_frame",
+			)),
 		}
 	}
 
@@ -1321,6 +1666,123 @@ impl TransducerEngine {
 			ArrayD::<f32>::zeros(ndarray::IxDyn(&input_state_shape(&self.decoder, "input_states_2"))),
 		)
 	}
+
+	/// GigaAM RNN-T predictor step: decoder(`x=token`, `h.1`, `c.1`) → `(dec, h, c)`
+	/// (gigaam.py `GigaamV2Rnnt._decode`, the `len(prev_state)==2` branch). Re-run only after a token
+	/// emission; the result's `dec` is cached and reused across blank frames.
+	fn gigaam_decoder_step(
+		&mut self,
+		token: i64,
+		h: &ArrayD<f32>,
+		c: &ArrayD<f32>,
+	) -> SttResult<GigaamPredState> {
+		// x is (1,1) int64 (decoder declares int64); h.1/c.1 are (1,1,320).
+		let x = tensor_i64((1, 1), vec![token])?;
+		let h_t = Tensor::from_array(h.clone())
+			.map_err(|e| SttError::Inference(format!("gigaam h.1: {e}")))?;
+		let c_t = Tensor::from_array(c.clone())
+			.map_err(|e| SttError::Inference(format!("gigaam c.1: {e}")))?;
+		let out = self
+			.decoder
+			.run(ort::inputs![ "x" => x, "h.1" => h_t, "c.1" => c_t ])
+			.map_err(|e| SttError::Inference(format!("gigaam decoder run: {e}")))?;
+		let dec = out_to_f32(&out["dec"])?;
+		let nh = out_to_f32(&out["h"])?;
+		let nc = out_to_f32(&out["c"])?;
+		drop(out);
+		Ok(GigaamPredState { dec, h: nh, c: nc })
+	}
+
+	/// GigaAM joiner: `joint = joiner(enc=encoder_out[None,:,None] (1,768,1), dec=dec.transpose(0,2,1)
+	/// (1,320,1))` → squeeze → (1025,) (gigaam.py `_decode`). `dec` is the cached decoder output
+	/// `(1,1,320)`; we transpose it to `(1,320,1)`.
+	fn gigaam_joiner_step(
+		&mut self,
+		enc_frame: &Array1<f32>,
+		dec: &ArrayD<f32>,
+	) -> SttResult<Vec<f32>> {
+		let d_enc = enc_frame.len();
+		// enc: (1, 768, 1)
+		let enc3 = enc_frame
+			.view()
+			.into_shape_with_order((1, d_enc, 1))
+			.map_err(|e| SttError::Inference(format!("gigaam joiner enc: {e}")))?
+			.to_owned();
+		let enc_t = Tensor::from_array(enc3)
+			.map_err(|e| SttError::Inference(format!("gigaam joiner enc tensor: {e}")))?;
+		// dec is (1,1,320) → transpose(0,2,1) → (1,320,1).
+		let dec3 = dec
+			.clone()
+			.into_dimensionality::<ndarray::Ix3>()
+			.map_err(|e| SttError::Inference(format!("gigaam dec dim: {e}")))?;
+		let dec_t_arr = dec3.permuted_axes([0, 2, 1]).as_standard_layout().into_owned();
+		let dec_t = Tensor::from_array(dec_t_arr)
+			.map_err(|e| SttError::Inference(format!("gigaam joiner dec tensor: {e}")))?;
+		let joint = self
+			.joiner
+			.as_mut()
+			.ok_or(SttError::Unsupported("gigaam transducer missing joiner"))?
+			.run(ort::inputs![ "enc" => enc_t, "dec" => dec_t ])
+			.map_err(|e| SttError::Inference(format!("gigaam joiner run: {e}")))?;
+		// joint is (1,1,1,1025) → flatten to (1025,).
+		let j = out_to_f32(&joint["joint"])?;
+		Ok(j.iter().copied().collect())
+	}
+
+	/// GigaAM v3 E2E RNN-T greedy decode — faithful port of onnx-asr `_AsrWithTransducerDecoding.
+	/// _decoding` specialized to `GigaamV2Rnnt._decode`'s decoder-output caching. The LSTM `(h,c)`
+	/// state advances only on a token emission; the cached `dec` is reused while frames produce blanks.
+	/// `max_tokens_per_step=3` caps emissions per encoder frame; step is always 1 (RNN-T).
+	fn transcribe_gigaam(&mut self, encoder_out: &Array2<f32>, t_len: usize) -> SttResult<Vec<i64>> {
+		let pred_hidden = 320usize;
+		let zeros_state =
+			|| ArrayD::<f32>::zeros(ndarray::IxDyn(&[1, 1, pred_hidden]));
+
+		// `state` mirrors onnx-asr's `prev_state`: after a token emission it holds ONLY (h,c) so the
+		// next frame re-runs the decoder; between emissions it holds the cached (dec,h,c).
+		// We model both with GigaamPredState + a `dirty` flag (true ⇒ dec must be recomputed).
+		let mut h = zeros_state();
+		let mut c = zeros_state();
+		let mut cached: Option<GigaamPredState> = None; // Some ⇒ dec is fresh for the current context
+		let mut tokens: Vec<i64> = Vec::new();
+
+		let mut t = 0usize;
+		let mut emitted = 0usize;
+		while t < t_len {
+			let enc_frame = encoder_out.index_axis(Axis(0), t).to_owned();
+
+			// Ensure we have a fresh decoder output for the current (last-token, h, c) context.
+			// Re-run the decoder iff the context changed since the last decoder run (cached == None).
+			if cached.is_none() {
+				let last = tokens.last().copied().unwrap_or(self.blank_id);
+				let st = self.gigaam_decoder_step(last, &h, &c)?;
+				cached = Some(st);
+			}
+			let pred = cached.as_ref().expect("cached set above");
+			let logits = self.gigaam_joiner_step(&enc_frame, &pred.dec)?;
+			let (best, _) = argmax_1d(&logits);
+			let token = best as i64;
+
+			if token != self.blank_id {
+				// Emit: advance the LSTM state to the just-computed (h,c) and invalidate the cache so
+				// the NEXT frame re-runs the decoder with the new last token (onnx-asr: prev_state=state).
+				let pred = cached.take().expect("cached set above");
+				h = pred.h;
+				c = pred.c;
+				tokens.push(token);
+				emitted += 1;
+				if emitted == self.max_tokens_per_step {
+					t += 1;
+					emitted = 0;
+				}
+			} else {
+				// Blank: keep the cached dec (reused next frame), advance time.
+				t += 1;
+				emitted = 0;
+			}
+		}
+		Ok(tokens)
+	}
 }
 
 impl Transcriber for TransducerEngine {
@@ -1344,6 +1806,18 @@ impl Transcriber for TransducerEngine {
 		let (encoder_out, t_len) = self.encode(audio)?;
 		if t_len == 0 {
 			return Ok(Transcription::default());
+		}
+
+		// GigaAM RNN-T uses a distinct decoder/joiner archetype + decoder-output caching; decode it
+		// with the dedicated faithful port, then share the symbol-join below.
+		if self.tkind == TransducerKind::GigaamRnnt {
+			let tokens = self.transcribe_gigaam(&encoder_out, t_len)?;
+			let syms: Vec<&str> = tokens.iter().filter_map(|&id| self.vocab.get(id)).collect();
+			let text = join_and_normalize(&syms, self.vocab.lowercase_decoded);
+			return Ok(Transcription {
+				text,
+				..Default::default()
+			});
 		}
 
 		let mut tokens: Vec<i64> = Vec::new();
@@ -1909,6 +2383,263 @@ impl Transcriber for CanaryEngine {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// 8b. T-One — streaming CTC (single graph; raw 8 kHz int32 signal, NO mel)
+// ───────────────────────────────────────────────────────────────────────────
+//
+// Port of onnx-asr `models/tone.py` (TOneCtc) + the `_AsrWithCtcDecoding` collapse, with the
+// `identity` preprocessor (`preprocessors/preprocessor.py::IdentityPreprocessor` — a no-op): the
+// `recognize()` pipeline resamples 16 kHz → 8 kHz (the model's `_get_sample_rate() == 8_000`),
+// then feeds the RAW 8 kHz float waveform straight into `_encode` (no fbank/mel).
+//
+// `_encode` (tone.py:73-86) is CHUNKED streaming CTC:
+//   * pad `(chunk_size, chunk_size + (-len) % chunk_size)`  — one leading chunk + round up trailing;
+//   * per 2400-sample chunk: `signal = (x[..., None] * (2**15 - 1)).astype(int32)`  shape (1,2400,1)
+//     + a carried `state` (f16, zeros at start), run → (`logprobs` f32, `state_next` f16);
+//   * `np.hstack(res[1:])`  — DROP the first chunk's logprobs (warm-up frame);
+//   * argmax over the (T', 35) logprobs → CTC greedy collapse (blank = `pad_token_id` = 34) →
+//     map ids via `config.json::decoder_params.vocabulary` (34 tokens, id 33 == literal " ").
+// Vocabulary tokens carry their own spaces (the " " token is the word separator); there is NO
+// SentencePiece `▁` and NO lowercasing (Cyrillic) — so we concatenate the symbols verbatim.
+
+/// 16 kHz → 8 kHz one-shot resample via rubato `FftFixedIn` (the same resampler `FrameResampler`
+/// uses; the task allows reusing it). onnx-asr resamples with an ONNX polyphase graph, but a quality
+/// 2:1 FFT downsample is numerically close enough for CTC phoneme decoding (validated by the spike).
+/// Processes in fixed chunks, zero-padding the final partial chunk (matches `FrameResampler::finish`).
+fn resample_16k_to_8k(audio: &[f32]) -> Vec<f32> {
+	use rubato::{FftFixedIn, Resampler as _};
+	const CHUNK_IN: usize = 1024;
+	let mut resampler = match FftFixedIn::<f32>::new(16_000, 8_000, CHUNK_IN, 1, 1) {
+		Ok(r) => r,
+		// If the resampler can't be built, fall back to naive 2:1 decimation (still 8 kHz).
+		Err(_) => return audio.iter().step_by(2).copied().collect(),
+	};
+	let mut out: Vec<f32> = Vec::with_capacity(audio.len() / 2 + CHUNK_IN);
+	let mut idx = 0usize;
+	while idx < audio.len() {
+		let end = (idx + CHUNK_IN).min(audio.len());
+		let mut buf: Vec<f32> = audio[idx..end].to_vec();
+		if buf.len() < CHUNK_IN {
+			buf.resize(CHUNK_IN, 0.0);
+		}
+		if let Ok(o) = resampler.process(&[&buf[..]], None) {
+			out.extend_from_slice(&o[0]);
+		}
+		idx = end;
+	}
+	out
+}
+
+/// T-One streaming-CTC engine. Single ONNX graph: per-chunk `(signal int32, state f16)` →
+/// `(logprobs f32, state_next f16)`. Vocab + blank come from `config.json` (no tokens.txt).
+pub struct ToneEngine {
+	session: Session,
+	/// id → symbol (from `config.json::decoder_params.vocabulary`; id 34 = blank has no symbol).
+	vocab: BTreeMap<i64, String>,
+	blank_idx: i64,
+	/// `signal` input frame length (2400 samples @ 8 kHz = 300 ms) — `shapes["signal"][1]`.
+	chunk_size: usize,
+	/// `state` input width (219729) — `shapes["state"][1]`.
+	state_size: usize,
+	signal_input: String,
+	state_input: String,
+	model_name: String,
+	providers: Vec<String>,
+}
+
+impl ToneEngine {
+	pub fn load(cfg: &EngineConfig) -> SttResult<ToneEngine> {
+		let model_path = file(&cfg.resolved, "model")?;
+		let config_path = file(&cfg.resolved, "config")?;
+		let session = build_session(model_path, &cfg.providers)?;
+
+		// Read chunk_size / state_size from the graph (tone.py:30-32: shapes["signal"][1] /
+		// shapes["state"][1]). Default to the published constants if a dim is dynamic.
+		let chunk_size = static_input_dim(&session, "signal", 1).unwrap_or(2400);
+		let state_size = static_input_dim(&session, "state", 1).unwrap_or(219_729);
+
+		// Resolve the actual input names (graph declares them `signal` / `state`, but read them
+		// so a re-export with different names still wires up).
+		let in_names = session_input_names(&session);
+		let signal_input = in_names
+			.iter()
+			.find(|n| n.eq_ignore_ascii_case("signal"))
+			.cloned()
+			.unwrap_or_else(|| in_names.first().cloned().unwrap_or_else(|| "signal".into()));
+		let state_input = in_names
+			.iter()
+			.find(|n| n.eq_ignore_ascii_case("state"))
+			.cloned()
+			.unwrap_or_else(|| in_names.get(1).cloned().unwrap_or_else(|| "state".into()));
+
+		// Vocab from config.json (decoder_params.vocabulary) + blank = pad_token_id (tone.py:34-36).
+		let cfg_text = std::fs::read_to_string(config_path)
+			.map_err(|e| SttError::Tokenizer(format!("read {}: {e}", config_path.display())))?;
+		let json: serde_json::Value = serde_json::from_str(&cfg_text)
+			.map_err(|e| SttError::Tokenizer(format!("parse t-one config.json: {e}")))?;
+		let vocab_arr = json
+			.get("decoder_params")
+			.and_then(|d| d.get("vocabulary"))
+			.and_then(|v| v.as_array())
+			.ok_or_else(|| {
+				SttError::Tokenizer("t-one config.json missing decoder_params.vocabulary".into())
+			})?;
+		let mut vocab = BTreeMap::new();
+		for (i, tok) in vocab_arr.iter().enumerate() {
+			if let Some(s) = tok.as_str() {
+				vocab.insert(i as i64, s.to_string());
+			}
+		}
+		if vocab.is_empty() {
+			return Err(SttError::Tokenizer("t-one vocabulary is empty".into()));
+		}
+		let blank_idx = json
+			.get("pad_token_id")
+			.and_then(serde_json::Value::as_i64)
+			// Default to len(vocab) — TOneCtc uses `_blank_idx = pad_token_id`, which equals the
+			// vocab length (the CTC blank lives just past the real symbols).
+			.unwrap_or(vocab.len() as i64);
+
+		Ok(ToneEngine {
+			session,
+			vocab,
+			blank_idx,
+			chunk_size,
+			state_size,
+			signal_input,
+			state_input,
+			model_name: cfg.model_name.clone(),
+			providers: providers_to_strings(&cfg.providers),
+		})
+	}
+}
+
+impl Transcriber for ToneEngine {
+	fn kind(&self) -> EngineKind {
+		EngineKind::ToneCtc
+	}
+	fn model_name(&self) -> &str {
+		&self.model_name
+	}
+	fn is_ready(&self) -> bool {
+		true
+	}
+	fn active_providers(&self) -> &[String] {
+		&self.providers
+	}
+
+	fn transcribe(&mut self, audio: &[f32], _opts: &TranscribeOptions) -> SttResult<Transcription> {
+		if audio.is_empty() {
+			return Ok(Transcription::default());
+		}
+
+		// 1. Resample 16 kHz → 8 kHz (the model's native rate; `_get_sample_rate() == 8000`).
+		let wav8 = resample_16k_to_8k(audio);
+		if wav8.is_empty() {
+			return Ok(Transcription::default());
+		}
+
+		// 2. Pad: leading `chunk_size` + trailing `chunk_size + (-len) % chunk_size` (tone.py:76-78).
+		let n = wav8.len();
+		let trailing = self.chunk_size + ((self.chunk_size - (n % self.chunk_size)) % self.chunk_size);
+		let total = n + self.chunk_size + trailing;
+		let mut padded = vec![0.0f32; total];
+		padded[self.chunk_size..self.chunk_size + n].copy_from_slice(&wav8);
+		let num_chunks = total / self.chunk_size;
+
+		// 3. Per-chunk streaming CTC. State is f16, zero-initialized; carry `state_next`.
+		let mut state: Array1<F16> =
+			Array1::from_elem(self.state_size, F16::from_f32(0.0));
+		// Collected logprobs over all chunks EXCEPT the first (tone.py:86 `np.hstack(res[1:])`).
+		let mut all_logprobs: Vec<Array2<f32>> = Vec::with_capacity(num_chunks.saturating_sub(1));
+
+		for c in 0..num_chunks {
+			let off = c * self.chunk_size;
+			// signal = (x * 32767).astype(int32), shape (1, chunk_size, 1) (tone.py:67).
+			let mut sig: Vec<i32> = Vec::with_capacity(self.chunk_size);
+			for &x in &padded[off..off + self.chunk_size] {
+				sig.push((x * 32767.0) as i32);
+			}
+			let sig_arr = ndarray::Array3::from_shape_vec((1, self.chunk_size, 1), sig)
+				.map_err(|e| SttError::Inference(format!("t-one signal reshape: {e}")))?;
+			let sig_tensor = Tensor::from_array(sig_arr)
+				.map_err(|e| SttError::Inference(format!("t-one signal tensor: {e}")))?;
+
+			let state_arr = state
+				.clone()
+				.into_shape_with_order((1, self.state_size))
+				.map_err(|e| SttError::Inference(format!("t-one state reshape: {e}")))?;
+			let state_tensor = Tensor::from_array(state_arr)
+				.map_err(|e| SttError::Inference(format!("t-one state tensor: {e}")))?;
+
+			let outputs = self
+				.session
+				.run(ort::inputs![
+					self.signal_input.as_str() => sig_tensor,
+					self.state_input.as_str() => state_tensor,
+				])
+				.map_err(|e| SttError::Inference(format!("t-one chunk {c} run: {e}")))?;
+
+			// state_next is f16 (tone.py:70 asserts is_float16). Carry it.
+			let next_state = outputs["state_next"]
+				.try_extract_array::<F16>()
+				.map_err(|e| SttError::Inference(format!("t-one state_next extract: {e}")))?;
+			state = next_state
+				.to_owned()
+				.into_shape_with_order(self.state_size)
+				.map_err(|e| SttError::Inference(format!("t-one state_next reshape: {e}")))?;
+
+			// DROP the first chunk's logprobs (warm-up); collect the rest.
+			if c >= 1 {
+				let lp = out_to_f32(&outputs["logprobs"])?; // (1, frames, 35)
+				let lp3 = lp
+					.into_dimensionality::<ndarray::Ix3>()
+					.map_err(|e| SttError::Inference(format!("t-one logprobs dim: {e}")))?;
+				all_logprobs.push(lp3.index_axis_move(Axis(0), 0).to_owned()); // (frames, 35)
+			}
+		}
+
+		if all_logprobs.is_empty() {
+			return Ok(Transcription::default());
+		}
+
+		// 4. Concat all logprobs along the time axis → (T', vocab); argmax → CTC collapse.
+		let views: Vec<ArrayView2<f32>> = all_logprobs.iter().map(|a| a.view()).collect();
+		let enc = ndarray::concatenate(Axis(0), &views)
+			.map_err(|e| SttError::Inference(format!("t-one concat logprobs: {e}")))?;
+		let ids = argmax_last_axis_2d(enc.view());
+		let collapsed = ctc_greedy_collapse(&ids, self.blank_idx);
+
+		// 5. Map ids → symbols and concatenate verbatim (the " " token = id 33 is the separator;
+		//    NO `▁`, NO lowercasing). Trim only trailing whitespace artifacts.
+		let mut text = String::new();
+		for &id in &collapsed {
+			if let Some(sym) = self.vocab.get(&id) {
+				text.push_str(sym);
+			}
+		}
+		let text = text.trim().to_string();
+
+		Ok(Transcription {
+			text,
+			..Default::default()
+		})
+	}
+}
+
+/// Read a STATIC dimension at `axis` of the named input, or `None` if dynamic/missing.
+/// (tone.py:30-32 reads `shapes["signal"][1]` / `shapes["state"][1]` off the loaded graph.)
+fn static_input_dim(session: &Session, name: &str, axis: usize) -> Option<usize> {
+	session
+		.inputs()
+		.iter()
+		.find(|i| i.name() == name)
+		.and_then(|i| i.dtype().tensor_shape())
+		.and_then(|s| s.get(axis).copied())
+		.filter(|&d| d > 0)
+		.map(|d| d as usize)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // 9. Dispatch
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -1917,24 +2648,23 @@ pub fn build_family_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>>
 	let engine: Box<dyn Transcriber> = match cfg.kind {
 		EngineKind::SenseVoiceCtc => Box::new(SenseVoiceEngine::load(&cfg)?),
 		EngineKind::DolphinCtc => Box::new(CtcEngine::load(&cfg, CtcFrontend::KaldiWithMetaCmvn)?),
-		// NeMo CTC (parakeet/fastconformer) uses the PROVEN 128-mel featurizer; GigaAM CTC keeps
-		// the 80-mel stand-in (its own featurizer is a separate, ru-only spike).
+		// NeMo CTC (parakeet/fastconformer) uses the PROVEN 128-mel featurizer; GigaAM v3 CTC uses
+		// its own 64-mel featurizer (n_fft=320/win=320/hop=160 periodic-Hann, embedded filterbank).
 		EngineKind::NemoCtc => Box::new(CtcEngine::load(&cfg, CtcFrontend::NemoMel128)?),
-		EngineKind::GigaamCtc => Box::new(CtcEngine::load(&cfg, CtcFrontend::NemoMel)?),
+		EngineKind::GigaamCtc => Box::new(CtcEngine::load(&cfg, CtcFrontend::GigaamV3)?),
 		EngineKind::KaldiTransducer => {
 			Box::new(TransducerEngine::load(&cfg, TransducerKind::KaldiStateless)?)
 		}
-		EngineKind::NemoRnnt | EngineKind::GigaamRnnt => {
+		EngineKind::NemoRnnt => {
 			Box::new(TransducerEngine::load(&cfg, TransducerKind::NemoRnnt)?)
+		}
+		EngineKind::GigaamRnnt => {
+			Box::new(TransducerEngine::load(&cfg, TransducerKind::GigaamRnnt)?)
 		}
 		EngineKind::NemoTdt => Box::new(TransducerEngine::load(&cfg, TransducerKind::NemoTdt)?),
 		EngineKind::CohereAsr => Box::new(CohereEngine::load(&cfg)?),
 		EngineKind::NemoAed => Box::new(CanaryEngine::load(&cfg)?),
-		EngineKind::ToneCtc => {
-			return Err(SttError::Unsupported(
-				"t-one streaming CTC engine not yet implemented (spike-gated)",
-			));
-		}
+		EngineKind::ToneCtc => Box::new(ToneEngine::load(&cfg)?),
 		EngineKind::WhisperHf | EngineKind::WhisperOrt | EngineKind::Moonshine => {
 			return Err(SttError::Unsupported(
 				"build_family_engine: Whisper/Moonshine handled by their own engine files",

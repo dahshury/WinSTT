@@ -6,6 +6,7 @@ import {
 	onNoAudioDetected,
 	onRealtimeText,
 	onRecordingStart,
+	onRecordingStop,
 	onSpeakerSegments,
 	onSttSessionAborted,
 	onTranscriptionFailed,
@@ -25,13 +26,20 @@ export function useTranscriptionFeed(): void {
 		// arm `isRecordingActive`. The overlay pill is gated on that flag so a
 		// freshly shown overlay window paints empty for one frame (before this
 		// event lands) rather than flashing the previous session's text.
-		// `isRecordingActive` deliberately stays `true` across `recording_stop`
-		// so the pill remains visible through the LLM "thinking" transition;
-		// it's reset only on terminal events (full_sentence / no_audio_detected).
 		const unsubStart = onRecordingStart(() => {
 			setRealtimeText("");
 			clearEphemeral();
 			setRecordingActive(true);
+		});
+
+		// Pill = the RECORDING indicator: hide it the instant the PTT key is released
+		// (recording_stop), like Handy — NOT keep it up through the whole transcribe.
+		// The pill's mount gate is `isRecordingActive || isThinking`, so when an Ollama/LLM
+		// post-processor is connected the `isThinking` branch keeps it visible for the
+		// reasoning phase; otherwise it vanishes immediately on release. The final text
+		// lands via full_sentence (pasted), not in the pill.
+		const unsubStop = onRecordingStop(() => {
+			setRecordingActive(false);
 		});
 
 		const unsubRealtime = onRealtimeText((text) => {
@@ -78,6 +86,7 @@ export function useTranscriptionFeed(): void {
 
 		return () => {
 			unsubStart();
+			unsubStop();
 			unsubRealtime();
 			unsubFinal();
 			unsubNoAudio();

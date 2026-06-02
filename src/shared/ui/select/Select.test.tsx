@@ -43,4 +43,22 @@ describe("Select", () => {
 			screen.getByText("French").closest("[data-menu-option]")?.getAttribute("data-menu-option")
 		).toBe("fr");
 	});
+
+	test("grouped mode renders section headers and still stamps rows with data-menu-option", () => {
+		const groups = [
+			{ value: "g1", label: "Group One", badge: "G1", options: [{ id: "a", label: "Apple" }] },
+			{ value: "g2", label: "Group Two", options: [{ id: "b", label: "Banana" }] },
+		];
+		render(<Select aria-label="fruit" groups={groups} onChange={() => undefined} value="a" />);
+		fireEvent.click(screen.getByRole("button", { name: "fruit" }));
+		// Both group headers render…
+		expect(screen.getByText("Group One")).toBeDefined();
+		expect(screen.getByText("Group Two")).toBeDefined();
+		// …and a row nested inside a Menu.Group still carries the highlight-layer
+		// contract attribute (headers deliberately do NOT).
+		expect(
+			screen.getByText("Banana").closest("[data-menu-option]")?.getAttribute("data-menu-option")
+		).toBe("b");
+		expect(screen.getByText("Group One").closest("[data-menu-option]")).toBeNull();
+	});
 });

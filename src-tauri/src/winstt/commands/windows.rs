@@ -93,7 +93,12 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         background: None,
     },
     // Settings — 700×560 frameless, opaque, centered on the main pill. Ported
-    // from main.ts createSettingsWindow().
+    // from main.ts createSettingsWindow(), but reworked into a MODAL CHILD of the
+    // pill (owner = main, set in `ensure_window`): it sits above the pill, can't be
+    // dismissed independently, and the pill is input-disabled while it's open
+    // (`set_main_modal`) so the two read as one window. `skip_taskbar: true` keeps a
+    // single taskbar/alt-tab entry (the owner relationship already hides it, this is
+    // explicit). Not `always_on_top` — a modal floats above its OWNER, not all apps.
     WindowSpec {
         label: "settings",
         url: "windows/settings.html",
@@ -106,7 +111,7 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         decorations: false,
         transparent: false,
         always_on_top: false,
-        skip_taskbar: false,
+        skip_taskbar: true,
         shadow: true,
         ignore_cursor: false,
         background: SUBSTRATE,
@@ -225,6 +230,11 @@ const WINDOW_SPECS: &[WindowSpec] = &[
     },
     // Context-playground — debug-only framed/resizable window, always-on-top.
     // Ported from context-playground-window.ts (600×780, min 440×420).
+    // AUDIT #6: only present in debug builds. A 600×780 debug-only window must never
+    // be prewarmed (or even creatable) in release; gating the WINDOW_SPECS entry drops
+    // it from the prewarm loop, `spec_for`, and `open_window` in shipping builds. Pairs
+    // with `CONTEXT_PLAYGROUND_ENABLED=false` in the renderer's debug-flags.ts.
+    #[cfg(debug_assertions)]
     WindowSpec {
         label: "context-playground",
         url: "windows/context-playground.html",
@@ -387,6 +397,27 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
 
     if let Some((r, g, b, a)) = spec.background {
         builder = builder.background_color(tauri::webview::Color(r, g, b, a));
+    }
+
+    // Make Settings a modal child owned by the main pill. On Windows `parent()`
+    // sets `main` as the OWNER window: Settings is always above it in the z-order,
+    // is hidden when the pill is minimized, and is destroyed with it — exactly the
+    // "they're the same thing" relationship we want. The pill is built in lib.rs
+    // `setup` BEFORE `prewarm_windows`, so it always exists here. A failure to
+    // parent (e.g. main somehow gone) degrades to a plain centered window — still
+    // modal via `set_main_modal`, just not OS-owned.
+    if spec.label == "settings" {
+        match app.get_webview_window("main") {
+            // `parent()` consumes the builder and doesn't hand it back on error, so
+            // there's nothing to degrade to — surface the failure (it only happens
+            // if the pill is genuinely gone, which never occurs in practice).
+            Some(main) => {
+                builder = builder
+                    .parent(&main)
+                    .map_err(|e| format!("parent settings to main failed: {e}"))?;
+            }
+            None => log::warn!("ensure_window: main window missing; settings created without owner"),
+        }
     }
 
     if let Some(data_dir) = crate::portable::data_dir() {
@@ -657,24 +688,78 @@ fn resolve_opener(
     app.get_webview_window(fallback)
 }
 
-/// Pre-create (hidden) every secondary window at STARTUP so `open_window` only ever
-/// has to SHOW an already-built window. Building a `WebviewWindow` lazily *inside* the
-/// synchronous `open_window` command handler hangs on Windows: WebView2 creation needs
-/// the main thread's message loop to pump, but the command IS running on the main
-/// thread and blocking it — so the window object is created yet its page never
-/// navigates/loads (blank window, "nothing happens"). The tray-menu + recording
-/// overlay already work precisely because they're built in `setup` (off the command
-/// path). This mirrors Handy, which creates its windows eagerly at startup and only
-/// `show()`/`hide()`s them thereafter. Idempotent — `ensure_window` early-returns for
-/// any window that already exists, so tray-menu/overlay aren't rebuilt.
+/// Windows prewarmed EAGERLY (on the critical startup path), before any deferral.
+/// These are the most-likely-opened secondaries — the recording `overlay` (shown on
+/// the very first dictation) and the `tray-menu` (a right-click away). Building them
+/// up front keeps the first interaction flicker-free. Everything else in WINDOW_SPECS
+/// is deferred (see `prewarm_windows`).
+const EAGER_PREWARM: &[&str] = &["overlay", "tray-menu"];
+
+/// Pre-create (hidden) the secondary windows so `open_window` only ever has to SHOW an
+/// already-built window. Building a `WebviewWindow` lazily *inside* the synchronous
+/// `open_window` command handler hangs on Windows: WebView2 creation needs the main
+/// thread's message loop to pump, but the command IS running on the main thread and
+/// blocking it — so the window object is created yet its page never navigates/loads
+/// (blank window, "nothing happens"). So we MUST still build them eagerly (off the
+/// command path), just NOT all synchronously before the pill paints.
+///
+/// AUDIT #6: the original implementation built ALL 8 secondary WebView2 windows
+/// synchronously in `setup()` BEFORE `show_main_window`, so the pill couldn't paint
+/// until every one finished — the cost the splash existed to hide. We now split it:
+///   - `overlay` + `tray-menu` are built eagerly (most-likely-opened first).
+///   - settings / model-picker / device-picker / onboarding / history /
+///     context-playground are DEFERRED to an idle `run_on_main_thread` callback that
+///     runs after the main loop is pumping (i.e. after the pill is up). They still
+///     build eagerly off the command path — NOT lazily inside `open_window` (which
+///     hangs, see above) — just later. `open_window` → `ensure_window` is idempotent,
+///     so a first-open that races the deferred build just creates it a beat early.
+///
+/// `prewarm_windows` itself must be called AFTER `show_main_window` in lib.rs so the
+/// pill paints first. Idempotent — `ensure_window` early-returns for any window that
+/// already exists, so nothing is rebuilt.
 pub(crate) fn prewarm_windows(app: &AppHandle) {
-    for spec in WINDOW_SPECS {
-        if spec.label == "main" {
-            continue; // created in lib.rs setup
+    // 1) Eager: the windows the user is most likely to hit first.
+    for label in EAGER_PREWARM {
+        match ensure_window(app, label) {
+            Ok(_) => log::info!("[prewarm] '{label}' pre-created (hidden, eager)"),
+            Err(e) => log::warn!("[prewarm] '{label}' failed: {e}"),
         }
-        match ensure_window(app, spec.label) {
-            Ok(_) => log::info!("[prewarm] '{}' pre-created (hidden)", spec.label),
-            Err(e) => log::warn!("[prewarm] '{}' failed: {e}", spec.label),
+    }
+
+    // 2) Deferred: the rest, off the critical path. `run_on_main_thread` schedules the
+    //    closure on the event loop, so it runs once `setup` has returned and the loop is
+    //    pumping — i.e. after the pill is visible. WebView2 creation still happens on the
+    //    main thread (required) but no longer blocks first paint.
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        for spec in WINDOW_SPECS {
+            if spec.label == "main" {
+                continue; // created in lib.rs setup
+            }
+            if EAGER_PREWARM.contains(&spec.label) {
+                continue; // already built eagerly above
+            }
+            match ensure_window(&app, spec.label) {
+                Ok(_) => log::info!("[prewarm] '{}' pre-created (hidden, deferred)", spec.label),
+                Err(e) => log::warn!("[prewarm] '{}' failed: {e}", spec.label),
+            }
+        }
+    });
+}
+
+// ── Settings modal (pill input gate) ────────────────────────────────────────
+
+/// Enable/disable the main pill's input while the Settings modal is up. Pairs the
+/// OS owner relationship (set in `ensure_window`) with the Win32 modal idiom
+/// (`set_enabled(false)` ⇒ clicks/focus on the owner just flash the modal) so the
+/// pill can't be focused while Settings is open and the two behave as one window.
+/// Re-enabled on every Settings close path (`close_self_window` / `close_window` /
+/// the native `CloseRequested` in lib.rs). No-op if the pill is gone. Harmless on
+/// non-Windows (`set_enabled` is cross-platform).
+pub(crate) fn set_main_modal(app: &AppHandle, modal_active: bool) {
+    if let Some(main) = app.get_webview_window("main") {
+        if let Err(e) = main.set_enabled(!modal_active) {
+            log::warn!("set_main_modal({modal_active}): {e}");
         }
     }
 }
@@ -752,6 +837,12 @@ pub fn open_window(
     window.show().map_err(|e| e.to_string())?;
     let _ = window.unminimize();
     let _ = window.set_focus();
+    // Settings is a modal child of the pill: disable the pill (after Settings has
+    // grabbed focus) so it can't be focused/clicked while open. Re-enabled when
+    // Settings closes (close_self_window / close_window / CloseRequested).
+    if label == "settings" {
+        set_main_modal(&app, true);
+    }
     Ok(())
 }
 
@@ -759,8 +850,28 @@ pub fn open_window(
 #[tauri::command]
 #[specta::specta]
 pub fn close_window(app: AppHandle, name: String) -> Result<(), String> {
+    // The tray-menu is kept always-shown and parked OFF-SCREEN (see tray_menu.rs
+    // OFFSCREEN) so re-open is a flicker-free reposition. The renderer's primary
+    // dismiss — a menu-item click — routes here via TRAY_MENU_CLOSE; a real hide()
+    // would leave it OS-hidden, and place_tray_menu no longer calls show() once it
+    // has been pre-shown, so the menu would never reappear. Park it instead, mirroring
+    // Electron's tray-menu:close → hideTrayMenu → moveOffscreen.
+    if name == "tray-menu" {
+        return crate::winstt::commands::tray_menu::hide_tray_menu(app);
+    }
+    // Closing Settings releases the pill's modal lock BEFORE the hide so Windows
+    // can reactivate the pill as the modal goes away (see close_self_window for the
+    // ordering rationale). Idempotent with close_self_window / CloseRequested.
+    if name == "settings" {
+        set_main_modal(&app, false);
+    }
     if let Some(window) = app.get_webview_window(&name) {
         window.hide().map_err(|e| e.to_string())?;
+    }
+    if name == "settings" {
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_focus();
+        }
     }
     // A closed picker forgets its anchor so a stray resize can't re-show it.
     if let Some(label) = spec_for(&name).map(|s| s.label) {
@@ -772,6 +883,34 @@ pub fn close_window(app: AppHandle, name: String) -> Result<(), String> {
         // `handleClose` (hideDevicePicker + hideTrayMenu).
         if label == "device-picker" {
             let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
+        }
+    }
+    Ok(())
+}
+
+/// `close_self_window` — hide the CALLING window (resolved from its own webview
+/// label), the Rust-side equivalent of the renderer's `getCurrentWindow().hide()`.
+/// The self-closing secondary windows (settings / onboarding) route their close
+/// button here instead of a bare webview hide so the Settings modal can release the
+/// pill's input lock as it closes — the renderer hide path never reached Rust, so
+/// the pill would otherwise stay disabled forever. For non-settings callers this is
+/// a plain hide, identical to the old behaviour.
+#[tauri::command]
+#[specta::specta]
+pub fn close_self_window(app: AppHandle, webview: tauri::WebviewWindow) -> Result<(), String> {
+    let label = webview.label().to_string();
+    // CRITICAL ORDER (Win32 modal teardown): re-enable the pill BEFORE hiding the
+    // modal. If the pill is still disabled when Settings hides, Windows has no valid
+    // window to reactivate (a disabled owner can't take focus), so the pill drops
+    // behind other apps and looks like it "closed". Re-enabling first lets Windows
+    // hand activation straight back to the pill; the explicit focus then raises it.
+    if label == "settings" {
+        set_main_modal(&app, false);
+    }
+    webview.hide().map_err(|e| e.to_string())?;
+    if label == "settings" {
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_focus();
         }
     }
     Ok(())
@@ -805,18 +944,36 @@ pub fn resize_window(app: AppHandle, name: String, width: f64, height: f64) -> R
     }
 
     if let Some(window) = app.get_webview_window(&name) {
-        window
-            .set_size(LogicalSize::new(width, height))
-            .map_err(|e| e.to_string())?;
-    }
+        // NO-OP GUARD (Electron's `sizeUnchanged` in tray-menu-window.ts): the
+        // renderer's ResizeObserver fires on EVERY reflow — hover, focus ring,
+        // sub-pixel layout — and frequently reports the SAME content size. Without
+        // this guard each repeat calls `set_size`, which emits a `Resized` event,
+        // which re-anchors, which can jitter the window. Round to integer logical
+        // px (the OS window granularity) and skip when the size hasn't changed.
+        let next_w = width.max(1.0).ceil() as u32;
+        let next_h = height.max(1.0).ceil() as u32;
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let current = window.inner_size().ok().map(|s| {
+            (
+                (s.width as f64 / scale).round() as u32,
+                (s.height as f64 / scale).round() as u32,
+            )
+        });
+        if current != Some((next_w, next_h)) {
+            window
+                .set_size(LogicalSize::new(f64::from(next_w), f64::from(next_h)))
+                .map_err(|e| e.to_string())?;
 
-    // The tray menu is `w-fit` and only reports its true content size after
-    // mount (TRAY_MENU_RESIZE). Re-anchor it from the stored click point so it
-    // stays glued there with the now-correct size instead of remaining clamped
-    // against its initial (larger) footprint — mirrors Electron's resize →
-    // re-anchor in tray-menu-window.ts.
-    if label == Some("tray-menu") {
-        let _ = crate::winstt::commands::tray_menu::reanchor_tray_menu(app.clone());
+            // The tray menu is `w-fit` and only reports its true content size after
+            // mount (TRAY_MENU_RESIZE). Re-anchor it from the stored click point so it
+            // stays glued there with the now-correct size instead of remaining clamped
+            // against its initial (larger) footprint — mirrors Electron's resize →
+            // re-anchor in tray-menu-window.ts. Only fires when the size ACTUALLY
+            // changed, so a steady-state ResizeObserver storm no longer re-anchors.
+            if label == Some("tray-menu") {
+                let _ = crate::winstt::commands::tray_menu::reanchor_tray_menu(app.clone());
+            }
+        }
     }
     Ok(())
 }

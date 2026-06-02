@@ -1,39 +1,53 @@
 import { describe, expect, test } from "bun:test";
-import { buildWakeWordOptions, DEFAULT_WAKE_WORD } from "./general-settings-panel-test-helpers";
+import { buildWakeWordGroups, DEFAULT_WAKE_WORD } from "./general-settings-panel-test-helpers";
 
-// buildWakeWordOptions() drives the private engineBadge() over the fixed unified
-// wake-word list. The list spans all three engines, so one build exercises every
-// engineBadge branch:
-//   composite  (word in BOTH keyword sets, e.g. "alexa")     -> "2x"
-//   openwakeword (OWW-only, e.g. "hey_jarvis")               -> "OWW"
-//   porcupine  (porcupine-only / neither, e.g. "picovoice")  -> "PVP"
-describe("buildWakeWordOptions / engineBadge", () => {
-	const options = buildWakeWordOptions();
-	const badgeOf = (id: string): string | undefined => options.find((o) => o.id === id)?.badge;
+// buildWakeWordGroups() partitions the fixed unified wake-word list into one
+// section per engine, the engine badge riding on the group header (the per-row
+// badge is dropped). The list spans all three engines, so one build exercises
+// every engineBadge branch:
+//   composite    (word in BOTH keyword sets, e.g. "alexa")      -> "2x"
+//   openwakeword (OWW-only, e.g. "hey_jarvis")                  -> "OWW"
+//   porcupine    (porcupine-only / neither, e.g. "picovoice")   -> "PVP"
+describe("buildWakeWordGroups / engineBadge", () => {
+	const groups = buildWakeWordGroups();
+	const allRows = groups.flatMap((g) => [...g.options]);
+	const groupOf = (id: string) => groups.find((g) => g.options.some((o) => o.id === id));
 
-	test("every engine badge branch is represented", () => {
-		expect(new Set(options.map((o) => o.badge))).toEqual(new Set(["2x", "OWW", "PVP"]));
+	test("every engine badge branch is represented on the group headers", () => {
+		expect(new Set(groups.map((g) => g.badge))).toEqual(new Set(["2x", "OWW", "PVP"]));
 	});
 
-	test("composite keyword (in both sets) badges as 2x", () => {
-		expect(badgeOf("alexa")).toBe("2x");
+	test("composite keyword (in both sets) lands in the 2x group", () => {
+		expect(groupOf("alexa")?.badge).toBe("2x");
 	});
 
-	test("openwakeword-only keyword badges as OWW", () => {
-		expect(badgeOf("hey_jarvis")).toBe("OWW");
+	test("openwakeword-only keyword lands in the OWW group", () => {
+		expect(groupOf("hey_jarvis")?.badge).toBe("OWW");
 	});
 
-	test("porcupine-only keyword badges as PVP", () => {
-		expect(badgeOf("picovoice")).toBe("PVP");
+	test("porcupine-only keyword lands in the PVP group", () => {
+		expect(groupOf("picovoice")?.badge).toBe("PVP");
+	});
+
+	test("composite section is listed first", () => {
+		expect(groups[0]?.value).toBe("composite");
+	});
+
+	test("rows carry no per-row badge (the header carries the engine)", () => {
+		expect(allRows.every((o) => o.badge === undefined)).toBe(true);
+	});
+
+	test("rows carry a leading icon", () => {
+		expect(allRows.every((o) => o.icon !== undefined)).toBe(true);
 	});
 
 	test("labels are human-formatted (underscores -> spaces) while id stays raw", () => {
-		const jarvis = options.find((o) => o.id === "hey_jarvis");
+		const jarvis = allRows.find((o) => o.id === "hey_jarvis");
 		expect(jarvis?.label).toBe("hey jarvis");
 	});
 
 	test("DEFAULT_WAKE_WORD is a known option", () => {
 		expect(DEFAULT_WAKE_WORD).toBe("alexa");
-		expect(options.some((o) => o.id === DEFAULT_WAKE_WORD)).toBe(true);
+		expect(allRows.some((o) => o.id === DEFAULT_WAKE_WORD)).toBe(true);
 	});
 });

@@ -16,7 +16,7 @@ import type { useTranslations } from "use-intl";
 import type { useSettingsStore } from "@/entities/setting";
 import { isVisualizerType, type VisualizerType } from "@/features/audio-visualizer";
 import { isLocale, type Locale } from "@/shared/i18n";
-import type { SelectOption } from "@/shared/ui/select";
+import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 import type { SwitcherOption } from "@/shared/ui/switcher";
 
 type GeneralT = ReturnType<typeof useTranslations<"general">>;
@@ -188,12 +188,44 @@ function engineBadge(engine: WakeWordEngine): string {
 	return "PVP";
 }
 
-export function buildWakeWordOptions(): SelectOption[] {
-	return ALL_WAKE_WORDS.map((word) => ({
-		id: word,
-		label: formatWakeWordLabel(word),
-		badge: engineBadge(engineForKeyword(word)),
-	}));
+// Section order for the grouped wake-word picker — composite keywords first
+// (they run on both engines), then the single-engine sets, matching the old
+// flat sort. Human-readable headers carry the engine; the engine *badge*
+// (2x / PVP / OWW) rides on the header so the per-row badge is dropped (each
+// row just shows the keyword + a wave icon).
+const WAKE_WORD_ENGINE_ORDER: readonly WakeWordEngine[] = [
+	"composite",
+	"porcupine",
+	"openwakeword",
+];
+
+const WAKE_WORD_ENGINE_LABEL: Record<WakeWordEngine, string> = {
+	composite: "Composite",
+	openwakeword: "openWakeWord",
+	porcupine: "Porcupine",
+};
+
+export function buildWakeWordGroups(): SelectOptionGroup[] {
+	const byEngine = new Map<WakeWordEngine, SelectOption[]>();
+	for (const word of ALL_WAKE_WORDS) {
+		const engine = engineForKeyword(word);
+		const list = byEngine.get(engine) ?? [];
+		list.push({ id: word, label: formatWakeWordLabel(word), icon: AudioWave02Icon });
+		byEngine.set(engine, list);
+	}
+	return WAKE_WORD_ENGINE_ORDER.flatMap((engine) => {
+		const options = byEngine.get(engine);
+		return options && options.length > 0
+			? [
+					{
+						value: engine,
+						label: WAKE_WORD_ENGINE_LABEL[engine],
+						badge: engineBadge(engine),
+						options,
+					},
+				]
+			: [];
+	});
 }
 
 function isKnownWakeWord(word: string | undefined): word is string {
@@ -516,7 +548,7 @@ export const __general_settings_panel_test_helpers__ = {
 	engineForKeyword,
 	engineBadge,
 	formatWakeWordLabel,
-	buildWakeWordOptions,
+	buildWakeWordGroups,
 	buildUnifiedWakeWordList,
 	sensitivityFromIndex,
 	sensitivityToIndex,

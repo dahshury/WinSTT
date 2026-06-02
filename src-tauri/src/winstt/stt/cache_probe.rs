@@ -123,8 +123,8 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
 /// vocab/tokenizer/config text files (those are shared across quants, so they don't tell us
 /// whether THIS quant's weights are present). A quant is "cached" iff every `.onnx` graph it needs
 /// is present and external-data-complete.
-fn required_onnx_globs(kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
-    resolver::file_globs(kind, quant)
+fn required_onnx_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
+    resolver::file_globs(model_id, kind, quant)
         .into_iter()
         .filter(|fg| fg.glob.ends_with(".onnx"))
         .collect()
@@ -134,11 +134,12 @@ fn required_onnx_globs(kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
 /// cache state for ONE quantization. `complete` is the per-file external-data completeness flag the
 /// caller computed from the on-disk snapshot.
 fn quant_state(
+    model_id: &str,
     kind: EngineKind,
     quant: Quantization,
     cached: &[(String, u64, bool)],
 ) -> (CacheState, u64) {
-    let globs = required_onnx_globs(kind, quant);
+    let globs = required_onnx_globs(model_id, kind, quant);
     if globs.is_empty() {
         // No graph files for this archetype (shouldn't happen) → can't attribute → not cached.
         return (CacheState::NotCached, 0);
@@ -208,9 +209,14 @@ pub struct ProbeModel {
 /// Probe the HF cache for every model in `models`, returning `model_id → ModelQuantCache`.
 ///
 /// Async because hf-hub's `scan_cache()` is async. The caller (download_manager / runtime command)
-/// drives it on the shared runtime (`tauri::async_runtime::block_on` off the async pump, mirroring
-/// the TTS download path). A scan failure (no cache dir yet, IO error) degrades to an EMPTY map →
-/// every model reads `not_cached`, which is the honest cold-start answer.
+/// drives it on the shared runtime. A scan failure (no cache dir yet, IO error) degrades to an EMPTY
+/// map → every model reads `not_cached`, which is the honest cold-start answer.
+///
+/// PICKER-OPEN HOT PATH (audit #7): this is the list path (`list_models_with_state`). It does NOT
+/// run `verify_external_data_complete` — that stat/parses every cached `.onnx` (the Rust analogue of
+/// the documented Python `list_models_onnx_parse_loop_starvation` bug). Every `.onnx` present on
+/// disk is treated as complete here; the LOAD path (`resolver::resolve` → `all_onnx_complete`) does
+/// the authoritative per-shard verify lazily, only for the one quant actually being loaded.
 pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCache> {
     let mut out: BTreeMap<String, ModelQuantCache> = BTreeMap::new();
 
@@ -226,9 +232,10 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
     // Index cached repos by lowercase `owner/name` for a cheap lookup per model.
     let mut repo_files: BTreeMap<String, Vec<(String, u64, bool)>> = BTreeMap::new();
     for repo in &scan.repos {
-        // Collect every file across all cached revisions of this repo. A file is "complete" iff its
-        // external-data sidecars are all present (we approximate by checking the blob path on disk
-        // — the resolver's verify works off the snapshot pointer dir).
+        // Collect every file across all cached revisions of this repo. The completeness flag is set
+        // to `true` for every present file: the picker-open list path deliberately skips the
+        // per-`.onnx` external-data verify (see the doc-comment above). Presence is enough to badge
+        // the quant `cached`; the load path catches a truly-partial shard set and refetches.
         let mut files: Vec<(String, u64, bool)> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         for rev in &repo.revisions {
@@ -237,12 +244,7 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
                 if !seen.insert(posix.clone()) {
                     continue;
                 }
-                let complete = if posix.ends_with(".onnx") {
-                    resolver::verify_external_data_complete(&f.file_path)
-                } else {
-                    true
-                };
-                files.push((posix, f.size_on_disk, complete));
+                files.push((posix, f.size_on_disk, true));
             }
         }
         repo_files.insert(repo.repo_id.to_ascii_lowercase(), files);
@@ -259,7 +261,7 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
         for q in &m.quantizations {
             let quant = Quantization::parse(q).unwrap_or(Quantization::Default);
             let (state, bytes) = match cached {
-                Some(files) => quant_state(kind, quant, files),
+                Some(files) => quant_state(&m.id, kind, quant, files),
                 None => (CacheState::NotCached, 0),
             };
             mqc.by_quant.insert(q.clone(), (state, bytes, bytes));
@@ -309,7 +311,7 @@ mod tests {
             ("onnx/decoder_model_merged.onnx".to_string(), 200, true),
             ("vocab.json".to_string(), 5, true),
         ];
-        let (state, bytes) = quant_state(EngineKind::WhisperHf, Quantization::Default, &files);
+        let (state, bytes) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
         assert_eq!(state, CacheState::Cached);
         assert_eq!(bytes, 300);
     }
@@ -317,7 +319,7 @@ mod tests {
     #[test]
     fn quant_state_partial_when_one_graph_missing() {
         let files = vec![("onnx/encoder_model.onnx".to_string(), 100, true)];
-        let (state, _) = quant_state(EngineKind::WhisperHf, Quantization::Default, &files);
+        let (state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
         assert_eq!(state, CacheState::Partial);
     }
 
@@ -327,14 +329,14 @@ mod tests {
             ("onnx/encoder_model_fp16.onnx".to_string(), 100, false), // shard missing
             ("onnx/decoder_model_merged_fp16.onnx".to_string(), 200, true),
         ];
-        let (state, _) = quant_state(EngineKind::WhisperHf, Quantization::Fp16, &files);
+        let (state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Fp16, &files);
         assert_eq!(state, CacheState::Partial);
     }
 
     #[test]
     fn quant_state_not_cached_when_no_graph() {
         let files = vec![("vocab.json".to_string(), 5, true)];
-        let (state, bytes) = quant_state(EngineKind::WhisperHf, Quantization::Default, &files);
+        let (state, bytes) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
         assert_eq!(state, CacheState::NotCached);
         assert_eq!(bytes, 0);
     }
@@ -346,9 +348,9 @@ mod tests {
             ("onnx/encoder_model_fp16.onnx".to_string(), 100, true),
             ("onnx/decoder_model_merged_fp16.onnx".to_string(), 200, true),
         ];
-        let (default_state, _) = quant_state(EngineKind::WhisperHf, Quantization::Default, &files);
+        let (default_state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
         assert_eq!(default_state, CacheState::NotCached, "fp16 files must not satisfy default export");
-        let (fp16_state, _) = quant_state(EngineKind::WhisperHf, Quantization::Fp16, &files);
+        let (fp16_state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Fp16, &files);
         assert_eq!(fp16_state, CacheState::Cached);
     }
 
@@ -359,7 +361,7 @@ mod tests {
             ("model.int8.onnx".to_string(), 999, true),
             ("tokens.txt".to_string(), 3, true),
         ];
-        let (state, bytes) = quant_state(EngineKind::DolphinCtc, Quantization::Int8, &files);
+        let (state, bytes) = quant_state("dolphin-base-ctc", EngineKind::DolphinCtc, Quantization::Int8, &files);
         assert_eq!(state, CacheState::Cached);
         assert_eq!(bytes, 999);
     }

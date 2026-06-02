@@ -81,7 +81,7 @@ pub type KokoroResult<T> = Result<T, KokoroError>;
 // ---------------------------------------------------------------------------
 
 /// One voice's style table: 510 rows of `STYLE_DIM` floats, flattened.
-/// Row `k` is the style vector for an input of `k` (padded) tokens.
+/// Row `k` is the style vector for an input of `k` UNPADDED tokens.
 #[derive(Clone)]
 pub struct VoiceStyle {
     /// `rows * STYLE_DIM` f32, row-major. `rows` == MAX_PHONEME_LENGTH.
@@ -90,10 +90,9 @@ pub struct VoiceStyle {
 }
 
 impl VoiceStyle {
-    /// The 256-dim style vector for a token sequence of length `token_count`
-    /// (this is the PADDED length — `[0, *tokens, 0]` → `tokens.len() + 2`).
-    /// Mirrors `voice = voice[len(tokens)]` where `len(tokens)` is the padded
-    /// list length in the Python adapter.
+    /// The 256-dim style vector for a token sequence of length `token_count`,
+    /// where `token_count` is the UNPADDED count. Mirrors kokoro_onnx's
+    /// `voice = voice[len(tokens)]`, evaluated BEFORE the `[0, *tokens, 0]` pad.
     pub fn row_for(&self, token_count: usize) -> KokoroResult<&[f32]> {
         if token_count >= self.rows {
             return Err(KokoroError::Voice(format!(
@@ -344,7 +343,8 @@ impl KokoroEngine {
         if tokens.is_empty() {
             return Ok(Vec::new());
         }
-        // Pad: [0, *tokens, 0]. The padded length indexes the voice style table.
+        // Pad: [0, *tokens, 0] for the MODEL INPUT only. NOTE: the style-table index
+        // uses the UNPADDED token count (see below), not this padded length.
         let mut padded = Vec::with_capacity(tokens.len() + 2);
         padded.push(0i64);
         padded.extend_from_slice(&tokens);
@@ -374,8 +374,12 @@ impl KokoroEngine {
         }
         let loaded = guard.as_mut().expect("just initialized");
 
-        // Style vector for the PADDED token count (Python `voice[len(tokens)]`).
-        let style_row = loaded.voices.get(voice)?.row_for(padded.len())?.to_vec();
+        // Style vector for the UNPADDED token count. kokoro_onnx does
+        // `voice = voice[len(tokens)]` BEFORE padding to `[0, *tokens, 0]`, so the row
+        // index is `tokens.len()`, NOT the padded length. Indexing at `padded.len()`
+        // (tokens.len()+2) picked the wrong style row → wrong prosody and a longer clip
+        // (81000 vs Electron's 65536 samples on the JFK sentence). Match Electron exactly.
+        let style_row = loaded.voices.get(voice)?.row_for(tokens.len())?.to_vec();
         self.run_inference(loaded, &padded, &style_row, speed)
     }
 
@@ -411,39 +415,38 @@ impl KokoroEngine {
         })
     }
 
-    /// Create the ORT session honoring the device policy. Mirrors the STT
-    /// slice's `register_providers` (winstt/stt/families.rs): register the GPU EP
-    /// first then ALWAYS append CPU last for per-op fallback — one session, ORT
-    /// handles the demotion internally (so a DML kernel gap silently falls back
-    /// to CPU instead of a hard session-create failure). DirectML is the proven
-    /// `ort::execution_providers::DirectMLExecutionProvider` (the dylib ships via
-    /// transcribe-rs's `ort-directml` feature on Windows; no app `directml`
-    /// feature exists — kept unconditional to match the green STT slice). Kokoro
-    /// is DML-SAFE, so no CPU-pin like the int8 STT families.
+    /// Create the ORT session. Kokoro is **CPU-only**: the kokoro-v1.0 fp16 export's
+    /// `/encoder/F0.1/pool/ConvTranspose` HARD-FAILS on DirectML with
+    /// `80070057 The parameter is incorrect` — not a clean unsupported-op CPU
+    /// fallback, an actual runtime crash. PROVEN identically by BOTH the Python
+    /// `kokoro_onnx` path (Electron) and this Rust path (see the tts benchmark), so
+    /// the upstream Electron app is likewise CPU-only for Kokoro. We therefore never
+    /// register the DirectML EP here regardless of the requested device. An 82M model
+    /// on CPU is fast — and faster than DML's per-op launch overhead would be at this
+    /// size — once we let ORT use its full intra-op thread pool (below).
     fn build_session(&self) -> KokoroResult<(ort::session::Session, Vec<String>)> {
-        use ort::execution_providers::{
-            CPUExecutionProvider, DirectMLExecutionProvider, ExecutionProviderDispatch,
-        };
+        use ort::execution_providers::{CPUExecutionProvider, ExecutionProviderDispatch};
         let model_path = self.config.model_path();
 
-        let mut dispatch: Vec<ExecutionProviderDispatch> = Vec::with_capacity(2);
-        let mut active: Vec<String> = Vec::with_capacity(2);
-        if matches!(self.config.device, KokoroDevice::Auto | KokoroDevice::DirectMl) {
-            dispatch.push(DirectMLExecutionProvider::default().build());
-            active.push("DmlExecutionProvider".to_string());
+        if !matches!(self.config.device, KokoroDevice::Cpu) {
+            log::debug!(
+                "[tts] Kokoro requested device={:?} → running CPU-only (DML ConvTranspose unsupported)",
+                self.config.device
+            );
         }
-        // CPU always last (fallback / primary for Cpu).
-        dispatch.push(CPUExecutionProvider::default().build());
-        active.push("CPUExecutionProvider".to_string());
+        let dispatch: Vec<ExecutionProviderDispatch> =
+            vec![CPUExecutionProvider::default().build()];
+        let active = vec!["CPUExecutionProvider".to_string()];
 
-        // `with_execution_providers` consumes self → Result<SessionBuilder>;
-        // `commit_from_file` takes `&mut self` → Result<Session>.
+        // NO `with_intra_threads(1)` — that pinned inference to ONE thread and made
+        // this path ~2.6× slower than Electron's multi-threaded kokoro_onnx CPU path
+        // (1323ms vs ~500ms warm on the same model+phonemes). Omitting it lets ORT use
+        // its default intra-op pool (all physical cores), matching onnxruntime's
+        // defaults that the Electron path relies on.
         let mut builder = ort::session::Session::builder()
             .map_err(|e| KokoroError::Session(format!("session builder: {e}")))?
             .with_execution_providers(dispatch)
-            .map_err(|e| KokoroError::Session(format!("register EPs: {e}")))?
-            .with_intra_threads(1)
-            .map_err(|e| KokoroError::Session(format!("intra threads: {e}")))?;
+            .map_err(|e| KokoroError::Session(format!("register EPs: {e}")))?;
         let session = builder
             .commit_from_file(&model_path)
             .map_err(|e| KokoroError::Session(format!("commit_from_file: {e}")))?;
@@ -509,7 +512,12 @@ impl KokoroEngine {
         let (_shape, data) = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| KokoroError::Session(format!("extract audio: {e}")))?;
-        Ok(data.to_vec())
+        // Trim leading/trailing silence, mirroring kokoro_onnx's `create(trim=True)`
+        // (librosa.effects.trim). Kokoro pads ~0.5–0.6s of near-silence around each
+        // utterance; without this our clips ran ~24% longer than the Electron path
+        // (81000 vs 65536 samples on the JFK sentence) — same speech, just dead air.
+        // Trimming matches Electron AND makes read-aloud start/stop snappier.
+        Ok(trim_silence(data))
     }
 
     /// Drop the session + voices (idempotent). Rust's Drop releases the native
@@ -519,6 +527,55 @@ impl KokoroEngine {
             *guard = None;
         }
         self.ready.store(false, Ordering::Release);
+    }
+}
+
+/// Trim leading/trailing silence — a faithful port of `librosa.effects.trim`
+/// (the exact function kokoro_onnx ships in `trim.py` and calls via `trim_audio`)
+/// with librosa's defaults: `top_db=60`, `frame_length=2048`, `hop_length=512`,
+/// `ref=max`. A frame is "non-silent" when its power exceeds
+/// `max_frame_power * 10^(-top_db/10)`; we keep `[first_nonsilent*hop ..
+/// (last_nonsilent+1)*hop]` (clamped). Returns the trimmed samples as an owned Vec
+/// (matching the previous `data.to_vec()` contract). Conservative: if the clip is
+/// shorter than one frame, or all-silent, the input passes through unchanged.
+fn trim_silence(audio: &[f32]) -> Vec<f32> {
+    const FRAME: usize = 2048;
+    const HOP: usize = 512;
+    const TOP_DB: f32 = 60.0;
+    if audio.len() < FRAME {
+        return audio.to_vec();
+    }
+    let n_frames = 1 + (audio.len() - FRAME) / HOP;
+    // Per-frame mean-square power (librosa rms²).
+    let mut powers = Vec::with_capacity(n_frames);
+    let mut max_p = 0.0f32;
+    for i in 0..n_frames {
+        let start = i * HOP;
+        let frame = &audio[start..start + FRAME];
+        let ms: f32 = frame.iter().map(|x| x * x).sum::<f32>() / FRAME as f32;
+        if ms > max_p {
+            max_p = ms;
+        }
+        powers.push(ms);
+    }
+    if max_p <= 0.0 {
+        return audio.to_vec();
+    }
+    // power_to_db(p, ref=max) > -top_db  ⇔  p > max_p * 10^(-top_db/10).
+    let thresh = max_p * 10f32.powf(-TOP_DB / 10.0);
+    let first = powers.iter().position(|&p| p > thresh);
+    let last = powers.iter().rposition(|&p| p > thresh);
+    match (first, last) {
+        (Some(f), Some(l)) => {
+            let start = f * HOP;
+            let end = ((l + 1) * HOP).min(audio.len());
+            if end > start {
+                audio[start..end].to_vec()
+            } else {
+                audio.to_vec()
+            }
+        }
+        _ => audio.to_vec(),
     }
 }
 

@@ -108,6 +108,10 @@ pub struct PostProcessProvider {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
+// Inherited Handy AppSettings enum; the WinSTT `settings_schema::OverlayPosition`
+// (with the extra `auto` variant) is the renderer-canonical type, so this one's
+// TS export is suffixed to avoid the duplicate-identifier collision in bindings.ts.
+#[specta(rename = "OverlayPositionLegacy")]
 pub enum OverlayPosition {
     None,
     Top,
@@ -116,6 +120,9 @@ pub enum OverlayPosition {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
+// Renderer-canonical timeout type is WinSTT `settings_schema::ModelUnloadTimeout`;
+// suffix this inherited one's TS export to break the bindings.ts collision.
+#[specta(rename = "ModelUnloadTimeoutLegacy")]
 pub enum ModelUnloadTimeout {
     Never,
     Immediately,
@@ -147,6 +154,9 @@ pub enum ClipboardHandling {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
+// Renderer-canonical is WinSTT `settings_schema::AutoSubmitKey`; suffix this
+// inherited one's TS export to break the bindings.ts collision.
+#[specta(rename = "AutoSubmitKeyLegacy")]
 pub enum AutoSubmitKey {
     Enter,
     CtrlEnter,
@@ -181,7 +191,11 @@ impl Default for KeyboardImplementation {
 
 impl Default for ModelUnloadTimeout {
     fn default() -> Self {
-        ModelUnloadTimeout::Min5
+        // Keep the STT engine WARM by default (like the Electron server, which never unloads):
+        // the previous Min5 unloaded the model after 5 min idle, so every dictation after a pause
+        // paid a cold reload + cold DirectML kernel-JIT — a major source of the "slow" perception.
+        // Users who want to reclaim VRAM can still pick a timeout in settings.
+        ModelUnloadTimeout::Never
     }
 }
 
@@ -337,6 +351,10 @@ impl std::ops::DerefMut for SecretMap {
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
+    // VESTIGIAL: the recording mode (ptt / toggle / listen / wakeword) is owned by
+    // `WinsttSettings.general.recording_mode`, which the BACKEND reads in shortcut/handler.rs
+    // to decide dispatch. This Handy-era `push_to_talk` bool is no longer consulted on the
+    // dictation path. Kept (not removed) to avoid serde/schema churn on the AppSettings store.
     pub push_to_talk: bool,
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
@@ -409,7 +427,10 @@ pub struct AppSettings {
     pub app_language: String,
     #[serde(default)]
     pub experimental_enabled: bool,
-    #[serde(default)]
+    // Keep the mic stream WARM after a dictation (lazy 30s close, like Handy) instead of tearing
+    // it down immediately — a cold cpal re-open + triple WASAPI device enumeration on the NEXT
+    // press was a big chunk of the "2s from hotkey to listening". Default-on for responsiveness.
+    #[serde(default = "default_lazy_stream_close")]
     pub lazy_stream_close: bool,
     #[serde(default)]
     pub keyboard_implementation: KeyboardImplementation,
@@ -438,6 +459,10 @@ fn default_model() -> String {
 
 fn default_always_on_microphone() -> bool {
     false
+}
+
+fn default_lazy_stream_close() -> bool {
+    true
 }
 
 fn default_translate_to_english() -> bool {
@@ -931,6 +956,13 @@ pub fn write_settings(app: &AppHandle, settings: AppSettings) {
         .expect("Failed to initialize store");
 
     store.set("settings", serde_json::to_value(&settings).unwrap());
+    // Flush to disk so the AppSettings store has the same durability semantics as the WinSTT
+    // store (winstt/commands/settings.rs::write_settings_value calls store.save()). Without
+    // this, a write could live only in the in-memory store and be lost if the process exits
+    // before the plugin's auto-save (e.g. a crash right after a settings change).
+    if let Err(e) = store.save() {
+        warn!("Failed to persist settings to disk: {}", e);
+    }
 }
 
 pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {

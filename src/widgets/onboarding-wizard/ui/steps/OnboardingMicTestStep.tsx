@@ -1,4 +1,9 @@
-import { CheckmarkCircle02Icon, Mic01Icon, MicOff01Icon } from "@hugeicons/core-free-icons";
+import {
+	CheckmarkCircle02Icon,
+	ComputerIcon,
+	Mic01Icon,
+	MicOff01Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
 import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
@@ -6,7 +11,7 @@ import { useSettingsStore } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { Select } from "@/shared/ui/select";
+import { Select, type SelectOption } from "@/shared/ui/select";
 import { useOnboardingWizardStore } from "../../model/wizard-store";
 
 /** RMS threshold above which we count the mic test as "heard something". */
@@ -104,6 +109,12 @@ export function OnboardingMicTestStep() {
 		inputDeviceIndex,
 		"System default"
 	);
+	// Mirror Settings → Audio: a leading icon per row (system-default reads as a
+	// distinct "computer" row, real mics get the mic glyph).
+	const deviceSelectOptions: SelectOption[] = deviceOptions.map((o) => ({
+		...o,
+		icon: o.id === "default" ? ComputerIcon : Mic01Icon,
+	}));
 
 	const handleDeviceChange = (id: string) => {
 		const nextIndex = id === "default" ? null : Number.parseInt(id, 10);
@@ -123,7 +134,7 @@ export function OnboardingMicTestStep() {
 					<Select
 						aria-label="Microphone"
 						onChange={handleDeviceChange}
-						options={deviceOptions}
+						options={deviceSelectOptions}
 						value={currentDeviceId}
 					/>
 				</ElevatedSurface>

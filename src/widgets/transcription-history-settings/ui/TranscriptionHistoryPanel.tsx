@@ -1,7 +1,9 @@
 import {
 	BarChartIcon,
+	Calendar03Icon,
 	DashboardCircleIcon,
 	Delete02Icon,
+	InfinityIcon,
 	ListViewIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -43,11 +45,11 @@ export function TranscriptionHistoryPanel() {
 	);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const retentionOptions: SelectOption[] = [
-		{ id: "never", label: t("retentionNever") },
-		{ id: "cap", label: t("retentionCap") },
-		{ id: "days3", label: t("retentionDays3") },
-		{ id: "weeks2", label: t("retentionWeeks2") },
-		{ id: "months3", label: t("retentionMonths3") },
+		{ id: "never", label: t("retentionNever"), icon: InfinityIcon },
+		{ id: "cap", label: t("retentionCap"), icon: ListViewIcon },
+		{ id: "days3", label: t("retentionDays3"), icon: Calendar03Icon },
+		{ id: "weeks2", label: t("retentionWeeks2"), icon: Calendar03Icon },
+		{ id: "months3", label: t("retentionMonths3"), icon: Calendar03Icon },
 	];
 
 	const filteredEntries = filterEntriesByDateRange(

@@ -11,6 +11,19 @@ default-run = "winstt"
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
+# Smaller debug info dramatically cuts MSVC link time (full PDB generation
+# dominates the link of ~1100 static deps + WebView2). "line-tables-only" keeps
+# panic/backtrace line numbers but drops the heavy variable/type info you only
+# need under a step debugger. Pairs with the lld-link linker in /.cargo/config.toml.
+debug = "line-tables-only"
+
+# Optimize DEPENDENCIES only — our own `winstt` crate stays at opt-level 0 so
+# incremental leaf rebuilds stay fast. Without this, debug-level numeric crates
+# (ort / ndarray / rustfft / symphonia / whisper) make dev-mode RUNTIME crawl.
+# Deps are cached after the first build, so this does NOT slow incremental
+# rebuilds; it only costs a one-time recompile the first time it's enabled.
+[profile.dev.package."*"]
+opt-level = 2
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,6 +33,19 @@ incremental = true # Compile your binary in smaller steps.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "handy_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+# Opt-in CUDA execution provider for the ONNX STT engine. The shipped Windows build
+# is DirectML (compiled via transcribe-rs's `ort-directml`), and the resolver overrides
+# CUDA→CPU on non-CUDA targets, so this is a build-time opt-in. Pulls in ort's CUDA EP
+# so `ort::ep::CUDA` exists when the feature is enabled (whisper.rs `Accelerator::Cuda` arm).
+cuda = ["ort/cuda"]
+# DEBUG-ONLY context-awareness extras (`commands::context::debug_read_context`); mirrors
+# CONTEXT_PLAYGROUND_ENABLED in the Electron build. Off in shipped builds. NOTE: the live
+# playground commands (`context_playground.rs`) are de-gated and compile unconditionally;
+# this gate only covers the older `debug_read_context` mode probe.
+context-playground = []
 
 # [[bin]]
 # name = "cli"
@@ -101,6 +127,12 @@ sherpa-onnx = { version = "1.13.2", default-features = false, features = ["share
 # (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine). See app/PORT/06_tts.md.
 handy-keys = "0.2.4"
 ferrous-opencc = "0.2.3"
+# TTS G2P: in-process espeak-ng phonemizer. We dlopen the espeak-ng shared lib
+# (espeak-ng.dll on Windows) and call espeak_TextToPhonemes directly — the SAME
+# path the Electron app's `phonemizer`/`espeakng_loader` takes via ctypes — so
+# there is NO per-sentence subprocess spawn (the CLI shell-out was slower on
+# short sentences). Already in the dep graph (transitive); pinned direct.
+libloading = "0.8"
 clap = { version = "4", features = ["derive"] }
 specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "0.0.9"
@@ -132,6 +164,7 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Threading",
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
 ] }
 winreg = "0.55"
 

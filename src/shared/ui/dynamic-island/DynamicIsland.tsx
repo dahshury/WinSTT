@@ -1,5 +1,14 @@
 import { AnimatePresence, type HTMLMotionProps, m } from "motion/react";
-import { createContext, type ReactNode, use, useEffect, useReducer, useState } from "react";
+import {
+	createContext,
+	type ReactNode,
+	type RefObject,
+	use,
+	useEffect,
+	useReducer,
+	useRef,
+	useState,
+} from "react";
 
 /**
  * DynamicIsland — composable, animated capsule primitives for adaptive
@@ -195,12 +204,17 @@ const REVEAL_BLUR_PX = 2;
 export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
 	children?: ReactNode;
 	/**
-	 * Let children drive the island's height (and any width past the preset's
-	 * own width). Skips `height` in the animate target and renders children
-	 * in normal flow so the parent grows to wrap them. Combined with the
-	 * `layout` prop (which needs `domMax` features in the parent
-	 * `<LazyMotion>`), height changes animate smoothly — every wrapped line
-	 * of text extends the shell by exactly one line's worth.
+	 * Let children drive the island's height. The children are rendered in
+	 * normal flow inside a measured wrapper; their intrinsic pixel height is
+	 * tracked (ResizeObserver) and fed into the animate target so the shell
+	 * tweens its `height` CSS PROPERTY — every wrapped line extends the shell
+	 * by one line's worth, smoothly.
+	 *
+	 * NB: height is deliberately animated as a property (layout reflow), NOT
+	 * via Framer's `layout`/FLIP. `layout` morphs the box with a `transform:
+	 * scale`, and scaling the box scale-distorts (stretches) the text rendered
+	 * inside it. Animating the height property reflows instead, so the island
+	 * still visibly stretches while the text stays pixel-crisp.
 	 */
 	fitContent?: boolean;
 	/**
@@ -213,10 +227,60 @@ export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
 }
 
 /**
+ * Measure the intrinsic pixel height of the `fitContent` children and return a
+ * ref to attach to the content wrapper plus the height the shell should animate
+ * to. The height is tweened as a CSS PROPERTY (not Framer `layout`/FLIP) so the
+ * shell stretches by reflow instead of `transform: scale`, which would
+ * scale-distort the text inside. Extracted from `DynamicIsland` to keep that
+ * component under the cognitive-complexity gate.
+ */
+function useFitContentHeight(
+	fitContent: boolean,
+	isVisible: boolean
+): { contentRef: RefObject<HTMLDivElement | null>; sizingHeight: number | null } {
+	const contentRef = useRef<HTMLDivElement | null>(null);
+	const [contentHeight, setContentHeight] = useState<number | null>(null);
+	useEffect(() => {
+		if (!fitContent) {
+			return;
+		}
+		const el = contentRef.current;
+		if (!el) {
+			return;
+		}
+		const measure = () => setContentHeight(el.offsetHeight);
+		measure();
+		// Guarded for the test env / any webview without ResizeObserver — the
+		// one-shot `measure()` above still seeds an initial height there.
+		if (typeof ResizeObserver === "undefined") {
+			return;
+		}
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [fitContent]);
+	// Freeze the last on-screen height so the close tween animates from the real
+	// size instead of collapsing to 0 when the content unmounts (mirrors
+	// `lastVisiblePreset`). A measured 0 means "content gone / not yet measured",
+	// so it never overwrites the frozen value.
+	const [lastVisibleHeight, setLastVisibleHeight] = useState<number | null>(null);
+	const measuredHeight = contentHeight && contentHeight > 0 ? contentHeight : null;
+	if (isVisible && measuredHeight !== null && measuredHeight !== lastVisibleHeight) {
+		setLastVisibleHeight(measuredHeight);
+	}
+	// While visible, prefer the fresh measurement but fall back to the frozen
+	// height during the first frame after a re-open (before ResizeObserver
+	// re-measures) so the island never flashes collapsed.
+	const sizingHeight = isVisible ? (measuredHeight ?? lastVisibleHeight) : lastVisibleHeight;
+	return { contentRef, sizingHeight };
+}
+
+/**
  * The animated capsule shell. Width / height / borderRadius are driven by
- * the active preset by default. With `fitContent` the height becomes
- * intrinsic and grows / shrinks with children (smoothly when the parent
- * `<LazyMotion>` loads `domMax`'s layout-animation feature).
+ * the active preset by default. With `fitContent` the height instead tracks
+ * the measured intrinsic height of the children and animates as a CSS property
+ * (no Framer `layout`/FLIP — see the `fitContent` prop doc), so the shell grows
+ * / shrinks smoothly without scale-distorting the text inside.
  */
 export function DynamicIsland({
 	id,
@@ -251,6 +315,12 @@ export function DynamicIsland({
 	}
 	const sizingPreset = isVisible ? preset : (lastVisiblePreset ?? p.default);
 
+	// fitContent height is intrinsic (driven by wrapped text); it's measured and
+	// tweened as a CSS property (NOT Framer `layout`/FLIP) so the shell stretches
+	// by reflow without scale-distorting the text. See `useFitContentHeight` and
+	// the `fitContent` prop doc.
+	const { contentRef, sizingHeight } = useFitContentHeight(fitContent, isVisible);
+
 	const baseClasses = [
 		"relative overflow-hidden bg-black text-white",
 		"shadow-[0_10px_30px_-10px_rgba(0,0,0,0.7)] ring-1 ring-white/[0.06] ring-inset",
@@ -274,7 +344,14 @@ export function DynamicIsland({
 		y: isVisible ? 0 : -REVEAL_OFFSET_PX,
 		filter: isVisible ? "blur(0px)" : `blur(${REVEAL_BLUR_PX}px)`,
 	};
-	if (!fitContent) {
+	if (fitContent) {
+		// Animated as a CSS property (reflow) — never via transform scale, so
+		// the text never stretches. Omitted until first measured so the very
+		// first paint sizes to the intrinsic (auto) height with no jump.
+		if (sizingHeight !== null) {
+			animateTarget.height = sizingHeight;
+		}
+	} else {
 		animateTarget.height = sizingPreset.height;
 	}
 
@@ -295,35 +372,30 @@ export function DynamicIsland({
 	};
 
 	return (
-		// `layout` is gated on `isVisible` (not just `fitContent`). When the
-		// island is collapsed (`empty` preset → 0 height) and then reveals, the
-		// layout-projection would animate the box from that 0×0 origin up to the
-		// full content size — a large `scale` transform that drags the shell's
-		// soft drop-shadow with it, painting a wide, faint dark rectangle below
-		// the island for a few frames before settling (the "transparent
-		// rectangle on first appear" bug). Disabling `layout` until the island
-		// is visible makes the reveal/close a pure panel-slide (opacity + y +
-		// blur, see `animateTarget`) with no projection scale, so the shadow
-		// stays tight. Once visible it stays visible for the whole session, so
-		// `layout` is active for every in-flight size change (per-line height
-		// growth, compact→long widen) exactly as before — those animate from a
-		// real box, not from 0, so they never distort the shadow.
+		// No Framer `layout`/FLIP here on purpose. Width AND height are both
+		// animated as CSS PROPERTIES (`width` from the preset, `height` from the
+		// measured content height) via the `shellTransition` spring — they
+		// reflow rather than scale, so the island visibly stretches while the
+		// text inside never scale-distorts. (Property tweens also sidestep the
+		// old "transparent rectangle on first appear" bug, where layout
+		// projection scaled the box up from the `empty` 0×0 origin and dragged
+		// the soft drop-shadow into a faint wide rectangle for a few frames.)
 		<m.div
 			animate={animateTarget}
 			className={baseClasses.join(" ")}
 			id={id}
 			initial={false}
-			layout={fitContent && isVisible}
 			style={motionStyle}
 			transition={transition}
 			{...rest}
 		>
 			{fitContent ? (
-				// Normal-flow children push the shell's height. No
-				// AnimatePresence here because state.size *also* changes
-				// width — letting the shell tween its own width while
-				// children swap inline keeps both axes coherent.
-				children
+				// Normal-flow children in a measured wrapper; its intrinsic
+				// height drives the shell's animated `height` (see the
+				// ResizeObserver above). The shell stays `relative`, so the
+				// absolute-positioned cancel button among `children` still
+				// anchors to the shell, not this static wrapper.
+				<div ref={contentRef}>{children}</div>
 			) : (
 				<AnimatePresence initial={false} mode="popLayout">
 					<m.div

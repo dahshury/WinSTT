@@ -41,14 +41,11 @@ import {
 	useModelStateStore,
 } from "@/entities/model-catalog";
 import {
-	DEFAULT_SETTINGS,
-	SettingResetButton,
 	SettingSection,
 	SettingSubsection,
 	useSettingsStore,
 } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
-import { HotkeyRecorder } from "@/features/record-hotkey";
 import {
 	detectOllama,
 	fetchOllamaModels,
@@ -59,12 +56,17 @@ import {
 import type { OpenRouterModel } from "@/shared/api/models";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
-import { cn } from "@/shared/lib/cn";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
-import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
+import { surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { useMountEffect } from "@/shared/lib/use-mount-effect";
 import { Button } from "@/shared/ui/button";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import {
+	DialogActionButton,
+	DialogDescription,
+	DialogFooter,
+	DialogTitle,
+} from "@/shared/ui/dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { IconButton } from "@/shared/ui/icon-button";
@@ -566,7 +568,10 @@ function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: Mo
 	const [name, setName] = useState(modifier?.name ?? "");
 	const [prompt, setPrompt] = useState(modifier?.prompt ?? "");
 	const [levelsEnabled, setLevelsEnabled] = useState(modifier?.levelsEnabled ?? false);
-	const buttonBg = surfaceBg(Math.min(useSurface() + 2, 8));
+	// Lift the prompt textarea one step above the popup surface — the same
+	// elevation the shared TextField uses — so it reads as an input on the modal
+	// rather than a dark inset well (the old hardcoded `bg-surface-1`).
+	const inputLevel = Math.min(useSurface() + 1, 8);
 
 	// A modifier needs both a name (its row label) and a prompt body before
 	// it can be saved.
@@ -588,9 +593,7 @@ function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: Mo
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
 			<div className="flex w-[28rem] max-w-[90vw] flex-col gap-4 p-6">
-				<h2 className="font-semibold text-foreground text-lg">
-					{isEdit ? t("modifierEditTitle") : t("modifierAddTitle")}
-				</h2>
+				<DialogTitle>{isEdit ? t("modifierEditTitle") : t("modifierAddTitle")}</DialogTitle>
 				<label className="flex flex-col gap-1.5" htmlFor="modifier-name-input">
 					<span className="text-foreground-secondary text-sm">{t("modifierName")}</span>
 					<TextField
@@ -604,7 +607,7 @@ function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: Mo
 					<span className="text-foreground-secondary text-sm">{t("modifierPrompt")}</span>
 					<textarea
 						aria-label={t("modifierPrompt")}
-						className="min-h-[120px] w-full resize-y rounded-sm bg-surface-1 p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1"
+						className={`min-h-[120px] w-full resize-y rounded-sm p-2.5 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${surfaceClasses(inputLevel)}`}
 						id="modifier-prompt-input"
 						onChange={(e) => setPrompt(e.target.value)}
 						placeholder={t("modifierPromptPlaceholder")}
@@ -622,24 +625,14 @@ function ModifierDialog({ isEdit, isOpen, modifier, onClose, onSave, t, tc }: Mo
 						onCheckedChange={setLevelsEnabled}
 					/>
 				</div>
-				<div className="flex gap-3">
-					<Button
-						className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-medium text-white transition-colors duration-150 hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-60"
-						disabled={!canSave}
-						onClick={submit}
-					>
-						{t("modifierSave")}
-					</Button>
-					<Button
-						className={cn(
-							"rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
-							buttonBg
-						)}
-						onClick={onClose}
-					>
+				<DialogFooter>
+					<DialogActionButton onClick={onClose} variant="neutral">
 						{tc("cancel")}
-					</Button>
-				</div>
+					</DialogActionButton>
+					<DialogActionButton disabled={!canSave} onClick={submit} variant="accent">
+						{t("modifierSave")}
+					</DialogActionButton>
+				</DialogFooter>
 			</div>
 		</Modal>
 	);
@@ -1402,38 +1395,6 @@ function FeaturePresetControls({
 	);
 }
 
-/**
- * Single global hotkey that triggers the transforms pipeline on the current
- * selection. Empty disables; presence registers a uiohook combo. Dictation
- * has no equivalent — it fires from the PTT/recording hotkey via the relay.
- */
-function TransformHotkeyField({
-	hotkey,
-	onChange,
-	t,
-}: {
-	hotkey: string;
-	onChange: (hotkey: string) => void;
-	t: TranslateFn;
-}) {
-	return (
-		<div className="py-2">
-			<FormControl
-				label={t("transformHotkey")}
-				labelTrailing={
-					<SettingResetButton
-						isDefault={hotkey === DEFAULT_SETTINGS.llm.transforms.hotkey}
-						onReset={() => onChange(DEFAULT_SETTINGS.llm.transforms.hotkey)}
-					/>
-				}
-				tooltip={`${t("transformHotkeyTooltip")} ${t("transformHotkeyCaption")}`}
-			>
-				<HotkeyRecorder currentKey={hotkey} onKeyRecorded={onChange} />
-			</FormControl>
-		</div>
-	);
-}
-
 // ── Playground modal ──────────────────────────────────────────────────
 //
 // A single, detached LLM playground (one modal in the Model tab, not a
@@ -1688,7 +1649,7 @@ function PlaygroundModalBody({
 		<div className="flex w-[44rem] max-w-[94vw] flex-col">
 			<header className="flex shrink-0 items-center gap-2 px-6 pt-6 pb-3">
 				<HugeiconsIcon className="text-accent" icon={PlayIcon} size={18} />
-				<h2 className="font-semibold text-foreground text-lg">{t("playgroundModalTitle")}</h2>
+				<DialogTitle>{t("playgroundModalTitle")}</DialogTitle>
 				<IconButton
 					aria-label={tc("cancel")}
 					className="ml-auto"
@@ -1912,26 +1873,18 @@ export function LlmSettingsPanel() {
 						snapshot={transforms}
 						update={updateTransforms}
 					/>
-					<TransformHotkeyField
-						hotkey={transforms.hotkey}
-						onChange={(hotkey) => updateTransforms({ hotkey })}
-						t={t}
-					/>
 				</FeatureBlock>
 			</SettingSection>
 
 			<LlmSettingsDialogs model={model} />
-			{/* Reset the surface baseline low so the modal gets a settings-like
-			    elevation ramp (popup → cards → inputs) with real contrast,
-			    instead of clamping flat at surface-8 when opened from a deeply
-			    nested settings substrate. */}
-			<SurfaceProvider value={1}>
-				<PlaygroundModal
-					model={model}
-					onClose={() => setPlaygroundOpen(false)}
-					open={playgroundOpen}
-				/>
-			</SurfaceProvider>
+			{/* Modal pins the surface baseline internally, so the playground gets a
+			    settings-like elevation ramp (popup → cards → inputs) regardless of
+			    how deeply this panel is nested — no wrapper needed here. */}
+			<PlaygroundModal
+				model={model}
+				onClose={() => setPlaygroundOpen(false)}
+				open={playgroundOpen}
+			/>
 		</>
 	);
 }
@@ -2287,22 +2240,15 @@ function OllamaPrimaryButton(props: OllamaPrimaryButtonProps) {
 	const { showRun, starting, t, onStart, onDownload } = props;
 	if (showRun) {
 		return (
-			<Button
-				className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-medium text-white transition-colors duration-150 hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-60"
-				disabled={starting}
-				onClick={onStart}
-			>
+			<DialogActionButton disabled={starting} onClick={onStart} variant="accent">
 				{starting ? t("starting") : t("runOllama")}
-			</Button>
+			</DialogActionButton>
 		);
 	}
 	return (
-		<Button
-			className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-medium text-white transition-colors duration-150 hover:bg-accent-dim"
-			onClick={onDownload}
-		>
+		<DialogActionButton onClick={onDownload} variant="accent">
 			{t("downloadOllama")}
-		</Button>
+		</DialogActionButton>
 	);
 }
 
@@ -2348,7 +2294,6 @@ const INITIAL_OLLAMA_DIALOG_STATE: OllamaDialogState = {
 function OllamaDialog({ t, tc, isOpen, onClose, onStarted }: OllamaDialogProps) {
 	const [state, dispatch] = useReducer(ollamaDialogReducer, INITIAL_OLLAMA_DIALOG_STATE);
 	const { installed, starting, startError } = state;
-	const cancelBg = surfaceBg(Math.min(useSurface() + 2, 8));
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -2390,11 +2335,14 @@ function OllamaDialog({ t, tc, isOpen, onClose, onStarted }: OllamaDialogProps) 
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
-			<div className="flex flex-col gap-4 p-6">
-				<h2 className="font-semibold text-foreground text-lg">{title}</h2>
-				<p className="text-foreground-secondary text-sm">{description}</p>
+			<div className="flex w-[28rem] max-w-[90vw] flex-col gap-4 p-6">
+				<DialogTitle>{title}</DialogTitle>
+				<DialogDescription>{description}</DialogDescription>
 				<OllamaStartErrorBanner message={startError} />
-				<div className="flex gap-3">
+				<DialogFooter>
+					<DialogActionButton disabled={starting} onClick={onClose} variant="neutral">
+						{tc("cancel")}
+					</DialogActionButton>
 					<OllamaPrimaryButton
 						onDownload={openDownload}
 						onStart={handleStart}
@@ -2402,17 +2350,7 @@ function OllamaDialog({ t, tc, isOpen, onClose, onStarted }: OllamaDialogProps) 
 						starting={starting}
 						t={t}
 					/>
-					<Button
-						className={cn(
-							"flex-1 rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
-							cancelBg
-						)}
-						disabled={starting}
-						onClick={onClose}
-					>
-						{tc("cancel")}
-					</Button>
-				</div>
+				</DialogFooter>
 			</div>
 		</Modal>
 	);
@@ -2428,7 +2366,6 @@ interface ApiKeyDialogProps extends DialogProps {
 function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDialogProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [hasValue, setHasValue] = useState(initialKey.trim().length > 0);
-	const buttonBg = surfaceBg(Math.min(useSurface() + 2, 8));
 
 	useEffect(() => {
 		if (!isOpen) {
@@ -2449,9 +2386,9 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose}>
-			<div className="flex flex-col gap-4 p-6">
-				<h2 className="font-semibold text-foreground text-lg">{t("apiKeyRequired")}</h2>
-				<p className="text-foreground-secondary text-sm">{t("apiKeyRequiredDescription")}</p>
+			<div className="flex w-[30rem] max-w-[90vw] flex-col gap-4 p-6">
+				<DialogTitle>{t("apiKeyRequired")}</DialogTitle>
+				<DialogDescription>{t("apiKeyRequiredDescription")}</DialogDescription>
 				<PasswordField
 					defaultValue={initialKey}
 					hideLabel={tc("hidePassword")}
@@ -2466,33 +2403,17 @@ function ApiKeyDialog({ t, tc, isOpen, onClose, onSave, initialKey }: ApiKeyDial
 					ref={inputRef}
 					revealLabel={tc("showPassword")}
 				/>
-				<div className="flex gap-3">
-					<Button
-						className="flex-1 rounded-md border border-accent bg-accent px-4 py-2 font-medium text-white transition-colors duration-150 hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-60"
-						disabled={!hasValue}
-						onClick={submit}
-					>
-						{t("saveAndEnable")}
-					</Button>
-					<Button
-						className={cn(
-							"rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
-							buttonBg
-						)}
-						onClick={openSignup}
-					>
+				<DialogFooter>
+					<DialogActionButton onClick={openSignup} variant="neutral">
 						{t("getApiKey")}
-					</Button>
-					<Button
-						className={cn(
-							"rounded-md border border-border px-4 py-2 font-medium transition-colors duration-150 hover:bg-surface-hover",
-							buttonBg
-						)}
-						onClick={onClose}
-					>
+					</DialogActionButton>
+					<DialogActionButton onClick={onClose} variant="neutral">
 						{tc("cancel")}
-					</Button>
-				</div>
+					</DialogActionButton>
+					<DialogActionButton disabled={!hasValue} onClick={submit} variant="accent">
+						{t("saveAndEnable")}
+					</DialogActionButton>
+				</DialogFooter>
 			</div>
 		</Modal>
 	);

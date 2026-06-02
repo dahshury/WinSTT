@@ -6,6 +6,7 @@ import { useTranslations } from "use-intl";
 import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
+	copyLastTranscript,
 	diagOpenLogsFolder,
 	diagSaveBundle,
 	dialogOpenFile,
@@ -25,7 +26,6 @@ import {
 	surfaceActivePseudoBg,
 	surfaceClasses,
 	surfaceHoverBg,
-	useSurface,
 } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { Switcher } from "@/shared/ui/switcher";
@@ -134,6 +134,13 @@ export function TrayMenu() {
 		closeTrayMenu();
 	};
 
+	// Copy the most recent completed transcription to the clipboard. Reads the
+	// history DB directly (no STT server needed), so it stays enabled offline.
+	const handleCopyLastTranscript = async () => {
+		await copyLastTranscript();
+		closeTrayMenu();
+	};
+
 	const handleModeChange = async (mode: RecordingMode) => {
 		dispatch({ type: "set-recording-mode", value: mode });
 		const settings = await settingsLoad();
@@ -209,8 +216,12 @@ export function TrayMenu() {
 		: tAudio("systemDefault");
 	const { currentDeviceLabel } = buildInputDeviceOptions(devices, inputDeviceIndex, defaultLabel);
 
-	const substrate = useSurface();
-	const menuLevel = Math.min(substrate + 4, 8);
+	// Match the settings window's panel treatment. The settings content card sits
+	// at surface-3 with a `ring-1 ring-divider-strong` outline and `rounded-xl`
+	// corners; the tray menu used a much-lighter surface-5 box with no ring, so it
+	// read as a different app. Pin the menu to that same dark surface-3 base (items
+	// lift on hover/active from there) and mirror the ring + rounding below.
+	const menuLevel = 3;
 	const hoverLevel = Math.min(menuLevel + 1, 8);
 	const activeLevel = Math.min(menuLevel + 2, 8);
 	const hoverBg = surfaceHoverBg(hoverLevel);
@@ -219,7 +230,7 @@ export function TrayMenu() {
 		<SurfaceProvider value={menuLevel}>
 			<div
 				className={cn(
-					"w-fit rounded-md p-1",
+					"w-fit rounded-xl p-1 ring-1 ring-divider-strong",
 					surfaceClasses(menuLevel, Math.max(menuLevel, 7)),
 					"font-sans text-body-sm text-foreground"
 				)}
@@ -235,6 +246,9 @@ export function TrayMenu() {
 				</MenuItem>
 				<MenuItem activeBg={activeBg} hoverBg={hoverBg} onClick={handleSettings} shortcut="Ctrl+,">
 					{t("openSettings")}
+				</MenuItem>
+				<MenuItem activeBg={activeBg} hoverBg={hoverBg} onClick={handleCopyLastTranscript}>
+					{t("copyLastTranscript")}
 				</MenuItem>
 
 				<MenuSeparator />

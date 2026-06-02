@@ -1,12 +1,14 @@
 import {
+	ArrowTurnBackwardIcon,
 	Certificate01Icon,
 	CloudDownloadIcon,
 	InformationCircleIcon,
 	LicenseIcon,
+	PowerSocket01Icon,
 	RefreshIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
@@ -26,6 +28,7 @@ import {
 	updaterQuitAndInstall,
 } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
@@ -33,6 +36,33 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Toggle } from "@/shared/ui/toggle";
 
 type AboutT = ReturnType<typeof useTranslations<"about">>;
+type GeneralT = ReturnType<typeof useTranslations<"general">>;
+type GeneralSettings = NonNullable<
+	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
+>;
+type UpdateFn = (patch: Partial<GeneralSettings>) => void;
+
+interface StartupFlags {
+	autoStart: boolean;
+	minimizeToTray: boolean;
+	sendCrashReports: boolean;
+	startMinimized: boolean;
+}
+
+function readBoolFlag(value: boolean | undefined, fallback: boolean): boolean {
+	return value ?? fallback;
+}
+
+// Copied verbatim from general-settings (FSD: a widget may not import another
+// widget's lib). Reads the system-pref booleans with their schema fallbacks.
+function readStartupFlags(general: GeneralSettings | undefined): StartupFlags {
+	return {
+		autoStart: readBoolFlag(general?.autoStart, false),
+		startMinimized: readBoolFlag(general?.startMinimized, false),
+		minimizeToTray: readBoolFlag(general?.minimizeToTray, true),
+		sendCrashReports: readBoolFlag(general?.sendCrashReports, true),
+	};
+}
 
 const EMPTY_APP_INFO: AboutAppInfo = {
 	copyright: "",
@@ -339,8 +369,114 @@ function NoticesSection({ loading, notices, t }: { loading: boolean; notices: st
 	);
 }
 
+interface StartupSectionProps {
+	general: GeneralSettings | undefined;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+function StartupSection({ t, general, update }: StartupSectionProps): ReactNode {
+	const flags = readStartupFlags(general);
+	return (
+		<SettingSection icon={PowerSocket01Icon} title={t("startup")}>
+			<div className="flex flex-col divide-y divide-surface-1">
+				{/* Single "Start on login" switch — on launches WinSTT on sign-in,
+				    minimized straight to the tray (autoStart + startMinimized +
+				    minimizeToTray together); off disables auto-launch. The former
+				    separate start-minimized / minimize-to-tray toggles are folded in. */}
+				<FormControl
+					label={t("startOnLogin")}
+					labelAddon={
+						<Toggle
+							checked={flags.autoStart}
+							onCheckedChange={(v) =>
+								update(
+									v
+										? { autoStart: true, startMinimized: true, minimizeToTray: true }
+										: { autoStart: false, startMinimized: false }
+								)
+							}
+						/>
+					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={
+								flags.autoStart === DEFAULT_SETTINGS.general.autoStart &&
+								flags.startMinimized === DEFAULT_SETTINGS.general.startMinimized &&
+								flags.minimizeToTray === DEFAULT_SETTINGS.general.minimizeToTray
+							}
+							onReset={() =>
+								update({
+									autoStart: DEFAULT_SETTINGS.general.autoStart,
+									startMinimized: DEFAULT_SETTINGS.general.startMinimized,
+									minimizeToTray: DEFAULT_SETTINGS.general.minimizeToTray,
+								})
+							}
+						/>
+					}
+					tooltip={t("startOnLoginTooltip")}
+				/>
+				<FormControl
+					label={t("sendCrashReports")}
+					labelAddon={
+						<Toggle
+							checked={flags.sendCrashReports}
+							onCheckedChange={(v) => update({ sendCrashReports: v })}
+						/>
+					}
+					labelTrailing={
+						<SettingResetButton
+							isDefault={flags.sendCrashReports === DEFAULT_SETTINGS.general.sendCrashReports}
+							onReset={() =>
+								update({ sendCrashReports: DEFAULT_SETTINGS.general.sendCrashReports })
+							}
+						/>
+					}
+					tooltip={t("sendCrashReportsTooltip")}
+				/>
+			</div>
+		</SettingSection>
+	);
+}
+
+function ResetSection(): ReactNode {
+	const resetSettings = useSettingsStore((s) => s.resetSettings);
+	const ts = useTranslations("settings");
+	const tc = useTranslations("common");
+	const [confirmOpen, setConfirmOpen] = useState(false);
+
+	return (
+		<>
+			<ConfirmDialog
+				confirmLabel={ts("resetConfirm")}
+				description={ts("resetDescription")}
+				onConfirm={resetSettings}
+				onOpenChange={setConfirmOpen}
+				open={confirmOpen}
+				title={ts("resetTitle")}
+			/>
+			<SettingSection
+				description={ts("resetDescription")}
+				headerAction={
+					<Button
+						className="h-8 rounded-md border border-error/40 bg-error/10 px-4 font-medium text-body text-error transition-colors duration-150 hover:bg-error/20"
+						onClick={() => setConfirmOpen(true)}
+					>
+						{tc("reset")}
+					</Button>
+				}
+				icon={ArrowTurnBackwardIcon}
+				title={ts("resetDefaults")}
+			/>
+		</>
+	);
+}
+
 export function AboutSettingsPanel() {
 	const t = useTranslations("about");
+	const tg = useTranslations("general");
+	const general = useSettingsStore((s) => s.settings.general);
+	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const [info, setInfo] = useState<AboutAppInfo>(EMPTY_APP_INFO);
 	const [license, setLicense] = useState("");
 	const [notices, setNotices] = useState("");
@@ -373,8 +509,10 @@ export function AboutSettingsPanel() {
 		<div className="flex flex-col gap-2">
 			<AppInfoSection info={info} t={t} />
 			<UpdatesSection t={t} />
+			<StartupSection general={general} t={tg} update={update} />
 			<LicenseSection license={license} loading={loading} t={t} />
 			<NoticesSection loading={loading} notices={notices} t={t} />
+			<ResetSection />
 		</div>
 	);
 }

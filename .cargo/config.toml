@@ -1,0 +1,19 @@
+# Cargo config for the WinSTT Tauri app (repo root — cargo walks up from
+# `src-tauri/` and finds this). Kept at the root (NOT under `src-tauri/`) so it
+# sits OUTSIDE the `tauri dev` file watcher and never triggers a rebuild of a
+# running dev instance; it takes effect only on the next `cargo`/`tauri dev`.
+#
+# WHY: a dev "rebuild" here is ~31–42s and recompiles NO dependencies (see
+# tauri_dev.log) — it is almost entirely the final LINK of ~1100 static deps +
+# WebView2. LLVM's `lld-link` is a drop-in for MSVC `link.exe` and links a binary
+# this size several times faster. It is already installed at
+# `C:\Program Files\LLVM\bin` (used for bindgen via LIBCLANG_PATH) and is put on
+# PATH by the `rust-migration\*.bat` helpers, so no new tooling is required.
+#
+# Only the final binary is relinked when this is enabled — dependency rlibs keep
+# their fingerprints — so turning this on does NOT force a full recompile.
+#
+# REVERT: if any link error appears, delete this file (or comment the `linker`
+# line) to fall back to the default MSVC `link.exe`.
+[target.x86_64-pc-windows-msvc]
+linker = "lld-link.exe"

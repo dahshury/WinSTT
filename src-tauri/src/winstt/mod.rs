@@ -1,18 +1,14 @@
-// DRAFT PORT — being compiled incrementally. Source: WinSTT port plan (app/PORT/README.md)
+// PORT IMPL — Source: WinSTT port plan (app/PORT/README.md)
 //
 // Root of the WinSTT port modules. ALL new WinSTT subsystems live under
 // `src-tauri/src/winstt/`. Handy's own files stay unmodified except the single
 // `pub mod winstt;` line in lib.rs (so upstream merges remain feasible).
 //
-// COMPILE-LOOP STAGING: modules are declared in waves so each wave can be
-// `cargo check`ed green before the next. Order follows app/PORT/lib_wiring.md §9.
-//
-//   WAVE 1 (active) — pure-logic, ZERO new crates (std + serde/specta already present).
-//   WAVE 2 — reqwest/tokio/windows-feature modules (llm, cloud_stt, context, paste_ext, ducking).
-//   WAVE 3 — new heavy crates: stt (ort), wakeword (sherpa-onnx), tts (kokoro). Gated by the
-//            STT de-risking spike (app/PORT/03_stt_engine.md §11) before the engine swap.
+// Modules are grouped by the dependency tier they belong to (pure-logic,
+// reqwest/windows-feature, heavy ONNX crates) — the original compile-loop
+// staging order. Order follows app/PORT/lib_wiring.md §9.
 
-// ───────────────────────── WAVE 1 — pure-logic (no new deps) ─────────────────────────
+// ───────────────────────── pure-logic (no new deps) ─────────────────────────
 
 /// WinSTT's full nested settings tree (9 tabs) as a specta-typed struct.
 /// See app/PORT/02_settings.md.
@@ -24,10 +20,8 @@ pub mod catalog;
 /// Adaptive Silero VAD sensitivity calibrator (SNR-driven, EMA-blended).
 pub mod vad_calibrator;
 
-/// Optional parity AND-gate VAD (WebRTC + Silero); VAD = lean-on-Handy ships.
-pub mod composite_vad;
-
-/// Dynamic-silence endpoint formula + sentence-classifier trait + noise-break.
+/// STUB: dynamic-silence endpoint formula + sentence-classifier trait + noise-break.
+/// Pure logic + tests are complete; NOT yet wired into the recorder pipeline.
 /// Ships `NullClassifier` (punctuation heuristic) until the DistilBERT ONNX export exists.
 pub mod endpointing;
 
@@ -38,21 +32,22 @@ pub mod realtime_stabilizer;
 /// Jaro-Winkler + double-metaphone gates). Applied as the LAST post-processing step before paste.
 pub mod snippets;
 
-// ───────────────────────── WAVE 2 — reqwest / windows-feature ─────────────────────────
+// ───────────────────────── reqwest / windows-feature ─────────────────────────
 /// All-Rust LLM post-processing: prompt composition + Ollama NDJSON streaming + CoT salvage.
 pub mod llm;
 /// Cloud STT: reqwest multipart to OpenAI/ElevenLabs.
 pub mod cloud_stt;
 /// Context-awareness: winstt-context.exe sidecar wrapper + deny-list.
 pub mod context;
-/// Terminal-aware paste (TERMINAL_CLASSES/EXES → Ctrl+Shift+V) + fallback chain + circuit-breaker.
+/// STUB: terminal-aware paste (TERMINAL_CLASSES/EXES → Ctrl+Shift+V) + fallback chain +
+/// circuit-breaker. Detection tables + breaker/pacing math are complete; the Win32
+/// foreground probe is sketched but NOT yet wired into the paste path.
 pub mod paste_ext;
 /// System-audio ducking via IAudioEndpointVolume::SetMasterVolumeLevelScalar (graduated 0-100%).
 pub mod ducking;
 
-// ───────────────────────── WAVE 3 — new heavy crates (gated by STT spike) ─────────────────────────
+// ───────────────────────── heavy ONNX crates ─────────────────────────
 /// Unified ONNX-on-`ort` STT engine: Transcriber trait + per-family engines.
-/// Trait/types/helpers compile; decode loops + per-model fixes land after the STT spike (03_*.md §11).
 pub mod stt;
 /// sherpa-onnx KWS wake word (open-vocabulary, offline).
 pub mod wakeword;

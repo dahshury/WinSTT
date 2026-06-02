@@ -37,6 +37,8 @@ pub mod mel;
 pub mod whisper_tokenizer;
 /// Whisper / lite-whisper / distil-whisper ONNX engine (encoder + merged-decoder KV-cache).
 pub mod whisper;
+/// Moonshine ONNX engine (raw-audio encoder + 3-graph decoder KV-cache, SentencePiece tokenizer).
+pub mod moonshine;
 /// HF snapshot resolver + download + sharded-data completeness + per-quant cache.
 pub mod resolver;
 /// On-disk HF-cache probe (per-model per-quant cached/partial/not_cached) for the picker badges.
@@ -45,8 +47,15 @@ pub mod cache_probe;
 pub mod fp16_patch;
 /// Non-Whisper families: CTC (SenseVoice/GigaAM/Dolphin/Kaldi), RNNT/TDT (Parakeet/zipformer), AED (Canary/Cohere).
 pub mod families;
+/// Embedded GigaAM v3 analysis window [320] + 64-mel filterbank [161,64] (from onnx_asr fbanks.npz).
+pub mod gigaam_v3_consts;
+/// WinSTT-owned STT backend trait (audit #14): the boundary the inherited Handy pipeline core
+/// (`crate::managers::transcription`) calls into for every WinSTT-specific load/decode/cloud step,
+/// so the core stops reaching sideways into `crate::winstt::*` (restores the one-way dep edge).
+pub mod backend;
 
 pub use whisper::WhisperEngine;
+pub use backend::{BackendRoute, ResolvedSpec, SttBackend, WinsttSttBackend};
 
 // ---------------------------------------------------------------------------
 // Result / error types
@@ -414,9 +423,7 @@ pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
         EngineKind::WhisperOrt => {
             Err(SttError::Unsupported("WhisperOrt engine not yet ported (PORT/03 §4.1 whisper_ort)"))
         }
-        EngineKind::Moonshine => {
-            Err(SttError::Unsupported("Moonshine engine not yet ported (PORT/03 §4.5)"))
-        }
+        EngineKind::Moonshine => Ok(Box::new(moonshine::MoonshineEngine::load(&cfg)?)),
         // All other families dispatch through `families::build_family_engine` (SenseVoice /
         // Dolphin / NeMo {Ctc,Rnnt,Tdt,Aed} / Kaldi / GigaAM / Cohere). Their numerics are
         // drafted but spike-gated — the LIVE path only enables a family after it's validated

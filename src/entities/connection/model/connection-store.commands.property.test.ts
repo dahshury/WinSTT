@@ -16,7 +16,7 @@ const SERVER_STATUSES: ServerStatus[] = ["idle", "starting", "running", "error"]
 
 interface Model {
 	connectionStatus: ConnectionStatus;
-	gpuInfo: GpuInfo | null;
+	gpuInfo: GpuInfo[];
 	runtimeInfo: RuntimeInfo | null;
 	serverStatus: ServerStatus;
 }
@@ -27,7 +27,7 @@ function resetStore(): void {
 	useConnectionStore.setState({
 		connectionStatus: "disconnected",
 		serverStatus: "idle",
-		gpuInfo: null,
+		gpuInfo: [],
 		runtimeInfo: null,
 	});
 }
@@ -36,7 +36,7 @@ function freshModel(): Model {
 	return {
 		connectionStatus: "disconnected",
 		serverStatus: "idle",
-		gpuInfo: null,
+		gpuInfo: [],
 		runtimeInfo: null,
 	};
 }
@@ -107,8 +107,8 @@ class SetServerStatusCmd implements fc.Command<Model, Real> {
 }
 
 class SetGpuInfoCmd implements fc.Command<Model, Real> {
-	readonly info: GpuInfo | null;
-	constructor(info: GpuInfo | null) {
+	readonly info: GpuInfo[];
+	constructor(info: GpuInfo[]) {
 		this.info = info;
 	}
 	check(): boolean {
@@ -123,7 +123,7 @@ class SetGpuInfoCmd implements fc.Command<Model, Real> {
 		}
 	}
 	toString(): string {
-		return `setGpu(${this.info === null ? "null" : this.info.name})`;
+		return `setGpu(${this.info.length === 0 ? "[]" : this.info[0]!.name})`;
 	}
 }
 
@@ -159,10 +159,12 @@ class SetRuntimeInfoCmd implements fc.Command<Model, Real> {
 	}
 }
 
-const gpuInfoArb: fc.Arbitrary<GpuInfo> = fc.record({
+const gpuInfoEntryArb: fc.Arbitrary<GpuInfo> = fc.record({
 	name: fc.string({ maxLength: 32 }),
-	available: fc.boolean(),
+	total_vram_bytes: fc.integer({ min: 0, max: 2 ** 32 }),
 });
+
+const gpuInfoArb: fc.Arbitrary<GpuInfo[]> = fc.array(gpuInfoEntryArb, { maxLength: 4 });
 
 const runtimeInfoArb: fc.Arbitrary<RuntimeInfo> = fc.record({
 	device: fc.constantFrom("cpu", "cuda", "directml"),
@@ -176,7 +178,7 @@ const commandsArb = fc.commands(
 	[
 		fc.constantFrom(...CONNECTION_STATUSES).map((s) => new SetConnectionStatusCmd(s)),
 		fc.constantFrom(...SERVER_STATUSES).map((s) => new SetServerStatusCmd(s)),
-		fc.option(gpuInfoArb, { nil: null }).map((info) => new SetGpuInfoCmd(info)),
+		gpuInfoArb.map((info) => new SetGpuInfoCmd(info)),
 		fc.option(runtimeInfoArb, { nil: null }).map((info) => new SetRuntimeInfoCmd(info)),
 	],
 	{ maxCommands: 35 }

@@ -138,21 +138,34 @@ pub fn runtime_info_snapshot(
 /// live-resources snapshot reshaped to `SystemInfoEntry`. The effective-quant bridge keys the
 /// overall badge off the precision the loader will ACTUALLY load, so "Downloaded" never lies into a
 /// silent re-download.
+///
+/// Async (audit #7): this `await`s the HF cache scan via `DownloadManager::cache_snapshot_async`
+/// rather than `block_on`-ing it on the command thread, so the whole-catalog cache walk (the Rust
+/// re-incarnation of the documented Python `list_models_onnx_parse_loop_starvation` bug) no longer
+/// blocks the IPC pump. The scan is memoized with a short TTL (invalidated on `model-cache-changed`)
+/// so the picker's repeated calls reuse one walk, and the per-`.onnx` external-data verify was moved
+/// off this list path (it runs lazily on load only). Async Tauri commands register identically in
+/// `generate_handler!` — no `lib.rs` change is needed.
 #[tauri::command]
 #[specta::specta]
-pub fn list_models_with_state(
+pub async fn list_models_with_state(
     app: AppHandle,
     downloads: State<'_, Arc<DownloadManager>>,
-) -> ModelsWithState {
+) -> Result<ModelsWithState, ()> {
     let accel = picker_accelerator(&app);
-    let cache_by_model = probe_cache_states(downloads.inner().as_ref());
+    let cache_by_model = probe_cache_states(downloads.inner().as_ref()).await;
     let sys = system_info_snapshot();
-    catalog_data::models_with_state(accel, sys, &cache_by_model)
+    // Async Tauri commands MUST return `Result` (the framework requires `Result<T, E>` for the async
+    // command shape with a borrowed `State<'_, _>`). `()` as the error type serializes to `null`;
+    // we never return `Err` here so the renderer always receives the `Ok(ModelsWithState)` payload —
+    // `TAURI_INVOKE` unwraps the `Ok` so the renderer-side type/value is unchanged.
+    Ok(catalog_data::models_with_state(accel, sys, &cache_by_model))
 }
 
-/// Build the `ProbeModel` list from the catalog const table, run the DownloadManager's blocking HF
-/// cache probe, and reshape `(CacheState, downloaded, total)` → the renderer's `ModelCacheInfo`.
-fn probe_cache_states(
+/// Build the `ProbeModel` list from the catalog const table, `await` the DownloadManager's HF cache
+/// probe (TTL-memoized), and reshape `(CacheState, downloaded, total)` → the renderer's
+/// `ModelCacheInfo`.
+async fn probe_cache_states(
     downloads: &DownloadManager,
 ) -> BTreeMap<String, BTreeMap<String, ModelCacheInfo>> {
     let probe_models: Vec<ProbeModel> = catalog::STT_CATALOG
@@ -165,7 +178,7 @@ fn probe_cache_states(
         })
         .collect();
 
-    let snapshot = downloads.cache_snapshot(&probe_models);
+    let snapshot = downloads.cache_snapshot_async(&probe_models).await;
     let mut out: BTreeMap<String, BTreeMap<String, ModelCacheInfo>> = BTreeMap::new();
     for (model_id, by_quant) in snapshot {
         let mut quant_map: BTreeMap<String, ModelCacheInfo> = BTreeMap::new();

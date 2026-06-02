@@ -91,14 +91,43 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
 
 /// Map a catalog id / bare alias to a `(owner, name)` HF repo pair. A model id that already
 /// contains `/` is split as-is (`onnx-community/whisper-tiny` → `("onnx-community", "whisper-tiny")`);
-/// a bare alias is looked up in `MODEL_REPOS` first and the resolved repo split. Returns `None` for
-/// an unknown bare alias (caller treats it as a local-dir custom model or errors).
+/// a bare id is resolved through THREE sources, in order:
+///   1. the WinSTT catalog (`catalog::find(id).onnx_model_name`) — the authoritative id→repo map the
+///      engine-load path already uses (`transcription.rs` builds `ResolveRequest { model_id:
+///      entry.onnx_model_name, .. }`). The catalog ships bare ids like `tiny` / `crisper-whisper` /
+///      `nemo-canary-1b-flash` whose real HF repo (`onnx-community/whisper-tiny`, …) lives ONLY in
+///      `onnx_model_name`, NOT in `MODEL_REPOS`. Without this lookup the per-quant DownloadManager
+///      and the cache probe both passed the bare catalog id straight here, got `None`, and silently
+///      settled the download as cancelled (badge cleared → "download does nothing / resets to
+///      nothing / stuck at 0%") while the model showed "Not downloaded" even when fully cached.
+///   2. the `MODEL_REPOS` onnx-asr alias table (Moonshine/NeMo/GigaAM/… aliases the catalog stores
+///      verbatim in `onnx_model_name`, so step 1 already covers catalog rows; this remains for any
+///      off-catalog alias callers).
+///   3. `None` — caller treats it as a local-dir custom model or errors.
+///
+/// The catalog's `onnx_model_name` is itself either a slashed repo (Whisper/Cohere/Sense/Vosk) or a
+/// `MODEL_REPOS` alias (Moonshine/NeMo/GigaAM), so we recurse through it once: a slash splits
+/// directly, an alias falls to step 2. The single-level guard (`!= model`) prevents any self-loop.
 pub fn resolve_repo(model: &str) -> Option<(String, String)> {
-    let repo: &str = if model.contains('/') {
-        model
-    } else {
-        MODEL_REPOS.iter().find(|(alias, _)| *alias == model).map(|(_, r)| *r)?
-    };
+    if let Some((owner, name)) = model.split_once('/') {
+        return Some((owner.to_string(), name.to_string()));
+    }
+    // 1. Catalog id → real repo / alias (the engine-load path's source of truth).
+    if let Some(entry) = crate::winstt::catalog::find(model) {
+        let onnx = entry.onnx_model_name;
+        if onnx != model {
+            if let Some((owner, name)) = onnx.split_once('/') {
+                return Some((owner.to_string(), name.to_string()));
+            }
+            // onnx_model_name is a bare alias (Moonshine/NeMo/GigaAM) → resolve it via MODEL_REPOS.
+            if let Some(repo) = MODEL_REPOS.iter().find(|(alias, _)| *alias == onnx).map(|(_, r)| *r) {
+                let (owner, name) = repo.split_once('/')?;
+                return Some((owner.to_string(), name.to_string()));
+            }
+        }
+    }
+    // 2. Bare onnx-asr alias not on the catalog.
+    let repo = MODEL_REPOS.iter().find(|(alias, _)| *alias == model).map(|(_, r)| *r)?;
     let (owner, name) = repo.split_once('/')?;
     Some((owner.to_string(), name.to_string()))
 }
@@ -130,7 +159,13 @@ fn quant_suffix(quant: Quantization) -> String {
 /// The logical file globs for one engine kind at one quantization. Ported one-for-one from each
 /// family's `_get_model_files` (spec §2.2 table; cross-checked against the onnx-asr source).
 /// `config.json` / `config.yaml` are ALWAYS added by `download_set()` so they aren't listed here.
-pub fn file_globs(kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
+///
+/// `model_id` is threaded through so the Kaldi arm can pick the right LAYOUT: Vosk packs nest the
+/// graphs one dir down (`am/encoder.onnx` + `lang/tokens.txt`), while icefall / sherpa-onnx
+/// zipformer packs ship them at the repo ROOT with an epoch-suffixed name
+/// (`encoder-epoch-99-avg-1.onnx` …). This mirrors onnx-asr's `IcefallZipformer._get_model_files`
+/// override of `KaldiTransducer._get_model_files` (models/kaldi.py L110-118 vs L39-47).
+pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
     let s = quant_suffix(quant);
     let g = |key: &'static str, glob: String| FileGlob { key, glob };
     match kind {
@@ -174,13 +209,30 @@ pub fn file_globs(kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
             g("decoder", format!("decoder-model{s}.onnx")),
             g("vocab", "vocab.txt".into()),
         ],
-        EngineKind::KaldiTransducer => vec![
-            // sherpa packs nest files one dir down → `*/`.
-            g("encoder", format!("*/encoder{s}.onnx")),
-            g("decoder", format!("*/decoder{s}.onnx")),
-            g("joiner", format!("*/joiner{s}.onnx")),
-            g("vocab", "*/tokens.txt".into()),
-        ],
+        EngineKind::KaldiTransducer => {
+            // onnx-asr splits the Kaldi transducer file set by repo layout (models/kaldi.py):
+            //   * `KaldiTransducer` (Vosk) nests one dir down: `*/encoder{?q}.onnx`, `*/tokens.txt`.
+            //   * `IcefallZipformer` (sherpa-onnx / icefall zipformer) ships at the ROOT with an
+            //     epoch suffix: `encoder-*{?q}.onnx`, `decoder-*{?q}.onnx`, `joiner-*{?q}.onnx`,
+            //     `tokens.txt`.
+            // We select on the model id the catalog uses (`zipformer-en`, `icefall-zipformer`).
+            let id = model_id.to_ascii_lowercase();
+            if id.contains("zipformer") || id.contains("icefall") {
+                vec![
+                    g("encoder", format!("encoder-*{s}.onnx")),
+                    g("decoder", format!("decoder-*{s}.onnx")),
+                    g("joiner", format!("joiner-*{s}.onnx")),
+                    g("vocab", "tokens.txt".into()),
+                ]
+            } else {
+                vec![
+                    g("encoder", format!("*/encoder{s}.onnx")),
+                    g("decoder", format!("*/decoder{s}.onnx")),
+                    g("joiner", format!("*/joiner{s}.onnx")),
+                    g("vocab", "*/tokens.txt".into()),
+                ]
+            }
+        }
         EngineKind::GigaamCtc => vec![
             // GigaAM v3 e2e ctc: flat root, `v3_e2e_ctc{sfx}.onnx` (gigaam.py:144). The `v?_` glob
             // also covers v2 (`v2_ctc.onnx`); we use the e2e form the catalog ships.
@@ -194,15 +246,53 @@ pub fn file_globs(kind: EngineKind, quant: Quantization) -> Vec<FileGlob> {
             g("vocab", "v3_e2e_rnnt_vocab.txt".into()),
         ],
         EngineKind::ToneCtc => vec![
-            // T-One single-graph streaming CTC (models/tone.py): flat `model{sfx}.onnx` + tokens.
+            // T-One single-graph streaming CTC (models/tone.py): flat `model{sfx}.onnx` only.
+            // T-One has NO tokens.txt — its vocabulary lives in `config.json`
+            // (decoder_params.vocabulary), which `download_set()` auto-resolves into the
+            // "config" key. `_get_model_files` returns just `{"model": "model{?quant}.onnx"}`.
             g("model", format!("model{s}.onnx")),
-            g("vocab", "tokens.txt".into()),
         ],
         EngineKind::DolphinCtc | EngineKind::SenseVoiceCtc => vec![
             // Both ship a flat root `model{?quant}.onnx` + `tokens.txt` (dolphin.py / sense_voice.py).
             g("model", format!("model{s}.onnx")),
             g("vocab", "tokens.txt".into()),
         ],
+    }
+}
+
+/// Resolve a set of glob matches to ONE path, applying a Kaldi-scoped tie-break.
+///
+/// The icefall/zipformer root globs (`encoder-*{?q}.onnx`) are intentionally loose so they catch
+/// the epoch-suffixed name (`encoder-epoch-99-avg-1.onnx`). But for the DEFAULT (unsuffixed) quant
+/// the `*` after `encoder-` ALSO spans the `.int8` / `.fp16` separator, so a repo that ships both
+/// precisions yields >1 match (`encoder-epoch-99-avg-1.onnx` AND `encoder-epoch-99-avg-1.int8.onnx`).
+/// The resolver normally errors on >1 match; for Kaldi we instead pick the file whose stem carries
+/// NO recognised quant tag (the shortest stem — the default export). For a NON-Kaldi kind, or when
+/// a single match exists, behaviour is unchanged (0 = caller's not-found error, >1 = error).
+///
+/// `matches` are POSIX repo paths. Returns `Ok(Some(path))` for a unique/resolved match, `Ok(None)`
+/// for zero matches (caller raises the family-specific "missing" error), and `Err(())` only when
+/// the tie-break could not disambiguate (>1 match that are all untagged, or a non-Kaldi >1).
+fn pick_kaldi_tiebreak<'a>(kind: EngineKind, matches: &[&'a String]) -> Result<Option<&'a String>, ()> {
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(Some(matches[0])),
+        _ if kind == EngineKind::KaldiTransducer => {
+            // Keep only the matches with NO quant tag on the `.onnx` stem (the default export).
+            // `tokens.txt` (vocab) never has a tag, so this only ever fires on the graph globs.
+            let untagged: Vec<&&'a String> = matches
+                .iter()
+                .filter(|p| {
+                    let fname: &str = p.rsplit('/').next().unwrap_or(p.as_str());
+                    file_quantization(fname) == Quantization::Default
+                })
+                .collect();
+            match untagged.len() {
+                1 => Ok(Some(untagged[0])),
+                _ => Err(()), // 0 (all tagged) or >1 (ambiguous) → can't disambiguate.
+            }
+        }
+        _ => Err(()), // non-Kaldi: >1 match is genuinely ambiguous → error.
     }
 }
 
@@ -449,13 +539,18 @@ struct PlannedFile {
 ///      we were cache-only → flip to a network refetch and retry the WHOLE plan ONCE (spec §2.3).
 pub async fn resolve(req: &ResolveRequest) -> SttResult<ResolvedModel> {
     if let Some(dir) = &req.local_dir {
-        return resolve_local_dir(dir, req.kind, req.effective_quant);
+        return resolve_local_dir(dir, &req.model_id, req.kind, req.effective_quant);
     }
 
     // Pass 1 — honour the caller's cache-only flag (mirrors resolver.py: try local_files_only=True).
     // It is "good" only if it resolved AND every `.onnx` has complete external data.
+    //
+    // OFFLINE-FIRST (audit #2 CRITICAL): a 100%-cached model must load with ZERO network. We derive
+    // the planned file set straight from the ON-DISK hf-hub snapshot (`scan_cache`) and glob-match it
+    // there — `repo.info().send()` (the HTTP tree listing) is NEVER touched on this pass. A genuine
+    // cache miss / incomplete shard falls through to the single network pass below.
     if req.local_files_only {
-        if let Ok(resolved) = resolve_remote(req, true).await {
+        if let Ok(resolved) = resolve_cached_offline(req).await {
             if all_onnx_complete(&resolved) {
                 return Ok(resolved);
             }
@@ -497,20 +592,28 @@ pub fn resolve_blocking(handle: &tokio::runtime::Handle, req: &ResolveRequest) -
 }
 
 /// Resolve a custom local-dir model (offline; no HF). Globs the dir for each required file.
-fn resolve_local_dir(dir: &Path, kind: EngineKind, quant: Quantization) -> SttResult<ResolvedModel> {
+fn resolve_local_dir(dir: &Path, model_id: &str, kind: EngineKind, quant: Quantization) -> SttResult<ResolvedModel> {
     let mut files = BTreeMap::new();
     let entries = list_dir_posix(dir).map_err(|e| SttError::Resolve(format!("scan {}: {e}", dir.display())))?;
-    for fg in file_globs(kind, quant) {
+    for fg in file_globs(model_id, kind, quant) {
         // Required keys must resolve; config-only extras are added below.
         let matched: Vec<&(String, PathBuf)> = entries.iter().filter(|(rel, _)| glob_match(&fg.glob, rel)).collect();
-        if matched.len() > 1 {
-            return Err(SttError::Resolve(format!(
-                "more than one file matched {} in {}",
-                fg.glob,
-                dir.display()
-            )));
-        }
-        match matched.first() {
+        let rels: Vec<&String> = matched.iter().map(|(rel, _)| rel).collect();
+        let chosen_rel = match pick_kaldi_tiebreak(kind, &rels) {
+            Ok(Some(rel)) => Some((*rel).clone()),
+            Ok(None) => None,
+            Err(()) => {
+                return Err(SttError::Resolve(format!(
+                    "more than one file matched {} in {}",
+                    fg.glob,
+                    dir.display()
+                )));
+            }
+        };
+        let matched_one = chosen_rel
+            .as_ref()
+            .and_then(|rel| matched.iter().find(|(r, _)| r == rel));
+        match matched_one {
             Some((_, abs)) => {
                 files.insert(fg.key.to_string(), abs.clone());
             }
@@ -551,7 +654,7 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
     let tree_paths = list_repo_tree(&repo).await?;
 
     // Plan the required (logical-key) files by matching each glob against the tree.
-    let globs = file_globs(req.kind, req.effective_quant);
+    let globs = file_globs(&req.model_id, req.kind, req.effective_quant);
     let mut planned: Vec<PlannedFile> = Vec::new();
     let mut onnx_stems: Vec<String> = Vec::new();
     for fg in &globs {
@@ -563,15 +666,21 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
                 matches = tree_paths.iter().filter(|p| glob_match(&ort, p)).collect();
             }
         }
-        if matches.len() > 1 {
-            return Err(SttError::Resolve(format!(
-                "more than one file matched {} in {}/{}",
-                fg.glob, owner, name
-            )));
-        }
-        let path = matches
-            .first()
-            .ok_or_else(|| SttError::Resolve(format!("missing {} ({}) in {}/{}", fg.key, fg.glob, owner, name)))?;
+        let path = match pick_kaldi_tiebreak(req.kind, &matches) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                return Err(SttError::Resolve(format!(
+                    "missing {} ({}) in {}/{}",
+                    fg.key, fg.glob, owner, name
+                )));
+            }
+            Err(()) => {
+                return Err(SttError::Resolve(format!(
+                    "more than one file matched {} in {}/{}",
+                    fg.glob, owner, name
+                )));
+            }
+        };
         if path.ends_with(".onnx") {
             if let Some(stem) = path.strip_suffix(".onnx") {
                 onnx_stems.push(stem.to_string());
@@ -630,6 +739,101 @@ async fn download_one(
         .map_err(|e| SttError::Resolve(format!("download {repo_path}: {e}")))
 }
 
+/// Resolve a model to its on-disk file set using ONLY the local hf-hub cache — never the network
+/// (no `repo.info().send()`). This is the offline-first Pass-1 of `resolve()`: a 100%-cached model
+/// loads/swaps with zero network latency and works when HF is unreachable.
+///
+/// It scans the local cache (`scan_cache`, an fs walk — the SAME walk `cache_probe.rs` uses), finds
+/// the repo's cached `(posix_name, abs_path)` pairs across every revision, then runs the IDENTICAL
+/// planning + glob-matching as `resolve_remote` against that on-disk file list. A cache miss (repo
+/// absent, or a required logical file not yet downloaded) returns `Err` so `resolve()` falls through
+/// to exactly one network pass.
+async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel> {
+    use hf_hub::HFClient;
+
+    let (owner, name) = resolve_repo(&req.model_id)
+        .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id)))?;
+    let repo_key = format!("{owner}/{name}").to_ascii_lowercase();
+
+    // Walk the local cache only — `scan_cache()` is a filesystem scan, no HTTP. A scan error or an
+    // absent repo is a cache miss → caller does the one network pass.
+    let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
+    let scan = client
+        .scan_cache()
+        .send()
+        .await
+        .map_err(|e| SttError::Resolve(format!("scan cache: {e}")))?;
+
+    // Collect the repo's cached files as `(posix_repo_path, abs_pointer_path)` across all revisions
+    // (dedup by repo path; first revision wins — pointer files refer to the same blob).
+    let repo = scan
+        .repos
+        .iter()
+        .find(|r| r.repo_id.to_ascii_lowercase() == repo_key)
+        .ok_or_else(|| SttError::Resolve(format!("{owner}/{name} not in local cache")))?;
+    let mut cached: Vec<(String, PathBuf)> = Vec::new();
+    {
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for rev in &repo.revisions {
+            for f in &rev.files {
+                let posix = f.file_name.replace('\\', "/");
+                if posix.is_empty() || !seen.insert(posix.clone()) {
+                    continue;
+                }
+                cached.push((posix, f.file_path.clone()));
+            }
+        }
+    }
+
+    // Plan the required (logical-key) files by matching each glob against the cached file list —
+    // the SAME planning logic as `resolve_remote`, just over the on-disk snapshot instead of the
+    // remote tree. A missing required file is a cache miss (→ network pass).
+    let globs = file_globs(&req.model_id, req.kind, req.effective_quant);
+    let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for fg in &globs {
+        // Match the glob (and the `.onnx`→`.ort` fallback) against the cached POSIX paths.
+        let mut matches: Vec<&String> = cached.iter().map(|(p, _)| p).filter(|p| glob_match(&fg.glob, p)).collect();
+        if matches.is_empty() {
+            if let Some(stem) = fg.glob.strip_suffix(".onnx") {
+                let ort = format!("{stem}.ort");
+                matches = cached.iter().map(|(p, _)| p).filter(|p| glob_match(&ort, p)).collect();
+            }
+        }
+        let chosen = match pick_kaldi_tiebreak(req.kind, &matches) {
+            Ok(Some(p)) => (*p).clone(),
+            Ok(None) => {
+                // Required file not cached → genuine miss; let `resolve()` go to the network.
+                return Err(SttError::Resolve(format!(
+                    "missing {} ({}) in local cache {}/{}",
+                    fg.key, fg.glob, owner, name
+                )));
+            }
+            Err(()) => {
+                return Err(SttError::Resolve(format!(
+                    "more than one cached file matched {} in {}/{}",
+                    fg.glob, owner, name
+                )));
+            }
+        };
+        let abs = cached
+            .iter()
+            .find(|(p, _)| *p == chosen)
+            .map(|(_, abs)| abs.clone())
+            .ok_or_else(|| SttError::Resolve(format!("cache path lost for {} in {}/{}", fg.key, owner, name)))?;
+        files.insert(fg.key.to_string(), abs);
+    }
+
+    // config.json (resolver.py:145-147): include it when cached so families that read decode params
+    // from config (e.g. T-One vocab) have it. Optional — its absence is not a cache miss. The
+    // external-data sidecars don't need enumerating into the map (they're not logical-key entries);
+    // `resolve()`'s `all_onnx_complete` verifies them on disk next, relative to each `.onnx`'s dir.
+    if let Some((_, abs)) = cached.iter().find(|(p, _)| p == "config.json") {
+        files.insert("config".into(), abs.clone());
+    }
+
+    Ok(ResolvedModel { files, effective_quantization: req.effective_quant })
+}
+
 // ---------------------------------------------------------------------------
 // 6b. Per-quant download PLAN + progress-aware fetch (consumed by DownloadManager)
 // ---------------------------------------------------------------------------
@@ -652,7 +856,7 @@ pub async fn plan_quant_download(
     let repo = client.model(owner.clone(), name.clone());
     let tree_paths = list_repo_tree(&repo).await?;
 
-    let globs = file_globs(kind, quant);
+    let globs = file_globs(model_id, kind, quant);
     let mut planned: Vec<String> = Vec::new();
     let mut onnx_stems: Vec<String> = Vec::new();
     for fg in &globs {
@@ -663,14 +867,25 @@ pub async fn plan_quant_download(
                 matches = tree_paths.iter().filter(|p| glob_match(&ort, p)).collect();
             }
         }
-        let path = match matches.first() {
-            Some(p) => (*p).clone(),
-            None => {
+        // Kaldi-scoped tie-break (zipformer default glob also matches `.int8` siblings); for any
+        // other kind a unique match is chosen, and >1 falls back to `first()` (pre-existing behaviour).
+        let path = match pick_kaldi_tiebreak(kind, &matches) {
+            Ok(Some(p)) => p.clone(),
+            Ok(None) => {
                 return Err(SttError::Resolve(format!(
                     "missing {} ({}) in {owner}/{name}",
                     fg.key, fg.glob
                 )));
             }
+            Err(()) => match matches.first() {
+                Some(p) => (*p).clone(),
+                None => {
+                    return Err(SttError::Resolve(format!(
+                        "missing {} ({}) in {owner}/{name}",
+                        fg.key, fg.glob
+                    )));
+                }
+            },
         };
         if let Some(stem) = path.strip_suffix(".onnx") {
             onnx_stems.push(stem.to_string());
@@ -851,6 +1066,40 @@ mod tests {
     }
 
     #[test]
+    fn catalog_bare_ids_resolve_via_onnx_model_name() {
+        // REGRESSION (download-stuck-at-0%): these catalog ids are bare (no `/`) and are NOT in
+        // MODEL_REPOS — they were only resolvable via the catalog's `onnx_model_name`. Before the
+        // fix, resolve_repo returned None for every one, so per-quant downloads settled cancelled
+        // (badge cleared instantly) and cached models showed "Not downloaded".
+        assert_eq!(
+            resolve_repo("tiny"),
+            Some(("onnx-community".into(), "whisper-tiny".into()))
+        );
+        assert_eq!(
+            resolve_repo("medium"),
+            Some(("Xenova".into(), "whisper-medium".into()))
+        );
+        assert_eq!(
+            resolve_repo("large-v3-turbo"),
+            Some(("onnx-community".into(), "whisper-large-v3-turbo".into()))
+        );
+        assert_eq!(
+            resolve_repo("crisper-whisper"),
+            Some(("onnx-community".into(), "CrisperWhisper-ONNX".into()))
+        );
+        assert_eq!(
+            resolve_repo("nemo-canary-1b-flash"),
+            Some(("istupakov".into(), "canary-1b-flash-onnx".into()))
+        );
+        // A catalog id whose onnx_model_name is itself a MODEL_REPOS alias (Moonshine) still
+        // resolves through the alias recursion.
+        assert_eq!(
+            resolve_repo("moonshine-base"),
+            Some(("onnx-community".into(), "moonshine-base-ONNX".into()))
+        );
+    }
+
+    #[test]
     fn quant_suffix_uses_question_separator() {
         assert_eq!(quant_suffix(Quantization::Default), "");
         assert_eq!(quant_suffix(Quantization::Int8), "?int8");
@@ -859,19 +1108,47 @@ mod tests {
 
     #[test]
     fn whisper_globs_default_and_fp16() {
-        let g = file_globs(EngineKind::WhisperHf, Quantization::Default);
+        let g = file_globs("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default);
         assert!(g.iter().any(|f| f.key == "encoder" && f.glob == "**/encoder_model.onnx"));
         assert!(g.iter().any(|f| f.key == "decoder" && f.glob == "**/decoder_model_merged.onnx"));
-        let g16 = file_globs(EngineKind::WhisperHf, Quantization::Fp16);
+        let g16 = file_globs("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Fp16);
         assert!(g16.iter().any(|f| f.glob == "**/encoder_model?fp16.onnx"));
         assert!(g16.iter().any(|f| f.glob == "**/decoder_model_merged?fp16.onnx"));
     }
 
     #[test]
-    fn kaldi_globs_nest_one_dir() {
-        let g = file_globs(EngineKind::KaldiTransducer, Quantization::Int8);
+    fn kaldi_vosk_globs_nest_one_dir() {
+        // Vosk (no "zipformer"/"icefall" in the id) keeps the nested `*/encoder...` layout.
+        let g = file_globs("alphacep/vosk-model-small-ru", EngineKind::KaldiTransducer, Quantization::Int8);
         assert!(g.iter().any(|f| f.key == "encoder" && f.glob == "*/encoder?int8.onnx"));
         assert!(g.iter().any(|f| f.key == "vocab" && f.glob == "*/tokens.txt"));
+    }
+
+    #[test]
+    fn kaldi_zipformer_globs_root_with_epoch_suffix() {
+        // icefall/zipformer ships at the ROOT with an epoch suffix → `encoder-*{?q}.onnx`, `tokens.txt`.
+        let g = file_globs("zipformer-en", EngineKind::KaldiTransducer, Quantization::Default);
+        assert!(g.iter().any(|f| f.key == "encoder" && f.glob == "encoder-*.onnx"));
+        assert!(g.iter().any(|f| f.key == "decoder" && f.glob == "decoder-*.onnx"));
+        assert!(g.iter().any(|f| f.key == "joiner" && f.glob == "joiner-*.onnx"));
+        assert!(g.iter().any(|f| f.key == "vocab" && f.glob == "tokens.txt"));
+        let gi = file_globs("icefall-zipformer", EngineKind::KaldiTransducer, Quantization::Int8);
+        assert!(gi.iter().any(|f| f.glob == "encoder-*?int8.onnx"));
+    }
+
+    #[test]
+    fn kaldi_tiebreak_prefers_untagged_default_export() {
+        // Default zipformer glob `encoder-*.onnx` matches BOTH the default and its int8 sibling.
+        let a = "encoder-epoch-99-avg-1.onnx".to_string();
+        let b = "encoder-epoch-99-avg-1.int8.onnx".to_string();
+        let matches = vec![&a, &b];
+        let chosen = pick_kaldi_tiebreak(EngineKind::KaldiTransducer, &matches).unwrap();
+        assert_eq!(chosen, Some(&a), "default export (untagged stem) must win");
+        // A non-Kaldi kind keeps the strict >1 = error contract.
+        assert!(pick_kaldi_tiebreak(EngineKind::WhisperHf, &matches).is_err());
+        // Zero / one match pass through unchanged.
+        assert_eq!(pick_kaldi_tiebreak(EngineKind::KaldiTransducer, &[]).unwrap(), None);
+        assert_eq!(pick_kaldi_tiebreak(EngineKind::KaldiTransducer, &[&a]).unwrap(), Some(&a));
     }
 
     #[test]

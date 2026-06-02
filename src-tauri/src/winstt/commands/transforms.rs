@@ -339,7 +339,28 @@ fn capture_via_clipboard(app: &AppHandle) -> (String, TransformSource) {
 /// Send a synthetic Ctrl+C (Cmd+C on macOS) through the managed Enigo instance so
 /// the focused app copies its current selection. Uses platform virtual key codes
 /// (layout-independent) to mirror the native `winstt-paste.exe --copy` helper.
+///
+/// The Enigo keystroke is dispatched on the MAIN thread (input synthesis must not run on the
+/// async-runtime / spawn_blocking worker — the same main-thread paste discipline actions.rs
+/// keeps). `capture_via_clipboard` runs on a `spawn_blocking` thread, so it can block on the
+/// keystroke completing here; we round-trip a oneshot channel and wait for the result.
 fn send_copy_keystroke(app: &AppHandle) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+    let app_for_main = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(send_copy_keystroke_on_main(&app_for_main));
+    })
+    .map_err(|e| format!("failed to schedule copy keystroke on main thread: {e}"))?;
+    // Bounded wait so a stalled main thread can't wedge the transform pipeline forever.
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(_) => Err("copy keystroke timed out on main thread".to_string()),
+    }
+}
+
+/// The actual Enigo Ctrl+C synthesis — MUST run on the main thread (called only via
+/// `send_copy_keystroke`'s `run_on_main_thread`).
+fn send_copy_keystroke_on_main(app: &AppHandle) -> Result<(), String> {
     use enigo::{Direction, Key, Keyboard};
 
     let enigo_state = app
@@ -514,9 +535,12 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
         }
     };
 
-    // Paste replaces the still-highlighted selection (clipboard + Ctrl+V). The
+    // Paste replaces the still-highlighted selection (clipboard + Ctrl+V). Use the
+    // REPLACE-mode paste (no trailing space, no auto-submit Enter — this is a rewrite-in-place,
+    // not a dictation) and schedule it on the MAIN thread: this pipeline runs on the async
+    // runtime, and input synthesis must not run off it (the discipline actions.rs keeps). The
     // paste runs its own clipboard sandwich, so the user's clipboard is restored.
-    let _ = crate::clipboard::paste(transformed.clone(), app.clone());
+    let _ = crate::clipboard::paste_on_main_thread(app, transformed.clone(), true);
 
     let result = TransformApplyResult {
         before: selected,

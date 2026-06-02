@@ -109,7 +109,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 
 	// ── Model catalog / picker / download (slices 01/03) ──
 	[IPC.STT_GET_MODEL_CATALOG]: { kind: "command", cmd: "list_models" },
-	[IPC.STT_LIST_MODELS_WITH_STATE]: { kind: "command", cmd: "list_models" },
+	[IPC.STT_LIST_MODELS_WITH_STATE]: { kind: "command", cmd: "list_models_with_state" },
 	[IPC.STT_MODEL_CATALOG]: { kind: "event", event: "stt:model-catalog" },
 	[IPC.STT_GET_RUNTIME_INFO]: { kind: "command", cmd: "get_runtime_info" },
 	[IPC.STT_RUNTIME_INFO]: { kind: "event", event: "stt:runtime-info" },
@@ -122,7 +122,11 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.STT_DOWNLOAD_CANCEL_QUANT]: { kind: "command", cmd: "download_cancel_quant" },
 	[IPC.STT_DELETE_MODEL_QUANTIZATION]: { kind: "command", cmd: "delete_model_quantization" },
 	[IPC.STT_DELETE_MODEL_CACHE]: { kind: "command", cmd: "delete_model_cache" },
-	[IPC.STT_CANCEL_DOWNLOAD]: { kind: "command", cmd: "cancel_download" },
+	// The renderer's `cancelDownload()` sends NO args. `cancel_download` is Handy's
+	// command (requires `model_id` → the arg-less invoke rejects on deserialize);
+	// the WinSTT arg-less variant is `winstt_cancel_download` (commands/download.rs),
+	// registered in lib.rs to avoid the duplicate-name clash.
+	[IPC.STT_CANCEL_DOWNLOAD]: { kind: "command", cmd: "winstt_cancel_download" },
 	[IPC.STT_MODEL_DOWNLOAD_START]: { kind: "event", event: "stt:model-download-start" },
 	[IPC.STT_MODEL_DOWNLOAD_PROGRESS]: { kind: "event", event: "stt:model-download-progress" },
 	[IPC.STT_MODEL_DOWNLOAD_COMPLETE]: { kind: "event", event: "stt:model-download-complete" },
@@ -164,8 +168,18 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.WINDOW_MINIMIZE]: { kind: "window", op: "minimize" },
 	[IPC.WINDOW_MAXIMIZE]: { kind: "window", op: "maximize" },
 	[IPC.WINDOW_CLOSE]: { kind: "window", op: "hide" },
-	[IPC.WINDOW_CLOSE_SELF]: { kind: "window", op: "hide" },
-	[IPC.WINDOW_SHOW]: { kind: "window", op: "show" },
+	// Self-closing secondary windows (settings / onboarding) route through the
+	// `close_self_window` command (not a bare webview hide) so the Settings modal
+	// can re-enable the main pill as it closes — a renderer-side `.hide()` never
+	// reaches Rust, leaving the pill input-disabled. Resolves its own label from
+	// the calling webview; non-settings callers get a plain hide.
+	[IPC.WINDOW_CLOSE_SELF]: { kind: "command", cmd: "close_self_window" },
+	// WINDOW_SHOW means "show the MAIN window" (Electron handled it in the main
+	// process). The only caller is the tray menu's "Show Window" item — routing it
+	// to the generic `getCurrentWindow().show()` would re-show the *tray-menu*
+	// window (the caller), never the pill. Target the main window explicitly via
+	// the command, which also force-raises it above other apps.
+	[IPC.WINDOW_SHOW]: { kind: "command", cmd: "show_main_window_command" },
 	[IPC.WINDOW_QUIT]: { kind: "window", op: "quit" },
 	[IPC.WINDOW_OPEN_SETTINGS]: { kind: "command", cmd: "open_window", inject: { name: "settings" } },
 	[IPC.MODEL_PICKER_OPEN]: { kind: "command", cmd: "open_window", inject: { name: "model-picker" } },
@@ -343,6 +357,9 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.HISTORY_ROW_ADDED]: { kind: "event", event: "history:row-added" },
 	[IPC.HISTORY_ROW_DELETED]: { kind: "event", event: "history:row-deleted" },
 	[IPC.HISTORY_ROW_TOGGLED]: { kind: "event", event: "history:row-toggled" },
+
+	// ── Transcript quick-actions ──
+	[IPC.TRANSCRIPT_COPY_LAST]: { kind: "command", cmd: "copy_last_transcript" },
 
 	// ── Diagnostics / custom models / about (slice 11) ──
 	[IPC.DIAG_OPEN_LOGS_FOLDER]: { kind: "plugin", plugin: "opener:logs" },
@@ -617,6 +634,23 @@ async function wireDragDrop(): Promise<void> {
 	}
 }
 
+// ── Critical-channel surfacing ──────────────────────────────────────────────
+// Backend failures on these flows used to vanish: a `command` invoke that
+// rejected was swallowed (the `send` arm `void`s the promise; the `invoke` arm's
+// rejection was eaten by ipc-client's `invokeOrDefault` catch). A rejected
+// download / model-state / settings-save then looked identical to "no value" —
+// exactly how the "download stuck at 0% / RAM unknown" bugs shipped unreported.
+//
+// For a `send` (fire-and-forget) on a critical channel we cannot return a
+// rejected promise to the caller, so we at least log the rejection LOUDLY here.
+// For an `invoke` the rejection propagates to ipc-client, which re-surfaces it
+// for critical channels (see CRITICAL_REJECT_CHANNELS / CRITICAL_LOG_ONLY_CHANNELS
+// there).
+const CRITICAL_SEND_CHANNELS: ReadonlySet<string> = new Set([
+	IPC.STT_RELOAD_MODEL, // model swap (sent, not invoked) — a failed swap must not be silent
+	IPC.SETTINGS_SAVE, // persisting settings (sent) — a write failure must surface
+]);
+
 // ── Install ──────────────────────────────────────────────────────────────────
 let installed = false;
 
@@ -639,11 +673,26 @@ export function installElectronTauriAdapter(): void {
 		send(channel: string, ...args: unknown[]): void {
 			const route = ROUTE[channel];
 			if (!route) {
-				console.warn(`[ipc-adapter] unmapped send channel "${channel}" — dropped`);
+				// An unmapped send is a renamed/deleted command (a real wiring bug),
+				// not a benign no-op — surface it as an ERROR. (See the invoke arm.)
+				console.error(`[ipc-adapter] unmapped send channel "${channel}" — dropped`);
 				return;
 			}
 			if (route.kind === "command") {
-				void core.invoke(route.cmd, { ...normalizeArgs(channel, args), ...route.inject });
+				const call = core.invoke(route.cmd, { ...normalizeArgs(channel, args), ...route.inject });
+				if (CRITICAL_SEND_CHANNELS.has(channel)) {
+					// Fire-and-forget, but a rejected critical write must not vanish —
+					// log it loudly so the failed swap / save is diagnosable instead of
+					// looking like a no-op. (Non-critical sends stay quiet/tolerant.)
+					void call.catch((err) => {
+						console.error(
+							`[ipc-adapter] critical send "${channel}" → command "${route.cmd}" failed:`,
+							err
+						);
+					});
+				} else {
+					void call;
+				}
 			} else if (route.kind === "window") {
 				void windowOp(route.op, args);
 			} else if (route.kind === "plugin") {
@@ -655,7 +704,13 @@ export function installElectronTauriAdapter(): void {
 		invoke(channel: string, ...args: unknown[]): Promise<unknown> {
 			const route = ROUTE[channel];
 			if (!route) {
-				console.warn(`[ipc-adapter] unmapped invoke channel "${channel}" — resolving undefined`);
+				// An unmapped invoke channel is NOT "no value" — it's a renamed or
+				// deleted backend command (a real wiring bug, the class behind the
+				// "download 0% / RAM unknown" silent failures). Log it as an ERROR so
+				// it can't hide in warn noise. We still resolve undefined (the caller's
+				// `invokeOrDefault` then supplies its fallback) so a single dead channel
+				// can't crash the renderer; the route-coverage test is the real guard.
+				console.error(`[ipc-adapter] unmapped invoke channel "${channel}" — resolving undefined`);
 				return Promise.resolve(undefined);
 			}
 			if (route.kind === "command") {

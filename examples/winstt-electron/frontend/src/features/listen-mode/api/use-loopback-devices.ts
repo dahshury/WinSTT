@@ -1,3 +1,4 @@
+import { ComputerIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { useSettingsStore } from "@/entities/setting";
@@ -43,8 +44,8 @@ function buildLoopbackOptions(typed: LoopbackDevice[]): {
 	const defaultLabel = defaultDev ? `System Default (${defaultDev.name})` : "System Default";
 	const defaultIndex = defaultDev?.index ?? null;
 	const options: SelectOption[] = [
-		{ id: "default", label: defaultLabel },
-		...typed.map((d) => ({ id: String(d.index), label: d.name })),
+		{ id: "default", label: defaultLabel, icon: ComputerIcon },
+		...typed.map((d) => ({ id: String(d.index), label: d.name, icon: VolumeHighIcon })),
 	];
 	return { options, defaultIndex };
 }

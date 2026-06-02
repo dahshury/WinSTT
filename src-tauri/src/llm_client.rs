@@ -47,6 +47,11 @@ struct ChatCompletionRequest {
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatChoice>,
+    /// Token accounting. OpenAI / OpenRouter / Ollama's OpenAI-compatible
+    /// `/chat/completions` all return this on non-streaming responses; absent
+    /// on servers that omit it (we then report no tokens/s downstream).
+    #[serde(default)]
+    usage: Option<Usage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +62,14 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatMessageResponse {
     content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Usage {
+    /// Generated (output) tokens — the numerator for tokens/s. Ollama maps its
+    /// native `eval_count` onto this field on the OpenAI-compat endpoint.
+    #[serde(default)]
+    completion_tokens: Option<i64>,
 }
 
 /// Build headers for API requests based on provider type
@@ -105,9 +118,11 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
 
-/// Send a chat completion request to an OpenAI-compatible API
-/// Returns Ok(Some(content)) on success, Ok(None) if response has no content,
-/// or Err on actual errors (HTTP, parsing, etc.)
+/// Send a chat completion request to an OpenAI-compatible API.
+/// Returns `Ok((content, completion_tokens))` — `content` is `Some` on success
+/// / `None` when the response has no content; `completion_tokens` is the output
+/// token count when the provider reported `usage` (else `None`). `Err` on
+/// actual errors (HTTP, parsing, etc.).
 pub async fn send_chat_completion(
     provider: &PostProcessProvider,
     api_key: String,
@@ -115,7 +130,7 @@ pub async fn send_chat_completion(
     prompt: String,
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
-) -> Result<Option<String>, String> {
+) -> Result<(Option<String>, Option<i64>), String> {
     send_chat_completion_with_schema(
         provider,
         api_key,
@@ -143,7 +158,7 @@ pub async fn send_chat_completion_with_schema(
     json_schema: Option<Value>,
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
-) -> Result<Option<String>, String> {
+) -> Result<(Option<String>, Option<i64>), String> {
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
@@ -210,10 +225,12 @@ pub async fn send_chat_completion_with_schema(
         .await
         .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
-    Ok(completion
+    let content = completion
         .choices
         .first()
-        .and_then(|choice| choice.message.content.clone()))
+        .and_then(|choice| choice.message.content.clone());
+    let completion_tokens = completion.usage.and_then(|u| u.completion_tokens);
+    Ok((content, completion_tokens))
 }
 
 /// Fetch available models from an OpenAI-compatible API

@@ -20,4 +20,4 @@
  *
  * Set to `false` before shipping a public build.
  */
-export const CONTEXT_PLAYGROUND_ENABLED = true;
+export const CONTEXT_PLAYGROUND_ENABLED = false;

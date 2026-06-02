@@ -3,8 +3,27 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "messages/**"
+      - "scripts/**"
+      - "package.json"
+      - "bun.lock"
+      - "eslint.config.*"
+      - ".prettierrc*"
+      - "tsconfig*"
+      - ".github/workflows/ci.yml"
   pull_request:
-    branches: [main]
+    paths:
+      - "src/**"
+      - "messages/**"
+      - "scripts/**"
+      - "package.json"
+      - "bun.lock"
+      - "eslint.config.*"
+      - ".prettierrc*"
+      - "tsconfig*"
+      - ".github/workflows/ci.yml"
 
 # Cancel superseded runs on the same ref. PR pushes especially benefit
 # — a fresh commit obsoletes the prior pipeline immediately.
@@ -16,14 +35,12 @@ permissions:
   contents: read
 
 jobs:
-  # Frontend: TypeScript typecheck, Biome lint, FSD architecture check,
-  # bun test runner. Runs on windows-latest for parity with the release
-  # build (Electron + native modules behave subtly different on POSIX
-  # runners, and the FSD checker globs case-sensitively on Linux which
-  # has tripped us before).
+  # Renderer (src/) lint + i18n parity + build. The Rust + Tauri port's
+  # renderer lives in src/ — the old jobs targeted the now-deleted Electron
+  # frontend/ + server/ dirs. Backend (src-tauri/) CI is in rust-ci.yml.
   frontend:
     name: Frontend
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,265 +50,36 @@ jobs:
         with:
           bun-version: "1.3.6"
 
-      # Bun's install cache lives under %USERPROFILE%\.bun\install\cache on
-      # Windows. Keyed on bun.lock so a dep bump invalidates cleanly; the
-      # restore-keys prefix lets us reuse cache layers across lockfile
+      # Bun's install cache. Keyed on bun.lock so a dep bump invalidates
+      # cleanly; the restore-keys prefix reuses cache layers across lockfile
       # changes within the same OS image.
       - name: Cache Bun install
         uses: actions/cache@v4
         with:
-          path: ~\.bun\install\cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock', 'frontend/bun.lockb') }}
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
 
       - name: Install dependencies
-        working-directory: frontend
         run: bun install --frozen-lockfile
 
-      - name: Typecheck
-        working-directory: frontend
-        run: bun typecheck
+      - name: Lint (ESLint)
+        run: bun run lint
 
-      - name: Lint (Biome)
-        working-directory: frontend
-        run: bun lint
+      # Prettier check scoped to the renderer. We don't reuse the
+      # `format:check` script because it also runs `cargo fmt` (covered by
+      # rust-ci.yml) which isn't set up on this Bun-only runner.
+      - name: Format check
+        run: bunx prettier --check src
 
-      - name: FSD architecture check
-        working-directory: frontend
-        run: bun run check:fsd
-
-      # i18n key parity across all 20 locale baselines. Default mode
-      # (no --strict) does NOT fail on English-equal values, so newly
-      # seeded community baselines (de/ja/ko/pt/ru/it/pl/tr/sv/cs/bg/he/
-      # uk/vi) that still mirror en.json pass — only missing keys fail.
-      # When translation coverage catches up, swap to `check:i18n:strict`.
+      # i18n key parity across all 20 locale baselines vs messages/en.json.
+      # Default mode (no --strict) only fails on missing keys, not on
+      # English-equal values, so seeded baselines still pass.
       - name: i18n parity check
-        working-directory: frontend
         run: bun run check:i18n
 
-      # Tests. The electron-mock harness has historically failed locally
-      # (see memory/project_relay_test_preexisting_fail.md) but passes on
-      # CI runners. We capture output and gate on a regression floor: if
-      # the pass count drops below the watermark, fail the job. The floor
-      # is intentionally lower than the current green count so transient
-      # mock-harness flakes don't block PRs.
-      - name: Test
-        id: test
-        working-directory: frontend
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          bun test --coverage --coverage-reporter=lcov 2>&1 | Tee-Object -FilePath test-output.txt
-          exit $LASTEXITCODE
-
-      - name: Verify test pass-count floor
-        working-directory: frontend
-        shell: pwsh
-        run: |
-          $content = Get-Content test-output.txt -Raw
-          # Bun's summary line looks like:  "5530 pass"  or  " 5530 pass"
-          $match = [regex]::Match($content, '(\d+)\s+pass')
-          if (-not $match.Success) {
-            Write-Error "Could not parse pass count from bun test output"
-            exit 1
-          }
-          $pass = [int]$match.Groups[1].Value
-          $floor = 5530
-          Write-Host "Passing tests: $pass (floor: $floor)"
-          if ($pass -lt $floor) {
-            Write-Error "Test pass count $pass regressed below floor $floor"
-            exit 1
-          }
-
-      # Coverage regression gate — parses coverage/lcov.info and fails if
-      # overall line or function coverage drops below the floor in
-      # scripts/coverage-gate.ts. Independent of test-pass status so a flaky
-      # test doesn't mask a coverage regression (and vice-versa).
-      - name: Coverage gate
-        if: hashFiles('frontend/coverage/lcov.info') != ''
-        working-directory: frontend
-        run: bun run coverage:gate
-
-      # CRAP analyzer — cyclomatic-complexity × inverse-coverage score per
-      # function. Refreshes coverage internally, but we ran tests above
-      # already; --skip-coverage reuses the lcov we just produced.
-      - name: Run CRAP analyzer
-        if: hashFiles('frontend/scripts/crap.ts') != ''
-        working-directory: frontend
-        continue-on-error: true
-        run: bun run scripts/crap.ts --skip-coverage
-
-      # Visual regression — pixel-diff each renderer window against a
-      # committed PNG baseline (see frontend/e2e/visual-regression.e2e.ts).
-      # First we need the renderer build the `vite preview` webServer hook
-      # serves from; then install the chromium binary Playwright drives.
-      # continue-on-error: true because pixel-diffs are inherently picky
-      # (font hinting, GPU layer composition); we want signal, not bricks.
-      # Diff artifacts are uploaded so reviewers can compare side-by-side.
-      - name: Build renderer (for visual regression)
-        working-directory: frontend
-        continue-on-error: true
+      # TypeScript typecheck + Vite renderer build. `build` runs `tsc &&
+      # vite build`, so it gates type errors and a broken bundle in one step.
+      - name: Build renderer
         run: bun run build
-
-      - name: Install Playwright chromium (for visual regression)
-        working-directory: frontend
-        continue-on-error: true
-        run: bunx playwright install chromium
-
-      - name: Visual regression
-        id: visual_regression
-        working-directory: frontend
-        continue-on-error: true
-        run: bun run test:visual
-
-      - name: Upload visual regression diff artifacts
-        if: always() && steps.visual_regression.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: visual-regression-diff
-          path: |
-            frontend/test-results/**/*.png
-            frontend/playwright-report/
-          if-no-files-found: ignore
-
-      - name: Upload coverage artifact
-        if: always() && hashFiles('frontend/coverage/lcov.info') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-coverage
-          path: frontend/coverage/lcov.info
-          if-no-files-found: ignore
-
-      - name: Upload CRAP report
-        if: always() && hashFiles('frontend/reports/crap.json') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-crap
-          path: frontend/reports/crap.json
-          if-no-files-found: ignore
-
-  # Server: ruff format/lint, mypy --strict, pytest with coverage gate.
-  # ubuntu-latest for speed — server tests use Fake adapters and never
-  # touch Windows audio APIs (PyAudio etc. are only imported by the
-  # infrastructure layer which is omitted from the test surface).
-  # No [cpu]/[gpu] extra needed: ORT is only used by the live transcriber
-  # adapter, also outside the test surface.
-  server:
-    name: Server
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-          cache-dependency-glob: "server/uv.lock"
-
-      # Sync the dev group only — pytest, mypy, ruff, hypothesis. Domain
-      # tests use Fake adapters from tests/fakes/ and the infrastructure
-      # layer is excluded from coverage, so we don't pull torch/ORT here.
-      # onnx-asr is resolved by uv from the dahshury/onnx-asr git URL
-      # (pinned commit in server/pyproject.toml [tool.uv.sources]); no
-      # local checkout needed.
-      - name: Install dependencies
-        run: uv sync --group dev
-
-      - name: Ruff format check
-        run: uv run ruff format --check .
-
-      - name: Ruff lint
-        run: uv run ruff check .
-
-      # mypy --strict is the local gold standard but occasionally regresses
-      # on env-dependent stub differences. continue-on-error keeps CI green
-      # while still surfacing the failure on the run summary; the regression
-      # floor is enforced manually in PR review until we close the gap.
-      - name: Mypy strict
-        continue-on-error: true
-        run: uv run mypy src/ --strict
-
-      # The 100% coverage gate occasionally fails at ~99.5% on untouched
-      # model_registry.py (env-dependent catalog branches — see
-      # memory/project_server_coverage_preexisting_gap.md). Override to
-      # 99% here so the gate still catches real regressions without
-      # blocking on the pre-existing gap. Also emit a JSON coverage
-      # report into reports/crap-coverage.json so the CRAP step below
-      # can reuse it via --skip-coverage instead of re-running pytest.
-      - name: Pytest
-        run: uv run pytest --tb=short --cov-fail-under=99 --cov-report=json:reports/crap-coverage.json
-
-      # CRAP analyzer — Python port of the frontend's scripts/crap.ts.
-      # Cyclomatic-complexity × inverse-coverage score per function.
-      # continue-on-error: informational; the artifact upload below
-      # captures the report regardless of any over-threshold finding.
-      - name: Run CRAP analyzer
-        if: hashFiles('server/scripts/crap.py') != ''
-        continue-on-error: true
-        run: uv run python scripts/crap.py --skip-coverage
-
-      - name: Upload CRAP report
-        if: always() && hashFiles('server/reports/crap.json') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: server-crap
-          path: server/reports/crap.json
-          if-no-files-found: ignore
-
-  # Informational rollup. Never fails; useful as a single required check
-  # in branch-protection rules that aggregates the parallel jobs.
-  summary:
-    name: Summary
-    runs-on: ubuntu-latest
-    needs: [frontend, server]
-    if: always()
-    steps:
-      - name: Download coverage artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-coverage
-          path: artifacts/coverage
-        continue-on-error: true
-
-      - name: Download frontend CRAP artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: frontend-crap
-          path: artifacts/crap
-        continue-on-error: true
-
-      - name: Download server CRAP artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: server-crap
-          path: artifacts/server-crap
-        continue-on-error: true
-
-      - name: Emit summary
-        shell: bash
-        run: |
-          echo "## CI Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- frontend: ${{ needs.frontend.result }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- server: ${{ needs.server.result }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f artifacts/coverage/lcov.info ]; then
-            lines=$(wc -l < artifacts/coverage/lcov.info)
-            echo "- frontend lcov.info: ${lines} lines" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f artifacts/crap/crap.json ]; then
-            echo "- frontend CRAP report: present" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if [ -f artifacts/server-crap/crap.json ]; then
-            echo "- server CRAP report: present" >> "$GITHUB_STEP_SUMMARY"
-          fi

@@ -65,8 +65,11 @@ export function matchesSearchQuery(haystack: string, query: string): boolean {
  * translated for free; a few language-neutral acronyms ("vad", "tts", "stt")
  * are appended literally since their spelled-out labels don't contain them.
  *
- * Note the Model tab also hosts the LLM post-processing and TTS sections, so
- * its keywords pull from those namespaces too.
+ * Tabs follow the transcript's pipeline (Recording → Model → Processing →
+ * Vocabulary → Output) plus cross-cutting tabs (Shortcuts, Appearance, History,
+ * Integrations, About). Many settings persist under the shared `general`/`quality`/
+ * `audio` store slices regardless of which tab renders them, so the keyword
+ * strings pull from whatever namespaces a tab's controls actually use.
  */
 export function useSettingsSearchKeywords(): Record<string, string> {
 	const tg = useTranslations("general");
@@ -83,23 +86,18 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 	const tTts = useTranslations("tts");
 
 	return {
-		general: [
+		recording: [
 			tg("recording"),
-			tg("display"),
-			tg("startup"),
 			tg("recordingMode"),
-			tg("language"),
 			tg("wakeWord"),
-			tg("visualizerType"),
-			tg("overlayMode"),
-			tg("muteSystemAudio"),
-			tg("speakerDiarization"),
-			tg("recordingSound"),
 			tg("loopbackDevice"),
-			tg("showRecordingOverlay"),
-			tg("liveTranscriptionDisplay"),
-			tg("startOnLogin"),
-			tg("sendCrashReports"),
+			ta("inputDevice"),
+			ta("device"),
+			ta("advancedTitle"),
+			ta("vad"),
+			tq("smartEndpoint"),
+			tq("sentencePauses"),
+			"vad ptt push to talk toggle listen wake word microphone endpoint silence",
 		].join(" "),
 		model: [
 			tm("mainModel"),
@@ -109,47 +107,60 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tm("translateToEnglish"),
 			tm("modelUnloadTimeout"),
 			tm("quantization"),
+			tg("speakerDiarization"),
+			"stt model whisper transcription diarization compute",
+		].join(" "),
+		processing: [
 			tLlm("title"),
 			tLlm("provider"),
 			tLlm("providerOllama"),
 			tLlm("providerOpenRouter"),
 			tLlm("subDictationTitle"),
 			tLlm("subTransformTitle"),
-			tTts("title"),
-			tTts("voice"),
-			tTts("speed"),
-			ti("sourceLabel"),
-			ti("sourceLocal"),
-			ti("sourceCloud"),
-			"stt tts",
-		].join(" "),
-		audio: [
-			ta("inputDevice"),
-			ta("outputDevice"),
-			ta("advancedTitle"),
-			ta("vad"),
-			ta("device"),
-			th("configuration"),
-			"vad",
-		].join(" "),
-		quality: [
-			tq("smartEndpoint"),
-			tq("sentencePauses"),
 			tq("formatting"),
 			tg("contextAwarenessSection"),
-			tg("fileTranscription"),
-			tg("pasteBehaviorTitle"),
-			ta("vad"),
-			"vad",
+			"llm cleanup grammar tone transform modifiers context formatting",
 		].join(" "),
-		dictionary: [
+		vocabulary: [
 			tDict("title"),
 			tDict("term"),
 			tDict("replacement"),
 			tDict("autoAddTitle"),
 			tDict("thresholdLabel"),
+			tSnip("title"),
+			tSnip("trigger"),
+			tSnip("expansion"),
+			"dictionary snippets vocabulary replacement expansion",
 		].join(" "),
-		snippets: [tSnip("title"), tSnip("trigger"), tSnip("expansion")].join(" "),
+		output: [
+			tg("pasteBehaviorTitle"),
+			tg("fileTranscription"),
+			tg("recordingSound"),
+			tg("muteSystemAudio"),
+			ta("outputDevice"),
+			tTts("title"),
+			tTts("voice"),
+			tTts("speed"),
+			"auto submit paste output device speaker text to speech tts srt",
+		].join(" "),
+		shortcuts: [
+			th("configuration"),
+			th("pushToTalkKey"),
+			th("repasteKey"),
+			th("shortcutsLegendLabel"),
+			tTts("hotkeyLabel"),
+			tLlm("subTransformTitle"),
+			"hotkey shortcut keybinding combo",
+		].join(" "),
+		appearance: [
+			tg("display"),
+			tg("language"),
+			tg("visualizerType"),
+			tg("overlayMode"),
+			tg("showRecordingOverlay"),
+			tg("liveTranscriptionDisplay"),
+			"theme visualizer overlay appearance display language live transcription",
+		].join(" "),
 		history: [
 			tHist("summaryTitle"),
 			tHist("heatmapTitle"),
@@ -175,6 +186,9 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 			tAbout("noticesTitle"),
 			tAbout("updatesTitle"),
 			tAbout("receivePrereleaseUpdates"),
+			tg("startOnLogin"),
+			tg("sendCrashReports"),
+			"startup login crash reports reset defaults updates version license",
 		].join(" "),
 	};
 }

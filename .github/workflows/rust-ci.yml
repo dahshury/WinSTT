@@ -1,0 +1,108 @@
+name: Rust CI
+
+# Real CI for the Rust + Tauri port. The renderer lives in src/ and the
+# backend crate in src-tauri/ — the old ci.yml targeted the now-deleted
+# Electron frontend/ + server/ dirs, so the ~58k-LOC crate and its 62
+# Rust test files never ran. This gates fmt + clippy + tests on the
+# shipped code so a broken Rust commit can't merge green.
+#
+# Path-gated on src-tauri/** (the crate) + this workflow file so renderer-
+# only PRs don't pay the (slow, link-dominated) cargo build.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-ci.yml"
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-ci.yml"
+
+# Cancel superseded runs on the same ref — a fresh push obsoletes the
+# prior pipeline immediately.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # windows-latest mirrors the shipped target: the crate pulls in DirectML
+  # / Windows-only audio + webview deps (the `cfg(windows)` transcribe-rs
+  # pin, ort EPs, enigo), so POSIX runners can't compile the real backend.
+  rust:
+    name: Rust (fmt / clippy / test)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Cache the src-tauri target dir keyed on the crate. The crate's link
+      # step dominates rebuild time, so a warm target is a large speedup.
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      # bun for any renderer setup tauri codegen leans on. We don't run the
+      # frontend gate here (that's the renderer's own workflow); this just
+      # makes `bun` available if a build invokes it via beforeBuildCommand.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.6"
+
+      - name: Format check
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
+
+  # Optional smoke build of the shipped crate. Path-gated identically and
+  # allowed to fail (the full tauri link is heavy + occasionally flaky on
+  # hosted runners); it surfaces a broken release build without bricking
+  # PRs on infra hiccups. Promote to a hard gate once it's reliably green.
+  build:
+    name: Build (no-bundle, optional)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.6"
+
+      - name: Install renderer dependencies
+        run: bun install --frozen-lockfile
+
+      # `tauri build --no-bundle` compiles the renderer + the release crate
+      # without producing an installer (no NSIS/code-signing on CI). This is
+      # the cheapest way to prove the shipped binary links.
+      - name: Tauri build (no bundle)
+        run: bun run tauri build --no-bundle
