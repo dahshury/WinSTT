@@ -1,63 +1,62 @@
-import ar from "../../../messages/ar.json";
-import bg from "../../../messages/bg.json";
-import cs from "../../../messages/cs.json";
-import de from "../../../messages/de.json";
-import en from "../../../messages/en.json";
-import es from "../../../messages/es.json";
-import fr from "../../../messages/fr.json";
-import he from "../../../messages/he.json";
-import hi from "../../../messages/hi.json";
-import it from "../../../messages/it.json";
-import ja from "../../../messages/ja.json";
-import ko from "../../../messages/ko.json";
-import pl from "../../../messages/pl.json";
-import pt from "../../../messages/pt.json";
-import ru from "../../../messages/ru.json";
-import sv from "../../../messages/sv.json";
-import tr from "../../../messages/tr.json";
-import uk from "../../../messages/uk.json";
-import vi from "../../../messages/vi.json";
-import zh from "../../../messages/zh.json";
 import type { Locale } from "./config";
+import { DEFAULT_LOCALE } from "./config";
 
-type Messages = typeof en;
-
-// `messages` is typed as Record<Locale, Messages> WITH a deferred per-locale
-// cast: non-en bundles are allowed to lag in key coverage (use-intl falls back
-// to en at runtime); scripts/verify-i18n.ts is the runtime/CI parity check.
+// Per-locale lazy loading.
 //
-// `en` stays un-cast so it remains the type-checked source of truth (it IS
-// `Messages`). Every other bundle goes through the single `asMessages` helper —
-// centralising the "shape divergence allowed" decision in one auditable place.
-// A missing bundle (new locale added without its JSON) is still a compile error;
-// English adding a key before translators catch up is not.
+// Previously this module statically `import`ed all 20 `messages/*.json`
+// bundles (~1.5 MB) and exposed them as one synchronous map. Because every
+// the reference/Tauri window's entry pulls in `IntlProvider`, that static map made
+// *each* window eagerly bundle + modulepreload all 20 locales — the single
+// largest chunk in the build (~1.37 MB) — even though a window only ever shows
+// ONE locale.
 //
-// Newly seeded baselines (de/ja/ko/pt/ru/it/pl/tr/sv/cs/bg/he/uk/vi) are
-// English copies and need community translation passes — the parity gate
-// passes today, the `--strict` mode does NOT, and that's intentional: it
-// flags the residual translation work so a future strict CI flip is one
-// configuration line, not a separate sweep.
-const asMessages = (bundle: unknown): Messages => bundle as Messages;
+// `import.meta.glob` (lazy / non-eager) hands back a map of dynamic-import
+// loaders, so Rollup emits one code-split chunk per locale JSON and the active
+// window only fetches the locale it actually renders.
+// Vite replaces the `import.meta.glob(...)` call below with the generated
+// per-locale loader map at transform time (the AST replacement happens
+// regardless of the surrounding try/catch). The guard only matters for
+// non-Vite runtimes such as `bun test`, where `import.meta.glob` is undefined
+// and the call would throw — there we fall back to an empty map so importing
+// this module never crashes.
+const loaders: Record<string, () => Promise<{ default: Record<string, unknown> }>> =
+	(() => {
+		try {
+			return import.meta.glob<{ default: Record<string, unknown> }>(
+				"../../../messages/*.json"
+			);
+		} catch {
+			return {};
+		}
+	})();
 
-export const messages: Record<Locale, Messages> = {
-	en,
-	ar: asMessages(ar),
-	bg: asMessages(bg),
-	cs: asMessages(cs),
-	de: asMessages(de),
-	es: asMessages(es),
-	fr: asMessages(fr),
-	he: asMessages(he),
-	hi: asMessages(hi),
-	it: asMessages(it),
-	ja: asMessages(ja),
-	ko: asMessages(ko),
-	pl: asMessages(pl),
-	pt: asMessages(pt),
-	ru: asMessages(ru),
-	sv: asMessages(sv),
-	tr: asMessages(tr),
-	uk: asMessages(uk),
-	vi: asMessages(vi),
-	zh: asMessages(zh),
-};
+const localePath = (locale: string): string => `../../../messages/${locale}.json`;
+
+// Locales that physically have a `messages/<code>.json` bundle on disk. Derived
+// from the glob so it can never drift from the actual files. `config.ts`'s
+// `LOCALES` is the *advertised* list (with its picker labels etc.); this is the
+// set we can actually load. They are kept in parity by `bun check:i18n`.
+export const SUPPORTED_LOCALES: readonly string[] = Object.keys(loaders)
+	.map((path) => path.replace(/^.*\/(.+)\.json$/, "$1"))
+	.sort();
+
+/**
+ * Lazily load the message bundle for `locale`, falling back to the default
+ * locale ({@link DEFAULT_LOCALE}) when the requested locale has no bundle.
+ *
+ * Each call resolves to the parsed JSON object. Per-locale bundles are allowed
+ * to lag `en` in key coverage — use-intl falls back to `en` at runtime, and
+ * `bun check:i18n` is the parity gate.
+ */
+export async function loadMessages(locale: string): Promise<Record<string, unknown>> {
+	const loader = loaders[localePath(locale)] ?? loaders[localePath(DEFAULT_LOCALE)];
+	if (!loader) {
+		// Should be unreachable: en.json always exists. Return an empty bundle so
+		// the provider can still render (use-intl tolerates missing messages).
+		return {};
+	}
+	const mod = await loader();
+	return mod.default;
+}
+
+export type { Locale };

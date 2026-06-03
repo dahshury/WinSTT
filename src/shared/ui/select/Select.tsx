@@ -166,7 +166,7 @@ export function Select({ options, groups, value, onChange, "aria-label": ariaLab
 				<SurfaceProvider value={popupLevel}>
 					<Menu.Positioner className="z-popover outline-none" collisionPadding={8} sideOffset={4}>
 						<Menu.Popup
-							className={`select-popup min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 transition-[transform,opacity] duration-150 ease-out [max-height:min(15rem,var(--available-height))] [max-width:var(--available-width)]`}
+							className={`select-popup min-w-[var(--anchor-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(15rem,var(--available-height))] [max-width:var(--available-width)]`}
 						>
 							<Menu.RadioGroup
 								className="relative"

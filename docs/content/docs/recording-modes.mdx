@@ -1,0 +1,184 @@
+---
+title: Recording Modes
+description: Push-to-Talk, Toggle, Listen, and Wake Word — the four ways to start a recording, what controls each, and the shared pipeline they all feed.
+---
+
+A recording mode decides **what starts a recording** — a held key, a tapped key, your speakers, or a spoken keyword. Whatever the trigger, every mode runs the same transcription pipeline and pastes to the same place.
+
+<Screenshot src="sec-general-recording" aspect="4 / 1" focus="top" alt="The Recording section of the General tab: the Push-to-Talk / Toggle / Listen / Wake Word switcher above the volume-ducking slider and recording-sound library." chrome="card" caption="Pick the trigger strategy under General → Recording. The controls below the switcher change to match the selected mode." />
+
+## One pipeline, four triggers
+
+All four modes share a single `RecordingPipeline` and **one paste endpoint** — they differ only in *who* fires the start. Once recording begins, the audio is buffered, segmented, transcribed, optionally cleaned by the LLM pass, and pasted at your cursor through the exact same code path. Switching modes never changes the transcription quality, only the way you kick it off.
+
+Set the mode in [General Settings](/docs/settings/general) via the **Recording Mode** picker.
+
+<SettingRow label="Recording Mode" settingKey="general.recordingMode" default="ptt">
+  Selects the trigger strategy: **Push-to-Talk**, **Toggle**, **Listen**, or **Wake
+  Word**. The mode only governs the start (and, for some modes, the stop) trigger — the
+  downstream transcription and paste are identical across all four.
+</SettingRow>
+
+<BentoGrid cols={2}>
+  <FeatureCard icon="hotkey" title="Push-to-Talk">
+    <ModeBadge mode="ptt" /> Hold the hotkey to record, release to transcribe. One press =
+    one utterance. Fast and deterministic — duration is exactly how long you hold the key.
+  </FeatureCard>
+  <FeatureCard icon="mic" title="Toggle">
+    <ModeBadge mode="toggle" /> Tap once to open a continuous session that auto-stops on
+    silence and auto-restarts on speech. Tap again to close it.
+  </FeatureCard>
+  <FeatureCard icon="waveform" title="Listen">
+    <ModeBadge mode="listen" /> No hotkey — passively captures your **speakers** over a
+    loopback device and streams a rolling, optionally diarized subtitle feed.
+  </FeatureCard>
+  <FeatureCard icon="wakeword" title="Wake Word">
+    <ModeBadge mode="wakeword" /> No hotkey — listens for a spoken keyword (Alexa, Computer,
+    Jarvis…) and starts recording the moment it hears it.
+  </FeatureCard>
+</BentoGrid>
+
+## Push-to-Talk
+
+<ModeBadge mode="ptt" />
+
+The default mode, and the most predictable. **Hold** the hotkey, speak, **release** to stop — the recording lasts exactly as long as you hold the key. There's no silence detection on the stop side, so a release triggers an immediate, fast finalize.
+
+<Video src="ptt" chrome="card" alt="Holding the push-to-talk hotkey starts recording; releasing it transcribes and pastes the result." caption="Hold to record; release to transcribe." />
+
+One press authorizes exactly one recording: the press signals intent for a single `recording_start`, then clears. Push-to-Talk is also the only mode that **bypasses the speech-onset debounce** (see below) — because you've already declared intent by holding the key, there's no noise to gate.
+
+<SettingRow label="Push-to-Talk Hotkey" settingKey="hotkey.pushToTalkKey" default="LCtrl+LMeta">
+  The key (or combo) you hold to record. Captured via the global keyboard hook, so it
+  works in any focused app. Change it on the [Hotkeys](/docs/settings/hotkey) page; it
+  updates at runtime without a restart.
+</SettingRow>
+
+**Best for:** quick bursts, voice commands, and noisy rooms where automatic voice detection would false-trigger.
+
+## Toggle
+
+<ModeBadge mode="toggle" />
+
+Tap the hotkey once to open a **continuous session** and tap again to close it — between those two taps, WinSTT records utterance after utterance hands-free. After you stop talking, it finalizes the turn on silence; when you start again, it opens the next recording automatically.
+
+<Video src="toggle" chrome="card" alt="Tapping the hotkey once opens a hands-free session that records utterance after utterance; tapping again closes it." caption="Tap once to start a hands-free session; tap again to stop." />
+
+The recording pill stays up for the whole session, not just the first sentence. Silence-based finalization uses the shared post-speech silence timing (and Smart Endpoint, when enabled) to decide when each turn ends.
+
+<SettingRow label="Manual Toggle Stop" settingKey="general.manualToggleStop" default="false">
+  When on, **disables** silence-based endpoint detection so the session records
+  continuously from the first tap to the second — nothing stops a turn but you. Good for
+  long-form dictation with long natural pauses; with it off, each pause ends a turn.
+</SettingRow>
+
+**Best for:** hands-free long-form dictation, dictating with natural pauses, or capturing a stretch of speech without holding a key.
+
+## Listen
+
+<ModeBadge mode="listen" />
+
+Listen mode captures **system audio** — what comes out of your speakers — over a WASAPI loopback device, then streams a rolling, continuously-transcribed subtitle feed. There's no hotkey; it runs as soon as the mode is active and a loopback device is selected. It uses the **realtime model only**, and caps each utterance at 15 seconds so the feed never stalls on a long monologue.
+
+<Video src="listen" chrome="card" alt="System audio from the speakers streams into a rolling, speaker-labeled subtitle feed in real time." caption="Transcribes system audio into live, diarized subtitles." />
+
+<Screenshot src="settings-general-listen" alt="The General tab in Listen mode, showing the loopback device picker and the Speaker Diarization toggle that replace the microphone controls." label="Settings — General (Listen)" chrome="card" caption="Listen mode swaps the microphone controls for a loopback device picker and a diarization toggle." />
+
+<SettingRow label="Loopback Device" settingKey="general.loopbackDeviceIndex" default="null" startupOnly>
+  The WASAPI loopback (system-audio) device to capture from. You need a loopback source
+  available — many sound cards expose one, or install a virtual cable such as VB-Audio
+  Virtual Cable. The standard microphone **Input Device** picker is hidden in this mode.
+</SettingRow>
+
+<SettingRow label="Speaker Diarization" settingKey="general.speakerDiarization" default="false">
+  Labels each line of the subtitle feed with a speaker (Speaker 1, Speaker 2…). Toggles
+  **at runtime** — no restart, and it even applies to an in-flight session.
+</SettingRow>
+
+<Callout type="warn" title="A loopback device is required">
+  Listen mode can't start without a loopback source. If none is available, the device
+  picker is empty and the mode has nothing to capture — pick a real microphone mode or
+  install a virtual cable first. The loopback device is read at startup, so changing it
+  needs a server restart.
+</Callout>
+
+**Best for:** transcribing meetings, calls, videos, and anything else playing through your speakers.
+
+## Wake Word
+
+<ModeBadge mode="wakeword" />
+
+Wake Word mode listens continuously for a spoken keyword and starts recording the instant it hears one — fully hands-free, no hotkey. After detection it records a turn and ends it on silence (the same way Toggle does), then goes back to waiting for the keyword. WinSTT picks the detection backend automatically (a composite of **Porcupine** and **openWakeWord**) based on the chosen keyword.
+
+<Video src="wakeword" chrome="card" alt="Speaking the wake-word arms a recording with no hotkey; the turn ends on silence and the detector returns to listening." caption="Say the keyword to arm recording — no hotkey." />
+
+<Screenshot src="settings-general-wakeword" alt="The General tab in Wake Word mode, showing the wake-word selector, sensitivity slider, and detection-timeout controls." label="Settings — General (Wake Word)" chrome="card" caption="Wake Word mode exposes the keyword, sensitivity, and a post-trigger timeout." />
+
+<SettingRow label="Wake Word" settingKey="general.wakeWord" default="alexa">
+  The keyword that arms a recording — for example **Alexa**, **Computer**, **Jarvis**, or
+  **Hey Google**. The right backend (Porcupine or openWakeWord) is selected automatically
+  for the chosen word.
+</SettingRow>
+
+<SettingRow label="Wake Word Sensitivity" settingKey="general.wakeWordSensitivity" default="0.6" startupOnly>
+  How eager the detector is, from 0 to 1. Higher catches the keyword more reliably but
+  raises false triggers; lower is stricter. Each engine clamps the value internally.
+</SettingRow>
+
+<SettingRow label="Wake Word Timeout" settingKey="general.wakeWordTimeout" default="5" startupOnly>
+  Seconds (1–30) the recording stays armed after the keyword fires before it gives up and
+  returns to listening. This is independent of the per-utterance silence timer.
+</SettingRow>
+
+<Callout type="warn" title="Wake-word settings apply at startup">
+  The keyword, its sensitivity, and the timeout are read when the detection engine loads.
+  Changing any of them needs a server restart to take effect.
+</Callout>
+
+**Best for:** fully hands-free, always-on voice activation across the room.
+
+## The speech-onset debounce gate
+
+Toggle, Listen, and Wake Word all start a turn from *audio*, so a cough or a door slam could pop the pill and wake the model for nothing. To prevent that, those modes gate the start behind a short **speech-onset debounce** — the pipeline waits for a few consecutive speech chunks (default **3**) before it commits to a recording.
+
+**Push-to-Talk skips this gate entirely.** Holding the key is an explicit signal of intent, so there's no noise to filter out — the recording starts the instant you press.
+
+## Silence timing per mode
+
+The post-speech silence window governs how long a pause must run before a turn ends — but it only matters for the modes that stop on silence.
+
+<ModelTable
+  head={["Mode", "Silence timing role"]}
+  rows={[
+    ["Push-to-Talk", "Unused. Releasing the key triggers an immediate, fast stop."],
+    ["Toggle", "Active — ends each turn after the silence window. Disabled when Manual Toggle Stop is on."],
+    ["Listen", "Active — segments the continuous loopback feed into turns."],
+    ["Wake Word", "Active after the keyword fires — ends the turn the same way Toggle does."],
+  ]}
+  caption="Tune the window itself in Audio settings; when Smart Endpoint is on, its classifier supersedes the fixed timers."
+/>
+
+Lower silence values make WinSTT react faster to pauses but can clip speech with natural breaks; higher values tolerate longer pauses at the cost of a later finalize. When [Smart Endpoint](/docs/settings/quality) is enabled, a sentence classifier decides when a turn is complete instead of the fixed timers.
+
+<Callout type="info" title="Re-paste the last transcription">
+  In any mode, the re-paste hotkey (default <Combo keys="LCtrl+LShift+V" />) drops the most
+  recent transcription at your cursor again — handy when focus moved between dictating and
+  pasting. It's a dedicated global shortcut and works at runtime.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Hotkeys" href="/docs/settings/hotkey">
+    Set the push-to-talk and toggle keys, plus the re-paste shortcut.
+  </Card>
+  <Card title="Audio settings" href="/docs/settings/audio">
+    Input device, microphone release policy, and the post-speech silence window.
+  </Card>
+  <Card title="Smart Endpoint & quality" href="/docs/settings/quality">
+    Let a classifier decide when a turn ends instead of a fixed silence timer.
+  </Card>
+  <Card title="General settings" href="/docs/settings/general">
+    The Recording Mode picker and every mode-specific control in one place.
+  </Card>
+</Cards>

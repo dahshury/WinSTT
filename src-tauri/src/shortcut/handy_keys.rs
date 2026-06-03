@@ -139,7 +139,20 @@ impl HandyKeysState {
                     if is_pressed {
                         suppress_start_menu_for_win_combo(hotkey_string);
                     }
-                    handle_shortcut_event(&app, binding_id, hotkey_string, is_pressed);
+                    // Dispatch inside catch_unwind: this loop IS the global-hotkey pump. If
+                    // `handle_shortcut_event` (which synchronously drives tray/overlay/coordinator
+                    // dispatch) ever panicked, the panic would unwind out of this thread and the
+                    // hotkey would go permanently dead — no key press would ever be seen again
+                    // until the app restarts. Containing it here keeps the pump alive across a
+                    // transient fault.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        handle_shortcut_event(&app, binding_id, hotkey_string, is_pressed);
+                    }));
+                    if let Err(e) = result {
+                        error!(
+                            "handy-keys recovered from a panic dispatching '{binding_id}': {e:?}"
+                        );
+                    }
                 }
             }
 
@@ -518,16 +531,43 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
         if id == "cancel" {
             continue;
         }
+        // Skip the WinSTT-tree hotkeys (transforms / read_aloud / repaste) — they are
+        // armed via `shortcut::reconcile_winstt_hotkeys` from the WinSTT settings tree
+        // (their raw key names, e.g. `LMeta+LShift+E`, aren't parseable here without the
+        // `winstt_accel_to_handy` translation that `change_binding` applies).
+        if crate::shortcut::is_winstt_tree_binding(&id) {
+            continue;
+        }
         // Skip post-processing shortcut when the feature is disabled
         if id == "transcribe_with_post_process" && !user_settings.post_process_enabled {
             continue;
         }
 
-        let binding = user_settings
+        let mut binding = user_settings
             .bindings
             .get(&id)
             .cloned()
             .unwrap_or(default_binding);
+
+        // The PTT/transcribe hotkey's SOURCE OF TRUTH is the WinSTT settings store
+        // (`hotkey.pushToTalkKey`) — that's what the renderer's `usePushToTalk` edits and
+        // registers. The Handy-side `bindings["transcribe"]` is a SECOND store that can lag or
+        // diverge from it. Registering the (possibly stale) Handy copy here meant the WRONG key
+        // — or the default `ctrl+space` — was the only thing armed at startup, and the user's
+        // real hotkey did NOTHING until the renderer re-registered it on mount. That is the
+        // "hotkey is dead out of the box but works after a hot-reload" bug. Arm the WinSTT key
+        // DIRECTLY at init so the correct hotkey is live from the first instant, independent of
+        // renderer mount timing (handy-keys keys by binding id, so the renderer's later
+        // change_binding still rebinds cleanly with no leak).
+        if id == "transcribe" {
+            let ptt = crate::winstt::commands::settings::read_settings_raw(app)
+                .hotkey
+                .push_to_talk_key;
+            let ptt = crate::winstt::commands::hotkey::winstt_accel_to_handy(ptt.trim());
+            if !ptt.trim().is_empty() {
+                binding.current_binding = ptt;
+            }
+        }
 
         if let Err(e) = state.register(&binding) {
             error!(

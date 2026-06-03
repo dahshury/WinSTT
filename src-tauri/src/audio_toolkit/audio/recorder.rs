@@ -25,6 +25,24 @@ enum Cmd {
     Shutdown,
 }
 
+/// Per-frame DC-immune RMS (AC energy of one resampled frame). Used ONLY to gate the
+/// surfaced speech signal (`speech_cb`), never the recording buffer itself.
+fn frame_ac_energy(frame: &[f32]) -> f32 {
+    let n = frame.len() as f32;
+    if n == 0.0 {
+        return 0.0;
+    }
+    let mean = frame.iter().copied().sum::<f32>() / n;
+    (frame.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / n).sqrt()
+}
+
+/// Frame AC-energy floor below which a Silero "speech" verdict is treated as a false
+/// positive for the UI signal. The Silero VAD (threshold 0.3) reports speech on
+/// near-silent frames on some mics, which would flash the overlay pill on silence; this
+/// floor sits above the silence/room-tone band and below voiced-speech frame energy.
+/// Mirrors the batch silence gate's intent (managers::transcription::SILENCE_AC_FLOOR).
+const SPEECH_SIGNAL_AC_FLOOR: f32 = 0.005;
+
 enum AudioChunk {
     Samples(Vec<f32>),
     EndOfStream,
@@ -38,7 +56,16 @@ pub struct AudioRecorder {
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     /// Raw-16k mono tap fired on EVERY resampled frame (independent of `recording`), so the
     /// wakeword detector can listen while idle. None = no-op (free when no wakeword armed).
+    #[expect(
+        clippy::type_complexity,
+        reason = "boxed audio-frame callback; factoring into a type alias would not aid clarity"
+    )]
     chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
+    /// Fired on SMOOTHED-VAD speech-state TRANSITIONS while recording: `true` at speech
+    /// onset, `false` at offset (after the hangover). Lets the app surface the real
+    /// Silero/SmoothedVad boundaries (e.g. as `stt:vad-start` / `stt:vad-stop`) instead
+    /// of faking them from the recording window. None = no-op.
+    speech_cb: Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>,
     /// Live snapshot MIRROR of `processed_samples` (the in-flight 16 kHz recording buffer),
     /// kept in sync TAIL-ONLY by run_consumer so the realtime worker can read a growing window
     /// of the current recording WITHOUT touching the wakeword `chunk_cb` slot (single, taken) or
@@ -63,6 +90,7 @@ impl AudioRecorder {
             vad: None,
             level_cb: None,
             chunk_cb: None,
+            speech_cb: None,
             live_audio: Arc::new(Mutex::new(Vec::new())),
             realtime_enabled: Arc::new(AtomicBool::new(false)),
         })
@@ -97,6 +125,17 @@ impl AudioRecorder {
         self
     }
 
+    /// Register a callback fired on SMOOTHED-VAD speech-state transitions (`true` =
+    /// onset, `false` = offset) while recording. Used to surface real VAD boundaries
+    /// to the UI instead of faking them from the recording window.
+    pub fn with_speech_callback<F>(mut self, cb: F) -> Self
+    where
+        F: Fn(bool) + Send + Sync + 'static,
+    {
+        self.speech_cb = Some(Arc::new(cb));
+        self
+    }
+
     pub fn open(&mut self, device: Option<Device>) -> Result<(), Box<dyn std::error::Error>> {
         if self.worker_handle.is_some() {
             return Ok(()); // already open
@@ -119,6 +158,7 @@ impl AudioRecorder {
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
         let chunk_cb = self.chunk_cb.clone();
+        let speech_cb = self.speech_cb.clone();
         // Clone the live-audio mirror handle so the realtime worker (via snapshot_recorded)
         // and run_consumer share the SAME buffer.
         let live_audio = Some(self.live_audio.clone());
@@ -207,6 +247,7 @@ impl AudioRecorder {
                         cmd_rx,
                         level_cb,
                         chunk_cb,
+                        speech_cb,
                         live_audio,
                         realtime_enabled,
                         stop_flag,
@@ -238,10 +279,9 @@ impl AudioRecorder {
             }
             Err(recv_error) => {
                 let _ = worker.join();
-                Err(Box::new(Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to initialize microphone worker: {recv_error}"),
-                )))
+                Err(Box::new(Error::other(format!(
+                    "Failed to initialize microphone worker: {recv_error}"
+                ))))
             }
         }
     }
@@ -411,23 +451,100 @@ impl AudioRecorder {
     }
 }
 
+/// Typed taxonomy for the failure modes the recorder can surface while opening a
+/// cpal input stream. Previously these distinctions only existed as Display
+/// substrings parsed back out at the call sites; this enum makes the taxonomy a
+/// real type so callers can `matches!` on a variant instead of string-sniffing.
+///
+/// Note: cpal's backend errors are stringly-typed and platform-specific (WASAPI
+/// HRESULTs, CoreAudio opaque errors, ALSA messages), so the *boundary* where a
+/// raw backend message becomes a typed variant is `classify`. Everything above
+/// that boundary works in terms of variants, not substrings.
+#[derive(Debug, thiserror::Error)]
+pub enum AudioDeviceError {
+    /// The OS refused microphone access (Windows mic-privacy off, WASAPI
+    /// `0x80070005`, or a generic "permission denied" from the backend).
+    #[error("microphone access denied: {0}")]
+    MicrophoneAccessDenied(String),
+
+    /// No usable input device exists (cpal returned none, or the CoreAudio
+    /// preferred-config probe failed because there is nothing to open).
+    #[error("no input device: {0}")]
+    NoInputDevice(String),
+
+    /// Building / starting the cpal input stream failed for some other reason.
+    #[error("failed to build input stream: {0}")]
+    BuildStream(String),
+}
+
+impl AudioDeviceError {
+    /// Classify a raw backend error message into a typed variant. This is the
+    /// single point where stringly-typed cpal/backend errors are interpreted;
+    /// the recorder's worker thread can only hand back a `String`, so the parse
+    /// has to live somewhere — keep it here, not scattered across call sites.
+    pub fn classify(error_message: &str) -> Self {
+        let normalized = error_message.to_lowercase();
+        if normalized.contains("access is denied")
+            || normalized.contains("permission denied")
+            || normalized.contains("0x80070005")
+        {
+            Self::MicrophoneAccessDenied(error_message.to_string())
+        } else if normalized.contains("no input device found")
+            || (normalized.contains("failed to fetch preferred config")
+                && normalized.contains("coreaudio"))
+        {
+            Self::NoInputDevice(error_message.to_string())
+        } else {
+            Self::BuildStream(error_message.to_string())
+        }
+    }
+}
+
 pub fn is_microphone_access_denied(error_message: &str) -> bool {
-    let normalized = error_message.to_lowercase();
-    normalized.contains("access is denied")
-        || normalized.contains("permission denied")
-        || normalized.contains("0x80070005")
+    matches!(
+        AudioDeviceError::classify(error_message),
+        AudioDeviceError::MicrophoneAccessDenied(_)
+    )
 }
 
 pub fn is_no_input_device_error(error_message: &str) -> bool {
-    let normalized = error_message.to_lowercase();
-    normalized.contains("no input device found")
-        || (normalized.contains("failed to fetch preferred config")
-            && normalized.contains("coreaudio"))
+    matches!(
+        AudioDeviceError::classify(error_message),
+        AudioDeviceError::NoInputDevice(_)
+    )
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "run_consumer is defined below the tests; keeping it in place avoids a risky reorder"
+)]
 mod tests {
-    use super::{is_microphone_access_denied, is_no_input_device_error};
+    use super::{is_microphone_access_denied, is_no_input_device_error, AudioDeviceError};
+
+    #[test]
+    fn classify_routes_access_denied_to_typed_variant() {
+        assert!(matches!(
+            AudioDeviceError::classify("Access is denied"),
+            AudioDeviceError::MicrophoneAccessDenied(_)
+        ));
+    }
+
+    #[test]
+    fn classify_routes_no_input_device_to_typed_variant() {
+        assert!(matches!(
+            AudioDeviceError::classify("No input device found"),
+            AudioDeviceError::NoInputDevice(_)
+        ));
+    }
+
+    #[test]
+    fn classify_routes_unrecognized_to_build_stream() {
+        assert!(matches!(
+            AudioDeviceError::classify("Failed to build input stream: device disconnected"),
+            AudioDeviceError::BuildStream(_)
+        ));
+    }
 
     #[test]
     fn detects_access_is_denied() {
@@ -468,6 +585,14 @@ mod tests {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "audio consumer wires together the cpal stream, VAD, callbacks, and shared buffers; grouping into a struct would not aid clarity"
+)]
+#[expect(
+    clippy::type_complexity,
+    reason = "boxed audio callbacks; factoring into type aliases would not aid clarity"
+)]
 fn run_consumer(
     in_sample_rate: u32,
     vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
@@ -475,6 +600,8 @@ fn run_consumer(
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     chunk_cb: Option<Arc<dyn Fn(&[f32]) + Send + Sync + 'static>>,
+    // Smoothed-VAD speech-transition callback (true=onset, false=offset). `None` = no-op.
+    speech_cb: Option<Arc<dyn Fn(bool) + Send + Sync + 'static>>,
     // Live snapshot mirror of `processed_samples` for the realtime worker (tail-synced below).
     // `None` makes the sync a no-op (free); the recorder always passes `Some(...)`.
     live_audio: Option<Arc<Mutex<Vec<f32>>>>,
@@ -491,6 +618,9 @@ fn run_consumer(
 
     let mut processed_samples = Vec::<f32>::new();
     let mut recording = false;
+    // Last surfaced SMOOTHED-VAD speech state, so we fire `speech_cb` only on
+    // transitions (not every frame). Reset to `false` on each Cmd::Start.
+    let mut vad_speaking = false;
 
     // ---------- spectrum visualisation setup ---------------------------- //
     const BUCKETS: usize = 16;
@@ -503,33 +633,64 @@ fn run_consumer(
         4000.0, // vocal_max_hz
     );
 
+    // Recover a poisoned VAD lock instead of propagating the panic: a panic inside
+    // the Silero ONNX `push_frame` would otherwise poison this mutex and silently
+    // kill the recorder worker forever. Mirrors the transcription manager's
+    // `lock_engine` poison discipline (warn + carry on with the inner guard).
+    fn lock_vad<'a>(
+        vad_arc: &'a Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>,
+    ) -> std::sync::MutexGuard<'a, Box<dyn vad::VoiceActivityDetector>> {
+        vad_arc.lock().unwrap_or_else(|p| {
+            log::warn!("VAD lock poisoned; recovering inner guard");
+            p.into_inner()
+        })
+    }
+
+    /// Returns whether this frame was classified as SPEECH by the (smoothed) VAD —
+    /// `true` when the frame's samples were kept (speech / hangover), `false` for
+    /// dropped noise or while not recording. The caller uses the return value to
+    /// surface speech-state transitions (see `vad_speaking` / `speech_cb`). With no
+    /// VAD configured every recorded frame counts as speech.
     fn handle_frame(
         samples: &[f32],
         recording: bool,
         vad: &Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
         out_buf: &mut Vec<f32>,
-    ) {
+    ) -> bool {
         if !recording {
-            return;
+            return false;
         }
 
         if let Some(vad_arc) = vad {
-            let mut det = vad_arc.lock().unwrap();
-            match det.push_frame(samples).unwrap_or(VadFrame::Speech(samples)) {
-                VadFrame::Speech(buf) => out_buf.extend_from_slice(buf),
-                VadFrame::Noise => {}
-            }
+            let mut det = lock_vad(vad_arc);
+            // The Silero ONNX inference can panic on malformed state; a panic here
+            // would poison the lock and kill the worker. Contain it and do the
+            // keep/drop extend INSIDE the guarded closure — `push_frame` returns a
+            // `VadFrame<'a>` borrowing `det`, so it cannot cross the `catch_unwind`
+            // boundary. On a panic, fall back to treating the frame as speech so
+            // audio is never silently dropped (and no per-frame allocation on the
+            // happy path). The closure yields whether the frame was speech.
+            let contained = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                match det.push_frame(samples).unwrap_or(VadFrame::Speech(samples)) {
+                    VadFrame::Speech(buf) => {
+                        out_buf.extend_from_slice(buf);
+                        true
+                    }
+                    VadFrame::Noise => false,
+                }
+            }));
+            contained.unwrap_or_else(|_| {
+                log::warn!("VAD push_frame panicked; treating frame as speech");
+                out_buf.extend_from_slice(samples);
+                true
+            })
         } else {
             out_buf.extend_from_slice(samples);
+            true
         }
     }
 
-    loop {
-        let chunk = match sample_rx.recv() {
-            Ok(c) => c,
-            Err(_) => break, // stream closed
-        };
-
+    while let Ok(chunk) = sample_rx.recv() {
         let raw = match chunk {
             AudioChunk::Samples(s) => s,
             AudioChunk::EndOfStream => continue,
@@ -549,7 +710,28 @@ fn run_consumer(
             if let Some(cb) = &chunk_cb {
                 cb(frame);
             }
-            handle_frame(frame, recording, &vad, &mut processed_samples)
+            let is_speech = handle_frame(frame, recording, &vad, &mut processed_samples);
+            // Surface SMOOTHED-VAD speech boundaries (real Silero state, ~one onset
+            // window after the user starts/stops talking) so the renderer's
+            // `isSpeaking` reflects ACTUAL speech — driving the overlay-pill reveal
+            // and the breathing glow. Fire only on transitions, only while recording.
+            //
+            // ENERGY BACKSTOP for the SIGNAL (not the recording): Silero at threshold 0.3
+            // reports "speech" even on near-silent frames on some mics, which flashed the
+            // pill on silence. Require real frame energy to BEGIN signaling speech; once
+            // signaling, follow the VAD's hangover so a brief quiet dip mid-word doesn't
+            // toggle it off and re-fire on the next loud frame.
+            let new_speaking = if vad_speaking {
+                is_speech
+            } else {
+                is_speech && frame_ac_energy(frame) >= SPEECH_SIGNAL_AC_FLOOR
+            };
+            if recording && new_speaking != vad_speaking {
+                vad_speaking = new_speaking;
+                if let Some(cb) = &speech_cb {
+                    cb(vad_speaking);
+                }
+            }
         });
 
         // ---------- realtime live-audio mirror (tail-sync) --------------- //
@@ -581,13 +763,23 @@ fn run_consumer(
                         mirror.lock().unwrap().clear();
                     }
                     recording = true;
+                    // Fresh utterance: the next real speech onset re-fires speech_cb(true).
+                    vad_speaking = false;
                     visualizer.reset();
                     if let Some(v) = &vad {
-                        v.lock().unwrap().reset();
+                        lock_vad(v).reset();
                     }
                 }
                 Cmd::Stop(reply_tx) => {
                     recording = false;
+                    // Surface a final speech-off if we ended mid-utterance so any consumer's
+                    // `isSpeaking` clears even when the user released PTT while still talking.
+                    if vad_speaking {
+                        vad_speaking = false;
+                        if let Some(cb) = &speech_cb {
+                            cb(false);
+                        }
+                    }
                     stop_flag.store(true, Ordering::Relaxed);
 
                     // Drain all remaining audio until the producer confirms end-of-stream.
@@ -598,7 +790,9 @@ fn run_consumer(
                         match sample_rx.recv_timeout(Duration::from_secs(2)) {
                             Ok(AudioChunk::Samples(remaining)) => {
                                 frame_resampler.push(&remaining, &mut |frame: &[f32]| {
-                                    handle_frame(frame, true, &vad, &mut processed_samples)
+                                    // Drain to the batch buffer; speech transitions aren't
+                                    // surfaced past release (we already emitted the final off).
+                                    let _ = handle_frame(frame, true, &vad, &mut processed_samples);
                                 });
                             }
                             Ok(AudioChunk::EndOfStream) => break,
@@ -610,10 +804,19 @@ fn run_consumer(
                     }
 
                     frame_resampler.finish(&mut |frame: &[f32]| {
-                        handle_frame(frame, true, &vad, &mut processed_samples)
+                        let _ = handle_frame(frame, true, &vad, &mut processed_samples);
                     });
 
                     let _ = reply_tx.send(std::mem::take(&mut processed_samples));
+
+                    // Drop the realtime mirror now that the take is finalized — it must not
+                    // retain a finished recording's audio (a realtime-worker snapshot landing
+                    // in the gap before the next Cmd::Start would otherwise re-decode and emit
+                    // the previous utterance). Cmd::Start also clears it; doing it here too frees
+                    // the second copy immediately and closes the cross-recording snapshot window.
+                    if let Some(mirror) = &live_audio {
+                        mirror.lock().unwrap().clear();
+                    }
 
                     // Resume the audio callback so the consumer loop can continue
                     // receiving chunks (important for always-on microphone mode).

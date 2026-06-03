@@ -9,10 +9,7 @@ export {
 	DialogDescription,
 	type DialogDescriptionProps,
 	DialogFooter,
-	DialogHeader,
 	type DialogProps,
 	DialogTitle,
 	type DialogTitleProps,
-	DialogTrigger,
-	type DialogTriggerProps,
 } from "./Dialog";

@@ -9,7 +9,7 @@
 // `tts://chunk` event, fires the `tts:started`/`tts:completed`/`tts:failed`
 // lifecycle, and owns the per-request cancel set.
 //
-// 1:1 with the Electron `tts.ts` orchestrator:
+// 1:1 with the reference `tts.ts` orchestrator:
 //   - handleSpeak → read_aloud (enabled-gate + source-aware engine + settings
 //     fallbacks for voice/lang/speed)
 //   - handleCloudPreview → read_preview_url
@@ -24,13 +24,20 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::winstt::commands::settings::read_settings;
+use crate::winstt::managers::tts_download_manager::{TtsDownloadErr, TtsDownloadManager};
 use crate::winstt::settings_schema::{DeviceType, TtsSource as SettingsTtsSource};
+use crate::winstt::tts::catalog::{self, TtsEngineId};
+use crate::winstt::tts::local_engines::{
+    piper_voice_infos, ChatterboxLocalEngine, KittenLocalEngine, PiperLocalEngine,
+    SupertonicLocalEngine, CHATTERBOX_VOICES, KITTEN_VOICES, SUPERTONIC_VOICES,
+};
 use crate::winstt::tts::{
-    classify_cloud_status, clamp_speed, parse_cloud_voices, parse_detail_status, split_sentences,
+    clamp_speed, classify_cloud_status, parse_cloud_voices, parse_detail_status, split_sentences,
     ChunkSink, CloudVoiceSettings, ElevenLabsEngine, Format, KokoroLocalEngine, LocalTtsConfig,
     SynthesisChunk, TtsDevice, TtsEngine, TtsError, TtsResult, TtsSource, VoiceInfo,
     DEFAULT_MAX_SENTENCE_LEN, ELEVENLABS_SUBSCRIPTION_URL, ELEVENLABS_VOICES_URL,
@@ -145,15 +152,56 @@ pub struct TtsManager {
     /// the pill's mid-read speed change (`tts_set_speed`) applies to the NEXT
     /// sentence at natural pitch ("next-sentence" — `tts.ts` `handleSetSpeed`).
     current_speed: AtomicU32,
+    /// Local-model idle tracking shared with the global model unload timeout.
+    active_reads: AtomicU32,
+    last_used_ms: AtomicU64,
+    idle_watcher_started: AtomicBool,
     /// Shared reqwest client for the cloud catalog / subscription GETs.
     http: reqwest::Client,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn tts_idle_unload_duration(timeout: crate::settings::ModelUnloadTimeout) -> Option<Duration> {
+    timeout.to_seconds().map(Duration::from_secs)
+}
+
+struct ActiveTtsUseGuard<'a> {
+    manager: &'a TtsManager,
+    source: TtsSource,
+}
+
+impl<'a> ActiveTtsUseGuard<'a> {
+    fn new(manager: &'a TtsManager, source: TtsSource) -> Self {
+        manager.active_reads.fetch_add(1, Ordering::AcqRel);
+        Self { manager, source }
+    }
+}
+
+impl Drop for ActiveTtsUseGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.active_reads.fetch_sub(1, Ordering::AcqRel);
+        self.manager.mark_model_used();
+        if matches!(self.source, TtsSource::Local)
+            && crate::settings::get_settings(&self.manager.app).model_unload_timeout
+                == crate::settings::ModelUnloadTimeout::Immediately
+        {
+            self.manager.unload_active_local_model("immediate timeout");
+        }
+    }
 }
 
 impl TtsManager {
     pub fn new(app: &AppHandle) -> Self {
         // Default to a local Kokoro engine; the first real call reloads from
         // settings (source + voice + key) via `ensure_engine`.
-        let engine: Arc<dyn TtsEngine> = Arc::new(KokoroLocalEngine::new(LocalTtsConfig::default()));
+        let engine: Arc<dyn TtsEngine> =
+            Arc::new(KokoroLocalEngine::new(LocalTtsConfig::default()));
         Self {
             app: app.clone(),
             active: Mutex::new(ActiveEngine {
@@ -165,6 +213,9 @@ impl TtsManager {
             seq: AtomicU64::new(1),
             synth_lock: Mutex::new(()),
             current_speed: AtomicU32::new(1.0_f32.to_bits()),
+            active_reads: AtomicU32::new(0),
+            last_used_ms: AtomicU64::new(now_ms()),
+            idle_watcher_started: AtomicBool::new(false),
             http: reqwest::Client::new(),
         }
     }
@@ -186,9 +237,54 @@ impl TtsManager {
         f32::from_bits(self.current_speed.load(Ordering::Relaxed))
     }
 
+    pub fn start_idle_watcher(self: &Arc<Self>) {
+        if self.idle_watcher_started.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let manager = Arc::clone(self);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let timeout = crate::settings::get_settings(&manager.app).model_unload_timeout;
+            let Some(max_idle) = tts_idle_unload_duration(timeout) else {
+                continue;
+            };
+            if max_idle.is_zero() || manager.active_reads.load(Ordering::Acquire) != 0 {
+                continue;
+            }
+            let idle_for = Duration::from_millis(
+                now_ms().saturating_sub(manager.last_used_ms.load(Ordering::Acquire)),
+            );
+            if idle_for >= max_idle {
+                manager.unload_active_local_model("idle timeout");
+            }
+        });
+    }
+
+    fn mark_model_used(&self) {
+        self.last_used_ms.store(now_ms(), Ordering::Release);
+    }
+
+    fn unload_active_local_model(&self, reason: &str) {
+        if self.active_reads.load(Ordering::Acquire) != 0 {
+            return;
+        }
+        let engine = {
+            let Ok(active) = self.active.lock() else {
+                return;
+            };
+            if !matches!(active.source, TtsSource::Local) || !active.engine.is_ready() {
+                return;
+            }
+            active.engine.clone()
+        };
+        engine.shutdown();
+        self.mark_model_used();
+        log::info!("[tts] local model session dropped ({reason})");
+    }
+
     // ── settings ───────────────────────────────────────────────────────────
 
-    /// True when TTS is enabled in settings. The Electron `handleSpeak` throws
+    /// True when TTS is enabled in settings. The the reference `handleSpeak` throws
     /// `"TTS is disabled in settings"` when this is false.
     pub fn is_enabled(&self) -> bool {
         read_settings(&self.app).tts.enabled
@@ -196,20 +292,17 @@ impl TtsManager {
 
     /// True when synthesis should be served by ElevenLabs cloud (not Kokoro).
     pub fn is_cloud_source(&self) -> bool {
-        matches!(read_settings(&self.app).tts.source, SettingsTtsSource::Cloud)
-    }
-
-    fn cache_dir(&self) -> PathBuf {
-        crate::portable::app_data_dir(&self.app)
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("tts")
-            .join("kokoro")
+        matches!(
+            read_settings(&self.app).tts.source,
+            SettingsTtsSource::Cloud
+        )
     }
 
     /// Resolve the local Kokoro config from settings (voice / lang / speed +
     /// the STT model device, which TTS shares — memory
     /// `project_tts_device_follows_model_device`). `model.device` is `Auto`
-    /// (DirectML with CPU fallback) or `Cpu`.
+    /// (DirectML with CPU fallback) or `Cpu`. Kokoro now lives under its catalog
+    /// id's per-model cache dir (`tts/kokoro-82m/`), same as the other engines.
     fn local_config(&self) -> LocalTtsConfig {
         let s = read_settings(&self.app);
         let device = match s.model.device {
@@ -217,7 +310,7 @@ impl TtsManager {
             DeviceType::Auto => TtsDevice::Auto,
         };
         LocalTtsConfig {
-            cache_dir: self.cache_dir(),
+            cache_dir: self.model_cache_dir(&s.tts.model),
             voice: s.tts.voice,
             lang: s.tts.lang,
             speed: s.tts.speed as f32,
@@ -254,7 +347,7 @@ impl TtsManager {
         match s.tts.source {
             SettingsTtsSource::Local => (
                 TtsSource::Local,
-                format!("local|{device_tag}"),
+                format!("local|{}|{device_tag}", s.tts.model),
             ),
             SettingsTtsSource::Cloud => (
                 TtsSource::Cloud,
@@ -266,24 +359,108 @@ impl TtsManager {
         }
     }
 
+    /// Per-model cache dir (`%LOCALAPPDATA%/winstt/tts/<model-id>/`) — matches the
+    /// TTS download manager's layout so the engine loads what the manager fetched.
+    fn model_cache_dir(&self, model_id: &str) -> PathBuf {
+        crate::portable::app_data_dir(&self.app)
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("tts")
+            .join(model_id)
+    }
+
+    /// Build the local engine for the selected `tts.model` catalog id. Kokoro keeps
+    /// its existing cache layout (`local_config`); the new ONNX engines load from
+    /// their per-model cache dir (populated by the TTS download manager).
+    fn build_local_engine(&self) -> Arc<dyn TtsEngine> {
+        let model_id = read_settings(&self.app).tts.model;
+        match catalog::find(&model_id).map(|e| e.engine) {
+            Some(TtsEngineId::Kitten) => Arc::new(KittenLocalEngine::new(
+                self.model_cache_dir(&model_id),
+                kitten_model_filename(&model_id),
+            )),
+            // Piper is ONE multilingual model whose voice (`tts.voice`) selects which
+            // `{stem}.onnx` to load; the engine lazily warms per-voice and the
+            // download manager fetches the selected voice's files on demand.
+            Some(TtsEngineId::Piper) => {
+                Arc::new(PiperLocalEngine::new(self.model_cache_dir(&model_id)))
+            }
+            Some(TtsEngineId::Supertonic) => {
+                Arc::new(SupertonicLocalEngine::new(self.model_cache_dir(&model_id)))
+            }
+            Some(TtsEngineId::Chatterbox) => {
+                Arc::new(ChatterboxLocalEngine::new(self.model_cache_dir(&model_id)))
+            }
+            // Kokoro (and any unknown id) → the existing Kokoro engine + cache.
+            _ => Arc::new(KokoroLocalEngine::new(self.local_config())),
+        }
+    }
+
+    /// Ensure the selected local model's assets are on disk, downloading via the
+    /// TTS download manager (emitting progress) if missing. Kokoro self-downloads
+    /// inside its own engine, so it is skipped here.
+    fn ensure_local_model_assets(&self) -> TtsResult<()> {
+        let model_id = read_settings(&self.app).tts.model;
+        let Some(entry) = catalog::find(&model_id) else {
+            return Ok(());
+        };
+        let quant = entry.default_quant();
+        let dl = self.app.state::<Arc<TtsDownloadManager>>();
+        if dl.is_present(&model_id, quant) {
+            return Ok(());
+        }
+        dl.download_blocking(&model_id, quant, true)
+            .map_err(|e| match e {
+                TtsDownloadErr::Cancelled => TtsError::Cancelled,
+                TtsDownloadErr::Paused => TtsError::Paused,
+                other => TtsError::Download(other.to_string()),
+            })?;
+        let _ = self.app.emit(
+            "tts:model-cache-changed",
+            serde_json::json!({ "modelId": model_id }),
+        );
+        Ok(())
+    }
+
     /// Lazily (re)build the active engine to match the current settings. Returns
     /// the engine + its source. Cheap when nothing changed (fingerprint match).
     fn ensure_engine(&self) -> (TtsSource, Arc<dyn TtsEngine>) {
         let (source, fingerprint) = self.engine_fingerprint();
         let mut a = self.active.lock().expect("tts active engine lock");
+        let mut outgoing: Option<Arc<dyn TtsEngine>> = None;
         if a.fingerprint != fingerprint || a.source != source {
+            let old_fp = a.fingerprint.clone();
+            let old_source = a.source;
             let engine: Arc<dyn TtsEngine> = match source {
-                TtsSource::Local => Arc::new(KokoroLocalEngine::new(self.local_config())),
+                TtsSource::Local => self.build_local_engine(),
                 TtsSource::Cloud => {
                     let (key, model, settings) = self.cloud_config();
                     Arc::new(ElevenLabsEngine::new(key, model, settings))
                 }
             };
+            // Swap the new engine in and hold the PREVIOUS one so we can free its
+            // native ORT session(s) explicitly below — a Chatterbox graph is ~1.6 GB
+            // resident, so relying on `Arc`-drop alone would leave the old model
+            // wandering in memory if any in-flight synthesis clone still holds a ref.
+            log::info!(
+                "[tts] engine swap ({old_source:?} '{old_fp}' → {source:?} '{fingerprint}') — unloading previous model"
+            );
+            outgoing = Some(std::mem::replace(&mut a.engine, engine));
             a.source = source;
             a.fingerprint = fingerprint;
-            a.engine = engine;
         }
-        (a.source, a.engine.clone())
+        let result = (a.source, a.engine.clone());
+        // Release the active lock BEFORE shutting the old engine down: `shutdown()`
+        // takes the engine's own inner lock and may briefly wait on an in-flight
+        // synthesis, which must not also be holding `active`.
+        drop(a);
+        if let Some(old) = outgoing {
+            // Deterministically drop the loaded session NOW (sets the engine's inner
+            // state to None behind its own lock); a stale clone simply lazily re-warms
+            // instead of pinning the previous model's memory.
+            old.shutdown();
+            log::info!("[tts] previous engine session dropped (unloaded)");
+        }
+        result
     }
 
     pub fn source(&self) -> TtsSource {
@@ -301,9 +478,20 @@ impl TtsManager {
     }
 
     /// `{ voices, languages }` — the `TtsVoiceCatalog` the local picker renders
-    /// (mirrors Electron `handleListVoices`, which returns `{ voices, languages }`).
-    pub fn list_voices_catalog(&self) -> VoiceCatalogPayload {
-        let voices = KOKORO_VOICE_CATALOG
+    /// (mirrors the reference `handleListVoices`, which returns `{ voices, languages }`).
+    pub fn list_voices_catalog(&self, model_id: Option<String>) -> VoiceCatalogPayload {
+        // Pick the voice set for the requested (or currently-selected) local model.
+        let model_id = model_id.unwrap_or_else(|| read_settings(&self.app).tts.model);
+        let voices_src: Vec<VoiceInfo> = match catalog::find(&model_id).map(|e| e.engine) {
+            Some(TtsEngineId::Kitten) => KITTEN_VOICES.to_vec(),
+            // Piper exposes its full curated multilingual voice list (one good voice
+            // per language); each voice downloads on demand when selected.
+            Some(TtsEngineId::Piper) => piper_voice_infos(),
+            Some(TtsEngineId::Supertonic) => SUPERTONIC_VOICES.to_vec(),
+            Some(TtsEngineId::Chatterbox) => CHATTERBOX_VOICES.to_vec(),
+            _ => KOKORO_VOICE_CATALOG.to_vec(),
+        };
+        let voices = voices_src
             .iter()
             .map(|v| LocalVoicePayload {
                 id: v.id.to_string(),
@@ -324,7 +512,7 @@ impl TtsManager {
 
     /// Live ElevenLabs `GET /v2/voices` (includes the account's cloned voices).
     /// Never throws across the IPC boundary — returns `{ voices: [], error }` when
-    /// the key is missing / invalid / the request fails (mirrors Electron
+    /// the key is missing / invalid / the request fails (mirrors the reference
     /// `handleCloudListVoices`).
     pub async fn list_cloud_voices(&self) -> CloudVoiceCatalogPayload {
         let key = read_settings(&self.app).integrations.elevenlabs.api_key;
@@ -371,12 +559,15 @@ impl TtsManager {
                 preview_url: v.preview_url,
             })
             .collect();
-        CloudVoiceCatalogPayload { voices, error: None }
+        CloudVoiceCatalogPayload {
+            voices,
+            error: None,
+        }
     }
 
     /// `GET /v1/user/subscription` → `{ tier, creditsExhausted }`. Both default to
     /// "unknown / false" on a missing-scope key or request failure so we never
-    /// wrongly block cloud TTS on data we couldn't read (mirrors Electron
+    /// wrongly block cloud TTS on data we couldn't read (mirrors the reference
     /// `handleCloudSubscription`). `creditsExhausted` is true only when the monthly
     /// character quota is spent AND can't overflow (`can_extend_character_limit`).
     pub async fn cloud_subscription(&self) -> CloudSubscriptionPayload {
@@ -412,14 +603,18 @@ impl TtsManager {
                 };
             }
         };
-        let tier = json.get("tier").and_then(|v| v.as_str()).map(str::to_string);
+        let tier = json
+            .get("tier")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let used = json.get("character_count").and_then(|v| v.as_u64());
         let limit = json.get("character_limit").and_then(|v| v.as_u64());
         let can_extend = json
             .get("can_extend_character_limit")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let credits_exhausted = matches!((used, limit), (Some(u), Some(l)) if u >= l) && !can_extend;
+        let credits_exhausted =
+            matches!((used, limit), (Some(u), Some(l)) if u >= l) && !can_extend;
         CloudSubscriptionPayload {
             tier,
             credits_exhausted,
@@ -430,7 +625,7 @@ impl TtsManager {
 
     /// Side-effect-free estimate of what enabling LOCAL Kokoro TTS will download:
     /// the two model files (`kokoro-v1.0.fp16.onnx`, `voices-v1.0.bin`). Mirrors
-    /// Electron `handleDownloadEstimate` shape (`{ alreadyInstalled, components,
+    /// the reference `handleDownloadEstimate` shape (`{ alreadyInstalled, components,
     /// totalBytes, unavailable? }`). Cloud has no local engine, so it reports
     /// `alreadyInstalled: true` with no components.
     pub async fn download_estimate(&self) -> DownloadEstimatePayload {
@@ -443,73 +638,32 @@ impl TtsManager {
                 unavailable: false,
             };
         }
-        let cfg = self.local_config().to_kokoro_config_pub();
-        let model_present = cfg.model_path().exists();
-        let voices_present = cfg.voices_path().exists();
-        // Probe the remote content-length for each missing file (HEAD-equivalent
-        // via a Range:0-0 GET → Content-Range total). Best-effort; a failed probe
-        // marks the estimate unavailable so the dialog says "can't size this".
-        let model_bytes = if model_present {
-            Some(0)
-        } else {
-            self.remote_size(&crate::winstt::tts::kokoro::model_url()).await
+        // Estimate from the TTS catalog (per-model HF download size) + the download
+        // manager's on-disk cache state for the SELECTED model.
+        let model_id = read_settings(&self.app).tts.model;
+        let Some(entry) = catalog::find(&model_id) else {
+            return DownloadEstimatePayload {
+                already_installed: false,
+                components: Vec::new(),
+                total_bytes: 0,
+                unavailable: true,
+            };
         };
-        let voices_bytes = if voices_present {
-            Some(0)
-        } else {
-            self.remote_size(&crate::winstt::tts::kokoro::voices_url()).await
-        };
-        // Either probe failing (when the file is actually missing) means we
-        // couldn't reach the internet to size the install.
-        let unavailable = (!model_present && model_bytes.is_none())
-            || (!voices_present && voices_bytes.is_none());
-        let components = vec![
-            DownloadComponent {
-                id: "model".to_string(),
-                label: "Kokoro voice model".to_string(),
-                bytes: model_bytes.unwrap_or(0),
-                installed: model_present,
-            },
-            DownloadComponent {
-                id: "voices".to_string(),
-                label: "Voicepacks".to_string(),
-                bytes: voices_bytes.unwrap_or(0),
-                installed: voices_present,
-            },
-        ];
-        let total_bytes = components
-            .iter()
-            .filter(|c| !c.installed)
-            .map(|c| c.bytes)
-            .sum();
+        let quant = entry.default_quant();
+        let dl = self.app.state::<Arc<TtsDownloadManager>>();
+        let installed = dl.is_present(&model_id, quant);
+        let total = entry.quant(quant).map(|q| q.size_bytes).unwrap_or(0);
         DownloadEstimatePayload {
-            already_installed: model_present && voices_present,
-            components,
-            total_bytes,
-            unavailable,
+            already_installed: installed,
+            components: vec![DownloadComponent {
+                id: model_id.clone(),
+                label: entry.display_name.to_string(),
+                bytes: total,
+                installed,
+            }],
+            total_bytes: if installed { 0 } else { total },
+            unavailable: false,
         }
-    }
-
-    /// Probe a remote file's total byte size via a 1-byte Range GET (reads
-    /// `Content-Range: bytes 0-0/<total>`), falling back to `Content-Length`.
-    /// Returns `None` on any transport / header-parse failure.
-    async fn remote_size(&self, url: &str) -> Option<u64> {
-        let resp = self
-            .http
-            .get(url)
-            .header(reqwest::header::RANGE, "bytes=0-0")
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .ok()?;
-        if let Some(cr) = resp.headers().get(reqwest::header::CONTENT_RANGE) {
-            if let Some(total) = cr.to_str().ok().and_then(|s| s.rsplit('/').next()) {
-                if let Ok(n) = total.trim().parse::<u64>() {
-                    return Some(n);
-                }
-            }
-        }
-        resp.content_length()
     }
 
     /// Force engine warm-up off the UI thread (download + session create / key
@@ -517,7 +671,12 @@ impl TtsManager {
     /// via `spawn_blocking`.
     pub fn warm_up(&self) -> TtsResult<()> {
         // Cloud has no Kokoro engine to warm — `warm_up` just checks the key.
-        let (_source, engine) = self.ensure_engine();
+        let (source, engine) = self.ensure_engine();
+        if matches!(source, TtsSource::Local) {
+            // Download the selected model's assets (with progress) before loading.
+            self.ensure_local_model_assets()?;
+        }
+        let _active_use = ActiveTtsUseGuard::new(self, source);
         engine.warm_up()
     }
 
@@ -597,7 +756,7 @@ impl TtsManager {
     /// is sampled per sentence (mid-read speed change → NEXT sentence). Blocking —
     /// the command runs it on a worker.
     ///
-    /// Enforces the Electron `handleSpeak` contract: throws (emits `tts:failed`)
+    /// Enforces the reference `handleSpeak` contract: throws (emits `tts:failed`)
     /// when TTS is disabled; routes synthesis to the active source's engine (local
     /// Kokoro or cloud ElevenLabs); fills voice/lang from settings when the call
     /// omits them. Emits exactly one terminal `tts:completed` / `tts:failed` after
@@ -614,10 +773,13 @@ impl TtsManager {
         // immediately after start flips THIS read's flag (and `cancel_all` lists it).
         let cancel = self.cancel_flag(request_id);
 
-        // Enabled-gate (Electron throws `ValidationError("TTS is disabled …")`).
+        // Enabled-gate (the reference throws `ValidationError("TTS is disabled …")`).
         if !self.is_enabled() {
             self.drop_request(request_id);
-            self.emit_event("tts:started", serde_json::json!({ "requestId": request_id }));
+            self.emit_event(
+                "tts:started",
+                serde_json::json!({ "requestId": request_id }),
+            );
             self.emit_event(
                 "tts:failed",
                 serde_json::json!({ "requestId": request_id, "reason": "TTS is disabled in settings" }),
@@ -626,22 +788,68 @@ impl TtsManager {
         }
 
         let started = std::time::Instant::now();
-        self.emit_event("tts:started", serde_json::json!({ "requestId": request_id }));
+        self.emit_event(
+            "tts:started",
+            serde_json::json!({ "requestId": request_id }),
+        );
 
         let (source, engine) = self.ensure_engine();
+        // Auto-download the selected local model's assets (with progress) before
+        // synthesizing — mirrors the STT first-use download. Kokoro self-downloads.
+        if matches!(source, TtsSource::Local) {
+            if let Err(e) = self.ensure_local_model_assets() {
+                self.drop_request(request_id);
+                self.emit_event(
+                    "tts:failed",
+                    serde_json::json!({ "requestId": request_id, "reason": e.to_string() }),
+                );
+                return;
+            }
+        }
         // Fill voice/lang from settings when the caller omitted them (the renderer's
         // `ttsSpeak` passes them, but the hotkey path may not).
         let s = read_settings(&self.app);
         let (eff_voice, eff_lang) = match source {
             TtsSource::Local => (
-                if voice.is_empty() { s.tts.voice.clone() } else { voice.to_string() },
-                if lang.is_empty() { s.tts.lang.clone() } else { lang.to_string() },
+                if voice.is_empty() {
+                    s.tts.voice.clone()
+                } else {
+                    voice.to_string()
+                },
+                if lang.is_empty() {
+                    s.tts.lang.clone()
+                } else {
+                    lang.to_string()
+                },
             ),
             TtsSource::Cloud => (
-                if voice.is_empty() { s.tts.cloud.voice.clone() } else { voice.to_string() },
+                if voice.is_empty() {
+                    s.tts.cloud.voice.clone()
+                } else {
+                    voice.to_string()
+                },
                 String::new(),
             ),
         };
+
+        // Lazily fetch the requested local voice if it wasn't in the (small) model
+        // download — Kokoro ships only its default voice and pulls the other 53
+        // per-voice on first use. No-op for already-cached voices, cloning models,
+        // and the bundled-voice engines. A fetch failure surfaces as a synth failure
+        // rather than silently producing nothing (the prior "voice doesn't respond").
+        if matches!(source, TtsSource::Local) {
+            let dl = self.app.state::<Arc<TtsDownloadManager>>();
+            if let Err(e) = dl.ensure_voice(&s.tts.model, &eff_voice) {
+                self.drop_request(request_id);
+                self.emit_event(
+                    "tts:failed",
+                    serde_json::json!({ "requestId": request_id, "reason": format!("voice download failed: {e}") }),
+                );
+                return;
+            }
+        }
+
+        let _active_use = ActiveTtsUseGuard::new(self, source);
 
         let _guard = match self.synth_lock.lock() {
             Ok(g) => g,
@@ -670,7 +878,8 @@ impl TtsManager {
                 break;
             }
             let speed = clamp_speed(get_speed());
-            if let Err(e) = engine.synthesize_stream(&sentence, &eff_voice, &eff_lang, speed, &sink) {
+            if let Err(e) = engine.synthesize_stream(&sentence, &eff_voice, &eff_lang, speed, &sink)
+            {
                 result = Err(e);
                 break;
             }
@@ -706,7 +915,10 @@ impl TtsManager {
     pub fn read_preview_url(&self, request_id: &str, preview_url: &str) {
         let cancel = self.cancel_flag(request_id);
         let started = std::time::Instant::now();
-        self.emit_event("tts:started", serde_json::json!({ "requestId": request_id }));
+        self.emit_event(
+            "tts:started",
+            serde_json::json!({ "requestId": request_id }),
+        );
 
         // The CDN preview is key-free; build a throwaway cloud engine for the https
         // GET (it refuses non-https). No synth lock — this is a plain download.
@@ -744,10 +956,21 @@ impl TtsManager {
     }
 }
 
+/// The Kitten ONNX graph filename for a catalog id (both nano models share the
+/// `voices.npz`; only the graph file differs per version). Kept in sync with the
+/// download manager's `kitten_model_file`.
+fn kitten_model_filename(model_id: &str) -> &'static str {
+    match model_id {
+        "kitten-nano-0.2" => "kitten_tts_nano_v0_2.onnx",
+        _ => "kitten_tts_nano_v0_1.onnx",
+    }
+}
+
 /// Build the `tts://chunk` event payload. `pcm` carries RAW BYTES the renderer
 /// interprets PER FORMAT:
 ///   - "f32le": `new Float32Array(pcm)` reads it as little-endian f32 PCM.
 ///   - "mp3":   `decodeAudioData(pcm)` decodes the mp3 container.
+///
 /// (Serde serializes the `Vec<u8>` as a JSON number array; the adapter reshapes
 /// it back to an `ArrayBuffer` — see WU-5 risks.)
 fn chunk_payload(request_id: &str, chunk: &SynthesisChunk) -> serde_json::Value {
@@ -789,7 +1012,9 @@ struct EmitChunkSink {
 
 impl EmitChunkSink {
     fn emit(&self, chunk: &SynthesisChunk) {
-        let _ = self.app.emit("tts://chunk", chunk_payload(&self.request_id, chunk));
+        let _ = self
+            .app
+            .emit("tts://chunk", chunk_payload(&self.request_id, chunk));
     }
 
     /// Emit the held-back chunk (if any) with `is_final = true`. Called once at the
@@ -832,5 +1057,32 @@ impl ChunkSink for EmitChunkSink {
 
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::ModelUnloadTimeout;
+
+    #[test]
+    fn tts_idle_unload_duration_uses_shared_core_timeout_table() {
+        assert_eq!(tts_idle_unload_duration(ModelUnloadTimeout::Never), None);
+        assert_eq!(
+            tts_idle_unload_duration(ModelUnloadTimeout::Immediately),
+            Some(Duration::from_secs(0))
+        );
+        assert_eq!(
+            tts_idle_unload_duration(ModelUnloadTimeout::Min5),
+            Some(Duration::from_secs(300))
+        );
+        assert_eq!(
+            tts_idle_unload_duration(ModelUnloadTimeout::Hour1),
+            Some(Duration::from_secs(3600))
+        );
+        assert_eq!(
+            tts_idle_unload_duration(ModelUnloadTimeout::Sec15),
+            Some(Duration::from_secs(15))
+        );
     }
 }

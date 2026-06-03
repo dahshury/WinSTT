@@ -152,7 +152,7 @@ function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
 			icon: cfg.logoSrc ? (
 				<img
 					alt=""
-					className="size-5 rounded-[3px] object-cover"
+					className="size-5 rounded-[3px] object-contain"
 					height={20}
 					src={publicAsset(cfg.logoSrc)}
 					width={20}

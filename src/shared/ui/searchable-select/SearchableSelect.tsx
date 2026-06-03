@@ -2,6 +2,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { useTranslations } from "use-intl";
 import { SurfaceProvider, surfaceBg, surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
@@ -143,7 +144,11 @@ function GroupHeader({
 }) {
 	return (
 		<Combobox.GroupLabel
-			className={`sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b px-2.5 py-1.5 ${surfaceBg(level)}`}
+			// `z-overlay` (not `z-raised`): each `Row` is `relative z-raised`, so an
+			// equal-z sticky header would be painted OVER by the rows scrolling under
+			// it (later DOM, same z) — making the opaque header look transparent. A
+			// higher z keeps the sticky header above its rows.
+			className={`sticky top-0 z-overlay flex items-center gap-2 border-border/60 border-b px-2.5 py-1.5 ${surfaceBg(level)}`}
 		>
 			<span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[11px] text-foreground-muted uppercase tracking-[0.12em]">
 				{label}
@@ -201,6 +206,7 @@ export function SearchableSelect({
 	inputTrailing,
 	renderItemTrailing,
 }: SearchableSelectProps) {
+	const t = useTranslations("common");
 	// Grouped mode flattens to a single list for the selected-value lookup +
 	// the Combobox value contract; the popup still renders grouped.
 	const flatOptions = groups ? groups.flatMap((g) => [...g.options]) : (options ?? []);
@@ -305,12 +311,16 @@ export function SearchableSelect({
 						sideOffset={4}
 					>
 						<Combobox.Popup
-							className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(15rem,var(--available-height))]`}
+							// Top padding lives on the LIST, not here: a sticky group header pins to
+							// the scroll container's padding edge, so a `pt` on this scroller would
+							// leave a band ABOVE the header where scrolling rows leak through. Keeping
+							// only `pb-1` lets the header pin flush to the popup's top edge.
+							className={`searchable-select-popup relative w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} pb-1 [max-height:min(15rem,var(--available-height))]`}
 							ref={popupRef}
 						>
 							<MenuHighlightLayer containerRef={popupRef} value={value} />
-							<Combobox.Empty className="searchable-select-empty">No results found.</Combobox.Empty>
-							<Combobox.List className="outline-none">
+							<Combobox.Empty className="searchable-select-empty">{t("noResults")}</Combobox.Empty>
+							<Combobox.List className="pt-1 outline-none">
 								{groups
 									? (group: { items: SelectOption[]; value: string }) => {
 											const meta = groupMeta.get(group.value);
@@ -354,6 +364,11 @@ export function SearchableSelect({
 	);
 }
 
+// Decorative accessible name for the checkmark glyph. The <svg> is
+// aria-hidden, so screen readers never announce this <title>; it's kept as a
+// constant only so it isn't flagged as a user-facing literal.
+const CHECK_ICON_TITLE = "Selected";
+
 function CheckIcon() {
 	return (
 		<svg
@@ -364,7 +379,7 @@ function CheckIcon() {
 			viewBox="0 0 10 10"
 			width="10"
 		>
-			<title>Selected</title>
+			<title>{CHECK_ICON_TITLE}</title>
 			<path d="M9.16 1.12C9.51 1.35 9.6 1.81 9.38 2.16L5.14 8.66C5.02 8.84 4.82 8.97 4.6 9C4.39 9.02 4.17 8.95 4.01 8.81L1.25 6.31C0.94 6.03 0.92 5.56 1.19 5.25C1.47 4.94 1.95 4.92 2.25 5.2L4.36 7.1L8.12 1.34C8.35 0.99 8.81 0.9 9.16 1.12Z" />
 		</svg>
 	);

@@ -1,17 +1,21 @@
 import { Tooltip } from "@base-ui/react/tooltip";
-import { StrictMode, Suspense } from "react";
+import { StrictMode, Suspense, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { HtmlLang } from "@/app/layouts/HtmlLang";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import "@/app/styles/fonts.css";
 import "@/app/styles/globals.css";
+import { useConnectionStore } from "@/entities/connection";
 import { useConnectionListener } from "@/features/connect-server";
 import { useDownloadListener } from "@/features/model-download";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
+import { gpuGetInfo } from "@/shared/api/ipc-client";
+import { installNativeBridge } from "@/shared/api/native-bridge-adapter";
 import { diagBeacon, installWebviewDiag } from "@/shared/lib/winstt-diag";
 import { SettingsPage } from "@/views/settings";
 
+installNativeBridge();
 installWebviewDiag("settings");
 
 const container = document.getElementById("root");
@@ -28,12 +32,32 @@ if (!container) {
  * never hydrates (Tauri webviews don't share localStorage), `SettingsPage` reads
  * `isLoaded === false`, and the whole window renders blank. Run ONLY the safe data hooks.
  */
+// Fire the lifecycle beacon ONCE per window process — not on every re-render. The bootstrap
+// re-renders many times while the store hydrates (each data hook's state update), and emitting
+// the beacon in the render body flooded handy.log with identical "render reached" lines.
+let settingsBeaconSent = false;
+
 function SettingsBootstrap() {
+	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
 	useSyncSettings(); // settingsLoad() -> hydrate store + write-back on change (THE blank fix)
 	useSyncActiveModel(); // active-model reconcile for the model tab
 	useDownloadListener(); // per-quant download progress for the model tab
 	useConnectionListener(); // server/runtime status for the badges
-	diagBeacon("settings", "SettingsBootstrap render reached");
+	useEffect(() => {
+		let cancelled = false;
+		gpuGetInfo().then((info) => {
+			if (!cancelled) {
+				setGpuInfo(info);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [setGpuInfo]);
+	if (!settingsBeaconSent) {
+		settingsBeaconSent = true;
+		diagBeacon("settings", "SettingsBootstrap render reached");
+	}
 	return <SettingsPage />;
 }
 

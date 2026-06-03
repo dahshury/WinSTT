@@ -9,7 +9,7 @@
 //   - sttGetParameter(parameter)         → STT_GET_PARAMETER  → winstt_get_parameter
 //   - sttCallMethod(method, args)        → STT_CALL_METHOD    → winstt_call_method
 //   - sttReloadModel(kind, name)         → STT_RELOAD_MODEL   → set_winstt_model
-// (the adapter ROUTE map in electron-tauri-adapter.ts encodes exactly these names).
+// (the adapter ROUTE map in native-bridge-adapter.ts encodes exactly these names).
 //
 // This file ALSO centralizes the STT lifecycle/level *event* emitters (the MISSING
 // set flagged for WU-3): recording-start/stop, vad-start/stop, transcription-start,
@@ -56,7 +56,7 @@ const DICTATION_BINDING: &str = "transcribe";
 /// The `language` / `translate_to_english` / `initial_prompt` / `custom_words` /
 /// `word_correction_threshold` / `filter_fillers` knobs route into the persisted
 /// settings so the next `TranscriptionManager::transcribe` (which re-reads
-/// `get_settings`) picks them up live — that mirrors Electron's `set_parameter`,
+/// `get_settings`) picks them up live — that mirrors the reference's `set_parameter`,
 /// which forwarded these to the running recorder. `onnx_quantization` / `model`
 /// trigger a reload through the model slice and are accepted here as no-ops (the
 /// model-swap command owns the real reload).
@@ -82,7 +82,7 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
         // it from there. The old AppSettings `selected_language` write was a second source of
         // truth that different transcribe() arms read inconsistently; it's been removed. Accept
         // the live `set_parameter("language", …)` as a no-op so the renderer's fire-and-forget
-        // send never errors (Electron's was best-effort too).
+        // send never errors (the reference's was best-effort too).
         "language" => {}
         "translate_to_english" => {
             apply_translate(&app, value.as_bool().unwrap_or(false));
@@ -96,12 +96,17 @@ pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json
                 apply_custom_words(&app, words);
             }
         }
+        "model_unload_timeout_seconds" => {
+            if let Some(seconds) = value.as_i64() {
+                apply_model_unload_timeout_seconds(&app, seconds);
+            }
+        }
         "is_recording" => {
             // Renderer-driven mirror only; the manager owns the authoritative flag.
         }
         // Every other AllowedParameter (model/quant/prompt/vad knobs) is owned by
         // its subsystem slice; accept silently so the renderer's send() is a no-fail
-        // fire-and-forget (Electron's set_parameter was also best-effort).
+        // fire-and-forget (the reference's set_parameter was also best-effort).
         _ => {}
     }
 }
@@ -119,6 +124,30 @@ fn apply_custom_words(app: &AppHandle, words: Vec<String>) {
     let mut settings = crate::settings::get_settings(app);
     settings.custom_words = words;
     crate::settings::write_settings(app, settings);
+}
+
+fn core_timeout_from_seconds(seconds: i64) -> crate::settings::ModelUnloadTimeout {
+    match seconds {
+        s if s < 0 => crate::settings::ModelUnloadTimeout::Never,
+        0 => crate::settings::ModelUnloadTimeout::Immediately,
+        120 => crate::settings::ModelUnloadTimeout::Min2,
+        300 => crate::settings::ModelUnloadTimeout::Min5,
+        600 => crate::settings::ModelUnloadTimeout::Min10,
+        900 => crate::settings::ModelUnloadTimeout::Min15,
+        3600 => crate::settings::ModelUnloadTimeout::Hour1,
+        _ => crate::settings::ModelUnloadTimeout::Min5,
+    }
+}
+
+fn apply_model_unload_timeout_seconds(app: &AppHandle, seconds: i64) {
+    let timeout = core_timeout_from_seconds(seconds);
+    let mut settings = crate::settings::get_settings(app);
+    settings.model_unload_timeout = timeout;
+    crate::settings::write_settings(app, settings);
+
+    if timeout != crate::settings::ModelUnloadTimeout::Immediately {
+        crate::winstt::commands::settings::warm_stt_model_async(app);
+    }
 }
 
 /// `winstt_get_parameter` — the few readbacks the renderer issues (e.g. recorder
@@ -212,7 +241,10 @@ fn set_microphone(app: &AppHandle, on: bool) {
 fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
     // Payload shapes are byte-identical to WinSTT's DiarizationTogglePayload
     // (`{ enabled }`) and DiarizationToggleCompletedPayload (`{ enabled, message }`).
-    let _ = app.emit("stt:diarization-toggle-started", serde_json::json!({ "enabled": enabled }));
+    let _ = app.emit(
+        "stt:diarization-toggle-started",
+        serde_json::json!({ "enabled": enabled }),
+    );
     let applied = app
         .try_state::<Arc<DiarizationManager>>()
         .map(|dm| dm.set_enabled(enabled))
@@ -302,6 +334,18 @@ impl SttEvents {
         let _ = app.emit("stt:full-sentence", serde_json::json!({ "text": text }));
     }
 
+    /// `stt:preview-ready` — preview-before-pasting is on: the finalized text is
+    /// held back from auto-paste so the renderer can show the editable preview
+    /// pill. Carries both the RAW transcript (`original`, the re-process source)
+    /// and the auto-processed `text` (what the pill shows). NOT terminal — the
+    /// pill stays up via `isPreviewActive` until `confirm_paste`/`cancel_preview`.
+    pub fn preview_ready(app: &AppHandle, original: &str, text: &str) {
+        let _ = app.emit(
+            "stt:preview-ready",
+            serde_json::json!({ "original": original, "text": text }),
+        );
+    }
+
     /// `stt:no-audio-detected` — the recorder captured nothing usable. TERMINAL.
     pub fn no_audio_detected(app: &AppHandle) {
         let _ = app.emit("stt:no-audio-detected", ());
@@ -373,4 +417,24 @@ pub fn winstt_emit_ready(app: AppHandle) {
     let _ = read_settings(&app); // touch settings so a corrupt blob surfaces early
     SttEvents::connection_change(&app, true);
     SttEvents::server_status(&app, "running");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::ModelUnloadTimeout;
+
+    #[test]
+    fn core_timeout_from_seconds_matches_renderer_sentinels() {
+        assert_eq!(core_timeout_from_seconds(-1), ModelUnloadTimeout::Never);
+        assert_eq!(
+            core_timeout_from_seconds(0),
+            ModelUnloadTimeout::Immediately
+        );
+        assert_eq!(core_timeout_from_seconds(120), ModelUnloadTimeout::Min2);
+        assert_eq!(core_timeout_from_seconds(300), ModelUnloadTimeout::Min5);
+        assert_eq!(core_timeout_from_seconds(600), ModelUnloadTimeout::Min10);
+        assert_eq!(core_timeout_from_seconds(900), ModelUnloadTimeout::Min15);
+        assert_eq!(core_timeout_from_seconds(3600), ModelUnloadTimeout::Hour1);
+    }
 }

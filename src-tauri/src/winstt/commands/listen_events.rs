@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // (WU-9 §6 — "loopback/lid/device-switch events, diarization-toggle events,
 // vad-sensitivity-adapted"), lib_wiring.md §4b, frontend/electron/ipc/relay.ts
 // (DATA_EVENT_HANDLERS — the exact camelCase shapes the renderer consumes).
@@ -11,7 +11,7 @@
 //      `features/vad-calibration`, `features/listen-mode`, `entities/transcription`)
 //      consume FIXED camelCase shapes via `onCast`/`onTyped` extractors in
 //      `shared/api/ipc-client.ts`. Emitting the exact JSON here keeps the reused
-//      renderer byte-identical to its Electron contract.
+//      renderer byte-identical to its the reference contract.
 //   2. The producers (the VAD calibrator, the input-device switch path, the
 //      diarization manager) live in pure-logic / Handy-owned modules; routing
 //      their results through these `AppHandle`-only helpers avoids leaking specta

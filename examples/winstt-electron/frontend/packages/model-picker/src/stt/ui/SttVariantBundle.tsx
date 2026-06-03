@@ -103,7 +103,7 @@ function ExpandTrigger({
 					"active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100",
 					expanded
 						? "bg-foreground/[0.10] text-foreground ring-1 ring-foreground/15"
-						: "bg-surface-elevated/80 text-foreground-muted ring-1 ring-border hover:bg-foreground/[0.08] hover:text-foreground-secondary"
+						: "bg-surface-5 text-foreground-muted shadow-surface-1 ring-1 ring-border hover:bg-surface-6 hover:text-foreground-secondary"
 				)}
 				onClick={toggleVariantExpansion}
 				type="button"

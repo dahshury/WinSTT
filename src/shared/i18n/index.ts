@@ -7,4 +7,4 @@ export {
 	pickLocaleFromSystem,
 } from "./config";
 export { useLocaleStore } from "./locale-store";
-export { messages } from "./messages";
+export { loadMessages, SUPPORTED_LOCALES } from "./messages";

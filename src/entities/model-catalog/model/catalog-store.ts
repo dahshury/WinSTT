@@ -144,7 +144,7 @@ export const useCatalogStore = create<CatalogState>()((set, get) => ({
 
 /**
  * Fetches the cached model catalog from the main process and subscribes to
- * live catalog updates. Called automatically on module load in Electron windows.
+ * live catalog updates. Called automatically on module load in the reference windows.
  * Exported for unit tests that need to trigger initialization manually.
  */
 export function initCatalogStore(): void {
@@ -158,7 +158,7 @@ export function initCatalogStore(): void {
 
 // Self-initializing: fetch cached catalog from main process on import,
 // and subscribe to live updates. Works in every window (main + settings).
-// Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,BlockStatement: guard for non-electron environments (SSR / tests w/o electronAPI). Mutating this branch is an equivalent mutant in unit tests since initCatalogStore() is also called explicitly elsewhere.
-if (typeof window !== "undefined" && window.electronAPI != null) {
+// Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,BlockStatement: guard for non-bridge environments (SSR / tests w/o nativeBridge). Mutating this branch is an equivalent mutant in unit tests since initCatalogStore() is also called explicitly elsewhere.
+if (typeof window !== "undefined" && window.nativeBridge != null) {
 	initCatalogStore();
 }

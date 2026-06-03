@@ -2,9 +2,9 @@
 
 import { Combobox } from "@base-ui/react/combobox";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
-import { Spinner } from "@/shared/ui/spinner";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 
 /**
  * Generic combobox shell shared by every model picker in the package.
@@ -13,7 +13,7 @@ import { Spinner } from "@/shared/ui/spinner";
  *   - The `Combobox.Root` instance + open state + search-input state
  *   - The popup container (Portal → Positioner → Popup) with consistent
  *     border / background / radius / shadow / animation tokens
- *   - The search input row with optional `filtersMenu` addon + loading spinner
+ *   - The search input row with optional `filtersMenu` addon + loading pulse dot
  *   - The optional left sidebar slot (provider-rail style)
  *   - The optional active-filters bar below the search row
  *   - The optional content slot rendered below the popup (e.g. reasoning controls)
@@ -125,13 +125,12 @@ const DEFAULT_POPUP_HEIGHT = "h-[min(620px,var(--available-height))]";
 const DEFAULT_POPUP_WIDTH = "w-[max(520px,var(--anchor-width))]";
 
 const POPUP_BASE_CLASSES = cn(
-	"select-popup relative z-popover flex flex-col overflow-hidden rounded-xl p-0",
-	"max-w-[calc(100vw-32px)] origin-(--transform-origin)",
+	"t-dropdown relative z-popover flex flex-col overflow-hidden rounded-xl p-0",
+	"max-w-[calc(100vw-32px)]",
 	"bg-gradient-to-b from-[var(--color-surface-3)]/95 to-[var(--color-surface-2)]/98",
 	"shadow-[0_12px_32px_-12px_rgba(2,3,8,0.65),inset_0_1px_0_0_rgba(255,255,255,0.06)]",
 	"ring-1 ring-white/[0.08] ring-inset",
-	"backdrop-blur-md backdrop-saturate-150",
-	"transition-[transform,opacity] duration-150 ease-out data-[ending-style]:ease-in"
+	"backdrop-blur-md backdrop-saturate-150"
 );
 
 const SEARCH_INPUT_CLASSES = cn(
@@ -172,6 +171,14 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 }: ModelPickerProps<TItem, TValue>) {
 	const [internalOpen, setInternalOpen] = useState(false);
 	const [internalSearch, setInternalSearch] = useState("");
+	const [popupContentReady, setPopupContentReady] = useState(false);
+	// Side the popup opens toward. Recomputed on every open: the popup is
+	// height-clamped to `--available-height`, so Base UI's flip never fires
+	// (it always "fits" below by shrinking) — we instead pick whichever of
+	// top / bottom has more room around the trigger so the list gets the most
+	// vertical space. Driven by the layout effect + `triggerWrapperRef` below.
+	const [popupSide, setPopupSide] = useState<"top" | "bottom">("bottom");
+	const triggerWrapperRef = useRef<HTMLDivElement>(null);
 
 	const isOpenControlled = controlledOpen !== undefined;
 	const isSearchControlled = inputValue !== undefined;
@@ -180,6 +187,45 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 	const controlledOrInternalOpen = isOpenControlled ? controlledOpen : internalOpen;
 	const effectiveOpen = inline ? true : controlledOrInternalOpen;
 	const effectiveSearch = isSearchControlled ? inputValue : internalSearch;
+	const popupOrigin = popupSide === "top" ? "bottom-left" : "top-left";
+
+	// Measure the trigger when the popup opens and steer it toward the side with
+	// more room (top vs bottom). Runs in a layout effect so the side is set
+	// before paint — no visible bottom→top jump on open.
+	useLayoutEffect(() => {
+		if (inline || !effectiveOpen) {
+			return;
+		}
+		const anchor = triggerWrapperRef.current;
+		if (!anchor) {
+			return;
+		}
+		const rect = anchor.getBoundingClientRect();
+		const spaceAbove = rect.top;
+		const spaceBelow = window.innerHeight - rect.bottom;
+		setPopupSide(spaceAbove > spaceBelow ? "top" : "bottom");
+	}, [effectiveOpen, inline]);
+
+	useEffect(() => {
+		if (inline) {
+			setPopupContentReady(true);
+			return;
+		}
+		if (!effectiveOpen || popupContentReady) {
+			return;
+		}
+		setPopupContentReady(false);
+		let secondFrame: number | null = null;
+		const firstFrame = requestAnimationFrame(() => {
+			secondFrame = requestAnimationFrame(() => setPopupContentReady(true));
+		});
+		return () => {
+			cancelAnimationFrame(firstFrame);
+			if (secondFrame !== null) {
+				cancelAnimationFrame(secondFrame);
+			}
+		};
+	}, [effectiveOpen, inline, popupContentReady]);
 
 	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
 		// Inline mode never actually closes the combobox; it just forwards
@@ -219,6 +265,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 		}
 	};
 
+	const renderCollection = inline || popupContentReady;
 	const panelBody = (
 		<>
 			<span
@@ -230,7 +277,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				    input on the right edge, sharing the same surface so
 				    they read as one control instead of "input + button".
 				    Same pattern across all three pickers. Input gets
-				    end-padding when either the loading spinner or the
+				    end-padding when either the loading pulse dot or the
 				    filters menu is present to leave room. */}
 				<div className="relative flex w-full items-center">
 					<Combobox.Input
@@ -243,9 +290,9 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 						placeholder={searchPlaceholder}
 					/>
 					{isLoading ? (
-						<Spinner
+						<PulseDot
 							className={cn(
-								"pointer-events-none absolute top-1/2 size-4 -translate-y-1/2 text-foreground-muted",
+								"pointer-events-none absolute top-1/2 size-2.5 -translate-y-1/2 text-foreground-muted",
 								filtersMenuSlot ? "end-11" : "end-3"
 							)}
 						/>
@@ -257,7 +304,7 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				{activeFiltersSlot}
 			</div>
 			<div className="flex min-h-0 min-w-0 flex-1">
-				{sidebarSlot}
+				{renderCollection ? sidebarSlot : null}
 				{/* `min-w-0` is load-bearing: a flex child defaults to
 				    `min-width: auto` (= its content's intrinsic min size), so
 				    without this the list column refuses to shrink below the
@@ -267,7 +314,17 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 				    filter, whose surviving cards all carry that wide right
 				    column. With `min-w-0` the column tracks the available width
 				    and each card's own `min-w-0` left region truncates instead. */}
-				<div className="flex min-h-0 min-w-0 flex-1 flex-col">{list}</div>
+				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+					{renderCollection ? (
+						list
+					) : (
+						<div
+							aria-hidden="true"
+							className="min-h-0 flex-1"
+							data-slot="model-picker-list-warmup"
+						/>
+					)}
+				</div>
 			</div>
 		</>
 	);
@@ -289,7 +346,8 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 			>
 				{inline ? (
 					<div
-						className={cn(POPUP_BASE_CLASSES, popupHeightClass, popupWidthClass)}
+						className={cn(POPUP_BASE_CLASSES, "is-open", popupHeightClass, popupWidthClass)}
+						data-origin="top-left"
 						data-slot="model-picker-inline"
 						ref={popupRef}
 					>
@@ -297,11 +355,23 @@ export function ModelPicker<TItem, TValue = TItem | null>({
 					</div>
 				) : (
 					<>
-						{trigger}
-						<Combobox.Portal>
-							<Combobox.Positioner align="start" className="z-popover outline-none" sideOffset={6}>
+						{/* Wrapper measures the trigger's viewport position so the popup
+						    can open toward the side with more room — see triggerWrapperRef
+						    and the open-side layout effect. It adds no visual box. */}
+						<div className="w-full" ref={triggerWrapperRef}>
+							{trigger}
+						</div>
+						<Combobox.Portal keepMounted>
+							<Combobox.Positioner
+								align="start"
+								className="z-popover outline-none"
+								side={popupSide}
+								sideOffset={6}
+							>
 								<Combobox.Popup
 									className={cn(POPUP_BASE_CLASSES, popupHeightClass, popupWidthClass)}
+									data-origin={popupOrigin}
+									data-slot="model-picker-popup"
 									ref={popupRef}
 								>
 									{panelBody}

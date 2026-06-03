@@ -1,16 +1,16 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // §1b/§6 (WU-11), frontend/electron/ipc/diag-bundle.ts. No manager — reads logs + zips them.
 //
 // The About panel's "Open logs folder" / "Save diagnostic bundle" actions map to:
 //   diag_open_logs_folder -> String  (the log dir; the adapter opens it via the opener plugin)
 //   diag_save_bundle      -> DiagSaveBundleResult { ok, cancelled?, error?, path? }
 //
-// `diag_open_logs_folder` returns the *path* (not a void) because the electronAPI polyfill's
+// `diag_open_logs_folder` returns the *path* (not a void) because the nativeBridge polyfill's
 // `opener:logs` route invokes this command, then hands the returned string to
 // `@tauri-apps/plugin-opener`'s `openPath`. Returning the path keeps the open-folder behaviour in
 // the (capability-gated) plugin rather than shelling out from Rust.
 //
-// `diag_save_bundle` mirrors the Electron handler: prompt for a save location (Desktop +
+// `diag_save_bundle` mirrors the reference handler: prompt for a save location (Desktop +
 // `winstt-diag-<ts>.zip` default), collect whatever log files exist, append a `system-info.txt`,
 // and write a single deflate zip. The renderer's `DiagSaveBundleResult` shape (shared/api/
 // ipc-client.ts) is byte-identical to the camelCase struct below, so the value round-trips through
@@ -31,7 +31,7 @@ use zip::CompressionMethod;
 
 /// Result of `diag_save_bundle`. Field names mirror the renderer's
 /// `DiagSaveBundleResult` interface exactly; `ok` is always present, the rest are
-/// optional and skipped when absent so the JSON matches the Electron handler.
+/// optional and skipped when absent so the JSON matches the reference handler.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagSaveBundleResult {
@@ -101,14 +101,14 @@ fn pad2(n: u32) -> String {
     }
 }
 
-/// `winstt-diag-YYYYMMDD-HHMMSS.zip` — same scheme as the Electron handler's
+/// `winstt-diag-YYYYMMDD-HHMMSS.zip` — same scheme as the reference handler's
 /// `formatTimestampForFilename`, derived from local time without pulling `chrono`.
 fn default_bundle_filename() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // Decompose the unix timestamp into a UTC civil date/time. The Electron build
+    // Decompose the unix timestamp into a UTC civil date/time. The the reference build
     // used local time; UTC here keeps the filename deterministic without a
     // timezone dep — the value is cosmetic (uniqueness, not correctness).
     let (y, mo, d, h, mi, s) = unix_to_civil(now);
@@ -150,7 +150,7 @@ struct LogEntry {
     source: PathBuf,
 }
 
-/// Candidate log files, filtered to those that actually exist (the Electron
+/// Candidate log files, filtered to those that actually exist (the reference
 /// handler's `collectExistingLogFiles`). `tauri-plugin-log` writes a single
 /// rolling log; the WinSTT-named files are included opportunistically.
 fn collect_existing_log_files(logs_dir: &Path) -> Vec<LogEntry> {
@@ -167,8 +167,8 @@ fn collect_existing_log_files(logs_dir: &Path) -> Vec<LogEntry> {
         .collect()
 }
 
-/// The `system-info.txt` content (the Electron handler's `buildSystemInfo`),
-/// trimmed to what's available without `sysinfo`/Electron's `getGPUInfo`.
+/// The `system-info.txt` content (the reference handler's `buildSystemInfo`),
+/// trimmed to what's available without `sysinfo`/the reference's `getGPUInfo`.
 fn build_system_info(app: &AppHandle) -> String {
     let lines = [
         format!("WinSTT version: {}", app.package_info().version),
@@ -196,7 +196,7 @@ fn write_zip_archive(
     for entry in log_files {
         // Read each log fully (logs are small relative to the diagnostic flow)
         // and embed it at the archive root under its display name, matching the
-        // Electron handler's `addLocalFile(source, "", name)`.
+        // the reference handler's `addLocalFile(source, "", name)`.
         let bytes = std::fs::read(&entry.source).map_err(|e| e.to_string())?;
         zip.start_file(entry.name, options)
             .map_err(|e| e.to_string())?;
@@ -214,7 +214,7 @@ fn write_zip_archive(
 
 /// Prompt for a save location (Desktop default), then collect logs + system-info
 /// into a single deflate zip. Returns `cancelled` when the user dismisses the
-/// dialog (matching the Electron `{ ok:false, cancelled:true }`).
+/// dialog (matching the reference `{ ok:false, cancelled:true }`).
 fn build_bundle(app: &AppHandle) -> DiagSaveBundleResult {
     let default_name = default_bundle_filename();
     let mut builder = app

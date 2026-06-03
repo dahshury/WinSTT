@@ -1,0 +1,111 @@
+---
+title: File Transcription
+description: Drag an audio or video file onto WinSTT — or pick one from the tray — and get a plain-text or timestamped SRT transcript next to it. Uses your main model, fully offline.
+---
+
+Drop an existing recording onto WinSTT and it transcribes the whole file in one
+pass, writing the text to a `.txt` or `.srt` file beside the source — no dictation,
+no hotkey, same on-device model you use for live dictation.
+
+<Video src="transcribe-file" chrome="card" alt="An interview.mp3 is dragged into a drop zone, a progress bar fills, and interview.srt appears beside it." caption="Drag in an audio file; a timestamped .srt is written right beside it." />
+
+<Screenshot src="sec-quality-filetx" alt="The File Transcription section of the Processing tab: a Format switcher between TXT and SRT and a save-location choice." chrome="card" caption="The File Transcription format lives in the Processing tab — TXT for plain text, SRT for timestamped subtitles." />
+
+## Two ways to start
+
+Both routes feed the same engine; only how you hand it the file differs.
+
+<StepFlow>
+  <Step title="Drag and drop">
+    Drag an audio or video file from Explorer onto the main window. While the file
+    is over the window the visualizer area shows a **"Drop file to transcribe"**
+    overlay; release to start. This is the fastest path when the window is visible.
+  </Step>
+  <Step title="Transcribe File… from the tray">
+    Right-click the tray icon and choose **Transcribe File…**. A native picker
+    titled *"Select Audio or Video File to Transcribe"* opens; select one file.
+    Use this when the window is minimized to the tray.
+  </Step>
+</StepFlow>
+
+<Screenshot src="tray-menu" alt="The WinSTT tray context menu listing Settings, Transcribe File…, Check for Updates, and other entries." chrome="card" label="Tray menu" caption="Transcribe File… opens a file picker without needing the main window in front." />
+
+A request runs to completion in the background and reports progress as it goes; the
+running dictation model stays connected the whole time.
+
+## Supported formats
+
+WinSTT accepts common audio **and** video containers — the audio track is extracted
+and transcribed. Anything outside this list is rejected with an "Unsupported file
+format" message.
+
+<ModelTable
+  head={["Kind", "Extensions"]}
+  rows={[
+    ["Audio", ".mp3 · .wav · .flac · .m4a · .aac · .ogg · .wma"],
+    ["Video", ".mp4 · .mkv · .avi · .mov · .wmv · .flv · .webm"],
+  ]}
+  caption="The dropped or picked file must have one of these extensions, exist on disk, and the STT server must be connected."
+/>
+
+## Output format
+
+One setting, in the **Processing** tab, decides what gets written.
+
+<SettingRow label="File Transcription Format" settingKey="general.fileTranscriptionFormat" default="txt">
+  **TXT** writes the transcript as plain text. **SRT** writes SubRip subtitles with
+  numbered cues and `00:00:00,000 --> ...` timecodes, ready to load into a video
+  player or editor. Set with the Format switcher in the Processing tab.
+</SettingRow>
+
+<ModelTable
+  head={["Format", "Contents", "Best for"]}
+  rows={[
+    ["TXT", "Continuous plain text, no timing", "Notes, articles, pasting into a doc"],
+    ["SRT", "Numbered cues with start/end timecodes", "Captions and subtitles for video"],
+  ]}
+  caption="The format applies to every file you transcribe until you change it."
+/>
+
+## Where files land
+
+The output filename is the source path with the format appended — transcribing
+`interview.mp3` produces `interview.mp3.txt` (or `interview.mp3.srt`). Where that
+file is written depends on one setting.
+
+<SettingRow label="Save Location" settingKey="general.fileTranscriptionSaveLocation" default="auto">
+  **Auto** writes the transcript next to the source file automatically, with no
+  prompt. **Ask** opens a Save dialog each time so you can choose the folder and
+  name; cancelling the dialog cancels the transcription. Auto is the default.
+</SettingRow>
+
+<Callout type="info" title="Same model as dictation">
+  File transcription reuses your **main** model — whatever you picked in the
+  [Model](/docs/settings/model) tab. There's no separate file engine, so accuracy,
+  language scope, and device all match your dictation setup. Larger files take
+  proportionally longer; a heavier model trades speed for accuracy here just as it
+  does live.
+</Callout>
+
+<Callout type="warn" title="The server must be running">
+  Transcription is dispatched to the local STT server over the WebSocket. If the
+  server is still starting up or disconnected, the request is refused with a
+  connection error — wait for the app to show **connected**, then retry.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Choose a model" href="/docs/settings/model">
+    The main model that powers both dictation and file transcription.
+  </Card>
+  <Card title="Processing settings" href="/docs/settings/quality">
+    Where the File Transcription format and other post-processing options live.
+  </Card>
+  <Card title="Dictation" href="/docs/dictation">
+    Real-time voice typing with the hotkey — the everyday way to use WinSTT.
+  </Card>
+  <Card title="Transcription history" href="/docs/transcription-history">
+    Browse, search, and replay everything you've dictated.
+  </Card>
+</Cards>

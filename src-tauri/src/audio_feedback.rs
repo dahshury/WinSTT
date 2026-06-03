@@ -14,6 +14,28 @@ pub enum SoundType {
     Stop,
 }
 
+/// Failures from resolving an output device, opening the rodio stream, reading
+/// the sound file, or queuing it for playback. Replaces the previous
+/// `Box<dyn std::error::Error>` boundary so the error has a real type and
+/// `From` conversions instead of an opaque trait object.
+#[derive(Debug, thiserror::Error)]
+pub enum AudioFeedbackError {
+    #[error("failed to enumerate output devices: {0}")]
+    Devices(#[from] cpal::DevicesError),
+
+    #[error("failed to read output device name: {0}")]
+    DeviceName(#[from] cpal::DeviceNameError),
+
+    #[error("failed to open output stream: {0}")]
+    Stream(#[from] rodio::StreamError),
+
+    #[error("failed to open sound file: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("failed to play sound: {0}")]
+    Play(#[from] rodio::PlayError),
+}
+
 fn resolve_sound_path(
     app: &AppHandle,
     settings: &AppSettings,
@@ -87,18 +109,18 @@ fn play_sound_blocking(app: &AppHandle, path: &Path) {
     }
 }
 
-fn play_sound_at_path(app: &AppHandle, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn play_sound_at_path(app: &AppHandle, path: &Path) -> Result<(), AudioFeedbackError> {
     let settings = settings::get_settings(app);
     let volume = settings.audio_feedback_volume;
     let selected_device = settings.selected_output_device.clone();
     play_audio_file(path, selected_device, volume)
 }
 
-fn play_audio_file(
+pub(crate) fn play_audio_file(
     path: &std::path::Path,
     selected_device: Option<String>,
     volume: f32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), AudioFeedbackError> {
     let stream_builder = if let Some(device_name) = selected_device {
         if device_name == "Default" {
             debug!("Using default device");

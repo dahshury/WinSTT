@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/05_*.md §A + lib_wiring.md §3,
+// Source: docs/port/05_*.md §A + lib_wiring.md §3,
 // frontend/electron/ipc/wakeword. Wraps managers::WakeWordManager.
 //
 // Wake-word commands. set_wake_word rebuilds the detector from the chosen preset

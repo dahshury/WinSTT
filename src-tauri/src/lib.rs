@@ -87,7 +87,7 @@ fn build_console_filter() -> env_filter::Filter {
 
 fn show_main_window(app: &AppHandle) {
     // Hand off from the splash: the real window is about to be visible. Idempotent
-    // and a no-op if the page-load handler already closed it (mirrors Electron's
+    // and a no-op if the page-load handler already closed it (mirrors the reference's
     // showOnce → closeSplashWindow).
     splash::close_splash_window(app);
     if let Some(main_window) = app.get_webview_window("main") {
@@ -182,6 +182,24 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
 
+    // Pre-warm the Silero VAD + audio recorder OFF the PTT press path. Neither
+    // WinSTT nor upstream Handy preloads this, so the COLD first push-to-talk
+    // otherwise pays the Silero ONNX load + recorder construction synchronously
+    // inside `start_microphone_stream` (~50-200ms) before the recording chime
+    // fires — the "warmup feels slow" the user reported. This only loads the
+    // model + builds the recorder; it does NOT open the mic stream, so on-demand
+    // privacy (mic stays closed until a real press) is preserved. Off-thread so
+    // setup isn't blocked; `preload_vad` is idempotent (the press-path call then
+    // no-ops).
+    {
+        let rm = recording_manager.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = rm.preload_vad() {
+                log::debug!("Startup VAD pre-load failed: {e}");
+            }
+        });
+    }
+
     // Seed WinSTT settings defaults BEFORE managers read them (first-run materialization).
     winstt::commands::settings::seed_defaults(app_handle);
 
@@ -207,20 +225,39 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             FileTranscribeManager, LlmManager, LoopbackManager, RealtimeManager, TtsManager,
             WakeWordManager, WordAligner,
         };
-        app_handle.manage(Arc::new(LlmManager::new(app_handle)));
+        let llm_manager = Arc::new(LlmManager::new(app_handle));
+        app_handle.manage(llm_manager.clone());
         app_handle.manage(Arc::new(CloudSttManager::new(app_handle)));
         app_handle.manage(Arc::new(ContextManager::new(app_handle)));
-        app_handle.manage(Arc::new(TtsManager::new(app_handle)));
+        let tts_manager = Arc::new(TtsManager::new(app_handle));
+        tts_manager.start_idle_watcher();
+        app_handle.manage(tts_manager);
         app_handle.manage(Arc::new(WakeWordManager::new(app_handle)));
         app_handle.manage(Arc::new(DiarizationManager::new(app_handle)));
         app_handle.manage(Arc::new(LoopbackManager::new(app_handle)));
-        app_handle.manage(Arc::new(WordAligner::new(app_handle, model_manager.clone())));
+        app_handle.manage(Arc::new(WordAligner::new(
+            app_handle,
+            model_manager.clone(),
+        )));
         app_handle.manage(Arc::new(FileTranscribeManager::new(
             app_handle,
             transcription_manager.clone(),
         )));
         // C4 fix: DownloadManager MUST be managed or the 6 download commands panic on State injection.
         app_handle.manage(Arc::new(DownloadManager::new(app_handle)));
+        // Multi-provider TTS catalog download manager (Kitten/Piper/Supertonic/Kokoro
+        // from HF) — backs the tts_predownload_model / pause / resume / cancel / delete
+        // commands + the picker's per-model cache state.
+        app_handle.manage(Arc::new(
+            crate::winstt::managers::tts_download_manager::TtsDownloadManager::new(app_handle),
+        ));
+        {
+            let settings = winstt::commands::settings::read_settings(app_handle);
+            if winstt::commands::settings::should_warm_tts(&settings) {
+                winstt::commands::settings::warm_tts_async(app_handle);
+            }
+        }
+        llm_manager.start_warmup_loop();
 
         // ── Realtime streaming transcription worker ──
         // Reuses the MAIN transcription engine (single-engine port — no separate realtime
@@ -235,6 +272,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         realtime_manager.start();
         app_handle.manage(realtime_manager);
     }
+    // If the persisted WinSTT mode is wakeword, arm the detector and open the
+    // microphone stream during startup. The renderer treats wakeword as
+    // server-driven, so this backend sync is the only place that can make a cold
+    // launch start listening.
+    winstt::commands::settings::sync_wakeword_runtime_from_settings(app_handle);
+
     // Tray-menu placement state + the custom-HTML-tray + history live-event bridge.
     app_handle.manage(crate::winstt::commands::tray_menu::TrayMenuAnchor::default());
     // Hotkey combo-recorder state. hotkey_start_recording/stop + the per-key
@@ -243,6 +286,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // during a hotkey rebind records NOTHING. (This is why "changing a hotkey doesn't
     // record the keys".) Must be managed before hotkey_start_recording runs.
     app_handle.manage(crate::winstt::commands::hotkey::CaptureBridge::default());
+    // Preview-before-pasting: holds the foreground (paste-target) HWND captured
+    // when the editable preview pill opens, so `confirm_paste` can restore it
+    // before pasting. Managed here so `capture_foreground` / `confirm_paste` /
+    // `cancel_preview` find it via `app.try_state::<PreviewState>()`.
+    app_handle.manage(crate::winstt::commands::preview::PreviewState::default());
     winstt::commands::history::install_history_event_bridge(app_handle);
     winstt::commands::tray_menu::install_tray_menu_lifecycle(app_handle);
     // Snippet expansion cache: warm at startup + rebuild on every settings:changed.
@@ -267,6 +315,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Set up signal handlers for toggling transcription
     #[cfg(unix)]
     signal_handle::setup_signal_handler(app_handle.clone(), signals);
+
+    // Windows: shut down cleanly on Ctrl+C / console-close so `tauri dev` exits with code 0
+    // and no WebView2 teardown noise (no STATUS_CONTROL_C_EXIT, no `window_impl.cc` warning,
+    // no `^C^C` race). See the handler doc for why this is a hard exit, not app.exit(0).
+    #[cfg(windows)]
+    signal_handle::setup_windows_ctrl_handler();
 
     // Apply macOS Accessory policy if starting hidden and tray is available.
     // If the tray icon is disabled, keep the dock icon so the user can reopen.
@@ -297,9 +351,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         .icon_as_template(true)
         // WinSTT uses its OWN transparent HTML tray menu (views/tray-menu), NOT Handy's
         // native OS context menu (the user's complaint: "tray menu matches Handy not my
-        // Electron menu"). No native menu is attached (see tray.rs::update_tray_menu).
+        // the reference menu"). No native menu is attached (see tray.rs::update_tray_menu).
         //
-        // Click routing mirrors the Electron tray (electron/ipc/tray.ts):
+        // Click routing mirrors the reference tray (electron/ipc/tray.ts):
         //   - LEFT click / DOUBLE click → show + raise the main window
         //     (`tray.on("click", () => win.show())`).
         //   - RIGHT click → toggle the custom HTML tray menu at the cursor
@@ -356,7 +410,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Get the autostart manager and configure based on user setting
     let autostart_manager = app_handle.autolaunch();
-    let settings = settings::get_settings(&app_handle);
+    let settings = settings::get_settings(app_handle);
 
     if settings.autostart_enabled {
         // Enable autostart if user has opted in
@@ -373,14 +427,18 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Eagerly load + WARM the STT engine at boot so the user's FIRST PTT decode is warm — no
     // model-load + cold DirectML-kernel JIT serialized after release (the ~10x first-dictation
-    // gap vs the Electron app, whose server warms at boot). Off-thread so setup isn't blocked;
+    // gap vs the reference app, whose server warms at boot). Off-thread so setup isn't blocked;
     // `initiate_model_load` is idempotent (a later PTT-press load is a no-op) and `warmup` skips
-    // cleanly for cloud ids / failed loads. Mirrors the Electron server's boot `recorder.warmup()`.
+    // cleanly for cloud ids / failed loads. Mirrors the reference server's boot `recorder.warmup()`.
     {
         let tm = transcription_manager.clone();
         std::thread::spawn(move || {
             tm.initiate_model_load(); // spawns its own background load thread
             tm.warmup(); // waits out that load, then dummy-decodes to compile kernels
+                         // Signal the splash ready-watcher that the backend is up + warm (or had
+                         // nothing to load). The single-process analog of the reference's
+                         // `server-ready`; one of the two gates before the pill is shown.
+            splash::mark_stt_boot_done();
         });
     }
 }
@@ -533,6 +591,13 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             winstt::commands::tts::tts_install_resume,
             winstt::commands::tts::tts_install_cancel,
             winstt::commands::tts::tts_preview_cloud,
+            winstt::commands::tts::tts_list_models,
+            winstt::commands::tts::tts_list_models_with_state,
+            winstt::commands::tts::tts_predownload_model,
+            winstt::commands::tts::tts_download_pause,
+            winstt::commands::tts::tts_download_resume,
+            winstt::commands::tts::tts_download_cancel,
+            winstt::commands::tts::tts_delete_model,
             winstt::commands::llm::process_text,
             winstt::commands::llm::process_transform,
             winstt::commands::llm::scan_ollama_models,
@@ -611,6 +676,8 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             winstt::commands::sound::sound_library_remove,
             winstt::commands::transforms::apply_transform,
             winstt::commands::transforms::apply_transform_preview,
+            winstt::commands::preview::confirm_paste,
+            winstt::commands::preview::cancel_preview,
             winstt::commands::windows::winstt_diag,
             winstt::commands::windows::open_window,
             winstt::commands::windows::close_window,
@@ -643,11 +710,58 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         ])
 }
 
+/// Point hf-hub at the standard Hugging Face cache when the user hasn't set one.
+///
+/// hf-hub 1.0.0-rc.1 resolves its cache dir from `$HOME` only (see
+/// `hf_hub::constants::dirs_or_home`): it ignores Windows' `%USERPROFILE%` and
+/// falls back to `/tmp` when `HOME` is unset. A packaged `WinSTT.exe` launched
+/// from Explorer inherits no `HOME`, so every `HFClient::new()` resolves the
+/// model cache to `<cwd-drive>:\tmp\.cache\huggingface\hub` — an empty dir — and
+/// the app "can't see" models already downloaded under
+/// `%USERPROFILE%\.cache\huggingface\hub`. `tauri dev`, launched from a shell
+/// that exports `HOME`, never hits this, which is why dev finds the models and a
+/// double-clicked build doesn't.
+///
+/// Set `HF_HOME` to the same location Python's `huggingface_hub` uses on Windows
+/// (`%USERPROFILE%/.cache/huggingface`) whenever the user hasn't configured the
+/// cache themselves — leaving any explicit `HF_HOME` / `HF_HUB_CACHE` /
+/// `HUGGINGFACE_HUB_CACHE`, or a shell-provided `HOME`, untouched.
+#[cfg(windows)]
+fn ensure_hf_cache_env() {
+    let configured = std::env::var_os("HF_HOME").is_some()
+        || std::env::var_os("HF_HUB_CACHE").is_some()
+        || std::env::var_os("HUGGINGFACE_HUB_CACHE").is_some()
+        // A shell-provided HOME already yields the correct cache (this is how
+        // `tauri dev` finds the models), so don't override it.
+        || std::env::var_os("HOME").is_some();
+    if configured {
+        return;
+    }
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        let hf_home = std::path::Path::new(&profile)
+            .join(".cache")
+            .join("huggingface");
+        eprintln!(
+            "[hf-cache] HOME unset; pointing HF_HOME at {}",
+            hf_home.display()
+        );
+        std::env::set_var("HF_HOME", hf_home);
+    }
+}
+
+/// No-op on non-Windows: `$HOME` is always set there, so hf-hub resolves the
+/// cache correctly without help.
+#[cfg(not(windows))]
+fn ensure_hf_cache_env() {}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
     // Detect portable mode before anything else
     portable::init();
+
+    // Make a double-clicked build resolve the same HF model cache as `tauri dev`
+    // (hf-hub reads $HOME only and falls back to /tmp on Windows without it).
+    ensure_hf_cache_env();
 
     // Parse console logging directives from RUST_LOG, falling back to info-level logging
     // when the variable is unset
@@ -734,10 +848,36 @@ pub fn run(cli_args: CliArgs) {
         .setup(move |app| {
             specta_builder.mount_events(app);
 
+            // Global panic hook → the file log. The log plugin's logger is installed by now, so
+            // this captures EVERY panic (thread name + location + payload) even when a
+            // `catch_unwind` later swallows it (the hook runs first, before unwinding). Without
+            // it, a panic on a worker thread — the audio recorder pump, the hotkey dispatch, a
+            // model-load thread — left no trace and was the kind of silent fault that wedged the
+            // PTT pipeline. Chains the previous hook so the default stderr message is preserved.
+            {
+                let prev_hook = std::panic::take_hook();
+                std::panic::set_hook(Box::new(move |info| {
+                    let thread = std::thread::current();
+                    let name = thread.name().unwrap_or("<unnamed>");
+                    let location = info
+                        .location()
+                        .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                        .unwrap_or_else(|| "<unknown location>".to_string());
+                    let payload = info
+                        .payload()
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "<non-string panic payload>".to_string());
+                    log::error!("[panic] thread '{name}' at {location}: {payload}");
+                    prev_hook(info);
+                }));
+            }
+
             // Show the startup splash the instant setup begins — BEFORE the slow
             // path (initialize_core_logic + prewarm_windows building all 8
             // secondary WebView2 windows + Enigo init) and before the main pill
-            // paints. Ported from the Electron in-app splash (splash-window.ts);
+            // paints. Ported from the reference in-app splash (splash-window.ts);
             // closed by the main window's on_page_load(Finished) below (with a
             // 30 s backstop inside create_splash_window).
             let app_handle_for_splash = app.handle().clone();
@@ -748,7 +888,6 @@ pub fn run(cli_args: CliArgs) {
             // Create main window programmatically so we can set data_directory
             // for portable mode (redirects WebView2 cache to portable Data dir)
             // WinSTT main window: 420x150 frameless floating pill (windows.rs WINDOW_SPECS[main]).
-            let app_handle_for_page_load = app.handle().clone();
             let mut win_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
                     .title("WinSTT")
@@ -757,12 +896,15 @@ pub fn run(cli_args: CliArgs) {
                     .resizable(false)
                     .decorations(false)
                     .maximizable(false)
-                    // Hand off from the splash the moment the main pill's page
-                    // finishes loading (the renderer has painted), mirroring the
-                    // Electron `showOnce` → `closeSplashWindow`. Idempotent.
+                    // Record that the renderer has PAINTED — one of the two signals
+                    // the splash ready-watcher waits on before handing off to the
+                    // real window (the reference `did-finish-load` half of its
+                    // `showOnce` gate). Do NOT close the splash here: the watcher
+                    // also waits for the STT boot to finish, then shows the pill +
+                    // closes the splash in one handoff.
                     .on_page_load(move |_w, payload| {
                         if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                            splash::close_splash_window(&app_handle_for_page_load);
+                            splash::mark_renderer_painted();
                         }
                     })
                     .visible(false);
@@ -773,7 +915,7 @@ pub fn run(cli_args: CliArgs) {
 
             win_builder.build()?;
 
-            let mut settings = get_settings(&app.handle());
+            let mut settings = get_settings(app.handle());
 
             // CLI --debug flag overrides debug_mode and log level (runtime-only, not persisted)
             if cli_args.debug {
@@ -790,7 +932,7 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
 
-            // Register the global hotkeys at startup. The WinSTT renderer (ported from Electron,
+            // Register the global hotkeys at startup. The WinSTT renderer (ported from the reference,
             // where shortcuts lived in main.ts) never calls `initialize_shortcuts`, so without this
             // the dictation/cancel hotkeys are NEVER registered and pressing them does nothing.
             // Must run BEFORE the transforms hook below so HandyKeysState is initialized first.
@@ -811,24 +953,15 @@ pub fn run(cli_args: CliArgs) {
                 Err(e) => log::warn!("Enigo init at startup failed: {e}"),
             }
 
-            // WinSTT transforms global hotkey: arm `llm.transforms.hotkey` only while the
-            // feature is enabled (mirrors transform-hotkeys.ts). The accelerator lives in the
-            // WinSTT settings tree, so re-point the `transforms` binding at it here.
-            {
-                let ws = crate::winstt::commands::settings::read_settings(&app_handle);
-                let t = &ws.llm.transforms;
-                let hotkey = t.hotkey.trim().to_string();
-                if t.enabled && !hotkey.is_empty() {
-                    if let Err(e) =
-                        crate::shortcut::change_binding(app_handle.clone(), "transforms".to_string(), hotkey)
-                    {
-                        log::warn!("Failed to register transforms hotkey: {e}");
-                    }
-                }
-                // Disabled: do nothing. The binding isn't registered until `initialize_shortcuts`
-                // runs (frontend-driven, after this hook); when disabled, run_transform_pipeline
-                // gates itself to a no-op, so an idle combo capture is harmless.
-            }
+            // WinSTT-tree global hotkeys: arm the transforms (`llm.transforms.hotkey`),
+            // TTS read-aloud (`tts.hotkey`) and re-paste (`general.repasteHotkey`) combos
+            // from the WinSTT settings tree. `init_shortcuts` above deliberately skips
+            // these (their raw key names aren't parseable without translation), so this
+            // single call is what makes them live — gated on each feature's enable flag,
+            // and re-run on settings change (apply_settings_patch) so they hot-swap with
+            // no relaunch. Mirrors the reference's setupTransformHotkeys / setupTtsHotkey /
+            // setupRepasteHotkey, which all ran in main.ts at boot.
+            crate::shortcut::reconcile_winstt_hotkeys(&app_handle);
 
             // Pre-warm GPU/accelerator enumeration on a background thread.
             // The first call into transcribe_rs::whisper_cpp::gpu::list_gpu_devices
@@ -855,7 +988,25 @@ pub fn run(cli_args: CliArgs) {
             // If start_hidden but tray is disabled, we must show the window
             // anyway. Without a tray icon, the dock is the only way back in.
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-            if should_force_show || !should_hide || !tray_available {
+            let will_show = should_force_show || !should_hide || !tray_available;
+
+            // Hand off from the splash to the real window only once the app is READY.
+            //
+            // The previous code called `show_main_window` HERE, synchronously, inside
+            // `setup`. Because `show_main_window` closes the splash first (the handoff),
+            // and this runs before the event loop pumps, it tore the splash down at the
+            // very start of boot — before the renderer painted and long before the STT
+            // engine warmed — flashing a blank pill (the reported "splash killed early"
+            // bug). The intended `on_page_load(Finished)` close could never win that race.
+            //
+            // Instead the ready-watcher (off the main thread) waits for BOTH the renderer
+            // paint AND the STT boot (or a 15 s fallback), then shows the pill + closes the
+            // splash in one handoff — mirroring the reference's gated `showOnce`
+            // (did-finish-load + server-ready). When no splash exists (the `--start-hidden`
+            // CLI flag skips its creation), fall back to the old immediate show.
+            if splash::is_active(&app_handle) {
+                splash::spawn_ready_watcher(&app_handle, will_show);
+            } else if will_show {
                 show_main_window(&app_handle);
             }
 
@@ -880,7 +1031,7 @@ pub fn run(cli_args: CliArgs) {
                 // `process::exit` skipped all of that. A background thread (wakeword tap /
                 // idle watcher / ORT) could in theory stall the graceful path, so a bounded
                 // watchdog thread escalates to a hard `process::exit(0)` if the graceful exit
-                // hasn't terminated the process within the deadline. Mirrors the Electron
+                // hasn't terminated the process within the deadline. Mirrors the reference
                 // app.exit(0)+watchdog pattern. (No blocking joins are added to any Drop.)
                 if window.label() == "main" {
                     log::info!("Main window closed — exiting.");
@@ -898,22 +1049,16 @@ pub fn run(cli_args: CliArgs) {
                 // running for the hotkey.
                 api.prevent_close();
 
-                // Native close of Settings (Alt+F4 etc.) bypasses close_self_window. Release
-                // the pill's modal input lock BEFORE hiding so Windows reactivates the pill
-                // as the modal goes away (otherwise it drops behind other apps and looks
-                // closed), then raise it. See close_self_window for the ordering rationale.
-                let main_for_modal = if window.label() == "settings" {
-                    window.app_handle().get_webview_window("main")
-                } else {
-                    None
-                };
-                if let Some(main) = &main_for_modal {
-                    let _ = main.set_enabled(true);
+                // Native close of Settings (Alt+F4 etc.) bypasses close_self_window,
+                // so route it through the same animated close helper.
+                if window.label() == "settings" {
+                    let _ = winstt::commands::windows::close_window(
+                        window.app_handle().clone(),
+                        "settings".into(),
+                    );
+                    return;
                 }
                 let _res = window.hide();
-                if let Some(main) = &main_for_modal {
-                    let _ = main.set_focus();
-                }
 
                 #[cfg(target_os = "macos")]
                 {
@@ -935,7 +1080,7 @@ pub fn run(cli_args: CliArgs) {
             tauri::WindowEvent::ThemeChanged(theme) => {
                 log::info!("Theme changed to: {:?}", theme);
                 // Update tray icon to match new theme, maintaining idle state
-                utils::change_tray_icon(&window.app_handle(), utils::TrayIconState::Idle);
+                utils::change_tray_icon(window.app_handle(), utils::TrayIconState::Idle);
             }
             _ => {}
         })

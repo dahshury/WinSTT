@@ -58,7 +58,7 @@ export interface CustomModifier {
 	prompt: string;
 }
 
-export function isCustomEntry(entry: PresetEntry): entry is CustomModifierEntry {
+function isCustomEntry(entry: PresetEntry): entry is CustomModifierEntry {
 	return entry.key === CUSTOM_MODIFIER_KEY;
 }
 

@@ -1,21 +1,22 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source (authoritative):
+// Source (authoritative):
 // frontend/electron/ipc/context-playground-window.ts + frontend/electron/lib/context-debug.ts
 // + src/shared/api/context-debug-types.ts (the renderer's ContextDebugReport /
 //   ContextPlaygroundPush contract) + src/views/context-playground/model/use-context-playground.ts
-// + app/PORT/10_frontend_port_plan.md §6 WU-13 + memory project_context_playground_debug.
+// + docs/port/10_frontend_port_plan.md §6 WU-13 + memory project_context_playground_debug.
 //
-// DEBUG-ONLY context-awareness playground backend. Feature-gated behind
-// `context-playground` (mirrors CONTEXT_PLAYGROUND_ENABLED in the Electron build);
-// with the feature off NONE of this compiles in, so shipped builds can't reach it.
+// DEBUG-ONLY context-awareness playground backend. The renderer hides entry
+// points behind CONTEXT_PLAYGROUND_ENABLED, but the backend commands stay
+// registered so generated bindings and native-bridge routes never point at
+// missing commands in dev builds.
 //
 // The renderer (`views/context-playground`) drives three channels; the adapter
-// (electron-tauri-adapter.ts) routes them:
+// (native-bridge-adapter.ts) routes them:
 //   IPC.CONTEXT_PLAYGROUND_SET_LIVE  → command `context_playground_set_live`  ({ enabled })
 //   IPC.CONTEXT_PLAYGROUND_ARM_DEEP  → command `context_playground_arm_deep`
 //   IPC.CONTEXT_PLAYGROUND_CLOSE     → window  `close_window`  (handled by windows.rs)
 //   IPC.CONTEXT_PLAYGROUND_REPORT    → event   `context-playground:report`  (push)
 //
-// Capture model (matches the Electron `decideTick` state machine exactly):
+// Capture model (matches the reference `decideTick` state machine exactly):
 //   - Live: every ~750ms capture the foreground field via the production tree
 //     path and push a `report`.
 //   - Deep (armed by the renderer): the NEXT external tick runs all four UIA
@@ -25,16 +26,16 @@
 //     focus pushes `waiting{own-window-focused}` (deduped) instead of capturing.
 //
 // HARD-RULE-safe: NEW file under winstt/commands/. State lives in module-level
-// statics (mirroring the Electron handler's module-level `liveEnabled`/`armedDeep`,
+// statics (mirroring the reference handler's module-level `liveEnabled`/`armedDeep`,
 // NOT a Tauri-managed manager) so no lib.rs `.manage(...)` edit is needed. The
 // captures reuse the already-registered `ContextManager` (Arc state).
 //
 // The push payloads are BYTE-IDENTICAL to `ContextPlaygroundPush` in
 // context-debug-types.ts so the reused renderer listener needs no changes.
 
-// NOTE(port): de-gated — the renderer's CONTEXT_PLAYGROUND_ENABLED flag controls visibility;
-// the backend commands compile unconditionally so the renderer's invokes always resolve.
-// (was: #![cfg(feature = "context-playground")])
+// Compatibility behavior: visibility is a frontend debug flag, not a Rust cfg.
+// Keep these commands registered unconditionally so flipping the renderer flag
+// does not require rebuilding the backend with a matching Cargo feature.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,7 +61,7 @@ const AX_HTML_CAP: u64 = 60_000;
 /// ASR prompt-tail sanitize cap (mirrors the 250-char Whisper prior-text window).
 const ASR_TAIL_MAX: usize = 250;
 
-// ── module-level state (mirrors the Electron handler's module statics) ─────────
+// ── module-level state (mirrors the reference handler's module statics) ─────────
 
 static LIVE_ENABLED: AtomicBool = AtomicBool::new(true);
 static ARMED_DEEP: AtomicBool = AtomicBool::new(false);
@@ -146,6 +147,10 @@ pub struct ContextDebugReport {
 /// `specta::Type` (it isn't a command param/return nor a collected event).
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "debug-only context-playground payload; rarely constructed"
+)]
 pub enum ContextPlaygroundPush {
     #[serde(rename = "report")]
     Report { at: u64, report: ContextDebugReport },
@@ -246,7 +251,11 @@ fn build_report(
     let contentless = raw.focused_text.trim().is_empty()
         && raw.text_before.as_deref().unwrap_or("").trim().is_empty()
         && raw.ax_html.as_deref().unwrap_or("").trim().is_empty();
-    let ocr_used = raw.ocr_text.as_deref().map(|t| !t.trim().is_empty()).unwrap_or(false);
+    let ocr_used = raw
+        .ocr_text
+        .as_deref()
+        .map(|t| !t.trim().is_empty())
+        .unwrap_or(false);
 
     let metrics = ContextMetrics {
         ax_html_cap: AX_HTML_CAP,
@@ -298,7 +307,13 @@ fn push_report(app: &AppHandle, report: ContextDebugReport) {
     if let Ok(mut last) = LAST_WAIT.lock() {
         *last = None;
     }
-    push(app, ContextPlaygroundPush::Report { at: now_ms(), report });
+    push(
+        app,
+        ContextPlaygroundPush::Report {
+            at: now_ms(),
+            report,
+        },
+    );
 }
 
 fn push_waiting(app: &AppHandle, reason: &'static str) {
@@ -320,17 +335,21 @@ fn push_waiting(app: &AppHandle, reason: &'static str) {
 // ── capture ─────────────────────────────────────────────────────────────────────
 
 /// Capture one mode and time it. Mirrors a single `runCaptureForMode`.
-fn capture_mode(
-    context: &ContextManager,
-    mode: ContextMode,
-    label: &str,
-) -> ContextModeResult {
+fn capture_mode(context: &ContextManager, mode: ContextMode, label: &str) -> ContextModeResult {
     let start = std::time::Instant::now();
     let snapshot = ContextReader::read(context, mode);
     let duration_ms = start.elapsed().as_millis() as u64;
     let ok = !snapshot.focused_text.trim().is_empty()
-        || snapshot.text_before.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
-        || snapshot.ax_html.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+        || snapshot
+            .text_before
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+        || snapshot
+            .ax_html
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
     ContextModeResult {
         duration_ms,
         mode: label.to_string(),
@@ -385,7 +404,12 @@ enum TickDecision {
     CaptureDeep,
 }
 
-fn decide_tick(armed_deep: bool, capturing: bool, live_enabled: bool, own_focus: bool) -> TickDecision {
+fn decide_tick(
+    armed_deep: bool,
+    capturing: bool,
+    live_enabled: bool,
+    own_focus: bool,
+) -> TickDecision {
     if capturing {
         return TickDecision::SkipCapturing;
     }
@@ -495,7 +519,14 @@ pub fn context_playground_capture(
         None
     };
     let duration_ms = start.elapsed().as_millis() as u64;
-    build_report(&raw, deep, context_awareness_enabled, &deny_list, duration_ms, modes)
+    build_report(
+        &raw,
+        deep,
+        context_awareness_enabled,
+        &deny_list,
+        duration_ms,
+        modes,
+    )
 }
 
 #[cfg(test)]
@@ -509,17 +540,32 @@ mod tests {
     #[test]
     fn decide_tick_priority_order() {
         // capturing dominates everything.
-        assert_eq!(decide_tick(true, true, true, true), TickDecision::SkipCapturing);
+        assert_eq!(
+            decide_tick(true, true, true, true),
+            TickDecision::SkipCapturing
+        );
         // both live + deep off → wait-off.
-        assert_eq!(decide_tick(false, false, false, false), TickDecision::WaitOff);
+        assert_eq!(
+            decide_tick(false, false, false, false),
+            TickDecision::WaitOff
+        );
         // own-focus blocks capture.
         assert_eq!(decide_tick(false, false, true, true), TickDecision::WaitOwn);
         // live, external focus → live capture.
-        assert_eq!(decide_tick(false, false, true, false), TickDecision::CaptureLive);
+        assert_eq!(
+            decide_tick(false, false, true, false),
+            TickDecision::CaptureLive
+        );
         // armed deep, external focus → deep capture.
-        assert_eq!(decide_tick(true, false, false, false), TickDecision::CaptureDeep);
+        assert_eq!(
+            decide_tick(true, false, false, false),
+            TickDecision::CaptureDeep
+        );
         // armed deep beats live capture.
-        assert_eq!(decide_tick(true, false, true, false), TickDecision::CaptureDeep);
+        assert_eq!(
+            decide_tick(true, false, true, false),
+            TickDecision::CaptureDeep
+        );
     }
 
     #[test]
@@ -559,7 +605,10 @@ mod tests {
         };
         let r = build_report(&s, false, true, &[], 3, None);
         assert!(r.has_caret);
-        assert_eq!(r.metrics.text_before_chars, "Dear team, ".chars().count() as u64);
+        assert_eq!(
+            r.metrics.text_before_chars,
+            "Dear team, ".chars().count() as u64
+        );
         assert_eq!(r.metrics.focused_text_chars, 2);
         assert_eq!(r.metrics.ax_html_cap, AX_HTML_CAP);
     }
@@ -575,10 +624,30 @@ mod tests {
     #[test]
     fn deep_report_carries_four_modes() {
         let modes = vec![
-            ContextModeResult { duration_ms: 1, mode: "tree".into(), ok: true, snapshot: ContextSnapshotView::default() },
-            ContextModeResult { duration_ms: 1, mode: "split".into(), ok: false, snapshot: ContextSnapshotView::default() },
-            ContextModeResult { duration_ms: 1, mode: "default".into(), ok: false, snapshot: ContextSnapshotView::default() },
-            ContextModeResult { duration_ms: 1, mode: "selection".into(), ok: false, snapshot: ContextSnapshotView::default() },
+            ContextModeResult {
+                duration_ms: 1,
+                mode: "tree".into(),
+                ok: true,
+                snapshot: ContextSnapshotView::default(),
+            },
+            ContextModeResult {
+                duration_ms: 1,
+                mode: "split".into(),
+                ok: false,
+                snapshot: ContextSnapshotView::default(),
+            },
+            ContextModeResult {
+                duration_ms: 1,
+                mode: "default".into(),
+                ok: false,
+                snapshot: ContextSnapshotView::default(),
+            },
+            ContextModeResult {
+                duration_ms: 1,
+                mode: "selection".into(),
+                ok: false,
+                snapshot: ContextSnapshotView::default(),
+            },
         ];
         let r = build_report(&snap(), true, true, &[], 4, Some(modes));
         assert!(r.deep);
@@ -610,7 +679,10 @@ mod tests {
         assert!(json.contains("\"kind\":\"report\""));
         assert!(json.contains("\"report\""));
 
-        let w = ContextPlaygroundPush::Waiting { at: 9, reason: "live-off".into() };
+        let w = ContextPlaygroundPush::Waiting {
+            at: 9,
+            reason: "live-off".into(),
+        };
         let jw = serde_json::to_string(&w).unwrap();
         assert!(jw.contains("\"kind\":\"waiting\""));
         assert!(jw.contains("\"reason\":\"live-off\""));

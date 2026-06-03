@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { FileQueueItem } from "@/shared/api/ipc-client";
 
 /**
- * Renderer-side projection of the file-transcription queue. The Electron main
+ * Renderer-side projection of the file-transcription queue. The the reference main
  * process owns the authoritative queue (ordering, sequential dispatch, the
  * shared STT model); this store just mirrors it for display:
  *

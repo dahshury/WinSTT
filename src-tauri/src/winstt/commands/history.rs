@@ -2,7 +2,7 @@
 //
 // History command surface for the WinSTT renderer. The WinSTT renderer drives
 // history through TWO disjoint channel groups (both routed by the WU-0 adapter,
-// `shared/api/electron-tauri-adapter.ts`):
+// `shared/api/native-bridge-adapter.ts`):
 //
 //   1. The dedicated `views/history` window + the `entities/transcription-history`
 //      client → the SQLite-store channels:  history:list / add / delete-row /
@@ -12,7 +12,7 @@
 //      `timestamp`).
 //
 //   2. The settings panel + karaoke `HistoryTable` (word-timestamp playback) via
-//      `shared/api/ipc-client.ts` → the legacy electron-store channels:
+//      `shared/api/ipc-client.ts` → the legacy persisted store channels:
 //      history:get-all / clear / delete / load-audio / align-audio  +  the
 //      history:{added,deleted}  events. Shape = `TranscriptionHistoryEntry`
 //      (STRING id, `text`, `wordCount`, `durationMs`, `audioFilePath?`,
@@ -41,7 +41,9 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_specta::Event;
 
-use crate::managers::history::{HistoryEntry as DbHistoryEntry, HistoryManager, HistoryUpdatePayload};
+use crate::managers::history::{
+    HistoryEntry as DbHistoryEntry, HistoryManager, HistoryUpdatePayload,
+};
 
 // ── Renderer-facing payload shapes (camelCase, byte-identical to WinSTT) ────────
 
@@ -135,7 +137,10 @@ fn effective_text(entry: &DbHistoryEntry) -> &str {
 /// Map a Handy DB row → the legacy `TranscriptionHistoryEntry` shape (STRING id,
 /// MILLIS timestamp). `audioFilePath` is set only when the WAV is on disk so the
 /// renderer renders the play button exactly when playback can succeed.
-fn to_transcription_entry(mgr: &HistoryManager, entry: &DbHistoryEntry) -> TranscriptionHistoryEntry {
+fn to_transcription_entry(
+    mgr: &HistoryManager,
+    entry: &DbHistoryEntry,
+) -> TranscriptionHistoryEntry {
     let text = effective_text(entry).to_string();
     // `originalText` enables "Copy Original" — surface it whenever the LLM ran and
     // produced post-processed text (matches `shouldKeepOriginalText` with llmRan).
@@ -157,9 +162,15 @@ fn to_transcription_entry(mgr: &HistoryManager, entry: &DbHistoryEntry) -> Trans
     // into the footer's model / processing-time / speed chips. tokens/s is
     // computed here so the renderer only formats; it's omitted when the
     // provider reported no tokens or the pass was sub-millisecond.
-    let meta = entry.llm_meta.as_deref().map(parse_llm_meta).unwrap_or_default();
+    let meta = entry
+        .llm_meta
+        .as_deref()
+        .map(parse_llm_meta)
+        .unwrap_or_default();
     let llm_tokens_per_second = match (meta.tokens, meta.processing_ms) {
-        (Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => Some(tokens as f64 / (ms as f64 / 1000.0)),
+        (Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => {
+            Some(tokens as f64 / (ms as f64 / 1000.0))
+        }
         _ => None,
     };
     TranscriptionHistoryEntry {
@@ -223,8 +234,7 @@ fn to_history_row(entry: &DbHistoryEntry) -> HistoryRow {
 /// the only base64 in-tree is `families.rs`'s decoder, so we provide the encoder
 /// here. The output drives an `<audio src="data:audio/wav;base64,...">`.
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -444,11 +454,11 @@ pub async fn history_add(
     Ok(Some(to_history_row(&entry)))
 }
 
-// ── Group 2: legacy electron-store channels (settings panel + karaoke table) ────
+// ── Group 2: legacy persisted store channels (settings panel + karaoke table) ────
 
 /// `history:get-all` — every row reshaped to the legacy `TranscriptionHistoryEntry`
 /// shape (STRING id, MILLIS timestamp). Oldest-first to match the legacy
-/// electron-store's append order; the renderer's `HistoryTable` reverses it.
+/// persisted store's append order; the renderer's `HistoryTable` reverses it.
 #[tauri::command]
 #[specta::specta]
 pub async fn history_get_all(
@@ -558,7 +568,7 @@ pub async fn history_load_audio(
 /// `HistoryManager` on save / update / delete / toggle) as the WinSTT-shaped plain
 /// events the WU-0 adapter listens for:
 ///   - `Added`   → `history:added` (legacy `TranscriptionHistoryEntry`)
-///               + `history:row-added` (entity `HistoryRow`)
+///     + `history:row-added` (entity `HistoryRow`)
 ///   - `Deleted` → `history:deleted` `{ id: "<n>" }`  +  `history:row-deleted` `{ id: <n> }`
 ///   - `Toggled` → `history:row-toggled` `{ id, saved }`
 ///   - `Updated` → `history:row-added` (renderer upserts on the same id)
@@ -577,7 +587,10 @@ pub fn install_history_event_bridge(app: &AppHandle) {
             let _ = handle.emit("history:row-added", &row);
         }
         HistoryUpdatePayload::Deleted { id } => {
-            let _ = handle.emit("history:deleted", serde_json::json!({ "id": id.to_string() }));
+            let _ = handle.emit(
+                "history:deleted",
+                serde_json::json!({ "id": id.to_string() }),
+            );
             let _ = handle.emit("history:row-deleted", serde_json::json!({ "id": id }));
         }
         HistoryUpdatePayload::Toggled { id } => {

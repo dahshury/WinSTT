@@ -1,10 +1,11 @@
 import {
-	AiMagicIcon,
+	Activity03Icon,
+	AiMicIcon,
 	AiSettingIcon,
 	CpuIcon,
+	CpuSettingsIcon,
 	FlashIcon,
 	InfinityIcon,
-	SpeechToTextIcon,
 	Timer01Icon,
 	UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
@@ -23,7 +24,7 @@ import {
 } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
-	SettingResetButton,
+	SettingField,
 	SettingSection,
 	useDiarizationToggleStore,
 	useSettingsStore,
@@ -64,10 +65,13 @@ import { useSwapProgress } from "../model/use-swap-progress";
 type TFn = ReturnType<typeof useTranslations>;
 
 type SettingsStoreState = ReturnType<typeof useSettingsStore.getState>;
+type GlobalSettings = SettingsStoreState["settings"]["global"];
 type ModelSettings = SettingsStoreState["settings"]["model"];
 type QualitySettings = SettingsStoreState["settings"]["quality"];
+type UpdateGlobalFn = SettingsStoreState["updateGlobalSettings"];
 type UpdateModelFn = SettingsStoreState["updateModelSettings"];
 type UpdateQualityFn = SettingsStoreState["updateQualitySettings"];
+type ModelUnloadTimeoutValue = GlobalSettings["modelUnloadTimeout"];
 
 type DeviceValue = "auto" | "cpu";
 type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
@@ -115,7 +119,6 @@ interface MainModelSectionProps {
 		language: boolean;
 		/** Idle model-unload timeout. False for cloud (no local ONNX session
 		 *  to unload). */
-		unloadTimeout: boolean;
 	};
 	selectedModel: string;
 	settings: ModelSettings | undefined;
@@ -251,7 +254,7 @@ function SourceArea({
  * Whisper's free-text `initial_prompt` slot, surfaced as a small textarea.
  *
  * The persisted value (`model.initialPrompt`) is the user's static prefix; the
- * Electron main process folds it together with the personal-dictionary glossary
+ * the reference main process folds it together with the personal-dictionary glossary
  * and the per-utterance context tail before it reaches the decoder (see
  * `electron/lib/initial-prompt.ts`). Editing it re-syncs live via
  * `installInitialPromptSync` — no model reload, no restart.
@@ -277,17 +280,13 @@ function InitialPromptField({
 	// a flat hardcoded surface. (See `project_surface_elevation_convention`.)
 	const inputLevel = Math.min(useSurface() + 1, 8);
 	return (
-		<FormControl
+		<SettingField
+			isDefault={draft === DEFAULT_SETTINGS.model.initialPrompt}
 			label={t("initialPrompt")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={draft === DEFAULT_SETTINGS.model.initialPrompt}
-					onReset={() => {
-						setDraft(DEFAULT_SETTINGS.model.initialPrompt);
-						onCommit(DEFAULT_SETTINGS.model.initialPrompt);
-					}}
-				/>
-			}
+			onReset={() => {
+				setDraft(DEFAULT_SETTINGS.model.initialPrompt);
+				onCommit(DEFAULT_SETTINGS.model.initialPrompt);
+			}}
 			tooltip={t("initialPromptTooltip")}
 		>
 			<textarea
@@ -306,7 +305,7 @@ function InitialPromptField({
 				placeholder={t("initialPromptPlaceholder")}
 				value={draft}
 			/>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -344,7 +343,7 @@ function MainModelSection({
 	const effectiveSourceIsCloud = isCloud && hasAnyCloudKey;
 
 	return (
-		<SettingSection icon={SpeechToTextIcon} title={t("mainModel")}>
+		<SettingSection icon={AiMicIcon} title={t("mainModel")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				{/* `key` resets the local `source` state inside SourceArea whenever
 				 *  the persisted model's source changes or API-key availability
@@ -370,15 +369,11 @@ function MainModelSection({
 					tIntegrations={tIntegrations}
 				/>
 				{sections.language && (
-					<FormControl
+					<SettingField
+						isDefault={(settings?.language ?? "en") === DEFAULT_SETTINGS.model.language}
 						label={t("language")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={(settings?.language ?? "en") === DEFAULT_SETTINGS.model.language}
-								onReset={() => update({ language: DEFAULT_SETTINGS.model.language })}
-							/>
-						}
 						layout="row"
+						onReset={() => update({ language: DEFAULT_SETTINGS.model.language })}
 					>
 						<ElevatedSurface className="w-52" inline>
 							<SearchableSelect
@@ -387,7 +382,7 @@ function MainModelSection({
 								value={settings?.language ?? "en"}
 							/>
 						</ElevatedSurface>
-					</FormControl>
+					</SettingField>
 				)}
 				{/* Translate-to-English. Two engine families support it
 				    natively at decoder time — Whisper (multilingual
@@ -401,7 +396,10 @@ function MainModelSection({
 				    toggle whenever the user's selected catalog family
 				    is one of the two supported. */}
 				{translateSupported && (
-					<FormControl
+					<SettingField
+						isDefault={
+							(settings?.translateToEnglish ?? false) === DEFAULT_SETTINGS.model.translateToEnglish
+						}
 						label={t("translateToEnglish")}
 						labelAddon={
 							<Toggle
@@ -409,17 +407,7 @@ function MainModelSection({
 								onCheckedChange={(v) => update({ translateToEnglish: v })}
 							/>
 						}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={
-									(settings?.translateToEnglish ?? false) ===
-									DEFAULT_SETTINGS.model.translateToEnglish
-								}
-								onReset={() =>
-									update({ translateToEnglish: DEFAULT_SETTINGS.model.translateToEnglish })
-								}
-							/>
-						}
+						onReset={() => update({ translateToEnglish: DEFAULT_SETTINGS.model.translateToEnglish })}
 						tooltip={t("translateToEnglishTooltip")}
 					/>
 				)}
@@ -430,52 +418,52 @@ function MainModelSection({
 						value={settings?.initialPrompt ?? ""}
 					/>
 				)}
-				{sections.unloadTimeout && (
-					<FormControl
-						label={t("modelUnloadTimeout")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={
-									(settings?.modelUnloadTimeout ?? "min5") ===
-									DEFAULT_SETTINGS.model.modelUnloadTimeout
-								}
-								onReset={() =>
-									update({ modelUnloadTimeout: DEFAULT_SETTINGS.model.modelUnloadTimeout })
-								}
-							/>
-						}
-						layout="row"
-						tooltip={t("modelUnloadTimeoutTooltip")}
-					>
-						<ElevatedSurface className="w-52" inline>
-							<SearchableSelect
-								onChange={(v) =>
-									update({
-										modelUnloadTimeout: v as
-											| "immediately"
-											| "never"
-											| "min2"
-											| "min5"
-											| "min10"
-											| "min15"
-											| "hour1",
-									})
-								}
-								options={[
-									{ id: "immediately", label: t("modelUnloadImmediately"), icon: FlashIcon },
-									{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
-									{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
-									{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
-									{ id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
-									{ id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
-									{ id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
-								]}
-								value={settings?.modelUnloadTimeout ?? "min5"}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-				)}
 			</div>
+		</SettingSection>
+	);
+}
+
+function ModelLifetimeSection({
+	global,
+	t,
+	update,
+}: {
+	global: GlobalSettings | undefined;
+	t: TFn;
+	update: UpdateGlobalFn;
+}): ReactNode {
+	const value = global?.modelUnloadTimeout ?? DEFAULT_SETTINGS.global.modelUnloadTimeout;
+	return (
+		<SettingSection
+			description={t("modelUnloadTimeoutCaption")}
+			icon={Timer01Icon}
+			title={t("modelUnloadTimeout")}
+		>
+			<SettingField
+				isDefault={value === DEFAULT_SETTINGS.global.modelUnloadTimeout}
+				label={t("modelUnloadTimeout")}
+				layout="row"
+				onReset={() =>
+					update({ modelUnloadTimeout: DEFAULT_SETTINGS.global.modelUnloadTimeout })
+				}
+				tooltip={t("modelUnloadTimeoutTooltip")}
+			>
+				<ElevatedSurface className="w-52" inline>
+					<SearchableSelect
+						onChange={(v) => update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue })}
+						options={[
+							{ id: "immediately", label: t("modelUnloadImmediately"), icon: FlashIcon },
+							{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
+							{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
+							{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
+							{ id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
+							{ id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
+							{ id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
+						]}
+						value={value}
+					/>
+				</ElevatedSurface>
+			</SettingField>
 		</SettingSection>
 	);
 }
@@ -486,29 +474,32 @@ function MainModelSection({
  * model — the loaded ONNX STT session AND local Kokoro TTS (mirrored onto the
  * server's `--tts-device`). Nesting it under "Main Model" made it look like an
  * STT-only knob and left it stranded under a cloud STT selection even though
- * local TTS was still riding on it. The parent renders this only while at least
- * one local model is active; when STT and TTS are both cloud, nothing local
- * consumes a device and the whole section disappears.
+ * local TTS was still riding on it. The parent renders this only when a GPU is
+ * detected AND at least one local model is active: with no GPU there is no
+ * choice to make (Auto resolves to CPU), so the section is hidden; it also
+ * disappears when STT and TTS are both cloud, since nothing local consumes a
+ * device. Because the section never shows without a GPU, the control is a plain
+ * Auto/CPU switch — Auto picks the fastest device per model (CPU is the manual
+ * escape hatch for GPU contention / driver issues).
  */
 function DeviceSection({
 	deviceOpts,
 	deviceValue,
-	gpuAvailable,
 	t,
 	update,
 }: {
 	deviceOpts: SwitcherOption<DeviceValue>[];
 	deviceValue: DeviceValue;
-	gpuAvailable: boolean;
 	t: TFn;
 	update: UpdateModelFn;
 }): ReactNode {
 	return (
-		<SettingSection description={t("deviceSectionCaption")} icon={CpuIcon} title={t("device")}>
-			<FormControl
-				caption={gpuAvailable ? t("deviceCaptionGpu") : t("deviceCaptionNoGpu")}
-				layout="row"
-			>
+		<SettingSection
+			description={t("deviceSectionCaption")}
+			icon={CpuSettingsIcon}
+			title={t("device")}
+		>
+			<FormControl caption={t("deviceCaptionGpu")} layout="row">
 				<ElevatedSurface className="w-52">
 					<Switcher
 						fullWidth
@@ -608,7 +599,7 @@ function RealtimeModelSection({
 		</Tooltip>
 	);
 	return (
-		<SettingSection icon={AiMagicIcon} title={t("realtimeModelSection")}>
+		<SettingSection icon={Activity03Icon} title={t("realtimeModelSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
 					<FormControl
@@ -631,30 +622,32 @@ function RealtimeModelSection({
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
 							onDownloadSnapshot={onDownloadSnapshot}
-							prefilter={isRealtimeViable}
+							// Always include the MAIN model in the realtime picker, even when it's
+							// above the realtime-viable size threshold — otherwise "Use Main Model"
+							// (and a user who deliberately picks the main model) sets `value` to a
+							// model the prefilter hid, and the selector renders "no model selected".
+							// Our single-engine design reuses the main transcriber for realtime, so
+							// the main model is always a valid realtime choice.
+							prefilter={(m) => isRealtimeViable(m) || m.id === mainModelId}
 							statesById={statesById}
 							systemInfo={systemInfo}
 							value={realtimeModelId}
 						/>
 					</FormControl>
 				</div>
-				<FormControl
-					label={t("updateInterval")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(quality?.realtimeProcessingPause ??
-									DEFAULT_SETTINGS.quality.realtimeProcessingPause) ===
-								DEFAULT_SETTINGS.quality.realtimeProcessingPause
-							}
-							onReset={() =>
-								updateQuality({
-									realtimeProcessingPause: DEFAULT_SETTINGS.quality.realtimeProcessingPause,
-								})
-							}
-						/>
+				<SettingField
+					isDefault={
+						(quality?.realtimeProcessingPause ??
+							DEFAULT_SETTINGS.quality.realtimeProcessingPause) ===
+						DEFAULT_SETTINGS.quality.realtimeProcessingPause
 					}
+					label={t("updateInterval")}
 					layout="row"
+					onReset={() =>
+						updateQuality({
+							realtimeProcessingPause: DEFAULT_SETTINGS.quality.realtimeProcessingPause,
+						})
+					}
 					tooltip={t("updateIntervalTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -667,7 +660,7 @@ function RealtimeModelSection({
 							}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 			</div>
 		</SettingSection>
 	);
@@ -683,16 +676,14 @@ const ALL_LANG_OPTS: SelectOption[] = LANGUAGES.map((l) => ({
 	label: l.name,
 	badge: languageBadge(l.code),
 }));
-function buildDeviceOpts(t: TFn, gpuAvailable: boolean): SwitcherOption<DeviceValue>[] {
-	const cpu: SwitcherOption<DeviceValue> = {
-		value: "cpu",
-		label: t("deviceCpuLabel"),
-		icon: CpuIcon,
-	};
-	if (!gpuAvailable) {
-		return [cpu];
-	}
-	return [{ value: "auto", label: t("deviceAutoLabel"), icon: AiSettingIcon }, cpu];
+// The Device switch is only ever rendered when a GPU is present (see
+// DeviceSection), so it is always the full Auto/CPU pair — Auto picks the
+// fastest device per model; CPU is the manual override.
+function buildDeviceOpts(t: TFn): SwitcherOption<DeviceValue>[] {
+	return [
+		{ value: "auto", label: t("deviceAutoLabel"), icon: AiSettingIcon },
+		{ value: "cpu", label: t("deviceCpuLabel"), icon: CpuIcon },
+	];
 }
 
 type TtsSettings = SettingsStoreState["settings"]["tts"];
@@ -714,7 +705,6 @@ function isLocalTtsActive(tts: TtsSettings | undefined, elevenlabs: ElevenIntegr
 interface ModelControlVisibility {
 	showDevice: boolean;
 	showLanguage: boolean;
-	showUnloadTimeout: boolean;
 }
 
 /** Which Model-tab controls stay visible for the active main model. A cloud
@@ -733,7 +723,6 @@ function resolveModelControlVisibility(
 	return {
 		showLanguage: !selectedIsCloud && supportedLanguages?.length !== 1,
 		showDevice: !selectedIsCloud || localTtsActive,
-		showUnloadTimeout: !selectedIsCloud,
 	};
 }
 
@@ -816,7 +805,8 @@ function SpeakerDiarizationSection(): ReactNode {
 
 	return (
 		<SettingSection icon={UserMultiple02Icon} title={tGeneral("speakerDiarization")}>
-			<FormControl
+			<SettingField
+				isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
 				label={tGeneral("speakerDiarization")}
 				labelAddon={
 					<div className="flex items-center gap-2">
@@ -834,14 +824,7 @@ function SpeakerDiarizationSection(): ReactNode {
 						/>
 					</div>
 				}
-				labelTrailing={
-					<SettingResetButton
-						isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
-						onReset={() =>
-							update({ speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization })
-						}
-					/>
-				}
+				onReset={() => update({ speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization })}
 				tooltip={tGeneral("speakerDiarizationTooltip")}
 			/>
 		</SettingSection>
@@ -849,6 +832,8 @@ function SpeakerDiarizationSection(): ReactNode {
 }
 
 export function ModelSettingsPanel() {
+	const global = useSettingsStore((s) => s.settings.global);
+	const updateGlobal = useSettingsStore((s) => s.updateGlobalSettings);
 	const settings = useSettingsStore((s) => s.settings.model);
 	const update = useSettingsStore((s) => s.updateModelSettings);
 	const quality = useSettingsStore((s) => s.settings.quality);
@@ -883,7 +868,7 @@ export function ModelSettingsPanel() {
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const gpuAvailable = gpuInfo.length > 0;
 	const t = useTranslations("model");
-	const deviceOpts = buildDeviceOpts(t, gpuAvailable);
+	const deviceOpts = buildDeviceOpts(t);
 	const deviceValue: DeviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
 
 	const catalogModels = useCatalogStore((s) => s.models);
@@ -977,7 +962,7 @@ export function ModelSettingsPanel() {
 	// local Kokoro TTS also rides on (`model.device` → `--tts-device`). The
 	// derivation lives in pure helpers to keep this component under the
 	// cognitive-complexity cap.
-	const { showDevice, showLanguage, showUnloadTimeout } = resolveModelControlVisibility(
+	const { showDevice, showLanguage } = resolveModelControlVisibility(
 		selectedIsCloud,
 		supportedLanguages,
 		isLocalTtsActive(tts, elevenlabs)
@@ -985,7 +970,7 @@ export function ModelSettingsPanel() {
 
 	// Block model switching while files are transcribing — the swap would reload
 	// the shared transcriber mid-queue. The detached picker also disables its
-	// selector; Electron main enforces the same block as a final safety net.
+	// selector; the reference main enforces the same block as a final safety net.
 	const controller = useModelSwapController(
 		settings,
 		selectedModel,
@@ -1023,6 +1008,22 @@ export function ModelSettingsPanel() {
 	// footer picker wire the exact same controls into SttModelSelector.
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
 
+	// A precision-badge "download this variant" click opens the confirmation
+	// dialog (size + hardware-fit + Download/Cancel) for the right slot instead of
+	// silently starting a background fetch — Electron parity. Pause / resume /
+	// cancel of an in-flight download still dispatch straight to the server.
+	const gateDownloadAction =
+		(kind: "main" | "realtime"): typeof handleDownloadAction =>
+		(action, modelId, quantization) => {
+			if (action === "start") {
+				controller.promptDownload(kind, modelId, quantization);
+				return;
+			}
+			handleDownloadAction(action, modelId, quantization);
+		};
+	const handleMainDownloadAction = gateDownloadAction("main");
+	const handleRealtimeDownloadAction = gateDownloadAction("realtime");
+
 	// When the active main model is itself small enough to drive the live
 	// preview, the dedicated realtime slot has no job — a second small model
 	// would just duplicate work without improving quality.
@@ -1040,6 +1041,7 @@ export function ModelSettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
+			<ModelLifetimeSection global={global} t={t} update={updateGlobal} />
 			{isListenMode ? null : (
 				<MainModelSection
 					catalogLoaded={catalogLoaded}
@@ -1051,11 +1053,10 @@ export function ModelSettingsPanel() {
 					isSwapping={mainSwapping}
 					langOpts={langOpts}
 					onDeleteQuant={handleDeleteQuant}
-					onDownloadAction={handleDownloadAction}
+					onDownloadAction={handleMainDownloadAction}
 					onDownloadSnapshot={handleDownloadSnapshot}
 					sections={{
 						language: showLanguage,
-						unloadTimeout: showUnloadTimeout,
 					}}
 					selectedModel={selectedModel}
 					settings={settings}
@@ -1077,7 +1078,7 @@ export function ModelSettingsPanel() {
 					lockedToMainModel={lockRealtimeToMain}
 					mainModelId={selectedModel}
 					onDeleteQuant={handleDeleteQuant}
-					onDownloadAction={handleDownloadAction}
+					onDownloadAction={handleRealtimeDownloadAction}
 					onDownloadSnapshot={handleDownloadSnapshot}
 					onUseMainModel={handleUseMainModel}
 					quality={quality}
@@ -1089,14 +1090,16 @@ export function ModelSettingsPanel() {
 				/>
 			)}
 			{/* Compute device — standalone, shared by local STT + local TTS.
-			    Shown whenever any local model needs a device (`showDevice`);
-			    hidden only when STT and TTS are both cloud. Rendered outside the
-			    STT/TTS sections so it doesn't read as belonging to either. */}
-			{showDevice && (
+			    Shown only when a GPU exists AND a local model needs a device
+			    (`showDevice`). With no GPU there is no choice to make (Auto
+			    resolves to CPU), so the toggle is hidden rather than shown as a
+			    dead single-option switch; it's also hidden when STT and TTS are
+			    both cloud. Rendered outside the STT/TTS sections so it doesn't
+			    read as belonging to either. */}
+			{showDevice && gpuAvailable && (
 				<DeviceSection
 					deviceOpts={deviceOpts}
 					deviceValue={deviceValue}
-					gpuAvailable={gpuAvailable}
 					t={t}
 					update={update}
 				/>

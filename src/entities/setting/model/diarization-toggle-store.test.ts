@@ -3,13 +3,13 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { initDiarizationToggleStore, useDiarizationToggleStore } from "./diarization-toggle-store";
 import { useSettingsStore } from "./settings-store";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
 function installListeningApi() {
 	listeners.clear();
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -38,7 +38,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 describe("useDiarizationToggleStore actions", () => {

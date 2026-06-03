@@ -8,13 +8,12 @@
 // calls `transcribe_samples` from `TranscriptionManager::transcribe` when the
 // selected model id carries a cloud prefix (`openai:` / `elevenlabs:`).
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
 
+use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::cloud_stt::{
     classify_http_failure, classify_transport_error, classify_verify, default_cloud_model_id,
     parse_transcription_json, preflight, samples_to_wav_bytes, split_model_id, CloudSttError,
@@ -27,7 +26,7 @@ pub struct CloudSttManager {
     app: AppHandle,
     client: reqwest::Client,
     /// request_id → cancelled. A model swap / quit aborts in-flight uploads.
-    cancelled: Mutex<HashMap<String, bool>>,
+    cancelled: CancelRegistry,
     /// Monotonic counter for auto-generated request ids (the live pipeline call
     /// path has no renderer-supplied id; the cancel command supplies its own).
     next_request: AtomicU64,
@@ -38,7 +37,7 @@ impl CloudSttManager {
         Self {
             app: app.clone(),
             client: reqwest::Client::new(),
-            cancelled: Mutex::new(HashMap::new()),
+            cancelled: CancelRegistry::new(),
             next_request: AtomicU64::new(0),
         }
     }
@@ -49,41 +48,30 @@ impl CloudSttManager {
     }
 
     pub fn cancel(&self, request_id: &str) {
-        if let Ok(mut m) = self.cancelled.lock() {
-            m.insert(request_id.to_string(), true);
-        }
+        self.cancelled.cancel(request_id);
     }
 
     pub fn cancel_all(&self) {
-        if let Ok(mut m) = self.cancelled.lock() {
-            for v in m.values_mut() {
-                *v = true;
-            }
-        }
+        self.cancelled.cancel_all();
     }
 
     fn is_cancelled(&self, request_id: &str) -> bool {
-        self.cancelled
-            .lock()
-            .map(|m| m.get(request_id).copied().unwrap_or(false))
-            .unwrap_or(false)
+        self.cancelled.is_cancelled(request_id, false)
     }
 
     fn clear(&self, request_id: &str) {
-        if let Ok(mut m) = self.cancelled.lock() {
-            m.remove(request_id);
-        }
+        self.cancelled.clear(request_id);
     }
 
     /// Emit the single code-discriminated cloud error channel (07_* §4b).
     /// `aborted` is suppressed (user-initiated cancel).
     ///
-    /// The renderer's `CloudSttErrorToasts` fan-out (electron-tauri-adapter
+    /// The renderer's `CloudSttErrorToasts` fan-out (native-bridge-adapter
     /// `shouldDeliver`) routes ONE `stt-cloud-error` event to one of the five
     /// WinSTT channels by matching the payload `code` against the fan-out tokens
     /// `auth_failed | network_error | key_missing | rate_limited | provider_error`.
     /// So we emit the FAN-OUT token (not the raw taxonomy `auth`/`network`/…) and
-    /// include `provider` + `retryAfter` exactly like the Electron handler's
+    /// include `provider` + `retryAfter` exactly like the reference handler's
     /// `notifyRenderer` payload.
     fn emit_error(&self, provider: CloudSttProvider, err: &CloudSttError) {
         if !err.code.should_notify() {
@@ -193,7 +181,10 @@ impl CloudSttManager {
         }
     }
 
-    async fn do_upload(&self, req: CloudTranscribeRequest) -> Result<CloudTranscription, CloudSttError> {
+    async fn do_upload(
+        &self,
+        req: CloudTranscribeRequest,
+    ) -> Result<CloudTranscription, CloudSttError> {
         let part = reqwest::multipart::Part::bytes(req.audio_wav.clone())
             .file_name("audio.wav")
             .mime_str(&req.media_type)
@@ -292,9 +283,9 @@ impl CloudSttManager {
 }
 
 /// Map the internal taxonomy code to the renderer fan-out token the
-/// `electron-tauri-adapter` `shouldDeliver` routes on. `timeout` and
+/// `native-bridge-adapter` `shouldDeliver` routes on. `timeout` and
 /// `audio_too_large` have no dedicated WinSTT channel, so they ride the
-/// network / provider channels respectively (matching the Electron
+/// network / provider channels respectively (matching the reference
 /// `ERROR_CODE_CHANNEL` mapping). `aborted` never reaches here (suppressed
 /// by `should_notify`).
 fn fanout_code(code: CloudSttErrorCode) -> &'static str {

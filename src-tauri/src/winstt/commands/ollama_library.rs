@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // (WU-6: ollama-library MISSING) + lib_wiring.md §3. Faithful Rust port of
 // `frontend/electron/ipc/ollama-registry.ts` (the HTML scraper) — Ollama publishes no JSON search
 // API, so we scrape ollama.com/library, ollama.com/search, and ollama.com/library/<m>/tags with a
@@ -105,17 +105,19 @@ pub struct OllamaLibraryTagsResult {
     pub error: Option<String>,
 }
 
-// ── In-process caches (short-TTL like the Electron handler) ─────────────────────
+// ── In-process caches (short-TTL like the reference handler) ─────────────────────
 
 struct CacheEntry<T> {
     value: T,
     expires_at: Instant,
 }
 
-static SEARCH_CACHE: Lazy<Mutex<std::collections::HashMap<String, CacheEntry<OllamaLibrarySearchResult>>>> =
-    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
-static TAGS_CACHE: Lazy<Mutex<std::collections::HashMap<String, CacheEntry<OllamaLibraryTagsResult>>>> =
-    Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+static SEARCH_CACHE: Lazy<
+    Mutex<std::collections::HashMap<String, CacheEntry<OllamaLibrarySearchResult>>>,
+> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+static TAGS_CACHE: Lazy<
+    Mutex<std::collections::HashMap<String, CacheEntry<OllamaLibraryTagsResult>>>,
+> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
 static CATALOG_CACHE: Lazy<Mutex<Option<CacheEntry<OllamaLibraryCatalogResult>>>> =
     Lazy::new(|| Mutex::new(None));
 
@@ -261,7 +263,9 @@ fn decode_entities(s: &str) -> String {
 static TAG_STRIP_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").unwrap());
 
 fn strip_tags(s: &str) -> String {
-    decode_entities(&TAG_STRIP_RE.replace_all(s, "")).trim().to_string()
+    decode_entities(&TAG_STRIP_RE.replace_all(s, ""))
+        .trim()
+        .to_string()
 }
 
 // ── Search-page parser ──────────────────────────────────────────────────────────
@@ -269,8 +273,9 @@ fn strip_tags(s: &str) -> String {
 // ollama.com appends utility classes after `group w-full` (e.g. `space-y-5`), so
 // match the class prefix tolerantly — the strict `group w-full">` form silently
 // matched zero models after a site markup change, emptying the library browse.
-static SEARCH_HIT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"<a\s+href="/library/([^"]+)"\s+class="group w-full[^"]*">"#).unwrap());
+static SEARCH_HIT_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"<a\s+href="/library/([^"]+)"\s+class="group w-full[^"]*">"#).unwrap()
+});
 static TITLE_ATTR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"title="([^"]+)""#).unwrap());
 static DESCRIPTION_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?s)<p[^>]*class="[^"]*max-w-lg[^"]*"[^>]*>(.*?)</p>"#).unwrap());
@@ -278,8 +283,9 @@ static PULLS_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)<span[^>]*>([\d.,]+[KMB]?)\s*Pulls?</span>"#).unwrap());
 static UPDATED_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)<span[^>]*>Updated\s+([^<]+)</span>"#).unwrap());
-static CAPABILITY_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"<span[^>]*class="[^"]*capability[^"]*"[^>]*>([^<]+)</span>"#).unwrap());
+static CAPABILITY_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"<span[^>]*class="[^"]*capability[^"]*"[^>]*>([^<]+)</span>"#).unwrap()
+});
 
 fn parse_capabilities(block: &str) -> Option<Vec<String>> {
     let caps: Vec<String> = CAPABILITY_RE
@@ -350,12 +356,14 @@ static TAG_ANCHOR_RE: Lazy<Regex> = Lazy::new(|| {
 static SIZE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)([\d.]+)\s*(KB|MB|GB|TB)"#).unwrap());
 static CONTEXT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?i)([\d.]+[KMB])\s*context\s*window"#).unwrap());
-static QUANT_TOKEN_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r#"(?i)(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)($|[-:_])"#).unwrap());
+static QUANT_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?i)(?:^|[-:_])(q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)($|[-:_])"#).unwrap()
+});
 // Optional `e` prefix captures Gemma 3n/4 MatFormer "effective" sizes (`e2b`).
 static PARAM_TOKEN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?:^|[-:_])(e?\d+(?:\.\d+)?[mMbB])($|[-:_])"#).unwrap());
-static LATEST_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?i)text-blue-600[^>]*>latest<"#).unwrap());
+static LATEST_TAG_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)text-blue-600[^>]*>latest<"#).unwrap());
 
 fn size_multiplier(unit: &str) -> u64 {
     match unit.to_uppercase().as_str() {
@@ -462,7 +470,10 @@ fn search_url(query: &str, page: i32) -> String {
     } else {
         String::new()
     };
-    format!("{OLLAMA_BASE}/search?q={}{page_suffix}", encode_component(query))
+    format!(
+        "{OLLAMA_BASE}/search?q={}{page_suffix}",
+        encode_component(query)
+    )
 }
 
 async fn scrape_search(query: &str, page: i32, cache_key: &str) -> OllamaLibrarySearchResult {
@@ -470,8 +481,12 @@ async fn scrape_search(query: &str, page: i32, cache_key: &str) -> OllamaLibrary
         Ok(html) => {
             let all_hits = parse_search_page(&html);
             let start = (page.max(0) as usize) * PAGE_SIZE;
-            let hits: Vec<OllamaLibraryHit> =
-                all_hits.iter().skip(start).take(PAGE_SIZE).cloned().collect();
+            let hits: Vec<OllamaLibraryHit> = all_hits
+                .iter()
+                .skip(start)
+                .take(PAGE_SIZE)
+                .cloned()
+                .collect();
             let has_more = (start + PAGE_SIZE) < all_hits.len();
             let result = OllamaLibrarySearchResult {
                 hits,
@@ -612,7 +627,10 @@ mod tests {
 
     #[test]
     fn quant_and_param_from_tag() {
-        assert_eq!(parse_quantization("gemma3:4b-q8_0").as_deref(), Some("Q8_0"));
+        assert_eq!(
+            parse_quantization("gemma3:4b-q8_0").as_deref(),
+            Some("Q8_0")
+        );
         assert_eq!(parse_parameter_size("gemma3:4b").as_deref(), Some("4B"));
     }
 

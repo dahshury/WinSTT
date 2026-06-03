@@ -1,7 +1,7 @@
 /**
  * Renderer-side adapter for the `history:*` IPC channels owned by
- * `electron/ipc/history.ts`. All calls go through `window.electronAPI.invoke`
- * so the entity layer never touches Electron's globals directly (FSD: only
+ * `electron/ipc/history.ts`. All calls go through `window.nativeBridge.invoke`
+ * so the entity layer never touches the reference's globals directly (FSD: only
  * `shared` may hold IPC helpers — this file is a thin adapter, not a
  * generic client, so it's allowed in the entity).
  */
@@ -9,11 +9,11 @@
 import { IPC } from "@/shared/api/ipc-channels";
 import type { PaginatedHistory } from "../model/transcription-history";
 
-function getApi(): Window["electronAPI"] | null {
-	// `window.electronAPI` is injected by the preload bridge and typed globally
-	// in src/electron.d.ts. It's absent in non-Electron contexts (tests / plain
+function getApi(): Window["nativeBridge"] | null {
+	// `window.nativeBridge` is injected by the preload bridge and typed globally
+	// in src/shared/lib/native-bridge.d.ts. It's absent in non-bridge contexts (tests / plain
 	// browser), so guard for that even though the ambient type marks it present.
-	return window.electronAPI ?? null;
+	return window.nativeBridge ?? null;
 }
 
 export async function listHistoryPage(options: {

@@ -1,6 +1,7 @@
 import { Delete02Icon, FavouriteIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import {
 	deleteHistoryRow,
 	effectiveText,
@@ -21,9 +22,9 @@ function subscribeBroadcasts(callbacks: {
 	onDeleted: (id: number) => void;
 	onToggled: (id: number, saved: boolean) => void;
 }): () => void {
-	// `window.electronAPI` is typed globally (src/electron.d.ts) and injected by
-	// the preload bridge; guard for non-Electron contexts (tests) at runtime.
-	const api = window.electronAPI;
+	// `window.nativeBridge` is typed globally (src/shared/lib/native-bridge.d.ts) and injected by
+	// the preload bridge; guard for non-bridge contexts (tests) at runtime.
+	const api = window.nativeBridge;
 	if (!api) {
 		return () => undefined;
 	}
@@ -52,6 +53,7 @@ function subscribeBroadcasts(callbacks: {
 const PAGE_SIZE = 25;
 
 export function HistoryPage() {
+	const t = useTranslations("history");
 	const entries = useHistoryViewStore((s) => s.entries);
 	const hasMore = useHistoryViewStore((s) => s.hasMore);
 	const loading = useHistoryViewStore((s) => s.loading);
@@ -128,7 +130,7 @@ export function HistoryPage() {
 	return (
 		<div className="flex h-full flex-col gap-2 p-3">
 			<header>
-				<h1 className="font-semibold text-base">Transcription history</h1>
+				<h1 className="font-semibold text-base">{t("pageTitle")}</h1>
 				<p className="text-foreground-secondary text-xs">
 					{entries.length} {entries.length === 1 ? "entry" : "entries"}
 				</p>
@@ -171,7 +173,9 @@ export function HistoryPage() {
 								</Button>
 							</div>
 						</div>
-						<p className="text-sm">{effectiveText(entry)}</p>
+						<p className="text-sm" dir="auto">
+							{effectiveText(entry)}
+						</p>
 						{playingId === entry.id && audioUrl ? (
 							<audio aria-label="Transcription recording playback" autoPlay controls src={audioUrl}>
 								<track default kind="captions" label="No captions available" srcLang="en" />

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "index.html",
+    "windows/*.html",
+    "src/entries/*.{ts,tsx}",
+    "src/**/*.{test,spec}.{ts,tsx}",
+    "scripts/*.ts",
+    "test/**/*.ts",
+    "packages/model-picker/src/**/*.{test,spec}.{ts,tsx}",
+    "packages/model-picker/src/index.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "packages/model-picker/src/**/*.{ts,tsx}"],
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  },
+  "ignoreIssues": {
+    "src/widgets/ollama-model-manager/lib/ollama-model-manager-test-helpers.ts": ["exports"],
+    "src/bindings.ts": ["exports", "types"],
+    "src/shared/api/schema.zod.ts": ["exports", "types"]
+  }
+}

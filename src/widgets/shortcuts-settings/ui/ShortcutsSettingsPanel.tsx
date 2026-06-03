@@ -1,8 +1,8 @@
-import { KeyboardIcon } from "@hugeicons/core-free-icons";
+import { CommandIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
-	SettingResetButton,
+	SettingField,
 	SettingSection,
 	useSettingsStore,
 } from "@/entities/setting";
@@ -20,6 +20,12 @@ export function ShortcutsSettingsPanel() {
 	const updateTts = useSettingsStore((s) => s.updateTtsSettings);
 	const transformHotkey = useSettingsStore((s) => s.settings.llm?.transforms?.hotkey ?? "");
 	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
+	// A hotkey is meaningless while its feature is off — the backend doesn't even
+	// register it (see `reconcile_winstt_hotkeys`, gated on the same flags). Mirror
+	// that here: keep the row VISIBLE (so users know the shortcut exists) but
+	// disabled (dimmed + non-interactive) until the feature is enabled.
+	const ttsEnabled = useSettingsStore((s) => s.settings.tts?.enabled ?? false);
+	const transformsEnabled = useSettingsStore((s) => s.settings.llm?.transforms?.enabled ?? false);
 	const th = useTranslations("hotkey");
 	const tt = useTranslations("tts");
 	const tl = useTranslations("llm");
@@ -57,20 +63,14 @@ export function ShortcutsSettingsPanel() {
 		<div className="flex flex-col gap-2">
 			{/* ── Hotkey (Push-to-Talk disabled in Listen mode — the hotkey
 			    isn't used to start/stop a server-driven listen session) */}
-			<SettingSection icon={KeyboardIcon} title={th("configuration")}>
+			<SettingSection icon={CommandIcon} title={th("configuration")}>
 				<div className="flex flex-col divide-y divide-surface-1">
 					<div className="py-2">
-						<FormControl
+						<SettingField
 							disabled={recordingMode === "listen"}
+							isDefault={pttKey === DEFAULT_SETTINGS.hotkey.pushToTalkKey}
 							label={th("pushToTalkKey")}
-							labelTrailing={
-								<SettingResetButton
-									isDefault={pttKey === DEFAULT_SETTINGS.hotkey.pushToTalkKey}
-									onReset={() =>
-										updateHotkey({ pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey })
-									}
-								/>
-							}
+							onReset={() => updateHotkey({ pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey })}
 							tooltip={th("pushToTalkKeyTooltip")}
 						>
 							<HotkeyRecorder
@@ -78,19 +78,13 @@ export function ShortcutsSettingsPanel() {
 								forbiddenCombos={pttForbidden}
 								onKeyRecorded={(key) => updateHotkey({ pushToTalkKey: key })}
 							/>
-						</FormControl>
+						</SettingField>
 					</div>
 					<div className="py-2">
-						<FormControl
+						<SettingField
+							isDefault={repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey}
 							label={th("repasteKey")}
-							labelTrailing={
-								<SettingResetButton
-									isDefault={repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey}
-									onReset={() =>
-										updateGeneral({ repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey })
-									}
-								/>
-							}
+							onReset={() => updateGeneral({ repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey })}
 							tooltip={th("repasteKeyTooltip")}
 						>
 							<HotkeyRecorder
@@ -98,17 +92,14 @@ export function ShortcutsSettingsPanel() {
 								forbiddenCombos={repasteForbidden}
 								onKeyRecorded={(key) => updateGeneral({ repasteHotkey: key })}
 							/>
-						</FormControl>
+						</SettingField>
 					</div>
 					<div className="py-2">
-						<FormControl
+						<SettingField
+							disabled={!ttsEnabled}
+							isDefault={ttsHotkey === DEFAULT_SETTINGS.tts.hotkey}
 							label={tt("hotkeyLabel")}
-							labelTrailing={
-								<SettingResetButton
-									isDefault={ttsHotkey === DEFAULT_SETTINGS.tts.hotkey}
-									onReset={() => updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey })}
-								/>
-							}
+							onReset={() => updateTts({ hotkey: DEFAULT_SETTINGS.tts.hotkey })}
 							tooltip={tt("hotkeyHint")}
 						>
 							<HotkeyRecorder
@@ -116,23 +107,18 @@ export function ShortcutsSettingsPanel() {
 								forbiddenCombos={ttsForbidden}
 								onKeyRecorded={(key) => updateTts({ hotkey: key })}
 							/>
-						</FormControl>
+						</SettingField>
 					</div>
 					{/* ── Text-transformation hotkey — global combo that runs the
 					    composed LLM transform on the current selection. Lives here
 					    with the other global hotkeys; the transforms feature itself
 					    is configured in the Text-transformation settings. */}
 					<div className="py-2">
-						<FormControl
+						<SettingField
+							disabled={!transformsEnabled}
+							isDefault={transformHotkey === DEFAULT_SETTINGS.llm.transforms.hotkey}
 							label={tl("subTransformTitle")}
-							labelTrailing={
-								<SettingResetButton
-									isDefault={transformHotkey === DEFAULT_SETTINGS.llm.transforms.hotkey}
-									onReset={() =>
-										updateTransforms({ hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey })
-									}
-								/>
-							}
+							onReset={() => updateTransforms({ hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey })}
 							tooltip={`${tl("transformHotkeyTooltip")} ${tl("transformHotkeyCaption")}`}
 						>
 							<HotkeyRecorder
@@ -140,7 +126,7 @@ export function ShortcutsSettingsPanel() {
 								forbiddenCombos={transformForbidden}
 								onKeyRecorded={(key) => updateTransforms({ hotkey: key })}
 							/>
-						</FormControl>
+						</SettingField>
 					</div>
 					<div className="py-3">
 						<FormControl

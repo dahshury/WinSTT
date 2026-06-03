@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/07_*.md §2 + lib_wiring.md §3,
+// Source: docs/port/07_*.md §2 + lib_wiring.md §3,
 // frontend/electron/ipc/{stt-cloud,credentials}.ts. Wraps managers::CloudSttManager.
 //
 // Cloud-STT credential verify + cancel commands. The actual transcribe call is

@@ -61,4 +61,27 @@ describe("Select", () => {
 		).toBe("b");
 		expect(screen.getByText("Group One").closest("[data-menu-option]")).toBeNull();
 	});
+
+	test("keeps an open popup synced when options are added and removed", () => {
+		const defaultOnly: SelectOption[] = [{ id: "default", label: "System Default" }];
+		const withUsbMic: SelectOption[] = [
+			{ id: "default", label: "System Default" },
+			{ id: "usb", label: "USB Microphone" },
+		];
+		const { rerender } = render(
+			<Select aria-label="mic" onChange={() => undefined} options={defaultOnly} value="default" />
+		);
+		fireEvent.click(screen.getByRole("button", { name: "mic" }));
+		expect(screen.queryByText("USB Microphone")).toBeNull();
+
+		rerender(
+			<Select aria-label="mic" onChange={() => undefined} options={withUsbMic} value="default" />
+		);
+		expect(screen.getByText("USB Microphone")).toBeDefined();
+
+		rerender(
+			<Select aria-label="mic" onChange={() => undefined} options={defaultOnly} value="default" />
+		);
+		expect(screen.queryByText("USB Microphone")).toBeNull();
+	});
 });

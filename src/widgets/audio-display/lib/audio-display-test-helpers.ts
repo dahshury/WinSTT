@@ -68,7 +68,7 @@ function getContainerClassName(isListenMode: boolean): string {
 	return `${base} ${border}`;
 }
 
-export { collectDroppedFiles, enqueueDroppedFiles, getContainerClassName, getExtension };
+export { enqueueDroppedFiles, getContainerClassName };
 
 // Test-only exports — pure helpers extracted from drag/drop handling.
 export const __audio_display_test_helpers__ = {

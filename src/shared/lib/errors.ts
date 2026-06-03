@@ -13,7 +13,7 @@ export class ApplicationError extends Error {
 		this.timestamp = Date.now();
 
 		// Maintains proper stack trace for where error was thrown.
-		// V8 (Electron main + renderer) and JSC (Bun) both define this.
+		// V8 (the reference main + renderer) and JSC (Bun) both define this.
 		Error.captureStackTrace(this, this.constructor);
 	}
 

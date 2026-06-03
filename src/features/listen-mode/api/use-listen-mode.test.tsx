@@ -11,7 +11,7 @@ import {
 	validateDevices,
 } from "./use-listen-mode";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 const sentChannels: string[] = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings });
 	useConnectionStore.setState({ connectionStatus: "disconnected" });
 });
@@ -85,25 +85,25 @@ describe("validateDevices", () => {
 
 describe("applyLoopbackTransition", () => {
 	test("calls loopbackStart when mode=listen, device set, and connected", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		applyLoopbackTransition("listen", false, 3, "connected");
 		expect(sentChannels).toContain(IPC.LOOPBACK_START);
 	});
 
 	test("does not call loopbackStart when device index is null", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		applyLoopbackTransition("listen", false, null, "connected");
 		expect(sentChannels).not.toContain(IPC.LOOPBACK_START);
 	});
 
 	test("calls loopbackStop when transitioning away from listen mode", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		applyLoopbackTransition("ptt", true, null, "connected");
 		expect(sentChannels).toContain(IPC.LOOPBACK_STOP);
 	});
 
 	test("does not call loopbackStop when not connected", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		applyLoopbackTransition("ptt", true, null, "disconnected");
 		expect(sentChannels).not.toContain(IPC.LOOPBACK_STOP);
 	});
@@ -145,14 +145,14 @@ describe("handleLoopbackListError", () => {
 
 describe("useListenMode", () => {
 	test("subscribes to loopback started/stopped events", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		renderHook(() => useListenMode());
 		expect(listeners.has(IPC.STT_LOOPBACK_STARTED)).toBe(true);
 		expect(listeners.has(IPC.STT_LOOPBACK_STOPPED)).toBe(true);
 	});
 
 	test("loopback-started event sets isListening true with the device name", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		renderHook(() => useListenMode());
 		fire(IPC.STT_LOOPBACK_STARTED, { deviceName: "Speakers" });
 		const state = useListenStore.getState();
@@ -161,7 +161,7 @@ describe("useListenMode", () => {
 	});
 
 	test("loopback-stopped event sets isListening false", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		renderHook(() => useListenMode());
 		useListenStore.setState({ isListening: true, deviceName: "Speakers" });
 		fire(IPC.STT_LOOPBACK_STOPPED);
@@ -169,7 +169,7 @@ describe("useListenMode", () => {
 	});
 
 	test("starts loopback when mode=listen + connected + device selected", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,

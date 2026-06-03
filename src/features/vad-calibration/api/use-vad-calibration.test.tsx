@@ -8,7 +8,7 @@ mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 
 const { useVadCalibration } = await import("./use-vad-calibration");
 
-const originalElectronApi = window.electronAPI;
+const originalNativeBridge = window.nativeBridge;
 
 const settingsSaveCalls: Array<{
 	audio: {
@@ -22,8 +22,8 @@ let onVadAdaptedCb:
 let audioGetDevicesImpl: () => Promise<Array<{ index: number; name: string; isDefault: boolean }>> =
 	async () => [];
 
-function installElectronStub(): void {
-	window.electronAPI = {
+function installNativeBridgeStub(): void {
+	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: (channel: string, payload?: unknown) => {
 			if (channel === IPC.SETTINGS_SAVE) {
@@ -65,7 +65,7 @@ beforeEach(() => {
 	settingsSaveCalls.length = 0;
 	audioGetDevicesImpl = async () => [];
 	onVadAdaptedCb = null;
-	installElectronStub();
+	installNativeBridgeStub();
 	useSettingsStore.setState({
 		settings: freshSettings(),
 	});
@@ -77,7 +77,7 @@ afterEach(() => {
 	for (const handle of mountedHooks.splice(0)) {
 		act(() => handle.unmount());
 	}
-	window.electronAPI = originalElectronApi;
+	window.nativeBridge = originalNativeBridge;
 	useSettingsStore.setState({ settings: freshSettings() });
 	onVadAdaptedCb = null;
 	audioGetDevicesImpl = async () => [];
@@ -94,7 +94,7 @@ async function waitForDeviceListLoaded(name: string) {
 		// The hook only reacts once useInputDevices has data — devices list
 		// arrives via the audio_get_devices IPC promise resolving.
 		const { devices } =
-			(window.electronAPI as unknown as {
+			(window.nativeBridge as unknown as {
 				invoke: () => Promise<unknown[]>;
 				devices?: unknown;
 			}) ?? {};
@@ -136,7 +136,7 @@ describe("useVadCalibration — adapt event persistence", () => {
 		const after = useSettingsStore.getState().settings.audio;
 		expect(after?.sileroSensitivity).toBe(0.53);
 		expect(after?.sileroSensitivityByDeviceName?.["Bluetooth Headset"]).toBe(0.53);
-		// Persisted to electron-store immediately so a fast close doesn't lose it.
+		// Persisted to persisted store immediately so a fast close doesn't lose it.
 		expect(settingsSaveCalls.length).toBeGreaterThanOrEqual(1);
 		expect(
 			settingsSaveCalls.at(-1)?.audio?.sileroSensitivityByDeviceName?.["Bluetooth Headset"]

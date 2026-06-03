@@ -9,9 +9,9 @@ export interface QuantizationOption {
 
 const QUANTIZATION_LABELS: Record<OnnxQuantization, { label: string; tooltip: string }> = {
 	"": {
-		label: "Auto",
+		label: "fp32",
 		tooltip:
-			"Automatically uses the best precision for your device and runtime (e.g. fp16 on a DirectML GPU, int8 on CPU where available). Recommended.",
+			"Full precision (32-bit float) — the base export. Highest accuracy, but the largest on disk/RAM and the slowest. The badge marked “Recommended” is the best fit for your hardware; clicking the card body picks it.",
 	},
 	int8: {
 		label: "int8",
@@ -69,6 +69,11 @@ const QUANTIZATION_WEIGHT: Record<OnnxQuantization, number> = {
  */
 export function getQuantizationOptions(model: ModelInfo): QuantizationOption[] {
 	const available = new Set(model.availableQuantizations);
+	// EVERY published precision is shown as a selectable badge, including `""`
+	// (the unsuffixed export — labeled "fp32" — the full-precision base). "Auto"
+	// is NOT a badge: the recommended precision is instead a MARK on whichever
+	// concrete badge the backend's RAM/VRAM-aware resolver picks (the model
+	// state's `effective_quantization`), and clicking the card BODY selects it.
 	return ONNX_QUANTIZATIONS.filter((value) => available.has(value))
 		.map((value) => ({
 			value,

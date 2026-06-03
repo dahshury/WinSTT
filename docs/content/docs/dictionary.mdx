@@ -1,0 +1,162 @@
+---
+title: Dictionary
+description: Teach WinSTT the names, jargon, and brands it keeps mishearing — with vocabulary biasing for the model and LLM, plus deterministic find→replace rules applied after cleanup.
+---
+
+The **Dictionary** tab is where you fix the words WinSTT gets wrong — proper nouns, product names, and domain jargon — so the right spelling lands every time.
+
+<Screenshot src="settings-dictionary" alt="The Dictionary settings tab: a suggested-terms strip, an add-a-term form, the entries table, and the Correction strictness stepper." label="Settings — Dictionary" />
+
+## Two ways to fix a word
+
+The dictionary uses the same two-mode model as Wispr Flow. Every entry is either a **vocabulary word** or a **replacement pair**, and the difference is _when_ and _how_ the fix is applied.
+
+<ModelTable
+  head={["Mode", "Entry", "What it does", "When it runs"]}
+  rows={[
+    [
+      "Vocabulary word",
+      "Term only",
+      "Biases the model and LLM toward your spelling, and snaps phonetic near-misses to it.",
+      "During transcription — fuzzy pass before LLM cleanup, plus folded into the LLM prompt.",
+    ],
+    [
+      "Replacement pair",
+      "Term → Replace with",
+      "Forces an exact, case-insensitive whole-word find→replace.",
+      "After LLM cleanup — a deterministic safety net that always fires.",
+    ],
+  ]}
+  caption="Both modes also appear in the LLM system prompt; the replacement pair's after-cleanup pass guarantees the rule fires even if the model ignored it."
+/>
+
+A **vocabulary word** is a single canonical spelling — a name, brand, or term — with no
+"Replace with" value. WinSTT biases toward it two ways: the server fuzzy-matches every
+transcribed word against it (see <a href="#correction-strictness">strictness</a> below), and the word
+is handed to the LLM as a spelling reference. Use it when the model hears _roughly_ the
+right sounds but spells them wrong.
+
+A **replacement pair** adds a "Replace with" value. The **Term** is a mis-transcription you
+keep seeing; the replacement is what it should always become. This is a deterministic
+`find → replace` — not a guess — so it's the right tool when fuzzy matching can't help
+(e.g. an acronym the model spells out, or a phrase you want rewritten verbatim).
+
+<Video src="dictionary" chrome="card" alt="A dictionary replacement pair rewriting a mis-heard word: the transcribed 'wuster·sher' is replaced with 'Worcestershire' after cleanup." caption="A mis-heard word (wuster·sher) is corrected to Worcestershire." />
+
+<Callout type="info" title="Replacement pairs fire last, on purpose">
+  Replacement pairs run as a case-insensitive whole-word string replace **after** the LLM
+  cleanup pass. That ordering is deliberate: the LLM sees the original mis-transcription
+  (and the pair, so it can apply context), and the after-cleanup pass is the guaranteed
+  backstop that fires regardless of what the model did.
+</Callout>
+
+## Adding and managing entries
+
+<SettingRow label="Term" settingKey="settings.dictionary" default="—">
+  The canonical word, name, or brand. Required and trimmed; the **Add** button stays disabled
+  until you type something. Case-sensitive — type it exactly the way you want it to appear
+  ("PyTorch", not "pytorch"). Each entry gets a stable id automatically.
+</SettingRow>
+
+<SettingRow label="Replace with" settingKey="settings.dictionary" default="—">
+  Optional. Leave it empty for a vocabulary-only entry; fill it in to make a replacement
+  pair where the **Term** is always rewritten to this value.
+</SettingRow>
+
+The table lists every entry in the order you added them — there's no sorting or inline
+editing. To change an entry, delete it (the trash icon, no confirmation) and re-add it.
+**Delete All** wipes the whole dictionary at once.
+
+<Callout type="error" title="Delete All cannot be undone">
+  **Delete All** permanently removes every dictionary entry after a confirmation dialog.
+  There is no undo. Individual deletes are instant and also unrecoverable.
+</Callout>
+
+## Suggested terms
+
+When LLM cleanup is on, WinSTT watches your dictations for proper nouns — people's names,
+product names, distinctive acronyms, unusual places — and offers them as one-tap additions
+in the suggestion strip at the top of the tab.
+
+<SettingRow label="Suggested terms" settingKey="—" default="—">
+  Up to 5 candidate nouns per dictation, shown newest-first and capped at 20 pills. **Add**
+  saves a pill as a vocabulary word (persisted immediately); **Dismiss** drops it for now.
+  Anything already in your dictionary is filtered out so you only see new candidates.
+</SettingRow>
+
+<Callout type="info" title="Dismissed isn't forever">
+  The strip lives only in the panel's local state. Dismissing a pill forgets it for this
+  session — if the model surfaces the word again on a later dictation, it reappears.
+  Closing or refreshing the settings panel clears any pending suggestions. The strip is
+  hidden entirely when there's nothing to suggest. It only appears when LLM cleanup is
+  enabled, since the suggestions come from that pipeline.
+</Callout>
+
+## Correction strictness
+
+The fuzzy corrector runs **on the server, right after transcription and before LLM
+cleanup**. It walks 1–3-word windows through the text and snaps any close near-miss to a
+matching vocabulary word, using normalized Levenshtein distance with a Soundex phonetic
+boost so words that _sound_ alike match even when their letters diverge.
+
+<SettingRow label="Correction strictness" settingKey="general.wordCorrectionThreshold" default="0.18">
+  The maximum fuzzy-match score the corrector will accept (0.00–1.00, step 0.02). **Lower =
+  stricter** — fewer false replacements but more genuine near-misses left for the LLM.
+  **Higher** snaps more aggressively and risks rewriting words you didn't mean. `0.18` is
+  the reference Whisper/Wispr default. Changes apply on the next transcription.
+</SettingRow>
+
+<ModelTable
+  head={["Value", "Behavior"]}
+  numeric={[0]}
+  rows={[
+    ["0.00", "Effectively off — only near-exact matches snap."],
+    ["0.18", "Default sweet spot — catches phonetic mishears, few false positives."],
+    ["0.50+", "Aggressive — snaps loosely; expect occasional wrong rewrites."],
+  ]}
+  caption="Anything the deterministic pass misses still gets a second chance from the LLM modifiers."
+/>
+
+## How LLM on/off changes things
+
+The dictionary works either way, but the path differs:
+
+<ModelTable
+  head={["LLM cleanup", "Vocabulary words", "Replacement pairs"]}
+  rows={[
+    [
+      "On",
+      "Fuzzy-matched server-side, then reinforced in the LLM prompt.",
+      "Sent to the LLM as find→replace rules, then re-applied deterministically after cleanup.",
+    ],
+    [
+      "Off",
+      "Fuzzy matcher is the only line of defense.",
+      "Applied deterministically (no LLM pass to precede them).",
+    ],
+  ]}
+  caption="With LLM off, lean harder on the dictionary and tune Correction strictness, since there's no model pass to fix what the fuzzy matcher leaves behind."
+/>
+
+<Callout type="warn" title="Suggested terms need the LLM">
+  The proper-noun suggestion strip is driven by the LLM cleanup pipeline. With LLM cleanup
+  off, no suggestions are generated — add terms by hand instead. Turn cleanup on in
+  [LLM settings](/docs/settings/llm).
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Snippets" href="/docs/snippets">
+    Expand a short spoken phrase into longer text — addresses, signatures, boilerplate.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Tone presets, custom modifiers, and the pass that powers term suggestions.
+  </Card>
+  <Card title="Choose a model" href="/docs/models">
+    Pick the STT model whose spellings the dictionary nudges into shape.
+  </Card>
+  <Card title="Dictation" href="/docs/dictation">
+    The full speak-to-paste loop the dictionary corrects on its way to your cursor.
+  </Card>
+</Cards>

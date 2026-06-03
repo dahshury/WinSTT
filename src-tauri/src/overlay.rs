@@ -47,18 +47,3 @@ pub fn update_overlay_position(app_handle: &AppHandle) {
 pub fn hide_recording_overlay(app_handle: &AppHandle) {
     crate::winstt::commands::overlay::hide_recording_overlay(app_handle);
 }
-
-/// Forward per-frame mic spectrum levels to the renderer.
-///
-/// AUDIT #9: Handy emitted a global `mic-level` event (and a second copy to the dead
-/// `recording_overlay` window). The WinSTT renderer never listens to `mic-level` — the
-/// live visualizer is fed exclusively by `stt:audio-level` (a scalar RMS level emitted
-/// from `managers::audio` via `SttEvents::audio_level`). Both `mic-level` emits were
-/// therefore dead work on the ~94 Hz audio callback and have been removed.
-///
-/// Kept as a no-op (rather than removed) so the existing call site in
-/// `managers::audio` keeps compiling; the integrator can drop the call entirely.
-pub fn emit_levels(_app_handle: &AppHandle, _levels: &[f32]) {
-    // No renderer listens to `mic-level`; the pill's visualizer is driven by
-    // `stt:audio-level` instead. Intentionally does nothing.
-}

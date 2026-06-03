@@ -75,7 +75,10 @@ impl SlowTrackingAgc {
 
     /// Apply AGC in place on a 16-bit-domain block (peak measured as |sample|).
     pub fn process(&mut self, samples: &mut [i16]) {
-        let peak = samples.iter().map(|&s| (s as f32).abs()).fold(0.0f32, f32::max);
+        let peak = samples
+            .iter()
+            .map(|&s| (s as f32).abs())
+            .fold(0.0f32, f32::max);
         if peak > NOISE_FLOOR {
             let desired = (TARGET_PEAK / peak).min(MAX_GAIN);
             self.gain += GAIN_SMOOTH * (desired - self.gain);
@@ -107,7 +110,10 @@ pub fn interleaved_to_mono_i16(interleaved: &[i16], channels: usize) -> Vec<i16>
     let mut out = Vec::with_capacity(frames);
     for f in 0..frames {
         let base = f * channels;
-        let sum: i32 = interleaved[base..base + channels].iter().map(|&s| s as i32).sum();
+        let sum: i32 = interleaved[base..base + channels]
+            .iter()
+            .map(|&s| s as i32)
+            .sum();
         out.push((sum / channels as i32) as i16);
     }
     out
@@ -197,7 +203,10 @@ impl LoopbackCapture {
     }
 
     pub fn is_active(&self) -> bool {
-        self.thread.as_ref().map(|t| !t.is_finished()).unwrap_or(false)
+        self.thread
+            .as_ref()
+            .map(|t| !t.is_finished())
+            .unwrap_or(false)
     }
 
     /// Open the default render endpoint in WASAPI loopback, spawn the capture
@@ -395,7 +404,11 @@ mod windows_impl {
                 let id = dev.get_id().unwrap_or_default();
                 let name = dev.get_friendlyname().unwrap_or_else(|_| "Output".into());
                 let is_default = default_id.as_deref() == Some(id.as_str());
-                out.push(LoopbackDeviceInfo { id, name, is_default });
+                out.push(LoopbackDeviceInfo {
+                    id,
+                    name,
+                    is_default,
+                });
             }
         }
         Ok(out)
@@ -486,16 +499,12 @@ mod windows_impl {
                 }
 
                 // Convert whole frames out of the byte deque.
-                if block_align > 0 {
-                    let usable = (raw.len() / block_align) * block_align;
+                if let Some(frames) = raw.len().checked_div(block_align) {
+                    let usable = frames * block_align;
                     if usable > 0 {
                         let bytes: Vec<u8> = raw.drain(0..usable).collect();
-                        let mut mono = bytes_to_mono_i16(
-                            &bytes,
-                            channels,
-                            sample_type,
-                            bytes_per_sample,
-                        );
+                        let mut mono =
+                            bytes_to_mono_i16(&bytes, channels, sample_type, bytes_per_sample);
                         // AGC at device rate, int16 domain (Python parity).
                         agc.process(&mut mono);
                         // int16 → f32 [-1, 1], then resample to 16 kHz mono in
@@ -583,7 +592,10 @@ mod tests {
     use super::*;
 
     fn peak(samples: &[i16]) -> f32 {
-        samples.iter().map(|&s| (s as f32).abs()).fold(0.0, f32::max)
+        samples
+            .iter()
+            .map(|&s| (s as f32).abs())
+            .fold(0.0, f32::max)
     }
 
     #[test]
@@ -596,7 +608,10 @@ mod tests {
             let mut block = make();
             agc.process(&mut block);
             // Gain tracks toward desired = 8000/20000 = 0.4 (EMA, not instant).
-            assert!(agc.gain() <= last_gain + 1e-6, "gain must not rise on loud audio");
+            assert!(
+                agc.gain() <= last_gain + 1e-6,
+                "gain must not rise on loud audio"
+            );
             last_gain = agc.gain();
         }
         assert!(agc.gain() < 1.0, "gain settles below 1.0 for a loud source");
@@ -639,9 +654,15 @@ mod tests {
         let mut silence = vec![10i16; 64]; // < NOISE_FLOOR
         let before = silence.clone();
         agc.process(&mut silence);
-        assert_eq!(silence, before, "sub-floor audio passes through un-amplified");
+        assert_eq!(
+            silence, before,
+            "sub-floor audio passes through un-amplified"
+        );
         assert!(agc.gain() < raised, "gain decays during silence");
-        assert!(agc.gain() > 1.0, "single decay step doesn't overshoot unity");
+        assert!(
+            agc.gain() > 1.0,
+            "single decay step doesn't overshoot unity"
+        );
     }
 
     #[test]

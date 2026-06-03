@@ -7,7 +7,7 @@ import { ModelFamilySchema, TranscriberBackendSchema } from "@/shared/api/schema
 // uses the same pattern.
 mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 
-const originalElectronApi = window.electronAPI;
+const originalNativeBridge = window.nativeBridge;
 
 const { useCatalogStore } = await import("./catalog-store");
 
@@ -40,7 +40,7 @@ function resetStore(): void {
 }
 
 beforeEach(() => {
-	window.electronAPI = {
+	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: () => undefined,
 		invoke: async () => undefined,
@@ -50,7 +50,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalElectronApi;
+	window.nativeBridge = originalNativeBridge;
 });
 
 function freshModel(): Model {

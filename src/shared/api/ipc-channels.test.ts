@@ -76,6 +76,7 @@ describe("channelsByDirection", () => {
 		const onChannels = new Set(channelsByDirection("on"));
 		expect(onChannels.has(IPC.STT_REALTIME_TEXT)).toBe(true);
 		expect(onChannels.has(IPC.SETTINGS_CHANGED)).toBe(true);
+		expect(onChannels.has("model-picker:closing" as IpcChannel)).toBe(true);
 		expect(onChannels.has(IPC.SETTINGS_SAVE)).toBe(false);
 	});
 

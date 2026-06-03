@@ -1,0 +1,33 @@
+{
+  "title": "WinSTT",
+  "pages": [
+    "---Getting Started---",
+    "index",
+    "quick-start",
+    "install",
+    "---Core Workflows---",
+    "dictation",
+    "recording-modes",
+    "file-transcription",
+    "text-to-speech",
+    "---Personalize---",
+    "transcription-history",
+    "dictionary",
+    "snippets",
+    "settings",
+    "---Models & Reference---",
+    "models",
+    "cli",
+    "---Help---",
+    "troubleshooting",
+    "faq",
+    "manual-model-install",
+    "verify-releases",
+    "debug-mode",
+    "comparison",
+    "---Developers---",
+    "dev-setup",
+    "architecture",
+    "acknowledgments"
+  ]
+}

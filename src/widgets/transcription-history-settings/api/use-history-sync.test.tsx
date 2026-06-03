@@ -4,7 +4,15 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { useTranscriptionHistorySync } from "./use-history-sync";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
+const originalTauriInternals = (
+	window as unknown as {
+		__TAURI_INTERNALS__?: {
+			invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+			transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+		};
+	}
+).__TAURI_INTERNALS__;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 let invokeImpl: (channel: string) => Promise<unknown> = () => Promise.resolve([]);
 
@@ -12,7 +20,7 @@ beforeEach(() => {
 	listeners.clear();
 	invokeImpl = () => Promise.resolve([]);
 	useTranscriptionHistoryStore.setState({ entries: [], isLoaded: false });
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		invoke: (channel: string) => invokeImpl(channel),
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
@@ -27,10 +35,27 @@ beforeEach(() => {
 			};
 		},
 	};
+	(
+		window as unknown as {
+			__TAURI_INTERNALS__: NonNullable<typeof originalTauriInternals>;
+		}
+	).__TAURI_INTERNALS__ = {
+		...(originalTauriInternals ?? {
+			transformCallback: () => 0,
+		}),
+		invoke: (cmd: string) => invokeImpl(cmd),
+	};
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
+	if (originalTauriInternals) {
+		(
+			window as unknown as {
+				__TAURI_INTERNALS__: typeof originalTauriInternals;
+			}
+		).__TAURI_INTERNALS__ = originalTauriInternals;
+	}
 });
 
 function fire(channel: string, ...args: unknown[]) {

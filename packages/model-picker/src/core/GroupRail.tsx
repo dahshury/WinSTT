@@ -7,6 +7,7 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/Tooltip";
+import { FAVORITES_GROUP_VALUE } from "./favorites";
 
 /**
  * A single rail tile descriptor. Pickers compute these from their own
@@ -273,6 +274,25 @@ function GroupRailTile({
  * Favorites tile. A semi-transparent foreground tint, so it reads correctly on
  * any tile shade without needing the substrate level.
  */
+/**
+ * The pinned "Favorites" rail tile — maker-agnostic (an amber star instead of a
+ * brand logo) jumping to the synthetic Favorites group at the top of the list.
+ * Shared so every picker's Favorites tile is byte-identical.
+ */
+export function buildFavoritesRailItem(count: number): GroupRailItem {
+	return {
+		id: FAVORITES_GROUP_VALUE,
+		label: "Favorites",
+		pinned: true,
+		badge: count,
+		icon: (
+			<RailIconChip tone="favorite">
+				<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
+			</RailIconChip>
+		),
+	};
+}
+
 export function RailIconChip({
 	children,
 	tone = "neutral",

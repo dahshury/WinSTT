@@ -23,16 +23,71 @@ function _ipcClientPolluted(): boolean {
 	return typeof ipcClient.onHotkeyPressed !== "function";
 }
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
 const invokes: string[] = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
+// The renderer's outbound IPC for STT/hotkey channels does NOT flow through
+// `window.nativeBridge` anymore — `ipc-client.ts`'s COMMAND_INVOKERS routes those
+// channels through the typed `commands.*` (`@/bindings`), which call
+// `@tauri-apps/api/core` `invoke` → `window.__TAURI_INTERNALS__.invoke(cmd, args)`.
+// Event SUBSCRIPTIONS (`on`) still go through `window.nativeBridge.on`. To assert
+// on what the hook emits we therefore instrument BOTH seams: the nativeBridge `on`
+// (for the `fire(...)` listeners) AND the Tauri command boundary, translating each
+// recorded `(cmd, args)` back into the {channel,args} / invoke-name shape the
+// assertions read. The Tauri command names + arg keys are the source of truth in
+// `src/bindings.ts` (winstt_set_parameter {parameter,value}, winstt_call_method
+// {method,args}, hotkey_register/unregister {accelerator}).
+type TauriInvoke = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+
+const TAURI_INTERNALS_KEY = "__TAURI_INTERNALS__";
+const originalTauriInternals = (window as unknown as Record<string, { invoke: TauriInvoke }>)[
+	TAURI_INTERNALS_KEY
+];
+
+/** Tauri command name → the IPC channel the renderer wrappers used to hit. The
+ * command's `args` object is already in the `{accelerator}` / `{parameter,value}`
+ * / `{method,args}` shape the assertions read as `args[0]`, so it's recorded
+ * verbatim. SEND-style commands (void) land in `sentChannels`; the one
+ * INVOKE-style command (hotkey_register, returns the bool) also pushes its
+ * channel into `invokes`. */
+const SEND_COMMAND_CHANNELS: Record<string, string> = {
+	winstt_set_parameter: IPC.STT_SET_PARAMETER,
+	winstt_call_method: IPC.STT_CALL_METHOD,
+	hotkey_unregister: IPC.HOTKEY_UNREGISTER,
+};
+const INVOKE_COMMAND_CHANNELS: Record<string, string> = {
+	hotkey_register: IPC.HOTKEY_REGISTER,
+};
+
+function instrumentedTauriInvoke(cmd: string, args?: unknown): Promise<unknown> {
+	const invokeChannel = INVOKE_COMMAND_CHANNELS[cmd];
+	if (invokeChannel) {
+		invokes.push(invokeChannel);
+		if (invokeChannel === IPC.HOTKEY_REGISTER) {
+			return Promise.resolve(true);
+		}
+		return Promise.resolve(undefined);
+	}
+	const sendChannel = SEND_COMMAND_CHANNELS[cmd];
+	if (sendChannel) {
+		sentChannels.push({ channel: sendChannel, args: [args] });
+	}
+	return Promise.resolve(undefined);
+}
+
 function makeApi() {
 	listeners.clear();
 	sentChannels.length = 0;
 	invokes.length = 0;
+	// Re-arm the Tauri command boundary every test so the recorders above stay
+	// bound to THIS run's (just-cleared) arrays.
+	(window as unknown as Record<string, { invoke: TauriInvoke }>)[TAURI_INTERNALS_KEY] = {
+		...originalTauriInternals,
+		invoke: instrumentedTauriInvoke,
+	};
 	return {
 		...originalApi,
 		invoke: async (channel: string) => {
@@ -66,11 +121,12 @@ beforeEach(() => {
 		isActive: false,
 		accelerator: "LCtrl+LMeta",
 	});
-	window.electronAPI = makeApi();
+	window.nativeBridge = makeApi();
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
+	(window as unknown as Record<string, unknown>)[TAURI_INTERNALS_KEY] = originalTauriInternals;
 	useSettingsStore.setState({ settings: initialSettings });
 	// Reset the hotkey-store singleton so sibling test files (notably
 	// hotkey-store.test.ts which snapshots `useHotkeyStore.getState()` at
@@ -90,14 +146,18 @@ function fire(channel: string) {
 }
 
 describe("usePushToTalk", () => {
-	test("registers the global hotkey on mount and unregisters on unmount", () => {
+	test("registers the global hotkey on mount and does NOT unregister on unmount", () => {
+		// The backend `change_binding` rebinds the single "transcribe" slot atomically, so the
+		// hook deliberately has no cleanup `hotkeyUnregister` — a separate fire-and-forget
+		// unregister could race past the awaited re-register (StrictMode double-invoke) and leave
+		// the hotkey dead. The global hotkey is meant to outlive the window mount.
 		const { unmount } = renderHook(() => usePushToTalk());
 		expect(invokes).toContain(IPC.HOTKEY_REGISTER);
 		unmount();
-		expect(sentChannels.some((c) => c.channel === IPC.HOTKEY_UNREGISTER)).toBe(true);
+		expect(sentChannels.some((c) => c.channel === IPC.HOTKEY_UNREGISTER)).toBe(false);
 	});
 
-	test("hotkey-pressed in PTT mode sets isPressed=true and sends set_microphone(true)", () => {
+	test("hotkey-pressed in PTT mode sets isPressed=true and disables the silence endpoint", () => {
 		// Sibling tests in the suite call useSettingsStore.setState(...) without
 		// resetting on teardown, so initialSettings (captured at module load) may
 		// have the recordingMode "listen" — under which usePushToTalk's press
@@ -119,11 +179,18 @@ describe("usePushToTalk", () => {
 		}
 		fire(IPC.HOTKEY_PRESSED);
 		expect(useHotkeyStore.getState().isPressed).toBe(true);
+		// The renderer no longer relays `set_microphone` — the backend (handler.rs)
+		// dispatches the recorder for ptt/toggle on the hotkey thread. The press
+		// handler's only OUTBOUND IPC is the PTT recorder-config re-assert that
+		// pins the auto-stop disables (silence endpoint) the instant the recording
+		// starts. Assert THAT is what the press emits.
 		expect(
 			sentChannels.some(
 				(c) =>
-					c.channel === IPC.STT_CALL_METHOD &&
-					(c.args[0] as { method: string; args?: unknown[] }).method === "set_microphone"
+					c.channel === IPC.STT_SET_PARAMETER &&
+					(c.args[0] as { parameter: string; value: unknown }).parameter ===
+						"silence_endpoint_enabled" &&
+					(c.args[0] as { parameter: string; value: unknown }).value === false
 			)
 		).toBe(true);
 	});
@@ -147,7 +214,7 @@ describe("usePushToTalk", () => {
 		expect(useHotkeyStore.getState().isPressed).toBe(false);
 	});
 
-	test("toggle mode flips isActive on each press and skips release sends", () => {
+	test("toggle mode flips isActive on each press and never relays set_microphone", () => {
 		useSettingsStore.setState({
 			settings: {
 				...useSettingsStore.getState().settings,
@@ -161,32 +228,38 @@ describe("usePushToTalk", () => {
 		if (!listeners.has(IPC.HOTKEY_PRESSED)) {
 			return;
 		}
-		const sttCalls = (): Array<{ method: string; args?: unknown[] }> =>
+		// The backend (handler.rs) owns the recorder start/stop for toggle mode now;
+		// the renderer mirrors the active/pressed pill state ONLY and must NOT
+		// double-dispatch the mic via `set_microphone` (the Stage-machine dedupe
+		// this replaced). `micCalls()` counts any such leaked relay — it must stay 0.
+		const micCalls = (): number =>
 			sentChannels
 				.filter((c) => c.channel === IPC.STT_CALL_METHOD)
-				.map((c) => c.args[0] as { method: string; args?: unknown[] });
+				.map((c) => c.args[0] as { method: string; args?: unknown[] })
+				.filter((m) => m.method === "set_microphone").length;
 
 		// First press: toggle on.
 		fire(IPC.HOTKEY_PRESSED);
 		expect(useHotkeyStore.getState().isActive).toBe(true);
 		expect(useHotkeyStore.getState().isPressed).toBe(true);
-		const afterFirstPress = sttCalls();
-		expect(afterFirstPress.at(-1)).toEqual({ method: "set_microphone", args: [true] });
+		expect(micCalls()).toBe(0);
 
-		// Release in toggle mode must NOT emit another set_microphone.
+		// Release in toggle mode flips the pressed pill off but is otherwise a no-op.
 		fire(IPC.HOTKEY_RELEASED);
 		expect(useHotkeyStore.getState().isPressed).toBe(false);
-		expect(sttCalls().length).toBe(afterFirstPress.length);
+		expect(micCalls()).toBe(0);
 
-		// Second press: toggle off.
+		// Second press: toggle off — active state flips back, still no mic relay.
 		fire(IPC.HOTKEY_PRESSED);
 		expect(useHotkeyStore.getState().isActive).toBe(false);
-		const afterSecondPress = sttCalls();
-		expect(afterSecondPress.at(-1)).toEqual({ method: "set_microphone", args: [false] });
+		expect(micCalls()).toBe(0);
 	});
 
 	test("mirrors pushToTalkKey changes into the hotkey store accelerator", () => {
 		const { rerender } = renderHook(() => usePushToTalk());
+		// On mount the hook mirrors the persisted `settings.hotkey.pushToTalkKey`
+		// (here the schema default) into the store accelerator. The default is
+		// "LCtrl+LMeta" (settings-schema.ts) — the original WinSTT PTT combo.
 		expect(useHotkeyStore.getState().accelerator).toBe("LCtrl+LMeta");
 
 		act(() => {
@@ -252,7 +325,7 @@ describe("usePushToTalk", () => {
 		expect(silenceCall?.value).toBe(false);
 	});
 
-	test("PTT press re-asserts silence endpoint + timing OFF before set_microphone(true)", () => {
+	test("PTT press re-asserts the silence endpoint + timing disables", () => {
 		useSettingsStore.setState({
 			settings: {
 				...useSettingsStore.getState().settings,
@@ -276,20 +349,23 @@ describe("usePushToTalk", () => {
 		expect(params).toContainEqual({ parameter: "silence_endpoint_enabled", value: false });
 		expect(params).toContainEqual({ parameter: "silence_timing", value: false });
 
-		// Both disables must precede the set_microphone(true) relay so the server
-		// applies them before the recording starts accumulating silence.
+		// The renderer no longer relays `set_microphone` (the backend's handler.rs
+		// starts the recorder on the hotkey thread). What it MUST still guarantee is
+		// that the endpoint disable is asserted BEFORE the timing disable, in the
+		// documented order, so neither the VAD silence endpoint nor the smart-endpoint
+		// pause tuning can fire mid-hold. Verify that ordering instead.
 		const idxEndpoint = sentChannels.findIndex(
 			(c) =>
 				c.channel === IPC.STT_SET_PARAMETER &&
 				(c.args[0] as { parameter: string }).parameter === "silence_endpoint_enabled"
 		);
-		const idxMic = sentChannels.findIndex(
+		const idxTiming = sentChannels.findIndex(
 			(c) =>
-				c.channel === IPC.STT_CALL_METHOD &&
-				(c.args[0] as { method: string }).method === "set_microphone"
+				c.channel === IPC.STT_SET_PARAMETER &&
+				(c.args[0] as { parameter: string }).parameter === "silence_timing"
 		);
 		expect(idxEndpoint).toBeGreaterThanOrEqual(0);
-		expect(idxMic).toBeGreaterThan(idxEndpoint);
+		expect(idxTiming).toBeGreaterThan(idxEndpoint);
 	});
 
 	test("toggle press does NOT force the silence endpoint off (VAD still segments)", () => {

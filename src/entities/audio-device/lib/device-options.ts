@@ -1,8 +1,93 @@
+import {
+	BluetoothConnectedIcon,
+	CameraMicrophone01Icon,
+	ComputerIcon,
+	HeadsetIcon,
+	LaptopIcon,
+	Mic01Icon,
+	MixerIcon,
+	UsbConnected01Icon,
+} from "@hugeicons/core-free-icons";
+import type { IconSvgElement } from "@hugeicons/react";
 import type { AudioDevice } from "../model/audio-device";
 
-interface InputDeviceOption {
+export interface InputDeviceOption {
+	icon: IconSvgElement;
 	id: string;
 	label: string;
+}
+
+interface IconRule {
+	icon: IconSvgElement;
+	patterns: readonly RegExp[];
+}
+
+const DEVICE_ICON_RULES: readonly IconRule[] = [
+	{
+		icon: BluetoothConnectedIcon,
+		patterns: [/\bbluetooth\b/i, /\bbt\b/i, /\bwireless\b/i],
+	},
+	{
+		icon: HeadsetIcon,
+		patterns: [
+			/\bheadsets?\b/i,
+			/\bheadphones?\b/i,
+			/\bearbuds?\b/i,
+			/\bearphones?\b/i,
+			/\bhands[-\s]?free\b/i,
+			/\bairpods?\b/i,
+			/\bbuds?\b/i,
+		],
+	},
+	{
+		icon: CameraMicrophone01Icon,
+		patterns: [/\bcameras?\b/i, /\bwebcams?\b/i, /\bcam\b/i, /\bc920\b/i, /\bbrio\b/i],
+	},
+	{
+		icon: MixerIcon,
+		patterns: [
+			/\bline[-\s]?in\b/i,
+			/\bstereo mix\b/i,
+			/\bwhat u hear\b/i,
+			/\bmixers?\b/i,
+			/\baudio interface\b/i,
+			/\binterfaces?\b/i,
+			/\bfocusrite\b/i,
+			/\bscarlett\b/i,
+			/\brodecaster\b/i,
+			/\bvoicemeeter\b/i,
+		],
+	},
+	{
+		icon: UsbConnected01Icon,
+		patterns: [/\busb\b/i, /\busb-c\b/i, /\btype-c\b/i],
+	},
+	{
+		icon: LaptopIcon,
+		patterns: [
+			/\bbuilt[-\s]?in\b/i,
+			/\binternal\b/i,
+			/\bintegrated\b/i,
+			/\bmicrophone array\b/i,
+			/\bmic array\b/i,
+			/\brealtek\b/i,
+			/\bintel.*smart sound\b/i,
+			/\bdigital microphones?\b/i,
+		],
+	},
+] as const;
+
+export function inputDeviceIconForName(name: string): IconSvgElement {
+	for (const rule of DEVICE_ICON_RULES) {
+		if (rule.patterns.some((pattern) => pattern.test(name))) {
+			return rule.icon;
+		}
+	}
+	return Mic01Icon;
+}
+
+function inputDefaultIcon(defaultDeviceName: string | null | undefined): IconSvgElement {
+	return defaultDeviceName ? inputDeviceIconForName(defaultDeviceName) : ComputerIcon;
 }
 
 /**
@@ -35,7 +120,11 @@ function dedupeDevicesByName(
 			continue;
 		}
 		seen.add(key);
-		opts.push({ id: resolveDeviceId(d, inputDeviceIndex, selectedName), label: d.name });
+		opts.push({
+			icon: inputDeviceIconForName(d.name),
+			id: resolveDeviceId(d, inputDeviceIndex, selectedName),
+			label: d.name,
+		});
 	}
 	return opts;
 }
@@ -65,9 +154,12 @@ function resolveSelectedName(
 export function buildInputDeviceOptions(
 	devices: readonly AudioDevice[],
 	inputDeviceIndex: number | null,
-	defaultLabel: string
+	defaultLabel: string,
+	defaultDeviceName?: string | null
 ): InputDeviceResult {
-	const opts: InputDeviceOption[] = [{ id: "default", label: defaultLabel }];
+	const opts: InputDeviceOption[] = [
+		{ icon: inputDefaultIcon(defaultDeviceName), id: "default", label: defaultLabel },
+	];
 	const selectedName = resolveSelectedName(devices, inputDeviceIndex);
 	opts.push(...dedupeDevicesByName(devices, inputDeviceIndex, selectedName));
 

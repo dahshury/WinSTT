@@ -146,7 +146,7 @@ export function _resetOptimisticSwapForTests(): void {
 
 /**
  * Subscribe to swap lifecycle pushes. Called once on module load in
- * Electron windows; exported so tests can wire it manually.
+ * the reference windows; exported so tests can wire it manually.
  */
 export function initModelSwapStore(): () => void {
 	const unsubStarted = onModelSwapStarted(({ kind, name }) => {
@@ -193,6 +193,6 @@ export function initModelSwapStore(): () => void {
 	};
 }
 
-if (typeof window !== "undefined" && window.electronAPI != null) {
+if (typeof window !== "undefined" && window.nativeBridge != null) {
 	initModelSwapStore();
 }

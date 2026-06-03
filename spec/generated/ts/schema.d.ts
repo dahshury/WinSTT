@@ -564,7 +564,7 @@ export interface components {
              *     re-paste and is swallowed app-wide so it never also fires the
              *     focused app's native binding. Stored in the uiohook-style
              *     accelerator format (e.g. `LCtrl+LShift+V`); the main process
-             *     converts it to an Electron accelerator at registration. Empty
+             *     converts it to a global-shortcut accelerator at registration. Empty
              *     string disables the feature.
              */
             repasteHotkey?: string;
@@ -622,7 +622,7 @@ export interface components {
             /** @description Aura visualizer — rainbow hue-shift (percent → shader uColorShift 0–1). */
             visualizerAuraColorShift?: number;
             /**
-             * @description When enabled, the Electron client reads text from the focused window
+             * @description When enabled, the app reads text from the focused window
              *     via Windows UI Automation immediately before each dictation and feeds
              *     it to the LLM cleanup step so names and jargon get spelled correctly.
              *     Off by default; requires an explicit opt-in dialog in the UI because
@@ -645,7 +645,7 @@ export interface components {
             wordCorrectionThreshold: number;
         };
         HotkeySettings: {
-            /** @description Electron accelerator string */
+            /** @description Global-shortcut accelerator string */
             pushToTalkKey?: string;
         };
         /** @description A canonical word/name/phrase the user wants Whisper to land on. At post-process time we fuzzy-match each transcribed token against every dictionary term (Jaro-Winkler + Double Metaphone) and replace the closest near-miss with the canonical form. When `replacement` is present, the entry is a deterministic replacement pair: occurrences of `term` are rewritten to `replacement` after the LLM cleanup pass. */
@@ -883,7 +883,7 @@ export interface components {
          */
         OllamaPullProgressStatus: "pulling" | "downloading" | "verifying" | "writing" | "success" | "error" | "cancelled";
         /**
-         * @description Streaming progress event for a model pull. Emitted by the Electron main
+         * @description Streaming progress event for a model pull. Emitted by the app
          *     process to the renderer over IPC channel `llm:pull-progress`.
          */
         OllamaPullProgress: {
@@ -1021,7 +1021,7 @@ export interface components {
          * @enum {string}
          */
         CloudSttErrorCode: "auth" | "network" | "key_missing" | "rate_limit" | "provider_error";
-        /** @description Per-provider integration record. `apiKey` is encrypted at rest via Electron `safeStorage` (DPAPI on Windows); the wire/in-memory shape is plaintext. `verified` is the result of the last successful probe (null = never probed); `lastVerifiedAt` is epoch-ms (or null). */
+        /** @description Per-provider integration record. `apiKey` is encrypted at rest via the OS keychain (DPAPI on Windows); the wire/in-memory shape is plaintext. `verified` is the result of the last successful probe (null = never probed); `lastVerifiedAt` is epoch-ms (or null). */
         ProviderIntegrationStatus: {
             /** @default  */
             apiKey: string;

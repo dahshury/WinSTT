@@ -4,14 +4,18 @@ import {
 	AiAudioIcon,
 	AiCloud01Icon,
 	ArrowDown01Icon,
-	CloudDownloadIcon,
 	Mic01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { getFamilyConfig, variantDisplayName } from "@picker";
+// Deep-import the lightweight STT label helpers (not the `@picker` barrel) so
+// the heavy SttModelSelector / Ollama / OpenRouter / TTS picker UI trees are
+// not dragged into the `main` window's chunk — StatusBar only needs these two
+// helpers, and the barrel re-export would otherwise pull the whole
+// model-picker package into the main entry.
+import { getFamilyConfig, variantDisplayName } from "@picker/stt/lib/family-helpers";
 import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { useTranslations } from "use-intl";
-import { useInputDevices } from "@/entities/audio-device";
+import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
 import { providerDisplayName, providerOf } from "@/entities/cloud-stt-provider";
 import { useCatalogStore, useModelSwapStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
@@ -26,8 +30,8 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 import type { SelectOption } from "@/shared/ui/select";
-import { Spinner } from "@/shared/ui/spinner";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 const FOOTER_TOOLTIP_DELAY = 1500;
@@ -71,6 +75,8 @@ function FooterMenuChip({
 	const hoverLevel = Math.min(substrate + 2, 8);
 	const popupLevel = Math.min(substrate + 2, 8);
 	const popupShadow = Math.max(popupLevel, 6);
+	const selected = options.find((opt) => opt.id === value);
+	const triggerIcon = selected?.icon ?? icon;
 	// `position: relative` anchor for the animated selected/hover pills.
 	const radioGroupRef = useRef<HTMLDivElement | null>(null);
 	return (
@@ -83,7 +89,7 @@ function FooterMenuChip({
 					<HugeiconsIcon
 						aria-hidden="true"
 						color="var(--color-foreground-dim)"
-						icon={icon}
+						icon={triggerIcon}
 						size={11}
 					/>
 					<span className="min-w-0 truncate">{label}</span>
@@ -122,6 +128,15 @@ function FooterMenuChip({
 										key={opt.id}
 										value={opt.id}
 									>
+										{opt.icon ? (
+											<HugeiconsIcon
+												aria-hidden="true"
+												className="shrink-0 text-foreground-muted"
+												icon={opt.icon}
+												size={16}
+												strokeWidth={opt.id === value ? 2 : 1.5}
+											/>
+										) : null}
 										<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
 											{opt.label}
 										</span>
@@ -265,7 +280,7 @@ function ModelSwapChip({ label, tooltip }: ModelSwapChipProps): ReactNode {
 				aria-live="polite"
 				className="flex max-w-full cursor-default select-none items-center gap-1 rounded-xs bg-transparent px-1 py-[1px] text-2xs text-foreground-dim"
 			>
-				<Spinner className="size-2.5 border" />
+				<PulseDot className="size-1.5 text-accent" />
 				<span className="min-w-0 truncate">{label}</span>
 			</span>
 		</Tooltip>
@@ -341,18 +356,7 @@ function FooterDownloadChip({
 				onClick={open}
 				type="button"
 			>
-				<span className="relative inline-flex size-2.5 items-center justify-center">
-					<HugeiconsIcon
-						aria-hidden="true"
-						className="text-accent"
-						icon={CloudDownloadIcon}
-						size={11}
-					/>
-					<span
-						aria-hidden="true"
-						className="absolute inset-0 animate-ping rounded-full bg-accent/40 motion-reduce:animate-none"
-					/>
-				</span>
+				<PulseDot className="size-1.5 text-accent" />
 				<span className="min-w-0 truncate">{label}</span>
 				<span className="shrink-0 font-mono tabular-nums">
 					{reportedPercent === null ? "…" : `${reportedPercent}%`}
@@ -449,22 +453,17 @@ export function StatusBar() {
 	const tModel = useTranslations("model");
 
 	const { devices, defaultDevice } = useInputDevices();
-	const { deviceOptions, deviceNameMap } = (() => {
-		const defaultLabel = defaultDevice
-			? `${tAudio("systemDefault")} (${defaultDevice.name})`
-			: tAudio("systemDefault");
-		const opts: SelectOption[] = [{ id: "default", label: defaultLabel }];
-		const map = new Map<string, string>();
-		map.set("default", defaultDevice ? defaultDevice.name : tAudio("systemDefault"));
-		for (const d of devices) {
-			opts.push({ id: String(d.index), label: d.name });
-			map.set(String(d.index), d.name);
-		}
-		return { deviceOptions: opts, deviceNameMap: map };
-	})();
-
-	const currentDeviceId = inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
-	const currentDeviceName = deviceNameMap.get(currentDeviceId) ?? tAudio("systemDefault");
+	const defaultLabel = defaultDevice
+		? `${tAudio("systemDefault")} (${defaultDevice.name})`
+		: tAudio("systemDefault");
+	const { deviceOptions, currentDeviceId, currentDeviceLabel } = buildInputDeviceOptions(
+		devices,
+		inputDeviceIndex ?? null,
+		defaultLabel,
+		defaultDevice?.name
+	);
+	const currentDeviceName =
+		inputDeviceIndex == null ? (defaultDevice?.name ?? tAudio("systemDefault")) : currentDeviceLabel;
 
 	const handleDeviceChange = (v: string) =>
 		updateAudio({

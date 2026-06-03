@@ -190,16 +190,18 @@ describe("resolveTargetQuant", () => {
 		expect(t.resolveTargetQuant(undefined, "int8")).toBe("int8");
 	});
 
-	test("re-resolves the auto/default sentinel to the server's effective precision", () => {
-		// canary on auto ("") loads int8 on the server; the cache check must
-		// target int8, not the (cached) default export.
+	test("re-resolves the auto sentinel to the server's effective precision", () => {
+		// canary on "auto" loads int8 on the server; the cache check must target
+		// int8, not the user's nominal selection.
 		const state = { id: "m", effective_quantization: "int8" } as never;
-		expect(t.resolveTargetQuant(undefined, "", state)).toBe("int8");
+		expect(t.resolveTargetQuant(undefined, "auto", state)).toBe("int8");
 	});
 
-	test("honors a concrete pick over the effective precision", () => {
+	test("honors a concrete pick (incl fp32) over the auto-effective precision", () => {
 		const state = { id: "m", effective_quantization: "int8" } as never;
-		expect(t.resolveTargetQuant("fp16", "", state)).toBe("fp16");
+		expect(t.resolveTargetQuant("fp16", "auto", state)).toBe("fp16");
+		// "" is EXPLICIT fp32 now — a concrete pick, not re-resolved to int8.
+		expect(t.resolveTargetQuant("", "auto", state)).toBe("");
 	});
 });
 
@@ -207,10 +209,10 @@ describe("isSwapBlockedByDownload", () => {
 	const states = { m: { id: "m", effective_quantization: "int8" } } as never;
 
 	test("blocks a row-select when the model's effective precision is downloading", () => {
-		// Row select → quantization undefined → effective int8. int8 is
-		// downloading, so switching to it must be refused.
+		// Row select on auto → quantization undefined, currentQuantization "auto" →
+		// effective int8. int8 is downloading, so switching to it must be refused.
 		const dl = (id: string, q: string) => id === "m" && q === "int8";
-		expect(t.isSwapBlockedByDownload("m", undefined, "", states, dl)).toBe(true);
+		expect(t.isSwapBlockedByDownload("m", undefined, "auto", states, dl)).toBe(true);
 	});
 
 	test("allows switching to a cached precision while a DIFFERENT precision downloads", () => {
@@ -585,10 +587,10 @@ describe("runProceedWithSelection", () => {
 	});
 
 	test("prompts download when the effective precision is missing even though the default export is cached", () => {
-		// The canary-1b-flash repro: user on auto (""), default export ("") is
-		// on disk (cached), but the server loads int8 — which is NOT on disk.
-		// Pre-fix this issued a silent swap (no prompt) and the server
-		// background-downloaded int8. It must now prompt the download.
+		// The canary-1b-flash repro: user on "auto", the fp32 export ("") is on
+		// disk (cached), but the server loads int8 — which is NOT on disk. Pre-fix
+		// this issued a silent swap (no prompt) and the server background-downloaded
+		// int8. It must now prompt the download.
 		const setPending = mock(() => undefined);
 		const issueSwap = mock(() => undefined);
 		const states = {
@@ -603,7 +605,7 @@ describe("runProceedWithSelection", () => {
 			},
 		} as never;
 		t.runProceedWithSelection({
-			currentQuantization: "",
+			currentQuantization: "auto",
 			issueSwap: issueSwap as never,
 			kind: "main",
 			previous: "prev",

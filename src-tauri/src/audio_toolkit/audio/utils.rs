@@ -48,3 +48,46 @@ pub fn save_wav_file<P: AsRef<Path>>(file_path: P, samples: &[f32]) -> Result<()
     debug!("Saved WAV file: {:?}", file_path.as_ref());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_then_read_roundtrips_within_i16_epsilon() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("roundtrip.wav");
+        let samples = [0.0_f32, 0.5, -0.5, 1.0, -1.0, 0.25];
+        save_wav_file(&path, &samples).unwrap();
+        let back = read_wav_samples(&path).unwrap();
+        assert_eq!(back.len(), samples.len());
+        for (orig, got) in samples.iter().zip(back.iter()) {
+            // i16 quantization step is 1/32767 ~= 3.05e-5.
+            assert!(
+                (orig - got).abs() < 2e-4,
+                "f32->i16->f32 within quantization: {orig} vs {got}"
+            );
+        }
+    }
+
+    #[test]
+    fn verify_wav_file_matches_and_rejects_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("count.wav");
+        let samples = vec![0.1_f32; 320];
+        save_wav_file(&path, &samples).unwrap();
+        assert!(verify_wav_file(&path, 320).is_ok());
+        assert!(
+            verify_wav_file(&path, 321).is_err(),
+            "wrong sample count is an error"
+        );
+    }
+
+    #[test]
+    fn read_missing_file_is_err() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does_not_exist.wav");
+        assert!(read_wav_samples(&missing).is_err());
+        assert!(verify_wav_file(&missing, 0).is_err());
+    }
+}

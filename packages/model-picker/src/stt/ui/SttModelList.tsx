@@ -1,18 +1,14 @@
 "use client";
 
 import { Combobox } from "@base-ui/react/combobox";
-import {
-	ArrowUpDownIcon,
-	FolderOpenIcon,
-	ServerStack01Icon,
-	StarIcon,
-} from "@hugeicons/core-free-icons";
+import { ArrowUpDownIcon, FolderOpenIcon, ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import { openCustomModelsFolder } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
+import { FavoritesGroupLabel } from "../../core/model-card";
 import { publicAsset } from "../../lib/public-asset";
 import {
 	bundleVariants,
@@ -78,7 +74,7 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 			{config.logoSrc ? (
 				<img
 					alt={`${author} logo`}
-					className="size-4 shrink-0 rounded-[3px] object-cover"
+					className="size-4 shrink-0 rounded-[3px] object-contain"
 					height={16}
 					src={publicAsset(config.logoSrc)}
 					width={16}
@@ -92,31 +88,6 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 				{author}
 			</span>
 			<span className="text-[10px] text-foreground-dim">· {config.label}</span>
-		</Combobox.GroupLabel>
-	);
-}
-
-/**
- * Header for the synthetic "Favorites" group. Same sticky-label chrome as
- * {@link AuthorLabel} (so it docks identically while scrolling) but star-iconed
- * and maker-agnostic — it carries ``data-rail-section="favorites"`` so the rail
- * tile's click-to-jump and the scroll-spy both target it like any maker group.
- */
-function FavoritesLabel({ count }: { count: number }) {
-	return (
-		<Combobox.GroupLabel
-			className="sticky top-0 z-raised flex items-center gap-2 border-border/60 border-b bg-surface-elevated/95 px-3 py-1.5 backdrop-blur-sm"
-			data-rail-section="favorites"
-		>
-			<span className="flex size-4 items-center justify-center rounded bg-amber-400/[0.12] text-amber-400">
-				<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
-			</span>
-			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
-				Favorites
-			</span>
-			<span className="text-[10px] text-foreground-dim">
-				· {count === 1 ? "1 model" : `${count} models`}
-			</span>
 		</Combobox.GroupLabel>
 	);
 }
@@ -161,7 +132,7 @@ function FavoritesGroup({
 }: FavoritesGroupProps) {
 	return (
 		<Combobox.Group className="flex flex-col" items={items}>
-			<FavoritesLabel count={items.length} />
+			<FavoritesGroupLabel count={items.length} />
 			{items.map((model) => (
 				<SttModelCard
 					currentQuantization={currentQuantization}

@@ -1,15 +1,16 @@
 import { useTranslations } from "use-intl";
-import { DEFAULT_SETTINGS, SettingResetButton, useSettingsStore } from "@/entities/setting";
-import { FormControl } from "@/shared/ui/form-control";
-import { TagInput } from "@/shared/ui/tag-input";
+import { DEFAULT_SETTINGS, SettingField, useSettingsStore } from "@/entities/setting";
+import { EditableListCombobox } from "@/shared/ui/editable-list-combobox";
 
 /**
- * Editable deny-list for context capture, rendered as a creatable tags input:
- * type an entry and commit it inline, remove an entry via its chip.
+ * Editable deny-list for context capture, rendered as a manage-a-set combobox
+ * (`EditableListCombobox`): the field shows a count summary when closed, and
+ * opening it reveals a searchable dropdown where each entry can be edited in
+ * place or deleted, with a "create" row to add new ones.
  *
- * Two kinds of entries — both stored as plain strings; the matcher in
- * `electron/lib/context-snapshot.ts#isDeniedByList` distinguishes them
- * by the `.exe` suffix:
+ * Two kinds of entries — both stored as plain strings; the matcher (Rust side,
+ * `winstt`'s context snapshot; mirrors the reference `isDeniedByList`)
+ * distinguishes them by the `.exe` suffix:
  *
  *  - `chrome.exe`, `1password.exe` — exe-name match against the
  *    foreground process basename.
@@ -21,12 +22,13 @@ import { TagInput } from "@/shared/ui/tag-input";
  * skipped. Visibility is owned by the parent (shown only while context
  * awareness is enabled). Entries are normalised (trimmed + lower-cased) before
  * they're stored, which both matches the case-insensitive matcher and keeps
- * the `TagInput`'s duplicate detection honest.
+ * the combobox's duplicate detection honest.
  */
 export function ContextDenyListSection() {
 	const general = useSettingsStore((s) => s.settings.general);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("general");
+	const tc = useTranslations("common");
 	const denyList = general?.contextDenyList ?? [];
 	const defaultDenyList = DEFAULT_SETTINGS.general.contextDenyList;
 	// The deny-list is a set, so compare order-insensitively — re-adding a
@@ -34,25 +36,26 @@ export function ContextDenyListSection() {
 	const isDefaultDenyList = [...denyList].sort().join(" ") === [...defaultDenyList].sort().join(" ");
 
 	return (
-		<FormControl
+		<SettingField
+			isDefault={isDefaultDenyList}
 			label={t("contextDenyList")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={isDefaultDenyList}
-					onReset={() => update({ contextDenyList: [...defaultDenyList] })}
-				/>
-			}
+			onReset={() => update({ contextDenyList: [...defaultDenyList] })}
 			tooltip={t("contextDenyListTooltip")}
 		>
-			<TagInput
+			<EditableListCombobox
+				cancelAriaLabel={tc("cancel")}
 				createLabel={(entry) => `${t("contextDenyListAdd")} "${entry}"`}
+				editAriaLabel={(entry) => `${t("contextDenyListEdit")} "${entry}"`}
+				emptyLabel={t("contextDenyListEmpty")}
 				inputAriaLabel={t("contextDenyList")}
 				normalize={(raw) => raw.trim().toLowerCase()}
 				onChange={(next) => update({ contextDenyList: next })}
 				placeholder={t("contextDenyListPlaceholder")}
 				removeAriaLabel={(entry) => `${t("contextDenyListRemove")} "${entry}"`}
+				saveAriaLabel={tc("save")}
+				summaryLabel={(count) => t("contextDenyListSummary", { count })}
 				value={denyList}
 			/>
-		</FormControl>
+		</SettingField>
 	);
 }

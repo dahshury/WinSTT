@@ -1,6 +1,17 @@
-import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
+import {
+  AnimatePresence,
+  domAnimation,
+  LazyMotion,
+  m as motion,
+} from "motion/react";
 import { type RefObject, useEffect, useState } from "react";
 import { springs } from "@/shared/lib/springs";
+import {
+  type HighlightRect,
+  findDataAttributeElement,
+  highlightRectsEqual,
+  measureHighlightRect,
+} from "./highlight-geometry";
 
 /**
  * A reusable animated highlight layer for Base-UI menu/combobox popups.
@@ -32,180 +43,157 @@ import { springs } from "@/shared/lib/springs";
  * crisp on top of the tint.
  */
 
-interface Rect {
-	height: number;
-	left: number;
-	top: number;
-	width: number;
-}
-
-function rectsEqual(a: Rect | null, b: Rect | null): boolean {
-	if (a === null || b === null) {
-		return a === b;
-	}
-	return a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height;
-}
-
-function measureRect(el: HTMLElement, container: HTMLElement): Rect {
-	const c = container.getBoundingClientRect();
-	// Live ancestor scale = visual size (rect) ÷ layout size (offset). 1 when
-	// untransformed; <1 mid open-animation. Guard the hidden (offset 0) case.
-	const scaleX = container.offsetWidth ? c.width / container.offsetWidth : 1;
-	const scaleY = container.offsetHeight ? c.height / container.offsetHeight : 1;
-	const r = el.getBoundingClientRect();
-	return {
-		top: (r.top - c.top) / scaleY + container.scrollTop,
-		left: (r.left - c.left) / scaleX + container.scrollLeft,
-		width: r.width / scaleX,
-		height: r.height / scaleY,
-	};
-}
-
-function findSelected(container: HTMLElement, value: string): HTMLElement | null {
-	if (value === "") {
-		return null;
-	}
-	// Scan rather than `querySelector([data-menu-option="…"])` so arbitrary
-	// option ids (dots, brackets, locale codes) never need CSS.escape.
-	const rows = container.querySelectorAll<HTMLElement>("[data-menu-option]");
-	for (const row of rows) {
-		if (row.dataset.menuOption === value) {
-			return row;
-		}
-	}
-	return null;
+function findSelected(
+  container: HTMLElement,
+  value: string,
+): HTMLElement | null {
+  return findDataAttributeElement(
+    container,
+    "[data-menu-option]",
+    (row) => row.dataset.menuOption,
+    value,
+  );
 }
 
 interface MeasureState {
-	highlightedIsSelected: boolean;
-	highlightedRect: Rect | null;
-	selectedRect: Rect | null;
+  highlightedIsSelected: boolean;
+  highlightedRect: HighlightRect | null;
+  selectedRect: HighlightRect | null;
 }
 
 const EMPTY_STATE: MeasureState = {
-	highlightedRect: null,
-	selectedRect: null,
-	highlightedIsSelected: false,
+  highlightedRect: null,
+  selectedRect: null,
+  highlightedIsSelected: false,
 };
 
 export interface MenuHighlightLayerProps {
-	/**
-	 * The `position: relative` element the option rows live under (the popup's
-	 * radio-group for menus, or the popup itself for comboboxes). This layer is
-	 * rendered as one of its children.
-	 */
-	containerRef: RefObject<HTMLElement | null>;
-	/** The currently-selected option id (`""` for none). */
-	value: string;
+  /**
+   * The `position: relative` element the option rows live under (the popup's
+   * radio-group for menus, or the popup itself for comboboxes). This layer is
+   * rendered as one of its children.
+   */
+  containerRef: RefObject<HTMLElement | null>;
+  /** The currently-selected option id (`""` for none). */
+  value: string;
 }
 
-export function MenuHighlightLayer({ containerRef, value }: MenuHighlightLayerProps) {
-	const [state, setState] = useState<MeasureState>(EMPTY_STATE);
+export function MenuHighlightLayer({
+  containerRef,
+  value,
+}: MenuHighlightLayerProps) {
+  const [state, setState] = useState<MeasureState>(EMPTY_STATE);
 
-	// This component only mounts while the popup is open (Base UI unmounts the
-	// portal on close), so the effect's lifetime IS the open session. Re-runs on
-	// `value` change to re-find the selected row (a programmatic value change
-	// while open won't trip the `data-highlighted` observer below). Observers
-	// cover the rest: MutationObserver tracks `data-highlighted` flips (pointer +
-	// keyboard) and filtered-list row add/removal; ResizeObserver tracks the
-	// open-animation scale settling and any reflow.
-	useEffect(() => {
-		const container = containerRef.current;
-		if (!container) {
-			return;
-		}
-		const measure = () => {
-			const selectedEl = findSelected(container, value);
-			const highlightedEl = container.querySelector<HTMLElement>("[data-highlighted]");
-			const nextSelected = selectedEl ? measureRect(selectedEl, container) : null;
-			const nextHighlighted = highlightedEl ? measureRect(highlightedEl, container) : null;
-			const nextHighlightedIsSelected = highlightedEl !== null && highlightedEl === selectedEl;
-			setState((prev) =>
-				rectsEqual(prev.selectedRect, nextSelected) &&
-				rectsEqual(prev.highlightedRect, nextHighlighted) &&
-				prev.highlightedIsSelected === nextHighlightedIsSelected
-					? prev
-					: {
-							selectedRect: nextSelected,
-							highlightedRect: nextHighlighted,
-							highlightedIsSelected: nextHighlightedIsSelected,
-						}
-			);
-		};
-		measure();
-		// One more after layout so the post-mount (settled-scale) geometry wins
-		// even if no observer happens to fire on the first frame.
-		const raf = requestAnimationFrame(measure);
-		const ro = new ResizeObserver(measure);
-		ro.observe(container);
-		const mo = new MutationObserver(measure);
-		mo.observe(container, {
-			attributes: true,
-			attributeFilter: ["data-highlighted"],
-			childList: true,
-			subtree: true,
-		});
-		return () => {
-			cancelAnimationFrame(raf);
-			ro.disconnect();
-			mo.disconnect();
-		};
-	}, [containerRef, value]);
+  // This component only mounts while the popup is open (Base UI unmounts the
+  // portal on close), so the effect's lifetime IS the open session. Re-runs on
+  // `value` change to re-find the selected row (a programmatic value change
+  // while open won't trip the `data-highlighted` observer below). Observers
+  // cover the rest: MutationObserver tracks `data-highlighted` flips (pointer +
+  // keyboard) and filtered-list row add/removal; ResizeObserver tracks the
+  // open-animation scale settling and any reflow.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const measure = () => {
+      const selectedEl = findSelected(container, value);
+      const highlightedEl =
+        container.querySelector<HTMLElement>("[data-highlighted]");
+      const nextSelected = selectedEl
+        ? measureHighlightRect(selectedEl, container)
+        : null;
+      const nextHighlighted = highlightedEl
+        ? measureHighlightRect(highlightedEl, container)
+        : null;
+      const nextHighlightedIsSelected =
+        highlightedEl !== null && highlightedEl === selectedEl;
+      setState((prev) =>
+        highlightRectsEqual(prev.selectedRect, nextSelected) &&
+        highlightRectsEqual(prev.highlightedRect, nextHighlighted) &&
+        prev.highlightedIsSelected === nextHighlightedIsSelected
+          ? prev
+          : {
+              selectedRect: nextSelected,
+              highlightedRect: nextHighlighted,
+              highlightedIsSelected: nextHighlightedIsSelected,
+            },
+      );
+    };
+    measure();
+    // One more after layout so the post-mount (settled-scale) geometry wins
+    // even if no observer happens to fire on the first frame.
+    const raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(measure);
+    ro.observe(container);
+    const mo = new MutationObserver(measure);
+    mo.observe(container, {
+      attributes: true,
+      attributeFilter: ["data-highlighted"],
+      childList: true,
+      subtree: true,
+    });
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [containerRef, value]);
 
-	const { selectedRect, highlightedRect, highlightedIsSelected } = state;
-	const isHoveringOther = highlightedRect !== null && !highlightedIsSelected;
-	// The hover pill is suppressed while the highlight rests on the selected row
-	// (the selected pill already marks it) — only shown when gliding elsewhere.
-	const showHover = highlightedRect !== null && !highlightedIsSelected;
-	const hoverOrigin = selectedRect ?? highlightedRect;
+  const { selectedRect, highlightedRect, highlightedIsSelected } = state;
+  const isHoveringOther = highlightedRect !== null && !highlightedIsSelected;
+  // The hover pill is suppressed while the highlight rests on the selected row
+  // (the selected pill already marks it) — only shown when gliding elsewhere.
+  const showHover = highlightedRect !== null && !highlightedIsSelected;
+  const hoverOrigin = selectedRect ?? highlightedRect;
 
-	return (
-		<LazyMotion features={domAnimation} strict={true}>
-			<AnimatePresence>
-				{selectedRect ? (
-					<motion.div
-						animate={{
-							top: selectedRect.top,
-							left: selectedRect.left,
-							width: selectedRect.width,
-							height: selectedRect.height,
-							opacity: isHoveringOther ? 0.8 : 1,
-						}}
-						aria-hidden="true"
-						className="pointer-events-none absolute rounded-xs bg-accent/15 ring-1 ring-accent/40 ring-inset"
-						exit={{ opacity: 0, transition: { duration: 0.12 } }}
-						initial={false}
-						key="menu-selected"
-						transition={{ ...springs.moderate, opacity: { duration: 0.08 } }}
-					/>
-				) : null}
-			</AnimatePresence>
+  return (
+    <LazyMotion features={domAnimation} strict={true}>
+      <AnimatePresence>
+        {selectedRect ? (
+          <motion.div
+            animate={{
+              top: selectedRect.top,
+              left: selectedRect.left,
+              width: selectedRect.width,
+              height: selectedRect.height,
+              opacity: isHoveringOther ? 0.8 : 1,
+            }}
+            aria-hidden="true"
+            className="pointer-events-none absolute rounded-xs bg-accent/15 ring-1 ring-accent/40 ring-inset"
+            exit={{ opacity: 0, transition: { duration: 0.12 } }}
+            initial={false}
+            key="menu-selected"
+            transition={{ ...springs.moderate, opacity: { duration: 0.08 } }}
+          />
+        ) : null}
+      </AnimatePresence>
 
-			<AnimatePresence>
-				{showHover && highlightedRect ? (
-					<motion.div
-						animate={{
-							top: highlightedRect.top,
-							left: highlightedRect.left,
-							width: highlightedRect.width,
-							height: highlightedRect.height,
-							opacity: 1,
-						}}
-						aria-hidden="true"
-						className="pointer-events-none absolute rounded-xs bg-foreground/[0.06] ring-1 ring-divider ring-inset"
-						exit={{ opacity: 0, transition: { duration: 0.06 } }}
-						initial={{
-							top: (hoverOrigin ?? highlightedRect).top,
-							left: (hoverOrigin ?? highlightedRect).left,
-							width: (hoverOrigin ?? highlightedRect).width,
-							height: (hoverOrigin ?? highlightedRect).height,
-							opacity: 0,
-						}}
-						key="menu-hover"
-						transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
-					/>
-				) : null}
-			</AnimatePresence>
-		</LazyMotion>
-	);
+      <AnimatePresence>
+        {showHover && highlightedRect ? (
+          <motion.div
+            animate={{
+              top: highlightedRect.top,
+              left: highlightedRect.left,
+              width: highlightedRect.width,
+              height: highlightedRect.height,
+              opacity: 1,
+            }}
+            aria-hidden="true"
+            className="pointer-events-none absolute rounded-xs bg-foreground/[0.06] ring-1 ring-divider ring-inset"
+            exit={{ opacity: 0, transition: { duration: 0.06 } }}
+            initial={{
+              top: (hoverOrigin ?? highlightedRect).top,
+              left: (hoverOrigin ?? highlightedRect).left,
+              width: (hoverOrigin ?? highlightedRect).width,
+              height: (hoverOrigin ?? highlightedRect).height,
+              opacity: 0,
+            }}
+            key="menu-hover"
+            transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+          />
+        ) : null}
+      </AnimatePresence>
+    </LazyMotion>
+  );
 }

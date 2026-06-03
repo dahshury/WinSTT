@@ -229,8 +229,18 @@ export function TrayMenu() {
 	return (
 		<SurfaceProvider value={menuLevel}>
 			<div
+				// `w-max` (max-content), NOT `w-fit`: `fit-content` is capped by the
+				// containing block's available width, and the window's `body` has no
+				// explicit width (so available width == the window's CURRENT width).
+				// A menu that starts in a 280px window therefore caps itself at 280px,
+				// clips wider content (the mode switcher / shortcut column) off the
+				// right, and reports the capped 280px back via the ResizeObserver — so
+				// the resize-to-fit loop can never grow it. In dev the timing happens
+				// to dodge the cap; a packaged build (React in production mode) gets
+				// stuck on it. `max-content` is the true content width, unbounded by
+				// the window, so the menu always measures — and resizes — to fit.
 				className={cn(
-					"w-fit rounded-xl p-1 ring-1 ring-divider-strong",
+					"w-max rounded-xl p-1 ring-1 ring-divider-strong",
 					surfaceClasses(menuLevel, Math.max(menuLevel, 7)),
 					"font-sans text-body-sm text-foreground"
 				)}
@@ -280,7 +290,10 @@ export function TrayMenu() {
 							icon={Mic01Icon}
 							size={13}
 						/>
-						<span className="truncate">{currentDeviceLabel}</span>
+						{/* Cap the device name so a long label (e.g. "System Default
+						    (Microphone (Realtek(R) Audio))") truncates here instead of
+						    driving the now-`max-content` menu absurdly wide. */}
+						<span className="max-w-[15rem] truncate">{currentDeviceLabel}</span>
 					</span>
 					<HugeiconsIcon
 						aria-hidden="true"
@@ -327,6 +340,7 @@ export function TrayMenu() {
 				{CONTEXT_PLAYGROUND_ENABLED && (
 					<>
 						<MenuSeparator />
+						{/* eslint-disable i18next/no-literal-string -- debug-only menu item, gated off in release */}
 						<MenuItem
 							activeBg={activeBg}
 							hoverBg={hoverBg}
@@ -335,6 +349,7 @@ export function TrayMenu() {
 						>
 							Context Playground (debug)
 						</MenuItem>
+						{/* eslint-enable i18next/no-literal-string */}
 					</>
 				)}
 

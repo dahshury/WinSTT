@@ -7,8 +7,6 @@ import { SliderHandle } from "./SliderHandle";
 import { SliderHashMarks } from "./SliderHashMarks";
 import { decimalsForStep, useSliderInteraction } from "./use-slider-interaction";
 
-type SliderVariant = "pips" | "scrubber";
-
 export interface SliderProps {
 	"aria-label"?: string;
 	className?: string;
@@ -20,7 +18,6 @@ export interface SliderProps {
 	onChange: (value: number) => void;
 	step: number;
 	value: number;
-	variant?: SliderVariant;
 }
 
 function clamp(v: number, lo: number, hi: number): number {

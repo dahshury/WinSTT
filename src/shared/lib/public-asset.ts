@@ -28,7 +28,7 @@ export function resolvePublicAsset(path: string, protocol: string, href: string)
 
 /**
  * Resolve a `public/` asset referenced by an absolute `/foo.png` path so it
- * loads under both the dev server (http) and a packaged Electron build
+ * loads under both the dev server (http) and a packaged the reference build
  * (`file://`).
  *
  * Why this is needed: `vite.config.ts` sets `base: "./"`, so Vite emits

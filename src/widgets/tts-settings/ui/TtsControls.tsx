@@ -1,7 +1,6 @@
 import type { useTranslations } from "use-intl";
-import { DEFAULT_SETTINGS, SettingResetButton } from "@/entities/setting";
+import { DEFAULT_SETTINGS, SettingField } from "@/entities/setting";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { FormControl } from "@/shared/ui/form-control";
 import { SearchableSelect, type SelectOptionGroup } from "@/shared/ui/searchable-select";
 import { Slider } from "@/shared/ui/slider";
 import { TtsPreviewButton } from "./TtsPreviewButton";
@@ -45,15 +44,11 @@ export function TtsControls({
 }: TtsControlsProps) {
 	return (
 		<>
-			<FormControl
+			<SettingField
+				isDefault={voice === DEFAULT_SETTINGS.tts.voice}
 				label={t("voice")}
-				labelTrailing={
-					<SettingResetButton
-						isDefault={voice === DEFAULT_SETTINGS.tts.voice}
-						onReset={() => onVoiceChange(DEFAULT_SETTINGS.tts.voice)}
-					/>
-				}
 				layout="row"
+				onReset={() => onVoiceChange(DEFAULT_SETTINGS.tts.voice)}
 				tooltip={voicePlaceholder}
 			>
 				<ElevatedSurface className="w-52" inline>
@@ -90,15 +85,11 @@ export function TtsControls({
 						value={voice}
 					/>
 				</ElevatedSurface>
-			</FormControl>
-			<FormControl
+			</SettingField>
+			<SettingField
+				isDefault={speed === DEFAULT_SETTINGS.tts.speed}
 				label={t("speed")}
-				labelTrailing={
-					<SettingResetButton
-						isDefault={speed === DEFAULT_SETTINGS.tts.speed}
-						onReset={onSpeedReset}
-					/>
-				}
+				onReset={onSpeedReset}
 				tooltip={t("speedCaption")}
 			>
 				<ElevatedSurface inline>
@@ -112,7 +103,7 @@ export function TtsControls({
 						value={speed}
 					/>
 				</ElevatedSurface>
-			</FormControl>
+			</SettingField>
 		</>
 	);
 }

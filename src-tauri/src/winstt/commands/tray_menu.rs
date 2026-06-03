@@ -3,7 +3,7 @@
 // Tray-menu window placement. WinSTT's tray menu is NOT a native OS menu — it is
 // a custom transparent HTML BrowserWindow (`views/tray-menu`) the user pops open
 // from the tray icon, anchored at the icon/cursor location and clamped to the
-// monitor work area. This file ports the Electron `tray-menu-window.ts` logic
+// monitor work area. This file ports the reference `tray-menu-window.ts` logic
 // (`showTrayMenuAt` + `clampToWorkArea` + `hideTrayMenu`) onto the Tauri 9-window
 // topology that `winstt/commands/windows.rs` already creates.
 //
@@ -28,13 +28,13 @@ use super::windows::ensure_window;
 /// Label of the tray-menu webview (== Vite entry key == renderer window name).
 const TRAY_MENU_LABEL: &str = "tray-menu";
 
-/// Visual gap left above the taskbar. Mirrors `TASKBAR_MARGIN` in the Electron
+/// Visual gap left above the taskbar. Mirrors `TASKBAR_MARGIN` in the reference
 /// `tray-menu-window.ts`: on Windows 11 the taskbar's rounded/translucent top
 /// edge extends a few px above the work-area boundary, so a flush menu visually
 /// overlaps it. Native context menus leave a small gap; we replicate that.
 const TASKBAR_MARGIN: f64 = 8.0;
 
-/// Off-screen parking coordinate (logical px). Mirrors the Electron tray menu's
+/// Off-screen parking coordinate (logical px). Mirrors the reference tray menu's
 /// `OFFSCREEN = -9999`: instead of OS `hide()`/`show()` (which triggers a
 /// show/repaint animation → the user's "hard flicker"), we keep the window
 /// *always shown* and merely PARK it off-screen when dismissed and MOVE it on
@@ -96,7 +96,7 @@ fn monitor_rect_for_point(app: &AppHandle, point: (f64, f64)) -> (f64, f64, f64,
 }
 
 /// Clamp the desired top-left so the whole `menu_size` stays inside `work_area`,
-/// leaving `TASKBAR_MARGIN` at the bottom. Byte-for-byte port of the Electron
+/// leaving `TASKBAR_MARGIN` at the bottom. Byte-for-byte port of the reference
 /// `clampToWorkArea` (frontend/electron/ipc/tray-menu-window.ts).
 fn clamp_to_work_area(
     desired: (f64, f64),
@@ -153,7 +153,7 @@ fn position_tray_menu(
 /// Is the tray menu currently ON SCREEN? Because the window is kept always-shown
 /// (parked off-screen when dismissed — see `OFFSCREEN`), visibility can no longer
 /// be derived from `is_visible()`; instead we look at its position. Mirrors the
-/// Electron `isMenuVisible` (which checks `posY !== OFFSCREEN`).
+/// the reference `isMenuVisible` (which checks `posY !== OFFSCREEN`).
 fn is_tray_menu_on_screen(window: &tauri::WebviewWindow) -> bool {
     // Defense-in-depth: a HIDDEN window keeps its last on-screen position, so the
     // position test alone could misclassify it as visible. Require BOTH actually-shown
@@ -193,7 +193,7 @@ fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
 
 /// `show_tray_menu` — open the custom HTML tray menu anchored at (x, y) in
 /// logical screen px, or at the cursor when omitted. Stores the anchor so a
-/// later resize can re-anchor. Mirrors Electron's `showTrayMenuAt`.
+/// later resize can re-anchor. Mirrors the reference's `showTrayMenuAt`.
 #[tauri::command]
 #[specta::specta]
 pub fn show_tray_menu(app: AppHandle, x: Option<f64>, y: Option<f64>) -> Result<(), String> {
@@ -224,7 +224,7 @@ pub fn reanchor_tray_menu(app: AppHandle) -> Result<(), String> {
 }
 
 /// `hide_tray_menu` — hide (not destroy) the tray menu and clear the stored
-/// anchor, matching Electron's `hideTrayMenu` (window keep-alive semantics).
+/// anchor, matching the reference's `hideTrayMenu` (window keep-alive semantics).
 #[tauri::command]
 #[specta::specta]
 pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
@@ -239,7 +239,7 @@ pub fn hide_tray_menu(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Dismiss the tray menu by MOVING it off-screen (Electron's `moveOffscreen`),
+/// Dismiss the tray menu by MOVING it off-screen (the reference's `moveOffscreen`),
 /// NOT `hide()`. Keeping the window shown-but-parked means re-opening is a pure
 /// reposition with no OS show animation / transparent-surface repaint — the fix
 /// for the open flicker. Before the lifecycle pre-show has run the window may
@@ -306,16 +306,16 @@ pub fn toggle_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y
 }
 
 /// Install the tray-menu window's lifecycle behaviors ONCE (called from lib.rs
-/// setup — REPORTED in libOther). Two parities with Electron's
+/// setup — REPORTED in libOther). Two parities with the reference's
 /// `tray-menu-window.ts`:
 ///   1. RESIZE → RE-ANCHOR: the renderer's ResizeObserver reports the menu's real
 ///      `w-fit` content size via TRAY_MENU_RESIZE → `resize_window`. When the OS
 ///      resize lands, re-place the menu against the stored anchor so the now
-///      correctly-sized menu stays glued to the click point (Electron's
+///      correctly-sized menu stays glued to the click point (the reference's
 ///      `reanchorMenuIfVisible`).
 ///   2. BLUR → HIDE: when the menu loses focus (user clicked elsewhere), dismiss it
-///      (Electron's `handleBlur`). The detached device-picker child is allowed to
-///      steal focus — Electron suppresses blur-hide for that, but here the picker is
+///      (the reference's `handleBlur`). The detached device-picker child is allowed to
+///      steal focus — the reference suppresses blur-hide for that, but here the picker is
 ///      a separate always-on-top window and the menu staying open under it is
 ///      acceptable for v1; the renderer also closes the menu on item clicks.
 pub fn install_tray_menu_lifecycle(app: &AppHandle) {
@@ -352,7 +352,7 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
                 if is_tray_menu_on_screen(&window) {
                     // SUPPRESS blur-hide when focus went to the device-picker SUBMENU —
                     // it's a legitimate always-on-top child of the tray menu, so opening
-                    // the mic selector must NOT collapse the menu (Electron's handleBlur
+                    // the mic selector must NOT collapse the menu (the reference's handleBlur
                     // ignores the device-picker child). Choosing a device / Esc closes the
                     // picker via close_window("device-picker") → hide_tray_menu, which
                     // collapses the whole menu — so it still dismisses correctly afterward.
@@ -369,7 +369,7 @@ pub fn install_tray_menu_lifecycle(app: &AppHandle) {
         _ => {}
     });
 
-    // PRE-SHOW OFF-SCREEN (Electron parity: applyTrayMenuStyles → win.showInactive()).
+    // PRE-SHOW OFF-SCREEN (the reference parity: applyTrayMenuStyles → win.showInactive()).
     // Park the window off-screen and show it ONCE at startup so its transparent
     // webview surface composes and the React tree mounts + reports its real
     // content size (TRAY_MENU_RESIZE → resize_window → OS resize) while invisible.
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn clamps_into_work_area_bottom_with_taskbar_margin() {
         // Desired bottom-right that would overflow → pulled in by menu size +
-        // the taskbar margin (matches Electron clampToWorkArea semantics).
+        // the taskbar margin (matches the reference clampToWorkArea semantics).
         let work_area = (0.0, 0.0, 1920.0, 1080.0);
         let menu = (280.0, 360.0);
         let (x, y) = clamp_to_work_area((1900.0, 1070.0), menu, work_area);

@@ -1,5 +1,6 @@
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import { useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
 import { useSyncSettings } from "@/features/update-settings";
@@ -24,10 +25,11 @@ import { OnboardingWizard } from "@/widgets/onboarding-wizard";
  *
  * `useSyncSettings()` is what makes the wizard's settings mutations (mic
  * device, API keys, LLM dictation enable + model) actually round-trip to
- * the main process's electron-store. Without it, those choices would live
+ * the main process's persisted store. Without it, those choices would live
  * only in this window's zustand store and disappear when the wizard closes.
  */
 export function OnboardingPage() {
+	const t = useTranslations("onboarding");
 	useSyncSettings();
 	// The Ollama model-picker dialog lives here at the view level rather than
 	// inside the wizard widget because it's a sibling widget — widgets can't
@@ -62,7 +64,7 @@ export function OnboardingPage() {
 							className="size-1.5 rounded-full bg-accent shadow-[0_0_6px_var(--color-accent-glow-strong)]"
 						/>
 						<span className="font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]">
-							WinSTT Setup
+							{t("windowTitle")}
 						</span>
 					</div>
 					<div className="flex-1" />

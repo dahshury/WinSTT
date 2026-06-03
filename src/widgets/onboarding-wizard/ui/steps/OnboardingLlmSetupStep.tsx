@@ -7,6 +7,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import { findRecommendedModel, useLlmCatalogStore } from "@/entities/llm-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
@@ -14,7 +15,7 @@ import { detectOllama, type OllamaDetectResult, startOllama } from "@/shared/api
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { Spinner } from "@/shared/ui/spinner";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Toggle } from "@/shared/ui/toggle";
 
 const OLLAMA_HOMEPAGE = "https://ollama.com/download";
@@ -32,6 +33,7 @@ const OLLAMA_HOMEPAGE = "https://ollama.com/download";
  * model id into `llm.dictation.model`.
  */
 export function OnboardingLlmSetupStep() {
+	const t = useTranslations("onboarding");
 	const [detect, setDetect] = useState<OllamaDetectResult | null>(null);
 	const [starting, setStarting] = useState(false);
 	const [startError, setStartError] = useState<string | null>(null);
@@ -65,8 +67,8 @@ export function OnboardingLlmSetupStep() {
 	if (!detect) {
 		return (
 			<div className="flex items-center gap-2 px-1 py-1.5 text-body-sm text-foreground-muted">
-				<Spinner className="size-3 border" />
-				<span>Looking for Ollama on this machine…</span>
+				<PulseDot className="size-2" />
+				<span>{t("lookingForOllama")}</span>
 			</div>
 		);
 	}
@@ -83,7 +85,7 @@ export function OnboardingLlmSetupStep() {
 							if (result.started) {
 								return detectOllama().then(setDetect);
 							}
-							setStartError(result.error ?? "Could not start Ollama.");
+							setStartError(result.error ?? t("couldNotStartOllama"));
 							return;
 						})
 						.finally(() => setStarting(false));
@@ -95,7 +97,7 @@ export function OnboardingLlmSetupStep() {
 
 	const enabled = llmDictation.enabled;
 	const selectedModel = llmDictation.model;
-	const displayName = formatModelLabel(selectedModel, installedModels);
+	const displayName = formatModelLabel(selectedModel, installedModels, t);
 	const isInstalled = !!selectedModel && installedModels.some((m) => m.name === selectedModel);
 
 	const handleToggle = (next: boolean) => {
@@ -119,12 +121,12 @@ export function OnboardingLlmSetupStep() {
 		<div className="flex flex-col gap-3">
 			<div className="flex items-center gap-2 rounded-md bg-success/10 px-3 py-2 text-body-sm text-success ring-1 ring-success/25">
 				<HugeiconsIcon icon={CheckmarkCircle02Icon} size={13} />
-				<span className="font-medium">Ollama is running locally.</span>
+				<span className="font-medium">{t("ollamaRunning")}</span>
 			</div>
 
 			<FormControl
-				caption="Browse installed models or install a recommended one. The same picker you'll see in Settings → LLM."
-				label="Model"
+				caption={t("modelCaption")}
+				label={t("modelLabel")}
 				layout="stacked"
 			>
 				<ElevatedSurface inline>
@@ -140,7 +142,9 @@ export function OnboardingLlmSetupStep() {
 						<span className="flex min-w-0 flex-1 items-center gap-2">
 							{selectedModel ? (
 								<>
-									<span className="sr-only">{isInstalled ? "Installed" : "Not installed"}</span>
+									<span className="sr-only">
+										{isInstalled ? t("modelInstalled") : t("modelNotInstalledShort")}
+									</span>
 									<span
 										aria-hidden="true"
 										className={cn(
@@ -160,7 +164,7 @@ export function OnboardingLlmSetupStep() {
 							</span>
 						</span>
 						<span className="inline-flex items-center gap-1 font-mono text-accent text-xs-tight uppercase tracking-[0.14em]">
-							Browse
+							{t("browse")}
 							<HugeiconsIcon icon={ArrowRight02Icon} size={10} />
 						</span>
 					</button>
@@ -168,12 +172,12 @@ export function OnboardingLlmSetupStep() {
 			</FormControl>
 
 			<FormControl
-				caption="Removes filler words, fixes punctuation, and follows custom prompts."
-				label="Clean up dictation"
+				caption={t("cleanUpDictationCaption")}
+				label={t("cleanUpDictation")}
 				layout="row"
 			>
 				<Toggle
-					aria-label="Clean up dictation with LLM"
+					aria-label={t("cleanUpDictationAria")}
 					checked={enabled}
 					onCheckedChange={handleToggle}
 				/>
@@ -182,17 +186,23 @@ export function OnboardingLlmSetupStep() {
 	);
 }
 
+type OnboardingT = ReturnType<typeof useTranslations<"onboarding">>;
+
 /** Human-readable label for the currently-selected model. */
-function formatModelLabel(modelId: string, installed: readonly { name: string }[]): string {
+function formatModelLabel(
+	modelId: string,
+	installed: readonly { name: string }[],
+	t: OnboardingT
+): string {
 	if (!modelId) {
-		return "No model selected — click to choose";
+		return t("noModelSelected");
 	}
 	const recommended = findRecommendedModel(modelId);
 	if (recommended) {
 		return `${recommended.displayName} · ${recommended.paramSize}`;
 	}
 	const isInstalled = installed.some((m) => m.name === modelId);
-	return isInstalled ? modelId : `${modelId} (not installed)`;
+	return isInstalled ? modelId : t("modelNotInstalled", { model: modelId });
 }
 
 interface NotInstalledPanelProps {
@@ -202,16 +212,16 @@ interface NotInstalledPanelProps {
 }
 
 function NotInstalledPanel({ error, starting, onStart }: NotInstalledPanelProps) {
+	const t = useTranslations("onboarding");
 	return (
 		<div className="flex flex-col gap-3">
 			<div className="rounded-md bg-surface-2 px-4 py-3 ring-1 ring-divider">
 				<div className="flex items-center gap-2 font-medium text-body text-foreground">
 					<HugeiconsIcon className="text-foreground-muted" icon={Download04Icon} size={14} />
-					Ollama isn't running
+					{t("ollamaNotRunning")}
 				</div>
 				<p className="mt-1.5 text-body-sm text-foreground-muted leading-snug">
-					Ollama runs LLMs locally and powers WinSTT's dictation cleanup. It's a free, open-source
-					one-time install. If you already have it installed, we can try to start it for you.
+					{t("ollamaNotRunningBody")}
 				</p>
 				<div className="mt-3 flex flex-wrap items-center gap-2.5">
 					<button
@@ -225,7 +235,7 @@ function NotInstalledPanel({ error, starting, onStart }: NotInstalledPanelProps)
 						onClick={onStart}
 						type="button"
 					>
-						{starting ? "Starting…" : "Try to start Ollama"}
+						{starting ? t("startingOllama") : t("tryStartOllama")}
 					</button>
 					<a
 						className="inline-flex items-center gap-1 font-mono text-foreground-muted text-xs-tight uppercase tracking-[0.16em] underline-offset-4 transition-colors hover:text-foreground-secondary hover:underline"
@@ -234,15 +244,13 @@ function NotInstalledPanel({ error, starting, onStart }: NotInstalledPanelProps)
 						target="_blank"
 					>
 						<HugeiconsIcon icon={Cursor01Icon} size={10} />
-						Or install Ollama
+						{t("installOllama")}
 						<HugeiconsIcon icon={ArrowUpRight01Icon} size={10} />
 					</a>
 				</div>
 				{error ? <p className="mt-2 text-body-sm text-error">{error}</p> : null}
 			</div>
-			<p className="text-body-sm text-foreground-dim">
-				You can finish setup without it and enable LLM cleanup later from Settings.
-			</p>
+			<p className="text-body-sm text-foreground-dim">{t("finishWithoutOllama")}</p>
 		</div>
 	);
 }

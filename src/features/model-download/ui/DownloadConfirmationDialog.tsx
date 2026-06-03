@@ -1,5 +1,9 @@
-import { resolveEffectiveQuant, resolveQuantCache } from "@picker";
+// Deep-import the lightweight cache helpers (not the `@picker` barrel) so this
+// main-window-reachable dialog doesn't drag the whole model-picker UI into the
+// main entry chunk via the barrel re-export.
+import { resolveEffectiveQuant, resolveQuantCache } from "@picker/stt/lib/cache-helpers";
 import type { ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { formatBytes } from "@/shared/lib/format-bytes";
@@ -11,6 +15,7 @@ import { useDownloadStore } from "../model/download-store";
 
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
 type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
+type DownloadT = ReturnType<typeof useTranslations<"download">>;
 
 /** "12 MB / 30 MB · 2 MB/s" — drives the right-side caption on the dictation
  *  progress bar. Hidden when no total has been received yet (early frames). */
@@ -32,8 +37,8 @@ function formatStatsLine(downloaded: number, total: number, speed: number): stri
 }
 
 /** Byte size with this widget's legacy `<= 0 → "unknown"` sentinel. */
-function sizeLabel(bytes: number | null | undefined): string {
-	return formatBytes(bytes) ?? "unknown";
+function sizeLabel(bytes: number | null | undefined, t: DownloadT): string {
+	return formatBytes(bytes) ?? t("unknown");
 }
 
 export interface DownloadConfirmationDialogProps {
@@ -71,65 +76,71 @@ export function DownloadConfirmationDialog({
 	);
 }
 
-function dialogTitle(phase: DownloadPhase): string {
+function dialogTitle(phase: DownloadPhase, t: DownloadT): string {
 	if (phase === "active") {
-		return "Downloading model";
+		return t("confirmTitleActive");
 	}
 	if (phase === "paused") {
-		return "Resume download?";
+		return t("confirmTitlePaused");
 	}
-	return "Download model?";
+	return t("confirmTitleIdle");
 }
 
 function dialogSubtitle(
 	phase: DownloadPhase,
 	displayName: string,
 	sizeSuffix: string,
-	quantLabel: string
+	quantLabel: string,
+	t: DownloadT
 ): ReactNode {
+	const name = (
+		<span className="font-medium text-foreground">
+			{displayName}
+			{sizeSuffix}
+		</span>
+	);
+	const quant = <span className="font-medium text-foreground">{quantLabel}</span>;
+	// Connecting phrasing is split at the two interpolated spans (model name +
+	// precision) so the bold emphasis survives translation. The trailing comma
+	// pads the wording on either side of the spans per locale.
 	if (phase === "active") {
 		return (
 			<>
-				<span className="font-medium text-foreground">{displayName}</span>
-				{sizeSuffix} is downloading at{" "}
-				<span className="font-medium text-foreground">{quantLabel}</span>.
+				{name}
+				{t("confirmSubtitleActivePre")}
+				{quant}
+				{t("confirmSubtitleActivePost")}
 			</>
 		);
 	}
 	if (phase === "paused") {
 		return (
 			<>
-				<span className="font-medium text-foreground">{displayName}</span>
-				{sizeSuffix} is partly downloaded at{" "}
-				<span className="font-medium text-foreground">{quantLabel}</span>. Resume to finish, or
-				discard to clear the partial files.
+				{name}
+				{t("confirmSubtitlePausedPre")}
+				{quant}
+				{t("confirmSubtitlePausedPost")}
 			</>
 		);
 	}
 	return (
 		<>
-			<span className="font-medium text-foreground">{displayName}</span>
-			{sizeSuffix} isn't downloaded yet at{" "}
-			<span className="font-medium text-foreground">{quantLabel}</span>.
+			{name}
+			{t("confirmSubtitleIdlePre")}
+			{quant}
+			{t("confirmSubtitleIdlePost")}
 		</>
 	);
 }
 
-const DIALOG_ACTION_LABELS = {
-	download: "Download",
-	stop: "Stop",
-	discard: "Discard",
-	resume: "Resume",
-} as const;
-
-function dismissLabel(phase: DownloadPhase): string {
+function dismissLabel(phase: DownloadPhase, t: DownloadT): string {
 	if (phase === "active") {
-		return "Hide";
+		return t("dismissHide");
 	}
 	if (phase === "paused") {
-		return "Close";
+		return t("dismissClose");
 	}
-	return "Cancel";
+	return t("dismissCancel");
 }
 
 function resolveDownloadPhase(isDownloading: boolean, partialOnDisk: boolean): DownloadPhase {
@@ -154,17 +165,17 @@ interface DownloadFitness {
 /** Hardware fitness — surface the same heuristic the picker uses, plus
  *  concrete numbers so the user can decide. We don't refuse — the user
  *  can always proceed at their own risk. */
-function computeFitness(state: ModelState, systemInfo: SystemInfo): DownloadFitness {
+function computeFitness(state: ModelState, systemInfo: SystemInfo, t: DownloadT): DownloadFitness {
 	const hasGpu = !!systemInfo && systemInfo.gpus.length > 0;
 	const isUncomfortable =
 		!!state &&
 		state.estimated_bytes > 0 &&
 		(hasGpu ? !state.comfortable_on_gpu : !state.comfortable_on_cpu);
 	const estimatedLabel =
-		state && state.estimated_bytes > 0 ? sizeLabel(state.estimated_bytes) : "unknown";
+		state && state.estimated_bytes > 0 ? sizeLabel(state.estimated_bytes, t) : t("unknown");
 	const availableLabel = hasGpu
-		? `GPU VRAM: ${sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0)}`
-		: `RAM: ${sizeLabel(systemInfo?.total_ram_bytes ?? 0)}`;
+		? t("fitnessGpuVram", { size: sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0, t) })
+		: t("fitnessRam", { size: sizeLabel(systemInfo?.total_ram_bytes ?? 0, t) });
 	return { isUncomfortable, estimatedLabel, availableLabel };
 }
 
@@ -175,10 +186,10 @@ interface LiveDownload {
 	totalBytes: number;
 }
 
-function ActiveProgress({ live }: { live: LiveDownload }): ReactNode {
+function ActiveProgress({ live, t }: { live: LiveDownload; t: DownloadT }): ReactNode {
 	return (
 		<DownloadProgressBar
-			label={live.progress == null ? "Starting..." : `${live.progress}%`}
+			label={live.progress == null ? t("progressStarting") : `${live.progress}%`}
 			percent={live.progress}
 			statsLabel={formatStatsLine(live.downloadedBytes, live.totalBytes, live.speedBps)}
 			variant="active"
@@ -186,14 +197,18 @@ function ActiveProgress({ live }: { live: LiveDownload }): ReactNode {
 	);
 }
 
-function PausedProgress({ targetCache }: { targetCache: TargetCache }): ReactNode {
+function PausedProgress({ targetCache, t }: { targetCache: TargetCache; t: DownloadT }): ReactNode {
 	const pausedPercent =
 		targetCache && targetCache.total_bytes > 0
 			? Math.round((targetCache.progress ?? 0) * 100)
 			: null;
 	return (
 		<DownloadProgressBar
-			label={pausedPercent == null ? "Paused" : `Paused at ${pausedPercent}%`}
+			label={
+				pausedPercent == null
+					? t("progressPaused")
+					: t("progressPausedAt", { percent: pausedPercent })
+			}
 			percent={pausedPercent}
 			statsLabel={formatStatsLine(
 				targetCache?.downloaded_bytes ?? 0,
@@ -210,11 +225,13 @@ function IdleInfoCard({
 	targetCache,
 	catalogBytes,
 	fitness,
+	t,
 }: {
 	catalogBytes: number;
 	fitness: DownloadFitness;
 	infoLevel: number;
 	targetCache: TargetCache;
+	t: DownloadT;
 }): ReactNode {
 	const pausedDownloaded = targetCache?.downloaded_bytes ?? 0;
 	const pausedTotal = targetCache?.total_bytes ?? 0;
@@ -224,11 +241,11 @@ function IdleInfoCard({
 	// the partial-cache delta (resume scenario), then to the size_label hint.
 	let sizeLine: string;
 	if (pausedTotal > pausedDownloaded) {
-		sizeLine = `Need to download: ${sizeLabel(pausedTotal - pausedDownloaded)}`;
+		sizeLine = t("sizeNeedToDownload", { size: sizeLabel(pausedTotal - pausedDownloaded, t) });
 	} else if (catalogBytes > 0) {
-		sizeLine = `Download size: ${sizeLabel(catalogBytes)}`;
+		sizeLine = t("sizeDownloadSize", { size: sizeLabel(catalogBytes, t) });
 	} else {
-		sizeLine = "Size: unknown for this variant";
+		sizeLine = t("sizeUnknownVariant");
 	}
 	return (
 		<div
@@ -238,7 +255,7 @@ function IdleInfoCard({
 				<span className="text-foreground">{sizeLine}</span>
 			</div>
 			<div>
-				<span className="text-foreground">Estimated memory:</span> {fitness.estimatedLabel} ·{" "}
+				<span className="text-foreground">{t("estimatedMemory")}</span> {fitness.estimatedLabel} ·{" "}
 				{fitness.availableLabel}
 			</div>
 		</div>
@@ -252,6 +269,7 @@ function DownloadConfirmationContent({
 	statesById,
 	systemInfo,
 }: DownloadConfirmationDialogProps): ReactNode {
+	const t = useTranslations("download");
 	// DialogShell raises the substrate by +4 for the popup; mirror that math
 	// here (this component renders the shell, so its own useSurface() reads the
 	// OUTER level) to lift the body info cards +1 above the popup. The footer
@@ -270,7 +288,7 @@ function DownloadConfirmationContent({
 	// than the (often already-cached) default export.
 	const targetQuant = resolveEffectiveQuant(state, pending?.quantization ?? "");
 	const targetCache = resolveQuantCache(state, targetQuant);
-	const quantLabel = targetQuant === "" ? "default precision" : targetQuant;
+	const quantLabel = targetQuant === "" ? t("defaultPrecision") : targetQuant;
 
 	// This dialog drives the SAME per-quant streaming predownload the badges
 	// use — NOT a model swap. Keeping ``activeMain`` unset is the whole point:
@@ -299,7 +317,13 @@ function DownloadConfirmationContent({
 		speedBps: quant?.speedBps ?? 0,
 	};
 
-	const fitness = computeFitness(state, systemInfo);
+	const fitness = computeFitness(state, systemInfo, t);
+	const dialogActionLabels = {
+		download: t("actionDownload"),
+		stop: t("actionStop"),
+		discard: t("actionDiscard"),
+		resume: t("actionResume"),
+	};
 	const displayName = info?.displayName ?? pending?.modelId ?? "";
 	// Exact HF download bytes for the selected quantization — baked into the
 	// catalog by `scripts/refresh_catalog.py`. Zero when the catalog hasn't
@@ -359,39 +383,39 @@ function DownloadConfirmationContent({
 		<DialogShell
 			body={
 				<div className="flex flex-col gap-3">
-					{phase === "active" && <ActiveProgress live={liveForBar} />}
-					{phase === "paused" && <PausedProgress targetCache={targetCache} />}
+					{phase === "active" && <ActiveProgress live={liveForBar} t={t} />}
+					{phase === "paused" && <PausedProgress t={t} targetCache={targetCache} />}
 					{phase === "idle" && (
 						<IdleInfoCard
 							catalogBytes={catalogBytes}
 							fitness={fitness}
 							infoLevel={infoLevel}
+							t={t}
 							targetCache={targetCache}
 						/>
 					)}
 					{fitness.isUncomfortable && phase !== "active" && (
 						<div className="rounded-md border border-error/40 bg-error/10 p-3 text-error text-xs">
-							⚠ This model may not run comfortably on your hardware. Loading may fail or
-							transcription may be slow. You can continue at your own risk.
+							{t("hardwareWarning")}
 						</div>
 					)}
 				</div>
 			}
-			description={dialogSubtitle(phase, displayName, sizeSuffix, quantLabel)}
+			description={dialogSubtitle(phase, displayName, sizeSuffix, quantLabel, t)}
 			onOpenChange={(next) => {
 				if (!next) {
 					onCancel();
 				}
 			}}
 			open={pending !== null}
-			title={dialogTitle(phase)}
+			title={dialogTitle(phase, t)}
 			width={440}
 		>
 			<DialogActionButton onClick={onCancel} variant="neutral">
-				{dismissLabel(phase)}
+				{dismissLabel(phase, t)}
 			</DialogActionButton>
 			<DownloadActions
-				labels={DIALOG_ACTION_LABELS}
+				labels={dialogActionLabels}
 				onDiscard={handleDiscard}
 				onDownload={startDownload}
 				onResume={handleResume}

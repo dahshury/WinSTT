@@ -1,40 +1,113 @@
-# WinSTT (Rust + Tauri)
+# WinSTT
 
-A fast, private, on-device speech-to-text app for Windows — push-to-talk, toggle,
-wake-word and listen dictation that types into any app, with on-device transcription
-(ONNX via `ort`), LLM post-processing, transforms, dictionary/snippets, history, and
-TTS read-aloud.
+WinSTT is a local-first speech-to-text app for Windows. Press a hotkey, speak,
+and the transcription lands at your cursor in any app. It also includes
+real-time preview, file transcription, dictionary corrections, snippets,
+transcription history, optional LLM cleanup, and text-to-speech.
 
-This is the **Rust + Tauri** implementation. The original **Electron + Python** app —
-the parity reference — lives in [`examples/winstt-electron/`](examples/winstt-electron/).
+This repository is the Rust + Tauri implementation. The original Electron +
+Python app remains under [`examples/winstt-electron/`](examples/winstt-electron/)
+as the feature-parity reference.
+
+<p align="center">
+  <img src="docs/public/screenshots/main.png" alt="WinSTT main window with a live audio visualizer, hotkey, microphone, and model footer." width="840">
+</p>
+
+## What It Looks Like
+
+The recording overlay can sit at the bottom of the screen or dock at the top as
+a dynamic island. Both previews below use the same 16:9 canvas so the README
+does not jump between short and tall media.
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/public/screenshots/readme-overlay-floating.png" alt="Floating-bottom WinSTT recording overlay." width="100%">
+      <br>
+      <strong>Floating bottom</strong>
+    </td>
+    <td width="50%">
+      <img src="docs/public/screenshots/readme-overlay-island.png" alt="Dynamic-island WinSTT recording overlay." width="100%">
+      <br>
+      <strong>Dynamic island</strong>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="33%">
+      <img src="docs/public/screenshots/feat-model.png" alt="Model picker with model families, accuracy and speed bars, sizes, and quantization badges." width="100%">
+      <br>
+      <strong>Model picker</strong>
+    </td>
+    <td width="33%">
+      <img src="docs/public/screenshots/feat-stt.png" alt="Speech-to-text settings with local and cloud model controls." width="100%">
+      <br>
+      <strong>Speech-to-text</strong>
+    </td>
+    <td width="33%">
+      <img src="docs/public/screenshots/feat-llm.png" alt="LLM cleanup settings with provider, model, tone, and modifiers." width="100%">
+      <br>
+      <strong>LLM cleanup</strong>
+    </td>
+  </tr>
+</table>
+
+## Features
+
+- Four recording modes: push-to-talk, toggle, listen, and wake word.
+- On-device STT through ONNX Runtime via `ort`, with CPU, DirectML, and
+  OpenVINO builds.
+- 40+ model catalog covering Whisper, NeMo, Moonshine, GigaAM, Vosk, and more.
+- Real-time preview with a fast model while the main model produces the final
+  text.
+- Optional LLM cleanup through local Ollama or opt-in cloud providers.
+- Text-to-speech, dictionary corrections, snippets, and searchable history.
 
 ## Develop
 
-Windows, with the VS build tools, [bun](https://bun.sh), and the Rust toolchain.
+Windows development needs the Visual Studio build tools, [Bun](https://bun.sh),
+and the Rust toolchain. Use the helper scripts in `rust-migration/`; they set up
+the VS environment and run from the repository root.
 
-```bat
-rem dev (hot-reload renderer + Rust backend)
-rust-migration\tauri-dev.bat
+```powershell
+# Dev server with hot-reload renderer + Rust backend
+rust-migration\tauri-dev.ps1
 
-rem release build (standalone exe; --no-bundle skips the installer)
+# Release build without bundling an installer
 rust-migration\tauri-build.bat
+
+# Rust-only checks from src-tauri/
+rust-migration\cargo-env.bat check
 ```
 
-These helpers set up the VS environment and run `bun run tauri dev|build` from the repo
-root. For Rust-only checks: `rust-migration\cargo-env.bat check`.
+`cargo build --release` is not enough for a standalone app because Tauri still
+loads the dev URL. Use `bun run tauri build --no-bundle` through the helper for a
+standalone executable.
+
+## Documentation
+
+The TanStack Start + Fumadocs documentation app lives in [`docs/`](docs/).
+
+```powershell
+bun run docs:dev
+bun run docs:build
+```
 
 ## Structure
 
-| Path | What |
-|------|------|
-| `src/` | Renderer (Feature-Sliced Design), ported from the Electron frontend |
-| `src-tauri/` | Rust backend — `winstt::*` modules, STT engines, audio, IPC |
-| `windows/`, `public/`, `messages/` | Secondary-window HTML, assets, i18n |
-| `packages/` | Shared renderer packages (e.g. model-picker) |
-| `rust-migration/` | Windows build/dev helper scripts |
-| `examples/winstt-electron/` | The original Electron + Python app (parity reference) |
-| `examples/Handy/` | Upstream Rust+Tauri STT app this port forks from |
+| Path | Purpose |
+| --- | --- |
+| `src/` | Tauri renderer, ported from the reference frontend using Feature-Sliced Design |
+| `src-tauri/` | Rust backend: `winstt::*` modules, STT engines, audio, settings, IPC |
+| `docs/` | TanStack Start docs site and documentation assets |
+| `public/`, `windows/`, `messages/` | Static assets, secondary windows, and i18n messages |
+| `packages/` | Shared renderer packages, including the model picker |
+| `rust-migration/` | Windows build and dev environment helpers |
+| `examples/winstt-electron/` | Original Electron + Python app used as the parity reference |
 
 ## License
 
-See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+MIT. See [`LICENSE`](LICENSE) and
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

@@ -1,7 +1,16 @@
 import { describe, expect, mock, test } from "bun:test";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render as renderUi, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { IntlProvider } from "@/app/providers/IntlProvider";
 import type { SelectOption } from "@/shared/ui/select";
 import { SearchableSelect, type SelectOptionGroup } from "./SearchableSelect";
+
+// SearchableSelect calls `useTranslations("common")` (for its empty-state text),
+// so every render needs an IntlProvider in scope. The test double installed in
+// test/preload.ts serves the English bundle synchronously.
+function render(ui: ReactElement) {
+	return renderUi(<IntlProvider>{ui}</IntlProvider>);
+}
 
 const options: SelectOption[] = [
 	{ id: "tiny", label: "Tiny" },

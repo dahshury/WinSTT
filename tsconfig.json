@@ -24,7 +24,8 @@
       "@/*": ["./src/*"],
       "@spec/*": ["./spec/generated/ts/*"],
       "@picker": ["./packages/model-picker/src/index.ts"],
-      "@picker/*": ["./packages/model-picker/src/*"]
+      "@picker/*": ["./packages/model-picker/src/*"],
+      "@test/*": ["./test/*"]
     },
 
     /* Linting (matched to WinSTT's renderer tsconfig) */

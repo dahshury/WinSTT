@@ -8,7 +8,7 @@ import { jaroWinkler } from "@/shared/lib/fuzzy-match";
  * but a hair more lenient than the dictionary's 0.88 since surfacing one extra
  * tab on a near-miss query is cheap, whereas a wrong word substitution is not.
  */
-export const SETTINGS_SEARCH_JW_THRESHOLD = 0.85;
+const SETTINGS_SEARCH_JW_THRESHOLD = 0.85;
 
 // Fuzzy scoring only kicks in for query tokens this long. Short tokens (≤ 3
 // chars, e.g. acronyms like "vad" / "tts") are matched by exact/prefix only —

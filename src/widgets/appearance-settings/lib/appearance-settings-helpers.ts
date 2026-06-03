@@ -21,7 +21,7 @@ type UpdateFn = (patch: Partial<GeneralSettings>) => void;
 
 type VisualizerSizePreset = "xs" | "sm" | "md" | "lg" | "xl";
 
-export const VISUALIZER_SIZE_PRESETS = [
+const VISUALIZER_SIZE_PRESETS = [
 	"xs",
 	"sm",
 	"md",
@@ -29,7 +29,7 @@ export const VISUALIZER_SIZE_PRESETS = [
 	"xl",
 ] as const satisfies readonly VisualizerSizePreset[];
 
-export const VISUALIZER_SIZE_LABELS: Record<VisualizerSizePreset, string> = {
+const VISUALIZER_SIZE_LABELS: Record<VisualizerSizePreset, string> = {
 	xs: "XS",
 	sm: "S",
 	md: "M",
@@ -37,12 +37,12 @@ export const VISUALIZER_SIZE_LABELS: Record<VisualizerSizePreset, string> = {
 	xl: "XL",
 };
 
-export function visualizerSizeToIndex(preset: VisualizerSizePreset): number {
+function visualizerSizeToIndex(preset: VisualizerSizePreset): number {
 	const idx = VISUALIZER_SIZE_PRESETS.indexOf(preset);
 	return idx === -1 ? 0 : idx;
 }
 
-export function visualizerSizeFromIndex(index: number): VisualizerSizePreset {
+function visualizerSizeFromIndex(index: number): VisualizerSizePreset {
 	return VISUALIZER_SIZE_PRESETS[index] ?? "xs";
 }
 
@@ -110,7 +110,7 @@ function currentLiveDisplay(general: GeneralSettings | undefined): LiveTranscrip
 	return general?.liveTranscriptionDisplay ?? "both";
 }
 
-export function overlayTogglePatch(
+function overlayTogglePatch(
 	enabled: boolean,
 	general: GeneralSettings | undefined
 ): Partial<GeneralSettings> {

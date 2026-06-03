@@ -16,8 +16,8 @@ use ferrous_opencc::{config::BuiltinConfig, OpenCC};
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
@@ -25,6 +25,33 @@ use tauri::{AppHandle, Emitter};
 struct RecordingErrorEvent {
     error_type: String,
     detail: Option<String>,
+}
+
+/// Single-slot memory of the most recent dictation transcription, read back by the
+/// re-paste hotkey (`RepasteAction`). Ported from the reference's
+/// `electron/lib/last-transcription.ts`: deliberately ONE slot (the shortcut's
+/// contract is "paste the thing you just dictated"), not the full history store.
+/// Set at the same point dictation auto-pastes the final text (`TranscribeAction::stop`).
+static LAST_TRANSCRIPTION: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
+
+/// Remember `text` as the most recent transcription. Whitespace-only / empty input
+/// is ignored so a "no audio detected" pass can't blank the slot — the user still
+/// wants the previous real transcript re-pastable (mirrors `setLastTranscription`).
+fn set_last_transcription(text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut slot) = LAST_TRANSCRIPTION.lock() {
+        *slot = text.to_string();
+    }
+}
+
+/// The last recorded transcription, or `""` when nothing has been dictated yet.
+fn last_transcription() -> String {
+    LAST_TRANSCRIPTION
+        .lock()
+        .map(|slot| slot.clone())
+        .unwrap_or_default()
 }
 
 /// Drop guard that notifies the [`TranscriptionCoordinator`] when the
@@ -525,20 +552,24 @@ impl ShortcutAction for TranscribeAction {
             // overlay pill, and useTranscriptionFeed wipes ephemeral state + sets
             // isRecordingActive(true). Emitted only once the recorder actually opened
             // (recording_error is None) so a failed-mic start doesn't flash the pill.
-            // vad-start primes the renderer's `speaking` state; the in-proc recorder
-            // doesn't surface per-segment VAD boundaries to this layer, so the
-            // recording-active window stands in for "speaking" (renderer uses it only
-            // to drive a visual `setSpeaking` flag). See
-            // winstt/commands/dictation.rs::SttEvents for the byte-identical shapes.
+            // NOTE: we deliberately do NOT fake `vad-start` here. The recorder's real
+            // smoothed-Silero VAD now surfaces `stt:vad-start` / `stt:vad-stop` on actual
+            // speech onset/offset (managers::audio::create_audio_recorder
+            // with_speech_callback), so `isSpeaking` reflects real speech instead of the
+            // whole recording window — the overlay pill reveals on the first words, not
+            // on the silent lead-in. See winstt/commands/dictation.rs::SttEvents.
             crate::winstt::commands::dictation::SttEvents::recording_start(app);
-            crate::winstt::commands::dictation::SttEvents::vad_start(app);
-            // Play the recording chime (Electron `playRecordingSound()` on hotkey-start).
-            // Nothing else emitted `sound:play`, so the renderer's useRecordingSound never
-            // fired → no chime. The renderer no-ops if the sound is disabled/unloaded
-            // (sound:get-data returned null), so emitting unconditionally is safe. Listen
-            // mode goes through loopback_manager (not this path), matching Electron's
-            // "suppressed in listen mode".
-            let _ = app.emit("sound:play", ());
+            // Play the recording chime (the reference `playRecordingSound()` on hotkey-start).
+            // NATIVE rodio (like Handy) instead of the old `app.emit("sound:play")` →
+            // renderer Web Audio path: the webview chime hung off the main window's
+            // AudioContext, which starts suspended (a global hotkey gives the page no
+            // user gesture) and is throttled by WebView2 while the window sits hidden in
+            // the tray — so the first chime after idle could lag/drop. Playing from Rust
+            // removes the IPC→webview hop and both hazards. Self-gates on
+            // `general.recording_sound` and fires on a worker thread (non-blocking).
+            // Listen mode goes through loopback_manager (not this path), matching the
+            // reference's "suppressed in listen mode".
+            crate::winstt::commands::sound::play_recording_chime(app);
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -587,11 +618,13 @@ impl ShortcutAction for TranscribeAction {
 
         // WinSTT lifecycle: the recorder stopped (PTT release / toggle-off). The
         // renderer's useVisualizerSync (onRecordingStop) snaps the visualizer to
-        // zero; the overlay pill stays armed until a terminal event lands.
-        // isRecordingActive is held true across recording-stop so the pill survives
-        // the "transcribing/thinking" transition (see useTranscriptionFeed).
+        // zero AND clears `isSpeaking`; the overlay pill stays armed until a terminal
+        // event lands. isRecordingActive is held true across recording-stop so the
+        // pill survives the "transcribing/thinking" transition (see useTranscriptionFeed).
+        // No fake `vad-stop` here — the recorder emits a real one (Cmd::Stop →
+        // speech_cb(false)) if speech was still open at release, and recordingStopped()
+        // zeroes `isSpeaking` regardless.
         crate::winstt::commands::dictation::SttEvents::recording_stop(app);
-        crate::winstt::commands::dictation::SttEvents::vad_stop(app);
 
         // Unmute before playing audio feedback so the stop sound is audible
         rm.remove_mute();
@@ -601,6 +634,12 @@ impl ShortcutAction for TranscribeAction {
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
+        // Snapshot the recording generation BEFORE `stop_recording` so the realtime-reuse check
+        // matches the generation the realtime worker tagged its live decodes with. (Generation is
+        // bumped only on the NEXT recording's start, so reading it here — recording still active —
+        // yields the take being finalized; a racing re-press makes the cache generation mismatch,
+        // which `try_reuse_realtime` safely rejects.)
+        let generation = rm.recording_generation();
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
@@ -643,9 +682,33 @@ impl ShortcutAction for TranscribeAction {
                     // skip the base64 encode in the hot path.
                     crate::winstt::commands::dictation::SttEvents::transcription_start(&ah, None);
 
-                    // Transcribe concurrently with WAV save
+                    // Transcribe concurrently with WAV save. The decode is a multi-second
+                    // SYNC call (ONNX/GGML) — run it on the blocking pool so it never stalls
+                    // a tokio worker thread (mirrors commands/history.rs). Flatten a task
+                    // panic into the same `Result` shape the match below expects.
                     let transcription_time = Instant::now();
-                    let transcription_result = tm.transcribe(samples);
+                    // FAST PATH: reuse the realtime worker's last full-buffer decode when the user
+                    // has stopped talking — the live decode used the same engine on the same audio,
+                    // so final == that decode + post-processing, and we skip a redundant re-decode.
+                    // Falls back to a fresh decode when live transcription was off, the cache belongs
+                    // to a different recording, the recording is silent, or speech continued past the
+                    // last live decode (see TranscriptionManager::try_reuse_realtime).
+                    let transcription_result = if let Some(reused) =
+                        tm.try_reuse_realtime(generation, &samples)
+                    {
+                        debug!(
+                            "Reused realtime decode for final transcription ({} chars)",
+                            reused.len()
+                        );
+                        Ok(reused)
+                    } else {
+                        match tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
+                            .await
+                        {
+                            Ok(res) => res,
+                            Err(e) => Err(anyhow::anyhow!("Transcription task panicked: {e}")),
+                        }
+                    };
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -673,10 +736,12 @@ impl ShortcutAction for TranscribeAction {
 
                     match transcription_result {
                         Ok(transcription) => {
+                            // Do NOT log the dictated text — it lands in the persistent
+                            // file log. Log only timing + length (privacy).
                             debug!(
-                                "Transcription completed in {:?}: '{}'",
+                                "Transcription completed in {:?}: {} chars",
                                 transcription_time.elapsed(),
-                                transcription
+                                transcription.len()
                             );
 
                             if post_process {
@@ -685,6 +750,11 @@ impl ShortcutAction for TranscribeAction {
                             let processed =
                                 process_transcription_output(&ah, &transcription, post_process)
                                     .await;
+
+                            // Keep the raw transcript for the preview pill's
+                            // "original" (re-process source) — `save_entry`
+                            // consumes `transcription` when a WAV was saved.
+                            let original_transcript = transcription.clone();
 
                             // Save to history if WAV was saved
                             if wav_saved {
@@ -717,32 +787,73 @@ impl ShortcutAction for TranscribeAction {
                                 // resets isRecordingActive; useVisualizerSync pulses
                                 // the sentence ring. Emitted BEFORE the paste so the
                                 // pill updates the instant the text is ready.
-                                crate::winstt::commands::dictation::SttEvents::full_sentence(
-                                    &ah,
-                                    &processed.final_text,
-                                );
-                                let ah_clone = ah.clone();
-                                let paste_time = Instant::now();
-                                let final_text = processed.final_text;
-                                ah.run_on_main_thread(move || {
-                                    match utils::paste(final_text, ah_clone.clone()) {
-                                        Ok(()) => debug!(
-                                            "Text pasted successfully in {:?}",
-                                            paste_time.elapsed()
-                                        ),
-                                        Err(e) => {
-                                            error!("Failed to paste transcription: {}", e);
-                                            let _ = ah_clone.emit("paste-error", ());
-                                        }
-                                    }
-                                    utils::hide_recording_overlay(&ah_clone);
-                                    change_tray_icon(&ah_clone, TrayIconState::Idle);
-                                })
-                                .unwrap_or_else(|e| {
-                                    error!("Failed to run paste on main thread: {:?}", e);
-                                    utils::hide_recording_overlay(&ah);
+                                // Remember this as the re-pastable "last transcription"
+                                // (the RepasteAction hotkey reads it). Recorded at the
+                                // same point we auto-paste — mirrors relay.ts calling
+                                // setLastTranscription alongside its paste.
+                                set_last_transcription(&processed.final_text);
+
+                                // Preview-before-pasting: when enabled AND the pill is
+                                // shown, hold the auto-paste back and show the editable
+                                // preview pill. Capture the foreground (paste target)
+                                // NOW — while the user's app still owns the foreground
+                                // (the overlay hasn't taken focus yet) — then grow the
+                                // overlay + make it interactive and emit the raw +
+                                // processed text. The paste fires later on
+                                // `confirm_paste`; dismiss → `cancel_preview`.
+                                let preview_enabled =
+                                    crate::winstt::commands::settings::read_settings(&ah)
+                                        .general
+                                        .preview_before_pasting
+                                        && crate::winstt::commands::overlay::overlay_is_active(&ah);
+                                if preview_enabled {
+                                    crate::winstt::commands::preview::capture_foreground(&ah);
+                                    crate::winstt::commands::overlay::enter_preview_overlay(&ah);
+                                    // preview_ready BEFORE full_sentence so the renderer sets
+                                    // `isPreviewActive` before full_sentence flips
+                                    // `isRecordingActive` off — otherwise the pill briefly
+                                    // collapses between the two events.
+                                    crate::winstt::commands::dictation::SttEvents::preview_ready(
+                                        &ah,
+                                        &original_transcript,
+                                        &processed.final_text,
+                                    );
+                                    crate::winstt::commands::dictation::SttEvents::full_sentence(
+                                        &ah,
+                                        &processed.final_text,
+                                    );
+                                    // Transcription is done; the pill stays up via the
+                                    // renderer's `isPreviewActive` until confirm/cancel.
                                     change_tray_icon(&ah, TrayIconState::Idle);
-                                });
+                                } else {
+                                    // pill updates the instant the text is ready.
+                                    crate::winstt::commands::dictation::SttEvents::full_sentence(
+                                        &ah,
+                                        &processed.final_text,
+                                    );
+                                    let ah_clone = ah.clone();
+                                    let paste_time = Instant::now();
+                                    let final_text = processed.final_text;
+                                    ah.run_on_main_thread(move || {
+                                        match utils::paste(final_text, ah_clone.clone()) {
+                                            Ok(()) => debug!(
+                                                "Text pasted successfully in {:?}",
+                                                paste_time.elapsed()
+                                            ),
+                                            Err(e) => {
+                                                error!("Failed to paste transcription: {}", e);
+                                                let _ = ah_clone.emit("paste-error", ());
+                                            }
+                                        }
+                                        utils::hide_recording_overlay(&ah_clone);
+                                        change_tray_icon(&ah_clone, TrayIconState::Idle);
+                                    })
+                                    .unwrap_or_else(|e| {
+                                        error!("Failed to run paste on main thread: {:?}", e);
+                                        utils::hide_recording_overlay(&ah);
+                                        change_tray_icon(&ah, TrayIconState::Idle);
+                                    });
+                                }
                             }
                         }
                         Err(err) => {
@@ -753,7 +864,9 @@ impl ShortcutAction for TranscribeAction {
                             // failed)" pill) rather than the misleading "no audio
                             // detected" lie (memory:
                             // project_whisper_incomplete_vocab_and_transcription_failed).
-                            crate::winstt::commands::dictation::SttEvents::transcription_failed(&ah);
+                            crate::winstt::commands::dictation::SttEvents::transcription_failed(
+                                &ah,
+                            );
                             // Save entry with empty text so user can retry
                             if wav_saved {
                                 if let Err(save_err) = hm.save_entry(
@@ -820,6 +933,107 @@ impl ShortcutAction for TransformAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
+// Re-paste Action (WinSTT general.repasteHotkey, default LCtrl+LShift+V): re-inject
+// the most recent dictation transcription without re-dictating. handy-keys registers
+// the combo with blocking, so the accelerator is consumed system-wide (the reference's
+// "exclusive" globalShortcut semantics) — pressing it ONLY re-pastes, it does not also
+// trigger the focused app's native binding for the same combo. Mirrors
+// electron/ipc/repaste-hotkey.ts.
+struct RepasteAction;
+
+impl ShortcutAction for RepasteAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        let text = last_transcription();
+        if text.trim().is_empty() {
+            debug!("RepasteAction: no transcription recorded yet — ignoring");
+            return;
+        }
+        // This hotkey fires on key-DOWN while the user is STILL holding the combo
+        // (LCtrl+LShift+V), and must paste the WHOLE block immediately — exactly like a
+        // manual Ctrl+V — without waiting for release. A naive synthetic Ctrl+V can't do
+        // that here: handy-keys' blocking hook (which doesn't filter injected events) sees
+        // the synthetic `V` re-match the still-held Ctrl+Shift+V and SWALLOWS it, and the
+        // held Shift would turn Ctrl+V into Ctrl+Shift+V. Fix (the standard clipboard-paste
+        // dance, à la Espanso): inject key-UPs to release the held modifiers first — now
+        // the combo no longer matches (so handy lets the synthetic `V` through) and the
+        // paste reaches the app as a clean Ctrl+V. Then run the normal clipboard paste, so
+        // the text drops in as ONE block via the user's configured paste method.
+        // Run on a worker (off the hotkey/manager thread): Windows input synthesis +
+        // clipboard are thread-safe, and pasting here avoids the idle-event-loop latency a
+        // `run_on_main_thread` hop adds when no overlay is animating to pump the loop.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            #[cfg(target_os = "windows")]
+            {
+                crate::input::release_held_modifiers();
+                // Let the foreground app process the modifier key-ups before the paste.
+                std::thread::sleep(std::time::Duration::from_millis(15));
+            }
+            debug!(
+                "RepasteAction: re-pasting last transcription ({} chars)",
+                text.len()
+            );
+            // `replace=false` = the dictation paste variant (clipboard sandwich +
+            // configured paste method + append_trailing_space + auto-submit), so a
+            // re-paste is indistinguishable from the original dictation paste.
+            #[cfg(target_os = "macos")]
+            let result = crate::clipboard::paste_on_main_thread(&app, text, false);
+            #[cfg(not(target_os = "macos"))]
+            let result = crate::clipboard::paste(text, app.clone());
+            if let Err(e) = result {
+                error!("RepasteAction: paste failed: {e}");
+            }
+        });
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
+// Read-Aloud Action (WinSTT tts.hotkey, default LMeta+LShift+E): capture the active
+// selection and read it aloud through the source-aware TTS pipeline (local Kokoro /
+// cloud ElevenLabs). Single-shot on press. Mirrors electron/ipc/tts-hotkey.ts.
+struct ReadAloudAction;
+
+impl ShortcutAction for ReadAloudAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        // Gate on tts.enabled BEFORE capturing the selection — selection capture can
+        // fall back to a synthetic Ctrl+C (clipboard sandwich), which we must not fire
+        // when TTS is off (mirrors tts-hotkey.ts `maybeFire` checking `isTtsEnabled`).
+        let enabled = crate::winstt::commands::settings::read_settings(app)
+            .tts
+            .enabled;
+        if !enabled {
+            debug!("ReadAloudAction: TTS disabled — ignoring");
+            return;
+        }
+        let app = app.clone();
+        // Selection capture + blocking synthesis run off the hotkey thread.
+        std::thread::spawn(move || {
+            let text = crate::winstt::commands::transforms::capture_selection_text(&app);
+            if text.trim().is_empty() {
+                debug!("ReadAloudAction: no selection captured");
+                let _ = app.emit(
+                    "tts:failed",
+                    serde_json::json!({ "requestId": "", "reason": "No text selected" }),
+                );
+                return;
+            }
+            let Some(tts) = app.try_state::<Arc<crate::winstt::managers::TtsManager>>() else {
+                return;
+            };
+            let mgr = tts.inner().clone();
+            let rid = mgr.next_request_id();
+            // Empty voice/lang → the manager fills them from the active source's
+            // settings (same as the `tts_speak_selection` command path). Speed is
+            // sampled per sentence so a mid-read change applies to the next one.
+            let speed_mgr = mgr.clone();
+            mgr.read_aloud(&rid, &text, "", "", move || speed_mgr.current_speed());
+        });
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -868,6 +1082,14 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "transforms".to_string(),
         Arc::new(TransformAction) as Arc<dyn ShortcutAction>,
     );
+    map.insert(
+        "repaste".to_string(),
+        Arc::new(RepasteAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "read_aloud".to_string(),
+        Arc::new(ReadAloudAction) as Arc<dyn ShortcutAction>,
+    );
     map
 });
 
@@ -877,5 +1099,47 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 pub fn start_dictation_from_wakeword(app: &AppHandle) {
     if let Some(coord) = app.try_state::<crate::TranscriptionCoordinator>() {
         coord.send_input("transcribe", "", true, false);
+        schedule_wakeword_followup_timeout(app);
+    } else {
+        crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
     }
+}
+
+fn schedule_wakeword_followup_timeout(app: &AppHandle) {
+    let settings = crate::winstt::commands::settings::read_settings_raw(app);
+    let raw_seconds = settings.general.wake_word_timeout;
+    let seconds = if raw_seconds.is_finite() {
+        raw_seconds
+    } else {
+        5.0
+    }
+    .clamp(1.0, 30.0);
+    let timeout = Duration::from_millis((seconds * 1000.0).round() as u64);
+    let app = app.clone();
+
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(250));
+        let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
+            return;
+        };
+        if !audio.is_recording() {
+            crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(&app);
+            return;
+        }
+        let recording_generation = audio.recording_generation();
+        drop(audio);
+
+        std::thread::sleep(timeout);
+        let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
+            return;
+        };
+        if audio.is_recording()
+            && audio.recording_generation() == recording_generation
+            && !audio.speech_seen_since_recording_start()
+        {
+            if let Some(coord) = app.try_state::<crate::TranscriptionCoordinator>() {
+                coord.request_silence_stop("transcribe", recording_generation);
+            }
+        }
+    });
 }

@@ -19,11 +19,11 @@ export interface MetaEntry {
 /** The metadata-line container classes — shared so a picker composing a
  *  heterogeneous meta row (e.g. OpenRouter's variant badge + chips) matches the
  *  homogeneous {@link CardMetaRow} exactly. */
-export const META_ROW_CLASSES =
+const META_ROW_CLASSES =
 	"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-foreground-muted leading-tight";
 
 /** The faint middot that separates facts in a metadata line. */
-export function MetaSeparator() {
+function MetaSeparator() {
 	return (
 		<span aria-hidden="true" className="text-foreground-dim/40">
 			·
@@ -33,7 +33,7 @@ export function MetaSeparator() {
 
 /** A single fact: a dim leading glyph + value, full detail in the tooltip. A
  *  warning entry colours itself via `className`. */
-export function MetaItem({
+function MetaItem({
 	className,
 	icon,
 	value,

@@ -48,9 +48,10 @@ describe("SttModelSelector detached-open mode", () => {
 
 		// The click routes to the detached-window opener with the trigger's rect…
 		expect(onOpenDetached).toHaveBeenCalledTimes(1);
-		// …and the in-window popup never opens (no search box rendered), so it
-		// can't be clipped by the host window.
-		expect(screen.queryByPlaceholderText("Search transcription models")).toBeNull();
+		// …and the in-window popup remains closed, so it can't be clipped by the host window.
+		expect(trigger.getAttribute("data-state")).toBe("closed");
+		expect(trigger.getAttribute("aria-expanded")).toBe("false");
+		expect(screen.queryByRole("listbox")).toBeNull();
 		expect(onChange).not.toHaveBeenCalled();
 	});
 });

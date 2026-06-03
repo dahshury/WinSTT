@@ -10,18 +10,17 @@ import { useTranscriptionFeed } from "@/features/live-transcription";
 import { useLlmProcessingFeed } from "@/features/llm-processing";
 import { useDownloadListener } from "@/features/model-download";
 import { usePushToTalk } from "@/features/push-to-talk";
-import { useRecordingSound } from "@/features/recording-sound";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { useVadCalibration } from "@/features/vad-calibration";
-import { installElectronTauriAdapter } from "@/shared/api/electron-tauri-adapter";
+import { installNativeBridge } from "@/shared/api/native-bridge-adapter";
 import { gpuGetInfo } from "@/shared/api/ipc-client";
 
-// Install the `window.electronAPI` → Tauri polyfill at module-load time — BEFORE
+// Install the `window.nativeBridge` → Tauri polyfill at module-load time — BEFORE
 // React's first render fires the IPC hooks below (and before any entry's
 // createRoot().render()). The whole WinSTT renderer talks to the backend through
-// this single seam; see shared/api/electron-tauri-adapter.ts.
-installElectronTauriAdapter();
+// this single seam; see shared/api/native-bridge-adapter.ts.
+installNativeBridge();
 
 export function IpcProvider({ children }: { children: ReactNode }) {
 	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
@@ -42,7 +41,11 @@ export function IpcProvider({ children }: { children: ReactNode }) {
 	useListenMode();
 	useDeviceSwitchFeedback();
 	useVadCalibration();
-	useRecordingSound();
+	// Recording chime now plays NATIVELY from Rust (see
+	// winstt::commands::sound::play_recording_chime, fired by actions.rs on
+	// hotkey-start) instead of a webview Web Audio hook — the hidden-window
+	// AudioContext could lag/drop the first chime after the app went idle in the
+	// tray. TTS/history playback still use Web Audio here.
 
 	// Model catalog is self-initializing — see catalog-store.ts
 

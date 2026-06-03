@@ -31,7 +31,7 @@ import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { DownloadActions, type DownloadPhase, DownloadProgressBar } from "@/shared/ui/download";
-import { Spinner } from "@/shared/ui/spinner";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
 	buildSwitchingClassName,
 	SwapSweepBar,
@@ -39,9 +39,23 @@ import {
 	SwitchingPill,
 } from "@/shared/ui/switching-trigger";
 import { Tooltip as ContentTooltip } from "@/shared/ui/tooltip";
-import { GroupRail, type GroupRailItem, RailIconChip } from "../../core/GroupRail";
+import {
+	buildFavoritesRailItem,
+	GroupRail,
+	type GroupRailItem,
+	RailIconChip,
+} from "../../core/GroupRail";
+import { FAVORITES_GROUP_VALUE } from "../../core/favorites";
 import { ModelPicker } from "../../core/ModelPicker";
-import { GroupHeader, type MetaEntry, ModelCard, NeutralHeaderIcon } from "../../core/model-card";
+import {
+	BadgeIconButton,
+	badgeToneForCache,
+	GroupHeader,
+	type MetaEntry,
+	ModelCard,
+	NeutralHeaderIcon,
+	QuantBadgeLabel,
+} from "../../core/model-card";
 import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
 import { extractCloseReason } from "../../lib/combobox-reasons";
@@ -174,7 +188,9 @@ export interface OllamaModelSelectorProps {
 const DEFAULT_PLACEHOLDER = "Select a model";
 const OLLAMA_LIBRARY_URL = "https://ollama.com/library";
 const VALID_MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]+$/;
-const FAVORITES_RAIL_ID = "__favorites__";
+// Shared synthetic-group value so the Favorites rail tile, the group header's
+// `data-rail-section`, and the click-to-jump all use the same id across pickers.
+const FAVORITES_RAIL_ID = FAVORITES_GROUP_VALUE;
 const SORTED_RAIL_ID = "__sorted__";
 const LEADING_LETTERS_RE = /^[a-zA-Z]+/;
 
@@ -313,74 +329,10 @@ function RecommendedStar() {
 // The shelf reuses the EXACT muted tones + ButtonGroup composition as STT so the
 // two pickers read identically. (No speed/accuracy perf bars — out of scope.)
 
-/** Idle quant-badge tint by on-disk state — the SAME muted emerald / amber /
- *  neutral palette as the STT shelf's `badgeToneForCache`, so a glance reads
- *  "tinted = on disk" vs "gray = fetch". */
-function ollamaBadgeToneForCache(state: QuantBadgeCacheState): string {
-	if (state === "cached") {
-		return "bg-emerald-500/[0.08] text-emerald-300/80 hover:bg-emerald-500/[0.14]";
-	}
-	if (state === "partial") {
-		return "bg-amber-500/[0.08] text-amber-300/80 hover:bg-amber-500/[0.14]";
-	}
-	return "bg-foreground/[0.04] text-foreground-muted hover:bg-foreground/[0.08]";
-}
-
-type QuantIconButtonTone = "neutral" | "danger" | "primary";
-
-function quantToneClassName(tone: QuantIconButtonTone): string {
-	const map: Record<QuantIconButtonTone, string> = {
-		danger: "bg-foreground/[0.04] text-foreground-muted hover:bg-error/15 hover:text-error",
-		primary: "bg-foreground/[0.04] text-accent hover:bg-accent/15",
-		neutral:
-			"bg-foreground/[0.04] text-foreground-muted hover:bg-foreground/[0.10] hover:text-foreground",
-	};
-	return map[tone];
-}
-
-/** Inline icon button for the per-badge pull controls (Pause / Resume / Cancel /
- *  Delete) — same height + left-hairline treatment as the STT shelf's
- *  `BadgeIconButton` so the controls compose into one ButtonGroup chip. */
-function QuantIconButton({
-	ariaLabel,
-	icon,
-	onClick,
-	tone = "neutral",
-	tooltip,
-}: {
-	ariaLabel: string;
-	icon: IconSvgElement;
-	onClick: () => void;
-	tone?: QuantIconButtonTone;
-	tooltip: string;
-}) {
-	return (
-		<ContentTooltip content={tooltip} side="top">
-			<button
-				aria-label={ariaLabel}
-				className={cn(
-					"inline-flex h-6 cursor-pointer items-center justify-center border-border border-l px-1.5 leading-none transition-colors",
-					"last:rounded-r-[5px]",
-					quantToneClassName(tone)
-				)}
-				// Base UI's Combobox.Item begins selection on pointerdown, BEFORE click —
-				// so an onClick-only stopPropagation lets the card select first (and the
-				// quant action gets lost). Stop the pointer events too so Delete / Cancel /
-				// Pause / Resume act on the quant without selecting the whole card.
-				onClick={(e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					onClick();
-				}}
-				onMouseDown={(e) => e.stopPropagation()}
-				onPointerDown={(e) => e.stopPropagation()}
-				type="button"
-			>
-				<HugeiconsIcon className="size-3" icon={icon} />
-			</button>
-		</ContentTooltip>
-	);
-}
+// The badge tone palette + the per-control icon button are the SHARED quant-shelf
+// leaves (`core/model-card` → badgeToneForCache / BadgeIconButton): one definition
+// across the STT, TTS, and Ollama shelves. Ollama keeps only its tag/pull-specific
+// composition below.
 
 interface QuantBadgeState {
 	cacheState: QuantBadgeCacheState;
@@ -404,49 +356,6 @@ function deriveQuantBadgeState(
 		progressPercent = Math.max(0, Math.min(100, Math.round(paused.progress.percent ?? 0)));
 	}
 	return { cacheState, isDownloading, progressPercent };
-}
-
-/** Inner content of a quant badge — three visual states matching the STT shelf's
- *  `QuantBadgeLabel`:
- *   - downloading → pulsing download glyph + live percent (label dropped)
- *   - not-on-disk → the quant label, crossfading to a download glyph on hover
- *   - on-disk     → the bare quant label. */
-function QuantBadgeContent({
-	label,
-	isDownloading,
-	progressPercent,
-	canStartDownload,
-}: {
-	canStartDownload: boolean;
-	isDownloading: boolean;
-	label: string;
-	progressPercent: number | null;
-}) {
-	if (isDownloading) {
-		return (
-			<span className="relative inline-flex items-center gap-1.5">
-				<HugeiconsIcon className="size-3 animate-pulse" icon={CloudDownloadIcon} />
-				<span className="font-mono text-[9.5px] tabular-nums">
-					{progressPercent === null ? "…" : `${progressPercent}%`}
-				</span>
-			</span>
-		);
-	}
-	if (canStartDownload) {
-		return (
-			<span className="relative inline-flex items-center justify-center">
-				<span className="font-mono transition-opacity duration-150 group-hover/badge:opacity-0 motion-reduce:transition-none">
-					{label}
-				</span>
-				<HugeiconsIcon
-					aria-hidden="true"
-					className="absolute inset-0 m-auto size-3 opacity-0 transition-opacity duration-150 group-hover/badge:opacity-100 motion-reduce:transition-none"
-					icon={CloudDownloadIcon}
-				/>
-			</span>
-		);
-	}
-	return <span className="relative inline-flex items-center font-mono">{label}</span>;
 }
 
 /** The 0..2 trailing pull controls appended to a quant badge in the same
@@ -474,7 +383,7 @@ function QuantBadgeActions({
 	return (
 		<>
 			{state.isDownloading ? (
-				<QuantIconButton
+				<BadgeIconButton
 					ariaLabel={`Pause ${label} download`}
 					icon={PauseIcon}
 					onClick={() => onStop(tagName)}
@@ -482,7 +391,7 @@ function QuantBadgeActions({
 				/>
 			) : null}
 			{isPaused ? (
-				<QuantIconButton
+				<BadgeIconButton
 					ariaLabel={`Resume ${label} download`}
 					icon={PlayIcon}
 					onClick={() => onResume(tagName)}
@@ -491,7 +400,7 @@ function QuantBadgeActions({
 				/>
 			) : null}
 			{state.isDownloading || isPaused ? (
-				<QuantIconButton
+				<BadgeIconButton
 					ariaLabel={`Cancel ${label} download`}
 					icon={CancelCircleIcon}
 					onClick={() => onDiscard(tagName)}
@@ -500,7 +409,7 @@ function QuantBadgeActions({
 				/>
 			) : null}
 			{canDelete ? (
-				<QuantIconButton
+				<BadgeIconButton
 					ariaLabel={`Delete ${label}`}
 					icon={Delete02Icon}
 					onClick={() => onDiscard(tagName)}
@@ -569,7 +478,7 @@ function OllamaQuantBadge({
 						"group/badge relative inline-flex h-6 items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
 						state.isDownloading ? "cursor-default" : "cursor-pointer",
 						hasTrailing ? "rounded-l-[5px]" : "rounded-[5px]",
-						isActive ? "bg-accent/20 text-accent" : ollamaBadgeToneForCache(state.cacheState)
+						isActive ? "bg-accent/20 text-accent" : badgeToneForCache(state.cacheState)
 					)}
 					onClick={(e) => {
 						e.preventDefault();
@@ -594,11 +503,12 @@ function OllamaQuantBadge({
 							style={{ width: `${state.progressPercent}%` }}
 						/>
 					) : null}
-					<QuantBadgeContent
+					<QuantBadgeLabel
 						canStartDownload={canStartDownload}
 						isDownloading={state.isDownloading}
 						label={label}
-						progressPercent={state.progressPercent}
+						mono
+						progress={state.progressPercent}
 					/>
 				</button>
 			</ContentTooltip>
@@ -736,6 +646,32 @@ interface QuantShelfDeps {
 	pausedPulls: Readonly<Record<string, PausedPullState>>;
 	pulls: Readonly<Record<string, OllamaPullProgress>>;
 	selectedName: string | undefined;
+}
+
+/**
+ * Card-BODY click handler for a non-installed (`as="div"`) recommended/library
+ * card: it selects/pulls the model's AUTO / recommended (default) tag — the bare
+ * `<name>` / `<name>:<size>` with no precision suffix. Mirrors the STT picker,
+ * where the "Auto" badge was removed and a card-body click selects the
+ * recommended precision; the explicit per-quant badges keep their own clicks
+ * (they `stopPropagation`, so they never reach here).
+ *
+ * The action matches a quant badge's own routing for the default tag: select it
+ * when it's already installed, resume a paused pull, otherwise start the pull.
+ * Returns `undefined` when the tag is actively downloading (no body action while
+ * the default is in flight — the user uses the shelf controls to pause/cancel).
+ */
+function defaultTagBodyClick(deps: QuantShelfDeps, defaultTag: string): (() => void) | undefined {
+	if (deps.pulls[defaultTag] !== undefined) {
+		return undefined;
+	}
+	if (isTagInstalled(deps.installedNames, defaultTag)) {
+		return () => deps.onSelect(defaultTag);
+	}
+	if (deps.pausedPulls[defaultTag] !== undefined) {
+		return () => deps.onResume(defaultTag);
+	}
+	return () => deps.onPull(defaultTag);
 }
 
 interface LazyQuantShelfProps {
@@ -928,7 +864,7 @@ function OllamaBody({
 	if (props.isLoading) {
 		return (
 			<div className="flex flex-1 items-center gap-2">
-				<Spinner className="size-4" />
+				<PulseDot className="size-2.5 text-foreground-muted" />
 				<span className="font-medium text-body text-foreground-muted italic tracking-tight">
 					{props.placeholder}
 				</span>
@@ -1171,7 +1107,7 @@ function OllamaModelRow({
 	return (
 		<ModelCard
 			as="combobox-item"
-			badges={<ThinkingChip capabilities={model.capabilities} />}
+			badges={<ThinkingChip capabilities={model.capabilities ?? undefined} />}
 			data-model-id={model.name}
 			favorite={{
 				isFavorited,
@@ -1341,7 +1277,7 @@ function LibraryRowBadges({
 			) : null}
 			{status.activePull ? (
 				<span className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px font-medium text-[10px] text-accent">
-					<Spinner className="size-2.5" />
+					<PulseDot className="size-1.5" />
 					Downloading {progressPercent ?? 0}%
 				</span>
 			) : null}
@@ -1387,9 +1323,13 @@ function LibraryRowHeader({
 	status,
 	progressPercent,
 	shelf,
+	onBodyClick,
 }: {
 	hit: OllamaLibraryHit;
 	isFavorited: boolean;
+	/** Card-body click — selects/pulls the hit's recommended (default `:latest`)
+	 *  tag. Omitted (no body action) when the default is actively downloading. */
+	onBodyClick: (() => void) | undefined;
 	onToggleFavorite: (name: string) => void;
 	progressPercent: number | null;
 	/** The quant shelf — replaces the old expand-to-see-tags chevron. The
@@ -1431,6 +1371,9 @@ function LibraryRowHeader({
 			}}
 			makerIcon={<OllamaMakerIcon slug={hitPublisher.slug} />}
 			name={hitDisplayName}
+			// Card-body click = pull/select the hit's recommended default tag (its
+			// bare slug → `:latest`). The per-quant badges keep their explicit clicks.
+			onBodyClick={onBodyClick}
 			shelf={shelf}
 		/>
 	);
@@ -1477,7 +1420,7 @@ function LibraryRowShelf({
 	if (tagsState?.isLoading && (tagsState?.tags.length ?? 0) === 0) {
 		return (
 			<div className="flex items-center gap-2 text-foreground-muted text-xs">
-				<Spinner className="size-3" />
+				<PulseDot className="size-2" />
 				Loading quantizations…
 			</div>
 		);
@@ -1505,6 +1448,7 @@ function LibraryRow({
 			<LibraryRowHeader
 				hit={hit}
 				isFavorited={isFavorited}
+				onBodyClick={defaultTagBodyClick(shelfDeps, hit.name)}
 				onToggleFavorite={onToggleFavorite}
 				progressPercent={progressPercent}
 				shelf={<LibraryRowShelf hit={hit} shelfDeps={shelfDeps} tagsState={tagsState} />}
@@ -1699,6 +1643,10 @@ function RecommendedRow({
 			makerIcon={<OllamaMakerIcon slug={recPublisher.slug} />}
 			meta={buildRecommendedMetaEntries(model)}
 			name={model.displayName}
+			// Card-body click = use the recommended (default) tag: `model.name` is the
+			// bare recommended pull tag (e.g. `gemma3:4b`). Select it if installed,
+			// else pull it. The per-quant badges keep their own explicit clicks.
+			onBodyClick={defaultTagBodyClick(shelfDeps, model.name)}
 			// Lazily scrape the family's sibling tags (gated in the main process) so
 			// the card shows every quant for its param size; the default pull badge
 			// stands in as the placeholder until they resolve.
@@ -2274,7 +2222,7 @@ function ListBody(props: ListBodyProps) {
 			)}
 			{libraryLoading ? (
 				<div className="flex items-center justify-center gap-2 px-3 py-4 text-foreground-muted text-xs">
-					<Spinner className="size-3" />
+					<PulseDot className="size-2" />
 					Searching the Ollama library…
 				</div>
 			) : null}
@@ -2345,17 +2293,7 @@ function buildOllamaRailItems(opts: {
 }): GroupRailItem[] {
 	const railItems: GroupRailItem[] = [];
 	if (opts.favoritesVisibleCount > 0) {
-		railItems.push({
-			id: FAVORITES_RAIL_ID,
-			pinned: true,
-			label: "Favorites",
-			icon: (
-				<RailIconChip tone="favorite">
-					<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
-				</RailIconChip>
-			),
-			badge: opts.favoritesVisibleCount,
-		});
+		railItems.push(buildFavoritesRailItem(opts.favoritesVisibleCount));
 	}
 	if (opts.sortActive) {
 		if (opts.sortedInstalledCount > 0) {

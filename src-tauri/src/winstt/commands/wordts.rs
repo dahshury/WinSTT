@@ -1,11 +1,11 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/05_*.md (Word-timestamps)
+// Source: docs/port/05_*.md (Word-timestamps)
 // + lib_wiring.md §3, memory project_word_highlight_playback. Wraps managers::WordAligner.
 //
 // align_words: lazy cross-attention DTW for history playback (karaoke highlight).
 // Loads the history entry's recording + transcript, runs the timestamped whisper
 // export, and returns per-word start/end seconds.
 //
-// WU-10 (app/PORT/10_frontend_port_plan.md): the audio-load-by-id is wired here
+// WU-10 (docs/port/10_frontend_port_plan.md): the audio-load-by-id is wired here
 // (was a stub). The renderer's `alignTranscriptionHistoryAudio(id)` passes the
 // STRING id from the legacy `TranscriptionHistoryEntry` (= the DB row's integer
 // id rendered as a string — see winstt/commands/history.rs `to_transcription_entry`).
@@ -41,7 +41,8 @@ pub async fn align_words(
     history_manager: State<'_, Arc<HistoryManager>>,
     entry_id: String,
 ) -> Result<Vec<WordResultPayload>, String> {
-    let Some((audio, text)) = load_history_audio(history_manager.inner().as_ref(), &entry_id).await?
+    let Some((audio, text)) =
+        load_history_audio(history_manager.inner().as_ref(), &entry_id).await?
     else {
         return Ok(Vec::new());
     };

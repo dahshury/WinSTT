@@ -197,13 +197,13 @@ export function getRecordingMode(settings: AppSettings): string {
 /**
  * Whether the initial settings sync to the STT server should be triggered.
  * True only when the server just became ready, settings are loaded FROM
- * ELECTRON-STORE (not just from the Zustand-persist localStorage cache),
+ * PERSISTED STORE (not just from the Zustand-persist localStorage cache),
  * and we haven't already synced in this session.
  *
  * The `fromIpcLoad` gate is load-bearing: `isLoaded` flips to `true` the
  * moment localStorage hydration completes (synchronous, during the store's
  * `create` call). That cached snapshot can be STALE relative to
- * electron-store — most commonly when the user changed `model.model` in a
+ * persisted store — most commonly when the user changed `model.model` in a
  * previous session, the renderer wrote it through, but localStorage was
  * not updated for some reason (window force-killed before the persist
  * middleware flushed, dev-server hot reload during a write, …). Without
@@ -212,7 +212,7 @@ export function getRecordingMode(settings: AppSettings): string {
  * server obediently swaps from its CLI-arg-loaded model to the stale
  * value, and the user sees "Switching to <stale>" loop until they
  * manually re-pick. The server was already spawned with the correct
- * disk value from electron-store (see `SETTINGS_TO_CLI` in
+ * disk value from persisted store (see `SETTINGS_TO_CLI` in
  * stt-process.ts), so the only "initial sync" worth doing is one that
  * reflects the same disk state.
  *
@@ -237,7 +237,7 @@ export function shouldSyncOnConnect(
 }
 
 /**
- * Schedule a save of `settings` to electron-store, debouncing by `delayMs`
+ * Schedule a save of `settings` to persisted store, debouncing by `delayMs`
  * unless `immediate` is true (e.g. when the recording mode changed).
  *
  * Cancels any previously pending debounced save before scheduling the new one.

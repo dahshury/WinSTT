@@ -1,34 +1,24 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
+import { type TtsModelState, useTtsModelStateStore } from "@/entities/tts-catalog";
+import { useTtsModelPickerStore } from "@/features/tts-model-picker";
 import {
 	initTts,
 	onTtsInstallFailed,
 	onTtsInstallStatus,
 	onTtsModelDownloadComplete,
-	type TtsDownloadEstimatePayload,
 	type TtsInstallPhase,
-	ttsDownloadEstimate,
 } from "@/shared/api/ipc-client";
 
 export interface TtsInstallGate {
-	/** Backdrop/Escape close. */
-	closeConfirm: () => void;
-	/** Show the confirm dialog (suppressed while probing the estimate). */
-	confirmOpen: boolean;
-	/** Server's size breakdown, or null before the first probe. */
-	estimate: TtsDownloadEstimatePayload | null;
-	/** Pass to `SettingSection.onToggle`. Gates ON behind the dialog. */
+	/** Pass to `SettingSection.onToggle` (LOCAL path). Enables directly when the
+	 *  selected model is already on disk; otherwise opens the model selector so
+	 *  the user picks/downloads one (the selector's commit flips `enabled`). */
 	handleEnabledToggle: (next: boolean) => void;
-	/** Dialog reject — stays disabled. */
-	handleInstallCancel: () => void;
-	/** Dialog accept. Enables (or re-probes when offline). */
-	handleInstallConfirm: () => void;
 	/** Classified install-failure reason, or null when no error is showing. */
 	installError: string | null;
 	/** Current install phase, or null when idle / ready. */
 	installPhase: TtsInstallPhase | null;
-	/** True while the estimate is in flight. */
-	probing: boolean;
 	/** Re-trigger init_tts after a failure — clears the banner and re-runs warm-up. */
 	retryInstall: () => void;
 }
@@ -48,38 +38,20 @@ export function projectInstallPhase(phase: TtsInstallPhase): TtsInstallPhase | n
 }
 
 /**
- * Picks the post-probe action without `&&`/`if`:
- *   - `enable`: server says the engine + model are on disk and reachable
- *   - `confirm`: anything else — show the download dialog
+ * Whether the selected read-aloud model is usable offline — i.e. at least one
+ * of its quantizations is fully cached on disk. Pure so the toggle decision
+ * ("enable now" vs "open the picker to download") is unit-testable.
  *
- * The two boolean checks are converted to 0/1 and multiplied, then used as
- * an index into the action tuple. Branch-free → CC 1.
+ * Any cached quant counts (not just the server's `effectiveQuantization`): if
+ * the user already downloaded a usable variant we shouldn't re-prompt them to
+ * pick one. An unknown / not-yet-loaded state is treated as "not cached" so the
+ * first-run path opens the selector.
  */
-export type ProbeActionKey = "confirm" | "enable";
-
-const PROBE_ACTION_BY_INDEX: readonly ProbeActionKey[] = ["confirm", "enable"];
-
-/** Pure helper — exported for tests. */
-export function resolveProbeAction(est: TtsDownloadEstimatePayload): ProbeActionKey {
-	const installedFlag = Number(est.alreadyInstalled === true);
-	const reachableFlag = Number(est.unavailable !== true);
-	return PROBE_ACTION_BY_INDEX[installedFlag * reachableFlag] as ProbeActionKey;
-}
-
-/**
- * Picks the confirm-button action: "Retry" probes again offline,
- * "Confirm" closes the dialog and flips `enabled` on. Branch-free.
- */
-export type ConfirmActionKey = "enable" | "retry";
-
-const CONFIRM_ACTION_BY_INDEX: readonly ConfirmActionKey[] = ["enable", "retry"];
-
-/** Pure helper — exported for tests. */
-export function resolveConfirmAction(
-	estimate: TtsDownloadEstimatePayload | null
-): ConfirmActionKey {
-	const offlineFlag = Number(estimate?.unavailable === true);
-	return CONFIRM_ACTION_BY_INDEX[offlineFlag] as ConfirmActionKey;
+export function isTtsModelCached(state: TtsModelState | undefined): boolean {
+	if (!state) {
+		return false;
+	}
+	return Object.values(state.cacheByQuantization).some((c) => c.state === "cached");
 }
 
 /** Picks the toggle action without an `if`. */
@@ -108,25 +80,30 @@ export function buildTtsEnablePatch(
 
 const selectTtsHotkey = (s: ReturnType<typeof useSettingsStore.getState>): string =>
 	s.settings.tts?.hotkey ?? "";
+const selectTtsModel = (s: ReturnType<typeof useSettingsStore.getState>): string =>
+	s.settings.tts?.model ?? DEFAULT_SETTINGS.tts.model;
 
 /**
- * Confirm-before-download gate for enabling TTS.
+ * Enable gate for the read-aloud (TTS) feature.
  *
  * The settings store's `tts.enabled` flag is what actually triggers the
- * on-demand install (electron's tts store listener fires `init_tts` on
- * the off→on edge → the server downloads the engine pack + model). So we
- * must NOT flip that flag until the user accepts the confirmation dialog.
- * Turning OFF is immediate; turning ON probes the download size first and
- * opens the dialog (or, if everything's already on disk, enables straight
- * away with no dialog).
+ * on-demand warm-up (the server's tts store listener fires `init_tts` on the
+ * off→on edge → loads the selected model, downloading it only if it's missing).
+ * To honor "never enabled without a model the user chose", turning ON does NOT
+ * auto-download a default: if the selected model is already cached it enables
+ * straight away, otherwise it opens the model selector and lets the picker's
+ * commit flip `enabled` once a model lands. Turning OFF is immediate.
+ *
+ * The post-enable warm-up banner (phase pings + classified failures + retry)
+ * stays here so the section can show download/extraction progress after the
+ * toggle commits.
  */
 export function useTtsInstallGate(): TtsInstallGate {
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 	const currentHotkey = useSettingsStore(selectTtsHotkey);
+	const model = useSettingsStore(selectTtsModel);
+	const statesById = useTtsModelStateStore((s) => s.statesById);
 
-	const [confirmOpen, setConfirmOpen] = useState(false);
-	const [estimate, setEstimate] = useState<TtsDownloadEstimatePayload | null>(null);
-	const [probing, setProbing] = useState(false);
 	const [installPhase, setInstallPhase] = useState<TtsInstallPhase | null>(null);
 	const [installError, setInstallError] = useState<string | null>(null);
 
@@ -175,73 +152,24 @@ export function useTtsInstallGate(): TtsInstallGate {
 		[]
 	);
 
-	const runProbe = async (): Promise<TtsDownloadEstimatePayload> => {
-		setProbing(true);
-		try {
-			const est = await ttsDownloadEstimate();
-			setEstimate(est);
-			return est;
-		} finally {
-			setProbing(false);
-		}
-	};
-
-	// `runProbe` rejects if the size-probe IPC throws (server/WS down). The two
-	// fire-and-forget callers below must absorb that rejection — otherwise it
-	// surfaces as an unhandled promise rejection and the toggle/dialog hang with
-	// no signal. We log it; `probing` is already cleared by runProbe's `finally`.
-	const reportProbeError = (err: unknown): void => {
-		console.error("TTS install probe failed", err);
-	};
-
-	// Post-probe dispatch: tuple keyed by `resolveProbeAction` — no `if`.
-	const probeActions: Record<ProbeActionKey, (est: TtsDownloadEstimatePayload) => void> = {
-		enable: () => {
-			update(enablePatch());
-		},
-		confirm: () => {
-			setConfirmOpen(true);
-		},
-	};
-	const handleProbeResult = (est: TtsDownloadEstimatePayload): void => {
-		probeActions[resolveProbeAction(est)](est);
-	};
-
 	// Toggle dispatch: tuple keyed by `resolveToggleAction` — no `if`.
 	const toggleActions: Record<ToggleActionKey, () => void> = {
 		enable: () => {
-			runProbe().then(handleProbeResult).catch(reportProbeError);
+			// Already on disk → enable straight away. Otherwise open the model
+			// selector; its commit (download-complete / pick) flips `enabled`.
+			if (isTtsModelCached(statesById[model])) {
+				update(enablePatch());
+				return;
+			}
+			useTtsModelPickerStore.getState().openFor(true);
 		},
 		disable: () => {
 			update({ enabled: false });
 			setInstallPhase(null);
-			setConfirmOpen(false);
 		},
 	};
 	const handleEnabledToggle = (next: boolean): void => {
 		toggleActions[resolveToggleAction(next)]();
-	};
-
-	// Confirm-button dispatch: tuple keyed by `resolveConfirmAction` — no `if`.
-	const confirmActions: Record<ConfirmActionKey, () => void> = {
-		enable: () => {
-			setConfirmOpen(false);
-			update(enablePatch());
-		},
-		retry: () => {
-			runProbe().catch(reportProbeError);
-		},
-	};
-	const handleInstallConfirm = (): void => {
-		confirmActions[resolveConfirmAction(estimate)]();
-	};
-
-	const handleInstallCancel = (): void => {
-		setConfirmOpen(false);
-	};
-
-	const closeConfirm = (): void => {
-		setConfirmOpen(false);
 	};
 
 	// Re-trigger the eager warm-up. Clears any prior error so the banner
@@ -254,15 +182,9 @@ export function useTtsInstallGate(): TtsInstallGate {
 	};
 
 	return {
-		confirmOpen,
-		estimate,
-		probing,
 		installPhase,
 		installError,
 		handleEnabledToggle,
-		handleInstallConfirm,
-		handleInstallCancel,
-		closeConfirm,
 		retryInstall,
 	};
 }

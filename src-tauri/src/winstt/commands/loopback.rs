@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // (WU-9 §6 — "add loopback device-list"), lib_wiring.md §3/§4b,
 // server/src/stt_server/control_handler.py `_handle_list_loopback_devices` +
 // server/src/stt_server/loopback.py `LoopbackCapture.list_devices`. Wraps
@@ -12,7 +12,7 @@
 //     { index: int, name: string, defaultSampleRate: number,
 //       maxOutputChannels: number, isDefault?: bool }
 //
-// so this command emits EXACTLY that shape (byte-identical to the Electron
+// so this command emits EXACTLY that shape (byte-identical to the reference
 // server's `list_loopback_devices` response `value`). The numeric `index` is the
 // positional ordinal of the device in the enumeration — the same integer the
 // renderer hands back to `loopback:start` (→ `start_listen { deviceIndex }`),
@@ -79,7 +79,7 @@ pub fn resolve_loopback_device_name(device_index: i32) -> Option<String> {
 }
 
 /// `loopback_list_devices` — enumerate WASAPI loopback-capable output devices for
-/// the listen-mode device picker. Mirrors the Electron server's
+/// the listen-mode device picker. Mirrors the reference server's
 /// `list_loopback_devices` command (returns `[]` on any failure so the renderer's
 /// `.catch` / non-array guard never trips). Off the UI thread is unnecessary —
 /// WASAPI enumeration is sub-millisecond — but errors are swallowed to `[]`.

@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { create } from "zustand";
 import {
 	cancelOllamaModelPull,
@@ -9,6 +10,7 @@ import {
 	onOllamaPullProgress,
 	pullOllamaModel,
 } from "@/shared/api/ipc-client";
+import { OllamaPullProgressStatusSchema } from "@/shared/api/schema.zod";
 
 export type { OllamaModel };
 
@@ -38,23 +40,47 @@ export interface PausedPullState {
 
 const PAUSED_PULLS_STORAGE_KEY = "winstt:ollama-paused-pulls";
 
-/** Load persisted paused pulls — renderer only (gated on `electronAPI` so the
+// Validate the persisted blob on hydrate — localStorage is user-writable and
+// can be left over from an older schema, so a raw `as` cast could smuggle
+// malformed entries into the store. Mirrors the `OllamaPullProgress` shape
+// (spec/generated/ts/schema.d.ts): required model + status, the rest optional.
+const ollamaPullProgressSchema = z.object({
+	model: z.string(),
+	status: OllamaPullProgressStatusSchema,
+	statusText: z.string().optional(),
+	digest: z.string().optional(),
+	completed: z.number().optional(),
+	total: z.number().optional(),
+	percent: z.number().optional(),
+	error: z.string().optional(),
+});
+
+const pausedPullStateSchema = z.object({
+	pausedAt: z.number(),
+	progress: ollamaPullProgressSchema,
+});
+
+const pausedPullsSchema = z.record(z.string(), pausedPullStateSchema);
+
+/** Load persisted paused pulls — renderer only (gated on `nativeBridge` so the
  *  bun:test environment, which has a localStorage but no bridge, starts clean). */
 function loadPersistedPausedPulls(): Record<string, PausedPullState> {
-	if (typeof window === "undefined" || window.electronAPI == null || !window.localStorage) {
+	if (typeof window === "undefined" || window.nativeBridge == null || !window.localStorage) {
 		return {};
 	}
 	try {
 		const raw = window.localStorage.getItem(PAUSED_PULLS_STORAGE_KEY);
-		const parsed: unknown = raw ? JSON.parse(raw) : null;
-		return parsed && typeof parsed === "object" ? (parsed as Record<string, PausedPullState>) : {};
+		const parsed = pausedPullsSchema.safeParse(raw ? JSON.parse(raw) : null);
+		// `progress` widens to `OllamaPullProgress` (status is the same enum) — the
+		// cast crosses the generated-type ↔ zod boundary, not unchecked input.
+		return parsed.success ? (parsed.data as Record<string, PausedPullState>) : {};
 	} catch {
 		return {};
 	}
 }
 
 function persistPausedPulls(pausedPulls: Record<string, PausedPullState>): void {
-	if (typeof window === "undefined" || window.electronAPI == null || !window.localStorage) {
+	if (typeof window === "undefined" || window.nativeBridge == null || !window.localStorage) {
 		return;
 	}
 	try {
@@ -101,7 +127,7 @@ function makeScanErrorState(err: unknown) {
 function makeScanSuccessState(result: {
 	models: OllamaModel[];
 	reachable: boolean;
-	error?: string;
+	error?: string | null;
 }) {
 	return {
 		models: result.models,
@@ -311,12 +337,12 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 	},
 }));
 
-// SSR/Electron guard — under bun:test, the bridge is mocked and electronAPI
+// SSR/the reference guard — under bun:test, the bridge is mocked and nativeBridge
 // is undefined, so the body is skipped regardless of the conditional outcome.
 // Observable test behavior is identical with or without this branch, hence
 // every mutator on this if-statement is equivalent.
 // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,StringLiteral,BlockStatement
-if (typeof window !== "undefined" && window.electronAPI != null) {
+if (typeof window !== "undefined" && window.nativeBridge != null) {
 	// Stryker disable next-line ArrowFunction
 	onLlmCatalog((models) => useLlmCatalogStore.getState().setModels(models));
 	// Stryker disable next-line ArrowFunction

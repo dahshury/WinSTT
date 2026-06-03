@@ -1,31 +1,50 @@
-import { AnimatePresence, domAnimation, domMax, LazyMotion, m, type Variants } from "motion/react";
+import {
+  AnimatePresence,
+  domAnimation,
+  domMax,
+  LazyMotion,
+  m,
+  type Variants,
+} from "motion/react";
 import { type ReactNode, useEffect, useReducer, useRef, useState } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
-	AudioVisualizer,
-	useVisualizerStore,
-	useVisualizerSync,
+  AudioVisualizer,
+  useVisualizerStore,
+  useVisualizerSync,
 } from "@/features/audio-visualizer";
 import { useTranscriptionFeed } from "@/features/live-transcription";
-import { useLlmProcessingFeed, useLlmProcessingStore } from "@/features/llm-processing";
-import { onSettingsChanged, sttAbortOperation, ttsSetSpeed } from "@/shared/api/ipc-client";
+import {
+  useLlmProcessingFeed,
+  useLlmProcessingStore,
+} from "@/features/llm-processing";
+import {
+  TranscriptPreview,
+  useTranscriptPreviewFeed,
+  useTranscriptPreviewStore,
+} from "@/features/transcript-preview";
+import {
+  onSettingsChanged,
+  sttAbortOperation,
+  ttsSetSpeed,
+} from "@/shared/api/ipc-client";
 import { decodeSettingsPayload } from "@/shared/api/settings-codec";
 import {
-	DynamicIsland,
-	DynamicIslandProvider,
-	type DynamicIslandSize,
-	useDynamicIslandSize,
+  DynamicIsland,
+  DynamicIslandProvider,
+  type DynamicIslandSize,
+  useDynamicIslandSize,
 } from "@/shared/ui/dynamic-island";
 import { ScrollingText } from "@/shared/ui/scrolling-text";
 import { ThinkingIndicator } from "@/shared/ui/thinking-indicator";
 import {
-	discardTts,
-	getTtsLevel,
-	pauseTts,
-	resumeTts,
-	type TtsPlaybackStatus,
-	useTtsPlaybackStore,
+  discardTts,
+  getTtsLevel,
+  pauseTts,
+  resumeTts,
+  type TtsPlaybackStatus,
+  useTtsPlaybackStore,
 } from "../model/tts-playback-store";
 import { TtsPlaybackMount } from "./TtsPlaybackMount";
 
@@ -50,34 +69,35 @@ import { TtsPlaybackMount } from "./TtsPlaybackMount";
  * — BEFORE the OS delivers `visibilitychange` (which is gated on a compositor
  * pass). Resetting the flag to `false` here therefore clobbered the
  * freshly-armed value, and because realtime-text events only update the text
- * (they never re-arm), the pill's mount gate `(isRecordingActive && hasText)`
- * stayed `false` for the whole session — the pill "didn't appear on first
- * use". The transcription feed owns the flag (armed on recording_start,
- * disarmed on terminal events, already `false` between sessions), so leaving it
- * alone removes the race; a stale `true` can't flash content because `hasText`
- * is cleared right here.
+ * (they never re-arm), the pill's mount gate
+ * `(isRecordingActive && (isSpeaking || hasText))` stayed `false` for the whole
+ * session — the pill "didn't appear on first use". The transcription feed owns
+ * the flag (armed on recording_start, disarmed on terminal events, already
+ * `false` between sessions), so leaving it alone removes the race; a stale
+ * `true` can't flash content because `isSpeaking` (above) + `hasText` are both
+ * cleared right here.
  */
 function useResetOnOverlayShow(): void {
-	useEffect(() => {
-		const handler = () => {
-			if (document.visibilityState !== "visible") {
-				return;
-			}
-			useTranscriptionStore.setState({
-				currentRealtime: "",
-				ephemeral: null,
-			});
-			useLlmProcessingStore.setState({ isThinking: false });
-			// Belt-and-suspenders: `recordingStopped` in the visualizer
-			// store already clears `isSpeaking`, but if a session ended
-			// abnormally (connection drop, app crash recovery) a stale
-			// `true` here would flash the pill the moment the overlay
-			// re-appears.
-			useVisualizerStore.setState({ isSpeaking: false });
-		};
-		document.addEventListener("visibilitychange", handler);
-		return () => document.removeEventListener("visibilitychange", handler);
-	}, []);
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      useTranscriptionStore.setState({
+        currentRealtime: "",
+        ephemeral: null,
+      });
+      useLlmProcessingStore.setState({ isThinking: false });
+      // Belt-and-suspenders: `recordingStopped` in the visualizer
+      // store already clears `isSpeaking`, but if a session ended
+      // abnormally (connection drop, app crash recovery) a stale
+      // `true` here would flash the pill the moment the overlay
+      // re-appears.
+      useVisualizerStore.setState({ isSpeaking: false });
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
 }
 
 /**
@@ -90,27 +110,29 @@ function useResetOnOverlayShow(): void {
  * in case the renderer ever client-navigates away from /overlay).
  */
 function useTransparentBody(): void {
-	useEffect(() => {
-		const prevBody = document.body.style.background;
-		const prevHtml = document.documentElement.style.background;
-		Object.assign(document.body.style, { background: "transparent" });
-		Object.assign(document.documentElement.style, { background: "transparent" });
-		return () => {
-			Object.assign(document.body.style, { background: prevBody });
-			Object.assign(document.documentElement.style, { background: prevHtml });
-		};
-	}, []);
+  useEffect(() => {
+    const prevBody = document.body.style.background;
+    const prevHtml = document.documentElement.style.background;
+    Object.assign(document.body.style, { background: "transparent" });
+    Object.assign(document.documentElement.style, {
+      background: "transparent",
+    });
+    return () => {
+      Object.assign(document.body.style, { background: prevBody });
+      Object.assign(document.documentElement.style, { background: prevHtml });
+    };
+  }, []);
 }
 
 type SizePreset = "xs" | "sm" | "md" | "lg" | "xl";
 
 // Visible visualizer height in pixels for each preset.
 const PRESET_HEIGHT_PX: Record<SizePreset, number> = {
-	xs: 12,
-	sm: 18,
-	md: 27,
-	lg: 40,
-	xl: 60,
+  xs: 12,
+  sm: 18,
+  md: 27,
+  lg: 40,
+  xl: 60,
 };
 
 // Native height of the visualizer's `icon` preset (matches `barContainerVariants`
@@ -122,11 +144,11 @@ const ICON_PRESET_PX = 24;
 // to keep a chip-sized island legible, large enough at xl to read like a
 // caption from across the room.
 const TEXT_FONT_SIZE_PX: Record<SizePreset, number> = {
-	xs: 11,
-	sm: 12,
-	md: 14,
-	lg: 16,
-	xl: 20,
+  xs: 11,
+  sm: 12,
+  md: 14,
+  lg: 16,
+  xl: 20,
 };
 
 /**
@@ -141,62 +163,74 @@ const TEXT_FONT_SIZE_PX: Record<SizePreset, number> = {
  * `isRecordingActive` is false the interval doesn't run.
  */
 interface ElapsedState {
-	elapsedMs: number;
-	start: number | null;
+  elapsedMs: number;
+  start: number | null;
 }
 
 type ElapsedAction =
-	| { type: "reset" }
-	| { type: "start"; at: number }
-	| { type: "tick"; now: number };
+  | { type: "reset" }
+  | { type: "start"; at: number }
+  | { type: "tick"; now: number };
 
-function elapsedReducer(state: ElapsedState, action: ElapsedAction): ElapsedState {
-	switch (action.type) {
-		case "reset":
-			return state.start === null && state.elapsedMs === 0 ? state : { start: null, elapsedMs: 0 };
-		case "start":
-			return { start: action.at, elapsedMs: 0 };
-		case "tick":
-			return state.start === null
-				? state
-				: { start: state.start, elapsedMs: action.now - state.start };
-		default:
-			return state;
-	}
+function elapsedReducer(
+  state: ElapsedState,
+  action: ElapsedAction,
+): ElapsedState {
+  switch (action.type) {
+    case "reset":
+      return state.start === null && state.elapsedMs === 0
+        ? state
+        : { start: null, elapsedMs: 0 };
+    case "start":
+      return { start: action.at, elapsedMs: 0 };
+    case "tick":
+      return state.start === null
+        ? state
+        : { start: state.start, elapsedMs: action.now - state.start };
+    default:
+      return state;
+  }
 }
 
 function useRecordingElapsed(isRecordingActive: boolean): string {
-	// Single reducer-driven state (instead of two cascading useState slots)
-	// keeps reset+start+tick as one dispatch each — no setState waterfall
-	// inside the effect.
-	const [{ elapsedMs }, dispatch] = useReducer(elapsedReducer, { start: null, elapsedMs: 0 });
+  // Single reducer-driven state (instead of two cascading useState slots)
+  // keeps reset+start+tick as one dispatch each — no setState waterfall
+  // inside the effect.
+  const [{ elapsedMs }, dispatch] = useReducer(elapsedReducer, {
+    start: null,
+    elapsedMs: 0,
+  });
 
-	useEffect(() => {
-		if (!isRecordingActive) {
-			dispatch({ type: "reset" });
-			return;
-		}
-		const startedAt = Date.now();
-		dispatch({ type: "start", at: startedAt });
-		const interval = setInterval(() => {
-			dispatch({ type: "tick", now: Date.now() });
-		}, 1000);
-		return () => clearInterval(interval);
-	}, [isRecordingActive]);
+  useEffect(() => {
+    if (!isRecordingActive) {
+      dispatch({ type: "reset" });
+      return;
+    }
+    const startedAt = Date.now();
+    dispatch({ type: "start", at: startedAt });
+    const interval = setInterval(() => {
+      dispatch({ type: "tick", now: Date.now() });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isRecordingActive]);
 
-	const seconds = Math.floor(elapsedMs / 1000);
-	const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
-	const ss = String(seconds % 60).padStart(2, "0");
-	return `${mm}:${ss}`;
+  const seconds = Math.floor(elapsedMs / 1000);
+  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
 }
 
 // Older builds persisted `visualizerSize` as an integer pixel value; zustand's
 // localStorage hydration runs before the IPC settingsLoad reconciles, so we
 // can briefly observe a stale number here. Coerce anything unrecognized to xs.
 function toPreset(value: unknown): SizePreset {
-	return value === "xs" || value === "sm" || value === "md" || value === "lg" || value === "xl"
-		? value
-		: "xs";
+  return value === "xs" ||
+    value === "sm" ||
+    value === "md" ||
+    value === "lg" ||
+    value === "xl"
+    ? value
+    : "xs";
 }
 
 // Variants live at module scope so their references stay stable across
@@ -206,45 +240,49 @@ function toPreset(value: unknown): SizePreset {
 // same paint as the first transcribed token. Exits keep an ease-in
 // departure so cleanup still feels polished.
 const bubbleVariants: Variants = {
-	initial: { opacity: 1, scale: 1, y: 0 },
-	animate: { opacity: 1, scale: 1, y: 0 },
-	exit: {
-		opacity: 0,
-		y: 4,
-		scale: 0.97,
-		transition: { duration: 0.16, ease: [0.4, 0, 1, 1] },
-	},
+  initial: { opacity: 1, scale: 1, y: 0 },
+  animate: { opacity: 1, scale: 1, y: 0 },
+  exit: {
+    opacity: 0,
+    y: 4,
+    scale: 0.97,
+    transition: { duration: 0.16, ease: [0.4, 0, 1, 1] },
+  },
 };
 
 const chipVariants: Variants = {
-	initial: { opacity: 1, y: 0 },
-	animate: { opacity: 1, y: 0 },
-	exit: {
-		opacity: 0,
-		y: 4,
-		transition: { duration: 0.16, ease: [0.4, 0, 1, 1] },
-	},
+  initial: { opacity: 1, y: 0 },
+  animate: { opacity: 1, y: 0 },
+  exit: {
+    opacity: 0,
+    y: 4,
+    transition: { duration: 0.16, ease: [0.4, 0, 1, 1] },
+  },
 };
 
 // Crossfade between text and thinking content inside the bubble. Faster
 // than the bubble's own exit so swaps feel snappy. `initial={false}` on
 // the parent AnimatePresence suppresses this on first paint.
 const contentVariants: Variants = {
-	initial: { opacity: 0 },
-	animate: { opacity: 1, transition: { duration: 0.12 } },
-	exit: { opacity: 0, transition: { duration: 0.08 } },
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: { duration: 0.12 } },
+  exit: { opacity: 0, transition: { duration: 0.08 } },
 };
 
 // Inset breathing glow used only while VAD says the user is speaking.
 // Opacity-only keyframes (no scale) so the chip's bounding box stays
 // pixel-identical to its resting state.
 const breatheVariants: Variants = {
-	initial: { opacity: 0 },
-	animate: {
-		opacity: [0.0, 0.45, 0.0],
-		transition: { duration: 2.2, ease: "easeInOut", repeat: Number.POSITIVE_INFINITY },
-	},
-	exit: { opacity: 0, transition: { duration: 0.2 } },
+  initial: { opacity: 0 },
+  animate: {
+    opacity: [0.0, 0.45, 0.0],
+    transition: {
+      duration: 2.2,
+      ease: "easeInOut",
+      repeat: Number.POSITIVE_INFINITY,
+    },
+  },
+  exit: { opacity: 0, transition: { duration: 0.2 } },
 };
 
 // Shared glass surface — theme-token gradient + double-bezel hairline ring
@@ -253,11 +291,11 @@ const breatheVariants: Variants = {
 // material system. Concentric-radius (per chip vs. bubble) is the only
 // thing that differentiates them visually.
 const GLASS_SURFACE =
-	"bg-gradient-to-b from-[var(--color-surface-3)]/65 to-[var(--color-surface-1)]/92 ring-1 ring-white/[0.08] ring-inset backdrop-blur-md backdrop-saturate-150";
+  "bg-gradient-to-b from-[var(--color-surface-3)]/65 to-[var(--color-surface-1)]/92 ring-1 ring-white/[0.08] ring-inset backdrop-blur-md backdrop-saturate-150";
 const BUBBLE_SHADOW =
-	"shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.40),0_8px_24px_-8px_rgba(2,3,8,0.65)]";
+  "shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.40),0_8px_24px_-8px_rgba(2,3,8,0.65)]";
 const CHIP_SHADOW =
-	"shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.40),0_4px_14px_-6px_rgba(2,3,8,0.6)]";
+  "shadow-[inset_0_1px_0_0_rgba(255,255,255,0.10),inset_0_-1px_0_0_rgba(0,0,0,0.40),0_4px_14px_-6px_rgba(2,3,8,0.6)]";
 
 /**
  * Pure mapping from the renderer's live state to a Dynamic-Island size
@@ -277,7 +315,7 @@ const CHIP_SHADOW =
  *      (`compactMedium`) and let the indicator replace the visualizer in
  *      place — ballooning to the full-width text surface for content that
  *      doesn't need it is the "island grows for nothing" regression.
- *   2. `!isRecordingActive` collapses to `empty` (0×0) unless thinking —
+ *   2. `!isRecordingActive` collapses to `empty` (0Ã—0) unless thinking —
  *      same gate as the legacy floating pill, so the island disappears
  *      between dictation sessions.
  *   3. Captioned recording uses `long` (460px wide) — the natural width
@@ -288,24 +326,60 @@ const CHIP_SHADOW =
  * Exported for unit testing without mounting the motion-heavy pill tree.
  */
 export function computeIslandSize(args: {
-	isRecordingActive: boolean;
-	isSpeaking: boolean;
-	isThinking: boolean;
-	hasShownText: boolean;
+  isRecordingActive: boolean;
+  isSpeaking: boolean;
+  isThinking: boolean;
+  hasShownText: boolean;
 }): DynamicIslandSize {
-	if (args.isThinking) {
-		return args.hasShownText ? "long" : "compactMedium";
-	}
-	if (!args.isRecordingActive) {
-		return "empty";
-	}
-	if (args.hasShownText) {
-		return "long";
-	}
-	if (args.isSpeaking) {
-		return "compactMedium";
-	}
-	return "compact";
+  if (args.isThinking) {
+    return args.hasShownText ? "long" : "compactMedium";
+  }
+  if (!args.isRecordingActive) {
+    return "empty";
+  }
+  if (args.hasShownText) {
+    return "long";
+  }
+  if (args.isSpeaking) {
+    return "compactMedium";
+  }
+  return "compact";
+}
+
+/**
+ * Whether the overlay pill (floating-bottom chip/bubble OR dynamic island)
+ * should be revealed this frame.
+ *
+ * The pill must NOT appear on the bare recording-start — pressing PTT and
+ * holding through the silent lead-in before actually speaking used to pop the
+ * pill instantly ("it shows before I've said anything"). It reveals once the
+ * user ACTUALLY SPEAKS: either the recorder's real smoothed-Silero VAD reports
+ * speech onset (`isSpeaking`, ~one onset window after you start talking — the
+ * snappy signal) or the realtime model has streamed transcribed text into the
+ * pill (`hasText`, a slightly slower fallback that also covers VAD-quiet
+ * speech). Both are gated on `isRecordingActive` so stale state from a prior
+ * session can't flash the pill before the next recording arms. `isSpeaking` is
+ * REAL now — the backend surfaces actual VAD boundaries (managers::audio
+ * with_speech_callback); it used to be faked to the whole recording window,
+ * which is why this gate previously couldn't rely on it.
+ *
+ * `isThinking` keeps the pill alive across the recording → LLM-thinking
+ * transition (when `isRecordingActive` has already flipped off). The caller
+ * latches this sticky for the rest of the session (see `showPill`) so brief
+ * inter-word VAD gaps / realtime-text drops don't make the pill flicker.
+ *
+ * Exported for unit testing without mounting the motion-heavy pill tree.
+ */
+export function computePillReveal(args: {
+  isRecordingActive: boolean;
+  isSpeaking: boolean;
+  hasText: boolean;
+  isThinking: boolean;
+}): boolean {
+  return (
+    (args.isRecordingActive && (args.isSpeaking || args.hasText)) ||
+    args.isThinking
+  );
 }
 
 /** Boolean flags collapsed into one nested object so the island's content
@@ -314,18 +388,21 @@ export function computeIslandSize(args: {
  *  (recording / VAD / thinking / live-transcription policy) so the grouping
  *  reads naturally at the call site. */
 interface IslandFlags {
-	isRecordingActive: boolean;
-	isSpeaking: boolean;
-	isThinking: boolean;
-	showLiveTranscription: boolean;
+  isRecordingActive: boolean;
+  isSpeaking: boolean;
+  isThinking: boolean;
+  showLiveTranscription: boolean;
+  /** Editable preview-before-pasting pill is open — overrides the recording
+   *  content with the `TranscriptPreview` editor and forces a wide island. */
+  isPreviewActive: boolean;
 }
 
 interface IslandStateArgs {
-	flags: IslandFlags;
-	sizePreset: SizePreset;
-	text: string;
-	thinkingStartedAt: number | null;
-	thinkingText: string;
+  flags: IslandFlags;
+  sizePreset: SizePreset;
+  text: string;
+  thinkingStartedAt: number | null;
+  thinkingText: string;
 }
 
 /**
@@ -352,92 +429,109 @@ interface IslandStateArgs {
  * `pb-1.5` gives the trailing text room to breathe.
  */
 function DynamicIslandPillContent({
-	flags,
-	sizePreset,
-	text,
-	thinkingText,
-	thinkingStartedAt,
+  flags,
+  sizePreset,
+  text,
+  thinkingText,
+  thinkingStartedAt,
 }: IslandStateArgs) {
-	const { isRecordingActive, isSpeaking, isThinking, showLiveTranscription } = flags;
-	// Hook runs unconditionally — the early `null` return below would
-	// otherwise violate rules-of-hooks. The timer's interval only ticks
-	// when `isRecordingActive` is true (see `useRecordingElapsed`).
-	const elapsed = useRecordingElapsed(isRecordingActive);
+  const {
+    isRecordingActive,
+    isSpeaking,
+    isThinking,
+    showLiveTranscription,
+    isPreviewActive,
+  } = flags;
+  // Hook runs unconditionally — the early `null` return below would
+  // otherwise violate rules-of-hooks. The timer's interval only ticks
+  // when `isRecordingActive` is true (see `useRecordingElapsed`).
+  const elapsed = useRecordingElapsed(isRecordingActive);
 
-	if (!(isRecordingActive || isThinking)) {
-		// Belt-and-suspenders — the shell's `empty` preset (width 0) already
-		// hides the island; this guard prevents stale renders from leaking
-		// an empty padded box during the brief transition out.
-		return null;
-	}
+  // Preview-before-pasting owns the whole island when active — the editable
+  // transcript editor replaces the recording/thinking content.
+  if (isPreviewActive) {
+    return <TranscriptPreview />;
+  }
 
-	const visualizerZoom = PRESET_HEIGHT_PX[sizePreset] / ICON_PRESET_PX;
-	const textFontSize = TEXT_FONT_SIZE_PX[sizePreset];
-	// Timer is secondary information — render it slightly smaller than
-	// the transcription, like Apple's notch readout.
-	const timerFontSize = Math.max(10, Math.round(textFontSize * 0.8));
-	const showText = isRecordingActive && showLiveTranscription && text.length > 0;
+  if (!(isRecordingActive || isThinking)) {
+    // Belt-and-suspenders — the shell's `empty` preset (width 0) already
+    // hides the island; this guard prevents stale renders from leaking
+    // an empty padded box during the brief transition out.
+    return null;
+  }
 
-	// Padding tuned to the shell's 28px bottom-corner radius:
-	//   - `pt-1`  (4px) keeps the top row almost flush with the flat top
-	//     edge — the iPhone-notch look the user asked for.
-	//   - `px-5` (20px) keeps the rightmost char of the timer and the
-	//     last word of wrapped text clear of the bottom-corner curves.
-	//   - `pb-3` (12px) leaves a comfortable gap between the bottom text
-	//     line and the rounded bottom edge.
-	// Inner `gap-1` separates the top row from the transcription/thinking
-	// block by ~4px so they don't visually touch.
-	return (
-		<div className="flex flex-col gap-1 px-5 pt-1 pb-3">
-			{isRecordingActive ? (
-				<div className="flex items-center justify-between gap-3">
-					{/* Visualizer hugged to the top-left, scaled per setting */}
-					<div className="flex items-center" style={{ zoom: visualizerZoom }}>
-						<AudioVisualizer size="icon" />
-					</div>
-					{/* Recording dot + mm:ss timer, hugged to the top-right. The
+  const visualizerZoom = PRESET_HEIGHT_PX[sizePreset] / ICON_PRESET_PX;
+  const textFontSize = TEXT_FONT_SIZE_PX[sizePreset];
+  // Timer is secondary information — render it slightly smaller than
+  // the transcription, like Apple's notch readout.
+  const timerFontSize = Math.max(10, Math.round(textFontSize * 0.8));
+  const showText =
+    isRecordingActive && showLiveTranscription && text.length > 0;
+
+  // Padding tuned to the shell's 28px bottom-corner radius:
+  //   - `pt-1`  (4px) keeps the top row almost flush with the flat top
+  //     edge — the iPhone-notch look the user asked for.
+  //   - `px-5` (20px) keeps the rightmost char of the timer and the
+  //     last word of wrapped text clear of the bottom-corner curves.
+  //   - `pb-3` (12px) leaves a comfortable gap between the bottom text
+  //     line and the rounded bottom edge.
+  // Inner `gap-1` separates the top row from the transcription/thinking
+  // block by ~4px so they don't visually touch.
+  return (
+    <div className="flex flex-col gap-1 px-5 pt-1 pb-3">
+      {isRecordingActive ? (
+        <div className="flex items-center justify-between gap-3">
+          {/* Visualizer hugged to the top-left, scaled per setting */}
+          <div className="flex items-center" style={{ zoom: visualizerZoom }}>
+            <AudioVisualizer size="icon" />
+          </div>
+          {/* Recording dot + mm:ss timer, hugged to the top-right. The
 					    X cancel button is rendered separately (absolute-positioned
 					    in the parent shell) so it stays visible during LLM-thinking
 					    too — the header row hides in that state. */}
-					<div className="flex items-center gap-1.5">
-						<LivePulse isSpeaking={isSpeaking} />
-						<span
-							className="font-mono text-white/70 tabular-nums"
-							style={{ fontSize: timerFontSize }}
-						>
-							{elapsed}
-						</span>
-						{/* Spacer reserves room for the absolute-positioned X so the
+          <div className="flex items-center gap-1.5">
+            <LivePulse isSpeaking={isSpeaking} />
+            <span
+              className="font-mono text-white/70 tabular-nums"
+              style={{ fontSize: timerFontSize }}
+            >
+              {elapsed}
+            </span>
+            {/* Spacer reserves room for the absolute-positioned X so the
 						    timer doesn't sit flush against the right corner curve. */}
-						<span aria-hidden="true" className="inline-block w-3 shrink-0" />
-					</div>
-				</div>
-			) : null}
-			{showText ? (
-				<div className="w-full" style={{ fontSize: textFontSize }}>
-					<ScrollingText
-						className="text-left font-medium text-white tracking-tight"
-						// Solid black fade-mask matches the island's bg so the
-						// edge fade reads as "more text" rather than a band.
-						fadeColor="rgb(0 0 0 / 0.95)"
-						lineHeight={1.25}
-						maxLines={5}
-						text={text}
-					/>
-				</div>
-			) : null}
-			{isThinking ? (
-				<div className="w-full" style={{ fontSize: textFontSize }}>
-					{/* `fluidWidth` lets the streamed-reasoning band fill the
+            <span aria-hidden="true" className="inline-block w-3 shrink-0" />
+          </div>
+        </div>
+      ) : null}
+      {showText ? (
+        <div className="w-full" style={{ fontSize: textFontSize }}>
+          <ScrollingText
+            className="text-start font-medium text-white tracking-tight"
+            // Solid black fade-mask matches the island's bg so the
+            // edge fade reads as "more text" rather than a band.
+            fadeColor="rgb(0 0 0 / 0.95)"
+            lineHeight={1.25}
+            maxLines={5}
+            text={text}
+          />
+        </div>
+      ) : null}
+      {isThinking ? (
+        <div className="w-full" style={{ fontSize: textFontSize }}>
+          {/* `fluidWidth` lets the streamed-reasoning band fill the
 					    island width instead of its intrinsic clamp — so when the
 					    island sits at the compact `compactMedium` footprint (the
 					    main-model-only thinking path) the reasoning tracks that
 					    width rather than overflowing and getting clipped. */}
-					<ThinkingIndicator fluidWidth reasoning={thinkingText} startedAt={thinkingStartedAt} />
-				</div>
-			) : null}
-		</div>
-	);
+          <ThinkingIndicator
+            fluidWidth
+            reasoning={thinkingText}
+            startedAt={thinkingStartedAt}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -453,62 +547,66 @@ function DynamicIslandPillContent({
  * through so the rest of the pill never blocks input.
  */
 function CancelButton({ size = 16 }: { size?: number }) {
-	// Click-through is managed at the WINDOW level by OverlayPage's
-	// isRecordingActive/isThinking effect: ignore=false while the pill is
-	// active, ignore=true once the session ends. We deliberately do NOT
-	// flip ignore on hover / leave here — the hover-based dance was the
-	// reason touch input couldn't reach the X (no preceding mouseenter
-	// to flip ignore off before the synthesized mouse-down on touch).
-	// Letting the window stay interactive for the whole recording also
-	// removes the per-click IPC roundtrip race on mouse devices.
-	const cancelTranscription = () => {
-		sttAbortOperation();
-	};
-	// Wrap in the same glass material as the chip/island shell so the button
-	// reads as a sibling capsule — same gradient + hairline ring + drop shadow
-	// — instead of a floating raw glyph. `overflow-hidden` clips the hover
-	// tint to the circle. Size includes its own padding via `box-sizing`.
-	return (
-		<button
-			aria-label="Cancel transcription"
-			className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-white/70 transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
-			onClick={cancelTranscription}
-			style={{ width: size, height: size, boxSizing: "border-box" }}
-			type="button"
-		>
-			{/* Subtle hover wash inside the capsule — same tint logic the chip's
+  // Click-through is managed at the WINDOW level by OverlayPage's
+  // isRecordingActive/isThinking effect: ignore=false while the pill is
+  // active, ignore=true once the session ends. We deliberately do NOT
+  // flip ignore on hover / leave here — the hover-based dance was the
+  // reason touch input couldn't reach the X (no preceding mouseenter
+  // to flip ignore off before the synthesized mouse-down on touch).
+  // Letting the window stay interactive for the whole recording also
+  // removes the per-click IPC roundtrip race on mouse devices.
+  const cancelTranscription = () => {
+    sttAbortOperation();
+  };
+  // Wrap in the same glass material as the chip/island shell so the button
+  // reads as a sibling capsule — same gradient + hairline ring + drop shadow
+  // — instead of a floating raw glyph. `overflow-hidden` clips the hover
+  // tint to the circle. Size includes its own padding via `box-sizing`.
+  return (
+    <button
+      aria-label="Cancel transcription"
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-white/70 transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+      onClick={cancelTranscription}
+      style={{ width: size, height: size, boxSizing: "border-box" }}
+      type="button"
+    >
+      {/* Subtle hover wash inside the capsule — same tint logic the chip's
 			    breathing glow uses, but driven by :hover instead of VAD. */}
-			<span
-				aria-hidden="true"
-				className="pointer-events-none absolute inset-0 rounded-full bg-white/0 transition-colors duration-150 hover:bg-white/[0.08]"
-			/>
-			<svg
-				aria-hidden="true"
-				className="relative"
-				fill="none"
-				height={Math.round(size * 0.55)}
-				stroke="currentColor"
-				strokeLinecap="round"
-				strokeWidth={2}
-				viewBox="0 0 24 24"
-				width={Math.round(size * 0.55)}
-				xmlns="http://www.w3.org/2000/svg"
-			>
-				<line x1="6" x2="18" y1="6" y2="18" />
-				<line x1="6" x2="18" y1="18" y2="6" />
-			</svg>
-		</button>
-	);
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-full bg-white/0 transition-colors duration-150 hover:bg-white/[0.08]"
+      />
+      <svg
+        aria-hidden="true"
+        className="relative"
+        fill="none"
+        height={Math.round(size * 0.55)}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth={2}
+        viewBox="0 0 24 24"
+        width={Math.round(size * 0.55)}
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <line x1="6" x2="18" y1="6" y2="18" />
+        <line x1="6" x2="18" y1="18" y2="6" />
+      </svg>
+    </button>
+  );
 }
 
 function LivePulse({ isSpeaking }: { isSpeaking: boolean }) {
-	return (
-		<span
-			aria-hidden="true"
-			className="inline-block size-2 shrink-0 rounded-full bg-[oklch(62%_0.19_260)]"
-			style={isSpeaking ? { boxShadow: "0 0 8px 0 oklch(62% 0.19 260 / 0.7)" } : undefined}
-		/>
-	);
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block size-2 shrink-0 rounded-full bg-[oklch(62%_0.19_260)]"
+      style={
+        isSpeaking
+          ? { boxShadow: "0 0 8px 0 oklch(62% 0.19 260 / 0.7)" }
+          : undefined
+      }
+    />
+  );
 }
 
 /**
@@ -520,94 +618,114 @@ function LivePulse({ isSpeaking }: { isSpeaking: boolean }) {
  * the top bezel; `fitContent` lets each transcribed line extend the shell
  * by exactly one line's height.
  */
-function DynamicIslandPill(args: IslandStateArgs) {
-	const { setSize, state } = useDynamicIslandSize();
-	const { flags, text } = args;
-	const target = computeIslandSize({
-		isRecordingActive: flags.isRecordingActive,
-		isSpeaking: flags.isSpeaking,
-		isThinking: flags.isThinking,
-		hasShownText: flags.showLiveTranscription && text.length > 0,
-	});
+function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
+  const { setSize, state } = useDynamicIslandSize();
+  const { flags, text, revealed } = args;
+  // `revealed` is the sticky "actual words have been said this session" latch
+  // (shared with the floating-bottom pill via `computePillReveal` + `showPill`).
+  // Until it flips true the island stays collapsed to `empty` (0Ã—0, invisible)
+  // so it never pops on the bare recording-start before the first word — the
+  // same gate the floating-bottom chip uses. Once revealed, the normal size
+  // state-machine drives the width (it won't collapse back to `empty` mid-
+  // session, so brief inter-word gaps don't flicker the island shut).
+  const target = flags.isPreviewActive
+    ? "massive"
+    : revealed
+      ? computeIslandSize({
+          isRecordingActive: flags.isRecordingActive,
+          isSpeaking: flags.isSpeaking,
+          isThinking: flags.isThinking,
+          hasShownText: flags.showLiveTranscription && text.length > 0,
+        })
+      : "empty";
 
-	// Push the derived size into the DynamicIsland's reducer during render
-	// (React-documented "store info from previous renders" pattern, see
-	// https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
-	// The reducer's `set` action short-circuits when `state.size === target`,
-	// so this is a cheap no-op once we're already in sync — and the island
-	// no longer needs a setState-in-effect to mirror derived state.
-	if (state.size !== target) {
-		setSize(target);
-	}
+  // Push the derived size into the DynamicIsland's reducer during render
+  // (React-documented "store info from previous renders" pattern, see
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
+  // The reducer's `set` action short-circuits when `state.size === target`,
+  // so this is a cheap no-op once we're already in sync — and the island
+  // no longer needs a setState-in-effect to mirror derived state.
+  if (state.size !== target) {
+    setSize(target);
+  }
 
-	return (
-		<DynamicIsland fitContent flatTop id="winstt-overlay-island">
-			{/* X cancel anchored to the top-right of the island, just inside the
+  return (
+    <DynamicIsland fitContent flatTop id="winstt-overlay-island">
+      {/* X cancel anchored to the top-right of the island, just inside the
 			    rounded bottom-right area. Absolute-positioned so it stays visible
 			    in both the recording state (alongside the timer) and the LLM-
 			    thinking state (which hides the header row entirely). The 8px
-			    top inset matches the island's `pt-1` content padding. */}
-			<div className="pointer-events-auto absolute top-2 right-3 z-raised">
-				<CancelButton size={14} />
-			</div>
-			<DynamicIslandPillContent {...args} />
-		</DynamicIsland>
-	);
+			    top inset matches the island's `pt-1` content padding. Hidden
+			    during preview — the preview pill owns its own dismiss control. */}
+      {flags.isPreviewActive ? null : (
+        <div className="pointer-events-auto absolute top-2 right-3 z-raised">
+          <CancelButton size={14} />
+        </div>
+      )}
+      <DynamicIslandPillContent {...args} />
+    </DynamicIsland>
+  );
 }
 
 /**
  * SVG glyph for a TTS pill control. `pause`/`play` are filled; `discard` is the
  * same X stroke as {@link CancelButton}.
  */
-function IslandControlGlyph({ kind, size }: { kind: "pause" | "play" | "discard"; size: number }) {
-	if (kind === "discard") {
-		return (
-			<svg
-				aria-hidden="true"
-				className="relative"
-				fill="none"
-				height={size}
-				stroke="currentColor"
-				strokeLinecap="round"
-				strokeWidth={2}
-				viewBox="0 0 24 24"
-				width={size}
-				xmlns="http://www.w3.org/2000/svg"
-			>
-				<line x1="6" x2="18" y1="6" y2="18" />
-				<line x1="6" x2="18" y1="18" y2="6" />
-			</svg>
-		);
-	}
-	if (kind === "play") {
-		return (
-			<svg
-				aria-hidden="true"
-				className="relative"
-				fill="currentColor"
-				height={size}
-				viewBox="0 0 24 24"
-				width={size}
-				xmlns="http://www.w3.org/2000/svg"
-			>
-				<path d="M8 5v14l11-7z" />
-			</svg>
-		);
-	}
-	return (
-		<svg
-			aria-hidden="true"
-			className="relative"
-			fill="currentColor"
-			height={size}
-			viewBox="0 0 24 24"
-			width={size}
-			xmlns="http://www.w3.org/2000/svg"
-		>
-			<rect height="14" rx="1" width="4" x="6" y="5" />
-			<rect height="14" rx="1" width="4" x="14" y="5" />
-		</svg>
-	);
+function IslandControlGlyph({
+  kind,
+  size,
+}: {
+  kind: "pause" | "play" | "discard";
+  size: number;
+}) {
+  if (kind === "discard") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="relative"
+        fill="none"
+        height={size}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth={2}
+        viewBox="0 0 24 24"
+        width={size}
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <line x1="6" x2="18" y1="6" y2="18" />
+        <line x1="6" x2="18" y1="18" y2="6" />
+      </svg>
+    );
+  }
+  if (kind === "play") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="relative"
+        fill="currentColor"
+        height={size}
+        viewBox="0 0 24 24"
+        width={size}
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path d="M8 5v14l11-7z" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      aria-hidden="true"
+      className="relative"
+      fill="currentColor"
+      height={size}
+      viewBox="0 0 24 24"
+      width={size}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <rect height="14" rx="1" width="4" x="6" y="5" />
+      <rect height="14" rx="1" width="4" x="14" y="5" />
+    </svg>
+  );
 }
 
 /**
@@ -615,64 +733,70 @@ function IslandControlGlyph({ kind, size }: { kind: "pause" | "play" | "discard"
  * capsule material as {@link CancelButton} so the controls read as siblings.
  */
 function IslandControlButton({
-	kind,
-	label,
-	onClick,
-	size = 18,
+  kind,
+  label,
+  onClick,
+  size = 18,
 }: {
-	kind: "pause" | "play" | "discard";
-	label: string;
-	onClick: () => void;
-	size?: number;
+  kind: "pause" | "play" | "discard";
+  label: string;
+  onClick: () => void;
+  size?: number;
 }) {
-	return (
-		<button
-			aria-label={label}
-			className={`pointer-events-auto relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-white/75 transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
-			onClick={onClick}
-			style={{ width: size, height: size, boxSizing: "border-box" }}
-			type="button"
-		>
-			<span
-				aria-hidden="true"
-				className="pointer-events-none absolute inset-0 rounded-full bg-white/0 transition-colors duration-150 hover:bg-white/[0.08]"
-			/>
-			<IslandControlGlyph kind={kind} size={Math.round(size * 0.5)} />
-		</button>
-	);
+  return (
+    <button
+      aria-label={label}
+      className={`pointer-events-auto relative flex shrink-0 items-center justify-center overflow-hidden rounded-full text-white/75 transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+      onClick={onClick}
+      style={{ width: size, height: size, boxSizing: "border-box" }}
+      type="button"
+    >
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-full bg-white/0 transition-colors duration-150 hover:bg-white/[0.08]"
+      />
+      <IslandControlGlyph kind={kind} size={Math.round(size * 0.5)} />
+    </button>
+  );
 }
 
 // Read-aloud speed steps per source. Local Kokoro accepts 0.5–2.0; ElevenLabs
 // clamps `voice_settings.speed` to 0.7–1.2. Mirrors `electron/ipc/tts-reader.ts`
-// (separate runtimes can't share the const); electron re-clamps defensively.
+// (separate runtimes can't share the const); the reference re-clamps defensively.
 const TTS_LOCAL_SPEEDS = [1, 1.25, 1.5, 2] as const;
 const TTS_CLOUD_SPEEDS = [0.9, 1, 1.1, 1.2] as const;
 
 function nextTtsSpeed(current: number, cloud: boolean): number {
-	const steps = cloud ? TTS_CLOUD_SPEEDS : TTS_LOCAL_SPEEDS;
-	const idx = steps.findIndex((s) => Math.abs(s - current) < 0.001);
-	if (idx !== -1) {
-		return steps[(idx + 1) % steps.length] ?? current;
-	}
-	return steps.find((s) => s > current) ?? steps[0] ?? current;
+  const steps = cloud ? TTS_CLOUD_SPEEDS : TTS_LOCAL_SPEEDS;
+  const idx = steps.findIndex((s) => Math.abs(s - current) < 0.001);
+  if (idx !== -1) {
+    return steps[(idx + 1) % steps.length] ?? current;
+  }
+  return steps.find((s) => s > current) ?? steps[0] ?? current;
 }
 
 /**
- * Speed pill — shows the current read-aloud rate (e.g. `1.5×`) and cycles to the
+ * Speed pill — shows the current read-aloud rate (e.g. `1.5Ã—`) and cycles to the
  * next step on tap. The new speed applies to the read's UPCOMING sentences
  * (natural pitch) and is persisted by the main process.
  */
+function formatTtsSpeed(speed: number): string {
+  return `${speed}x`;
+}
+
 function SpeedButton({ speed, cloud }: { speed: number; cloud: boolean }) {
-	return (
-		<button
-			aria-label={`Reading speed ${speed}×, tap to change`}
-			className={`pointer-events-auto flex h-[18px] shrink-0 items-center justify-center rounded-full px-1.5 font-medium text-[10px] text-white/75 tabular-nums transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
-			onClick={() => ttsSetSpeed(nextTtsSpeed(speed, cloud))}
-			type="button"
-		>
-			{speed}×
-		</button>
-	);
+  const label = formatTtsSpeed(speed);
+  return (
+    <button
+      aria-label={`Reading speed ${label}, tap to change`}
+      className={`pointer-events-auto flex h-[18px] shrink-0 items-center justify-center rounded-full px-1.5 font-medium text-[10px] text-white/75 tabular-nums transition-colors hover:text-white focus:outline-none focus-visible:ring-1 focus-visible:ring-white/40 ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+      onClick={() => ttsSetSpeed(nextTtsSpeed(speed, cloud))}
+      title={`Reading speed ${label}`}
+      type="button"
+    >
+      {label}
+    </button>
+  );
 }
 
 /**
@@ -684,33 +808,37 @@ function SpeedButton({ speed, cloud }: { speed: number; cloud: boolean }) {
  * to the reader via IPC.
  */
 function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
-	const { setSize, state } = useDynamicIslandSize();
-	if (state.size !== "compactMedium") {
-		setSize("compactMedium");
-	}
-	const cloud = useSettingsStore((s) => s.settings.tts?.source) === "cloud";
-	const speed = useSettingsStore((s) =>
-		cloud ? (s.settings.tts?.cloud?.speed ?? 1) : (s.settings.tts?.speed ?? 1)
-	);
-	const paused = status === "paused";
-	return (
-		<DynamicIsland flatTop id="winstt-tts-island">
-			<div className="flex h-full items-center justify-between gap-2 px-4">
-				<div className="flex items-center">
-					<AudioVisualizer size="icon" />
-				</div>
-				<div className="pointer-events-auto flex items-center gap-2">
-					<SpeedButton cloud={cloud} speed={speed} />
-					<IslandControlButton
-						kind={paused ? "play" : "pause"}
-						label={paused ? "Resume reading" : "Pause reading"}
-						onClick={paused ? resumeTts : pauseTts}
-					/>
-					<IslandControlButton kind="discard" label="Stop reading" onClick={discardTts} />
-				</div>
-			</div>
-		</DynamicIsland>
-	);
+  const { setSize, state } = useDynamicIslandSize();
+  if (state.size !== "compactMedium") {
+    setSize("compactMedium");
+  }
+  const cloud = useSettingsStore((s) => s.settings.tts?.source) === "cloud";
+  const speed = useSettingsStore((s) =>
+    cloud ? (s.settings.tts?.cloud?.speed ?? 1) : (s.settings.tts?.speed ?? 1),
+  );
+  const paused = status === "paused";
+  return (
+    <DynamicIsland flatTop id="winstt-tts-island">
+      <div className="flex h-full items-center justify-between gap-2 px-4">
+        <div className="flex items-center">
+          <AudioVisualizer size="icon" />
+        </div>
+        <div className="pointer-events-auto flex items-center gap-2">
+          <SpeedButton cloud={cloud} speed={speed} />
+          <IslandControlButton
+            kind={paused ? "play" : "pause"}
+            label={paused ? "Resume reading" : "Pause reading"}
+            onClick={paused ? resumeTts : pauseTts}
+          />
+          <IslandControlButton
+            kind="discard"
+            label="Stop reading"
+            onClick={discardTts}
+          />
+        </div>
+      </div>
+    </DynamicIsland>
+  );
 }
 
 // Panel-reveal for the TTS island (transitions.dev "panel reveal", from the
@@ -723,18 +851,18 @@ function TtsIslandPill({ status }: { status: TtsPlaybackStatus }) {
 // vanish). `y` is a % of the island's own height.
 const TTS_PANEL_EASE = [0.22, 1, 0.36, 1] as const;
 const ttsPanelVariants: Variants = {
-	closed: {
-		y: "-72%",
-		opacity: 0,
-		filter: "blur(2px)",
-		transition: { duration: 0.35, ease: TTS_PANEL_EASE },
-	},
-	open: {
-		y: 0,
-		opacity: 1,
-		filter: "blur(0px)",
-		transition: { duration: 0.4, ease: TTS_PANEL_EASE },
-	},
+  closed: {
+    y: "-72%",
+    opacity: 0,
+    filter: "blur(2px)",
+    transition: { duration: 0.35, ease: TTS_PANEL_EASE },
+  },
+  open: {
+    y: 0,
+    opacity: 1,
+    filter: "blur(0px)",
+    transition: { duration: 0.4, ease: TTS_PANEL_EASE },
+  },
 };
 
 /**
@@ -746,22 +874,22 @@ const ttsPanelVariants: Variants = {
  * loops happy-dom in the OverlayPage tests).
  */
 function useDelayedUnmount(visible: boolean, exitMs: number): boolean {
-	const [mounted, setMounted] = useState(visible);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	// Latch `mounted` true during render the instant `visible` flips true, so the
-	// exit timer below has something to keep on screen while it animates out.
-	if (visible && !mounted) {
-		setMounted(true);
-	}
-	useEffect(() => {
-		if (visible) {
-			clearTimeout(timerRef.current);
-			return;
-		}
-		timerRef.current = setTimeout(() => setMounted(false), exitMs);
-		return () => clearTimeout(timerRef.current);
-	}, [visible, exitMs]);
-	return visible || mounted;
+  const [mounted, setMounted] = useState(visible);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Latch `mounted` true during render the instant `visible` flips true, so the
+  // exit timer below has something to keep on screen while it animates out.
+  if (visible && !mounted) {
+    setMounted(true);
+  }
+  useEffect(() => {
+    if (visible) {
+      clearTimeout(timerRef.current);
+      return;
+    }
+    timerRef.current = setTimeout(() => setMounted(false), exitMs);
+    return () => clearTimeout(timerRef.current);
+  }, [visible, exitMs]);
+  return visible || mounted;
 }
 
 /**
@@ -772,21 +900,31 @@ function useDelayedUnmount(visible: boolean, exitMs: number): boolean {
  * the close by `hideOverlay({ forceGrace: true })` in `tts.ts`. Top-anchored +
  * click-through container (only the controls capture pointer events).
  */
-function TtsIslandLayer({ show, status }: { show: boolean; status: TtsPlaybackStatus }) {
-	const mounted = useDelayedUnmount(show, 380);
-	return (
-		<LazyMotion features={domMax} strict>
-			<div className="pointer-events-none fixed inset-x-0 top-0 flex justify-center overflow-hidden">
-				{mounted && (
-					<m.div animate={show ? "open" : "closed"} initial="closed" variants={ttsPanelVariants}>
-						<DynamicIslandProvider initialSize="compactMedium">
-							<TtsIslandPill status={status} />
-						</DynamicIslandProvider>
-					</m.div>
-				)}
-			</div>
-		</LazyMotion>
-	);
+function TtsIslandLayer({
+  show,
+  status,
+}: {
+  show: boolean;
+  status: TtsPlaybackStatus;
+}) {
+  const mounted = useDelayedUnmount(show, 380);
+  return (
+    <LazyMotion features={domMax} strict>
+      <div className="pointer-events-none fixed inset-x-0 top-0 flex justify-center overflow-hidden">
+        {mounted && (
+          <m.div
+            animate={show ? "open" : "closed"}
+            initial="closed"
+            variants={ttsPanelVariants}
+          >
+            <DynamicIslandProvider initialSize="compactMedium">
+              <TtsIslandPill status={status} />
+            </DynamicIslandProvider>
+          </m.div>
+        )}
+      </div>
+    </LazyMotion>
+  );
 }
 
 /**
@@ -798,39 +936,46 @@ function TtsIslandLayer({ show, status }: { show: boolean; status: TtsPlaybackSt
  * flips to the STT view and the audio stops.
  */
 function useTtsIslandBridge(sessionActive: boolean): void {
-	const status = useTtsPlaybackStore((s) => s.status);
-	const setAudioLevel = useVisualizerStore((s) => s.setAudioLevel);
-	const rafRef = useRef(0);
+  const status = useTtsPlaybackStore((s) => s.status);
+  const setAudioLevel = useVisualizerStore((s) => s.setAudioLevel);
+  const rafRef = useRef(0);
 
-	useEffect(() => {
-		if (sessionActive && useTtsPlaybackStore.getState().status !== "idle") {
-			discardTts();
-		}
-	}, [sessionActive]);
+  useEffect(() => {
+    if (sessionActive && useTtsPlaybackStore.getState().status !== "idle") {
+      discardTts();
+    }
+  }, [sessionActive]);
 
-	useEffect(() => {
-		const playing = (status === "speaking" || status === "paused") && !sessionActive;
-		if (!playing) {
-			setAudioLevel(0);
-			cancelAnimationFrame(rafRef.current);
-			return;
-		}
-		const tick = () => {
-			setAudioLevel(getTtsLevel());
-			rafRef.current = requestAnimationFrame(tick);
-		};
-		rafRef.current = requestAnimationFrame(tick);
-		return () => cancelAnimationFrame(rafRef.current);
-	}, [status, sessionActive, setAudioLevel]);
+  useEffect(() => {
+    const playing =
+      (status === "speaking" || status === "paused") && !sessionActive;
+    if (!playing) {
+      setAudioLevel(0);
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
+    const tick = () => {
+      setAudioLevel(getTtsLevel());
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [status, sessionActive, setAudioLevel]);
 }
 
 interface FloatingPillProps {
-	flags: { isSpeaking: boolean; isThinking: boolean; showBubble: boolean; stickyShow: boolean };
-	heightPx: number;
-	text: string;
-	thinkingStartedAt: number | null;
-	thinkingText: string;
-	zoom: number;
+  flags: {
+    isSpeaking: boolean;
+    isThinking: boolean;
+    showBubble: boolean;
+    stickyShow: boolean;
+    isPreviewActive: boolean;
+  };
+  heightPx: number;
+  text: string;
+  thinkingStartedAt: number | null;
+  thinkingText: string;
+  zoom: number;
 }
 
 /**
@@ -840,88 +985,110 @@ interface FloatingPillProps {
  * cognitive-complexity gate.
  */
 function FloatingBottomPill({
-	flags,
-	heightPx,
-	text,
-	thinkingStartedAt,
-	thinkingText,
-	zoom,
+  flags,
+  heightPx,
+  text,
+  thinkingStartedAt,
+  thinkingText,
+  zoom,
 }: FloatingPillProps) {
-	const { isSpeaking, isThinking, showBubble, stickyShow } = flags;
-	return (
-		// Floating-bottom must NOT layout-animate the bubble — so the bubble
-		// carries no `layout` prop. The earlier code relied on this
-		// `domAnimation` wrapper to neutralize a `layout` prop, but that is
-		// false here: motion's feature registry is GLOBAL (LazyMotion's
-		// `features` merge into one shared definitions object via
-		// `loadFeatures`; the context only carries `renderer`/`strict`). The
-		// always-mounted `TtsIslandLayer` loads `domMax` (= domAnimation +
-		// drag + layout), so the layout-projection feature is active app-wide
-		// regardless of this wrapper. With `layout` on the bubble, Framer
-		// FLIP-scales the box as text wraps to a new line — the scaleY tween
-		// visibly STRETCHES the text inside (the bug). Letting the box grow by
-		// natural reflow keeps the text crisp, matching the Electron pill.
-		<LazyMotion features={domAnimation} strict>
-			<div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
-				{/* `relative` wrapper anchors the absolute-positioned X cancel
+  const { isSpeaking, isThinking, showBubble, stickyShow, isPreviewActive } =
+    flags;
+  // Preview-before-pasting owns the bottom pill when active — the editable
+  // transcript editor replaces the visualizer chip + bubble, in a glass bubble
+  // matching the pill aesthetic.
+  if (isPreviewActive) {
+    return (
+      <div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
+        <div
+          className={`relative overflow-hidden rounded-2xl ${GLASS_SURFACE} ${BUBBLE_SHADOW}`}
+        >
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-[oklch(62%_0.19_260/0.5)] to-transparent"
+          />
+          <TranscriptPreview />
+        </div>
+      </div>
+    );
+  }
+  return (
+    // Floating-bottom must NOT layout-animate the bubble — so the bubble
+    // carries no `layout` prop. The earlier code relied on this
+    // `domAnimation` wrapper to neutralize a `layout` prop, but that is
+    // false here: motion's feature registry is GLOBAL (LazyMotion's
+    // `features` merge into one shared definitions object via
+    // `loadFeatures`; the context only carries `renderer`/`strict`). The
+    // always-mounted `TtsIslandLayer` loads `domMax` (= domAnimation +
+    // drag + layout), so the layout-projection feature is active app-wide
+    // regardless of this wrapper. With `layout` on the bubble, Framer
+    // FLIP-scales the box as text wraps to a new line — the scaleY tween
+    // visibly STRETCHES the text inside (the bug). Letting the box grow by
+    // natural reflow keeps the text crisp, matching the reference pill.
+    <LazyMotion features={domAnimation} strict>
+      <div className="flex h-screen w-screen items-end justify-center overflow-hidden pb-3">
+        {/* `relative` wrapper anchors the absolute-positioned X cancel
 				    button to the bottom-right of the bubble/chip column without
 				    expanding the column itself. The button floats in the
 				    transparent margin to the right of the pill. */}
-				<div className="relative flex flex-col items-center gap-1">
-					{/* TEXT BUBBLE — appears with first transcribed word or
+        <div className="relative flex flex-col items-center gap-1">
+          {/* TEXT BUBBLE — appears with first transcribed word or
 					    when LLM is thinking. Grows by natural reflow as lines
 					    wrap; deliberately NO `layout` prop (see the note above
 					    — FLIP would scaleY-stretch the text inside the box). */}
-					<AnimatePresence>
-						{showBubble && (
-							<m.div
-								animate="animate"
-								className={`relative inline-flex max-w-[460px] flex-col items-center overflow-hidden rounded-2xl px-3 py-2 ${GLASS_SURFACE} ${BUBBLE_SHADOW}`}
-								exit="exit"
-								initial="initial"
-								key="text-bubble"
-								variants={bubbleVariants}
-							>
-								{/* Brand-accent hairline — single Docker-blue
+          <AnimatePresence>
+            {showBubble && (
+              <m.div
+                animate="animate"
+                className={`relative inline-flex max-w-[460px] flex-col items-center overflow-hidden rounded-2xl px-3 py-2 ${GLASS_SURFACE} ${BUBBLE_SHADOW}`}
+                exit="exit"
+                initial="initial"
+                key="text-bubble"
+                variants={bubbleVariants}
+              >
+                {/* Brand-accent hairline — single Docker-blue
 								    moment, sentence-case design. */}
-								<div
-									aria-hidden="true"
-									className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-[oklch(62%_0.19_260/0.5)] to-transparent"
-								/>
-								<AnimatePresence initial={false} mode="wait">
-									{isThinking ? (
-										<m.div
-											animate="animate"
-											exit="exit"
-											initial="initial"
-											key="thinking"
-											variants={contentVariants}
-										>
-											<ThinkingIndicator reasoning={thinkingText} startedAt={thinkingStartedAt} />
-										</m.div>
-									) : (
-										<m.div
-											animate="animate"
-											exit="exit"
-											initial="initial"
-											key="text"
-											variants={contentVariants}
-										>
-											<ScrollingText
-												className="text-center font-medium text-foreground text-sm tracking-tight"
-												fadeColor="oklch(8% 0.015 265 / 0.95)"
-												lineHeight={1.25}
-												maxLines={5}
-												text={text}
-											/>
-										</m.div>
-									)}
-								</AnimatePresence>
-							</m.div>
-						)}
-					</AnimatePresence>
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-[oklch(62%_0.19_260/0.5)] to-transparent"
+                />
+                <AnimatePresence initial={false} mode="wait">
+                  {isThinking ? (
+                    <m.div
+                      animate="animate"
+                      exit="exit"
+                      initial="initial"
+                      key="thinking"
+                      variants={contentVariants}
+                    >
+                      <ThinkingIndicator
+                        reasoning={thinkingText}
+                        startedAt={thinkingStartedAt}
+                      />
+                    </m.div>
+                  ) : (
+                    <m.div
+                      animate="animate"
+                      exit="exit"
+                      initial="initial"
+                      key="text"
+                      variants={contentVariants}
+                    >
+                      <ScrollingText
+                        className="text-center font-medium text-foreground text-sm tracking-tight"
+                        fadeColor="oklch(8% 0.015 265 / 0.95)"
+                        lineHeight={1.25}
+                        maxLines={5}
+                        text={text}
+                      />
+                    </m.div>
+                  )}
+                </AnimatePresence>
+              </m.div>
+            )}
+          </AnimatePresence>
 
-					{/* VISUALIZER CHIP — bottom-anchored, never moves. The
+          {/* VISUALIZER CHIP — bottom-anchored, never moves. The
 					    capsule (rounded-full) reads as the persistent
 					    "instrument" while the bubble above is the
 					    transient "output". The chip is wrapped in a `relative
@@ -932,252 +1099,262 @@ function FloatingBottomPill({
 					    sizes the wrapper to the chip's intrinsic width so the
 					    X stays anchored to the chip, not the column (which
 					    would grow with the bubble's width). */}
-					<div className="relative w-fit">
-						<AnimatePresence>
-							{stickyShow && (
-								<m.div
-									animate="animate"
-									className="absolute -top-1 -right-3 z-raised"
-									exit="exit"
-									initial="initial"
-									key="cancel-button"
-									variants={chipVariants}
-								>
-									<CancelButton size={16} />
-								</m.div>
-							)}
-						</AnimatePresence>
-						<AnimatePresence>
-							{stickyShow && (
-								<m.div
-									animate="animate"
-									// Hard-locked chip dimensions. The visualizer is rendered as an
-									// absolutely-positioned child below (`absolute inset-0`), so
-									// nothing it does — bars swinging with voice amplitude, radial
-									// dots oscillating, an SVG variant that draws outside its
-									// nominal `h-[24px]` box — can contribute to this element's
-									// layout. Width comes from `heightPx * 2.5 + 20`: enough room
-									// for the bar variant's widest reasonable barCount (≤12 bars at
-									// 4px + 2px gaps fits in 2.5× the icon height) plus 20px of
-									// `px-2.5` padding. Height is `heightPx + 8` (visualizer +
-									// py-1). `box-border` so the style values include padding.
-									className={`relative block shrink-0 overflow-hidden rounded-full ${GLASS_SURFACE} ${CHIP_SHADOW}`}
-									exit="exit"
-									initial="initial"
-									key="visualizer-chip"
-									style={{
-										width: Math.round(heightPx * 2.5 + 20),
-										height: heightPx + 8,
-										boxSizing: "border-box",
-									}}
-									variants={chipVariants}
-								>
-									{/* Glass refraction hairline at the very top
+          <div className="relative w-fit">
+            <AnimatePresence>
+              {stickyShow && (
+                <m.div
+                  animate="animate"
+                  className="absolute -top-1 -right-3 z-raised"
+                  exit="exit"
+                  initial="initial"
+                  key="cancel-button"
+                  variants={chipVariants}
+                >
+                  <CancelButton size={16} />
+                </m.div>
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {stickyShow && (
+                <m.div
+                  animate="animate"
+                  // Hard-locked chip dimensions. The visualizer is rendered as an
+                  // absolutely-positioned child below (`absolute inset-0`), so
+                  // nothing it does — bars swinging with voice amplitude, radial
+                  // dots oscillating, an SVG variant that draws outside its
+                  // nominal `h-[24px]` box — can contribute to this element's
+                  // layout. Width comes from `heightPx * 2.5 + 20`: enough room
+                  // for the bar variant's widest reasonable barCount (≤12 bars at
+                  // 4px + 2px gaps fits in 2.5Ã— the icon height) plus 20px of
+                  // `px-2.5` padding. Height is `heightPx + 8` (visualizer +
+                  // py-1). `box-border` so the style values include padding.
+                  className={`relative block shrink-0 overflow-hidden rounded-full ${GLASS_SURFACE} ${CHIP_SHADOW}`}
+                  exit="exit"
+                  initial="initial"
+                  key="visualizer-chip"
+                  style={{
+                    width: Math.round(heightPx * 2.5 + 20),
+                    height: heightPx + 8,
+                    boxSizing: "border-box",
+                  }}
+                  variants={chipVariants}
+                >
+                  {/* Glass refraction hairline at the very top
 								    of the capsule. */}
-									<div
-										aria-hidden="true"
-										className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent"
-									/>
-									{/* Breathing inset glow while user is
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent"
+                  />
+                  {/* Breathing inset glow while user is
 								    actively speaking. Opacity-only — chip
 								    dimensions stay pixel-identical to its
 								    resting state. */}
-									<AnimatePresence>
-										{isSpeaking && !isThinking && (
-											<m.div
-												animate="animate"
-												aria-hidden="true"
-												className="pointer-events-none absolute inset-0 rounded-full"
-												exit="exit"
-												initial="initial"
-												key="speaking-breathe"
-												style={{
-													boxShadow:
-														"inset 0 0 18px 0 oklch(62% 0.19 260 / 0.28), inset 0 0 1px 0 oklch(75% 0.15 260 / 0.4)",
-												}}
-												variants={breatheVariants}
-											/>
-										)}
-									</AnimatePresence>
-									{/* Visualizer rendered absolutely-positioned and centered.
+                  <AnimatePresence>
+                    {isSpeaking && !isThinking && (
+                      <m.div
+                        animate="animate"
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 rounded-full"
+                        exit="exit"
+                        initial="initial"
+                        key="speaking-breathe"
+                        style={{
+                          boxShadow:
+                            "inset 0 0 18px 0 oklch(62% 0.19 260 / 0.28), inset 0 0 1px 0 oklch(75% 0.15 260 / 0.4)",
+                        }}
+                        variants={breatheVariants}
+                      />
+                    )}
+                  </AnimatePresence>
+                  {/* Visualizer rendered absolutely-positioned and centered.
 									    Out-of-flow, so its zoom-scaled height never feeds back
 									    into the chip's layout box. */}
-									<div className="absolute inset-0 flex items-center justify-center">
-										<div
-											className="flex items-center justify-center"
-											style={{ zoom, height: ICON_PRESET_PX }}
-										>
-											<AudioVisualizer size="icon" />
-										</div>
-									</div>
-								</m.div>
-							)}
-						</AnimatePresence>
-					</div>
-				</div>
-			</div>
-		</LazyMotion>
-	);
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div
+                      className="flex items-center justify-center"
+                      style={{ zoom, height: ICON_PRESET_PX }}
+                    >
+                      <AudioVisualizer size="icon" />
+                    </div>
+                  </div>
+                </m.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </div>
+    </LazyMotion>
+  );
 }
 
 export function OverlayPage() {
-	useTransparentBody();
-	useResetOnOverlayShow();
-	useVisualizerSync();
-	useTranscriptionFeed();
-	useLlmProcessingFeed();
+  useTransparentBody();
+  useResetOnOverlayShow();
+  useVisualizerSync();
+  useTranscriptionFeed();
+  useLlmProcessingFeed();
+  useTranscriptPreviewFeed();
 
-	const setSettings = useSettingsStore((s) => s.setSettings);
-	const sizePreset = useSettingsStore((s) => toPreset(s.settings.general?.visualizerSize));
-	const liveDisplay = useSettingsStore(
-		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both"
-	);
-	const overlayMode = useSettingsStore((s) => s.settings.general?.overlayMode ?? "floating-bottom");
-	const showLiveTranscription = liveDisplay === "in-pill" || liveDisplay === "both";
+  const setSettings = useSettingsStore((s) => s.setSettings);
+  const sizePreset = useSettingsStore((s) =>
+    toPreset(s.settings.general?.visualizerSize),
+  );
+  const liveDisplay = useSettingsStore(
+    (s) => s.settings.general?.liveTranscriptionDisplay ?? "both",
+  );
+  const overlayMode = useSettingsStore(
+    (s) => s.settings.general?.overlayMode ?? "floating-bottom",
+  );
+  const showLiveTranscription =
+    liveDisplay === "in-pill" || liveDisplay === "both";
 
-	const realtime = useTranscriptionStore((s) => s.currentRealtime);
-	const ephemeral = useTranscriptionStore((s) => s.ephemeral);
-	const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
-	const isThinking = useLlmProcessingStore((s) => s.isThinking);
-	const thinkingText = useLlmProcessingStore((s) => s.thinkingText);
-	const thinkingStartedAt = useLlmProcessingStore((s) => s.thinkingStartedAt);
-	// `isSpeaking` (VAD) is still read for the breathing overlay, but it
-	// deliberately no longer gates pill mount — that fired hundreds of ms
-	// before the first transcribed word, making the pill appear "early".
-	const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
-	const ttsStatus = useTtsPlaybackStore((s) => s.status);
-	// STT (recording or post-recording LLM-thinking) always owns the island.
-	const sttOwnsIsland = isRecordingActive || isThinking;
-	useTtsIslandBridge(sttOwnsIsland);
+  const realtime = useTranscriptionStore((s) => s.currentRealtime);
+  const ephemeral = useTranscriptionStore((s) => s.ephemeral);
+  const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
+  const isThinking = useLlmProcessingStore((s) => s.isThinking);
+  const thinkingText = useLlmProcessingStore((s) => s.thinkingText);
+  const thinkingStartedAt = useLlmProcessingStore((s) => s.thinkingStartedAt);
+  // `isSpeaking` is the recorder's REAL smoothed-Silero VAD (backend surfaces
+  // stt:vad-start/stop on actual speech onset/offset). It gates the pill reveal
+  // (`computePillReveal`) — the chip lands on speech onset, not on the silent
+  // lead-in after PTT — and also drives the breathing glow + island width.
+  const isSpeaking = useVisualizerStore((s) => s.isSpeaking);
+  const ttsStatus = useTtsPlaybackStore((s) => s.status);
+  // Editable preview-before-pasting pill open (recording is done, paste held).
+  const isPreviewActive = useTranscriptPreviewStore((s) => s.isActive);
+  // STT (recording, post-recording LLM-thinking, OR an open preview) owns the
+  // island — a pending preview must keep TTS reads from taking over the pill.
+  const sttOwnsIsland = isRecordingActive || isThinking || isPreviewActive;
+  useTtsIslandBridge(sttOwnsIsland);
 
-	useEffect(() => {
-		const unsub = onSettingsChanged((incoming) => {
-			setSettings(decodeSettingsPayload(incoming));
-		});
-		return unsub;
-	}, [setSettings]);
+  useEffect(() => {
+    const unsub = onSettingsChanged((incoming) => {
+      setSettings(decodeSettingsPayload(incoming));
+    });
+    return unsub;
+  }, [setSettings]);
 
-	// Click-through is driven by main-process applyShow / applyHide in
-	// overlay.ts so the flag flips on the SAME tick as window visibility,
-	// no IPC roundtrip race between renderer state and OS pointer dispatch.
-	// The previous effect-based flip raced the click itself ("press X
-	// while talking → nothing happens" regression), because
-	// `isRecordingActive` is a renderer-side mirror that lags the actual
-	// window-shown event by however long the IPC + React reconcile takes.
-	// `overlaySetIgnoreMouse` is intentionally not called from here.
+  // Click-through is owned by the main process so window visibility and
+  // ignore-mouse state change on the same tick.
+  // Keeping it out of renderer state avoids a cancel-click race.
 
-	const text = realtime.trim() || ephemeral?.text || "";
-	const hasText = text.length > 0;
-	const showText = showLiveTranscription && hasText;
-	// The visualizer chip is the recording "instrument": it must appear the
-	// MOMENT recording starts and animate from the mic level — exactly like
-	// Handy's RecordingOverlay (bars render purely on state==='recording',
-	// fed by mic-level, never on transcribed text), and like our own
-	// dynamic-island mode (which already mounts on `isRecordingActive`).
-	// Gating on `hasText` kept the floating-bottom pill invisible for the
-	// whole session because the Tauri port has no realtime token feed yet, so
-	// `hasText` stays false until the final result (which simultaneously ends
-	// the session). The text BUBBLE stays gated on text via `showBubble`
-	// below, so this only un-gates the chip — no empty bubble flashes.
-	//
-	// `isThinking` keeps the pill alive across the recording → LLM-thinking
-	// transition (when `isRecordingActive` has already flipped off).
-	const sessionShouldShow = isRecordingActive || isThinking;
-	// Sticky once-on: hold the pill mounted for the rest of the session even
-	// if `currentRealtime` momentarily empties between realtime chunks.
-	// Without this, the AnimatePresence around chip + bubble unmounts on every
-	// brief text drop and the chip's chipVariants exit (`y: 4`) makes the
-	// whole pill visibly bounce up/down as the user speaks. The flag clears
-	// when the session truly ends (recording inactive AND not thinking) — the
-	// `useResetOnOverlayShow` visibilitychange handler already clears the
-	// underlying stores before the next session paints.
-	//
-	// Implemented with React's "store info from previous renders" pattern
-	// (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
-	// so the stickiness is captured in render-phase setState rather than a
-	// setState-in-effect waterfall.
-	const [showPill, setShowPill] = useState(false);
-	const sessionActive = isRecordingActive || isThinking;
-	const stickyShow = sessionActive ? showPill || sessionShouldShow : false;
-	if (stickyShow !== showPill) {
-		setShowPill(stickyShow);
-	}
+  const text = realtime.trim() || ephemeral?.text || "";
+  const hasText = text.length > 0;
+  const showText = showLiveTranscription && hasText;
+  // Reveal the pill once the user actually speaks (real VAD `isSpeaking`) or words
+  // are transcribed (`hasText`), or the LLM is thinking — NOT on the bare
+  // recording-start. See `computePillReveal` for the rationale (the pill used to pop
+  // instantly when PTT was held through a silent lead-in; now it lands on speech onset).
+  const sessionShouldShow =
+    computePillReveal({
+      isRecordingActive,
+      isSpeaking,
+      hasText,
+      isThinking,
+    }) || isPreviewActive;
+  // Sticky once-on: hold the pill mounted for the rest of the session even
+  // if `currentRealtime` momentarily empties between realtime chunks.
+  // Without this, the AnimatePresence around chip + bubble unmounts on every
+  // brief text drop and the chip's chipVariants exit (`y: 4`) makes the
+  // whole pill visibly bounce up/down as the user speaks. The flag clears
+  // when the session truly ends (recording inactive AND not thinking) — the
+  // `useResetOnOverlayShow` visibilitychange handler already clears the
+  // underlying stores before the next session paints.
+  //
+  // Implemented with React's "store info from previous renders" pattern
+  // (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
+  // so the stickiness is captured in render-phase setState rather than a
+  // setState-in-effect waterfall.
+  const [showPill, setShowPill] = useState(false);
+  const sessionActive = isRecordingActive || isThinking || isPreviewActive;
+  const stickyShow = sessionActive ? showPill || sessionShouldShow : false;
+  if (stickyShow !== showPill) {
+    setShowPill(stickyShow);
+  }
 
-	const heightPx = PRESET_HEIGHT_PX[sizePreset];
-	// CSS `zoom` (Chromium-supported, including Electron) scales both visual and
-	// layout box, so the surrounding flex container auto-sizes around the visualizer.
-	const zoom = heightPx / ICON_PRESET_PX;
+  const heightPx = PRESET_HEIGHT_PX[sizePreset];
+  // CSS `zoom` (Chromium-supported, including the reference) scales both visual and
+  // layout box, so the surrounding flex container auto-sizes around the visualizer.
+  const zoom = heightPx / ICON_PRESET_PX;
 
-	// Bubble respects the in-pill transcription setting: if the user routed
-	// live text to "in-app" only, the bubble stays hidden for transcription
-	// but still appears for the LLM-thinking state (that's a system signal,
-	// not "live captions"). Chip remains independent so a recording without
-	// in-pill captions still shows the instrument.
-	const showBubble = stickyShow && (showText || isThinking);
+  // Bubble respects the in-pill transcription setting: if the user routed
+  // live text to "in-app" only, the bubble stays hidden for transcription
+  // but still appears for the LLM-thinking state (that's a system signal,
+  // not "live captions"). Chip remains independent so a recording without
+  // in-pill captions still shows the instrument.
+  const showBubble = stickyShow && (showText || isThinking);
 
-	// STT pill vs forced TTS read-aloud pill. STT takes precedence: while a
-	// dictation session owns the island, any in-flight read was already
-	// discarded by `useTtsIslandBridge`, so `ttsStatus` is `idle` here.
-	const showTtsIsland = !sttOwnsIsland && ttsStatus !== "idle";
-	// STT pill (dynamic-island or floating-bottom). The forced TTS read-aloud pill
-	// is a separate, always-mounted animated layer (`TtsIslandLayer`) so it can
-	// slide in AND out from the top instead of popping.
-	let sttPill: ReactNode;
-	if (overlayMode === "dynamic-island") {
-		// Top-flush layout: container anchors content to the *top* of the
-		// renderer window (which is itself docked at `y = 0` of the primary
-		// display via electron/ipc/overlay.ts), so the island sits against
-		// the physical top bezel with no gap.
-		//
-		// Scaling is per-element inside the island (visualizer zoom + text
-		// font-size) rather than a uniform outer `zoom`. The shell's width
-		// stays bounded by the size preset (max 460px at `long`) regardless
-		// of `visualizerSize`, while the visualizer and text grow / shrink
-		// individually — same scale curve the floating-bottom pill uses.
-		sttPill = (
-			<LazyMotion features={domMax} strict>
-				<div className="flex h-screen w-screen items-start justify-center overflow-hidden">
-					<DynamicIslandProvider initialSize="empty">
-						<DynamicIslandPill
-							flags={{
-								isRecordingActive,
-								isSpeaking,
-								isThinking,
-								showLiveTranscription,
-							}}
-							sizePreset={sizePreset}
-							text={text}
-							thinkingStartedAt={thinkingStartedAt}
-							thinkingText={thinkingText}
-						/>
-					</DynamicIslandProvider>
-				</div>
-			</LazyMotion>
-		);
-	} else {
-		sttPill = (
-			<FloatingBottomPill
-				flags={{ isSpeaking, isThinking, showBubble, stickyShow }}
-				heightPx={heightPx}
-				text={text}
-				thinkingStartedAt={thinkingStartedAt}
-				thinkingText={thinkingText}
-				zoom={zoom}
-			/>
-		);
-	}
+  // STT pill vs forced TTS read-aloud pill. STT takes precedence: while a
+  // dictation session owns the island, any in-flight read was already
+  // discarded by `useTtsIslandBridge`, so `ttsStatus` is `idle` here.
+  const showTtsIsland = !sttOwnsIsland && ttsStatus !== "idle";
+  // STT pill (dynamic-island or floating-bottom). The forced TTS read-aloud pill
+  // is a separate, always-mounted animated layer (`TtsIslandLayer`) so it can
+  // slide in AND out from the top instead of popping.
+  let sttPill: ReactNode;
+  if (overlayMode === "dynamic-island") {
+    // Top-flush layout: container anchors content to the *top* of the
+    // renderer window (which is itself docked at `y = 0` of the primary
+    // display via electron/ipc/overlay.ts), so the island sits against
+    // the physical top bezel with no gap.
+    //
+    // Scaling is per-element inside the island (visualizer zoom + text
+    // font-size) rather than a uniform outer `zoom`. The shell's width
+    // stays bounded by the size preset (max 460px at `long`) regardless
+    // of `visualizerSize`, while the visualizer and text grow / shrink
+    // individually — same scale curve the floating-bottom pill uses.
+    sttPill = (
+      <LazyMotion features={domMax} strict>
+        <div className="flex h-screen w-screen items-start justify-center overflow-hidden">
+          <DynamicIslandProvider initialSize="empty">
+            <DynamicIslandPill
+              flags={{
+                isRecordingActive,
+                isSpeaking,
+                isThinking,
+                showLiveTranscription,
+                isPreviewActive,
+              }}
+              revealed={stickyShow}
+              sizePreset={sizePreset}
+              text={text}
+              thinkingStartedAt={thinkingStartedAt}
+              thinkingText={thinkingText}
+            />
+          </DynamicIslandProvider>
+        </div>
+      </LazyMotion>
+    );
+  } else {
+    sttPill = (
+      <FloatingBottomPill
+        flags={{
+          isSpeaking,
+          isThinking,
+          showBubble,
+          stickyShow,
+          isPreviewActive,
+        }}
+        heightPx={heightPx}
+        text={text}
+        thinkingStartedAt={thinkingStartedAt}
+        thinkingText={thinkingText}
+        zoom={zoom}
+      />
+    );
+  }
 
-	return (
-		<>
-			{/* Owns the Web Audio queue + analyser for this (visible-during-reads)
+  return (
+    <>
+      {/* Owns the Web Audio queue + analyser for this (visible-during-reads)
 			    window. Rendered at a STABLE position so switching the visible pill
 			    never unmounts it (which would dispose the queue). */}
-			<TtsPlaybackMount />
-			{/* Forced TTS read-aloud island — always mounted so AnimatePresence can
+      <TtsPlaybackMount />
+      {/* Forced TTS read-aloud island — always mounted so AnimatePresence can
 			    slide it in/out from the top. STT takes precedence: while STT owns the
 			    island `showTtsIsland` is false (the read was already discarded). */}
-			<TtsIslandLayer show={showTtsIsland} status={ttsStatus} />
-			{!showTtsIsland && sttPill}
-		</>
-	);
+      <TtsIslandLayer show={showTtsIsland} status={ttsStatus} />
+      {!showTtsIsland && sttPill}
+    </>
+  );
 }

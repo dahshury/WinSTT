@@ -1,10 +1,10 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/07_*.md +
+// Source: docs/port/07_*.md +
 // 10_frontend_port_plan.md §6 WU-8 + lib_wiring.md §3, and the authoritative
 // frontend/electron/ipc/file-transcribe-queue.ts. Wraps managers::FileTranscribeManager.
 //
 // The multi-file transcription queue command surface. The renderer
 // (`features/file-transcription` + `widgets/audio-display`) drives these via the
-// `window.electronAPI` polyfill (electron-tauri-adapter.ts), which routes the
+// `window.nativeBridge` polyfill (native-bridge-adapter.ts), which routes the
 // WinSTT `file:queue-*` channels to these commands with BYTE-IDENTICAL arg shapes:
 //
 //   file:transcribe        → file_transcribe_enqueue   { files: [{ filePath, fileName }] }
@@ -31,7 +31,7 @@ use tauri::State;
 use crate::winstt::managers::FileTranscribeManager;
 
 /// One dropped file: its native path + display name (resolved renderer-side via
-/// the `getPathForFile` drag-drop bridge). Mirrors the Electron enqueue payload.
+/// the `getPathForFile` drag-drop bridge). Mirrors the reference enqueue payload.
 #[derive(Clone, Debug, Deserialize, Serialize, specta::Type)]
 pub struct DroppedFile {
     #[serde(rename = "filePath")]
@@ -93,20 +93,14 @@ pub fn file_transcribe_clear(file_tx: State<'_, Arc<FileTranscribeManager>>) {
 ///   • no `id`   → PTT whole-queue auto-pause (the model is busy dictating).
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_pause(
-    file_tx: State<'_, Arc<FileTranscribeManager>>,
-    id: Option<String>,
-) {
+pub fn file_transcribe_pause(file_tx: State<'_, Arc<FileTranscribeManager>>, id: Option<String>) {
     file_tx.inner().clone().pause(id.as_deref());
 }
 
 /// `file_transcribe_resume` — optional `{id}` (symmetric with pause).
 #[tauri::command]
 #[specta::specta]
-pub fn file_transcribe_resume(
-    file_tx: State<'_, Arc<FileTranscribeManager>>,
-    id: Option<String>,
-) {
+pub fn file_transcribe_resume(file_tx: State<'_, Arc<FileTranscribeManager>>, id: Option<String>) {
     file_tx.inner().clone().resume(id.as_deref());
 }
 

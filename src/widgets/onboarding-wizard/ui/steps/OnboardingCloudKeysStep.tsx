@@ -1,6 +1,7 @@
 import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
+import { useTranslations } from "use-intl";
 import { useCredentialStatus } from "@/entities/cloud-stt-credential";
 import { useSettingsStore } from "@/entities/setting";
 import { verifyCredential } from "@/features/verify-credentials";
@@ -52,6 +53,7 @@ const PROVIDER_OPTIONS: readonly SwitcherOption<CloudSttProvider>[] = PROVIDERS.
  * status pill semantics match the Settings → Integrations panel exactly.
  */
 export function OnboardingCloudKeysStep() {
+	const t = useTranslations("onboarding");
 	const [provider, setProvider] = useState<CloudSttProvider>("openai");
 	const apiKey = useSettingsStore((s) => s.settings.integrations[provider].apiKey);
 	const updateIntegrations = useSettingsStore((s) => s.updateIntegrations);
@@ -67,8 +69,8 @@ export function OnboardingCloudKeysStep() {
 	return (
 		<div className="flex flex-col gap-3">
 			<FormControl
-				caption={`${meta?.label ?? "Provider"} — ${meta?.caption ?? ""}`}
-				label="Provider"
+				caption={`${meta?.label ?? t("provider")} — ${meta?.caption ?? ""}`}
+				label={t("provider")}
 				layout="stacked"
 			>
 				<ElevatedSurface>
@@ -82,8 +84,8 @@ export function OnboardingCloudKeysStep() {
 			</FormControl>
 
 			<FormControl
-				caption="Leave empty to add later in Settings → Integrations."
-				label={`${meta?.label ?? "API"} key`}
+				caption={t("apiKeyCaption")}
+				label={t("apiKeyLabel", { provider: meta?.label ?? "API" })}
 				labelTrailing={
 					<a
 						className="inline-flex items-center gap-1 font-mono text-foreground-muted text-xs-tight uppercase tracking-[0.14em] underline-offset-4 transition-colors hover:text-foreground-secondary hover:underline"
@@ -91,7 +93,7 @@ export function OnboardingCloudKeysStep() {
 						rel="noreferrer noopener"
 						target="_blank"
 					>
-						Get key
+						{t("getKey")}
 						<HugeiconsIcon icon={ArrowUpRight01Icon} size={10} />
 					</a>
 				}
@@ -127,7 +129,7 @@ export function OnboardingCloudKeysStep() {
 							onClick={handleVerify}
 							type="button"
 						>
-							{status.status === "verifying" ? "Verifying…" : "Verify key"}
+							{status.status === "verifying" ? t("verifyingKey") : t("verifyKey")}
 						</button>
 					</div>
 				</div>
@@ -142,25 +144,26 @@ interface StatusPillProps {
 }
 
 function StatusPill({ status, apiKey }: StatusPillProps) {
+	const t = useTranslations("onboarding");
 	if (status.status === "verifying") {
 		return (
 			<span className="inline-flex items-center gap-1.5 rounded-sm bg-surface-3 px-1.5 py-0.5 text-2xs text-foreground-muted ring-1 ring-divider">
 				<Spinner className="size-2.5 border" />
-				<span className="font-medium uppercase tracking-wider">Verifying…</span>
+				<span className="font-medium uppercase tracking-wider">{t("statusVerifying")}</span>
 			</span>
 		);
 	}
 	if (apiKey.trim().length === 0) {
 		return (
 			<span className="inline-flex items-center rounded-sm bg-surface-3 px-1.5 py-0.5 font-medium text-2xs text-foreground-muted uppercase tracking-wider ring-1 ring-divider">
-				No key yet
+				{t("statusNoKey")}
 			</span>
 		);
 	}
 	if (status.status === "verified") {
 		return (
 			<span className="inline-flex items-center rounded-sm bg-success/15 px-1.5 py-0.5 font-medium text-2xs text-success uppercase tracking-wider ring-1 ring-success/30">
-				Verified
+				{t("statusVerified")}
 			</span>
 		);
 	}
@@ -170,7 +173,7 @@ function StatusPill({ status, apiKey }: StatusPillProps) {
 				className="inline-flex items-center rounded-sm bg-error/15 px-1.5 py-0.5 font-medium text-2xs text-error uppercase tracking-wider ring-1 ring-error/30"
 				title={status.lastError}
 			>
-				Invalid key
+				{t("statusInvalidKey")}
 			</span>
 		);
 	}
@@ -180,7 +183,7 @@ function StatusPill({ status, apiKey }: StatusPillProps) {
 				className="inline-flex items-center rounded-sm bg-warning/15 px-1.5 py-0.5 font-medium text-2xs text-warning uppercase tracking-wider ring-1 ring-warning/30"
 				title={status.lastError}
 			>
-				Unreachable
+				{t("statusUnreachable")}
 			</span>
 		);
 	}

@@ -48,9 +48,9 @@ describe("paramSizeFromName", () => {
 
 describe("pruneToShownQuants", () => {
 	const noKeep = () => false;
-	it("keeps the canonical ladder + bare default, drops dominated/irrelevant", () => {
+	it("keeps only the explicit canonical ladder; the bare default is the card-body auto pick, not a badge", () => {
 		const tags = [
-			tag({ name: "qwen3.5:4b" }), // bare default
+			tag({ name: "qwen3.5:4b" }), // bare default → now card-body "auto", NOT a shelf badge
 			tag({ name: "qwen3.5:4b-q4_K_M", quantization: "Q4_K_M" }),
 			tag({ name: "qwen3.5:4b-q5_K_M", quantization: "Q5_K_M" }),
 			tag({ name: "qwen3.5:4b-q8_0", quantization: "Q8_0" }),
@@ -64,11 +64,19 @@ describe("pruneToShownQuants", () => {
 			tag({ name: "qwen3.5:4b-bf16" }), // ≈fp16 → drop
 		];
 		expect(pruneToShownQuants(tags, noKeep).map((t) => t.name)).toEqual([
-			"qwen3.5:4b",
 			"qwen3.5:4b-q4_K_M",
 			"qwen3.5:4b-q5_K_M",
 			"qwen3.5:4b-q8_0",
 			"qwen3.5:4b-fp16",
+		]);
+	});
+
+	it("still keeps a bare default the user already has on disk / is pulling (forceKeep)", () => {
+		const tags = [tag({ name: "qwen3.5:4b" }), tag({ name: "qwen3.5:4b-q8_0", quantization: "Q8_0" })];
+		const keep = (n: string) => n === "qwen3.5:4b";
+		expect(pruneToShownQuants(tags, keep).map((t) => t.name)).toEqual([
+			"qwen3.5:4b",
+			"qwen3.5:4b-q8_0",
 		]);
 	});
 

@@ -1,8 +1,8 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source (authoritative):
-// frontend/electron/ipc/custom-models.ts + app/PORT/10_frontend_port_plan.md §6 (WU-11).
+// Source (authoritative):
+// frontend/electron/ipc/custom-models.ts + docs/port/10_frontend_port_plan.md §6 (WU-11).
 //
 // The Settings → Models "Open custom-models folder" button sends
-// `CUSTOM_MODELS_OPEN_FOLDER`. The adapter (electron-tauri-adapter.ts) routes it as
+// `CUSTOM_MODELS_OPEN_FOLDER`. The adapter (native-bridge-adapter.ts) routes it as
 // `{ kind: "plugin", plugin: "opener:custom-models" }`, whose handler INVOKES the
 // Tauri command `open_custom_models_folder`, then hands the returned absolute path
 // to `@tauri-apps/plugin-opener`'s `openPath`. So this command must RETURN THE PATH
@@ -10,7 +10,7 @@
 // capability-gated opener plugin, mirroring how `diag_open_logs_folder` works.
 //
 // Path: `<appData>/models/custom` — the same per-user directory the Python server
-// scanned via `--custom-models-dir` in the Electron build (`getCustomModelsFolder`
+// scanned via `--custom-models-dir` in the reference build (`getCustomModelsFolder`
 // = `path.join(userData, "models", "custom")`). We resolve it portable-aware so it
 // matches wherever the model cache lives in this build. Created lazily so the
 // first-ever click reveals an existing (if empty) folder rather than failing on a

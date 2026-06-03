@@ -2,7 +2,7 @@ name: Rust CI
 
 # Real CI for the Rust + Tauri port. The renderer lives in src/ and the
 # backend crate in src-tauri/ — the old ci.yml targeted the now-deleted
-# Electron frontend/ + server/ dirs, so the ~58k-LOC crate and its 62
+# reference frontend/ + server/ dirs, so the ~58k-LOC crate and its 62
 # Rust test files never ran. This gates fmt + clippy + tests on the
 # shipped code so a broken Rust commit can't merge green.
 #
@@ -71,7 +71,13 @@ jobs:
 
       - name: Test
         working-directory: src-tauri
-        run: cargo test
+        shell: pwsh
+        run: |
+          # The test exe runs from target/debug/deps/, but the native ort /
+          # onnxruntime / sherpa-onnx DLLs land in target/debug/. Put that on
+          # PATH so the test harness can load them (else STATUS_ENTRYPOINT_NOT_FOUND).
+          $env:PATH = "$PWD\target\debug;$env:PATH"
+          cargo test
 
   # Optional smoke build of the shipped crate. Path-gated identically and
   # allowed to fail (the full tauri link is heavy + occasionally flaky on
@@ -106,3 +112,21 @@ jobs:
       # the cheapest way to prove the shipped binary links.
       - name: Tauri build (no bundle)
         run: bun run tauri build --no-bundle
+
+  # Release-readiness signal (SEC-5). Fails loudly if the updater is still wired
+  # with the placeholder signing key so a broken auto-update can't silently ship.
+  # continue-on-error → warns on PRs without blocking them; promote to a HARD gate
+  # in the release workflow once a real minisign key is set.
+  updater-key-check:
+    name: Release readiness (updater signing key)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject placeholder updater pubkey
+        run: |
+          if grep -q 'TODO_REPLACE_WITH_WINSTT_MINISIGN_PUBKEY' src-tauri/tauri.conf.json; then
+            echo "::warning::updater.pubkey is still the TODO placeholder — run 'cargo tauri signer generate', set plugins.updater.pubkey + TAURI_SIGNING_PRIVATE_KEY before enabling production auto-updates."
+            exit 1
+          fi
+          echo "updater pubkey is set."

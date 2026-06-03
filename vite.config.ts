@@ -3,12 +3,13 @@ import { fileURLToPath } from "node:url";
 import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import { visualizer } from "rollup-plugin-visualizer";
 import { defineConfig } from "vite";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const host = process.env.TAURI_DEV_HOST;
 
-// Multi-page Vite config for the Tauri renderer (ported from WinSTT's Electron
+// Multi-page Vite config for the Tauri renderer (ported from WinSTT's the reference
 // renderer `frontend/vite.config.ts`). Each Tauri WebviewWindow loads its own
 // HTML file (main at the root, 8 secondary under windows/). Output → `dist`
 // (Tauri `frontendDist: "../dist"`); dev server on the Tauri-fixed port 1420.
@@ -30,6 +31,17 @@ export default defineConfig(({ command }) => {
 			react(),
 			...(isProdBuild ? [babel({ presets: [reactCompilerPreset()] })] : []),
 			tailwindcss(),
+			// Build-only bundle treemap → dist/stats.html, so chunk layout (and the
+			// per-locale lazy split) stays visible. Never runs in dev.
+			...(isProdBuild
+				? [
+						visualizer({
+							filename: "dist/stats.html",
+							gzipSize: true,
+							template: "treemap",
+						}),
+					]
+				: []),
 		],
 		// Tauri: don't obscure Rust errors; ignore src-tauri in the watcher.
 		clearScreen: false,

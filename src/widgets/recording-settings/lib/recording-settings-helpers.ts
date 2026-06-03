@@ -125,7 +125,7 @@ function buildUnifiedWakeWordList(): readonly string[] {
 }
 
 const ALL_WAKE_WORDS = buildUnifiedWakeWordList();
-export const DEFAULT_WAKE_WORD = "alexa";
+const DEFAULT_WAKE_WORD = "alexa";
 
 function engineBadge(engine: WakeWordEngine): string {
 	if (engine === "composite") {

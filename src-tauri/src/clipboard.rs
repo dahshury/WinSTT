@@ -12,6 +12,33 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 #[cfg(target_os = "linux")]
 use crate::utils::{is_kde_wayland, is_wayland};
 
+/// Typed error for the paste/clipboard pipeline. Used for internal error construction
+/// so each failure carries its category (clipboard I/O vs. external typing tool vs.
+/// enigo key synthesis vs. misconfiguration) instead of a bare `String`. The public
+/// `paste*` boundary flattens this to `String` (via `Display`) so every existing caller
+/// — including those outside this module — keeps compiling unchanged.
+#[derive(Debug, thiserror::Error)]
+pub enum ClipboardError {
+    /// Reading or writing the system clipboard failed.
+    #[error("clipboard I/O failed: {0}")]
+    Clipboard(String),
+
+    /// A Linux-native typing/paste tool (wtype, xdotool, dotool, ydotool, kwtype,
+    /// wl-copy) or a user-configured external paste script failed to run or exited
+    /// non-zero.
+    #[error("paste tool failed: {0}")]
+    Tool(String),
+
+    /// Synthesizing keystrokes via enigo failed (paste combo / auto-submit Return).
+    #[error("input synthesis failed: {0}")]
+    Input(String),
+
+    /// The paste pipeline was misconfigured (missing enigo state, missing external
+    /// script path, or an unsupported paste method for the chosen path).
+    #[error("paste configuration error: {0}")]
+    Config(String),
+}
+
 /// Pastes text using the clipboard: saves current content, writes text, sends paste keystroke, restores clipboard.
 fn paste_via_clipboard(
     enigo: &mut Enigo,
@@ -19,7 +46,7 @@ fn paste_via_clipboard(
     app_handle: &AppHandle,
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
-) -> Result<(), String> {
+) -> Result<(), ClipboardError> {
     let clipboard = app_handle.clipboard();
     let clipboard_content = clipboard.read_text().unwrap_or_default();
 
@@ -32,13 +59,13 @@ fn paste_via_clipboard(
     } else {
         clipboard
             .write_text(text)
-            .map_err(|e| format!("Failed to write to clipboard: {}", e))
+            .map_err(|e| ClipboardError::Clipboard(format!("Failed to write to clipboard: {}", e)))
     };
 
     #[cfg(not(target_os = "linux"))]
     let write_result = clipboard
         .write_text(text)
-        .map_err(|e| format!("Failed to write to clipboard: {}", e));
+        .map_err(|e| ClipboardError::Clipboard(format!("Failed to write to clipboard: {}", e)));
 
     write_result?;
 
@@ -54,10 +81,18 @@ fn paste_via_clipboard(
     // Fall back to enigo if no native tool handled it
     if !key_combo_sent {
         match paste_method {
-            PasteMethod::CtrlV => input::send_paste_ctrl_v(enigo)?,
-            PasteMethod::CtrlShiftV => input::send_paste_ctrl_shift_v(enigo)?,
-            PasteMethod::ShiftInsert => input::send_paste_shift_insert(enigo)?,
-            _ => return Err("Invalid paste method for clipboard paste".into()),
+            PasteMethod::CtrlV => input::send_paste_ctrl_v(enigo).map_err(ClipboardError::Input)?,
+            PasteMethod::CtrlShiftV => {
+                input::send_paste_ctrl_shift_v(enigo).map_err(ClipboardError::Input)?
+            }
+            PasteMethod::ShiftInsert => {
+                input::send_paste_shift_insert(enigo).map_err(ClipboardError::Input)?
+            }
+            _ => {
+                return Err(ClipboardError::Config(
+                    "Invalid paste method for clipboard paste".into(),
+                ))
+            }
         }
     }
 
@@ -81,7 +116,7 @@ fn paste_via_clipboard(
 /// Attempts to send a key combination using Linux-native tools.
 /// Returns `Ok(true)` if a native tool handled it, `Ok(false)` to fall back to enigo.
 #[cfg(target_os = "linux")]
-fn try_send_key_combo_linux(paste_method: &PasteMethod) -> Result<bool, String> {
+fn try_send_key_combo_linux(paste_method: &PasteMethod) -> Result<bool, ClipboardError> {
     if is_wayland() {
         // Wayland: prefer wtype (but not on KDE), then dotool, then ydotool
         // Note: wtype doesn't work on KDE (no zwp_virtual_keyboard_manager_v1 support)
@@ -120,7 +155,7 @@ fn try_send_key_combo_linux(paste_method: &PasteMethod) -> Result<bool, String> 
 /// Attempts to type text directly using Linux-native tools.
 /// Returns `Ok(true)` if a native tool handled it, `Ok(false)` to fall back to enigo.
 #[cfg(target_os = "linux")]
-fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<bool, String> {
+fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<bool, ClipboardError> {
     // If user specified a tool, try only that one
     if preferred_tool != TypingTool::Auto {
         return match preferred_tool {
@@ -149,10 +184,10 @@ fn try_direct_typing_linux(text: &str, preferred_tool: TypingTool) -> Result<boo
                 type_text_via_xdotool(text)?;
                 Ok(true)
             }
-            _ => Err(format!(
+            _ => Err(ClipboardError::Tool(format!(
                 "Typing tool {:?} is not available on this system",
                 preferred_tool
-            )),
+            ))),
         };
     }
 
@@ -282,16 +317,16 @@ fn is_wl_copy_available() -> bool {
 
 /// Type text directly via wtype on Wayland.
 #[cfg(target_os = "linux")]
-fn type_text_via_wtype(text: &str) -> Result<(), String> {
+fn type_text_via_wtype(text: &str) -> Result<(), ClipboardError> {
     let output = Command::new("wtype")
         .arg("--") // Protect against text starting with -
         .arg(text)
         .output()
-        .map_err(|e| format!("Failed to execute wtype: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute wtype: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("wtype failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("wtype failed: {}", stderr)));
     }
 
     Ok(())
@@ -299,18 +334,18 @@ fn type_text_via_wtype(text: &str) -> Result<(), String> {
 
 /// Type text directly via xdotool on X11.
 #[cfg(target_os = "linux")]
-fn type_text_via_xdotool(text: &str) -> Result<(), String> {
+fn type_text_via_xdotool(text: &str) -> Result<(), ClipboardError> {
     let output = Command::new("xdotool")
         .arg("type")
         .arg("--clearmodifiers")
         .arg("--")
         .arg(text)
         .output()
-        .map_err(|e| format!("Failed to execute xdotool: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute xdotool: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("xdotool failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("xdotool failed: {}", stderr)));
     }
 
     Ok(())
@@ -318,28 +353,28 @@ fn type_text_via_xdotool(text: &str) -> Result<(), String> {
 
 /// Type text directly via dotool (works on both Wayland and X11 via uinput).
 #[cfg(target_os = "linux")]
-fn type_text_via_dotool(text: &str) -> Result<(), String> {
+fn type_text_via_dotool(text: &str) -> Result<(), ClipboardError> {
     use std::io::Write;
     use std::process::Stdio;
 
     let mut child = Command::new("dotool")
         .stdin(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Failed to spawn dotool: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to spawn dotool: {}", e)))?;
 
     if let Some(mut stdin) = child.stdin.take() {
         // dotool uses "type <text>" command
         writeln!(stdin, "type {}", text)
-            .map_err(|e| format!("Failed to write to dotool stdin: {}", e))?;
+            .map_err(|e| ClipboardError::Tool(format!("Failed to write to dotool stdin: {}", e)))?;
     }
 
     let output = child
         .wait_with_output()
-        .map_err(|e| format!("Failed to wait for dotool: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to wait for dotool: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("dotool failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("dotool failed: {}", stderr)));
     }
 
     Ok(())
@@ -347,17 +382,17 @@ fn type_text_via_dotool(text: &str) -> Result<(), String> {
 
 /// Type text directly via ydotool (uinput-based, requires ydotoold daemon).
 #[cfg(target_os = "linux")]
-fn type_text_via_ydotool(text: &str) -> Result<(), String> {
+fn type_text_via_ydotool(text: &str) -> Result<(), ClipboardError> {
     let output = Command::new("ydotool")
         .arg("type")
         .arg("--")
         .arg(text)
         .output()
-        .map_err(|e| format!("Failed to execute ydotool: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute ydotool: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ydotool failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("ydotool failed: {}", stderr)));
     }
 
     Ok(())
@@ -365,16 +400,16 @@ fn type_text_via_ydotool(text: &str) -> Result<(), String> {
 
 /// Type text directly via kwtype (KDE Wayland virtual keyboard, uses KDE Fake Input protocol).
 #[cfg(target_os = "linux")]
-fn type_text_via_kwtype(text: &str) -> Result<(), String> {
+fn type_text_via_kwtype(text: &str) -> Result<(), ClipboardError> {
     let output = Command::new("kwtype")
         .arg("--")
         .arg(text)
         .output()
-        .map_err(|e| format!("Failed to execute kwtype: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute kwtype: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("kwtype failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("kwtype failed: {}", stderr)));
     }
 
     Ok(())
@@ -384,7 +419,7 @@ fn type_text_via_kwtype(text: &str) -> Result<(), String> {
 /// Uses Stdio::null() to avoid blocking on repeated calls — wl-copy forks a
 /// daemon that inherits piped fds, causing read_to_end to hang indefinitely.
 #[cfg(target_os = "linux")]
-fn write_clipboard_via_wl_copy(text: &str) -> Result<(), String> {
+fn write_clipboard_via_wl_copy(text: &str) -> Result<(), ClipboardError> {
     use std::process::Stdio;
     let status = Command::new("wl-copy")
         .arg("--")
@@ -392,10 +427,10 @@ fn write_clipboard_via_wl_copy(text: &str) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| format!("Failed to execute wl-copy: {}", e))?;
+        .map_err(|e| ClipboardError::Clipboard(format!("Failed to execute wl-copy: {}", e)))?;
 
     if !status.success() {
-        return Err("wl-copy failed".into());
+        return Err(ClipboardError::Clipboard("wl-copy failed".into()));
     }
 
     Ok(())
@@ -403,22 +438,22 @@ fn write_clipboard_via_wl_copy(text: &str) -> Result<(), String> {
 
 /// Send a key combination (e.g., Ctrl+V) via wtype on Wayland.
 #[cfg(target_os = "linux")]
-fn send_key_combo_via_wtype(paste_method: &PasteMethod) -> Result<(), String> {
+fn send_key_combo_via_wtype(paste_method: &PasteMethod) -> Result<(), ClipboardError> {
     let args: Vec<&str> = match paste_method {
         PasteMethod::CtrlV => vec!["-M", "ctrl", "-k", "v"],
         PasteMethod::ShiftInsert => vec!["-M", "shift", "-k", "Insert"],
         PasteMethod::CtrlShiftV => vec!["-M", "ctrl", "-M", "shift", "-k", "v"],
-        _ => return Err("Unsupported paste method".into()),
+        _ => return Err(ClipboardError::Config("Unsupported paste method".into())),
     };
 
     let output = Command::new("wtype")
         .args(&args)
         .output()
-        .map_err(|e| format!("Failed to execute wtype: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute wtype: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("wtype failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("wtype failed: {}", stderr)));
     }
 
     Ok(())
@@ -426,13 +461,13 @@ fn send_key_combo_via_wtype(paste_method: &PasteMethod) -> Result<(), String> {
 
 /// Send a key combination (e.g., Ctrl+V) via dotool.
 #[cfg(target_os = "linux")]
-fn send_key_combo_via_dotool(paste_method: &PasteMethod) -> Result<(), String> {
+fn send_key_combo_via_dotool(paste_method: &PasteMethod) -> Result<(), ClipboardError> {
     let command;
     match paste_method {
         PasteMethod::CtrlV => command = "echo key ctrl+v | dotool",
         PasteMethod::ShiftInsert => command = "echo key shift+insert | dotool",
         PasteMethod::CtrlShiftV => command = "echo key ctrl+shift+v | dotool",
-        _ => return Err("Unsupported paste method".into()),
+        _ => return Err(ClipboardError::Config("Unsupported paste method".into())),
     }
     use std::process::Stdio;
     let status = Command::new("sh")
@@ -441,9 +476,9 @@ fn send_key_combo_via_dotool(paste_method: &PasteMethod) -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| format!("Failed to execute dotool: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute dotool: {}", e)))?;
     if !status.success() {
-        return Err("dotool failed".into());
+        return Err(ClipboardError::Tool("dotool failed".into()));
     }
 
     Ok(())
@@ -451,24 +486,24 @@ fn send_key_combo_via_dotool(paste_method: &PasteMethod) -> Result<(), String> {
 
 /// Send a key combination (e.g., Ctrl+V) via ydotool (requires ydotoold daemon).
 #[cfg(target_os = "linux")]
-fn send_key_combo_via_ydotool(paste_method: &PasteMethod) -> Result<(), String> {
+fn send_key_combo_via_ydotool(paste_method: &PasteMethod) -> Result<(), ClipboardError> {
     // ydotool uses Linux input event keycodes with format <keycode>:<pressed>
     // where pressed is 1 for down, 0 for up. Keycodes: ctrl=29, shift=42, v=47, insert=110
     let args: Vec<&str> = match paste_method {
         PasteMethod::CtrlV => vec!["key", "29:1", "47:1", "47:0", "29:0"],
         PasteMethod::ShiftInsert => vec!["key", "42:1", "110:1", "110:0", "42:0"],
         PasteMethod::CtrlShiftV => vec!["key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"],
-        _ => return Err("Unsupported paste method".into()),
+        _ => return Err(ClipboardError::Config("Unsupported paste method".into())),
     };
 
     let output = Command::new("ydotool")
         .args(&args)
         .output()
-        .map_err(|e| format!("Failed to execute ydotool: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute ydotool: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ydotool failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("ydotool failed: {}", stderr)));
     }
 
     Ok(())
@@ -476,12 +511,12 @@ fn send_key_combo_via_ydotool(paste_method: &PasteMethod) -> Result<(), String> 
 
 /// Send a key combination (e.g., Ctrl+V) via xdotool on X11.
 #[cfg(target_os = "linux")]
-fn send_key_combo_via_xdotool(paste_method: &PasteMethod) -> Result<(), String> {
+fn send_key_combo_via_xdotool(paste_method: &PasteMethod) -> Result<(), ClipboardError> {
     let key_combo = match paste_method {
         PasteMethod::CtrlV => "ctrl+v",
         PasteMethod::CtrlShiftV => "ctrl+shift+v",
         PasteMethod::ShiftInsert => "shift+Insert",
-        _ => return Err("Unsupported paste method".into()),
+        _ => return Err(ClipboardError::Config("Unsupported paste method".into())),
     };
 
     let output = Command::new("xdotool")
@@ -489,11 +524,11 @@ fn send_key_combo_via_xdotool(paste_method: &PasteMethod) -> Result<(), String> 
         .arg("--clearmodifiers")
         .arg(key_combo)
         .output()
-        .map_err(|e| format!("Failed to execute xdotool: {}", e))?;
+        .map_err(|e| ClipboardError::Tool(format!("Failed to execute xdotool: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("xdotool failed: {}", stderr));
+        return Err(ClipboardError::Tool(format!("xdotool failed: {}", stderr)));
     }
 
     Ok(())
@@ -501,24 +536,26 @@ fn send_key_combo_via_xdotool(paste_method: &PasteMethod) -> Result<(), String> 
 
 /// Pastes text by invoking an external script.
 /// The script receives the text to paste as a single argument.
-fn paste_via_external_script(text: &str, script_path: &str) -> Result<(), String> {
+fn paste_via_external_script(text: &str, script_path: &str) -> Result<(), ClipboardError> {
     info!("Pasting via external script: {}", script_path);
 
-    let output = Command::new(script_path)
-        .arg(text)
-        .output()
-        .map_err(|e| format!("Failed to execute external script '{}': {}", script_path, e))?;
+    let output = Command::new(script_path).arg(text).output().map_err(|e| {
+        ClipboardError::Tool(format!(
+            "Failed to execute external script '{}': {}",
+            script_path, e
+        ))
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
+        return Err(ClipboardError::Tool(format!(
             "External script '{}' failed with exit code {:?}. stderr: {}, stdout: {}",
             script_path,
             output.status.code(),
             stderr.trim(),
             stdout.trim()
-        ));
+        )));
     }
 
     Ok(())
@@ -529,7 +566,7 @@ fn paste_direct(
     enigo: &mut Enigo,
     text: &str,
     #[cfg(target_os = "linux")] typing_tool: TypingTool,
-) -> Result<(), String> {
+) -> Result<(), ClipboardError> {
     #[cfg(target_os = "linux")]
     {
         if try_direct_typing_linux(text, typing_tool)? {
@@ -538,46 +575,46 @@ fn paste_direct(
         info!("Falling back to enigo for direct text input");
     }
 
-    input::paste_text_direct(enigo, text)
+    input::paste_text_direct(enigo, text).map_err(ClipboardError::Input)
 }
 
-fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), String> {
+fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), ClipboardError> {
     match key_type {
         AutoSubmitKey::Enter => {
             enigo
                 .key(Key::Return, Direction::Press)
-                .map_err(|e| format!("Failed to press Return key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Release)
-                .map_err(|e| format!("Failed to release Return key: {}", e))?;
+                .map_err(|e| ClipboardError::Input(format!("Failed to press Return key: {}", e)))?;
+            enigo.key(Key::Return, Direction::Release).map_err(|e| {
+                ClipboardError::Input(format!("Failed to release Return key: {}", e))
+            })?;
         }
         AutoSubmitKey::CtrlEnter => {
-            enigo
-                .key(Key::Control, Direction::Press)
-                .map_err(|e| format!("Failed to press Control key: {}", e))?;
+            enigo.key(Key::Control, Direction::Press).map_err(|e| {
+                ClipboardError::Input(format!("Failed to press Control key: {}", e))
+            })?;
             enigo
                 .key(Key::Return, Direction::Press)
-                .map_err(|e| format!("Failed to press Return key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Release)
-                .map_err(|e| format!("Failed to release Return key: {}", e))?;
-            enigo
-                .key(Key::Control, Direction::Release)
-                .map_err(|e| format!("Failed to release Control key: {}", e))?;
+                .map_err(|e| ClipboardError::Input(format!("Failed to press Return key: {}", e)))?;
+            enigo.key(Key::Return, Direction::Release).map_err(|e| {
+                ClipboardError::Input(format!("Failed to release Return key: {}", e))
+            })?;
+            enigo.key(Key::Control, Direction::Release).map_err(|e| {
+                ClipboardError::Input(format!("Failed to release Control key: {}", e))
+            })?;
         }
         AutoSubmitKey::CmdEnter => {
-            enigo
-                .key(Key::Meta, Direction::Press)
-                .map_err(|e| format!("Failed to press Meta/Cmd key: {}", e))?;
+            enigo.key(Key::Meta, Direction::Press).map_err(|e| {
+                ClipboardError::Input(format!("Failed to press Meta/Cmd key: {}", e))
+            })?;
             enigo
                 .key(Key::Return, Direction::Press)
-                .map_err(|e| format!("Failed to press Return key: {}", e))?;
-            enigo
-                .key(Key::Return, Direction::Release)
-                .map_err(|e| format!("Failed to release Return key: {}", e))?;
-            enigo
-                .key(Key::Meta, Direction::Release)
-                .map_err(|e| format!("Failed to release Meta/Cmd key: {}", e))?;
+                .map_err(|e| ClipboardError::Input(format!("Failed to press Return key: {}", e)))?;
+            enigo.key(Key::Return, Direction::Release).map_err(|e| {
+                ClipboardError::Input(format!("Failed to release Return key: {}", e))
+            })?;
+            enigo.key(Key::Meta, Direction::Release).map_err(|e| {
+                ClipboardError::Input(format!("Failed to release Meta/Cmd key: {}", e))
+            })?;
         }
     }
 
@@ -593,7 +630,7 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
 /// main thread MUST schedule it via [`paste_on_main_thread`] (input synthesis is a main-thread
 /// concern, the discipline `actions.rs` keeps).
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
-    paste_inner(text, app_handle, false)
+    paste_inner(text, app_handle, false).map_err(|e| e.to_string())
 }
 
 /// In-place REPLACE paste (the Transforms pipeline): paste over the still-highlighted selection
@@ -601,7 +638,7 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
 /// corrupt a rewrite-in-place (the user didn't dictate a new line, they rewrote existing text).
 /// Otherwise identical to [`paste`] (clipboard sandwich + configured paste method).
 pub fn paste_replace(text: String, app_handle: AppHandle) -> Result<(), String> {
-    paste_inner(text, app_handle, true)
+    paste_inner(text, app_handle, true).map_err(|e| e.to_string())
 }
 
 /// Schedule a paste on the MAIN thread (input synthesis must not run on an async-runtime worker —
@@ -609,7 +646,11 @@ pub fn paste_replace(text: String, app_handle: AppHandle) -> Result<(), String> 
 /// `spawn`/`spawn_blocking`). `replace` picks the replace-mode variant (no trailing space / no
 /// auto-submit). Returns `Err` only if the closure couldn't be scheduled; the paste's own result
 /// is logged inside the closure (the caller is off-thread and can't await it).
-pub fn paste_on_main_thread(app_handle: &AppHandle, text: String, replace: bool) -> Result<(), String> {
+pub fn paste_on_main_thread(
+    app_handle: &AppHandle,
+    text: String,
+    replace: bool,
+) -> Result<(), String> {
     let app_for_paste = app_handle.clone();
     app_handle
         .run_on_main_thread(move || {
@@ -626,7 +667,11 @@ pub fn paste_on_main_thread(app_handle: &AppHandle, text: String, replace: bool)
         .map_err(|e| format!("failed to schedule paste on main thread: {e}"))
 }
 
-fn paste_inner(text: String, app_handle: AppHandle, replace_mode: bool) -> Result<(), String> {
+fn paste_inner(
+    text: String,
+    app_handle: AppHandle,
+    replace_mode: bool,
+) -> Result<(), ClipboardError> {
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
@@ -647,11 +692,11 @@ fn paste_inner(text: String, app_handle: AppHandle, replace_mode: bool) -> Resul
     // Get the managed Enigo instance
     let enigo_state = app_handle
         .try_state::<EnigoState>()
-        .ok_or("Enigo state not initialized")?;
+        .ok_or_else(|| ClipboardError::Config("Enigo state not initialized".into()))?;
     let mut enigo = enigo_state
         .0
         .lock()
-        .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
+        .map_err(|e| ClipboardError::Input(format!("Failed to lock Enigo: {}", e)))?;
 
     // Perform the paste operation
     match paste_method {
@@ -680,7 +725,9 @@ fn paste_inner(text: String, app_handle: AppHandle, replace_mode: bool) -> Resul
                 .external_script_path
                 .as_ref()
                 .filter(|p| !p.is_empty())
-                .ok_or("External script path is not configured")?;
+                .ok_or_else(|| {
+                    ClipboardError::Config("External script path is not configured".into())
+                })?;
             paste_via_external_script(&text, script_path)?;
         }
     }
@@ -696,9 +743,9 @@ fn paste_inner(text: String, app_handle: AppHandle, replace_mode: bool) -> Resul
     // After pasting, optionally copy to clipboard based on settings
     if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
         let clipboard = app_handle.clipboard();
-        clipboard
-            .write_text(&text)
-            .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+        clipboard.write_text(&text).map_err(|e| {
+            ClipboardError::Clipboard(format!("Failed to copy to clipboard: {}", e))
+        })?;
     }
 
     Ok(())

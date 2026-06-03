@@ -103,3 +103,121 @@ impl VoiceActivityDetector for SmoothedVad {
         self.temp_out.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    /// A VAD whose voiced/unvoiced decision follows a fixed script — lets us drive
+    /// the SmoothedVad state machine deterministically. Only `push_frame` is needed;
+    /// SmoothedVad calls `is_voice`, whose trait default delegates here.
+    struct ScriptedVad {
+        script: VecDeque<bool>,
+    }
+    impl ScriptedVad {
+        fn new(seq: impl IntoIterator<Item = bool>) -> Self {
+            Self {
+                script: seq.into_iter().collect(),
+            }
+        }
+    }
+    impl VoiceActivityDetector for ScriptedVad {
+        fn push_frame<'a>(&'a mut self, frame: &'a [f32]) -> Result<VadFrame<'a>> {
+            let voiced = self.script.pop_front().unwrap_or(false);
+            Ok(if voiced {
+                VadFrame::Speech(frame)
+            } else {
+                VadFrame::Noise
+            })
+        }
+    }
+
+    fn smoothed(
+        seq: impl IntoIterator<Item = bool>,
+        prefill: usize,
+        hangover: usize,
+        onset: usize,
+    ) -> SmoothedVad {
+        SmoothedVad::new(Box::new(ScriptedVad::new(seq)), prefill, hangover, onset)
+    }
+
+    const F: [f32; 2] = [0.5, 0.5];
+
+    #[test]
+    fn onset_requires_consecutive_voiced_frames() {
+        let mut vad = smoothed([true, true, true], 0, 2, 3);
+        assert!(!vad.push_frame(&F).unwrap().is_speech(), "1st is onset");
+        assert!(!vad.push_frame(&F).unwrap().is_speech(), "2nd is onset");
+        assert!(
+            vad.push_frame(&F).unwrap().is_speech(),
+            "3rd triggers speech"
+        );
+    }
+
+    #[test]
+    fn onset_counter_resets_on_silence() {
+        let mut vad = smoothed([true, true, false, true, true, true], 0, 2, 3);
+        assert!(!vad.push_frame(&F).unwrap().is_speech());
+        assert!(!vad.push_frame(&F).unwrap().is_speech());
+        assert!(
+            !vad.push_frame(&F).unwrap().is_speech(),
+            "silence resets onset"
+        );
+        assert!(!vad.push_frame(&F).unwrap().is_speech());
+        assert!(!vad.push_frame(&F).unwrap().is_speech());
+        assert!(
+            vad.push_frame(&F).unwrap().is_speech(),
+            "needs 3 fresh consecutive voiced frames"
+        );
+    }
+
+    #[test]
+    fn hangover_keeps_speech_open_then_closes() {
+        let mut vad = smoothed([true, true, true, false, false, false], 0, 2, 3);
+        let _ = vad.push_frame(&F).unwrap();
+        let _ = vad.push_frame(&F).unwrap();
+        assert!(vad.push_frame(&F).unwrap().is_speech(), "onset reached");
+        assert!(
+            vad.push_frame(&F).unwrap().is_speech(),
+            "1st silence: hangover"
+        );
+        assert!(
+            vad.push_frame(&F).unwrap().is_speech(),
+            "2nd silence: hangover"
+        );
+        assert!(
+            !vad.push_frame(&F).unwrap().is_speech(),
+            "hangover exhausted -> noise"
+        );
+    }
+
+    #[test]
+    fn reset_clears_in_speech_state() {
+        let mut vad = smoothed([true, true, true, true], 0, 2, 3);
+        let _ = vad.push_frame(&F).unwrap();
+        let _ = vad.push_frame(&F).unwrap();
+        assert!(vad.push_frame(&F).unwrap().is_speech());
+        vad.reset();
+        assert!(
+            !vad.push_frame(&F).unwrap().is_speech(),
+            "after reset, one voiced frame is onset again"
+        );
+    }
+
+    #[test]
+    fn speech_trigger_emits_prefill_preroll() {
+        // prefill=2, onset=1: the two buffered frames are prepended to the
+        // triggering frame, so the first Speech payload carries all three.
+        let mut vad = smoothed([false, false, true], 2, 1, 1);
+        let a = [1.0f32, 1.0];
+        let b = [2.0f32, 2.0];
+        let c = [3.0f32, 3.0];
+        assert!(!vad.push_frame(&a).unwrap().is_speech());
+        assert!(!vad.push_frame(&b).unwrap().is_speech());
+        match vad.push_frame(&c).unwrap() {
+            VadFrame::Speech(out) => assert_eq!(out, &[1.0, 1.0, 2.0, 2.0, 3.0, 3.0]),
+            VadFrame::Noise => panic!("expected speech with pre-roll"),
+        }
+    }
+}

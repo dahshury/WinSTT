@@ -1,0 +1,78 @@
+---
+title: Settings
+description: The frameless WinSTT settings window for model, audio, processing, hotkeys, LLM cleanup, text-to-speech, and integrations. Changes save immediately.
+---
+
+Every knob in WinSTT lives in one frameless settings window — pick a model, tune voice detection, rebind the hotkey, or wire up an LLM, all from a single searchable sidebar.
+
+<Screenshot src="settings-general" alt="The WinSTT settings window: a vertical sidebar of settings panels on the left and the General panel open on the right." label="Settings — General" caption="The sidebar groups the app's configuration panels. The titlebar is the drag region — there is no window frame." />
+
+## The window
+
+The settings window is frameless and resizable. The left sidebar lists the configuration panels; click one to switch. The active panel's title sits in a band that doubles as the drag region, so you can move the window from the empty header space. Close it from the sidebar — nothing is lost, because there is no "Save" or "Apply" button.
+
+Two panels — **Model** and **General** — host sub-sections that have their own docs pages: **LLM** and **Text-to-Speech** live inside the **Model** panel, and the recording-mode hotkey is set in the **General** panel.
+
+## Pick a panel
+
+<BentoGrid cols={3}>
+  <BentoCell span={2} icon="brain" title="Model" href="/docs/settings/model">
+    Choose the main transcription model, quantization, and device — plus the live-preview model and one-pass translation to English. LLM cleanup and Text-to-Speech are sub-sections here.
+  </BentoCell>
+  <BentoCell icon="mic" title="Audio" href="/docs/settings/audio">
+    Select the input microphone and tune voice-activity detection — sensitivity and silence-stop timing.
+  </BentoCell>
+  <BentoCell icon="quality" title="Processing" href="/docs/settings/quality">
+    Realtime-preview behavior, beam search and batch sizes, smart endpoint detection, and text-formatting rules.
+  </BentoCell>
+  <BentoCell icon="hotkey" title="General" href="/docs/settings/general">
+    App behavior, recording mode (PTT, toggle, listen, wake word), the push-to-talk hotkey, audio ducking, the overlay, and file transcription.
+  </BentoCell>
+  <BentoCell icon="keyboard" title="Hotkey" href="/docs/settings/hotkey">
+    The combo-string format for the dictation hotkey and the re-paste shortcut. The hotkey itself is bound in the General panel.
+  </BentoCell>
+  <BentoCell icon="llm" title="LLM cleanup" href="/docs/settings/llm">
+    Reshape dictated text with tone presets and custom modifiers — local Ollama, OpenRouter, or Apple Intelligence. Sub-section of Model.
+  </BentoCell>
+  <BentoCell icon="tts" title="Text-to-Speech" href="/docs/settings/tts">
+    Read selected text aloud with the bundled Kokoro-82M voice — 54 voices across 9 languages. Sub-section of Model.
+  </BentoCell>
+  <BentoCell span={2} icon="integrations" title="Integrations" href="/docs/settings/integrations">
+    API keys and verification for the optional cloud providers — Ollama, OpenRouter, OpenAI, and ElevenLabs. Every provider is opt-in; the app stays fully functional offline.
+  </BentoCell>
+</BentoGrid>
+
+The sidebar also has a **Dictionary** panel (fuzzy corrections), a **Snippets** panel (text expansion), a **History** dashboard, and an **About** panel — covered on the [Dictionary](/docs/dictionary) and [Transcription history](/docs/transcription-history) pages.
+
+## How changes are saved
+
+Settings save automatically the moment you change them — there is no "Save" or "Apply" button. The Electron main process writes them to disk (`electron-store`) and syncs them to the Python STT server over the control WebSocket channel.
+
+<Screenshot src="settings-model" alt="The Model settings panel showing the main-model source toggle, model selector, language, device, and unload timeout." label="Settings — Model" caption="Most model changes hot-swap live; the overlay shows a brief 'swapping' state." />
+
+Most changes apply live, including swapping the active model. A few changes have to restart the speech engine, which reconnects the WebSocket and takes a moment:
+
+<Callout type="restart">
+  Switching the **model backend family**, toggling **cloud vs local** transcription, and a small set of **startup-only** audio options (sample rate, microphone lifecycle) reconnect the engine. The overlay shows a brief "swapping" state and the connection dot pulses while it comes back. Each restart-bound control is flagged on its panel's page.
+</Callout>
+
+<Callout type="success" title="Offline by default">
+  WinSTT runs fully offline. The cloud panels under **Integrations** are opt-in — adding a key never sends audio anywhere until you explicitly select a cloud model. Removing a cloud key silently reverts to your last local model.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Model" href="/docs/settings/model">
+    Choose the engine, quantization, and device — the most-used panel.
+  </Card>
+  <Card title="Audio" href="/docs/settings/audio">
+    Microphone, sample rate, and voice-activity detection.
+  </Card>
+  <Card title="Processing" href="/docs/settings/quality">
+    Realtime preview, beam/batch sizes, endpointing, and formatting.
+  </Card>
+  <Card title="General" href="/docs/settings/general">
+    Recording mode, hotkey, overlay, ducking, and file transcription.
+  </Card>
+</Cards>

@@ -1,15 +1,9 @@
-import { TextIcon } from "@hugeicons/core-free-icons";
+import { BookOpenTextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
-import {
-	DEFAULT_SETTINGS,
-	SettingResetButton,
-	SettingSection,
-	useSettingsStore,
-} from "@/entities/setting";
+import { DEFAULT_SETTINGS, SettingField, SettingSection, useSettingsStore } from "@/entities/setting";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { AutoAddSuggestions } from "./AutoAddSuggestions";
 import { DictionaryTable } from "./DictionaryTable";
@@ -32,7 +26,7 @@ export function DictionarySettingsPanel() {
 	};
 
 	return (
-		<SettingSection icon={TextIcon} title={t("title")}>
+		<SettingSection icon={BookOpenTextIcon} title={t("title")}>
 			<div className="flex flex-col gap-3 py-2">
 				<p className="text-body-sm text-foreground-muted">{t("description")}</p>
 				<AutoAddSuggestions
@@ -53,20 +47,17 @@ export function DictionarySettingsPanel() {
 				    matcher runs BEFORE the LLM modifier pipeline, so the LLM still
 				    sees post-dictionary text and can fix anything the deterministic
 				    pass missed. Lower = stricter; 0.18 is the reference default. */}
-				<FormControl
+				<SettingField
+					defaultValue={DEFAULT_SETTINGS.general.wordCorrectionThreshold}
 					label={t("thresholdLabel")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={threshold === DEFAULT_SETTINGS.general.wordCorrectionThreshold}
-							onReset={() =>
-								updateGeneralSettings({
-									wordCorrectionThreshold: DEFAULT_SETTINGS.general.wordCorrectionThreshold,
-								})
-							}
-						/>
-					}
 					layout="row"
+					onReset={() =>
+						updateGeneralSettings({
+							wordCorrectionThreshold: DEFAULT_SETTINGS.general.wordCorrectionThreshold,
+						})
+					}
 					tooltip={`${t("thresholdTooltip")} ${t("thresholdCaption")}`}
+					value={threshold}
 				>
 					<ElevatedSurface className="w-fit" inline>
 						<NumberStepper
@@ -77,7 +68,7 @@ export function DictionarySettingsPanel() {
 							value={threshold}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 			</div>
 		</SettingSection>
 	);

@@ -20,7 +20,7 @@ import {
 	updaterGetStatusHistory,
 } from "./ipc-client";
 
-describe("ipc-client non-electron fallbacks", () => {
+describe("ipc-client non-bridge fallbacks", () => {
 	test("returns stable fallback values for getters", async () => {
 		expect(await settingsLoad()).toBeDefined();
 		expect((await settingsLoad()).general.recordingMode).toBe("ptt");
@@ -29,7 +29,9 @@ describe("ipc-client non-electron fallbacks", () => {
 		expect(await hotkeyStartRecording()).toBe(false);
 		expect(await autostartGet()).toBe(false);
 		expect(await audioGetDevices()).toEqual([]);
-		expect(await gpuGetInfo()).toBeNull();
+		// gpuGetInfo's declared fallback is `[]` (GpuInfo[]) — the prior `toBeNull()`
+		// assertion was stale (never matched the wrapper's `[]` default).
+		expect(await gpuGetInfo()).toEqual([]);
 		expect(await sttIsConnected()).toBe(false);
 		expect(await sttServerStatus()).toBe("idle");
 		expect(await fetchModelCatalog()).toEqual([]);

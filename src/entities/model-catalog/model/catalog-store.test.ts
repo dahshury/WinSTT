@@ -4,7 +4,7 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { ModelFamilySchema, TranscriberBackendSchema } from "@/shared/api/schema.zod";
 
 // ---------------------------------------------------------------------------
-// Why this test routes through `window.electronAPI` instead of overriding
+// Why this test routes through `window.nativeBridge` instead of overriding
 // exports via `mock.module`:
 //
 // bun:test evaluates EVERY `mock.module()` during the module-load phase and,
@@ -18,7 +18,7 @@ import { ModelFamilySchema, TranscriberBackendSchema } from "@/shared/api/schema
 // Instead we install the COMPLETE, behavior-faithful `ipcClientMock()` — the
 // SAME clean fake every other partial-mock file installs, so whichever wins
 // globally is identical and harmless — and drive this suite's data through a
-// per-file `window.electronAPI` stub that is restored in afterEach. The real
+// per-file `window.nativeBridge` stub that is restored in afterEach. The real
 // catalog-store routes `fetchModelCatalog` → invoke(STT_GET_MODEL_CATALOG)
 // and `onModelCatalog` → on(STT_MODEL_CATALOG), so the faithful fake honours
 // our stub exactly as the real module would.
@@ -26,19 +26,19 @@ import { ModelFamilySchema, TranscriberBackendSchema } from "@/shared/api/schema
 
 mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 
-const originalElectronApi = window.electronAPI;
+const originalNativeBridge = window.nativeBridge;
 
 let catalogPayload: unknown[] = [];
 let catalogListener: ((raw: unknown[]) => void) | null = null;
 const fetchInvokes: string[] = [];
 const onSubscriptions: string[] = [];
 
-function installElectronStub(): void {
+function installNativeBridgeStub(): void {
 	catalogPayload = [];
 	catalogListener = null;
 	fetchInvokes.length = 0;
 	onSubscriptions.length = 0;
-	window.electronAPI = {
+	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: () => undefined,
 		invoke: async (channel: string) => {
@@ -84,12 +84,12 @@ const invalidRaw = {
 };
 
 beforeEach(() => {
-	installElectronStub();
+	installNativeBridgeStub();
 	useCatalogStore.setState({ models: [], isLoaded: false });
 });
 
 afterEach(() => {
-	window.electronAPI = originalElectronApi;
+	window.nativeBridge = originalNativeBridge;
 });
 
 describe("useCatalogStore.setModels", () => {
@@ -208,7 +208,7 @@ describe("store initial state (mutation guards)", () => {
 	});
 });
 
-describe("catalog-store self-init block (window.electronAPI != null)", () => {
+describe("catalog-store self-init block (window.nativeBridge != null)", () => {
 	test("fetchModelCatalog is invoked and onModelCatalog subscribes on init", async () => {
 		initCatalogStore();
 		await new Promise((r) => setTimeout(r, 0));

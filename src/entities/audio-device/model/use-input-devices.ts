@@ -17,6 +17,24 @@ interface UseInputDevicesResult {
  * hammers the server with 5-10 list_input_devices requests in a burst.
  */
 const DEVICECHANGE_DEBOUNCE_MS = 200;
+const DEVICE_POLL_INTERVAL_MS = 1000;
+
+function areDeviceListsEqual(a: readonly AudioDevice[], b: readonly AudioDevice[]): boolean {
+	if (a.length !== b.length) {
+		return false;
+	}
+	return a.every((device, index) => {
+		const other = b[index];
+		return (
+			other !== undefined &&
+			device.index === other.index &&
+			device.name === other.name &&
+			device.isDefault === other.isDefault &&
+			device.maxInputChannels === other.maxInputChannels &&
+			device.defaultSampleRate === other.defaultSampleRate
+		);
+	});
+}
 
 /**
  * Returns the list of audio input devices reported by the OS via the main
@@ -35,14 +53,16 @@ export function useInputDevices(): UseInputDevicesResult {
 
 	const refresh = useCallback(async () => {
 		const list = await audioGetDevices();
-		setDevices(list);
+		setDevices((current) => (areDeviceListsEqual(current, list) ? current : list));
 	}, []);
 
 	useEffect(() => {
-		refresh().catch(() => undefined);
-		if (typeof navigator === "undefined" || !navigator.mediaDevices) {
-			return;
-		}
+		const refreshSafely = () => {
+			refresh().catch(() => undefined);
+		};
+		refreshSafely();
+		const pollId = setInterval(refreshSafely, DEVICE_POLL_INTERVAL_MS);
+		const mediaDevices = typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
 		const handler = () => {
 			// Coalesce rapid devicechange bursts (5-10 events within ~10ms when
 			// a stream open fails and the OS retries) into a single enumeration.
@@ -51,12 +71,13 @@ export function useInputDevices(): UseInputDevicesResult {
 			}
 			debounceRef.current = setTimeout(() => {
 				debounceRef.current = null;
-				refresh().catch(() => undefined);
+				refreshSafely();
 			}, DEVICECHANGE_DEBOUNCE_MS);
 		};
-		navigator.mediaDevices.addEventListener("devicechange", handler);
+		mediaDevices?.addEventListener("devicechange", handler);
 		return () => {
-			navigator.mediaDevices.removeEventListener("devicechange", handler);
+			clearInterval(pollId);
+			mediaDevices?.removeEventListener("devicechange", handler);
 			if (debounceRef.current) {
 				clearTimeout(debounceRef.current);
 				debounceRef.current = null;

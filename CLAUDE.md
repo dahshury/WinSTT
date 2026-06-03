@@ -9,15 +9,14 @@ for feature parity; `main` still tracks that Electron app.
 
 ```
 /                      ← Tauri WinSTT app (this is the app)
-├── src/               renderer (FSD; ported 1:1 from the Electron frontend)
+├── src/               renderer (FSD; ported 1:1 from the reference frontend)
 ├── src-tauri/         Rust backend (winstt::* modules, STT engines on `ort`)
 ├── public/ windows/ messages/ packages/ spec/ scripts/
+├── docs/              project docs + port plan (docs/port/ ← the migration plan)
 ├── index.html  package.json  vite.config.ts  tsconfig*.json
 ├── rust-migration/    Windows build helpers (.bat: vcvars + cargo/bun)
 ├── examples/
-│   ├── winstt-electron/   the original Electron+Python app (parity reference)
-│   ├── Handy/             upstream Rust+Tauri STT this port forks from
-│   └── …                  other reference repos
+│   └── winstt-electron/   the original Electron+Python app (parity reference)
 ```
 
 ## Build / run (Windows)
@@ -25,14 +24,16 @@ for feature parity; `main` still tracks that Electron app.
 The Tauri app needs the VS build env + bun/cargo on PATH. Use the helpers in
 `rust-migration/` (they set up vcvars and `cd` to the right place):
 
-- `rust-migration\tauri-dev.bat`   — `bun run tauri dev` (long-running; logs to `tauri_dev.log`)
+- `rust-migration\tauri-dev.ps1`   — `bun run tauri dev` (long-running). **Prefer this:** Ctrl+C
+  closes cleanly (no cmd "Terminate batch job (Y/N)?" prompt). `tauri-dev.bat` still works but,
+  being a batch file, cmd shows that prompt on Ctrl+C.
 - `rust-migration\tauri-build.bat`  — `bun run tauri build --no-bundle`
 - `rust-migration\cargo-env.bat check|build` — cargo in `src-tauri/`
 
 Note: `cargo build --release` leaves Tauri in **dev mode** (webview loads the dev URL);
 only `tauri build` produces a standalone exe.
 
-## Critical rules (carried from the Electron CLAUDE.md)
+## Critical rules (carried from the reference CLAUDE.md)
 
 - **NEVER `git stash`** in any form — the working tree is huge and stash conflicts hold
   work hostage. Use `cp file file.bak` or `git show <ref>:<path>` to compare.

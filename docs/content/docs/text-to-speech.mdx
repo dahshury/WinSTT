@@ -1,0 +1,162 @@
+---
+title: Text-to-Speech
+description: Read any selected text aloud with the on-device Kokoro-82M voice — 54 voices across 9 languages, all synthesized locally.
+---
+
+Select text anywhere, press a hotkey, and WinSTT reads it back to you in one of 54
+voices — synthesized on your own machine by the bundled Kokoro-82M ONNX model, with no
+cloud round-trip.
+
+<Screenshot src="section-tts" alt="The Text-to-Speech settings section: a master toggle, a searchable voice picker with per-row preview buttons, and a speed slider." chrome="card" label="Settings — Text-to-Speech" caption="Enable TTS, pick a voice, and set the playback speed." />
+
+## How it works
+
+Text-to-Speech runs the same way dictation does — in reverse. Highlight text in any
+application, fire the hotkey, and WinSTT captures the active selection, synthesizes it to
+24 kHz PCM audio with [Kokoro-82M](https://github.com/hexgrad/kokoro), and plays it
+through your chosen output device. Synthesis happens on-device; the text never leaves your
+machine.
+
+The voice catalog covers **54 voices across 9 languages** — US/UK English, Japanese,
+Mandarin, Spanish, French, Hindi, Italian, and Brazilian Portuguese. Picking a voice also
+sets its language, so there is no second picker to keep in sync. The voice list *is* the
+complete set of languages local TTS can speak: if a language has no voice in the picker,
+Kokoro can't synthesize it, and it never translates — it reads the selected text in the
+chosen voice's language.
+
+<Callout type="success" title="Synthesized locally">
+  Kokoro-82M runs entirely on local hardware — the same ONNX runtime that powers
+  transcription. Selected text is read from the focused app and synthesized in memory; it
+  is never written to disk or uploaded.
+</Callout>
+
+<Callout type="info" title="Need a language that isn't listed?">
+  Local Kokoro is the only text-to-speech engine WinSTT ships today, so its 9 languages are
+  the hard limit for on-device read-aloud. A cloud engine such as
+  [ElevenLabs](https://elevenlabs.io) synthesizes dozens of languages — and WinSTT already
+  talks to ElevenLabs for [cloud transcription](/docs/settings/integrations) — but **cloud
+  text-to-speech isn't wired up yet**. For now, languages beyond the 9 above mean reaching
+  for an external TTS tool.
+</Callout>
+
+## First-time setup
+
+The Kokoro engine and voice files aren't bundled into the installer — they're fetched
+once, on demand, the first time you enable TTS, and cached on disk forever after.
+
+<StepFlow>
+  <Step title="Toggle Text-to-Speech on">
+    Open **Settings → Desktop → Text-to-Speech** and flip the section toggle. WinSTT
+    probes the download size; if the pack is already cached it skips straight to step 3.
+  </Step>
+  <Step title="Confirm the one-time download">
+    A dialog itemizes the components and the total size, then waits for you to choose
+    **Download & Enable**. If WinSTT can't reach the server to size the download, you'll
+    see an offline notice with a **Retry** button instead.
+  </Step>
+  <Step title="Wait for the pack to install">
+    An install banner shows live progress with **Pause**, **Resume**, and **Cancel**
+    buttons. The voice/speed controls stay locked until the engine is ready. Cancel
+    discards the download and flips the toggle back off.
+  </Step>
+  <Step title="Pick a voice and speak">
+    Once installed, the voice picker fills with the full catalog. Choose a voice, set your
+    speed, and use the TTS hotkey from any app — or the per-row preview button to audition.
+  </Step>
+</StepFlow>
+
+The pack downloads in three parts, totaling about **190 MB**:
+
+<ModelTable
+  head={["Component", "What it is", "Size"]}
+  numeric={[2]}
+  rows={[
+    ["Engine pack", "The Kokoro ONNX runtime support files", "~50 MB"],
+    ["Voice model", "The 82M-parameter Kokoro model weights", "~100 MB"],
+    ["Voicepacks", "Per-voice embeddings for all 54 voices", "~40 MB"],
+  ]}
+  caption="A one-time download. Subsequent launches reuse the cached files and work fully offline."
+/>
+
+<Callout type="info" title="Download, pause, resume">
+  The install streams in the background. Use **Pause**/**Resume** on the banner to manage
+  bandwidth, or **Cancel** to abandon it. If a download fails, a **Retry** action appears.
+</Callout>
+
+## Controls
+
+<SettingRow label="Text-to-Speech" settingKey="tts.enabled" default="false">
+  Master on/off gate. Turning it on triggers the first-use download (or skips it if the
+  pack is cached). The toggle is disabled while a download is in progress.
+</SettingRow>
+
+<SettingRow label="Voice" settingKey="tts.voice" default="af_heart">
+  Searchable dropdown of all 54 voices, grouped by country with a region badge (US, UK,
+  JP, ZH, …). Each row has a preview button; picking a voice also previews it and sets the
+  matching language. The default is **Heart**, a US female voice. If a saved voice ever
+  drops out of the catalog, TTS auto-selects the first available voice.
+</SettingRow>
+
+<SettingRow label="Speed" settingKey="tts.speed" default="1.0">
+  Playback-speed multiplier from **0.5×** to **2.0×** in 0.1 steps, displayed as
+  `1.0×`. Applied by the Kokoro session itself, not post-processed. A reset button appears
+  when the value isn't 1.0×.
+</SettingRow>
+
+<SettingRow label="Language" settingKey="tts.lang" default="en-us">
+  Set automatically from the chosen voice — there's no separate language control to
+  manage. Each voice belongs to exactly one of the 9 supported languages, and those 9 are
+  the only languages local TTS can speak — there's no way to add more on-device.
+</SettingRow>
+
+<SettingRow label="Text-to-speech key" settingKey="tts.hotkey" default="LMeta+LShift+E">
+  Global combo that reads the active selection aloud from any app. Defaults to
+  <Combo keys="LMeta+LShift+E" />. Hold the same combo together with <Kbd>Backspace</Kbd>
+  to stop playback immediately — it halts both future generation and already-buffered
+  audio. Rebind it from the Hotkey settings.
+</SettingRow>
+
+### Previewing a voice
+
+Every voice row — and the selected voice in the closed picker — has a preview button that
+speaks a fixed sample, *"The quick brown fox jumps over the lazy dog."*, at your current
+speed. The button cycles through play → loading → stop, and clicking a different voice
+cancels the in-flight preview so you always hear the latest pick.
+
+## Output device
+
+TTS playback (and recording-mode chimes) route to whichever device you pick under
+**Settings → Audio → Output Device**. Leave it on **System default** or choose a specific
+output. The section only appears when TTS or the recording sound is enabled, and routing
+uses the browser `setSinkId()` API under the hood.
+
+<Screenshot src="device-picker" alt="The output device picker dropdown listing the system default plus each available playback device." chrome="card" label="Output device" caption="TTS and recording chimes both follow this output selection." />
+
+## Compute device
+
+There is **no separate TTS compute device**. The synthesizer shares the main
+speech-to-text model's device — set it once with **Device** in the
+[Model tab](/docs/settings/model) (`model.device`).
+
+<Callout type="info" title="TTS follows model.device">
+  The spawn layer mirrors your Model-tab device choice onto the server's `--tts-device`
+  flag. So **Auto** lets a GPU build run Kokoro on the available accelerator (DirectML)
+  and falls back to CPU otherwise — exactly like transcription. Change it in one place.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Model & device" href="/docs/settings/model">
+    Set the compute device once — TTS and transcription both follow it.
+  </Card>
+  <Card title="Hotkeys" href="/docs/settings/hotkey">
+    Rebind the TTS combo and review every global shortcut.
+  </Card>
+  <Card title="Audio & output" href="/docs/settings/audio">
+    Choose the output device for TTS playback and recording chimes.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Reshape dictation with tone presets before you read it back.
+  </Card>
+</Cards>

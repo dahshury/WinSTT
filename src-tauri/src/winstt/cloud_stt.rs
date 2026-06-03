@@ -2,7 +2,7 @@
 // frontend/electron/ipc/credentials.ts + entities/cloud-stt-provider/model/catalog.ts.
 //
 // Cloud STT: reqwest multipart POST to OpenAI /v1/audio/transcriptions and
-// ElevenLabs /v1/speech-to-text. In WinSTT-Electron the Python pipeline's
+// ElevenLabs /v1/speech-to-text. In WinSTT-the reference the Python pipeline's
 // RemoteTranscriber adapter sends the WAV bytes to the main process over WS;
 // in the Rust/Tauri port there is NO Python and NO WS — the
 // TranscriptionManager calls `CloudSttManager::transcribe` directly when the
@@ -416,7 +416,10 @@ pub fn samples_to_wav_bytes(samples: &[f32]) -> Result<Vec<u8>, CloudSttError> {
             })?;
         }
         writer.finalize().map_err(|e| {
-            CloudSttError::new(CloudSttErrorCode::ProviderError, format!("wav finalize: {e}"))
+            CloudSttError::new(
+                CloudSttErrorCode::ProviderError,
+                format!("wav finalize: {e}"),
+            )
         })?;
     }
     Ok(cursor.into_inner())
@@ -463,11 +466,7 @@ pub enum VerifyResult {
 
 /// Classify a verify-probe response. Honors the ElevenLabs scoped-key
 /// special-case. Mirrors probeProvider's success/scoped/failure branches.
-pub fn classify_verify(
-    provider: CloudSttProvider,
-    status: u16,
-    body: &str,
-) -> VerifyResult {
+pub fn classify_verify(provider: CloudSttProvider, status: u16, body: &str) -> VerifyResult {
     if (200..300).contains(&status) {
         return VerifyResult::Ok;
     }
@@ -487,17 +486,35 @@ mod tests {
 
     #[test]
     fn provider_id_roundtrip() {
-        assert_eq!(CloudSttProvider::from_id("openai"), Some(CloudSttProvider::OpenAi));
-        assert_eq!(CloudSttProvider::from_id("elevenlabs"), Some(CloudSttProvider::ElevenLabs));
+        assert_eq!(
+            CloudSttProvider::from_id("openai"),
+            Some(CloudSttProvider::OpenAi)
+        );
+        assert_eq!(
+            CloudSttProvider::from_id("elevenlabs"),
+            Some(CloudSttProvider::ElevenLabs)
+        );
         assert_eq!(CloudSttProvider::from_id("azure"), None);
     }
 
     #[test]
     fn audio_limits_match_spec() {
-        assert_eq!(provider_audio_limit_bytes(CloudSttProvider::OpenAi), 25 * 1024 * 1024);
-        assert_eq!(provider_audio_limit_bytes(CloudSttProvider::ElevenLabs), 1024 * 1024 * 1024);
-        assert!(exceeds_audio_limit(CloudSttProvider::OpenAi, 26 * 1024 * 1024));
-        assert!(!exceeds_audio_limit(CloudSttProvider::OpenAi, 10 * 1024 * 1024));
+        assert_eq!(
+            provider_audio_limit_bytes(CloudSttProvider::OpenAi),
+            25 * 1024 * 1024
+        );
+        assert_eq!(
+            provider_audio_limit_bytes(CloudSttProvider::ElevenLabs),
+            1024 * 1024 * 1024
+        );
+        assert!(exceeds_audio_limit(
+            CloudSttProvider::OpenAi,
+            26 * 1024 * 1024
+        ));
+        assert!(!exceeds_audio_limit(
+            CloudSttProvider::OpenAi,
+            10 * 1024 * 1024
+        ));
     }
 
     #[test]
@@ -534,13 +551,19 @@ mod tests {
     #[test]
     fn verify_classifies_scoped_key_as_ok() {
         let body = r#"{"detail":{"status":"missing_permissions"}}"#;
-        assert_eq!(classify_verify(CloudSttProvider::ElevenLabs, 401, body), VerifyResult::Ok);
+        assert_eq!(
+            classify_verify(CloudSttProvider::ElevenLabs, 401, body),
+            VerifyResult::Ok
+        );
         // openai 401 is a hard auth failure
         match classify_verify(CloudSttProvider::OpenAi, 401, "bad") {
             VerifyResult::Failed { code, .. } => assert_eq!(code, CloudSttErrorCode::Auth),
             _ => panic!("expected failure"),
         }
-        assert_eq!(classify_verify(CloudSttProvider::OpenAi, 200, "{}"), VerifyResult::Ok);
+        assert_eq!(
+            classify_verify(CloudSttProvider::OpenAi, 200, "{}"),
+            VerifyResult::Ok
+        );
     }
 
     #[test]
@@ -555,9 +578,18 @@ mod tests {
 
     #[test]
     fn transport_error_network_vs_provider() {
-        assert_eq!(classify_transport_error("ECONNREFUSED").code, CloudSttErrorCode::Network);
-        assert_eq!(classify_transport_error("fetch failed").code, CloudSttErrorCode::Network);
-        assert_eq!(classify_transport_error("weird internal bug").code, CloudSttErrorCode::ProviderError);
+        assert_eq!(
+            classify_transport_error("ECONNREFUSED").code,
+            CloudSttErrorCode::Network
+        );
+        assert_eq!(
+            classify_transport_error("fetch failed").code,
+            CloudSttErrorCode::Network
+        );
+        assert_eq!(
+            classify_transport_error("weird internal bug").code,
+            CloudSttErrorCode::ProviderError
+        );
     }
 
     #[test]
@@ -571,14 +603,20 @@ mod tests {
             media_type: "audio/wav".into(),
             audio_wav: vec![],
         };
-        assert_eq!(preflight(&req).unwrap_err().code, CloudSttErrorCode::KeyMissing);
+        assert_eq!(
+            preflight(&req).unwrap_err().code,
+            CloudSttErrorCode::KeyMissing
+        );
 
         let req2 = CloudTranscribeRequest {
             api_key: "sk-xxx".into(),
             audio_wav: big,
             ..req.clone()
         };
-        assert_eq!(preflight(&req2).unwrap_err().code, CloudSttErrorCode::AudioTooLarge);
+        assert_eq!(
+            preflight(&req2).unwrap_err().code,
+            CloudSttErrorCode::AudioTooLarge
+        );
 
         let req3 = CloudTranscribeRequest {
             api_key: "sk-xxx".into(),
@@ -618,7 +656,10 @@ mod tests {
 
     #[test]
     fn provider_of_recognizes_cloud_prefixes() {
-        assert_eq!(provider_of("openai:whisper-1"), Some(CloudSttProvider::OpenAi));
+        assert_eq!(
+            provider_of("openai:whisper-1"),
+            Some(CloudSttProvider::OpenAi)
+        );
         assert_eq!(
             provider_of("elevenlabs:scribe_v1"),
             Some(CloudSttProvider::ElevenLabs)

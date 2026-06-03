@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // (WU-9 §6 — `entities/audio-device`), lib_wiring.md §3, spec/openapi.yaml `AudioDevice`,
 // server/src/stt_server/control_handler.py `list_input_devices`. Wraps Handy's
 // `audio_toolkit::audio::device::list_input_devices` (cpal).
@@ -25,10 +25,19 @@
 // integer), the same integer the renderer persists as
 // `audio.inputDeviceIndex` and hands to `set_parameter input_device_index`.
 
+use std::sync::Mutex;
+
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::audio_toolkit::audio::list_input_devices;
+
+/// Last device list we logged, so repeated identical enumerations (every window's
+/// `useInputDevices` calls this on mount + on each device-change poll) don't spam the
+/// log. We log ONLY when the set changes — which preserves the diagnostic value
+/// (a hot-plugged BT mic appearing/disappearing) while killing the dozen-per-startup
+/// duplicate lines.
+static LAST_LOGGED_DEVICES: Mutex<Option<String>> = Mutex::new(None);
 
 /// One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -65,15 +74,30 @@ fn map_input_devices() -> Vec<AudioDevicePayload> {
     // DIAGNOSTIC: log every cpal INPUT device so we can see whether a hot-plugged mic (e.g.
     // a Bluetooth headset) is enumerated. NB: a BT headset's mic exists as an input device
     // ONLY in HFP/Hands-Free mode — in A2DP (music) mode Windows exposes NO mic input, so
-    // cpal (correctly) won't list it until it switches to HFP.
-    log::info!(
-        "[devices] cpal input devices: [{}]",
-        devices
-            .iter()
-            .map(|d| format!("{}:{}{}", d.index, d.name, if d.is_default { "*" } else { "" }))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    // cpal (correctly) won't list it until it switches to HFP. Logged ONLY when the set
+    // CHANGES (see `LAST_LOGGED_DEVICES`) so the many windows that enumerate on mount don't
+    // each emit an identical line.
+    let signature = devices
+        .iter()
+        .map(|d| {
+            format!(
+                "{}:{}{}",
+                d.index,
+                d.name,
+                if d.is_default { "*" } else { "" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    {
+        let mut last = LAST_LOGGED_DEVICES
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if last.as_deref() != Some(signature.as_str()) {
+            log::info!("[devices] cpal input devices: [{signature}]");
+            *last = Some(signature);
+        }
+    }
     devices
         .into_iter()
         .filter_map(|d| {

@@ -4,12 +4,12 @@ import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
 import { TitleBar } from "./TitleBar";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 let sendCalls: Array<{ channel: string; args: unknown[] }>;
 
 beforeEach(() => {
 	sendCalls = [];
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		send: (channel: string, ...args: unknown[]) => {
 			sendCalls.push({ channel, args });
@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 function renderWithIntl() {

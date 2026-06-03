@@ -1,4 +1,3 @@
-// PORT IMPL — drafted against real APIs, pending compile.
 // Source: docs.rs/sherpa-onnx/1.13.2 (KeywordSpotter / KeywordSpotterConfig /
 //         OnlineModelConfig / OnlineTransducerModelConfig / OnlineStream / KeywordResult),
 //         verified 2026-05-31 via docs.rs source (src/kws.rs, src/online_asr.rs).
@@ -8,7 +7,7 @@
 //   server/src/recorder/infrastructure/composite_wake_word.py
 //   server/src/recorder/bootstrap.py (WAKE_WORD_BACKENDS registry, L938-945)
 //   frontend/src/shared/config/settings-schema.ts (general.wakeWord/wakeWordSensitivity/wakeWordTimeout)
-//   app/PORT/05_wakeword_diarization_loopback_wordts.md (§A)
+//   docs/port/05_wakeword_diarization_loopback_wordts.md (§A)
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // REAL sherpa-onnx 1.13.2 KWS API (the ONLY thing that changed vs the sherpa-rs draft):
@@ -93,11 +92,19 @@ pub struct WakeWordResult {
 
 impl WakeWordResult {
     pub fn none() -> Self {
-        WakeWordResult { detected: false, word_index: -1, word: String::new() }
+        WakeWordResult {
+            detected: false,
+            word_index: -1,
+            word: String::new(),
+        }
     }
 
     pub fn hit(word_index: i32, word: impl Into<String>) -> Self {
-        WakeWordResult { detected: true, word_index, word: word.into() }
+        WakeWordResult {
+            detected: true,
+            word_index,
+            word: word.into(),
+        }
     }
 }
 
@@ -131,24 +138,75 @@ pub struct WakeWordPreset {
 /// as a free-form custom phrase (see [`resolve_phrase`]).
 pub const WAKE_WORD_PRESETS: &[WakeWordPreset] = &[
     // ── Porcupine 1.9.x built-ins (no access key) ──
-    WakeWordPreset { name: "alexa", phrase: "alexa" },
-    WakeWordPreset { name: "americano", phrase: "americano" },
-    WakeWordPreset { name: "blueberry", phrase: "blueberry" },
-    WakeWordPreset { name: "bumblebee", phrase: "bumblebee" },
-    WakeWordPreset { name: "computer", phrase: "computer" },
-    WakeWordPreset { name: "grapefruit", phrase: "grapefruit" },
-    WakeWordPreset { name: "grasshopper", phrase: "grasshopper" },
-    WakeWordPreset { name: "hey google", phrase: "hey google" },
-    WakeWordPreset { name: "hey siri", phrase: "hey siri" },
-    WakeWordPreset { name: "jarvis", phrase: "jarvis" },
-    WakeWordPreset { name: "ok google", phrase: "ok google" },
-    WakeWordPreset { name: "picovoice", phrase: "picovoice" },
-    WakeWordPreset { name: "porcupine", phrase: "porcupine" },
-    WakeWordPreset { name: "terminator", phrase: "terminator" },
+    WakeWordPreset {
+        name: "alexa",
+        phrase: "alexa",
+    },
+    WakeWordPreset {
+        name: "americano",
+        phrase: "americano",
+    },
+    WakeWordPreset {
+        name: "blueberry",
+        phrase: "blueberry",
+    },
+    WakeWordPreset {
+        name: "bumblebee",
+        phrase: "bumblebee",
+    },
+    WakeWordPreset {
+        name: "computer",
+        phrase: "computer",
+    },
+    WakeWordPreset {
+        name: "grapefruit",
+        phrase: "grapefruit",
+    },
+    WakeWordPreset {
+        name: "grasshopper",
+        phrase: "grasshopper",
+    },
+    WakeWordPreset {
+        name: "hey google",
+        phrase: "hey google",
+    },
+    WakeWordPreset {
+        name: "hey siri",
+        phrase: "hey siri",
+    },
+    WakeWordPreset {
+        name: "jarvis",
+        phrase: "jarvis",
+    },
+    WakeWordPreset {
+        name: "ok google",
+        phrase: "ok google",
+    },
+    WakeWordPreset {
+        name: "picovoice",
+        phrase: "picovoice",
+    },
+    WakeWordPreset {
+        name: "porcupine",
+        phrase: "porcupine",
+    },
+    WakeWordPreset {
+        name: "terminator",
+        phrase: "terminator",
+    },
     // ── openWakeWord "hey_*" phrases WinSTT exposed (underscores → spaces) ──
-    WakeWordPreset { name: "hey_jarvis", phrase: "hey jarvis" },
-    WakeWordPreset { name: "hey_mycroft", phrase: "hey mycroft" },
-    WakeWordPreset { name: "hey_rhasspy", phrase: "hey rhasspy" },
+    WakeWordPreset {
+        name: "hey_jarvis",
+        phrase: "hey jarvis",
+    },
+    WakeWordPreset {
+        name: "hey_mycroft",
+        phrase: "hey mycroft",
+    },
+    WakeWordPreset {
+        name: "hey_rhasspy",
+        phrase: "hey rhasspy",
+    },
 ];
 
 /// Resolve a persisted wake-word name into the phrase to spot.
@@ -563,11 +621,11 @@ pub struct WakeWordDetector {
     sample_rate: i32,
 }
 
-// NOTE(port): sherpa-onnx `KeywordSpotter` and `OnlineStream` both implement
-// `Send + Sync` (verified in the crate's trait list, docs.rs 1.13.2), so
-// `WakeWordDetector` is AUTO `Send + Sync` — no manual `unsafe impl` needed (and
-// a manual one would conflict with the auto-impl). The detector can therefore
-// live behind the manager's mutex and be fed from the audio-consumer thread.
+// Compatibility behavior: sherpa-onnx `KeywordSpotter` and `OnlineStream` both
+// implement `Send + Sync` (verified in the crate's trait list, docs.rs 1.13.2),
+// so `WakeWordDetector` is auto `Send + Sync`. Do not add a manual `unsafe impl`;
+// it would conflict with the auto impl. The detector can live behind the
+// manager's mutex and be fed from the audio-consumer thread.
 
 impl WakeWordDetector {
     /// Build a live spotter + armed stream from a [`WakeWordConfig`].
@@ -600,10 +658,7 @@ impl WakeWordDetector {
             // Per-keyword `#threshold` in the content TIGHTENS this global floor.
             keywords_threshold: config.global_threshold(),
             keywords_score: config.default_boost(),
-            keywords_file: config
-                .keywords_file
-                .as_deref()
-                .map(path_string_lossy),
+            keywords_file: config.keywords_file.as_deref().map(path_string_lossy),
             keywords_buf: config.keywords_inline().map(str::to_string),
             ..KeywordSpotterConfig::default()
         };
@@ -996,7 +1051,10 @@ mod tests {
     fn config_keywords_inline_prefers_content() {
         let cfg = sample_config();
         assert_eq!(cfg.keywords_inline(), Some("▁A L E X A #0.22 @alexa\n"));
-        let empty = WakeWordConfig { keywords_content: None, ..sample_config() };
+        let empty = WakeWordConfig {
+            keywords_content: None,
+            ..sample_config()
+        };
         assert_eq!(empty.keywords_inline(), None);
     }
 

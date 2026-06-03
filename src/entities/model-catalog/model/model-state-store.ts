@@ -162,7 +162,7 @@ export function initModelStateStore(): () => void {
 	};
 }
 
-if (typeof window !== "undefined" && window.electronAPI != null) {
+if (typeof window !== "undefined" && window.nativeBridge != null) {
 	useModelStateStore.getState().refresh();
 	initModelStateStore();
 }

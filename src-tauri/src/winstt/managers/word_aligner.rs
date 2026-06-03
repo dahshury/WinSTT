@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/05_*.md (Word-timestamps),
+// Source: docs/port/05_*.md (Word-timestamps),
 // server/src/recorder/infrastructure/word_aligner.py (the tiered native + use-our-words strategy),
 // onnx-asr/src/onnx_asr/word_timestamps.py (DTW + median filter + alignment heads + word grouping).
 //
@@ -199,8 +199,16 @@ mod tests {
     fn map_known_text_transfers_equal_words() {
         // "test that" timed → known "test this": "test" keeps its window, "this" inherits "that"'s.
         let timed = vec![
-            WordResult { text: "test".into(), start: 0.0, end: 0.5 },
-            WordResult { text: "that".into(), start: 0.5, end: 1.0 },
+            WordResult {
+                text: "test".into(),
+                start: 0.0,
+                end: 0.5,
+            },
+            WordResult {
+                text: "that".into(),
+                start: 0.5,
+                end: 1.0,
+            },
         ];
         let mapped = WordAligner::map_timings_to_known_text(&timed, "test this");
         assert_eq!(mapped.len(), 2);
@@ -214,7 +222,11 @@ mod tests {
 
     #[test]
     fn map_known_text_empty_known_is_empty() {
-        let timed = vec![WordResult { text: "a".into(), start: 0.0, end: 0.1 }];
+        let timed = vec![WordResult {
+            text: "a".into(),
+            start: 0.0,
+            end: 0.1,
+        }];
         assert!(WordAligner::map_timings_to_known_text(&timed, "   ").is_empty());
     }
 

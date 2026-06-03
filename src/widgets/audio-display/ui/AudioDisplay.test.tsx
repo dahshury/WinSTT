@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+// (afterEach/beforeEach are used by both the collectDroppedFiles and
+//  enqueueDroppedFiles describe blocks.)
 import { render } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { __audio_display_test_helpers__ as helpers } from "../lib/audio-display-test-helpers";
 import { AudioDisplay } from "./AudioDisplay";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 function makeFile(name: string): File {
@@ -53,7 +55,7 @@ describe("AudioDisplay helpers — SUPPORTED_EXTENSIONS", () => {
 
 describe("AudioDisplay helpers — collectDroppedFiles", () => {
 	beforeEach(() => {
-		window.electronAPI = {
+		window.nativeBridge = {
 			...originalApi,
 			getPathForFile: (file: File) => `/tmp/${file.name}`,
 		};
@@ -71,35 +73,75 @@ describe("AudioDisplay helpers — collectDroppedFiles", () => {
 	});
 
 	test("drops files whose native path can't be resolved", () => {
-		window.electronAPI = { ...originalApi, getPathForFile: () => "" };
+		window.nativeBridge = { ...originalApi, getPathForFile: () => "" };
 		const result = helpers.collectDroppedFiles([makeFile("song.mp3")]);
 		expect(result).toEqual([]);
 	});
 });
 
 describe("AudioDisplay helpers — enqueueDroppedFiles", () => {
-	test("enqueues the collected files and returns the count", async () => {
-		const invoke = mock(() => Promise.resolve(null));
-		window.electronAPI = {
+	// `getFilePath` (inside collectDroppedFiles) reads
+	// `window.nativeBridge.getPathForFile`, but `fileQueueEnqueue` routes through
+	// the TYPED `commands.fileTranscribeEnqueue()` (IPC.FILE_QUEUE_ENQUEUE is in
+	// `COMMAND_INVOKERS`), which calls `@tauri-apps/api/core` invoke →
+	// `window.__TAURI_INTERNALS__.invoke("file_transcribe_enqueue")` — NOT
+	// `nativeBridge.invoke`.
+	//
+	// HOWEVER bun:test's `mock.module` is process-global and never torn down, so
+	// if the download-store suite (which mocks `@/shared/api/ipc-client`) ran
+	// earlier in the same process, this file gets the LEAKED behaviour-faithful
+	// fake whose `fileQueueEnqueue` routes through `nativeBridge.invoke` instead.
+	// To stay order-independent we observe BOTH seams with one shared counter and
+	// assert that an enqueue IPC was dispatched on whichever seam the live module
+	// actually uses.
+	type TauriInternals = {
+		invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+		transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+	};
+	function tauriInternals(): TauriInternals {
+		return (window as unknown as { __TAURI_INTERNALS__: TauriInternals }).__TAURI_INTERNALS__;
+	}
+	let savedTauriInvoke: TauriInternals["invoke"];
+	let enqueueCalls: number;
+
+	beforeEach(() => {
+		enqueueCalls = 0;
+		savedTauriInvoke = tauriInternals().invoke;
+		// Real module → tauri internals seam.
+		tauriInternals().invoke = ((cmd: string) => {
+			if (cmd === "file_transcribe_enqueue") {
+				enqueueCalls += 1;
+				return Promise.resolve([]);
+			}
+			return Promise.resolve(undefined);
+		}) as unknown as TauriInternals["invoke"];
+		// Leaked-fake module → nativeBridge.invoke seam (IPC.FILE_QUEUE_ENQUEUE).
+		window.nativeBridge = {
 			...originalApi,
 			getPathForFile: (file: File) => `/tmp/${file.name}`,
-			invoke: invoke as unknown as typeof window.electronAPI.invoke,
+			invoke: ((channel: string) => {
+				if (channel === "file:queue-enqueue") {
+					enqueueCalls += 1;
+				}
+				return Promise.resolve(null);
+			}) as typeof window.nativeBridge.invoke,
 		};
+	});
+
+	afterEach(() => {
+		tauriInternals().invoke = savedTauriInvoke;
+	});
+
+	test("enqueues the collected files and returns the count", async () => {
 		const count = await helpers.enqueueDroppedFiles([makeFile("a.wav"), makeFile("skip.txt")]);
 		expect(count).toBe(1);
-		expect(invoke).toHaveBeenCalled();
+		expect(enqueueCalls).toBe(1);
 	});
 
 	test("returns 0 and does not enqueue when nothing is transcribable", async () => {
-		const invoke = mock(() => Promise.resolve(null));
-		window.electronAPI = {
-			...originalApi,
-			getPathForFile: (file: File) => `/tmp/${file.name}`,
-			invoke: invoke as unknown as typeof window.electronAPI.invoke,
-		};
 		const count = await helpers.enqueueDroppedFiles([makeFile("doc.txt")]);
 		expect(count).toBe(0);
-		expect(invoke).not.toHaveBeenCalled();
+		expect(enqueueCalls).toBe(0);
 	});
 });
 

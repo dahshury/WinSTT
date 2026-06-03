@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/07_llm_cloud_context_longtail.md §1,
+// Source: docs/port/07_llm_cloud_context_longtail.md §1,
 // frontend/electron/ipc/llm.ts + ollama.ts. Wraps winstt::llm (pure prompt/leakage logic).
 //
 // LlmManager owns the reqwest client, the Ollama `/api/show` capability cache,
@@ -8,18 +8,31 @@
 //
 // Connection values (endpoint / api key) are read from the persisted settings via
 // `settings::get_settings` at call time so a key change takes effect with no restart
-// (hot-swap path). The model warm-up loop (`keep_alive=30m`) keeps Ollama hot.
+// (hot-swap path). Ollama keep-alive follows the shared model lifetime setting.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter};
 
-use crate::winstt::llm::{
-    self, build_ollama_api_url, build_ollama_chat_body, dictation_user_prompt, finalize_chat_answer,
-    parse_chat_stream_line, transforms_user_prompt, OllamaStreamState, ReasoningSink, ThinkingEffort,
+use crate::winstt::cancel_registry::CancelRegistry;
+use crate::winstt::commands::ollama_pull::{
+    set_warmup_status, LlmWarmupModelStatus, LlmWarmupOutcome, LlmWarmupStatus,
 };
+use crate::winstt::commands::settings::{enabled_ollama_models, read_settings};
+use crate::winstt::llm::{
+    self, build_ollama_api_url, build_ollama_chat_body_with_keep_alive, dictation_user_prompt,
+    finalize_chat_answer, normalize_ollama_endpoint, ollama_keep_alive_from_core_timeout,
+    parse_chat_stream_line, transforms_user_prompt, OllamaStreamState, ReasoningSink,
+    ThinkingEffort,
+};
+
+const OLLAMA_WARMUP_INTERVAL: Duration = Duration::from_secs(4 * 60);
+const OLLAMA_WARMUP_TIMEOUT: Duration = Duration::from_secs(120);
+const OLLAMA_EVICT_TIMEOUT: Duration = Duration::from_secs(5);
+const OLLAMA_BOOT_WAIT: Duration = Duration::from_secs(10);
 
 /// One Ollama model's capabilities (from `/api/show`). Cached so the per-dictation
 /// path doesn't re-probe whether the model can `think` on every request.
@@ -45,6 +58,35 @@ impl llm::ReasoningSink for EmitReasoningSink {
     }
 }
 
+struct WarmupRunGuard<'a>(&'a AtomicBool);
+
+impl Drop for WarmupRunGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn warmup_timestamp() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as f64)
+        .unwrap_or(0.0)
+}
+
+fn is_loopback_ollama_endpoint(endpoint: &str) -> bool {
+    let normalized = normalize_ollama_endpoint(endpoint);
+    if normalized.is_empty() {
+        return false;
+    }
+    let Ok(url) = reqwest::Url::parse(&normalized) else {
+        return false;
+    };
+    matches!(
+        url.host_str().unwrap_or("").to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | ""
+    )
+}
+
 /// All-Rust LLM post-processing manager.
 pub struct LlmManager {
     app: AppHandle,
@@ -52,9 +94,15 @@ pub struct LlmManager {
     /// `/api/show` capability cache keyed by Ollama model id.
     caps_cache: Mutex<HashMap<String, OllamaCapabilities>>,
     /// Cancelled request ids — the Ollama drain loop checks this between chunks.
-    cancelled: Mutex<HashMap<String, bool>>,
+    cancelled: CancelRegistry,
     /// Monotonic request-id source for fire-and-emit calls without a renderer id.
     seq: AtomicU64,
+    /// Prevents overlapping warmup passes when a settings save lands during the periodic tick.
+    warmup_running: AtomicBool,
+    /// Guards the app-lifetime periodic keep-alive loop against duplicate startup wiring.
+    warmup_loop_started: AtomicBool,
+    /// Models this process has warmed and may evict when no longer selected.
+    warmed_models: Mutex<HashSet<String>>,
 }
 
 impl LlmManager {
@@ -63,8 +111,11 @@ impl LlmManager {
             app: app.clone(),
             client: reqwest::Client::new(),
             caps_cache: Mutex::new(HashMap::new()),
-            cancelled: Mutex::new(HashMap::new()),
+            cancelled: CancelRegistry::new(),
             seq: AtomicU64::new(1),
+            warmup_running: AtomicBool::new(false),
+            warmup_loop_started: AtomicBool::new(false),
+            warmed_models: Mutex::new(HashSet::new()),
         }
     }
 
@@ -72,32 +123,273 @@ impl LlmManager {
         format!("llm-{}", self.seq.fetch_add(1, Ordering::Relaxed))
     }
 
+    pub fn start_warmup_loop(self: &Arc<Self>) {
+        if self
+            .warmup_loop_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        let mgr = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            loop {
+                mgr.warm_enabled_models().await;
+                tokio::time::sleep(OLLAMA_WARMUP_INTERVAL).await;
+            }
+        });
+    }
+
+    pub async fn warm_enabled_models(&self) {
+        if self
+            .warmup_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let _guard = WarmupRunGuard(&self.warmup_running);
+
+        let settings = read_settings(&self.app);
+        let endpoint = settings.llm.endpoint.clone();
+        let models = enabled_ollama_models(&settings);
+        if models.is_empty() {
+            self.evict_stale_warmed_models(&endpoint, &[]).await;
+            self.publish_warmup_status(LlmWarmupStatus {
+                endpoint,
+                in_progress: false,
+                models: Vec::new(),
+                ollama_installed: false,
+                reachable: false,
+                timestamp: warmup_timestamp(),
+            });
+            return;
+        }
+
+        self.cancel_all();
+        let (reachable, ollama_installed) = self.ensure_ollama_reachable(&endpoint).await;
+        if !reachable {
+            self.publish_warmup_status(LlmWarmupStatus {
+                endpoint,
+                in_progress: false,
+                models: models
+                    .into_iter()
+                    .map(|model| LlmWarmupModelStatus {
+                        model,
+                        outcome: LlmWarmupOutcome::Unreachable,
+                        error_body: None,
+                    })
+                    .collect(),
+                ollama_installed,
+                reachable: false,
+                timestamp: warmup_timestamp(),
+            });
+            return;
+        }
+
+        self.publish_warmup_status(LlmWarmupStatus {
+            endpoint: endpoint.clone(),
+            in_progress: true,
+            models: models
+                .iter()
+                .map(|model| LlmWarmupModelStatus {
+                    model: model.clone(),
+                    outcome: LlmWarmupOutcome::Loading,
+                    error_body: None,
+                })
+                .collect(),
+            ollama_installed,
+            reachable: true,
+            timestamp: warmup_timestamp(),
+        });
+
+        self.evict_stale_warmed_models(&endpoint, &models).await;
+
+        let keep_alive = self.ollama_keep_alive();
+        let mut results = Vec::with_capacity(models.len());
+        for model in &models {
+            results.push(self.warmup_ollama_model(&endpoint, model, keep_alive).await);
+        }
+        if let Ok(mut warmed) = self.warmed_models.lock() {
+            warmed.clear();
+            warmed.extend(
+                results
+                    .iter()
+                    .filter(|r| r.outcome == LlmWarmupOutcome::Ok)
+                    .map(|r| r.model.clone()),
+            );
+        }
+
+        self.publish_warmup_status(LlmWarmupStatus {
+            endpoint,
+            in_progress: false,
+            models: results,
+            ollama_installed,
+            reachable: true,
+            timestamp: warmup_timestamp(),
+        });
+    }
+
     /// Mark a request cancelled (a model swap / new dictation aborts the prior).
     pub fn cancel(&self, request_id: &str) {
-        if let Ok(mut map) = self.cancelled.lock() {
-            map.insert(request_id.to_string(), true);
-        }
+        self.cancelled.cancel(request_id);
     }
 
     pub fn cancel_all(&self) {
-        if let Ok(mut map) = self.cancelled.lock() {
-            for v in map.values_mut() {
-                *v = true;
-            }
-        }
+        self.cancelled.cancel_all();
     }
 
     fn is_cancelled(&self, request_id: &str) -> bool {
-        self.cancelled
-            .lock()
-            .map(|m| m.get(request_id).copied().unwrap_or(false))
-            .unwrap_or(false)
+        self.cancelled.is_cancelled(request_id, false)
     }
 
     fn clear_cancel(&self, request_id: &str) {
-        if let Ok(mut map) = self.cancelled.lock() {
-            map.remove(request_id);
+        self.cancelled.clear(request_id);
+    }
+
+    fn ollama_keep_alive(&self) -> &'static str {
+        let timeout = read_settings(&self.app).global.model_unload_timeout;
+        let timeout = crate::winstt::commands::settings::core_timeout_from_winstt(timeout);
+        ollama_keep_alive_from_core_timeout(timeout)
+    }
+
+    async fn ensure_ollama_reachable(&self, endpoint: &str) -> (bool, bool) {
+        if self.ollama_detect(endpoint).await {
+            return (true, true);
         }
+        if !is_loopback_ollama_endpoint(endpoint) {
+            return (false, false);
+        }
+        let detected = crate::winstt::commands::llm::detect_ollama_executable().await;
+        let Some(path) = detected.path else {
+            return (false, detected.installed);
+        };
+        if let Err(err) = crate::winstt::commands::llm::spawn_ollama_serve(&path) {
+            log::debug!("[llm] Ollama auto-start failed: {err}");
+            return (false, true);
+        }
+        (self.wait_for_ollama(endpoint, OLLAMA_BOOT_WAIT).await, true)
+    }
+
+    async fn wait_for_ollama(&self, endpoint: &str, total: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + total;
+        loop {
+            if self.ollama_detect(endpoint).await {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    async fn evict_stale_warmed_models(&self, endpoint: &str, active_models: &[String]) {
+        let stale = self.stale_warmed_models(active_models);
+        for model in stale {
+            self.unload_ollama_model(endpoint, &model).await;
+        }
+    }
+
+    fn stale_warmed_models(&self, active_models: &[String]) -> Vec<String> {
+        let active: HashSet<&str> = active_models.iter().map(String::as_str).collect();
+        self.warmed_models
+            .lock()
+            .map(|warmed| {
+                warmed
+                    .iter()
+                    .filter(|model| !active.contains(model.as_str()))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn unload_ollama_model(&self, endpoint: &str, model: &str) {
+        let url = build_ollama_api_url(endpoint, "/api/generate");
+        let result = self
+            .client
+            .post(url)
+            .json(&serde_json::json!({
+                "model": model,
+                "prompt": "",
+                "stream": false,
+                "keep_alive": 0,
+            }))
+            .timeout(OLLAMA_EVICT_TIMEOUT)
+            .send()
+            .await;
+        if let Err(err) = result {
+            log::debug!("[llm] Ollama evict failed for {model}: {err}");
+        }
+    }
+
+    async fn warmup_ollama_model(
+        &self,
+        endpoint: &str,
+        model: &str,
+        keep_alive: &str,
+    ) -> LlmWarmupModelStatus {
+        if model.trim().is_empty() {
+            return LlmWarmupModelStatus {
+                model: model.to_string(),
+                outcome: LlmWarmupOutcome::Skipped,
+                error_body: None,
+            };
+        }
+
+        let url = build_ollama_api_url(endpoint, "/api/generate");
+        let response = self
+            .client
+            .post(url)
+            .json(&serde_json::json!({
+                "model": model,
+                "prompt": "",
+                "stream": false,
+                "keep_alive": keep_alive,
+            }))
+            .timeout(OLLAMA_WARMUP_TIMEOUT)
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(response) => response,
+            Err(err) => {
+                return LlmWarmupModelStatus {
+                    model: model.to_string(),
+                    outcome: LlmWarmupOutcome::Unreachable,
+                    error_body: Some(err.to_string()),
+                };
+            }
+        };
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return LlmWarmupModelStatus {
+                model: model.to_string(),
+                outcome: if status == 404 {
+                    LlmWarmupOutcome::ModelNotFound
+                } else {
+                    LlmWarmupOutcome::LoadFailed
+                },
+                error_body: if body.is_empty() { None } else { Some(body) },
+            };
+        }
+
+        let _ = response.bytes().await;
+        log::debug!("[llm] Ollama warm-up OK: {model}");
+        LlmWarmupModelStatus {
+            model: model.to_string(),
+            outcome: LlmWarmupOutcome::Ok,
+            error_body: None,
+        }
+    }
+
+    fn publish_warmup_status(&self, status: LlmWarmupStatus) {
+        set_warmup_status(status.clone());
+        let _ = self.app.emit("llm:warmup-status", status);
     }
 
     // ── Ollama capability probe (`/api/show`) ──────────────────────────────
@@ -157,13 +449,14 @@ impl LlmManager {
             .ollama_capabilities(endpoint, model)
             .await
             .unwrap_or_default();
-        let body = build_ollama_chat_body(
+        let body = build_ollama_chat_body_with_keep_alive(
             model,
             system_prompt,
             &dictation_user_prompt(text),
             text.len(),
             caps.supports_thinking,
             effort,
+            self.ollama_keep_alive(),
         );
         self.stream_ollama_chat(endpoint, body, text, request_id)
             .await
@@ -184,13 +477,14 @@ impl LlmManager {
             .ollama_capabilities(endpoint, model)
             .await
             .unwrap_or_default();
-        let body = build_ollama_chat_body(
+        let body = build_ollama_chat_body_with_keep_alive(
             model,
             system_prompt,
             &transforms_user_prompt(text),
             text.len(),
             caps.supports_thinking,
             effort,
+            self.ollama_keep_alive(),
         );
         self.stream_ollama_chat(endpoint, body, text, request_id)
             .await
@@ -257,9 +551,10 @@ impl LlmManager {
         // → `llm-learned-proper-nouns`). Empty batches are dropped.
         let nouns = llm::extract_learned_proper_nouns(&state.content);
         if !nouns.is_empty() {
-            let _ = self
-                .app
-                .emit("llm-learned-proper-nouns", serde_json::json!({ "nouns": nouns }));
+            let _ = self.app.emit(
+                "llm-learned-proper-nouns",
+                serde_json::json!({ "nouns": nouns }),
+            );
         }
         let (answer, reasoning) = finalize_chat_answer(&state.content, fallback);
         if let Some(r) = reasoning {
@@ -314,7 +609,7 @@ impl LlmManager {
 
     /// List local Ollama models (`/api/tags`) as full detail rows (name + size +
     /// modifiedAt + details + enriched capabilities). Mirrors `scanOllamaModels`
-    /// in the Electron handler: parse `/api/tags`, then per-model `/api/show` to
+    /// in the reference handler: parse `/api/tags`, then per-model `/api/show` to
     /// fill `capabilities`. A single `/api/show` failure leaves that model's caps
     /// empty rather than poisoning the list.
     pub async fn ollama_list_models_detailed(
@@ -380,7 +675,7 @@ impl LlmManager {
     /// `llm:pull-progress` for every coalesced NDJSON frame (broadcast to all
     /// windows via `self.app`). `is_cancelled` is polled between frames so the
     /// renderer's stop button aborts mid-stream. Mirrors `pullOllamaModel` +
-    /// `readPullStream` in the Electron handler.
+    /// `readPullStream` in the reference handler.
     ///
     /// Returns `PullOutcome` so the command can build the `OllamaPullResult`.
     /// (Emit is done internally rather than via a callback so the future stays
@@ -408,7 +703,15 @@ impl LlmManager {
             Ok(r) => r,
             Err(e) => {
                 let msg = format!("Ollama /api/pull failed: {e}");
-                self.emit_pull(pull_progress_json(model, "error", None, None, None, None, Some(&msg)));
+                self.emit_pull(pull_progress_json(
+                    model,
+                    "error",
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&msg),
+                ));
                 return PullOutcome::Error(msg);
             }
         };
@@ -416,7 +719,15 @@ impl LlmManager {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
             let msg = format!("Ollama /api/pull HTTP {status}: {body}");
-            self.emit_pull(pull_progress_json(model, "error", None, None, None, None, Some(&msg)));
+            self.emit_pull(pull_progress_json(
+                model,
+                "error",
+                None,
+                None,
+                None,
+                None,
+                Some(&msg),
+            ));
             return PullOutcome::Error(msg);
         }
 
@@ -437,7 +748,13 @@ impl LlmManager {
                 Err(e) => {
                     let msg = format!("Ollama /api/pull stream error: {e}");
                     self.emit_pull(pull_progress_json(
-                        model, "error", None, None, None, None, Some(&msg),
+                        model,
+                        "error",
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(&msg),
                     ));
                     return PullOutcome::Error(msg);
                 }
@@ -481,8 +798,17 @@ impl LlmManager {
         if success {
             PullOutcome::Success
         } else {
-            let msg = last_error.unwrap_or_else(|| "Pull did not complete successfully".to_string());
-            self.emit_pull(pull_progress_json(model, "error", None, None, None, None, Some(&msg)));
+            let msg =
+                last_error.unwrap_or_else(|| "Pull did not complete successfully".to_string());
+            self.emit_pull(pull_progress_json(
+                model,
+                "error",
+                None,
+                None,
+                None,
+                None,
+                Some(&msg),
+            ));
             PullOutcome::Error(msg)
         }
     }
@@ -956,7 +1282,8 @@ fn extract_openrouter_text(content: &str, fallback: &str) -> String {
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    if let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(stripped) {
+    if let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(stripped)
+    {
         if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
             let out = text.trim();
             if !out.is_empty() {
@@ -1069,9 +1396,20 @@ mod tests {
 
     #[test]
     fn pull_progress_json_has_percent() {
-        let v = pull_progress_json("m", "downloading", Some("pulling x"), None, Some(50), Some(100), None);
+        let v = pull_progress_json(
+            "m",
+            "downloading",
+            Some("pulling x"),
+            None,
+            Some(50),
+            Some(100),
+            None,
+        );
         assert_eq!(v.get("percent").and_then(|p| p.as_f64()), Some(50.0));
-        assert_eq!(v.get("status").and_then(|s| s.as_str()), Some("downloading"));
+        assert_eq!(
+            v.get("status").and_then(|s| s.as_str()),
+            Some("downloading")
+        );
         assert_eq!(v.get("model").and_then(|s| s.as_str()), Some("m"));
     }
 

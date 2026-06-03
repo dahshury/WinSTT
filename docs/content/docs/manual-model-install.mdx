@@ -1,0 +1,175 @@
+---
+title: Manual Model Install
+description: Install WinSTT's built-in STT models offline, behind a proxy, or on an air-gapped machine by staging files into the Hugging Face cache.
+---
+
+Stage any built-in model by hand so WinSTT can run it without ever touching the network — for proxy-blocked, firewalled, or fully air-gapped machines.
+
+<Screenshot src="model-dropdown" alt="The open model picker dropdown with a maker rail on the left and model rows showing accuracy and speed bars, size, language scope, and per-quantization download badges." label="Model picker" caption="The picker re-probes the Hugging Face cache on open. Manually-staged models surface here with their quantization badges already marked Cached." />
+
+WinSTT normally downloads built-in models from the [Hugging Face Hub](https://huggingface.co) on demand. If your network blocks `huggingface.co` — corporate proxy, firewall, air-gapped lab, country-level block — you can copy the model files into the cache yourself, and the picker will pick them up on the next restart.
+
+<Callout type="info" title="Different from custom models">
+  Dropping a Hugging Face-style export into `{userData}/models/custom/` is a separate flow described in [Custom Models](/docs/models#custom-models). That path is for unsupported, user-provided ONNX bundles; this page is for the **built-in** catalog entries (Whisper, NeMo, Moonshine, and the rest).
+</Callout>
+
+## Where models live
+
+WinSTT uses the standard `huggingface_hub` cache, not its own `models/` directory.
+
+| Scope | Path |
+|---|---|
+| **Windows (default)** | `C:\Users\<you>\.cache\huggingface\hub\` |
+| **Override** | Set `HF_HOME=<somewhere>` before launching WinSTT — the cache becomes `<HF_HOME>\hub\` |
+
+Inside the cache each repo gets a folder named `models--<owner>--<repo>` with `blobs/`, `refs/`, and `snapshots/` subfolders. `huggingface_hub` resumes interrupted pulls automatically — a partial download leaves a `*.incomplete` marker that resumes on the next attempt.
+
+## Stage a model offline
+
+<StepFlow>
+
+<Step title="Identify the repo ID">
+Open the picker in WinSTT (or check [Available Models](/docs/models)) and note the **Hugging Face repo** for the model you want. A few common ones:
+
+<ModelTable
+  head={["Picker label", "HF repo ID"]}
+  rows={[
+    ["Whisper Tiny (multilingual)", "onnx-community/whisper-tiny"],
+    ["Whisper Tiny.en", "onnx-community/whisper-tiny.en"],
+    ["Whisper Base.en", "onnx-community/whisper-base.en"],
+    ["Whisper Small", "onnx-community/whisper-small"],
+    ["Whisper Large v3 Turbo", "onnx-community/whisper-large-v3-turbo"],
+    ["Lite-Whisper Large v3 Turbo (acc)", "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX"],
+    ["Kokoro-82M (TTS)", "onnx-community/Kokoro-82M-v1.0-ONNX"],
+  ]}
+  caption="The catalog at server/src/recorder/domain/catalog.json is the authoritative list — the onnx_model_name field holds the exact repo ID for every entry."
+/>
+</Step>
+
+<Step title="Download the snapshot on a connected machine">
+The cleanest path is to use `huggingface_hub` on a machine that *does* have network access:
+
+```bash
+pip install huggingface_hub
+huggingface-cli download onnx-community/whisper-tiny.en --local-dir ./whisper-tiny.en
+```
+
+This pulls the entire repo into `./whisper-tiny.en/`. You can also browse the repo in a web browser and download each file by hand — the URLs look like:
+
+```text
+https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/onnx/encoder_model.onnx
+https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/onnx/decoder_model_merged.onnx
+https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/tokenizer.json
+https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/config.json
+https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/generation_config.json
+https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/preprocessor_config.json
+```
+
+You only need the **quantization variants you'll actually run**. For Whisper that's typically `encoder_model.onnx` and `decoder_model_merged.onnx` (default precision), plus optional `*_fp16.onnx`, `*_q4.onnx`, or `*_int8.onnx` for the other quantizations the model card lists.
+
+<Callout type="warn" title="WinSTT does not auto-quantize">
+  To run, say, `q4` you must have the `*_q4.onnx` weights from the upstream repo. The picker greys out any quantization whose files aren't present — it never compresses weights itself.
+</Callout>
+</Step>
+
+<Step title="Place the files into the cache layout">
+Inside `C:\Users\<you>\.cache\huggingface\hub\`, recreate the standard layout for one model:
+
+```text
+models--onnx-community--whisper-tiny.en/
+├── refs/
+│   └── main                # text file containing the commit SHA you downloaded
+├── snapshots/
+│   └── <commit-sha>/       # mirror of the repo at that revision
+│       ├── config.json
+│       ├── tokenizer.json
+│       ├── generation_config.json
+│       ├── preprocessor_config.json
+│       └── onnx/
+│           ├── encoder_model.onnx
+│           └── decoder_model_merged.onnx
+└── blobs/                  # optional — symlink targets; can be empty if snapshots/ holds real files
+```
+
+The simplest approach is to download with `huggingface-cli` on a connected machine, then copy the entire `models--<owner>--<repo>` folder verbatim to the target. This preserves the blobs-and-symlinks layout `huggingface_hub` expects.
+
+```powershell
+robocopy `
+  "\\source-machine\C$\Users\you\.cache\huggingface\hub\models--onnx-community--whisper-tiny.en" `
+  "$env:USERPROFILE\.cache\huggingface\hub\models--onnx-community--whisper-tiny.en" `
+  /MIR
+```
+</Step>
+
+<Step title="Restart WinSTT">
+The picker re-probes the Hugging Face cache every time the settings panel opens. After a restart the model's quantization badge flips from **Not cached** to **Cached**, and you can swap to it with no active network connection.
+
+If the badge stays **Not cached**, the folder layout doesn't match. Open `%APPDATA%\WinSTT\debug.log` and search for `hub_cache_dir` or `models--`; those lines say which path the probe walked and what it expected to find.
+</Step>
+
+</StepFlow>
+
+## Where staged models appear in the picker
+
+A manually-placed model is **indistinguishable from one WinSTT downloaded itself** — both live in the same cache. In the [model picker](/docs/settings/model#the-model-picker) it appears in its family group with the same accuracy/speed bars, size, and language scope, and each quantization you staged shows a **Cached** badge instead of a **Download** button. Variants you didn't stage stay greyed out until their files are present.
+
+## Verify without launching the app
+
+To sanity-check the layout before booting Electron, run the cache probe in isolation from `server/`:
+
+```bash
+cd server
+uv run python -c "from recorder.infrastructure.model_cache import probe_cache_state; print(probe_cache_state('onnx-community/whisper-tiny.en'))"
+```
+
+The state field tells you exactly where you stand:
+
+<ModelTable
+  head={["State", "Meaning", "Fix"]}
+  rows={[
+    ["cached", "All expected weight files are present — the picker will show Cached.", "Nothing — you're done."],
+    ["partial", "A file is missing or an .incomplete marker is still present.", "Re-copy the snapshot; check for leftover *.incomplete files."],
+    ["not_cached", "The snapshots/<sha>/ folder isn't there at all.", "Recheck the folder name (models--<owner>--<repo>) and the commit SHA in refs/main."],
+  ]}
+  caption="probe_cache_state returns a ModelCacheState(state=…); cached reports equal downloaded/total bytes."
+/>
+
+## Bulk staging for a fleet
+
+For IT teams deploying WinSTT across a managed fleet, the usual pattern is:
+
+<StepFlow>
+  <Step title="Stage everything once">
+    Run a one-time online setup on a build machine to download every model the org wants pre-staged.
+  </Step>
+  <Step title="Zip the cache">
+    Archive the whole `C:\Users\<build-user>\.cache\huggingface\hub\` folder.
+  </Step>
+  <Step title="Deploy to each user">
+    Unpack the archive into each user's `%USERPROFILE%\.cache\huggingface\hub\` via your MDM or GPO of choice.
+  </Step>
+  <Step title="Lock the network off">
+    Set the system env var `HF_HUB_OFFLINE=1` to forbid any outbound Hub request. WinSTT then uses only what's already cached.
+  </Step>
+</StepFlow>
+
+<Callout type="info" title="HF_HUB_OFFLINE=1 is opt-in">
+  `HF_HUB_OFFLINE=1` is the difference between "use the cache when possible" (the default) and "never touch the network". With it set, the picker shows **Not cached** entries as disabled rather than offering a **Download** button — the right setting for genuinely air-gapped boxes.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Browse the catalog" href="/docs/models">
+    All 40+ models across 8 families, with accuracy, speed, and language coverage.
+  </Card>
+  <Card title="The model picker" href="/docs/settings/model">
+    How to search, filter, and switch models — and where the Cached badges live.
+  </Card>
+  <Card title="Custom models" href="/docs/models#custom-models">
+    Drop your own ONNX export into `{userData}/models/custom/` instead.
+  </Card>
+  <Card title="Model downloads fail" href="/docs/troubleshooting#model-downloads-fail">
+    Recover from a partial or interrupted download mid-flight.
+  </Card>
+</Cards>

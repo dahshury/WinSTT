@@ -38,7 +38,7 @@ export function formatEntryTimestamp(entry: HistoryEntry): string {
 
 /**
  * Approximate "word count" for the row's effective text. Whitespace-delimited
- * tokens, matching the legacy electron-store history's policy in
+ * tokens, matching the legacy persisted store history's policy in
  * `transcription-history.ts`'s `countWords`.
  */
 export function entryWordCount(entry: HistoryEntry): number {

@@ -1,8 +1,13 @@
-import { AiCloud01Icon, CpuIcon, LockIcon, VolumeHighIcon } from "@hugeicons/core-free-icons";
+import {
+	AiCloud01Icon,
+	AiComputerIcon,
+	AiVoiceGeneratorIcon,
+	LockIcon,
+} from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
-	SettingResetButton,
+	SettingField,
 	SettingSection,
 	useSettingsStore,
 	useSettingsTabStore,
@@ -11,12 +16,12 @@ import {
 	type TtsVoiceCatalog,
 	ttsCancel,
 	ttsCloudPreview,
+	ttsDeleteModel,
 	ttsInstallCancel,
 	ttsSpeak,
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { FormControl } from "@/shared/ui/form-control";
 import type { SelectOptionGroup } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
@@ -24,11 +29,13 @@ import { type UseCloudTtsVoices, useCloudTtsVoices } from "../model/use-cloud-tt
 import { useTtsDownloadProgress } from "../model/use-tts-download-progress";
 import { useTtsInstallGate } from "../model/use-tts-install-gate";
 import { useTtsPlayback } from "../model/use-tts-playback";
+import { TtsModelSelector } from "@picker/tts";
+import { useTtsCatalogStore, useTtsModelStateStore } from "@/entities/tts-catalog";
+import { useTtsModelDownloads } from "../model/use-tts-model-downloads";
 import { useTtsVoiceCatalog } from "../model/use-tts-voice-catalog";
 import { CloudTtsControls } from "./CloudTtsControls";
 import { TtsControls } from "./TtsControls";
 import { TtsInstallBanner } from "./TtsInstallBanner";
-import { TtsInstallDialog } from "./TtsInstallDialog";
 
 export interface TtsModelSectionProps {
 	/** Reserved for future composition — currently the section pulls all state
@@ -39,6 +46,31 @@ export interface TtsModelSectionProps {
 // Sample sentence read aloud by the "Test voice" button. Static so the speed/
 // voice change is the only audible variable.
 const TEST_SAMPLE_FALLBACK = "The quick brown fox jumps over the lazy dog.";
+
+// Per-language demo line so previewing a non-English voice actually demonstrates
+// THAT language. Keyed by the language PREFIX (the part before any region tag:
+// "pt-br" → "pt", "en-gb" → "en").
+//
+// IMPORTANT — only languages our G2P (espeak-ng) can actually pronounce belong
+// here. Kokoro's Japanese ("ja") and Mandarin ("cmn") need a misaki-style G2P we
+// don't ship; feeding espeak native CJK text makes it ANNOUNCE the script ("in
+// Japanese", "in Chinese") and run long. Those (and any unlisted language) fall
+// back to the English sample below — clean, even if not native. Latin/Devanagari
+// languages (es/fr/it/pt/hi) espeak handles, so they get a native line.
+const DEMO_SENTENCE_BY_LANG: Record<string, string> = {
+	es: "Hola, esta es una breve demostración de síntesis de voz.",
+	fr: "Bonjour, ceci est une courte démonstration de synthèse vocale.",
+	hi: "नमस्ते, यह वाक् संश्लेषण का एक छोटा सा उदाहरण है।",
+	it: "Ciao, questa è una breve dimostrazione di sintesi vocale.",
+	pt: "Olá, esta é uma breve demonstração de síntese de voz.",
+};
+
+// Resolve the demo line for a voice's language: native sentence when we have one
+// AND can pronounce it, else the (English) i18n sample or the pangram fallback.
+function demoSentenceForLang(lang: string, i18nSample: string): string {
+	const prefix = lang.split("-")[0]?.toLowerCase() ?? "";
+	return DEMO_SENTENCE_BY_LANG[prefix] || i18nSample || TEST_SAMPLE_FALLBACK;
+}
 
 // Shown when the ElevenLabs character quota is spent (free OR paid) — Cloud is
 // locked until it resets / the plan upgrades. Plain const (not an i18n key) to
@@ -135,6 +167,30 @@ function buildVoiceGroups(catalog: TtsVoiceCatalog): SelectOptionGroup[] {
 		}));
 }
 
+// Sentinel option id: picking it opens a file dialog to clone from an audio clip.
+const TTS_CLONE_ADD = "__tts_clone_add__";
+
+function fileBaseName(p: string): string {
+	const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+	return i >= 0 ? p.slice(i + 1) : p;
+}
+
+// Voice groups for a CLONING engine (Chatterbox): the same SearchableSelect the
+// preset-voice models use, but offering the bundled default voice, the currently
+// selected reference clip (if any), and a "clone from a file" action — so voice
+// selection is one unified control across every model.
+function buildCloningVoiceGroups(
+	currentVoice: string,
+	t: ReturnType<typeof useTranslations>
+): SelectOptionGroup[] {
+	const opts: SelectOption[] = [{ id: "default", label: t("defaultVoice") }];
+	if (currentVoice && currentVoice !== "default" && currentVoice !== "af_heart") {
+		opts.push({ id: currentVoice, label: fileBaseName(currentVoice) });
+	}
+	opts.push({ id: TTS_CLONE_ADD, label: t("cloneFromFile") });
+	return [{ value: "clone", label: t("voice"), options: opts }];
+}
+
 interface CloudGate {
 	/** Cloud source is selectable (key verified AND voices available/loading). */
 	cloudAllowed: boolean;
@@ -209,33 +265,44 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	const effectiveSource = tts?.source === "cloud" && cloudAllowed ? "cloud" : "local";
 	const isCloud = effectiveSource === "cloud";
 
-	// Confirm-before-download gate (state + handlers live in the model
-	// hook — see use-tts-install-gate). `handleLocalEnabledToggle` only flips
-	// the store's `enabled` flag after the user accepts the dialog — it is the
-	// LOCAL path; cloud has nothing to download (see `handleEnabledToggle`).
+	// Enable gate (state + handlers live in the model hook — see
+	// use-tts-install-gate). `handleLocalEnabledToggle` is the LOCAL path: it
+	// enables directly when the selected model is already on disk, otherwise it
+	// opens the model selector (whose commit flips `enabled` once a model lands).
+	// Cloud has nothing to download (see `handleEnabledToggle`).
 	const {
-		confirmOpen,
-		estimate,
-		probing,
 		installPhase,
 		installError,
 		handleEnabledToggle: handleLocalEnabledToggle,
-		handleInstallConfirm,
-		handleInstallCancel,
-		closeConfirm,
 		retryInstall,
 	} = useTtsInstallGate();
 
 	const enabled = tts?.enabled ?? false;
+	const model = tts?.model ?? DEFAULT_SETTINGS.tts.model;
 	const voice = tts?.voice ?? "af_heart";
 	const speed = tts?.speed ?? DEFAULT_SETTINGS.tts.speed;
 
-	const catalog = useTtsVoiceCatalog(enabled, voice, update);
+	const catalog = useTtsVoiceCatalog(enabled, model, voice, update);
+	// Multi-provider TTS model picker data + per-quant download wiring.
+	const ttsModels = useTtsCatalogStore((s) => s.models);
+	const ttsStatesById = useTtsModelStateStore((s) => s.statesById);
+	const { getSnapshot: getTtsDownloadSnapshot, onDownloadAction: onTtsDownloadAction } =
+		useTtsModelDownloads();
+	const currentTtsQuant = ttsStatesById[model]?.effectiveQuantization ?? "";
+	const selectedModelInfo = useTtsCatalogStore((s) => s.getModel(model));
+	const isCloningModel = (selectedModelInfo?.cloning ?? "none") !== "none";
+	const handleModelChange = (nextModel: string): void => {
+		update({ model: nextModel });
+	};
 	const { playback, isLoading, isSpeaking, previewVoiceId, setPreviewVoiceId, errorReason } =
 		useTtsPlayback();
 
 	const downloadProgress = useTtsDownloadProgress(installPhase);
-	const voiceGroups = buildVoiceGroups(catalog);
+	// One unified voice selector for every model: preset voices for Kokoro/Kitten/
+	// Piper/Supertonic, or default-voice + clone-from-clip for cloning engines.
+	const voiceGroups = isCloningModel
+		? buildCloningVoiceGroups(voice, t)
+		: buildVoiceGroups(catalog);
 
 	const langForVoice = (voiceId: string): string =>
 		catalog.voices.find((v) => v.id === voiceId)?.language ?? deriveLanguage(voiceId);
@@ -249,7 +316,7 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		ttsCancel();
 		setPreviewVoiceId(nextVoiceId);
 		ttsSpeak({
-			text: t("testVoiceSample") || TEST_SAMPLE_FALLBACK,
+			text: demoSentenceForLang(previewLang, t("testVoiceSample")),
 			voice: nextVoiceId,
 			lang: previewLang,
 			speed,
@@ -277,6 +344,26 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 	};
 
 	const handleVoiceChange = (nextVoice: string): void => {
+		// Cloning engines: "clone from a file" opens a native picker; the chosen
+		// WAV path becomes the voice (the backend clones from it). The default and
+		// any previously-picked clip are plain values.
+		if (nextVoice === TTS_CLONE_ADD) {
+			void (async () => {
+				const { open } = await import("@tauri-apps/plugin-dialog");
+				const picked = await open({
+					multiple: false,
+					filters: [{ name: "Audio", extensions: ["wav"] }],
+				});
+				if (typeof picked === "string") {
+					update({ voice: picked });
+				}
+			})();
+			return;
+		}
+		if (isCloningModel) {
+			update({ voice: nextVoice });
+			return;
+		}
 		// Each voice belongs to one language — derive it so the user doesn't
 		// have to keep two pickers in sync. Prefer the catalog field when
 		// present; fall back to the prefix heuristic for offline mode.
@@ -352,7 +439,7 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		tIntegrations("cloudDisabledHint")
 	);
 	const sourceOpts: SwitcherOption<"local" | "cloud">[] = [
-		{ value: "local", label: tIntegrations("sourceLocal"), icon: CpuIcon },
+		{ value: "local", label: tIntegrations("sourceLocal"), icon: AiComputerIcon },
 		{
 			value: "cloud",
 			label: tIntegrations("sourceCloud"),
@@ -373,7 +460,7 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 		<>
 			<SettingSection
 				description={t("description")}
-				icon={VolumeHighIcon}
+				icon={AiVoiceGeneratorIcon}
 				onToggle={handleEnabledToggle}
 				title={t("title")}
 				toggleDisabled={installing}
@@ -386,15 +473,11 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 							installing && "pointer-events-none opacity-40"
 						)}
 					>
-						<FormControl
+						<SettingField
+							isDefault={effectiveSource === DEFAULT_SETTINGS.tts.source}
 							label={tIntegrations("sourceLabel")}
-							labelTrailing={
-								<SettingResetButton
-									isDefault={effectiveSource === DEFAULT_SETTINGS.tts.source}
-									onReset={() => handleSourceChange(DEFAULT_SETTINGS.tts.source)}
-								/>
-							}
 							layout="row"
+							onReset={() => handleSourceChange(DEFAULT_SETTINGS.tts.source)}
 							tooltip={tIntegrations("sourceTooltip")}
 						>
 							<ElevatedSurface className="w-52">
@@ -405,7 +488,7 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 									value={effectiveSource}
 								/>
 							</ElevatedSurface>
-						</FormControl>
+						</SettingField>
 						{noVoiceAccess ? (
 							<p className="px-1 pt-2 text-2xs text-foreground-muted leading-relaxed">
 								{cloud.error}
@@ -429,22 +512,42 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 								t={t}
 							/>
 						) : (
-							<TtsControls
-								activeRequestId={playback.requestId}
-								isLoading={isLoading}
-								isSpeaking={isSpeaking}
-								langForVoice={langForVoice}
-								onSpeedChange={handleSpeedChange}
-								onSpeedReset={handleSpeedReset}
-								onVoiceChange={handleVoiceChange}
-								previewVoice={previewVoice}
-								previewVoiceId={previewVoiceId}
-								speed={speed}
-								t={t}
-								voice={voice}
-								voiceGroups={voiceGroups}
-								voicePlaceholder={voicePlaceholder}
-							/>
+							<>
+								<SettingField
+									isDefault={model === DEFAULT_SETTINGS.tts.model}
+									label={t("model")}
+									layout="row"
+									onReset={() => handleModelChange(DEFAULT_SETTINGS.tts.model)}
+									tooltip={t("modelCaption")}
+								>
+									<TtsModelSelector
+										currentQuantization={currentTtsQuant}
+										models={ttsModels}
+										onChange={(modelId) => handleModelChange(modelId)}
+										onDeleteQuant={(modelId, quant) => ttsDeleteModel(modelId, quant)}
+										onDownloadAction={onTtsDownloadAction}
+										onDownloadSnapshot={getTtsDownloadSnapshot}
+										statesById={ttsStatesById}
+										value={model}
+									/>
+								</SettingField>
+								<TtsControls
+									activeRequestId={playback.requestId}
+									isLoading={isLoading}
+									isSpeaking={isSpeaking}
+									langForVoice={langForVoice}
+									onSpeedChange={handleSpeedChange}
+									onSpeedReset={handleSpeedReset}
+									onVoiceChange={handleVoiceChange}
+									previewVoice={previewVoice}
+									previewVoiceId={previewVoiceId}
+									speed={speed}
+									t={t}
+									voice={voice}
+									voiceGroups={voiceGroups}
+									voicePlaceholder={voicePlaceholder}
+								/>
+							</>
 						)}
 					</div>
 					{isCloud ? null : (
@@ -459,15 +562,6 @@ export function TtsModelSection(_props: TtsModelSectionProps = {}) {
 					)}
 				</div>
 			</SettingSection>
-			{isCloud ? null : (
-				<TtsInstallDialog
-					estimate={estimate}
-					onCancel={handleInstallCancel}
-					onClose={closeConfirm}
-					onConfirm={handleInstallConfirm}
-					open={confirmOpen && !probing}
-				/>
-			)}
 		</>
 	);
 }

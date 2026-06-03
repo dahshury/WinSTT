@@ -1,5 +1,4 @@
 export {
-	readLastLocalSttModel,
 	recordLastLocalSttModel,
 	resolveLocalDefault,
 } from "./lib/last-local-model";

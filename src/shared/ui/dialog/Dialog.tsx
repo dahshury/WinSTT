@@ -82,30 +82,6 @@ export function Dialog({
 	);
 }
 
-type TriggerRender = ComponentProps<typeof VanillaDialog.Trigger>["render"];
-
-export interface DialogTriggerProps {
-	children?: ReactNode;
-	className?: string;
-	render?: TriggerRender;
-}
-
-export function DialogTrigger({ children, className, render }: DialogTriggerProps) {
-	const alert = useAlertMode();
-	if (alert) {
-		return (
-			<AlertDialog.Trigger className={className} render={render}>
-				{children}
-			</AlertDialog.Trigger>
-		);
-	}
-	return (
-		<VanillaDialog.Trigger className={className} render={render}>
-			{children}
-		</VanillaDialog.Trigger>
-	);
-}
-
 type CloseRender = ComponentProps<typeof VanillaDialog.Close>["render"];
 
 export interface DialogCloseProps {
@@ -242,16 +218,6 @@ export function DialogContent({
 			</VanillaDialog.Popup>
 		</VanillaDialog.Portal>
 	);
-}
-
-export function DialogHeader({
-	children,
-	className,
-}: {
-	children?: ReactNode;
-	className?: string;
-}) {
-	return <div className={cn("flex flex-col gap-1.5", className)}>{children}</div>;
 }
 
 export function DialogFooter({

@@ -1,0 +1,194 @@
+---
+title: Dictation
+description: The core record → transcribe → optional LLM cleanup → paste loop — press your hotkey, speak, and the text lands at your cursor in any app.
+---
+
+Press your hotkey, speak, and WinSTT pastes the polished text straight into whatever you
+were typing in — a chat box, an editor, a terminal, a search bar. Everything between the
+hotkey and the paste happens on your machine.
+
+<Screenshot src="main" alt="The WinSTT main window: a 9-band audio visualizer with the active hotkey, microphone, and model shown in the footer." label="WinSTT — main window" caption="The footer shows your active hotkey, input device, and model. Press the hotkey from anywhere — WinSTT doesn't need focus." />
+
+## The dictation loop
+
+Every recording mode — <ModeBadge mode="ptt" />, <ModeBadge mode="toggle" />,
+<ModeBadge mode="listen" />, and <ModeBadge mode="wakeword" /> — runs the same four steps.
+Only the start trigger differs; the transcribe → cleanup → paste tail is identical.
+
+<StepFlow>
+  <Step title="Trigger a recording">
+    Press your **Push-to-Talk** hotkey (default <Combo keys="LCtrl+LMeta" />). In
+    push-to-talk you hold it; in toggle you tap to start; in wake-word you say the keyword;
+    in listen WinSTT captures system audio. A short chime confirms the start (off in
+    listen/wake-word modes), and the recording overlay appears.
+  </Step>
+  <Step title="Speak — watch the live preview">
+    A small, fast realtime model streams a rough preview of your words as you talk, so you
+    can see it's hearing you. This preview is *not* the final text — it's a progress
+    indicator. It can show in the app window, the overlay pill, both, or nowhere (see
+    <a href="#live-transcription-display">Live-transcription display</a>).
+  </Step>
+  <Step title="Stop">
+    **Release** the key (push-to-talk), **press again** (toggle), or just **stop talking** —
+    the Smart Endpoint and post-speech silence timer end the utterance automatically after
+    `0.7s` of silence (default). The overlay shows a brief "thinking" state while the main,
+    accurate model produces the final transcription.
+  </Step>
+  <Step title="(Optional) LLM cleanup, then paste">
+    If you've enabled [LLM cleanup](/docs/settings/llm), the final text runs through your
+    chosen modifier (tone, translate, custom) before delivery. WinSTT then pastes the
+    result at your cursor — and optionally presses Enter to submit.
+  </Step>
+</StepFlow>
+
+<Callout type="info" title="Cancel mid-flight">
+  Hold your hotkey and tap <Kbd>Backspace</Kbd> to abort an in-progress recording, the
+  transcription, or the LLM pass. Hold the hotkey and tap <Kbd>↑</Kbd> to cycle the
+  recording mode without opening settings.
+</Callout>
+
+## How text gets pasted
+
+WinSTT delivers text the same way a fast typist's clipboard does, and falls back when an
+app refuses the clipboard.
+
+<StepFlow>
+  <Step title="Clipboard + atomic Ctrl+V (primary)">
+    WinSTT puts the transcription on the clipboard, fires a single <Combo keys="Ctrl+V" />,
+    then restores your previous clipboard contents. This is one atomic paste — the whole
+    sentence appears at once, the way Handy, Whispering, and VoiceTypr do it. No more
+    "typing bit by bit."
+  </Step>
+  <Step title="Per-character injection (fallback)">
+    If an app blocks programmatic paste, WinSTT types the text character-by-character via
+    Windows Unicode key events (`KEYEVENTF_UNICODE`). Slower, but it works in fields that
+    reject <Combo keys="Ctrl+V" />.
+  </Step>
+</StepFlow>
+
+<Callout type="info" title="Paste guard">
+  WinSTT suppresses the synthetic keystrokes it injects for ~50 ms so its own
+  <Combo keys="Ctrl+V" /> doesn't re-trigger your push-to-talk combo. You never see this;
+  it just means dictation won't recurse on itself.
+</Callout>
+
+### Auto-submit after paste
+
+Found under **Settings → General → Paste Behavior**. Off by default to preserve the
+classic "paste and let me review" behavior.
+
+<Video src="auto-submit" chrome="card" alt="A dictated message lands in a chat box, then WinSTT presses Enter and the message sends on its own." caption="After the paste lands, WinSTT presses Enter and the message sends." />
+
+<SettingRow label="Auto-Submit After Paste" settingKey="general.autoSubmit" default="false">
+  When on, WinSTT injects a submit key right after each successful paste — so a dictated
+  chat message ships without a separate Enter press.
+</SettingRow>
+
+<SettingRow label="Submit Key" settingKey="general.autoSubmitKey" default="Enter">
+  Which combo to inject: **Enter** works for most chat boxes and forms; **Ctrl+Enter** is
+  the convention in IDEs and chat apps (Cursor, ChatGPT desktop) where plain Enter inserts
+  a newline. Only shown when Auto-Submit is on.
+</SettingRow>
+
+### Re-paste the last transcription
+
+Lost the text, or pasted into the wrong window? Re-inject the most recent transcription
+without speaking again.
+
+<SettingRow label="Re-paste Key" settingKey="general.repasteHotkey" default="LCtrl+LShift+V">
+  An **exclusive** global shortcut (it swallows the combo system-wide) that re-pastes your
+  last transcription via the same clipboard + <Combo keys="Ctrl+V" /> path as dictation.
+  Silent if nothing has been transcribed yet. Set it to empty to disable. If it collides
+  with your push-to-talk key it's reset to default at startup.
+</SettingRow>
+
+## Context-awareness (caret split)
+
+WinSTT can read the focused window's text right before each dictation and feed it to your
+LLM cleanup pass, so names and jargon get spelled the way they already appear on screen.
+On the dictation path it also reads the text immediately **before and after** your caret
+(the caret split), giving the model the sentence it's continuing.
+
+<SettingRow label="Context awareness" settingKey="general.contextAwareness" default="false">
+  Reads focused-window text via Windows accessibility APIs immediately before each
+  dictation and includes it in the LLM cleanup prompt. Off by default — the in-app dialog
+  requires explicit opt-in, since it can read emails, chats, editors, and browsers.
+</SettingRow>
+
+<Callout type="warn" title="Only used by the LLM cleanup pass">
+  Context-awareness does nothing on its own. It requires the **Dictation post-processing
+  LLM** to be enabled with a configured model — the captured window text is used only in
+  that cleanup prompt, never stored or sent anywhere else.
+</Callout>
+
+<SettingRow label="Context deny-list" settingKey="general.contextDenyList" default="empty">
+  Apps and websites that should **never** be read for context. Add executable names (e.g.
+  `1password.exe`) or URL hosts (e.g. `bankofamerica.com` — subdomains match
+  automatically). On a match, only the harmless window title is kept. Password fields are
+  always excluded regardless of this list.
+</SettingRow>
+
+<Callout type="success" title="Privacy">
+  With context-awareness off (the default), nothing about your screen is read. With it on,
+  text goes only to your configured cleanup provider — local Ollama, or remote OpenRouter
+  if you chose it. There's no per-app allowlist; the deny-list is the override.
+</Callout>
+
+## Live-transcription display
+
+The realtime preview is a fast-model approximation that updates as you speak. Choose where
+it shows under **Settings → General → Display**.
+
+<SettingRow label="Live transcription" settingKey="general.liveTranscriptionDisplay" default="both">
+  Where the live preview appears: **In app** (main window only), **In overlay** (the
+  floating pill only), **Both**, or **None**. The overlay options require the recording
+  overlay to be enabled and the realtime model to be on.
+</SettingRow>
+
+The final, pasted text always comes from the **main** model regardless of this setting —
+the preview is purely a "WinSTT is hearing you" signal. See
+[Real-time preview](/docs/settings/quality) for how the streaming/committed-text window
+works.
+
+## Recording overlay
+
+A small pill floats above whatever you're working in while you record, showing an elapsed
+timer, the audio visualizer, the live preview, and a thinking indicator. Two layouts are
+available.
+
+<MediaGrid cols={2}>
+  <Video src="overlay-floating" alt="The floating-bottom recording overlay: a two-piece pill near the bottom of the screen with a visualizer and live transcription text." chrome="card" caption="Floating bottom — a two-piece pill near the bottom." />
+  <Video src="overlay-island" alt="The dynamic-island recording overlay docked at top-center, showing live transcription text above a small audio-visualizer capsule." chrome="card" caption="Dynamic island — a top-center notch that morphs to fit." />
+</MediaGrid>
+
+<SettingRow label="Recording Overlay" settingKey="general.showRecordingOverlay" default="on, xs">
+  A 6-step slider — **Off**, then five sizes (XS / SM / MD / LG / XL). Controls whether the
+  pill shows and how large it is. Greyed out in listen mode.
+</SettingRow>
+
+<SettingRow label="Overlay Mode" settingKey="general.overlayMode" default="floating-bottom">
+  **Floating bottom** (two-piece pill) or **Dynamic island** (docked top-center). Greyed
+  out if the overlay is off.
+</SettingRow>
+
+<Callout type="info" title="Platform default">
+  The overlay defaults to a bottom position on Windows and macOS, and to **none** on Linux
+  (compositor quirks). You can override the position to top, bottom, auto, or none.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Recording modes" href="/docs/recording-modes">
+    Push-to-talk, toggle, listen, and wake-word — the four ways to trigger this loop.
+  </Card>
+  <Card title="Hotkeys & overlay" href="/docs/settings/hotkey">
+    Rebind push-to-talk, re-paste, and TTS; tune the overlay layout and visualizer.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Reshape the transcription with tone presets, translate, and custom modifiers.
+  </Card>
+  <Card title="Quality & endpointing" href="/docs/settings/quality">
+    Smart Endpoint, silence timing, and how the live preview commits to final text.
+  </Card>
+</Cards>

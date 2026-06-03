@@ -1,0 +1,188 @@
+---
+title: Backend Architecture
+description: The Rust backend — module tree, managers, the STT pipeline, ort device policy, and threading
+---
+
+The WinSTT backend is Rust (`src-tauri/`), compiled into the Tauri binary. It captures audio,
+runs voice-activity detection, loads and runs STT/TTS models on [ONNX Runtime](https://onnxruntime.ai)
+(`ort`), drives the LLM and cloud integrations, and owns settings, history, and the global
+hotkey. Everything runs in one process — there is no server and no IPC to a model host.
+
+## Module Tree
+
+The app's own code lives under `src-tauri/src/winstt/`. Tauri/Handy-inherited plumbing
+(window setup, the recording coordinator, the audio recorder toolkit) sits one level up in
+`src-tauri/src/`.
+
+```
+src-tauri/src/
+  lib.rs                  App builder: plugins, windows, state, setup() (run())
+  main.rs                 Thin binary — parse CliArgs, call run()
+  cli.rs                  clap CliArgs (--start-hidden, --debug, …)
+  actions.rs              Dictation coordinator — record → decode → paste
+  transcription_coordinator.rs  Single thread serializing recording state
+  settings.rs             AppSettings (Handy-era store)
+  audio_toolkit/          Recorder (cpal), resampler (rubato), Silero VAD
+  managers/               audio · transcription · history · model (core)
+  winstt/
+    mod.rs                Module tiering + re-exports
+    stt/
+      backend.rs          SttBackend trait — the ONLY seam the core sees
+      mod.rs              Transcriber trait, EngineKind, EngineConfig
+      whisper.rs          Whisper / lite-whisper / distil (IoBinding KV-cache)
+      moonshine.rs        3-graph encoder/decoder
+      families.rs         CTC / RNN-T / TDT / AED engines
+      resolver.rs         HuggingFace snapshot resolver + per-quant cache
+      mel.rs              Log-mel feature extraction
+    tts/
+      kokoro.rs           Kokoro-82M @ 24 kHz (CPU-only)
+      phonemize.rs        espeak-ng G2P (dlopen, process-separated)
+    managers/             llm · cloud_stt · tts · wakeword · diarization ·
+                          loopback · realtime · file_transcribe · download · …
+    commands/             ~90 #[tauri::command] #[specta::specta] fns
+    settings_schema.rs    WinsttSettings (the full typed settings tree)
+    catalog.rs            Embedded STT model catalog + quant/EP policy
+```
+
+## Manager Layer
+
+`lib.rs::initialize_core_logic()` constructs every manager once and registers it as Tauri
+managed state (`Arc<T>`), so commands receive them via `State<'_, Arc<T>>`. The core four are
+inherited from Handy; the rest are WinSTT features.
+
+| Manager | Responsibility |
+|---------|----------------|
+| `AudioRecordingManager` | mic capture, resampling to 16 kHz, VAD, level/wakeword taps |
+| `TranscriptionManager` | loads the active engine, runs batch + realtime decodes |
+| `ModelManager` / `DownloadManager` | per-quant model download, activation, cache |
+| `HistoryManager` | transcription history store + audio playback |
+| `LlmManager` | Ollama / OpenRouter post-processing + custom transforms |
+| `CloudSttManager` | OpenAI / ElevenLabs cloud STT round-trips |
+| `TtsManager` | Kokoro (local) + ElevenLabs (cloud) synthesis |
+| `WakeWordManager` / `DiarizationManager` | sherpa-onnx KWS + speaker embedding |
+| `LoopbackManager` | WASAPI system-audio capture (listen mode) |
+| `RealtimeManager` | daemon that decodes a growing window for the live preview |
+| `FileTranscribeManager` | batch file-transcribe queue |
+
+## The STT Pipeline
+
+A press-to-talk dictation flows through a single sequential coordinator, so the hotkey, the
+CLI, and a wake-word can never race the recording state:
+
+```
+hotkey / CLI / wake-word
+  → TranscriptionCoordinator (debounced, owns Idle | Recording | Processing)
+  → AudioRecordingManager.start_recording()   open mic, resample → 16 kHz mono
+  → (release) stop_recording() → Vec<f32>
+  → TranscriptionManager.transcribe(samples)
+  → SttBackend::decode(...)  → text
+  → LLM post-process (optional) → paste (Enigo) / clipboard
+  → HistoryManager record + optional WAV
+```
+
+### Two traits define the boundary
+
+`TranscriptionManager` is Handy-inherited and must not know about WinSTT's engine zoo, so the
+backend exposes exactly one seam — the **`SttBackend` trait** (`winstt/stt/backend.rs`). It
+routes a model id (`cloud:*` → cloud, in-catalog → local, else → the bundled `transcribe-rs`
+backend) and resolves/loads/decodes in two phases so a model swap stays failure-atomic
+(`resolve_catalog` is offline-safe; `build_resolved` only unloads the old engine once the new
+one is built).
+
+Each engine family implements the **`Transcriber` trait** (`winstt/stt/mod.rs`):
+
+```rust
+pub trait Transcriber: Send {
+    fn kind(&self) -> EngineKind;
+    fn is_ready(&self) -> bool;
+    fn transcribe(&mut self, audio: &[f32], opts: &TranscribeOptions) -> SttResult<Transcription>;
+    fn shutdown(&mut self) {}   // explicit ort session release (Windows DLL-unload safety)
+    // …
+}
+```
+
+### Model families
+
+The catalog spans ~40 models across eight families, each an `EngineKind`:
+
+| Class | Engines |
+|-------|---------|
+| Whisper | `WhisperHf` (encoder + merged decoder, device-resident KV-cache via IoBinding), `Moonshine` |
+| CTC | `NemoCtc`, `GigaamCtc`, `ToneCtc`, `DolphinCtc`, `SenseVoiceCtc` |
+| Transducer | `NemoRnnt`, `NemoTdt`, `KaldiTransducer` (Zipformer), `GigaamRnnt` |
+| AED | `NemoAed` (Canary), `CohereAsr` |
+
+Models resolve through the **`onnx-asr` resolver** (`resolver.rs`): a HuggingFace snapshot
+fetch (`hf-hub`) that verifies sharded `.onnx_data` completeness and caches per-quantization
+(`""`/`fp16`/`int8`/`q4`/`q4f16`/`bnb4`/`uint8`).
+
+### Device policy (`ort`)
+
+WinSTT ships **one binary with both CPU and DirectML** execution providers and picks per
+`EngineKind` rather than blanket-excluding families:
+
+<Callout type="info" title="Per-engine, not per-family">
+  Some encoders crash on DirectML's reshape (Canary/Cohere/Kaldi/SenseVoice/Dolphin → forced
+  CPU). Quantized RNN-T is slower on DML than CPU (per-frame predictor loop → CPU). CTC/TDT
+  and Whisper run **2–3× faster on DirectML** and stay on the GPU. The matrix lives in
+  `winstt/stt/backend.rs::override_dml_to_cpu_for_kind`.
+</Callout>
+
+## Audio, VAD & Realtime
+
+`AudioRecordingManager` builds an `AudioRecorder` (cpal) with a `rubato` resampler to 16 kHz
+mono and a `SileroVad` wrapped in a `SmoothedVad` (onset pre-roll + hangover) for clean
+speech-edge detection. Every 16 kHz frame is also tapped for the audio-level visualizer and
+the always-on wake-word detector.
+
+The **`RealtimeManager`** is a single daemon that powers the live preview: it `try_lock`s the
+main engine and runs a non-blocking peek decode of the growing recording window (no second
+model in memory), feeding a stabilizer that commits text past a watermark.
+
+## Text-to-Speech
+
+The shipped engine is **Kokoro-82M** (`winstt/tts/kokoro.rs`), 24 kHz, **CPU-only** (its
+`ConvTranspose` crashes on DirectML). Phonemization is **espeak-ng** via `libloading`,
+process-separated for GPL hygiene and bundled at `resources/espeakng_loader/`. `TtsManager`
+splits text into sentences and streams `tts://chunk` events for gap-free playback; cloud
+ElevenLabs synthesis follows the same chunked path. (kitten/piper/supertonic/chatterbox are
+exploratory spike engines, not shipped.)
+
+## Threading Model
+
+| Context | Where work runs |
+|---------|-----------------|
+| `#[tauri::command]` | Tauri async runtime (tokio) |
+| ONNX decode, file I/O | `spawn_blocking` (dedicated blocking pool — never the executor) |
+| Recording state | the single `TranscriptionCoordinator` thread |
+| Live preview | the `RealtimeManager` daemon |
+| Model warmup / GPU probe | one-shot threads spawned at startup |
+
+ONNX decode is wrapped in `catch_unwind` so a model panic surfaces as an error instead of
+taking down the worker.
+
+## Key Dependencies
+
+| Crate | Role |
+|-------|------|
+| `tauri` 2.10 + `tauri-specta` | app framework + typed command/event bindings |
+| `ort` 2.0 (rc) | ONNX Runtime — DirectML on Windows, CoreML on macOS |
+| `hf-hub` | HuggingFace model resolver + download |
+| `cpal` / `rubato` / `rustfft` | audio capture / resampling / spectrum |
+| `vad-rs` (Silero) | voice-activity detection |
+| `sherpa-onnx` | wake-word KWS + diarization embedder |
+| `transcribe-rs` | bundled fallback STT backend (Handy-inherited) |
+| `tokenizers`, `ndarray`, `half` | tokenization + tensor math |
+| `windows` / `wasapi` | WASAPI loopback, audio ducking (COM) |
+| `ollama-rs`, `keyring`, `enigo` | local LLM, encrypted secrets, paste injection |
+
+## Related
+
+<Cards>
+  <Card title="IPC: Commands" href="/docs/architecture/ipc">
+    How the renderer calls into these managers.
+  </Card>
+  <Card title="Events" href="/docs/architecture/events">
+    What the backend pushes back to the UI.
+  </Card>
+</Cards>

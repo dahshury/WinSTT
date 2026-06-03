@@ -50,9 +50,15 @@ class SetConnectionStatusCmd implements fc.Command<Model, Real> {
 		return true;
 	}
 	run(m: Model, real: Real): void {
-		const prevServer = m.serverStatus;
-		const prevGpu = m.gpuInfo;
-		const prevRuntime = m.runtimeInfo;
+		// Snapshot the OTHER slices from the REAL store (not the model). The model
+		// seeds its own fresh `[]` / `null` references that are distinct from the
+		// store's initial ones, so comparing the post-call store against the model
+		// would spuriously fail the "untouched" check on the very first command
+		// (`[] !== []`). Capturing the store's own pre-call references makes the
+		// orthogonality invariant exact: this setter must not REPLACE those refs.
+		const prevServer = real.getState().serverStatus;
+		const prevGpu = real.getState().gpuInfo;
+		const prevRuntime = real.getState().runtimeInfo;
 		real.getState().setConnectionStatus(this.status);
 		m.connectionStatus = this.status;
 		const s = real.getState();
@@ -87,7 +93,10 @@ class SetServerStatusCmd implements fc.Command<Model, Real> {
 		return true;
 	}
 	run(m: Model, real: Real): void {
-		const prevConn = m.connectionStatus;
+		// Snapshot from the REAL store (see SetConnectionStatusCmd) so the
+		// orthogonality check verifies the store didn't change, independent of the
+		// model's separately-seeded references.
+		const prevConn = real.getState().connectionStatus;
 		real.getState().setServerStatus(this.status);
 		m.serverStatus = this.status;
 		const s = real.getState();

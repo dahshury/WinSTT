@@ -12,7 +12,7 @@
 // per-quant byte sizes, accuracy/speed scores). Those live in catalog.json, which we embed via
 // `include_str!` (colocated `catalog_data.json`, refreshed from the server copy) and parse once.
 //
-// Shapes are byte-identical to the WS payloads the Electron renderer consumed, so `fetchModelCatalog`
+// Shapes are byte-identical to the WS payloads the reference renderer consumed, so `fetchModelCatalog`
 // (→ rawModelInfoSchema.safeParse) and `fetchModelsWithState` (→ {models, states, system_info}) run
 // VERBATIM through the polyfill adapter.
 
@@ -22,7 +22,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::winstt::catalog::{self, Accelerator, Family};
+use crate::winstt::catalog::{self, Accelerator};
 
 /// Raw catalog.json row (editorial source of truth). `wer`/`rtfx` are present on every shipped row
 /// (asserted upstream); the rest map 1:1 to the renderer's `rawModelInfoSchema`.
@@ -107,7 +107,12 @@ pub struct ModelCacheInfo {
 
 impl ModelCacheInfo {
     fn not_cached() -> Self {
-        Self { state: "not_cached".into(), downloaded_bytes: 0, total_bytes: 0, progress: 0.0 }
+        Self {
+            state: "not_cached".into(),
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            progress: 0.0,
+        }
     }
 }
 
@@ -214,7 +219,9 @@ fn is_comfortable_on_gpu(param_count: u64, sys: &SystemInfoEntry) -> bool {
     if needed == 0 {
         return true;
     }
-    sys.gpus.iter().all(|g| g.total_vram_bytes as f64 >= needed as f64 * GPU_HEADROOM)
+    sys.gpus
+        .iter()
+        .all(|g| g.total_vram_bytes as f64 >= needed as f64 * GPU_HEADROOM)
 }
 
 fn is_comfortable_on_cpu(param_count: u64, sys: &SystemInfoEntry) -> bool {
@@ -229,7 +236,11 @@ fn is_comfortable_on_cpu(param_count: u64, sys: &SystemInfoEntry) -> bool {
 
 fn family_quants_for(entry: &RawCatalogEntry, accel: Accelerator) -> Vec<String> {
     // Mirror catalog::picker_quantizations_for: CUDA drops sub-fp16, others keep the full set.
-    let avail: Vec<&str> = entry.available_quantizations.iter().map(String::as_str).collect();
+    let avail: Vec<&str> = entry
+        .available_quantizations
+        .iter()
+        .map(String::as_str)
+        .collect();
     if accel.is_cuda() {
         avail
             .into_iter()
@@ -273,7 +284,10 @@ fn to_catalog_row(entry: &RawCatalogEntry, accel: Accelerator) -> CatalogModelIn
 
 /// The full rich catalog (CUDA-aware quant filtering). Drives `fetchModelCatalog`.
 pub fn catalog_rows(accel: Accelerator) -> Vec<CatalogModelInfo> {
-    raw_catalog().iter().map(|e| to_catalog_row(e, accel)).collect()
+    raw_catalog()
+        .iter()
+        .map(|e| to_catalog_row(e, accel))
+        .collect()
 }
 
 /// Build one model's cache+fitness state. `cache_states` supplies any per-quant snapshots already
@@ -283,21 +297,49 @@ pub(crate) fn to_state_entry(
     accel: Accelerator,
     sys: &SystemInfoEntry,
     cache_states: &BTreeMap<String, ModelCacheInfo>,
+    available_ram_bytes: u64,
+    vram_bytes: u64,
 ) -> ModelStateEntry {
-    let family = Family::from_str(&entry.family);
-    let avail: Vec<&str> = entry.available_quantizations.iter().map(String::as_str).collect();
-    let eff = catalog::effective_quantization(
-        "auto",
-        accel,
+    // `effective_quantization` MUST agree with what the LOAD path (backend::resolve_catalog) will
+    // actually pick for "auto", so the picker marks the badge that loads. Both paths now route the
+    // SAME kind-based RAM/VRAM-aware resolver (`stt::fit_aware_auto_quant`) over the same inputs —
+    // NOT the family-based accuracy-first `catalog::effective_quantization` (which diverged).
+    let kind = crate::winstt::stt::cache_probe::engine_kind_for(
+        &entry.id,
+        &entry.family,
+        &entry.onnx_model_name,
+    );
+    let available: Vec<crate::winstt::stt::Quantization> = entry
+        .available_quantizations
+        .iter()
+        .filter_map(|s| crate::winstt::stt::Quantization::parse(s))
+        .collect();
+    // catalog::Accelerator → stt::Accelerator (distinct same-variant enums).
+    let primary = match accel {
+        Accelerator::Cpu => crate::winstt::stt::Accelerator::Cpu,
+        Accelerator::Cuda => crate::winstt::stt::Accelerator::Cuda,
+        Accelerator::DirectMl => crate::winstt::stt::Accelerator::DirectMl,
+        Accelerator::CoreMl => crate::winstt::stt::Accelerator::CoreMl,
+        Accelerator::Rocm => crate::winstt::stt::Accelerator::Rocm,
+        Accelerator::OpenVino => crate::winstt::stt::Accelerator::OpenVino,
+    };
+    let eff = crate::winstt::stt::fit_aware_auto_quant(
+        &available,
+        kind,
+        primary,
         entry.param_count,
-        Some(&avail),
-        family,
+        available_ram_bytes,
+        vram_bytes,
     )
+    .suffix()
     .to_string();
 
     let mut by_quant: BTreeMap<String, ModelCacheInfo> = BTreeMap::new();
     for q in &entry.available_quantizations {
-        let info = cache_states.get(q).cloned().unwrap_or_else(ModelCacheInfo::not_cached);
+        let info = cache_states
+            .get(q)
+            .cloned()
+            .unwrap_or_else(ModelCacheInfo::not_cached);
         by_quant.insert(q.clone(), info);
     }
     // Overall = the EFFECTIVE precision's state (memory project_effective_quantization_bridge);
@@ -327,15 +369,30 @@ pub fn models_with_state(
     cache_by_model: &BTreeMap<String, BTreeMap<String, ModelCacheInfo>>,
 ) -> ModelsWithState {
     let empty: BTreeMap<String, ModelCacheInfo> = BTreeMap::new();
-    let models = raw_catalog().iter().map(|e| to_catalog_row(e, accel)).collect();
+    // Live RAM/VRAM read ONCE here (not per entry): to_state_entry runs ~42× over the catalog and
+    // the RAM/VRAM-aware "auto" resolver needs the same live budget for every row.
+    let available_ram_bytes = {
+        let mut s = sysinfo::System::new();
+        s.refresh_memory();
+        s.available_memory()
+    };
+    let vram_bytes = crate::winstt::commands::runtime::detected_max_vram_bytes();
+    let models = raw_catalog()
+        .iter()
+        .map(|e| to_catalog_row(e, accel))
+        .collect();
     let states = raw_catalog()
         .iter()
         .map(|e| {
             let states = cache_by_model.get(&e.id).unwrap_or(&empty);
-            to_state_entry(e, accel, &sys, states)
+            to_state_entry(e, accel, &sys, states, available_ram_bytes, vram_bytes)
         })
         .collect();
-    ModelsWithState { models, states, system_info: sys }
+    ModelsWithState {
+        models,
+        states,
+        system_info: sys,
+    }
 }
 
 /// Resident-bytes estimate for a single catalog id (used by fit assessment commands).
@@ -411,7 +468,11 @@ mod tests {
 
     #[test]
     fn catalog_parses_42_rows() {
-        assert_eq!(raw_catalog().len(), 42, "embedded catalog must carry all 42 shipped models");
+        assert_eq!(
+            raw_catalog().len(),
+            42,
+            "embedded catalog must carry all 42 shipped models"
+        );
     }
 
     #[test]
@@ -433,7 +494,10 @@ mod tests {
     #[test]
     fn rich_rows_carry_editorial_fields() {
         let rows = catalog_rows(Accelerator::Cpu);
-        let tiny = rows.iter().find(|r| r.id == "tiny").expect("whisper tiny present");
+        let tiny = rows
+            .iter()
+            .find(|r| r.id == "tiny")
+            .expect("whisper tiny present");
         assert_eq!(tiny.backend, "onnx_asr");
         assert!(!tiny.languages.is_empty());
         assert!(!tiny.description.is_empty());
@@ -474,16 +538,47 @@ mod tests {
     }
 
     #[test]
-    fn state_effective_quant_is_int8_for_int8_preferred_off_cuda() {
+    fn state_effective_quant_matches_ram_aware_load_pick() {
+        // The DTO's effective_quantization (the picker's MARK source) MUST equal the kind-based
+        // RAM/VRAM-aware pick the LOAD path (backend::resolve_catalog) makes for "auto" — same
+        // resolver, same inputs — so the picker marks the badge that actually loads.
         let entry = raw_catalog()
             .iter()
             .find(|e| e.family == "cohere")
             .expect("cohere present");
         let sys = SystemInfoEntry::default();
-        let st = to_state_entry(entry, Accelerator::DirectMl, &sys, &BTreeMap::new());
-        // Cohere is int8-preferred off-CUDA and publishes int8 → effective resolves to int8.
-        if entry.available_quantizations.iter().any(|q| q == "int8") {
-            assert_eq!(st.effective_quantization, "int8");
-        }
+        // Generous budget so the fit check is exercised (vs. the ram==0/vram==0 "everything fits").
+        let ram = 64u64 * 1024 * 1024 * 1024;
+        let vram = 24u64 * 1024 * 1024 * 1024;
+        let st = to_state_entry(
+            entry,
+            Accelerator::DirectMl,
+            &sys,
+            &BTreeMap::new(),
+            ram,
+            vram,
+        );
+
+        let kind = crate::winstt::stt::cache_probe::engine_kind_for(
+            &entry.id,
+            &entry.family,
+            &entry.onnx_model_name,
+        );
+        let available: Vec<crate::winstt::stt::Quantization> = entry
+            .available_quantizations
+            .iter()
+            .filter_map(|s| crate::winstt::stt::Quantization::parse(s))
+            .collect();
+        let expected = crate::winstt::stt::fit_aware_auto_quant(
+            &available,
+            kind,
+            crate::winstt::stt::Accelerator::DirectMl,
+            entry.param_count,
+            ram,
+            vram,
+        )
+        .suffix()
+        .to_string();
+        assert_eq!(st.effective_quantization, expected);
     }
 }

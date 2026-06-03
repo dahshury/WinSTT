@@ -49,4 +49,17 @@ describe("decodeSettingsPayload", () => {
 		expect(typeof settings.integrations.openai).toBe("object");
 		expect(settings.integrations.openai.apiKey).toBe("");
 	});
+
+	test("section fallback still migrates legacy model unload timeout to global", () => {
+		const settings = decodeSettingsPayload({
+			model: {
+				modelUnloadTimeout: "hour1",
+			},
+			integrations: {
+				openai: "",
+			},
+		});
+		expect(settings.global.modelUnloadTimeout).toBe("hour1");
+		expect("modelUnloadTimeout" in settings.model).toBe(false);
+	});
 });

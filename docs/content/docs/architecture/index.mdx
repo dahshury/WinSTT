@@ -1,0 +1,49 @@
+---
+title: Architecture Overview
+description: How WinSTT is built
+---
+
+WinSTT is a **single-process desktop application** built with [Tauri 2](https://tauri.app):
+a **Rust backend** and a **WebView2-rendered React frontend**, compiled into one native
+executable. There is no separate server and no network hop — speech recognition and
+text-to-speech run **in-process in Rust** on [ONNX Runtime](https://onnxruntime.ai) (`ort`).
+
+**Backend** — Rust (`src-tauri/`). Owns audio capture, voice-activity detection, STT/TTS
+model loading and inference, the LLM/cloud integrations, settings, history, and the global
+hotkey. Organized under the `winstt::*` module tree.
+
+**Frontend** — Vite multi-page React 19, Feature-Sliced Design (`src/`). The same renderer
+that shipped on Electron, ported 1:1. It renders the recording pill, settings, model picker,
+history, and overlays across several Tauri windows.
+
+The renderer holds no model code and opens no sockets. It calls into Rust through **Tauri
+commands** (typed request/response) and receives **events** (push notifications) — all
+type-checked end-to-end by [`tauri-specta`](https://github.com/specta-rs/tauri-specta).
+
+<Callout type="info" title="What changed from the Electron build">
+  The original WinSTT was two processes — a Python STT server and an Electron client talking
+  over dual WebSockets. The Rust+Tauri port collapses both into one binary: the Python server
+  became in-process Rust on `ort`, and the WebSocket relay became Tauri commands + events. The
+  React renderer is unchanged; a thin native-bridge adapter maps its old IPC calls onto Tauri.
+</Callout>
+
+## Deep Dives
+
+<Cards>
+  <Card title="Backend Architecture" href="/docs/architecture/backend">
+    The Rust `winstt::*` module tree, the manager layer, the STT pipeline (engine traits, model
+    families, `ort` device policy), audio + VAD, TTS, and the threading model.
+  </Card>
+  <Card title="Frontend Architecture" href="/docs/architecture/frontend">
+    The Tauri WebView renderer, the native-bridge adapter that replaced the Electron preload,
+    Feature-Sliced Design layers, the multi-window setup, and state management.
+  </Card>
+  <Card title="IPC: Commands" href="/docs/architecture/ipc">
+    How the renderer reaches Rust — `#[tauri::command]` functions, the generated `bindings.ts`,
+    the `COMMAND_INVOKERS` map, and the command catalog by category.
+  </Card>
+  <Card title="Events" href="/docs/architecture/events">
+    Everything Rust pushes to the UI — typed `tauri-specta` payloads and high-frequency plain
+    string events, from recording lifecycle to download progress.
+  </Card>
+</Cards>

@@ -5,12 +5,12 @@
 //
 // The Transforms apply/preview pipeline + its renderer feedback events. WU-13
 // owns the `transforms:applied` / `transforms:failed` PLAIN events (matching
-// WinSTT's Electron IPC shape byte-for-byte so the reused
+// WinSTT's the reference IPC shape byte-for-byte so the reused
 // `features/transform-notifications` TransformToast listener works unchanged):
 //   • `transforms:applied` → { before, after, source }
 //   • `transforms:failed`  → { reason }
 //
-// The adapter (electron-tauri-adapter.ts) routes:
+// The adapter (native-bridge-adapter.ts) routes:
 //   IPC.TRANSFORMS_APPLY   → command `apply_transform`           (no args; selection + paste internal)
 //   IPC.TRANSFORMS_PREVIEW → command `apply_transform_preview`   ({ text, feature, config })
 //   IPC.TRANSFORMS_APPLIED → event   `transforms:applied`
@@ -223,7 +223,12 @@ async fn run_transform_provider(
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();
             let selection = settings.llm.transforms.base.openrouter_model.clone();
-            let fallback = settings.llm.transforms.base.openrouter_fallback_model.clone();
+            let fallback = settings
+                .llm
+                .transforms
+                .base
+                .openrouter_fallback_model
+                .clone();
             let user_prompt = transforms_user_prompt(text);
             // OpenRouter's structured-output path already returns the fallback
             // text on a total failure (never throws across the boundary), so the
@@ -305,9 +310,25 @@ fn capture_selection(context: &ContextManager, app: &AppHandle) -> (String, Tran
     // 2. Clipboard-sandwich fallback (mirrors captureViaClipboard): save the
     //    current clipboard, simulate Ctrl+C, poll for the clipboard to change,
     //    then restore the original clipboard. UIA fails silently in Chromium-
-    //    based renderers (Slack, Discord, VS Code) and most Electron apps unless
+    //    based renderers (Slack, Discord, VS Code) and most the reference apps unless
     //    accessibility is force-enabled — this trick covers those.
     capture_via_clipboard(app)
+}
+
+/// Capture the current selection for a NON-transform consumer (the TTS read-aloud
+/// global hotkey). Resolves the `ContextManager` from managed state and returns
+/// just the selected text (`""` when nothing is selected / no context manager).
+/// Runs the SAME UIA → clipboard-sandwich path as the transforms pipeline, so the
+/// hotkey behaves identically to "Speak selection". BLOCKING (the clipboard
+/// sandwich simulates Ctrl+C) — call it off the hotkey thread.
+pub fn capture_selection_text(app: &AppHandle) -> String {
+    match app.try_state::<Arc<ContextManager>>() {
+        Some(ctx) => {
+            let ctx = ctx.inner().clone();
+            capture_selection(ctx.as_ref(), app).0
+        }
+        None => String::new(),
+    }
 }
 
 fn capture_via_clipboard(app: &AppHandle) -> (String, TransformSource) {
@@ -451,7 +472,7 @@ fn emit_failed(app: &AppHandle, reason: &str) {
 /// Both the `apply_transform` command (renderer `applyTransform()`) and the
 /// global `transforms.hotkey` action call THIS, so the two entry points are
 /// byte-identical (mirrors `runTransformPipeline`, shared by the IPC handler and
-/// the uIOhook listener in the Electron build).
+/// the uIOhook listener in the reference build).
 pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
     let settings = read_settings(app);
 
@@ -514,26 +535,20 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
     // Run the LLM over the CONFIGURED provider. On a hard error, emit failure +
     // return the original-as-before so the toast surfaces the message (mirrors
     // `runLlm`'s catch → broadcast `transforms:failed` → rethrow).
-    let transformed = match run_transform_provider(
-        &mgr,
-        &settings,
-        &system_prompt,
-        &selected,
-        effort,
-        &model,
-    )
-    .await
-    {
-        Ok(out) => out,
-        Err(reason) => {
-            emit_failed(app, &reason);
-            return TransformApplyResult {
-                before: selected,
-                after: String::new(),
-                source,
-            };
-        }
-    };
+    let transformed =
+        match run_transform_provider(&mgr, &settings, &system_prompt, &selected, effort, &model)
+            .await
+        {
+            Ok(out) => out,
+            Err(reason) => {
+                emit_failed(app, &reason);
+                return TransformApplyResult {
+                    before: selected,
+                    after: String::new(),
+                    source,
+                };
+            }
+        };
 
     // Paste replaces the still-highlighted selection (clipboard + Ctrl+V). Use the
     // REPLACE-mode paste (no trailing space, no auto-submit Enter — this is a rewrite-in-place,
@@ -566,7 +581,7 @@ pub async fn apply_transform(app: AppHandle) -> Result<TransformApplyResult, Str
 }
 
 /// Explicit LLM config the Playground runs against (mirrors `LlmPreviewConfig` /
-/// the electron-main `FeatureLlmConfig`). Connection values (endpoint, key) are
+/// the reference main `FeatureLlmConfig`). Connection values (endpoint, key) are
 /// read from settings regardless, so they are NOT carried here.
 #[derive(Clone, Debug, Deserialize, Type, Default)]
 #[serde(rename_all = "camelCase")]
@@ -679,9 +694,16 @@ pub async fn apply_transform_preview(
         LlmProvider::Ollama => {
             let endpoint = settings.llm.endpoint.clone();
             let request_id = mgr.next_request_id();
-            mgr.ollama_transform(&endpoint, &model, &system_prompt, &text, effort, &request_id)
-                .await
-                .unwrap_or_else(|_| text.clone())
+            mgr.ollama_transform(
+                &endpoint,
+                &model,
+                &system_prompt,
+                &text,
+                effort,
+                &request_id,
+            )
+            .await
+            .unwrap_or_else(|_| text.clone())
         }
     };
     Ok(out)
@@ -824,9 +846,6 @@ mod tests {
             LlmProvider::AppleIntelligence
         ));
         // Unknown → saved transforms provider (default Ollama).
-        assert!(matches!(
-            parse_provider("", &s, false),
-            LlmProvider::Ollama
-        ));
+        assert!(matches!(parse_provider("", &s, false), LlmProvider::Ollama));
     }
 }

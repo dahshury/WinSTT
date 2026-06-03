@@ -196,11 +196,13 @@ fn scan_windows_from_right(
 // COMMITTED-WATERMARK ACCUMULATOR
 // ============================================================================
 
-/// Commit the older portion of the fresh window once it exceeds this many
-/// seconds (recorder_service.py `REALTIME_COMMIT_AFTER_SECONDS`). Exposed so the
-/// host can tune it; the WinSTT value should be mirrored during the compile loop
-/// (it is a module constant in recorder_service.py — re-read it then).
-pub const REALTIME_COMMIT_AFTER_SECONDS: f32 = 2.0;
+/// Commit the older portion of the fresh window once it exceeds this many seconds.
+/// Mirrors the reference `recorder_service.py REALTIME_COMMIT_AFTER_SECONDS = 20.0`: 20 s keeps
+/// every commit comfortably under Whisper's 30 s mel wall while giving the model ample context per
+/// slice, and bounds per-tick decode cost regardless of total recording length. The earlier `2.0`
+/// here was a porting PLACEHOLDER (the original comment said to re-read the real value) — it
+/// crippled realtime quality, since each committed slice saw only ~2 s of context.
+pub const REALTIME_COMMIT_AFTER_SECONDS: f32 = 20.0;
 
 /// Pure text+watermark bookkeeping for the live-preview accumulator. The audio
 /// slicing + transcribe calls live in the recorder pipeline (heavy ORT); this
@@ -280,7 +282,12 @@ impl RealtimeAccumulator {
     ///
     /// Watermark advances ALWAYS once the threshold is crossed (even on empty
     /// commit text) so the same audio is never re-processed.
-    pub fn commit_if_needed<F>(&mut self, total_frames: u64, fps: f32, mut transcribe_window: F) -> u64
+    pub fn commit_if_needed<F>(
+        &mut self,
+        total_frames: u64,
+        fps: f32,
+        mut transcribe_window: F,
+    ) -> u64
     where
         F: FnMut(u64, u64) -> Option<String>,
     {
@@ -371,7 +378,7 @@ mod tests {
         // "abcabcabca" — searching for tail "0123456789"? Build a case where the
         // target recurs and the RIGHT-MOST wins.
         let t1 = chars("XXXXXrepeat"); // last 10 = "XXXXrepeat"
-        // text2 has "XXXXrepeat" twice; expect the END index of the second one.
+                                       // text2 has "XXXXrepeat" twice; expect the END index of the second one.
         let t2 = chars("XXXXrepeat____XXXXrepeat");
         let pos = find_tail_match_in_text(&t1, &t2, TAIL_MATCH_LEN).unwrap();
         assert_eq!(pos, t2.len()); // right-most window ends at the very end
@@ -379,8 +386,14 @@ mod tests {
 
     #[test]
     fn tail_match_none_when_too_short() {
-        assert_eq!(find_tail_match_in_text(&chars("short"), &chars("also short"), 10), None);
-        assert_eq!(find_tail_match_in_text(&chars("0123456789"), &chars("nope"), 10), None);
+        assert_eq!(
+            find_tail_match_in_text(&chars("short"), &chars("also short"), 10),
+            None
+        );
+        assert_eq!(
+            find_tail_match_in_text(&chars("0123456789"), &chars("nope"), 10),
+            None
+        );
     }
 
     #[test]
@@ -449,7 +462,7 @@ mod tests {
         let mut s = RealtimeStabilizer::new();
         s.update("你好世界这是测试一二三"); // 11 chars
         let out = s.update("你好世界这是测试一二三四"); // extends by one char
-        // safetext should be the 11-char common prefix; output extends to 12.
+                                                        // safetext should be the 11-char common prefix; output extends to 12.
         assert_eq!(s.safetext().chars().count(), 11);
         assert_eq!(out.chars().count(), 12);
     }
@@ -476,7 +489,7 @@ mod tests {
     fn commit_advances_watermark_and_appends() {
         let mut acc = RealtimeAccumulator::new();
         let fps = 100.0; // commit_chunk = 200 frames
-        // Not enough fresh frames -> no commit, watermark stays 0.
+                         // Not enough fresh frames -> no commit, watermark stays 0.
         let wm = acc.commit_if_needed(150, fps, |_s, _e| Some("nope".into()));
         assert_eq!(wm, 0);
         assert_eq!(acc.committed_text(), "");
@@ -494,7 +507,7 @@ mod tests {
     fn commit_advances_even_on_empty_or_none() {
         let mut acc = RealtimeAccumulator::new();
         let fps = 100.0; // commit_chunk = 200
-        // None (mid-swap): watermark still advances, no text appended.
+                         // None (mid-swap): watermark still advances, no text appended.
         let wm = acc.commit_if_needed(500, fps, |_s, _e| None);
         assert_eq!(wm, 200);
         assert_eq!(acc.committed_text(), "");

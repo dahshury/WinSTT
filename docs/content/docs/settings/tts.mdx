@@ -1,0 +1,83 @@
+---
+title: Text-to-Speech (reference)
+description: The Text-to-Speech settings section — enable, pick a voice and speed, set a speak hotkey, and download the on-demand Kokoro voice pack.
+---
+
+The **Text-to-Speech** section turns selected text into speech with the local Kokoro-82M ONNX model — 54 voices across 9 languages, all on-device.
+
+<Screenshot src="section-tts" alt="The Text-to-Speech settings section with an enable toggle, a voice picker, a speed slider, and a speak hotkey field." chrome="card" label="Settings — Text-to-Speech" />
+
+This page is the quick settings reference. For the full walkthrough — voice catalog, previews, playback flow, and troubleshooting — see the [Text-to-Speech guide](/docs/text-to-speech).
+
+## Controls
+
+<SettingRow label="Enable Text-to-Speech" settingKey="tts.enabled" default="false">
+  Master on/off gate. Turning it on probes whether the voice pack is already cached; if
+  not, you're prompted to download it (see below). The toggle is disabled while a download
+  is in flight.
+</SettingRow>
+
+<SettingRow label="Voice" settingKey="tts.voice" default="af_heart">
+  A searchable list of 54 voices grouped by language, each with a per-row preview button and
+  a region badge (US, UK, JP, ZH). The languages in this list — US/UK English, Japanese,
+  Mandarin, Spanish, French, Hindi, Italian, Brazilian Portuguese — are the only ones local
+  TTS can speak. Picking a voice auto-updates the language. Default is **Heart** (US female,
+  `af_heart`). If a saved voice ID is missing from the catalog, the first available voice is
+  selected.
+</SettingRow>
+
+<SettingRow label="Speed" settingKey="tts.speed" default="1.0">
+  Synthesis playback speed, **0.5x to 2.0x** in 0.1 steps, shown as `1.0x`. Applied by the
+  Kokoro session itself (not post-processing), so pitch stays natural. A reset button
+  appears when the value is non-default.
+</SettingRow>
+
+<SettingRow label="Speak hotkey" settingKey="tts.hotkey" default="(unset)">
+  A uiohook key combo that reads the current text selection aloud. Set it from the
+  [Hotkeys](/docs/settings/general) capture field; leave it empty to trigger TTS only from
+  the tray or the preview buttons.
+</SettingRow>
+
+<Callout type="info" title="9 languages, local only">
+  The voice picker is the full list of languages local TTS supports — Kokoro is the only
+  bundled engine and it doesn't translate. ElevenLabs (already used for
+  [cloud STT](/docs/settings/integrations)) covers far more languages, but **cloud
+  text-to-speech isn't available in WinSTT yet**.
+</Callout>
+
+## On-demand voice pack
+
+The Kokoro assets ship **separately** from the installer and download once on first enable,
+then cache indefinitely. Total is **~190 MB**: a ~50 MB engine pack, the ~100 MB Kokoro
+model, and ~40 MB of voicepacks. An install banner under the controls shows phase and
+percent and lets you **pause**, **resume**, or **cancel**.
+
+<Callout type="info" title="Downloaded once">
+  Audio is synthesized fully on-device — nothing is sent to the cloud. After the first
+  download the pack is reused on every launch, so subsequent enables are instant.
+</Callout>
+
+<Callout type="info" title="Device follows the Model tab">
+  Text-to-Speech runs on the **same compute device as your speech-to-text model** — there's
+  no separate TTS device picker. Set it once with **Device** in the
+  [Model](/docs/settings/model) tab (`model.device`); the spawn layer mirrors that choice
+  onto the server's `--tts-device` flag, so **Auto** runs Kokoro on the GPU (DirectML) where
+  available and falls back to CPU otherwise.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Text-to-Speech guide" href="/docs/text-to-speech">
+    The full walkthrough: voice catalog, previews, playback flow, and troubleshooting.
+  </Card>
+  <Card title="Model & device" href="/docs/settings/model">
+    Pick the STT model and the compute device that Text-to-Speech also uses.
+  </Card>
+  <Card title="Hotkeys" href="/docs/settings/general">
+    Bind the speak-selection combo and the rest of WinSTT's shortcuts.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Reshape dictation with tone presets and custom modifiers.
+  </Card>
+</Cards>

@@ -26,12 +26,19 @@ if (!container) {
  * Without this the store never hydrates (Tauri webviews don't share localStorage) and the picker
  * renders empty/blank. The catalog list self-loads via the catalog store.
  */
+// Fire the lifecycle beacon ONCE per window process — not on every re-render (see the
+// settings entry for the same fix). The store hydration triggers many re-renders.
+let modelPickerBeaconSent = false;
+
 function ModelPickerBootstrap() {
 	useSyncSettings();
 	useSyncActiveModel();
 	useDownloadListener();
 	useConnectionListener();
-	diagBeacon("model-picker", "ModelPickerBootstrap render reached");
+	if (!modelPickerBeaconSent) {
+		modelPickerBeaconSent = true;
+		diagBeacon("model-picker", "ModelPickerBootstrap render reached");
+	}
 	return <ModelPickerPage />;
 }
 

@@ -8,6 +8,11 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import type { ModelInfo } from "@/entities/model-catalog";
+import { collectFavorites, FAVORITES_GROUP_VALUE, isFavoritesGroupValue } from "../../core/favorites";
+
+// Re-export the shared synthetic-group value so STT call sites keep importing it
+// from family-helpers unchanged (the canonical definition now lives in core).
+export { FAVORITES_GROUP_VALUE } from "../../core/favorites";
 
 export type FamilyKey = ModelInfo["family"];
 
@@ -44,26 +49,33 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		icon: Radio01Icon,
 		label: "GigaAM",
 		chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-		logoSrc: "/provider-icons/sber-salute.png",
+		// Sber's sphere emblem (transparent PNG) — the HF org avatar was a
+		// full-bleed opaque tile that read as a solid rectangle in the chip.
+		// PNG, not SVG: the emblem's clipped gradient ring rendered as a solid
+		// square in WebView2's SVG image-mode (clip-path quirk).
+		logoSrc: "/provider-icons/sber.png",
 	},
 	kaldi: {
 		icon: CpuIcon,
 		label: "Kaldi",
 		chip: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
-		logoSrc: "/provider-icons/alpha-cephei.png",
+		// Vosk's transparent diamond mark.
+		logoSrc: "/provider-icons/vosk.png",
 	},
 	"t-one": {
 		icon: FlashIcon,
 		label: "T-One",
 		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-		logoSrc: "/provider-icons/t-tech.png",
+		// T-Bank's shield emblem (transparent SVG) — the HF org avatar was an
+		// opaque dark tile that read as a solid rectangle in the chip.
+		logoSrc: "/provider-icons/t-bank.svg",
 	},
 	moonshine: {
 		icon: FlashIcon,
 		label: "Moonshine",
 		chip: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
-		// No brand logo bundled — Useful Sensors doesn't ship one in
-		// provider-icons/, so we fall back to the HugeIcon.
+		// Useful Sensors' Moonshine crescent + waveform mark (transparent).
+		logoSrc: "/provider-icons/moonshine.png",
 	},
 	cohere: {
 		icon: AiChipIcon,
@@ -81,6 +93,8 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		icon: AudioWave02Icon,
 		label: "Dolphin",
 		chip: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+		// DataoceanAI's wordmark (transparent). It's a wide wordmark, so the
+		// logo `<img>` uses object-contain (not cover) to show it whole.
 		logoSrc: "/provider-icons/dataoceanai.png",
 	},
 	custom: {
@@ -293,14 +307,6 @@ export function groupModelsByAuthor(models: readonly ModelInfo[]): AuthorGroup[]
 }
 
 /**
- * Synthetic group value for the user's starred models. NOT a {@link FamilyKey}
- * — the Favorites group aggregates models across makers and is pinned to the
- * top of the picker list, so list/rail code special-cases it before falling
- * back to the per-family rendering.
- */
-export const FAVORITES_GROUP_VALUE = "favorites";
-
-/**
  * Synthetic group value for the flat, globally-sorted view. Like
  * {@link FAVORITES_GROUP_VALUE} it is NOT a {@link FamilyKey} — it holds every
  * surviving model in one bucket so an active sort isn't fragmented across the
@@ -320,7 +326,7 @@ export interface SttListGroup {
 
 /** Narrowing helper — true for the synthetic favorites group. */
 export function isFavoritesGroup(value: SttGroupValue): value is typeof FAVORITES_GROUP_VALUE {
-	return value === FAVORITES_GROUP_VALUE;
+	return isFavoritesGroupValue(value);
 }
 
 /** Narrowing helper — true for the synthetic flat "sorted" group. */
@@ -345,16 +351,7 @@ export function withFavoritesGroup(
 	groups: readonly AuthorGroup[],
 	isFavorite: (modelId: string) => boolean
 ): SttListGroup[] {
-	const favorites: ModelInfo[] = [];
-	const seen = new Set<string>();
-	for (const group of groups) {
-		for (const model of group.items) {
-			if (isFavorite(model.id) && !seen.has(model.id)) {
-				seen.add(model.id);
-				favorites.push(model);
-			}
-		}
-	}
+	const favorites = collectFavorites(groups, isFavorite, (model) => model.id);
 	if (favorites.length === 0) {
 		return [...groups];
 	}

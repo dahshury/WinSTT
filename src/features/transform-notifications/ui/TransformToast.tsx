@@ -1,6 +1,7 @@
 import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
+import { useTranslations } from "use-intl";
 import { applyTransform, onTransformApplied, onTransformFailed } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -37,6 +38,7 @@ function resolveToastBody(notification: TransformNotification): string {
  * actions. Auto-dismisses after 5s; newer events overwrite older ones.
  */
 export function TransformToast() {
+	const t = useTranslations("common");
 	const current = useTransformNotifications((s) => s.current);
 	const show = useTransformNotifications((s) => s.show);
 	const clear = useTransformNotifications((s) => s.clear);
@@ -119,7 +121,7 @@ export function TransformToast() {
 						onClick={handleRetry}
 					>
 						<HugeiconsIcon icon={RefreshIcon} size={11} />
-						Retry
+						{t("retry")}
 					</Button>
 				</div>
 			) : null}

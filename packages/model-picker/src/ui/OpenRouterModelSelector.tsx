@@ -1,11 +1,9 @@
 "use client";
 
-import { StarIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { useRef, useState } from "react";
 import type { OpenRouterModel } from "@/shared/api/models";
 import { parseModelSelection } from "@/shared/lib/openrouter-model-selection";
-import { GroupRail, type GroupRailItem, RailIconChip } from "../core/GroupRail";
+import { buildFavoritesRailItem, GroupRail, type GroupRailItem } from "../core/GroupRail";
 import { useFavoriteSet } from "../core/use-favorite-set";
 import { ModelPicker } from "../core/ModelPicker";
 import { isReasoningModel } from "../lib/model-selector-display-utils";
@@ -25,7 +23,6 @@ import {
 } from "../lib/openrouter-model-selector-test-helpers";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
 import { OPENROUTER_SORT_HEADER_LABEL, type OpenRouterSortValue } from "../lib/openrouter-sort";
-import { FAVORITES_SECTION_ID } from "../lib/model-list-content-virtualized-utils";
 import { publicAsset } from "../lib/public-asset";
 import { getProviderIcon } from "../lib/provider-icons";
 import { useModelSelectorClickTracking } from "../lib/use-model-selector-click-tracking";
@@ -298,20 +295,7 @@ export function OpenRouterModelSelector({
 	);
 	const railItems: GroupRailItem[] =
 		favoriteModelCount > 0
-			? [
-					{
-						id: FAVORITES_SECTION_ID,
-						label: "Favorites",
-						pinned: true,
-						badge: favoriteModelCount,
-						icon: (
-							<RailIconChip tone="favorite">
-								<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
-							</RailIconChip>
-						),
-					},
-					...makerRailItems,
-				]
+			? [buildFavoritesRailItem(favoriteModelCount), ...makerRailItems]
 			: makerRailItems;
 
 	// A global sort flattens the makers into one column, so the maker rail (and

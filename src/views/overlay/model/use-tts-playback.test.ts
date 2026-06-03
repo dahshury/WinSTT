@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MutableRefObject } from "react";
-import { IPC } from "@/shared/api/ipc-channels";
 import type { TtsChunkPayload } from "@/shared/api/ipc-client";
 import type { TtsPlaybackQueue } from "../lib/playback-queue";
 import { handleTtsChunkPayload, handleTtsCompletedPayload, stopTts } from "./use-tts-playback";
@@ -24,6 +23,38 @@ interface StubQueue {
 	stop: () => void;
 }
 const asQueue = (q: StubQueue) => q as unknown as TtsPlaybackQueue;
+
+interface TauriInvokeCall {
+	args: Record<string, unknown> | undefined;
+	cmd: string;
+}
+
+interface TauriInternals {
+	invoke: (cmd: string, args?: Record<string, unknown>, options?: unknown) => Promise<unknown>;
+}
+
+function installTauriInvokeRecorder(): {
+	calls: TauriInvokeCall[];
+	restore: () => void;
+} {
+	const internals = (window as unknown as { __TAURI_INTERNALS__?: TauriInternals })
+		.__TAURI_INTERNALS__;
+	if (!internals) {
+		throw new Error("expected test Tauri internals to be installed");
+	}
+	const calls: TauriInvokeCall[] = [];
+	const originalInvoke = internals.invoke;
+	internals.invoke = (cmd, args) => {
+		calls.push({ cmd, args });
+		return Promise.resolve(undefined);
+	};
+	return {
+		calls,
+		restore: () => {
+			internals.invoke = originalInvoke;
+		},
+	};
+}
 
 function makeStubQueue(): { queue: TtsPlaybackQueue; calls: QueueCalls } {
 	const calls: QueueCalls = { enqueue: [], markComplete: [], stop: 0 };
@@ -110,30 +141,27 @@ describe("handleTtsCompletedPayload", () => {
 });
 
 describe("stopTts", () => {
-	const originalApi = window.electronAPI;
-	const sends: Array<{ channel: string; args: unknown[] }> = [];
+	let calls: TauriInvokeCall[] = [];
+	let restoreTauriInvoke: (() => void) | null = null;
 
 	beforeEach(() => {
-		sends.length = 0;
-		window.electronAPI = {
-			...originalApi,
-			send: (channel: string, ...args: unknown[]) => {
-				sends.push({ channel, args });
-			},
-		};
+		const recorder = installTauriInvokeRecorder();
+		calls = recorder.calls;
+		restoreTauriInvoke = recorder.restore;
 	});
 
 	afterEach(() => {
-		window.electronAPI = originalApi;
+		restoreTauriInvoke?.();
+		restoreTauriInvoke = null;
 	});
 
-	test("forwards the request id to TTS_CANCEL", () => {
+	test("forwards the request id to the typed TTS cancel command", () => {
 		stopTts("r");
-		expect(sends).toEqual([{ channel: IPC.TTS_CANCEL, args: [{ requestId: "r" }] }]);
+		expect(calls).toEqual([{ cmd: "tts_cancel", args: { requestId: "r" } }]);
 	});
 
 	test("cancels every active request when called without an id", () => {
 		stopTts();
-		expect(sends).toEqual([{ channel: IPC.TTS_CANCEL, args: [{ requestId: undefined }] }]);
+		expect(calls).toEqual([{ cmd: "tts_cancel", args: { requestId: null } }]);
 	});
 });

@@ -1,0 +1,88 @@
+---
+title: Events
+description: Everything the Rust backend pushes to the renderer
+---
+
+Where [commands](/docs/architecture/ipc) are the renderer calling Rust, **events** are Rust
+pushing to the renderer. The backend emits them with Tauri's `Emitter`; windows subscribe with
+`listen`. They come in two flavors.
+
+**Typed payloads** are declared in `src-tauri/src/winstt/commands/events.rs`, registered in
+`collect_events![...]`, and mounted via `mount_events(app)`. They derive `specta::Type` +
+`tauri_specta::Event`, so their shapes appear in `bindings.ts` and are type-checked on both
+sides.
+
+**Plain string events** are high-frequency or legacy channels emitted as `app.emit(name, payload)`
+to match the listener names the reused Electron renderer already expects (e.g. `stt:audio-level`
+fires per audio frame).
+
+<Callout type="info" title="No EventBus, no WebSocket relay">
+  The Electron build published domain events on a Python `EventBus` and relayed them over a
+  WebSocket. Here, managers emit Tauri events directly to all windows — same event names on the
+  renderer side, so the UI's listeners were reused unchanged.
+</Callout>
+
+## Typed payloads (`events.rs`)
+
+| Event payload | Fields | Meaning |
+|---------------|--------|---------|
+| `RealtimeUpdatePayload` | `text` | Raw live-preview text (pre-stabilization) |
+| `RealtimeStabilizedPayload` | `text` | Live preview past the committed watermark |
+| `WakeWordDetectedPayload` | `word`, `word_index` | A configured wake word matched |
+| `VadSensitivityAdaptedPayload` | sensitivity | Auto-calibrated Silero sensitivity for the device |
+| `SpeakerSegmentsPayload` | segments | Diarized speaker segments (listen mode) |
+| `WordAlignmentPayload` | word timings | Per-word timestamps for history playback |
+| `TtsLifecyclePayload` | `request_id`, `phase`, `progress?` | TTS started / completed / failed / download-progress |
+| `FileTranscribeProgressPayload` | `id`, `path`, `status`, `progress`, `text?` | Batch file-transcribe progress |
+
+## Plain string events
+
+### Recording lifecycle
+
+| Event | Meaning |
+|-------|---------|
+| `stt:recording-start` / `stt:recording-stop` | Capture began / ended |
+| `stt:transcription-start` | Full decode started |
+| `stt:full-sentence` | Final transcription result |
+| `stt:no-audio-detected` | Recording held no speech |
+
+### Voice activity & audio
+
+| Event | Meaning |
+|-------|---------|
+| `stt:vad-start` / `stt:vad-stop` | Speech onset / offset (smoothed) |
+| `stt:audio-level` | Per-frame mic level + spectrum (visualizer) |
+| `vad-sensitivity-adapted` | VAD sensitivity recalibrated |
+
+### Wake word & realtime
+
+| Event | Meaning |
+|-------|---------|
+| `wake_word_detected` | Wake word hit → starts dictation |
+| `realtime-update` | Live preview text tick |
+
+### Models & swaps
+
+| Event | Meaning |
+|-------|---------|
+| `stt:model-download-progress` | Per-file download percentage |
+| `stt:model-swap-started` / `-completed` / `-failed` | Active-model swap lifecycle |
+| `stt:restart-required` | A startup-only setting changed (in-process engine can't hot-apply it) |
+
+### Settings
+
+| Event | Meaning |
+|-------|---------|
+| `settings:changed` | Full post-save snapshot, broadcast to every window |
+| `settings:save-error` | Validation or persistence failure |
+
+## Related
+
+<Cards>
+  <Card title="IPC: Commands" href="/docs/architecture/ipc">
+    The request/response side, and how the renderer subscribes.
+  </Card>
+  <Card title="Backend Architecture" href="/docs/architecture/backend">
+    The managers that emit these events.
+  </Card>
+</Cards>

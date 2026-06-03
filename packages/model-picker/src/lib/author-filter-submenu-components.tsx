@@ -12,7 +12,7 @@ interface SelectedTickProps {
 	isSelected: boolean;
 }
 
-export function SelectedTick({ isSelected }: SelectedTickProps) {
+function SelectedTick({ isSelected }: SelectedTickProps) {
 	if (!isSelected) {
 		return null;
 	}
@@ -40,7 +40,7 @@ interface FavoriteToggleButtonProps {
 	provider: string;
 }
 
-export function FavoriteToggleButton({
+function FavoriteToggleButton({
 	isFavorite,
 	onToggleFavorite,
 	provider,

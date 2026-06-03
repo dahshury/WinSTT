@@ -3,13 +3,13 @@
 //
 // This module ports WinSTT's ~150-field nested settings tree into a single
 // specta-typed `WinsttSettings` Rust struct. The nesting mirrors the Zod
-// schema's 9 sub-objects exactly (model / quality / audio / general / hotkey /
-// dictionary / snippets / llm / tts / integrations) so the reused React
+// schema's 10 sub-objects exactly (global / model / quality / audio / general /
+// hotkey / dictionary / snippets / llm / tts / integrations) so the reused React
 // renderer maps onto it 1:1 over `tauri-specta` bindings.
 //
 // CONVENTIONS (locked, do not drift):
 //   * Field NAMES on the wire are camelCase — the renderer reads/writes the
-//     exact same keys WinSTT's electron-store used. Every struct therefore
+//     exact same keys WinSTT's persisted store used. Every struct therefore
 //     carries `#[serde(rename_all = "camelCase")]` and every enum that needs a
 //     specific JSON spelling carries an explicit `#[serde(rename...)]`.
 //   * Every field is `#[serde(default = "...")]` (or `#[serde(default)]` for
@@ -25,6 +25,9 @@
 // readable set is `STARTUP_ONLY_KEYS` at the bottom of this file (mirrors
 // WinSTT's `STARTUP_ONLY_KEYS_LIST` in electron/ipc/settings.ts, minus the
 // retired `model.computeType` — WinSTT is ONNX-only now).
+
+// reason: explicit Default impls document the settings-schema defaults (parity with the Zod schema)
+#![allow(clippy::derivable_impls)]
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -56,7 +59,7 @@ pub enum TranscriberBackend {
     OnnxAsr,
 }
 
-/// `model.modelUnloadTimeout`. IPC normalizes `never` → negative seconds
+/// `global.modelUnloadTimeout`. IPC normalizes `never` → negative seconds
 /// sentinel ("keep loaded forever"), `immediately` → 0 (tear down after each
 /// transcription). HOT-SWAP (retunes the idle-unload daemon in place).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -142,8 +145,9 @@ pub enum VisualizerSize {
 }
 
 /// `general.liveTranscriptionDisplay`. Also GATES whether realtime is
-/// effectively enabled (the `--enable_realtime_transcription` flag) → CONDITIONAL
-/// restart when the effective-realtime flag flips.
+/// effectively enabled. HOT-SWAP: the realtime worker re-reads
+/// `effective_realtime` every loop tick and self-gates, so toggling this (incl.
+/// disabling live transcription entirely) takes effect with no restart.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum LiveTranscriptionDisplay {
@@ -390,9 +394,6 @@ pub struct ModelSettings {
     /// Whisper task=translate (multilingual Whisper only). HOT-SWAP. Zod `.catch(false)`.
     #[serde(default)]
     pub translate_to_english: bool,
-    /// Idle-unload policy. HOT-SWAP. Zod `.catch("min5")`.
-    #[serde(default)]
-    pub model_unload_timeout: ModelUnloadTimeout,
 }
 
 impl ModelSettings {
@@ -435,6 +436,22 @@ impl Default for ModelSettings {
             initial_prompt: String::new(),
             initial_prompt_realtime: String::new(),
             translate_to_english: false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalSettings {
+    /// Idle-unload policy shared by local STT, realtime preview, local TTS, and
+    /// Ollama keep-alive. HOT-SWAP. Zod `.catch("min5")`.
+    #[serde(default)]
+    pub model_unload_timeout: ModelUnloadTimeout,
+}
+
+impl Default for GlobalSettings {
+    fn default() -> Self {
+        Self {
             model_unload_timeout: ModelUnloadTimeout::default(),
         }
     }
@@ -636,8 +653,9 @@ impl Default for AudioSettings {
 // SECTION: general  (generalSettingsSchema) — the largest section.
 // STARTUP-ONLY: sendCrashReports (Sentry init reads once).
 // CONDITIONAL restart: recordingMode↔wakeword boundary; wakeWord /
-// wakeWordSensitivity / wakeWordTimeout while in wakeword mode;
-// liveTranscriptionDisplay (+ showRecordingOverlay) flipping effective-realtime.
+// wakeWordSensitivity / wakeWordTimeout while in wakeword mode.
+// HOT-SWAP: liveTranscriptionDisplay / showRecordingOverlay (effective-realtime is
+// re-read live by the realtime worker — no restart even when fully disabled).
 // MAIN-owned (not user controls): onboarded, onboardedAt, onboardedTrack.
 // Everything else HOT-SWAP.
 // ===========================================================================
@@ -697,7 +715,8 @@ pub struct GeneralSettings {
     /// Seconds the gate stays armed after detection. Range 1..30. CONDITIONAL restart.
     #[serde(default = "GeneralSettings::default_wake_word_timeout")]
     pub wake_word_timeout: f64,
-    /// Show floating recording pill. CONDITIONAL (affects effective-realtime).
+    /// Show floating recording pill. HOT-SWAP (affects effective-realtime, which the
+    /// realtime worker re-reads live — no restart).
     #[serde(default = "bool_true")]
     pub show_recording_overlay: bool,
     /// Overlay visual layout. HOT-SWAP. Zod `.catch`.
@@ -709,7 +728,8 @@ pub struct GeneralSettings {
     /// Overlay visualizer height preset. HOT-SWAP. Zod `.catch`.
     #[serde(default)]
     pub visualizer_size: VisualizerSize,
-    /// Where live preview renders; also gates effective-realtime. CONDITIONAL. Zod `.catch`.
+    /// Where live preview renders; also gates effective-realtime. HOT-SWAP (worker
+    /// re-reads it live — no restart, even when disabled). Zod `.catch`.
     #[serde(default)]
     pub live_transcription_display: LiveTranscriptionDisplay,
     /// Visualizer style. HOT-SWAP.
@@ -782,6 +802,11 @@ pub struct GeneralSettings {
     /// Which key combo to inject on auto-submit. HOT-SWAP. Zod `.catch("enter")`.
     #[serde(default)]
     pub auto_submit_key: AutoSubmitKey,
+    /// Gate auto-paste behind an editable preview pill the user confirms before
+    /// pasting. HOT-SWAP. Only effective when the recording pill is shown (the
+    /// preview IS the pill). Zod `.catch(false)`.
+    #[serde(default)]
+    pub preview_before_pasting: bool,
     /// Cap on persisted history entries. Range 10..10000. HOT-SWAP. Zod `.catch(1000)`.
     #[serde(default = "GeneralSettings::default_history_max_entries")]
     pub history_max_entries: i64,
@@ -974,6 +999,7 @@ impl Default for GeneralSettings {
             output_device_id: String::new(),
             auto_submit: false,
             auto_submit_key: AutoSubmitKey::default(),
+            preview_before_pasting: false,
             history_max_entries: Self::default_history_max_entries(),
             recording_retention: RecordingRetention::default(),
             word_correction_threshold: Self::default_word_correction_threshold(),
@@ -998,12 +1024,13 @@ pub struct HotkeySettings {
 
 impl HotkeySettings {
     fn default_push_to_talk_key() -> String {
-        // Must contain a REAL key, not just modifiers. The previous default
-        // `LCtrl+LMeta` (Ctrl+Windows) is modifier-only, and the OS-level key hook
-        // (handy-keys) never fires press/release for a modifier-only combo on Windows
-        // — so dictation could never trigger. `LCtrl+Space` matches Handy's proven
-        // `ctrl+space` default and works one-handed for push-to-talk.
-        "LCtrl+Space".to_string()
+        // The default PTT combo (= the original WinSTT default). `LCtrl+LMeta`
+        // (Ctrl+Win) rides the Win key, so the low-level hook leaks a lone Win
+        // press that would pop the Start menu — the handy-keys pump disguises it
+        // (`suppress_start_menu_for_win_combo`, see shortcut/handy_keys.rs) the
+        // instant the combo fires, so press/release dispatch one-handed without
+        // stealing focus.
+        "LCtrl+LMeta".to_string()
     }
 }
 
@@ -1252,7 +1279,12 @@ impl Default for TtsCloud {
 pub struct TtsSettings {
     #[serde(default)]
     pub enabled: bool,
-    /// Kokoro voice catalog id.
+    /// Local TTS catalog id selecting WHICH engine/model synthesizes
+    /// (kokoro-82m / kitten-nano-0.1 / kitten-nano-0.2 / piper / supertonic-en).
+    /// `voice` below is the voice WITHIN this model. Cloud source ignores this.
+    #[serde(default = "TtsSettings::default_model")]
+    pub model: String,
+    /// Voice catalog id WITHIN the selected model.
     #[serde(default = "TtsSettings::default_voice")]
     pub voice: String,
     #[serde(default = "TtsSettings::default_lang")]
@@ -1271,6 +1303,9 @@ pub struct TtsSettings {
 }
 
 impl TtsSettings {
+    fn default_model() -> String {
+        "kokoro-82m".to_string()
+    }
     fn default_voice() -> String {
         "af_heart".to_string()
     }
@@ -1281,7 +1316,7 @@ impl TtsSettings {
         1.0
     }
     fn default_hotkey() -> String {
-        "LMeta+LShift+E".to_string()
+        "LCtrl+Space".to_string()
     }
 }
 
@@ -1295,6 +1330,7 @@ impl Default for TtsSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            model: Self::default_model(),
             voice: Self::default_voice(),
             lang: Self::default_lang(),
             speed: Self::default_speed(),
@@ -1360,15 +1396,17 @@ impl Default for IntegrationsSettings {
 // TOP-LEVEL: WinsttSettings  (appSettingsSchema)
 // ===========================================================================
 
-/// The complete WinSTT settings tree, nested by the 9 settings tabs, ported
+/// The complete WinSTT settings tree, nested by the settings sections, ported
 /// 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON
 /// the reused React renderer expects.
 ///
 /// Persisted via the Tauri store (one JSON value). Secrets are encrypted at
 /// rest by the persistence layer — they are plaintext on this struct.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+#[derive(Serialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WinsttSettings {
+    #[serde(default)]
+    pub global: GlobalSettings,
     #[serde(default)]
     pub model: ModelSettings,
     #[serde(default)]
@@ -1395,6 +1433,7 @@ pub struct WinsttSettings {
 impl Default for WinsttSettings {
     fn default() -> Self {
         Self {
+            global: GlobalSettings::default(),
             model: ModelSettings::default(),
             quality: QualitySettings::default(),
             audio: AudioSettings::default(),
@@ -1407,6 +1446,85 @@ impl Default for WinsttSettings {
             integrations: IntegrationsSettings::default(),
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WinsttSettingsWire {
+    #[serde(default)]
+    global: GlobalSettings,
+    #[serde(default)]
+    model: ModelSettings,
+    #[serde(default)]
+    quality: QualitySettings,
+    #[serde(default)]
+    audio: AudioSettings,
+    #[serde(default)]
+    general: GeneralSettings,
+    #[serde(default)]
+    hotkey: HotkeySettings,
+    #[serde(default)]
+    dictionary: Vec<DictionaryEntry>,
+    #[serde(default)]
+    snippets: Vec<SnippetEntry>,
+    #[serde(default)]
+    llm: LlmSettings,
+    #[serde(default)]
+    tts: TtsSettings,
+    #[serde(default)]
+    integrations: IntegrationsSettings,
+}
+
+impl From<WinsttSettingsWire> for WinsttSettings {
+    fn from(w: WinsttSettingsWire) -> Self {
+        Self {
+            global: w.global,
+            model: w.model,
+            quality: w.quality,
+            audio: w.audio,
+            general: w.general,
+            hotkey: w.hotkey,
+            dictionary: w.dictionary,
+            snippets: w.snippets,
+            llm: w.llm,
+            tts: w.tts,
+            integrations: w.integrations,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WinsttSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        migrate_legacy_global_settings(&mut value);
+        let wire = WinsttSettingsWire::deserialize(value).map_err(serde::de::Error::custom)?;
+        Ok(wire.into())
+    }
+}
+
+fn migrate_legacy_global_settings(value: &mut serde_json::Value) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+    let legacy_timeout = root
+        .get("model")
+        .and_then(|model| model.get("modelUnloadTimeout"))
+        .cloned();
+    let Some(legacy_timeout) = legacy_timeout else {
+        return;
+    };
+    let global = root
+        .entry("global")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(global_obj) = global.as_object_mut() else {
+        return;
+    };
+    global_obj
+        .entry("modelUnloadTimeout")
+        .or_insert(legacy_timeout);
 }
 
 // ===========================================================================
@@ -1436,9 +1554,11 @@ fn default_neutral_presets() -> Vec<PresetEntry> {
 // A settings change triggers an engine restart ONLY when:
 //   1. a key in STARTUP_ONLY_KEYS changed; OR
 //   2. the wakeword config branch changed (see WAKEWORD_CONFIG_KEYS) while in /
-//      crossing wakeword mode; OR
-//   3. effective-realtime flipped (liveTranscriptionDisplay / showRecordingOverlay).
-// Everything else is hot-swapped in place.
+//      crossing wakeword mode.
+// Everything else is hot-swapped in place — INCLUDING effective-realtime
+// (liveTranscriptionDisplay / showRecordingOverlay): the realtime worker re-reads it
+// live, so toggling live transcription never restarts. (the reference DID restart here; see
+// commands::settings::compute_restart_keys for the deliberate divergence.)
 // ===========================================================================
 
 /// Dot-paths that force a full engine restart when changed.
@@ -1462,8 +1582,10 @@ pub const WAKEWORD_CONFIG_KEYS: &[&str] = &[
 ];
 
 /// Dot-paths that can flip whether realtime transcription is *effectively*
-/// enabled (the engine's `--enable_realtime_transcription` flag). A restart is
-/// needed only when the effective flag actually changes.
+/// enabled. NO restart on change: the realtime worker
+/// (`winstt::managers::realtime_manager`) re-reads `effective_realtime` every loop
+/// tick and self-gates, so a flip (incl. fully disabling) is hot. Kept as a
+/// documented set of the keys that gate the effective flag.
 pub const REALTIME_EFFECTIVE_KEYS: &[&str] = &[
     "general.liveTranscriptionDisplay",
     "general.showRecordingOverlay",
@@ -1508,7 +1630,7 @@ mod tests {
         assert_eq!(s.model.backend, TranscriberBackend::FasterWhisper);
         assert_eq!(s.model.onnx_quantization, "");
         assert!(!s.model.translate_to_english);
-        assert_eq!(s.model.model_unload_timeout, ModelUnloadTimeout::Min5);
+        assert_eq!(s.global.model_unload_timeout, ModelUnloadTimeout::Min5);
 
         // quality
         assert!(!s.quality.use_main_model_for_realtime);
@@ -1545,7 +1667,10 @@ mod tests {
         assert_eq!(s.general.wake_word, "alexa");
         assert_eq!(s.general.wake_word_sensitivity, 0.6);
         assert_eq!(s.general.wake_word_timeout, 5.0);
-        assert_eq!(s.general.live_transcription_display, LiveTranscriptionDisplay::Both);
+        assert_eq!(
+            s.general.live_transcription_display,
+            LiveTranscriptionDisplay::Both
+        );
         assert_eq!(s.general.overlay_mode, OverlayMode::FloatingBottom);
         assert_eq!(s.general.overlay_position, OverlayPosition::Auto);
         assert_eq!(s.general.visualizer_size, VisualizerSize::Xs);
@@ -1576,7 +1701,7 @@ mod tests {
         );
 
         // hotkey
-        assert_eq!(s.hotkey.push_to_talk_key, "LCtrl+Space");
+        assert_eq!(s.hotkey.push_to_talk_key, "LCtrl+LMeta");
 
         // dictionary / snippets
         assert!(s.dictionary.is_empty());
@@ -1598,7 +1723,7 @@ mod tests {
         assert_eq!(s.tts.voice, "af_heart");
         assert_eq!(s.tts.lang, "en-us");
         assert_eq!(s.tts.speed, 1.0);
-        assert_eq!(s.tts.hotkey, "LMeta+LShift+E");
+        assert_eq!(s.tts.hotkey, "LCtrl+Space");
         assert_eq!(s.tts.source, TtsSource::Local);
         assert_eq!(s.tts.cloud.model, "eleven_multilingual_v2");
         assert_eq!(s.tts.cloud.stability, 0.5);
@@ -1609,6 +1734,20 @@ mod tests {
         assert_eq!(s.integrations.openai.api_key, "");
         assert_eq!(s.integrations.openai.verified, None);
         assert_eq!(s.integrations.elevenlabs.last_verified_at, None);
+    }
+
+    #[test]
+    fn legacy_model_unload_timeout_migrates_to_global_section() {
+        let s: WinsttSettings = serde_json::from_value(serde_json::json!({
+            "model": { "modelUnloadTimeout": "hour1" }
+        }))
+        .unwrap();
+        let serialized = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            serialized["global"]["modelUnloadTimeout"],
+            serde_json::json!("hour1")
+        );
+        assert!(serialized["model"].get("modelUnloadTimeout").is_none());
     }
 
     #[test]

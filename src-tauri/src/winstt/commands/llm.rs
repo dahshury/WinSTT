@@ -20,6 +20,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, State};
@@ -29,13 +30,12 @@ use crate::winstt::cloud_stt::{
     CloudSttErrorCode,
 };
 use crate::winstt::llm::{
-    self, build_dictation_system_prompt, build_system_prompt,
-    merge_presets_with_custom_modifiers, PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey,
-    PresetLevel as LlmPresetLevel, ThinkingEffort as LlmEffort, Vocab,
+    self, build_dictation_system_prompt, build_system_prompt, merge_presets_with_custom_modifiers,
+    PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey, PresetLevel as LlmPresetLevel,
+    ThinkingEffort as LlmEffort, Vocab,
 };
 use crate::winstt::managers::llm_manager::{
-    OllamaModelDetails as MgrDetails, OllamaModelInfo as MgrModel, OpenRouterModelInfo,
-    PullOutcome,
+    OllamaModelDetails as MgrDetails, OllamaModelInfo as MgrModel, OpenRouterModelInfo, PullOutcome,
 };
 use crate::winstt::managers::LlmManager;
 use crate::winstt::settings_schema::{
@@ -318,7 +318,12 @@ pub async fn process_text(
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();
             let selection = settings.llm.dictation.base.openrouter_model.clone();
-            let fallback = settings.llm.dictation.base.openrouter_fallback_model.clone();
+            let fallback = settings
+                .llm
+                .dictation
+                .base
+                .openrouter_fallback_model
+                .clone();
             let user_prompt = llm::dictation_user_prompt(&text);
             run_openrouter_with_fallback(
                 &mgr,
@@ -328,14 +333,29 @@ pub async fn process_text(
                 &system_prompt,
                 &user_prompt,
                 &text,
+                "dictation",
+                &request_id,
             )
             .await
         }
         LlmProvider::AppleIntelligence => text.clone(),
         LlmProvider::Ollama => mgr
-            .ollama_dictation(&endpoint, &model, &system_prompt, &text, effort, &request_id)
+            .ollama_dictation(
+                &endpoint,
+                &model,
+                &system_prompt,
+                &text,
+                effort,
+                &request_id,
+            )
             .await
-            .unwrap_or_else(|_| text.clone()),
+            .unwrap_or_else(|err| {
+                warn!(
+                    "[llm][{request_id}] dictation Ollama model '{model}' failed; returning original text: {}",
+                    llm::compact_error_for_log(&err)
+                );
+                text.clone()
+            }),
     };
 
     // Deterministic replacement-pair safety net (guaranteed fire).
@@ -368,13 +388,17 @@ pub async fn process_transform(
     let request_id = mgr.next_request_id();
     let endpoint = settings.llm.endpoint.clone();
     let model = settings.llm.transforms.base.model.clone();
-    let _ = transform_id;
 
     let answer = match settings.llm.transforms.base.provider {
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();
             let selection = settings.llm.transforms.base.openrouter_model.clone();
-            let fallback = settings.llm.transforms.base.openrouter_fallback_model.clone();
+            let fallback = settings
+                .llm
+                .transforms
+                .base
+                .openrouter_fallback_model
+                .clone();
             let user_prompt = llm::transforms_user_prompt(&text);
             run_openrouter_with_fallback(
                 &mgr,
@@ -384,14 +408,30 @@ pub async fn process_transform(
                 &system_prompt,
                 &user_prompt,
                 &text,
+                &transform_id,
+                &request_id,
             )
             .await
         }
         LlmProvider::AppleIntelligence => text.clone(),
         LlmProvider::Ollama => mgr
-            .ollama_transform(&endpoint, &model, &system_prompt, &text, effort, &request_id)
+            .ollama_transform(
+                &endpoint,
+                &model,
+                &system_prompt,
+                &text,
+                effort,
+                &request_id,
+            )
             .await
-            .unwrap_or_else(|_| text.clone()),
+            .unwrap_or_else(|err| {
+                warn!(
+                    "[llm][{request_id}] transform '{}' Ollama model '{model}' failed; returning original text: {}",
+                    transform_id,
+                    llm::compact_error_for_log(&err)
+                );
+                text.clone()
+            }),
     };
     Ok(answer)
 }
@@ -407,17 +447,40 @@ async fn run_openrouter_with_fallback(
     system_prompt: &str,
     user_prompt: &str,
     text: &str,
+    feature: &str,
+    request_id: &str,
 ) -> String {
     match mgr
         .openrouter_chat(api_key, primary, system_prompt, user_prompt, text)
         .await
     {
         Ok(answer) => answer,
-        Err(_primary_err) if !fallback.is_empty() => mgr
-            .openrouter_chat(api_key, fallback, system_prompt, user_prompt, text)
-            .await
-            .unwrap_or_else(|_| text.to_string()),
-        Err(_) => text.to_string(),
+        Err(primary_err) if !fallback.is_empty() => {
+            warn!(
+                "[llm][{request_id}] {feature} OpenRouter primary model '{primary}' failed; trying fallback '{fallback}': {}",
+                llm::compact_error_for_log(&primary_err)
+            );
+            match mgr
+                .openrouter_chat(api_key, fallback, system_prompt, user_prompt, text)
+                .await
+            {
+                Ok(answer) => answer,
+                Err(fallback_err) => {
+                    warn!(
+                        "[llm][{request_id}] {feature} OpenRouter fallback model '{fallback}' failed; returning original text: {}",
+                        llm::compact_error_for_log(&fallback_err)
+                    );
+                    text.to_string()
+                }
+            }
+        }
+        Err(primary_err) => {
+            warn!(
+                "[llm][{request_id}] {feature} OpenRouter model '{primary}' failed with no fallback; returning original text: {}",
+                llm::compact_error_for_log(&primary_err)
+            );
+            text.to_string()
+        }
     }
 }
 
@@ -436,7 +499,7 @@ pub async fn scan_ollama_models(
     let endpoint = settings.llm.endpoint.clone();
     let mgr = llm_manager.inner().clone();
     // A reachability ping first so a refused connection is reported as
-    // `reachable: false` (Electron's `safeFetch` error path) rather than a
+    // `reachable: false` (the reference's `safeFetch` error path) rather than a
     // generic parse error.
     if !mgr.ollama_detect(&endpoint).await {
         return Ok(OllamaScanResultPayload {
@@ -560,7 +623,7 @@ pub async fn ollama_pull(
     let endpoint = settings.llm.endpoint.clone();
     let mgr = llm_manager.inner().clone();
 
-    // Leading "starting" frame (matches the Electron broadcast).
+    // Leading "starting" frame (matches the reference broadcast).
     emit_pull_progress(
         &app,
         serde_json::json!({ "model": model.as_str(), "status": "pulling", "statusText": "starting" }),
@@ -728,7 +791,7 @@ async fn probe_verify(probe: VerifyProbe, api_key: &str) -> VerifyCredentialPayl
 
 // ── Ollama executable detection + spawn (mirrors detectOllama / startOllama) ──
 
-async fn detect_ollama_executable() -> OllamaDetectResultPayload {
+pub(crate) async fn detect_ollama_executable() -> OllamaDetectResultPayload {
     // Detection shells out + touches the filesystem; do it on the blocking pool
     // so the async runtime isn't stalled (and we avoid relying on tokio's
     // optional `process`/`fs` features — `std` is always available).
@@ -788,7 +851,7 @@ fn ollama_default_paths() -> Vec<String> {
     out
 }
 
-fn spawn_ollama_serve(exec_path: &str) -> Result<(), String> {
+pub(crate) fn spawn_ollama_serve(exec_path: &str) -> Result<(), String> {
     let mut cmd = std::process::Command::new(exec_path);
     cmd.arg("serve");
     cmd.stdin(std::process::Stdio::null());
@@ -831,11 +894,7 @@ fn emit_pull_progress(app: &AppHandle, payload: serde_json::Value) {
 // ── settings → vocab / replacement-pairs ──────────────────────────────────
 
 fn build_vocab(settings: &WinsttSettings) -> Vocab {
-    let dictionary: Vec<String> = settings
-        .dictionary
-        .iter()
-        .map(|d| d.term.clone())
-        .collect();
+    let dictionary: Vec<String> = settings.dictionary.iter().map(|d| d.term.clone()).collect();
     let snippets: Vec<(String, String)> = settings
         .snippets
         .iter()

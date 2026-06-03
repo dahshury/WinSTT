@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 // Mirrors preset-prompts.ts. The `PresetKey` set, the leveled prompts,
 // the schema clamp, the translate generalization clause, and the
 // compose-body assembly are reproduced verbatim so the Rust output is
-// byte-identical to the Electron build for the same preset selection.
+// byte-identical to the reference build for the same preset selection.
 
 /// Tone + modifier preset identity. Mirrors `PresetKey` in preset-prompts.ts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,7 +164,11 @@ fn raw_builtin_prompt(key: PresetKey, level: Option<PresetLevel>) -> String {
 fn translate_prompt_for(lang: &str) -> String {
     let target = {
         let t = lang.trim();
-        if t.is_empty() { DEFAULT_TARGET_LANG } else { t }
+        if t.is_empty() {
+            DEFAULT_TARGET_LANG
+        } else {
+            t
+        }
     };
     format!(
         "Translate the cleaned, styled result into {target}. \
@@ -235,7 +239,8 @@ fn sort_translate_last(presets: &[PresetEntry]) -> Vec<&PresetEntry> {
 /// (not numbered) to avoid chain-of-thought narration.
 fn compose_preset_body(presets: &[PresetEntry]) -> String {
     let base = format!("{}{}", POLISH_PROMPT, SCHEMA_CLAMP);
-    let non_neutral: Vec<PresetEntry> = presets.iter().filter(|p| !is_neutral(p)).cloned().collect();
+    let non_neutral: Vec<PresetEntry> =
+        presets.iter().filter(|p| !is_neutral(p)).cloned().collect();
     let extras = sort_translate_last(&non_neutral);
 
     if extras.is_empty() {
@@ -655,11 +660,7 @@ pub fn extract_boxed_answer(content: &str) -> Option<Leakage> {
             let inner_end = inner_start + inner_len;
             // +1 for the closing `}`.
             let full_end = inner_end + 1;
-            last = Some((
-                open,
-                full_end,
-                content[inner_start..inner_end].to_string(),
-            ));
+            last = Some((open, full_end, content[inner_start..inner_end].to_string()));
             search = full_end;
         } else {
             search = inner_start;
@@ -907,6 +908,21 @@ pub fn finalize_chat_answer(content: &str, fallback: &str) -> (String, Option<St
     (fallback.to_string(), reasoning)
 }
 
+/// Compact provider/transport errors for logs. Keeps status and first-order
+/// failure context without dumping full response bodies or prompt/user text.
+pub fn compact_error_for_log(message: &str) -> String {
+    const MAX_CHARS: usize = 240;
+
+    let compact = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= MAX_CHARS {
+        return compact;
+    }
+
+    let mut out = compact.chars().take(MAX_CHARS).collect::<String>();
+    out.push_str("...");
+    out
+}
+
 // ───────────────────── Ollama transport interface ─────────────────────
 //
 // The streaming transport is intentionally an INTERFACE plus a documented
@@ -936,7 +952,24 @@ impl ThinkingEffort {
 }
 
 // Ollama keep-alive + structured schema, mirroring buildOllamaChatBody.
-const OLLAMA_KEEP_ALIVE: &str = "30m";
+const DEFAULT_OLLAMA_KEEP_ALIVE: &str = "5m";
+
+/// Map the shared model lifetime setting onto Ollama's keep_alive field.
+/// Ollama uses `0` for unload immediately and `-1` for keep resident forever.
+pub fn ollama_keep_alive_from_core_timeout(
+    timeout: crate::settings::ModelUnloadTimeout,
+) -> &'static str {
+    match timeout {
+        crate::settings::ModelUnloadTimeout::Never => "-1",
+        crate::settings::ModelUnloadTimeout::Immediately => "0",
+        crate::settings::ModelUnloadTimeout::Min2 => "2m",
+        crate::settings::ModelUnloadTimeout::Min5 => "5m",
+        crate::settings::ModelUnloadTimeout::Min10 => "10m",
+        crate::settings::ModelUnloadTimeout::Min15 => "15m",
+        crate::settings::ModelUnloadTimeout::Hour1 => "1h",
+        crate::settings::ModelUnloadTimeout::Sec15 => "15s",
+    }
+}
 
 /// Build the `think` field value: `false` when the model can't think or
 /// effort is Off, else the effort string. Mirrors thinkingFlagFor.
@@ -977,6 +1010,27 @@ pub fn build_ollama_chat_body(
     supports_thinking: bool,
     effort: ThinkingEffort,
 ) -> serde_json::Value {
+    build_ollama_chat_body_with_keep_alive(
+        model,
+        system_prompt,
+        user_prompt,
+        text_len,
+        supports_thinking,
+        effort,
+        DEFAULT_OLLAMA_KEEP_ALIVE,
+    )
+}
+
+/// Build the /api/chat request body with an app-selected keep_alive value.
+pub fn build_ollama_chat_body_with_keep_alive(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    text_len: usize,
+    supports_thinking: bool,
+    effort: ThinkingEffort,
+    keep_alive: &str,
+) -> serde_json::Value {
     serde_json::json!({
         "model": model,
         "messages": [
@@ -986,7 +1040,7 @@ pub fn build_ollama_chat_body(
         "stream": true,
         "think": thinking_flag_for(effort, supports_thinking),
         "format": ollama_structured_output_schema(),
-        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "keep_alive": keep_alive,
         "options": {
             "temperature": 0.3,
             "top_p": 0.9,
@@ -1139,7 +1193,7 @@ pub trait OllamaChat {
 //
 // Cancellation: hold a tokio CancellationToken / AbortHandle in the manager
 // (mirrors activeChatControllers) so a model swap aborts in-flight chats.
-// The keep_alive=30m + a warmup loop keep the model hot between dictations.
+// keep_alive follows the shared model lifetime setting; the manager passes it in.
 
 // ─────────────────────── OpenRouter extra-body ────────────────────────
 //
@@ -1324,7 +1378,13 @@ mod tests {
     fn translate_always_sorted_last() {
         let presets = vec![translate("Spanish"), formal()];
         let ordered = sort_translate_last(&presets);
-        assert!(matches!(ordered[0], PresetEntry::Builtin { key: PresetKey::Formal, .. }));
+        assert!(matches!(
+            ordered[0],
+            PresetEntry::Builtin {
+                key: PresetKey::Formal,
+                ..
+            }
+        ));
         assert!(is_translate(ordered[1]));
     }
 
@@ -1338,7 +1398,10 @@ mod tests {
 
     #[test]
     fn concise_levels_pick_distinct_text() {
-        assert_ne!(leveled_concise(PresetLevel::Light), leveled_concise(PresetLevel::High));
+        assert_ne!(
+            leveled_concise(PresetLevel::Light),
+            leveled_concise(PresetLevel::High)
+        );
         assert_eq!(
             raw_builtin_prompt(PresetKey::Concise, None),
             leveled_concise(PresetLevel::Medium)
@@ -1436,7 +1499,10 @@ mod tests {
 
     #[test]
     fn replacement_pairs_whole_word_case_insensitive() {
-        let out = apply_replacement_pairs("I love github and GITHUB", &[("github".into(), "GitHub".into())]);
+        let out = apply_replacement_pairs(
+            "I love github and GITHUB",
+            &[("github".into(), "GitHub".into())],
+        );
         assert_eq!(out, "I love GitHub and GitHub");
     }
 
@@ -1466,7 +1532,8 @@ mod tests {
 
     #[test]
     fn harmony_extracts_final_channel() {
-        let content = "<|channel|>analysis<|message|>thinking...<|channel|>final<|message|>The answer<|end|>";
+        let content =
+            "<|channel|>analysis<|message|>thinking...<|channel|>final<|message|>The answer<|end|>";
         let leak = extract_harmony_answer(content).unwrap();
         assert_eq!(leak.answer, "The answer");
         assert!(leak.thinking.contains("thinking..."));
@@ -1539,9 +1606,28 @@ mod tests {
     // ── ollama transport helpers ──
 
     #[test]
+    fn compact_error_for_log_collapses_whitespace() {
+        let msg = compact_error_for_log("OpenRouter HTTP 500:\n\n  provider failed\tbadly");
+        assert_eq!(msg, "OpenRouter HTTP 500: provider failed badly");
+    }
+
+    #[test]
+    fn compact_error_for_log_truncates_long_payloads() {
+        let msg = compact_error_for_log(&"x".repeat(400));
+        assert!(msg.len() < 280);
+        assert!(msg.ends_with("..."));
+    }
+
+    #[test]
     fn thinking_flag_off_when_unsupported() {
-        assert_eq!(thinking_flag_for(ThinkingEffort::High, false), serde_json::Value::Bool(false));
-        assert_eq!(thinking_flag_for(ThinkingEffort::Off, true), serde_json::Value::Bool(false));
+        assert_eq!(
+            thinking_flag_for(ThinkingEffort::High, false),
+            serde_json::Value::Bool(false)
+        );
+        assert_eq!(
+            thinking_flag_for(ThinkingEffort::Off, true),
+            serde_json::Value::Bool(false)
+        );
         assert_eq!(
             thinking_flag_for(ThinkingEffort::High, true),
             serde_json::Value::String("high".into())
@@ -1553,10 +1639,29 @@ mod tests {
         let body = build_ollama_chat_body("qwen3", "sys", "usr", 100, true, ThinkingEffort::Medium);
         assert_eq!(body["stream"], serde_json::Value::Bool(true));
         assert_eq!(body["format"]["required"][0], "text");
+        assert_eq!(body["keep_alive"], "5m");
         // floor is max(100*4, 8192) = 8192
         assert_eq!(body["options"]["num_predict"], 8192);
-        let body2 = build_ollama_chat_body("qwen3", "sys", "usr", 3000, true, ThinkingEffort::Medium);
+        let body2 =
+            build_ollama_chat_body("qwen3", "sys", "usr", 3000, true, ThinkingEffort::Medium);
         assert_eq!(body2["options"]["num_predict"], 12000);
+    }
+
+    #[test]
+    fn ollama_keep_alive_tracks_global_model_lifetime_policy() {
+        use crate::settings::ModelUnloadTimeout as Timeout;
+
+        assert_eq!(
+            ollama_keep_alive_from_core_timeout(Timeout::Immediately),
+            "0"
+        );
+        assert_eq!(ollama_keep_alive_from_core_timeout(Timeout::Never), "-1");
+        assert_eq!(ollama_keep_alive_from_core_timeout(Timeout::Min2), "2m");
+        assert_eq!(ollama_keep_alive_from_core_timeout(Timeout::Min5), "5m");
+        assert_eq!(ollama_keep_alive_from_core_timeout(Timeout::Min10), "10m");
+        assert_eq!(ollama_keep_alive_from_core_timeout(Timeout::Min15), "15m");
+        assert_eq!(ollama_keep_alive_from_core_timeout(Timeout::Hour1), "1h");
+        assert_eq!(ollama_keep_alive_from_core_timeout(Timeout::Sec15), "15s");
     }
 
     #[test]
@@ -1573,7 +1678,10 @@ mod tests {
         let c1 = parse_chat_stream_line(r#"{"message":{"thinking":"r1"}}"#).unwrap();
         let d1 = state.apply_chunk(&c1);
         assert_eq!(d1.thinking.unwrap(), "r1");
-        let c2 = parse_chat_stream_line(r#"{"message":{"content":"answer"},"done":true,"done_reason":"stop"}"#).unwrap();
+        let c2 = parse_chat_stream_line(
+            r#"{"message":{"content":"answer"},"done":true,"done_reason":"stop"}"#,
+        )
+        .unwrap();
         state.apply_chunk(&c2);
         assert_eq!(state.thinking, "r1");
         assert_eq!(state.content, "answer");
@@ -1594,14 +1702,20 @@ mod tests {
     fn openrouter_extra_body_pins_provider() {
         let body = openrouter_extra_body(Some("deepinfra"));
         assert_eq!(body["provider"]["order"][0], "deepinfra");
-        assert_eq!(body["provider"]["allow_fallbacks"], serde_json::Value::Bool(false));
+        assert_eq!(
+            body["provider"]["allow_fallbacks"],
+            serde_json::Value::Bool(false)
+        );
     }
 
     #[test]
     fn model_selection_splits_provider_slug() {
         assert_eq!(
             parse_model_selection("anthropic/claude::deepinfra"),
-            ("anthropic/claude".to_string(), Some("deepinfra".to_string()))
+            (
+                "anthropic/claude".to_string(),
+                Some("deepinfra".to_string())
+            )
         );
         assert_eq!(
             parse_model_selection("openrouter/auto"),
@@ -1613,9 +1727,18 @@ mod tests {
 
     #[test]
     fn normalize_strips_api_and_v1_and_slashes() {
-        assert_eq!(normalize_ollama_endpoint("http://localhost:11434/api/"), "http://localhost:11434");
-        assert_eq!(normalize_ollama_endpoint("http://localhost:11434/v1"), "http://localhost:11434");
-        assert_eq!(normalize_ollama_endpoint("http://host/api/v1/"), "http://host");
+        assert_eq!(
+            normalize_ollama_endpoint("http://localhost:11434/api/"),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            normalize_ollama_endpoint("http://localhost:11434/v1"),
+            "http://localhost:11434"
+        );
+        assert_eq!(
+            normalize_ollama_endpoint("http://host/api/v1/"),
+            "http://host"
+        );
     }
 
     #[test]

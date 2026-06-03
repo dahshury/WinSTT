@@ -1,9 +1,9 @@
-import { AiBrain01Icon, SpeechToTextIcon } from "@hugeicons/core-free-icons";
+import { AiBrain01Icon, ApiIcon } from "@hugeicons/core-free-icons";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
-	SettingResetButton,
+	SettingField,
 	SettingSection,
 	useSettingsStore,
 } from "@/entities/setting";
@@ -78,7 +78,7 @@ export function IntegrationsSettingsPanel() {
 	const chipLevel = Math.min(useSurface() + 1, 8);
 
 	// Persisted key is read from the in-memory Zustand store, which `useSyncSettings`
-	// (mounted by SettingsPage) already reconciled with electron-store on window
+	// (mounted by SettingsPage) already reconciled with persisted store on window
 	// open. Re-running `settingsLoad()` on every panel mount used to clobber the
 	// store with stale disk data whenever the user switched away and back before
 	// the 300ms debounced `settingsSave` had a chance to write — wiping a freshly-
@@ -200,14 +200,10 @@ export function IntegrationsSettingsPanel() {
 				</p>
 				<div className="flex flex-col divide-y divide-surface-1">
 					<div className="col-span-2">
-						<FormControl
+						<SettingField
+							isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
 							label={tLlm("endpoint")}
-							labelTrailing={
-								<SettingResetButton
-									isDefault={endpoint === DEFAULT_SETTINGS.llm.endpoint}
-									onReset={() => updateLlmSettings({ endpoint: DEFAULT_SETTINGS.llm.endpoint })}
-								/>
-							}
+							onReset={() => updateLlmSettings({ endpoint: DEFAULT_SETTINGS.llm.endpoint })}
 							tooltip={tLlm("endpointTooltip")}
 						>
 							<ElevatedSurface inline>
@@ -217,7 +213,7 @@ export function IntegrationsSettingsPanel() {
 									value={endpoint}
 								/>
 							</ElevatedSurface>
-						</FormControl>
+						</SettingField>
 					</div>
 
 					<div className="col-span-2">
@@ -281,7 +277,7 @@ export function IntegrationsSettingsPanel() {
 			 *  Model tab. OpenAI (Whisper / GPT-4o transcribe) and ElevenLabs
 			 *  (Scribe) are the only cloud STT providers — `hasAnyCloudKey`
 			 *  in ModelSettingsPanel gates on exactly these two. */}
-			<SettingSection icon={SpeechToTextIcon} title={t("sttSectionTitle")}>
+			<SettingSection icon={ApiIcon} title={t("sttSectionTitle")}>
 				<p className="pt-1 pb-2 text-body-sm text-foreground-muted leading-snug">
 					{t("sttSectionCaption")}
 				</p>

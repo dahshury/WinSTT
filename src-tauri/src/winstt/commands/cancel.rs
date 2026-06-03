@@ -1,13 +1,13 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source (authoritative):
+// Source (authoritative):
 // frontend/electron/ipc/stt-commands.ts::handleAbortOperation + frontend/electron/main.ts
 // (the overlay X button + hotkey+Backspace "cancel" combo both call it) +
-// app/PORT/10_frontend_port_plan.md §6 (WU-3 dictation core) + the adapter ROUTE map.
+// docs/port/10_frontend_port_plan.md §6 (WU-3 dictation core) + the adapter ROUTE map.
 //
-// The renderer's user-initiated cancel — overlay X button, and (in the Electron build)
+// The renderer's user-initiated cancel — overlay X button, and (in the reference build)
 // the hotkey+Backspace combo — sends `STT_ABORT_OPERATION`, which the adapter
-// (electron-tauri-adapter.ts) routes to the Tauri command `cancel_current_operation`.
+// (native-bridge-adapter.ts) routes to the Tauri command `cancel_current_operation`.
 //
-// In the Electron build `handleAbortOperation` did:
+// In the reference build `handleAbortOperation` did:
 //   markSessionAborted  (→ stt:session-aborted broadcast)
 //   abort active Ollama chats
 //   recorder.abort + clear_audio_queue
@@ -21,7 +21,7 @@
 //   - notifies the TranscriptionCoordinator so lifecycle state stays coherent
 // We add the WinSTT-specific epilogue — the `stt:session-aborted` broadcast — so the
 // reused renderer's `onSessionAborted` listener (usePushToTalk's toggle `isActiveRef`
-// reset + visualizer/pill teardown) fires exactly as it did under Electron.
+// reset + visualizer/pill teardown) fires exactly as it did under the reference.
 //
 // HARD-RULE-safe: NEW file under winstt/commands/. No lib.rs `.manage(...)` edit —
 // it reuses the already-managed AudioRecordingManager / TranscriptionManager /

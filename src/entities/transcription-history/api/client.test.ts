@@ -3,12 +3,12 @@ import { IPC } from "@/shared/api/ipc-channels";
 import type { PaginatedHistory } from "../model/transcription-history";
 import { deleteHistoryRow, listHistoryPage, loadHistoryAudio, toggleHistoryRow } from "./client";
 
-// ── electronAPI harness ───────────────────────────────────────────────
-// The adapter routes every call through `window.electronAPI.invoke`. The
+// ── nativeBridge harness ───────────────────────────────────────────────
+// The adapter routes every call through `window.nativeBridge.invoke`. The
 // preload installs a canonical mock; capture it so afterEach can restore it
 // (bun:test shares one happy-dom window across files — leaking a per-test
 // override poisons later files that route the REAL ipc-client through it).
-const originalElectronApi = window.electronAPI;
+const originalNativeBridge = window.nativeBridge;
 
 interface InvokeCall {
 	args: unknown[];
@@ -18,10 +18,10 @@ interface InvokeCall {
 let invokeCalls: InvokeCall[] = [];
 let invokeImpl: (channel: string, ...args: unknown[]) => Promise<unknown> = async () => undefined;
 
-function installFakeElectron(): void {
+function installFakeBridge(): void {
 	invokeCalls = [];
-	window.electronAPI = {
-		...originalElectronApi,
+	window.nativeBridge = {
+		...originalNativeBridge,
 		invoke: (channel: string, ...args: unknown[]) => {
 			invokeCalls.push({ channel, args });
 			return invokeImpl(channel, ...args);
@@ -29,20 +29,20 @@ function installFakeElectron(): void {
 	};
 }
 
-function removeElectron(): void {
-	// `getApi()` returns null when `window.electronAPI` is absent. Use delete so
+function removeNativeBridge(): void {
+	// `getApi()` returns null when `window.nativeBridge` is absent. Use delete so
 	// the `?? null` guard fires (assigning undefined also works, but delete is
-	// closer to the real non-Electron context this branch exists for).
-	(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+	// closer to the real non-bridge context this branch exists for).
+	(window as unknown as { nativeBridge?: unknown }).nativeBridge = undefined;
 }
 
 beforeEach(() => {
-	installFakeElectron();
+	installFakeBridge();
 	invokeImpl = async () => undefined;
 });
 
 afterEach(() => {
-	window.electronAPI = originalElectronApi;
+	window.nativeBridge = originalNativeBridge;
 });
 
 describe("listHistoryPage", () => {
@@ -75,13 +75,13 @@ describe("listHistoryPage", () => {
 		expect(result).toEqual({ entries: [], hasMore: false });
 	});
 
-	test("returns an empty page (no invoke) when electronAPI is absent", async () => {
-		removeElectron();
+	test("returns an empty page (no invoke) when nativeBridge is absent", async () => {
+		removeNativeBridge();
 		const result = await listHistoryPage({ offset: 0, limit: 5 });
 		expect(result).toEqual({ entries: [], hasMore: false });
-		// Restore so installFakeElectron's invokeCalls assertion is meaningful and
+		// Restore so installFakeBridge's invokeCalls assertion is meaningful and
 		// the absent-API path didn't reach an invoke.
-		installFakeElectron();
+		installFakeBridge();
 		expect(invokeCalls).toEqual([]);
 	});
 });
@@ -103,8 +103,8 @@ describe("deleteHistoryRow", () => {
 		expect(await deleteHistoryRow(42)).toBe(false);
 	});
 
-	test("returns false when electronAPI is absent", async () => {
-		removeElectron();
+	test("returns false when nativeBridge is absent", async () => {
+		removeNativeBridge();
 		expect(await deleteHistoryRow(1)).toBe(false);
 	});
 });
@@ -128,8 +128,8 @@ describe("toggleHistoryRow", () => {
 		expect(await toggleHistoryRow(3)).toBeNull();
 	});
 
-	test("returns null (no invoke) when electronAPI is absent", async () => {
-		removeElectron();
+	test("returns null (no invoke) when nativeBridge is absent", async () => {
+		removeNativeBridge();
 		expect(await toggleHistoryRow(3)).toBeNull();
 	});
 });
@@ -146,8 +146,8 @@ describe("loadHistoryAudio", () => {
 		expect(await loadHistoryAudio(9)).toBeNull();
 	});
 
-	test("returns null when electronAPI is absent", async () => {
-		removeElectron();
+	test("returns null when nativeBridge is absent", async () => {
+		removeNativeBridge();
 		expect(await loadHistoryAudio(9)).toBeNull();
 	});
 });

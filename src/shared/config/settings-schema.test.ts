@@ -52,16 +52,40 @@ describe("modelSettingsSchema defaults", () => {
 		expect(() => modelSettingsSchema.parse({ backend: "" })).toThrow();
 	});
 
-	test("onnxQuantization defaults to an empty string (kills L13 default-literal mutation)", () => {
-		// Locks the `default("")` for onnxQuantization. Mutating to a
-		// non-empty default would surface a stale value to consumers.
-		expect(modelSettingsSchema.parse({}).onnxQuantization).toBe("");
+	test("onnxQuantization defaults to 'auto' (RAM/VRAM-aware recommended precision)", () => {
+		// Locks the `default("auto")` for onnxQuantization. "auto" resolves to
+		// the hardware-aware recommended precision (fit_aware_auto_quant); ""
+		// now means EXPLICIT fp32, not "auto". Mutating this default would
+		// surface a stale value to consumers.
+		expect(modelSettingsSchema.parse({}).onnxQuantization).toBe("auto");
 	});
 
 	test("initialPrompt and initialPromptRealtime default to empty strings", () => {
 		const out = modelSettingsSchema.parse({});
 		expect(out.initialPrompt).toBe("");
 		expect(out.initialPromptRealtime).toBe("");
+	});
+
+	test("does not expose the unload timeout as a model-scoped setting", () => {
+		const out = modelSettingsSchema.parse({ modelUnloadTimeout: "hour1" });
+		expect("modelUnloadTimeout" in out).toBe(false);
+	});
+});
+
+describe("global model lifetime settings", () => {
+	test("defaults the shared unload timeout to 5 minutes", () => {
+		const out = appSettingsSchema.parse({});
+		expect((out as { global?: { modelUnloadTimeout?: string } }).global?.modelUnloadTimeout).toBe(
+			"min5"
+		);
+	});
+
+	test("migrates legacy model.modelUnloadTimeout into the global section", () => {
+		const out = appSettingsSchema.parse({ model: { modelUnloadTimeout: "hour1" } });
+		expect((out as { global?: { modelUnloadTimeout?: string } }).global?.modelUnloadTimeout).toBe(
+			"hour1"
+		);
+		expect("modelUnloadTimeout" in out.model).toBe(false);
 	});
 });
 
@@ -155,6 +179,9 @@ describe("generalSettingsSchema", () => {
 
 describe("hotkeySettingsSchema", () => {
 	test("default is LCtrl+LMeta", () => {
+		// `LCtrl+LMeta` (Ctrl+Win) is the original WinSTT PTT default. The Win key
+		// is disguised at the hook level so it doesn't pop the Start menu (see
+		// shortcut/handy_keys.rs); press/release dispatch normally.
 		expect(hotkeySettingsSchema.parse({}).pushToTalkKey).toBe("LCtrl+LMeta");
 	});
 
@@ -303,8 +330,8 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 		expect(generalSettingsSchema.parse({}).sendCrashReports).toBe(true);
 	});
 
-	test("systemAudioReductionWhileDictating defaults to 0 (off)", () => {
-		expect(generalSettingsSchema.parse({}).systemAudioReductionWhileDictating).toBe(0);
+	test("systemAudioReductionWhileDictating defaults to 60 (percent reduction)", () => {
+		expect(generalSettingsSchema.parse({}).systemAudioReductionWhileDictating).toBe(60);
 	});
 
 	test("systemAudioReductionWhileDictating accepts an in-range percent", () => {
@@ -314,15 +341,17 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
 		).toBe(80);
 	});
 
-	test("systemAudioReductionWhileDictating falls back to 0 on out-of-range / bad input", () => {
+	test("systemAudioReductionWhileDictating falls back to 60 on out-of-range / bad input", () => {
+		// `.catch(60)` rehydrates a corrupt/out-of-range persisted value to the
+		// default instead of failing the whole `general` parse.
 		expect(
 			generalSettingsSchema.parse({ systemAudioReductionWhileDictating: 999 })
 				.systemAudioReductionWhileDictating
-		).toBe(0);
+		).toBe(60);
 		expect(
 			generalSettingsSchema.parse({ systemAudioReductionWhileDictating: "nope" })
 				.systemAudioReductionWhileDictating
-		).toBe(0);
+		).toBe(60);
 	});
 
 	test("recordingSound defaults to true", () => {

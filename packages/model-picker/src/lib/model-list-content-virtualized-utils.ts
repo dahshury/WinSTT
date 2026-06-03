@@ -1,6 +1,7 @@
 import type { ScrollToIndexOpts } from "virtua";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
 import { cn } from "@/shared/lib/cn";
+import { collectFavorites, FAVORITES_GROUP_VALUE } from "../core/favorites";
 import {
 	getPricingTier,
 	getUniqueEndpoints,
@@ -284,7 +285,7 @@ export function getSelectionProviderTooltip(selectedProviderName: string | undef
  *  matches the Favorites rail tile id so the scroll-spy + click-to-jump align,
  *  and is distinct from any real maker slug so maker jump/highlight is unaffected
  *  by the favorites group's REPEATED model rows. */
-export const FAVORITES_SECTION_ID = "__favorites__";
+export const FAVORITES_SECTION_ID = FAVORITES_GROUP_VALUE;
 
 export type VirtualizedItem =
 	| {
@@ -314,23 +315,6 @@ export type VirtualizedItem =
 			index: number;
 	  };
 
-/** Collect the distinct favorited models across all maker groups, in order. */
-function collectFavoriteModels(
-	groupedModels: [string, OpenRouterModel[]][],
-	isFavoriteModel: (id: string) => boolean
-): OpenRouterModel[] {
-	const favorites: OpenRouterModel[] = [];
-	const seen = new Set<string>();
-	for (const [, makerModels] of groupedModels) {
-		for (const model of makerModels) {
-			if (isFavoriteModel(model.id) && !seen.has(model.id)) {
-				seen.add(model.id);
-				favorites.push(model);
-			}
-		}
-	}
-	return favorites;
-}
 
 /** Push a sticky section header item (the Favorites group or a maker group). */
 function pushSectionHeader(
@@ -374,7 +358,13 @@ export function buildVirtualItems(
 	// STT/Ollama pattern) — they keep their normal per-maker row too, and carry
 	// sectionId=FAVORITES_SECTION_ID so the maker scroll-spy never confuses them.
 	if (isFavoriteModel) {
-		const favorites = collectFavoriteModels(groupedModels, isFavoriteModel);
+		// Shared dedup-walk (STT/TTS use the same): adapt the maker tuples to the
+		// `{ items }` shape the generic collector expects.
+		const favorites = collectFavorites(
+			groupedModels.map(([, models]) => ({ items: models })),
+			isFavoriteModel,
+			(m) => m.id
+		);
 		if (favorites.length > 0) {
 			pushSectionHeader(items, globalIndex, FAVORITES_SECTION_ID, "Favorites", favorites.length);
 			globalIndex = appendGroupModels(

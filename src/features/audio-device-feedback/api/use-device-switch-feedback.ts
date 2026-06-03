@@ -47,7 +47,7 @@ export const __test_shouldResetSavedIndex = shouldResetSavedIndex;
  *
  * The fallback is persisted immediately (bypassing useSyncSettings' 300 ms
  * debounce) — otherwise a user closing the app within that window would
- * leave the broken index in electron-store and hit the same failure on the
+ * leave the broken index in persisted store and hit the same failure on the
  * next launch.
  */
 export function useDeviceSwitchFeedback(): void {

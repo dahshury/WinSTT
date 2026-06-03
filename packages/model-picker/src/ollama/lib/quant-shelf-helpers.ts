@@ -115,24 +115,24 @@ function sortByCapabilityDesc(tags: readonly OllamaLibraryTag[]): readonly Ollam
 /**
  * Quant pruning — Ollama lists 15–20+ tags per size (legacy linear q4_0/q5_1,
  * Apple-only MLX, niche mxfp8/nvfp4, every K-quant _S/_M/_L, bf16≈fp16). Most are
- * strictly dominated or platform-irrelevant, so the shelf shows only a canonical
- * precision ladder — q4_K_M (sweet spot) · q5_K_M · q8_0 · fp16 — plus the bare
- * "default" pull (no precision token). Anything else is hidden UNLESS the user
- * already has it on disk / downloading (so an installed odd quant never vanishes).
+ * strictly dominated or platform-irrelevant, so the shelf shows ONLY the explicit
+ * canonical precision ladder — q4_K_M (sweet spot) · q5_K_M · q8_0 · fp16.
+ *
+ * The bare "default" / `:latest` tag (no precision token) is deliberately NOT a
+ * shelf badge — it is the model's AUTO/recommended pick, surfaced by clicking the
+ * card BODY instead (mirrors the STT picker, where the "Auto" badge was removed
+ * and a card-body click selects the recommended precision). Anything else is
+ * hidden UNLESS the user already has it on disk / downloading / paused / selected
+ * (so an installed odd quant — or the default they already pulled — never vanishes
+ * mid-flight; `pruneToShownQuants`'s `forceKeep` keeps it).
  */
 const CANONICAL_QUANT_RE = /(?:^|[-_:])(q4_k_m|q5_k_m|q8_0|fp16)(?=$|[-_:])/i;
-// Any precision/format token at all — used to tell a bare default (no token →
-// keep) apart from a non-canonical format like mlx / mxfp8 / nvfp4 / bf16 / q2_K.
-const PRECISION_SUFFIX_RE =
-	/(?:^|[-_:])(q\d[a-z0-9]*(?:_[a-z0-9]+)*|fp\d+|bf\d+|int\d+|mxfp\d+|nvfp\d+|mlx)(?=$|[-_:])/i;
 
 function isShownQuantTag(name: string): boolean {
-	if (CANONICAL_QUANT_RE.test(name)) {
-		return true;
-	}
-	// Bare default (no precision token) is always meaningful; a non-canonical
-	// precision token means a dominated/irrelevant quant → hide.
-	return !PRECISION_SUFFIX_RE.test(name);
+	// Only the explicit canonical quant ladder gets a badge. A bare default (no
+	// precision token) is now the card-body "auto" pick, not a shelf badge; a
+	// non-canonical precision token (mlx / mxfp8 / bf16 / q2_K …) stays dominated.
+	return CANONICAL_QUANT_RE.test(name);
 }
 
 /**

@@ -1,13 +1,9 @@
-import {
-	type AnimationPlaybackControlsWithThen,
-	animate,
-	useMotionValue,
-	type ValueAnimationTransition,
-} from "motion/react";
-import { useCallback, useEffect, useRef } from "react";
+import type { ValueAnimationTransition } from "motion/react";
+import { useEffect } from "react";
 import { useVisualizerStore } from "../model/visualizer-store";
 import type { Uniforms } from "../ui/ReactShaderToy";
 import type { AgentState } from "./audio-visualizer";
+import { useRefAnimatedValue } from "./use-ref-animated-value";
 
 const DEFAULT_AMPLITUDE = 2;
 const DEFAULT_FREQUENCY = 0.5;
@@ -20,42 +16,6 @@ const DEFAULT_PULSE_TRANSITION: ValueAnimationTransition = {
 	repeat: Number.POSITIVE_INFINITY,
 	repeatType: "mirror",
 };
-
-/**
- * Creates an animated motion value that writes directly to a mutable ref
- * instead of triggering React state updates. This avoids re-renders on
- * every animation frame — the ReactShaderToy render loop reads from the
- * uniforms ref instead of from React props.
- */
-function useRefAnimatedValue(
-	initialValue: number,
-	uniformsRef: React.RefObject<Uniforms>,
-	uniformName: string,
-	uniformType: string
-) {
-	const motionValue = useMotionValue(initialValue);
-	const controlsRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
-
-	// Write every motion value change directly into the shared uniforms ref
-	useEffect(() => {
-		const unsubscribe = motionValue.on("change", (v: number) => {
-			const uniforms = uniformsRef.current;
-			if (uniforms?.[uniformName]) {
-				uniforms[uniformName] = { type: uniformType, value: v };
-			}
-		});
-		return unsubscribe;
-	}, [motionValue, uniformsRef, uniformName, uniformType]);
-
-	const animateFn = useCallback(
-		(targetValue: number | number[], transition: ValueAnimationTransition) => {
-			controlsRef.current = animate(motionValue, targetValue, transition);
-		},
-		[motionValue]
-	);
-
-	return { motionValue, controls: controlsRef, animate: animateFn };
-}
 
 export function useAuraAnimator(state: AgentState, uniformsRef: React.RefObject<Uniforms>): void {
 	const { animate: animateScale, motionValue: scaleMotionValue } = useRefAnimatedValue(

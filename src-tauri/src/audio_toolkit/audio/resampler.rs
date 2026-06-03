@@ -97,3 +97,55 @@ impl FrameResampler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame_dur_for(samples: usize, hz: usize) -> Duration {
+        Duration::from_secs_f64(samples as f64 / hz as f64)
+    }
+
+    #[test]
+    fn identity_passthrough_chunks_into_fixed_frames() {
+        // in == out -> no resampler; pure 160-sample reframing, content preserved.
+        let mut r = FrameResampler::new(16_000, 16_000, frame_dur_for(160, 16_000));
+        let input: Vec<f32> = (0..320).map(|i| i as f32).collect();
+        let mut frames: Vec<Vec<f32>> = Vec::new();
+        r.push(&input, |f| frames.push(f.to_vec()));
+        assert_eq!(frames.len(), 2, "320 samples -> two 160-frames");
+        assert_eq!(frames[0], (0..160).map(|i| i as f32).collect::<Vec<_>>());
+        assert_eq!(frames[1], (160..320).map(|i| i as f32).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn frames_accumulate_across_push_calls() {
+        let mut r = FrameResampler::new(16_000, 16_000, frame_dur_for(160, 16_000));
+        let mut frames: Vec<Vec<f32>> = Vec::new();
+        r.push(&vec![1.0; 100], |f| frames.push(f.to_vec()));
+        assert!(frames.is_empty(), "100 < 160, nothing emitted yet");
+        r.push(&vec![1.0; 60], |f| frames.push(f.to_vec()));
+        assert_eq!(frames.len(), 1, "100 + 60 = 160 -> one frame");
+        assert_eq!(frames[0].len(), 160);
+    }
+
+    #[test]
+    fn finish_zero_pads_the_trailing_partial_frame() {
+        let mut r = FrameResampler::new(16_000, 16_000, frame_dur_for(160, 16_000));
+        let mut frames: Vec<Vec<f32>> = Vec::new();
+        r.push(&vec![0.7; 200], |f| frames.push(f.to_vec())); // 1 full frame + 40 pending
+        assert_eq!(frames.len(), 1);
+        r.finish(|f| frames.push(f.to_vec()));
+        assert_eq!(frames.len(), 2, "finish flushes the padded partial");
+        let last = &frames[1];
+        assert_eq!(last.len(), 160);
+        assert!(last[..40].iter().all(|&x| (x - 0.7).abs() < 1e-6));
+        assert!(last[40..].iter().all(|&x| x == 0.0), "tail zero-padded");
+    }
+
+    #[test]
+    #[should_panic(expected = "frame duration too short")]
+    fn rejects_zero_length_frame_duration() {
+        let _ = FrameResampler::new(16_000, 16_000, Duration::from_nanos(1));
+    }
+}

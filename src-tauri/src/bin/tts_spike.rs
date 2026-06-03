@@ -18,7 +18,9 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use handy_app_lib::winstt::tts::kokoro::{KokoroConfig, KokoroDevice, KokoroEngine, KOKORO_SAMPLE_RATE};
+use handy_app_lib::winstt::tts::kokoro::{
+    KokoroConfig, KokoroDevice, KokoroEngine, KOKORO_SAMPLE_RATE,
+};
 use handy_app_lib::winstt::tts::phonemize::{default_phonemizer, resolve_espeak_lib};
 use handy_app_lib::winstt::tts::{voice_by_id, KOKORO_VOICE_CATALOG};
 
@@ -31,20 +33,26 @@ fn kokoro_cache_dir() -> PathBuf {
     }
     // Fall back to %USERPROFILE%\AppData\Local (or $HOME) rather than a
     // machine-specific absolute path, so the spike isn't pinned to one layout.
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_default();
-        PathBuf::from(home).join("AppData/Local")
-    });
-    local.join("winstt/tts/kokoro")
+    let local = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var("USERPROFILE")
+                .or_else(|_| std::env::var("HOME"))
+                .unwrap_or_default();
+            PathBuf::from(home).join("AppData/Local")
+        });
+    local.join("winstt/tts/kokoro-82m")
 }
 
 fn device_from_env() -> KokoroDevice {
-    match std::env::var("SPIKE_TTS_DEVICE").unwrap_or_default().to_lowercase().as_str() {
+    match std::env::var("SPIKE_TTS_DEVICE")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
         "dml" | "directml" => KokoroDevice::DirectMl,
         "cpu" => KokoroDevice::Cpu,
-        _ => KokoroDevice::Cpu, // CPU default → comparable to the Electron CPU path
+        _ => KokoroDevice::Cpu, // CPU default → comparable to the reference CPU path
     }
 }
 
@@ -77,18 +85,22 @@ fn audio_stats(samples: &[f32]) -> (f32, f32, usize) {
         peak = peak.max(s.abs());
         sumsq += (s as f64) * (s as f64);
     }
-    let rms = if samples.is_empty() { 0.0 } else { (sumsq / samples.len() as f64).sqrt() as f32 };
+    let rms = if samples.is_empty() {
+        0.0
+    } else {
+        (sumsq / samples.len() as f64).sqrt() as f32
+    };
     (peak, rms, nan)
 }
 
 fn build_engine() -> KokoroEngine {
     let cache_dir = kokoro_cache_dir();
     eprintln!("kokoro cache dir : {}", cache_dir.display());
-    let model = cache_dir.join("kokoro-v1.0.fp16.onnx");
-    let voices = cache_dir.join("voices-v1.0.bin");
+    let model = cache_dir.join("onnx").join("model_fp16.onnx");
+    let voices = cache_dir.join("voices").join("af_heart.bin");
     if !model.exists() || !voices.exists() {
         eprintln!(
-            "FATAL: kokoro model not cached.\n  model:  {} (exists={})\n  voices: {} (exists={})\n\
+            "FATAL: kokoro model not cached (onnx-community layout).\n  model:  {} (exists={})\n  voices: {} (exists={})\n\
              Run the app once to download, or set WINSTT_KOKORO_DIR.",
             model.display(),
             model.exists(),
@@ -99,8 +111,8 @@ fn build_engine() -> KokoroEngine {
     }
     let cfg = KokoroConfig {
         cache_dir,
-        model_filename: "kokoro-v1.0.fp16.onnx".to_string(),
-        voices_filename: "voices-v1.0.bin".to_string(),
+        model_filename: "model_fp16.onnx".to_string(),
+        voices_dir: "voices".to_string(),
         device: device_from_env(),
     };
     KokoroEngine::new(cfg)
@@ -120,7 +132,11 @@ fn synth_one(engine: &KokoroEngine, voice: &str, lang: &str, text: &str) {
     eprintln!("\n--- voice={voice} lang={lang} ---");
     eprintln!("  text     : {text:?}");
     eprintln!("  phonemes : {ipa:?}");
-    eprintln!("  n_tokens : {} (incl. pad +2 → {})", tokens.len(), tokens.len() + 2);
+    eprintln!(
+        "  n_tokens : {} (incl. pad +2 → {})",
+        tokens.len(),
+        tokens.len() + 2
+    );
 
     // Cold pass (session create + first inference) then warm pass (steady-state).
     for label in ["cold", "warm"] {
@@ -130,7 +146,11 @@ fn synth_one(engine: &KokoroEngine, voice: &str, lang: &str, text: &str) {
                 let dt = t.elapsed();
                 let dur = samples.len() as f32 / KOKORO_SAMPLE_RATE as f32;
                 let (peak, rms, nan) = audio_stats(&samples);
-                let rtf = if dur > 0.0 { dt.as_secs_f32() / dur } else { f32::INFINITY };
+                let rtf = if dur > 0.0 {
+                    dt.as_secs_f32() / dur
+                } else {
+                    f32::INFINITY
+                };
                 let ok = !samples.is_empty() && nan == 0 && peak > 1e-4;
                 eprintln!(
                     "  [{label}] synth={:>7.1}ms  samples={}  dur={:.2}s  RTF={:.3}  peak={:.3} rms={:.4} nan={}  audio_ok={}",
@@ -182,11 +202,17 @@ fn main() {
         return;
     }
 
-    let voice = args.get(1).cloned().unwrap_or_else(|| "af_heart".to_string());
+    let voice = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "af_heart".to_string());
     let lang = voice_by_id(&voice)
         .map(|v| v.language.to_string())
         .unwrap_or_else(|| "en-us".to_string());
-    let text = args.get(2).cloned().unwrap_or_else(|| DEFAULT_SENTENCE.to_string());
+    let text = args
+        .get(2)
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_SENTENCE.to_string());
 
     synth_one(&engine, &voice, &lang, &text);
 }

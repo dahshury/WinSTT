@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // (WU-6: pull-cancel MISSING + warmup-status) + lib_wiring.md §3/§4b, frontend/electron/ipc/llm.ts.
 //
 // Two WU-6 commands that don't belong in the (already-landed) `commands/llm.rs` and that the
@@ -29,6 +29,7 @@ use specta::Type;
 // ── Pull-cancel registry (module-local; consulted by the streaming pull drain) ──
 
 static PULL_CANCELLED: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+static LAST_WARMUP_STATUS: Lazy<Mutex<Option<LlmWarmupStatus>>> = Lazy::new(|| Mutex::new(None));
 
 /// Mark a model's in-flight pull as cancelled. Idempotent.
 pub fn mark_pull_cancelled(model: &str) {
@@ -90,7 +91,7 @@ pub struct OllamaPullProgress {
 
 // ── Warmup status payload (mirrors frontend models.ts LlmWarmupStatus) ───────────
 
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[derive(Clone, Debug, Serialize, Deserialize, Type, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum LlmWarmupOutcome {
     Ok,
@@ -127,6 +128,12 @@ pub struct CancelPullResult {
     pub cancelled: bool,
 }
 
+pub fn set_warmup_status(status: LlmWarmupStatus) {
+    if let Ok(mut last) = LAST_WARMUP_STATUS.lock() {
+        *last = Some(status);
+    }
+}
+
 // ── Commands ────────────────────────────────────────────────────────────────────
 
 /// `ollama_cancel_pull` → `LLM_CANCEL_PULL_MODEL`. Flags the model's in-flight pull for the
@@ -145,7 +152,7 @@ pub fn ollama_cancel_pull(model: String) -> Result<CancelPullResult, String> {
 pub fn llm_get_warmup_status() -> Result<Option<LlmWarmupStatus>, String> {
     // No snapshot store yet — the warmup loop in LlmManager (07_*) will populate one and emit
     // `llm:warmup-status`. Until then, mirror WinSTT's WIP behavior: no info → null → banner hidden.
-    Ok(None)
+    Ok(LAST_WARMUP_STATUS.lock().ok().and_then(|last| last.clone()))
 }
 
 #[cfg(test)]

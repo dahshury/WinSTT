@@ -52,6 +52,15 @@ describe("Table", () => {
 		const cell = screen.getByRole("cell", { name: "no entries" });
 		expect(cell.getAttribute("colspan")).toBe("3");
 	});
+
+	test("body rows opt into shared enter/layout animation hooks", () => {
+		render(<ExampleTable />);
+		const rows = screen.getAllByRole("row");
+
+		expect(rows[1]?.getAttribute("data-animated-row")).toBe("true");
+		expect(rows[2]?.getAttribute("data-animated-row")).toBe("true");
+		expect(rows[0]?.getAttribute("data-animated-row")).toBeNull();
+	});
 });
 
 describe("Table proximity-hover backdrop", () => {

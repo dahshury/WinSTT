@@ -27,6 +27,7 @@ type ApplyVoiceFallback = (patch: { voice: string; lang: string }) => void;
  */
 export function useTtsVoiceCatalog(
 	enabled: boolean,
+	modelId: string,
 	voice: string,
 	update: ApplyVoiceFallback
 ): TtsVoiceCatalog {
@@ -70,7 +71,7 @@ export function useTtsVoiceCatalog(
 		// free again. A successful fetch is cached main-side, so a later re-open
 		// resolves instantly.
 		const fetchVoices = (attemptsLeft: number): void => {
-			listTtsVoices().then((result) => {
+			listTtsVoices(modelId).then((result) => {
 				if (cancelled) {
 					return;
 				}
@@ -91,7 +92,7 @@ export function useTtsVoiceCatalog(
 				clearTimeout(retryTimer);
 			}
 		};
-	}, [enabled]);
+	}, [enabled, modelId]);
 
 	return catalog;
 }

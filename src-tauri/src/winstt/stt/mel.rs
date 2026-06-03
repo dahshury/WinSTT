@@ -1,4 +1,3 @@
-// PORT IMPL — drafted against real APIs, pending compile.
 // Source: onnx-asr fork preprocessors/whisper.py + preprocessors/fbanks.py
 //   (E:/DL/Projects/onnx-asr/preprocessors/) and
 //   src/onnx_asr/preprocessors/numpy_preprocessor.py::WhisperPreprocessorNumpy.
@@ -53,118 +52,134 @@ const CLAMP_MIN: f32 = 1e-10;
 /// every utterance. Holds the Slaney mel filterbank `(N_FREQS, n_mels)` and the
 /// periodic Hann window.
 pub struct MelExtractor {
-	pub n_mels: usize,
-	/// Mel filterbank, row-major `[freq * n_mels + mel]` — i.e. shape (N_FREQS, n_mels),
-	/// matched to `spectrum (T, N_FREQS) @ fbanks (N_FREQS, n_mels)`.
-	fbanks: Vec<f32>,
-	/// Periodic Hann window of length WIN_LENGTH (`hann(WIN_LENGTH+1)[:-1]`).
-	window: [f32; WIN_LENGTH],
-	/// Reusable forward-FFT plan (size N_FFT) for the per-frame power spectrum. Replaces the
-	/// previous naive O(n_fft·n_freqs) DFT, which DOMINATED decode time: 3000 frames × 200 bins
-	/// × 400 samples of `cos`+`sin` per utterance (~240M transcendental calls). The Whisper window
-	/// is ALWAYS 3000 frames, so even a 2 s sentence paid the full fixed cost — the reason short
-	/// dictations weren't instant and realtime ticks never finished. rustfft is exact to the DFT
-	/// within f32 precision, so the mel features (and transcript) are unchanged.
-	fft: Arc<dyn Fft<f32>>,
+    pub n_mels: usize,
+    /// Mel filterbank, row-major `[freq * n_mels + mel]` — i.e. shape (N_FREQS, n_mels),
+    /// matched to `spectrum (T, N_FREQS) @ fbanks (N_FREQS, n_mels)`.
+    fbanks: Vec<f32>,
+    /// Periodic Hann window of length WIN_LENGTH (`hann(WIN_LENGTH+1)[:-1]`).
+    window: [f32; WIN_LENGTH],
+    /// Reusable forward-FFT plan (size N_FFT) for the per-frame power spectrum. Replaces the
+    /// previous naive O(n_fft·n_freqs) DFT, which DOMINATED decode time: 3000 frames × 200 bins
+    /// × 400 samples of `cos`+`sin` per utterance (~240M transcendental calls). The Whisper window
+    /// is ALWAYS 3000 frames, so even a 2 s sentence paid the full fixed cost — the reason short
+    /// dictations weren't instant and realtime ticks never finished. rustfft is exact to the DFT
+    /// within f32 precision, so the mel features (and transcript) are unchanged.
+    fft: Arc<dyn Fft<f32>>,
 }
 
 impl MelExtractor {
-	/// Build the extractor for `n_mels` ∈ {80, 128}. The 80-mel front-end is used by
-	/// every multilingual + `.en` Whisper/lite-whisper export except large-v3 (128).
-	/// The mel-bin count is read from the model's `config.json` `num_mel_bins`.
-	pub fn new(n_mels: usize) -> Self {
-		let fbanks = slaney_mel_filterbank(N_FREQS + 1, 0.0, (SAMPLE_RATE / 2) as f32, n_mels, SAMPLE_RATE);
-		// Drop the Nyquist row so the matrix is (N_FREQS, n_mels) — the preprocessor
-		// uses rfft[:, :-1] (200 bins) against the full 201-bin filterbank rows[:-1].
-		let mut fb = vec![0.0f32; N_FREQS * n_mels];
-		for f in 0..N_FREQS {
-			for m in 0..n_mels {
-				fb[f * n_mels + m] = fbanks[f * n_mels + m];
-			}
-		}
-		let mut window = [0.0f32; WIN_LENGTH];
-		// Periodic Hann: hann(N+1)[:-1] => 0.5 * (1 - cos(2πn/N)) for n in 0..N.
-		for (n, w) in window.iter_mut().enumerate() {
-			*w = 0.5 * (1.0 - (2.0 * PI * n as f32 / WIN_LENGTH as f32).cos());
-		}
-		let fft = FftPlanner::<f32>::new().plan_fft_forward(N_FFT);
-		Self { n_mels, fbanks: fb, window, fft }
-	}
+    /// Build the extractor for `n_mels` ∈ {80, 128}. The 80-mel front-end is used by
+    /// every multilingual + `.en` Whisper/lite-whisper export except large-v3 (128).
+    /// The mel-bin count is read from the model's `config.json` `num_mel_bins`.
+    pub fn new(n_mels: usize) -> Self {
+        let fbanks = slaney_mel_filterbank(
+            N_FREQS + 1,
+            0.0,
+            (SAMPLE_RATE / 2) as f32,
+            n_mels,
+            SAMPLE_RATE,
+        );
+        // Drop the Nyquist row so the matrix is (N_FREQS, n_mels) — the preprocessor
+        // uses rfft[:, :-1] (200 bins) against the full 201-bin filterbank rows[:-1].
+        let mut fb = vec![0.0f32; N_FREQS * n_mels];
+        for f in 0..N_FREQS {
+            for m in 0..n_mels {
+                fb[f * n_mels + m] = fbanks[f * n_mels + m];
+            }
+        }
+        let mut window = [0.0f32; WIN_LENGTH];
+        // Periodic Hann: hann(N+1)[:-1] => 0.5 * (1 - cos(2πn/N)) for n in 0..N.
+        for (n, w) in window.iter_mut().enumerate() {
+            *w = 0.5 * (1.0 - (2.0 * PI * n as f32 / WIN_LENGTH as f32).cos());
+        }
+        let fft = FftPlanner::<f32>::new().plan_fft_forward(N_FFT);
+        Self {
+            n_mels,
+            fbanks: fb,
+            window,
+            fft,
+        }
+    }
 
-	/// Compute log-mel features for one mono 16 kHz utterance.
-	///
-	/// Returns `(features, n_mels, n_frames)` where `features` is row-major
-	/// `[mel * n_frames + frame]` — i.e. shape `(n_mels, N_FRAMES)`, ready to feed the
-	/// encoder as `input_features (1, n_mels, T)`. T is always `N_FRAMES` (3000) because
-	/// Whisper pads/truncates to a fixed 30 s window.
-	pub fn extract(&self, audio: &[f32]) -> (Vec<f32>, usize, usize) {
-		// 1. Truncate then zero-pad to exactly N_SAMPLES (30 s).
-		let mut padded = vec![0.0f32; N_SAMPLES + N_FFT];
-		let take = audio.len().min(N_SAMPLES);
-		// 2. reflect-pad n_fft/2 on each side. We place the signal at offset n_fft/2
-		//    and fill the left/right reflect borders. The right border lives in the
-		//    zero-padded silence region, so reflection there is over zeros (no-op).
-		let off = N_FFT / 2;
-		padded[off..off + take].copy_from_slice(&audio[..take]);
-		// left reflect border: padded[off-1-k] = audio[k+1]
-		for k in 0..off {
-			let src = (k + 1).min(take.saturating_sub(1));
-			padded[off - 1 - k] = if take > 1 { audio[src] } else { 0.0 };
-		}
-		// right reflect border mirrors the tail of the 30 s window; since the window
-		// tail is silence (zero-padded), the reflection is zeros — already initialized.
+    /// Compute log-mel features for one mono 16 kHz utterance.
+    ///
+    /// Returns `(features, n_mels, n_frames)` where `features` is row-major
+    /// `[mel * n_frames + frame]` — i.e. shape `(n_mels, N_FRAMES)`, ready to feed the
+    /// encoder as `input_features (1, n_mels, T)`. T is always `N_FRAMES` (3000) because
+    /// Whisper pads/truncates to a fixed 30 s window.
+    pub fn extract(&self, audio: &[f32]) -> (Vec<f32>, usize, usize) {
+        // 1. Truncate then zero-pad to exactly N_SAMPLES (30 s).
+        let mut padded = vec![0.0f32; N_SAMPLES + N_FFT];
+        let take = audio.len().min(N_SAMPLES);
+        // 2. reflect-pad n_fft/2 on each side. We place the signal at offset n_fft/2
+        //    and fill the left/right reflect borders. The right border lives in the
+        //    zero-padded silence region, so reflection there is over zeros (no-op).
+        let off = N_FFT / 2;
+        padded[off..off + take].copy_from_slice(&audio[..take]);
+        // left reflect border: padded[off-1-k] = audio[k+1]
+        for k in 0..off {
+            let src = (k + 1).min(take.saturating_sub(1));
+            padded[off - 1 - k] = if take > 1 { audio[src] } else { 0.0 };
+        }
+        // right reflect border mirrors the tail of the 30 s window; since the window
+        // tail is silence (zero-padded), the reflection is zeros — already initialized.
 
-		let n_mels = self.n_mels;
-		let mut features = vec![0.0f32; n_mels * N_FRAMES];
-		// Per-frame complex FFT buffer (re = windowed sample, im = 0 for real PCM) + reusable
-		// scratch — the forward FFT plan (self.fft) replaces the old naive per-bin DFT.
-		let mut buffer = vec![Complex::<f32>::new(0.0, 0.0); N_FFT];
-		let mut scratch = vec![Complex::<f32>::new(0.0, 0.0); self.fft.get_inplace_scratch_len()];
-		// log10 mel, time-major (t, mel); transposed to (mel, t) at the end.
-		let mut log_mel = vec![0.0f32; n_mels * N_FRAMES];
-		let mut global_max = f32::NEG_INFINITY;
+        let n_mels = self.n_mels;
+        let mut features = vec![0.0f32; n_mels * N_FRAMES];
+        // log10 mel, time-major (t, mel); transposed to (mel, t) at the end.
+        let mut log_mel = vec![0.0f32; n_mels * N_FRAMES];
 
-		for t in 0..N_FRAMES {
-			let start = t * HOP_LENGTH;
-			// Windowed frame into the complex buffer. WIN_LENGTH == N_FFT (400 == 400) so there is
-			// no symmetric window pad — the whole frame is windowed directly.
-			for i in 0..N_FFT {
-				let s = padded.get(start + i).copied().unwrap_or(0.0);
-				buffer[i] = Complex::new(s * self.window[i], 0.0);
-			}
-			// Real-input FFT → |X[k]|² for the first N_FREQS bins (drops Nyquist, matching
-			// rfft[:, :-1]). Numerically identical to the previous naive DFT within f32 precision,
-			// but O(n_fft·log n_fft) and free of the per-sample cos/sin that dominated decode time.
-			self.fft.process_with_scratch(&mut buffer, &mut scratch);
-			let mut power = [0.0f32; N_FREQS];
-			for (f, p) in power.iter_mut().enumerate() {
-				let c = buffer[f];
-				*p = c.re * c.re + c.im * c.im;
-			}
-			// Mel projection: spectrum (N_FREQS) · fbanks (N_FREQS, n_mels) → (n_mels).
-			for m in 0..n_mels {
-				let mut acc = 0.0f32;
-				for f in 0..N_FREQS {
-					acc += power[f] * self.fbanks[f * n_mels + m];
-				}
-				let v = acc.max(CLAMP_MIN).log10();
-				log_mel[t * n_mels + m] = v;
-				if v > global_max {
-					global_max = v;
-				}
-			}
-		}
+        // The 3000 frames are independent → compute the per-frame FFT + mel projection in parallel
+        // (Whisper ALWAYS processes the full 30 s window = 3000 frames regardless of clip length, so
+        // this is a fixed ~3000-FFT + 3000·N_FREQS·n_mels-MAC cost that single-threaded dominated the
+        // pre-decode latency). `self.fft` is `Arc<dyn Fft>` and rustfft's `Fft: Send + Sync`, so the
+        // plan is shared; each worker owns its FFT buffer + scratch. Byte-identical to the serial loop.
+        use rayon::prelude::*;
+        log_mel
+            .par_chunks_mut(n_mels)
+            .enumerate()
+            .for_each(|(t, row)| {
+                let start = t * HOP_LENGTH;
+                // Windowed frame into the complex buffer (re = windowed sample, im = 0 for real PCM).
+                // WIN_LENGTH == N_FFT (400 == 400) so the whole frame is windowed directly.
+                let mut buffer = vec![Complex::<f32>::new(0.0, 0.0); N_FFT];
+                let mut scratch =
+                    vec![Complex::<f32>::new(0.0, 0.0); self.fft.get_inplace_scratch_len()];
+                for (i, slot) in buffer.iter_mut().enumerate() {
+                    let s = padded.get(start + i).copied().unwrap_or(0.0);
+                    *slot = Complex::new(s * self.window[i], 0.0);
+                }
+                // Real-input FFT → |X[k]|² for the first N_FREQS bins (drops Nyquist, matching
+                // rfft[:, :-1]). O(n_fft·log n_fft), numerically identical to the previous naive DFT.
+                self.fft.process_with_scratch(&mut buffer, &mut scratch);
+                let mut power = [0.0f32; N_FREQS];
+                for (f, p) in power.iter_mut().enumerate() {
+                    let c = buffer[f];
+                    *p = c.re * c.re + c.im * c.im;
+                }
+                // Mel projection: spectrum (N_FREQS) · fbanks (N_FREQS, n_mels) → (n_mels).
+                for (m, out) in row.iter_mut().enumerate() {
+                    let mut acc = 0.0f32;
+                    for (f, &p) in power.iter().enumerate() {
+                        acc += p * self.fbanks[f * n_mels + m];
+                    }
+                    *out = acc.max(CLAMP_MIN).log10();
+                }
+            });
 
-		// 6. Dynamic-range clamp to (max - 8), affine (+4)/4. 7. transpose to (n_mels, T).
-		let floor = global_max - 8.0;
-		for t in 0..N_FRAMES {
-			for m in 0..n_mels {
-				let v = log_mel[t * n_mels + m].max(floor);
-				features[m * N_FRAMES + t] = (v + 4.0) / 4.0;
-			}
-		}
-		(features, n_mels, N_FRAMES)
-	}
+        // 5. global max over all log-mel bins (single O(n_mels·T) pass; ~0.2 ms, not worth a reduce).
+        let global_max = log_mel.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+        // 6. Dynamic-range clamp to (max - 8), affine (+4)/4. 7. transpose to (n_mels, T).
+        let floor = global_max - 8.0;
+        for t in 0..N_FRAMES {
+            for m in 0..n_mels {
+                let v = log_mel[t * n_mels + m].max(floor);
+                features[m * N_FRAMES + t] = (v + 4.0) / 4.0;
+            }
+        }
+        (features, n_mels, N_FRAMES)
+    }
 }
 
 /// Build the Slaney-norm mel filterbank, row-major `[freq * n_mels + mel]` with shape
@@ -173,117 +188,123 @@ impl MelExtractor {
 ///   * `all_freqs = linspace(0, sr/2, n_freqs)` (linear Hz on the freq axis)
 ///   * mel points: Slaney hz↔mel (linear below 1 kHz, log above)
 ///   * triangular filters; Slaney area-normalize each filter by `2 / (f[i+2] - f[i])`.
-fn slaney_mel_filterbank(n_freqs: usize, f_min: f32, f_max: f32, n_mels: usize, sample_rate: usize) -> Vec<f32> {
-	let all_freqs: Vec<f32> = (0..n_freqs)
-		.map(|i| (sample_rate / 2) as f32 * i as f32 / (n_freqs - 1) as f32)
-		.collect();
-	let m_min = slaney_hz_to_mel(f_min);
-	let m_max = slaney_hz_to_mel(f_max);
-	// n_mels + 2 mel-spaced points, converted back to Hz (Slaney).
-	let m_pts: Vec<f32> = (0..n_mels + 2)
-		.map(|i| {
-			let mel = m_min + (m_max - m_min) * i as f32 / (n_mels + 1) as f32;
-			slaney_mel_to_hz(mel)
-		})
-		.collect();
+fn slaney_mel_filterbank(
+    n_freqs: usize,
+    f_min: f32,
+    f_max: f32,
+    n_mels: usize,
+    sample_rate: usize,
+) -> Vec<f32> {
+    let all_freqs: Vec<f32> = (0..n_freqs)
+        .map(|i| (sample_rate / 2) as f32 * i as f32 / (n_freqs - 1) as f32)
+        .collect();
+    let m_min = slaney_hz_to_mel(f_min);
+    let m_max = slaney_hz_to_mel(f_max);
+    // n_mels + 2 mel-spaced points, converted back to Hz (Slaney).
+    let m_pts: Vec<f32> = (0..n_mels + 2)
+        .map(|i| {
+            let mel = m_min + (m_max - m_min) * i as f32 / (n_mels + 1) as f32;
+            slaney_mel_to_hz(mel)
+        })
+        .collect();
 
-	let mut fb = vec![0.0f32; n_freqs * n_mels];
-	for (f, &freq) in all_freqs.iter().enumerate() {
-		for m in 0..n_mels {
-			let lower = m_pts[m];
-			let center = m_pts[m + 1];
-			let upper = m_pts[m + 2];
-			let up = (freq - lower) / (center - lower);
-			let down = (upper - freq) / (upper - center);
-			let mut tri = up.min(down).max(0.0);
-			// Slaney area normalization.
-			tri *= 2.0 / (upper - lower);
-			fb[f * n_mels + m] = tri;
-		}
-	}
-	fb
+    let mut fb = vec![0.0f32; n_freqs * n_mels];
+    for (f, &freq) in all_freqs.iter().enumerate() {
+        for m in 0..n_mels {
+            let lower = m_pts[m];
+            let center = m_pts[m + 1];
+            let upper = m_pts[m + 2];
+            let up = (freq - lower) / (center - lower);
+            let down = (upper - freq) / (upper - center);
+            let mut tri = up.min(down).max(0.0);
+            // Slaney area normalization.
+            tri *= 2.0 / (upper - lower);
+            fb[f * n_mels + m] = tri;
+        }
+    }
+    fb
 }
 
 /// Slaney Hz→mel: linear at 3·f/200 below 1 kHz, log-spaced above (matches fbanks.py).
 fn slaney_hz_to_mel(freq: f32) -> f32 {
-	const F_SP: f32 = 200.0 / 3.0;
-	const MIN_LOG_HZ: f32 = 1000.0;
-	const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP; // 15.0
-	let logstep = (6.4f32).ln() / 27.0;
-	if freq < MIN_LOG_HZ {
-		freq / F_SP
-	} else {
-		MIN_LOG_MEL + (freq / MIN_LOG_HZ).ln() / logstep
-	}
+    const F_SP: f32 = 200.0 / 3.0;
+    const MIN_LOG_HZ: f32 = 1000.0;
+    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP; // 15.0
+    let logstep = (6.4f32).ln() / 27.0;
+    if freq < MIN_LOG_HZ {
+        freq / F_SP
+    } else {
+        MIN_LOG_MEL + (freq / MIN_LOG_HZ).ln() / logstep
+    }
 }
 
 /// Slaney mel→Hz inverse of `slaney_hz_to_mel`.
 fn slaney_mel_to_hz(mel: f32) -> f32 {
-	const F_SP: f32 = 200.0 / 3.0;
-	const MIN_LOG_MEL: f32 = 15.0;
-	const MIN_LOG_HZ: f32 = 1000.0;
-	let logstep = (6.4f32).ln() / 27.0;
-	if mel < MIN_LOG_MEL {
-		F_SP * mel
-	} else {
-		MIN_LOG_HZ * (logstep * (mel - MIN_LOG_MEL)).exp()
-	}
+    const F_SP: f32 = 200.0 / 3.0;
+    const MIN_LOG_MEL: f32 = 15.0;
+    const MIN_LOG_HZ: f32 = 1000.0;
+    let logstep = (6.4f32).ln() / 27.0;
+    if mel < MIN_LOG_MEL {
+        F_SP * mel
+    } else {
+        MIN_LOG_HZ * (logstep * (mel - MIN_LOG_MEL)).exp()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+    use super::*;
 
-	#[test]
-	fn mel_roundtrip_hz() {
-		// Slaney hz↔mel must invert across the linear/log knee.
-		for &hz in &[0.0f32, 250.0, 999.0, 1000.0, 4000.0, 8000.0] {
-			let back = slaney_mel_to_hz(slaney_hz_to_mel(hz));
-			assert!((back - hz).abs() < 1e-1, "hz={hz} back={back}");
-		}
-	}
+    #[test]
+    fn mel_roundtrip_hz() {
+        // Slaney hz↔mel must invert across the linear/log knee.
+        for &hz in &[0.0f32, 250.0, 999.0, 1000.0, 4000.0, 8000.0] {
+            let back = slaney_mel_to_hz(slaney_hz_to_mel(hz));
+            assert!((back - hz).abs() < 1e-1, "hz={hz} back={back}");
+        }
+    }
 
-	#[test]
-	fn filterbank_shape_and_partition() {
-		let fb = slaney_mel_filterbank(N_FREQS + 1, 0.0, 8000.0, 80, SAMPLE_RATE);
-		assert_eq!(fb.len(), (N_FREQS + 1) * 80);
-		// Every entry is finite and non-negative (triangular filters).
-		assert!(fb.iter().all(|&v| v.is_finite() && v >= 0.0));
-		// The bank carries energy: at least some filters are non-zero.
-		assert!(fb.iter().any(|&v| v > 0.0));
-	}
+    #[test]
+    fn filterbank_shape_and_partition() {
+        let fb = slaney_mel_filterbank(N_FREQS + 1, 0.0, 8000.0, 80, SAMPLE_RATE);
+        assert_eq!(fb.len(), (N_FREQS + 1) * 80);
+        // Every entry is finite and non-negative (triangular filters).
+        assert!(fb.iter().all(|&v| v.is_finite() && v >= 0.0));
+        // The bank carries energy: at least some filters are non-zero.
+        assert!(fb.iter().any(|&v| v > 0.0));
+    }
 
-	#[test]
-	fn window_is_periodic_hann() {
-		let mx = MelExtractor::new(80);
-		// Hann starts at 0 and is symmetric-ish; midpoint is the peak (~1.0).
-		assert!(mx.window[0].abs() < 1e-6);
-		assert!((mx.window[WIN_LENGTH / 2] - 1.0).abs() < 1e-2);
-	}
+    #[test]
+    fn window_is_periodic_hann() {
+        let mx = MelExtractor::new(80);
+        // Hann starts at 0 and is symmetric-ish; midpoint is the peak (~1.0).
+        assert!(mx.window[0].abs() < 1e-6);
+        assert!((mx.window[WIN_LENGTH / 2] - 1.0).abs() < 1e-2);
+    }
 
-	#[test]
-	#[ignore = "SPIKE: Whisper log-mel is not bounded at 1.0; validate exact normalization vs the Python preprocessor on real audio (03_stt_engine.md §11)"]
-	fn extract_produces_fixed_window() {
-		let mx = MelExtractor::new(80);
-		// One second of a 440 Hz tone.
-		let audio: Vec<f32> = (0..16_000)
-			.map(|i| (2.0 * PI * 440.0 * i as f32 / SAMPLE_RATE as f32).sin() * 0.5)
-			.collect();
-		let (feats, n_mels, n_frames) = mx.extract(&audio);
-		assert_eq!(n_mels, 80);
-		assert_eq!(n_frames, N_FRAMES);
-		assert_eq!(feats.len(), 80 * N_FRAMES);
-		// Features must be finite and bounded (~[-? , 1]); the affine maps log-mel to ≤ 1.
-		assert!(feats.iter().all(|v| v.is_finite()));
-		assert!(feats.iter().cloned().fold(f32::MIN, f32::max) <= 1.0001);
-	}
+    #[test]
+    #[ignore = "SPIKE: Whisper log-mel is not bounded at 1.0; validate exact normalization vs the Python preprocessor on real audio (03_stt_engine.md §11)"]
+    fn extract_produces_fixed_window() {
+        let mx = MelExtractor::new(80);
+        // One second of a 440 Hz tone.
+        let audio: Vec<f32> = (0..16_000)
+            .map(|i| (2.0 * PI * 440.0 * i as f32 / SAMPLE_RATE as f32).sin() * 0.5)
+            .collect();
+        let (feats, n_mels, n_frames) = mx.extract(&audio);
+        assert_eq!(n_mels, 80);
+        assert_eq!(n_frames, N_FRAMES);
+        assert_eq!(feats.len(), 80 * N_FRAMES);
+        // Features must be finite and bounded (~[-? , 1]); the affine maps log-mel to ≤ 1.
+        assert!(feats.iter().all(|v| v.is_finite()));
+        assert!(feats.iter().cloned().fold(f32::MIN, f32::max) <= 1.0001);
+    }
 
-	#[test]
-	fn silence_extracts_without_panic() {
-		let mx = MelExtractor::new(128);
-		let (feats, n_mels, n_frames) = mx.extract(&[]);
-		assert_eq!(n_mels, 128);
-		assert_eq!(n_frames, N_FRAMES);
-		assert!(feats.iter().all(|v| v.is_finite()));
-	}
+    #[test]
+    fn silence_extracts_without_panic() {
+        let mx = MelExtractor::new(128);
+        let (feats, n_mels, n_frames) = mx.extract(&[]);
+        assert_eq!(n_mels, 128);
+        assert_eq!(n_frames, N_FRAMES);
+        assert!(feats.iter().all(|v| v.is_finite()));
+    }
 }

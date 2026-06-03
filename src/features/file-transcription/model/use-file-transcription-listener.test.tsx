@@ -4,13 +4,13 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { useFileTranscriptionStore } from "./file-transcription-store";
 import { useFileTranscriptionListener } from "./use-file-transcription-listener";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
 beforeEach(() => {
 	listeners.clear();
 	useFileTranscriptionStore.getState().reset();
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 	useFileTranscriptionStore.getState().reset();
 });
 

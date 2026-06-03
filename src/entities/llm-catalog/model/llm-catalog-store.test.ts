@@ -25,7 +25,7 @@ const ipcOverrides = {
 // the exports this suite controls. bun:test's `mock.module` is process-global
 // and never torn down, so a partial shim leaks an incomplete module into
 // every later test file. `ipcClientMock()` exposes every real export and
-// routes each through `window.electronAPI` exactly as the real module, so the
+// routes each through `window.nativeBridge` exactly as the real module, so the
 // leak is harmless regardless of file order.
 mock.module("@/shared/api/ipc-client", () => ({
 	...ipcClientMock(),

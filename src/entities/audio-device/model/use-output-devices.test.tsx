@@ -264,6 +264,31 @@ describe("useOutputDevices", () => {
 		expect(result.current.devices.length).toBe(2);
 	});
 
+	test("polls for hot-plug additions and removals when no browser devicechange event fires", async () => {
+		installFakeMediaDevices();
+		enumResult = [{ deviceId: "spk-1", kind: "audiooutput", label: "Speakers A" }];
+		const { result } = renderTrackedHook();
+		await waitFor(() => expect(result.current.devices.length).toBe(1));
+
+		enumResult = [
+			{ deviceId: "spk-1", kind: "audiooutput", label: "Speakers A" },
+			{ deviceId: "spk-2", kind: "audiooutput", label: "Hot Plug Headset" },
+		];
+		await waitFor(
+			() => expect(result.current.devices.map((d) => d.label)).toContain("Hot Plug Headset"),
+			{ timeout: 2500 }
+		);
+
+		enumResult = [{ deviceId: "spk-1", kind: "audiooutput", label: "Speakers A" }];
+		await waitFor(
+			() => {
+				expect(result.current.devices).toHaveLength(1);
+				expect(result.current.devices.map((d) => d.label)).not.toContain("Hot Plug Headset");
+			},
+			{ timeout: 2500 }
+		);
+	});
+
 	test("mount-time enumeration rejection is swallowed (.catch) and leaves the list empty", async () => {
 		// The mount effect calls refresh().catch(() => undefined). When
 		// enumerateDevices() rejects (e.g. permission revoked mid-session) the

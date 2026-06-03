@@ -20,7 +20,7 @@ import { IconButton } from "@/shared/ui/icon-button";
 import { Modal } from "@/shared/ui/modal";
 import { Spinner } from "@/shared/ui/spinner";
 import { Switcher } from "@/shared/ui/switcher";
-import { TextField } from "@/shared/ui/text-field";
+import { ClearableTextField } from "@/shared/ui/text-field";
 import { buildPullsMap, computePullPercent, pullStatusToI18nKey } from "../lib/dialog-helpers";
 import {
 	filterInstalledModels,
@@ -368,16 +368,18 @@ function DialogSearch({
 }) {
 	return (
 		<div className="relative">
-			<TextField
-				className="pl-8"
-				onChange={(e) => onChange(e.target.value)}
+			<ClearableTextField
+				clearLabel="Clear search"
+				leadingIcon={
+					<HugeiconsIcon
+						aria-hidden="true"
+						icon={Search01Icon}
+						size={14}
+					/>
+				}
+				onValueChange={onChange}
 				placeholder={t("modelSearchPlaceholder")}
 				value={query}
-			/>
-			<HugeiconsIcon
-				className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-foreground-muted"
-				icon={Search01Icon}
-				size={14}
 			/>
 		</div>
 	);

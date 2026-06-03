@@ -11,7 +11,7 @@ import { ipcOn, ipcSend } from "@/shared/api/ipc-client";
  * State controller for the context-awareness playground (debug view).
  *
  * Subscribes to the `CONTEXT_PLAYGROUND_REPORT` push channel and mirrors the
- * Electron-main poll loop:
+ * reference main poll loop:
  *   - `report` is the last EXTERNAL-field capture (kept, never clobbered by a
  *     "waiting" heartbeat).
  *   - `waiting` is the reason the loop currently can't capture (the playground

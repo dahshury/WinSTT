@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string -- last-resort crash fallback must not depend on the i18n layer, which may itself be the thing that threw; copy is intentionally static English */
 import { Collapsible } from "@base-ui/react/collapsible";
 import { Component, type ReactNode } from "react";
 import { formatErrorForLog, isApplicationError } from "@/shared/lib/errors";

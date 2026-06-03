@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the WinSTT Tauri icon + tray set from the ONE WinSTT brand mark.
 
-Mirrors frontend/scripts/generate-icons.py (the Electron app's icon pipeline)
+Mirrors frontend/scripts/generate-icons.py (the reference app's icon pipeline)
 so the Rust/Tauri port carries the IDENTICAL VR-visor mascot everywhere:
 
   src-tauri/icons/        app + installer icons (tauri.conf bundle.icon)

@@ -115,7 +115,7 @@ export function resolveMicReleasePolicy(value: unknown): MicReleasePolicy {
 }
 
 /**
- * ``model.modelUnloadTimeout`` enum → server seconds. ``-1`` is the
+ * ``global.modelUnloadTimeout`` enum → server seconds. ``-1`` is the
  * "never unload" sentinel (server normalises to None internally).
  * Mirrors the table in ``electron/ipc/stt-process.ts`` so the CLI-arg
  * boot and the runtime hot-swap pick the same value for the same enum.
@@ -256,13 +256,12 @@ export function syncModelParams(
 		isInitial
 	);
 	syncInitialPromptStatics(deps, model, prevModel, isInitial);
-	syncModelUnloadTimeout(deps, model, prevModel, isInitial);
 }
 
 /**
  * Push the static (non-context, non-dictionary) initial prompt prefixes
  * to the server. The composed prompt that includes the dictionary +
- * volatile context tail is pushed separately by Electron's
+ * volatile context tail is pushed separately by the reference's
  * ``installInitialPromptSync`` whenever those upstream inputs change;
  * this handler only fires on edits to the user-typed static prefix in
  * the Settings UI. Both produce ``set_parameter("initial_prompt", ...)``
@@ -285,7 +284,7 @@ function syncInitialPromptStatics(
 }
 
 /**
- * Translate the enum-valued ``model.modelUnloadTimeout`` setting to the
+ * Translate the enum-valued ``global.modelUnloadTimeout`` setting to the
  * seconds the server CLI expects, then push only on actual changes.
  * Unlike the static-prefix sync above, this one converts the enum to a
  * number before the equality check — the renderer stores the enum, but
@@ -305,15 +304,24 @@ export function modelUnloadTimeoutNeedsPush(
 
 function syncModelUnloadTimeout(
 	deps: SyncDeps,
-	model: AppSettings["model"] | undefined,
-	prevModel: AppSettings["model"] | undefined,
+	global: AppSettings["global"] | undefined,
+	prevGlobal: AppSettings["global"] | undefined,
 	isInitial: boolean
 ): void {
-	const current = model?.modelUnloadTimeout;
-	if (!modelUnloadTimeoutNeedsPush(current, prevModel?.modelUnloadTimeout, isInitial)) {
+	const current = global?.modelUnloadTimeout;
+	if (!modelUnloadTimeoutNeedsPush(current, prevGlobal?.modelUnloadTimeout, isInitial)) {
 		return;
 	}
 	deps.sttSetParameter("model_unload_timeout_seconds", resolveModelUnloadTimeoutSeconds(current));
+}
+
+function syncGlobalParams(
+	deps: SyncDeps,
+	settings: AppSettings,
+	prev: AppSettings | undefined
+): void {
+	const isInitial = !prev;
+	syncModelUnloadTimeout(deps, settings.global, prev?.global, isInitial);
 }
 
 /** Mapping of quality keys → AllowedParameter names. */
@@ -376,7 +384,7 @@ function maybeSyncSilenceTiming(
  * This is the CANONICAL, server-ready-gated push for the flag. The
  * `usePushToTalk` mount effect also pushes it, but that effect fires once at
  * mount and races the WS handshake + recorder-ready gate — on a cold start the
- * server isn't ready yet, so the push is dropped (electron-main drops it as
+ * server isn't ready yet, so the push is dropped (reference main drops it as
  * "not connected", or the Python control handler drops it as "not pre-ready")
  * and is never retried (its deps are [recordingMode, manualToggleStop], neither
  * of which changes after connect). Without this canonical push the server keeps
@@ -463,7 +471,7 @@ export function syncDiarizationParams(
 }
 
 /**
- * Sync settings to the STT server (and Electron system settings).
+ * Sync settings to the STT server (and the reference system settings).
  *
  * - If `prev` is undefined → initial connect: push all non-null settings.
  * - If `prev` is provided → incremental: push only changed keys.
@@ -473,8 +481,8 @@ export function syncDiarizationParams(
  * are consumed by the recorder's post-decode pipeline.
  *
  * `filter_fillers` is routed HERE (renderer → sttSetParameter, reading the live
- * settings store) rather than through electron-main's `custom-words-sync`. That
- * path reads the persisted electron-store and was delivering a STALE value in
+ * settings store) rather than through reference main's `custom-words-sync`. That
+ * path reads the persisted persisted store and was delivering a STALE value in
  * the long-running main process (it pushed `filter_fillers=true` while disk
  * held `false`), so toggling "Remove Filler Words" never reached the recorder.
  * The renderer always holds the value the user just toggled, and this fires on
@@ -508,11 +516,11 @@ const DEFAULT_WORD_CORRECTION_THRESHOLD = 0.18;
  * "vocab-biasing" terms the fuzzy matcher should bias toward. Entries WITH a
  * ``replacement`` are deterministic find-and-replace pairs handled separately
  * by the post-processor; feeding them to the server-side matcher would
- * double-correct them. Mirrors ``readCurrentCustomWords`` in Electron's
+ * double-correct them. Mirrors ``readCurrentCustomWords`` in the reference's
  * ``custom-words-sync.ts``. Returns trimmed, de-duplicated terms in insertion
  * order.
  */
-export function deriveCustomWords(dictionary: readonly DictionaryEntry[] | undefined): string[] {
+function deriveCustomWords(dictionary: readonly DictionaryEntry[] | undefined): string[] {
 	if (!dictionary?.length) {
 		return [];
 	}
@@ -531,7 +539,7 @@ export function deriveCustomWords(dictionary: readonly DictionaryEntry[] | undef
 }
 
 /** Trim + de-duplicate the per-user filler-word override list. */
-export function deriveCustomFillerWords(words: readonly string[] | undefined): string[] {
+function deriveCustomFillerWords(words: readonly string[] | undefined): string[] {
 	if (!words?.length) {
 		return [];
 	}
@@ -549,7 +557,7 @@ export function deriveCustomFillerWords(words: readonly string[] | undefined): s
 }
 
 /** Resolve ``general.wordCorrectionThreshold`` to a number, defaulting safely. */
-export function resolveWordCorrectionThreshold(value: unknown): number {
+function resolveWordCorrectionThreshold(value: unknown): number {
 	return typeof value === "number" ? value : DEFAULT_WORD_CORRECTION_THRESHOLD;
 }
 
@@ -575,7 +583,7 @@ function listsEqual(a: readonly string[], b: readonly string[]): boolean {
  * and reads them straight off disk at transcription time
  * (`apply_custom_words` / `filter_transcription_output` in
  * `managers/transcription.rs`). So "taking effect" just means writing the value
- * via the dedicated command. Mirrors Electron's `installCustomWordsSync`:
+ * via the dedicated command. Mirrors the reference's `installCustomWordsSync`:
  *
  *   - `dictionary` (entries without `replacement`) → `update_custom_words`
  *   - `general.wordCorrectionThreshold` → `change_word_correction_threshold_setting`
@@ -587,11 +595,11 @@ function listsEqual(a: readonly string[], b: readonly string[]): boolean {
  * doesn't yet have the filler command) silently skips that push.
  *
  * NOTE: `settings.snippets` is deliberately NOT pushed here. Snippet expansion
- * is a post-transcription text-processing concern (mirrors Electron's
+ * is a post-transcription text-processing concern (mirrors the reference's
  * `text-processing.ts replaceWithSnippets`), not an STT-engine input — the
  * reference never sends snippets to the recorder, so neither do we.
  */
-export function syncDictionaryParams(
+function syncDictionaryParams(
 	deps: SyncDeps,
 	settings: AppSettings,
 	prev: AppSettings | undefined
@@ -618,6 +626,7 @@ export function syncDictionaryParams(
 }
 
 export function syncToServer(deps: SyncDeps, settings: AppSettings, prev?: AppSettings): void {
+	syncGlobalParams(deps, settings, prev);
 	syncAudioParams(deps, settings, prev);
 	syncModelParams(deps, settings, prev);
 	syncQualityParams(deps, settings, prev);

@@ -22,6 +22,25 @@ interface UseOutputDevicesResult {
  * ``devicechange`` events from drivers coalesce into one re-enumeration.
  */
 const DEVICECHANGE_DEBOUNCE_MS = 200;
+const DEVICE_POLL_INTERVAL_MS = 1000;
+
+function areOutputDeviceListsEqual(
+	a: readonly OutputDevice[],
+	b: readonly OutputDevice[]
+): boolean {
+	if (a.length !== b.length) {
+		return false;
+	}
+	return a.every((device, index) => {
+		const other = b[index];
+		return (
+			other !== undefined &&
+			device.deviceId === other.deviceId &&
+			device.label === other.label &&
+			device.isDefault === other.isDefault
+		);
+	});
+}
 
 /**
  * Returns the list of audio OUTPUT devices reported by the browser via
@@ -67,26 +86,32 @@ export function useOutputDevices(): UseOutputDevicesResult {
 				isDefault: d.deviceId === "default",
 			});
 		}
-		setDevices(outputs);
+		setDevices((current) => (areOutputDeviceListsEqual(current, outputs) ? current : outputs));
 	}, []);
 
 	useEffect(() => {
-		refresh().catch(() => undefined);
-		if (typeof navigator === "undefined" || !navigator.mediaDevices) {
+		const refreshSafely = () => {
+			refresh().catch(() => undefined);
+		};
+		refreshSafely();
+		const mediaDevices = typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
+		if (!mediaDevices) {
 			return;
 		}
+		const pollId = setInterval(refreshSafely, DEVICE_POLL_INTERVAL_MS);
 		const handler = () => {
 			if (debounceRef.current) {
 				clearTimeout(debounceRef.current);
 			}
 			debounceRef.current = setTimeout(() => {
 				debounceRef.current = null;
-				refresh().catch(() => undefined);
+				refreshSafely();
 			}, DEVICECHANGE_DEBOUNCE_MS);
 		};
-		navigator.mediaDevices.addEventListener("devicechange", handler);
+		mediaDevices.addEventListener("devicechange", handler);
 		return () => {
-			navigator.mediaDevices.removeEventListener("devicechange", handler);
+			clearInterval(pollId);
+			mediaDevices.removeEventListener("devicechange", handler);
 			if (debounceRef.current) {
 				clearTimeout(debounceRef.current);
 				debounceRef.current = null;

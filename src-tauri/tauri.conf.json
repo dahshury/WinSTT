@@ -13,11 +13,11 @@
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; media-src 'self' asset: http://asset.localhost blob:; connect-src 'self' ipc: http://ipc.localhost https://api.openai.com https://api.elevenlabs.io https://openrouter.ai https://ollama.com http://localhost:11434; object-src 'none'; frame-ancestors 'none'; base-uri 'self'",
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": ["**"],
+          "allow": ["$APPDATA/**", "$RESOURCE/**"],
           "requireLiteralLeadingDot": false
         }
       }

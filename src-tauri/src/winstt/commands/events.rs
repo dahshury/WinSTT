@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/lib_wiring.md §4a.
+// Source: docs/port/lib_wiring.md §4a.
 //
 // Specta-typed events the WinSTT port emits. Each derives the same set as Handy's
 // `HistoryUpdatePayload` (Clone + Serialize + Deserialize + specta::Type +

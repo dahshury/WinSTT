@@ -83,7 +83,7 @@ function seedCatalog(): void {
 	});
 }
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 
 function withModel(model: string): RuntimeInfo {
 	return {
@@ -96,7 +96,7 @@ function withModel(model: string): RuntimeInfo {
 }
 
 beforeEach(() => {
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		invoke: () => Promise.resolve(),
 		send: () => undefined,
@@ -130,7 +130,7 @@ afterEach(() => {
 	// via beginSwap — a leaked default-window timer would fire after happy-dom
 	// teardown ("window is not defined" between test files).
 	_resetOptimisticSwapForTests();
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 describe("useSyncActiveModel", () => {
@@ -239,8 +239,8 @@ describe("useSyncActiveModel", () => {
 		// Race observed in production: the server falls back from a broken
 		// user pick (canary) to tiny and pushes runtime_info=tiny. The
 		// reconciler writes "tiny" into settings. Then useSyncSettings's
-		// async settingsLoad() resolves with electron-store's stored value
-		// (still canary, since electron-store wasn't refreshed yet) and
+		// async settingsLoad() resolves with persisted store's stored value
+		// (still canary, since persisted store wasn't refreshed yet) and
 		// setSettings(...) replaces the whole settings object — silently
 		// reverting model.model back to canary. With settingsModel out of
 		// deps, the reconciler doesn't re-fire and the picker stays on
@@ -265,7 +265,7 @@ describe("useSyncActiveModel", () => {
 			expect(useSettingsStore.getState().settings.model.model).toBe("tiny");
 		});
 		// Simulate the late-resolving settingsLoad replacing the whole
-		// settings object with electron-store's stale canary value.
+		// settings object with persisted store's stale canary value.
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,

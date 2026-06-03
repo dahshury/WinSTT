@@ -1,0 +1,132 @@
+---
+title: Debug Mode
+description: Gather logs and a one-click diagnostic bundle so a maintainer can fix a bug fast — straight from the tray menu.
+---
+
+When something goes wrong, the fastest path to a fix is attaching a diagnostic bundle to your bug report. WinSTT zips its logs plus a system summary into one file from the tray menu — no command line required.
+
+<Screenshot src="tray-menu" alt="The WinSTT tray menu with Open Logs Folder and Save Diagnostic Bundle entries near the bottom, above Quit." label="Tray menu" caption="Right-click the tray icon. Open Logs Folder and Save Diagnostic Bundle sit just above Quit." />
+
+## What gets logged
+
+WinSTT keeps two rolling log files in its user-data folder. Both are written at **verbose** level all the time, so the full trace is captured even on a normal launch — you do not have to reproduce in a special mode first.
+
+| File | Source | Rotation |
+|---|---|---|
+| `debug.log` | Electron main + renderer (process spawn, WebSocket, hotkeys, settings, IPC). | Rolls at 5 MB to `debug.old.log`. |
+| `stt-server.log` | The Python STT server (bootstrap, recorder, model swaps). | Same 5 MB roll. |
+
+Both files live in `%APPDATA%\WinSTT\` (the Electron user-data path). Log lines use the format `[HH:MM:SS.mmm] [scope] message`.
+
+<Callout type="success" title="The log does not contain your audio">
+  Audio frames are processed in memory and discarded; only summary statistics
+  (chunk count, VAD decision, transcribed-text length) reach the log. Transcribed
+  text is logged so you can match "what I said" to the model's output. Nothing is
+  uploaded — the log stays on your machine until you choose to share the bundle.
+</Callout>
+
+## Gather a diagnostic bundle
+
+Two entries near the bottom of the tray menu do everything. Right-click the WinSTT tray icon to open it.
+
+<SettingRow label="Open Logs Folder">
+  Opens `%APPDATA%\WinSTT\` in File Explorer so you can inspect `debug.log` and
+  `stt-server.log` directly, or copy them out by hand.
+</SettingRow>
+
+<SettingRow label="Save Diagnostic Bundle">
+  Zips the logs plus a system-info summary into a single `.zip`, then offers to
+  reveal it in Explorer. This is the file to attach to a bug report.
+</SettingRow>
+
+<StepFlow>
+  <Step title="Reproduce the bug">
+    Do whatever triggers the problem, and keep it short so the relevant lines are
+    recent — `debug.log` rolls at 5 MB, so older context can age out of the file.
+  </Step>
+  <Step title="Save the bundle">
+    Right-click the tray icon, then click **Save Diagnostic Bundle**. A save dialog
+    opens, pre-filled with `winstt-diag-<timestamp>.zip` on your Desktop. Pick a
+    location and confirm.
+  </Step>
+  <Step title="Reveal and attach">
+    When the zip is written, WinSTT shows a "Diagnostic bundle saved" dialog with an
+    **Open folder** button. Attach the `.zip` to your GitHub issue.
+  </Step>
+</StepFlow>
+
+### What the bundle contains
+
+The archive holds every log that currently exists plus a freshly generated system summary at the zip root:
+
+```
+winstt-diag-<timestamp>.zip
+├── debug.log              (Electron main + renderer)
+├── debug.old.log          (only if a rotation happened recently)
+├── stt-server.log         (Python STT server)
+└── system-info.txt        (versions, OS, CPU, RAM, GPU)
+```
+
+`system-info.txt` is a plain key-value list: the generation timestamp, WinSTT / Electron / Node / Chrome versions, platform and architecture, OS release, total and free RAM, CPU model and core count, and a JSON dump of the GPU info Electron reports. No settings, API keys, or tokens are written into the bundle.
+
+<Callout type="info" title="If the zip is over GitHub's 25 MB limit">
+  Attach `system-info.txt` plus the tail of each log inline
+  (`Get-Content -Tail 500 "$env:APPDATA\WinSTT\debug.log"`), and upload the full
+  bundle to a [gist](https://gist.github.com) or a cloud-drive link.
+</Callout>
+
+## Reading the logs yourself
+
+Both files share the `[HH:MM:SS.mmm] [scope] message` format. Filter by scope to find the relevant lines.
+
+Electron side (`debug.log`):
+
+| Scope | What it covers |
+|---|---|
+| `stt-process` | Spawn / restart of the bundled `stt-server.exe`. An early "exit code 1" is usually the cause of a windowed crash. |
+| `ws-client` | The WebSocket client to the server — reconnects and disconnect storms. |
+| `relay` | The IPC relay between Electron main and the renderer windows. |
+| `settings` | Settings persistence. Look here when a setting appears to revert. |
+| `hotkey` | Global hotkey registration. A `register false` line means another app claimed the chord. |
+| `diag-bundle` | The bundle generator itself. |
+| `tray-menu` | Tray actions, including **Open Logs Folder**. |
+
+Server side (`stt-server.log`):
+
+| Scope | What it covers |
+|---|---|
+| `bootstrap` | Adapter wiring at startup — the first lines say which audio device, VAD, transcriber, and wake-word backend were resolved. |
+| `recorder.application` | `RecorderService` lifecycle and state-machine transitions. |
+| `recorder.pipeline` | The VAD loop, per-chunk decisions, and turn boundaries. Very chatty. |
+| `model_swap` | Hot-swap of STT models. Failures here usually mean a quantization that is incompatible with the chosen backend. |
+
+## Verbose terminal output
+
+The file log is always verbose, but the **terminal** is quiet by default so dev runs aren't flooded with per-keystroke traces. To mirror the verbose stream to the console for live tailing, launch with `--verbose` (or set `WINSTT_VERBOSE=1`):
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\WinSTT\WinSTT.exe" --verbose
+```
+
+This only changes what prints to the terminal. The bundle and the log files already hold the full trace either way.
+
+## Crash reports
+
+If a crash escapes, the Electron main process forwards a redacted exception payload to Sentry. This is **opt-out** at **Settings → General → Anonymous crash reports**; the redactor strips file paths, the home directory, and anything that pattern-matches an API key. Sentry sees the *crash*, not the *behavior leading up to it* — so it is never a substitute for the diagnostic bundle, which captures the latter.
+
+## Related
+
+<Cards>
+  <Card title="Troubleshooting" href="/docs/troubleshooting">
+    Common issues — stuck reconnecting, no paste, missing audio — and their fixes.
+  </Card>
+  <Card title="CLI & Signals" href="/docs/cli">
+    Every command-line flag, including `--verbose`.
+  </Card>
+  <Card title="Recording modes" href="/docs/recording-modes">
+    Push-to-talk, toggle, listen, and wake-word — and when to use each.
+  </Card>
+  <Card title="Choose a model" href="/docs/models">
+    Browse the catalog and pick the right accuracy/speed trade-off.
+  </Card>
+</Cards>

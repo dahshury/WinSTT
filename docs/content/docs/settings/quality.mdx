@@ -1,0 +1,165 @@
+---
+title: Processing
+description: Control the live preview timing, smart endpoint detection, sentence-pause heuristics, and the formatting passes that run before your text is pasted.
+---
+
+The **Processing** tab governs everything that happens between speech and paste — how fast the live preview updates, when WinSTT decides you've finished a sentence, and the casing/punctuation cleanup applied to the final text.
+
+## Realtime preview
+
+While you speak, a fast model streams words into the overlay so you see text immediately; the main model still produces the final, accurate transcription when you stop. These controls tune how that live pass behaves. See [Model → Realtime model](/docs/settings/model) to pick the model itself.
+
+<SettingRow label="Use Main Model For Realtime" settingKey="quality.useMainModelForRealtime" default="false">
+  Drive the live preview with your **main** model instead of the smaller realtime variant.
+  More accurate previews at the cost of more compute per update — only worth it on a fast
+  GPU with a mid-size main model.
+</SettingRow>
+
+<SettingRow label="Update Interval" settingKey="quality.realtimeProcessingPause" default="0.02">
+  Minimum seconds between live-preview re-runs. **0.02s** updates roughly 50 times a
+  second; raise it to ease CPU/GPU load, lower it for the snappiest feel.
+</SettingRow>
+
+<SettingRow label="Init Realtime After" settingKey="quality.initRealtimeAfterSeconds" default="0.2">
+  Seconds to wait after recording starts before the first live-preview run fires. The
+  short delay lets a buffer accumulate so the first preview isn't a one-word guess.
+</SettingRow>
+
+<SettingRow label="Early Transcription On Silence" settingKey="quality.earlyTranscriptionOnSilence" default="0.2">
+  Seconds of detected silence that trigger an early full transcription instead of waiting
+  for the endpoint timer — text lands sooner when you pause mid-thought.
+</SettingRow>
+
+## Smart Endpoint
+
+In **Toggle** and **Wake Word** modes WinSTT keeps recording across natural pauses, so it needs to decide when a sentence is actually finished. **Smart Endpoint** uses a DistilBERT classifier (`KoljaB/SentenceFinishedClassification`) to read the live transcript and judge whether you've completed a thought, then sets the silence threshold accordingly.
+
+<SettingRow label="Smart Endpoint" settingKey="quality.smartEndpoint" default="true">
+  AI sentence-completion detection. The pause it waits for is computed as
+  `(model_probability + whisper_heuristic) × Detection Speed`, clamped to roughly a 1.0s
+  floor. Only shown when **live transcription is enabled** *and* the mode is
+  <ModeBadge mode="toggle" /> or <ModeBadge mode="wakeword" />.
+</SettingRow>
+
+<SettingRow label="Detection Speed" settingKey="quality.smartEndpointSpeed" default="2.0">
+  Multiplier on the computed pause, range **0.5–3.0**, step **0.1**. Higher finalizes
+  faster (shorter waits, but more risk of cutting you off mid-sentence); lower is more
+  patient. Only visible while Smart Endpoint is on.
+</SettingRow>
+
+<Callout type="warn" title="Smart Endpoint and LLM cleanup are mutually exclusive">
+  Enabling Smart Endpoint **disables LLM dictation cleanup**, and vice-versa. The
+  classifier reads the raw live transcript to time the endpoint, so the two can't both own
+  the post-speech stage. Pick the one that fits your workflow — fast hands-free finalizing
+  (Smart Endpoint) or rewritten output ([LLM cleanup](/docs/settings/llm)).
+</Callout>
+
+<Callout type="warn" title="Needs the sentence-classifier server extra">
+  Smart Endpoint relies on the server `sentence-classifier` extra — the only component
+  that pulls in PyTorch. If it isn't installed, the feature **fails soft** and falls back
+  to the manual Sentence Pauses below.
+</Callout>
+
+## Sentence pauses
+
+When Smart Endpoint is **off**, WinSTT falls back to a punctuation-based heuristic: it looks at how the live transcript ends and waits a different amount of silence before finalizing. These three steppers appear only in <ModeBadge mode="toggle" /> / <ModeBadge mode="wakeword" /> mode **with Smart Endpoint off**.
+
+<ModelTable
+  head={["Control", "Triggered by", "Range", "Default"]}
+  numeric={[3]}
+  rows={[
+    ["End-of-sentence pause", "Transcript ends with . ! ?", "0.1–5.0s, step 0.05", "0.45"],
+    ["Mid-sentence pause", "Transcript ends with an ellipsis …", "0.1–10.0s, step 0.1", "2.0"],
+    ["Unknown-sentence pause", "No clear terminator", "0.1–5.0s, step 0.05", "1.3"],
+  ]}
+  caption="Lower values finalize faster; raise them if WinSTT keeps cutting off natural pauses."
+/>
+
+<SettingRow label="End-of-sentence pause (s)" settingKey="quality.endOfSentenceDetectionPause" default="0.45">
+  Silence to wait after a clear terminator (`.`, `!`, `?`). The shortest of the three —
+  a finished sentence rarely needs a long wait.
+</SettingRow>
+
+<SettingRow label="Mid-sentence pause (s)" settingKey="quality.midSentenceDetectionPause" default="2.0">
+  Silence to wait after a trailing ellipsis (`…`). Its upper bound is **10.0s** (vs 5.0s
+  for the others) because an ellipsis signals you intend to keep going, so it warrants a
+  longer grace period.
+</SettingRow>
+
+<SettingRow label="Unknown-sentence pause (s)" settingKey="quality.unknownSentenceDetectionPause" default="1.3">
+  Fallback when speech ends with no recognizable terminator. Raised from 0.7s to **1.3s**
+  so ordinary mid-thought pauses don't get clipped.
+</SettingRow>
+
+## Formatting
+
+Two independent passes clean up the text **before** it's pasted. Both default on.
+
+<Screenshot src="sec-quality-formatting" alt="The Formatting section: Uppercase First Letter and End with Period toggles, both switched on." chrome="card" caption="Two per-character cleanup passes that run on the final text before paste." />
+
+<SettingRow label="Uppercase First Letter" settingKey="quality.ensureSentenceStartingUppercase" default="true">
+  Capitalizes the first letter of each sentence in the output.
+</SettingRow>
+
+<SettingRow label="End with Period" settingKey="quality.ensureSentenceEndsWithPeriod" default="true">
+  Appends a period to sentences that lack terminal punctuation.
+</SettingRow>
+
+<Callout type="info" title="Disabled when LLM cleanup is on">
+  Both formatting toggles gray out when [LLM dictation cleanup](/docs/settings/llm) is
+  enabled. The LLM rewrites the whole transcript — including casing and punctuation — so
+  the per-character fixups would be redundant.
+</Callout>
+
+## Context awareness
+
+When LLM cleanup is on, WinSTT can read the focused window's text right before each dictation and feed it to the cleanup pass, so names and jargon get spelled the way they already appear on screen.
+
+<Screenshot src="sec-quality-context" alt="The Context awareness section with a single Context awareness toggle, switched on." chrome="card" caption="Feeds focused-window text into the LLM cleanup prompt. Off by default — opt in per the in-app dialog." />
+
+<SettingRow label="Context awareness" settingKey="general.contextAwareness" default="false">
+  Reads focused-window text via Windows accessibility APIs immediately before each
+  dictation and includes it in the LLM cleanup prompt. It does nothing on its own — it
+  needs [LLM cleanup](/docs/settings/llm) enabled. Full detail, including the deny-list and
+  privacy notes, lives under [Dictation → Context-awareness](/docs/dictation#context-awareness-caret-split).
+</SettingRow>
+
+## Paste behavior
+
+After the final text is produced (and optionally cleaned), WinSTT pastes it at your cursor. This toggle decides whether it also presses a submit key.
+
+<Screenshot src="sec-quality-paste" alt="The Paste Behavior section with the Auto-Submit After Paste toggle, switched off." chrome="card" caption="Auto-Submit fires a submit key right after each paste — off by default." />
+
+<SettingRow label="Auto-Submit After Paste" settingKey="general.autoSubmit" default="false">
+  When on, WinSTT injects a submit key right after each successful paste — so a dictated
+  chat message ships without a separate Enter press. The submit key and re-paste shortcut
+  are covered under [Dictation → How text gets pasted](/docs/dictation#how-text-gets-pasted).
+</SettingRow>
+
+## File transcription
+
+When you drop an audio file in for batch transcription, this setting picks the output format. It applies to file jobs only, not live dictation.
+
+<Screenshot src="sec-quality-filetx" alt="The File Transcription section with a Format control toggled between TXT and SRT — TXT selected." chrome="card" caption="Pick the batch-export format: plain TXT or timestamped SRT subtitles." />
+
+<SettingRow label="File Transcription Format" settingKey="general.fileTranscriptionFormat" default="txt">
+  **TXT** writes plain text; **SRT** writes SubRip subtitles with timecodes. Full details
+  on the batch workflow live in [File transcription](/docs/file-transcription).
+</SettingRow>
+
+## Related
+
+<Cards>
+  <Card title="Model & realtime model" href="/docs/settings/model">
+    Pick the main and live-preview models that these timing controls drive.
+  </Card>
+  <Card title="LLM cleanup" href="/docs/settings/llm">
+    Rewrite dictation with tone presets — the mutually-exclusive alternative to Smart Endpoint.
+  </Card>
+  <Card title="Audio & VAD" href="/docs/settings/audio">
+    Microphone, mute behavior, and the voice-activity tuning that feeds endpoint detection.
+  </Card>
+  <Card title="File transcription" href="/docs/file-transcription">
+    Batch-transcribe audio files and export TXT or timestamped SRT subtitles.
+  </Card>
+</Cards>

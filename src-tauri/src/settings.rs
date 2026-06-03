@@ -1,3 +1,6 @@
+// derivable_impls: explicit Default impls document the settings-schema defaults.
+#![allow(clippy::derivable_impls)]
+
 use log::{debug, warn};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -191,7 +194,7 @@ impl Default for KeyboardImplementation {
 
 impl Default for ModelUnloadTimeout {
     fn default() -> Self {
-        // Keep the STT engine WARM by default (like the Electron server, which never unloads):
+        // Keep the STT engine WARM by default (like the reference server, which never unloads):
         // the previous Min5 unloaded the model after 5 min idle, so every dictation after a pause
         // paid a cold reload + cold DirectML kernel-JIT — a major source of the "slow" perception.
         // Users who want to reclaim VRAM can still pick a timeout in settings.
@@ -262,10 +265,18 @@ impl SoundTheme {
         }
     }
 
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "to_* accessor on a Copy enum; renaming is a public API change"
+    )]
     pub fn to_start_path(&self) -> String {
         format!("resources/{}_start.wav", self.as_str())
     }
 
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "to_* accessor on a Copy enum; renaming is a public API change"
+    )]
     pub fn to_stop_path(&self) -> String {
         format!("resources/{}_stop.wav", self.as_str())
     }
@@ -497,7 +508,9 @@ fn default_debug_mode() -> bool {
 }
 
 fn default_log_level() -> LogLevel {
-    LogLevel::Debug
+    // Ship at Info so dictated text (logged at Debug) never reaches the persistent
+    // file log by default. Users can opt into Debug when troubleshooting.
+    LogLevel::Info
 }
 
 fn default_word_correction_threshold() -> f64 {
@@ -798,6 +811,33 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: "escape".to_string(),
         },
     );
+    // WinSTT-tree hotkeys: their accelerator SOURCE OF TRUTH lives in the WinSTT
+    // settings tree (`tts.hotkey`, `general.repasteHotkey`) — like `transforms`
+    // (`llm.transforms.hotkey`). These rows exist so `change_binding` / `reset_binding`
+    // can resolve a default, but they are NEVER registered by the init loops (which
+    // would parse the raw WinSTT key names — `LMeta` is unknown to handy-keys). They
+    // are armed exclusively through `shortcut::reconcile_winstt_hotkeys`, which routes
+    // every accelerator through `winstt_accel_to_handy` and gates on the feature flag.
+    bindings.insert(
+        "read_aloud".to_string(),
+        ShortcutBinding {
+            id: "read_aloud".to_string(),
+            name: "Read Selection Aloud".to_string(),
+            description: "Speaks the currently selected text using TTS.".to_string(),
+            default_binding: "LMeta+LShift+E".to_string(),
+            current_binding: "LMeta+LShift+E".to_string(),
+        },
+    );
+    bindings.insert(
+        "repaste".to_string(),
+        ShortcutBinding {
+            id: "repaste".to_string(),
+            name: "Re-paste Last Transcription".to_string(),
+            description: "Pastes the most recent transcription again.".to_string(),
+            default_binding: "LCtrl+LShift+V".to_string(),
+            current_binding: "LCtrl+LShift+V".to_string(),
+        },
+    );
 
     AppSettings {
         bindings,
@@ -891,9 +931,11 @@ pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
 
                 // Merge default bindings into existing settings
                 for (key, value) in default_settings.bindings {
-                    if !settings.bindings.contains_key(&key) {
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        settings.bindings.entry(key.clone())
+                    {
                         debug!("Adding missing binding: {}", key);
-                        settings.bindings.insert(key, value);
+                        entry.insert(value);
                         updated = true;
                     }
                 }
@@ -977,13 +1019,16 @@ pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
     // Fall back to a benign empty binding when `id` is absent from the persisted store
     // (e.g. a newly-added binding whose default predates the user's settings_store.json).
     // The previous `.unwrap()` here panicked the whole app at startup in that case.
-    bindings.get(id).cloned().unwrap_or_else(|| ShortcutBinding {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: String::new(),
-        default_binding: String::new(),
-        current_binding: String::new(),
-    })
+    bindings
+        .get(id)
+        .cloned()
+        .unwrap_or_else(|| ShortcutBinding {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            default_binding: String::new(),
+            current_binding: String::new(),
+        })
 }
 
 pub fn get_history_limit(app: &AppHandle) -> usize {

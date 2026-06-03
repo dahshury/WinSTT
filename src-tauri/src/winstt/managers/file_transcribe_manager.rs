@@ -1,9 +1,9 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source (authoritative):
+// Source (authoritative):
 // frontend/electron/ipc/file-transcribe-queue.ts (the canonical multi-file queue)
-// + app/PORT/07_*.md / 10_frontend_port_plan.md §6 WU-8. Decode via symphonia
+// + docs/port/07_*.md / 10_frontend_port_plan.md §6 WU-8. Decode via symphonia
 // (in-process; no external ffmpeg, unlike the Python server's ffmpeg shell-out).
 //
-// FileTranscribeManager is a faithful Rust port of WinSTT's Electron
+// FileTranscribeManager is a faithful Rust port of WinSTT's the reference
 // `setupFileTranscribeQueue`: a SEQUENTIAL file queue (the shared STT model is
 // single-threaded) with
 //
@@ -15,14 +15,14 @@
 //   4. Busy flag       — broadcast on transitions so the detached model-picker
 //                        disables model switching while busy.
 //
-// The renderer event contract is BYTE-IDENTICAL to WinSTT's Electron IPC so the
+// The renderer event contract is BYTE-IDENTICAL to WinSTT's the reference IPC so the
 // reused `features/file-transcription` store/listener need no changes:
 //   • `file:queue-update`   → { items: [{ id, fileName, status, progress, stage, message }] }
 //   • `file:queue-progress` → { id, progress, stage }   (high-frequency tick)
 //   • `file:queue-active`   → { active }                (cross-window, on transition)
 // Statuses: "queued" | "transcribing" | "complete" | "error" | "paused" | "canceled".
 //
-// Difference from Electron: Handy's `TranscriptionManager::transcribe(Vec<f32>)`
+// Difference from the reference: Handy's `TranscriptionManager::transcribe(Vec<f32>)`
 // is a ONE-SHOT call (no streaming server, so no `resume_from`/`partial_segments`
 // mid-file). Per-row resume therefore re-transcribes the file from the start
 // (functionally identical output; only wasted work, like a cold retry). The
@@ -46,7 +46,7 @@ use crate::managers::transcription::TranscriptionManager;
 /// (Cancelled if new files are dropped meanwhile.) Mirrors AUTO_CLEAR_DELAY_MS.
 const AUTO_CLEAR_DELAY_MS: u64 = 2500;
 
-/// One queued file + its lifecycle. Field names mirror the Electron `QueueItem`.
+/// One queued file + its lifecycle. Field names mirror the reference `QueueItem`.
 #[derive(Clone, Debug)]
 struct QueueItem {
     id: String,
@@ -102,7 +102,7 @@ impl QueueStatus {
 }
 
 /// Renderer-facing DTO emitted in `file:queue-update`. Byte-identical to the
-/// Electron `QueueItemDTO` (no path, no text — display-only).
+/// the reference `QueueItemDTO` (no path, no text — display-only).
 #[derive(Clone, Debug, Serialize)]
 pub struct QueueItemDto {
     id: String,
@@ -223,7 +223,7 @@ impl FileTranscribeManager {
 
     /// `file:queue-cancel` `{id}` — drop a queued/paused row, or cancel the
     /// in-flight file (the running file finishes its one-shot transcribe; the row
-    /// is removed once it returns). Mirrors the Electron `cancel`.
+    /// is removed once it returns). Mirrors the reference `cancel`.
     pub fn cancel(self: &Arc<Self>, id: &str) {
         let mut removed = false;
         {
@@ -441,7 +441,11 @@ impl FileTranscribeManager {
             // Pop the next QUEUED row (skips Paused rows automatically).
             let next = {
                 let mut st = self.lock_state();
-                match st.items.iter().position(|it| it.status == QueueStatus::Queued) {
+                match st
+                    .items
+                    .iter()
+                    .position(|it| it.status == QueueStatus::Queued)
+                {
                     Some(i) => {
                         st.items[i].status = QueueStatus::Transcribing;
                         st.items[i].progress = 0.0;
@@ -476,7 +480,7 @@ impl FileTranscribeManager {
     /// net: a `notify_all` racing the predicate check would otherwise sleep the
     /// worker forever, since the queue/pause predicates live in a separate mutex).
     /// The worker re-evaluates on every wake/timeout — cheap and missed-signal
-    /// proof, matching the event-driven re-pump of the single-threaded Electron
+    /// proof, matching the event-driven re-pump of the single-threaded the reference
     /// queue this ports.
     fn park(&self) {
         let gate = self.worker_gate.lock().expect("worker gate poisoned");
@@ -536,7 +540,13 @@ impl FileTranscribeManager {
     /// Terminal transition for the in-flight row, then advance the pump. A row
     /// canceled mid-transcribe (status flipped to Canceled by `cancel`) is
     /// removed instead of marked complete/error.
-    fn finish(self: &Arc<Self>, id: &str, status: QueueStatus, text: Option<&str>, error: Option<&str>) {
+    fn finish(
+        self: &Arc<Self>,
+        id: &str,
+        status: QueueStatus,
+        text: Option<&str>,
+        error: Option<&str>,
+    ) {
         {
             let mut st = self.lock_state();
             if let Some(pos) = st.items.iter().position(|it| it.id == id) {
@@ -555,8 +565,9 @@ impl FileTranscribeManager {
                         }
                         QueueStatus::Error => {
                             it.stage = "error".into();
-                            it.message =
-                                error.map(str::to_string).unwrap_or_else(|| "Transcription failed".into());
+                            it.message = error
+                                .map(str::to_string)
+                                .unwrap_or_else(|| "Transcription failed".into());
                         }
                         _ => {}
                     }
@@ -572,7 +583,7 @@ impl FileTranscribeManager {
     // ── Emission ────────────────────────────────────────────────────────────
 
     /// Re-emit the whole list (`file:queue-update`), update the busy flag, and
-    /// schedule the auto-clear. Mirrors Electron `emitQueue`.
+    /// schedule the auto-clear. Mirrors the reference `emitQueue`.
     fn emit_queue(self: &Arc<Self>) {
         let (items, busy, has_items): (Vec<QueueItemDto>, bool, bool) = {
             let st = self.lock_state();
@@ -583,7 +594,9 @@ impl FileTranscribeManager {
                 !st.items.is_empty(),
             )
         };
-        let _ = self.app.emit("file:queue-update", FileQueueUpdate { items });
+        let _ = self
+            .app
+            .emit("file:queue-update", FileQueueUpdate { items });
         self.broadcast_active(busy);
         self.schedule_auto_clear(busy, has_items);
     }
@@ -592,14 +605,19 @@ impl FileTranscribeManager {
     /// the detached model-picker disables selection while busy.
     fn broadcast_active(&self, active: bool) {
         {
-            let mut last = self.last_broadcast_active.lock().expect("broadcast flag poisoned");
+            let mut last = self
+                .last_broadcast_active
+                .lock()
+                .expect("broadcast flag poisoned");
             if *last == Some(active) {
                 return;
             }
             *last = Some(active);
         }
         // Emit to every window so the detached model-picker sees it too.
-        let _ = self.app.emit("file:queue-active", FileQueueActive { active });
+        let _ = self
+            .app
+            .emit("file:queue-active", FileQueueActive { active });
     }
 
     /// Auto-return to the visualizer once every row is terminal: after a short
@@ -647,7 +665,7 @@ impl FileTranscribeManager {
     }
 }
 
-// ── Event payloads (renderer-shape, byte-identical to WinSTT Electron IPC) ──
+// ── Event payloads (renderer-shape, byte-identical to WinSTT the reference IPC) ──
 
 /// `file:queue-update` payload.
 #[derive(Clone, Debug, Serialize)]

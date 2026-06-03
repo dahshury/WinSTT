@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/01_stt_catalog.md +
+// Source: docs/port/01_stt_catalog.md +
 // 03_stt_engine.md + lib_wiring.md §3, frontend/electron/ipc/stt-models / model-picker.
 //
 // STT catalog + picker commands. These wrap the pure `winstt::catalog` policy
@@ -69,7 +69,7 @@ pub fn picker_accelerator(app: &AppHandle) -> Accelerator {
 ///
 /// NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
 /// is `list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
-/// here and `STT_LIST_MODELS_WITH_STATE` → `list_models_with_state` (electron-tauri-adapter.ts ROUTE).
+/// here and `STT_LIST_MODELS_WITH_STATE` → `list_models_with_state` (native-bridge-adapter.ts ROUTE).
 #[tauri::command]
 #[specta::specta]
 pub fn list_models(app: AppHandle) -> Vec<CatalogModelInfo> {

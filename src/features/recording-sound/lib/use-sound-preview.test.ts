@@ -4,10 +4,10 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { useSoundPreview } from "./use-sound-preview";
 
 // happy-dom has no Web Audio API. We install a controllable fake AudioContext
-// + drive byte fetching through a per-file `window.electronAPI` stub keyed on
+// + drive byte fetching through a per-file `window.nativeBridge` stub keyed on
 // IPC channels (no global module mock — nothing leaks into sibling files).
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const OriginalAudioContext = (globalThis as { AudioContext?: unknown }).AudioContext;
 
 interface FakeSource {
@@ -74,7 +74,7 @@ function installStub(): void {
 	customBytes = new Uint8Array([4, 5, 6]);
 	invokes.length = 0;
 	(globalThis as { AudioContext?: unknown }).AudioContext = FakeAudioContext;
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		getPathForFile: () => "",
 		send: () => undefined,
@@ -95,7 +95,7 @@ function installStub(): void {
 beforeEach(installStub);
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 	(globalThis as { AudioContext?: unknown }).AudioContext = OriginalAudioContext;
 });
 

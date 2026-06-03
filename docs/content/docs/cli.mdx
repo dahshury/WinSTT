@@ -1,0 +1,103 @@
+---
+title: Command-Line Flags
+description: The flags the WinSTT app accepts at launch, and the developer-only spike binaries for benchmarking STT/TTS.
+---
+
+WinSTT is a single native executable. It accepts a small set of launch flags, and because it
+runs single-instance, a few of them are **forwarded to an already-running instance** — which
+makes them handy targets for OS-level keyboard shortcuts or automation.
+
+```bash
+WinSTT [OPTIONS]
+```
+
+## App flags
+
+<ModelTable
+  head={["Flag", "What it does"]}
+  rows={[
+    ["--start-hidden", "Start with the main pill window hidden (tray only)."],
+    ["--no-tray", "Don't create the system-tray icon."],
+    ["--toggle-transcription", "Toggle dictation on/off. Forwarded to the running instance."],
+    ["--toggle-post-process", "Toggle dictation with LLM post-processing on/off. Forwarded to the running instance."],
+    ["--cancel", "Cancel the current operation. Forwarded to the running instance."],
+    ["--debug", "Enable verbose logging."],
+    ["-h, --help", "Print help and exit."],
+  ]}
+/>
+
+<Callout type="info" title="The forwarded flags drive shortcuts">
+  WinSTT runs single-instance. Launching the exe again with `--toggle-transcription`,
+  `--toggle-post-process`, or `--cancel` doesn't open a second window — it hands the flag to the
+  instance that's already running. Bind a global shortcut (or a stream-deck button, or a script)
+  to `WinSTT.exe --toggle-transcription` to start/stop dictation from anywhere.
+</Callout>
+
+Everything else — the model, language, device, VAD, realtime, wake words, TTS — is configured
+in the [Settings UI](/docs/settings) and persisted, not passed on the command line.
+
+## Developer spike binaries
+
+The repo ships a few **non-shipped** `cargo run --bin` harnesses used to benchmark and
+de-risk the engines during the port. They live in `src-tauri/src/bin/` and are driven by
+environment variables. You only need these if you're hacking on the inference path.
+
+### `stt_spike` — STT decode benchmark
+
+Decodes a fixed 16 kHz JFK sample through the unified `ort` engine and prints the transcript +
+timing, so you can A/B a model, quantization, or execution provider.
+
+```bash
+cargo run --release --bin stt_spike                       # whisper-tiny.en, CPU
+cargo run --release --bin stt_spike -- <hf_snapshot_dir> [n_mels] [lang]
+SPIKE_PROVIDER=dml cargo run --release --bin stt_spike    # measure the DirectML path
+```
+
+<ModelTable
+  head={["Env var", "What it does"]}
+  rows={[
+    ["SPIKE_PROVIDER", "Execution provider: cpu (default), dml, or cuda."],
+    ["SPIKE_QUANT", "Override the resolved quantization (e.g. int8, fp16) to A/B precisions."],
+    ["SPIKE_CACHE_ONLY", "Resolve from the on-disk HF cache only (no network)."],
+    ["HF_HUB_CACHE / HF_HOME", "Where to find / download model snapshots."],
+  ]}
+/>
+
+### `tts_spike` — Kokoro TTS benchmark
+
+Times the shipped Kokoro synthesis path (warm/cold) on CPU or DirectML.
+
+```bash
+cargo run --release --bin tts_spike
+SPIKE_TTS_DEVICE=dml cargo run --release --bin tts_spike   # measure the GPU path
+```
+
+`WINSTT_KOKORO_DIR` overrides the model/voicepack location; `SPIKE_TTS_DEVICE` selects
+`cpu` (default) or `dml`.
+
+### `tts_engine_spike` — exploratory TTS engines
+
+Runs the experimental TTS engines (kitten / piper / supertonic / chatterbox) that are **not**
+in the shipped app, loading their weights from `.tts-cache/<engine>/`.
+
+```bat
+rem from the repo root — wraps the MSVC env + redirects output to spike_out.log
+rust-migration\spike.bat <engine> [voice] [text]
+```
+
+`WINSTT_TTS_CACHE` overrides the cache root; `ESPEAK_NG_LIBRARY` points at the espeak-ng DLL
+(auto-resolved to the bundled copy if unset).
+
+## Related
+
+<Cards>
+  <Card title="Choose a model" href="/docs/settings/model">
+    Model, device, quantization, and realtime — set from the UI.
+  </Card>
+  <Card title="Backend Architecture" href="/docs/architecture/backend">
+    How the engines the spikes exercise are loaded and run.
+  </Card>
+  <Card title="Dev Environment Setup" href="/docs/dev-setup">
+    Toolchain, build helpers, and running the app from source.
+  </Card>
+</Cards>

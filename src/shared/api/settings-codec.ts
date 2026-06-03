@@ -1,5 +1,9 @@
 import type { z } from "zod";
-import { type AppSettingsOutput, appSettingsSchema } from "@/shared/config/settings-schema";
+import {
+	type AppSettingsOutput,
+	appSettingsSchema,
+	appSettingsSectionSchemas,
+} from "@/shared/config/settings-schema";
 import { resolveHotkeyTriple } from "@/shared/lib/hotkey-conflict";
 
 /**
@@ -72,11 +76,31 @@ function payloadAsRecord(payload: unknown): Record<string, unknown> {
 		: {};
 }
 
+function migrateLegacyGlobalSection(payload: unknown): Record<string, unknown> {
+	const root = payloadAsRecord(payload);
+	const model = payloadAsRecord(root.model);
+	const legacyTimeout = model.modelUnloadTimeout;
+	if (legacyTimeout === undefined) {
+		return root;
+	}
+	const global = payloadAsRecord(root.global);
+	if (global.modelUnloadTimeout !== undefined) {
+		return root;
+	}
+	return {
+		...root,
+		global: {
+			...global,
+			modelUnloadTimeout: legacyTimeout,
+		},
+	};
+}
+
 function partialDecodeBySections(payload: unknown): AppSettingsOutput {
 	const defaults = appSettingsSchema.parse({});
-	const payloadRecord = payloadAsRecord(payload);
+	const payloadRecord = migrateLegacyGlobalSection(payload);
 	const result: Record<string, unknown> = { ...defaults };
-	for (const [key, sectionSchema] of Object.entries(appSettingsSchema.shape)) {
+	for (const [key, sectionSchema] of Object.entries(appSettingsSectionSchemas)) {
 		const sectionParsed = (sectionSchema as z.ZodType).safeParse(payloadRecord[key]);
 		if (sectionParsed.success) {
 			result[key] = sectionParsed.data;

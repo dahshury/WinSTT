@@ -1,8 +1,8 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/07_*.md §3 + lib_wiring.md §3,
+// Source: docs/port/07_*.md §3 + lib_wiring.md §3,
 // memory project_context_playground_debug. Wraps managers::ContextManager.
 //
 // Context-awareness debug command — gated behind the `context-playground` feature
-// (flip off before release; mirrors CONTEXT_PLAYGROUND_ENABLED in the Electron
+// (flip off before release; mirrors CONTEXT_PLAYGROUND_ENABLED in the reference
 // build). Surfaces EXACTLY what the dictation capture pulls from the focused
 // field, for the live debug window.
 
@@ -45,9 +45,7 @@ pub fn debug_read_context(
     context: State<'_, Arc<ContextManager>>,
     mode: String,
 ) -> ContextDebugPayload {
-    use crate::winstt::context::{
-        debug_verdicts, format_context_for_prompt, ContextReader,
-    };
+    use crate::winstt::context::{debug_verdicts, format_context_for_prompt, ContextReader};
 
     let mode = match mode.as_str() {
         "selection" => ContextMode::Selection,

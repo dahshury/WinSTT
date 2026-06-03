@@ -5,11 +5,11 @@ import { IPC } from "@/shared/api/ipc-channels";
 import type { SoundLibraryEntry } from "@/shared/config/settings-schema";
 import { useSoundLibrary } from "./use-sound-library";
 
-// Drives the hook through a per-file `window.electronAPI` stub keyed on IPC
+// Drives the hook through a per-file `window.nativeBridge` stub keyed on IPC
 // channels (the push-to-talk / catalog-store convention) instead of a global
 // `mock.module` — so nothing leaks into sibling test files.
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 
 interface AddResult {
@@ -32,7 +32,7 @@ function installStub(): void {
 	removeResult = { ok: true };
 	dialogPath = null;
 	invokes.length = 0;
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		getPathForFile: () => "",
 		send: () => undefined,
@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings });
 });
 

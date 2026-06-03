@@ -85,26 +85,3 @@ export function TextureCardBody({ className, children, ...props }: TextureCardRe
 		</div>
 	);
 }
-
-/**
- * Bottom region — a brighter strip that provides the visual close to the
- * card. Lifts one surface step above the body so it visibly contrasts
- * (the user's specific ask: "contrast between footers and surroundings").
- * Uses dimmer text by default so it reads as supporting metadata.
- */
-export function TextureCardFooter({ className, children, ...props }: TextureCardRegionProps) {
-	const bodyLevel = useSurface();
-	const footerLevel = Math.min(bodyLevel + 1, 8);
-	return (
-		<div
-			className={cn(
-				surfaceBg(footerLevel),
-				"px-5 py-2.5 text-body-sm text-foreground-muted",
-				className
-			)}
-			{...props}
-		>
-			{children}
-		</div>
-	);
-}

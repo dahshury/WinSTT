@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { IPC } from "@/shared/api/ipc-channels";
 import type { TtsPlaybackQueue } from "../lib/playback-queue";
 import {
 	discardTts,
@@ -20,6 +19,38 @@ interface StubQueue {
 	stop: () => void;
 }
 const asQueue = (q: StubQueue) => q as unknown as TtsPlaybackQueue;
+
+interface TauriInvokeCall {
+	args: Record<string, unknown> | undefined;
+	cmd: string;
+}
+
+interface TauriInternals {
+	invoke: (cmd: string, args?: Record<string, unknown>, options?: unknown) => Promise<unknown>;
+}
+
+function installTauriInvokeRecorder(): {
+	calls: TauriInvokeCall[];
+	restore: () => void;
+} {
+	const internals = (window as unknown as { __TAURI_INTERNALS__?: TauriInternals })
+		.__TAURI_INTERNALS__;
+	if (!internals) {
+		throw new Error("expected test Tauri internals to be installed");
+	}
+	const calls: TauriInvokeCall[] = [];
+	const originalInvoke = internals.invoke;
+	internals.invoke = (cmd, args) => {
+		calls.push({ cmd, args });
+		return Promise.resolve(undefined);
+	};
+	return {
+		calls,
+		restore: () => {
+			internals.invoke = originalInvoke;
+		},
+	};
+}
 
 function resetStore(): void {
 	useTtsPlaybackStore.setState({ status: "idle", requestId: null, error: null });
@@ -123,21 +154,14 @@ describe("tts-playback queue controls", () => {
 	});
 
 	test("discardTts stops the local queue AND cancels the server run", () => {
-		const originalApi = window.electronAPI;
-		const sends: Array<{ channel: string; args: unknown[] }> = [];
-		window.electronAPI = {
-			...originalApi,
-			send: (channel: string, ...args: unknown[]) => {
-				sends.push({ channel, args });
-			},
-		};
+		const { calls: tauriCalls, restore } = installTauriInvokeRecorder();
 		try {
 			useTtsPlaybackStore.getState().markStarted("req-9");
 			discardTts();
 			expect(calls.stop).toBe(1);
-			expect(sends).toEqual([{ channel: IPC.TTS_CANCEL, args: [{ requestId: "req-9" }] }]);
+			expect(tauriCalls).toEqual([{ cmd: "tts_cancel", args: { requestId: "req-9" } }]);
 		} finally {
-			window.electronAPI = originalApi;
+			restore();
 		}
 	});
 });

@@ -4,7 +4,7 @@ import { useConnectionStore } from "@/entities/connection";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useConnectionListener } from "./use-connection-listener";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
 function makeApi(invokeImpl?: (channel: string) => unknown) {
@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 function fire(channel: string, ...args: unknown[]) {
@@ -51,14 +51,14 @@ function fire(channel: string, ...args: unknown[]) {
 
 describe("useConnectionListener", () => {
 	test("subscribes to connection-change and server-status channels", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		renderHook(() => useConnectionListener());
 		expect(listeners.has(IPC.STT_CONNECTION_CHANGE)).toBe(true);
 		expect(listeners.has(IPC.STT_SERVER_STATUS)).toBe(true);
 	});
 
 	test("queries STT_IS_CONNECTED on mount and seeds connection state if true", async () => {
-		window.electronAPI = makeApi((channel) => {
+		window.nativeBridge = makeApi((channel) => {
 			if (channel === IPC.STT_IS_CONNECTED) {
 				return true;
 			}
@@ -71,7 +71,7 @@ describe("useConnectionListener", () => {
 	});
 
 	test("connection-change events update the store status", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		renderHook(() => useConnectionListener());
 		fire(IPC.STT_CONNECTION_CHANGE, { connected: true });
 		expect(useConnectionStore.getState().connectionStatus).toBe("connected");
@@ -82,14 +82,14 @@ describe("useConnectionListener", () => {
 	});
 
 	test("server-status events update the store serverStatus", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		renderHook(() => useConnectionListener());
 		fire(IPC.STT_SERVER_STATUS, { status: "running" });
 		expect(useConnectionStore.getState().serverStatus).toBe("running");
 	});
 
 	test("unmount unsubscribes all listeners", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		const { unmount } = renderHook(() => useConnectionListener());
 		unmount();
 		expect(listeners.get(IPC.STT_CONNECTION_CHANGE)?.length ?? 0).toBe(0);

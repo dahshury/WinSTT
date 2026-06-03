@@ -1,17 +1,17 @@
 import {
 	CheckmarkCircle02Icon,
-	ComputerIcon,
 	Mic01Icon,
 	MicOff01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
+import { useTranslations } from "use-intl";
 import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { Select, type SelectOption } from "@/shared/ui/select";
+import { Select } from "@/shared/ui/select";
 import { useOnboardingWizardStore } from "../../model/wizard-store";
 
 /** RMS threshold above which we count the mic test as "heard something". */
@@ -36,7 +36,8 @@ const METER_SEGMENTS = 28;
  * "ANY mic is producing audio" sanity check.
  */
 export function OnboardingMicTestStep() {
-	const { devices } = useInputDevices();
+	const t = useTranslations("onboarding");
+	const { devices, defaultDevice } = useInputDevices();
 	const inputDeviceIndex = useSettingsStore((s) => s.settings.audio.inputDeviceIndex);
 	const updateAudioSettings = useSettingsStore((s) => s.updateAudioSettings);
 	const micTestPassed = useOnboardingWizardStore((s) => s.micTestPassed);
@@ -107,15 +108,9 @@ export function OnboardingMicTestStep() {
 	const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
 		devices,
 		inputDeviceIndex,
-		"System default"
+		t("systemDefault"),
+		defaultDevice?.name
 	);
-	// Mirror Settings → Audio: a leading icon per row (system-default reads as a
-	// distinct "computer" row, real mics get the mic glyph).
-	const deviceSelectOptions: SelectOption[] = deviceOptions.map((o) => ({
-		...o,
-		icon: o.id === "default" ? ComputerIcon : Mic01Icon,
-	}));
-
 	const handleDeviceChange = (id: string) => {
 		const nextIndex = id === "default" ? null : Number.parseInt(id, 10);
 		updateAudioSettings({
@@ -126,39 +121,37 @@ export function OnboardingMicTestStep() {
 	return (
 		<div className="flex flex-col gap-3">
 			<FormControl
-				caption="Same picker you'll see in Settings → Audio. Change any time from the tray menu."
-				label="Microphone"
+				caption={t("micCaption")}
+				label={t("micLabel")}
 				layout="stacked"
 			>
 				<ElevatedSurface inline>
 					<Select
-						aria-label="Microphone"
+						aria-label={t("micLabel")}
 						onChange={handleDeviceChange}
-						options={deviceSelectOptions}
+						options={deviceOptions}
 						value={currentDeviceId}
 					/>
 				</ElevatedSurface>
 			</FormControl>
 
-			<FormControl label="Level test" layout="stacked">
+			<FormControl label={t("levelTest")} layout="stacked">
 				<ElevatedSurface>
 					<div className="flex flex-col gap-2.5 px-2 py-1">
 						<div className="flex items-center justify-between">
 							<span className="font-medium font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.16em]">
-								Speak now
+								{t("speakNow")}
 							</span>
 							{micTestPassed ? (
 								<span className="inline-flex items-center gap-1 rounded-sm bg-teal/15 px-1.5 py-0.5 text-2xs text-teal ring-1 ring-teal/30">
 									<HugeiconsIcon icon={CheckmarkCircle02Icon} size={10} />
-									<span className="font-medium uppercase tracking-wider">Heard you</span>
+									<span className="font-medium uppercase tracking-wider">{t("heardYou")}</span>
 								</span>
 							) : null}
 						</div>
 						<Meter level={level} permission={permission} />
 						{permission === "denied" ? (
-							<p className="text-body-sm text-error leading-snug">
-								Microphone access is blocked. Enable it in Windows Settings, then re-open WinSTT.
-							</p>
+							<p className="text-body-sm text-error leading-snug">{t("micBlocked")}</p>
 						) : null}
 						{permission === "granted" && !micTestPassed ? (
 							<button
@@ -166,7 +159,7 @@ export function OnboardingMicTestStep() {
 								onClick={() => setMicTestPassed(true)}
 								type="button"
 							>
-								Skip mic test
+								{t("skipMicTest")}
 							</button>
 						) : null}
 					</div>

@@ -89,6 +89,7 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
         "sense_voice" => EngineKind::SenseVoiceCtc,
         "dolphin" => EngineKind::DolphinCtc,
         "t-one" => EngineKind::ToneCtc,
+        "kaldi" if has("streaming") => EngineKind::KaldiTransducerStreaming, // sherpa streaming zipformer2
         "kaldi" => EngineKind::KaldiTransducer, // vosk + zipformer both = transducer file set
         "gigaam" => {
             if has("rnnt") {
@@ -100,6 +101,13 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
         "nemo" => {
             if has("canary") {
                 EngineKind::NemoAed
+            } else if has("streaming") {
+                // sherpa-onnx streaming FastConformer (cache-aware): CTC vs RNN-T transducer.
+                if has("ctc") {
+                    EngineKind::NemoCtcStreaming
+                } else {
+                    EngineKind::NemoRnntStreaming
+                }
             } else if has("rnnt") {
                 EngineKind::NemoRnnt
             } else if has("tdt") {
@@ -154,15 +162,12 @@ fn quant_state(
             .iter()
             .filter(|(name, _, _)| matches_quant_glob(&fg.glob, name, quant))
             .max_by_key(|(_, size, _)| *size);
-        match best {
-            Some((_, size, complete)) => {
-                present += 1;
-                matched_bytes += *size;
-                if !*complete {
-                    all_complete = false;
-                }
+        if let Some((_, size, complete)) = best {
+            present += 1;
+            matched_bytes += *size;
+            if !*complete {
+                all_complete = false;
             }
-            None => {}
         }
     }
     if present == 0 {
@@ -253,8 +258,8 @@ pub async fn probe_cache(models: &[ProbeModel]) -> BTreeMap<String, ModelQuantCa
     for m in models {
         let mut mqc = ModelQuantCache::default();
         // Resolve the model's HF repo id; an unknown bare alias has no cache entry → all not_cached.
-        let repo_key = resolver::resolve_repo(&m.id)
-            .map(|(o, n)| format!("{o}/{n}").to_ascii_lowercase());
+        let repo_key =
+            resolver::resolve_repo(&m.id).map(|(o, n)| format!("{o}/{n}").to_ascii_lowercase());
         let cached = repo_key.as_ref().and_then(|k| repo_files.get(k));
         let kind = engine_kind_for(&m.id, &m.family, &m.onnx_name);
 
@@ -278,29 +283,82 @@ mod tests {
 
     #[test]
     fn engine_kind_dispatch_matches_family() {
-        assert_eq!(engine_kind_for("tiny", "whisper", "onnx-community/whisper-tiny"), EngineKind::WhisperHf);
-        assert_eq!(engine_kind_for("moonshine-base", "moonshine", "moonshine-base"), EngineKind::Moonshine);
-        assert_eq!(engine_kind_for("cohere-transcribe", "cohere", "cohere-transcribe"), EngineKind::CohereAsr);
-        assert_eq!(engine_kind_for("sense-voice-small", "sense_voice", "x"), EngineKind::SenseVoiceCtc);
-        assert_eq!(engine_kind_for("dolphin-base-ctc", "dolphin", "dolphin-base-ctc"), EngineKind::DolphinCtc);
-        assert_eq!(engine_kind_for("t-tech/t-one", "t-one", "t-tech/t-one"), EngineKind::ToneCtc);
-        assert_eq!(engine_kind_for("zipformer-en", "kaldi", "zipformer-en"), EngineKind::KaldiTransducer);
-        assert_eq!(engine_kind_for("alphacep/vosk-model-ru", "kaldi", "x"), EngineKind::KaldiTransducer);
+        assert_eq!(
+            engine_kind_for("tiny", "whisper", "onnx-community/whisper-tiny"),
+            EngineKind::WhisperHf
+        );
+        assert_eq!(
+            engine_kind_for("moonshine-base", "moonshine", "moonshine-base"),
+            EngineKind::Moonshine
+        );
+        assert_eq!(
+            engine_kind_for("cohere-transcribe", "cohere", "cohere-transcribe"),
+            EngineKind::CohereAsr
+        );
+        assert_eq!(
+            engine_kind_for("sense-voice-small", "sense_voice", "x"),
+            EngineKind::SenseVoiceCtc
+        );
+        assert_eq!(
+            engine_kind_for("dolphin-base-ctc", "dolphin", "dolphin-base-ctc"),
+            EngineKind::DolphinCtc
+        );
+        assert_eq!(
+            engine_kind_for("t-tech/t-one", "t-one", "t-tech/t-one"),
+            EngineKind::ToneCtc
+        );
+        assert_eq!(
+            engine_kind_for("zipformer-en", "kaldi", "zipformer-en"),
+            EngineKind::KaldiTransducer
+        );
+        assert_eq!(
+            engine_kind_for("alphacep/vosk-model-ru", "kaldi", "x"),
+            EngineKind::KaldiTransducer
+        );
     }
 
     #[test]
     fn nemo_family_fans_out_by_name() {
-        assert_eq!(engine_kind_for("nemo-parakeet-ctc-0.6b", "nemo", "nemo-parakeet-ctc-0.6b"), EngineKind::NemoCtc);
-        assert_eq!(engine_kind_for("nemo-parakeet-rnnt-0.6b", "nemo", "nemo-parakeet-rnnt-0.6b"), EngineKind::NemoRnnt);
-        assert_eq!(engine_kind_for("nemo-parakeet-tdt-0.6b-v3", "nemo", "nemo-parakeet-tdt-0.6b-v3"), EngineKind::NemoTdt);
-        assert_eq!(engine_kind_for("nemo-canary-1b-v2", "nemo", "nemo-canary-1b-v2"), EngineKind::NemoAed);
-        assert_eq!(engine_kind_for("nemo-canary-1b-flash", "nemo", "istupakov/canary-1b-flash-onnx"), EngineKind::NemoAed);
+        assert_eq!(
+            engine_kind_for("nemo-parakeet-ctc-0.6b", "nemo", "nemo-parakeet-ctc-0.6b"),
+            EngineKind::NemoCtc
+        );
+        assert_eq!(
+            engine_kind_for("nemo-parakeet-rnnt-0.6b", "nemo", "nemo-parakeet-rnnt-0.6b"),
+            EngineKind::NemoRnnt
+        );
+        assert_eq!(
+            engine_kind_for(
+                "nemo-parakeet-tdt-0.6b-v3",
+                "nemo",
+                "nemo-parakeet-tdt-0.6b-v3"
+            ),
+            EngineKind::NemoTdt
+        );
+        assert_eq!(
+            engine_kind_for("nemo-canary-1b-v2", "nemo", "nemo-canary-1b-v2"),
+            EngineKind::NemoAed
+        );
+        assert_eq!(
+            engine_kind_for(
+                "nemo-canary-1b-flash",
+                "nemo",
+                "istupakov/canary-1b-flash-onnx"
+            ),
+            EngineKind::NemoAed
+        );
     }
 
     #[test]
     fn gigaam_family_splits_ctc_rnnt() {
-        assert_eq!(engine_kind_for("gigaam-v3-e2e-ctc", "gigaam", "gigaam-v3-e2e-ctc"), EngineKind::GigaamCtc);
-        assert_eq!(engine_kind_for("gigaam-v3-e2e-rnnt", "gigaam", "gigaam-v3-e2e-rnnt"), EngineKind::GigaamRnnt);
+        assert_eq!(
+            engine_kind_for("gigaam-v3-e2e-ctc", "gigaam", "gigaam-v3-e2e-ctc"),
+            EngineKind::GigaamCtc
+        );
+        assert_eq!(
+            engine_kind_for("gigaam-v3-e2e-rnnt", "gigaam", "gigaam-v3-e2e-rnnt"),
+            EngineKind::GigaamRnnt
+        );
     }
 
     #[test]
@@ -311,7 +369,12 @@ mod tests {
             ("onnx/decoder_model_merged.onnx".to_string(), 200, true),
             ("vocab.json".to_string(), 5, true),
         ];
-        let (state, bytes) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
+        let (state, bytes) = quant_state(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Default,
+            &files,
+        );
         assert_eq!(state, CacheState::Cached);
         assert_eq!(bytes, 300);
     }
@@ -319,7 +382,12 @@ mod tests {
     #[test]
     fn quant_state_partial_when_one_graph_missing() {
         let files = vec![("onnx/encoder_model.onnx".to_string(), 100, true)];
-        let (state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
+        let (state, _) = quant_state(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Default,
+            &files,
+        );
         assert_eq!(state, CacheState::Partial);
     }
 
@@ -329,14 +397,24 @@ mod tests {
             ("onnx/encoder_model_fp16.onnx".to_string(), 100, false), // shard missing
             ("onnx/decoder_model_merged_fp16.onnx".to_string(), 200, true),
         ];
-        let (state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Fp16, &files);
+        let (state, _) = quant_state(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Fp16,
+            &files,
+        );
         assert_eq!(state, CacheState::Partial);
     }
 
     #[test]
     fn quant_state_not_cached_when_no_graph() {
         let files = vec![("vocab.json".to_string(), 5, true)];
-        let (state, bytes) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
+        let (state, bytes) = quant_state(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Default,
+            &files,
+        );
         assert_eq!(state, CacheState::NotCached);
         assert_eq!(bytes, 0);
     }
@@ -348,9 +426,23 @@ mod tests {
             ("onnx/encoder_model_fp16.onnx".to_string(), 100, true),
             ("onnx/decoder_model_merged_fp16.onnx".to_string(), 200, true),
         ];
-        let (default_state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default, &files);
-        assert_eq!(default_state, CacheState::NotCached, "fp16 files must not satisfy default export");
-        let (fp16_state, _) = quant_state("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Fp16, &files);
+        let (default_state, _) = quant_state(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Default,
+            &files,
+        );
+        assert_eq!(
+            default_state,
+            CacheState::NotCached,
+            "fp16 files must not satisfy default export"
+        );
+        let (fp16_state, _) = quant_state(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Fp16,
+            &files,
+        );
         assert_eq!(fp16_state, CacheState::Cached);
     }
 
@@ -361,7 +453,12 @@ mod tests {
             ("model.int8.onnx".to_string(), 999, true),
             ("tokens.txt".to_string(), 3, true),
         ];
-        let (state, bytes) = quant_state("dolphin-base-ctc", EngineKind::DolphinCtc, Quantization::Int8, &files);
+        let (state, bytes) = quant_state(
+            "dolphin-base-ctc",
+            EngineKind::DolphinCtc,
+            Quantization::Int8,
+            &files,
+        );
         assert_eq!(state, CacheState::Cached);
         assert_eq!(bytes, 999);
     }

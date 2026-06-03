@@ -466,7 +466,7 @@ export function formatOllamaDisplayName(name: string): string {
 }
 
 /** Pretty size label — "1.2 GB" / "650 MB" / "—" when unknown. */
-export function formatOllamaSize(bytes: number | undefined): string {
+export function formatOllamaSize(bytes: number | null | undefined): string {
 	if (!bytes || bytes <= 0) {
 		return "—";
 	}

@@ -6,7 +6,7 @@ import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { FormControl } from "@/shared/ui/form-control";
 import { InputGroupButton } from "@/shared/ui/input-group";
-import { Spinner } from "@/shared/ui/spinner";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 
 interface PlaygroundProps {
 	/** Disables the Run button regardless of sample content (e.g. no model
@@ -130,7 +130,7 @@ export function Playground({ run, disabled = false, disabledReason }: Playground
 								tone="surface"
 							>
 								{running ? (
-									<Spinner className="size-3.5" />
+									<PulseDot className="size-2.5" />
 								) : (
 									<HugeiconsIcon icon={PlayIcon} size={16} strokeWidth={2.25} />
 								)}

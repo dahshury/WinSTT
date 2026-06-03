@@ -5,7 +5,7 @@ import { useTranscriptionStore } from "@/entities/transcription";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useTranscriptionFeed } from "./use-transcription-feed";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
 beforeEach(() => {
@@ -16,7 +16,7 @@ beforeEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 	});
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -33,7 +33,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 function fire(channel: string, ...args: unknown[]) {
@@ -138,16 +138,28 @@ describe("useTranscriptionFeed", () => {
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
 	});
 
-	test("recording_stop does NOT disarm isRecordingActive (pill must survive LLM thinking)", () => {
-		// recording_stop fires before the LLM "thinking" indicator arrives, so
-		// flipping the flag here would hide the pill, then re-show it when
-		// LLM_PROCESSING_START fires — the exact flicker the OverlayPage
-		// comment block warns against.
-		useTranscriptionStore.setState({ isRecordingActive: true });
+	test("recording_stop disarms isRecordingActive (pill survives LLM thinking via isThinking, not this flag)", () => {
+		// The pill's mount gate is `isRecordingActive || isThinking`. The
+		// transcription feed OWNS `isRecordingActive` and disarms it the instant
+		// the PTT key is released (recording_stop), like Handy — the pill is the
+		// recording indicator, not the transcribe/post-process indicator. When an
+		// Ollama/LLM post-processor is connected the SEPARATE `isThinking` flag
+		// (driven by LLM_PROCESSING_START/_END) keeps the pill visible across the
+		// recording → thinking transition, so disarming here causes no flicker.
+		// recording_stop also wipes the realtime/ephemeral preview so it can't
+		// survive into the next PTT session.
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			currentRealtime: "live preview",
+			ephemeral: { text: "stale", timestamp: 0 },
+		});
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
 		fire(IPC.STT_RECORDING_STOP);
-		expect(useTranscriptionStore.getState().isRecordingActive).toBe(true);
+		const state = useTranscriptionStore.getState();
+		expect(state.isRecordingActive).toBe(false);
+		expect(state.currentRealtime).toBe("");
+		expect(state.ephemeral).toBeNull();
 	});
 });

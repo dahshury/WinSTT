@@ -1,4 +1,4 @@
-import { Note01Icon } from "@hugeicons/core-free-icons";
+import { StickyNote01Icon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import { SettingSection, useSettingsStore } from "@/entities/setting";
 import { generateId } from "@/shared/lib/generate-id";
@@ -10,7 +10,7 @@ export function SnippetsSettingsPanel() {
 	const t = useTranslations("snippets");
 
 	return (
-		<SettingSection icon={Note01Icon} title={t("title")}>
+		<SettingSection icon={StickyNote01Icon} title={t("title")}>
 			<div className="py-2">
 				<p className="mb-3 text-body-sm text-foreground-muted">{t("description")}</p>
 				<SnippetsTable

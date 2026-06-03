@@ -19,7 +19,7 @@ import {
 // at the call site, and it returns the exact same object it was given.
 const asSettings = <T extends object>(s: T): AppSettings => s as unknown as AppSettings;
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -55,11 +55,11 @@ function makeApi() {
 beforeEach(() => {
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
 	useConnectionStore.setState({ serverStatus: "idle" });
-	window.electronAPI = makeApi();
+	window.nativeBridge = makeApi();
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
 	useConnectionStore.setState({ serverStatus: "idle" });
 });
@@ -106,7 +106,7 @@ describe("collectChangedSections", () => {
 
 describe("performScheduledSave", () => {
 	test("is a no-op when the IPC-load guard window is active", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		const latestSettingsRef = { current: initialSettings };
 		const lastSavedRef: { current: AppSettings | undefined } = { current: initialSettings };
 		markIpcLoadResolved();
@@ -115,7 +115,7 @@ describe("performScheduledSave", () => {
 	});
 
 	test("is a no-op when the latest settings match lastSaved (empty patch)", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		_resetIpcLoadTimingForTests();
 		const latestSettingsRef = { current: initialSettings };
 		const lastSavedRef: { current: AppSettings | undefined } = { current: initialSettings };
@@ -124,7 +124,7 @@ describe("performScheduledSave", () => {
 	});
 
 	test("sends a settings:save with the diff and advances lastSavedRef when changes exist", () => {
-		window.electronAPI = makeApi();
+		window.nativeBridge = makeApi();
 		_resetIpcLoadTimingForTests();
 		// Build two clearly-divergent settings snapshots so diffAgainstLastSaved
 		// returns a non-empty patch regardless of how the default schema is

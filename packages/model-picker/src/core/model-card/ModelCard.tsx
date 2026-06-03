@@ -52,6 +52,12 @@ export interface ModelCardProps {
 	metaSlot?: ReactNode;
 	name: string;
 	nested?: boolean;
+	/** Card-BODY click handler for non-selectable (`as="div"`) rows — e.g. the
+	 *  Ollama recommended/library cards, where clicking the body selects/pulls the
+	 *  model's recommended (default) tag. Selectable (`combobox-item`) rows select
+	 *  through Base UI's `onValueChange` instead and ignore this. Shelf/action
+	 *  controls `stopPropagation`, so they never bubble up to it. */
+	onBodyClick?: (() => void) | undefined;
 	perf?: { accuracyScore: number; speedScore: number } | null | undefined;
 	selected?: boolean;
 	/** Override the leading selection indicator. Default (combobox-item mode) is
@@ -190,6 +196,7 @@ export function ModelCard({
 	"data-model-id": dataModelId,
 	makerIcon,
 	name,
+	onBodyClick,
 	selected = false,
 	indirectlySelected = false,
 	nested = false,
@@ -208,12 +215,17 @@ export function ModelCard({
 	trailing,
 	shelf,
 }: ModelCardProps) {
+	// A `div` card becomes body-clickable (select/pull the recommended tag) only
+	// when given a handler and not unavailable — `combobox-item` rows select via
+	// Base UI and ignore `onBodyClick`.
+	const bodyClickable = as === "div" && !unavailable && onBodyClick !== undefined;
 	const cardClass = cn(
 		CARD_BASE,
 		nested && CARD_NESTED,
 		selected && CARD_SELECTED,
 		indirectlySelected && CARD_SELECTED_VARIANT,
 		unavailable && CARD_UNAVAILABLE,
+		bodyClickable && "cursor-pointer",
 		className
 	);
 
@@ -267,6 +279,28 @@ export function ModelCard({
 			>
 				{body}
 			</Combobox.Item>
+		);
+	}
+	if (bodyClickable) {
+		return (
+			<div
+				className={cardClass}
+				data-model-id={dataModelId}
+				onClick={onBodyClick}
+				onKeyDown={(e) => {
+					// Activate on Enter/Space like a button — the badges/actions inside
+					// already `stopPropagation`, so this only fires for the card body.
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						onBodyClick?.();
+					}
+				}}
+				role="button"
+				tabIndex={0}
+				title={title}
+			>
+				{body}
+			</div>
 		);
 	}
 	return (

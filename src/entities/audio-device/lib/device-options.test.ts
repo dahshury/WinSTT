@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import {
+	BluetoothConnectedIcon,
+	CameraMicrophone01Icon,
+	ComputerIcon,
+	HeadsetIcon,
+	LaptopIcon,
+	Mic01Icon,
+	MixerIcon,
+	UsbConnected01Icon,
+} from "@hugeicons/core-free-icons";
 import type { AudioDevice } from "../model/audio-device";
-import { buildInputDeviceOptions } from "./device-options";
+import { buildInputDeviceOptions, inputDeviceIconForName } from "./device-options";
 
 function makeDevice(index: number, name: string, isDefault = false): AudioDevice {
 	return { index, name, isDefault, defaultSampleRate: 44_100, maxInputChannels: 2 };
@@ -11,6 +21,7 @@ describe("buildInputDeviceOptions", () => {
 		const result = buildInputDeviceOptions([], null, "System Default");
 		expect(result.deviceOptions).toHaveLength(1);
 		expect(result.deviceOptions[0]?.id).toBe("default");
+		expect(result.deviceOptions[0]?.icon).toBe(ComputerIcon);
 		expect(result.currentDeviceId).toBe("default");
 		expect(result.currentDeviceLabel).toBe("System Default");
 	});
@@ -20,7 +31,25 @@ describe("buildInputDeviceOptions", () => {
 		const result = buildInputDeviceOptions(devices, null, "System Default");
 		expect(result.deviceOptions).toHaveLength(3);
 		expect(result.deviceOptions[1]?.label).toBe("Built-in Mic");
+		expect(result.deviceOptions[1]?.icon).toBe(LaptopIcon);
 		expect(result.deviceOptions[2]?.label).toBe("USB Headset");
+		expect(result.deviceOptions[2]?.icon).toBe(HeadsetIcon);
+	});
+
+	test("uses the actual default device name to pick the system-default row icon", () => {
+		const result = buildInputDeviceOptions([], null, "System Default (USB Mic)", "USB Mic");
+		expect(result.deviceOptions[0]?.icon).toBe(UsbConnected01Icon);
+	});
+
+	test("maps common input device names to suitable icons", () => {
+		expect(inputDeviceIconForName("Bluetooth Headset")).toBe(BluetoothConnectedIcon);
+		expect(inputDeviceIconForName("USB Condenser Mic")).toBe(UsbConnected01Icon);
+		expect(inputDeviceIconForName("Integrated Camera Microphone")).toBe(
+			CameraMicrophone01Icon
+		);
+		expect(inputDeviceIconForName("Scarlett 2i2 USB")).toBe(MixerIcon);
+		expect(inputDeviceIconForName("Built-in Microphone Array")).toBe(LaptopIcon);
+		expect(inputDeviceIconForName("Studio Microphone")).toBe(Mic01Icon);
 	});
 
 	test("deduplicates devices with the same name (case-insensitive trim)", () => {

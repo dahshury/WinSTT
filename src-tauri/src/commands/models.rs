@@ -162,7 +162,13 @@ pub async fn set_active_model(
     _transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    switch_active_model(&app_handle, &model_id)
+    // `switch_active_model` performs a synchronous ONNX model load
+    // (`transcription_manager.load_model`), which can take seconds and would
+    // otherwise block a Tauri async runtime worker for the whole duration.
+    // Offload it to the blocking pool so the executor stays responsive.
+    tauri::async_runtime::spawn_blocking(move || switch_active_model(&app_handle, &model_id))
+        .await
+        .map_err(|e| format!("Model load task panicked: {}", e))?
 }
 
 #[tauri::command]

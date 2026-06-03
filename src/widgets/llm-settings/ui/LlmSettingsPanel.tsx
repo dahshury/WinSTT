@@ -1,6 +1,7 @@
 import {
 	AiBrain02Icon,
 	ArrangeIcon,
+	BrainCircuitIcon,
 	BrushIcon,
 	Cancel01Icon,
 	Delete02Icon,
@@ -56,6 +57,7 @@ import {
 import type { OpenRouterModel } from "@/shared/api/models";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { detectAppleIntelligencePlatform } from "@/shared/lib/apple-intelligence-platform";
+import { cn } from "@/shared/lib/cn";
 import { findLanguage, LANGUAGES } from "@/shared/lib/languages";
 import { surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { useMountEffect } from "@/shared/lib/use-mount-effect";
@@ -104,13 +106,14 @@ import {
 	toggleIndependent,
 } from "../lib/llm-settings-panel-test-helpers";
 import {
-	clonePlaygroundConfig,
-	loadPlaygroundPresets,
-	makePlaygroundPresetId,
-	type PlaygroundConfig,
-	type PlaygroundPreset,
-	savePlaygroundPresets,
-} from "../model/playground-presets";
+	cloneLlmConfiguration,
+	type LlmConfiguration,
+	loadPlaygroundSession,
+	matchConfigurationId,
+	type SavedConfiguration,
+	savePlaygroundSession,
+	useLlmConfigurationsStore,
+} from "../model/configurations";
 import { useWarmupStatusStore } from "../model/warmup-status-store";
 import { CreatableCombobox, type CreatableComboboxItem } from "./CreatableCombobox";
 import { Playground } from "./Playground";
@@ -1294,12 +1297,89 @@ type PresetUpdate = Partial<{
 	presets: BuiltinPresetEntry[];
 }>;
 
+// The full per-feature snapshot (provider/model fields + the tone/modifiers
+// carrier). The Configuration combobox needs the model half too, so saving from
+// the tone row captures a complete configuration that's also runnable in the
+// Playground — `seedDraftFromFeature` (hoisted, defined below) projects it.
+type FullFeatureSnapshot = LlmFeatureDraft & PresetCarrier;
+
+/**
+ * Configuration combobox for a feature's Tone row. Lists every saved
+ * configuration (shared across both features AND the Playground via
+ * `useLlmConfigurationsStore`):
+ *   - selecting one applies its tone + modifiers to THIS section (the
+ *     provider/model half is left untouched — that's the Playground's job);
+ *   - typing a name saves the section's CURRENT full state as a configuration;
+ *   - the inline delete removes one.
+ * The closed value reflects the configuration whose tone + modifiers currently
+ * match the section, or blank once the user diverges. Applying restores custom
+ * modifiers wholesale — including ones the user had since deleted, whose full
+ * definitions live on inside the saved configuration.
+ */
+function ConfigurationsCombobox({
+	snapshot,
+	t,
+	update,
+}: {
+	snapshot: FullFeatureSnapshot;
+	t: TranslateFn;
+	update: (patch: PresetUpdate) => void;
+}) {
+	const configurations = useLlmConfigurationsStore((s) => s.configurations);
+	const saveConfiguration = useLlmConfigurationsStore((s) => s.saveConfiguration);
+	const removeConfiguration = useLlmConfigurationsStore((s) => s.removeConfiguration);
+
+	const items: CreatableComboboxItem[] = configurations.map((c) => ({
+		id: c.id,
+		label: c.name,
+		deletable: true,
+	}));
+
+	const applyConfiguration = (id: string) => {
+		const cfg = configurations.find((c) => c.id === id);
+		if (!cfg) {
+			return;
+		}
+		update({
+			presets: cfg.config.presets.map((p) => ({ ...p })),
+			customModifiers: cfg.config.customModifiers.map((m) => ({ ...m })),
+		});
+	};
+
+	const handleCreate = (rawName: string) => {
+		const name = rawName.trim();
+		if (name) {
+			saveConfiguration(name, seedDraftFromFeature(snapshot));
+		}
+	};
+
+	return (
+		<CreatableCombobox
+			className="ml-auto w-52"
+			createLabel={(name) => t("modifierPresetCreate", { name })}
+			deleteAriaLabel={t("playgroundDeletePreset")}
+			emptyLabel={t("modifierPresetEmpty")}
+			items={items}
+			onCreate={handleCreate}
+			onDelete={removeConfiguration}
+			onSelect={applyConfiguration}
+			placeholder={t("playgroundSelectConfig")}
+			value={matchConfigurationId(snapshot, configurations)}
+		/>
+	);
+}
+
 function FeaturePresetControls({
+	configControl,
 	feature,
 	model,
 	snapshot,
 	update,
 }: {
+	/** Optional Configuration combobox rendered on the trailing edge of the Tone
+	 *  row. The settings panel passes one (save/apply/delete a configuration for
+	 *  this section); the Playground omits it — it has its own config selector. */
+	configControl?: ReactNode;
 	feature: "dictation" | "transforms";
 	model: Pick<LlmSettingsPanelModel, "t" | "tc" | "toneOpts" | "levelOpts">;
 	snapshot: PresetCarrier;
@@ -1322,7 +1402,7 @@ function FeaturePresetControls({
 	return (
 		<div className="flex flex-col divide-y divide-surface-1">
 			<div className="col-span-2">
-				<FormControl label={t("tone")} tooltip={t("toneTooltip")}>
+				<FormControl label={t("tone")} labelTrailing={configControl} tooltip={t("toneTooltip")}>
 					<ElevatedSurface>
 						<Switcher
 							fullWidth
@@ -1410,7 +1490,7 @@ function FeaturePresetControls({
 const LIVE_DICTATION = "live:dictation";
 const LIVE_TRANSFORMS = "live:transforms";
 
-function seedDraftFromFeature(f: LlmFeatureDraft & PresetCarrier): PlaygroundConfig {
+function seedDraftFromFeature(f: LlmFeatureDraft & PresetCarrier): LlmConfiguration {
 	return {
 		enabled: f.enabled,
 		maxOutputTokens: f.maxOutputTokens,
@@ -1426,7 +1506,26 @@ function seedDraftFromFeature(f: LlmFeatureDraft & PresetCarrier): PlaygroundCon
 	};
 }
 
-function initialPlaygroundSelection(model: LlmSettingsPanelModel): string {
+/** True for combobox values the restored session can legitimately point at:
+ *  the two live entries always, a saved preset only while it still exists. */
+function isResolvableSelection(selection: string, presets: readonly SavedConfiguration[]): boolean {
+	return (
+		selection === LIVE_DICTATION ||
+		selection === LIVE_TRANSFORMS ||
+		presets.some((p) => p.id === selection)
+	);
+}
+
+function initialPlaygroundSelection(
+	model: LlmSettingsPanelModel,
+	presets: readonly SavedConfiguration[]
+): string {
+	// A remembered session wins — but if its label was a since-deleted preset,
+	// fall back to the Dictation entry (the draft itself is still restored).
+	const session = loadPlaygroundSession();
+	if (session) {
+		return isResolvableSelection(session.selection, presets) ? session.selection : LIVE_DICTATION;
+	}
 	return model.dictation.enabled || !model.transforms.enabled ? LIVE_DICTATION : LIVE_TRANSFORMS;
 }
 
@@ -1435,23 +1534,30 @@ function initialPlaygroundSelection(model: LlmSettingsPanelModel): string {
 function seedForSelection(
 	selection: string,
 	model: LlmSettingsPanelModel,
-	presets: readonly PlaygroundPreset[]
-): PlaygroundConfig {
+	presets: readonly SavedConfiguration[]
+): LlmConfiguration {
 	if (selection === LIVE_TRANSFORMS) {
 		return seedDraftFromFeature(model.transforms);
 	}
 	const preset = presets.find((p) => p.id === selection);
 	if (preset) {
-		return clonePlaygroundConfig(preset.config);
+		return cloneLlmConfiguration(preset.config);
 	}
 	return seedDraftFromFeature(model.dictation);
 }
 
-/** Initial editable draft when the playground opens: the live config for the
- *  feature the user is most likely tuning. Mirrors the lazy `useState` seed for
- *  `selection` so both derive from `model` the same single-call way. */
-function initialPlaygroundDraft(model: LlmSettingsPanelModel): PlaygroundConfig {
-	return seedForSelection(initialPlaygroundSelection(model), model, []);
+/** Initial editable draft when the playground opens: the model/config the user
+ *  last left it on (restored from the persisted session) if present, otherwise
+ *  the live config for the feature they're most likely tuning. */
+function initialPlaygroundDraft(
+	model: LlmSettingsPanelModel,
+	presets: readonly SavedConfiguration[]
+): LlmConfiguration {
+	const session = loadPlaygroundSession();
+	if (session) {
+		return cloneLlmConfiguration(session.config);
+	}
+	return seedForSelection(initialPlaygroundSelection(model, presets), model, presets);
 }
 
 /**
@@ -1467,9 +1573,9 @@ function PlaygroundModelPicker({
 	model,
 	onChange,
 }: {
-	draft: PlaygroundConfig;
+	draft: LlmConfiguration;
 	model: LlmSettingsPanelModel;
-	onChange: (patch: Partial<PlaygroundConfig>) => void;
+	onChange: (patch: Partial<LlmConfiguration>) => void;
 }) {
 	const { t, tc, providerOpts, ollamaCatalogState, openrouterCatalogState, openrouterApiKey } =
 		model;
@@ -1535,7 +1641,7 @@ function PlaygroundModelPicker({
 }
 
 /** True when the chosen provider has enough configured to actually run. */
-function playgroundHasModel(draft: PlaygroundConfig, openrouterApiKey: string): boolean {
+function playgroundHasModel(draft: LlmConfiguration, openrouterApiKey: string): boolean {
 	if (draft.provider === "apple-intelligence") {
 		return true;
 	}
@@ -1548,7 +1654,7 @@ function playgroundHasModel(draft: PlaygroundConfig, openrouterApiKey: string): 
 /** Combobox items for the playground config selector: the two live configs
  *  (non-deletable) followed by the saved config presets (deletable). */
 function buildConfigItems(
-	presets: readonly PlaygroundPreset[],
+	presets: readonly SavedConfiguration[],
 	t: TranslateFn
 ): CreatableComboboxItem[] {
 	return [
@@ -1566,11 +1672,34 @@ function PlaygroundModalBody({
 	onClose: () => void;
 }) {
 	const { t, tc } = model;
-	const [presets, setPresets] = useState<PlaygroundPreset[]>(loadPlaygroundPresets);
-	const [selection, setSelection] = useState<string>(() => initialPlaygroundSelection(model));
-	const [draft, setDraft] = useState<PlaygroundConfig>(() => initialPlaygroundDraft(model));
+	// Saved configurations come from the shared store so the Playground and the
+	// per-feature tone-row comboboxes all read/write ONE live list. Selection +
+	// draft seed once (lazy initializer) from whatever's saved at open.
+	const presets = useLlmConfigurationsStore((s) => s.configurations);
+	const saveConfiguration = useLlmConfigurationsStore((s) => s.saveConfiguration);
+	const removeConfiguration = useLlmConfigurationsStore((s) => s.removeConfiguration);
+	const [selection, setSelection] = useState<string>(() =>
+		initialPlaygroundSelection(model, presets)
+	);
+	const [draft, setDraft] = useState<LlmConfiguration>(() => initialPlaygroundDraft(model, presets));
 
-	const update = (patch: Partial<PlaygroundConfig>) => setDraft((prev) => ({ ...prev, ...patch }));
+	// Mirror the current config + combobox label to localStorage so the next
+	// open restores the model/tweaks instead of re-seeding from the live config.
+	// External-store sync (not derived state) — the write lives in the effect
+	// body, never a setState, so it's the allowed useEffect shape. The mount run
+	// is skipped (the ref resets on each open since the body remounts) so simply
+	// opening and closing without touching anything doesn't freeze the live seed;
+	// only edits made inside the playground are remembered.
+	const sessionWriteArmed = useRef(false);
+	useEffect(() => {
+		if (!sessionWriteArmed.current) {
+			sessionWriteArmed.current = true;
+			return;
+		}
+		savePlaygroundSession({ selection, config: draft });
+	}, [selection, draft]);
+
+	const update = (patch: Partial<LlmConfiguration>) => setDraft((prev) => ({ ...prev, ...patch }));
 
 	const handleSelect = (next: string) => {
 		setSelection(next);
@@ -1582,21 +1711,12 @@ function PlaygroundModalBody({
 		if (!name) {
 			return;
 		}
-		const preset: PlaygroundPreset = {
-			id: makePlaygroundPresetId(),
-			name,
-			config: clonePlaygroundConfig(draft),
-		};
-		const next = [...presets, preset];
-		setPresets(next);
-		savePlaygroundPresets(next);
-		setSelection(preset.id);
+		// The store clones the draft on save, so later tweaks never mutate it.
+		setSelection(saveConfiguration(name, draft));
 	};
 
 	const deletePreset = (id: string) => {
-		const next = presets.filter((p) => p.id !== id);
-		setPresets(next);
-		savePlaygroundPresets(next);
+		removeConfiguration(id);
 		if (selection === id) {
 			handleSelect(LIVE_DICTATION);
 		}
@@ -1676,16 +1796,25 @@ function PlaygroundModalBody({
 						/>
 					</FormControl>
 					<PlaygroundModelPicker draft={draft} model={model} onChange={update} />
-					{/* Re-key on `selection` so the preset list's internal level/lang
-					    caches reseed from the freshly-seeded draft on switch. */}
-					<FeaturePresetControls
-						feature="transforms"
-						key={selection}
-						model={model}
-						snapshot={{ presets: draft.presets, customModifiers: draft.customModifiers }}
-						update={update}
-					/>
-					<Playground disabled={runDisabled} disabledReason={disabledReason} run={run} />
+					{/* Everything below the model selection — tone/modifiers and the
+					    run surface — is inert until a usable model is configured for
+					    the chosen provider: there's nothing to tune or test without
+					    one. The Playground's own `disabled` still surfaces the reason. */}
+					<div
+						aria-disabled={!hasModel || undefined}
+						className={cn("flex flex-col gap-4", !hasModel && "pointer-events-none opacity-40")}
+					>
+						{/* Re-key on `selection` so the preset list's internal level/lang
+						    caches reseed from the freshly-seeded draft on switch. */}
+						<FeaturePresetControls
+							feature="transforms"
+							key={selection}
+							model={model}
+							snapshot={{ presets: draft.presets, customModifiers: draft.customModifiers }}
+							update={update}
+						/>
+						<Playground disabled={runDisabled} disabledReason={disabledReason} run={run} />
+					</div>
 				</div>
 			</ScrollArea>
 		</div>
@@ -1808,7 +1937,7 @@ export function LlmSettingsPanel() {
 						{t("playgroundTitle")}
 					</Button>
 				}
-				icon={AiBrain02Icon}
+				icon={BrainCircuitIcon}
 				title={t("title")}
 			>
 				{/* Provider connection inputs (Ollama endpoint, OpenRouter API
@@ -1839,6 +1968,9 @@ export function LlmSettingsPanel() {
 					warmupStatus={warmupStatus}
 				>
 					<FeaturePresetControls
+						configControl={
+							<ConfigurationsCombobox snapshot={dictation} t={t} update={updateDictation} />
+						}
 						feature="dictation"
 						model={model}
 						snapshot={dictation}
@@ -1868,6 +2000,9 @@ export function LlmSettingsPanel() {
 					warmupStatus={warmupStatus}
 				>
 					<FeaturePresetControls
+						configControl={
+							<ConfigurationsCombobox snapshot={transforms} t={t} update={updateTransforms} />
+						}
 						feature="transforms"
 						model={model}
 						snapshot={transforms}

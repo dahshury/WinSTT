@@ -48,8 +48,8 @@ const IDENTICAL_BY_DESIGN = new Set<string>([
   "titleBar.appName", // "WinSTT"
   "about.appInfoTitle", // "Application" (cognate / proper noun in many locales)
   "about.appVersion", // "Version"
-  "about.electronVersion", // "Electron" (framework name)
-  "about.nodeVersion", // "Node" (runtime name)
+  "about.frameworkVersion", // "Tauri" (framework name)
+  "about.webview2Version", // "WebView2" (runtime name)
   "settings.tabLlm", // "LLM"
   // Brand / product names — identical in every locale.
   "integrations.openai", // "OpenAI"

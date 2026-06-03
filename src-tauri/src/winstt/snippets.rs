@@ -45,7 +45,8 @@ use crate::winstt::settings_schema::SnippetEntry;
 // "address." stays as match("address") + literal ".". Mirrors the TS
 // `WORD_RE = /[\p{L}\p{N}']+/gu`. The `regex` crate has Unicode classes on by
 // default, so `\p{L}` / `\p{N}` resolve the same way.
-static WORD_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\p{L}\p{N}']+").expect("valid word regex"));
+static WORD_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[\p{L}\p{N}']+").expect("valid word regex"));
 
 /// Jaro-Winkler acceptance bar for a candidate window vs. a trigger. Mirrors the
 /// TS `SNIPPET_JW_THRESHOLD` (0.92). Higher than the dictionary bar because a
@@ -226,7 +227,10 @@ fn double_metaphone(value: &str) -> (String, String) {
                         let sv = slice(chars, index - 2, index + 4);
                         sv.contains("ORCHES") || sv.contains("ARCHIT") || sv.contains("ORCHID")
                     };
-                    let ch_for_kh = matches!(nextnext, ' ' | 'B' | 'F' | 'H' | 'L' | 'M' | 'N' | 'R' | 'V' | 'W');
+                    let ch_for_kh = matches!(
+                        nextnext,
+                        ' ' | 'B' | 'F' | 'H' | 'L' | 'M' | 'N' | 'R' | 'V' | 'W'
+                    );
                     if is_germanic
                         || greek
                         || nextnext == 'T'
@@ -484,10 +488,7 @@ fn double_metaphone(value: &str) -> (String, String) {
                 if index == 0 {
                     primary.push('J');
                     secondary.push('A');
-                } else if !is_slavo_germanic
-                    && (next == 'A' || next == 'O')
-                    && is_vowel(previous)
-                {
+                } else if !is_slavo_germanic && (next == 'A' || next == 'O') && is_vowel(previous) {
                     primary.push('J');
                     secondary.push('H');
                 } else if index == last {
@@ -523,9 +524,7 @@ fn double_metaphone(value: &str) -> (String, String) {
                     if (index == length - 3
                         && ((previous == 'A' && nextnext == 'E')
                             || (previous == 'I' && (nextnext == 'O' || nextnext == 'A'))))
-                        || (previous == 'A'
-                            && nextnext == 'E'
-                            && (cl == 'A' || cl == 'O' || alle))
+                        || (previous == 'A' && nextnext == 'E' && (cl == 'A' || cl == 'O' || alle))
                     {
                         primary.push('L');
                         index += 2;
@@ -661,10 +660,8 @@ fn double_metaphone(value: &str) -> (String, String) {
                     // Schlesinger's rule.
                     if nextnext == 'H' {
                         let sv = slice(chars, index + 3, index + 5);
-                        let dutch = matches!(
-                            sv.as_str(),
-                            "ED" | "EM" | "EN" | "ER" | "UY" | "OO"
-                        ) || sv.starts_with("ED")
+                        let dutch = matches!(sv.as_str(), "ED" | "EM" | "EN" | "ER" | "UY" | "OO")
+                            || sv.starts_with("ED")
                             || sv.starts_with("EM")
                             || sv.starts_with("EN")
                             || sv.starts_with("ER")
@@ -1069,10 +1066,7 @@ pub fn reload_from_settings(app: &AppHandle) {
 
 /// Snapshot the cached snippets (the active set the expansion pass uses).
 fn cached_snippets() -> Vec<SnippetEntry> {
-    SNIPPET_STORE
-        .read()
-        .map(|g| g.clone())
-        .unwrap_or_default()
+    SNIPPET_STORE.read().map(|g| g.clone()).unwrap_or_default()
 }
 
 /// Apply snippet expansion using the in-memory cache. Pure given the cache;
@@ -1186,7 +1180,10 @@ mod tests {
     fn non_overlapping_left_to_right() {
         let s = vec![entry("my email", "E")];
         // Two occurrences, each replaced independently.
-        assert_eq!(replace_with_snippets("my email and my email", &s), "E and E");
+        assert_eq!(
+            replace_with_snippets("my email and my email", &s),
+            "E and E"
+        );
     }
 
     #[test]

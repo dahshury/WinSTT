@@ -1,12 +1,11 @@
 "use client";
 
-import { StarIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useReducer, useRef, useState } from "react";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { RailIconChip, type GroupRailItem } from "../../core/GroupRail";
+import { buildFavoritesRailItem, type GroupRailItem, RailIconChip } from "../../core/GroupRail";
 import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useRailScrollSpy } from "../../core/use-rail-scroll-spy";
 import { extractCloseReason } from "../../lib/combobox-reasons";
@@ -19,7 +18,6 @@ import { useModelSelectorClickTracking } from "../../lib/use-model-selector-clic
 import { STT_PICKER_WIDTH_CLASS } from "../lib/dimensions";
 import {
 	buildModelSearchCorpus,
-	FAVORITES_GROUP_VALUE,
 	type FamilyKey,
 	getAuthorLabel,
 	getBaseId,
@@ -130,17 +128,7 @@ function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
 		// The Favorites tile is maker-agnostic — a star instead of a brand logo,
 		// jumping to the synthetic group pinned at the top of the list.
 		if (isFavoritesGroup(group.value)) {
-			items.push({
-				id: FAVORITES_GROUP_VALUE,
-				label: "Favorites",
-				pinned: true,
-				badge: group.items.length,
-				icon: (
-					<RailIconChip tone="favorite">
-						<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
-					</RailIconChip>
-				),
-			});
+			items.push(buildFavoritesRailItem(group.items.length));
 			continue;
 		}
 		const family: FamilyKey = group.value;
@@ -152,7 +140,7 @@ function buildRailItems(groups: readonly SttListGroup[]): GroupRailItem[] {
 			icon: cfg.logoSrc ? (
 				<img
 					alt=""
-					className="size-5 rounded-[3px] object-cover"
+					className="size-5 rounded-[3px] object-contain"
 					height={20}
 					src={publicAsset(cfg.logoSrc)}
 					width={20}

@@ -1,4 +1,4 @@
-import { AiCloud01Icon, CpuIcon, LockIcon } from "@hugeicons/core-free-icons";
+import { AiComputerIcon, CloudServerIcon, LockIcon } from "@hugeicons/core-free-icons";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { CLOUD_PROVIDERS, defaultCloudModelId, providerOf } from "@/entities/cloud-stt-provider";
@@ -91,11 +91,11 @@ export function useSttSourceSwitch({
 	};
 
 	const sourceOpts: SwitcherOption<SttSource>[] = [
-		{ value: "local", label: t("sourceLocal"), icon: CpuIcon },
+		{ value: "local", label: t("sourceLocal"), icon: AiComputerIcon },
 		{
 			value: "cloud",
 			label: t("sourceCloud"),
-			icon: AiCloud01Icon,
+			icon: CloudServerIcon,
 			disabled: !hasAnyCloudKey,
 			...(hasAnyCloudKey
 				? {}

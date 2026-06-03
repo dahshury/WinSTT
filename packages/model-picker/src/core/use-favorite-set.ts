@@ -42,9 +42,7 @@ export interface FavoriteSet {
  * never collide. No defaults are seeded: favoriting is an explicit choice, so a
  * fresh install starts empty.
  *
- * Mirrors the persistence pattern of the original `useFavoriteSttModels` /
- * `useFavoriteOllamaModels` hooks — those stay as-is; new favorites features
- * use this shared hook.
+ * Model-specific hooks wrap this shared implementation with their storage key.
  */
 export function useFavoriteSet(storageKey: string): FavoriteSet {
 	const [favorites, setFavorites] = useState<string[]>(() => readStored(storageKey));

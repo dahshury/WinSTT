@@ -13,7 +13,16 @@ import { HotkeyRecorder } from "./HotkeyRecorder";
 const startCalls: number[] = [];
 const stopCalls: number[] = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
-let savedApi: typeof window.electronAPI;
+let savedApi: typeof window.nativeBridge;
+
+type TauriInternals = {
+	invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+	transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+};
+function tauriInternals(): TauriInternals {
+	return (window as unknown as { __TAURI_INTERNALS__: TauriInternals }).__TAURI_INTERNALS__;
+}
+let savedTauriInvoke: TauriInternals["invoke"];
 
 function fireListener(channel: string, ...args: unknown[]): void {
 	for (const cb of listeners.get(channel) ?? []) {
@@ -22,11 +31,12 @@ function fireListener(channel: string, ...args: unknown[]): void {
 }
 
 beforeEach(() => {
-	savedApi = window.electronAPI;
+	savedApi = window.nativeBridge;
+	savedTauriInvoke = tauriInternals().invoke;
 	startCalls.length = 0;
 	stopCalls.length = 0;
 	listeners.clear();
-	window.electronAPI = {
+	window.nativeBridge = {
 		getPathForFile: () => "",
 		secureInvoke: () => Promise.resolve(undefined),
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
@@ -40,12 +50,18 @@ beforeEach(() => {
 				);
 			};
 		},
-		invoke: async (channel: string) => {
-			if (channel === "hotkey:start-recording") {
+		// Record the LEAKED-fake seam too. When `mock.module("@/shared/api/ipc-client")`
+		// from another file leaks its behaviour-faithful fake into this one,
+		// `hotkeyStartRecording` routes through `nativeBridge.invoke` on the
+		// `hotkey:start-recording` channel (IPC.HOTKEY_START_RECORDING) instead of
+		// the typed `__TAURI_INTERNALS__` seam below — so observe BOTH with the same
+		// `startCalls` recorder to stay order-independent.
+		invoke: (channel: string) => {
+			if (channel === IPC.HOTKEY_START_RECORDING) {
 				startCalls.push(1);
-				return false;
+				return Promise.resolve(false);
 			}
-			return;
+			return Promise.resolve(undefined);
 		},
 		send: (channel: string) => {
 			if (channel === "hotkey:stop-recording") {
@@ -53,10 +69,23 @@ beforeEach(() => {
 			}
 		},
 	};
+	// `hotkeyStartRecording` routes through the TYPED `commands.hotkeyStartRecording()`
+	// (IPC.HOTKEY_START_RECORDING is in `COMMAND_INVOKERS`), which calls
+	// `@tauri-apps/api/core` invoke → `window.__TAURI_INTERNALS__.invoke("hotkey_start_recording")`.
+	// With the REAL module this is the seam that fires (the leaked-fake seam is
+	// the nativeBridge.invoke above) — instrument both so either routing counts.
+	tauriInternals().invoke = (cmd: string) => {
+		if (cmd === "hotkey_start_recording") {
+			startCalls.push(1);
+			return Promise.resolve(false);
+		}
+		return Promise.resolve(undefined);
+	};
 });
 
 afterEach(() => {
-	window.electronAPI = savedApi;
+	window.nativeBridge = savedApi;
+	tauriInternals().invoke = savedTauriInvoke;
 });
 
 function renderIt(currentKey = "LCtrl+LMeta", forbiddenCombos?: readonly ForbiddenCombo[]) {
@@ -115,7 +144,7 @@ describe("HotkeyRecorder", () => {
 		expect(recBtn).toBeDefined();
 	});
 
-	test("clicking the record button calls hotkeyStartRecording (via window.electronAPI.invoke)", () => {
+	test("clicking the record button calls hotkeyStartRecording (via the typed __TAURI_INTERNALS__.invoke seam)", () => {
 		renderIt();
 		const recBtn = screen.getByRole("button", { name: /record/i });
 		fireEvent.click(recBtn);

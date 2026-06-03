@@ -2,8 +2,9 @@ import { PlayIcon, StopIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { useTranslations } from "use-intl";
 import { ttsCancel } from "@/shared/api/ipc-client";
+import { IconSwap } from "@/shared/ui/animated-value";
 import { IconButton } from "@/shared/ui/icon-button";
-import { Spinner } from "@/shared/ui/spinner";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 
 export interface TtsPreviewButtonProps {
 	activeRequestId: string | null;
@@ -43,9 +44,13 @@ export function TtsPreviewButton({
 		label = t("loadingVoice");
 	}
 	const icon = thisLoading ? (
-		<Spinner className="size-4" />
+		<PulseDot className="size-2.5" />
 	) : (
-		<HugeiconsIcon icon={thisSpeaking ? StopIcon : PlayIcon} size={compact ? 14 : 16} />
+		<IconSwap
+			a={<HugeiconsIcon icon={PlayIcon} size={compact ? 14 : 16} />}
+			b={<HugeiconsIcon icon={StopIcon} size={compact ? 14 : 16} />}
+			state={thisSpeaking ? "b" : "a"}
+		/>
 	);
 	const onClick = () => {
 		if (thisSpeaking) {

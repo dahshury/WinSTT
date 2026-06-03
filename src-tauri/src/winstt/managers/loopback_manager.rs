@@ -212,8 +212,7 @@ fn consumer_loop(
     mut vad: Box<dyn VoiceActivityDetector>,
 ) {
     // How many consecutive silence frames close an utterance.
-    let silence_frames_to_end =
-        ((POST_SPEECH_SILENCE_DURATION * 1000.0) / 30.0).round() as usize;
+    let silence_frames_to_end = ((POST_SPEECH_SILENCE_DURATION * 1000.0) / 30.0).round() as usize;
 
     let mut speech: Vec<f32> = Vec::new();
     // Re-frame buffer: the capture emits 30 ms frames, but guard against a

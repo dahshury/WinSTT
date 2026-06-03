@@ -38,7 +38,7 @@ export const useDiarizationToggleStore = create<DiarizationToggleStore>()((set) 
 
 /**
  * Subscribe to diarization-toggle lifecycle pushes. Called once on module
- * load in Electron windows; exported so tests can wire it manually.
+ * load in the reference windows; exported so tests can wire it manually.
  */
 export function initDiarizationToggleStore(): () => void {
 	const unsubStarted = onDiarizationToggleStarted(() => {
@@ -68,6 +68,6 @@ export function initDiarizationToggleStore(): () => void {
 	};
 }
 
-if (typeof window !== "undefined" && window.electronAPI != null) {
+if (typeof window !== "undefined" && window.nativeBridge != null) {
 	initDiarizationToggleStore();
 }

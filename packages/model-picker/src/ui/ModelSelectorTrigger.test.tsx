@@ -94,7 +94,7 @@ describe("ModelSelectorTrigger", () => {
 		expect(container.textContent).toContain("Pick a model");
 	});
 
-	test("renders loading state with spinner", () => {
+	test("renders loading state with pulse dot", () => {
 		const { container } = render(
 			<TooltipProvider.Provider>
 				<Combobox.Root>
@@ -110,6 +110,10 @@ describe("ModelSelectorTrigger", () => {
 			</TooltipProvider.Provider>
 		);
 		expect(container.textContent).toContain("Loading...");
+		const dot = container.querySelector('[data-slot="pulse-dot"]');
+		expect(dot).not.toBeNull();
+		expect(dot?.getAttribute("style")).toContain("loading-ui-pulse-dot");
+		expect(container.querySelector(".animate-spin")).toBeNull();
 	});
 });
 
@@ -131,6 +135,8 @@ describe("TriggerButton", () => {
 			</TooltipProvider.Provider>
 		);
 		expect(container.textContent).toContain("Loading...");
+		expect(container.querySelector('[data-slot="pulse-dot"]')).not.toBeNull();
+		expect(container.querySelector(".animate-spin")).toBeNull();
 	});
 
 	test("renders Auto state when no model and no parsedModelId", () => {

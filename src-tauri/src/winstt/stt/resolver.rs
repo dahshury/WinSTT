@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: onnx-asr fork
+// Source: onnx-asr fork
 //   (E:/DL/Projects/onnx-asr/src/onnx_asr/resolver.py — model_repos, Resolver._download_model,
 //    _resolve_model_files; model_base._get_model_files; models/*.py per-family globs)
 // + WinSTT server (server/src/recorder/infrastructure/onnxasr_transcriber.py — _refetch_hf_snapshot,
@@ -50,12 +50,27 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
     ("gigaam-v3-rnnt", "istupakov/gigaam-v3-onnx"),
     ("gigaam-v3-e2e-ctc", "istupakov/gigaam-v3-onnx"),
     ("gigaam-v3-e2e-rnnt", "istupakov/gigaam-v3-onnx"),
-    ("nemo-fastconformer-ru-ctc", "istupakov/stt_ru_fastconformer_hybrid_large_pc_onnx"),
-    ("nemo-fastconformer-ru-rnnt", "istupakov/stt_ru_fastconformer_hybrid_large_pc_onnx"),
+    (
+        "nemo-fastconformer-ru-ctc",
+        "istupakov/stt_ru_fastconformer_hybrid_large_pc_onnx",
+    ),
+    (
+        "nemo-fastconformer-ru-rnnt",
+        "istupakov/stt_ru_fastconformer_hybrid_large_pc_onnx",
+    ),
     ("nemo-parakeet-ctc-0.6b", "istupakov/parakeet-ctc-0.6b-onnx"),
-    ("nemo-parakeet-rnnt-0.6b", "istupakov/parakeet-rnnt-0.6b-onnx"),
-    ("nemo-parakeet-tdt-0.6b-v2", "istupakov/parakeet-tdt-0.6b-v2-onnx"),
-    ("nemo-parakeet-tdt-0.6b-v3", "istupakov/parakeet-tdt-0.6b-v3-onnx"),
+    (
+        "nemo-parakeet-rnnt-0.6b",
+        "istupakov/parakeet-rnnt-0.6b-onnx",
+    ),
+    (
+        "nemo-parakeet-tdt-0.6b-v2",
+        "istupakov/parakeet-tdt-0.6b-v2-onnx",
+    ),
+    (
+        "nemo-parakeet-tdt-0.6b-v3",
+        "istupakov/parakeet-tdt-0.6b-v3-onnx",
+    ),
     ("nemo-canary-1b-v2", "istupakov/canary-1b-v2-onnx"),
     ("whisper-base", "istupakov/whisper-base-onnx"),
     ("moonshine-tiny", "onnx-community/moonshine-tiny-ONNX"),
@@ -70,8 +85,14 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
     ("moonshine-base-ko", "onnx-community/moonshine-base-ko-ONNX"),
     ("moonshine-tiny-uk", "onnx-community/moonshine-tiny-uk-ONNX"),
     ("moonshine-tiny-fr", "onnx-community/moonshine-tiny-fr-ONNX"),
-    ("cohere-transcribe", "onnx-community/cohere-transcribe-03-2026-ONNX"),
-    ("granite-4.0-1b-speech", "onnx-community/granite-4.0-1b-speech-ONNX"),
+    (
+        "cohere-transcribe",
+        "onnx-community/cohere-transcribe-03-2026-ONNX",
+    ),
+    (
+        "granite-4.0-1b-speech",
+        "onnx-community/granite-4.0-1b-speech-ONNX",
+    ),
     (
         "dolphin-base-ctc",
         "csukuangfj/sherpa-onnx-dolphin-base-ctc-multi-lang-int8-2025-04-02",
@@ -80,13 +101,19 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
         "dolphin-small-ctc",
         "csukuangfj/sherpa-onnx-dolphin-small-ctc-multi-lang-int8-2025-04-02",
     ),
-    ("zipformer-en", "csukuangfj/sherpa-onnx-zipformer-en-2023-06-26"),
+    (
+        "zipformer-en",
+        "csukuangfj/sherpa-onnx-zipformer-en-2023-06-26",
+    ),
     (
         "sense-voice-small",
         "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
     ),
     ("silero", "istupakov/silero-vad-onnx"),
-    ("wespeaker-voxceleb-resnet34-LM", "Wespeaker/wespeaker-voxceleb-resnet34-LM"),
+    (
+        "wespeaker-voxceleb-resnet34-LM",
+        "Wespeaker/wespeaker-voxceleb-resnet34-LM",
+    ),
 ];
 
 /// Map a catalog id / bare alias to a `(owner, name)` HF repo pair. A model id that already
@@ -120,14 +147,21 @@ pub fn resolve_repo(model: &str) -> Option<(String, String)> {
                 return Some((owner.to_string(), name.to_string()));
             }
             // onnx_model_name is a bare alias (Moonshine/NeMo/GigaAM) → resolve it via MODEL_REPOS.
-            if let Some(repo) = MODEL_REPOS.iter().find(|(alias, _)| *alias == onnx).map(|(_, r)| *r) {
+            if let Some(repo) = MODEL_REPOS
+                .iter()
+                .find(|(alias, _)| *alias == onnx)
+                .map(|(_, r)| *r)
+            {
                 let (owner, name) = repo.split_once('/')?;
                 return Some((owner.to_string(), name.to_string()));
             }
         }
     }
     // 2. Bare onnx-asr alias not on the catalog.
-    let repo = MODEL_REPOS.iter().find(|(alias, _)| *alias == model).map(|(_, r)| *r)?;
+    let repo = MODEL_REPOS
+        .iter()
+        .find(|(alias, _)| *alias == model)
+        .map(|(_, r)| *r)?;
     let (owner, name) = repo.split_once('/')?;
     Some((owner.to_string(), name.to_string()))
 }
@@ -185,7 +219,10 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
         EngineKind::Moonshine => vec![
             g("encoder", format!("**/encoder_model{s}.onnx")),
             g("decoder", format!("**/decoder_model{s}.onnx")),
-            g("decoder_with_past", format!("**/decoder_with_past_model{s}.onnx")),
+            g(
+                "decoder_with_past",
+                format!("**/decoder_with_past_model{s}.onnx"),
+            ),
             g("tokenizer", "tokenizer.json".into()),
             g("tokenizer_config", "tokenizer_config.json".into()),
         ],
@@ -257,6 +294,27 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
             g("model", format!("model{s}.onnx")),
             g("vocab", "tokens.txt".into()),
         ],
+        // sherpa-onnx streaming packs (driven by SherpaStreamingEngine):
+        EngineKind::NemoCtcStreaming => vec![
+            // streaming NeMo FastConformer CTC: flat `model{?q}.onnx` + `tokens.txt`.
+            g("model", format!("model{s}.onnx")),
+            g("vocab", "tokens.txt".into()),
+        ],
+        EngineKind::NemoRnntStreaming => vec![
+            // streaming NeMo RNN-T: flat encoder/decoder/joiner + `tokens.txt`.
+            g("encoder", format!("encoder{s}.onnx")),
+            g("decoder", format!("decoder{s}.onnx")),
+            g("joiner", format!("joiner{s}.onnx")),
+            g("vocab", "tokens.txt".into()),
+        ],
+        EngineKind::KaldiTransducerStreaming => vec![
+            // streaming Zipformer2: epoch-suffixed encoder/decoder/joiner + `tokens.txt`
+            // (same root-epoch layout as the offline icefall zipformer branch above).
+            g("encoder", format!("encoder-*{s}.onnx")),
+            g("decoder", format!("decoder-*{s}.onnx")),
+            g("joiner", format!("joiner-*{s}.onnx")),
+            g("vocab", "tokens.txt".into()),
+        ],
     }
 }
 
@@ -273,11 +331,18 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
 /// `matches` are POSIX repo paths. Returns `Ok(Some(path))` for a unique/resolved match, `Ok(None)`
 /// for zero matches (caller raises the family-specific "missing" error), and `Err(())` only when
 /// the tie-break could not disambiguate (>1 match that are all untagged, or a non-Kaldi >1).
-fn pick_kaldi_tiebreak<'a>(kind: EngineKind, matches: &[&'a String]) -> Result<Option<&'a String>, ()> {
+fn pick_kaldi_tiebreak<'a>(
+    kind: EngineKind,
+    matches: &[&'a String],
+) -> Result<Option<&'a String>, ()> {
     match matches.len() {
         0 => Ok(None),
         1 => Ok(Some(matches[0])),
-        _ if kind == EngineKind::KaldiTransducer => {
+        _ if matches!(
+            kind,
+            EngineKind::KaldiTransducer | EngineKind::KaldiTransducerStreaming
+        ) =>
+        {
             // Keep only the matches with NO quant tag on the `.onnx` stem (the default export).
             // `tokens.txt` (vocab) never has a tag, so this only ever fires on the graph globs.
             let untagged: Vec<&&'a String> = matches
@@ -306,6 +371,7 @@ fn pick_kaldi_tiebreak<'a>(kind: EngineKind, matches: &[&'a String]) -> Result<O
 ///   * `*`  matches within a single segment (not across `/`);
 ///   * `?`  matches exactly one character (the quant-separator wildcard);
 ///   * everything else is literal.
+///
 /// `path` MUST be a forward-slash POSIX path (an HF repo path is always POSIX). We normalise any
 /// stray backslash to `/` defensively so a Windows-side comparison can't silently miss.
 pub fn glob_match(glob: &str, path: &str) -> bool {
@@ -323,7 +389,11 @@ fn glob_rec(g: &[char], p: &[char]) -> bool {
     // `**` — matches any number of segments. Two forms: `**/rest` and trailing `**`.
     if g.len() >= 2 && g[0] == '*' && g[1] == '*' {
         // Skip the `**` and an optional following `/`.
-        let rest = if g.len() >= 3 && g[2] == '/' { &g[3..] } else { &g[2..] };
+        let rest = if g.len() >= 3 && g[2] == '/' {
+            &g[3..]
+        } else {
+            &g[2..]
+        };
         // `**` can consume zero or more whole segments. Try matching `rest` at the current
         // position and after each `/`-delimited prefix.
         if glob_rec(rest, p) {
@@ -377,10 +447,13 @@ pub const EXTERNAL_DATA_PARSE_SIZE_GUARD: u64 = 64 * 1024 * 1024;
 ///   1. If the `.onnx` is small (under the 64 MB guard) we read the protobuf's `external_data`
 ///      `location` records via `super::fp16_patch::external_data_locations` (a tiny prost parse).
 ///   2. Otherwise the graph inlines its weights — there are no sidecars, return empty.
+///
 /// On any parse failure we fall back to the NAME-PATTERN guess (`<stem>.onnx_data*`,
 /// `<stem>.onnx.data*`) which the directory scan in `verify_external_data_complete` resolves.
 pub fn referenced_sidecars(onnx_path: &Path) -> Vec<String> {
-    let size = std::fs::metadata(onnx_path).map(|m| m.len()).unwrap_or(u64::MAX);
+    let size = std::fs::metadata(onnx_path)
+        .map(|m| m.len())
+        .unwrap_or(u64::MAX);
     if size >= EXTERNAL_DATA_PARSE_SIZE_GUARD {
         return Vec::new();
     }
@@ -435,9 +508,12 @@ pub fn verify_external_data_complete(onnx_path: &Path) -> bool {
         // Require a contiguous shard series 1..N (stop at the first gap). A gap = incomplete.
         let mut n = 1;
         loop {
-            let present = [format!("{stem}.onnx_data_{n}"), format!("{stem}.onnx.data_{n}")]
-                .iter()
-                .any(|f| dir.join(f).is_file());
+            let present = [
+                format!("{stem}.onnx_data_{n}"),
+                format!("{stem}.onnx.data_{n}"),
+            ]
+            .iter()
+            .any(|f| dir.join(f).is_file());
             if !present {
                 // n-1 shards present and contiguous; that's "complete" as far as we can tell from
                 // names alone. (A truly partial set where shard 2 is missing surfaces here as the
@@ -463,7 +539,11 @@ pub fn verify_external_data_complete(onnx_path: &Path) -> bool {
 /// quant tag so `whisper-tiny__int8` and `whisper-tiny__fp16` never collide, and replaces anything
 /// outside `[A-Za-z0-9._-]` with `_`. Used for the per-quant local-dir under the app model root.
 pub fn slug_model_id(model_name: &str, quant: Quantization) -> String {
-    let base = if model_name.is_empty() { "unknown" } else { model_name };
+    let base = if model_name.is_empty() {
+        "unknown"
+    } else {
+        model_name
+    };
     let quant_tag = match quant {
         Quantization::Default => "default",
         q => q.suffix(),
@@ -494,7 +574,9 @@ pub fn file_quantization(onnx_filename: &str) -> Quantization {
     let stem = onnx_filename.strip_suffix(".onnx").unwrap_or(onnx_filename);
     // The quant tag is the last `_`- or `.`-delimited component if it parses to a known quant.
     let last = stem.rsplit(['_', '.']).next().unwrap_or("");
-    Quantization::parse(last).filter(|q| *q != Quantization::Default).unwrap_or(Quantization::Default)
+    Quantization::parse(last)
+        .filter(|q| *q != Quantization::Default)
+        .unwrap_or(Quantization::Default)
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +665,10 @@ pub async fn resolve(req: &ResolveRequest) -> SttResult<ResolvedModel> {
 /// Drives `resolve` on the supplied tokio runtime handle. The coordinator owns a `Handle` (Tauri's
 /// async runtime); pass `tokio::runtime::Handle::current()` from inside Tauri, or a dedicated
 /// `Runtime::new()?.handle()`.
-pub fn resolve_blocking(handle: &tokio::runtime::Handle, req: &ResolveRequest) -> SttResult<ResolvedModel> {
+pub fn resolve_blocking(
+    handle: &tokio::runtime::Handle,
+    req: &ResolveRequest,
+) -> SttResult<ResolvedModel> {
     // CONTRACT: call this from a NON-runtime thread (the engine load runs on a dedicated
     // `std::thread` / `spawn_blocking` worker), so `Handle::block_on` is valid. If you must call it
     // from inside a runtime worker, wrap with `tokio::task::block_in_place(|| handle.block_on(..))`
@@ -592,12 +677,21 @@ pub fn resolve_blocking(handle: &tokio::runtime::Handle, req: &ResolveRequest) -
 }
 
 /// Resolve a custom local-dir model (offline; no HF). Globs the dir for each required file.
-fn resolve_local_dir(dir: &Path, model_id: &str, kind: EngineKind, quant: Quantization) -> SttResult<ResolvedModel> {
+fn resolve_local_dir(
+    dir: &Path,
+    model_id: &str,
+    kind: EngineKind,
+    quant: Quantization,
+) -> SttResult<ResolvedModel> {
     let mut files = BTreeMap::new();
-    let entries = list_dir_posix(dir).map_err(|e| SttError::Resolve(format!("scan {}: {e}", dir.display())))?;
+    let entries = list_dir_posix(dir)
+        .map_err(|e| SttError::Resolve(format!("scan {}: {e}", dir.display())))?;
     for fg in file_globs(model_id, kind, quant) {
         // Required keys must resolve; config-only extras are added below.
-        let matched: Vec<&(String, PathBuf)> = entries.iter().filter(|(rel, _)| glob_match(&fg.glob, rel)).collect();
+        let matched: Vec<&(String, PathBuf)> = entries
+            .iter()
+            .filter(|(rel, _)| glob_match(&fg.glob, rel))
+            .collect();
         let rels: Vec<&String> = matched.iter().map(|(rel, _)| rel).collect();
         let chosen_rel = match pick_kaldi_tiebreak(kind, &rels) {
             Ok(Some(rel)) => Some((*rel).clone()),
@@ -621,12 +715,19 @@ fn resolve_local_dir(dir: &Path, model_id: &str, kind: EngineKind, quant: Quanti
                 // `.ort` fallback (resolver.py find()): try the `.onnx`→`.ort` swap.
                 if let Some(ort_glob) = fg.glob.strip_suffix(".onnx") {
                     let ort_glob = format!("{ort_glob}.ort");
-                    if let Some((_, abs)) = entries.iter().find(|(rel, _)| glob_match(&ort_glob, rel)) {
+                    if let Some((_, abs)) =
+                        entries.iter().find(|(rel, _)| glob_match(&ort_glob, rel))
+                    {
                         files.insert(fg.key.to_string(), abs.clone());
                         continue;
                     }
                 }
-                return Err(SttError::Resolve(format!("missing {} ({}) in {}", fg.key, fg.glob, dir.display())));
+                return Err(SttError::Resolve(format!(
+                    "missing {} ({}) in {}",
+                    fg.key,
+                    fg.glob,
+                    dir.display()
+                )));
             }
         }
     }
@@ -635,7 +736,10 @@ fn resolve_local_dir(dir: &Path, model_id: &str, kind: EngineKind, quant: Quanti
     if cfg.is_file() {
         files.insert("config".into(), cfg);
     }
-    Ok(ResolvedModel { files, effective_quantization: quant })
+    Ok(ResolvedModel {
+        files,
+        effective_quantization: quant,
+    })
 }
 
 /// The remote resolve: list tree → glob → download each file (+ sidecars + config). `cache_only`
@@ -643,8 +747,9 @@ fn resolve_local_dir(dir: &Path, model_id: &str, kind: EngineKind, quant: Quanti
 async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<ResolvedModel> {
     use hf_hub::HFClient;
 
-    let (owner, name) = resolve_repo(&req.model_id)
-        .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id)))?;
+    let (owner, name) = resolve_repo(&req.model_id).ok_or_else(|| {
+        SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id))
+    })?;
 
     let client = HFClient::new().map_err(|e| SttError::Resolve(format!("hf client init: {e}")))?;
     let repo = client.model(owner.clone(), name.clone());
@@ -658,7 +763,10 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
     let mut planned: Vec<PlannedFile> = Vec::new();
     let mut onnx_stems: Vec<String> = Vec::new();
     for fg in &globs {
-        let mut matches: Vec<&String> = tree_paths.iter().filter(|p| glob_match(&fg.glob, p)).collect();
+        let mut matches: Vec<&String> = tree_paths
+            .iter()
+            .filter(|p| glob_match(&fg.glob, p))
+            .collect();
         // `.ort` fallback when the `.onnx` form has no match (resolver.py find()).
         if matches.is_empty() {
             if let Some(stem) = fg.glob.strip_suffix(".onnx") {
@@ -686,7 +794,10 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
                 onnx_stems.push(stem.to_string());
             }
         }
-        planned.push(PlannedFile { key: Some(fg.key), repo_path: (*path).clone() });
+        planned.push(PlannedFile {
+            key: Some(fg.key),
+            repo_path: (*path).clone(),
+        });
     }
 
     // Plan every external-data sidecar for each planned `.onnx`: `<stem>.onnx_data`, `.onnx.data`,
@@ -695,7 +806,10 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
     for stem in &onnx_stems {
         for p in &tree_paths {
             if is_sidecar_for(stem, p) {
-                planned.push(PlannedFile { key: None, repo_path: p.clone() });
+                planned.push(PlannedFile {
+                    key: None,
+                    repo_path: p.clone(),
+                });
             }
         }
     }
@@ -703,7 +817,10 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
     // Always pull config.json / config.yaml when present (resolver.py:145-147).
     for cfg in ["config.json", "config.yaml"] {
         if tree_paths.iter().any(|p| p == cfg) {
-            planned.push(PlannedFile { key: None, repo_path: cfg.to_string() });
+            planned.push(PlannedFile {
+                key: None,
+                repo_path: cfg.to_string(),
+            });
         }
     }
 
@@ -722,7 +839,10 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
         files.insert("config".into(), cfg);
     }
 
-    Ok(ResolvedModel { files, effective_quantization: req.effective_quant })
+    Ok(ResolvedModel {
+        files,
+        effective_quantization: req.effective_quant,
+    })
 }
 
 /// Download one repo file (cache-aware). Returns the local cached path.
@@ -751,8 +871,9 @@ async fn download_one(
 async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel> {
     use hf_hub::HFClient;
 
-    let (owner, name) = resolve_repo(&req.model_id)
-        .ok_or_else(|| SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id)))?;
+    let (owner, name) = resolve_repo(&req.model_id).ok_or_else(|| {
+        SttError::Resolve(format!("unknown model alias / repo: {}", req.model_id))
+    })?;
     let repo_key = format!("{owner}/{name}").to_ascii_lowercase();
 
     // Walk the local cache only — `scan_cache()` is a filesystem scan, no HTTP. A scan error or an
@@ -792,11 +913,19 @@ async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel
     let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
     for fg in &globs {
         // Match the glob (and the `.onnx`→`.ort` fallback) against the cached POSIX paths.
-        let mut matches: Vec<&String> = cached.iter().map(|(p, _)| p).filter(|p| glob_match(&fg.glob, p)).collect();
+        let mut matches: Vec<&String> = cached
+            .iter()
+            .map(|(p, _)| p)
+            .filter(|p| glob_match(&fg.glob, p))
+            .collect();
         if matches.is_empty() {
             if let Some(stem) = fg.glob.strip_suffix(".onnx") {
                 let ort = format!("{stem}.ort");
-                matches = cached.iter().map(|(p, _)| p).filter(|p| glob_match(&ort, p)).collect();
+                matches = cached
+                    .iter()
+                    .map(|(p, _)| p)
+                    .filter(|p| glob_match(&ort, p))
+                    .collect();
             }
         }
         let chosen = match pick_kaldi_tiebreak(req.kind, &matches) {
@@ -819,7 +948,12 @@ async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel
             .iter()
             .find(|(p, _)| *p == chosen)
             .map(|(_, abs)| abs.clone())
-            .ok_or_else(|| SttError::Resolve(format!("cache path lost for {} in {}/{}", fg.key, owner, name)))?;
+            .ok_or_else(|| {
+                SttError::Resolve(format!(
+                    "cache path lost for {} in {}/{}",
+                    fg.key, owner, name
+                ))
+            })?;
         files.insert(fg.key.to_string(), abs);
     }
 
@@ -831,7 +965,10 @@ async fn resolve_cached_offline(req: &ResolveRequest) -> SttResult<ResolvedModel
         files.insert("config".into(), abs.clone());
     }
 
-    Ok(ResolvedModel { files, effective_quantization: req.effective_quant })
+    Ok(ResolvedModel {
+        files,
+        effective_quantization: req.effective_quant,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -860,7 +997,10 @@ pub async fn plan_quant_download(
     let mut planned: Vec<String> = Vec::new();
     let mut onnx_stems: Vec<String> = Vec::new();
     for fg in &globs {
-        let mut matches: Vec<&String> = tree_paths.iter().filter(|p| glob_match(&fg.glob, p)).collect();
+        let mut matches: Vec<&String> = tree_paths
+            .iter()
+            .filter(|p| glob_match(&fg.glob, p))
+            .collect();
         if matches.is_empty() {
             if let Some(stem) = fg.glob.strip_suffix(".onnx") {
                 let ort = format!("{stem}.ort");
@@ -962,7 +1102,9 @@ pub async fn is_file_cached(model_id: &str, repo_path: &str) -> bool {
 /// surface the Python `huggingface_hub` exposes, which onnx-asr's resolver fnmatches). This is
 /// preferred over `list_tree()` (whose `RepoTreeEntry` is an enum we'd have to destructure) because
 /// `rfilename` is a flat `String` we can glob directly.
-async fn list_repo_tree(repo: &hf_hub::HFRepository<hf_hub::RepoTypeModel>) -> SttResult<Vec<String>> {
+async fn list_repo_tree(
+    repo: &hf_hub::HFRepository<hf_hub::RepoTypeModel>,
+) -> SttResult<Vec<String>> {
     // SPIKE: the HF `/api/models/{id}` response includes `siblings` (rfilename) by default, so a
     // plain `info().send()` should populate `ModelInfo.siblings`. If the builder gates siblings
     // behind an expand flag (e.g. `.expand("siblings")` / `.files(true)`), add it on the next line.
@@ -1059,7 +1201,10 @@ mod tests {
         // sense-voice alias.
         assert_eq!(
             resolve_repo("sense-voice-small"),
-            Some(("csukuangfj".into(), "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17".into()))
+            Some((
+                "csukuangfj".into(),
+                "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17".into()
+            ))
         );
         // unknown bare alias → None.
         assert_eq!(resolve_repo("totally-unknown-alias"), None);
@@ -1108,31 +1253,67 @@ mod tests {
 
     #[test]
     fn whisper_globs_default_and_fp16() {
-        let g = file_globs("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Default);
-        assert!(g.iter().any(|f| f.key == "encoder" && f.glob == "**/encoder_model.onnx"));
-        assert!(g.iter().any(|f| f.key == "decoder" && f.glob == "**/decoder_model_merged.onnx"));
-        let g16 = file_globs("onnx-community/whisper-tiny", EngineKind::WhisperHf, Quantization::Fp16);
+        let g = file_globs(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Default,
+        );
+        assert!(g
+            .iter()
+            .any(|f| f.key == "encoder" && f.glob == "**/encoder_model.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "decoder" && f.glob == "**/decoder_model_merged.onnx"));
+        let g16 = file_globs(
+            "onnx-community/whisper-tiny",
+            EngineKind::WhisperHf,
+            Quantization::Fp16,
+        );
         assert!(g16.iter().any(|f| f.glob == "**/encoder_model?fp16.onnx"));
-        assert!(g16.iter().any(|f| f.glob == "**/decoder_model_merged?fp16.onnx"));
+        assert!(g16
+            .iter()
+            .any(|f| f.glob == "**/decoder_model_merged?fp16.onnx"));
     }
 
     #[test]
     fn kaldi_vosk_globs_nest_one_dir() {
         // Vosk (no "zipformer"/"icefall" in the id) keeps the nested `*/encoder...` layout.
-        let g = file_globs("alphacep/vosk-model-small-ru", EngineKind::KaldiTransducer, Quantization::Int8);
-        assert!(g.iter().any(|f| f.key == "encoder" && f.glob == "*/encoder?int8.onnx"));
-        assert!(g.iter().any(|f| f.key == "vocab" && f.glob == "*/tokens.txt"));
+        let g = file_globs(
+            "alphacep/vosk-model-small-ru",
+            EngineKind::KaldiTransducer,
+            Quantization::Int8,
+        );
+        assert!(g
+            .iter()
+            .any(|f| f.key == "encoder" && f.glob == "*/encoder?int8.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "vocab" && f.glob == "*/tokens.txt"));
     }
 
     #[test]
     fn kaldi_zipformer_globs_root_with_epoch_suffix() {
         // icefall/zipformer ships at the ROOT with an epoch suffix → `encoder-*{?q}.onnx`, `tokens.txt`.
-        let g = file_globs("zipformer-en", EngineKind::KaldiTransducer, Quantization::Default);
-        assert!(g.iter().any(|f| f.key == "encoder" && f.glob == "encoder-*.onnx"));
-        assert!(g.iter().any(|f| f.key == "decoder" && f.glob == "decoder-*.onnx"));
-        assert!(g.iter().any(|f| f.key == "joiner" && f.glob == "joiner-*.onnx"));
+        let g = file_globs(
+            "zipformer-en",
+            EngineKind::KaldiTransducer,
+            Quantization::Default,
+        );
+        assert!(g
+            .iter()
+            .any(|f| f.key == "encoder" && f.glob == "encoder-*.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "decoder" && f.glob == "decoder-*.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "joiner" && f.glob == "joiner-*.onnx"));
         assert!(g.iter().any(|f| f.key == "vocab" && f.glob == "tokens.txt"));
-        let gi = file_globs("icefall-zipformer", EngineKind::KaldiTransducer, Quantization::Int8);
+        let gi = file_globs(
+            "icefall-zipformer",
+            EngineKind::KaldiTransducer,
+            Quantization::Int8,
+        );
         assert!(gi.iter().any(|f| f.glob == "encoder-*?int8.onnx"));
     }
 
@@ -1147,23 +1328,41 @@ mod tests {
         // A non-Kaldi kind keeps the strict >1 = error contract.
         assert!(pick_kaldi_tiebreak(EngineKind::WhisperHf, &matches).is_err());
         // Zero / one match pass through unchanged.
-        assert_eq!(pick_kaldi_tiebreak(EngineKind::KaldiTransducer, &[]).unwrap(), None);
-        assert_eq!(pick_kaldi_tiebreak(EngineKind::KaldiTransducer, &[&a]).unwrap(), Some(&a));
+        assert_eq!(
+            pick_kaldi_tiebreak(EngineKind::KaldiTransducer, &[]).unwrap(),
+            None
+        );
+        assert_eq!(
+            pick_kaldi_tiebreak(EngineKind::KaldiTransducer, &[&a]).unwrap(),
+            Some(&a)
+        );
     }
 
     #[test]
     fn glob_match_doublestar_recurses() {
         // `**/x.onnx` matches at root and any depth.
         assert!(glob_match("**/encoder_model.onnx", "encoder_model.onnx"));
-        assert!(glob_match("**/encoder_model.onnx", "onnx/encoder_model.onnx"));
-        assert!(glob_match("**/encoder_model.onnx", "a/b/encoder_model.onnx"));
-        assert!(!glob_match("**/encoder_model.onnx", "encoder_model_fp16.onnx"));
+        assert!(glob_match(
+            "**/encoder_model.onnx",
+            "onnx/encoder_model.onnx"
+        ));
+        assert!(glob_match(
+            "**/encoder_model.onnx",
+            "a/b/encoder_model.onnx"
+        ));
+        assert!(!glob_match(
+            "**/encoder_model.onnx",
+            "encoder_model_fp16.onnx"
+        ));
     }
 
     #[test]
     fn glob_match_single_star_one_segment() {
         // `*/tokens.txt` matches exactly one dir level (sherpa pack).
-        assert!(glob_match("*/tokens.txt", "sherpa-onnx-zipformer-en/tokens.txt"));
+        assert!(glob_match(
+            "*/tokens.txt",
+            "sherpa-onnx-zipformer-en/tokens.txt"
+        ));
         assert!(!glob_match("*/tokens.txt", "tokens.txt")); // needs a dir level
         assert!(!glob_match("*/tokens.txt", "a/b/tokens.txt")); // `*` can't cross `/`
     }
@@ -1181,7 +1380,10 @@ mod tests {
     #[test]
     fn glob_match_normalises_backslashes() {
         // A Windows-side path with backslashes must still match a POSIX glob.
-        assert!(glob_match("**/encoder_model.onnx", "onnx\\encoder_model.onnx"));
+        assert!(glob_match(
+            "**/encoder_model.onnx",
+            "onnx\\encoder_model.onnx"
+        ));
     }
 
     #[test]
@@ -1201,8 +1403,14 @@ mod tests {
 
     #[test]
     fn slug_embeds_quant_and_is_fs_safe() {
-        assert_eq!(slug_model_id("onnx-community/whisper-tiny", Quantization::Int8), "onnx-community_whisper-tiny__int8");
-        assert_eq!(slug_model_id("onnx-community/whisper-tiny", Quantization::Default), "onnx-community_whisper-tiny__default");
+        assert_eq!(
+            slug_model_id("onnx-community/whisper-tiny", Quantization::Int8),
+            "onnx-community_whisper-tiny__int8"
+        );
+        assert_eq!(
+            slug_model_id("onnx-community/whisper-tiny", Quantization::Default),
+            "onnx-community_whisper-tiny__default"
+        );
         // int8 vs fp16 never collide.
         assert_ne!(
             slug_model_id("m", Quantization::Int8),
@@ -1213,12 +1421,21 @@ mod tests {
 
     #[test]
     fn file_quantization_reads_suffix_both_separators() {
-        assert_eq!(file_quantization("encoder_model_fp16.onnx"), Quantization::Fp16);
+        assert_eq!(
+            file_quantization("encoder_model_fp16.onnx"),
+            Quantization::Fp16
+        );
         assert_eq!(file_quantization("encoder.int8.onnx"), Quantization::Int8);
-        assert_eq!(file_quantization("encoder_model.onnx"), Quantization::Default);
+        assert_eq!(
+            file_quantization("encoder_model.onnx"),
+            Quantization::Default
+        );
         assert_eq!(file_quantization("model.onnx"), Quantization::Default);
         // q4f16 round-trips (last component).
-        assert_eq!(file_quantization("decoder_model_merged_q4f16.onnx"), Quantization::Q4f16);
+        assert_eq!(
+            file_quantization("decoder_model_merged_q4f16.onnx"),
+            Quantization::Q4f16
+        );
     }
 
     #[test]

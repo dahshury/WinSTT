@@ -37,9 +37,10 @@
 //!    only the decode/warmup BODIES move here. `peak_normalize` is applied ONLY to the winstt
 //!    arm input (here), never to the transcribe-rs arms (those stay in core, unconditioned).
 
+use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::settings::get_settings;
-use crate::winstt::stt::{EngineConfig, Transcriber, TranscribeOptions};
+use crate::winstt::stt::{EngineConfig, TranscribeOptions, Transcriber};
 use anyhow::Result;
 use tauri::{AppHandle, Manager};
 
@@ -118,8 +119,12 @@ pub trait SttBackend: Send + Sync {
     /// `WinsttSettings`). Returns the FINAL text — the core must NOT run its generic transcribe-rs
     /// post-processing on this output. `engine` is borrowed `&mut` from inside the core's
     /// `catch_unwind`; this method must NOT lock the engine mutex.
-    fn decode(&self, app: &AppHandle, engine: &mut dyn Transcriber, audio: &[f32])
-        -> Result<String>;
+    fn decode(
+        &self,
+        app: &AppHandle,
+        engine: &mut dyn Transcriber,
+        audio: &[f32],
+    ) -> Result<String>;
 
     /// One realtime live-preview decode (RAW text, no post-processing) on the winstt-arm engine.
     /// Returns `None` on engine error. Peak-normalizes the input. Called from inside the core's
@@ -220,28 +225,45 @@ impl SttBackend for WinsttSttBackend {
             }
         };
 
-        // requested quant from settings; auto-resolve the int8-preferred / fp16 policy
-        let requested = Quantization::parse(settings.model.onnx_quantization.trim())
-            .unwrap_or(Quantization::Default);
+        // requested quant from settings. The empty string `""` now means EXPLICIT fp32 (the
+        // unsuffixed base export → Quantization::Default); the literal `"auto"` is the RAM/VRAM-aware
+        // "recommended" sentinel. (They were previously conflated under the empty string.)
+        let raw = settings.model.onnx_quantization.trim();
         let available: Vec<Quantization> = entry
             .available_quantizations
             .iter()
             .filter_map(|s| Quantization::parse(s))
             .collect();
-        let effective = stt::resolve_quantization_auto(
-            requested,
-            primary,
-            family_slug,
-            entry.param_count,
-            Some(&available),
-        );
+        // AUTO ("auto") → RAM/VRAM-aware pick: the highest-accuracy quant that FITS the user's live
+        // hardware (NOT a blind int8/fp32). A concrete user pick is respected verbatim (the picker
+        // exposes every published quant off-CUDA, incl `""`=fp32). Footprint = param × bytes-per-param;
+        // budget is the device the (engine, quant) runs on (VRAM for DML, available RAM for CPU).
+        let effective = if raw.eq_ignore_ascii_case("auto") {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_memory();
+            let available_ram = sys.available_memory();
+            let vram = crate::winstt::commands::runtime::detected_max_vram_bytes();
+            stt::fit_aware_auto_quant(
+                &available,
+                kind,
+                primary,
+                entry.param_count,
+                available_ram,
+                vram,
+            )
+        } else {
+            Quantization::parse(raw).unwrap_or(Quantization::Default) // "" → Default(fp32); "int8" → Int8; ...
+        };
 
-        // provider list (primary + CPU fallback), then the DML-incompatible-family override.
+        // provider list (primary + CPU fallback), then the DML-incompatible-ENGINE override.
+        // EngineKind-based (empirical), NOT family-based: parakeet-ctc/tdt/rnnt + gigaam + t-one
+        // run 2-3× faster on DML; only the AED decoders (canary/cohere) + sherpa graphs
+        // (kaldi/sense_voice/dolphin) are forced to CPU. See EngineKind::is_dml_incompatible.
         let providers = match primary {
             Accelerator::Cpu => vec![Accelerator::Cpu],
             other => vec![other, Accelerator::Cpu],
         };
-        let providers = stt::override_dml_to_cpu_for_family(providers, family_slug);
+        let providers = stt::override_dml_to_cpu_for_kind(providers, kind, effective);
 
         // resolve the on-disk file set (cache-first; one network refetch if a shard is missing).
         // OFFLINE-FIRST (`local_files_only: true`, no network, no ORT session) — the riskiest step
@@ -312,37 +334,47 @@ impl SttBackend for WinsttSttBackend {
         // Peak-normalize is the WinSTT-arm-ONLY audio-conditioning chokepoint (the transcribe-rs
         // arms in the core get RAW audio).
         let conditioned = peak_normalize(audio);
-        let text = engine
-            .transcribe(&conditioned, &opts)
-            .map(|t| t.text)
-            .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e))?;
+        // Long recordings would hit fixed per-decode windows (Whisper truncates at 30 s in mel.rs;
+        // the AED decoders cap at ~1024 tokens) and silently drop everything past the cap. For
+        // those, VAD-segment into ≤MAX_CHUNK_S chunks on silence boundaries and decode each
+        // independently (whisperX / onnx-asr long-form). Short recordings — the common PTT case —
+        // take the single-pass path unchanged, and the VAD model is only loaded when actually
+        // needed (never for normal dictation).
+        const MAX_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
+        let transcribe_once = |engine: &mut dyn Transcriber| -> Result<String> {
+            engine
+                .transcribe(&conditioned, &opts)
+                .map(|t| t.text)
+                .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e))
+        };
+        let text = if conditioned.len() > (MAX_CHUNK_S * 16_000.0) as usize {
+            match build_segmentation_vad(app) {
+                Ok(mut vad) => crate::winstt::stt::vad_segment::vad_segment_decode(
+                    engine,
+                    &conditioned,
+                    MAX_CHUNK_S,
+                    false, // independent per-chunk decode (whisperX/onnx-asr default)
+                    &mut vad,
+                    &opts,
+                )
+                .map_err(|e| anyhow::anyhow!("WinSTT VAD-segment transcription failed: {}", e))?,
+                Err(e) => {
+                    log::warn!(
+                        "VAD-segment unavailable ({e}); single-pass decode (may truncate >30 s)"
+                    );
+                    transcribe_once(engine)?
+                }
+            }
+        } else {
+            transcribe_once(engine)?
+        };
 
         // WinSTT-arm post-processing: custom-words correction + filler/hallucination filtering,
         // sourced from the SAME `ws` snapshot. The core does NOT re-run its generic transcribe-rs
-        // post-processing on this output (avoids double-processing).
-        let custom_words: Vec<String> = ws
-            .dictionary
-            .iter()
-            .map(|d| d.term.clone())
-            .filter(|t| !t.trim().is_empty())
-            .collect();
-        let corrected = if custom_words.is_empty() {
-            text
-        } else {
-            apply_custom_words(&text, &custom_words, ws.general.word_correction_threshold)
-        };
-        // filter_fillers off → Some([]) (no patterns); on+empty → None (language default table).
-        let filler: Option<Vec<String>> = if ws.general.filter_fillers {
-            if ws.general.custom_filler_words.is_empty() {
-                None
-            } else {
-                Some(ws.general.custom_filler_words.clone())
-            }
-        } else {
-            Some(Vec::new())
-        };
+        // post-processing on this output (avoids double-processing). Shared with the realtime-reuse
+        // fast path (see `winstt_postprocess`) so a reused live decode gets byte-identical cleanup.
         let app_language = get_settings(app).app_language;
-        Ok(filter_transcription_output(&corrected, &app_language, &filler))
+        Ok(winstt_postprocess(&text, &ws, &app_language))
     }
 
     fn decode_realtime(
@@ -415,7 +447,11 @@ impl SttBackend for WinsttSttBackend {
         } else {
             Some(Vec::new())
         };
-        Ok(filter_transcription_output(&corrected, &app_language, &filler))
+        Ok(filter_transcription_output(
+            &corrected,
+            &app_language,
+            &filler,
+        ))
     }
 
     fn postprocess_transcribe_rs(
@@ -426,7 +462,7 @@ impl SttBackend for WinsttSttBackend {
     ) -> String {
         // WinSTT dictionary bridge: the picker's dictionary (custom words) + fuzzy threshold +
         // filler list live in the WinSTT settings store, NOT Handy's `settings.custom_words`
-        // (mirrors Electron set_parameter forwarding custom_words/threshold/filler to the recorder).
+        // (mirrors the reference set_parameter forwarding custom_words/threshold/filler to the recorder).
         let ws = crate::winstt::commands::settings::read_settings(app);
         let custom_words: Vec<String> = ws
             .dictionary
@@ -494,6 +530,9 @@ fn engine_kind_for(
             | EngineKind::GigaamCtc
             | EngineKind::GigaamRnnt
             | EngineKind::ToneCtc
+            | EngineKind::NemoCtcStreaming
+            | EngineKind::NemoRnntStreaming
+            | EngineKind::KaldiTransducerStreaming
     );
     if validated {
         Some(kind)
@@ -502,8 +541,8 @@ fn engine_kind_for(
     }
 }
 
-/// Catalog family → the policy slug string the `stt` helpers key on (mirrors the Python
-/// `family` strings used by `resolve_quantization_auto` / `override_dml_to_cpu_for_family`).
+/// Catalog family → the policy slug string passed to quantization resolution. Provider routing is
+/// engine-kind based (`override_dml_to_cpu_for_kind`) after the concrete engine is resolved.
 fn family_policy_slug(family: crate::winstt::catalog::Family) -> &'static str {
     use crate::winstt::catalog::Family;
     match family {
@@ -543,6 +582,55 @@ fn peak_normalize(audio: &[f32]) -> Vec<f32> {
     }
     let g = 0.95 / peak;
     audio.iter().map(|&x| x * g).collect()
+}
+
+/// Build a one-shot Silero VAD for offline FINAL-decode segmentation (long recordings only). This
+/// is a SEPARATE instance from the recorder's live VAD — segmentation runs over the already-
+/// captured buffer, not the realtime stream — and resolves the same bundled model the recorder
+/// uses (managers/audio.rs). Built lazily so normal short-PTT dictation never pays the load.
+fn build_segmentation_vad(app: &AppHandle) -> Result<SileroVad> {
+    let path = app
+        .path()
+        .resolve(
+            "resources/models/silero_vad_v4.onnx",
+            tauri::path::BaseDirectory::Resource,
+        )
+        .map_err(|e| anyhow::anyhow!("resolve VAD path: {e}"))?;
+    SileroVad::new(&path, VAD_SPEECH_THRESHOLD)
+}
+
+/// Apply the WinSTT-arm text post-processing — custom-words fuzzy correction + filler/
+/// hallucination filtering — to an ALREADY-decoded transcript. Factored out of `decode` so the
+/// realtime-reuse fast path (the final paste reusing the realtime worker's last full-buffer
+/// decode) applies byte-identical cleanup. `ws` + `app_language` are passed in so callers that
+/// already hold a settings snapshot don't pay a second `read_settings` (secret-decrypt) hit.
+pub(crate) fn winstt_postprocess(
+    text: &str,
+    ws: &crate::winstt::settings_schema::WinsttSettings,
+    app_language: &str,
+) -> String {
+    let custom_words: Vec<String> = ws
+        .dictionary
+        .iter()
+        .map(|d| d.term.clone())
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+    let corrected = if custom_words.is_empty() {
+        text.to_string()
+    } else {
+        apply_custom_words(text, &custom_words, ws.general.word_correction_threshold)
+    };
+    // filter_fillers off → Some([]) (no patterns); on+empty → None (language default table).
+    let filler: Option<Vec<String>> = if ws.general.filter_fillers {
+        if ws.general.custom_filler_words.is_empty() {
+            None
+        } else {
+            Some(ws.general.custom_filler_words.clone())
+        }
+    } else {
+        Some(Vec::new())
+    };
+    filter_transcription_output(&corrected, app_language, &filler)
 }
 
 #[cfg(test)]

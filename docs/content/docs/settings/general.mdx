@@ -1,0 +1,292 @@
+---
+title: General
+description: Recording mode, audio feedback, display language, the visualizer and recording overlay, live-transcription placement, and startup behavior.
+---
+
+The **General** tab is where you choose how recording is triggered, how WinSTT looks while
+you dictate, and how it starts with Windows. It is the busiest settings tab — and several
+controls appear or hide depending on the recording mode you pick.
+
+## Recording
+
+This section sets the trigger strategy and the feedback you get while dictating. The first
+control swaps the rest of the section in and out.
+
+<Screenshot src="sec-general-recording" alt="The Recording section: the four-way recording-mode switcher, the System Audio Reduction ducking slider, and the Recording Sound toggle with its Sound Library." chrome="card" caption="The Recording section — mode switcher, volume ducking, and the recording-sound library." />
+
+<SettingRow label="Recording Mode" settingKey="general.recordingMode" default="ptt">
+  A four-way switcher: <ModeBadge mode="ptt" /> <ModeBadge mode="toggle" />{" "}
+  <ModeBadge mode="listen" /> <ModeBadge mode="wakeword" />. Push-to-talk holds to record;
+  toggle starts/stops on a tap; listen transcribes system audio from a loopback device;
+  wake word arms a keyword detector. Switching mode shows or hides the mode-specific
+  controls below. See [Recording modes](/docs/recording-modes) for when to use each.
+</SettingRow>
+
+<SettingRow label="Manual Toggle Stop" settingKey="general.manualToggleStop" default="false">
+  Shown only in **Toggle** mode. When on, a toggle session runs continuously from the first
+  press to the second — silence-based auto-stop and silence-timing punctuation tuning are
+  both disabled. Use it for long-form dictation where soft pauses were cutting you off.
+</SettingRow>
+
+<SettingRow label="Loopback Device" settingKey="general.loopbackDeviceIndex" default="null">
+  Shown only in **Listen** mode. Picks which WASAPI loopback (system-audio) device is
+  transcribed. `null` uses the default render device. This lets WinSTT caption a call,
+  video, or anything playing through your speakers.
+</SettingRow>
+
+<Screenshot src="settings-general-listen" alt="The General tab in Listen mode — the loopback device picker and the Speaker Diarization toggle replace the microphone controls." chrome="card" caption="Listen mode swaps the mic controls for a loopback device picker and a diarization toggle." />
+
+### Wake-word controls (Wakeword mode)
+
+These three controls appear only when the mode is **Wakeword**.
+
+<Screenshot src="settings-general-wakeword" alt="The General tab in Wake Word mode — the wake-word keyword selector, the sensitivity slider, and the detection-timeout control." chrome="card" caption="Wake Word mode exposes the keyword, its sensitivity, and a post-trigger timeout." />
+
+<SettingRow label="Wake Word" settingKey="general.wakeWord" default="alexa">
+  A keyword that arms recording when spoken. The list unifies 18 free keywords across two
+  engines — a `2x` badge means both Porcupine (`PVP`) and openWakeWord (`OWW`) agree
+  (highest accuracy); single-engine keywords carry just the `PVP` or `OWW` badge. The
+  detector backend is chosen automatically from the keyword you select.
+</SettingRow>
+
+<SettingRow label="Wake Word Sensitivity" settingKey="general.wakeWordSensitivity" default="0.6">
+  A 0.00–1.00 slider in 0.05 steps (21 positions). **Lower** is stricter — fewer false
+  triggers, may miss soft pronunciations. **Higher** is more permissive. 0.60 is a sensible
+  middle for most voices.
+</SettingRow>
+
+<SettingRow label="Wake Word Timeout" settingKey="general.wakeWordTimeout" default="5">
+  Seconds the gate stays armed after a detection (1–30). If you say the wake word but never
+  follow up, the engine returns to listening after this window — protection against stray
+  noise triggering a long-tail recording.
+</SettingRow>
+
+<SettingRow label="Speaker Diarization" settingKey="general.speakerDiarization" default="false">
+  Shown only in **Listen** mode. Colors each speaker in the transcript and tracks identities
+  across the session. First use downloads ~32 MB of ONNX models. Toggles live — no restart.
+</SettingRow>
+
+### Audio feedback
+
+<SettingRow label="System Audio Reduction" settingKey="general.systemAudioReductionWhileDictating" default="0">
+  Hidden in **Listen** mode. A 6-step slider — **Off, 20%, 40%, 60%, 80%, Mute** — that ducks
+  your speaker volume while you dictate so playback doesn't bleed into the mic. Intermediate
+  values drop to `(100 − value)%` of the previous level; the original volume is restored when
+  recording stops.
+</SettingRow>
+
+<SettingRow label="Recording Sound" settingKey="general.recordingSound" default="true">
+  Hidden in **Listen** mode. Plays a short chime when recording starts and stops. Turning it
+  on reveals the **Sound Library** below.
+</SettingRow>
+
+<Callout type="info" title="Custom sound library">
+  With Recording Sound on, the **Sound Library** lists the built-in chime plus any clips you
+  add. Drag in or browse for a `.wav`/`.mp3` (≤ 3 s), then **rename**, **preview**,
+  **select**, or **delete** each entry. The active clip is stored as
+  `general.recordingSoundPath` (empty = built-in); your uploads live in
+  `general.recordingSoundLibrary`. The chime plays through the output device set on the
+  [Audio tab](/docs/settings/audio) (`general.outputDeviceId`).
+</Callout>
+
+## Display
+
+This section controls the interface language and everything you see while recording.
+
+<Screenshot src="sec-general-display" alt="The Display section: the display-language picker, the visualizer-type switcher, and the recording-overlay size slider." chrome="card" caption="The Display section — interface language, visualizer style, and the recording overlay." />
+
+<SettingRow label="Display Language" settingKey="useLocaleStore" default="en">
+  The interface language, independent of the language you dictate in. Six locales are
+  fully translated — **Arabic (العربية)**, **English**, **Spanish (Español)**,
+  **French (Français)**, **Hindi (हिन्दी)**, and **Chinese (中文)**. Arabic renders
+  right-to-left. (Additional seeded locales appear in the list but still display English
+  until their translation passes land.)
+</SettingRow>
+
+### Visualizer
+
+The visualizer is the animated audio meter shown in the main window and the recording
+overlay. Pick the style that suits you — all five react live to your mic input.
+
+<SettingRow label="Visualizer Type" settingKey="general.visualizerType" default="bar">
+  A five-way switcher: <b>Bar</b>, <b>Grid</b>, <b>Radial</b>, <b>Wave</b>, and <b>Aura</b>. The
+  gallery below shows each reacting to speech.
+</SettingRow>
+
+The gallery below is recorded live from the app — each clip is the real
+visualizer reacting to speech.
+
+<MediaGrid cols={3}>
+  <Video src="viz-bar" alt="The bar visualizer — vertical bars rising and falling with the input level." chrome="card" caption="Bar (default)" />
+  <Video src="viz-grid" alt="The grid visualizer — a matrix of dots that light up with the audio level." chrome="card" caption="Grid" />
+  <Video src="viz-radial" alt="The radial visualizer — bars arranged in a circle pulsing outward." chrome="card" caption="Radial" />
+  <Video src="viz-wave" alt="The wave visualizer — a continuous waveform tracing the input signal." chrome="card" caption="Wave" />
+  <Video src="viz-aura" alt="The aura visualizer — a soft glowing blob that breathes with the audio level." chrome="card" caption="Aura" />
+</MediaGrid>
+
+<SettingRow label="Visualizer Bar Count" settingKey="general.visualizerBarCount" default="9">
+  Shown only when the type is **Bar**. The number of bars, **3–21 in odd steps** (3, 5, 7 …
+  21). More bars read denser; fewer read calmer.
+</SettingRow>
+
+### Recording overlay
+
+<SettingRow label="Recording Overlay" settingKey="general.showRecordingOverlay" default="on, xs">
+  A 6-step slider — **Off · XS · S · M · L · XL** — that both turns the floating overlay on
+  and sets its size. Position 0 (Off) hides the overlay and reverts overlay-only live-display
+  choices to in-app; XS–XL pick the visualizer height. Greyed out in **Listen** mode (the
+  overlay never shows there). Size is stored as `general.visualizerSize`.
+</SettingRow>
+
+<SettingRow label="Overlay Mode" settingKey="general.overlayMode" default="floating-bottom">
+  Greyed out when the overlay is off. Two layouts (shown below):{" "}
+  <b>Floating bottom</b>{" "}
+  — a two-piece pill near the bottom of the primary display; and{" "}
+  <b>Dynamic island</b>{" "}
+  — a morphing capsule docked to the top-center that grows as the live preview fills in.
+</SettingRow>
+
+<MediaGrid cols={2}>
+  <Video src="overlay-floating" alt="The floating-bottom recording overlay — a rounded pill with the audio visualizer near the bottom of the screen." chrome="card" caption="Floating bottom — a two-piece pill at the bottom." />
+  <Video src="overlay-island" alt="The dynamic-island recording overlay — a morphing capsule docked at the top-center showing live transcription above a visualizer." chrome="card" caption="Dynamic island — a top-center notch with a timer." />
+</MediaGrid>
+
+<SettingRow label="Live Transcription Display" settingKey="general.liveTranscriptionDisplay" default="both">
+  Where the live preview renders, as two checkboxes — **In app** (the main-window feed) and
+  **In pill** (inside the overlay). The combination maps to `none`, `in-app`, `in-pill`, or
+  `both`. The "In pill" option is disabled while the overlay is off.
+</SettingRow>
+
+<Callout type="info" title="Overlay position is platform-derived">
+  `general.overlayPosition` (`auto`/`none`/`top`/`bottom`, default `auto`) gates which screen
+  edge the pill may appear on. On Windows and macOS `auto` resolves to the bottom edge; on
+  Linux it resolves to `none` because some compositors break the paste pipeline when an
+  always-on-top window appears mid-keystroke.
+</Callout>
+
+## Startup
+
+How WinSTT behaves at sign-in and when you close the window.
+
+<Screenshot src="sec-general-startup" alt="The Startup section: Start on Login, Start Minimized, Minimize to Tray, and Send Crash Reports toggles." chrome="card" caption="The Startup section — sign-in launch, tray behavior, and crash reporting." />
+
+<SettingRow label="Start on Login" settingKey="general.autoStart" default="false">
+  Launch WinSTT automatically when you sign in to Windows.
+</SettingRow>
+
+<SettingRow label="Start Minimized" settingKey="general.startMinimized" default="false">
+  Start hidden in the system tray instead of opening the main window.
+</SettingRow>
+
+<SettingRow label="Minimize to Tray" settingKey="general.minimizeToTray" default="true">
+  Closing the window keeps WinSTT running in the tray rather than quitting. With this off, the
+  close button exits the app entirely.
+</SettingRow>
+
+<SettingRow label="Send Crash Reports" settingKey="general.sendCrashReports" default="true" restart>
+  Opt-out anonymized crash/error reporting via Sentry. Audio and transcripts are never sent —
+  only stack traces and error context.
+</SettingRow>
+
+<Callout type="restart">
+  Toggling **Send Crash Reports** takes effect on the next launch. Sentry's `init()` can't be
+  cleanly reversed at runtime, so both the renderer and main process read this flag once at
+  startup.
+</Callout>
+
+## Related General settings on other tabs
+
+A handful of controls live under the same `general.*` schema but are surfaced on the tab
+that fits them best:
+
+| Setting | Key | Default | Where it lives |
+|---|---|---|---|
+| Auto-submit after paste | `general.autoSubmit` | `false` | [Quality](/docs/settings/quality) |
+| Auto-submit key | `general.autoSubmitKey` | `enter` | [Quality](/docs/settings/quality) |
+| Context awareness | `general.contextAwareness` | `false` | [Quality](/docs/settings/quality) |
+| Context deny-list | `general.contextDenyList` | 6 password managers | [LLM cleanup](/docs/settings/llm) |
+| History max entries | `general.historyMaxEntries` | `1000` | [History](/docs/transcription-history) |
+| Recording retention | `general.recordingRetention` | `cap` | [History](/docs/transcription-history) |
+| Filler filtering | `general.filterFillers` | `true` | [Dictionary](/docs/dictionary) |
+| Word-correction threshold | `general.wordCorrectionThreshold` | `0.18` | [Dictionary](/docs/dictionary) |
+| Pre-release updates | `general.receivePrereleaseUpdates` | `false` | About tab |
+| Output device | `general.outputDeviceId` | system default | [Audio](/docs/settings/audio) |
+
+A few highlights, with their gotchas:
+
+<SettingRow label="Auto-Submit" settingKey="general.autoSubmit" default="false">
+  When on, WinSTT presses a submit key right after the paste lands. **Auto-Submit Key**
+  (`general.autoSubmitKey`) chooses the combo — `Enter` for chat boxes or `Ctrl`+`Enter` for
+  IDE prompts. Off preserves the historical "paste, leave the cursor" behavior.
+</SettingRow>
+
+<SettingRow label="Context Awareness" settingKey="general.contextAwareness" default="false">
+  Reads text from the focused window via Windows UI Automation just before each dictation and
+  feeds it to the LLM cleanup step so names and jargon are spelled correctly. Opt-in: it shows
+  a confirmation dialog before activating, and is only offered when it actually helps (a
+  Whisper model or LLM cleanup is active).
+</SettingRow>
+
+<SettingRow label="Context Deny-List" settingKey="general.contextDenyList" default="6 entries">
+  An app/host allow-out list for context capture. Each entry is an executable basename
+  (`1password.exe`) or a URL host suffix (`bankofamerica.com`, matches subdomains). Matching
+  windows have their captured text, HTML, and URL stripped before reaching the LLM. Seeded
+  with six common password managers.
+</SettingRow>
+
+<SettingRow label="History Max Entries" settingKey="general.historyMaxEntries" default="1000">
+  Cap on persisted transcription-history rows (10–10,000). The main process trims oldest on
+  each insert; larger histories slow the history dashboard.
+</SettingRow>
+
+<SettingRow label="Recording Retention" settingKey="general.recordingRetention" default="cap">
+  Auto-deletes saved recordings: **Never** keeps everything; **Cap** prunes recordings beyond
+  History Max Entries; **3 days / 2 weeks / 3 months** are absolute age cutoffs. Cleanup runs
+  at startup and whenever the policy changes — "Never" still saves, it just never prunes.
+</SettingRow>
+
+<SettingRow label="Filler Filtering" settingKey="general.filterFillers" default="true">
+  Strips locale-aware filler words and collapses 3+ stutters. Consults your custom filler list
+  first (`general.customFillerWords`), then a per-language table. Words that are real in other
+  locales (Portuguese "um") are deliberately excluded from those tables.
+</SettingRow>
+
+<SettingRow label="Word-Correction Threshold" settingKey="general.wordCorrectionThreshold" default="0.18">
+  The fuzzy-match threshold (0–1) for the deterministic corrector that runs before LLM cleanup.
+  **Lower** is stricter — fewer false positives, more near-misses left for the LLM. 0.18 is the
+  reference default.
+</SettingRow>
+
+<SettingRow label="Pre-Release Updates" settingKey="general.receivePrereleaseUpdates" default="false">
+  Opt in to alpha/beta auto-updates. Alpha installs always keep updating to newer alphas
+  regardless of this toggle; the knob only changes behavior on stable builds.
+</SettingRow>
+
+## Reset
+
+A single button at the bottom restores **every** setting to its factory default after a
+confirmation dialog.
+
+<Callout type="error" title="Reset to Defaults has no undo">
+  Confirming the reset clears all tabs — model, audio, quality, dictionary, snippets, LLM,
+  TTS, and integrations — back to defaults. There is no undo; your API keys, custom modifiers,
+  dictionary entries, and sound library are wiped.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Recording modes" href="/docs/recording-modes">
+    Push-to-talk, toggle, listen, and wake word explained in depth, with the controls each one
+    unlocks.
+  </Card>
+  <Card title="Audio settings" href="/docs/settings/audio">
+    Input device, VAD sensitivity, the mic-release policy, and the output device for chimes.
+  </Card>
+  <Card title="Quality settings" href="/docs/settings/quality">
+    Smart Endpoint, auto-submit, context awareness, and the realtime preview timing.
+  </Card>
+  <Card title="Transcription history" href="/docs/transcription-history">
+    The history dashboard, max-entry cap, and recording-retention policy.
+  </Card>
+</Cards>

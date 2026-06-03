@@ -9,7 +9,7 @@ import {
 	useLoopbackDevices,
 } from "./use-loopback-devices";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 
 function makeApi(devices: unknown[]) {
@@ -36,7 +36,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings });
 });
 
@@ -227,13 +227,13 @@ describe("useLoopbackDevices", () => {
 				general: { ...initialSettings.general, recordingMode: "ptt" },
 			},
 		});
-		window.electronAPI = makeApi([]);
+		window.nativeBridge = makeApi([]);
 		const { result } = renderHook(() => useLoopbackDevices());
 		expect(result.current.options).toEqual([]);
 	});
 
 	test("populates options with a System Default entry plus per-device entries", async () => {
-		window.electronAPI = makeApi([
+		window.nativeBridge = makeApi([
 			{
 				index: 0,
 				name: "Speakers",
@@ -254,7 +254,7 @@ describe("useLoopbackDevices", () => {
 	});
 
 	test("auto-selects the default device index when none was chosen", async () => {
-		window.electronAPI = makeApi([
+		window.nativeBridge = makeApi([
 			{
 				index: 5,
 				name: "Output",
@@ -270,7 +270,7 @@ describe("useLoopbackDevices", () => {
 	});
 
 	test("handleChange('default') stores the underlying default index", async () => {
-		window.electronAPI = makeApi([
+		window.nativeBridge = makeApi([
 			{ index: 5, name: "Out", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
 		]);
 		const { result } = renderHook(() => useLoopbackDevices());
@@ -282,7 +282,7 @@ describe("useLoopbackDevices", () => {
 	});
 
 	test("handleChange(numeric string) stores the numeric index", async () => {
-		window.electronAPI = makeApi([
+		window.nativeBridge = makeApi([
 			{ index: 0, name: "A", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
 			{ index: 7, name: "B", defaultSampleRate: 48_000, maxOutputChannels: 2 },
 		]);
@@ -295,7 +295,7 @@ describe("useLoopbackDevices", () => {
 	});
 
 	test("currentId is 'default' when the stored index matches the detected default", async () => {
-		window.electronAPI = makeApi([
+		window.nativeBridge = makeApi([
 			{ index: 9, name: "Spk", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
 		]);
 		const { result } = renderHook(() => useLoopbackDevices());
@@ -318,7 +318,7 @@ describe("useLoopbackDevices", () => {
 				},
 			},
 		});
-		window.electronAPI = makeApi([
+		window.nativeBridge = makeApi([
 			{ index: 1, name: "A", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
 			{ index: 4, name: "B", defaultSampleRate: 48_000, maxOutputChannels: 2 },
 		]);
@@ -337,7 +337,7 @@ describe("useLoopbackDevices", () => {
 				general: { ...initialSettings.general, recordingMode: "ptt", loopbackDeviceIndex: 2 },
 			},
 		});
-		window.electronAPI = makeApi([]);
+		window.nativeBridge = makeApi([]);
 		const { result } = renderHook(() => useLoopbackDevices());
 		act(() => result.current.handleChange("default"));
 		expect(useSettingsStore.getState().settings.general.loopbackDeviceIndex).toBe(null);
@@ -350,7 +350,7 @@ describe("useLoopbackDevices", () => {
 			warned = true;
 		};
 		try {
-			window.electronAPI = {
+			window.nativeBridge = {
 				...originalApi,
 				invoke: async (channel: string) => {
 					if (channel === IPC.LOOPBACK_LIST_DEVICES) {

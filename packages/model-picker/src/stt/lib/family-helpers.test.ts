@@ -59,11 +59,18 @@ describe("getFamilyConfig", () => {
 		expect(cfg.logoSrc).toBe("/provider-icons/funaudiollm.png");
 	});
 
-	test("includes the Dolphin family with the DataoceanAI brand logo", () => {
+	test("includes the Dolphin family with the DataoceanAI wordmark logo", () => {
 		const cfg = getFamilyConfig("dolphin");
 		expect(cfg.label).toBe("Dolphin");
 		expect(cfg.icon).toBeDefined();
 		expect(cfg.logoSrc).toBe("/provider-icons/dataoceanai.png");
+	});
+
+	test("uses transparent brand logos for every STT family", () => {
+		expect(getFamilyConfig("gigaam").logoSrc).toBe("/provider-icons/sber.png");
+		expect(getFamilyConfig("t-one").logoSrc).toBe("/provider-icons/t-bank.svg");
+		expect(getFamilyConfig("kaldi").logoSrc).toBe("/provider-icons/vosk.png");
+		expect(getFamilyConfig("moonshine").logoSrc).toBe("/provider-icons/moonshine.png");
 	});
 });
 

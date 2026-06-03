@@ -1,7 +1,7 @@
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
-import { Spinner } from "@/shared/ui/spinner";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 
 /**
  * Visual vocabulary for "this trigger is mid-swap" applied uniformly to any
@@ -24,7 +24,7 @@ interface SwitchingFromToRowProps {
 	to?: ReactNode;
 }
 
-/** `[from] → ◌ → [to]` body row. Renders the spinner unconditionally so the
+/** `[from] -> dot -> [to]` body row. Renders the pulse dot unconditionally so the
  *  switch reads as "active" even when one leg is unknown. */
 export function SwitchingFromToRow({ from, to, ariaLabel }: SwitchingFromToRowProps) {
 	return (
@@ -44,7 +44,7 @@ export function SwitchingFromToRow({ from, to, ariaLabel }: SwitchingFromToRowPr
 					/>
 				</>
 			) : null}
-			<Spinner className="size-3.5 shrink-0 border-accent/30 border-t-accent" />
+			<PulseDot className="size-2.5 shrink-0 text-accent" />
 			{to ? (
 				<>
 					<HugeiconsIcon

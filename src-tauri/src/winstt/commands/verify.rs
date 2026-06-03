@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // (WU-7) + lib_wiring.md §3, frontend/electron/ipc/credentials.ts + frontend/electron/lib/
 // cloud-provider-http.ts. Owns the ONE renderer verify seam (`integrations:verify`).
 //

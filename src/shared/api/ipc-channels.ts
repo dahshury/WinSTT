@@ -44,7 +44,7 @@ export const IPC = {
 	STT_DIARIZATION_TOGGLE_STARTED: "stt:diarization-toggle-started",
 	STT_DIARIZATION_TOGGLE_COMPLETED: "stt:diarization-toggle-completed",
 	STT_DIARIZATION_TOGGLE_FAILED: "stt:diarization-toggle-failed",
-	// A startup-only setting changed but the STT server is not Electron-
+	// A startup-only setting changed but the STT server is not the reference-
 	// managed (dev: user-run server), so it can't be auto-restarted.
 	STT_RESTART_REQUIRED: "stt:restart-required",
 
@@ -122,6 +122,9 @@ export const IPC = {
 	// backdrop window (window-local CSS px). Everything else in the window
 	// is a transparent click-to-dismiss backdrop.
 	MODEL_PICKER_ANCHOR: "model-picker:anchor",
+	// Main → renderer: close animation should start; Rust hides the window
+	// after the dropdown close duration.
+	MODEL_PICKER_CLOSING: "model-picker:closing",
 
 	// Detached input-device-picker window (renderer → main)
 	DEVICE_PICKER_OPEN: "device-picker:open",
@@ -247,6 +250,13 @@ export const IPC = {
 	TRANSFORMS_APPLIED: "transforms:applied",
 	TRANSFORMS_FAILED: "transforms:failed",
 
+	// Preview-before-pasting (renderer → main)
+	PREVIEW_CONFIRM_PASTE: "preview:confirm-paste",
+	PREVIEW_CANCEL: "preview:cancel",
+	// Preview-before-pasting event (main → renderer): the finalized transcript is
+	// held back from auto-paste; carries `{ original, text }` for the editable pill.
+	STT_PREVIEW_READY: "stt:preview-ready",
+
 	// TTS commands (renderer → main)
 	TTS_SPEAK: "tts:speak",
 	TTS_SPEAK_SELECTION: "tts:speak-selection",
@@ -285,6 +295,15 @@ export const IPC = {
 	TTS_REPORT_PLAYBACK_STARTED: "tts:report-playback-started",
 	TTS_REPORT_PLAYBACK_ENDED: "tts:report-playback-ended",
 
+	// Multi-provider TTS catalog (renderer → main): model-aware picker.
+	TTS_LIST_MODELS: "tts:list-models",
+	TTS_LIST_MODELS_WITH_STATE: "tts:list-models-with-state",
+	TTS_PREDOWNLOAD: "tts:predownload",
+	TTS_DOWNLOAD_PAUSE: "tts:download-pause",
+	TTS_DOWNLOAD_RESUME: "tts:download-resume",
+	TTS_DOWNLOAD_CANCEL: "tts:download-cancel",
+	TTS_DELETE_MODEL: "tts:delete-model",
+
 	// TTS events (main → renderer)
 	TTS_STARTED: "tts:started",
 	TTS_CHUNK: "tts:chunk",
@@ -310,6 +329,16 @@ export const IPC = {
 	// styling and re-enables the Pause button after Resume.
 	TTS_INSTALL_PAUSED: "tts:install-paused",
 	TTS_INSTALL_RESUMED: "tts:install-resumed",
+
+	// Multi-provider TTS catalog download events (main → renderer). Distinct
+	// wire strings from the legacy single-install TTS_MODEL_DOWNLOAD_* above
+	// (which carry no model/quantization) so the catalog picker updates the
+	// right per-model badge. PROGRESS { model, quantization, progress,
+	// downloadedBytes, totalBytes }; COMPLETE { model, quantization, cancelled };
+	// CACHE_CHANGED { modelId }.
+	TTS_CATALOG_MODEL_DOWNLOAD_PROGRESS: "tts:catalog-model-download-progress",
+	TTS_CATALOG_MODEL_DOWNLOAD_COMPLETE: "tts:catalog-model-download-complete",
+	TTS_CATALOG_MODEL_CACHE_CHANGED: "tts:model-cache-changed",
 
 	// LLM events (main → renderer)
 	LLM_CATALOG: "llm:catalog",
@@ -343,14 +372,14 @@ export const IPC = {
 	// periodic check. See setupUpdaterStatusHandlers in electron/main.ts.
 	UPDATER_CHECK_NOW: "updater:check-now",
 	// Restart the app to apply a downloaded update (renderer → main). Calls
-	// electron-updater's `quitAndInstall`. The renderer wires this to the
+	// the updater's `quitAndInstall`. The renderer wires this to the
 	// "Restart to install" button shown once status === "downloaded".
 	UPDATER_QUIT_AND_INSTALL: "updater:quit-and-install",
 	WINDOW_TELEMETRY: "window:telemetry",
 	SECURE_GET_KEY: "secure:get-key",
 	SECURE_INVOKE: "secure:invoke",
 
-	// Transcription history (renderer → main) — electron-store backed.
+	// Transcription history (renderer → main) — persisted store backed.
 	// Layered alongside the SQLite history (`history:*` channels below);
 	// not deleted yet because the settings panel still reads from it.
 	HISTORY_GET_ALL: "history:get-all",
@@ -377,7 +406,7 @@ export const IPC = {
 	// SQLite-backed transcription history (renderer → main).
 	// Owns the `{userData}/history.db` rusqlite-equivalent table and the
 	// `{userData}/recordings/` WAV files. Pagination + retention live here;
-	// the legacy electron-store history above is kept until callers migrate.
+	// the legacy persisted store history above is kept until callers migrate.
 	HISTORY_LIST: "history:list",
 	HISTORY_ADD: "history:add",
 	HISTORY_DELETE_ROW: "history:delete-row",
@@ -529,6 +558,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.MODEL_PICKER_CLOSE]: ["send"],
 	[IPC.MODEL_PICKER_RESIZE]: ["send"],
 	[IPC.MODEL_PICKER_ANCHOR]: ["on"],
+	[IPC.MODEL_PICKER_CLOSING]: ["on"],
 
 	// Detached input-device-picker window
 	[IPC.DEVICE_PICKER_OPEN]: ["send"],
@@ -621,6 +651,11 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TRANSFORMS_APPLIED]: ["on"],
 	[IPC.TRANSFORMS_FAILED]: ["on"],
 
+	// Preview-before-pasting
+	[IPC.PREVIEW_CONFIRM_PASTE]: ["invoke"],
+	[IPC.PREVIEW_CANCEL]: ["invoke"],
+	[IPC.STT_PREVIEW_READY]: ["on"],
+
 	// TTS (renderer → main)
 	[IPC.TTS_SPEAK]: ["invoke"],
 	[IPC.TTS_SPEAK_SELECTION]: ["invoke"],
@@ -637,6 +672,13 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_INSTALL_CANCEL]: ["send"],
 	[IPC.TTS_REPORT_PLAYBACK_STARTED]: ["send"],
 	[IPC.TTS_REPORT_PLAYBACK_ENDED]: ["send"],
+	[IPC.TTS_LIST_MODELS]: ["invoke"],
+	[IPC.TTS_LIST_MODELS_WITH_STATE]: ["invoke"],
+	[IPC.TTS_PREDOWNLOAD]: ["invoke"],
+	[IPC.TTS_DOWNLOAD_PAUSE]: ["invoke"],
+	[IPC.TTS_DOWNLOAD_RESUME]: ["invoke"],
+	[IPC.TTS_DOWNLOAD_CANCEL]: ["invoke"],
+	[IPC.TTS_DELETE_MODEL]: ["invoke"],
 
 	// TTS events (main → renderer)
 	[IPC.TTS_STARTED]: ["on"],
@@ -652,6 +694,9 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
 	[IPC.TTS_INSTALL_FAILED]: ["on"],
 	[IPC.TTS_INSTALL_PAUSED]: ["on"],
 	[IPC.TTS_INSTALL_RESUMED]: ["on"],
+	[IPC.TTS_CATALOG_MODEL_DOWNLOAD_PROGRESS]: ["on"],
+	[IPC.TTS_CATALOG_MODEL_DOWNLOAD_COMPLETE]: ["on"],
+	[IPC.TTS_CATALOG_MODEL_CACHE_CHANGED]: ["on"],
 
 	// LLM events (main → renderer)
 	[IPC.LLM_CATALOG]: ["on"],

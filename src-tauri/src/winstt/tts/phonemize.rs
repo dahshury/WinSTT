@@ -1,4 +1,3 @@
-// PORT IMPL — drafted against real APIs, pending compile.
 // Source: thewh1teagle/kokoro-onnx (src/kokoro_onnx/{tokenizer.py,config.json}),
 //   server/src/synthesizer/infrastructure/kokoro_synthesizer.py, espeak-ng CLI (`espeak-ng -q --ipa`).
 //
@@ -75,7 +74,10 @@ pub trait Phonemizer: Send + Sync {
     /// Python `tokenize()` (`[i for i in map(vocab.get, phonemes) if i is not None]`).
     fn tokenize(&self, phonemes: &str) -> PhonemizeResult<Vec<i64>> {
         let vocab = vocab();
-        let ids: Vec<i64> = phonemes.chars().filter_map(|c| vocab.get(&c).copied()).collect();
+        let ids: Vec<i64> = phonemes
+            .chars()
+            .filter_map(|c| vocab.get(&c).copied())
+            .collect();
         if ids.len() > MAX_PHONEME_LENGTH {
             return Err(PhonemizeError::TooLong(ids.len()));
         }
@@ -114,13 +116,17 @@ pub struct EspeakCliPhonemizer {
 
 impl Default for EspeakCliPhonemizer {
     fn default() -> Self {
-        Self { binary: espeak_binary() }
+        Self {
+            binary: espeak_binary(),
+        }
     }
 }
 
 impl EspeakCliPhonemizer {
     pub fn new(binary: impl Into<String>) -> Self {
-        Self { binary: binary.into() }
+        Self {
+            binary: binary.into(),
+        }
     }
 }
 
@@ -217,7 +223,12 @@ fn espeak_binary() -> String {
 pub fn espeak_lang_for(lang: &str) -> &'static str {
     match lang {
         "en-us" => "en-us",
-        "en-gb" => "en-gb",
+        // espeak-ng has NO bare "en-gb" voice file — British English ships as
+        // `en-GB-x-rp` (Received Pronunciation) etc. `espeak_SetVoiceByName("en-gb")`
+        // therefore returns EE_NOT_FOUND (2) and every UK Kokoro voice fails to
+        // phonemize. RP is the standard British voice (same phoneme set Kokoro's
+        // misaki uses for en-gb), and the `en-GB-x-rp` data is in our bundle.
+        "en-gb" => "en-gb-x-rp",
         "ja" => "ja",
         "cmn" => "cmn",
         "es" => "es",
@@ -233,7 +244,7 @@ pub fn espeak_lang_for(lang: &str) -> &'static str {
 // In-process espeak-ng FFI backend (the FAST + PARITY path)
 // ---------------------------------------------------------------------------
 //
-// The Electron app does NOT shell out to an `espeak-ng` CLI — it loads the
+// The the reference app does NOT shell out to an `espeak-ng` CLI — it loads the
 // espeak-ng SHARED LIBRARY (`espeak-ng.dll`, shipped by the `espeakng_loader`
 // PyPI package) and calls `espeak_TextToPhonemes` IN-PROCESS via ctypes (see
 // `phonemizer/backend/espeak/{wrapper,api}.py` + `kokoro_onnx/tokenizer.py`).
@@ -337,7 +348,7 @@ impl EspeakLib {
                 })?;
 
             // This espeak-ng build sets `path_home = path` DIRECTLY (it does not
-            // append `espeak-ng-data`) — the same convention as the Electron
+            // append `espeak-ng-data`) — the same convention as the reference
             // `espeakng_loader` + phonemizer, which init with `get_data_path()`
             // (the `espeak-ng-data` dir itself). `data_home` already points AT
             // that dir (it holds `phontab`), so pass it verbatim.
@@ -429,7 +440,10 @@ pub struct EspeakLibPhonemizer {
 
 enum EspeakLibState {
     /// Not yet loaded; carries the resolved (lib_path, data_dir) to try.
-    Pending { lib_path: PathBuf, data_dir: Option<PathBuf> },
+    Pending {
+        lib_path: PathBuf,
+        data_dir: Option<PathBuf>,
+    },
     /// Loaded + initialized.
     Loaded(EspeakLib),
     /// Load was attempted and failed — remember so we don't retry every call.
@@ -446,11 +460,29 @@ impl EspeakLibPhonemizer {
     }
 
     /// Resolve the espeak-ng shared library + data dir from the environment and
-    /// common install locations (incl. the Electron app's `espeakng_loader`
+    /// common install locations (incl. the reference app's `espeakng_loader`
     /// bundle), if any. Returns None when no shared lib can be found.
     pub fn discover() -> Option<Self> {
         let (lib_path, data_dir) = resolve_espeak_lib()?;
         Some(Self::new(lib_path, data_dir))
+    }
+
+    /// Phonemize with an EXPLICIT espeak voice id (e.g. `en-us`, `en-gb`, `de`,
+    /// `fr-fr`), bypassing the Kokoro lang-code remap in `espeak_lang_for`.
+    /// Returns cleaned IPA (espeak `_` separators dropped, whitespace collapsed,
+    /// single word spaces kept) — the per-codepoint form Piper mapping consumes.
+    /// Used by engines whose voice list carries native espeak voice ids (e.g.
+    /// Piper's `.onnx.json` `espeak.voice`).
+    pub fn phonemize_voice(&self, text: &str, espeak_voice: &str) -> PhonemizeResult<String> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Ok(String::new());
+        }
+        self.with_lib(|lib| {
+            lib.set_voice(espeak_voice)?;
+            let raw = lib.text_to_phonemes(trimmed)?;
+            Ok(clean_espeak_ipa(&raw))
+        })
     }
 
     /// Run `f` against the loaded library, loading it on first use.
@@ -476,9 +508,9 @@ impl EspeakLibPhonemizer {
         }
         match &mut *guard {
             EspeakLibState::Loaded(lib) => f(lib),
-            EspeakLibState::Failed => {
-                Err(PhonemizeError::EspeakUnavailable("espeak-ng shared lib unavailable".into()))
-            }
+            EspeakLibState::Failed => Err(PhonemizeError::EspeakUnavailable(
+                "espeak-ng shared lib unavailable".into(),
+            )),
             EspeakLibState::Pending { .. } => unreachable!("promoted above"),
         }
     }
@@ -508,15 +540,20 @@ impl Phonemizer for EspeakLibPhonemizer {
 /// `espeak-ng-data`. Precedence (parity with `phonemizer`'s lookup):
 ///   1. `ESPEAK_NG_LIBRARY` / `PHONEMIZER_ESPEAK_LIBRARY` / `WINSTT_ESPEAK_LIB`
 ///      explicit shared-lib path (+ `ESPEAK_DATA_PATH` / `PHONEMIZER_ESPEAK_DATA_PATH`).
-///   2. The Electron app's `espeakng_loader` bundle under
+///   2. The the reference app's `espeakng_loader` bundle under
 ///      `%LOCALAPPDATA%/winstt/tts/runtime/espeakng_loader/` (what ships today).
 ///   3. Common system install dirs (`C:\Program Files\eSpeak NG\`, PATH).
+///
 /// Returns None if no shared lib is found (caller falls back to CLI / null).
 pub fn resolve_espeak_lib() -> Option<(PathBuf, Option<PathBuf>)> {
     let lib_name = espeak_shared_lib_name();
 
     // (1) explicit lib path override.
-    for var in ["ESPEAK_NG_LIBRARY", "PHONEMIZER_ESPEAK_LIBRARY", "WINSTT_ESPEAK_LIB"] {
+    for var in [
+        "ESPEAK_NG_LIBRARY",
+        "PHONEMIZER_ESPEAK_LIBRARY",
+        "WINSTT_ESPEAK_LIB",
+    ] {
         if let Ok(p) = std::env::var(var) {
             let p = p.trim();
             if !p.is_empty() && Path::new(p).exists() {
@@ -527,7 +564,7 @@ pub fn resolve_espeak_lib() -> Option<(PathBuf, Option<PathBuf>)> {
 
     // Candidate dirs that may contain the shared lib (+ its espeak-ng-data).
     let mut dirs: Vec<PathBuf> = Vec::new();
-    // (2) the Electron espeakng_loader bundle (the file actually present today).
+    // (2) the reference espeakng_loader bundle (the file actually present today).
     if let Some(local) = local_app_data() {
         dirs.push(local.join("winstt/tts/runtime/espeakng_loader"));
     }
@@ -582,7 +619,7 @@ fn espeak_data_dir_for(lib_dir: &Path) -> Option<PathBuf> {
 
 /// The directory espeak-ng must use as its data home — the one that DIRECTLY
 /// contains `phontab`. This espeak-ng build sets `path_home = path` without
-/// appending `espeak-ng-data` (matching the Electron `espeakng_loader` +
+/// appending `espeak-ng-data` (matching the reference `espeakng_loader` +
 /// phonemizer, which init with `get_data_path()` = the `espeak-ng-data` dir
 /// itself). The resolver hands us either that dir or its parent (the lib dir,
 /// with `espeak-ng-data` beside it), so accept both. Returns None when `phontab`
@@ -632,7 +669,7 @@ fn explicit_data_dir(lib_path: &Path) -> Option<PathBuf> {
             }
         }
     }
-    lib_path.parent().and_then(|d| espeak_data_dir_for(d))
+    lib_path.parent().and_then(espeak_data_dir_for)
 }
 
 /// `%LOCALAPPDATA%` (Windows) — used to find the espeakng_loader bundle.
@@ -663,12 +700,13 @@ impl Phonemizer for NullPhonemizer {
 }
 
 /// Pick the best available phonemizer, in preference order:
-///   1. `EspeakLibPhonemizer` — in-process espeak-ng shared lib (the Electron
+///   1. `EspeakLibPhonemizer` — in-process espeak-ng shared lib (the reference
 ///      path; byte-identical phonemes, NO per-sentence subprocess). This is the
 ///      fast + parity default whenever the espeak-ng .dll/.so is discoverable.
 ///   2. `EspeakCliPhonemizer` — a system `espeak-ng` CLI binary, if one exists
 ///      (process-separated; slower on short sentences but still correct G2P).
 ///   3. `NullPhonemizer` — deterministic degraded fallback (poor pronunciation).
+///
 /// The host calls this once at engine warm-up and keeps the choice.
 pub fn default_phonemizer() -> Box<dyn Phonemizer> {
     if let Some(lib) = EspeakLibPhonemizer::discover() {
@@ -821,7 +859,10 @@ mod tests {
         assert_eq!(v.get(&'a'), Some(&43));
         // script-g ɡ (U+0261), NOT ascii 'g' — ascii 'g' is intentionally absent.
         assert_eq!(v.get(&'\u{0261}'), Some(&92));
-        assert!(v.get(&'g').is_none(), "ascii g must not be in the kokoro vocab");
+        assert!(
+            v.get(&'g').is_none(),
+            "ascii g must not be in the kokoro vocab"
+        );
         assert_eq!(v.get(&'\u{02C8}'), Some(&156)); // primary stress
     }
 
@@ -844,7 +885,7 @@ mod tests {
     #[test]
     fn tokenize_rejects_overlong() {
         let p = NullPhonemizer;
-        let long: String = std::iter::repeat('a').take(MAX_PHONEME_LENGTH + 1).collect();
+        let long: String = "a".repeat(MAX_PHONEME_LENGTH + 1);
         assert!(matches!(p.tokenize(&long), Err(PhonemizeError::TooLong(_))));
     }
 
@@ -900,10 +941,8 @@ mod tests {
     #[test]
     fn lib_phonemizer_pending_then_failed_on_bad_path() {
         // A non-existent lib path → is_available() false, no panic, cached Failed.
-        let p = EspeakLibPhonemizer::new(
-            PathBuf::from("Z:/definitely/missing/espeak-ng.dll"),
-            None,
-        );
+        let p =
+            EspeakLibPhonemizer::new(PathBuf::from("Z:/definitely/missing/espeak-ng.dll"), None);
         assert!(!p.is_available());
         // Second call must also be false (Failed state is sticky).
         assert!(p.phonemize("hello", "en-us").is_err());

@@ -1,3 +1,4 @@
+import { commands } from "@/bindings";
 import { IPC } from "./ipc-channels";
 import type {
 	AllowedMethod,
@@ -27,7 +28,7 @@ import { decodeSettingsPayload } from "./settings-codec";
 type AppSettings = ReturnType<typeof decodeSettingsPayload>;
 
 const noop = () => {
-	/* not in electron */
+	/* outside a bridge context */
 };
 
 type FallbackValue<T> = T | (() => T);
@@ -81,10 +82,10 @@ const CRITICAL_LOG_ONLY_CHANNELS: ReadonlySet<string> = new Set<string>([
 // the `typeof window !== "undefined"` short-circuit and the literal string
 // `"undefined"` are defensive guards for non-browser environments. Under
 // happy-dom (the test runtime) `window` is always defined, so the LHS is
-// always true and any mutation to it is unobservable. The RHS `window.electronAPI != null`
-// is what every test exercises (via setting electronAPI to undefined or a mock).
-function isElectron(): boolean {
-	return typeof window !== "undefined" && window.electronAPI != null;
+// always true and any mutation to it is unobservable. The RHS `window.nativeBridge != null`
+// is what every test exercises (via setting nativeBridge to undefined or a mock).
+function hasNativeBridge(): boolean {
+	return typeof window !== "undefined" && window.nativeBridge != null;
 }
 
 /**
@@ -113,7 +114,7 @@ function jsonRoundTripArg(arg: unknown): unknown {
 }
 
 /**
- * Make IPC arguments safe to cross the Electron `contextBridge`.
+ * Make IPC arguments safe to cross the reference `contextBridge`.
  *
  * `ipcRenderer.send`/`invoke` run every argument through the HTML
  * structured-clone algorithm. Anything non-cloneable in the object graph
@@ -149,15 +150,273 @@ function toCloneableArgs(channel: string, args: unknown[]): unknown[] {
 	}
 }
 
+/**
+ * The wrappers below ALWAYS pass either a single options-object or nothing, so
+ * `args[0]` is the only payload that matters. Return it when it's a non-array
+ * object; otherwise `{}` (a bare positional value or no args → the matching
+ * `COMMAND_INVOKERS` entry reads no keys from it). Channels whose wrapper passes
+ * a BARE positional (e.g. `deleteModelCache(id)`) are deliberately NOT in the
+ * map — they stay on the adapter's `POSITIONAL_STRING_PARAM` path.
+ */
+function firstObjArg(args: unknown[]): Record<string, unknown> {
+	const first = args[0];
+	if (first !== null && typeof first === "object" && !Array.isArray(first)) {
+		return first as Record<string, unknown>;
+	}
+	return {};
+}
+
+/**
+ * tauri-specta wraps fallible commands in a `Result` (`{ status:"ok", data }` |
+ * `{ status:"error", error }`); infallible ones return the value raw. Collapse
+ * the Result back to the bare value/throw the renderer's chokepoints expect:
+ *  - ok    → the unwrapped `data`
+ *  - error → THROW `error` (propagates to `invokeOrDefault`'s catch →
+ *            `handleInvokeError`, preserving the audit-#13 critical-channel
+ *            logging keyed by channel — exactly as a rejected the reference invoke did)
+ *  - raw   → returned unchanged
+ */
+function unwrapResult(v: unknown): unknown {
+	if (
+		v !== null &&
+		typeof v === "object" &&
+		"status" in v &&
+		((v as { status: unknown }).status === "ok" || (v as { status: unknown }).status === "error")
+	) {
+		const r = v as { status: "ok"; data: unknown } | { status: "error"; error: unknown };
+		if (r.status === "ok") {
+			return r.data;
+		}
+		throw r.error;
+	}
+	return v;
+}
+
+/**
+ * The typed transport for `kind:"command"` channels: each entry calls the
+ * matching generated `commands.METHOD(...)` from `@/bindings` with the wrapper's
+ * args extracted from the single options-object in POSITIONAL order. The
+ * `commands.METHOD(...)` call is what tsc type-checks — a Rust command signature
+ * change (renamed/reordered/retyped param) now BREAKS THE BUILD here instead of
+ * silently mis-routing through the untyped `invoke(channel, ...)` adapter path.
+ *
+ * Keyed by IPC channel. `invoke()` / `send()` consult this map FIRST (inside
+ * their `hasNativeBridge()` guard); a channel absent here falls through to the
+ * existing `window.nativeBridge.{invoke,send}` adapter path unchanged. Every
+ * entry was cross-checked: ROUTE[channel].cmd → bindings camelCase method →
+ * positional params, against the wrapper body's object keys.
+ *
+ * DELIBERATELY EXCLUDED (left on the adapter): window-family `inject` routes,
+ * secureInvoke channels, the STT connection/server-status noop shims, the
+ * bare-positional-string history/cache channels, and the few channels whose
+ * wrapper arg-shape doesn't line up 1:1 with the command params.
+ */
+const COMMAND_INVOKERS: Partial<Record<string, (a: Record<string, unknown>) => Promise<unknown>>> =
+	{
+		// ── STT dictation core ──
+		[IPC.STT_SET_PARAMETER]: (a) =>
+			commands.winsttSetParameter(a.parameter as string, a.value as never),
+		[IPC.STT_GET_PARAMETER]: (a) => commands.winsttGetParameter(a.parameter as string),
+		[IPC.STT_CALL_METHOD]: (a) =>
+			commands.winsttCallMethod(a.method as string, (a.args as never[] | undefined) ?? null),
+		[IPC.STT_ABORT_OPERATION]: () => commands.cancelCurrentOperation(),
+		[IPC.STT_RELOAD_MODEL]: (a) => commands.setWinsttModel(a.kind as string, a.name as string),
+
+		// ── Model catalog / runtime / fitness ──
+		[IPC.STT_GET_MODEL_CATALOG]: () => commands.listModels(),
+		[IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.listModelsWithState(),
+		[IPC.STT_GET_RUNTIME_INFO]: () => commands.getRuntimeInfo(),
+		[IPC.STT_GET_LIVE_RESOURCES]: (a) =>
+			commands.getLiveResources((a.forceRefresh as boolean | undefined) ?? null),
+		[IPC.STT_ASSESS_DICTATION_FIT]: (a) =>
+			commands.assessDictationFit(
+				a.modelId as string,
+				(a.quantization as string | null | undefined) ?? null,
+				(a.device as string | null | undefined) ?? null
+			),
+		[IPC.STT_ASSESS_OLLAMA_FIT]: (a) => commands.assessOllamaFit(a.sizeBytes as number),
+
+		// ── Per-quant download lifecycle ──
+		[IPC.STT_PREDOWNLOAD_QUANT]: (a) =>
+			commands.predownloadQuant(a.modelId as string, a.quantization as string),
+		[IPC.STT_DOWNLOAD_PAUSE]: (a) =>
+			commands.downloadPauseQuant(a.modelId as string, a.quantization as string),
+		[IPC.STT_DOWNLOAD_RESUME]: (a) =>
+			commands.downloadResumeQuant(a.modelId as string, a.quantization as string),
+		[IPC.STT_DOWNLOAD_CANCEL_QUANT]: (a) =>
+			commands.downloadCancelQuant(a.modelId as string, a.quantization as string),
+		[IPC.STT_DELETE_MODEL_QUANTIZATION]: (a) =>
+			commands.deleteModelQuantization(a.modelId as string, a.quantization as string),
+		[IPC.STT_CANCEL_DOWNLOAD]: () => commands.winsttCancelDownload(),
+
+		// ── Settings ──
+		[IPC.SETTINGS_LOAD]: () => commands.winsttGetSettings(),
+		[IPC.SETTINGS_SAVE]: (a) => commands.winsttSetSettings(a.settings as never),
+
+		// ── Hotkey ──
+		[IPC.HOTKEY_REGISTER]: (a) => commands.hotkeyRegister(a.accelerator as string),
+		[IPC.HOTKEY_UNREGISTER]: (a) => commands.hotkeyUnregister(a.accelerator as string),
+		[IPC.HOTKEY_START_RECORDING]: () => commands.hotkeyStartRecording(),
+		[IPC.HOTKEY_STOP_RECORDING]: () => commands.hotkeyStopRecording(),
+
+		// ── System ──
+		[IPC.AUDIO_GET_DEVICES]: () => commands.getAudioDevices(),
+		[IPC.GPU_GET_INFO]: () => commands.gpuGetInfo(),
+
+		// ── TTS ──
+		[IPC.TTS_SPEAK]: (a) =>
+			commands.ttsSpeak(
+				a.text as string,
+				(a.voice as string | null | undefined) ?? null,
+				(a.lang as string | null | undefined) ?? null,
+				(a.speed as number | null | undefined) ?? null
+			),
+		[IPC.TTS_CANCEL]: (a) => commands.ttsCancel((a.requestId as string | null | undefined) ?? null),
+		[IPC.TTS_SET_SPEED]: (a) => commands.ttsSetSpeed(a.speed as number),
+		[IPC.TTS_INIT]: () => commands.ttsInit(),
+		[IPC.TTS_LIST_VOICES]: (a) =>
+			commands.ttsListVoices((a.modelId as string | null | undefined) ?? null),
+		[IPC.TTS_CLOUD_LIST_VOICES]: () => commands.ttsListCloudVoices(),
+		[IPC.TTS_CLOUD_PREVIEW]: (a) => commands.ttsPreviewCloud(a.previewUrl as string),
+		[IPC.TTS_CLOUD_SUBSCRIPTION]: () => commands.ttsCloudSubscription(),
+		[IPC.TTS_DOWNLOAD_ESTIMATE]: () => commands.ttsDownloadEstimate(),
+		[IPC.TTS_INSTALL_PAUSE]: () => commands.ttsInstallPause(),
+		[IPC.TTS_INSTALL_RESUME]: () => commands.ttsInstallResume(),
+		[IPC.TTS_INSTALL_CANCEL]: () => commands.ttsInstallCancel(),
+		[IPC.TTS_REPORT_PLAYBACK_STARTED]: (a) =>
+			commands.ttsReportPlaybackStarted(a.requestId as string),
+		[IPC.TTS_REPORT_PLAYBACK_ENDED]: (a) => commands.ttsReportPlaybackEnded(a.requestId as string),
+		[IPC.TTS_LIST_MODELS]: () => commands.ttsListModels(),
+		[IPC.TTS_LIST_MODELS_WITH_STATE]: () => commands.ttsListModelsWithState(),
+		[IPC.TTS_PREDOWNLOAD]: (a) =>
+			commands.ttsPredownloadModel(a.modelId as string, a.quantization as string),
+		[IPC.TTS_DOWNLOAD_PAUSE]: (a) =>
+			commands.ttsDownloadPause(a.modelId as string, a.quantization as string),
+		[IPC.TTS_DOWNLOAD_RESUME]: (a) =>
+			commands.ttsDownloadResume(a.modelId as string, a.quantization as string),
+		[IPC.TTS_DOWNLOAD_CANCEL]: (a) =>
+			commands.ttsDownloadCancel(a.modelId as string, a.quantization as string),
+		[IPC.TTS_DELETE_MODEL]: (a) =>
+			commands.ttsDeleteModel(a.modelId as string, a.quantization as string),
+
+		// ── LLM / Ollama / OpenRouter ──
+		[IPC.LLM_SCAN_MODELS]: () => commands.scanOllamaModels(),
+		[IPC.LLM_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterModels(),
+		[IPC.LLM_DETECT_OLLAMA]: () => commands.ollamaDetect(),
+		[IPC.LLM_START_OLLAMA]: () => commands.ollamaStart(),
+		[IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a.model as string),
+		[IPC.LLM_CANCEL_PULL_MODEL]: (a) => commands.ollamaCancelPull(a.model as string),
+		[IPC.LLM_DELETE_MODEL]: (a) => commands.ollamaDelete(a.model as string),
+		[IPC.LLM_FETCH_OLLAMA_LIBRARY]: () => commands.ollamaFetchLibrary(),
+		[IPC.LLM_FETCH_OLLAMA_TAGS]: (a) => commands.ollamaFetchTags(a.model as string),
+		[IPC.LLM_GET_WARMUP_STATUS]: () => commands.llmGetWarmupStatus(),
+
+		// ── Transforms ──
+		[IPC.LLM_PROCESS_TEXT]: (a) =>
+			commands.processText(a.text as string, (a.context as string | undefined) ?? ""),
+		[IPC.LLM_PROCESS_TEXT_CUSTOM]: (a) =>
+			commands.processText(a.text as string, (a.context as string | undefined) ?? ""),
+
+		[IPC.TRANSFORMS_APPLY]: () => commands.applyTransform(),
+		[IPC.TRANSFORMS_PREVIEW]: (a) =>
+			commands.applyTransformPreview(
+				a.text as string,
+				a.feature as string,
+				(a.config as never | undefined) ?? null
+			),
+
+		// ── Preview-before-pasting ──
+		[IPC.PREVIEW_CONFIRM_PASTE]: (a) => commands.confirmPaste(a.text as string),
+		[IPC.PREVIEW_CANCEL]: () => commands.cancelPreview(),
+
+		// ── File transcription queue ──
+		[IPC.FILE_QUEUE_ENQUEUE]: (a) => commands.fileTranscribeEnqueue(a.files as never[]),
+		[IPC.FILE_QUEUE_CANCEL]: (a) => commands.fileTranscribeCancel(a.id as string),
+		[IPC.FILE_QUEUE_RETRY]: (a) => commands.fileTranscribeRetry(a.id as string),
+		[IPC.FILE_QUEUE_COPY]: (a) => commands.fileTranscribeCopy(a.id as string),
+		[IPC.FILE_QUEUE_CLEAR]: () => commands.fileTranscribeClear(),
+		[IPC.FILE_QUEUE_PAUSE]: (a) =>
+			commands.fileTranscribePause((a.id as string | null | undefined) ?? null),
+		[IPC.FILE_QUEUE_RESUME]: (a) =>
+			commands.fileTranscribeResume((a.id as string | null | undefined) ?? null),
+		[IPC.FILE_QUEUE_DISCARD_ALL]: () => commands.fileTranscribeDiscardAll(),
+		[IPC.FILE_QUEUE_GET_ACTIVE]: () => commands.fileTranscribeGetActive(),
+
+		// ── Loopback / listen ──
+		[IPC.LOOPBACK_LIST_DEVICES]: () => commands.loopbackListDevices(),
+		[IPC.LOOPBACK_START]: (a) => commands.startListen(a.deviceIndex as number),
+		[IPC.LOOPBACK_STOP]: () => commands.stopListen(),
+
+		// ── Sound library ──
+		[IPC.SOUND_LIBRARY_ADD]: (a) =>
+			commands.soundLibraryAdd(a.sourcePath as string, (a.name as string | null | undefined) ?? null),
+		[IPC.SOUND_LIBRARY_REMOVE]: (a) => commands.soundLibraryRemove(a.path as string),
+		[IPC.SOUND_LIBRARY_READ_FILE]: (a) => commands.soundLibraryReadFile(a.path as string),
+
+		// ── History (object-arg commands only; bare-positional-string channels
+		//    STT_DELETE_MODEL_CACHE / HISTORY_DELETE / HISTORY_LOAD_AUDIO /
+		//    HISTORY_ALIGN_AUDIO stay on the adapter's POSITIONAL_STRING_PARAM path) ──
+		[IPC.HISTORY_GET_ALL]: () => commands.historyGetAll(),
+		[IPC.HISTORY_CLEAR]: () => commands.historyClear(),
+
+		// ── Transcript quick-actions / diagnostics / about ──
+		[IPC.TRANSCRIPT_COPY_LAST]: () => commands.copyLastTranscript(),
+		[IPC.DIAG_SAVE_BUNDLE]: () => commands.diagSaveBundle(),
+		[IPC.ABOUT_GET_LICENSE]: () => commands.aboutGetLicense(),
+		[IPC.ABOUT_GET_NOTICES]: () => commands.aboutGetNotices(),
+		[IPC.ABOUT_GET_APP_INFO]: () => commands.aboutGetAppInfo(),
+	};
+
+/**
+ * Fire-and-forget critical channels: a rejected `send()` here can't return a
+ * promise to the caller, so we mirror the adapter's loud log instead of letting
+ * the failed write vanish (audit #13). Kept in sync with the adapter's
+ * `CRITICAL_SEND_CHANNELS`.
+ */
+const CRITICAL_SEND_CHANNELS: ReadonlySet<string> = new Set<string>([
+	IPC.STT_RELOAD_MODEL,
+	IPC.SETTINGS_SAVE,
+]);
+
 function send(channel: string, ...args: unknown[]) {
-	if (isElectron()) {
-		window.electronAPI.send(channel, ...toCloneableArgs(channel, args));
+	if (hasNativeBridge()) {
+		const invoker = COMMAND_INVOKERS[channel];
+		if (invoker) {
+			// `unwrapResult` is the load-bearing step here: a fallible `commands.*`
+			// returns a specta `Result`, and when the backend returns `Err(String)`
+			// the @tauri-apps `invoke` rejects with a plain STRING, so the generated
+			// wrapper does NOT rethrow — it RESOLVES `{status:"error"}`. Without this
+			// `.then(unwrapResult)` a failed critical send (e.g. SETTINGS_SAVE) would
+			// resolve that error-Result and slip past the critical `.catch` below,
+			// silently swallowing the write failure (the audit-#13 regression the
+			// adapter's raw `core.invoke` reject path used to surface).
+			const p = invoker(firstObjArg(args)).then(unwrapResult);
+			if (CRITICAL_SEND_CHANNELS.has(channel)) {
+				// Mirror the adapter's critical-send log so a failed swap / save is
+				// diagnosable instead of looking like a no-op.
+				void p.catch((err) => {
+					console.error(`[ipc] critical send "${channel}" via typed command failed:`, err);
+				});
+			} else {
+				void p.catch(() => {
+					/* fire-and-forget tolerant */
+				});
+			}
+			return;
+		}
+		window.nativeBridge.send(channel, ...toCloneableArgs(channel, args));
 	}
 }
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-	if (isElectron()) {
-		return window.electronAPI.invoke(channel, ...toCloneableArgs(channel, args)) as Promise<T>;
+	if (hasNativeBridge()) {
+		const invoker = COMMAND_INVOKERS[channel];
+		if (invoker) {
+			// A thrown Result-error propagates to invokeOrDefault's catch →
+			// handleInvokeError, preserving the #13 critical-channel logging.
+			return invoker(firstObjArg(args)).then((v) => unwrapResult(v) as T);
+		}
+		return window.nativeBridge.invoke(channel, ...toCloneableArgs(channel, args)) as Promise<T>;
 	}
 	return Promise.resolve(undefined as T);
 }
@@ -165,23 +424,23 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 // Stryker disable next-line ConditionalExpression: equivalent — invokeSecure
 // is only called via invokeSecureOrDefault, which wraps the result in
 // try/catch and returns the fallback when the call throws. With the mutant
-// `if (true)`, calling `window.electronAPI.secureInvoke` on undefined throws
+// `if (true)`, calling `window.nativeBridge.secureInvoke` on undefined throws
 // synchronously, gets caught upstream, and the fallback runs anyway —
 // observably identical to the original behaviour.
 function invokeSecure<T>(channel: string, payload?: unknown): Promise<T> {
-	if (isElectron()) {
-		return window.electronAPI.secureInvoke(channel, payload) as Promise<T>;
+	if (hasNativeBridge()) {
+		return window.nativeBridge.secureInvoke(channel, payload) as Promise<T>;
 	}
 	return Promise.resolve(undefined as T);
 }
 
 // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent —
 // every fallback passed by call-sites is either a non-function value (e.g.
-// `false`, `[]`, `{}`) OR the noop `() => { /* not in electron */ }`.
+// `false`, `[]`, `{}`) OR the noop `() => { /* outside a bridge context */ }`.
 // Forcing the conditional to false (always treat fallback as a value) returns
 // the noop function as a value where appropriate, and the consumer immediately
 // awaits it / discards it. Forcing to true wraps non-function values in `()`
-// which throws TypeError — but this only happens on the non-electron fallback
+// which throws TypeError — but this only happens on the non-bridge fallback
 // path, where the suite either accepts the throw (catches happen upstream)
 // or doesn't trigger this branch at all.
 function resolveFallback<T>(fallback: FallbackValue<T>): T {
@@ -195,9 +454,13 @@ async function invokeOrDefault<T>(
 ): Promise<T> {
 	try {
 		const value = await invoke<T | undefined>(channel, ...args);
+		// A resolved `undefined` is the BENIGN "void command / unwired feature"
+		// path — falling through to the fallback here is expected, so stay quiet.
 		return value === undefined ? resolveFallback(fallback) : value;
 	} catch (err) {
-		return handleInvokeError(channel, fallback, err);
+		// Only the THROW/REJECT path lands here — distinct from the quiet
+		// resolved-undefined path above — so a backend error is never silent.
+		return handleInvokeError(channel, fallback, err, args);
 	}
 }
 
@@ -213,33 +476,79 @@ async function invokeSecureOrDefault<T>(
 		// Mirror invokeOrDefault. None of today's secure channels are critical, but
 		// the shared classifier keeps a future critical secure channel from
 		// regressing into a silent fallback.
-		return handleInvokeError(channel, fallback, err);
+		return handleInvokeError(channel, fallback, err, [payload]);
 	}
 }
 
 /**
- * Decide what a rejected critical-channel invoke does. REJECT-tier channels
- * re-throw (the failure is a catchable signal); LOG-ONLY channels (and a future
- * tier addition) surface the error but still resolve the fallback; everything
- * else stays silently tolerant. Centralised so `invokeOrDefault` and
- * `invokeSecureOrDefault` can't drift.
+ * One-line digest of an invoke's args for the failure log — enough to pin the
+ * call site (which model / id / quant failed) without dumping a base64 audio
+ * blob or a full settings tree into the console. Objects are shallow-keyed;
+ * long strings are truncated.
  */
-function handleInvokeError<T>(channel: string, fallback: FallbackValue<T>, err: unknown): T {
+function summarizeArgs(args: unknown[]): string {
+	if (args.length === 0) {
+		return "(no args)";
+	}
+	const digest = (arg: unknown): unknown => {
+		if (typeof arg === "string") {
+			return arg.length > 80 ? `${arg.slice(0, 80)}…(${arg.length} chars)` : arg;
+		}
+		if (arg !== null && typeof arg === "object" && !Array.isArray(arg)) {
+			return Object.keys(arg as Record<string, unknown>);
+		}
+		return arg;
+	};
+	try {
+		return JSON.stringify(args.map(digest));
+	} catch {
+		return "(unserialisable args)";
+	}
+}
+
+/**
+ * Decide what a rejected invoke does. EVERY rejection is logged with the
+ * channel + an args digest + the error BEFORE the fallback is returned, so a
+ * backend error is observable instead of indistinguishable from "no value"
+ * (audit #13). Tiers only change the SEVERITY / control flow on top of that:
+ *
+ *  - REJECT tier: re-throw so the failure is a real catchable signal (call
+ *    sites consume it). This is the opt-in "surface a user-facing error"
+ *    mechanism — adding a channel to `CRITICAL_REJECT_CHANNELS` is the only
+ *    thing that changes the default fallback behaviour.
+ *  - LOG-ONLY tier: `console.error` but STILL return the fallback (re-rejecting
+ *    a high-fan-out read would break `.then(...)`-only consumers).
+ *  - everything else: `console.warn` and return the fallback — tolerant, but no
+ *    longer silent.
+ *
+ * Centralised so `invokeOrDefault` and `invokeSecureOrDefault` can't drift.
+ */
+function handleInvokeError<T>(
+	channel: string,
+	fallback: FallbackValue<T>,
+	err: unknown,
+	args: unknown[]
+): T {
+	const where = `[ipc] invoke "${channel}" args=${summarizeArgs(args)}`;
 	if (CRITICAL_REJECT_CHANNELS.has(channel)) {
-		console.error(`[ipc] critical invoke "${channel}" failed:`, err);
+		console.error(`${where} failed (critical):`, err);
 		throw err;
 	}
 	if (CRITICAL_LOG_ONLY_CHANNELS.has(channel)) {
 		// Surfaced (no longer silent) but tolerant — re-rejecting a high-fan-out
 		// read would break consumers that only `.then(...)` it.
-		console.error(`[ipc] critical invoke "${channel}" failed (tolerated):`, err);
+		console.error(`${where} failed (tolerated):`, err);
+		return resolveFallback(fallback);
 	}
+	// Uncategorised channels were previously SILENT here — exactly the audit #13
+	// "backend error looks like no value" bug. Warn (tolerant) so it's observable.
+	console.warn(`${where} failed — returning fallback:`, err);
 	return resolveFallback(fallback);
 }
 
 function on(channel: string, callback: (...args: unknown[]) => void): () => void {
-	if (isElectron()) {
-		return window.electronAPI.on(channel, callback);
+	if (hasNativeBridge()) {
+		return window.nativeBridge.on(channel, callback);
 	}
 	return noop;
 }
@@ -262,8 +571,8 @@ function onCast<T>(channel: string, cb: (value: T) => void): () => void {
 
 /** Get the native file path for a dropped File object (works with sandbox: true). */
 export function getFilePath(file: File): string {
-	if (isElectron()) {
-		return window.electronAPI.getPathForFile(file);
+	if (hasNativeBridge()) {
+		return window.nativeBridge.getPathForFile(file);
 	}
 	return "";
 }
@@ -293,14 +602,6 @@ export const sttAbortOperation = () => send(IPC.STT_ABORT_OPERATION);
  * already aborted.
  */
 export const onSttSessionAborted = (cb: () => void) => on(IPC.STT_SESSION_ABORTED, () => cb());
-
-/**
- * Toggle whether the overlay BrowserWindow accepts mouse events. The window is
- * click-through by default; the renderer flips this to `false` while the cursor
- * is over the X cancel button so the click lands instead of falling through.
- */
-export const overlaySetIgnoreMouse = (ignore: boolean) =>
-	send(IPC.OVERLAY_SET_IGNORE_MOUSE, { ignore });
 
 // Hotkey
 export const hotkeyRegister = (accelerator: string) =>
@@ -566,7 +867,7 @@ export const onDiarizationToggleFailed = (cb: (info: DiarizationToggleFailedPayl
 
 export interface ServerRestartRequiredPayload {
 	/** `unmanaged`: a startup-only setting changed but the server isn't
-	 * Electron-managed. `skew`: the running server is missing a capability
+	 * reference-managed. `skew`: the running server is missing a capability
 	 * this build needs (it's executing stale code). */
 	kind?: "unmanaged" | "skew";
 	/** Human-readable thing that needs the restart (a setting, or a build). */
@@ -853,7 +1154,7 @@ export const clipboardClear = () =>
 
 export interface UpdaterStatusEntry {
 	/** Only present when status === "downloading". Pass-through from
-	 *  electron-updater's `download-progress` payload. */
+	 *  the updater's `download-progress` payload. */
 	bytesPerSecond?: number;
 	message?: string;
 	percent?: number;
@@ -1037,8 +1338,6 @@ export const fileQueueRetry = (id: string) =>
 export const fileQueueCopy = (id: string) =>
 	invokeOrDefault<null>(IPC.FILE_QUEUE_COPY, null, { id });
 
-export const fileQueueClear = () => invokeOrDefault<null>(IPC.FILE_QUEUE_CLEAR, null);
-
 /** Pause ONE file (the in-flight one); it parks and the queue moves to the next. */
 export const fileQueuePause = (id: string) =>
 	invokeOrDefault<null>(IPC.FILE_QUEUE_PAUSE, null, { id });
@@ -1129,7 +1428,7 @@ export const applyTransform = (): Promise<TransformApplyResult> =>
 
 /**
  * Explicit LLM config the Playground can run against, independent of the
- * feature's saved settings. Mirrors the electron-main `FeatureLlmConfig`
+ * feature's saved settings. Mirrors the reference main `FeatureLlmConfig`
  * shape; shared connection values (Ollama endpoint, OpenRouter API key) are
  * NOT included — main reads those from the store regardless.
  */
@@ -1156,6 +1455,21 @@ export const runLlmPreview = (
 	config?: LlmPreviewConfig
 ): Promise<string> =>
 	invokeOrDefault<string>(IPC.TRANSFORMS_PREVIEW, text, { text, feature, config });
+
+// ── Preview-before-pasting ──
+// The finalized transcript is held back from auto-paste; the overlay shows the
+// editable preview pill. `onPreviewReady` carries the raw `original` (re-process
+// source) + the auto-processed `text` (what the pill shows). `confirmPaste`
+// restores the captured target window + pastes the (possibly edited) text;
+// `cancelPreview` dismisses without pasting.
+export const onPreviewReady = (cb: (payload: { original: string; text: string }) => void) =>
+	onCast(IPC.STT_PREVIEW_READY, cb);
+
+export const confirmPaste = (text: string): Promise<void> =>
+	invokeOrDefault<void>(IPC.PREVIEW_CONFIRM_PASTE, undefined, { text });
+
+export const cancelPreview = (): Promise<void> =>
+	invokeOrDefault<void>(IPC.PREVIEW_CANCEL, undefined);
 
 interface TransformAppliedPayload {
 	after: string;
@@ -1238,14 +1552,6 @@ export interface TtsModelDownloadProgressPayload {
 	totalBytes: number;
 }
 
-export interface TtsDownloadEstimatePayload {
-	alreadyInstalled: boolean;
-	components: Array<{ id: string; label: string; bytes: number; installed: boolean }>;
-	totalBytes: number;
-	/** True when the estimate couldn't be fetched (server / no internet). */
-	unavailable?: boolean;
-}
-
 /** Install phase emitted while the on-demand TTS install runs. */
 export type TtsInstallPhase = "engine" | "model" | "ready" | "unknown";
 
@@ -1277,19 +1583,12 @@ const TTS_VOICE_FALLBACK: TtsVoiceCatalog = { voices: [], languages: [] };
 
 const TTS_CLOUD_VOICE_FALLBACK: CloudTtsVoiceCatalog = { voices: [], error: null };
 
-const TTS_ESTIMATE_FALLBACK: TtsDownloadEstimatePayload = {
-	totalBytes: 0,
-	components: [],
-	alreadyInstalled: false,
-	unavailable: true,
-};
-
 /**
  * Fetch the static Kokoro voice catalog from the server. Result is
  * cached on the main side, so repeat calls are cheap.
  */
-export const listTtsVoices = (): Promise<TtsVoiceCatalog> =>
-	invokeOrDefault<TtsVoiceCatalog>(IPC.TTS_LIST_VOICES, TTS_VOICE_FALLBACK);
+export const listTtsVoices = (modelId?: string): Promise<TtsVoiceCatalog> =>
+	invokeOrDefault<TtsVoiceCatalog>(IPC.TTS_LIST_VOICES, TTS_VOICE_FALLBACK, { modelId });
 
 /**
  * Fetch the live ElevenLabs voice catalog for cloud TTS (GET /v2/voices,
@@ -1325,14 +1624,83 @@ export const ttsCloudSubscription = (): Promise<{
 		creditsExhausted: false,
 	});
 
-/**
- * Side-effect-free probe of what enabling TTS will download. Drives the
- * confirmation dialog — calling this never starts a download. A
- * `unavailable: true` result means the server / internet couldn't be
- * reached to size the install.
- */
-export const ttsDownloadEstimate = (): Promise<TtsDownloadEstimatePayload> =>
-	invokeOrDefault<TtsDownloadEstimatePayload>(IPC.TTS_DOWNLOAD_ESTIMATE, TTS_ESTIMATE_FALLBACK);
+
+// ── Multi-provider TTS catalog (model-aware picker) ───────────────────
+
+/** Per-quantization cache state for one TTS model (mirrors STT `ModelCacheInfo`). */
+export interface TtsModelCacheInfo {
+	downloadedBytes: number;
+	progress: number;
+	state: CacheState;
+	totalBytes: number;
+}
+
+export interface TtsModelStateEntry {
+	cacheByQuantization: Record<string, TtsModelCacheInfo>;
+	effectiveQuantization: string;
+	estimatedBytes: number;
+	id: string;
+}
+
+export interface TtsModelsWithStatePayload {
+	models: unknown[];
+	states: TtsModelStateEntry[];
+}
+
+/** Fetch the TTS catalog plus per-model cache state in one round-trip. */
+export const fetchTtsModelsWithState = (): Promise<TtsModelsWithStatePayload | null> =>
+	invokeOrDefault<TtsModelsWithStatePayload | null>(IPC.TTS_LIST_MODELS_WITH_STATE, null);
+
+/** Kick off a per-quant download for one `(modelId, quantization)` TTS model. */
+export const ttsPredownloadModel = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.TTS_PREDOWNLOAD, undefined, { modelId, quantization });
+
+/** Pause an in-flight TTS model download (partial file survives for resume). */
+export const ttsDownloadPause = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.TTS_DOWNLOAD_PAUSE, undefined, { modelId, quantization });
+
+/** Resume a paused TTS model download. */
+export const ttsDownloadResume = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.TTS_DOWNLOAD_RESUME, undefined, { modelId, quantization });
+
+/** Cancel an in-flight TTS model download. */
+export const ttsDownloadCancel = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.TTS_DOWNLOAD_CANCEL, undefined, { modelId, quantization });
+
+/** Delete one cached TTS model from disk. */
+export const ttsDeleteModel = (modelId: string, quantization: string) =>
+	invokeOrDefault<void>(IPC.TTS_DELETE_MODEL, undefined, { modelId, quantization });
+
+export interface TtsCatalogDownloadProgressPayload {
+	downloadedBytes: number;
+	model: string;
+	progress: number;
+	quantization: string;
+	totalBytes: number;
+}
+
+/** Subscribe to per-quant TTS catalog download progress. */
+export const onTtsModelDownloadProgressCatalog = (
+	cb: (payload: TtsCatalogDownloadProgressPayload) => void
+): (() => void) => onCast(IPC.TTS_CATALOG_MODEL_DOWNLOAD_PROGRESS, cb);
+
+/** Subscribe to per-quant TTS catalog download completion. */
+export const onTtsModelDownloadCompleteCatalog = (
+	cb: (model: string, cancelled: boolean, quantization: string) => void
+): (() => void) =>
+	on(IPC.TTS_CATALOG_MODEL_DOWNLOAD_COMPLETE, (data) => {
+		const d = data as { cancelled?: boolean; model: string; quantization: string };
+		cb(d.model, d.cancelled ?? false, d.quantization);
+	});
+
+/** Subscribe to TTS model cache invalidations (download finished / deleted). */
+export const onTtsModelCacheChanged = (cb: (modelId: string) => void): (() => void) =>
+	on(IPC.TTS_CATALOG_MODEL_CACHE_CHANGED, (data) => {
+		const d = data as { modelId?: unknown };
+		if (typeof d.modelId === "string") {
+			cb(d.modelId);
+		}
+	});
 
 /**
  * Force eager construction of the synthesizer (which on first call also
@@ -1476,7 +1844,7 @@ export const onTtsInstallResumed = (callback: () => void): (() => void) =>
 	onCast<Record<string, never>>(IPC.TTS_INSTALL_RESUMED, () => callback());
 
 export const onLlmCatalog = (callback: (models: OllamaModel[]) => void): (() => void) => {
-	if (!isElectron()) {
+	if (!hasNativeBridge()) {
 		return noop;
 	}
 	return onTyped(IPC.LLM_CATALOG, (d: { models: OllamaModel[] }) => d.models, callback);
@@ -1622,16 +1990,16 @@ export const openCustomModelsFolder = (): Promise<OpenCustomModelsFolderResult> 
 // ── About / licenses ────────────────────────────────────────────────
 export interface AboutAppInfo {
 	copyright: string;
-	electronVersion: string;
-	nodeVersion: string;
+	frameworkVersion: string;
 	version: string;
+	webview2Version: string;
 }
 
 const ABOUT_APP_INFO_FALLBACK: AboutAppInfo = {
 	copyright: "",
-	electronVersion: "",
-	nodeVersion: "",
+	frameworkVersion: "",
 	version: "",
+	webview2Version: "",
 };
 
 export const aboutGetLicense = (): Promise<string> =>

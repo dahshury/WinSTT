@@ -3,7 +3,50 @@ import { asInvalid } from "@test/lib/cast";
 import { IPC } from "./ipc-channels";
 import * as ipc from "./ipc-client";
 
-const originalApi = window.electronAPI;
+// ── Typed-transport seam (the `@/bindings` `commands.*` migration) ──────────────
+//
+// Migrated COMMAND-kind channels no longer cross `window.nativeBridge.invoke/send`
+// — they call the generated `commands.METHOD()` from `@/bindings`, which bottoms
+// out in `@tauri-apps/api/core` `invoke(snake_case_cmd, namedArgs)`. We mock THAT
+// seam so the migrated wrappers assert the Rust command NAME + the named-args
+// object (the real renderer↔Rust contract) instead of an opaque string channel.
+//
+// `commands.*` wraps fallible commands in a specta `Result` ({status:"ok",data})
+// and returns infallible ones raw, then ipc-client's `unwrapResult` collapses
+// that back to the bare value/throw. So the mock just resolves the RAW data
+// (commands wraps it, unwrapResult unwraps it) — the value flows through
+// unchanged for BOTH Result and raw commands. A thrown impl propagates as a
+// rejected command (the specta wrapper rethrows `Error`s) → `invokeOrDefault`.
+const tauriCalls: Array<{ args: Record<string, unknown> | undefined; cmd: string }> = [];
+let tauriInvokeImpl: (cmd: string, args?: Record<string, unknown>) => unknown = () => undefined;
+
+mock.module("@tauri-apps/api/core", () => ({
+	// `bindings.ts` imports `{ invoke as TAURI_INVOKE, Channel as TAURI_CHANNEL }`.
+	invoke: (cmd: string, args?: Record<string, unknown>) => {
+		tauriCalls.push({ cmd, args });
+		return Promise.resolve(tauriInvokeImpl(cmd, args));
+	},
+	// `Channel` is imported by bindings.ts but unused on the command path — a bare
+	// stub keeps the import binding satisfied.
+	Channel: class {},
+}));
+
+/** Reset the recorded TAURI invokes + install a resolver for the typed-command seam. */
+function setTauriInvoke(impl?: (cmd: string, args?: Record<string, unknown>) => unknown) {
+	tauriCalls.length = 0;
+	tauriInvokeImpl = impl ?? (() => undefined);
+}
+
+/** The single recorded `commands.*` → TAURI invoke for a migrated channel. */
+function lastTauriCall(): { args: Record<string, unknown> | undefined; cmd: string } {
+	const call = tauriCalls.at(-1);
+	if (!call) {
+		throw new Error("expected a typed command (TAURI invoke) but none was recorded");
+	}
+	return call;
+}
+
+const originalApi = window.nativeBridge;
 
 interface MockApi {
 	getPathForFile: ReturnType<typeof mock>;
@@ -14,10 +57,10 @@ interface MockApi {
 	send: ReturnType<typeof mock>;
 }
 
-// MockApi implements only the ElectronAPI surface ipc-client.ts actually calls.
-// The single boundary cast (mock → real ElectronAPI) lives here instead of being
+// MockApi implements only the NativeBridge surface ipc-client.ts actually calls.
+// The single boundary cast (mock → real NativeBridge) lives here instead of being
 // repeated at every injection site — the runtime object is returned unchanged.
-const asElectronApi = (m: MockApi) => m as unknown as typeof window.electronAPI;
+const asNativeBridge = (m: MockApi) => m as unknown as typeof window.nativeBridge;
 
 function installMockApi(opts?: {
 	invokeImpl?: (channel: string, ...args: unknown[]) => unknown;
@@ -52,7 +95,7 @@ function installMockApi(opts?: {
 		}),
 		getPathForFile: mock(() => "/mock/path"),
 	};
-	window.electronAPI = asElectronApi(api);
+	window.nativeBridge = asNativeBridge(api);
 	return api;
 }
 
@@ -64,58 +107,126 @@ function fire(api: MockApi, channel: string, ...args: unknown[]) {
 
 beforeEach(() => {
 	// reset to clean baseline before each test
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
+	// clear the typed-command seam so a prior test's recorded TAURI invokes /
+	// resolver can't leak into the next.
+	setTauriInvoke();
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 describe("getFilePath", () => {
-	test("delegates to electronAPI.getPathForFile when in electron", () => {
+	test("delegates to nativeBridge.getPathForFile when in a bridge context", () => {
 		const api = installMockApi();
 		const file = new File(["hi"], "x.wav", { type: "audio/wav" });
 		expect(ipc.getFilePath(file)).toBe("/mock/path");
 		expect(api.getPathForFile).toHaveBeenCalledTimes(1);
 	});
 
-	test("returns empty string when not in electron", () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("returns empty string when outside a bridge context", () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			expect(ipc.getFilePath(new File([], "x.wav"))).toBe("");
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 });
 
-describe("send wrappers", () => {
-	test("hotkeyUnregister forwards accelerator", () => {
-		const api = installMockApi();
+// Migrated send-kind wrappers now route through the typed `commands.*` →
+// `@tauri-apps/api/core` invoke seam (gated on hasNativeBridge()), so we assert the
+// Rust command NAME + named args, not the nativeBridge string channel.
+describe("send wrappers (migrated to typed commands)", () => {
+	test("hotkeyUnregister calls hotkey_unregister with the accelerator", () => {
+		installMockApi();
 		ipc.hotkeyUnregister("Ctrl+S");
-		expect(api.send).toHaveBeenCalledWith(IPC.HOTKEY_UNREGISTER, { accelerator: "Ctrl+S" });
+		expect(lastTauriCall()).toEqual({ cmd: "hotkey_unregister", args: { accelerator: "Ctrl+S" } });
 	});
 
-	test("hotkeyStopRecording sends with no payload", () => {
-		const api = installMockApi();
+	test("hotkeyStopRecording calls hotkey_stop_recording with no args", () => {
+		installMockApi();
 		ipc.hotkeyStopRecording();
-		expect(api.send).toHaveBeenCalledWith(IPC.HOTKEY_STOP_RECORDING);
+		expect(lastTauriCall().cmd).toBe("hotkey_stop_recording");
 	});
 
-	test("autostartSet sends enabled flag", () => {
+	test("settingsSave calls winstt_set_settings with the settings patch", () => {
+		installMockApi();
+		ipc.settingsSave({} as Parameters<typeof ipc.settingsSave>[0]);
+		expect(lastTauriCall()).toEqual({ cmd: "winstt_set_settings", args: { settings: {} } });
+	});
+
+	test("loopbackStart and loopbackStop route to start_listen / stop_listen", () => {
+		installMockApi();
+		ipc.loopbackStart(3);
+		ipc.loopbackStop();
+		expect(tauriCalls).toEqual([
+			{ cmd: "start_listen", args: { deviceIndex: 3 } },
+			{ cmd: "stop_listen", args: undefined },
+		]);
+	});
+
+	test("sttSetParameter and sttCallMethod route to winstt_set_parameter / winstt_call_method", () => {
+		installMockApi();
+		ipc.sttSetParameter("model", "tiny");
+		ipc.sttCallMethod("abort", [1, 2]);
+		expect(tauriCalls).toEqual([
+			{ cmd: "winstt_set_parameter", args: { parameter: "model", value: "tiny" } },
+			{ cmd: "winstt_call_method", args: { method: "abort", args: [1, 2] } },
+		]);
+	});
+
+	// audit-#13 regression: a fallible `commands.*` (e.g. winstt_set_settings) wraps
+	// its result in a specta `Result`. When the backend returns `Err(String)`, the
+	// @tauri-apps `invoke` rejects with a plain STRING (not an `Error`), so the
+	// generated wrapper does NOT rethrow — it RESOLVES `{status:"error"}`. send()
+	// must `.then(unwrapResult)` so that resolved error-Result becomes a rejection
+	// the CRITICAL_SEND_CHANNELS `.catch` logs, instead of being silently swallowed.
+	test("settingsSave (critical send) surfaces an Err(String) backend failure via console.error", async () => {
+		installMockApi();
+		// Simulate the Rust `Err("disk full")` → tauri invoke rejecting with a bare
+		// string → specta wrapper RESOLVES `{status:"error", error:"disk full"}`.
+		setTauriInvoke(() => {
+			// Deliberately a NON-Error literal: reproduces the @tauri-apps
+			// string-rejection path the specta wrapper does NOT rethrow (it only
+			// rethrows `instanceof Error`), so the wrapper RESOLVES {status:"error"}.
+			throw "disk full";
+		});
+		const originalError = console.error;
+		const errorCalls: unknown[][] = [];
+		console.error = (...a: unknown[]) => {
+			errorCalls.push(a);
+		};
+		try {
+			ipc.settingsSave({} as Parameters<typeof ipc.settingsSave>[0]);
+			// Drain the send()'s internal promise chain (.then(unwrapResult).catch).
+			await Promise.resolve();
+			await Promise.resolve();
+		} finally {
+			console.error = originalError;
+		}
+		expect(lastTauriCall().cmd).toBe("winstt_set_settings");
+		expect(errorCalls).toHaveLength(1);
+		const [msg, err] = errorCalls[0];
+		expect(String(msg)).toContain("critical send");
+		expect(String(msg)).toContain(IPC.SETTINGS_SAVE);
+		expect(err).toBe("disk full");
+	});
+});
+
+// Non-migrated send-kind wrappers stay on the nativeBridge string-channel adapter
+// path (plugin / window-family routes — deliberately excluded from the map).
+describe("send wrappers (still on the adapter)", () => {
+	test("autostartSet sends enabled flag (plugin route — not migrated)", () => {
 		const api = installMockApi();
 		ipc.autostartSet(true);
 		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET, { enabled: true });
+		expect(tauriCalls).toHaveLength(0);
 	});
 
-	test("settingsSave sends settings", () => {
-		const api = installMockApi();
-		ipc.settingsSave({} as Parameters<typeof ipc.settingsSave>[0]);
-		expect(api.send).toHaveBeenCalledWith(IPC.SETTINGS_SAVE, { settings: {} });
-	});
-
-	test("window controls send their channels", () => {
+	test("window controls send their channels (window-family — not migrated)", () => {
 		const api = installMockApi();
 		ipc.windowMinimize();
 		ipc.windowMaximize();
@@ -132,36 +243,21 @@ describe("send wrappers", () => {
 			IPC.WINDOW_OPEN_SETTINGS,
 			IPC.WINDOW_CLOSE_SELF,
 		]);
-	});
-
-	test("loopbackStart and loopbackStop send their payloads", () => {
-		const api = installMockApi();
-		ipc.loopbackStart(3);
-		ipc.loopbackStop();
-		expect(api.send).toHaveBeenNthCalledWith(1, IPC.LOOPBACK_START, { deviceIndex: 3 });
-		expect(api.send).toHaveBeenNthCalledWith(2, IPC.LOOPBACK_STOP);
-	});
-
-	test("sttSetParameter and sttCallMethod send full payloads", () => {
-		const api = installMockApi();
-		ipc.sttSetParameter("model", "tiny");
-		ipc.sttCallMethod("abort", [1, 2]);
-		expect(api.send).toHaveBeenNthCalledWith(1, IPC.STT_SET_PARAMETER, {
-			parameter: "model",
-			value: "tiny",
-		});
-		expect(api.send).toHaveBeenNthCalledWith(2, IPC.STT_CALL_METHOD, {
-			method: "abort",
-			args: [1, 2],
-		});
+		expect(tauriCalls).toHaveLength(0);
 	});
 });
 
+// The contextBridge clone guard (`toCloneableArgs`) only runs on the nativeBridge
+// adapter path — i.e. for channels NOT in COMMAND_INVOKERS. The original tests used
+// `settings:save` / `history:get-all`, which are now migrated (shadowed by the typed
+// map), so they'd never reach the clone guard. We exercise it through NON-migrated
+// channels (`autostart:set` send / `autostart:get` invoke) instead — same guard,
+// real adapter path.
 describe("toCloneableArgs (contextBridge clone guard)", () => {
 	test("passes plain payloads through unchanged (structuredClone fast path)", () => {
 		const api = installMockApi();
-		ipc.ipcSend("settings:save", { settings: { a: 1, nested: { b: [2, 3] } } });
-		expect(api.send).toHaveBeenCalledWith("settings:save", {
+		ipc.ipcSend(IPC.AUTOSTART_SET, { settings: { a: 1, nested: { b: [2, 3] } } });
+		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET, {
 			settings: { a: 1, nested: { b: [2, 3] } },
 		});
 	});
@@ -169,23 +265,23 @@ describe("toCloneableArgs (contextBridge clone guard)", () => {
 	test("strips a non-cloneable function from a send payload instead of throwing", () => {
 		const api = installMockApi();
 		const poisoned = { settings: { ok: 1, fn: () => "boom" } };
-		expect(() => ipc.ipcSend("settings:save", poisoned)).not.toThrow();
-		expect(api.send).toHaveBeenCalledWith("settings:save", { settings: { ok: 1 } });
+		expect(() => ipc.ipcSend(IPC.AUTOSTART_SET, poisoned)).not.toThrow();
+		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET, { settings: { ok: 1 } });
 	});
 
 	test("sanitizes a non-cloneable invoke argument and still resolves", async () => {
 		const api = installMockApi({ invokeImpl: (_c, arg) => arg });
-		const result = await ipc.ipcInvoke("history:get-all", { id: "x", fn: () => 0 });
+		const result = await ipc.ipcInvoke(IPC.AUTOSTART_GET, { id: "x", fn: () => 0 });
 		expect(result).toEqual({ id: "x" });
-		expect(api.invoke).toHaveBeenCalledWith("history:get-all", { id: "x" });
+		expect(api.invoke).toHaveBeenCalledWith(IPC.AUTOSTART_GET, { id: "x" });
 	});
 
 	test("drops to no args when the payload is circular (does not crash the renderer)", () => {
 		const api = installMockApi();
 		const circular: Record<string, unknown> = { fn: () => 0 };
 		circular.self = circular;
-		expect(() => ipc.ipcSend("settings:save", circular)).not.toThrow();
-		expect(api.send).toHaveBeenCalledWith("settings:save");
+		expect(() => ipc.ipcSend(IPC.AUTOSTART_SET, circular)).not.toThrow();
+		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET);
 	});
 });
 
@@ -211,30 +307,31 @@ describe("invokeOrDefault wrappers", () => {
 		expect(await ipc.autostartGet()).toBe(false);
 	});
 
-	test("hotkeyRegister forwards accelerator and returns the result", async () => {
-		const api = installMockApi({
-			invokeImpl: () => true,
-		});
+	test("hotkeyRegister calls hotkey_register and returns the result (migrated)", async () => {
+		// `commands.hotkeyRegister` is a RAW (non-Result) command → the mock resolves
+		// the bool directly.
+		installMockApi();
+		setTauriInvoke(() => true);
 		expect(await ipc.hotkeyRegister("Ctrl+S")).toBe(true);
-		expect(api.invoke).toHaveBeenCalledWith(IPC.HOTKEY_REGISTER, { accelerator: "Ctrl+S" });
+		expect(lastTauriCall()).toEqual({ cmd: "hotkey_register", args: { accelerator: "Ctrl+S" } });
 	});
 
-	test("settingsLoad decodes the returned payload", async () => {
-		installMockApi({
-			invokeImpl: () => ({ general: { recordingMode: "toggle" } }),
-		});
+	test("settingsLoad decodes the winstt_get_settings payload (migrated)", async () => {
+		installMockApi();
+		setTauriInvoke(() => ({ general: { recordingMode: "toggle" } }));
 		const settings = await ipc.settingsLoad();
+		expect(lastTauriCall().cmd).toBe("winstt_get_settings");
 		expect(settings.general.recordingMode).toBe("toggle");
 		// Other fields filled with defaults
 		expect(settings.general.minimizeToTray).toBe(true);
 	});
 
-	test("processWithLlm passes the input text through", async () => {
-		const api = installMockApi({
-			invokeImpl: () => "processed!",
-		});
+	test("processWithLlm routes through process_text with an empty context", async () => {
+		const api = installMockApi();
+		setTauriInvoke(() => "processed!");
 		expect(await ipc.processWithLlm("raw")).toBe("processed!");
-		expect(api.invoke).toHaveBeenCalledWith(IPC.LLM_PROCESS_TEXT, { text: "raw" });
+		expect(lastTauriCall()).toEqual({ cmd: "process_text", args: { text: "raw", context: "" } });
+		expect(api.invoke).not.toHaveBeenCalled();
 	});
 
 	test("processWithLlm falls back to original text when invoke returns undefined", async () => {
@@ -292,17 +389,20 @@ describe("invokeOrDefault wrappers", () => {
 		expect(api.invoke).toHaveBeenCalledWith(IPC.FILE_TRANSCRIBE, { filePath: "C:\\a.wav" });
 	});
 
-	test("fetchOllamaModels returns scan result", async () => {
+	test("fetchOllamaModels returns scan result (migrated → scan_ollama_models)", async () => {
 		const fixture = { models: [{ name: "m" }], reachable: true };
-		installMockApi({ invokeImpl: () => fixture });
+		installMockApi();
+		// `commands.scanOllamaModels` is a Result command; the mock resolves the RAW
+		// data (commands wraps it {status:"ok",data}, unwrapResult unwraps it).
+		setTauriInvoke(() => fixture);
 		expect(await ipc.fetchOllamaModels()).toBe(fixture);
+		expect(lastTauriCall().cmd).toBe("scan_ollama_models");
 	});
 
-	test("fetchOllamaModels falls back to disconnected scan when invoke fails", async () => {
-		installMockApi({
-			invokeImpl: () => {
-				throw new Error("nope");
-			},
+	test("fetchOllamaModels falls back to disconnected scan when the command rejects", async () => {
+		installMockApi();
+		setTauriInvoke(() => {
+			throw new Error("nope");
 		});
 		const out = await ipc.fetchOllamaModels();
 		expect(out.reachable).toBe(false);
@@ -314,7 +414,7 @@ describe("invokeOrDefault wrappers", () => {
 		expect(await ipc.detectOllama()).toEqual({ installed: false });
 	});
 
-	test("startOllama returns fallback on no-electron-path", async () => {
+	test("startOllama returns fallback on no-bridge-path", async () => {
 		installMockApi();
 		const out = await ipc.startOllama();
 		expect(out.started).toBe(false);
@@ -539,13 +639,17 @@ describe("typed event subscriptions", () => {
 		expect(cb).toHaveBeenCalledWith("base", true, "q4");
 	});
 
-	test("onModelCatalog and fetchModelCatalog handle models list", async () => {
-		const api = installMockApi({ invokeImpl: () => [{ name: "tiny" }] });
+	test("onModelCatalog (event) and fetchModelCatalog (migrated → list_models) handle models list", async () => {
+		const api = installMockApi();
 		const cb = mock(() => undefined);
+		// onModelCatalog stays on the event/adapter path (nativeBridge.on).
 		ipc.onModelCatalog(cb);
 		fire(api, IPC.STT_MODEL_CATALOG, { models: [1, 2] });
 		expect(cb).toHaveBeenCalledWith([1, 2]);
+		// fetchModelCatalog is migrated → typed command (raw array, no Result wrap).
+		setTauriInvoke(() => [{ name: "tiny" }]);
 		expect(await ipc.fetchModelCatalog()).toEqual([{ name: "tiny" }]);
+		expect(lastTauriCall().cmd).toBe("list_models");
 	});
 
 	test("loopback events extract their fields", () => {
@@ -619,20 +723,20 @@ describe("typed event subscriptions", () => {
 		expect(tele).toHaveBeenCalled();
 	});
 
-	test("onLlmCatalog returns no-op when not in electron", () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("onLlmCatalog returns no-op when outside a bridge context", () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			const cb = mock(() => undefined);
 			const unsub = ipc.onLlmCatalog(cb);
 			unsub();
 			expect(cb).not.toHaveBeenCalled();
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 
-	test("onLlmCatalog subscribes when in electron and extracts models array", () => {
+	test("onLlmCatalog subscribes when in a bridge context and extracts models array", () => {
 		const api = installMockApi();
 		const cb = mock(() => undefined);
 		const unsub = ipc.onLlmCatalog(cb);
@@ -644,144 +748,150 @@ describe("typed event subscriptions", () => {
 		expect((cb as unknown as { mock: { calls: unknown[][] } }).mock.calls.length).toBe(1);
 	});
 
-	test("ipcOn returns a no-op unsubscribe when not in electron", () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("ipcOn returns a no-op unsubscribe when outside a bridge context", () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			const unsub = ipc.ipcOn("foo", () => undefined);
 			expect(typeof unsub).toBe("function");
 			unsub(); // should not throw
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 
-	test("ipcSend is a no-op when not in electron", () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("ipcSend is a no-op when outside a bridge context", () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			expect(() => ipc.ipcSend("foo", 1, 2)).not.toThrow();
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 
-	test("ipcInvoke resolves to undefined when not in electron", async () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("ipcInvoke resolves to undefined when outside a bridge context", async () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			expect(await ipc.ipcInvoke("foo")).toBeUndefined();
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 
-	test("clipboardReadText returns empty string when not in electron (secureInvoke fallback)", async () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("clipboardReadText returns empty string when outside a bridge context (secureInvoke fallback)", async () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			expect(await ipc.clipboardReadText()).toBe("");
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 
-	test("ipcSend on undefined electronAPI is a no-op and does not throw (kills L30 isElectron `true` mutant — would call .send on undefined)", () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("ipcSend on undefined nativeBridge is a no-op and does not throw (kills L30 hasNativeBridge `true` mutant — would call .send on undefined)", () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			expect(() => ipc.ipcSend("settings:save")).not.toThrow();
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 
-	test("ipcInvoke on undefined electronAPI does not throw (kills L30 mutant where isElectron => true would call .invoke on undefined)", async () => {
-		const previous = window.electronAPI;
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("ipcInvoke on undefined nativeBridge does not throw (kills L30 mutant where hasNativeBridge => true would call .invoke on undefined)", async () => {
+		const previous = window.nativeBridge;
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		try {
 			await expect(ipc.ipcInvoke("settings:load")).resolves.toBeUndefined();
 		} finally {
-			window.electronAPI = previous;
+			window.nativeBridge = previous;
 		}
 	});
 });
 
 describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arrow body mutants)", () => {
-	test("sttGetParameter calls invoke and returns result when in electron", async () => {
-		const api = installMockApi({
-			invokeImpl: (_ch, payload) => {
-				expect((payload as { parameter: string }).parameter).toBe("model");
-				return "tiny";
-			},
+	test("sttGetParameter calls winstt_get_parameter and returns result when in a bridge context", async () => {
+		installMockApi();
+		setTauriInvoke((_cmd, args) => {
+			expect((args as { parameter: string }).parameter).toBe("model");
+			return "tiny";
 		});
 		const result = await ipc.sttGetParameter("model");
 		expect(result).toBe("tiny");
-		expect(api.invoke).toHaveBeenCalledWith(IPC.STT_GET_PARAMETER, { parameter: "model" });
+		expect(lastTauriCall()).toEqual({ cmd: "winstt_get_parameter", args: { parameter: "model" } });
 	});
 
-	test("sttGetParameter falls back to null when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("sttGetParameter falls back to null when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.sttGetParameter("model");
 		expect(result).toBeNull();
 	});
 
-	test("hotkeyStartRecording calls invoke and returns result", async () => {
-		const api = installMockApi({ invokeImpl: () => true });
+	test("hotkeyStartRecording calls hotkey_start_recording and returns result", async () => {
+		installMockApi();
+		setTauriInvoke(() => true);
 		expect(await ipc.hotkeyStartRecording()).toBe(true);
-		expect(api.invoke).toHaveBeenCalledWith(IPC.HOTKEY_START_RECORDING);
+		expect(lastTauriCall().cmd).toBe("hotkey_start_recording");
 	});
 
-	test("hotkeyStartRecording falls back to false when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("hotkeyStartRecording falls back to false when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.hotkeyStartRecording()).toBe(false);
 	});
 
-	test("autostartGet falls back to false when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("autostartGet falls back to false when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.autostartGet()).toBe(false);
 	});
 
-	test("audioGetDevices returns invoke result when in electron", async () => {
+	test("audioGetDevices returns the get_audio_devices result when in a bridge context", async () => {
 		const devices = [{ index: 0, name: "Mic", isDefault: true }];
-		const api = installMockApi({ invokeImpl: () => devices });
+		installMockApi();
+		// `commands.getAudioDevices` is a Result command; mock resolves the raw array.
+		setTauriInvoke(() => devices);
 		const out = await ipc.audioGetDevices();
 		expect(out).toEqual(devices as unknown as Awaited<ReturnType<typeof ipc.audioGetDevices>>);
-		expect(api.invoke).toHaveBeenCalledWith(IPC.AUDIO_GET_DEVICES);
+		expect(lastTauriCall().cmd).toBe("get_audio_devices");
 	});
 
-	test("audioGetDevices falls back to [] when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("audioGetDevices falls back to [] when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.audioGetDevices()).toEqual([]);
 	});
 
-	test("gpuGetInfo returns invoke result when in electron", async () => {
-		const info = { name: "RTX 4090", available: true };
-		const api = installMockApi({ invokeImpl: () => info });
+	test("gpuGetInfo returns the gpu_get_info result when in a bridge context", async () => {
+		const info = [{ name: "RTX 4090", available: true }];
+		installMockApi();
+		// `commands.gpuGetInfo` is a RAW command (returns the array directly).
+		setTauriInvoke(() => info);
 		expect(await ipc.gpuGetInfo()).toEqual(info);
-		expect(api.invoke).toHaveBeenCalledWith(IPC.GPU_GET_INFO);
+		expect(lastTauriCall().cmd).toBe("gpu_get_info");
 	});
 
-	test("gpuGetInfo falls back to null when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
-		expect(await ipc.gpuGetInfo()).toBeNull();
+	test("gpuGetInfo falls back to [] when outside a bridge context", async () => {
+		// NB: gpuGetInfo's declared fallback is `[]` (GpuInfo[]), not null — the prior
+		// `toBeNull()` assertion was stale (it never matched the wrapper's `[]` default).
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
+		expect(await ipc.gpuGetInfo()).toEqual([]);
 	});
 
-	test("sttIsConnected falls back to false when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("sttIsConnected falls back to false when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.sttIsConnected()).toBe(false);
 	});
 
-	test("sttServerStatus falls back to 'idle' when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("sttServerStatus falls back to 'idle' when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.sttServerStatus()).toBe("idle");
 	});
 
-	test("settingsSave forwards full settings object", () => {
-		const api = installMockApi();
+	test("settingsSave forwards the full settings object to winstt_set_settings", () => {
+		installMockApi();
 		const settings = { model: { model: "tiny" } } as Parameters<typeof ipc.settingsSave>[0];
 		ipc.settingsSave(settings);
-		expect(api.send).toHaveBeenCalledWith(IPC.SETTINGS_SAVE, { settings });
+		expect(lastTauriCall()).toEqual({ cmd: "winstt_set_settings", args: { settings } });
 	});
 
 	test("autostartSet forwards enabled flag", () => {
@@ -790,10 +900,10 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		expect(api.send).toHaveBeenCalledWith(IPC.AUTOSTART_SET, { enabled: true });
 	});
 
-	test("hotkeyStopRecording sends with no payload", () => {
-		const api = installMockApi();
+	test("hotkeyStopRecording routes to hotkey_stop_recording with no args", () => {
+		installMockApi();
 		ipc.hotkeyStopRecording();
-		expect(api.send).toHaveBeenCalledWith(IPC.HOTKEY_STOP_RECORDING);
+		expect(lastTauriCall().cmd).toBe("hotkey_stop_recording");
 	});
 
 	test("window controls send corresponding IPC channels with no payload", () => {
@@ -808,152 +918,153 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_OPEN_SETTINGS);
 	});
 
-	test("loopbackStart forwards device index", () => {
-		const api = installMockApi();
+	test("loopbackStart forwards device index to start_listen", () => {
+		installMockApi();
 		ipc.loopbackStart(7);
-		expect(api.send).toHaveBeenCalledWith(IPC.LOOPBACK_START, { deviceIndex: 7 });
+		expect(lastTauriCall()).toEqual({ cmd: "start_listen", args: { deviceIndex: 7 } });
 	});
 
-	test("loopbackStop sends with no payload", () => {
-		const api = installMockApi();
+	test("loopbackStop routes to stop_listen with no args", () => {
+		installMockApi();
 		ipc.loopbackStop();
-		expect(api.send).toHaveBeenCalledWith(IPC.LOOPBACK_STOP);
+		expect(lastTauriCall().cmd).toBe("stop_listen");
 	});
 
-	test("cancelDownload returns invoke result", async () => {
-		const api = installMockApi();
+	test("cancelDownload routes to winstt_cancel_download", async () => {
+		installMockApi();
 		await ipc.cancelDownload();
-		expect(api.invoke).toHaveBeenCalledWith(IPC.STT_CANCEL_DOWNLOAD);
+		expect(lastTauriCall().cmd).toBe("winstt_cancel_download");
 	});
 
-	test("fetchModelCatalog returns invoke result when in electron", async () => {
+	test("fetchModelCatalog returns the list_models result when in a bridge context", async () => {
 		const models = [{ id: "tiny" }];
-		const api = installMockApi({ invokeImpl: () => models });
+		installMockApi();
+		setTauriInvoke(() => models);
 		expect(await ipc.fetchModelCatalog()).toEqual(models);
-		expect(api.invoke).toHaveBeenCalledWith(IPC.STT_GET_MODEL_CATALOG);
+		expect(lastTauriCall().cmd).toBe("list_models");
 	});
 
-	test("fetchModelCatalog falls back to [] when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("fetchModelCatalog falls back to [] when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.fetchModelCatalog()).toEqual([]);
 	});
 
-	test("LLM fallback shapes: fetchOllamaModels returns reachable=false sentinel when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback shapes: fetchOllamaModels returns reachable=false sentinel when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.fetchOllamaModels();
 		expect(result.reachable).toBe(false);
 		expect(result.models).toEqual([]);
 		expect(result.error).toBe("IPC unavailable");
 	});
 
-	test("LLM fallback: detectOllama returns installed=false sentinel when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback: detectOllama returns installed=false sentinel when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.detectOllama();
 		expect(result.installed).toBe(false);
 	});
 
-	test("LLM fallback: startOllama returns started=false sentinel when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback: startOllama returns started=false sentinel when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.startOllama();
 		expect(result.started).toBe(false);
 		expect(result.error).toBe("IPC unavailable");
 	});
 
-	test("LLM fallback: fetchOpenRouterModels returns reachable=false sentinel when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback: fetchOpenRouterModels returns reachable=false sentinel when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.fetchOpenRouterModels();
 		expect(result.reachable).toBe(false);
 		expect(result.models).toEqual([]);
 		expect(result.error).toBe("IPC unavailable");
 	});
 
-	test("LLM fallback: processWithLlm returns the original text when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback: processWithLlm returns the original text when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.processWithLlm("hello")).toBe("hello");
 	});
 
-	test("LLM fallback: pullOllamaModel returns success=false sentinel when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback: pullOllamaModel returns success=false sentinel when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.pullOllamaModel("llama3.2:1b");
 		expect(result.success).toBe(false);
 		expect(result.model).toBe("");
 		expect(result.error).toBe("IPC unavailable");
 	});
 
-	test("LLM fallback: deleteOllamaModel returns success=false sentinel when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback: deleteOllamaModel returns success=false sentinel when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.deleteOllamaModel("llama3.2:1b");
 		expect(result.success).toBe(false);
 		expect(result.model).toBe("");
 		expect(result.error).toBe("IPC unavailable");
 	});
 
-	test("LLM fallback: cancelOllamaModelPull returns cancelled=false when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("LLM fallback: cancelOllamaModelPull returns cancelled=false when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.cancelOllamaModelPull("llama3.2:1b");
 		expect(result.cancelled).toBe(false);
 	});
 
-	test("fileTranscribe falls back to { requestId: '' } when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("fileTranscribe falls back to { requestId: '' } when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.fileTranscribe("/some/file.wav");
 		expect(result.requestId).toBe("");
 	});
 
-	test("loopbackListDevices falls back to [] when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("loopbackListDevices falls back to [] when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.loopbackListDevices()).toEqual([]);
 	});
 
-	test("dialogOpenFile falls back to null when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("dialogOpenFile falls back to null when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.dialogOpenFile()).toBeNull();
 	});
 
-	test("appMenuSetTemplate falls back to { applied: false, itemCount: 0 } when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("appMenuSetTemplate falls back to { applied: false, itemCount: 0 } when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.appMenuSetTemplate([]);
 		expect(result.applied).toBe(false);
 		expect(result.itemCount).toBe(0);
 	});
 
-	test("appMenuReset falls back to { applied: false } when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("appMenuReset falls back to { applied: false } when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.appMenuReset();
 		expect(result.applied).toBe(false);
 	});
 
-	test("contextMenuShow falls back to { selectedId: null } when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("contextMenuShow falls back to { selectedId: null } when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.contextMenuShow([]);
 		expect(result.selectedId).toBeNull();
 	});
 
-	test("clipboardWriteText resolves to a writeText response (no throw, no electron)", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("clipboardWriteText resolves to a writeText response (no throw, no bridge)", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.clipboardWriteText("hello");
 		expect((result as { operation: string }).operation).toBe("writeText");
 	});
 
-	test("clipboardClear resolves to a clear response (no throw, no electron)", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("clipboardClear resolves to a clear response (no throw, no bridge)", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.clipboardClear();
 		expect((result as { operation: string }).operation).toBe("clear");
 	});
 
-	test("updaterClearStatusHistory falls back to { cleared: true } when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("updaterClearStatusHistory falls back to { cleared: true } when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const result = await ipc.updaterClearStatusHistory();
 		expect(result.cleared).toBe(true);
 	});
 
-	test("updaterGetStatusHistory falls back to [] when not in electron", async () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("updaterGetStatusHistory falls back to [] when outside a bridge context", async () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		expect(await ipc.updaterGetStatusHistory()).toEqual([]);
 	});
 
-	test("onLlmCatalog returns a noop unsubscribe when not in electron (kills L448 ConditionalExpression mutation)", () => {
-		window.electronAPI = asInvalid<typeof window.electronAPI>(undefined);
+	test("onLlmCatalog returns a noop unsubscribe when outside a bridge context (kills L448 ConditionalExpression mutation)", () => {
+		window.nativeBridge = asInvalid<typeof window.nativeBridge>(undefined);
 		const unsub = ipc.onLlmCatalog(() => undefined);
 		expect(typeof unsub).toBe("function");
 		// Calling unsub should not throw.
@@ -986,7 +1097,7 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
 		ipc.onLoopbackStarted(cb1);
 		ipc.onLoopbackStopped(cb1);
 		ipc.onDeviceSwitchFailed(cb1);
-		// Each on() registration should have been forwarded to electronAPI.on.
+		// Each on() registration should have been forwarded to nativeBridge.on.
 		expect(api.on.mock.calls.length).toBeGreaterThanOrEqual(20);
 	});
 });

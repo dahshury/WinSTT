@@ -38,6 +38,9 @@ const CHIP_BASE =
 	"inline-flex h-6 items-center rounded-[6px] px-1.5 py-px text-[11px] leading-none font-medium";
 const CHIP_RECORDING = "bg-error/15 text-error ring-1 ring-error/35";
 const CHIP_HINT = "bg-transparent text-foreground-muted ring-0 italic font-normal";
+// Decorative, aria-hidden separator glyph between key chips — a visual symbol,
+// not translatable copy. Held in a constant so it isn't flagged as user-facing.
+const PLUS_GLYPH = "＋";
 
 function ComboParts({
 	text,
@@ -87,7 +90,7 @@ function ComboParts({
 					>
 						{i > 0 && (
 							<span aria-hidden className="select-none text-[10px] text-foreground-dim">
-								＋
+								{PLUS_GLYPH}
 							</span>
 						)}
 						<span className={`${CHIP_BASE} ${chipClass}`}>{part}</span>

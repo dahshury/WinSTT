@@ -1,20 +1,30 @@
-import { AnimatePresence, m as motion } from "motion/react";
+import { AnimatePresence, m as motion, useReducedMotion, type MotionProps } from "motion/react";
 import {
 	type ComponentPropsWithoutRef,
+	Children,
+	cloneElement,
 	createContext,
-	type ReactNode,
+	isValidElement,
 	type Ref,
 	type RefObject,
 	use,
 	useEffect,
 	useRef,
 	useState,
+	type ReactNode,
 } from "react";
 import { cn } from "@/shared/lib/cn";
 import { fontWeights } from "@/shared/lib/font-weight";
 import { springs } from "@/shared/lib/springs";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 import { useProximityHover } from "@/shared/lib/use-proximity-hover";
+
+type MotionTableRowProps = ComponentPropsWithoutRef<"tr"> &
+	Pick<MotionProps, "animate" | "exit" | "initial" | "layout" | "transition"> & {
+		ref?: Ref<HTMLTableRowElement>;
+	};
+
+const MotionTableRow = motion.tr as unknown as (props: MotionTableRowProps) => ReactNode;
 
 interface TableContextValue {
 	activeIndex: number | null;
@@ -54,6 +64,7 @@ export function Table({ children, className, containerClassName, ref, ...props }
 	const [session, setSession] = useState(0);
 
 	const activeRect = activeIndex === null ? null : itemRects[activeIndex];
+	const reduceMotion = useReducedMotion();
 
 	const contextValue: TableContextValue = { activeIndex, registerItem };
 
@@ -84,15 +95,21 @@ export function Table({ children, className, containerClassName, ref, ...props }
 								}}
 								className="pointer-events-none absolute bg-surface-hover"
 								exit={{ opacity: 0, transition: { duration: 0.06 } }}
-								initial={{
-									height: activeRect.height,
-									left: activeRect.left,
-									opacity: 0,
-									top: activeRect.top,
-									width: activeRect.width,
-								}}
+								initial={
+									reduceMotion
+										? false
+										: {
+												height: activeRect.height,
+												left: activeRect.left,
+												opacity: 0,
+												top: activeRect.top,
+												width: activeRect.width,
+											}
+								}
 								key={session}
-								transition={{ ...springs.fast, opacity: { duration: 0.08 } }}
+								transition={
+									reduceMotion ? { duration: 0 } : { ...springs.fast, opacity: { duration: 0.08 } }
+								}
 							/>
 						) : null}
 					</AnimatePresence>
@@ -117,8 +134,18 @@ export type TableBodyProps = ComponentPropsWithoutRef<"tbody"> & {
 	ref?: Ref<HTMLTableSectionElement>;
 };
 
-export function TableBody({ className, ref, ...props }: TableBodyProps) {
-	return <tbody className={cn(className)} ref={ref} {...props} />;
+export function TableBody({ children, className, ref, ...props }: TableBodyProps) {
+	const keyedChildren = Children.map(children, (child, index) => {
+		if (!isValidElement(child) || child.key !== null) {
+			return child;
+		}
+		return cloneElement(child, { key: `table-row-${index}` });
+	});
+	return (
+		<tbody className={cn(className)} ref={ref} {...props}>
+			<AnimatePresence initial={false}>{keyedChildren}</AnimatePresence>
+		</tbody>
+	);
 }
 
 export interface TableRowProps extends ComponentPropsWithoutRef<"tr"> {
@@ -129,6 +156,7 @@ export interface TableRowProps extends ComponentPropsWithoutRef<"tr"> {
 export function TableRow({ className, index, ref, style, ...props }: TableRowProps) {
 	const internalRef = useRef<HTMLTableRowElement | null>(null);
 	const ctx = use(TableContext);
+	const reduceMotion = useReducedMotion();
 
 	useEffect(() => {
 		if (index === undefined || !ctx) {
@@ -150,24 +178,49 @@ export function TableRow({ className, index, ref, style, ...props }: TableRowPro
 		if (typeof ref === "function") {
 			ref(node);
 		} else if (ref) {
-			(ref as { current: HTMLTableRowElement | null }).current = node;
+			ref.current = node;
 		}
 	};
 
+	const rowClassName = cn(
+		"group/row relative z-raised border-b transition-[border-color] duration-100",
+		hideBorder ? "border-transparent" : "border-border",
+		isBodyRow && activeIdx === index && "is-active",
+		className
+	);
+	const rowStyle = {
+		fontVariationSettings: isBodyRow ? fontWeights.normal : fontWeights.semibold,
+		...style,
+	};
+
+	if (isBodyRow) {
+		return (
+			<MotionTableRow
+				animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+				className={rowClassName}
+				data-animated-row="true"
+				data-proximity-index={index}
+				exit={
+					reduceMotion
+						? { opacity: 1, transition: { duration: 0 } }
+						: { opacity: 0, y: -4, filter: "blur(2px)", transition: { duration: 0.12 } }
+				}
+				initial={reduceMotion ? false : { opacity: 0, y: 4, filter: "blur(2px)" }}
+				ref={setRef}
+				{...props}
+				{...(reduceMotion ? {} : { layout: "position" as const })}
+				style={rowStyle}
+				transition={reduceMotion ? { duration: 0 } : { ...springs.fast, opacity: { duration: 0.1 } }}
+			/>
+		);
+	}
+
 	return (
 		<tr
-			className={cn(
-				"group/row relative z-raised border-b transition-[border-color] duration-100",
-				hideBorder ? "border-transparent" : "border-border",
-				isBodyRow && activeIdx === index && "is-active",
-				className
-			)}
+			className={rowClassName}
 			data-proximity-index={index}
 			ref={setRef}
-			style={{
-				fontVariationSettings: isBodyRow ? fontWeights.normal : fontWeights.semibold,
-				...style,
-			}}
+			style={rowStyle}
 			{...props}
 		/>
 	);

@@ -69,7 +69,12 @@ export function ScrollingText({
 					paddingBottom: isOverflowing ? bottomFade : undefined,
 				}}
 			>
-				<p className="m-0 whitespace-pre-wrap break-words">{text}</p>
+				{/* `dir="auto"` lets the bidi algorithm pick base direction from
+				    the transcription content itself — RTL speech (Arabic/Hebrew)
+				    reads right-to-left even though the UI stays LTR. */}
+				<p className="m-0 whitespace-pre-wrap break-words" dir="auto">
+					{text}
+				</p>
 			</div>
 			<div
 				aria-hidden="true"

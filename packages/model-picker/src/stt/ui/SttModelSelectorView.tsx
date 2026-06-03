@@ -161,25 +161,19 @@ export function SttModelSelectorView(props: SttModelSelectorViewProps): ReactNod
 			}
 			onOpenChange={handleOpenChange}
 			onValueChange={(next) => {
-				// Choosing the card itself selects the model at its default precision.
-				// Broken custom-model entries (``available=false``) are guarded
-				// against here — the user clicked a greyed-out row to read the
-				// tooltip, not to actually load broken weights.
+				// Clicking the CARD BODY (anywhere that is NOT a precision badge — the
+				// badges ``stopPropagation`` so they never reach here) means "use the
+				// RECOMMENDED precision for this model". We send the backend's
+				// RAM/VRAM-aware pick — the model state's ``effective_quantization``,
+				// the badge marked "Recommended" — as a CONCRETE selection, exactly as
+				// if the user had clicked that badge. Falls back to "" (fp32) only when
+				// the model's state hasn't loaded yet. The per-badge clicks remain the
+				// explicit accuracy/speed/size router. Broken custom-model entries
+				// (``available=false``) are guarded — the user clicked a greyed-out row
+				// to read the tooltip, not to load broken weights.
 				if (next && next.available !== false) {
-					// If the user's current quantization isn't published by the
-					// target model (e.g. switching from a NeMo model on int8 to
-					// Cohere which only ships ["", "q4"]), carrying the old
-					// quant through would have the server resolve to fp32 with
-					// a warning AND still trip the picker's STARTUP_ONLY
-					// restart path inconsistently. Explicitly pick a quant the
-					// target model actually publishes — preferring the first
-					// in the catalog's order, which the refresh script puts in
-					// "default-then-smaller" order so we usually land on fp32.
-					const supportsCurrent = next.availableQuantizations.includes(currentQuantization);
-					const fallback = supportsCurrent
-						? undefined
-						: ((next.availableQuantizations[0] ?? "") as OnnxQuantization);
-					handleSelect(next.id, fallback);
+					const recommended = statesById[next.id]?.effective_quantization;
+					handleSelect(next.id, (recommended ?? "") as OnnxQuantization);
 				}
 			}}
 			open={open}

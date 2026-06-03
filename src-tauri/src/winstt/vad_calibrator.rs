@@ -1,4 +1,4 @@
-// DRAFT PORT — not yet compiled. Source: server/src/recorder/application/vad_calibrator.py
+// LIVE — compiled and wired via winstt/commands/listen_events.rs. Source: server/src/recorder/application/vad_calibrator.py
 //
 // Cross-utterance adaptive Silero VAD sensitivity.
 //

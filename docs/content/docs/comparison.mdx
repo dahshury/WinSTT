@@ -1,0 +1,88 @@
+---
+title: How WinSTT Compares
+description: How WinSTT stacks up against cloud dictation apps and other local speech-to-text tools — on privacy, cost, model choice, and features.
+---
+
+Most speech-to-text apps fall into two camps: **cloud dictation services** that stream your
+audio to a server for a monthly fee, and **local tools** that run on your machine. WinSTT is
+firmly in the second camp — and aims to be the most capable option there on Windows.
+
+## WinSTT vs. cloud dictation
+
+The biggest decision is local vs. cloud. Cloud services (Wispr Flow, superwhisper's cloud
+tier, and similar) are convenient but send your voice off-device and bill monthly.
+
+<ModelTable
+  head={["", "WinSTT", "Typical cloud dictation app"]}
+  rows={[
+    ["Where audio is processed", "On your machine, in memory", "Uploaded to a server"]
+    ,["Works offline", "Yes — fully", "No"]
+    ,["Price", "Free, forever (MIT)", "Subscription (~$10–15/mo)"]
+    ,["Data ownership", "Never leaves your device", "Stored/processed by the vendor"]
+    ,["Model choice", "40+ models, swap any time", "Whatever the vendor runs"]
+    ,["Source code", "Open — fully auditable", "Closed"]
+    ,["Telemetry", "None (opt-out crash reports only)", "Usage analytics typical"]
+  ]}
+  caption="Cloud capabilities vary by vendor and change over time — check each product. WinSTT can also call OpenAI/ElevenLabs as an opt-in cloud option if you want it."
+/>
+
+<Callout type="success" title="The economics of local">
+  A cloud dictation subscription runs roughly **$120–180 per year**. WinSTT is a one-time
+  free download with no account and no metering — the same hardware you already own does the
+  work. You can still opt into a cloud provider per-feature if you prefer, but you're never
+  required to.
+</Callout>
+
+## WinSTT vs. other local tools
+
+Open-source local STT tools share WinSTT's privacy stance; they differ in scope. [Handy](https://github.com/cjpais/Handy)
+is an excellent, deliberately **minimal and cross-platform** tool ("the most forkable" STT
+app). WinSTT trades cross-platform breadth (Windows-first today) for a deeper feature set.
+
+<ModelTable
+  head={["Capability", "WinSTT", "Minimal local tools (e.g. Handy)"]}
+  rows={[
+    ["Platforms", "Windows (Linux/macOS on the roadmap)", "Windows / macOS / Linux"]
+    ,["STT models", "40+ across 8 families", "Whisper + Parakeet"]
+    ,["Recording modes", "Push-to-talk, toggle, listen, wake word", "Push-to-talk, toggle"]
+    ,["Listen mode (system audio)", "Yes — loopback capture + diarization", "No"]
+    ,["LLM text cleanup", "Yes — Ollama / OpenRouter / Apple", "No"]
+    ,["Text-to-speech", "Yes — Kokoro, 54 voices", "No"]
+    ,["File transcription", "Yes — TXT / SRT", "Varies"]
+    ,["Transcription history", "Yes — dashboard + heatmap + playback", "Basic"]
+    ,["Dictionary & snippets", "Yes", "Dictionary"]
+  ]}
+  caption="Feature sets as of 2026 — both projects move fast. If you want the smallest, most-forkable cross-platform tool, Handy is a great pick; if you want the most features on Windows, that's WinSTT."
+/>
+
+## Why local-first
+
+<BentoGrid cols={2}>
+  <FeatureCard icon="privacy" title="Privacy by default">
+    Audio is transcribed in memory and discarded. Nothing is uploaded; there are no usage
+    analytics. The only outbound signal is opt-out crash reports.
+  </FeatureCard>
+  <FeatureCard icon="cpu" title="No metering, no limits">
+    Dictate all day. There's no per-minute billing, no monthly cap, and no account.
+  </FeatureCard>
+  <FeatureCard icon="brain" title="Your choice of model">
+    Pick accuracy, speed, or size per task — and swap models from the UI without a restart.
+  </FeatureCard>
+  <FeatureCard icon="shield" title="Open and auditable">
+    Every line is MIT-licensed. You can verify exactly what runs on your machine.
+  </FeatureCard>
+</BentoGrid>
+
+## Related
+
+<Cards>
+  <Card title="Why local — the full story" href="/docs/faq">
+    Privacy, offline behavior, and what (if anything) ever leaves your machine.
+  </Card>
+  <Card title="Quick start" href="/docs/quick-start">
+    Download and dictate your first sentence in under two minutes.
+  </Card>
+  <Card title="Browse the models" href="/docs/models">
+    The 40+ models WinSTT can run, with accuracy and speed trade-offs.
+  </Card>
+</Cards>

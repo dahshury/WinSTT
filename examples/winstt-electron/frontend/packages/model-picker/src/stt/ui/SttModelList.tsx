@@ -78,7 +78,7 @@ function AuthorLabel({ family }: { family: FamilyKey }) {
 			{config.logoSrc ? (
 				<img
 					alt={`${author} logo`}
-					className="size-4 shrink-0 rounded-[3px] object-cover"
+					className="size-4 shrink-0 rounded-[3px] object-contain"
 					height={16}
 					src={publicAsset(config.logoSrc)}
 					width={16}

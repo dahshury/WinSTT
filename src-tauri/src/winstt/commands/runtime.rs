@@ -9,7 +9,7 @@
 // state + the persisted device, none of which needs the recorder loaded (so they answer instantly
 // during cold start — the renderer's `pre_ready` contract).
 //
-// IPC mapping (app/src/shared/api/electron-tauri-adapter.ts ROUTE):
+// IPC mapping (app/src/shared/api/native-bridge-adapter.ts ROUTE):
 //   IPC.STT_GET_RUNTIME_INFO        (`stt:get-runtime-info`)                         → get_runtime_info
 //   IPC.STT_LIST_MODELS_WITH_STATE  (`stt:list-models-with-state`)                   → list_models_with_state  (⚠ adapter ROUTE fix)
 //   IPC.STT_ASSESS_DICTATION_FIT    (`stt:assess-dictation-fit`, { modelId, quantization, device }) → assess_dictation_fit
@@ -35,7 +35,7 @@ use crate::winstt::managers::DownloadManager;
 use crate::winstt::settings_schema::DeviceType;
 use crate::winstt::stt::cache_probe::{CacheState, ProbeModel};
 
-use super::catalog_data::{self, ModelsWithState, SystemInfoEntry, ModelCacheInfo};
+use super::catalog_data::{self, ModelCacheInfo, ModelsWithState, SystemInfoEntry};
 use super::settings::read_settings;
 use super::stt::picker_accelerator;
 
@@ -66,22 +66,34 @@ fn accel_runtime(accel: Accelerator) -> (&'static str, bool, Vec<String>) {
         Accelerator::Cuda => (
             "cuda",
             true,
-            vec!["CUDAExecutionProvider".into(), "CPUExecutionProvider".into()],
+            vec![
+                "CUDAExecutionProvider".into(),
+                "CPUExecutionProvider".into(),
+            ],
         ),
         Accelerator::CoreMl => (
             "coreml",
             true,
-            vec!["CoreMLExecutionProvider".into(), "CPUExecutionProvider".into()],
+            vec![
+                "CoreMLExecutionProvider".into(),
+                "CPUExecutionProvider".into(),
+            ],
         ),
         Accelerator::Rocm => (
             "rocm",
             true,
-            vec!["ROCMExecutionProvider".into(), "CPUExecutionProvider".into()],
+            vec![
+                "ROCMExecutionProvider".into(),
+                "CPUExecutionProvider".into(),
+            ],
         ),
         Accelerator::OpenVino => (
             "openvino",
             true,
-            vec!["OpenVINOExecutionProvider".into(), "CPUExecutionProvider".into()],
+            vec![
+                "OpenVINOExecutionProvider".into(),
+                "CPUExecutionProvider".into(),
+            ],
         ),
     }
 }
@@ -114,11 +126,19 @@ pub fn runtime_info_snapshot(
     let loaded = transcription.get_current_model();
     let model = loaded.or_else(|| {
         let m = settings.model.model.clone();
-        if m.is_empty() { None } else { Some(m) }
+        if m.is_empty() {
+            None
+        } else {
+            Some(m)
+        }
     });
     let realtime_model = {
         let rt = settings.model.realtime_model.clone();
-        if rt.is_empty() { None } else { Some(rt) }
+        if rt.is_empty() {
+            None
+        } else {
+            Some(rt)
+        }
     };
     RuntimeInfoPayload {
         device: device.to_string(),
@@ -174,7 +194,11 @@ async fn probe_cache_states(
             id: m.id.to_string(),
             family: m.family.as_str().to_string(),
             onnx_name: m.onnx_model_name.to_string(),
-            quantizations: m.available_quantizations.iter().map(|q| q.to_string()).collect(),
+            quantizations: m
+                .available_quantizations
+                .iter()
+                .map(|q| q.to_string())
+                .collect(),
         })
         .collect();
 
@@ -206,7 +230,12 @@ fn cache_info_from(state: CacheState, downloaded: u64, total: u64) -> ModelCache
             } else {
                 0.0
             };
-            ModelCacheInfo { state: "partial".into(), downloaded_bytes: downloaded, total_bytes: total, progress }
+            ModelCacheInfo {
+                state: "partial".into(),
+                downloaded_bytes: downloaded,
+                total_bytes: total,
+                progress,
+            }
         }
         CacheState::NotCached => ModelCacheInfo {
             state: "not_cached".into(),
@@ -220,14 +249,22 @@ fn cache_info_from(state: CacheState, downloaded: u64, total: u64) -> ModelCache
 /// Live system snapshot for the fitness fields. SPIKE: `sysinfo` for RAM + DXGI for VRAM. Zeros are
 /// a valid "unknown" answer (the fit heuristics skip warnings when RAM/VRAM read 0).
 fn system_info_snapshot() -> SystemInfoEntry {
-    // Real total RAM via sysinfo (fixes the model-download dialog's "RAM: unknown").
-    // VRAM/DXGI GPU detection is still deferred → `gpus` stays empty (GPU fitness reads 0,
-    // which the heuristics treat as "unknown" and skip — safe).
+    // Real total RAM via sysinfo (fixes the model-download dialog's "RAM: unknown") + real DXGI
+    // GPU enumeration for `gpus` (powers the settings device picker + VRAM fitness). A zero/empty
+    // result is a valid "unknown" the fit heuristics skip; a non-empty list makes the picker offer
+    // the GPU/Auto option instead of lying "CPU only".
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
+    let gpus = enumerate_gpus()
+        .into_iter()
+        .map(|g| catalog_data::SystemInfoGpu {
+            name: g.name,
+            total_vram_bytes: g.total_vram_bytes,
+        })
+        .collect();
     SystemInfoEntry {
         total_ram_bytes: sys.total_memory(), // bytes in sysinfo 0.30+
-        ..SystemInfoEntry::default()
+        gpus,
     }
 }
 
@@ -275,13 +312,84 @@ pub struct GpuInfoEntry {
 }
 
 /// `gpu_get_info` — the detected GPU list (drives the GPU chip + the "DirectML available?" hint).
-/// SPIKE: DXGI adapter enumeration. Empty until then (renderer shows "CPU only", which is safe).
+/// Real DXGI adapter enumeration: a non-empty list means a DirectML-capable GPU exists, so the
+/// settings device picker stops lying ("no GPU") and offers the Auto/GPU option, agreeing with the
+/// main-window chip. Empty (true no-GPU box, or DXGI unavailable) → renderer shows "CPU only".
 #[tauri::command]
 #[specta::specta]
-pub fn gpu_get_info(app: AppHandle) -> Vec<GpuInfoEntry> {
-    // Device intent is known from settings even before VRAM enumeration lands.
-    let _ = read_settings(&app).model.device;
-    Vec::new()
+pub fn gpu_get_info(_app: AppHandle) -> Vec<GpuInfoEntry> {
+    enumerate_gpus()
+}
+
+/// Enumerate physical GPU adapters via DXGI (skips the Microsoft Basic Render Driver / WARP
+/// software adapter). The single shipped binary already registers the DirectML EP on Windows; this
+/// just tells the UI (and VRAM fitness) whether a real GPU is present so the device choice is
+/// correct out of the box. Empty on non-Windows or if the DXGI factory can't be created.
+fn enumerate_gpus() -> Vec<GpuInfoEntry> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Dxgi::{
+            CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+        };
+        let mut gpus = Vec::new();
+        unsafe {
+            let factory: IDXGIFactory1 = match CreateDXGIFactory1() {
+                Ok(f) => f,
+                Err(_) => return gpus,
+            };
+            let mut idx = 0u32;
+            while let Ok(adapter) = factory.EnumAdapters1(idx) {
+                idx += 1;
+                let desc = match adapter.GetDesc1() {
+                    Ok(d) => d,
+                    Err(_) => continue,
+                };
+                // Skip the software/WARP adapter (Microsoft Basic Render Driver).
+                if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0 {
+                    continue;
+                }
+                let end = desc
+                    .Description
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(desc.Description.len());
+                let name = String::from_utf16_lossy(&desc.Description[..end]);
+                if name.trim().is_empty() {
+                    continue;
+                }
+                let total_vram_bytes = desc.DedicatedVideoMemory as u64;
+                // Optimus / virtual-display drivers (e.g. spacedesk) can surface ONE physical GPU
+                // as two DXGI adapters. Dedupe by (name, vram) so the device picker lists one
+                // entry per real GPU instead of "NVIDIA … ×2".
+                if gpus.iter().any(|g: &GpuInfoEntry| {
+                    g.name == name && g.total_vram_bytes == total_vram_bytes
+                }) {
+                    continue;
+                }
+                gpus.push(GpuInfoEntry {
+                    name,
+                    total_vram_bytes,
+                });
+            }
+        }
+        gpus
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+/// The largest detected GPU's total VRAM in bytes (0 if no GPU / non-Windows). The load-path
+/// RAM/VRAM-aware auto-quant selector (`stt::fit_aware_auto_quant`) uses this to size the DirectML
+/// budget. DXGI exposes only the static dedicated cap (not live free VRAM), which is the right
+/// "can this model fit" upper bound for the auto choice.
+pub(crate) fn detected_max_vram_bytes() -> u64 {
+    enumerate_gpus()
+        .iter()
+        .map(|g| g.total_vram_bytes)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Whether the persisted device intent is GPU (helper reused by the runtime chip + tests).

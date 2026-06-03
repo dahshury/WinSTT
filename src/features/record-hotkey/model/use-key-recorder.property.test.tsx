@@ -15,7 +15,7 @@ import { useKeyRecorder } from "./use-key-recorder";
 // verify the invariants the user spec'd (adapted from a key-event hook to
 // this IPC-event hook).
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 const sentChannels: string[] = [];
 const invokes: string[] = [];
@@ -54,11 +54,11 @@ function fire(channel: string, ...args: unknown[]) {
 }
 
 beforeEach(() => {
-	window.electronAPI = makeApi();
+	window.nativeBridge = makeApi();
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 // ─── Arbitraries ───────────────────────────────────────────────────────

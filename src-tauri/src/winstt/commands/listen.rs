@@ -1,5 +1,5 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/05_*.md (Loopback/Diarization)
-// + app/PORT/10_frontend_port_plan.md (WU-9) + lib_wiring.md §3/§4b,
+// Source: docs/port/05_*.md (Loopback/Diarization)
+// + docs/port/10_frontend_port_plan.md (WU-9) + lib_wiring.md §3/§4b,
 // server/src/stt_server/control_handler.py `_handle_start_loopback`/`_handle_stop_loopback`.
 // Wraps managers::{LoopbackManager, DiarizationManager}.
 //
@@ -7,14 +7,14 @@
 // audio → the same recording pipeline) and diarization; stop_listen turns both
 // off. The diarized subtitles + speaker segments are emitted as events.
 //
-// IPC mapping (app/src/shared/api/electron-tauri-adapter.ts):
+// IPC mapping (app/src/shared/api/native-bridge-adapter.ts):
 //   IPC.LOOPBACK_START (`loopback:start`, payload `{ deviceIndex }`) → start_listen
 //   IPC.LOOPBACK_STOP  (`loopback:stop`)                             → stop_listen
 //
-// The renderer never passes a `diarize` flag (the Electron server reads the
+// The renderer never passes a `diarize` flag (the reference server reads the
 // `speakerDiarization` setting server-side); so start_listen reads it from the
 // persisted WinSTT settings (`general.speaker_diarization`), matching the
-// Electron split-of-concerns exactly.
+// the reference split-of-concerns exactly.
 //
 // EVENTS (plain string events, lib_wiring §4b — byte-identical to WinSTT's IPC so
 // the reused renderer's `onLoopbackStarted`/`onLoopbackStopped` listeners in
@@ -47,7 +47,7 @@ pub fn start_listen(
     device_index: i32,
 ) -> Result<(), String> {
     // Diarization follows the persisted setting (renderer doesn't pass a flag —
-    // it mirrors the Electron server which reads `speakerDiarization` itself).
+    // it mirrors the reference server which reads `speakerDiarization` itself).
     let diarize = read_settings(&app).general.speaker_diarization;
     diarization.set_enabled(diarize);
     diarization.reset();
@@ -67,7 +67,7 @@ pub fn start_listen(
 
 /// `stop_listen` — stop loopback capture + diarization. Emits
 /// `stt:loopback-stopped` so the renderer clears the listen pill. Idempotent
-/// (mirrors the Electron server, which only emits when capture was active — but
+/// (mirrors the reference server, which only emits when capture was active — but
 /// the renderer's `setListening(false)` is itself idempotent, so an extra emit on
 /// an already-stopped session is harmless).
 #[tauri::command]

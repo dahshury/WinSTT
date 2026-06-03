@@ -54,6 +54,29 @@ function mergeIntegrations(settings: AppSettingsOutput, patch: IntegrationPatch)
 	};
 }
 
+/**
+ * Strip secret fields before they hit localStorage.
+ *
+ * The backend store is the source of truth for API keys — it seals them at
+ * rest and re-hydrates them through the decrypt path on load. Persisting the
+ * plaintext keys here (``integrations.openai.apiKey``,
+ * ``integrations.elevenlabs.apiKey``, ``llm.openrouterApiKey``) would defeat
+ * that sealing by leaving a cleartext copy in localStorage. Blank them on the
+ * way out; the schema requires the fields to exist (so we keep ``""`` rather
+ * than deleting them), and the backend overwrites them on the next sync.
+ */
+function stripSecrets(settings: AppSettingsOutput): AppSettingsOutput {
+	return {
+		...settings,
+		llm: { ...settings.llm, openrouterApiKey: "" },
+		integrations: {
+			...settings.integrations,
+			openai: { ...settings.integrations.openai, apiKey: "" },
+			elevenlabs: { ...settings.integrations.elevenlabs, apiKey: "" },
+		},
+	};
+}
+
 interface SettingsState {
 	isLoaded: boolean;
 	resetSettings: () => void;
@@ -62,6 +85,7 @@ interface SettingsState {
 	settings: AppSettingsOutput;
 	updateAudioSettings: (patch: Partial<AppSettingsOutput["audio"]>) => void;
 	updateDictionary: (dictionary: AppSettingsOutput["dictionary"]) => void;
+	updateGlobalSettings: (patch: Partial<AppSettingsOutput["global"]>) => void;
 	updateGeneralSettings: (patch: Partial<AppSettingsOutput["general"]>) => void;
 	updateHotkeySettings: (patch: Partial<AppSettingsOutput["hotkey"]>) => void;
 	/**
@@ -133,6 +157,13 @@ export const useSettingsStore = create<SettingsState>()(
 						general: { ...state.settings.general, ...patch },
 					},
 				})),
+			updateGlobalSettings: (patch) =>
+				set((state) => ({
+					settings: {
+						...state.settings,
+						global: { ...state.settings.global, ...patch },
+					},
+				})),
 			updateHotkeySettings: (patch) =>
 				set((state) => ({
 					settings: {
@@ -198,7 +229,10 @@ export const useSettingsStore = create<SettingsState>()(
 		}),
 		{
 			name: "winstt-settings",
-			partialize: (state) => ({ settings: state.settings }),
+			// Never write API keys to localStorage in plaintext — the backend
+			// store seals them at rest and re-hydrates them on load. See
+			// ``stripSecrets``.
+			partialize: (state) => ({ settings: stripSecrets(state.settings) }),
 		}
 	)
 );

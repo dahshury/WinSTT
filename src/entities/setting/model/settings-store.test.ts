@@ -37,6 +37,23 @@ describe("useSettingsStore mutators", () => {
 		expect(useSettingsStore.getState().settings.general.recordingMode).toBe("toggle");
 	});
 
+	test("updateGlobalSettings merges patch", () => {
+		const store = useSettingsStore.getState() as typeof useSettingsStore extends {
+			getState: () => infer S;
+		}
+			? S & { updateGlobalSettings?: (patch: { modelUnloadTimeout: "hour1" }) => void }
+			: never;
+		expect(typeof store.updateGlobalSettings).toBe("function");
+		store.updateGlobalSettings?.({ modelUnloadTimeout: "hour1" });
+		expect(
+			(
+				useSettingsStore.getState().settings as {
+					global?: { modelUnloadTimeout?: string };
+				}
+			).global?.modelUnloadTimeout
+		).toBe("hour1");
+	});
+
 	test("updateHotkeySettings merges patch", () => {
 		useSettingsStore.getState().updateHotkeySettings({ pushToTalkKey: "Ctrl+S" });
 		expect(useSettingsStore.getState().settings.hotkey.pushToTalkKey).toBe("Ctrl+S");

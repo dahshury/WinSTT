@@ -4,8 +4,8 @@ import { act, renderHook } from "@testing-library/react";
 import { IPC } from "@/shared/api/ipc-channels";
 
 // The feed hook subscribes through ipc-client, which routes `on(channel, cb)`
-// through `window.electronAPI.on`. Install the complete behavior-faithful fake
-// so the import chain resolves; our instrumented `window.electronAPI` below
+// through `window.nativeBridge.on`. Install the complete behavior-faithful fake
+// so the import chain resolves; our instrumented `window.nativeBridge` below
 // captures the per-channel callbacks and their unsubscribers.
 mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 
@@ -13,17 +13,17 @@ const { useLlmProcessingStore } = await import("../model/llm-processing-store");
 const { useLlmProcessingFeed } = await import("./use-llm-processing-feed");
 
 const INITIAL_STATE = useLlmProcessingStore.getInitialState();
-const originalElectronApi = window.electronAPI;
+const originalNativeBridge = window.nativeBridge;
 
 // channel → registered callback. Each `on` returns an unsubscribe that nulls
 // out its slot here, so we can assert cleanup ran on unmount.
 const listeners = new Map<string, (...args: unknown[]) => void>();
 let unsubscribeCalls: string[] = [];
 
-function installElectronStub(): void {
+function installNativeBridgeStub(): void {
 	listeners.clear();
 	unsubscribeCalls = [];
-	window.electronAPI = {
+	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: () => undefined,
 		invoke: async () => undefined,
@@ -47,7 +47,7 @@ function fire(channel: string, payload?: unknown): void {
 }
 
 beforeEach(() => {
-	installElectronStub();
+	installNativeBridgeStub();
 	useLlmProcessingStore.setState({
 		isThinking: INITIAL_STATE.isThinking,
 		thinkingStartedAt: INITIAL_STATE.thinkingStartedAt,
@@ -56,7 +56,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalElectronApi;
+	window.nativeBridge = originalNativeBridge;
 	useLlmProcessingStore.setState({
 		isThinking: INITIAL_STATE.isThinking,
 		thinkingStartedAt: INITIAL_STATE.thinkingStartedAt,

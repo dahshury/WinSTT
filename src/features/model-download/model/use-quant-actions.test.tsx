@@ -5,9 +5,9 @@ import { IPC } from "@/shared/api/ipc-channels";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 
 // download-store's actions delegate to ipc-client, which routes through
-// `window.electronAPI`. Install the complete behavior-faithful fake so the
+// `window.nativeBridge`. Install the complete behavior-faithful fake so the
 // store import chain resolves and each store action issues the real IPC
-// channel through our instrumented `window.electronAPI` below.
+// channel through our instrumented `window.nativeBridge` below.
 mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 
 const { useDownloadStore } = await import("./download-store");
@@ -16,14 +16,14 @@ const { useQuantActions } = await import("./use-quant-actions");
 import type { QuantDownloadState } from "./download-store";
 
 const INITIAL_STATE = useDownloadStore.getInitialState();
-const originalElectronApi = window.electronAPI;
+const originalNativeBridge = window.nativeBridge;
 
-// Records every `window.electronAPI.invoke` channel + payload so we can assert
+// Records every `window.nativeBridge.invoke` channel + payload so we can assert
 // the handlers reach the right server command with the right envelope.
 let invokeCalls: Array<{ channel: string; payload: unknown }> = [];
 
-function installElectronStub(): void {
-	window.electronAPI = {
+function installNativeBridgeStub(): void {
+	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: () => undefined,
 		invoke: async (channel: string, payload?: unknown) => {
@@ -53,12 +53,12 @@ function makeQuantEntry(
 
 beforeEach(() => {
 	invokeCalls = [];
-	installElectronStub();
+	installNativeBridgeStub();
 	useDownloadStore.setState({ quantDownloads: {} });
 });
 
 afterEach(() => {
-	window.electronAPI = originalElectronApi;
+	window.nativeBridge = originalNativeBridge;
 	useDownloadStore.setState({ quantDownloads: INITIAL_STATE.quantDownloads });
 });
 

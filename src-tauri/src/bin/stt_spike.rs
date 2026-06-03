@@ -41,22 +41,26 @@ fn default_snap() -> String {
         .join("models--onnx-community--whisper-tiny.en")
         .join("snapshots");
     if let Ok(entries) = std::fs::read_dir(&snapshots) {
-        let first_dir = entries
-            .flatten()
-            .map(|e| e.path())
-            .find(|p| p.is_dir());
+        let first_dir = entries.flatten().map(|e| e.path()).find(|p| p.is_dir());
         if let Some(dir) = first_dir {
             return dir.to_string_lossy().into_owned();
         }
     }
-    snapshots.join("<snapshot-hash>").to_string_lossy().into_owned()
+    snapshots
+        .join("<snapshot-hash>")
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Provider selection for the spike, via `SPIKE_PROVIDER` (cpu|dml|cuda; default cpu).
 /// DirectML/CUDA fall back to CPU inside `execution_providers()` if the EP isn't present,
 /// so the spike still runs; the active-providers print tells you what actually bound.
 fn providers_from_env() -> Vec<Accelerator> {
-    match std::env::var("SPIKE_PROVIDER").unwrap_or_default().to_lowercase().as_str() {
+    match std::env::var("SPIKE_PROVIDER")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
         "dml" | "directml" => vec![Accelerator::DirectMl, Accelerator::Cpu],
         "cuda" => vec![Accelerator::Cuda, Accelerator::Cpu],
         _ => vec![Accelerator::Cpu],
@@ -68,6 +72,11 @@ fn providers_from_env() -> Vec<Accelerator> {
 /// crate manifest (`CARGO_MANIFEST_DIR/jfk_16k_mono.f32`) so the spike works
 /// regardless of where it's launched from — no machine-specific absolute path.
 fn audio_path() -> PathBuf {
+    // BENCH override: `SPIKE_AUDIO` points at any raw f32le 16 kHz mono clip (short/
+    // long/varied) so the same harness can stress the engine on real long-form audio.
+    if let Ok(p) = std::env::var("SPIKE_AUDIO") {
+        return PathBuf::from(p);
+    }
     let cwd = PathBuf::from("jfk_16k_mono.f32");
     if cwd.exists() {
         cwd
@@ -115,8 +124,8 @@ fn family_slug_of(family: handy_app_lib::winstt::catalog::Family) -> &'static st
 /// Proves the resolver wires the right files (incl. config-derived n_mels) for a real catalog id.
 fn run_catalog_mode(cat_id: &str) {
     use handy_app_lib::winstt::catalog;
-    use handy_app_lib::winstt::stt::resolver::{self, ResolveRequest};
     use handy_app_lib::winstt::stt::build_engine;
+    use handy_app_lib::winstt::stt::resolver::{self, ResolveRequest};
 
     let entry = catalog::find(cat_id).unwrap_or_else(|| panic!("catalog id '{cat_id}' not found"));
     let family_slug = family_slug_of(entry.family);
@@ -127,14 +136,33 @@ fn run_catalog_mode(cat_id: &str) {
     );
     eprintln!("=== CATALOG MODE ===");
     eprintln!("catalog id : {cat_id}");
-    eprintln!("repo       : {} (family {:?} -> {:?})", entry.onnx_model_name, entry.family, kind);
+    eprintln!(
+        "repo       : {} (family {:?} -> {:?})",
+        entry.onnx_model_name, entry.family, kind
+    );
 
     // Download if not cached (family models often aren't pre-cached); cache-first when present.
     let local_files_only = std::env::var("SPIKE_CACHE_ONLY").is_ok();
+    // SPIKE_QUANT overrides the resolved quantization so we can A/B fp32 vs int8 (and match the
+    // prod Auto→int8 path the app actually loads for NeMo/Cohere/etc.). Default = fp32 ("").
+    let effective_quant = match std::env::var("SPIKE_QUANT")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        "int8" => Quantization::Int8,
+        "fp16" => Quantization::Fp16,
+        "q4" => Quantization::Q4,
+        "q4f16" => Quantization::Q4f16,
+        "bnb4" => Quantization::Bnb4,
+        "uint8" => Quantization::Uint8,
+        _ => Quantization::Default,
+    };
+    eprintln!("quant      : {effective_quant:?} (SPIKE_QUANT env)");
     let req = ResolveRequest {
         model_id: entry.onnx_model_name.to_string(),
         kind,
-        effective_quant: Quantization::Default,
+        effective_quant,
         local_dir: None,
         local_files_only,
     };
@@ -188,12 +216,18 @@ fn main() {
 
     // Catalog mode: `stt_spike --catalog <catalog_id>` (verifies the resolver→engine path).
     if args.get(1).map(|s| s == "--catalog").unwrap_or(false) {
-        let cat_id = args.get(2).cloned().unwrap_or_else(|| "tiny.en".to_string());
+        let cat_id = args
+            .get(2)
+            .cloned()
+            .unwrap_or_else(|| "tiny.en".to_string());
         run_catalog_mode(&cat_id);
         return;
     }
     let snap = args.get(1).cloned().unwrap_or_else(default_snap);
-    let n_mels = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(80);
+    let n_mels = args
+        .get(2)
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(80);
     let lang = args.get(3).cloned().unwrap_or_else(|| "en".to_string());
 
     eprintln!("=== STT SPIKE ===");
@@ -208,7 +242,11 @@ fn main() {
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
-    eprintln!("audio    : {} samples ({:.2}s)", audio.len(), audio.len() as f32 / 16_000.0);
+    eprintln!(
+        "audio    : {} samples ({:.2}s)",
+        audio.len(),
+        audio.len() as f32 / 16_000.0
+    );
 
     // peak-normalize to 0.95 (the coordinator's single chokepoint; engines expect conditioned audio)
     let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
@@ -222,8 +260,14 @@ fn main() {
 
     // ---- 2. build engine config ----
     let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
-    files.insert("encoder".into(), PathBuf::from(format!("{snap}/onnx/encoder_model.onnx")));
-    files.insert("decoder".into(), PathBuf::from(format!("{snap}/onnx/decoder_model_merged.onnx")));
+    files.insert(
+        "encoder".into(),
+        PathBuf::from(format!("{snap}/onnx/encoder_model.onnx")),
+    );
+    files.insert(
+        "decoder".into(),
+        PathBuf::from(format!("{snap}/onnx/decoder_model_merged.onnx")),
+    );
     files.insert("vocab".into(), PathBuf::from(format!("{snap}/vocab.json")));
     let added = PathBuf::from(format!("{snap}/added_tokens.json"));
     if added.exists() {
@@ -241,7 +285,10 @@ fn main() {
         model_name: snap.clone(),
         family: "whisper".into(),
         kind: EngineKind::WhisperHf,
-        resolved: ResolvedModel { files, effective_quantization: Quantization::Default },
+        resolved: ResolvedModel {
+            files,
+            effective_quantization: Quantization::Default,
+        },
         providers: providers_from_env(),
         whisper_fp16_workaround: false,
     };
@@ -255,7 +302,11 @@ fn main() {
             std::process::exit(2);
         }
     };
-    eprintln!("loaded in {:?}; providers={:?}", t0.elapsed(), engine.active_providers());
+    eprintln!(
+        "loaded in {:?}; providers={:?}",
+        t0.elapsed(),
+        engine.active_providers()
+    );
     eprintln!("word-ts capable: {}", engine.supports_word_timestamps());
 
     // ---- 4. transcribe ----
@@ -270,7 +321,10 @@ fn main() {
         match engine.transcribe(&audio, &opts) {
             Ok(out) => {
                 eprintln!("transcribed ({label}) in {:?}", t1.elapsed());
-                println!("\n=== TRANSCRIPT ({label}) ===\n{}\n==================", out.text);
+                println!(
+                    "\n=== TRANSCRIPT ({label}) ===\n{}\n==================",
+                    out.text
+                );
             }
             Err(e) => {
                 eprintln!("TRANSCRIBE FAILED: {e}");

@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 // Re-export all utility modules for easy access
-// pub use crate::audio_feedback::*;
 pub use crate::clipboard::*;
 pub use crate::overlay::*;
 pub use crate::tray::*;

@@ -49,7 +49,7 @@ const PARAM_LABEL_RE = /^([\d.]+)\s*([KMBT]?)/i;
  * a smallest-first list. Local to this slice (the STT picker has its own
  * ``parseParameterSize`` but FSD slice isolation keeps them separate).
  */
-function parseOllamaParamCount(label: string | undefined): number {
+function parseOllamaParamCount(label: string | null | undefined): number {
 	const match = (label ?? "").trim().match(PARAM_LABEL_RE);
 	if (!match || match[1] === undefined) {
 		return Number.POSITIVE_INFINITY;

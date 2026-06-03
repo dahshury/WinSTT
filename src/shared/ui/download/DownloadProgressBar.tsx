@@ -2,6 +2,7 @@ import { Progress } from "@base-ui/react/progress";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { AnimatedValueText } from "@/shared/ui/animated-value";
 
 /** "active" pulses the accent color; "paused" freezes a warning-tinted bar so
  *  a static fill can't be mistaken for an idle / finished one. */
@@ -55,8 +56,12 @@ export function DownloadProgressBar({
 			</Progress.Track>
 			{hasCaption ? (
 				<div className="flex items-center justify-between text-foreground-muted text-xs tabular-nums">
-					<span>{label ?? ""}</span>
-					{statsLabel ? <span className="font-mono">{statsLabel}</span> : null}
+					<span>{label ? <AnimatedValueText text={label} /> : ""}</span>
+					{statsLabel ? (
+						<span className="font-mono">
+							<AnimatedValueText text={statsLabel} />
+						</span>
+					) : null}
 				</div>
 			) : null}
 		</Progress.Root>

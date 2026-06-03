@@ -2,7 +2,7 @@
  * Debug-only feature flags.
  *
  * Single source of truth, importable from BOTH the renderer (`@/shared/...`)
- * and the Electron main process (relative `../../src/shared/...`, the same way
+ * and the reference main process (relative `../../src/shared/...`, the same way
  * `ipc-channels.ts` is consumed by the preload + handlers).
  *
  * These gate developer-only tooling that must NEVER ship visible to end users.

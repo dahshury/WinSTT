@@ -48,6 +48,8 @@ interface PanelRect {
 	y: number;
 }
 
+type PanelPhase = "hidden" | "open" | "closing";
+
 function close(): void {
 	ipcSend(IPC.MODEL_PICKER_CLOSE);
 }
@@ -240,6 +242,22 @@ export function ModelPickerWindow() {
 	// reach the main process regardless of which window fired them.
 	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
 
+	// A precision-badge "download this variant" click opens the confirmation
+	// dialog (size + hardware-fit + Download/Cancel) instead of silently starting
+	// a background fetch — Electron parity. Pause / resume / cancel on an already
+	// in-flight download still dispatch straight through to the server.
+	const handleDownloadActionGated: QuantActions["handleDownloadAction"] = (
+		action,
+		modelId,
+		quantization
+	) => {
+		if (action === "start") {
+			controller.promptDownload("main", modelId, quantization);
+			return;
+		}
+		handleDownloadAction(action, modelId, quantization);
+	};
+
 	const selectModel = (modelId: string, quantization?: OnnxQuantization) => {
 		controller.handleModelChange(modelId, quantization);
 		// Re-selecting the loaded model is a no-op for the controller (no
@@ -254,7 +272,36 @@ export function ModelPickerWindow() {
 	// (recomputed on every open and on resize, so it always reflects the
 	// current chip position / clamped height).
 	const [panel, setPanel] = useState<PanelRect | null>(null);
-	useEffect(() => ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => setPanel(rect as PanelRect)), []);
+	const [panelPhase, setPanelPhase] = useState<PanelPhase>("hidden");
+	const panelRef = useRef<PanelRect | null>(null);
+	useEffect(() => {
+		panelRef.current = panel;
+	}, [panel]);
+	// A `null` payload means "the window was hidden — drop the stale rect" so the
+	// next open re-warms invisibly and reveals only once the fresh anchor lands
+	// (no flash of the previous open's position). A real rect positions + reveals.
+	useEffect(
+		() =>
+			ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => {
+				if (rect) {
+					setPanel(rect as PanelRect);
+					setPanelPhase("open");
+					return;
+				}
+				setPanel(null);
+				setPanelPhase("hidden");
+			}),
+		[]
+	);
+	useEffect(
+		() =>
+			ipcOn(IPC.MODEL_PICKER_CLOSING, () => {
+				if (panelRef.current !== null) {
+					setPanelPhase("closing");
+				}
+			}),
+		[]
+	);
 
 	// Report the desired footprint once. Main clamps it to the room above
 	// the chip and sends back the final panel rect via MODEL_PICKER_ANCHOR.
@@ -265,7 +312,7 @@ export function ModelPickerWindow() {
 	// Esc dismisses the window. The picker is force-open in inline mode, so
 	// Base UI's own open/close events are NOT a reliable dismiss signal
 	// (clicking the author rail or a filter also fires them) — only an
-	// explicit Escape or an outside-the-window click (electron blur) closes.
+	// explicit Escape or an outside-the-window click (window blur) closes.
 	useEffect(() => {
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
@@ -291,8 +338,11 @@ export function ModelPickerWindow() {
 	// render is never visible; the first real open then just repositions an
 	// already-warm tree (a cheap re-render) instead of mounting the whole picker.
 	const panelRevealed = panel !== null;
+	const panelInteractive = panelRevealed && panelPhase === "open";
 	const warmPanel = panel ?? { x: 0, y: 0, width: DESIRED_WIDTH, height: DESIRED_HEIGHT };
 	const shouldMountBody = panelRevealed || catalogLoaded;
+	const dropdownStateClass =
+		panelPhase === "closing" ? "is-closing" : panelRevealed ? "is-open" : "";
 
 	return (
 		// Full-screen transparent backdrop. A pointer-down that lands on the
@@ -319,14 +369,17 @@ export function ModelPickerWindow() {
 					// the default footprint but held invisible + non-interactive so the
 					// heavy first render happens during the window's idle pre-create
 					// instead of during the open fade.
-					className="absolute flex flex-col"
+					className={["absolute flex flex-col t-dropdown", dropdownStateClass]
+						.filter(Boolean)
+						.join(" ")}
+					data-origin="bottom-right"
 					style={{
 						left: warmPanel.x,
 						top: warmPanel.y,
 						width: warmPanel.width,
 						height: warmPanel.height,
 						opacity: panelRevealed ? undefined : 0,
-						pointerEvents: panelRevealed ? undefined : "none",
+						pointerEvents: panelInteractive ? undefined : "none",
 					}}
 				>
 					<PickerBody
@@ -340,7 +393,7 @@ export function ModelPickerWindow() {
 						// source flips (or a key is added/removed) — no derived effect.
 						key={effectiveSourceIsCloud ? "cloud" : "local"}
 						onDeleteQuant={handleDeleteQuant}
-						onDownloadAction={handleDownloadAction}
+						onDownloadAction={handleDownloadActionGated}
 						onDownloadSnapshot={handleDownloadSnapshot}
 						onSelect={selectModel}
 						statesById={statesById}

@@ -5,10 +5,14 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "packages/**"
+      - "test/**"
       - "messages/**"
       - "scripts/**"
       - "package.json"
       - "bun.lock"
+      - "bunfig.toml"
+      - "knip.json"
       - "eslint.config.*"
       - ".prettierrc*"
       - "tsconfig*"
@@ -16,10 +20,14 @@ on:
   pull_request:
     paths:
       - "src/**"
+      - "packages/**"
+      - "test/**"
       - "messages/**"
       - "scripts/**"
       - "package.json"
       - "bun.lock"
+      - "bunfig.toml"
+      - "knip.json"
       - "eslint.config.*"
       - ".prettierrc*"
       - "tsconfig*"
@@ -36,7 +44,7 @@ permissions:
 
 jobs:
   # Renderer (src/) lint + i18n parity + build. The Rust + Tauri port's
-  # renderer lives in src/ — the old jobs targeted the now-deleted Electron
+  # renderer lives in src/ — the old jobs targeted the now-deleted reference
   # frontend/ + server/ dirs. Backend (src-tauri/) CI is in rust-ci.yml.
   frontend:
     name: Frontend
@@ -67,6 +75,12 @@ jobs:
       - name: Lint (ESLint)
         run: bun run lint
 
+      - name: TypeScript typecheck
+        run: bun run typecheck
+
+      - name: Dead-code check
+        run: bun run check:deadcode
+
       # Prettier check scoped to the renderer. We don't reuse the
       # `format:check` script because it also runs `cargo fmt` (covered by
       # rust-ci.yml) which isn't set up on this Bun-only runner.
@@ -79,7 +93,8 @@ jobs:
       - name: i18n parity check
         run: bun run check:i18n
 
-      # TypeScript typecheck + Vite renderer build. `build` runs `tsc &&
-      # vite build`, so it gates type errors and a broken bundle in one step.
+      # Renderer bundle smoke. `build` still runs its own tsc as part of the
+      # local developer contract; the explicit typecheck step above gives CI a
+      # focused TypeScript failure before the bundle work starts.
       - name: Build renderer
         run: bun run build

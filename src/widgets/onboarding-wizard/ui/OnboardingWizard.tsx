@@ -9,6 +9,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useTranslations } from "use-intl";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcSend } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
@@ -32,6 +33,8 @@ import { OnboardingLlmSetupStep } from "./steps/OnboardingLlmSetupStep";
 import { OnboardingLocalVsCloudStep } from "./steps/OnboardingLocalVsCloudStep";
 import { OnboardingMicTestStep } from "./steps/OnboardingMicTestStep";
 
+type OnboardingT = ReturnType<typeof useTranslations<"onboarding">>;
+
 interface StepMeta {
 	icon: IconSvgElement;
 	short: string;
@@ -39,34 +42,38 @@ interface StepMeta {
 	title: string;
 }
 
-const STEP_TITLES: Record<OnboardingStepId, StepMeta> = {
-	welcome: {
-		title: "Welcome to WinSTT",
-		subtitle:
-			"Choose how you'd like to transcribe — fully offline with Whisper on your machine, or via a cloud provider.",
-		short: "Start",
-		icon: ComputerIcon,
-	},
-	mic: {
-		title: "Test your microphone",
-		subtitle: "Pick your input device and confirm we can hear you.",
-		short: "Mic",
-		icon: Mic01Icon,
-	},
-	"cloud-keys": {
-		title: "Connect a cloud provider",
-		subtitle: "Paste your API key. You can always change this later in Settings.",
-		short: "Keys",
-		icon: CloudIcon,
-	},
-	llm: {
-		title: "Smarter dictation",
-		subtitle:
-			"Optional — let a local LLM clean up filler words, fix punctuation, and follow custom prompts on the way to the cursor.",
-		short: "LLM",
-		icon: SparklesIcon,
-	},
+const STEP_ICONS: Record<OnboardingStepId, IconSvgElement> = {
+	welcome: ComputerIcon,
+	mic: Mic01Icon,
+	"cloud-keys": CloudIcon,
+	llm: SparklesIcon,
 };
+
+function stepMeta(step: OnboardingStepId, t: OnboardingT): StepMeta {
+	const byStep: Record<OnboardingStepId, Omit<StepMeta, "icon">> = {
+		welcome: {
+			title: t("stepWelcomeTitle"),
+			subtitle: t("stepWelcomeSubtitle"),
+			short: t("stepWelcomeShort"),
+		},
+		mic: {
+			title: t("stepMicTitle"),
+			subtitle: t("stepMicSubtitle"),
+			short: t("stepMicShort"),
+		},
+		"cloud-keys": {
+			title: t("stepKeysTitle"),
+			subtitle: t("stepKeysSubtitle"),
+			short: t("stepKeysShort"),
+		},
+		llm: {
+			title: t("stepLlmTitle"),
+			subtitle: t("stepLlmSubtitle"),
+			short: t("stepLlmShort"),
+		},
+	};
+	return { ...byStep[step], icon: STEP_ICONS[step] };
+}
 
 /**
  * First-run wizard, composed entirely from system primitives so it visually
@@ -82,16 +89,17 @@ const STEP_TITLES: Record<OnboardingStepId, StepMeta> = {
  *     accent primary next/finish with the brand bottom-edge glow.
  */
 export function OnboardingWizard() {
+	const t = useTranslations("onboarding");
 	const currentStep = useOnboardingWizardStore((s) => s.currentStep);
 	const track = useOnboardingWizardStore((s) => s.track);
 	const micTestPassed = useOnboardingWizardStore((s) => s.micTestPassed);
 	const goNext = useOnboardingWizardStore((s) => s.goNext);
 	const goBack = useOnboardingWizardStore((s) => s.goBack);
 
-	const steps = visibleSteps(track).map((id) => ({ id, label: STEP_TITLES[id].short }));
+	const steps = visibleSteps(track).map((id) => ({ id, label: stepMeta(id, t).short }));
 	const last = isLastStep(currentStep, track);
 	const first = isFirstStep(currentStep, track);
-	const meta = STEP_TITLES[currentStep];
+	const meta = stepMeta(currentStep, t);
 
 	// "Next" is gated only on hard prerequisites; everything else is skippable.
 	//  - welcome: must pick a track
@@ -141,7 +149,7 @@ export function OnboardingWizard() {
 				<TextureCard offset={1}>
 					<TextureCardHeader className="py-3">
 						<span className="font-medium font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]">
-							{stepLabelFor(currentStep)}
+							{stepLabelFor(currentStep, t)}
 						</span>
 					</TextureCardHeader>
 					<TextureSeparator />
@@ -157,7 +165,7 @@ export function OnboardingWizard() {
 			<footer className="flex shrink-0 items-center justify-between gap-3 border-divider border-t bg-gradient-to-t from-[var(--color-surface-3)]/40 to-transparent px-6 py-3">
 				<WizardGhostButton disabled={first} onClick={goBack}>
 					<HugeiconsIcon icon={ArrowLeft02Icon} size={13} />
-					<span>Back</span>
+					<span>{t("back")}</span>
 				</WizardGhostButton>
 				<div className="flex items-center gap-3">
 					<button
@@ -165,10 +173,10 @@ export function OnboardingWizard() {
 						onClick={() => handleFinish(false)}
 						type="button"
 					>
-						Skip setup
+						{t("skipSetup")}
 					</button>
 					<WizardPrimaryButton disabled={!nextEnabled} onClick={handleNext}>
-						<span>{last ? "Finish" : "Next"}</span>
+						<span>{last ? t("finish") : t("next")}</span>
 						<HugeiconsIcon icon={last ? CheckmarkCircle02Icon : ArrowRight02Icon} size={13} />
 					</WizardPrimaryButton>
 				</div>
@@ -177,17 +185,17 @@ export function OnboardingWizard() {
 	);
 }
 
-function stepLabelFor(step: OnboardingStepId): string {
+function stepLabelFor(step: OnboardingStepId, t: OnboardingT): string {
 	if (step === "welcome") {
-		return "01 · Choose your track";
+		return t("stepLabelWelcome");
 	}
 	if (step === "mic") {
-		return "02 · Microphone";
+		return t("stepLabelMic");
 	}
 	if (step === "cloud-keys") {
-		return "03 · API keys";
+		return t("stepLabelKeys");
 	}
-	return "04 · LLM cleanup";
+	return t("stepLabelLlm");
 }
 
 function StepBody({ step }: { step: OnboardingStepId }) {

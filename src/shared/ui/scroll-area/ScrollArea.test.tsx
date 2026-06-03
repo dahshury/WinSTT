@@ -1,14 +1,48 @@
 import { describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { ScrollArea } from "./ScrollArea";
+
+function touchEvent(type: string, clientY: number) {
+	const event = new Event(type, {
+		bubbles: true,
+		cancelable: true,
+	}) as Event & {
+		changedTouches: Array<{ clientY: number }>;
+		touches: Array<{ clientY: number }>;
+	};
+	Object.defineProperty(event, "touches", {
+		value: type === "touchend" || type === "touchcancel" ? [] : [{ clientY }],
+	});
+	Object.defineProperty(event, "changedTouches", { value: [{ clientY }] });
+	return event;
+}
+
+function setScrollMetrics(
+	viewport: HTMLElement,
+	metrics: { clientHeight: number; scrollHeight: number; scrollTop: number },
+) {
+	Object.defineProperty(viewport, "clientHeight", {
+		configurable: true,
+		value: metrics.clientHeight,
+	});
+	Object.defineProperty(viewport, "scrollHeight", {
+		configurable: true,
+		value: metrics.scrollHeight,
+	});
+	Object.defineProperty(viewport, "scrollTop", {
+		configurable: true,
+		value: metrics.scrollTop,
+		writable: true,
+	});
+}
 
 describe("ScrollArea", () => {
 	test("renders children inside a scroll viewport", () => {
 		render(
 			<ScrollArea>
 				<div data-testid="content">Long content</div>
-			</ScrollArea>
+			</ScrollArea>,
 		);
 		expect(screen.getByTestId("content")).toBeDefined();
 	});
@@ -17,7 +51,7 @@ describe("ScrollArea", () => {
 		const { container } = render(
 			<ScrollArea className="custom-root">
 				<div>x</div>
-			</ScrollArea>
+			</ScrollArea>,
 		);
 		const root = container.firstElementChild as HTMLElement;
 		expect(root.className).toContain("custom-root");
@@ -27,9 +61,10 @@ describe("ScrollArea", () => {
 		render(
 			<ScrollArea viewportClassName="custom-viewport">
 				<div data-testid="c">x</div>
-			</ScrollArea>
+			</ScrollArea>,
 		);
-		const viewport = screen.getByTestId("c").parentElement as HTMLElement;
+		const contentLayer = screen.getByTestId("c").parentElement as HTMLElement;
+		const viewport = contentLayer.parentElement as HTMLElement;
 		expect(viewport.className).toContain("custom-viewport");
 	});
 
@@ -49,5 +84,80 @@ describe("ScrollArea", () => {
 		}
 		render(<Probe />);
 		expect(screen.getByTestId("content")).toBeDefined();
+	});
+
+	test("wraps children in a transformable layer when touch rubber banding is enabled", () => {
+		render(
+			<ScrollArea rubberBandOnTouch>
+				<div data-testid="content">x</div>
+			</ScrollArea>,
+		);
+		const contentLayer = screen.getByTestId("content")
+			.parentElement as HTMLElement;
+		expect(contentLayer.dataset.rubberBandContent).toBe("true");
+	});
+
+	test("enables touch rubber banding by default", () => {
+		render(
+			<ScrollArea>
+				<div data-testid="content">x</div>
+			</ScrollArea>,
+		);
+		const contentLayer = screen.getByTestId("content")
+			.parentElement as HTMLElement;
+		expect(contentLayer.dataset.rubberBandContent).toBe("true");
+	});
+
+	test("pulls the content down when a touch drag overscrolls the top edge", () => {
+		render(
+			<ScrollArea rubberBandOnTouch>
+				<div data-testid="content">x</div>
+			</ScrollArea>,
+		);
+		const contentLayer = screen.getByTestId("content")
+			.parentElement as HTMLElement;
+		const viewport = contentLayer.parentElement as HTMLElement;
+		setScrollMetrics(viewport, {
+			clientHeight: 100,
+			scrollHeight: 400,
+			scrollTop: 0,
+		});
+
+		act(() => {
+			viewport.dispatchEvent(touchEvent("touchstart", 100));
+			viewport.dispatchEvent(touchEvent("touchmove", 150));
+		});
+
+		expect(contentLayer.style.transform).toContain("translate3d(0, ");
+		expect(contentLayer.style.transform).not.toContain("0px");
+
+		act(() => {
+			viewport.dispatchEvent(touchEvent("touchend", 150));
+		});
+
+		expect(contentLayer.style.transform).toContain("0px");
+	});
+
+	test("pulls the content up when a touch drag overscrolls the bottom edge", () => {
+		render(
+			<ScrollArea rubberBandOnTouch>
+				<div data-testid="content">x</div>
+			</ScrollArea>,
+		);
+		const contentLayer = screen.getByTestId("content")
+			.parentElement as HTMLElement;
+		const viewport = contentLayer.parentElement as HTMLElement;
+		setScrollMetrics(viewport, {
+			clientHeight: 100,
+			scrollHeight: 400,
+			scrollTop: 300,
+		});
+
+		act(() => {
+			viewport.dispatchEvent(touchEvent("touchstart", 150));
+			viewport.dispatchEvent(touchEvent("touchmove", 100));
+		});
+
+		expect(contentLayer.style.transform).toContain("translate3d(0, -");
 	});
 });

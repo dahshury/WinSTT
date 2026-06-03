@@ -4,12 +4,15 @@ import { useTranslations } from "use-intl";
 import { useCatalogStore } from "@/entities/model-catalog";
 import {
 	DEFAULT_SETTINGS,
+	SettingField,
 	SettingResetButton,
 	SettingSection,
 	useSettingsStore,
 } from "@/entities/setting";
 import { cn } from "@/shared/lib/cn";
-import { FormControl } from "@/shared/ui/form-control";
+import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { OptInDialog } from "@/shared/ui/opt-in-dialog";
 import { Toggle } from "@/shared/ui/toggle";
 import { ContextDenyListSection } from "./ContextDenyListSection";
@@ -39,6 +42,7 @@ function ContextAwarenessSection({
 	onConfirm,
 	tg,
 }: ContextAwarenessSectionProps) {
+	const ts = useTranslations("settings");
 	const [dialogOpen, setDialogOpen] = useState(false);
 	// Toggle ON ⇒ show the opt-in dialog and DON'T persist yet; the dialog's
 	// confirm path is what actually flips the stored value. Toggle OFF ⇒
@@ -53,21 +57,28 @@ function ContextAwarenessSection({
 	return (
 		<SettingSection icon={EyeIcon} title={tg("contextAwarenessSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
+				<SettingField
+					isDefault={enabled === DEFAULT_SETTINGS.general.contextAwareness}
 					label={tg("contextAwareness")}
 					labelAddon={<Toggle checked={enabled} onCheckedChange={handleToggle} />}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={enabled === DEFAULT_SETTINGS.general.contextAwareness}
-							onReset={onCancel}
-						/>
+					onReset={onCancel}
+					tooltip={
+						enabled
+							? tg("contextAwarenessTooltip")
+							: `${tg("contextAwarenessTooltip")} ${ts("disabledReason", { name: tg("contextAwareness") })}`
 					}
-					tooltip={tg("contextAwarenessTooltip")}
 				/>
 				{/* The deny-list (apps/sites to skip) configures the same capture
 				    pipeline this toggle gates, so it lives directly beneath it —
-				    shown only once context awareness is actually on. */}
-				{enabled ? <ContextDenyListSection /> : null}
+				    shown disabled (not hidden) until context awareness is on. */}
+				<div
+					className={cn(
+						"transition-opacity duration-200 ease-out",
+						!enabled && "pointer-events-none opacity-40"
+					)}
+				>
+					<ContextDenyListSection />
+				</div>
 			</div>
 			<OptInDialog
 				body={tg("contextAwarenessDialogBody")}
@@ -104,90 +115,76 @@ function FormattingSection({
 	update,
 	updateGeneral,
 }: FormattingSectionProps) {
+	const uppercase = q?.ensureSentenceStartingUppercase ?? true;
+	const period = q?.ensureSentenceEndsWithPeriod ?? true;
+	// Filler removal is a `general.*` setting (synced server-side via
+	// custom-words-sync → set_parameter("filter_fillers")), surfaced here next to
+	// the other post-decode cleanups. Turn OFF to keep verbatim disfluencies —
+	// the reason to pick a model like CrisperWhisper.
+	const filler = general?.filterFillers ?? true;
+
+	const checkedIndices = new Set<number>();
+	if (uppercase) {
+		checkedIndices.add(0);
+	}
+	if (period) {
+		checkedIndices.add(1);
+	}
+	if (filler) {
+		checkedIndices.add(2);
+	}
+
+	const isDefault =
+		uppercase === DEFAULT_SETTINGS.quality.ensureSentenceStartingUppercase &&
+		period === DEFAULT_SETTINGS.quality.ensureSentenceEndsWithPeriod &&
+		filler === DEFAULT_SETTINGS.general.filterFillers;
+	const resetAll = (): void => {
+		update({
+			ensureSentenceEndsWithPeriod: DEFAULT_SETTINGS.quality.ensureSentenceEndsWithPeriod,
+			ensureSentenceStartingUppercase: DEFAULT_SETTINGS.quality.ensureSentenceStartingUppercase,
+		});
+		updateGeneral({ filterFillers: DEFAULT_SETTINGS.general.filterFillers });
+	};
+
+	// The post-decode fixups are one group of booleans, so they read as a
+	// CheckboxGroup (mirroring the live-transcription display control in the
+	// Appearance tab) rather than three separate toggles. Each keeps its own help
+	// tooltip in the trailing slot; one group reset lives in the section header.
+	// Disabled per-item while LLM dictation is on (it rewrites the transcript).
 	return (
-		<SettingSection icon={TextSquareIcon} title={t("formatting")}>
-			<div
-				className={cn(
-					"flex flex-col divide-y divide-surface-1 transition-opacity duration-200 ease-out",
-					llmDictationEnabled && "pointer-events-none opacity-40"
-				)}
-			>
-				<FormControl
-					label={t("uppercaseFirst")}
-					labelAddon={
-						<Toggle
-							checked={q?.ensureSentenceStartingUppercase ?? true}
-							disabled={llmDictationEnabled}
-							onCheckedChange={(v) => update({ ensureSentenceStartingUppercase: v })}
-						/>
-					}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(q?.ensureSentenceStartingUppercase ?? true) ===
-								DEFAULT_SETTINGS.quality.ensureSentenceStartingUppercase
-							}
-							onReset={() =>
-								update({
-									ensureSentenceStartingUppercase:
-										DEFAULT_SETTINGS.quality.ensureSentenceStartingUppercase,
-								})
-							}
-						/>
-					}
-					tooltip={t("uppercaseFirstTooltip")}
-				/>
-				<FormControl
-					label={t("endWithPeriod")}
-					labelAddon={
-						<Toggle
-							checked={q?.ensureSentenceEndsWithPeriod ?? true}
-							disabled={llmDictationEnabled}
-							onCheckedChange={(v) => update({ ensureSentenceEndsWithPeriod: v })}
-						/>
-					}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(q?.ensureSentenceEndsWithPeriod ?? true) ===
-								DEFAULT_SETTINGS.quality.ensureSentenceEndsWithPeriod
-							}
-							onReset={() =>
-								update({
-									ensureSentenceEndsWithPeriod:
-										DEFAULT_SETTINGS.quality.ensureSentenceEndsWithPeriod,
-								})
-							}
-						/>
-					}
-					tooltip={t("endWithPeriodTooltip")}
-				/>
-				{/* Filler removal is a `general.*` setting (synced server-side via
-					custom-words-sync → set_parameter("filter_fillers")). Surfaced here
-					next to the other post-decode cleanups. Turn OFF to keep verbatim
-					disfluencies — the reason to pick a model like CrisperWhisper. */}
-				<FormControl
-					label={t("removeFillerWords")}
-					labelAddon={
-						<Toggle
-							checked={general?.filterFillers ?? true}
-							disabled={llmDictationEnabled}
-							onCheckedChange={(v) => updateGeneral({ filterFillers: v })}
-						/>
-					}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(general?.filterFillers ?? true) === DEFAULT_SETTINGS.general.filterFillers
-							}
-							onReset={() =>
-								updateGeneral({ filterFillers: DEFAULT_SETTINGS.general.filterFillers })
-							}
-						/>
-					}
-					tooltip={t("removeFillerWordsTooltip")}
-				/>
-			</div>
+		<SettingSection
+			headerAction={<SettingResetButton isDefault={isDefault} onReset={resetAll} />}
+			icon={TextSquareIcon}
+			title={t("formatting")}
+		>
+			<ElevatedSurface>
+				<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
+					<CheckboxItem
+						checked={uppercase}
+						disabled={llmDictationEnabled}
+						index={0}
+						label={t("uppercaseFirst")}
+						onToggle={() => update({ ensureSentenceStartingUppercase: !uppercase })}
+						trailing={<InfoTooltip content={t("uppercaseFirstTooltip")} />}
+					/>
+					<CheckboxItem
+						checked={period}
+						disabled={llmDictationEnabled}
+						index={1}
+						label={t("endWithPeriod")}
+						onToggle={() => update({ ensureSentenceEndsWithPeriod: !period })}
+						trailing={<InfoTooltip content={t("endWithPeriodTooltip")} />}
+					/>
+					<CheckboxItem
+						checked={filler}
+						disabled={llmDictationEnabled}
+						index={2}
+						label={t("removeFillerWords")}
+						onToggle={() => updateGeneral({ filterFillers: !filler })}
+						trailing={<InfoTooltip content={t("removeFillerWordsTooltip")} />}
+					/>
+				</CheckboxGroup>
+			</ElevatedSurface>
 		</SettingSection>
 	);
 }
@@ -195,9 +192,8 @@ function FormattingSection({
 /**
  * Post-recognition text-cleanup controls that are NOT the LLM provider config.
  * Renders after `LlmSettingsPanel` on the Processing tab: Context awareness
- * (+ deny-list) and the post-decode Formatting fixups. Behavior is copied
- * verbatim from the former QualitySettingsPanel — store keys, update fns,
- * i18n keys, reset buttons, and gating are unchanged.
+ * (+ deny-list) and the post-decode Formatting fixups. (These moved here from
+ * the former QualitySettingsPanel, folded away in the settings IA reorg.)
  */
 export function ProcessingExtrasPanel() {
 	const q = useSettingsStore((s) => s.settings.quality);

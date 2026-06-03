@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 
 // ---------------------------------------------------------------------------
-// This suite drives its data through a per-file `window.electronAPI` stub
+// This suite drives its data through a per-file `window.nativeBridge` stub
 // (restored in afterEach) rather than overriding ipc-client exports via
 // `mock.module`. bun:test's `mock.module` is process-global with a single
 // winner per path and no teardown, so per-file export overrides leak between
@@ -25,7 +25,7 @@ const { useDeviceSwitchFeedback, __test_shouldResetSavedIndex } = await import(
 	"./use-device-switch-feedback"
 );
 
-const originalElectronApi = window.electronAPI;
+const originalNativeBridge = window.nativeBridge;
 
 // Capture mock-call records so each test can assert.
 const settingsSaveCalls: Array<{ audio: { inputDeviceIndex: number | null } | undefined }> = [];
@@ -39,8 +39,8 @@ let onDeviceSwitchFailedCb:
 let audioGetDevicesImpl: () => Promise<Array<{ index: number; name: string; isDefault: boolean }>> =
 	async () => [];
 
-function installElectronStub(): void {
-	window.electronAPI = {
+function installNativeBridgeStub(): void {
+	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: (channel: string, payload?: unknown) => {
 			if (channel === IPC.SETTINGS_SAVE) {
@@ -81,7 +81,7 @@ beforeEach(() => {
 	settingsSaveCalls.length = 0;
 	audioGetDevicesImpl = async () => [];
 	onDeviceSwitchFailedCb = null;
-	installElectronStub();
+	installNativeBridgeStub();
 	useSettingsStore.setState({
 		settings: {
 			...freshSettings(),
@@ -96,7 +96,7 @@ afterEach(() => {
 	for (const handle of mountedHooks.splice(0)) {
 		act(() => handle.unmount());
 	}
-	window.electronAPI = originalElectronApi;
+	window.nativeBridge = originalNativeBridge;
 	useSettingsStore.setState({ settings: freshSettings() });
 	onDeviceSwitchFailedCb = null;
 	audioGetDevicesImpl = async () => [];
@@ -126,7 +126,7 @@ describe("useDeviceSwitchFeedback", () => {
 			});
 		});
 		// settingsSave must fire synchronously in the same tick — otherwise the
-		// stale index 6 stays in electron-store across an early Electron close.
+		// stale index 6 stays in persisted store across an early app close.
 		expect(settingsSaveCalls.length).toBe(1);
 		expect(settingsSaveCalls[0]?.audio?.inputDeviceIndex).toBe(null);
 		// And the Zustand store reflects the fallback.

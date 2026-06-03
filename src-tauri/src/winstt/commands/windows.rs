@@ -1,18 +1,18 @@
 // PORT IMPL — WU-0 (app/PORT/10_frontend_port_plan.md §4b + lib_wiring.md).
 //
 // Window-management commands for the 9-window WinSTT topology. Each WinSTT
-// Electron BrowserWindow becomes a Tauri WebviewWindow loading its own HTML
+// the reference BrowserWindow becomes a Tauri WebviewWindow loading its own HTML
 // entry (main at "/", the 8 secondary at "windows/<name>.html"). The chrome
 // (size, transparency, decorations, always-on-top, skip-taskbar) is translated
 // 1:1 from frontend/electron/main.ts + electron/ipc/*-window.ts.
 //
-// Creation policy (matches Electron's keep-alive semantics):
+// Creation policy (matches the reference's keep-alive semantics):
 //   - `main` is created eagerly in lib.rs setup (NOT here).
 //   - settings/history/onboarding/pickers/overlay/tray-menu/context-playground
 //     are created LAZILY on first `open_window` and HIDDEN (not destroyed) on
 //     `close_window`, so re-open preserves renderer state.
 //
-// Two placement regimes (ported from the Electron window creators):
+// Two placement regimes (ported from the reference window creators):
 //   - PLAIN windows (settings/history/onboarding/context-playground): created at
 //     a fixed size, CENTERED (settings on the main pill, the rest on the primary
 //     display), opaque backgroundColor, shown + focused. Hide-on-close.
@@ -34,6 +34,7 @@
 // Per-picker anchor/size is held in module-level statics (no `.manage()` needed).
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -43,7 +44,7 @@ use tauri::{
     WebviewUrl, WebviewWindowBuilder,
 };
 
-/// Per-window chrome/geometry spec, ported from the Electron window creators.
+/// Per-window chrome/geometry spec, ported from the reference window creators.
 struct WindowSpec {
     /// Tauri window label == the Vite entry key == the renderer's window name.
     label: &'static str,
@@ -63,14 +64,14 @@ struct WindowSpec {
     /// Whether the window starts mouse-click-through (overlay only).
     ignore_cursor: bool,
     /// Opaque background color (None for transparent popups). Mirrors the
-    /// Electron `backgroundColor: "#09090b"` on the framed windows — prevents a
+    /// the reference `backgroundColor: "#09090b"` on the framed windows — prevents a
     /// white flash before the renderer paints.
     background: Option<(u8, u8, u8, u8)>,
 }
 
 /// WinSTT's dark substrate (`#09090b`), used as the opaque window background to
 /// kill the white flash on the framed windows (settings/onboarding/…). Matches
-/// the Electron `backgroundColor`.
+/// the reference `backgroundColor`.
 const SUBSTRATE: Option<(u8, u8, u8, u8)> = Some((9, 9, 11, 255));
 
 /// The 9-window table (main is created in lib.rs setup; listed here for resize).
@@ -267,7 +268,7 @@ fn is_picker(label: &str) -> bool {
 // The renderer reports a DESIRED footprint via `resize_window`; the trigger rect
 // arrives via `open_window`. We keep both per-picker so a `resize_window` (the
 // renderer's ResizeObserver fires after mount) re-anchors the popup to the same
-// trigger with the now-correct size — exactly like the Electron pickers.
+// trigger with the now-correct size — exactly like the reference pickers.
 
 /// Anchor = the screen-space rect of the chip/row that opened the picker.
 #[derive(Clone, Copy)]
@@ -278,6 +279,8 @@ struct PickerAnchor {
     screen_right: f64,
     /// Screen Y of the trigger's top edge (logical px).
     screen_top: f64,
+    /// Screen Y of the trigger's bottom edge (logical px).
+    screen_bottom: f64,
 }
 
 #[derive(Clone, Copy)]
@@ -288,6 +291,15 @@ struct PickerState {
 }
 
 static PICKER_STATE: Mutex<Option<HashMap<&'static str, PickerState>>> = Mutex::new(None);
+
+/// Monotonic open/close counter for the model-picker. Every open and every
+/// hide/reset bumps it; the delayed re-emit (see `place_model_picker`) captures
+/// the value at schedule time and only fires while it's still current — so a
+/// close (or a reopen at a new anchor) during the 250ms wait invalidates a stray
+/// re-emit that would otherwise re-plant a stale panel rect.
+static MODEL_PICKER_SEQ: AtomicU64 = AtomicU64::new(0);
+static SETTINGS_FADE_SEQ: AtomicU64 = AtomicU64::new(0);
+static SETTINGS_OPACITY_BITS: AtomicU64 = AtomicU64::new(1.0f64.to_bits());
 
 /// Default seed footprint per picker (the renderer overrides it on first resize).
 fn picker_default_size(label: &str) -> (f64, f64) {
@@ -317,8 +329,11 @@ fn with_picker_state<R>(label: &'static str, f: impl FnOnce(&mut PickerState) ->
 
 const TASKBAR_MARGIN: f64 = 8.0;
 /// Gap between the popup's bottom edge and the trigger that opened it. Mirrors
-/// `ANCHOR_GAP` in the Electron pickers.
+/// `ANCHOR_GAP` in the reference pickers.
 const ANCHOR_GAP: f64 = 6.0;
+const MODEL_PICKER_CLOSE_MS: u64 = 150;
+const SETTINGS_FADE_MS: u64 = 150;
+const SETTINGS_FADE_TICK_MS: u64 = 16;
 /// Smallest usable model-picker height before we pin it to the screen top.
 const MODEL_MIN_HEIGHT: f64 = 160.0;
 /// Smallest usable device-picker height before we pin it to the screen top.
@@ -357,8 +372,108 @@ fn work_area_for_point(app: &AppHandle, point: (f64, f64)) -> (f64, f64, f64, f6
     (0.0, 0.0, 1920.0, 1080.0)
 }
 
+fn settings_fade_alpha(progress: f64) -> f64 {
+    let t = progress.clamp(0.0, 1.0);
+    1.0 - (1.0 - t).powi(3)
+}
+
+fn settings_fade_alpha_in(progress: f64) -> f64 {
+    progress.clamp(0.0, 1.0).powi(3)
+}
+
+fn settings_opacity_byte(opacity: f64) -> u8 {
+    (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn settings_fade_should_seed_hidden(label: &str, is_visible: bool) -> bool {
+    label == "settings" && !is_visible
+}
+
+fn settings_current_opacity() -> f64 {
+    f64::from_bits(SETTINGS_OPACITY_BITS.load(Ordering::SeqCst)).clamp(0.0, 1.0)
+}
+
+fn remember_settings_opacity(opacity: f64) {
+    SETTINGS_OPACITY_BITS.store(opacity.clamp(0.0, 1.0).to_bits(), Ordering::SeqCst);
+}
+
+#[cfg(target_os = "windows")]
+fn set_settings_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Result<(), String> {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
+        WS_EX_LAYERED,
+    };
+
+    remember_settings_opacity(opacity);
+    let alpha = settings_opacity_byte(opacity);
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    unsafe {
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let layered_style = ex_style | WS_EX_LAYERED.0 as isize;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, layered_style);
+        SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_settings_window_opacity(_window: &tauri::WebviewWindow, opacity: f64) -> Result<(), String> {
+    remember_settings_opacity(opacity);
+    Ok(())
+}
+
+fn start_settings_opacity_fade<F>(
+    window: tauri::WebviewWindow,
+    to: f64,
+    easing: fn(f64) -> f64,
+    on_complete: F,
+) where
+    F: FnOnce() + Send + 'static,
+{
+    let seq = SETTINGS_FADE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let from = settings_current_opacity();
+    let to = to.clamp(0.0, 1.0);
+
+    if (from - to).abs() <= f64::EPSILON {
+        let _ = set_settings_window_opacity(&window, to);
+        on_complete();
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        let mut on_complete = Some(on_complete);
+        loop {
+            if SETTINGS_FADE_SEQ.load(Ordering::SeqCst) != seq {
+                return;
+            }
+
+            let elapsed = start.elapsed().as_millis() as f64;
+            let progress = (elapsed / SETTINGS_FADE_MS as f64).min(1.0);
+            let opacity = from + (to - from) * easing(progress);
+            let _ = set_settings_window_opacity(&window, opacity);
+
+            if progress >= 1.0 {
+                let _ = set_settings_window_opacity(&window, to);
+                if let Some(done) = on_complete.take() {
+                    done();
+                }
+                return;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(SETTINGS_FADE_TICK_MS));
+        }
+    });
+}
+
+fn animate_settings_open(window: tauri::WebviewWindow) {
+    start_settings_opacity_fade(window, 1.0, settings_fade_alpha, || {});
+}
+
 /// Outer position of a window in LOGICAL px (used to convert a child window's
-/// viewport-space rect into screen space, like Electron's `senderWin.getBounds()`).
+/// viewport-space rect into screen space, like the reference's `senderWin.getBounds()`).
 fn outer_position_logical(window: &tauri::WebviewWindow) -> (f64, f64) {
     let scale = window.scale_factor().unwrap_or(1.0);
     window
@@ -416,7 +531,9 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
                     .parent(&main)
                     .map_err(|e| format!("parent settings to main failed: {e}"))?;
             }
-            None => log::warn!("ensure_window: main window missing; settings created without owner"),
+            None => {
+                log::warn!("ensure_window: main window missing; settings created without owner")
+            }
         }
     }
 
@@ -436,7 +553,7 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
     {
         let diag_label = spec.label;
         builder = builder.on_page_load(move |_w, payload| {
-            log::info!(
+            log::debug!(
                 "[webview-load:{diag_label}] {:?} url={}",
                 payload.event(),
                 payload.url()
@@ -449,9 +566,12 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
         e.to_string()
     })?;
 
-    log::info!(
+    log::debug!(
         "[webview-built:{label}] url={}",
-        window.url().map(|u| u.to_string()).unwrap_or_else(|_| "<none>".into())
+        window
+            .url()
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| "<none>".into())
     );
 
     if spec.ignore_cursor {
@@ -513,7 +633,7 @@ fn clamp_into_work_area(x: f64, y: f64, w: f64, h: f64, work: (f64, f64, f64, f6
     (x.clamp(wx, max_x), y.clamp(wy, max_y))
 }
 
-// ── Picker geometry (ported from the Electron pickers) ──────────────────────
+// ── Picker geometry (ported from the reference pickers) ──────────────────────
 
 struct PanelBounds {
     x: f64,
@@ -522,9 +642,11 @@ struct PanelBounds {
     height: f64,
 }
 
-/// Y-axis placement: glue the popup bottom `ANCHOR_GAP` above the trigger,
-/// shrinking the height to the room above when the full height won't fit; if
-/// there's basically no room above, pin to the work-area top.
+/// Y-axis placement: open toward whichever side (above OR below the trigger) has
+/// more room, gluing the popup `ANCHOR_GAP` away from that trigger edge and
+/// shrinking the height to the available room. Ties favour ABOVE (the historical
+/// behaviour). When neither side has comfortable room (`min_height`) the trigger
+/// is hogging the screen, so we pin to the work-area top as a last resort.
 fn compute_y_axis(
     anchor: PickerAnchor,
     desired_height: f64,
@@ -532,10 +654,16 @@ fn compute_y_axis(
     work_h: f64,
     min_height: f64,
 ) -> (f64, f64) {
-    let room = anchor.screen_top - work_y - ANCHOR_GAP;
     let ceiling = work_h - TASKBAR_MARGIN;
-    if room >= min_height {
-        let height = desired_height.min(room).min(ceiling);
+    let room_above = anchor.screen_top - work_y - ANCHOR_GAP;
+    let room_below = work_y + work_h - anchor.screen_bottom - ANCHOR_GAP;
+    if room_below > room_above && room_below >= min_height {
+        // Below has strictly more room (and fits): drop the popup under the trigger.
+        let height = desired_height.min(room_below).min(ceiling);
+        (anchor.screen_bottom + ANCHOR_GAP, height)
+    } else if room_above >= min_height {
+        // Above wins (or ties) and fits: glue the popup bottom above the trigger.
+        let height = desired_height.min(room_above).min(ceiling);
         (anchor.screen_top - height - ANCHOR_GAP, height)
     } else {
         (work_y, desired_height.min(ceiling))
@@ -568,6 +696,40 @@ fn compute_panel(
         width,
         height,
     }
+}
+
+/// Tell the model-picker renderer to drop its last panel rect (emits a `null`
+/// `model-picker:anchor`). Called while the window is HIDDEN, so a reopen can't
+/// flash the previous open's position before the fresh anchor lands: by the time
+/// the window reshows, the panel is invisible and the new anchor reveals it in
+/// place. Race-free precisely because it happens off-screen, not at show time.
+fn reset_model_picker_panel(app: &AppHandle) {
+    // Bump first so any in-flight delayed re-emit from the prior open is stale.
+    MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst);
+    let _ = app.emit("model-picker:anchor", serde_json::Value::Null);
+}
+
+fn close_model_picker_with_animation(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = app.emit("model-picker:closing", serde_json::Value::Null);
+
+    let app2 = app.clone();
+    let window2 = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(MODEL_PICKER_CLOSE_MS));
+        if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
+            return;
+        }
+        let app3 = app2.clone();
+        let _ = app2.run_on_main_thread(move || {
+            if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
+                return;
+            }
+            let _ = window2.hide();
+            with_picker_state("model-picker", |s| s.anchor = None);
+            reset_model_picker_panel(&app3);
+        });
+    });
 }
 
 /// Place + show the MODEL picker: the window fills the display work area as a
@@ -609,13 +771,19 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
     // its `model-picker:anchor` listener yet when we emit above, so the panel
     // would stay invisible until the renderer's own mount-time
     // `MODEL_PICKER_RESIZE` round-trips. Re-emit once after a short delay so the
-    // panel reveals promptly even on a cold first open (mirrors Electron's
+    // panel reveals promptly even on a cold first open (mirrors the reference's
     // `deferShowUntilLoaded`). Cheap, idempotent — the renderer just sets the
     // same rect again.
+    // This open's sequence number. The delayed re-emit below fires only while
+    // it's still current — a close or reopen in the meantime bumps the counter
+    // and cancels the stray re-emit (which would re-plant a stale panel).
+    let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let app2 = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(250));
-        let _ = app2.emit("model-picker:anchor", payload);
+        if MODEL_PICKER_SEQ.load(Ordering::SeqCst) == seq {
+            let _ = app2.emit("model-picker:anchor", payload);
+        }
     });
 }
 
@@ -647,26 +815,28 @@ fn place_picker(app: &AppHandle, label: &'static str, window: &tauri::WebviewWin
 }
 
 /// Convert a trigger rect reported in the OPENER window's viewport coords into a
-/// screen-space anchor (logical px). Mirrors Electron's `anchorFromRect`.
+/// screen-space anchor (logical px). Mirrors the reference's `anchorFromRect`.
 fn anchor_from_rect(
     opener: &tauri::WebviewWindow,
     x: f64,
     y: f64,
     width: f64,
-    _height: f64,
+    height: f64,
 ) -> PickerAnchor {
     let (ox, oy) = outer_position_logical(opener);
     let screen_left = ox + x;
+    let screen_top = oy + y;
     PickerAnchor {
         screen_left,
         screen_right: screen_left + width,
-        screen_top: oy + y,
+        screen_top,
+        screen_bottom: screen_top + height,
     }
 }
 
 /// Resolve the OPENER window — the one whose viewport the trigger rect is
 /// measured in. We prefer the calling webview (Tauri injects it as the command's
-/// `WebviewWindow` param — the exact analogue of Electron's `event.sender`), so
+/// `WebviewWindow` param — the exact analogue of the reference's `event.sender`), so
 /// the picker anchors correctly whether the chip was clicked in the main pill OR
 /// the settings window (ModelSettingsPanel opens the same picker). Falls back to
 /// a sensible default window if the caller's webview can't be resolved.
@@ -721,7 +891,7 @@ pub(crate) fn prewarm_windows(app: &AppHandle) {
     // 1) Eager: the windows the user is most likely to hit first.
     for label in EAGER_PREWARM {
         match ensure_window(app, label) {
-            Ok(_) => log::info!("[prewarm] '{label}' pre-created (hidden, eager)"),
+            Ok(_) => log::debug!("[prewarm] '{label}' pre-created (hidden, eager)"),
             Err(e) => log::warn!("[prewarm] '{label}' failed: {e}"),
         }
     }
@@ -740,7 +910,7 @@ pub(crate) fn prewarm_windows(app: &AppHandle) {
                 continue; // already built eagerly above
             }
             match ensure_window(&app, spec.label) {
-                Ok(_) => log::info!("[prewarm] '{}' pre-created (hidden, deferred)", spec.label),
+                Ok(_) => log::debug!("[prewarm] '{}' pre-created (hidden, deferred)", spec.label),
                 Err(e) => log::warn!("[prewarm] '{}' failed: {e}", spec.label),
             }
         }
@@ -764,6 +934,29 @@ pub(crate) fn set_main_modal(app: &AppHandle, modal_active: bool) {
     }
 }
 
+fn close_settings_window(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if !window.is_visible().unwrap_or(false) {
+        set_main_modal(&app, false);
+        let _ = set_settings_window_opacity(&window, 0.0);
+        return Ok(());
+    }
+
+    let fade_window = window.clone();
+    start_settings_opacity_fade(fade_window, 0.0, settings_fade_alpha_in, move || {
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            // Preserve the Win32 modal teardown ordering: re-enable the owner before
+            // hiding the child so Windows can reactivate the pill immediately.
+            set_main_modal(&app2, false);
+            let _ = window.hide();
+            if let Some(main) = app2.get_webview_window("main") {
+                let _ = main.set_focus();
+            }
+        });
+    });
+    Ok(())
+}
+
 // ── Commands ────────────────────────────────────────────────────────────────
 
 /// `winstt_diag` — webview → backend log bridge. The secondary windows (settings /
@@ -778,7 +971,7 @@ pub fn winstt_diag(label: String, level: String, message: String) {
     match level.as_str() {
         "error" => log::error!("[webview:{label}] {message}"),
         "warn" => log::warn!("[webview:{label}] {message}"),
-        _ => log::info!("[webview:{label}] {message}"),
+        _ => log::debug!("[webview:{label}] {message}"),
     }
 }
 
@@ -800,7 +993,7 @@ pub fn open_window(
     width: Option<f64>,
     height: Option<f64>,
 ) -> Result<(), String> {
-    log::info!("open_window('{name}') invoked");
+    log::debug!("open_window('{name}') invoked");
     // Resolve the static label so it can key the picker-state map / emit.
     let label: &'static str = match spec_for(&name) {
         Some(spec) => spec.label,
@@ -812,10 +1005,14 @@ pub fn open_window(
 
     if is_picker(label) {
         // Picker open is a TOGGLE: a second open while visible closes it (the
-        // chip/row toggles its own popup), matching the Electron pickers.
+        // chip/row toggles its own popup), matching the reference pickers.
         if window.is_visible().unwrap_or(false) {
-            let _ = window.hide();
-            with_picker_state(label, |s| s.anchor = None);
+            if label == "model-picker" {
+                close_model_picker_with_animation(&app, &window);
+            } else {
+                let _ = window.hide();
+                with_picker_state(label, |s| s.anchor = None);
+            }
             return Ok(());
         }
 
@@ -832,8 +1029,12 @@ pub fn open_window(
     }
 
     // Plain window: center (settings on the main pill, others on the primary
-    // display), then show + focus. `settings` centers on main per Electron.
+    // display), then show + focus. `settings` centers on main per the reference.
     center_window(&app, &window, label == "settings");
+    let was_visible = window.is_visible().unwrap_or(false);
+    if settings_fade_should_seed_hidden(label, was_visible) {
+        let _ = set_settings_window_opacity(&window, 0.0);
+    }
     window.show().map_err(|e| e.to_string())?;
     let _ = window.unminimize();
     let _ = window.set_focus();
@@ -842,6 +1043,7 @@ pub fn open_window(
     // Settings closes (close_self_window / close_window / CloseRequested).
     if label == "settings" {
         set_main_modal(&app, true);
+        animate_settings_open(window.clone());
     }
     Ok(())
 }
@@ -855,31 +1057,34 @@ pub fn close_window(app: AppHandle, name: String) -> Result<(), String> {
     // dismiss — a menu-item click — routes here via TRAY_MENU_CLOSE; a real hide()
     // would leave it OS-hidden, and place_tray_menu no longer calls show() once it
     // has been pre-shown, so the menu would never reappear. Park it instead, mirroring
-    // Electron's tray-menu:close → hideTrayMenu → moveOffscreen.
+    // the reference's tray-menu:close → hideTrayMenu → moveOffscreen.
     if name == "tray-menu" {
         return crate::winstt::commands::tray_menu::hide_tray_menu(app);
     }
-    // Closing Settings releases the pill's modal lock BEFORE the hide so Windows
-    // can reactivate the pill as the modal goes away (see close_self_window for the
-    // ordering rationale). Idempotent with close_self_window / CloseRequested.
     if name == "settings" {
+        if let Some(window) = app.get_webview_window(&name) {
+            return close_settings_window(app, window);
+        }
         set_main_modal(&app, false);
+        return Ok(());
     }
     if let Some(window) = app.get_webview_window(&name) {
-        window.hide().map_err(|e| e.to_string())?;
-    }
-    if name == "settings" {
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.set_focus();
+        if name == "model-picker" {
+            close_model_picker_with_animation(&app, &window);
+            return Ok(());
         }
+        window.hide().map_err(|e| e.to_string())?;
     }
     // A closed picker forgets its anchor so a stray resize can't re-show it.
     if let Some(label) = spec_for(&name).map(|s| s.label) {
         if is_picker(label) {
             with_picker_state(label, |s| s.anchor = None);
+            if label == "model-picker" {
+                reset_model_picker_panel(&app);
+            }
         }
         // The device-picker is a tray-menu submenu: choosing a device (or Esc)
-        // collapses the WHOLE menu, matching Electron's device-picker
+        // collapses the WHOLE menu, matching the reference's device-picker
         // `handleClose` (hideDevicePicker + hideTrayMenu).
         if label == "device-picker" {
             let _ = crate::winstt::commands::tray_menu::hide_tray_menu(app.clone());
@@ -899,20 +1104,10 @@ pub fn close_window(app: AppHandle, name: String) -> Result<(), String> {
 #[specta::specta]
 pub fn close_self_window(app: AppHandle, webview: tauri::WebviewWindow) -> Result<(), String> {
     let label = webview.label().to_string();
-    // CRITICAL ORDER (Win32 modal teardown): re-enable the pill BEFORE hiding the
-    // modal. If the pill is still disabled when Settings hides, Windows has no valid
-    // window to reactivate (a disabled owner can't take focus), so the pill drops
-    // behind other apps and looks like it "closed". Re-enabling first lets Windows
-    // hand activation straight back to the pill; the explicit focus then raises it.
     if label == "settings" {
-        set_main_modal(&app, false);
+        return close_settings_window(app, webview);
     }
     webview.hide().map_err(|e| e.to_string())?;
-    if label == "settings" {
-        if let Some(main) = app.get_webview_window("main") {
-            let _ = main.set_focus();
-        }
-    }
     Ok(())
 }
 
@@ -944,7 +1139,7 @@ pub fn resize_window(app: AppHandle, name: String, width: f64, height: f64) -> R
     }
 
     if let Some(window) = app.get_webview_window(&name) {
-        // NO-OP GUARD (Electron's `sizeUnchanged` in tray-menu-window.ts): the
+        // NO-OP GUARD (the reference's `sizeUnchanged` in tray-menu-window.ts): the
         // renderer's ResizeObserver fires on EVERY reflow — hover, focus ring,
         // sub-pixel layout — and frequently reports the SAME content size. Without
         // this guard each repeat calls `set_size`, which emits a `Resized` event,
@@ -967,7 +1162,7 @@ pub fn resize_window(app: AppHandle, name: String, width: f64, height: f64) -> R
             // The tray menu is `w-fit` and only reports its true content size after
             // mount (TRAY_MENU_RESIZE). Re-anchor it from the stored click point so it
             // stays glued there with the now-correct size instead of remaining clamped
-            // against its initial (larger) footprint — mirrors Electron's resize →
+            // against its initial (larger) footprint — mirrors the reference's resize →
             // re-anchor in tray-menu-window.ts. Only fires when the size ACTUALLY
             // changed, so a steady-state ResizeObserver storm no longer re-anchors.
             if label == Some("tray-menu") {
@@ -1018,7 +1213,8 @@ pub fn onboarding_finish(app: AppHandle, _args: OnboardingFinishArgs) -> Result<
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_panel, compute_x_axis, compute_y_axis, is_picker, spec_for, PickerAnchor,
+        compute_panel, compute_x_axis, compute_y_axis, is_picker, settings_fade_alpha,
+        settings_fade_should_seed_hidden, settings_opacity_byte, spec_for, PickerAnchor,
         ANCHOR_GAP, MODEL_MIN_HEIGHT, TASKBAR_MARGIN,
     };
 
@@ -1048,11 +1244,41 @@ mod tests {
     }
 
     #[test]
-    fn y_axis_glues_above_trigger_when_room() {
+    fn settings_open_fade_uses_cubic_ease_out() {
+        assert_eq!(settings_fade_alpha(0.0), 0.0);
+        assert_eq!(settings_fade_alpha(1.0), 1.0);
+
+        let halfway = settings_fade_alpha(0.5);
+        assert!(
+            (halfway - 0.875).abs() < f64::EPSILON,
+            "expected cubic ease-out halfway alpha, got {halfway}"
+        );
+    }
+
+    #[test]
+    fn settings_opacity_maps_to_win32_alpha_byte() {
+        assert_eq!(settings_opacity_byte(-1.0), 0);
+        assert_eq!(settings_opacity_byte(0.0), 0);
+        assert_eq!(settings_opacity_byte(0.5), 128);
+        assert_eq!(settings_opacity_byte(1.0), 255);
+        assert_eq!(settings_opacity_byte(2.0), 255);
+    }
+
+    #[test]
+    fn settings_hidden_window_is_seeded_transparent_before_show() {
+        assert!(settings_fade_should_seed_hidden("settings", false));
+        assert!(!settings_fade_should_seed_hidden("settings", true));
+        assert!(!settings_fade_should_seed_hidden("history", false));
+    }
+
+    #[test]
+    fn y_axis_glues_above_trigger_when_more_room_above() {
+        // Trigger low on the screen: far more room above than below → open above.
         let anchor = PickerAnchor {
             screen_left: 0.0,
             screen_right: 100.0,
             screen_top: 900.0,
+            screen_bottom: 952.0,
         };
         let (y, h) = compute_y_axis(anchor, 560.0, 0.0, 1080.0, MODEL_MIN_HEIGHT);
         // Bottom glued ANCHOR_GAP above the trigger top.
@@ -1061,22 +1287,28 @@ mod tests {
     }
 
     #[test]
-    fn y_axis_pins_to_top_when_no_room() {
+    fn y_axis_opens_below_when_more_room_below() {
+        // Trigger near the top: little room above, lots below → open below.
         let anchor = PickerAnchor {
             screen_left: 0.0,
             screen_right: 100.0,
             screen_top: 40.0,
+            screen_bottom: 92.0,
         };
-        let (y, _h) = compute_y_axis(anchor, 560.0, 0.0, 1080.0, MODEL_MIN_HEIGHT);
-        assert_eq!(y, 0.0);
+        let (y, h) = compute_y_axis(anchor, 560.0, 0.0, 1080.0, MODEL_MIN_HEIGHT);
+        // Top glued ANCHOR_GAP below the trigger bottom.
+        assert_eq!(y, anchor.screen_bottom + ANCHOR_GAP);
+        assert_eq!(h, 560.0);
     }
 
     #[test]
     fn y_axis_shrinks_to_ceiling() {
+        // Trigger pinned at the very bottom: room is above, height clamps to ceiling.
         let anchor = PickerAnchor {
             screen_left: 0.0,
             screen_right: 100.0,
             screen_top: 1080.0,
+            screen_bottom: 1132.0,
         };
         let (_y, h) = compute_y_axis(anchor, 5000.0, 0.0, 1080.0, MODEL_MIN_HEIGHT);
         assert_eq!(h, 1080.0 - TASKBAR_MARGIN);
@@ -1088,6 +1320,7 @@ mod tests {
             screen_left: 0.0,
             screen_right: 500.0,
             screen_top: 900.0,
+            screen_bottom: 952.0,
         };
         // Right-aligned to the trigger's right edge.
         assert_eq!(compute_x_axis(anchor, 200.0, 0.0, 1920.0), 300.0);
@@ -1096,6 +1329,7 @@ mod tests {
             screen_left: 0.0,
             screen_right: 50.0,
             screen_top: 900.0,
+            screen_bottom: 952.0,
         };
         assert_eq!(compute_x_axis(near_left, 200.0, 0.0, 1920.0), 0.0);
     }
@@ -1106,8 +1340,14 @@ mod tests {
             screen_left: 1900.0,
             screen_right: 1920.0,
             screen_top: 1070.0,
+            screen_bottom: 1122.0,
         };
-        let panel = compute_panel(anchor, (600.0, 560.0), (0.0, 0.0, 1920.0, 1080.0), MODEL_MIN_HEIGHT);
+        let panel = compute_panel(
+            anchor,
+            (600.0, 560.0),
+            (0.0, 0.0, 1920.0, 1080.0),
+            MODEL_MIN_HEIGHT,
+        );
         assert!(panel.x >= 0.0);
         assert!(panel.x + panel.width <= 1920.0 + 0.01);
         assert!(panel.y >= 0.0);

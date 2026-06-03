@@ -158,7 +158,7 @@ function invokeCallbacks(callbacks: ReadonlyArray<() => void>): void {
 
 /**
  * Lazily-constructed playback queue. ``AudioContext`` creation is
- * deferred until the first chunk because Chrome / Electron require a
+ * deferred until the first chunk because Chrome / the reference require a
  * user-gesture for the context to start out of the ``suspended`` state.
  */
 export class TtsPlaybackQueue {

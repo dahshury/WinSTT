@@ -1,4 +1,3 @@
-// PORT IMPL — drafted against real APIs, pending compile.
 // Source: thewh1teagle/kokoro-onnx (src/kokoro_onnx/{__init__.py,config.py}),
 //   server/src/synthesizer/infrastructure/{kokoro_synthesizer.py,asset_downloader.py},
 //   docs.rs/ort/2.0.0-rc.12 (Session, inputs!, Value, Tensor, execution_providers),
@@ -17,12 +16,11 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
-use super::phonemize::{MAX_PHONEME_LENGTH, Phonemizer, default_phonemizer};
+use super::phonemize::{default_phonemizer, Phonemizer, MAX_PHONEME_LENGTH};
 
 /// Kokoro v1.0 emits 24 kHz mono float PCM.
 pub const KOKORO_SAMPLE_RATE: u32 = 24_000;
@@ -31,10 +29,13 @@ pub const STYLE_DIM: usize = 256;
 
 /// Pinned upstream model-file URLs (PORT/06_tts.md §3; same release the Python
 /// downloader uses). Overridable via env for CI / self-host.
+/// Kokoro is now a normal HF ONNX model (onnx-community), downloaded through the
+/// shared TTS download manager like every other engine — NOT its old
+/// thewh1teagle GitHub-release single-npz path. The fp16 graph lives under
+/// `onnx/`; each voice is an individual raw-f32 `voices/<id>.bin`.
+pub const KOKORO_HF_REPO: &str = "onnx-community/Kokoro-82M-v1.0-ONNX";
 pub const KOKORO_FP16_URL: &str =
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.fp16.onnx";
-pub const KOKORO_VOICES_URL: &str =
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin";
+    "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_fp16.onnx";
 
 /// EP intent — mirrors the STT slice's `Accelerator` collapse. Kokoro is
 /// DirectML-SAFE (82M fp16, NOT in the int8 DML-incompatible STT families), so
@@ -105,108 +106,66 @@ impl VoiceStyle {
     }
 }
 
-/// Parsed voice pack: voice-id → style table.
+/// Dir-backed voice pack: loads each voice from `voices/<id>.bin` (raw
+/// little-endian f32, shape `[rows, 256]`, NO npy/npz header — the
+/// onnx-community Kokoro layout, 522240 bytes = 510*256*4 per voice) on first
+/// use and caches it. Unifies Kokoro with the other ONNX TTS engines (HF source
+/// + per-file download via the shared TTS download manager).
 pub struct VoicePack {
-    voices: HashMap<String, VoiceStyle>,
+    dir: PathBuf,
+    cache: Mutex<HashMap<String, VoiceStyle>>,
 }
 
 impl VoicePack {
-    /// Parse `voices-v1.0.bin` (a numpy `.npz` = a zip of `<name>.npy` entries).
-    /// Each entry is a little-endian f32 array of shape `[510, 1, 256]`; we
-    /// flatten the middle singleton axis to `[510, 256]`.
-    pub fn load(path: &Path) -> KokoroResult<Self> {
-        let file =
-            std::fs::File::open(path).map_err(|e| KokoroError::AssetsMissing(e.to_string()))?;
-        let mut zip = zip::ZipArchive::new(file)
-            .map_err(|e| KokoroError::Voice(format!("voices.bin is not a valid npz: {e}")))?;
-        let mut voices = HashMap::new();
-        for i in 0..zip.len() {
-            let mut entry = zip
-                .by_index(i)
-                .map_err(|e| KokoroError::Voice(e.to_string()))?;
-            let name = entry.name().to_string();
-            // npz entries are "<voice_id>.npy"
-            let voice_id = name.strip_suffix(".npy").unwrap_or(&name).to_string();
-            let mut bytes = Vec::with_capacity(entry.size() as usize);
-            entry
-                .read_to_end(&mut bytes)
-                .map_err(|e| KokoroError::Voice(e.to_string()))?;
-            let style = parse_npy_f32(&bytes)?;
-            voices.insert(voice_id, style);
+    /// Bind to the directory that holds the per-voice `<id>.bin` files. Files are
+    /// loaded lazily (not all 54 at warm-up).
+    pub fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            cache: Mutex::new(HashMap::new()),
         }
-        if voices.is_empty() {
-            return Err(KokoroError::Voice("voice pack contained no voices".into()));
-        }
-        Ok(Self { voices })
     }
 
-    pub fn get(&self, voice_id: &str) -> KokoroResult<&VoiceStyle> {
-        self.voices
-            .get(voice_id)
-            .ok_or_else(|| KokoroError::Voice(format!("unknown voice id '{voice_id}'")))
-    }
-
-    pub fn voice_ids(&self) -> impl Iterator<Item = &str> {
-        self.voices.keys().map(|s| s.as_str())
+    /// The 256-dim style row for `voice_id` at the UNPADDED `token_count`. Loads +
+    /// caches the voice's raw `.bin` on first access; returns an owned Vec (the
+    /// cached table lives behind the Mutex, so we can't hand out a borrow).
+    pub fn style_row(&self, voice_id: &str, token_count: usize) -> KokoroResult<Vec<f32>> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| KokoroError::Voice("voice cache poisoned".into()))?;
+        if !cache.contains_key(voice_id) {
+            let path = self.dir.join(format!("{voice_id}.bin"));
+            let style = load_voice_bin(&path)?;
+            cache.insert(voice_id.to_string(), style);
+        }
+        let style = cache.get(voice_id).expect("just inserted");
+        Ok(style.row_for(token_count)?.to_vec())
     }
 }
 
-/// Minimal `.npy` v1.0 parser for a little-endian `<f4` array. We only need the
-/// raw f32 payload + the total element count (shape is `[510,1,256]` →
-/// `MAX_PHONEME_LENGTH` rows of `STYLE_DIM`). Header format:
-///   bytes 0..6  : magic \x93NUMPY
-///   byte 6      : major version (1)
-///   byte 7      : minor version (0)
-///   bytes 8..10 : header-len u16 LE (v1.0)
-///   header      : ASCII dict, e.g. {'descr': '<f4', 'fortran_order': False, 'shape': (510, 1, 256), }
-///   payload     : row-major f32 little-endian
-fn parse_npy_f32(bytes: &[u8]) -> KokoroResult<VoiceStyle> {
-    const MAGIC: &[u8] = b"\x93NUMPY";
-    if bytes.len() < 10 || &bytes[0..6] != MAGIC {
-        return Err(KokoroError::Voice("bad .npy magic".into()));
+/// Load a raw little-endian f32 voice file (`[rows, 256]`, NO header — the
+/// onnx-community `voices/<id>.bin` format). The legacy `af.bin` (512 rows) also
+/// parses; only the 55 named voices are used by the catalog.
+fn load_voice_bin(path: &Path) -> KokoroResult<VoiceStyle> {
+    let bytes = std::fs::read(path).map_err(|e| KokoroError::AssetsMissing(e.to_string()))?;
+    if !bytes.len().is_multiple_of(4) {
+        return Err(KokoroError::Voice("voice .bin not f32-aligned".into()));
     }
-    let major = bytes[6];
-    // v1.0 uses a u16 header length at [8..10]; v2.0+ uses u32 at [8..12].
-    let (header_len, header_start) = if major >= 2 {
-        if bytes.len() < 12 {
-            return Err(KokoroError::Voice("truncated .npy v2 header".into()));
-        }
-        let hl = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
-        (hl, 12usize)
-    } else {
-        let hl = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
-        (hl, 10usize)
-    };
-    let header_end = header_start + header_len;
-    if bytes.len() < header_end {
-        return Err(KokoroError::Voice("truncated .npy header".into()));
-    }
-    let header = std::str::from_utf8(&bytes[header_start..header_end])
-        .map_err(|_| KokoroError::Voice("non-utf8 .npy header".into()))?;
-    if !header.contains("<f4") {
+    let count = bytes.len() / 4;
+    if count == 0 || !count.is_multiple_of(STYLE_DIM) {
         return Err(KokoroError::Voice(format!(
-            "voice pack dtype is not <f4: {header}"
-        )));
-    }
-    if header.contains("'fortran_order': True") {
-        return Err(KokoroError::Voice("fortran-ordered voice pack unsupported".into()));
-    }
-    let payload = &bytes[header_end..];
-    if payload.len() % 4 != 0 {
-        return Err(KokoroError::Voice("voice payload not f32-aligned".into()));
-    }
-    let count = payload.len() / 4;
-    if count % STYLE_DIM != 0 {
-        return Err(KokoroError::Voice(format!(
-            "voice payload {count} floats not a multiple of style dim {STYLE_DIM}"
+            "voice .bin {count} floats not a multiple of style dim {STYLE_DIM}"
         )));
     }
     let mut data = Vec::with_capacity(count);
-    for chunk in payload.chunks_exact(4) {
+    for chunk in bytes.chunks_exact(4) {
         data.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
-    let rows = count / STYLE_DIM;
-    Ok(VoiceStyle { data, rows })
+    Ok(VoiceStyle {
+        data,
+        rows: count / STYLE_DIM,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -216,12 +175,13 @@ fn parse_npy_f32(bytes: &[u8]) -> KokoroResult<VoiceStyle> {
 /// Configuration for the local Kokoro engine.
 #[derive(Clone, Debug)]
 pub struct KokoroConfig {
-    /// `%LOCALAPPDATA%/winstt/tts/kokoro` (host-resolved). Holds both files.
+    /// `%LOCALAPPDATA%/winstt/tts/kokoro-82m` (host-resolved). Holds `onnx/<graph>`
+    /// + `voices/<id>.bin` (onnx-community layout).
     pub cache_dir: PathBuf,
-    /// `kokoro-v1.0.fp16.onnx` by default.
+    /// fp16 graph basename under `onnx/` (`model_fp16.onnx` by default).
     pub model_filename: String,
-    /// `voices-v1.0.bin` by default.
-    pub voices_filename: String,
+    /// Subdir holding the per-voice raw `.bin` files (`voices` by default).
+    pub voices_dir: String,
     pub device: KokoroDevice,
 }
 
@@ -229,8 +189,8 @@ impl Default for KokoroConfig {
     fn default() -> Self {
         Self {
             cache_dir: PathBuf::new(),
-            model_filename: "kokoro-v1.0.fp16.onnx".to_string(),
-            voices_filename: "voices-v1.0.bin".to_string(),
+            model_filename: "model_fp16.onnx".to_string(),
+            voices_dir: "voices".to_string(),
             device: KokoroDevice::Auto,
         }
     }
@@ -238,14 +198,18 @@ impl Default for KokoroConfig {
 
 impl KokoroConfig {
     pub fn model_path(&self) -> PathBuf {
-        self.cache_dir.join(&self.model_filename)
+        self.cache_dir.join("onnx").join(&self.model_filename)
     }
-    pub fn voices_path(&self) -> PathBuf {
-        self.cache_dir.join(&self.voices_filename)
+    pub fn voices_dir_path(&self) -> PathBuf {
+        self.cache_dir.join(&self.voices_dir)
     }
-    /// True once both files are present on disk (so warm-up can skip download).
+    pub fn voice_path(&self, voice_id: &str) -> PathBuf {
+        self.voices_dir_path().join(format!("{voice_id}.bin"))
+    }
+    /// True once the model graph + the default voice are on disk (we no longer
+    /// ship all voices in one blob, so presence == graph + at least af_heart).
     pub fn assets_present(&self) -> bool {
-        self.model_path().exists() && self.voices_path().exists()
+        self.model_path().exists() && self.voice_path("af_heart").exists()
     }
 }
 
@@ -309,9 +273,10 @@ impl KokoroEngine {
     /// Assets must already be on disk (the host runs `download_assets` first via
     /// the shared resumable downloader). Returns Ok once `ready`.
     pub fn warm_up(&self) -> KokoroResult<()> {
-        let mut guard = self.inner.lock().map_err(|_| {
-            KokoroError::Session("kokoro engine lock poisoned".into())
-        })?;
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| KokoroError::Session("kokoro engine lock poisoned".into()))?;
         if guard.is_some() {
             return Ok(());
         }
@@ -319,7 +284,7 @@ impl KokoroEngine {
             return Err(KokoroError::AssetsMissing(format!(
                 "expected {} and {}",
                 self.config.model_path().display(),
-                self.config.voices_path().display()
+                self.config.voices_dir_path().display()
             )));
         }
         let loaded = self.load()?;
@@ -330,7 +295,13 @@ impl KokoroEngine {
 
     /// Synthesize ONE sentence → mono f32 PCM @ 24 kHz. Blocking. Lazily warms
     /// up on first call. `speed` is pre-clamped by the caller.
-    pub fn synthesize(&self, text: &str, voice: &str, lang: &str, speed: f32) -> KokoroResult<Vec<f32>> {
+    pub fn synthesize(
+        &self,
+        text: &str,
+        voice: &str,
+        lang: &str,
+        speed: f32,
+    ) -> KokoroResult<Vec<f32>> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return Ok(Vec::new());
@@ -366,7 +337,7 @@ impl KokoroEngine {
                 return Err(KokoroError::AssetsMissing(format!(
                     "expected {} and {}",
                     self.config.model_path().display(),
-                    self.config.voices_path().display()
+                    self.config.voices_dir_path().display()
                 )));
             }
             *guard = Some(self.load()?);
@@ -378,33 +349,30 @@ impl KokoroEngine {
         // `voice = voice[len(tokens)]` BEFORE padding to `[0, *tokens, 0]`, so the row
         // index is `tokens.len()`, NOT the padded length. Indexing at `padded.len()`
         // (tokens.len()+2) picked the wrong style row → wrong prosody and a longer clip
-        // (81000 vs Electron's 65536 samples on the JFK sentence). Match Electron exactly.
-        let style_row = loaded.voices.get(voice)?.row_for(tokens.len())?.to_vec();
+        // (81000 vs the reference's 65536 samples on the JFK sentence). Match the reference exactly.
+        let style_row = loaded.voices.style_row(voice, tokens.len())?;
         self.run_inference(loaded, &padded, &style_row, speed)
     }
 
     /// Build the ORT session + parse the voice pack + detect the input schema.
     fn load(&self) -> KokoroResult<LoadedKokoro> {
-        let voices = VoicePack::load(&self.config.voices_path())?;
+        let voices = VoicePack::new(self.config.voices_dir_path());
         let (session, active_providers) = self.build_session()?;
 
-        // Detect the input schema from the graph's input node names.
-        // The canonical kokoro-v1.0(.fp16).onnx export uses
-        //   tokens [1,N] i64 + style [1,256] f32 + speed [1] f32
-        // while newer re-exports (HF onnx-community) use
-        //   input_ids [1,N] i64 + style + speed [1] i64.
-        // `session.inputs()` returns the input node descriptors; we read each
-        // node's name to pick the right token-input key + speed dtype. If the
-        // descriptor API can't be read we fall back to the canonical schema
-        // (`tokens` + f32 speed) and the inference path retries the alternate
-        // key on an unknown-input error.
+        // Detect the token-input key from the graph's input node names: the
+        // onnx-community export uses `input_ids`, the older kokoro-v1.0 export
+        // `tokens`. BOTH take `style [1,256] f32` + `speed [1] f32` — verified at
+        // runtime: the onnx-community model rejects an int64 speed
+        // ("Unexpected input data type ... expected (tensor(float))"). So speed is
+        // always f32 here (the i64 path in run_inference is kept as a guard but
+        // unused by the shipped exports).
         let names = input_node_names(&session);
-        let (tokens_input, speed_is_f32) = if names.iter().any(|n| n == "input_ids") {
-            ("input_ids".to_string(), false)
+        let tokens_input = if names.iter().any(|n| n == "input_ids") {
+            "input_ids".to_string()
         } else {
-            // default: canonical kokoro-v1.0 export
-            ("tokens".to_string(), true)
+            "tokens".to_string()
         };
+        let speed_is_f32 = true;
 
         Ok(LoadedKokoro {
             session,
@@ -419,8 +387,8 @@ impl KokoroEngine {
     /// `/encoder/F0.1/pool/ConvTranspose` HARD-FAILS on DirectML with
     /// `80070057 The parameter is incorrect` — not a clean unsupported-op CPU
     /// fallback, an actual runtime crash. PROVEN identically by BOTH the Python
-    /// `kokoro_onnx` path (Electron) and this Rust path (see the tts benchmark), so
-    /// the upstream Electron app is likewise CPU-only for Kokoro. We therefore never
+    /// `kokoro_onnx` path (the reference) and this Rust path (see the tts benchmark), so
+    /// the upstream the reference app is likewise CPU-only for Kokoro. We therefore never
     /// register the DirectML EP here regardless of the requested device. An 82M model
     /// on CPU is fast — and faster than DML's per-op launch overhead would be at this
     /// size — once we let ORT use its full intra-op thread pool (below).
@@ -439,10 +407,10 @@ impl KokoroEngine {
         let active = vec!["CPUExecutionProvider".to_string()];
 
         // NO `with_intra_threads(1)` — that pinned inference to ONE thread and made
-        // this path ~2.6× slower than Electron's multi-threaded kokoro_onnx CPU path
+        // this path ~2.6× slower than the reference's multi-threaded kokoro_onnx CPU path
         // (1323ms vs ~500ms warm on the same model+phonemes). Omitting it lets ORT use
         // its default intra-op pool (all physical cores), matching onnxruntime's
-        // defaults that the Electron path relies on.
+        // defaults that the reference path relies on.
         let mut builder = ort::session::Session::builder()
             .map_err(|e| KokoroError::Session(format!("session builder: {e}")))?
             .with_execution_providers(dispatch)
@@ -467,17 +435,13 @@ impl KokoroEngine {
         // (winstt/stt/whisper.rs `Tensor::from_array(([1usize, ..], data.into_boxed_slice()))`).
         let n = padded_tokens.len();
         // tokens / input_ids: [1, n] i64
-        let ids_tensor = Tensor::from_array((
-            [1usize, n],
-            padded_tokens.to_vec().into_boxed_slice(),
-        ))
-        .map_err(|e| KokoroError::Session(format!("token-ids tensor: {e}")))?;
+        let ids_tensor =
+            Tensor::from_array(([1usize, n], padded_tokens.to_vec().into_boxed_slice()))
+                .map_err(|e| KokoroError::Session(format!("token-ids tensor: {e}")))?;
         // style: [1, 256] f32
-        let style_tensor = Tensor::from_array((
-            [1usize, STYLE_DIM],
-            style_row.to_vec().into_boxed_slice(),
-        ))
-        .map_err(|e| KokoroError::Session(format!("style tensor: {e}")))?;
+        let style_tensor =
+            Tensor::from_array(([1usize, STYLE_DIM], style_row.to_vec().into_boxed_slice()))
+                .map_err(|e| KokoroError::Session(format!("style tensor: {e}")))?;
 
         // speed: f32 [1] (canonical kokoro-v1.0 export) or i64 [1] (newer HF re-export).
         let outputs = if loaded.speed_is_f32 {
@@ -514,9 +478,9 @@ impl KokoroEngine {
             .map_err(|e| KokoroError::Session(format!("extract audio: {e}")))?;
         // Trim leading/trailing silence, mirroring kokoro_onnx's `create(trim=True)`
         // (librosa.effects.trim). Kokoro pads ~0.5–0.6s of near-silence around each
-        // utterance; without this our clips ran ~24% longer than the Electron path
+        // utterance; without this our clips ran ~24% longer than the reference path
         // (81000 vs 65536 samples on the JFK sentence) — same speech, just dead air.
-        // Trimming matches Electron AND makes read-aloud start/stop snappier.
+        // Trimming matches the reference AND makes read-aloud start/stop snappier.
         Ok(trim_silence(data))
     }
 
@@ -590,15 +554,20 @@ fn trim_silence(audio: &[f32]) -> Vec<f32> {
 fn input_node_names(session: &ort::session::Session) -> Vec<String> {
     // `session.inputs()` → &[Outlet]; `Outlet::name()` is a method (matches
     // winstt/stt/whisper.rs `o.name()`), NOT a field.
-    session.inputs().iter().map(|o| o.name().to_string()).collect()
+    session
+        .inputs()
+        .iter()
+        .map(|o| o.name().to_string())
+        .collect()
 }
 
-/// Resolve the model-file URLs, allowing env override (CI / self-host).
+/// Resolve the fp16 graph URL, allowing env override (CI / self-host).
 pub fn model_url() -> String {
     std::env::var("WINSTT_KOKORO_MODEL_URL").unwrap_or_else(|_| KOKORO_FP16_URL.to_string())
 }
-pub fn voices_url() -> String {
-    std::env::var("WINSTT_KOKORO_VOICES_URL").unwrap_or_else(|_| KOKORO_VOICES_URL.to_string())
+/// Per-voice raw-`.bin` URL on the onnx-community repo.
+pub fn voice_url(voice_id: &str) -> String {
+    format!("https://huggingface.co/{KOKORO_HF_REPO}/resolve/main/voices/{voice_id}.bin")
 }
 
 // ===========================================================================
@@ -609,95 +578,71 @@ pub fn voices_url() -> String {
 mod tests {
     use super::*;
 
-    /// Build a minimal valid .npy v1.0 buffer for an f32 array of `shape`.
-    fn make_npy(shape: &[usize], data: &[f32]) -> Vec<u8> {
-        let shape_str = if shape.len() == 1 {
-            format!("({},)", shape[0])
-        } else {
-            let inner: Vec<String> = shape.iter().map(|d| d.to_string()).collect();
-            format!("({})", inner.join(", "))
-        };
-        let header = format!(
-            "{{'descr': '<f4', 'fortran_order': False, 'shape': {shape_str}, }}"
-        );
-        // pad header so total (10 + header_len) is a multiple of 64, ending in \n
-        let mut header_bytes = header.into_bytes();
-        let unpadded = 10 + header_bytes.len() + 1; // +1 for trailing \n
-        let pad = (64 - (unpadded % 64)) % 64;
-        header_bytes.extend(std::iter::repeat(b' ').take(pad));
-        header_bytes.push(b'\n');
-
-        let mut out = Vec::new();
-        out.extend_from_slice(b"\x93NUMPY");
-        out.push(1); // major
-        out.push(0); // minor
-        out.extend_from_slice(&(header_bytes.len() as u16).to_le_bytes());
-        out.extend_from_slice(&header_bytes);
-        for f in data {
-            out.extend_from_slice(&f.to_le_bytes());
+    /// Write a raw little-endian f32 `[rows, STYLE_DIM]` voice `.bin` (the
+    /// onnx-community layout — no header) to a temp file and return its path.
+    fn write_voice_bin(tag: &str, rows: usize) -> PathBuf {
+        let total = rows * STYLE_DIM;
+        let mut bytes = Vec::with_capacity(total * 4);
+        for i in 0..total {
+            bytes.extend_from_slice(&(i as f32).to_le_bytes());
         }
-        out
+        let p = std::env::temp_dir().join(format!(
+            "winstt_kokoro_{tag}_{}_{rows}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&p, &bytes).unwrap();
+        p
     }
 
     #[test]
-    fn parse_npy_reads_shape_and_payload() {
-        // shape [3, 1, 2] → 6 floats → rows = 6 / STYLE_DIM... use STYLE_DIM-sized rows instead
-        let rows = 2usize;
-        let total = rows * STYLE_DIM;
-        let data: Vec<f32> = (0..total).map(|i| i as f32).collect();
-        let buf = make_npy(&[rows, 1, STYLE_DIM], &data);
-        let style = parse_npy_f32(&buf).unwrap();
-        assert_eq!(style.rows, rows);
-        // row 0 starts at 0.0, row 1 starts at STYLE_DIM as f32
+    fn load_voice_bin_reads_rows_and_payload() {
+        let p = write_voice_bin("ok", 3);
+        let style = load_voice_bin(&p).unwrap();
+        assert_eq!(style.rows, 3);
         assert_eq!(style.row_for(0).unwrap()[0], 0.0);
         assert_eq!(style.row_for(1).unwrap()[0], STYLE_DIM as f32);
-        assert_eq!(style.row_for(0).unwrap().len(), STYLE_DIM);
+        assert_eq!(style.row_for(1).unwrap().len(), STYLE_DIM);
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
     fn row_for_rejects_out_of_range_token_count() {
-        let rows = 2usize;
-        let data: Vec<f32> = vec![0.0; rows * STYLE_DIM];
-        let buf = make_npy(&[rows, 1, STYLE_DIM], &data);
-        let style = parse_npy_f32(&buf).unwrap();
+        let style = VoiceStyle {
+            data: vec![0.0; 2 * STYLE_DIM],
+            rows: 2,
+        };
         assert!(style.row_for(2).is_err()); // == rows → out of range
         assert!(style.row_for(99).is_err());
     }
 
     #[test]
-    fn parse_npy_rejects_wrong_dtype() {
-        // craft a header claiming <i8
-        let header = b"{'descr': '<i8', 'fortran_order': False, 'shape': (1,), }\n";
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"\x93NUMPY");
-        buf.push(1);
-        buf.push(0);
-        buf.extend_from_slice(&(header.len() as u16).to_le_bytes());
-        buf.extend_from_slice(header);
-        buf.extend_from_slice(&0i64.to_le_bytes());
-        assert!(parse_npy_f32(&buf).is_err());
+    fn load_voice_bin_rejects_misaligned() {
+        let p = std::env::temp_dir().join(format!("winstt_kokoro_bad_{}.bin", std::process::id()));
+        std::fs::write(&p, [0u8; 10]).unwrap(); // 10 bytes: not a multiple of 256*4
+        assert!(load_voice_bin(&p).is_err());
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
-    fn parse_npy_rejects_bad_magic() {
-        let buf = vec![0u8; 32];
-        assert!(parse_npy_f32(&buf).is_err());
-    }
-
-    #[test]
-    fn config_paths_join_cache_dir() {
+    fn config_uses_onnx_and_voices_layout() {
         let cfg = KokoroConfig {
-            cache_dir: PathBuf::from("/tmp/kokoro"),
+            cache_dir: PathBuf::from("/tmp/kokoro-82m"),
             ..Default::default()
         };
-        assert!(cfg.model_path().ends_with("kokoro-v1.0.fp16.onnx"));
-        assert!(cfg.voices_path().ends_with("voices-v1.0.bin"));
+        assert!(cfg.model_path().ends_with("model_fp16.onnx"));
+        let model = cfg.model_path().to_string_lossy().replace('\\', "/");
+        assert!(model.contains("onnx/model_fp16.onnx"), "{model}");
+        let voice = cfg
+            .voice_path("af_heart")
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(voice.ends_with("voices/af_heart.bin"), "{voice}");
     }
 
     #[test]
-    fn urls_default_to_upstream_release() {
-        // (env not set in test → upstream pins)
-        assert!(model_url().contains("kokoro-v1.0.fp16.onnx"));
-        assert!(voices_url().contains("voices-v1.0.bin"));
+    fn urls_point_at_onnx_community() {
+        assert!(model_url().contains("model_fp16.onnx"));
+        assert!(voice_url("af_heart").contains("voices/af_heart.bin"));
+        assert!(voice_url("af_heart").contains("onnx-community/Kokoro-82M-v1.0-ONNX"));
     }
 }

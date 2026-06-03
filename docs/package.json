@@ -1,0 +1,41 @@
+{
+  "name": "docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build && tsc --noEmit",
+    "preview": "vite preview",
+    "start": "node .output/server/index.mjs",
+    "types:check": "tsc --noEmit",
+    "lint": "biome check",
+    "format": "biome format --write"
+  },
+  "dependencies": {
+    "@takumi-rs/image-response": "^1.5.0",
+    "@tanstack/react-router": "^1.170.8",
+    "@tanstack/react-start": "^1.168.11",
+    "fumadocs-core": "16.8.8",
+    "fumadocs-mdx": "15.0.8",
+    "fumadocs-ui": "16.8.8",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwind-merge": "^3.5.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.14",
+    "@tailwindcss/vite": "^4.2.4",
+    "@tanstack/react-router-devtools": "^1.167.0",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^25.6.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "nitro": "^3.0.260311-beta",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0"
+  }
+}

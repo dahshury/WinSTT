@@ -3,7 +3,7 @@ import { IpcProvider } from "./IpcProvider";
 
 describe("IpcProvider", () => {
 	test("module exports the provider as a function", () => {
-		// IpcProvider orchestrates ~9 hooks against window.electronAPI;
+		// IpcProvider orchestrates ~9 hooks against window.nativeBridge;
 		// fully rendering it under happy-dom requires mocking AudioContext,
 		// MediaSource, and racing with gpuGetInfo() — the integration is
 		// covered end-to-end by Playwright (phase 10).

@@ -48,7 +48,7 @@ examples/WinSTT/
 .i18n-work/
 
 # Reference example clones (embedded repos, not part of the fork) — keep only
-# the Electron app, which IS part of this repo.
+# the reference app, which IS part of this repo.
 examples/*
 !examples/winstt-electron/
 
@@ -57,3 +57,14 @@ examples/*
 target-moon/
 target-spike/
 target-verify*/
+
+# Python tooling cache (ruff) — stray ephemeral cache, never commit
+.ruff_cache/
+
+# TTS engine-spike model cache (kitten/piper/supertonic/chatterbox/oute weights,
+# loaded by src-tauri/src/bin/tts_engine_spike.rs). Re-downloadable; never commit.
+.tts-cache/
+
+# Deep research scratch binaries/models. The markdown findings are useful; the
+# downloaded whisper.cpp runtime/model artifacts are re-creatable and too large for Git.
+.deep-research/whispercpp/

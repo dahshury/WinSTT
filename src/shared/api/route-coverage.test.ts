@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 // ── Route-coverage guard (HANDY_VS_WINSTT_AUDIT.md #8 interim) ──────────────────
 //
 // The renderer crosses the IPC boundary through an UNTYPED string-channel adapter
-// (`electron-tauri-adapter.ts`): each route names a backend command as a bare
+// (`native-bridge-adapter.ts`): each route names a backend command as a bare
 // `cmd: "snake_case_name"` literal. The generated `bindings.ts` (tauri-specta)
 // is the authoritative list of commands the Rust backend actually exposes — but
 // it's imported by zero renderer files, so a Rust command rename / deletion goes
@@ -55,7 +55,7 @@ function extractBindingsCmds(bindingsSource: string): Set<string> {
 	return collectCaptures(bindingsSource, /TAURI_INVOKE\(\s*"([a-z0-9_]+)"/g);
 }
 
-const adapterSource = read("electron-tauri-adapter.ts");
+const adapterSource = read("native-bridge-adapter.ts");
 const bindingsSource = read("../../bindings.ts");
 
 const routeCmds = extractRouteCmds(adapterSource);

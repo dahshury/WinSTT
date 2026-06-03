@@ -13,7 +13,7 @@
 //   `frames_per_second = sample_rate / buffer_size`. This Rust port counts
 //   FRAMES = SAMPLES at 16 kHz, so `fps = 16000.0` and `total_frames = snapshot.len()`.
 //   That keeps the unit system internally consistent: `commit_chunk_frames(16000.0)
-//   = REALTIME_COMMIT_AFTER_SECONDS * 16000 = 32000 samples = 2.0 s`, and every
+//   = REALTIME_COMMIT_AFTER_SECONDS * 16000 = 320000 samples = 20.0 s`, and every
 //   frame-range the accumulator hands the closure maps DIRECTLY onto a snapshot slice
 //   (frame index == sample index). `RealtimeAccumulator::commit_if_needed` /
 //   `publish_fresh` are agnostic to the unit — they only require fps and frame counts to
@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
 use crate::managers::audio::AudioRecordingManager;
-use crate::managers::transcription::TranscriptionManager;
+use crate::managers::transcription::{RealtimeStreamOutcome, TranscriptionManager};
 use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::commands::settings::{effective_realtime, read_settings_raw};
 use crate::winstt::realtime_stabilizer::RealtimeAccumulator;
@@ -82,8 +82,17 @@ impl RealtimeManager {
         // Per-loop state (mirrors _RealtimeLoopState).
         let mut recording_seen_at: Option<Instant> = None; // set on rising edge
         let mut last_transcription = Instant::now(); // gates realtime_processing_pause
-        // -1 sentinel → "no tick processed yet this recording" (Python last_processed_frame_count).
+                                                     // -1 sentinel → "no tick processed yet this recording" (Python last_processed_frame_count).
         let mut last_processed_len: i64 = -1;
+        // The recorder's recording-generation as of the last reset. Used to detect a
+        // NEW recording even when the idle gap was never observed (quick re-press).
+        let mut last_generation: Option<u64> = None;
+        // Native-streaming preview state, decided ONCE per recording (the loaded engine's kind
+        // doesn't change mid-recording). `None` until the engine resolves; `Some(true)` → feed only
+        // new samples to the engine's cache via `stream_accept`; `Some(false)` → window-redecode.
+        // `fed_len` is the absolute count of samples already handed to the streaming engine.
+        let mut native_decided: Option<bool> = None;
+        let mut fed_len: usize = 0;
 
         loop {
             // ── not recording: reset accumulator (keep last text), idle-sleep ──
@@ -118,12 +127,29 @@ impl RealtimeManager {
             // `live_audio` so our snapshots see the growing window. Cheap, idempotent.
             self.audio.set_realtime_enabled(true);
 
-            // ── rising edge: first tick after recording started ──
+            // ── new-recording edge ──
             // Mirrors _realtime_mark_recording_start: stamp start time + reset(clear_last=True)
             // so the stabilizer + committed text start clean for the new utterance.
-            if recording_seen_at.is_none() {
+            //
+            // Detect a fresh recording by the recorder's monotonic GENERATION, not only by
+            // having observed `!is_recording()` since the last tick. On a quick
+            // press→release→press the worker can be mid-decode across the boundary and never
+            // see the idle gap, so a `recording_seen_at`-only edge would (1) leave the previous
+            // utterance's committed-frame watermark in place — freezing the preview until the
+            // new take grows past it — and (2) let the previous take's in-flight text be emitted
+            // into the new session (the pill "carries on the previous transcription"). Resetting
+            // on a generation change closes both holes. `last_processed_len` is reset here too so
+            // the stale-audio guard doesn't compare against the previous recording's length.
+            let generation = self.audio.recording_generation();
+            if recording_seen_at.is_none() || last_generation != Some(generation) {
                 recording_seen_at = Some(Instant::now());
+                last_generation = Some(generation);
+                last_processed_len = -1;
                 acc.reset(true);
+                // Re-decide native vs window for the new utterance; the streaming engine's stream is
+                // reset the moment we (re-)detect native (below) so it starts from the buffer head.
+                native_decided = None;
+                fed_len = 0;
             }
             let seen_at = recording_seen_at.expect("set on the line above");
 
@@ -138,6 +164,63 @@ impl RealtimeManager {
                 Duration::from_secs_f64(settings.quality.realtime_processing_pause.max(0.0));
             if last_transcription.elapsed() < processing_pause {
                 std::thread::sleep(Duration::from_millis(1));
+                continue;
+            }
+
+            // ── NATIVE-STREAMING fast path (T-One / sherpa Zipformer+NeMo) ──
+            // Resolve once per recording. The engine carries cache state across ticks, so we feed
+            // ONLY the new samples since `fed_len` (no growing-window re-decode), and emit the
+            // engine's incremental text directly (already monotonic — no accumulator/stabilizer).
+            // While the engine is still loading (`None`), fall through to the window path, which
+            // degrades gracefully; once it resolves to native we reset the stream + re-read the head.
+            if native_decided.is_none() {
+                native_decided = self.transcription.realtime_native_streaming();
+                if native_decided == Some(true) {
+                    self.transcription.stream_reset_realtime();
+                    fed_len = 0;
+                    last_processed_len = -1;
+                }
+            }
+            if native_decided == Some(true) {
+                let (total_len, new_tail) = self.audio.snapshot_audio_from(fed_len);
+                if total_len as i64 == last_processed_len {
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+                if new_tail.is_empty() {
+                    continue;
+                }
+                last_transcription = Instant::now();
+                match self.transcription.stream_accept_realtime(&new_tail) {
+                    RealtimeStreamOutcome::Text(text) => {
+                        fed_len = total_len;
+                        last_processed_len = total_len as i64;
+                        // The streamed text covers the whole buffer to `total_len` → cache it for the
+                        // final-paste reuse (native-streaming families are non-context, so reuse fires).
+                        if self.audio.recording_generation() == generation {
+                            self.transcription
+                                .cache_realtime_reuse(generation, total_len, &text);
+                        }
+                        // Late bail: PTT released / generation changed mid-decode (don't flash a stale
+                        // tick over the final paste or into the next session).
+                        if !self.audio.is_recording()
+                            || self.audio.recording_generation() != generation
+                        {
+                            continue;
+                        }
+                        SttEvents::realtime_stabilized(&self.app, &text);
+                        SttEvents::realtime_text(&self.app, &text);
+                    }
+                    // Batch decode holds the engine — retry the SAME samples next tick (don't advance
+                    // `fed_len`/`last_processed_len`).
+                    RealtimeStreamOutcome::Skipped => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    // Engine swapped to a non-streaming kind under us → window path from now on.
+                    RealtimeStreamOutcome::NotStreaming => {
+                        native_decided = Some(false);
+                    }
+                }
                 continue;
             }
 
@@ -176,7 +259,11 @@ impl RealtimeManager {
             // of re-running Whisper's language-detect (we already have `settings` in hand).
             let lang_owned = {
                 let l = settings.model.language.trim();
-                if l.is_empty() || l == "auto" { None } else { Some(l.to_string()) }
+                if l.is_empty() || l == "auto" {
+                    None
+                } else {
+                    Some(l.to_string())
+                }
             };
             let lang = lang_owned.as_deref();
             let tm = &self.transcription;
@@ -189,7 +276,10 @@ impl RealtimeManager {
                 if start >= end {
                     return Some(String::new()); // empty slice → no text, watermark still advances
                 }
-                Some(tm.transcribe_realtime(&snap[start..end], lang).unwrap_or_default())
+                Some(
+                    tm.transcribe_realtime(&snap[start..end], lang)
+                        .unwrap_or_default(),
+                )
             });
 
             // ── decode the FRESH window past the (possibly advanced) watermark ──
@@ -205,12 +295,23 @@ impl RealtimeManager {
 
             let publish = acc.publish_fresh(&fresh_text);
 
+            // Cache the assembled realtime text for the final-paste reuse fast path. Cache even on
+            // the tick where the recording just ended (still our generation) — the most complete
+            // preview. `try_reuse_realtime` consumes it only for NON-context (CTC/transducer/
+            // streaming) families; the attention enc-dec families re-decode via VAD-segment instead.
+            if self.audio.recording_generation() == generation {
+                self.transcription
+                    .cache_realtime_reuse(generation, total_len, &publish.raw);
+            }
+
             // ── late bail (port of _publish_realtime_update's is_recording re-check) ──
             // The user may have released PTT during the (potentially long) decode; the recorder
             // has already flipped out of Recording and main is about to run its own final pass.
             // Skip the emit so the preview doesn't flash a stale realtime tick over the final
-            // text.
-            if !self.audio.is_recording() {
+            // text. Also bail when the recording GENERATION changed mid-decode (release + quick
+            // re-press): this decode belongs to the PREVIOUS utterance, so emitting it would
+            // repaint the next session's freshly-cleared pill with the old transcription.
+            if !self.audio.is_recording() || self.audio.recording_generation() != generation {
                 continue;
             }
 

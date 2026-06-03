@@ -93,6 +93,66 @@ pub fn unregister_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<
 }
 
 // ============================================================================
+// WinSTT-tree hotkeys (transforms / read_aloud / repaste)
+// ============================================================================
+
+/// True for the bindings whose accelerator SOURCE OF TRUTH lives in the WinSTT
+/// settings tree (`llm.transforms.hotkey`, `tts.hotkey`, `general.repasteHotkey`)
+/// rather than in `AppSettings.bindings`. These are armed exclusively through
+/// [`reconcile_winstt_hotkeys`] — the init / implementation-switch loops MUST skip
+/// them, because those loops would try to register the raw WinSTT key names (e.g.
+/// `LMeta+LShift+E`, which handy-keys' parser rejects) and gate on the wrong store.
+pub(crate) fn is_winstt_tree_binding(id: &str) -> bool {
+    matches!(id, "transforms" | "read_aloud" | "repaste")
+}
+
+/// Arm (or disarm) the three WinSTT-tree global hotkeys from the WinSTT settings
+/// tree. The single source of truth for each accelerator + its enable flag:
+///   * `transforms` → `llm.transforms.hotkey`   (gated on `llm.transforms.enabled`)
+///   * `read_aloud` → `tts.hotkey`              (gated on `tts.enabled`)
+///   * `repaste`    → `general.repasteHotkey`   (always on when non-empty)
+///
+/// Called at startup (lib.rs setup), whenever one of those settings changes
+/// (`apply_settings_patch`), and after a keyboard-implementation switch — so the
+/// hotkeys go live immediately, exactly like the PTT hotkey, with no relaunch.
+/// Routes every accelerator through `change_binding`, which translates the WinSTT
+/// key names to handy's vocabulary (`winstt_accel_to_handy`) and persists + (re)registers.
+pub fn reconcile_winstt_hotkeys(app: &AppHandle) {
+    let ws = crate::winstt::commands::settings::read_settings(app);
+    reconcile_one(
+        app,
+        "transforms",
+        ws.llm.transforms.enabled,
+        &ws.llm.transforms.hotkey,
+    );
+    reconcile_one(app, "read_aloud", ws.tts.enabled, &ws.tts.hotkey);
+    // Re-paste has no enable flag — active whenever a non-empty combo is configured.
+    reconcile_one(app, "repaste", true, &ws.general.repaste_hotkey);
+}
+
+/// Reconcile a single WinSTT-tree binding: register `accel` when `enabled` and the
+/// accelerator is non-empty, otherwise unregister whatever is currently armed.
+fn reconcile_one(app: &AppHandle, id: &str, enabled: bool, accel: &str) {
+    let accel = accel.trim();
+    if enabled && !accel.is_empty() {
+        // `change_binding` translates (winstt→handy), validates, (re)registers, and
+        // persists. It unregisters the previous accelerator first, so a rebind never
+        // leaves the old combo hijacked.
+        if let Err(e) = change_binding(app.clone(), id.to_string(), accel.to_string()) {
+            warn!("reconcile_winstt_hotkeys: failed to arm '{}': {}", id, e);
+        }
+    } else {
+        // Disabled / empty: drop any live registration (idempotent — handy keys by
+        // binding id, so a never-registered binding is a silent no-op).
+        let binding = settings::get_stored_binding(app, id);
+        if let Err(e) = unregister_shortcut(app, binding) {
+            // A not-currently-registered binding is the common case; log at debug.
+            log::debug!("reconcile_winstt_hotkeys: '{}' not unregistered: {}", id, e);
+        }
+    }
+}
+
+// ============================================================================
 // Binding Management Commands
 // ============================================================================
 
@@ -115,7 +175,7 @@ pub fn change_binding(
         return Err("Binding cannot be empty".to_string());
     }
 
-    // WinSTT fork: the renderer sends accelerators in WinSTT/Electron key names
+    // WinSTT fork: the renderer sends accelerators in WinSTT/the reference key names
     // (`LCtrl+LMeta`, `LMeta+LShift+E`, …). handy-keys' parser rejects `LMeta`/`RMeta`
     // (it wants `super_left`), so translate to its token vocabulary at this single
     // chokepoint — covering every path (PTT register, TTS, transforms, settings-rebind).
@@ -290,18 +350,21 @@ pub fn change_keyboard_implementation_setting(
     settings::write_settings(&app, settings);
 
     // Initialize new implementation if needed (HandyKeys needs state)
-    if new_impl == KeyboardImplementation::HandyKeys {
-        if initialize_handy_keys_with_rollback(&app)? {
-            // Shortcuts already registered during init
-            return Ok(ImplementationChangeResult {
-                success: true,
-                reset_bindings: vec![],
-            });
-        }
+    if new_impl == KeyboardImplementation::HandyKeys && initialize_handy_keys_with_rollback(&app)? {
+        // Shortcuts already registered during init (which skips the WinSTT-tree
+        // hotkeys) — arm those from the WinSTT settings tree now.
+        reconcile_winstt_hotkeys(&app);
+        return Ok(ImplementationChangeResult {
+            success: true,
+            reset_bindings: vec![],
+        });
     }
 
     // Register all shortcuts with new implementation, resetting invalid ones
     let reset_bindings = register_all_shortcuts_for_implementation(&app, new_impl);
+
+    // Arm the WinSTT-tree hotkeys (skipped by the loop above) from their settings tree.
+    reconcile_winstt_hotkeys(&app);
 
     // Emit event to notify frontend of the change
     let _ = app.emit(
@@ -398,6 +461,13 @@ fn register_all_shortcuts_for_implementation(
     for (id, default_binding) in &default_bindings {
         // Skip cancel shortcut as it's dynamically registered
         if id == "cancel" {
+            continue;
+        }
+        // Skip the WinSTT-tree hotkeys — armed via `reconcile_winstt_hotkeys` (called
+        // after the switch), which reads their accelerators from the WinSTT settings
+        // tree and translates the key names. Registering them here would use the raw
+        // (untranslatable) AppSettings copy.
+        if is_winstt_tree_binding(id) {
             continue;
         }
 

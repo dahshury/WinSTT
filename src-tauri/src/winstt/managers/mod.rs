@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/lib_wiring.md §1c/§2.
+// Source: docs/port/lib_wiring.md §1c/§2.
 //
 // The WinSTT manager layer. Each manager is an `Arc`-friendly struct holding the
 // relevant engine/state, constructed with `new(&AppHandle)` and exposing the
@@ -19,16 +19,17 @@
 // (e.g. `loopback_manager` drives `crate::managers::transcription::TranscriptionManager`),
 // never the reverse.
 
-pub mod llm_manager;
 pub mod cloud_stt_manager;
 pub mod context_manager;
+pub mod diarization_manager;
+pub mod file_transcribe_manager;
+pub mod llm_manager;
+pub mod loopback_manager;
+pub mod tts_download_manager;
 pub mod tts_manager;
 pub mod wakeword_manager;
-pub mod diarization_manager;
-pub mod loopback_manager;
 pub mod word_aligner;
-pub mod file_transcribe_manager;
-// ── slice: model download (app/PORT/10_frontend_port_plan.md §6 WU-4) ──
+// ── slice: model download (docs/port/10_frontend_port_plan.md §6 WU-4) ──
 /// Per-quant streaming download manager (predownload/pause/resume/cancel/delete +
 /// the stt:model-download-* / stt:model-cache-changed broadcasts).
 pub mod download_manager;

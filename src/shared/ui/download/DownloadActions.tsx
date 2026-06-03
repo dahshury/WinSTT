@@ -1,5 +1,6 @@
 import { Cancel01Icon, CloudDownloadIcon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { AnimatePresence, domAnimation, LazyMotion, m, useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
@@ -71,22 +72,23 @@ export function DownloadActions({
 	const buttonLevel = Math.min(substrate + 1, 8);
 	const buttonHover = Math.min(substrate + 2, 8);
 	const neutralCls = cn(NEUTRAL_STATIC, surfaceBg(buttonLevel), surfaceHoverBg(buttonHover));
+	const reduceMotion = useReducedMotion();
+	let content: ReactNode;
 	if (phase === "active") {
-		return (
+		content = (
 			<Button className={cn(neutralCls, sizeCls)} onClick={onStop}>
 				<HugeiconsIcon icon={PauseIcon} size={iconSize} />
 				<span>{labels.stop}</span>
 			</Button>
 		);
-	}
-	if (phase === "paused") {
+	} else if (phase === "paused") {
 		const discardButton = (
 			<Button className={cn(neutralCls, sizeCls)} onClick={onDiscard}>
 				<HugeiconsIcon icon={Cancel01Icon} size={iconSize} />
 				<span>{labels.discard}</span>
 			</Button>
 		);
-		return (
+		content = (
 			<div className="flex items-center gap-1.5">
 				{discardTooltip ? (
 					<Tooltip content={discardTooltip} side="top">
@@ -101,11 +103,34 @@ export function DownloadActions({
 				</Button>
 			</div>
 		);
+	} else {
+		content = (
+			<Button className={cn(ACCENT_BASE, sizeCls)} onClick={onDownload}>
+				<HugeiconsIcon icon={CloudDownloadIcon} size={iconSize} />
+				<span>{labels.download}</span>
+			</Button>
+		);
 	}
 	return (
-		<Button className={cn(ACCENT_BASE, sizeCls)} onClick={onDownload}>
-			<HugeiconsIcon icon={CloudDownloadIcon} size={iconSize} />
-			<span>{labels.download}</span>
-		</Button>
+		<LazyMotion features={domAnimation} strict>
+			<AnimatePresence initial={false} mode="wait">
+				<m.div
+					animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+					className="inline-flex items-center"
+					exit={
+						reduceMotion
+							? { opacity: 1, transition: { duration: 0 } }
+							: { opacity: 0, y: -3, filter: "blur(2px)", transition: { duration: 0.12 } }
+					}
+					initial={reduceMotion ? false : { opacity: 0, y: 3, filter: "blur(2px)" }}
+					key={phase}
+					transition={
+						reduceMotion ? { duration: 0 } : { duration: 0.16, ease: [0.22, 1, 0.36, 1] }
+					}
+				>
+					{content}
+				</m.div>
+			</AnimatePresence>
+		</LazyMotion>
 	);
 }

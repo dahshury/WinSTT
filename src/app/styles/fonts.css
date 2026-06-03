@@ -7,7 +7,7 @@
  * The .woff2 files live in `public/fonts/` (vendored from upstream Geist
  * v1.7.0). Vite serves `public/` at the URL root in dev AND copies it
  * into the build output, so the same `/fonts/…` URL works in `bun dev`
- * and the packaged Electron app. */
+ * and the packaged the reference app. */
 
 @font-face {
 	font-family: "Geist";

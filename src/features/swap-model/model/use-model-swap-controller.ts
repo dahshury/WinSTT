@@ -1,4 +1,7 @@
-import { resolveEffectiveQuant, resolveQuantCache } from "@picker";
+// Deep-import the lightweight cache helpers (not the `@picker` barrel) so this
+// main-window-reachable feature doesn't drag the whole model-picker UI into the
+// main entry chunk via the barrel re-export.
+import { resolveEffectiveQuant, resolveQuantCache } from "@picker/stt/lib/cache-helpers";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import {
@@ -14,7 +17,7 @@ import {
 	onModelSwapFailed,
 	sttReloadModel,
 } from "@/shared/api/ipc-client";
-import type { OnnxQuantization } from "@/shared/config/defaults";
+import { ONNX_QUANTIZATIONS, type OnnxQuantization } from "@/shared/config/defaults";
 
 type SettingsStoreState = ReturnType<typeof useSettingsStore.getState>;
 type ModelSettings = SettingsStoreState["settings"]["model"];
@@ -59,6 +62,16 @@ export interface SwapController {
 	handleRealtimeModelChange: (v: string, quantization?: OnnxQuantization) => void;
 	pendingDownload: PendingDownload | null;
 	pendingFitWarning: PendingFitWarning | null;
+	/** Open the download-confirmation dialog for an explicit per-quant download
+	 *  (the precision-badge "download this variant" action) WITHOUT selecting /
+	 *  swapping to the model. The dialog's Download button runs the same
+	 *  background predownload the badge used to fire directly — gating it behind
+	 *  the size + hardware-fit confirmation (Electron parity). */
+	promptDownload: (
+		kind: "main" | "realtime",
+		modelId: string,
+		quantization?: OnnxQuantization
+	) => void;
 	setPendingFitWarning: (value: PendingFitWarning | null) => void;
 }
 
@@ -150,7 +163,7 @@ export function useModelSwapController(
 	// Injected (FSD: a feature can't import the file-transcription feature) so
 	// the controller refuses to swap the shared STT model while the file queue
 	// is busy — the swap would shut down and reload the very transcriber the
-	// queue is mid-stream on. The Electron main process enforces the same block
+	// queue is mid-stream on. The the reference main process enforces the same block
 	// as a safety net; this keeps the renderer from even issuing the request.
 	// Defaults to "not busy" for callers/tests that don't wire it.
 	isFileQueueBusy: () => boolean = () => false
@@ -345,6 +358,25 @@ export function useModelSwapController(
 		setPendingDownload(null);
 	}, []);
 
+	// Explicit per-quant download (precision-badge click): open the confirmation
+	// dialog for ``(modelId, quantization)`` without touching the loaded model.
+	// The dialog already surfaces the download size + hardware-fit warning and
+	// runs a background predownload on confirm — so a badge click no longer
+	// silently kicks off a multi-GB fetch (Electron parity). ``previousModelId``
+	// is the currently-loaded model for the slot; it is only consulted by the
+	// swap-rollback path, which this predownload-only flow never reaches.
+	const promptDownload = useCallback(
+		(kind: "main" | "realtime", modelId: string, quantization?: OnnxQuantization) => {
+			setPendingDownload({
+				kind,
+				modelId,
+				previousModelId: kind === "main" ? currentMainModel : currentRealtimeModel,
+				quantization,
+			});
+		},
+		[currentMainModel, currentRealtimeModel]
+	);
+
 	// Auto-close when the model the modal is targeting finishes downloading
 	// successfully — at that point the swap completes naturally and the
 	// settings panel can show the new active model. Cancellations keep the
@@ -382,6 +414,7 @@ export function useModelSwapController(
 		handleRealtimeModelChange,
 		confirmPendingDownload,
 		cancelPendingDownload,
+		promptDownload,
 	};
 }
 
@@ -579,7 +612,20 @@ function resolveTargetQuant(
 	// auto checks the (cached) default export and silently background-loads
 	// the uncached int8 weights.
 	const selected = quantization ?? currentQuantization;
-	return resolveEffectiveQuant(state, selected) as OnnxQuantization;
+	return toOnnxQuantization(resolveEffectiveQuant(state, selected), selected);
+}
+
+/** ``resolveEffectiveQuant`` returns the server-reported ``effective_quantization``
+ *  string, which we can't statically prove is one of our known tiers. Validate it
+ *  against the ``ONNX_QUANTIZATIONS`` union instead of an unchecked ``as`` — an
+ *  unrecognized server value falls back to the (already-typed) selected tier
+ *  rather than poisoning the cache check with a bogus quant. */
+function isOnnxQuantization(value: string): value is OnnxQuantization {
+	return (ONNX_QUANTIZATIONS as readonly string[]).includes(value);
+}
+
+function toOnnxQuantization(value: string, fallback: OnnxQuantization): OnnxQuantization {
+	return isOnnxQuantization(value) ? value : fallback;
 }
 
 /** True when a swap to ``(value, target precision)`` must be refused because

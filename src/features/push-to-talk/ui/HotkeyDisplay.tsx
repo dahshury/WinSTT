@@ -5,6 +5,10 @@ import { Tooltip } from "@/shared/ui/tooltip";
 import { FOOTER_TOOLTIP_DELAY, resolveTone, TONE_TEXT } from "../lib/hotkey-display-helpers";
 import { useHotkeyStore } from "../model/hotkey-store";
 
+// Decorative, aria-hidden separator glyph between keycaps — a visual symbol,
+// not translatable copy. Held in a constant so it isn't flagged as user-facing.
+const PLUS_GLYPH = "＋";
+
 interface HotkeyDisplayProps {
 	isConnected: boolean;
 	/** Tooltip side. Defaults to "top" (footer placement); pass "bottom" when
@@ -37,7 +41,7 @@ export function HotkeyDisplay({ isConnected, side = "top" }: HotkeyDisplayProps)
 						<span className="flex items-center gap-1" key={key}>
 							{i > 0 && (
 								<span aria-hidden className="text-[8px] text-foreground-dim">
-									＋
+									{PLUS_GLYPH}
 								</span>
 							)}
 							<kbd

@@ -1,7 +1,7 @@
 // PORT IMPL — WU-12 (app/PORT/10_frontend_port_plan.md §6 WU-12).
 //
 // `onboarding_finish` — the backend side of WinSTT's first-run wizard
-// (`views/onboarding` + `widgets/onboarding-wizard`). Ports the Electron
+// (`views/onboarding` + `widgets/onboarding-wizard`). Ports the reference
 // `onboarding-window.ts` FINISH handler, which does TWO things the WU-0 stub in
 // `windows.rs` omitted:
 //
@@ -63,10 +63,7 @@ fn track_from_str(track: &str) -> OnboardedTrack {
 /// section without disturbing any other field. Reads the full snapshot, mutates
 /// only `general.onboarded*`, writes it back, and returns the snapshot so the
 /// caller can broadcast it.
-fn mark_onboarded(
-    app: &AppHandle,
-    track: OnboardedTrack,
-) -> Result<serde_json::Value, String> {
+fn mark_onboarded(app: &AppHandle, track: OnboardedTrack) -> Result<serde_json::Value, String> {
     let mut settings = crate::winstt::commands::settings::read_settings(app);
     settings.general.onboarded = true;
     settings.general.onboarded_at = Some(now_ms());
@@ -90,7 +87,7 @@ fn now_ms() -> i64 {
 
 /// `onboarding_finish` — record the wizard as completed/skipped, broadcast the
 /// new settings snapshot, then hide onboarding and surface the main window.
-/// Mirrors Electron's `handleFinish` (frontend/electron/ipc/onboarding-window.ts).
+/// Mirrors the reference's `handleFinish` (frontend/electron/ipc/onboarding-window.ts).
 #[tauri::command]
 #[specta::specta]
 pub fn onboarding_finish(app: AppHandle, args: OnboardingFinishArgs) -> Result<(), String> {
@@ -98,7 +95,10 @@ pub fn onboarding_finish(app: AppHandle, args: OnboardingFinishArgs) -> Result<(
     //    live window re-hydrates (and the onboarding gate flips closed).
     match mark_onboarded(&app, track_from_str(&args.track)) {
         Ok(snapshot) => {
-            let _ = app.emit(SETTINGS_CHANGED_EVENT, serde_json::json!({ "settings": snapshot }));
+            let _ = app.emit(
+                SETTINGS_CHANGED_EVENT,
+                serde_json::json!({ "settings": snapshot }),
+            );
         }
         Err(e) => {
             // Persistence failure must not strand the user on the wizard window;

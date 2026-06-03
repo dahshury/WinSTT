@@ -50,14 +50,14 @@ const SWAP_FAILURE_GUARD_WINDOW_MS = 500;
  *
  *   - flips the picker to the actually-active model so the user isn't
  *     looking at a lie,
- *   - persists the fallback to electron-store so the next launch starts
+ *   - persists the fallback to persisted store so the next launch starts
  *     where this one ended up (matching the server-side persist),
  *   - keeps the in-window UI in sync between restarts.
  *
  * Fires on a fresh ``runtime_info`` push from the server **and** on
  * ``settings.model`` changes — the latter so that an async
  * ``settingsLoad()`` in ``useSyncSettings`` (which replaces the whole
- * settings object from electron-store after the renderer mounts) can't
+ * settings object from persisted store after the renderer mounts) can't
  * silently revert a reconciliation that already happened. Without
  * ``settingsModel`` in deps, the race is: runtime_info arrives → we write
  * "tiny" → settingsLoad resolves later → setSettings overwrites with the

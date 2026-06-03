@@ -9,7 +9,7 @@ import { MainPage } from "@/views/main";
 
 installWebviewDiag("main");
 
-// Each Electron window has its own root because each window is its own
+// Each the reference window has its own root because each window is its own
 // HTML document — there is no shared layout shell, no router. The wrapper
 // stack (HtmlLang + RootLayout + Suspense + view) is composed inline; if
 // you add a window, create a sibling entry under src/entries/ and a

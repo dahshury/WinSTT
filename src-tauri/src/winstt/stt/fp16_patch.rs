@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: WinSTT server
+// Source: WinSTT server
 //   (server/src/recorder/infrastructure/onnx_patch.py — patch_whisper_decoder, _fix_if_subgraph,
 //    _walk; onnxasr_transcriber.py — _FP16_DECODER_LOAD_ERROR, _load_model_with_fp16_repair).
 // + ONNX protobuf wire format (onnx.proto3, stable field numbers) hand-defined with `prost 0.13`
@@ -55,7 +55,10 @@ use super::{SttError, SttResult};
 const PATCH_MARKER_SUFFIX: &str = ".winstt_patched_v1";
 
 fn marker_path(model_path: &Path) -> PathBuf {
-    let name = model_path.file_name().and_then(|s| s.to_str()).unwrap_or("model.onnx");
+    let name = model_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("model.onnx");
     model_path.with_file_name(format!("{name}{PATCH_MARKER_SUFFIX}"))
 }
 
@@ -274,7 +277,8 @@ fn fix_if_subgraph(
             }
         }
     }
-    let sg_inputs: std::collections::HashSet<&str> = subgraph.input.iter().map(|i| i.name.as_str()).collect();
+    let sg_inputs: std::collections::HashSet<&str> =
+        subgraph.input.iter().map(|i| i.name.as_str()).collect();
 
     let mut edits = 0usize;
     // Collect the (rename, retype) decisions first to avoid borrow conflicts.
@@ -332,7 +336,12 @@ fn walk(
     // type_lookup = parent ∪ this graph's value_info/output/input (this graph wins on conflicts,
     // matching the Python dict-update order).
     let mut type_lookup = parent_output_types.clone();
-    for vi in graph.value_info.iter().chain(graph.output.iter()).chain(graph.input.iter()) {
+    for vi in graph
+        .value_info
+        .iter()
+        .chain(graph.output.iter())
+        .chain(graph.input.iter())
+    {
         if let Some(t) = vi.r#type.as_ref() {
             type_lookup.insert(vi.name.clone(), (**t).clone());
         }
@@ -384,8 +393,9 @@ pub fn patch_whisper_decoder(model_path: &Path) -> SttResult<usize> {
     }
     let bytes = std::fs::read(model_path)
         .map_err(|e| SttError::SessionCreate(format!("read {}: {e}", model_path.display())))?;
-    let mut model = ModelProtoReal::decode(bytes.as_slice())
-        .map_err(|e| SttError::SessionCreate(format!("onnx proto decode {}: {e}", model_path.display())))?;
+    let mut model = ModelProtoReal::decode(bytes.as_slice()).map_err(|e| {
+        SttError::SessionCreate(format!("onnx proto decode {}: {e}", model_path.display()))
+    })?;
 
     let mut counter = 0usize;
     if let Some(graph) = model.graph.as_mut() {
@@ -395,9 +405,9 @@ pub fn patch_whisper_decoder(model_path: &Path) -> SttResult<usize> {
 
     if counter > 0 {
         let mut out = Vec::with_capacity(bytes.len());
-        model
-            .encode(&mut out)
-            .map_err(|e| SttError::SessionCreate(format!("onnx proto encode {}: {e}", model_path.display())))?;
+        model.encode(&mut out).map_err(|e| {
+            SttError::SessionCreate(format!("onnx proto encode {}: {e}", model_path.display()))
+        })?;
         std::fs::write(model_path, &out)
             .map_err(|e| SttError::SessionCreate(format!("write {}: {e}", model_path.display())))?;
     }
@@ -493,8 +503,9 @@ fn msg_mentions_sidecar(msg: &str) -> bool {
 pub fn external_data_locations(model_path: &Path) -> SttResult<Vec<String>> {
     let bytes = std::fs::read(model_path)
         .map_err(|e| SttError::Resolve(format!("read {}: {e}", model_path.display())))?;
-    let model = ModelProtoReal::decode(bytes.as_slice())
-        .map_err(|e| SttError::Resolve(format!("onnx proto decode {}: {e}", model_path.display())))?;
+    let model = ModelProtoReal::decode(bytes.as_slice()).map_err(|e| {
+        SttError::Resolve(format!("onnx proto decode {}: {e}", model_path.display()))
+    })?;
     let mut out = Vec::new();
     if let Some(graph) = model.graph.as_ref() {
         collect_external_locations(graph, &mut out);
@@ -539,11 +550,17 @@ mod tests {
     // rename and the retype.
     fn defective_model() -> ModelProtoReal {
         let fp16_type = TypeProto {
-            tensor_type: Some(Box::new(TensorTypeProto { elem_type: ELEM_TYPE_FLOAT16, shape: None })),
+            tensor_type: Some(Box::new(TensorTypeProto {
+                elem_type: ELEM_TYPE_FLOAT16,
+                shape: None,
+            })),
             denotation: String::new(),
         };
         let fp32_type = TypeProto {
-            tensor_type: Some(Box::new(TensorTypeProto { elem_type: ELEM_TYPE_FLOAT, shape: None })),
+            tensor_type: Some(Box::new(TensorTypeProto {
+                elem_type: ELEM_TYPE_FLOAT,
+                shape: None,
+            })),
             denotation: String::new(),
         };
 
@@ -623,7 +640,14 @@ mod tests {
         for attr in &if_node.attribute {
             let sg = attr.g.as_ref().unwrap();
             assert_eq!(sg.output[0].name, "graph_output_cast_0");
-            let et = sg.output[0].r#type.as_ref().unwrap().tensor_type.as_ref().unwrap().elem_type;
+            let et = sg.output[0]
+                .r#type
+                .as_ref()
+                .unwrap()
+                .tensor_type
+                .as_ref()
+                .unwrap()
+                .elem_type;
             assert_eq!(et, ELEM_TYPE_FLOAT16);
         }
     }
@@ -652,7 +676,10 @@ mod tests {
 
         let edits = patch_whisper_decoder(&path).unwrap();
         assert_eq!(edits, 4);
-        assert!(should_skip_patch(&path), "marker must be dropped after patch");
+        assert!(
+            should_skip_patch(&path),
+            "marker must be dropped after patch"
+        );
 
         // Second call short-circuits on the marker → 0 edits, no re-parse.
         let again = patch_whisper_decoder(&path).unwrap();
@@ -664,7 +691,9 @@ mod tests {
         let msg = "Load model from C:\\cache\\decoder_model_merged_fp16.onnx failed:Node ... \
                    Subgraph output 'logits' is an outer scope value being returned directly.";
         let p = fp16_decoder_path_from_error(msg).expect("should match");
-        assert!(p.to_string_lossy().ends_with("decoder_model_merged_fp16.onnx"));
+        assert!(p
+            .to_string_lossy()
+            .ends_with("decoder_model_merged_fp16.onnx"));
 
         // A "Subgraph output" error on a NON-merged-decoder file must NOT match (don't patch it).
         let other = "Load model from C:\\cache\\encoder_model_fp16.onnx failed: \
@@ -672,7 +701,8 @@ mod tests {
         assert!(fp16_decoder_path_from_error(other).is_none());
 
         // Missing the second marker phrase → no match.
-        let partial = "Load model from x/decoder_model_merged_fp16.onnx failed: Subgraph output 'logits'";
+        let partial =
+            "Load model from x/decoder_model_merged_fp16.onnx failed: Subgraph output 'logits'";
         assert!(fp16_decoder_path_from_error(partial).is_none());
     }
 
@@ -695,7 +725,9 @@ mod tests {
             "No such file or directory: config.json"
         ));
         // A fp16-decoder subgraph error is NOT an external-data error.
-        assert!(!is_external_data_missing_error("Subgraph output ... outer scope value"));
+        assert!(!is_external_data_missing_error(
+            "Subgraph output ... outer scope value"
+        ));
     }
 
     #[test]
@@ -706,14 +738,23 @@ mod tests {
             data_type: ELEM_TYPE_FLOAT16,
             data_location: DATA_LOCATION_EXTERNAL,
             external_data: vec![
-                StringStringEntryProto { key: "location".into(), value: "encoder_model_fp16.onnx_data".into() },
-                StringStringEntryProto { key: "offset".into(), value: "0".into() },
+                StringStringEntryProto {
+                    key: "location".into(),
+                    value: "encoder_model_fp16.onnx_data".into(),
+                },
+                StringStringEntryProto {
+                    key: "offset".into(),
+                    value: "0".into(),
+                },
             ],
             ..Default::default()
         };
         let model = ModelProtoReal {
             ir_version: 9,
-            graph: Some(GraphProto { initializer: vec![init], ..Default::default() }),
+            graph: Some(GraphProto {
+                initializer: vec![init],
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let dir = tempfile::tempdir().unwrap();

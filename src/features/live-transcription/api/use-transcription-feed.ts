@@ -38,8 +38,17 @@ export function useTranscriptionFeed(): void {
 		// post-processor is connected the `isThinking` branch keeps it visible for the
 		// reasoning phase; otherwise it vanishes immediately on release. The final text
 		// lands via full_sentence (pasted), not in the pill.
+		//
+		// Also wipe the realtime/ephemeral preview here so it can't survive into the next
+		// PTT session. The overlay is a persistent window (hidden, not destroyed), so its
+		// store state lives across sessions; clearing on release enforces "the pill never
+		// carries the previous transcription" at the consumer, independent of the backend's
+		// per-recording reset. Invisible to the user — the pill is hidden the same tick
+		// (and the live caption is gated on `isRecordingActive`, which just went false).
 		const unsubStop = onRecordingStop(() => {
 			setRecordingActive(false);
+			setRealtimeText("");
+			clearEphemeral();
 		});
 
 		const unsubRealtime = onRealtimeText((text) => {

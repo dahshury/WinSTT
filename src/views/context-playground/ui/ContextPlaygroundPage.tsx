@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string -- debug-only window, not user-facing/shipped */
 import { useState } from "react";
 import type {
 	ContextDebugReport,
@@ -135,7 +136,7 @@ function copyClass(status: CopyStatus): string {
 }
 
 /**
- * Copy text robustly from an Electron renderer. The async Clipboard API works
+ * Copy text robustly from the reference renderer. The async Clipboard API works
  * when the document is focused (it is — the user just clicked our button); the
  * legacy textarea + execCommand path covers file:// where the async API can be
  * blocked. Returns whether either path succeeded.

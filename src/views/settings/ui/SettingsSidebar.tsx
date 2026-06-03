@@ -1,6 +1,5 @@
 import { Tabs } from "@base-ui/react/tabs";
 import {
-	Cancel01Icon,
 	PanelLeftCloseIcon,
 	PanelLeftOpenIcon,
 	Search01Icon,
@@ -10,7 +9,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/shared/ui/input-group";
+import { ClearableTextField } from "@/shared/ui/text-field";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { matchesSearchQuery } from "../lib/settings-search";
 
@@ -232,7 +231,7 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 				// listener that folds the field away.
 				<div className="flex h-14 shrink-0 items-center gap-2 px-3">
 					<div
-						className="relative flex h-8 min-w-0 flex-1 items-center gap-2"
+						className="relative flex h-full min-w-0 flex-1 items-center gap-2"
 						ref={searchRegionRef}
 					>
 						{searchOpen ? null : (
@@ -241,9 +240,14 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 								{/* The wordmark doubles as the window-move handle (`drag`). It
 								    sits between the buttons, so they keep their own plain client
 								    pixels and stay tappable on touch — see the collapsed-header
-								    note and Tauri #4746. */}
-								<span className="titlebar-drag min-w-0 flex-1 truncate font-semibold text-foreground text-title tracking-[-0.01em]">
-									{t("title")}
+								    note and Tauri #4746. `self-stretch` makes the drag box fill the
+								    FULL header height (not just the text line), so the strip ABOVE
+								    and below the word is draggable too; the inner span keeps the
+								    truncating text vertically centred. */}
+								<span className="titlebar-drag flex min-w-0 flex-1 items-center self-stretch">
+									<span className="min-w-0 flex-1 truncate font-semibold text-foreground text-title tracking-[-0.01em]">
+										{t("title")}
+									</span>
 								</span>
 							</>
 						)}
@@ -252,50 +256,31 @@ export function SettingsSidebar({ links }: SettingsSidebarProps) {
 						    snapping. Always mounted so the close also animates; gated out of
 						    the a11y/tab order while folded. */}
 						<div
-							className="t-resize titlebar-no-drag absolute inset-y-0 start-0 overflow-hidden"
+							className="t-resize titlebar-no-drag absolute inset-y-0 start-0 flex items-center overflow-hidden"
 							style={{ width: searchOpen ? "100%" : "0px" }}
 						>
-							{/* Flat/minimal frame (no shadow or glow) to match the muted
-							    fluidfunctionalism field language. The INSET ring keeps the 1px
-							    edge from being clipped by the overlay's `overflow-hidden`
-							    (an outset ring would vanish at the animating boundary). */}
-							<InputGroup appearance="minimal" className="h-8 w-full ring-inset" size="sm">
-								<InputGroupAddon align="inline-start">
-									<HugeiconsIcon aria-hidden="true" icon={Search01Icon} size={14} />
-								</InputGroupAddon>
-								<InputGroupInput
-									aria-hidden={!searchOpen}
-									aria-label={t("searchPlaceholder")}
-									onBlur={handleSearchBlur}
-									onChange={(e) => setQuery(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === "Escape") {
-											// Close the field, not the window.
-											e.stopPropagation();
-											closeSearch();
-										}
-									}}
-									placeholder={t("searchPlaceholderShort")}
-									ref={inputRef}
-									tabIndex={searchOpen ? 0 : -1}
-									type="text"
-									value={query}
-								/>
-								{trimmed.length > 0 ? (
-									<InputGroupAddon align="inline-end">
-										<button
-											aria-label={t("searchClear")}
-											className="flex size-5 items-center justify-center rounded-full bg-transparent text-foreground-muted outline-none transition-colors hover:bg-foreground/10 hover:text-foreground-secondary focus-visible:ring-2 focus-visible:ring-accent"
-											onClick={() => setQuery("")}
-											// Keep focus on the input so clearing doesn't fold the field.
-											onMouseDown={(e) => e.preventDefault()}
-											type="button"
-										>
-											<HugeiconsIcon icon={Cancel01Icon} size={12} />
-										</button>
-									</InputGroupAddon>
-								) : null}
-							</InputGroup>
+							<ClearableTextField
+								aria-hidden={!searchOpen}
+								aria-label={t("searchPlaceholder")}
+								clearLabel={t("searchClear")}
+								className="h-8 rounded-md"
+								leadingIcon={<HugeiconsIcon aria-hidden="true" icon={Search01Icon} size={14} />}
+								onBlur={handleSearchBlur}
+								onKeyDown={(e) => {
+									if (e.key === "Escape") {
+										// Close the field, not the window.
+										e.stopPropagation();
+										closeSearch();
+									}
+								}}
+								onValueChange={setQuery}
+								placeholder={t("searchPlaceholderShort")}
+								ref={inputRef}
+								tabIndex={searchOpen ? 0 : -1}
+								type="text"
+								value={query}
+								wrapperClassName="w-full"
+							/>
 						</div>
 					</div>
 					{toggleButton}

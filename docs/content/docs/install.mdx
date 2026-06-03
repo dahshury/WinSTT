@@ -1,0 +1,116 @@
+---
+title: Install
+description: Pick the right portable installer — DirectML, CPU, or OpenVINO — and check the system requirements. No Python, no setup, no accounts.
+---
+
+WinSTT ships as a self-contained portable `.exe`: download one file, run it, and dictate. There is no installer wizard, no Python, no model download required to start.
+
+<Screenshot src="onboarding" alt="The first-run onboarding wizard that appears after install: choose local Whisper or a cloud provider, then test your microphone." label="WinSTT — first run" caption="On first launch, a quick setup wizard gets you transcribing — pick local or cloud and you're done." />
+
+## Which installer?
+
+Every release publishes three portable builds on the [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page. All three wrap the **same** Electron app and the same speech engine — only the bundled ONNX Runtime (ORT) execution provider differs. Pick by your hardware:
+
+<ModelTable
+  head={["Installer", "Size", "ORT wheel", "When to use"]}
+  numeric={[1]}
+  rows={[
+    ["WinSTT-Portable-<ver>.exe", "~200 MB", "onnxruntime-directml", "Default GPU build. Any D3D12-capable GPU — AMD, Intel, or NVIDIA via DirectX 12. The unmarked default download."],
+    ["WinSTT-CPU-Portable-<ver>.exe", "~150 MB", "onnxruntime", "No GPU, a headless box, or you just want the smallest download. CPU-only."],
+    ["WinSTT-OpenVINO-Portable-<ver>.exe", "~250 MB", "onnxruntime-openvino", "Intel ARC dGPU, or recent Iris Xe / Arc iGPU. ~10-30% faster than DirectML on Intel silicon (Intel-published benchmarks)."],
+  ]}
+  caption="The <ver> in each filename is the release tag (e.g. WinSTT-Portable-0.X.0.exe)."
+/>
+
+<Callout type="info" title="Not sure? Take DirectML.">
+  The default **WinSTT-Portable** (DirectML) build runs on every modern Windows GPU and
+  automatically falls back to CPU when no compatible GPU is present — so it's safe to
+  install anywhere. Only choose CPU if you specifically want the smallest download, or
+  OpenVINO if you're on Intel ARC / Iris Xe graphics.
+</Callout>
+
+No CUDA installer is shipped on Windows. On our workload DirectML is faster and ~10× lighter than CUDA — on an RTX 3080 Ti, DirectML runs whisper-tiny-q4 at **85 ms p50** versus CUDA's **120 ms p50**, while the installer is ~200 MB instead of ~2 GB. The CUDA path is reserved for a future Linux NVIDIA build.
+
+## Auto-fallback to CPU
+
+The GPU builds degrade gracefully. At startup the server probes the active execution provider, and if the requested GPU path isn't viable — no D3D12 GPU for DirectML, no Intel accelerator for OpenVINO — it silently falls back to CPU. You get a working app either way, so installing the DirectML build on a GPU-less machine is harmless.
+
+<Callout type="info" title="Force CPU manually">
+  You can pin CPU regardless of the installed build from the **Model** tab's Device
+  control (set it to **CPU**), which is useful on machines where the GPU driver is flaky.
+</Callout>
+
+## System requirements
+
+All three builds share the same baseline; the GPU builds add an optional accelerator.
+
+<ModelTable
+  head={["Requirement", "Minimum", "Notes"]}
+  rows={[
+    ["OS", "Windows 10 1903+ or Windows 11", "64-bit. Older Windows 10 builds are unsupported."],
+    ["CPU", "64-bit x86 with AVX2", "Any modern Intel / AMD from ~2015 onward. AVX2 is required by ONNX Runtime."],
+    ["RAM", "4 GB", "For tiny / base Whisper. 8 GB+ for Whisper-Turbo or Parakeet."],
+    ["Disk", "~1 GB + ~500 MB per model", "Install footprint plus each downloaded model's weights."],
+    ["GPU (DirectML)", "Optional — any D3D12 GPU", "AMD / Intel / NVIDIA via DirectX 12. Falls back to CPU if absent."],
+    ["GPU (OpenVINO)", "Optional — Intel ARC / Iris Xe / Arc", "Tune the target with the OPENVINO_DEVICE env var (AUTO / GPU / GPU.0 / CPU; default AUTO)."],
+  ]}
+/>
+
+<SettingRow label="Microphone" settingKey="">
+  Any input device PortAudio can open. For **Listen** mode you also need a loopback /
+  monitor device (e.g. VB-Audio Virtual Cable) so the app can capture system audio.
+</SettingRow>
+
+<Callout type="success" title="No Python, no accounts, no telemetry">
+  End users never install Python, uv, or any model files — the bundled `stt-server.exe` is
+  a self-contained PyInstaller artifact. Models download on demand from the UI. Transcription
+  runs entirely on your machine; there are no usage analytics. (Anonymized crash reports via
+  Sentry are opt-out.)
+</Callout>
+
+## Install steps
+
+<StepFlow>
+  <Step title="Download the installer">
+    Grab the build that matches your hardware from the
+    [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page. The unmarked
+    `WinSTT-Portable-<ver>.exe` is the DirectML default.
+  </Step>
+  <Step title="Verify the signature (recommended)">
+    Each `.exe` ships a [minisign](/docs/verify-releases) `.minisig` sidecar so you can
+    confirm the download offline, on top of the Authenticode signature Windows already
+    checks. See [Verify Release Signatures](/docs/verify-releases).
+  </Step>
+  <Step title="Run it">
+    Double-click the `.exe`. It's portable — no install wizard, no admin rights needed for a
+    normal launch. WinSTT starts in the system tray.
+  </Step>
+  <Step title="Onboard & pick a model">
+    On first launch you'll choose a microphone, a hotkey, and a model. The default model
+    downloads in the background; you can switch models any time from the **Model** tab
+    without a restart.
+  </Step>
+</StepFlow>
+
+<Callout type="warn" title="SmartScreen on first run">
+  Windows SmartScreen may warn on a freshly released, low-reputation binary. Click
+  **More info → Run anyway** after you've verified the signature. The installers are
+  Authenticode-signed, and reputation builds up as more people download each release.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Verify release signatures" href="/docs/verify-releases">
+    Confirm your download with the minisign sidecar and the bundled public key.
+  </Card>
+  <Card title="Recording modes" href="/docs/recording-modes">
+    Push-to-talk, toggle, listen, and wake-word — and when to use each.
+  </Card>
+  <Card title="Choose a model" href="/docs/models">
+    Browse 40+ STT models and pick the right accuracy/speed trade-off.
+  </Card>
+  <Card title="Troubleshooting" href="/docs/troubleshooting">
+    Blank window, slow transcription, audio devices, and model-download fixes.
+  </Card>
+</Cards>

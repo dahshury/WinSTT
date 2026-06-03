@@ -4,9 +4,9 @@ import { useSoundDrop } from "./use-sound-drop";
 
 // happy-dom has no Web Audio API; useSoundDrop decodes the dropped file to
 // measure its duration. Install a controllable fake AudioContext and a
-// per-file `window.electronAPI` stub for the native path lookup.
+// per-file `window.nativeBridge` stub for the native path lookup.
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const OriginalAudioContext = (globalThis as { AudioContext?: unknown }).AudioContext;
 
 let decodeDuration = 1;
@@ -54,7 +54,7 @@ beforeEach(() => {
 	decodeShouldThrow = false;
 	nativePath = "/native/drop.wav";
 	(globalThis as { AudioContext?: unknown }).AudioContext = FakeAudioContext;
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		getPathForFile: () => nativePath,
 		send: () => undefined,
@@ -64,7 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 	(globalThis as { AudioContext?: unknown }).AudioContext = OriginalAudioContext;
 });
 

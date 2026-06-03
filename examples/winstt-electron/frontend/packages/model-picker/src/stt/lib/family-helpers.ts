@@ -44,26 +44,33 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		icon: Radio01Icon,
 		label: "GigaAM",
 		chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-		logoSrc: "/provider-icons/sber-salute.png",
+		// Sber's sphere emblem (transparent PNG) — the HF org avatar was a
+		// full-bleed opaque tile that read as a solid rectangle in the chip.
+		// PNG, not SVG: the emblem's clipped gradient ring rendered as a solid
+		// square in WebView2's SVG image-mode (clip-path quirk).
+		logoSrc: "/provider-icons/sber.png",
 	},
 	kaldi: {
 		icon: CpuIcon,
 		label: "Kaldi",
 		chip: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
-		logoSrc: "/provider-icons/alpha-cephei.png",
+		// Vosk's transparent diamond mark.
+		logoSrc: "/provider-icons/vosk.png",
 	},
 	"t-one": {
 		icon: FlashIcon,
 		label: "T-One",
 		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-		logoSrc: "/provider-icons/t-tech.png",
+		// T-Bank's shield emblem (transparent SVG) — the HF org avatar was an
+		// opaque dark tile that read as a solid rectangle in the chip.
+		logoSrc: "/provider-icons/t-bank.svg",
 	},
 	moonshine: {
 		icon: FlashIcon,
 		label: "Moonshine",
 		chip: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
-		// No brand logo bundled — Useful Sensors doesn't ship one in
-		// provider-icons/, so we fall back to the HugeIcon.
+		// Useful Sensors' Moonshine crescent + waveform mark (transparent).
+		logoSrc: "/provider-icons/moonshine.png",
 	},
 	cohere: {
 		icon: AiChipIcon,
@@ -81,6 +88,8 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
 		icon: AudioWave02Icon,
 		label: "Dolphin",
 		chip: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+		// DataoceanAI's wordmark (transparent). It's a wide wordmark, so the
+		// logo `<img>` uses object-contain (not cover) to show it whole.
 		logoSrc: "/provider-icons/dataoceanai.png",
 	},
 	custom: {

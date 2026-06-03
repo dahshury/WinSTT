@@ -70,13 +70,19 @@ impl SwapEvents {
     /// `stt:model-swap-started` — the engine began loading new weights (control plane briefly stalls;
     /// the picker shows "Switching to {name}..." while `activeMain` is set).
     pub fn started(app: &AppHandle, kind: &str, name: &str) {
-        let _ = app.emit("stt:model-swap-started", json!({ "kind": kind, "name": name }));
+        let _ = app.emit(
+            "stt:model-swap-started",
+            json!({ "kind": kind, "name": name }),
+        );
     }
 
     /// `stt:model-swap-completed` — the new model is loaded (clears the in-flight chip; the
     /// model-state store refetches because the new model is now cached).
     pub fn completed(app: &AppHandle, kind: &str, name: &str) {
-        let _ = app.emit("stt:model-swap-completed", json!({ "kind": kind, "name": name }));
+        let _ = app.emit(
+            "stt:model-swap-completed",
+            json!({ "kind": kind, "name": name }),
+        );
     }
 
     /// `stt:model-swap-failed` — the swap failed; the renderer fires `SwapFailureToast` and rolls the
@@ -124,8 +130,9 @@ impl SwapEvents {
 ///
 /// The model SELECTION is already persisted to settings by the renderer's `update(...)` before this
 /// fires, so `get_runtime_info` reflects the new id even before the engine finishes loading; the
-/// engine LOAD itself rides `TranscriptionManager::initiate_model_load` (real ort numerics for the
-/// non-Whisper families land behind the STT engine spike — `// TODO(engine)`).
+/// engine LOAD itself rides `TranscriptionManager::load_model_blocking`, which returns the concrete
+/// load result for every supported local engine. This module owns only the renderer lifecycle
+/// events around that load.
 pub fn perform_model_swap(app: &AppHandle, kind: &str, name: &str) {
     // Realtime-kind reloads are owned by the realtime slice (04_*) — only the main model swaps here.
     if kind != "main" {
@@ -140,12 +147,11 @@ pub fn perform_model_swap(app: &AppHandle, kind: &str, name: &str) {
         // Load the REQUESTED model synchronously and observe the real result. We pass `name`
         // explicitly (NOT re-reading settings) because the renderer's persist of `model.model` is
         // debounced ~300ms — re-reading here would load the stale/default "tiny" and "succeed".
-        let load_result: Result<(), String> = match app
-            .try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
-        {
-            Some(tm) => tm.load_model_blocking(&name),
-            None => Err("transcription manager not initialized".to_string()),
-        };
+        let load_result: Result<(), String> =
+            match app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>() {
+                Some(tm) => tm.load_model_blocking(&name),
+                None => Err("transcription manager not initialized".to_string()),
+            };
 
         match load_result {
             Ok(()) => {
@@ -205,8 +211,14 @@ mod tests {
     #[test]
     fn category_strings_match_ts_union() {
         assert_eq!(SwapFailedCategory::OutOfMemory.as_str(), "out_of_memory");
-        assert_eq!(SwapFailedCategory::ModelNotFound.as_str(), "model_not_found");
+        assert_eq!(
+            SwapFailedCategory::ModelNotFound.as_str(),
+            "model_not_found"
+        );
         assert_eq!(SwapFailedCategory::Cancelled.as_str(), "cancelled");
-        assert_eq!(SwapFailedCategory::IncompatibleQuantization.as_str(), "incompatible_quantization");
+        assert_eq!(
+            SwapFailedCategory::IncompatibleQuantization.as_str(),
+            "incompatible_quantization"
+        );
     }
 }

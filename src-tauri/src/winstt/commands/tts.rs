@@ -16,7 +16,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::winstt::managers::tts_manager::{
-    CloudSubscriptionPayload, CloudVoiceCatalogPayload, DownloadEstimatePayload, VoiceCatalogPayload,
+    CloudSubscriptionPayload, CloudVoiceCatalogPayload, DownloadEstimatePayload,
+    VoiceCatalogPayload,
 };
 use crate::winstt::managers::TtsManager;
 
@@ -33,7 +34,7 @@ pub struct SpeakResult {
 /// Returns the request id so the renderer can correlate the `tts://chunk` stream
 /// + cancel it. Enabled-gate, source selection (local/cloud), and settings
 /// fallbacks for voice/lang/speed all live in `TtsManager::read_aloud` (mirrors
-/// the Electron `handleSpeak`). Empty `voice`/`lang` → the manager resolves them
+/// the reference `handleSpeak`). Empty `voice`/`lang` → the manager resolves them
 /// from the active source's settings.
 #[tauri::command]
 #[specta::specta]
@@ -59,7 +60,9 @@ pub async fn tts_speak(
     let speed_mgr = mgr.clone();
     // Run the blocking synthesis off the async pump.
     tauri::async_runtime::spawn_blocking(move || {
-        mgr.read_aloud(&rid, &text, &voice, &lang, move || speed_mgr.current_speed());
+        mgr.read_aloud(&rid, &text, &voice, &lang, move || {
+            speed_mgr.current_speed()
+        });
     });
     Ok(SpeakResult { request_id })
 }
@@ -67,7 +70,7 @@ pub async fn tts_speak(
 /// `tts_speak_selection` — read the current selection aloud (the read hotkey).
 /// The selected text is captured by the caller (context sidecar / clipboard) and
 /// passed in; this wraps the same source-aware synthesis path. An empty selection
-/// emits `tts:failed { reason: "No text selected" }` (mirrors Electron).
+/// emits `tts:failed { reason: "No text selected" }` (mirrors the reference).
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_speak_selection(
@@ -82,7 +85,7 @@ pub async fn tts_speak_selection(
     let request_id = mgr.next_request_id();
     let text = text.unwrap_or_default();
     if text.trim().is_empty() {
-        // No selection — surface the same failure the Electron path broadcasts so
+        // No selection — surface the same failure the reference path broadcasts so
         // the overlay pill shows the error and resets.
         let _ = app.emit(
             "tts:failed",
@@ -98,7 +101,9 @@ pub async fn tts_speak_selection(
     }
     let speed_mgr = mgr.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        mgr.read_aloud(&rid, &text, &voice, &lang, move || speed_mgr.current_speed());
+        mgr.read_aloud(&rid, &text, &voice, &lang, move || {
+            speed_mgr.current_speed()
+        });
     });
     Ok(SpeakResult { request_id })
 }
@@ -133,6 +138,10 @@ pub fn tts_set_speed(tts: State<'_, Arc<TtsManager>>, speed: f32) {
 #[tauri::command]
 #[specta::specta]
 pub fn tts_report_playback_started(app: AppHandle, request_id: String) {
+    // Reveal the forced read-aloud island. The overlay window is otherwise only
+    // shown for dictation; the renderer already paints the TTS island from its
+    // `ttsStatus` store, so we just have to put the window on screen (top-anchored).
+    crate::winstt::commands::overlay::show_tts_overlay(&app);
     let _ = app.emit(
         "tts:playback-started",
         serde_json::json!({ "requestId": request_id }),
@@ -146,6 +155,10 @@ pub fn tts_report_playback_started(app: AppHandle, request_id: String) {
 #[tauri::command]
 #[specta::specta]
 pub fn tts_report_playback_ended(app: AppHandle, request_id: String) {
+    // Read finished / cancelled / failed → hide the island. The shared hide's
+    // show-generation guard means a dictation session that just took over (which
+    // re-shows + repositions the overlay) is NOT hidden by this call.
+    crate::winstt::commands::overlay::hide_recording_overlay(&app);
     let _ = app.emit(
         "tts:playback-ended",
         serde_json::json!({ "requestId": request_id }),
@@ -161,7 +174,7 @@ pub fn tts_cancel_all(tts: State<'_, Arc<TtsManager>>) {
 
 /// `tts_init` — force the engine warm-up off the UI thread (download + session
 /// create / key check). Idempotent. Cloud source has no Kokoro engine to warm, so
-/// it's a no-op there (mirrors Electron `maybeWarmup` skipping cloud). Returns
+/// it's a no-op there (mirrors the reference `maybeWarmup` skipping cloud). Returns
 /// `{ ready }` (the renderer's `initTts` expects `{ ready: boolean }`).
 #[tauri::command]
 #[specta::specta]
@@ -188,8 +201,11 @@ pub struct TtsInitResult {
 /// (the `TtsVoiceCatalog` the renderer's `listTtsVoices` expects). NOT a bare array.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_list_voices(tts: State<'_, Arc<TtsManager>>) -> VoiceCatalogPayload {
-    tts.list_voices_catalog()
+pub fn tts_list_voices(
+    tts: State<'_, Arc<TtsManager>>,
+    model_id: Option<String>,
+) -> VoiceCatalogPayload {
+    tts.list_voices_catalog(model_id)
 }
 
 /// `tts_list_cloud_voices` — live `GET /v2/voices` (cloned voices appear here).
@@ -231,7 +247,7 @@ pub async fn tts_download_estimate(
 /// The local Kokoro install is just the two model FILES (no separate engine pack),
 /// and the current downloader runs synchronously inside `warm_up`/first-synth, so
 /// there is no long-lived resumable job to pause yet. We emit `tts:install-paused`
-/// for UI parity with Electron; the partial files survive on disk and re-enabling
+/// for UI parity with the reference; the partial files survive on disk and re-enabling
 /// resumes via HTTP Range automatically.
 // TODO(engine): when the shared resumable asset downloader lands (mod.rs
 // `download_kokoro_assets` DownloadControl), wire pause/resume/cancel to its
@@ -297,4 +313,202 @@ pub async fn tts_preview_cloud(
         mgr.read_preview_url(&rid, &preview_url);
     });
     Ok(SpeakResult { request_id })
+}
+
+// ===========================================================================
+// Multi-provider TTS catalog (the model-aware picker). Mirrors the STT
+// list_models / list_models_with_state + per-quant download lifecycle, but for
+// the TTS_CATALOG (Kokoro / Kitten / Piper / Supertonic) downloaded from HF.
+// ===========================================================================
+
+use std::collections::HashMap;
+
+use crate::winstt::managers::tts_download_manager::TtsDownloadManager;
+use crate::winstt::tts::catalog::{self, TtsModelEntry};
+
+/// One TTS catalog row, snake_case (the renderer's rawTtsModelSchema maps it to
+/// the camelCase `TtsModelInfo`).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type, Default)]
+pub struct TtsModelInfoDto {
+    pub id: String,
+    pub engine: String,
+    pub display_name: String,
+    pub maker: String,
+    pub languages: Vec<String>,
+    pub num_voices: u32,
+    pub cloning: String,
+    pub sample_rate: u32,
+    pub param_count_m: u32,
+    pub size_label: String,
+    pub available_quantizations: Vec<String>,
+    pub size_bytes_by_quantization: HashMap<String, u64>,
+    pub quality_score: f32,
+    pub speed_score: f32,
+    pub description: String,
+    pub available: bool,
+}
+
+/// Per-quant cache state, camelCase (matches the renderer's `TtsModelCacheInfo`).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsCacheInfoDto {
+    pub state: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    pub progress: f64,
+}
+
+/// Per-model cache state, camelCase (matches the renderer's `TtsModelStateEntry`).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsModelStateDto {
+    pub id: String,
+    pub cache_by_quantization: HashMap<String, TtsCacheInfoDto>,
+    pub effective_quantization: String,
+    pub estimated_bytes: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type, Default)]
+pub struct TtsModelsWithStateDto {
+    pub models: Vec<TtsModelInfoDto>,
+    pub states: Vec<TtsModelStateDto>,
+}
+
+fn human_size(bytes: u64) -> String {
+    const MB: f64 = 1_048_576.0;
+    const GB: f64 = 1_073_741_824.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.1} GB", b / GB)
+    } else {
+        format!("{:.0} MB", (b / MB).max(1.0))
+    }
+}
+
+fn to_model_info(m: &TtsModelEntry) -> TtsModelInfoDto {
+    let mut size_by: HashMap<String, u64> = HashMap::new();
+    for q in m.quants {
+        size_by.insert(q.id.to_string(), q.size_bytes);
+    }
+    let default_size = m
+        .quant(m.default_quant())
+        .map(|q| q.size_bytes)
+        .unwrap_or(0);
+    TtsModelInfoDto {
+        id: m.id.to_string(),
+        engine: m.engine.as_str().to_string(),
+        display_name: m.display_name.to_string(),
+        maker: m.maker.to_string(),
+        languages: m.languages.iter().map(|s| s.to_string()).collect(),
+        num_voices: m.num_voices,
+        cloning: m.cloning.as_str().to_string(),
+        sample_rate: m.sample_rate,
+        param_count_m: m.param_count_m,
+        size_label: human_size(default_size),
+        available_quantizations: m.quants.iter().map(|q| q.id.to_string()).collect(),
+        size_bytes_by_quantization: size_by,
+        quality_score: m.quality_score,
+        speed_score: m.speed_score,
+        description: m.description.to_string(),
+        available: true,
+    }
+}
+
+fn to_model_state(m: &TtsModelEntry, dl: &TtsDownloadManager) -> TtsModelStateDto {
+    let mut by_quant: HashMap<String, TtsCacheInfoDto> = HashMap::new();
+    for q in m.quants {
+        let info = dl.cache_info(m.id, q.id);
+        by_quant.insert(
+            q.id.to_string(),
+            TtsCacheInfoDto {
+                state: info.state.as_str().to_string(),
+                downloaded_bytes: info.downloaded_bytes,
+                total_bytes: info.total_bytes,
+                progress: info.progress,
+            },
+        );
+    }
+    let eff = m.default_quant().to_string();
+    let estimated_bytes = m.quant(&eff).map(|q| q.size_bytes).unwrap_or(0);
+    TtsModelStateDto {
+        id: m.id.to_string(),
+        cache_by_quantization: by_quant,
+        effective_quantization: eff,
+        estimated_bytes,
+    }
+}
+
+/// `tts_list_models` — the full multi-provider TTS catalog (snake_case rows).
+#[tauri::command]
+#[specta::specta]
+pub fn tts_list_models() -> Vec<TtsModelInfoDto> {
+    catalog::TTS_CATALOG.iter().map(to_model_info).collect()
+}
+
+/// `tts_list_models_with_state` — catalog + per-model cache state in one call.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_list_models_with_state(dl: State<'_, Arc<TtsDownloadManager>>) -> TtsModelsWithStateDto {
+    let models = catalog::TTS_CATALOG.iter().map(to_model_info).collect();
+    let states = catalog::TTS_CATALOG
+        .iter()
+        .map(|m| to_model_state(m, dl.inner()))
+        .collect();
+    TtsModelsWithStateDto { models, states }
+}
+
+/// `tts_predownload_model` — start (or resume) a per-quant model download.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_predownload_model(
+    dl: State<'_, Arc<TtsDownloadManager>>,
+    model_id: String,
+    quantization: String,
+) {
+    dl.inner().predownload(&model_id, &quantization);
+}
+
+/// `tts_download_pause` — cooperatively pause an in-flight model download.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_download_pause(
+    dl: State<'_, Arc<TtsDownloadManager>>,
+    model_id: String,
+    quantization: String,
+) {
+    dl.pause(&model_id, &quantization);
+}
+
+/// `tts_download_resume` — resume a paused download (re-fires the worker; the
+/// `.partial` file resumes via HTTP Range).
+#[tauri::command]
+#[specta::specta]
+pub fn tts_download_resume(
+    dl: State<'_, Arc<TtsDownloadManager>>,
+    model_id: String,
+    quantization: String,
+) {
+    dl.inner().predownload(&model_id, &quantization);
+}
+
+/// `tts_download_cancel` — cancel an in-flight download (drops the `.partial`).
+#[tauri::command]
+#[specta::specta]
+pub fn tts_download_cancel(
+    dl: State<'_, Arc<TtsDownloadManager>>,
+    model_id: String,
+    quantization: String,
+) {
+    dl.cancel(&model_id, &quantization);
+}
+
+/// `tts_delete_model` — delete a model's cached files from disk.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_delete_model(
+    dl: State<'_, Arc<TtsDownloadManager>>,
+    model_id: String,
+    _quantization: String,
+) {
+    dl.delete(&model_id);
 }

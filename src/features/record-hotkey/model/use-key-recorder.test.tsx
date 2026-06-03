@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { IPC } from "@/shared/api/ipc-channels";
 import { useKeyRecorder } from "./use-key-recorder";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const sentChannels: string[] = [];
 const invokes: string[] = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -36,11 +36,11 @@ function makeApi() {
 }
 
 beforeEach(() => {
-	window.electronAPI = makeApi();
+	window.nativeBridge = makeApi();
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 function fire(channel: string, ...args: unknown[]) {

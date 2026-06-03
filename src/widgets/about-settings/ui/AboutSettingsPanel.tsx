@@ -1,8 +1,8 @@
 import {
 	ArrowTurnBackwardIcon,
+	AppWindowIcon,
 	Certificate01Icon,
 	CloudDownloadIcon,
-	InformationCircleIcon,
 	LicenseIcon,
 	PowerSocket01Icon,
 	RefreshIcon,
@@ -10,12 +10,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
-import {
-	DEFAULT_SETTINGS,
-	SettingResetButton,
-	SettingSection,
-	useSettingsStore,
-} from "@/entities/setting";
+import { DEFAULT_SETTINGS, SettingField, SettingSection, useSettingsStore } from "@/entities/setting";
 import {
 	type AboutAppInfo,
 	aboutGetAppInfo,
@@ -31,7 +26,6 @@ import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DownloadProgressBar } from "@/shared/ui/download";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { FormControl } from "@/shared/ui/form-control";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Toggle } from "@/shared/ui/toggle";
 
@@ -64,11 +58,16 @@ function readStartupFlags(general: GeneralSettings | undefined): StartupFlags {
 	};
 }
 
+// Brand / product name — a proper noun that is identical in every locale (see
+// the `IDENTICAL_BY_DESIGN` allowlist in scripts/check-i18n.ts). Held in a
+// constant so it isn't flagged as a translatable literal.
+const APP_NAME = "WinSTT";
+
 const EMPTY_APP_INFO: AboutAppInfo = {
 	copyright: "",
-	electronVersion: "",
-	nodeVersion: "",
+	frameworkVersion: "",
 	version: "",
+	webview2Version: "",
 };
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -82,16 +81,16 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 
 function AppInfoSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 	return (
-		<SettingSection icon={InformationCircleIcon} title={t("appInfoTitle")}>
+		<SettingSection icon={AppWindowIcon} title={t("appInfoTitle")}>
 			<div className="flex flex-col gap-3">
 				<div className="flex flex-col">
-					<span className="font-semibold text-foreground text-title">WinSTT</span>
+					<span className="font-semibold text-foreground text-title">{APP_NAME}</span>
 					<span className="text-body text-foreground-muted">{info.copyright}</span>
 				</div>
 				<ElevatedSurface className="px-3 py-2">
 					<InfoRow label={t("appVersion")} value={info.version} />
-					<InfoRow label={t("electronVersion")} value={info.electronVersion} />
-					<InfoRow label={t("nodeVersion")} value={info.nodeVersion} />
+					<InfoRow label={t("frameworkVersion")} value={info.frameworkVersion} />
+					<InfoRow label={t("webview2Version")} value={info.webview2Version} />
 				</ElevatedSurface>
 				{/* Hugeicons free-tier attribution — required by the Hugeicons Free
 				    License whenever the icon set is used. Keep this string
@@ -307,7 +306,8 @@ function UpdatesSection({ t }: { t: AboutT }) {
 			title={t("updatesTitle")}
 		>
 			<div className="flex flex-col gap-3">
-				<FormControl
+				<SettingField
+					isDefault={receivePrereleaseUpdates === DEFAULT_SETTINGS.general.receivePrereleaseUpdates}
 					label={t("receivePrereleaseUpdates")}
 					labelAddon={
 						<Toggle
@@ -315,17 +315,10 @@ function UpdatesSection({ t }: { t: AboutT }) {
 							onCheckedChange={(v) => update({ receivePrereleaseUpdates: v })}
 						/>
 					}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								receivePrereleaseUpdates === DEFAULT_SETTINGS.general.receivePrereleaseUpdates
-							}
-							onReset={() =>
-								update({
-									receivePrereleaseUpdates: DEFAULT_SETTINGS.general.receivePrereleaseUpdates,
-								})
-							}
-						/>
+					onReset={() =>
+						update({
+							receivePrereleaseUpdates: DEFAULT_SETTINGS.general.receivePrereleaseUpdates,
+						})
 					}
 					tooltip={t("receivePrereleaseUpdatesCaption")}
 				/>
@@ -384,7 +377,12 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 				    minimized straight to the tray (autoStart + startMinimized +
 				    minimizeToTray together); off disables auto-launch. The former
 				    separate start-minimized / minimize-to-tray toggles are folded in. */}
-				<FormControl
+				<SettingField
+					isDefault={
+						flags.autoStart === DEFAULT_SETTINGS.general.autoStart &&
+						flags.startMinimized === DEFAULT_SETTINGS.general.startMinimized &&
+						flags.minimizeToTray === DEFAULT_SETTINGS.general.minimizeToTray
+					}
 					label={t("startOnLogin")}
 					labelAddon={
 						<Toggle
@@ -398,25 +396,17 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 							}
 						/>
 					}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								flags.autoStart === DEFAULT_SETTINGS.general.autoStart &&
-								flags.startMinimized === DEFAULT_SETTINGS.general.startMinimized &&
-								flags.minimizeToTray === DEFAULT_SETTINGS.general.minimizeToTray
-							}
-							onReset={() =>
-								update({
-									autoStart: DEFAULT_SETTINGS.general.autoStart,
-									startMinimized: DEFAULT_SETTINGS.general.startMinimized,
-									minimizeToTray: DEFAULT_SETTINGS.general.minimizeToTray,
-								})
-							}
-						/>
+					onReset={() =>
+						update({
+							autoStart: DEFAULT_SETTINGS.general.autoStart,
+							startMinimized: DEFAULT_SETTINGS.general.startMinimized,
+							minimizeToTray: DEFAULT_SETTINGS.general.minimizeToTray,
+						})
 					}
 					tooltip={t("startOnLoginTooltip")}
 				/>
-				<FormControl
+				<SettingField
+					isDefault={flags.sendCrashReports === DEFAULT_SETTINGS.general.sendCrashReports}
 					label={t("sendCrashReports")}
 					labelAddon={
 						<Toggle
@@ -424,14 +414,7 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 							onCheckedChange={(v) => update({ sendCrashReports: v })}
 						/>
 					}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={flags.sendCrashReports === DEFAULT_SETTINGS.general.sendCrashReports}
-							onReset={() =>
-								update({ sendCrashReports: DEFAULT_SETTINGS.general.sendCrashReports })
-							}
-						/>
-					}
+					onReset={() => update({ sendCrashReports: DEFAULT_SETTINGS.general.sendCrashReports })}
 					tooltip={t("sendCrashReportsTooltip")}
 				/>
 			</div>

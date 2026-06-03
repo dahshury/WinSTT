@@ -139,17 +139,17 @@ describe("composeBarLabel", () => {
 
 // ── Hook integration ────────────────────────────────────────────────────
 // The hook subscribes to five IPC channels through the REAL ipc-client, which
-// reads `window.electronAPI.on` at call time. We swap in a listener registry
+// reads `window.nativeBridge.on` at call time. We swap in a listener registry
 // so each `on*` subscription lands in `listeners` and we can drive the real
 // `applyProgressEvent` + functional state updaters by firing payloads.
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 const unsubscribed: string[] = [];
 
 beforeEach(() => {
 	listeners.clear();
 	unsubscribed.length = 0;
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -167,7 +167,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 function fire(channel: string, ...args: unknown[]): void {

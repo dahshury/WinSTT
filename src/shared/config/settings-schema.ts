@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { DeviceTypeSchema, TranscriberBackendSchema } from "@/shared/api/schema.zod";
 
+const modelUnloadTimeoutSchema = z
+	.enum(["immediately", "never", "min2", "min5", "min10", "min15", "hour1"])
+	.default("min5")
+	.catch("min5");
+
 export const modelSettingsSchema = z.object({
 	// Bundled offline base model — see `project_offline_base_and_tts_pack`
 	// memory. tiny-q4 is vendored into the installer so first-run users
@@ -10,13 +15,18 @@ export const modelSettingsSchema = z.object({
 	// on a partial-save decode produced the "large v2 in the main window
 	// but vosk-russian in the picker" desync (different fallbacks across
 	// surfaces). "tiny" exists in every catalog flavor and matches the
-	// CLI default the Electron spawn passes (`--model tiny`).
+	// CLI default the reference spawn passes (`--model tiny`).
 	model: z.string().default("tiny"),
 	realtimeModel: z.string().default("tiny"),
 	language: z.string().default("en"),
 	device: DeviceTypeSchema.default("auto"),
 	backend: TranscriberBackendSchema.default("faster_whisper"),
-	onnxQuantization: z.string().default(""),
+	// "auto" = the RAM/VRAM-aware recommended precision (re-resolved by the
+	// backend's ``fit_aware_auto_quant`` for the user's live hardware). ""
+	// is no longer "auto" — it now means EXPLICIT fp32 (the full-precision
+	// base export), a normal selectable badge. Concrete tiers (int8/fp16/…)
+	// pass through verbatim.
+	onnxQuantization: z.string().default("auto"),
 	initialPrompt: z.string().default(""),
 	initialPromptRealtime: z.string().default(""),
 	// Whisper-native task=translate. When true and the active model is a
@@ -26,16 +36,12 @@ export const modelSettingsSchema = z.object({
 	// non-Whisper families like Moonshine). `.catch(false)` keeps older
 	// builds from wiping the whole model section on a corrupt persisted value.
 	translateToEnglish: z.boolean().default(false).catch(false),
-	// Idle-timeout that unloads the loaded ONNX session(s) so the OS can
-	// reclaim RAM/VRAM. Enum lists the model-unload-timeout modes — the
-	// IPC layer normalizes ``never`` to a negative seconds value (server
-	// sentinel for "keep loaded forever") and ``immediately`` to ``0``
-	// (server tears down right after each transcription instead of
-	// polling for idleness). Default "min5".
-	modelUnloadTimeout: z
-		.enum(["immediately", "never", "min2", "min5", "min10", "min15", "hour1"])
-		.default("min5")
-		.catch("min5"),
+});
+
+const globalSettingsSchema = z.object({
+	// Idle-timeout shared by local STT, realtime preview, local TTS, and
+	// Ollama keep-alive. Default "min5".
+	modelUnloadTimeout: modelUnloadTimeoutSchema,
 });
 
 export const qualitySettingsSchema = z.object({
@@ -189,11 +195,11 @@ export const generalSettingsSchema = z.object({
 	manualToggleStop: z.boolean().default(false),
 	// Global shortcut that re-pastes the most recent dictation transcription
 	// into the focused window on demand. Registered as an EXCLUSIVE system-
-	// wide shortcut (Electron globalShortcut) — it is swallowed app-wide so
+	// wide shortcut (the reference globalShortcut) — it is swallowed app-wide so
 	// pressing it ONLY triggers our re-paste and never also fires the focused
 	// app's native binding (e.g. paste-without-formatting). Stored in the same
 	// uiohook-style accelerator format the HotkeyRecorder produces; the main
-	// process converts it to an Electron accelerator at registration time.
+	// process converts it to the reference accelerator at registration time.
 	// Must be non-empty: an empty string from corrupt settings would leave
 	// the feature silently disabled; instead `.catch()` rehydrates to the
 	// canonical default so the binding is always present.
@@ -371,6 +377,10 @@ export const generalSettingsSchema = z.object({
 	// to inject — Enter for chat boxes, Ctrl+Enter for IDE prompts.
 	autoSubmit: z.boolean().default(false).catch(false),
 	autoSubmitKey: z.enum(["enter", "ctrl_enter"]).default("enter").catch("enter"),
+	// Gate the auto-paste behind an editable preview pill the user confirms
+	// before pasting (the magic button re-runs LLM post-processing on demand).
+	// Only effective when the recording pill is shown — the preview IS the pill.
+	previewBeforePasting: z.boolean().default(false).catch(false),
 	// Cap on the number of transcription history entries persisted to disk.
 	// Larger histories slow the settings panel (rendering + load), so the
 	// upper bound is 10000; lower bound 10 keeps the UI useful. The main
@@ -412,7 +422,7 @@ export const hotkeySettingsSchema = z.object({
 	// `.min(1)` would throw and `decodeSettingsPayload` would wipe the whole
 	// `hotkey` section. Catch rehydrates to the documented default so the
 	// PTT binding is always present and never empty.
-	pushToTalkKey: z.string().min(1).default("LCtrl+Space").catch("LCtrl+Space"),
+	pushToTalkKey: z.string().min(1).default("LCtrl+LMeta").catch("LCtrl+LMeta"),
 });
 
 // Dictionary entries are dual-purpose, matching Wispr Flow's two-mode model:
@@ -617,7 +627,7 @@ export const llmSettingsSchema = z.object({
 });
 
 // Per-provider integration record. `apiKey` is encrypted at rest via
-// Electron `safeStorage` (DPAPI on Windows) — the wire/in-memory shape
+// the reference `safeStorage` (DPAPI on Windows) — the wire/in-memory shape
 // is plaintext but the persisted JSON contains `enc:v1:<base64>`; the
 // secret-storage layer transparently encrypts on save and decrypts on
 // read (see `electron/lib/secret-storage.ts`). `verified` is the result
@@ -641,12 +651,16 @@ const integrationsSchema = z.object({
 // ``server/src/synthesizer/infrastructure/voice_catalog.py``); `speed` is
 // a multiplier clamped 0.5..2.0. `hotkey` is the global combo that
 // captures the active selection and reads it aloud; defaults to
-// LWin+LShift+E so the binding is always present when TTS is enabled
+// LMeta+LShift+E so the binding is always present when TTS is enabled
 // (users can rebind from settings). There is no per-TTS compute device:
 // the synthesizer shares the main STT model's device (`model.device`),
 // which the spawn layer mirrors onto the server's `--tts-device` flag.
 export const ttsSettingsSchema = z.object({
 	enabled: z.boolean().default(false),
+	// Local TTS catalog id selecting WHICH engine/model synthesizes (Kokoro,
+	// Kitten, Piper, Supertonic). `voice` below is the voice WITHIN this model.
+	// Default "kokoro-82m" preserves the historical Kokoro-only behaviour.
+	model: z.string().default("kokoro-82m"),
 	voice: z.string().default("af_heart"),
 	lang: z.string().default("en-us"),
 	speed: z.number().min(0.5).max(2.0).default(1.0),
@@ -656,7 +670,7 @@ export const ttsSettingsSchema = z.object({
 	hotkey: z.string().min(1).default("LMeta+LShift+E").catch("LMeta+LShift+E"),
 	// Local ⇄ Cloud switch mirroring the STT/LLM source toggles. "local" =
 	// Kokoro ONNX (the `voice`/`lang`/`speed` fields above); "cloud" routes
-	// synthesis through ElevenLabs entirely in the Electron main process (see
+	// synthesis through ElevenLabs entirely in the reference main process (see
 	// `electron/ipc/tts-cloud.ts`). Cloud is only selectable when the
 	// ElevenLabs key is present AND verified (`integrations.elevenlabs.verified`);
 	// the renderer gates the option, and the cloud path reuses the same
@@ -683,7 +697,35 @@ export const ttsSettingsSchema = z.object({
 		.prefault({}),
 });
 
-export const appSettingsSchema = z.object({
+function objectRecord(value: unknown): Record<string, unknown> | null {
+	return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function migrateLegacyGlobalSettings(payload: unknown): unknown {
+	const root = objectRecord(payload);
+	if (!root) {
+		return payload;
+	}
+	const model = objectRecord(root.model);
+	const legacyTimeout = model?.modelUnloadTimeout;
+	if (legacyTimeout === undefined) {
+		return payload;
+	}
+	const global = objectRecord(root.global);
+	if (global?.modelUnloadTimeout !== undefined) {
+		return payload;
+	}
+	return {
+		...root,
+		global: {
+			...(global ?? {}),
+			modelUnloadTimeout: legacyTimeout,
+		},
+	};
+}
+
+const appSettingsBaseSchema = z.object({
+	global: globalSettingsSchema.prefault({}),
 	model: modelSettingsSchema.prefault({}),
 	quality: qualitySettingsSchema.prefault({}),
 	audio: audioSettingsSchema.prefault({}),
@@ -699,5 +741,9 @@ export const appSettingsSchema = z.object({
 	tts: ttsSettingsSchema.prefault({}),
 	integrations: integrationsSchema.prefault({}),
 });
+
+export const appSettingsSectionSchemas = appSettingsBaseSchema.shape;
+
+export const appSettingsSchema = z.preprocess(migrateLegacyGlobalSettings, appSettingsBaseSchema);
 
 export type AppSettingsOutput = z.output<typeof appSettingsSchema>;

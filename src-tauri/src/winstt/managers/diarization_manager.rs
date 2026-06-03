@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/05_*.md (Diarization),
+// Source: docs/port/05_*.md (Diarization),
 // onnx-asr/src/onnx_asr/diarization.py, server diarization_stream.py + domain/speaker_timeline.py.
 //
 // DiarizationManager owns the per-utterance `SessionDiarizer` and the continuous
@@ -7,7 +7,7 @@
 // spike); this manager is the lifecycle + state + event-emit shell.
 //
 // Emits the specta-typed `SpeakerSegmentsPayload` (diarized segments). The
-// renderer event-name contract is unchanged from WinSTT's Electron IPC.
+// renderer event-name contract is unchanged from WinSTT's the reference IPC.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

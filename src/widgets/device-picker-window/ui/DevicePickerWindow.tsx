@@ -94,7 +94,8 @@ export function DevicePickerWindow() {
 	const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
 		devices,
 		inputDeviceIndex,
-		defaultLabel
+		defaultLabel,
+		defaultDevice?.name
 	);
 
 	return (
@@ -133,7 +134,7 @@ export function DevicePickerWindow() {
 								<HugeiconsIcon
 									aria-hidden="true"
 									className="shrink-0 text-foreground-muted"
-									icon={Mic01Icon}
+									icon={opt.icon ?? Mic01Icon}
 									size={16}
 									strokeWidth={active ? 2 : 1.5}
 								/>

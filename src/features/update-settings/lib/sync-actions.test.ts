@@ -175,6 +175,33 @@ describe("syncModelParams", () => {
 	});
 });
 
+describe("global model unload timeout sync", () => {
+	test("pushes global timeout on initial connect", () => {
+		const { deps, calls } = makeDeps();
+		syncToServer(
+			deps,
+			settingsWith({ global: { modelUnloadTimeout: "hour1" } } as never)
+		);
+		expect(calls).toContainEqual({
+			kind: "sttSetParameter",
+			args: ["model_unload_timeout_seconds", 3600],
+		});
+	});
+
+	test("pushes global timeout when it changes", () => {
+		const { deps, calls } = makeDeps();
+		syncToServer(
+			deps,
+			settingsWith({ global: { modelUnloadTimeout: "never" } } as never),
+			settingsWith({ global: { modelUnloadTimeout: "min5" } } as never)
+		);
+		expect(calls).toContainEqual({
+			kind: "sttSetParameter",
+			args: ["model_unload_timeout_seconds", -1],
+		});
+	});
+});
+
 describe("syncQualityParams", () => {
 	test("pushes silence_timing AND every quality field on initial connect", () => {
 		const { deps, calls } = makeDeps();

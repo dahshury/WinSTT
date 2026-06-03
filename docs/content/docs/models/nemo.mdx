@@ -1,0 +1,98 @@
+---
+title: NVIDIA NeMo
+description: NVIDIA's Parakeet and Canary models — Conformer-based recognizers that run at 400–1300× real-time on the same ONNX engine as everything else.
+---
+
+NVIDIA's NeMo family pairs FastConformer encoders with three different decoders (CTC, RNN-T, TDT) to hit some of the highest accuracy-per-millisecond numbers in the catalog — Parakeet TDT lands at **5.9 WER** while decoding at **1100× real-time**. WinSTT runs every NeMo model on the same `onnx-asr` ONNX Runtime engine as Whisper and the rest; there is no separate backend to flip.
+
+## The line-up
+
+Two product lines share the FastConformer encoder:
+
+- **Parakeet** — single-pass recognizers tuned for raw speed. English-only for CTC/RNN-T, 25-language for the newer TDT.
+- **Canary** — encoder-decoder models with a small attention decoder. They add automatic language detection and Whisper-style `translate` support, trading some throughput for it.
+
+A pair of **FastConformer RU** models round out Russian coverage.
+
+<ModelTable
+  head={["Model", "Params", "WER", "RTFx", "Languages", "Quant"]}
+  numeric={[1, 2, 3, 4]}
+  rows={[
+    ["Parakeet CTC 0.6B", "600M", "7.5", "1200", "English", "—, int8"],
+    ["Parakeet RNNT 0.6B", "600M", "6.5", "850", "English", "—, int8"],
+    ["Parakeet TDT 0.6B v3", "627M", "5.9", "1100", "25 (multilingual)", "—, int8"],
+    ["Canary 180M Flash", "194M", "7.5", "1300", "en · de · es · fr", "—, int8"],
+    ["Canary 1B Flash", "883M", "6.4", "1000", "en · de · es · fr", "—, int8"],
+    ["Canary 1B v2", "978M", "5.6", "430", "25 (multilingual)", "—, int8"],
+    ["FastConformer RU CTC", "109M", "10.0", "700", "Russian", "—, int8"],
+    ["FastConformer RU RNNT", "114M", "9.0", "550", "Russian", "—, int8"],
+  ]}
+  caption="WER is the model's published average; lower is better. RTFx is real-time factor — 1100 means it transcribes 1100 seconds of audio per wall-clock second on the reference GPU. “—” is the default (un-suffixed) full-precision graph."
+/>
+
+Every NeMo model supports the **live preview** (realtime transcription), so any of them can serve as both your main and realtime model.
+
+## CTC vs RNN-T vs TDT
+
+All three decoders sit on top of the same FastConformer encoder. They differ only in how they turn encoder frames into text — which is what moves the speed/accuracy trade-off.
+
+<ModelTable
+  head={["Decoder", "How it decodes", "Trade-off"]}
+  rows={[
+    ["CTC", "Each audio frame is classified independently in a single pass, then collapsed.", "Fastest, lightest. Slightly higher WER because it can't condition on what it just emitted."],
+    ["RNN-T", "Autoregressive — each token is predicted from the audio and the tokens emitted so far.", "More accurate than CTC; the token-by-token loop is heavier, so RTFx is lower."],
+    ["TDT", "An RNN-T variant that predicts a token and its duration together, so it can skip ahead instead of stepping one frame at a time.", "RNN-T accuracy at close-to-CTC speed — NVIDIA's newest decoder, and why TDT v3 beats both 0.6B Parakeets."],
+  ]}
+  caption="Within the 0.6B Parakeets the numbers line up exactly: CTC 7.5 WER @ 1200 RTFx, RNN-T 6.5 @ 850, TDT 5.9 @ 1100."
+/>
+
+The same pattern shows up in the Russian pair — `FastConformer RU CTC` (10.0 WER, 700 RTFx) is faster but less accurate than `FastConformer RU RNNT` (9.0 WER, 550 RTFx).
+
+## English-only vs multilingual
+
+Language scope is fixed per model — it is not a setting you can widen.
+
+- **English-only:** `Parakeet CTC 0.6B` and `Parakeet RNNT 0.6B`. The fastest path to high-accuracy English dictation; no language-detection step to pay for.
+- **Four-language (en / de / es / fr):** both **Canary Flash** models. `180M Flash` is the throughput champion of the family at 1300 RTFx; `1B Flash` keeps Flash-level speed (1000 RTFx) at noticeably lower WER (6.4).
+- **25-language:** `Parakeet TDT 0.6B v3` and `Canary 1B v2` both cover the same 25 European languages (Bulgarian, Czech, Danish, German, Greek, English, Spanish, Estonian, Finnish, French, Croatian, Hungarian, Italian, Lithuanian, Latvian, Maltese, Dutch, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Swedish, Ukrainian). Both auto-detect the spoken language.
+- **Russian-only:** the two `FastConformer RU` models.
+
+<Callout type="info" title="TDT v3 or Canary 1B v2 for multilingual?">
+  They cover the same 25 languages. **TDT v3** is the right default — 5.9 WER at 1100 RTFx in 2.5 GB. **Canary 1B v2** is slightly more accurate (5.6 WER) and adds a real `translate` task, but it is a 4 GB encoder-decoder that runs at 430 RTFx — about 2.5× slower.
+</Callout>
+
+## Precision
+
+Every NeMo model ships two quantizations, selected by the **Quantization** control on the [Model](/docs/settings/model) tab:
+
+<ModelTable
+  head={["Value", "Precision", "Best for"]}
+  rows={[
+    ["— (default)", "Full precision", "Maximum accuracy; GPU"],
+    ["int8", "8-bit integer", "CPU — ~3.5–4× smaller download and lower RAM"],
+  ]}
+  caption="No fp16/q4 variants are published for NeMo. int8 is the recommended choice on CPU."
+/>
+
+For example, `Parakeet TDT 0.6B v3` is **2.5 GB** at default precision and **670 MB** as int8; `Canary 1B v2` drops from **4.0 GB** to **1.0 GB**. See [Compute Types](/docs/models/compute-types) for what the quantization labels mean.
+
+<Callout type="info" title="No backend to set">
+  Every model — NeMo included — runs on the single ONNX engine. There's no "NeMo backend" toggle; just pick a NeMo model in [Model](/docs/settings/model) and it hot-swaps in. Switching to or from a different model **family** briefly reconnects the engine.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Browse all families" href="/docs/models">
+    Whisper, NeMo, Moonshine, Cohere, GigaAM, Vosk, and more across the full catalog.
+  </Card>
+  <Card title="Whisper Models" href="/docs/models/whisper">
+    OpenAI Whisper and the compressed Lite-Whisper variants — multilingual and English-only.
+  </Card>
+  <Card title="Compute & quantization" href="/docs/models/compute-types">
+    What int8, fp16, and q4 mean, and how to read the quantization labels.
+  </Card>
+  <Card title="Pick a model" href="/docs/settings/model">
+    Choose your main and realtime models, language, device, and precision.
+  </Card>
+</Cards>

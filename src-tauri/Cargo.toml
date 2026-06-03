@@ -42,7 +42,7 @@ default = []
 # so `ort::ep::CUDA` exists when the feature is enabled (whisper.rs `Accelerator::Cuda` arm).
 cuda = ["ort/cuda"]
 # DEBUG-ONLY context-awareness extras (`commands::context::debug_read_context`); mirrors
-# CONTEXT_PLAYGROUND_ENABLED in the Electron build. Off in shipped builds. NOTE: the live
+# CONTEXT_PLAYGROUND_ENABLED in the reference build. Off in shipped builds. NOTE: the live
 # playground commands (`context_playground.rs`) are de-gated and compile unconditionally;
 # this gate only covers the older `debug_read_context` mode probe.
 context-playground = []
@@ -76,7 +76,6 @@ rusqlite_migration = "2.3"
 tauri-plugin-fs = "2.4.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rdev = { git = "https://github.com/rustdesk-org/rdev" }
 cpal = "0.16.0"
 anyhow = "1.0.95"
 rubato = "0.16.2"
@@ -107,14 +106,14 @@ transcribe-rs = { version = "0.3.8", features = ["whisper-cpp", "onnx"] }
 # winstt/stt can `use ort`. directml EP + dylib loading come from transcribe-rs's ort-directml feature.
 ort = { version = "=2.0.0-rc.12", features = ["ndarray", "half"] }
 ndarray = "0.17.2"
+num_cpus = "1"  # physical-core count for the STT intra-op thread pick (matches onnx-asr's default)
+rayon = "1"     # parallel per-frame fbank/mel feature extraction (long-audio throughput)
 thiserror = "2"
 # WinSTT port — remaining subsystem deps (versions per app/PORT/00_cargo_additions.md, verified 2026-05)
 hf-hub = "1.0.0-rc.1"            # HF snapshot resolver for STT model files (resolver/download)
 prost = "0.13"                   # ONNX-proto edit for the fp16 decoder patch (03_stt_engine.md §6.1)
 tokenizers = { version = "0.22.1", default-features = false, features = ["onig"] }  # DistilBERT + custom models
-ollama-rs = "0.3.4"              # native Ollama /api/* (pull progress not OpenAI-compatible)
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
-keyring = "4.0.1"                # encrypted API keys at rest
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
 half = "2"                       # f16 tensor element type (matches ort's half)
@@ -129,7 +128,7 @@ handy-keys = "0.2.4"
 ferrous-opencc = "0.2.3"
 # TTS G2P: in-process espeak-ng phonemizer. We dlopen the espeak-ng shared lib
 # (espeak-ng.dll on Windows) and call espeak_TextToPhonemes directly — the SAME
-# path the Electron app's `phonemizer`/`espeakng_loader` takes via ctypes — so
+# path the reference app's `phonemizer`/`espeakng_loader` takes via ctypes — so
 # there is NO per-sentence subprocess spawn (the CLI shell-out was slower on
 # short sentences). Already in the dep graph (transitive); pinned direct.
 libloading = "0.8"
@@ -162,9 +161,12 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Variant",
   "Win32_System_ProcessStatus",
   "Win32_System_Threading",
+  "Win32_Security_Cryptography",
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_Graphics_Dxgi",
+  "Win32_System_Console",
 ] }
 winreg = "0.55"
 
@@ -184,6 +186,16 @@ tauri-utils = { git = "https://github.com/cjpais/tauri.git", branch = "handy-2.1
 
 [dev-dependencies]
 tempfile = "3"
+
+# Lint policy (rust-best-practices ch.2 §2.5). The default clippy groups
+# (correctness / suspicious / style / complexity / perf) are enforced as warnings
+# here so the editor + local `cargo clippy` match the CI gate
+# (`cargo clippy --all-targets -- -D warnings` in rust-ci.yml). pedantic/nursery
+# are intentionally NOT enabled: under `-D warnings` they would turn hundreds of
+# opinionated/unstable lints into hard errors. `priority = -1` lets any future
+# per-lint override win over the group.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
 
 [profile.release]
 lto = true

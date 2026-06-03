@@ -1,16 +1,15 @@
-import { DashboardCircleIcon } from "@hugeicons/core-free-icons";
+import { MonitorDotIcon } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import {
 	DEFAULT_SETTINGS,
-	SettingResetButton,
+	SettingField,
 	SettingSection,
 	useSettingsStore,
 } from "@/entities/setting";
 import { DEFAULT_LOCALE, LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { FormControl } from "@/shared/ui/form-control";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
 import type { SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
@@ -83,15 +82,11 @@ interface LanguageControlProps {
 
 function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactNode {
 	return (
-		<FormControl
+		<SettingField
+			isDefault={locale === DEFAULT_LOCALE}
 			label={t("language")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={locale === DEFAULT_LOCALE}
-					onReset={() => setLocale(DEFAULT_LOCALE)}
-				/>
-			}
 			layout="row"
+			onReset={() => setLocale(DEFAULT_LOCALE)}
 			tooltip={t("languageTooltip")}
 		>
 			<ElevatedSurface className="w-52" inline>
@@ -101,7 +96,7 @@ function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactN
 					value={locale}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -115,18 +110,13 @@ interface OverlayControlProps {
 function OverlayControl({ t, isListenMode, general, update }: OverlayControlProps): ReactNode {
 	const idx = overlaySliderToIndex(general);
 	return (
-		<FormControl
+		<SettingField
 			disabled={isListenMode}
+			hideReset={isListenMode}
+			isDefault={idx === overlaySliderToIndex(DEFAULT_SETTINGS.general)}
 			label={t("showRecordingOverlay")}
-			labelTrailing={
-				isListenMode ? undefined : (
-					<SettingResetButton
-						isDefault={idx === overlaySliderToIndex(DEFAULT_SETTINGS.general)}
-						onReset={() =>
-							update(overlaySliderPatch(overlaySliderToIndex(DEFAULT_SETTINGS.general), general))
-						}
-					/>
-				)
+			onReset={() =>
+				update(overlaySliderPatch(overlaySliderToIndex(DEFAULT_SETTINGS.general), general))
 			}
 			tooltip={t("showRecordingOverlayTooltip")}
 		>
@@ -144,7 +134,7 @@ function OverlayControl({ t, isListenMode, general, update }: OverlayControlProp
 					value={idx}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -169,22 +159,17 @@ function OverlayModeControl({
 		}
 	};
 	return (
-		<FormControl
+		<SettingField
+			hideReset={subDisabled}
+			isDefault={value === DEFAULT_SETTINGS.general.overlayMode}
 			label={t("overlayMode")}
-			labelTrailing={
-				subDisabled ? undefined : (
-					<SettingResetButton
-						isDefault={value === DEFAULT_SETTINGS.general.overlayMode}
-						onReset={() => update({ overlayMode: DEFAULT_SETTINGS.general.overlayMode })}
-					/>
-				)
-			}
+			onReset={() => update({ overlayMode: DEFAULT_SETTINGS.general.overlayMode })}
 			tooltip={t("overlayModeTooltip")}
 		>
 			<ElevatedSurface className={subDisabled ? "pointer-events-none opacity-40" : undefined}>
 				<Switcher fullWidth onChange={onChange} options={options} value={value} />
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -220,17 +205,13 @@ function LiveTranscriptionDisplayControl({
 		update({ liveTranscriptionDisplay: flagsToLiveDisplay(inApp, next) });
 	};
 	return (
-		<FormControl
+		<SettingField
+			isDefault={stored === DEFAULT_SETTINGS.general.liveTranscriptionDisplay}
 			label={t("liveTranscriptionDisplay")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={stored === DEFAULT_SETTINGS.general.liveTranscriptionDisplay}
-					onReset={() =>
-						update({
-							liveTranscriptionDisplay: DEFAULT_SETTINGS.general.liveTranscriptionDisplay,
-						})
-					}
-				/>
+			onReset={() =>
+				update({
+					liveTranscriptionDisplay: DEFAULT_SETTINGS.general.liveTranscriptionDisplay,
+				})
 			}
 			tooltip={t("liveTranscriptionDisplayTooltip")}
 		>
@@ -251,7 +232,7 @@ function LiveTranscriptionDisplayControl({
 					/>
 				</CheckboxGroup>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -265,14 +246,10 @@ function VisualizerTypeControl({ t, general, update }: VisualizerTypeControlProp
 	const value = general?.visualizerType ?? "bar";
 	const options = buildVisualizerTypeSwitcherOptions(t);
 	return (
-		<FormControl
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.general.visualizerType}
 			label={t("visualizerType")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={value === DEFAULT_SETTINGS.general.visualizerType}
-					onReset={() => pickVisualizerType(DEFAULT_SETTINGS.general.visualizerType, update)}
-				/>
-			}
+			onReset={() => pickVisualizerType(DEFAULT_SETTINGS.general.visualizerType, update)}
 			tooltip={t("visualizerTypeTooltip")}
 		>
 			<ElevatedSurface>
@@ -283,7 +260,7 @@ function VisualizerTypeControl({ t, general, update }: VisualizerTypeControlProp
 					value={value}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -300,16 +277,10 @@ function VisualizerBarCountControl({
 }: VisualizerBarCountControlProps): ReactNode {
 	const value = general?.visualizerBarCount ?? DEFAULT_SETTINGS.general.visualizerBarCount;
 	return (
-		<FormControl
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.general.visualizerBarCount}
 			label={t("visualizerBarCount")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={value === DEFAULT_SETTINGS.general.visualizerBarCount}
-					onReset={() =>
-						update({ visualizerBarCount: DEFAULT_SETTINGS.general.visualizerBarCount })
-					}
-				/>
-			}
+			onReset={() => update({ visualizerBarCount: DEFAULT_SETTINGS.general.visualizerBarCount })}
 			tooltip={t("visualizerBarCountTooltip")}
 		>
 			<ElevatedSurface inline>
@@ -322,7 +293,7 @@ function VisualizerBarCountControl({
 					value={value}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -362,15 +333,12 @@ function VizSliderControl({
 }: VizSliderControlProps): ReactNode {
 	const label = t(labelKey);
 	return (
-		<FormControl
+		<SettingField
+			defaultValue={defaultValue}
 			label={label}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={value === defaultValue}
-					onReset={() => onChange(defaultValue)}
-				/>
-			}
+			onReset={() => onChange(defaultValue)}
 			tooltip={t(tooltipKey)}
+			value={value}
 		>
 			<ElevatedSurface inline>
 				<Slider
@@ -383,7 +351,7 @@ function VizSliderControl({
 					{...(formatValue ? { formatValue } : {})}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -516,14 +484,10 @@ function VisualizerAuraShapeControl({
 	const value = general?.visualizerAuraShape ?? DEFAULT_SETTINGS.general.visualizerAuraShape;
 	const options = buildAuraShapeSwitcherOptions(t);
 	return (
-		<FormControl
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.general.visualizerAuraShape}
 			label={t("visualizerAuraShape")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={value === DEFAULT_SETTINGS.general.visualizerAuraShape}
-					onReset={() => pickAuraShape(DEFAULT_SETTINGS.general.visualizerAuraShape, update)}
-				/>
-			}
+			onReset={() => pickAuraShape(DEFAULT_SETTINGS.general.visualizerAuraShape, update)}
 			tooltip={t("visualizerAuraShapeTooltip")}
 		>
 			<ElevatedSurface>
@@ -534,7 +498,7 @@ function VisualizerAuraShapeControl({
 					value={value}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -613,20 +577,18 @@ export function AppearanceSettingsPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
-			<SettingSection icon={DashboardCircleIcon} title={t("display")}>
-				<div className="flex flex-col divide-y divide-surface-1">
-					<LanguageControl locale={locale} setLocale={setLocale} t={t} />
-					<VisualizerTypeControl general={general} t={t} update={update} />
-					<VisualizerShapeControls general={general} t={t} update={update} />
-					<OverlayControl general={general} isListenMode={isListenMode} t={t} update={update} />
-					<OverlayModeControl
-						general={general}
-						subDisabled={flags.subDisabled}
-						t={t}
-						update={update}
-					/>
-					<LiveTranscriptionDisplayControl general={general} t={t} update={update} />
-				</div>
+			<SettingSection divided icon={MonitorDotIcon} title={t("display")}>
+				<LanguageControl locale={locale} setLocale={setLocale} t={t} />
+				<VisualizerTypeControl general={general} t={t} update={update} />
+				<VisualizerShapeControls general={general} t={t} update={update} />
+				<OverlayControl general={general} isListenMode={isListenMode} t={t} update={update} />
+				<OverlayModeControl
+					general={general}
+					subDisabled={flags.subDisabled}
+					t={t}
+					update={update}
+				/>
+				<LiveTranscriptionDisplayControl general={general} t={t} update={update} />
 			</SettingSection>
 		</div>
 	);

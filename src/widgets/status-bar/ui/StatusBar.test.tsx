@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
 import {
@@ -53,7 +53,14 @@ beforeEach(() => {
 	// instead of falling back to its placeholder.
 	useCatalogStore.setState({ models: CATALOG, isLoaded: true });
 	// Reset the swap store — leftover `activeMain` from the model-swap-store
-	// tests would otherwise flip the trigger into its switching view.
+	// tests would otherwise flip the trigger into its switching view. NOTE: this
+	// reset holds until render. In the FULL suite a LEAKED, never-unmounted
+	// `useSyncActiveModel` fiber (the preload's global afterEach brute-clears
+	// <body> but never React-unmounts roots, so a prior file's hook stays
+	// subscribed to the shared settings store) re-fires its effect when a test
+	// here changes `settings.model`, calling `beginSwap("main", prev, next)` and
+	// re-populating `activeMain` DURING render. The size-free test below clears
+	// that phantom after render so the footer settles on the steady-state chip.
 	useModelSwapStore.setState({
 		activeMain: null,
 		activeRealtime: null,
@@ -143,6 +150,17 @@ describe("StatusBar", () => {
 				<StatusBar />
 			</IntlProvider>
 		);
+		// A leaked `useSyncActiveModel` (see beforeEach note) may have flipped the
+		// swap store to `activeMain: "nemo-canary-180m-flash"` during this render,
+		// which paints the transient "Switching to Canary Flash..." swap chip
+		// instead of the steady-state model chip. Clear the phantom and let
+		// StatusBar re-render to the idle chip — the behaviour under test (the
+		// footer resolves the SIZE-FREE variant NAME, not the raw id) is the same
+		// either way; the leak just wrapped that name in spinner chrome. Alone (no
+		// leak) this reset is a no-op (`activeMain` is already null).
+		act(() => {
+			useModelSwapStore.setState({ activeMain: null, fromMain: null });
+		});
 		// "NeMo Canary 180M Flash" → "Canary Flash": family prefix + "180M"
 		// stripped so the always-visible footer matches the picker/settings tab.
 		// The previous behaviour leaked the raw model id into the chip.

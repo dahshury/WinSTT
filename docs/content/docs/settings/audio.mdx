@@ -1,0 +1,165 @@
+---
+title: Audio
+description: Pick your input and output devices, tune the dual-VAD pipeline that decides when you're speaking, and set how the microphone is held between recordings.
+---
+
+The **Audio** tab controls how WinSTT captures sound and decides when speech starts and stops — the microphone it listens on, the two voice-activity detectors that gate recording, and the timing knobs around them.
+
+## Devices
+
+<Screenshot src="sec-audio-input" alt="The Audio tab's input section: the microphone Input Device picker above the Silero and WebRTC voice-activity sliders." chrome="card" caption="Input device and the dual-VAD sliders that gate recording." />
+
+<SettingRow label="Input Device" settingKey="audio.inputDeviceIndex" default="System default">
+  The microphone WinSTT records from. The list is the system default plus every enumerated
+  capture device. A device change applies on the **next** recording — an in-flight one keeps
+  the old device. Hidden in <ModeBadge mode="listen" /> mode, which captures system output
+  instead (see [General](/docs/settings/general)).
+</SettingRow>
+
+<Screenshot src="device-picker" alt="An open audio device picker dropdown listing the system default microphone followed by the enumerated capture devices." chrome="card" caption="The device picker lists the system default first, then every enumerated device." />
+
+<Screenshot src="sec-audio-output" alt="The Audio tab's Output Device picker, where start/stop chimes and text-to-speech play back." chrome="card" caption="The output device for chimes and text-to-speech." maxWidth={620} />
+
+<SettingRow label="Output Device" settingKey="general.outputDeviceId" default="System default">
+  Where start/stop chimes and text-to-speech play. Only shown when the recording sound or TTS
+  is enabled. The Chromium `default` sentinel is filtered out; an empty selection passes
+  through to the system default.
+</SettingRow>
+
+## The VAD pipeline
+
+Voice activity detection (VAD) is how WinSTT tells speech apart from silence and background noise in the hands-free modes. WinSTT runs **two** detectors in series and only treats audio as speech when **both** agree (AND logic) — a fast energy gate catches the obvious silence, and a neural model confirms it's actually a voice. This keeps the overlay from popping on a cough or a keyboard clack without dropping quiet, real speech.
+
+<StepFlow>
+  <Step title="WebRTC VAD — fast energy gate">
+    A lightweight energy-and-spectral detector runs first. It's cheap enough to run on every
+    frame and rejects clear silence before the neural model is ever consulted.
+  </Step>
+  <Step title="Silero VAD — neural confirmation">
+    Frames that pass WebRTC go to the Silero neural network, which scores how confidently the
+    audio is a human voice. Speech is declared only when Silero's confidence clears its trip
+    threshold **and** WebRTC already agreed.
+  </Step>
+  <Step title="Endpoint timing — when the segment ends">
+    Once speech is active, WinSTT watches for the end. In <ModeBadge mode="listen" /> and
+    <ModeBadge mode="wakeword" /> a stretch of silence longer than **Post-Speech Silence**
+    finalizes the segment. In <ModeBadge mode="toggle" /> the Smart Endpoint classifier (or a
+    sentence-pause heuristic) decides. In <ModeBadge mode="ptt" /> none of this applies — the
+    hotkey release is a hard boundary and VAD is irrelevant.
+  </Step>
+</StepFlow>
+
+<Callout type="info" title="When the VAD controls are visible">
+  Silero and WebRTC tuning only appear in <ModeBadge mode="listen" /> and
+  <ModeBadge mode="wakeword" /> mode — the hands-free modes where WinSTT, not you, decides
+  when recording starts and stops. In <ModeBadge mode="ptt" /> and <ModeBadge mode="toggle" />
+  you draw the boundaries by key, so the sensitivity sliders are hidden.
+</Callout>
+
+### Silero sensitivity
+
+<SettingRow label="Silero Sensitivity" settingKey="audio.sileroSensitivity" default="0.7">
+  Confidence threshold for the neural detector, 0–1 in steps of 0.05. Higher is **more**
+  sensitive. Internally the trip point is `1 − sensitivity`, so the default 0.7 trips whenever
+  Silero's confidence exceeds 0.3. Raise it if quiet or distant speech is being missed; lower
+  it if background voices keep waking the recorder. The old 0.4 default dropped too much quiet
+  speech, which is why the default is now 0.7.
+</SettingRow>
+
+WinSTT also **learns** a sensitivity per microphone. As you record, `vad_sensitivity_adapted`
+events nudge a per-device value stored in `audio.sileroSensitivityByDeviceName` (a map keyed by
+device name). Each device boots with its own last-known value, and the calibration survives
+device switching and restarts. This map isn't user-editable — it's auto-populated and only
+visible in debug logs.
+
+<SettingRow label="Silero Deactivity Detection" settingKey="audio.sileroDeactivityDetection" default="true">
+  Master switch for the Silero stage, doubling as the section header. With it off, only WebRTC
+  gates recording. Applies immediately — no restart needed.
+</SettingRow>
+
+### WebRTC sensitivity
+
+<SettingRow label="WebRTC Sensitivity" settingKey="audio.webrtcSensitivity" default="3">
+  Aggressiveness of the energy gate, an integer 0–3. The range is **inverted**: 0 is the most
+  permissive (lets quiet speech through), 3 is the strictest (demands loud, clear audio). The
+  default 3 leans on Silero for the nuance and uses WebRTC purely to throw away obvious silence.
+  Drop it toward 0 if soft speech is being filtered before Silero ever sees it.
+</SettingRow>
+
+### Endpoint and buffer timing
+
+<SettingRow label="Post-Speech Silence Duration" settingKey="audio.postSpeechSilenceDuration" default="0.7">
+  Seconds of silence after speech before the segment is finalized, from 0.1 up in 0.1 steps.
+  This drives the VAD-based modes only — <ModeBadge mode="listen" /> and
+  <ModeBadge mode="wakeword" />. <ModeBadge mode="ptt" /> ignores it entirely, and
+  <ModeBadge mode="toggle" /> with Smart Endpoint defers to the classifier instead. Shorter
+  feels snappier but can clip pauses mid-thought; longer waits for you to finish.
+</SettingRow>
+
+WinSTT also keeps a short **pre-recording buffer** — a 1.0-second ring of audio captured
+*before* speech onset (`audio.preRecordingBufferDuration`). When VAD trips slightly late, the
+buffer back-fills the first syllable so the start of your sentence isn't lost. It's fixed at
+1.0 s and not exposed as a UI control.
+
+<Callout type="info" title="Two settings live in the schema but not the UI">
+  `audio.minGapBetweenRecordings` (default `0`) was reserved for a future minimum-pause feature
+  and is never enforced. `audio.extraRecordingBufferMs` (default `0`, range 0–2000 ms) would
+  capture extra audio after a user-driven stop to catch trailing syllables, but it isn't surfaced
+  as a control yet either. `audio.sampleRate` (16,000 Hz, Whisper-native) and `audio.bufferSize`
+  (512 frames) are low-level infrastructure pinned for stability — don't expect them in the UI.
+</Callout>
+
+## Microphone lifecycle
+
+<Screenshot src="sec-audio-advanced" alt="The Audio tab's microphone-lifecycle controls: the Microphone Release dropdown and the Clamshell Microphone swap selector." chrome="card" caption="How long the mic stream stays open, and the clamshell auto-swap." />
+
+<SettingRow label="Microphone Release" settingKey="audio.microphoneRelease" default="immediate" startupOnly>
+  How long the OS audio stream stays open after a recording stops. **Immediately** (default)
+  releases the mic the instant recording ends — the cleanest for the privacy indicator but adds
+  a small re-open cost next time. **Always** keeps the stream open for the fastest start.
+  **30 seconds**, **1 minute**, and **5 minutes** hold it open for that window, then release. The
+  source reads this once at construction, so changes only take effect after a server restart.
+</SettingRow>
+
+<Callout type="restart">
+  **Microphone Release** is read when the audio source is built. Changing it needs a server
+  restart before the new policy takes hold; most other VAD tunings on this tab apply on the next
+  segment.
+</Callout>
+
+<SettingRow label="Clamshell Microphone" settingKey="audio.clamshellMicrophone" default="Off">
+  Auto-swap to a chosen alternate microphone when a laptop lid closes — for a docked machine that
+  should switch to an external USB mic when clamshelled. Pick **None** to disable, or any input
+  device to swap to. The lid state is polled every 5 seconds. Supported on macOS and Linux;
+  Windows support is deferred, so this has no effect on a Windows build today.
+</SettingRow>
+
+## A note on the hotkey
+
+The Audio tab also hosts the **hotkey recorder** — the control that captures the key combo for
+your active recording mode. It lives here for proximity to the input device, but every detail of
+binding modes, modifiers, and re-paste lives on its own page.
+
+<Screenshot src="sec-audio-hotkeys" alt="The hotkey recorder control on the Audio tab, capturing the key combo for the active recording mode." chrome="card" caption="The hotkey recorder captures the combo for your active recording mode." maxWidth={620} />
+
+<Callout type="info">
+  Setting your push-to-talk combo, switching recording modes, and the re-paste shortcut are all
+  documented in [Hotkey settings](/docs/settings/hotkey).
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Hotkey & recording modes" href="/docs/settings/hotkey">
+    Bind the trigger combo for each mode and the re-paste shortcut.
+  </Card>
+  <Card title="General settings" href="/docs/settings/general">
+    Listen-mode loopback device, the recording overlay, and chimes.
+  </Card>
+  <Card title="Quality & endpointing" href="/docs/settings/quality">
+    Smart Endpoint, the realtime update interval, and accuracy trade-offs.
+  </Card>
+  <Card title="Choose a model" href="/docs/settings/model">
+    Pick the STT engine, quantization, and compute device.
+  </Card>
+</Cards>

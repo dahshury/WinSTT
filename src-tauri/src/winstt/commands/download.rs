@@ -8,7 +8,7 @@
 // state and forwards the call. The manager owns the keyed in-flight registry + the four
 // `stt:model-download-*` / `stt:model-cache-changed` broadcasts (download_manager.rs).
 //
-// IPC mapping (app/src/shared/api/electron-tauri-adapter.ts ROUTE):
+// IPC mapping (app/src/shared/api/native-bridge-adapter.ts ROUTE):
 //   IPC.STT_PREDOWNLOAD_QUANT       (`stt:predownload-quant`,        { modelId, quantization }) → predownload_quant
 //   IPC.STT_DOWNLOAD_PAUSE          (`stt:download-pause`,           { modelId, quantization }) → download_pause_quant
 //   IPC.STT_DOWNLOAD_RESUME         (`stt:download-resume`,          { modelId, quantization }) → download_resume_quant
@@ -80,22 +80,41 @@ pub fn download_cancel_quant(
 
 /// `delete_model_quantization` — drop just the weight files matching `quantization` from the HF
 /// cache of `model_id` (other quants intact). Re-broadcasts `stt:model-cache-changed`.
+///
+/// `async` so the blocking HF-cache scan + unlink runs on the blocking pool instead of stalling
+/// the main thread (async commands register identically to sync ones).
 #[tauri::command]
 #[specta::specta]
-pub fn delete_model_quantization(
+pub async fn delete_model_quantization(
     downloads: State<'_, Arc<DownloadManager>>,
     model_id: String,
     quantization: String,
-) {
-    downloads.delete_quantization(&model_id, &quantization);
+) -> Result<(), String> {
+    let downloads = downloads.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        downloads.delete_quantization(&model_id, &quantization);
+    })
+    .await
+    .map_err(|e| format!("delete_model_quantization task panicked: {e}"))
 }
 
 /// `delete_model_cache` — wipe the entire HF snapshot directory for `model_id`. Positional-string
 /// channel (`POSITIONAL_STRING_PARAM` → `{ modelId }`). Re-broadcasts cache-changed.
+///
+/// `async` so the blocking snapshot-dir scan + remove runs on the blocking pool instead of
+/// stalling the main thread (async commands register identically to sync ones).
 #[tauri::command]
 #[specta::specta]
-pub fn delete_model_cache(downloads: State<'_, Arc<DownloadManager>>, model_id: String) {
-    downloads.delete_model_cache(&model_id);
+pub async fn delete_model_cache(
+    downloads: State<'_, Arc<DownloadManager>>,
+    model_id: String,
+) -> Result<(), String> {
+    let downloads = downloads.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        downloads.delete_model_cache(&model_id);
+    })
+    .await
+    .map_err(|e| format!("delete_model_cache task panicked: {e}"))
 }
 
 /// `cancel_download` — cancel the legacy single-slot whole-model swap-download (no quantization).

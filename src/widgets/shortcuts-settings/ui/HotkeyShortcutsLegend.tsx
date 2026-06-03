@@ -31,6 +31,12 @@ import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
  * global hotkey listener; this just teaches the user what's possible.
  */
 
+// Decorative, aria-hidden glyphs — pure visual symbols, not translatable copy.
+// Held in constants so they aren't flagged as user-facing literal JSX text.
+const PLUS_GLYPH = "＋";
+const WRAP_GLYPH = "↻";
+const BACKSPACE_GLYPH = "⌫";
+
 const MODE_CYCLE_ORDER: readonly RecordingMode[] = ["ptt", "toggle", "listen", "wakeword"] as const;
 
 type ModeLabelKey = "shortcutPtt" | "shortcutToggle" | "shortcutListen" | "shortcutWakeword";
@@ -93,7 +99,7 @@ function HotkeyPrefix({ keys, placeholder, secondKey }: HotkeyPrefixProps) {
 					<span className="inline-flex items-center gap-1" key={key}>
 						{i > 0 ? (
 							<span aria-hidden className="text-[9px] text-foreground-dim">
-								＋
+								{PLUS_GLYPH}
 							</span>
 						) : null}
 						<Keycap emphasized>{formatKeyName(key)}</Keycap>
@@ -103,7 +109,7 @@ function HotkeyPrefix({ keys, placeholder, secondKey }: HotkeyPrefixProps) {
 				<Keycap emphasized>{placeholder}</Keycap>
 			)}
 			<span aria-hidden className="px-0.5 text-[10px] text-foreground-dim">
-				＋
+				{PLUS_GLYPH}
 			</span>
 			{secondKey}
 		</span>
@@ -257,7 +263,7 @@ export function HotkeyShortcutsLegend({ disabled = false }: HotkeyShortcutsLegen
 						aria-hidden
 						className="ms-1 text-[13px] text-foreground-dim leading-none rtl:-scale-x-100"
 					>
-						↻
+						{WRAP_GLYPH}
 					</span>
 				</div>
 			</ShortcutRow>
@@ -274,7 +280,7 @@ export function HotkeyShortcutsLegend({ disabled = false }: HotkeyShortcutsLegen
 						// Unicode backspace glyph — no Backspace icon in
 						// @hugeicons/core-free-icons. Well-supported in both
 						// Geist Mono and the system mono fallback chain.
-						secondKey={<Keycap>⌫</Keycap>}
+						secondKey={<Keycap>{BACKSPACE_GLYPH}</Keycap>}
 					/>
 				}
 			>
@@ -296,7 +302,7 @@ export function HotkeyShortcutsLegend({ disabled = false }: HotkeyShortcutsLegen
 						<HotkeyPrefix
 							keys={ttsHotkeyParts}
 							placeholder={placeholder}
-							secondKey={<Keycap>⌫</Keycap>}
+							secondKey={<Keycap>{BACKSPACE_GLYPH}</Keycap>}
 						/>
 					}
 				>

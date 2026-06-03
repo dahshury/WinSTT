@@ -4,7 +4,7 @@ import { IPC } from "@/shared/api/ipc-channels";
 import { useVisualizerStore } from "../model/visualizer-store";
 import { useVisualizerSync } from "./use-visualizer-sync";
 
-const originalApi = window.electronAPI;
+const originalApi = window.nativeBridge;
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 // Track every mounted hook so afterEach can tear them down — without an
 // explicit unmount, useVisualizerSync's rAF loop keeps running across test
@@ -26,7 +26,7 @@ beforeEach(() => {
 		audioLevel: 0,
 		sentencePulse: 0,
 	});
-	window.electronAPI = {
+	window.nativeBridge = {
 		...originalApi,
 		on: (channel: string, cb: (...args: unknown[]) => void) => {
 			const list = listeners.get(channel) ?? [];
@@ -47,7 +47,7 @@ afterEach(() => {
 		h.unmount();
 	}
 	mountedHooks = [];
-	window.electronAPI = originalApi;
+	window.nativeBridge = originalApi;
 });
 
 function fire(channel: string, ...args: unknown[]) {

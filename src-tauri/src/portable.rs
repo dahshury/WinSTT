@@ -7,7 +7,6 @@ use tauri::Manager;
 /// When a file named `portable` exists next to the executable, all user data
 /// (settings, models, recordings, database, logs) is stored in a `Data/`
 /// directory alongside the executable instead of `%APPDATA%`.
-
 static PORTABLE_DATA_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Detect portable mode by looking for a `portable` marker file next to the exe.
@@ -159,7 +158,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("portable");
         let mut f = std::fs::File::create(&marker).unwrap();
-        write!(f, "  WinSTT Portable Mode\n").unwrap();
+        writeln!(f, "  WinSTT Portable Mode").unwrap();
         assert!(is_valid_portable_marker(&marker));
         std::fs::remove_dir_all(dir).unwrap();
     }

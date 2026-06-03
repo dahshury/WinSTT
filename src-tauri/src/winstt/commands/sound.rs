@@ -1,11 +1,11 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/10_frontend_port_plan.md
+// Source: docs/port/10_frontend_port_plan.md
 // §6 WU-5 (recording-sound shares audio plumbing) + the AUTHORITATIVE
 // frontend/electron/lib/sound-library.ts. Verbatim port of the custom recording-sound
 // file-library manager.
 //
 // The renderer's `features/recording-sound` slice persists user-supplied recording
 // sounds (.wav / .mp3) under `<appData>/sounds/`. It drives these via the
-// `window.electronAPI` polyfill (electron-tauri-adapter.ts), which routes the WinSTT
+// `window.nativeBridge` polyfill (native-bridge-adapter.ts), which routes the WinSTT
 // `sound:library-*` channels to these commands with BYTE-IDENTICAL arg shapes:
 //
 //   sound:library-add        → sound_library_add        { sourcePath, name? }  -> SoundLibraryAddResult
@@ -248,7 +248,7 @@ pub fn sound_library_read_file(path: String) -> Option<Vec<u8>> {
 // `use-recording-sound.ts`) calls `invoke("sound:get-data")` on mount to fetch the
 // ACTIVE recording chime's raw bytes (default OR the user-chosen custom path). It
 // decodes them into a Web Audio buffer and plays it on `sound:play`. The adapter
-// (electron-tauri-adapter.ts) routes `SOUND_GET_DATA → sound_get_data`, expecting
+// (native-bridge-adapter.ts) routes `SOUND_GET_DATA → sound_get_data`, expecting
 // `Vec<u8> | null` (`Uint8Array | null` in TS).
 //
 // Behaviour mirror:
@@ -272,7 +272,7 @@ fn is_allowed_recording_sound_ext(path: &str) -> bool {
 }
 
 /// Resolve the bundled default chime (`resources/recording_sound_default.wav`,
-/// copied from the Electron build's `build/splash.wav`). Mirrors `DEFAULT_SOUND_PATH`.
+/// copied from the reference build's `build/splash.wav`). Mirrors `DEFAULT_SOUND_PATH`.
 fn default_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .resolve(
@@ -310,4 +310,41 @@ fn active_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
 pub fn sound_get_data(app: AppHandle) -> Option<Vec<u8>> {
     let path = active_recording_sound_path(&app)?;
     std::fs::read(&path).ok()
+}
+
+/// Play the ACTIVE recording chime NATIVELY (rodio), off the press path.
+///
+/// Replaces the old `app.emit("sound:play")` → renderer Web Audio path. The
+/// webview chime depended on the main window's `AudioContext`, which (a) starts
+/// suspended — a global PTT hotkey gives the page no user-activation gesture, so
+/// `resume()` can lag — and (b) gets throttled by WebView2 while the window sits
+/// hidden in the tray (the normal dictation state), so the FIRST chime after the
+/// app goes idle could arrive late or drop. Playing from Rust like Handy removes
+/// both hazards and the IPC→webview hop.
+///
+/// Parity with the renderer it replaces:
+///   - Gating + file selection go through [`active_recording_sound_path`], so no
+///     chime when `general.recording_sound` is off, and the same default/custom
+///     sound otherwise.
+///   - Full volume (the renderer chime applied no gain; there is no
+///     recording-sound volume setting).
+///
+/// Output routing differs by necessity: the renderer routed via
+/// `general.outputDeviceId`, a Web-Audio `sinkId` the backend can't map to a
+/// cpal device. Native playback uses the cpal-name `selected_output_device` when
+/// set, else the system default — i.e. exactly Handy's behavior. TTS/history
+/// playback keep their Web-Audio sinkId routing (unchanged).
+///
+/// Fire-and-forget on a worker thread: rodio's `sink.sleep_until_end()` blocks,
+/// and the press path must not. Mirrors `audio_feedback::play_sound_async`.
+pub fn play_recording_chime(app: &AppHandle) {
+    let Some(path) = active_recording_sound_path(app) else {
+        return;
+    };
+    let selected_device = crate::settings::get_settings(app).selected_output_device;
+    std::thread::spawn(move || {
+        if let Err(e) = crate::audio_feedback::play_audio_file(&path, selected_device, 1.0) {
+            log::error!("Failed to play recording chime '{}': {e}", path.display());
+        }
+    });
 }

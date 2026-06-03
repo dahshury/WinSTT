@@ -1,4 +1,4 @@
-// PORT IMPL — drafted against real APIs, pending compile. Source: app/PORT/07_*.md §3 + lib_wiring.md §6,
+// Source: docs/port/07_*.md §3 + lib_wiring.md §6,
 // frontend/electron/lib/context-reader.ts. Wraps winstt::context (pure deny-list + formatter + parser).
 //
 // ContextManager resolves the `winstt-context.exe` sidecar path and implements
@@ -63,7 +63,7 @@ impl ContextReader for ContextManager {
 }
 
 /// Resolve the sidecar exe. Packaged: `<resource>/binaries/winstt-context.exe`.
-/// Dev fallback: the already-built binary under the frontend native tree.
+/// Dev fallback: the binary staged under `src-tauri/binaries/`.
 fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "winstt-context.exe"
@@ -86,12 +86,11 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
             }
         }
     }
-    // 3. Dev fallback: the WinSTT frontend's already-built helper.
+    // 3. Dev fallback: the binary staged under `src-tauri/binaries/` (the
+    //    externalBin source dir), relative to the dev working directory.
     #[cfg(windows)]
     {
-        let dev = PathBuf::from(
-            "../frontend/electron/native/bin/winstt-context.exe",
-        );
+        let dev = PathBuf::from("binaries").join(name);
         if dev.exists() {
             return Some(dev);
         }

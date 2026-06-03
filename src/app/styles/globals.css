@@ -1,5 +1,36 @@
 @import "tailwindcss";
 
+/* Transitions.dev shared variables used by reusable animation primitives. */
+:root {
+	--digit-dur: 500ms;
+	--digit-distance: 8px;
+	--digit-stagger: 70ms;
+	--digit-blur: 2px;
+	--digit-ease: cubic-bezier(0.34, 1.45, 0.64, 1);
+	--digit-dir-x: 0;
+	--digit-dir-y: 1;
+	--text-swap-dur: 150ms;
+	--text-swap-translate-y: 4px;
+	--text-swap-blur: 2px;
+	--text-swap-ease: ease-in-out;
+	--icon-swap-dur: 200ms;
+	--icon-swap-blur: 2px;
+	--icon-swap-start-scale: 0.25;
+	--icon-swap-ease: ease-in-out;
+	--clear-dur: 1000ms;
+	--clear-out-dur: 400ms;
+	--clear-in-dur: 400ms;
+	--clear-out-fly: 12px;
+	--clear-in-fly: 12px;
+	--clear-out-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--clear-in-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--clear-blur: 2px;
+	--glow-delay: 50ms;
+	--glow-peak-at: 0.15;
+	--glow-opacity: 0.85;
+	--glow-spread: 1.5;
+}
+
 /* ── Theme: design tokens → Tailwind utilities ── */
 @theme {
 	/* Surface — original darkness, blue-shifted (hue ~265) */
@@ -531,11 +562,35 @@
 		appearance: textfield;
 	}
 
-	/* Select popup transition */
+	/* Select popup transition - Transitions.dev panel reveal */
+	:root {
+		--panel-open-dur: 400ms;
+		--panel-close-dur: 350ms;
+		--panel-translate-y: 94px;
+		--panel-blur: 2px;
+		--panel-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	.select-popup {
+		transform: translateY(0);
+		opacity: 1;
+		filter: blur(0);
+		transition:
+			transform var(--panel-open-dur) var(--panel-ease),
+			opacity var(--panel-open-dur) var(--panel-ease),
+			filter var(--panel-open-dur) var(--panel-ease);
+		will-change: transform, opacity, filter;
+	}
+
 	.select-popup[data-starting-style],
 	.select-popup[data-ending-style] {
+		transform: translateY(var(--panel-translate-y));
 		opacity: 0;
-		transform: scale(0.95);
+		filter: blur(var(--panel-blur));
+		transition:
+			transform var(--panel-close-dur) var(--panel-ease),
+			opacity var(--panel-close-dur) var(--panel-ease),
+			filter var(--panel-close-dur) var(--panel-ease);
 	}
 
 	/* Selection */
@@ -565,6 +620,124 @@
 		content: "";
 		background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' /%3E%3C/svg%3E");
 		opacity: 0.015;
+	}
+}
+
+/* Transitions.dev — Menu dropdown */
+
+/*
+  Usage:
+    <div class="t-dropdown" data-origin="top-center">
+      <!-- your menu contents -->
+    </div>
+
+  State:
+    - Add `.is-open` to show.
+    - On close, swap `.is-open` for `.is-closing`, then remove
+      `.is-closing` after --dropdown-close-dur.
+
+  Base UI bridge:
+    - Base UI popups expose `data-open`, `data-starting-style`, and
+      `data-ending-style` instead of toggling classes. The animation rules
+      below mirror the same scale/opacity contract while avoiding Base UI's
+      one-frame inline `transition: none` on mount.
+
+  data-origin values: top-left | top-center | top-right |
+                      bottom-left | bottom-center | bottom-right.
+*/
+
+:root {
+	--dropdown-open-dur: 250ms;
+	--dropdown-close-dur: 150ms;
+	--dropdown-pre-scale: 0.97;
+	--dropdown-closing-scale: 0.99;
+	--dropdown-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.t-dropdown {
+	pointer-events: none;
+	opacity: 0;
+	transform: scale(var(--dropdown-pre-scale));
+	transform-origin: top left;
+	transition:
+		transform var(--dropdown-open-dur) var(--dropdown-ease),
+		opacity var(--dropdown-open-dur) var(--dropdown-ease);
+	will-change: transform, opacity;
+}
+.t-dropdown[data-origin="top-right"] {
+	transform-origin: top right;
+}
+.t-dropdown[data-origin="top-center"] {
+	transform-origin: top center;
+}
+.t-dropdown[data-origin="bottom-left"] {
+	transform-origin: bottom left;
+}
+.t-dropdown[data-origin="bottom-center"] {
+	transform-origin: bottom center;
+}
+.t-dropdown[data-origin="bottom-right"] {
+	transform-origin: bottom right;
+}
+
+.t-dropdown.is-open,
+.t-dropdown[data-open] {
+	pointer-events: auto;
+	opacity: 1;
+	transform: scale(1);
+}
+
+.t-dropdown.is-open,
+.t-dropdown[data-open] {
+	animation: dropdown-in var(--dropdown-open-dur) var(--dropdown-ease);
+}
+
+.t-dropdown[data-starting-style] {
+	pointer-events: none;
+	opacity: 0;
+	transform: scale(var(--dropdown-pre-scale));
+}
+
+.t-dropdown.is-closing,
+.t-dropdown[data-ending-style] {
+	pointer-events: none;
+	opacity: 0;
+	transform: scale(var(--dropdown-closing-scale));
+	transition:
+		transform var(--dropdown-close-dur) var(--dropdown-ease),
+		opacity var(--dropdown-close-dur) var(--dropdown-ease);
+}
+
+.t-dropdown[data-ending-style] {
+	animation: dropdown-out var(--dropdown-close-dur) var(--dropdown-ease) forwards;
+}
+
+@keyframes dropdown-in {
+	from {
+		opacity: 0;
+		transform: scale(var(--dropdown-pre-scale));
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@keyframes dropdown-out {
+	from {
+		opacity: 1;
+		transform: scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: scale(var(--dropdown-closing-scale));
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.t-dropdown {
+		transition: none !important;
+		animation: none !important;
 	}
 }
 
@@ -687,26 +860,177 @@
 	filter: blur(0);
 	transform: translateY(0);
 	transition:
-		transform 150ms ease-in-out,
-		filter 150ms ease-in-out,
-		opacity 150ms ease-in-out;
+		transform var(--text-swap-dur) var(--text-swap-ease),
+		filter var(--text-swap-dur) var(--text-swap-ease),
+		opacity var(--text-swap-dur) var(--text-swap-ease);
 	will-change: transform, filter, opacity;
 }
 .t-text-swap.is-exit {
 	opacity: 0;
-	filter: blur(2px);
-	transform: translateY(-4px);
+	filter: blur(var(--text-swap-blur));
+	transform: translateY(calc(var(--text-swap-translate-y) * -1));
 }
 .t-text-swap.is-enter-start {
 	opacity: 0;
-	filter: blur(2px);
-	transform: translateY(4px);
+	filter: blur(var(--text-swap-blur));
+	transform: translateY(var(--text-swap-translate-y));
 	transition: none;
+}
+
+@keyframes t-digit-pop-in {
+	0% {
+		opacity: 0;
+		filter: blur(var(--digit-blur));
+		transform: translate(
+			calc(var(--digit-distance) * var(--digit-dir-x)),
+			calc(var(--digit-distance) * var(--digit-dir-y))
+		);
+	}
+	100% {
+		opacity: 1;
+		filter: blur(0);
+		transform: translate(0, 0);
+	}
+}
+
+.t-digit-group {
+	display: inline-flex;
+	align-items: baseline;
+}
+.t-digit {
+	display: inline-block;
+	will-change: transform, opacity, filter;
+}
+.t-digit-group.is-animating .t-digit {
+	animation: t-digit-pop-in var(--digit-dur) var(--digit-ease) both;
+}
+.t-digit-group.is-animating .t-digit[data-stagger="1"] {
+	animation-delay: var(--digit-stagger);
+}
+.t-digit-group.is-animating .t-digit[data-stagger="2"] {
+	animation-delay: calc(var(--digit-stagger) * 2);
+}
+
+.t-icon-swap {
+	position: relative;
+	display: inline-grid;
+	place-items: center;
+}
+.t-icon-swap .t-icon {
+	grid-area: 1 / 1;
+	transition:
+		opacity var(--icon-swap-dur) var(--icon-swap-ease),
+		filter var(--icon-swap-dur) var(--icon-swap-ease),
+		transform var(--icon-swap-dur) var(--icon-swap-ease);
+	will-change: opacity, filter, transform;
+}
+.t-icon-swap[data-state="a"] .t-icon[data-icon="a"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="b"] {
+	opacity: 1;
+	filter: blur(0);
+	transform: scale(1);
+}
+.t-icon-swap[data-state="a"] .t-icon[data-icon="b"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="a"] {
+	opacity: 0;
+	filter: blur(var(--icon-swap-blur));
+	transform: scale(var(--icon-swap-start-scale));
+}
+
+.t-clear {
+	position: relative;
+	overflow: hidden;
+}
+.t-clear-mirror,
+.t-clear-placeholder {
+	position: absolute;
+	inset: 0;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	overflow: hidden;
+	white-space: nowrap;
+	pointer-events: none;
+}
+.t-clear-mirror {
+	opacity: 0;
+}
+.t-clear.has-value .t-clear-mirror,
+.t-clear.is-clearing .t-clear-mirror {
+	opacity: 1;
+}
+.t-clear.has-value > input,
+.t-clear.is-clearing > input {
+	-webkit-text-fill-color: transparent;
+}
+.t-clear.has-value .t-clear-placeholder {
+	opacity: 0;
+}
+.t-clear-glow {
+	position: absolute;
+	inset: 0;
+	z-index: 3;
+	pointer-events: none;
+	mix-blend-mode: screen;
+	opacity: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.t-page-slide .t-page,
-	.t-text-swap {
+	.t-text-swap,
+	.t-icon-swap .t-icon {
+		transition: none !important;
+	}
+	.t-digit-group .t-digit {
+		animation: none !important;
+	}
+	.t-clear-glow {
+		opacity: 0 !important;
+	}
+}
+
+/* Transitions.dev — staggered text reveal. Used by the preview-before-pasting
+   pill (transcript-preview) to fade + lift + de-blur its lines on view change.
+   Add `.is-shown` to the `.t-stagger` parent to play; `.is-hiding` fades all
+   lines out in place (no reverse stagger). */
+.t-stagger {
+	--stagger-dur: 600ms;
+	--stagger-distance: 12px;
+	--stagger-stagger: 40ms;
+	--stagger-blur: 3px;
+	--stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+.t-stagger-line {
+	display: block;
+	opacity: 0;
+	transform: translateY(var(--stagger-distance));
+	filter: blur(var(--stagger-blur));
+	transition:
+		opacity var(--stagger-dur) var(--stagger-ease),
+		transform var(--stagger-dur) var(--stagger-ease),
+		filter var(--stagger-dur) var(--stagger-ease);
+	will-change: transform, opacity, filter;
+}
+.t-stagger-line--2 {
+	transition-delay: var(--stagger-stagger);
+}
+.t-stagger.is-shown .t-stagger-line {
+	opacity: 1;
+	transform: translateY(0);
+	filter: blur(0);
+}
+.t-stagger.is-hiding .t-stagger-line {
+	opacity: 0;
+	transform: translateY(0);
+	filter: blur(0);
+	transition:
+		opacity 200ms ease,
+		transform 0s linear,
+		filter 0s linear;
+	transition-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+	.t-stagger-line {
 		transition: none !important;
 	}
 }

@@ -1,27 +1,30 @@
 import {
 	Clock01Icon,
-	ComputerIcon,
-	DashboardCircleIcon,
 	FlashIcon,
+	HourglassIcon,
 	InfinityIcon,
 	Mic01Icon,
+	Mic02Icon,
 	MicOff01Icon,
-	SparklesIcon,
+	PauseCircleIcon,
+	Radar02Icon,
+	RecordIcon,
+	SlidersHorizontalIcon,
+	Timer01Icon,
 	VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
-import { useInputDevices } from "@/entities/audio-device";
+import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
 import {
 	DEFAULT_SETTINGS,
-	SettingResetButton,
+	SettingField,
 	SettingSection,
 	useSettingsStore,
 } from "@/entities/setting";
 import { useLoopbackDevices } from "@/features/listen-mode";
 import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
@@ -50,6 +53,14 @@ type UpdateGeneralFn = (patch: Partial<GeneralSettings>) => void;
 type UpdateAudioFn = (patch: Partial<AudioSettings>) => void;
 type UpdateQualityFn = (patch: Partial<QualitySettings>) => void;
 
+const SILENCE_STOP_MIN_SECONDS = 0.1;
+const SILENCE_STOP_MAX_SECONDS = 10;
+const SILENCE_STOP_STEP_SECONDS = 0.1;
+
+function roundSilenceStopSeconds(value: number): number {
+	return Number((Math.round(value / SILENCE_STOP_STEP_SECONDS) * SILENCE_STOP_STEP_SECONDS).toFixed(1));
+}
+
 // ─────────────────────────── Recording mode sub-controls ───────────────────────────
 
 interface LoopbackControlProps {
@@ -66,21 +77,17 @@ function LoopbackControl({
 	handleLoopbackChange,
 }: LoopbackControlProps): ReactNode {
 	return (
-		<FormControl
+		<SettingField
+			isDefault={currentLoopbackId === "default"}
 			label={t("loopbackDevice")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={currentLoopbackId === "default"}
-					onReset={() => handleLoopbackChange("default")}
-				/>
-			}
 			layout="row"
+			onReset={() => handleLoopbackChange("default")}
 			tooltip={t("loopbackDeviceTooltip")}
 		>
 			<ElevatedSurface className="w-52" inline>
 				<Select onChange={handleLoopbackChange} options={loopbackOpts} value={currentLoopbackId} />
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -96,7 +103,8 @@ interface ManualToggleStopControlProps {
 // fixing the mid-speech cutoff users hit when their voice goes soft.
 function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControlProps): ReactNode {
 	return (
-		<FormControl
+		<SettingField
+			isDefault={enabled === DEFAULT_SETTINGS.general.manualToggleStop}
 			label={t("manualToggleStop")}
 			labelAddon={
 				<Toggle
@@ -105,14 +113,47 @@ function ManualToggleStopControl({ enabled, t, update }: ManualToggleStopControl
 					onCheckedChange={(v) => update({ manualToggleStop: v })}
 				/>
 			}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={enabled === DEFAULT_SETTINGS.general.manualToggleStop}
-					onReset={() => update({ manualToggleStop: DEFAULT_SETTINGS.general.manualToggleStop })}
-				/>
-			}
+			onReset={() => update({ manualToggleStop: DEFAULT_SETTINGS.general.manualToggleStop })}
 			tooltip={t("manualToggleStopTooltip")}
 		/>
+	);
+}
+
+interface ToggleSilenceStopControlProps {
+	audio: AudioSettings | undefined;
+	t: AudioT;
+	update: UpdateAudioFn;
+}
+
+function ToggleSilenceStopControl({
+	audio,
+	t,
+	update,
+}: ToggleSilenceStopControlProps): ReactNode {
+	const value = audio?.postSpeechSilenceDuration ?? DEFAULT_SETTINGS.audio.postSpeechSilenceDuration;
+	return (
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.audio.postSpeechSilenceDuration}
+			label={t("postSpeechSilence")}
+			onReset={() =>
+				update({
+					postSpeechSilenceDuration: DEFAULT_SETTINGS.audio.postSpeechSilenceDuration,
+				})
+			}
+			tooltip={t("postSpeechSilenceTooltip")}
+		>
+			<ElevatedSurface inline>
+				<Slider
+					aria-label={t("postSpeechSilence")}
+					formatValue={(v) => `${v.toFixed(1)}s`}
+					max={SILENCE_STOP_MAX_SECONDS}
+					min={SILENCE_STOP_MIN_SECONDS}
+					onChange={(v) => update({ postSpeechSilenceDuration: roundSilenceStopSeconds(v) })}
+					step={SILENCE_STOP_STEP_SECONDS}
+					value={value}
+				/>
+			</ElevatedSurface>
+		</SettingField>
 	);
 }
 
@@ -125,15 +166,11 @@ interface WakeWordControlProps {
 function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode {
 	const groups = buildWakeWordGroups();
 	return (
-		<FormControl
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.general.wakeWord}
 			label={t("wakeWord")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={value === DEFAULT_SETTINGS.general.wakeWord}
-					onReset={() => update({ wakeWord: DEFAULT_SETTINGS.general.wakeWord })}
-				/>
-			}
 			layout="row"
+			onReset={() => update({ wakeWord: DEFAULT_SETTINGS.general.wakeWord })}
 			tooltip={t("wakeWordTooltip")}
 		>
 			<ElevatedSurface className="w-52" inline>
@@ -144,7 +181,7 @@ function WakeWordControl({ t, value, update }: WakeWordControlProps): ReactNode 
 					value={value}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -160,16 +197,10 @@ function WakeWordSensitivityControl({
 	update,
 }: WakeWordSensitivityControlProps): ReactNode {
 	return (
-		<FormControl
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.general.wakeWordSensitivity}
 			label={t("wakeWordSensitivity")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={value === DEFAULT_SETTINGS.general.wakeWordSensitivity}
-					onReset={() =>
-						update({ wakeWordSensitivity: DEFAULT_SETTINGS.general.wakeWordSensitivity })
-					}
-				/>
-			}
+			onReset={() => update({ wakeWordSensitivity: DEFAULT_SETTINGS.general.wakeWordSensitivity })}
 			tooltip={t("wakeWordSensitivityTooltip")}
 		>
 			<ElevatedSurface inline>
@@ -183,7 +214,7 @@ function WakeWordSensitivityControl({
 					value={sensitivityToIndex(value)}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
@@ -195,14 +226,10 @@ interface WakeWordTimeoutControlProps {
 
 function WakeWordTimeoutControl({ t, value, update }: WakeWordTimeoutControlProps): ReactNode {
 	return (
-		<FormControl
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.general.wakeWordTimeout}
 			label={t("wakeWordTimeout")}
-			labelTrailing={
-				<SettingResetButton
-					isDefault={value === DEFAULT_SETTINGS.general.wakeWordTimeout}
-					onReset={() => update({ wakeWordTimeout: DEFAULT_SETTINGS.general.wakeWordTimeout })}
-				/>
-			}
+			onReset={() => update({ wakeWordTimeout: DEFAULT_SETTINGS.general.wakeWordTimeout })}
 			tooltip={t("wakeWordTimeoutTooltip")}
 		>
 			<ElevatedSurface inline>
@@ -216,18 +243,21 @@ function WakeWordTimeoutControl({ t, value, update }: WakeWordTimeoutControlProp
 					value={value}
 				/>
 			</ElevatedSurface>
-		</FormControl>
+		</SettingField>
 	);
 }
 
 interface RecordingModeSectionProps {
+	audio: AudioSettings | undefined;
 	currentLoopbackId: string;
 	general: GeneralSettings | undefined;
 	handleLoopbackChange: (value: string) => void;
 	loopbackOpts: SelectOption[];
 	recordingMode: "ptt" | "toggle" | "listen" | "wakeword";
+	ta: AudioT;
 	t: GeneralT;
 	update: UpdateGeneralFn;
+	updateAudio: UpdateAudioFn;
 }
 
 // Recording mode is the hero control: the four-way switcher that decides how a
@@ -236,29 +266,27 @@ interface RecordingModeSectionProps {
 // Sensitivity + Follow-up timeout for Wake Word). Diarization, mute-system-audio
 // and the recording-sound chime moved to Model/Output tabs respectively.
 function RecordingModeSection({
+	audio,
 	t,
+	ta,
 	general,
 	recordingMode,
 	update,
+	updateAudio,
 	loopbackOpts,
 	currentLoopbackId,
 	handleLoopbackChange,
 }: RecordingModeSectionProps): ReactNode {
 	const recordingModeOptions = buildRecordingModeOptions(t);
+	const manualToggleStop = general?.manualToggleStop ?? false;
 	return (
-		<SettingSection icon={Mic01Icon} title={t("recording")}>
+		<SettingSection icon={RecordIcon} title={t("recording")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
+				<SettingField
+					isDefault={recordingMode === DEFAULT_SETTINGS.general.recordingMode}
 					label={t("recordingMode")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={recordingMode === DEFAULT_SETTINGS.general.recordingMode}
-							onReset={() =>
-								update(
-									recordingModePatch(DEFAULT_SETTINGS.general.recordingMode, general?.wakeWord)
-								)
-							}
-						/>
+					onReset={() =>
+						update(recordingModePatch(DEFAULT_SETTINGS.general.recordingMode, general?.wakeWord))
 					}
 					tooltip={t("recordingModeTooltip")}
 				>
@@ -273,13 +301,14 @@ function RecordingModeSection({
 							value={recordingMode}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 				{recordingMode === "toggle" ? (
-					<ManualToggleStopControl
-						enabled={general?.manualToggleStop ?? false}
-						t={t}
-						update={update}
-					/>
+					<>
+						<ManualToggleStopControl enabled={manualToggleStop} t={t} update={update} />
+						{!manualToggleStop ? (
+							<ToggleSilenceStopControl audio={audio} t={ta} update={updateAudio} />
+						) : null}
+					</>
 				) : null}
 				{recordingMode === "listen" ? (
 					<LoopbackControl
@@ -317,47 +346,44 @@ interface InputDeviceSectionProps {
 // device (above) is captured instead of a microphone.
 function InputDeviceSection({ audio, t, update }: InputDeviceSectionProps): ReactNode {
 	const { devices, defaultDevice } = useInputDevices();
-	const deviceOptions: SelectOption[] = (() => {
-		const defaultLabel = defaultDevice
-			? `${t("systemDefault")} (${defaultDevice.name})`
-			: t("systemDefault");
-		const opts: SelectOption[] = [{ id: "default", label: defaultLabel, icon: ComputerIcon }];
-		for (const d of devices) {
-			opts.push({ id: String(d.index), label: d.name, icon: Mic01Icon });
-		}
-		return opts;
-	})();
+	const defaultLabel = defaultDevice
+		? `${t("systemDefault")} (${defaultDevice.name})`
+		: t("systemDefault");
+	const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
+		devices,
+		audio?.inputDeviceIndex ?? null,
+		defaultLabel,
+		defaultDevice?.name
+	);
 
 	// Clamshell picker shares the device list but uses a "disabled" sentinel
 	// instead of "default" — null = feature off (don't poll), whereas a
 	// configured index = mic to swap to when the lid closes.
+	const { deviceOptions: clamshellDeviceOptions } = buildInputDeviceOptions(
+		devices,
+		audio?.clamshellMicrophone ?? null,
+		defaultLabel,
+		defaultDevice?.name
+	);
 	const clamshellOptions: SelectOption[] = (() => {
 		const opts: SelectOption[] = [
 			{ id: "disabled", label: t("clamshellDisabled"), icon: MicOff01Icon },
 		];
-		for (const d of devices) {
-			opts.push({ id: String(d.index), label: d.name, icon: Mic01Icon });
-		}
+		opts.push(...clamshellDeviceOptions.filter((o) => o.id !== "default"));
 		return opts;
 	})();
 
-	const currentDeviceId =
-		audio?.inputDeviceIndex == null ? "default" : String(audio.inputDeviceIndex);
 	const currentClamshellId =
 		audio?.clamshellMicrophone == null ? "disabled" : String(audio.clamshellMicrophone);
 
 	return (
-		<SettingSection icon={Mic01Icon} title={t("inputDevice")}>
+		<SettingSection icon={Mic02Icon} title={t("inputDevice")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
+				<SettingField
+					isDefault={currentDeviceId === "default"}
 					label={t("device")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={currentDeviceId === "default"}
-							onReset={() => update({ inputDeviceIndex: null })}
-						/>
-					}
 					layout="row"
+					onReset={() => update({ inputDeviceIndex: null })}
 					tooltip={t("deviceTooltip")}
 				>
 					<ElevatedSurface className="w-52" inline>
@@ -371,20 +397,16 @@ function InputDeviceSection({ audio, t, update }: InputDeviceSectionProps): Reac
 							value={currentDeviceId}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 				{/* Clamshell mic — auto-swap when the laptop lid closes. The
-				    polling detector lives in the Electron main process; the
+				    polling detector lives in the reference main process; the
 				    setting persists across launches. macOS + Linux supported;
 				    Windows is a documented v1.1 deferral. */}
-				<FormControl
+				<SettingField
+					isDefault={currentClamshellId === "disabled"}
 					label={t("clamshellLabel")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={currentClamshellId === "disabled"}
-							onReset={() => update({ clamshellMicrophone: null })}
-						/>
-					}
 					layout="row"
+					onReset={() => update({ clamshellMicrophone: null })}
 					tooltip={t("clamshellTooltip")}
 				>
 					<ElevatedSurface className="w-52" inline>
@@ -398,7 +420,7 @@ function InputDeviceSection({ audio, t, update }: InputDeviceSectionProps): Reac
 							value={currentClamshellId}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 			</div>
 		</SettingSection>
 	);
@@ -424,19 +446,13 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 			toggled={audio?.sileroDeactivityDetection ?? true}
 		>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
-					label={ta("sileroSensitivity")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(audio?.sileroSensitivity ?? DEFAULT_SETTINGS.audio.sileroSensitivity) ===
-								DEFAULT_SETTINGS.audio.sileroSensitivity
-							}
-							onReset={() =>
-								updateAudio({ sileroSensitivity: DEFAULT_SETTINGS.audio.sileroSensitivity })
-							}
-						/>
+				<SettingField
+					isDefault={
+						(audio?.sileroSensitivity ?? DEFAULT_SETTINGS.audio.sileroSensitivity) ===
+						DEFAULT_SETTINGS.audio.sileroSensitivity
 					}
+					label={ta("sileroSensitivity")}
+					onReset={() => updateAudio({ sileroSensitivity: DEFAULT_SETTINGS.audio.sileroSensitivity })}
 					tooltip={ta("sileroSensitivityTooltip")}
 				>
 					<ElevatedSurface inline>
@@ -450,20 +466,14 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 							value={audio?.sileroSensitivity ?? DEFAULT_SETTINGS.audio.sileroSensitivity}
 						/>
 					</ElevatedSurface>
-				</FormControl>
-				<FormControl
-					label={ta("webrtcSensitivity")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(audio?.webrtcSensitivity ?? DEFAULT_SETTINGS.audio.webrtcSensitivity) ===
-								DEFAULT_SETTINGS.audio.webrtcSensitivity
-							}
-							onReset={() =>
-								updateAudio({ webrtcSensitivity: DEFAULT_SETTINGS.audio.webrtcSensitivity })
-							}
-						/>
+				</SettingField>
+				<SettingField
+					isDefault={
+						(audio?.webrtcSensitivity ?? DEFAULT_SETTINGS.audio.webrtcSensitivity) ===
+						DEFAULT_SETTINGS.audio.webrtcSensitivity
 					}
+					label={ta("webrtcSensitivity")}
+					onReset={() => updateAudio({ webrtcSensitivity: DEFAULT_SETTINGS.audio.webrtcSensitivity })}
 					tooltip={ta("webrtcSensitivityTooltip")}
 				>
 					<ElevatedSurface inline>
@@ -476,24 +486,20 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 							value={audio?.webrtcSensitivity ?? DEFAULT_SETTINGS.audio.webrtcSensitivity}
 						/>
 					</ElevatedSurface>
-				</FormControl>
-				<FormControl
-					label={ta("postSpeechSilence")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(audio?.postSpeechSilenceDuration ??
-									DEFAULT_SETTINGS.audio.postSpeechSilenceDuration) ===
-								DEFAULT_SETTINGS.audio.postSpeechSilenceDuration
-							}
-							onReset={() =>
-								updateAudio({
-									postSpeechSilenceDuration: DEFAULT_SETTINGS.audio.postSpeechSilenceDuration,
-								})
-							}
-						/>
+				</SettingField>
+				<SettingField
+					isDefault={
+						(audio?.postSpeechSilenceDuration ??
+							DEFAULT_SETTINGS.audio.postSpeechSilenceDuration) ===
+						DEFAULT_SETTINGS.audio.postSpeechSilenceDuration
 					}
+					label={ta("postSpeechSilence")}
 					layout="row"
+					onReset={() =>
+						updateAudio({
+							postSpeechSilenceDuration: DEFAULT_SETTINGS.audio.postSpeechSilenceDuration,
+						})
+					}
 					tooltip={ta("postSpeechSilenceTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -506,7 +512,7 @@ function VadSection({ audio, ta, updateAudio }: VadSectionProps) {
 							}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 			</div>
 		</SettingSection>
 	);
@@ -522,47 +528,39 @@ interface SmartEndpointSectionProps {
 function SmartEndpointSection({ q, t, update, onToggle }: SmartEndpointSectionProps) {
 	const enabled = q?.smartEndpoint ?? false;
 	return (
-		<SettingSection icon={SparklesIcon} title={t("smartEndpoint")}>
+		<SettingSection icon={Radar02Icon} title={t("smartEndpoint")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
+				<SettingField
+					isDefault={enabled === DEFAULT_SETTINGS.quality.smartEndpoint}
 					label={t("smartEndpointLabel")}
 					labelAddon={<Toggle checked={enabled} onCheckedChange={onToggle} />}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={enabled === DEFAULT_SETTINGS.quality.smartEndpoint}
-							onReset={() => onToggle(DEFAULT_SETTINGS.quality.smartEndpoint)}
-						/>
-					}
+					onReset={() => onToggle(DEFAULT_SETTINGS.quality.smartEndpoint)}
 					tooltip={t("smartEndpointTooltip")}
 				/>
-				{enabled && (
-					<FormControl
-						label={t("detectionSpeed")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={
-									(q?.smartEndpointSpeed ?? DEFAULT_SETTINGS.quality.smartEndpointSpeed) ===
-									DEFAULT_SETTINGS.quality.smartEndpointSpeed
-								}
-								onReset={() =>
-									update({ smartEndpointSpeed: DEFAULT_SETTINGS.quality.smartEndpointSpeed })
-								}
-							/>
-						}
-						layout="row"
-						tooltip={t("detectionSpeedTooltip")}
-					>
-						<ElevatedSurface className="w-fit" inline>
-							<NumberStepper
-								max={3.0}
-								min={0.5}
-								onChange={(v) => update({ smartEndpointSpeed: v })}
-								step={0.1}
-								value={q?.smartEndpointSpeed ?? DEFAULT_SETTINGS.quality.smartEndpointSpeed}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-				)}
+				{/* Detection speed depends on Smart Endpoint being on — shown
+				    disabled (not hidden) when off so the option stays discoverable. */}
+				<SettingField
+					disabled={!enabled}
+					disabledReason={t("smartEndpoint")}
+					isDefault={
+						(q?.smartEndpointSpeed ?? DEFAULT_SETTINGS.quality.smartEndpointSpeed) ===
+						DEFAULT_SETTINGS.quality.smartEndpointSpeed
+					}
+					label={t("detectionSpeed")}
+					layout="row"
+					onReset={() => update({ smartEndpointSpeed: DEFAULT_SETTINGS.quality.smartEndpointSpeed })}
+					tooltip={t("detectionSpeedTooltip")}
+				>
+					<ElevatedSurface className="w-fit" inline>
+						<NumberStepper
+							max={3.0}
+							min={0.5}
+							onChange={(v) => update({ smartEndpointSpeed: v })}
+							step={0.1}
+							value={q?.smartEndpointSpeed ?? DEFAULT_SETTINGS.quality.smartEndpointSpeed}
+						/>
+					</ElevatedSurface>
+				</SettingField>
 			</div>
 		</SettingSection>
 	);
@@ -579,25 +577,21 @@ interface SentencePauseSectionProps {
 // are the manual alternative to it.
 function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 	return (
-		<SettingSection icon={SparklesIcon} title={t("sentencePauses")}>
+		<SettingSection icon={PauseCircleIcon} title={t("sentencePauses")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
-					label={t("endOfSentencePause")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(q?.endOfSentenceDetectionPause ??
-									DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause) ===
-								DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause
-							}
-							onReset={() =>
-								update({
-									endOfSentenceDetectionPause: DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause,
-								})
-							}
-						/>
+				<SettingField
+					isDefault={
+						(q?.endOfSentenceDetectionPause ??
+							DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause) ===
+						DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause
 					}
+					label={t("endOfSentencePause")}
 					layout="row"
+					onReset={() =>
+						update({
+							endOfSentenceDetectionPause: DEFAULT_SETTINGS.quality.endOfSentenceDetectionPause,
+						})
+					}
 					tooltip={t("endOfSentencePauseTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -612,25 +606,20 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 							}
 						/>
 					</ElevatedSurface>
-				</FormControl>
-				<FormControl
-					label={t("unknownSentencePause")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(q?.unknownSentenceDetectionPause ??
-									DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause) ===
-								DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause
-							}
-							onReset={() =>
-								update({
-									unknownSentenceDetectionPause:
-										DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause,
-								})
-							}
-						/>
+				</SettingField>
+				<SettingField
+					isDefault={
+						(q?.unknownSentenceDetectionPause ??
+							DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause) ===
+						DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause
 					}
+					label={t("unknownSentencePause")}
 					layout="row"
+					onReset={() =>
+						update({
+							unknownSentenceDetectionPause: DEFAULT_SETTINGS.quality.unknownSentenceDetectionPause,
+						})
+					}
 					tooltip={t("unknownSentencePauseTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -645,24 +634,20 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 							}
 						/>
 					</ElevatedSurface>
-				</FormControl>
-				<FormControl
-					label={t("midSentencePause")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={
-								(q?.midSentenceDetectionPause ??
-									DEFAULT_SETTINGS.quality.midSentenceDetectionPause) ===
-								DEFAULT_SETTINGS.quality.midSentenceDetectionPause
-							}
-							onReset={() =>
-								update({
-									midSentenceDetectionPause: DEFAULT_SETTINGS.quality.midSentenceDetectionPause,
-								})
-							}
-						/>
+				</SettingField>
+				<SettingField
+					isDefault={
+						(q?.midSentenceDetectionPause ??
+							DEFAULT_SETTINGS.quality.midSentenceDetectionPause) ===
+						DEFAULT_SETTINGS.quality.midSentenceDetectionPause
 					}
+					label={t("midSentencePause")}
 					layout="row"
+					onReset={() =>
+						update({
+							midSentenceDetectionPause: DEFAULT_SETTINGS.quality.midSentenceDetectionPause,
+						})
+					}
 					tooltip={t("midSentencePauseTooltip")}
 				>
 					<ElevatedSurface className="w-fit" inline>
@@ -676,7 +661,7 @@ function SentencePauseSection({ q, t, update }: SentencePauseSectionProps) {
 							}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 			</div>
 		</SettingSection>
 	);
@@ -699,23 +684,17 @@ function AdvancedSection({ audio, t, update }: AdvancedSectionProps): ReactNode 
 		{ id: "always", label: t("microphoneReleaseAlways"), icon: InfinityIcon },
 		{ id: "immediate", label: t("microphoneReleaseImmediate"), icon: FlashIcon },
 		{ id: "sec30", label: t("microphoneReleaseSec30"), icon: Clock01Icon },
-		{ id: "min1", label: t("microphoneReleaseMin1"), icon: Clock01Icon },
-		{ id: "min5", label: t("microphoneReleaseMin5"), icon: Clock01Icon },
+		{ id: "min1", label: t("microphoneReleaseMin1"), icon: Timer01Icon },
+		{ id: "min5", label: t("microphoneReleaseMin5"), icon: HourglassIcon },
 	];
 	return (
-		<SettingSection icon={DashboardCircleIcon} title={t("advancedTitle")}>
+		<SettingSection icon={SlidersHorizontalIcon} title={t("advancedTitle")}>
 			<div className="flex flex-col divide-y divide-surface-1">
-				<FormControl
+				<SettingField
+					isDefault={microphoneRelease === DEFAULT_SETTINGS.audio.microphoneRelease}
 					label={t("microphoneRelease")}
-					labelTrailing={
-						<SettingResetButton
-							isDefault={microphoneRelease === DEFAULT_SETTINGS.audio.microphoneRelease}
-							onReset={() =>
-								update({ microphoneRelease: DEFAULT_SETTINGS.audio.microphoneRelease })
-							}
-						/>
-					}
 					layout="row"
+					onReset={() => update({ microphoneRelease: DEFAULT_SETTINGS.audio.microphoneRelease })}
 					tooltip={t("microphoneReleaseTooltip")}
 				>
 					<ElevatedSurface className="w-52" inline>
@@ -729,7 +708,7 @@ function AdvancedSection({ audio, t, update }: AdvancedSectionProps): ReactNode 
 							value={microphoneRelease}
 						/>
 					</ElevatedSurface>
-				</FormControl>
+				</SettingField>
 			</div>
 		</SettingSection>
 	);
@@ -785,13 +764,16 @@ export function RecordingSettingsPanel() {
 	return (
 		<div className="flex flex-col gap-2">
 			<RecordingModeSection
+				audio={audio}
 				currentLoopbackId={currentLoopbackId}
 				general={general}
 				handleLoopbackChange={handleLoopbackChange}
 				loopbackOpts={loopbackOpts}
 				recordingMode={recordingMode}
+				ta={ta}
 				t={t}
 				update={updateGeneral}
+				updateAudio={updateAudio}
 			/>
 
 			{/* ── Input Device (hidden in Listen mode — loopback device is used instead) */}

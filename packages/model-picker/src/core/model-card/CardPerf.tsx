@@ -16,7 +16,7 @@ interface PerfBarsProps {
  * rather than a neon rainbow. Higher is better, so a fast-but-sloppy model
  * shows a sage speed bar over a rose accuracy bar at a glance.
  */
-export function scoreColor(score: number): string {
+function scoreColor(score: number): string {
 	const t = Math.max(0, Math.min(1, score));
 	const mix = (a: number, b: number, k: number): number => Math.round(a + (b - a) * k);
 	if (t < 0.5) {
@@ -40,7 +40,7 @@ interface PerfBarProps {
  * muted-coloured fill bar, and the percentage echoed in the bar's own colour.
  * Uses horizontal space instead of stacking another full-width row.
  */
-export function PerfBar({ icon, label, score }: PerfBarProps) {
+function PerfBar({ icon, label, score }: PerfBarProps) {
 	const pct = Math.round(score * 100);
 	const color = scoreColor(score);
 	return (

@@ -1,14 +1,98 @@
 use crate::audio_toolkit::{list_input_devices, vad::SmoothedVad, AudioRecorder, SileroVad};
 use crate::helpers::clamshell;
 use crate::settings::{get_settings, AppSettings};
-use crate::utils;
+use crate::winstt::commands::settings::read_settings_raw;
+use crate::winstt::settings_schema::{RecordingMode, WinsttSettings};
 use log::{debug, error, info};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const TOGGLE_SILENCE_STOP_MIN_SECONDS: f64 = 0.1;
+const TOGGLE_SILENCE_STOP_MAX_SECONDS: f64 = 10.0;
+const TOGGLE_SILENCE_STOP_DEFAULT_SECONDS: f64 = 0.7;
+const TOGGLE_SILENCE_STOP_BINDING: &str = "transcribe";
+
+pub(crate) fn silence_auto_stop_delay(settings: &WinsttSettings) -> Option<Duration> {
+    match settings.general.recording_mode {
+        RecordingMode::Toggle if settings.general.manual_toggle_stop => return None,
+        RecordingMode::Toggle | RecordingMode::Wakeword => {}
+        _ => return None,
+    }
+
+    let raw_seconds = settings.audio.post_speech_silence_duration;
+    let seconds = if raw_seconds.is_finite() {
+        raw_seconds
+    } else {
+        TOGGLE_SILENCE_STOP_DEFAULT_SECONDS
+    }
+    .clamp(
+        TOGGLE_SILENCE_STOP_MIN_SECONDS,
+        TOGGLE_SILENCE_STOP_MAX_SECONDS,
+    );
+
+    Some(Duration::from_millis((seconds * 1000.0).round() as u64))
+}
+
+fn schedule_toggle_silence_stop(
+    app_handle: &tauri::AppHandle,
+    speech_generation: Arc<AtomicU64>,
+    speech_token: u64,
+) {
+    let settings = read_settings_raw(app_handle);
+    let Some(delay) = silence_auto_stop_delay(&settings) else {
+        return;
+    };
+    let Some(audio) = app_handle.try_state::<Arc<AudioRecordingManager>>() else {
+        return;
+    };
+    if !audio.is_recording() {
+        return;
+    }
+    let recording_generation = audio.recording_generation();
+    let app = app_handle.clone();
+
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        if speech_generation.load(Ordering::SeqCst) != speech_token {
+            return;
+        }
+
+        let settings = read_settings_raw(&app);
+        if silence_auto_stop_delay(&settings).is_none() {
+            return;
+        }
+
+        let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
+            return;
+        };
+        if !audio.is_recording() || audio.recording_generation() != recording_generation {
+            return;
+        }
+
+        if let Some(coordinator) = app.try_state::<crate::TranscriptionCoordinator>() {
+            coordinator.request_silence_stop(TOGGLE_SILENCE_STOP_BINDING, recording_generation);
+        }
+    });
+}
+
+/// Lock a recorder mutex, RECOVERING the inner value if a previous panic poisoned it.
+///
+/// This is the fix for the "PTT hotkey dies and only an app restart brings it back" bug. The
+/// recording path holds these mutexes across calls into cpal (`open`/`start`/`stop`) on
+/// real-world flaky inputs — a Bluetooth headset whose mic vanishes when it drops to A2DP, a
+/// virtual "WO Mic"/loopback endpoint, a device yanked mid-recording. If any of those faults
+/// *panics* while a lock is held, plain `.lock().unwrap()` would poison the mutex and EVERY
+/// later lock would itself panic: the recorder could never return to `Idle`, and the panic
+/// propagating up the coordinator thread killed the dispatch loop — so the hotkey silently
+/// stopped recording until restart. Recovering the poisoned value turns that permanent wedge
+/// into a recoverable transient (the next press retries). Mirrors the same discipline the
+/// transcription manager already applies to its engine/loading locks.
+fn lock_recover<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn set_mute(mute: bool) {
     // Expected behavior:
@@ -120,6 +204,7 @@ pub enum MicrophoneMode {
 fn create_audio_recorder(
     vad_path: &str,
     app_handle: &tauri::AppHandle,
+    speech_seen: Arc<AtomicBool>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let silero = SileroVad::new(vad_path, 0.3)
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
@@ -133,24 +218,31 @@ fn create_audio_recorder(
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
-                // Handy-native multiband spectrum for the recording overlay's
-                // bar renderer (mic-level event, Vec<f32>).
-                utils::emit_levels(&app_handle, &levels);
                 // WinSTT scalar level for the reused renderer's audio visualizer.
                 // useVisualizerSync (onAudioLevel) reads `{ level: number }` (a
                 // single 0..1 RMS-ish amplitude) and feeds the rAF bar loop. The
                 // multiband callback gives a per-band magnitude vector; collapse it
                 // to one representative level via peak-across-bands so the bars
                 // react to the loudest band (what the eye tracks). Clamped to 0..1.
-                let level = levels.iter().copied().fold(0.0_f32, f32::max).clamp(0.0, 1.0);
+                let level = levels
+                    .iter()
+                    .copied()
+                    .fold(0.0_f32, f32::max)
+                    .clamp(0.0, 1.0);
                 crate::winstt::commands::dictation::SttEvents::audio_level(&app_handle, level);
                 // DIAGNOSTIC: log the peak level ~once/sec so we can see whether the
                 // mic is actually delivering audio (a silent/virtual default device
                 // reads ~0.00 here → flat visualizer). Callback fires ~94 Hz.
                 {
                     static LEVEL_LOG_TICK: AtomicU64 = AtomicU64::new(0);
-                    if LEVEL_LOG_TICK.fetch_add(1, Ordering::Relaxed) % 90 == 0 {
-                        log::info!("[audio] mic peak level = {level:.3} ({} bands)", levels.len());
+                    if LEVEL_LOG_TICK
+                        .fetch_add(1, Ordering::Relaxed)
+                        .is_multiple_of(90)
+                    {
+                        log::debug!(
+                            "[audio] mic peak level = {level:.3} ({} bands)",
+                            levels.len()
+                        );
                     }
                 }
             }
@@ -165,6 +257,29 @@ fn create_audio_recorder(
                     .try_state::<std::sync::Arc<crate::winstt::managers::WakeWordManager>>()
                 {
                     let _ = wm.feed_chunk(frame);
+                }
+            }
+        })
+        .with_speech_callback({
+            // Surface the recorder's REAL smoothed-Silero VAD as stt:vad-start /
+            // stt:vad-stop so the renderer's `isSpeaking` tracks actual speech onset
+            // (~one onset window after the user starts talking) instead of being faked
+            // from the recording window. Drives the overlay-pill reveal + breathing glow.
+            let app_handle = app_handle.clone();
+            let speech_generation = Arc::new(AtomicU64::new(0));
+            let speech_seen = Arc::clone(&speech_seen);
+            move |speaking: bool| {
+                let speech_token = speech_generation.fetch_add(1, Ordering::SeqCst) + 1;
+                if speaking {
+                    speech_seen.store(true, Ordering::SeqCst);
+                    crate::winstt::commands::dictation::SttEvents::vad_start(&app_handle);
+                } else {
+                    crate::winstt::commands::dictation::SttEvents::vad_stop(&app_handle);
+                    schedule_toggle_silence_stop(
+                        &app_handle,
+                        Arc::clone(&speech_generation),
+                        speech_token,
+                    );
                 }
             }
         });
@@ -185,6 +300,13 @@ pub struct AudioRecordingManager {
     is_recording: Arc<Mutex<bool>>,
     did_mute: Arc<Mutex<bool>>,
     close_generation: Arc<AtomicU64>,
+    speech_seen: Arc<AtomicBool>,
+    /// Monotonic counter bumped on every successful `try_start_recording`. The
+    /// realtime worker keys its per-recording reset + emit guard on this so a
+    /// quick press→release→press (where it never observes the idle gap between
+    /// the two recordings) still starts the new utterance with a clean watermark
+    /// and never emits the previous one's in-flight realtime text.
+    recording_generation: Arc<AtomicU64>,
 }
 
 impl AudioRecordingManager {
@@ -208,6 +330,8 @@ impl AudioRecordingManager {
             is_recording: Arc::new(Mutex::new(false)),
             did_mute: Arc::new(Mutex::new(false)),
             close_generation: Arc::new(AtomicU64::new(0)),
+            speech_seen: Arc::new(AtomicBool::new(false)),
+            recording_generation: Arc::new(AtomicU64::new(0)),
         };
 
         // Always-on?  Open immediately.
@@ -292,7 +416,9 @@ impl AudioRecordingManager {
                         .or_else(|| devices.iter().position(|d| d.is_default))
                         .or_else(|| (!devices.is_empty()).then_some(0usize))
                 };
-                chosen.and_then(|i| devices.into_iter().nth(i)).map(|d| d.device)
+                chosen
+                    .and_then(|i| devices.into_iter().nth(i))
+                    .map(|d| d.device)
             }
             Err(e) => {
                 debug!("Failed to list devices, using default: {}", e);
@@ -310,9 +436,10 @@ impl AudioRecordingManager {
             // Hold state lock across the check AND close to serialize against
             // try_start_recording, preventing a race where the stream is closed
             // under an active recording.
-            let state = rm.state.lock().unwrap();
+            let state = lock_recover(&rm.state);
             if rm.close_generation.load(Ordering::SeqCst) == gen
                 && matches!(*state, RecordingState::Idle)
+                && !rm.wakeword_mode_active()
             {
                 // stop_microphone_stream does not acquire the state lock,
                 // so holding it here is safe (no deadlock).
@@ -330,9 +457,9 @@ impl AudioRecordingManager {
     /// Applies mute if mute_while_recording is enabled and stream is open
     pub fn apply_mute(&self) {
         let settings = get_settings(&self.app_handle);
-        let mut did_mute_guard = self.did_mute.lock().unwrap();
+        let mut did_mute_guard = lock_recover(&self.did_mute);
 
-        if settings.mute_while_recording && *self.is_open.lock().unwrap() {
+        if settings.mute_while_recording && *lock_recover(&self.is_open) {
             set_mute(true);
             *did_mute_guard = true;
             debug!("Mute applied");
@@ -341,7 +468,7 @@ impl AudioRecordingManager {
 
     /// Removes mute if it was applied
     pub fn remove_mute(&self) {
-        let mut did_mute_guard = self.did_mute.lock().unwrap();
+        let mut did_mute_guard = lock_recover(&self.did_mute);
         if *did_mute_guard {
             set_mute(false);
             *did_mute_guard = false;
@@ -350,7 +477,7 @@ impl AudioRecordingManager {
     }
 
     pub fn preload_vad(&self) -> Result<(), anyhow::Error> {
-        let mut recorder_opt = self.recorder.lock().unwrap();
+        let mut recorder_opt = lock_recover(&self.recorder);
         if recorder_opt.is_none() {
             let vad_path = self
                 .app_handle
@@ -360,16 +487,39 @@ impl AudioRecordingManager {
                     tauri::path::BaseDirectory::Resource,
                 )
                 .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {}", e))?;
+            let vad_str = vad_path.to_str().ok_or_else(|| {
+                anyhow::anyhow!("VAD path is not valid UTF-8: {}", vad_path.display())
+            })?;
             *recorder_opt = Some(create_audio_recorder(
-                vad_path.to_str().unwrap(),
+                vad_str,
                 &self.app_handle,
+                Arc::clone(&self.speech_seen),
             )?);
         }
         Ok(())
     }
 
+    fn wakeword_mode_active(&self) -> bool {
+        read_settings_raw(&self.app_handle).general.recording_mode == RecordingMode::Wakeword
+    }
+
+    pub fn ensure_wakeword_listening_stream(&self) -> Result<(), anyhow::Error> {
+        self.close_generation.fetch_add(1, Ordering::SeqCst);
+        self.start_microphone_stream()
+    }
+
+    pub fn stop_wakeword_listening_stream_if_idle(&self) {
+        if self.is_recording() {
+            return;
+        }
+        if matches!(*lock_recover(&self.mode), MicrophoneMode::OnDemand) {
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+            self.stop_microphone_stream();
+        }
+    }
+
     pub fn start_microphone_stream(&self) -> Result<(), anyhow::Error> {
-        let mut open_flag = self.is_open.lock().unwrap();
+        let mut open_flag = lock_recover(&self.is_open);
         if *open_flag {
             debug!("Microphone stream already active");
             return Ok(());
@@ -378,7 +528,7 @@ impl AudioRecordingManager {
         let start_time = Instant::now();
 
         // Don't mute immediately - caller will handle muting after audio feedback
-        let mut did_mute_guard = self.did_mute.lock().unwrap();
+        let mut did_mute_guard = lock_recover(&self.did_mute);
         *did_mute_guard = false;
 
         // Get the selected device from settings, considering clamshell mode
@@ -400,7 +550,7 @@ impl AudioRecordingManager {
         // Ensure VAD is loaded if it wasn't for whatever reason
         self.preload_vad()?;
 
-        let mut recorder_opt = self.recorder.lock().unwrap();
+        let mut recorder_opt = lock_recover(&self.recorder);
         if let Some(rec) = recorder_opt.as_mut() {
             rec.open(selected_device)
                 .map_err(|e| anyhow::anyhow!("Failed to open recorder: {}", e))?;
@@ -420,22 +570,22 @@ impl AudioRecordingManager {
     }
 
     pub fn stop_microphone_stream(&self) {
-        let mut open_flag = self.is_open.lock().unwrap();
+        let mut open_flag = lock_recover(&self.is_open);
         if !*open_flag {
             return;
         }
 
-        let mut did_mute_guard = self.did_mute.lock().unwrap();
+        let mut did_mute_guard = lock_recover(&self.did_mute);
         if *did_mute_guard {
             set_mute(false);
         }
         *did_mute_guard = false;
 
-        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
+        if let Some(rec) = lock_recover(&self.recorder).as_mut() {
             // If still recording, stop first.
-            if *self.is_recording.lock().unwrap() {
+            if *lock_recover(&self.is_recording) {
                 let _ = rec.stop();
-                *self.is_recording.lock().unwrap() = false;
+                *lock_recover(&self.is_recording) = false;
             }
             let _ = rec.close();
         }
@@ -447,11 +597,13 @@ impl AudioRecordingManager {
     /* ---------- mode switching --------------------------------------------- */
 
     pub fn update_mode(&self, new_mode: MicrophoneMode) -> Result<(), anyhow::Error> {
-        let cur_mode = self.mode.lock().unwrap().clone();
+        let cur_mode = lock_recover(&self.mode).clone();
 
         match (cur_mode, &new_mode) {
             (MicrophoneMode::AlwaysOn, MicrophoneMode::OnDemand) => {
-                if matches!(*self.state.lock().unwrap(), RecordingState::Idle) {
+                if matches!(*lock_recover(&self.state), RecordingState::Idle)
+                    && !self.wakeword_mode_active()
+                {
                     self.close_generation.fetch_add(1, Ordering::SeqCst);
                     self.stop_microphone_stream();
                 }
@@ -463,18 +615,18 @@ impl AudioRecordingManager {
             _ => {}
         }
 
-        *self.mode.lock().unwrap() = new_mode;
+        *lock_recover(&self.mode) = new_mode;
         Ok(())
     }
 
     /* ---------- recording --------------------------------------------------- */
 
     pub fn try_start_recording(&self, binding_id: &str) -> Result<(), String> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock_recover(&self.state);
 
         if let RecordingState::Idle = *state {
             // Ensure microphone is open in on-demand mode
-            if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+            if matches!(*lock_recover(&self.mode), MicrophoneMode::OnDemand) {
                 // Cancel any pending lazy close
                 self.close_generation.fetch_add(1, Ordering::SeqCst);
                 if let Err(e) = self.start_microphone_stream() {
@@ -484,9 +636,14 @@ impl AudioRecordingManager {
                 }
             }
 
-            if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            if let Some(rec) = lock_recover(&self.recorder).as_ref() {
+                self.speech_seen.store(false, Ordering::SeqCst);
                 if rec.start().is_ok() {
-                    *self.is_recording.lock().unwrap() = true;
+                    *lock_recover(&self.is_recording) = true;
+                    // Bump the recording generation so the realtime worker treats
+                    // this as a fresh utterance even when the previous one ended
+                    // moments ago (press→release→press) and it never saw the gap.
+                    self.recording_generation.fetch_add(1, Ordering::SeqCst);
                     *state = RecordingState::Recording {
                         binding_id: binding_id.to_string(),
                     };
@@ -502,7 +659,7 @@ impl AudioRecordingManager {
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
         // If currently open, restart the microphone stream to use the new device
-        if *self.is_open.lock().unwrap() {
+        if *lock_recover(&self.is_open) {
             self.close_generation.fetch_add(1, Ordering::SeqCst);
             self.stop_microphone_stream();
             self.start_microphone_stream()?;
@@ -511,7 +668,7 @@ impl AudioRecordingManager {
     }
 
     pub fn stop_recording(&self, binding_id: &str) -> Option<Vec<f32>> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock_recover(&self.state);
 
         match *state {
             RecordingState::Recording {
@@ -530,7 +687,7 @@ impl AudioRecordingManager {
                     std::thread::sleep(Duration::from_millis(settings.extra_recording_buffer_ms));
                 }
 
-                let samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+                let samples = if let Some(rec) = lock_recover(&self.recorder).as_ref() {
                     match rec.stop() {
                         Ok(buf) => buf,
                         Err(e) => {
@@ -543,10 +700,12 @@ impl AudioRecordingManager {
                     Vec::new()
                 };
 
-                *self.is_recording.lock().unwrap() = false;
+                *lock_recover(&self.is_recording) = false;
 
                 // In on-demand mode, close the mic (lazily if the setting is enabled)
-                if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+                if matches!(*lock_recover(&self.mode), MicrophoneMode::OnDemand)
+                    && !self.wakeword_mode_active()
+                {
                     if get_settings(&self.app_handle).lazy_stream_close {
                         self.schedule_lazy_close();
                     } else {
@@ -569,10 +728,18 @@ impl AudioRecordingManager {
         }
     }
     pub fn is_recording(&self) -> bool {
-        matches!(
-            *self.state.lock().unwrap(),
-            RecordingState::Recording { .. }
-        )
+        matches!(*lock_recover(&self.state), RecordingState::Recording { .. })
+    }
+
+    /// Monotonic recording-start counter (see the field doc). The realtime worker
+    /// reads this once per active tick to detect a new utterance and to guard its
+    /// emit against a decode that belongs to a recording that has since ended.
+    pub fn recording_generation(&self) -> u64 {
+        self.recording_generation.load(Ordering::SeqCst)
+    }
+
+    pub fn speech_seen_since_recording_start(&self) -> bool {
+        self.speech_seen.load(Ordering::SeqCst)
     }
 
     /// Snapshot the in-flight 16 kHz mono recording buffer (a clone of the recorder's live
@@ -606,27 +773,29 @@ impl AudioRecordingManager {
     /// recording based on `effective_realtime` so plain dictation never pays the mirror cost.
     /// No-op when no recorder is open (the gate is re-applied on the next worker tick).
     pub fn set_realtime_enabled(&self, enabled: bool) {
-        if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+        if let Some(rec) = lock_recover(&self.recorder).as_ref() {
             rec.set_realtime_enabled(enabled);
         }
     }
 
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock_recover(&self.state);
 
         if let RecordingState::Recording { .. } = *state {
             *state = RecordingState::Idle;
             drop(state);
 
-            if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            if let Some(rec) = lock_recover(&self.recorder).as_ref() {
                 let _ = rec.stop(); // Discard the result
             }
 
-            *self.is_recording.lock().unwrap() = false;
+            *lock_recover(&self.is_recording) = false;
 
             // In on-demand mode, close the mic (lazily if the setting is enabled)
-            if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
+            if matches!(*lock_recover(&self.mode), MicrophoneMode::OnDemand)
+                && !self.wakeword_mode_active()
+            {
                 if get_settings(&self.app_handle).lazy_stream_close {
                     self.schedule_lazy_close();
                 } else {
@@ -634,5 +803,72 @@ impl AudioRecordingManager {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::winstt::settings_schema::{RecordingMode, WinsttSettings};
+
+    fn settings_with(
+        recording_mode: RecordingMode,
+        manual_toggle_stop: bool,
+        post_speech_silence_duration: f64,
+    ) -> WinsttSettings {
+        let mut settings = WinsttSettings::default();
+        settings.general.recording_mode = recording_mode;
+        settings.general.manual_toggle_stop = manual_toggle_stop;
+        settings.audio.post_speech_silence_duration = post_speech_silence_duration;
+        settings
+    }
+
+    #[test]
+    fn toggle_auto_stop_uses_post_speech_silence_duration() {
+        let settings = settings_with(RecordingMode::Toggle, false, 1.4);
+
+        assert_eq!(
+            silence_auto_stop_delay(&settings),
+            Some(Duration::from_millis(1400))
+        );
+    }
+
+    #[test]
+    fn toggle_manual_stop_disables_silence_auto_stop() {
+        let settings = settings_with(RecordingMode::Toggle, true, 1.4);
+
+        assert_eq!(silence_auto_stop_delay(&settings), None);
+    }
+
+    #[test]
+    fn ptt_does_not_auto_stop_on_silence() {
+        let settings = settings_with(RecordingMode::Ptt, false, 1.4);
+
+        assert_eq!(silence_auto_stop_delay(&settings), None);
+    }
+
+    #[test]
+    fn wakeword_auto_stop_uses_post_speech_silence_duration() {
+        let settings = settings_with(RecordingMode::Wakeword, true, 1.4);
+
+        assert_eq!(
+            silence_auto_stop_delay(&settings),
+            Some(Duration::from_millis(1400))
+        );
+    }
+
+    #[test]
+    fn silence_auto_stop_delay_is_clamped_to_slider_bounds() {
+        let too_low = settings_with(RecordingMode::Toggle, false, -1.0);
+        let too_high = settings_with(RecordingMode::Toggle, false, 99.0);
+
+        assert_eq!(
+            silence_auto_stop_delay(&too_low),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            silence_auto_stop_delay(&too_high),
+            Some(Duration::from_secs(10))
+        );
     }
 }

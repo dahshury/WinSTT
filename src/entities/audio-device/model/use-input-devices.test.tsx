@@ -1,6 +1,41 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, type RenderHookResult, renderHook, waitFor } from "@testing-library/react";
 import { useInputDevices } from "./use-input-devices";
+
+// ── Transport seam #2: the globally-mocked `@tauri-apps/api/core` ──────────────
+//
+// `useInputDevices` fetches via `audioGetDevices()`, which the live ipc-client
+// routes through the typed `commands.getAudioDevices()` (@/bindings). The
+// bindings bottom out in `@tauri-apps/api/core` `invoke(cmd, args)` — NOT in
+// `window.__TAURI_INTERNALS__` directly. `src/shared/api/ipc-client.test.ts`
+// (which runs FIRST in the suite) installs a PROCESS-GLOBAL
+// `mock.module("@tauri-apps/api/core")` whose `invoke` resolves whatever its
+// private `tauriInvokeImpl` returns — left at `() => undefined` once that file
+// finishes. Since `mock.module` never tears down and this file runs SECOND,
+// that leaked core mock makes every `commands.*` call resolve `undefined`,
+// so instrumenting `window.__TAURI_INTERNALS__` alone is invisible here.
+//
+// `mock.module` is "last registration wins", so re-register our own faithful
+// core mock that serves the queued device payload for `get_audio_devices` and
+// delegates everything else to `undefined` — byte-for-byte the same observable
+// behaviour the leaked ipc-client.test.ts mock gives later files, just with the
+// one command this suite needs wired through. This makes the suite correct under
+// BOTH the leaked core mock (full suite) and the real core (run alone). The
+// nativeBridge seam below still covers the leaked-ipc-client-FAKE transport.
+let invokeQueue: unknown[] = [];
+let invokeCalls: string[] = [];
+
+mock.module("@tauri-apps/api/core", () => ({
+	invoke: (cmd: string) => {
+		if (cmd === "get_audio_devices") {
+			invokeCalls.push("get_audio_devices");
+			return Promise.resolve(nextDevicePayload());
+		}
+		return Promise.resolve(undefined);
+	},
+	// `bindings.ts` imports `Channel` too; an unused stub keeps the binding satisfied.
+	Channel: class {},
+}));
 
 // Track every rendered hook so afterEach can UNMOUNT it. The hook installs a
 // `navigator.mediaDevices` listener and a 200 ms devicechange debounce
@@ -52,47 +87,98 @@ function installFakeMediaDevices(): {
 	return { mediaDevices: fake, addedListeners: added };
 }
 
-interface FakeApi {
-	getPathForFile: () => string;
-	invoke: (channel: string) => Promise<unknown>;
-	on: () => () => void;
-	secureInvoke: () => Promise<unknown>;
-	send: () => void;
+// `audioGetDevices()` reaches the hook via one of THREE transports depending on
+// which process-global `mock.module` registrations have leaked in by the time
+// this file runs (bun shares one happy-dom + module registry across files):
+//   1. Run ALONE — real ipc-client + real `@tauri-apps/api/core` →
+//      `window.__TAURI_INTERNALS__.invoke("get_audio_devices")`.
+//   2. Full suite — the leaked `@tauri-apps/api/core` mock from
+//      `ipc-client.test.ts` shadows transport 1 (the bindings call its `invoke`,
+//      not `__TAURI_INTERNALS__`); handled by our OWN core mock above.
+//   3. A leaked `@/shared/api/ipc-client` FAITHFUL FAKE → `audioGetDevices`
+//      routes through `window.nativeBridge.invoke("audio:get-devices")`.
+// We serve the SAME queued device payload from all three and count each into one
+// shared `invokeCalls` recorder (every seam pushes the canonical `GET_DEVICES_CMD`
+// tag so the assertions read identically regardless of file order).
+const GET_DEVICES_CMD = "get_audio_devices";
+const GET_DEVICES_CHANNEL = "audio:get-devices"; // IPC.AUDIO_GET_DEVICES
+
+type TauriInvokeFn = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+
+interface TauriInternals {
+	__TAURI_INTERNALS__: { invoke: TauriInvokeFn };
 }
 
-// Capture the canonical `window.electronAPI` installed by the test preload so
-// afterEach can RESTORE it. Setting it to `undefined` here leaked into every
-// subsequent test file (bun:test shares one happy-dom window across files,
-// with no per-file teardown), breaking victims that route the REAL ipc-client
-// through `window.electronAPI` (detectElectron, StatusBar, OverlayPage, …).
-const originalElectronApi = window.electronAPI;
+// The preload's per-test `afterEach` REPLACES the whole `window.__TAURI_INTERNALS__`
+// object with a fresh one each tick, so a module-level captured reference goes
+// stale after the first test (writes to the stale object are invisible to
+// `@tauri-apps/api/core`, which reads `window.__TAURI_INTERNALS__` live). Always
+// read the LIVE object — and re-stamp our instrumentation in every `beforeEach`
+// onto whatever object is current — so the transport-1 seam is honoured on every
+// test, not just the first.
+function tauriInternals(): TauriInternals["__TAURI_INTERNALS__"] {
+	return (window as unknown as TauriInternals).__TAURI_INTERNALS__;
+}
 
-let invokeQueue: unknown[] = [];
-let invokeCalls: string[] = [];
+function nextDevicePayload(): unknown {
+	// `commands.getAudioDevices()` is infallible (returns the raw array, not a
+	// specta Result) and the leaked fake's `audioGetDevices` falls back to `[]`
+	// via `invokeOrDefault`, so resolve the queued payload directly on both seams.
+	const value = invokeQueue.shift();
+	return value ?? [];
+}
 
-function installFakeElectron(): void {
+function installFakeBridge(): void {
 	invokeQueue = [];
 	invokeCalls = [];
-	const api: FakeApi = {
-		send: () => undefined,
-		invoke: async (channel: string) => {
-			invokeCalls.push(channel);
-			const value = invokeQueue.shift();
-			return value ?? [];
-		},
-		on: () => () => undefined,
-		getPathForFile: () => "",
-		secureInvoke: async () => undefined,
+	// Real-module seam: the typed command bypasses nativeBridge and hits Tauri
+	// internals. Re-stamp onto the LIVE object each beforeEach (the preload swaps
+	// the object out between tests).
+	tauriInternals().invoke = async (cmd: string) => {
+		if (cmd === GET_DEVICES_CMD) {
+			invokeCalls.push(GET_DEVICES_CMD);
+			return nextDevicePayload();
+		}
+		invokeCalls.push(cmd);
+		return undefined;
 	};
-	(window as unknown as { electronAPI: FakeApi }).electronAPI = api;
+	// Leaked-fake seam: the faithful fake routes `audioGetDevices` through
+	// nativeBridge.invoke on the `audio:get-devices` channel.
+	window.nativeBridge = {
+		...window.nativeBridge,
+		invoke: (async (channel: string) => {
+			if (channel === GET_DEVICES_CHANNEL) {
+				invokeCalls.push(GET_DEVICES_CMD);
+				return nextDevicePayload();
+			}
+			return undefined;
+		}) as typeof window.nativeBridge.invoke,
+	};
 }
 
 function queueDevices(devices: Array<{ index: number; name: string; isDefault: boolean }>): void {
 	invokeQueue.push(devices);
 }
 
+function queueDevicesRepeated(
+	devices: Array<{ index: number; name: string; isDefault: boolean }>,
+	times: number
+): void {
+	for (let i = 0; i < times; i++) {
+		queueDevices(devices);
+	}
+}
+
+function replaceQueuedDevicesRepeated(
+	devices: Array<{ index: number; name: string; isDefault: boolean }>,
+	times: number
+): void {
+	invokeQueue = [];
+	queueDevicesRepeated(devices, times);
+}
+
 beforeEach(() => {
-	installFakeElectron();
+	installFakeBridge();
 });
 
 afterEach(async () => {
@@ -105,11 +191,13 @@ afterEach(async () => {
 		act(() => handle.unmount());
 	}
 	// Let any in-flight refresh() promise + the (now-cancelled) debounce
-	// settle before restoring globals, so nothing resolves post-restore.
+	// settle before restoring globals, so nothing resolves post-restore. The
+	// preload's own afterEach re-installs fresh default `__TAURI_INTERNALS__` +
+	// `nativeBridge` objects after this, so we don't manually restore those two
+	// (a captured reference would be stale — the preload swaps the objects out).
 	await act(async () => {
 		await new Promise((r) => setTimeout(r, 0));
 	});
-	window.electronAPI = originalElectronApi;
 	try {
 		Object.defineProperty(navigator, "mediaDevices", {
 			configurable: true,
@@ -149,7 +237,7 @@ describe("useInputDevices", () => {
 		await waitFor(() => expect(result.current.devices.length).toBe(2));
 		expect(result.current.devices[1]?.name).toBe("Newly Plugged USB");
 		// Two invocations: one on mount, one on devicechange.
-		expect(invokeCalls.filter((c) => c === "audio:get-devices").length).toBe(2);
+		expect(invokeCalls.filter((c) => c === GET_DEVICES_CMD).length).toBe(2);
 	});
 
 	test("removes the devicechange listener on unmount", async () => {
@@ -171,7 +259,7 @@ describe("useInputDevices", () => {
 		const { result } = renderTrackedHook();
 		await waitFor(() => expect(result.current.devices.length).toBe(1));
 
-		const callsBeforeBurst = invokeCalls.filter((c) => c === "audio:get-devices").length;
+		const callsBeforeBurst = invokeCalls.filter((c) => c === GET_DEVICES_CMD).length;
 
 		// Queue the result for the (single) coalesced refetch.
 		queueDevices([
@@ -187,8 +275,36 @@ describe("useInputDevices", () => {
 
 		await waitFor(() => expect(result.current.devices.length).toBe(2));
 
-		const callsAfterBurst = invokeCalls.filter((c) => c === "audio:get-devices").length;
+		const callsAfterBurst = invokeCalls.filter((c) => c === GET_DEVICES_CMD).length;
 		// Exactly ONE additional call despite six events.
 		expect(callsAfterBurst - callsBeforeBurst).toBe(1);
+	});
+
+	test("polls for hot-plug additions and removals when no browser devicechange event fires", async () => {
+		installFakeMediaDevices();
+		queueDevices([{ index: 0, name: "Built-in Mic", isDefault: true }]);
+		const { result } = renderTrackedHook();
+		await waitFor(() => expect(result.current.devices.length).toBe(1));
+
+		queueDevicesRepeated(
+			[
+				{ index: 0, name: "Built-in Mic", isDefault: true },
+				{ index: 2, name: "Hot Plug USB Mic", isDefault: false },
+			],
+			3
+		);
+		await waitFor(
+			() => expect(result.current.devices.map((d) => d.name)).toContain("Hot Plug USB Mic"),
+			{ timeout: 2500 }
+		);
+
+		replaceQueuedDevicesRepeated([{ index: 0, name: "Built-in Mic", isDefault: true }], 3);
+		await waitFor(
+			() => {
+				expect(result.current.devices).toHaveLength(1);
+				expect(result.current.devices.map((d) => d.name)).not.toContain("Hot Plug USB Mic");
+			},
+			{ timeout: 2500 }
+		);
 	});
 });

@@ -1,10 +1,10 @@
 import {
-	AiCloud01Icon,
+	AiCloud02Icon,
 	AppleIcon,
 	BookOpen01Icon,
-	ComputerIcon,
 	LockIcon,
 	PencilIcon,
+	ServerStack02Icon,
 	SignalFull02Icon,
 	SignalLow02Icon,
 	SignalMedium02Icon,
@@ -397,11 +397,11 @@ export function buildProviderOpts(
 	ctx: ProviderOptsContext = {}
 ): readonly ProviderOption[] {
 	const opts: ProviderOption[] = [
-		{ value: "ollama", label: t("providerOllama"), icon: ComputerIcon },
+		{ value: "ollama", label: t("providerOllama"), icon: ServerStack02Icon },
 		{
 			value: "openrouter",
 			label: t("providerOpenRouter"),
-			icon: AiCloud01Icon,
+			icon: AiCloud02Icon,
 			// LOCK the cloud provider until a key is configured — full parity with
 			// the STT Source "Cloud" option (disabled + lock badge whose footer
 			// points the user at the key). A bare `tooltip` was insufficient: a

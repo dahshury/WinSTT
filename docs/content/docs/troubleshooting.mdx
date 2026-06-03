@@ -1,0 +1,247 @@
+---
+title: Troubleshooting
+description: Symptom-to-fix table for the issues people actually hit — blank window, slow transcription, GPU fallback, a stuck mic, missing playback audio, failed downloads, blocked hotkeys, and Listen-mode Bluetooth.
+---
+
+Match your symptom in the table below, then jump to the section for the full fix. Almost every reported issue resolves here; when one doesn't, [Debug Mode](/docs/debug-mode) gathers the logs you'll attach to a bug report.
+
+<Screenshot src="tray-menu" alt="The WinSTT tray menu with Restart STT server, Open settings, and Quit entries." label="Tray menu" caption="Right-click the tray icon for the fastest recovery actions — Restart STT server clears most stuck states." />
+
+<Callout type="info" title="Attach a diagnostic bundle to every report">
+  **Settings → Advanced → Save Diagnostic Bundle…** writes one zip with `debug.log`, `stt-server.log`, GPU info, and a redacted settings file. It shortcuts at least three rounds of back-and-forth — see [Debug Mode](/docs/debug-mode).
+</Callout>
+
+## Symptom → fix
+
+<ModelTable
+  head={["Symptom", "Likely cause", "Fix"]}
+  rows={[
+    ["Window flashes and closes", "stt-server.exe blocked or missing VC++ runtime", "Install VC++ x64; whitelist the exe — see Blank or black window"],
+    ["Main window opens but stays black", "Vite chunk-split regression (React / Base UI)", "Re-pull main — see Blank or black window"],
+    ["Live preview lags 5+ seconds", "Server fell back to CPU; realtime model too big", "Confirm the accelerator, pick a smaller realtime model — see Transcription is slow"],
+    ["First turn after launch is slow", "Lazy model load on first transcription", "Expected once; later turns are sub-second"],
+    ["GPU present but server uses CPU", "GPU not D3D12-capable, or incomplete CUDA wheels", "Read the accelerator line — see GPU fallback"],
+    ["Mic missing / overlay stuck recording", "Device enumerated once at boot; phantom device state", "Restart the server; run Fix-Audio.ps1 — see Mic stuck"],
+    ["“Reconnecting…” forever", "Server crashed on warmup / session create", "Check stt-server.log; switch quant or device — see Reconnecting forever"],
+    ["No audio when playing back a recording", "Recording muted at OS level, or wrong output device", "Unmute WinSTT; pick the right playback device — see No audio on playback"],
+    ["Model download stalls at 0%", "huggingface.co blocked by proxy / firewall", "Set HTTPS_PROXY or install manually — see Model downloads fail"],
+    ["PTT hotkey never fires", "Low-level hooks blocked by group policy", "Use Toggle mode or run as Admin — see Hotkeys blocked"],
+    ["Listen mode sounds mono / muffled", "Bluetooth headset in mono headset profile", "Switch to A2DP or a wired/loopback device — see Bluetooth mono in Listen"],
+  ]}
+  caption="Find your row, then read the matching section below for the complete walkthrough."
+/>
+
+## Blank or black window
+
+<Callout type="error" title="Window flashes and disappears (packaged build)">
+  The bundled `stt-server.exe` failed to start. Open `%APPDATA%/WinSTT/debug.log` — the last lines name the cause, usually a missing Visual C++ Redistributable or a virus-scanner quarantine. Then:
+
+  - Install the [latest VC++ x64 redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist).
+  - Whitelist `%LOCALAPPDATA%/Programs/WinSTT/resources/app.asar.unpacked/stt-server/stt-server.exe` in your antivirus.
+  - Run the installer as Administrator if `%APPDATA%/WinSTT/` is on a path your user can't write to.
+</Callout>
+
+If the window opens but **stays black** while dev mode looks fine, open the renderer console (**Settings → Advanced → Open DevTools**). The tell is `Cannot read properties of undefined (reading 'useLayoutEffect')` — a Vite chunk-split regression that separates `@base-ui/react` from `react` / `react-dom` into a circular ESM import.
+
+<Callout type="info" title="Fix for the black window">
+  Re-pull `main`. `frontend/vite.config.ts` keeps `@base-ui/react` and React in the same `manualChunks` group; the black screen returns only if that grouping regresses. If you're on a release build, update to the latest installer.
+</Callout>
+
+In **dev mode**, a blank window usually means the renderer is waiting for the STT server. Confirm `uv run stt-server` is running and listening on `127.0.0.1:8011` / `:8012`. If you changed ports with `-c` / `-d`, mirror them via `WINSTT_CONTROL_PORT` / `WINSTT_DATA_PORT` before `bun electron:dev`.
+
+## Transcription is slow
+
+The first transcription after a fresh launch or a model swap pays the model-load cost — that one is **expected**. If *every* turn is slow, the server is almost always running on the wrong device.
+
+<StepFlow>
+  <Step title="Confirm which device the server picked">
+    Launch with `--debug` and read the first second of `stt-server.log` for a line like `Accelerator: directml` or `Accelerator: cpu`.
+  </Step>
+  <Step title="If it says cpu but you want GPU">
+    A DirectML build that reports `cpu` means your GPU isn't D3D12-capable — see <a href="#gpu-fallback">GPU fallback</a>. If you have the CPU build, install the DirectML installer (`WinSTT-Portable-<version>.exe`).
+  </Step>
+  <Step title="Shrink the live-preview model">
+    Pick a smaller realtime model in [Settings → Model](/docs/settings/model). `whisper-tiny.en` runs roughly 4× faster than `whisper-base.en` and is fine for the preview; the main model still produces the accurate final text.
+  </Step>
+  <Step title="Right-size the main model">
+    Whisper `large-v3-turbo` on a 4–6 GB GPU spills into CPU memory — drop to `whisper-small` or `whisper-medium`. On CPU, quantize to `q4` (small quality loss on `tiny` / `base`, larger on `large`).
+  </Step>
+</StepFlow>
+
+<Callout type="info" title="Smart Endpoint adds ~50 ms per turn">
+  The DistilBERT turn-boundary classifier costs about 50 ms per utterance. If you don't need automatic turn detection, turn it off under [Settings → Quality](/docs/settings/quality).
+</Callout>
+
+## GPU fallback
+
+WinSTT's accelerator auto-degrades to CPU whenever the requested GPU path isn't viable. The DirectML build does this silently and safely, but it means a slow session can look like a software bug when it's really a hardware or driver mismatch.
+
+<ModelTable
+  head={["You see", "Why", "What to do"]}
+  rows={[
+    ["DirectML build logs Accelerator: cpu", "GPU isn't DirectX 12-capable", "Update the GPU driver; otherwise accept CPU speeds or use a smaller model"],
+    ["NVIDIA GPU, still on CPU", "Incomplete NVIDIA cu12 wheel set", "Install the full [gpu] extra — every wheel is mandatory at session create"],
+    ["GPU works then drops to CPU mid-session", "ORT session-create failure on a quant (e.g. Canary + int8 on DML)", "Switch quantization or device in Settings → Model"],
+  ]}
+/>
+
+The released Windows installers ship **no CUDA** — DirectML is faster and ~10× lighter on this workload. CUDA is a development-only / future-Linux path:
+
+```bash
+cd server
+uv sync --extra gpu      # onnxruntime-gpu + the full NVIDIA cu12 wheel set
+```
+
+<Callout type="warn" title="Never trim the [gpu] extra">
+  ORT's CUDA EP delay-loads **every** NVIDIA wheel (`cufft`, `cusparse`, `cusolver`, `curand`, and the rest) at session-create time, regardless of your model graph. Dropping any one silently demotes the whole session to CPU.
+</Callout>
+
+## Mic stuck or missing
+
+PortAudio enumerates input devices **once** when the server starts. A mic plugged in afterwards won't appear, and a device left in a phantom state (`CM_PROB_PHANTOM`) blocks enumeration entirely. The overlay can also appear stuck "recording" if the device handle never returns audio.
+
+<Screenshot src="device-picker" alt="The input-device picker dropdown listing available microphones with the active one checked." chrome="card" label="Input device picker" caption="Pick the explicit microphone by name — avoid virtual “Stereo Mix” devices that map to your speakers." />
+
+<StepFlow>
+  <Step title="Restart the STT server">
+    Use **Restart STT server** in the tray menu (or kill `stt-server.exe` and let it respawn). This re-enumerates devices and clears most stuck-recording states.
+  </Step>
+  <Step title="Re-pick the device">
+    Open the input-device picker and select your microphone by name. Some headsets (Logitech, Razer) expose a virtual "Stereo Mix" that maps to your speakers rather than the mic.
+  </Step>
+  <Step title="Clear phantom device states">
+    From an elevated PowerShell, run `Fix-Audio.ps1` — it bounces `Audiosrv`, `AudioEndpointBuilder`, and the Bluetooth user service, clearing the `CM_PROB_PHANTOM` states that block enumeration.
+  </Step>
+  <Step title="Recalibrate VAD if the mic is selected but silent">
+    In **Settings → Audio → VAD calibration**, recalibrate in a quiet room. If the noise floor sits above your speaking volume, voice-activity detection never fires and nothing is captured.
+  </Step>
+</StepFlow>
+
+### Reconnecting forever
+
+A renderer stuck on "Reconnecting…" means the server process died — usually during warmup or ONNX session create, not from a network fault. Open `stt-server.log`.
+
+<ModelTable
+  head={["Log signature", "Cause", "Fix"]}
+  rows={[
+    ["Hangs right after “loading Silero VAD”", "VAD loaded on a GPU EP and deadlocked session create", "Update to the latest build — VAD is pinned to CPU"],
+    ["Reshape “node_view” RuntimeException", "Canary + DirectML + int8 kernel crash", "Switch quantization or device in Settings → Model"],
+    ["“Recorder does not have method …”", "Warmup failed before the recorder was installed", "Update; the recorder now constructs before warmup"],
+  ]}
+  caption="If the log shows none of these, attach the diagnostic bundle to a bug report."
+/>
+
+## No audio on playback
+
+Saved recordings play back from the [Transcription History](/docs/transcription-history) dashboard. Silence on playback is almost always an output-routing issue, not a corrupt file.
+
+- **Check the OS mixer.** Make sure WinSTT isn't muted for output in the Windows volume mixer — app-level mutes survive restarts.
+- **Pick the right playback device.** If your default output changed (a headset disconnected, a monitor's speakers took over), Windows may be routing playback somewhere you can't hear.
+- **Confirm the recording was actually saved.** Recordings only have audio when `recordingRetention` isn't set so the file was never written — check that the row has a play button rather than a transcript-only entry.
+
+<Callout type="info" title="Retention “Never” means keep forever">
+  In [Settings → History](/docs/transcription-history), `recordingRetention: never` means **keep recordings forever**, not "don't save." Recordings are always saved; retention only governs cleanup of old ones.
+</Callout>
+
+## Model downloads fail
+
+Models live on the Hugging Face hub. Behind a corporate proxy or a country block, the download can silently hang.
+
+<ModelTable
+  head={["Symptom", "Cause", "Fix"]}
+  rows={[
+    ["Stalls at 0% / times out", "huggingface.co unreachable", "Set HTTPS_PROXY, or install manually"],
+    ["Finishes but shows “Unavailable”", "Killed mid-download left a .incomplete marker", "Re-trigger the download — it resumes from partial bytes"],
+    ["404 / 403 on the TTS pack", "Asset renamed in a release rotation", "Open an issue with the URL the server tried"],
+    ["Custom folder not in picker", "Incomplete ONNX export", "Add the missing files — see Custom Models"],
+  ]}
+/>
+
+For blocked networks, set a proxy before launching — WinSTT inherits your user environment, so `setx HTTPS_PROXY http://your.proxy:8080` works:
+
+```powershell
+setx HTTPS_PROXY "http://your.proxy:8080"
+```
+
+Or skip the network entirely with [Manual Model Install](/docs/manual-model-install) — the URLs are public and resumable.
+
+<Callout type="warn" title="Don't set a token for the TTS pack">
+  The TTS pack is on the **public** [winstt-assets](https://github.com/dahshury/winstt-assets) repo. Setting a `GITHUB_TOKEN` that lacks read access to that repo causes a 403. Tokenless `urllib` works fine — let WinSTT use its built-in unauthenticated client.
+</Callout>
+
+A custom model folder must contain a complete onnx-community / Optimum export: `encoder.onnx` (or `encoder_model.onnx`), `decoder_model.onnx` (or `decoder_model_merged.onnx`), a HuggingFace `tokenizer.json`, and a `config.json` with a non-empty `model_type`. Partial folders show greyed-out in the picker with a tooltip naming the missing file — see [Custom Models](/docs/models#custom-models).
+
+## Hotkeys blocked
+
+Every WinSTT hotkey except re-paste uses passive `uiohook-napi`. Re-paste (`general.repasteHotkey`, default <Combo keys="LCtrl+LShift+V" />) is the **only** one that goes through Electron's `globalShortcut`.
+
+<ShortcutLegend rows={[
+  { action: "Re-paste last (globalShortcut)", keys: "LCtrl+LShift+V", note: "If another app grabbed it, registration fails — pick another combo." },
+]} />
+
+<ModelTable
+  head={["Symptom", "Cause", "Fix"]}
+  rows={[
+    ["PTT never fires on a corporate box", "Group policy blocks low-level keyboard hooks", "Switch to Toggle mode (single key event, no hook) or run as Admin"],
+    ["Hotkey works for some apps, not others", "Antivirus behavior-blocker flagging the global hook", "Whitelist WinSTT's process in your AV"],
+    ["Re-paste does nothing", "Another app already registered the chord", "Change it in Settings → Hotkey → Re-paste hotkey"],
+    ["Paste lands in the wrong window", "Focus drifted between hotkey release and paste", "Enable Smart Endpoint so the turn ends faster; confirm focus first"],
+  ]}
+/>
+
+<Callout type="warn" title="Locked-down boxes can disable PTT entirely">
+  On machines where group policy blocks low-level keyboard hooks, <ModeBadge mode="ptt" /> won't work at all. <ModeBadge mode="toggle" /> uses a single key event instead of a held hook and is the reliable fallback. Running WinSTT as Administrator also restores the hook on some configurations.
+</Callout>
+
+For terminals, VMs, or RDP where the host clipboard isn't reachable, switch **Settings → Advanced → Paste via SendInput** instead of the default clipboard paste.
+
+## Bluetooth mono in Listen
+
+<ModeBadge mode="listen" /> mode transcribes a **loopback** of your system audio — your microphone capture won't help. The common failure is a Bluetooth headset that drops into the mono 16 kHz headset profile when it has an active mic, which makes Listen-mode audio sound thin and transcribe poorly.
+
+<StepFlow>
+  <Step title="Force A2DP (high-quality stereo) on the headset">
+    In Windows Sound settings, ensure the headset is using its stereo (A2DP) profile, not the hands-free headset profile. Disconnecting the headset's microphone often flips it back to A2DP.
+  </Step>
+  <Step title="Or route through a virtual loopback cable">
+    Install [VB-Audio Virtual Cable](https://vb-audio.com/Cable/), set **CABLE Output (VB-Audio)** as the loopback device in Settings → Audio → Loopback, and route the source app (Teams, Zoom, OBS) into **CABLE Input**.
+  </Step>
+  <Step title="Prefer a wired headset for meetings">
+    Wired headsets and VB-Cable avoid the Bluetooth profile-switch entirely and are the most reliable for sustained Listen-mode capture.
+  </Step>
+</StepFlow>
+
+<Callout type="info" title="Windows “Listen to this device” is flaky on Bluetooth">
+  The OS-level loopback works on wired devices but is unreliable over Bluetooth. VB-Cable is the dependable path for Listen mode.
+</Callout>
+
+## Still stuck?
+
+<StepFlow>
+  <Step title="Capture a diagnostic bundle">
+    **Settings → Advanced → Save Diagnostic Bundle…**
+  </Step>
+  <Step title="Reproduce with --debug">
+    So `debug.log` and `stt-server.log` carry the verbose trace — see [Debug Mode](/docs/debug-mode).
+  </Step>
+  <Step title="File a bug with the bundle attached">
+    At [github.com/dahshury/WinSTT/issues](https://github.com/dahshury/WinSTT/issues). Feature ideas and questions live in [Discussions](https://github.com/dahshury/WinSTT/discussions).
+  </Step>
+</StepFlow>
+
+## Related
+
+<Cards>
+  <Card title="Debug Mode" href="/docs/debug-mode">
+    Gather `debug.log`, `stt-server.log`, and a redacted diagnostic bundle for bug reports.
+  </Card>
+  <Card title="Manual Model Install" href="/docs/manual-model-install">
+    Offline, proxy, and firewalled installs of the built-in models.
+  </Card>
+  <Card title="Recording modes" href="/docs/recording-modes">
+    Push-to-talk, toggle, listen, and wake-word — and when each one applies.
+  </Card>
+  <Card title="FAQ" href="/docs/faq">
+    Short answers to the questions that come up before a bug report.
+  </Card>
+</Cards>

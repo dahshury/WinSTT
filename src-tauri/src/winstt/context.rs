@@ -3,12 +3,12 @@
 //
 // Context-awareness for the dictation cleanup path. ZERO reimplementation of
 // the UIA reader — `winstt-context.exe` (the existing C binary, byte-identical
-// to the Electron build) ships as a Tauri SIDECAR (externalBin) and is invoked
+// to the reference build) ships as a Tauri SIDECAR (externalBin) and is invoked
 // per dictation via std::process::Command. This module:
 //
 //   1. Resolves + spawns the sidecar with the right mode flag
 //      (--selection / --split / --tree), with the same hard timeout as the
-//      Electron wrapper (READ_TIMEOUT_MS = 1200ms; the binary's own 750ms
+//      the reference wrapper (READ_TIMEOUT_MS = 1200ms; the binary's own 750ms
 //      watchdog is the inner fence).
 //   2. Parses its single-line JSON stdout into a `WindowContextSnapshot`,
 //      attaching optional fields only when non-empty (so an empty capture is
@@ -99,10 +99,19 @@ pub fn parse_snapshot(raw: &str) -> WindowContextSnapshot {
     let Some(obj) = value.as_object() else {
         return empty_context();
     };
-    let get = |k: &str| obj.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let get = |k: &str| {
+        obj.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let non_empty = |k: &str| {
         let v = get(k);
-        if v.is_empty() { None } else { Some(v) }
+        if v.is_empty() {
+            None
+        } else {
+            Some(v)
+        }
     };
     WindowContextSnapshot {
         window_title: get("windowTitle"),
@@ -208,8 +217,7 @@ fn deny_pattern_matches_probe(raw: &str, probe: &DenyProbe) -> bool {
     if pattern.is_empty() {
         return false;
     }
-    matches_app_exe_pattern(&pattern, &probe.app_exe)
-        || matches_host_pattern(&pattern, &probe.host)
+    matches_app_exe_pattern(&pattern, &probe.app_exe) || matches_host_pattern(&pattern, &probe.host)
 }
 
 /// True when the snapshot's app/url matches any deny-list pattern. Mirrors
@@ -219,7 +227,9 @@ pub fn is_denied_by_list(snapshot: &WindowContextSnapshot, deny_list: &[String])
         return false;
     }
     let probe = build_deny_probe(snapshot);
-    deny_list.iter().any(|raw| deny_pattern_matches_probe(raw, &probe))
+    deny_list
+        .iter()
+        .any(|raw| deny_pattern_matches_probe(raw, &probe))
 }
 
 /// Strip the Wispr-tier fields from a denied snapshot, keeping only the
@@ -280,7 +290,14 @@ pub fn is_ide_context(snapshot: &WindowContextSnapshot) -> bool {
         "devenv.exe",
     ];
     const PREFIXES: &[&str] = &[
-        "idea", "pycharm", "webstorm", "rubymine", "clion", "goland", "rustrover", "rider",
+        "idea",
+        "pycharm",
+        "webstorm",
+        "rubymine",
+        "clion",
+        "goland",
+        "rustrover",
+        "rider",
         "phpstorm",
     ];
     if EXACT.contains(&exe.as_str()) {
@@ -411,21 +428,31 @@ fn push_metadata(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
     push_section(out, snapshot.url.as_deref().unwrap_or("").trim(), |v| {
         format!("URL: {v}")
     });
-    push_section(out, snapshot.window_title.trim(), |v| format!("Window: {v}"));
+    push_section(out, snapshot.window_title.trim(), |v| {
+        format!("Window: {v}")
+    });
     push_section(out, snapshot.element_name.trim(), |v| {
         format!("Focused field: {v}")
     });
 }
 
 fn push_selected(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    let v = clip_head(&clean_caret(snapshot.selected_text.as_deref()), SELECTED_TEXT_LLM_MAX);
+    let v = clip_head(
+        &clean_caret(snapshot.selected_text.as_deref()),
+        SELECTED_TEXT_LLM_MAX,
+    );
     push_section(out, &v, |s| {
-        format!("Selected text (the user highlighted this — likely the thing they're acting on):\n{s}")
+        format!(
+            "Selected text (the user highlighted this — likely the thing they're acting on):\n{s}"
+        )
     });
 }
 
 fn push_clipboard(out: &mut Vec<String>, snapshot: &WindowContextSnapshot) {
-    let v = clip_head(&clean_caret(snapshot.clipboard_text.as_deref()), CLIPBOARD_LLM_MAX);
+    let v = clip_head(
+        &clean_caret(snapshot.clipboard_text.as_deref()),
+        CLIPBOARD_LLM_MAX,
+    );
     push_section(out, &v, |s| {
         format!("Clipboard contents (the user recently copied this — use only if relevant):\n{s}")
     });
@@ -684,8 +711,14 @@ mod tests {
     #[test]
     fn canvas_detection() {
         assert!(is_canvas_surface(Some("figma.exe"), None));
-        assert!(is_canvas_surface(None, Some("https://www.figma.com/file/x")));
-        assert!(!is_canvas_surface(Some("notepad.exe"), Some("https://example.com")));
+        assert!(is_canvas_surface(
+            None,
+            Some("https://www.figma.com/file/x")
+        ));
+        assert!(!is_canvas_surface(
+            Some("notepad.exe"),
+            Some("https://example.com")
+        ));
     }
 
     // ── prompt formatter ──

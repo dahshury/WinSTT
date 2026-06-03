@@ -112,6 +112,56 @@ pub fn send_paste_shift_insert(enigo: &mut Enigo) -> Result<(), String> {
     Ok(())
 }
 
+/// Release any physically-held keyboard modifiers (both L/R Ctrl, Shift, Alt, Win) by
+/// injecting key-up events.
+///
+/// Used by the re-paste hotkey before it synthesizes a Ctrl+V while the user is STILL
+/// holding the combo (e.g. `LCtrl+LShift+V`). Two problems it solves at once:
+///   • handy-keys' low-level hook BLOCKS any key matching a registered combo and does not
+///     filter injected events, so a synthetic `V` re-matches the still-held Ctrl+Shift+V
+///     and is swallowed. Clearing the modifiers means the combo no longer matches, so the
+///     synthetic `V` passes through.
+///   • the held Shift would otherwise turn the synthetic Ctrl+V into Ctrl+Shift+V.
+/// After this, a plain clipboard Ctrl+V lands as one block, exactly like a manual paste.
+/// Injecting a key-up for a key that isn't down is harmless. Windows only (no-op elsewhere).
+#[cfg(target_os = "windows")]
+pub fn release_held_modifiers() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_LCONTROL,
+        VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
+    };
+
+    let inputs: Vec<INPUT> = [
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_LMENU,
+        VK_RMENU,
+        VK_LWIN,
+        VK_RWIN,
+    ]
+    .into_iter()
+    .map(|vk| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    })
+    .collect();
+
+    // SAFETY: `inputs` is a valid, correctly-sized slice of INPUT for SendInput.
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
 /// Pastes text directly using the enigo text method.
 /// This tries to use system input methods if possible, otherwise simulates keystrokes one by one.
 pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {

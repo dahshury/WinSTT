@@ -1,7 +1,10 @@
 import {
-	BarChartIcon,
-	Calendar03Icon,
-	DashboardCircleIcon,
+	Analytics01Icon,
+	CalendarAnalysisIcon,
+	CalendarClockIcon,
+	CalendarDaysIcon,
+	CalendarRangeIcon,
+	DatabaseSettingIcon,
 	Delete02Icon,
 	InfinityIcon,
 	ListViewIcon,
@@ -9,18 +12,12 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
-import {
-	DEFAULT_SETTINGS,
-	SettingResetButton,
-	SettingSection,
-	useSettingsStore,
-} from "@/entities/setting";
+import { DEFAULT_SETTINGS, SettingField, SettingSection, useSettingsStore } from "@/entities/setting";
 import { clearTranscriptionHistory } from "@/shared/api/ipc-client";
 import { Button } from "@/shared/ui/button";
 import type { DateRange } from "@/shared/ui/calendar-heatmap";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { FormControl } from "@/shared/ui/form-control";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { useTranscriptionHistorySync } from "../api/use-history-sync";
@@ -47,9 +44,9 @@ export function TranscriptionHistoryPanel() {
 	const retentionOptions: SelectOption[] = [
 		{ id: "never", label: t("retentionNever"), icon: InfinityIcon },
 		{ id: "cap", label: t("retentionCap"), icon: ListViewIcon },
-		{ id: "days3", label: t("retentionDays3"), icon: Calendar03Icon },
-		{ id: "weeks2", label: t("retentionWeeks2"), icon: Calendar03Icon },
-		{ id: "months3", label: t("retentionMonths3"), icon: Calendar03Icon },
+		{ id: "days3", label: t("retentionDays3"), icon: CalendarDaysIcon },
+		{ id: "weeks2", label: t("retentionWeeks2"), icon: CalendarRangeIcon },
+		{ id: "months3", label: t("retentionMonths3"), icon: CalendarClockIcon },
 	];
 
 	const filteredEntries = filterEntriesByDateRange(
@@ -65,13 +62,13 @@ export function TranscriptionHistoryPanel() {
 
 	return (
 		<div className="flex flex-col gap-2">
-			<SettingSection icon={BarChartIcon} title={t("summaryTitle")}>
+			<SettingSection icon={Analytics01Icon} title={t("summaryTitle")}>
 				<div className="py-2">
 					<HistorySummary stats={stats} />
 				</div>
 			</SettingSection>
 
-			<SettingSection icon={BarChartIcon} title={t("heatmapTitle")}>
+			<SettingSection icon={CalendarAnalysisIcon} title={t("heatmapTitle")}>
 				<div className="py-2">
 					<ActivityHeatmap
 						entries={entries}
@@ -114,55 +111,47 @@ export function TranscriptionHistoryPanel() {
 			    Cap defaults to 1000, retention defaults to "cap" (delete
 			    only when the entry count exceeds the cap; absolute time
 			    cutoffs are opt-in). */}
-			<SettingSection icon={DashboardCircleIcon} title={t("limitsTitle")}>
-				<div className="flex flex-col divide-y divide-surface-1">
-					<FormControl
-						label={t("historyMaxEntries")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={historyMaxEntries === DEFAULT_SETTINGS.general.historyMaxEntries}
-								onReset={() =>
-									updateGeneral({ historyMaxEntries: DEFAULT_SETTINGS.general.historyMaxEntries })
-								}
-							/>
-						}
-						layout="row"
-						tooltip={`${t("historyMaxEntriesTooltip")} ${t("historyMaxEntriesCaption")}`}
-					>
-						<ElevatedSurface className="w-fit" inline>
-							<NumberStepper
-								max={10_000}
-								min={10}
-								onChange={(v) => updateGeneral({ historyMaxEntries: v })}
-								step={10}
-								value={historyMaxEntries}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-					<FormControl
-						label={t("retention")}
-						labelTrailing={
-							<SettingResetButton
-								isDefault={recordingRetention === DEFAULT_SETTINGS.general.recordingRetention}
-								onReset={() =>
-									updateGeneral({
-										recordingRetention: DEFAULT_SETTINGS.general.recordingRetention,
-									})
-								}
-							/>
-						}
-						layout="row"
-						tooltip={t("retentionTooltip")}
-					>
-						<ElevatedSurface className="w-52" inline>
-							<Select
-								onChange={(v) => updateGeneral({ recordingRetention: v as RetentionValue })}
-								options={retentionOptions}
-								value={recordingRetention}
-							/>
-						</ElevatedSurface>
-					</FormControl>
-				</div>
+			<SettingSection divided icon={DatabaseSettingIcon} title={t("limitsTitle")}>
+				<SettingField
+					defaultValue={DEFAULT_SETTINGS.general.historyMaxEntries}
+					label={t("historyMaxEntries")}
+					layout="row"
+					onReset={() =>
+						updateGeneral({ historyMaxEntries: DEFAULT_SETTINGS.general.historyMaxEntries })
+					}
+					tooltip={`${t("historyMaxEntriesTooltip")} ${t("historyMaxEntriesCaption")}`}
+					value={historyMaxEntries}
+				>
+					<ElevatedSurface className="w-fit" inline>
+						<NumberStepper
+							max={10_000}
+							min={10}
+							onChange={(v) => updateGeneral({ historyMaxEntries: v })}
+							step={10}
+							value={historyMaxEntries}
+						/>
+					</ElevatedSurface>
+				</SettingField>
+				<SettingField
+					defaultValue={DEFAULT_SETTINGS.general.recordingRetention}
+					label={t("retention")}
+					layout="row"
+					onReset={() =>
+						updateGeneral({
+							recordingRetention: DEFAULT_SETTINGS.general.recordingRetention,
+						})
+					}
+					tooltip={t("retentionTooltip")}
+					value={recordingRetention}
+				>
+					<ElevatedSurface className="w-52" inline>
+						<Select
+							onChange={(v) => updateGeneral({ recordingRetention: v as RetentionValue })}
+							options={retentionOptions}
+							value={recordingRetention}
+						/>
+					</ElevatedSurface>
+				</SettingField>
 			</SettingSection>
 		</div>
 	);

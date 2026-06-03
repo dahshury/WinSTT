@@ -99,7 +99,7 @@ function copyEntryText(text: string): void {
 
 /**
  * Switch the underlying audio sink for an HTMLAudioElement. `setSinkId` is
- * gated on a "speaker-selection" permission that Electron grants by default
+ * gated on a "speaker-selection" permission that the reference grants by default
  * for the file-loaded renderer, but the call still fails on devices that
  * don't exist or aren't reachable — swallow that case (the play silently
  * falls back to the system default rather than throwing inside the JSX).
@@ -262,10 +262,19 @@ function PlayButton({
 	} else if (playing) {
 		label = "Pause recording";
 	}
+	// Ghost transport control, matched to the recording-sound library's play
+	// button (SoundLibraryRow): idle is a muted glyph that picks up a faint
+	// neutral wash on hover; playing settles into a soft neutral chip. No accent
+	// — playback state reads through tone alone, not color.
 	return (
 		<button
 			aria-label={label}
-			className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-accent transition-[color,background-color,transform] hover:bg-accent/15 active:scale-95"
+			className={cn(
+				"inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-150 active:scale-95",
+				playing
+					? "bg-foreground/15 text-foreground hover:bg-foreground/25"
+					: "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground"
+			)}
 			disabled={loading}
 			onClick={onToggle}
 			type="button"
@@ -273,7 +282,7 @@ function PlayButton({
 			{loading ? (
 				<Spinner className="size-3.5" />
 			) : (
-				<HugeiconsIcon className="size-4" icon={playing ? PauseIcon : PlayIcon} />
+				<HugeiconsIcon className="size-3.5" icon={playing ? PauseIcon : PlayIcon} />
 			)}
 		</button>
 	);
@@ -437,7 +446,10 @@ function FullTranscriptHover({
 								surfaceClasses(popupLevel, popupShadow)
 							)}
 						>
-							<div className="max-h-[40vh] select-text overflow-y-auto whitespace-pre-wrap break-words text-body text-foreground leading-relaxed">
+							<div
+								className="max-h-[40vh] select-text overflow-y-auto whitespace-pre-wrap break-words text-body text-foreground leading-relaxed"
+								dir="auto"
+							>
 								{text}
 							</div>
 						</TooltipPrimitive.Popup>
@@ -503,6 +515,7 @@ function RowTranscript({ activeIndex, displayText, viewFullLabel, words }: RowTr
 				"mt-0.5 min-w-0 flex-1 select-text whitespace-pre-wrap break-words text-body text-foreground leading-relaxed",
 				!showWords && "line-clamp-4"
 			)}
+			dir="auto"
 			ref={measureRef}
 		>
 			{showWords && words
@@ -511,7 +524,9 @@ function RowTranscript({ activeIndex, displayText, viewFullLabel, words }: RowTr
 							{index > 0 ? " " : null}
 							<span
 								className={
-									index === activeIndex ? "rounded-[3px] bg-accent/25 text-foreground" : undefined
+									index === activeIndex
+										? "rounded-[3px] bg-foreground/15 text-foreground"
+										: undefined
 								}
 							>
 								{word.text}
@@ -629,8 +644,11 @@ function HistoryRow({
 	return (
 		// Per-card padding wrapper: virtua measures the border-box (margins are
 		// NOT counted), so the inter-card gap lives here as padding, never as a
-		// margin on the card itself.
-		<div className="px-2 py-1">
+		// margin on the card itself. Horizontal inset is deliberately omitted —
+		// the scroll container reserves a symmetric `scrollbar-gutter` on both
+		// edges, so the side gaps match (left == right) instead of the right
+		// being padding + the scrollbar's reserved width.
+		<div className="py-1">
 			<SurfaceProvider value={cardLevel}>
 				<div
 					className={cn(
@@ -760,7 +778,10 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 		);
 	} else if (sorted.length < VIRTUALIZE_THRESHOLD) {
 		body = (
-			<div className="overflow-y-auto" style={{ maxHeight: MAX_BODY_HEIGHT_PX }}>
+			<div
+				className="overflow-y-auto"
+				style={{ maxHeight: MAX_BODY_HEIGHT_PX, scrollbarGutter: "stable both-edges" }}
+			>
 				{rows}
 			</div>
 		);
@@ -770,6 +791,7 @@ export function HistoryTable({ entries }: HistoryTableProps) {
 				itemSize={ROW_HEIGHT_HINT_PX}
 				style={{
 					height: Math.min(sorted.length * ROW_HEIGHT_HINT_PX, MAX_BODY_HEIGHT_PX),
+					scrollbarGutter: "stable both-edges",
 				}}
 			>
 				{rows}

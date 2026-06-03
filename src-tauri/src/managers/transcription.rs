@@ -33,6 +33,82 @@ use transcribe_rs::{
     SpeechModel, TranscribeOptions,
 };
 
+/// DC-immune RMS (AC energy): subtract the mean (constant offset) first so a dead
+/// device's constant DC bias doesn't read as signal, then RMS the residual. Shared by
+/// the batch silence gate AND the realtime worker so both reject windows with no
+/// decodable speech energy — below this Whisper hallucinates phantom text ("Thank you.")
+/// on the silence the Silero VAD (threshold 0.3) lets through.
+pub(crate) fn dc_immune_rms(audio: &[f32]) -> f32 {
+    let n = audio.len() as f32;
+    if n == 0.0 {
+        return 0.0;
+    }
+    let mean = audio.iter().copied().sum::<f32>() / n;
+    (audio.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / n).sqrt()
+}
+
+/// AC-energy floor separating real speech from silence / room-tone / Whisper-on-silence
+/// hallucinations. Empirically (this repo's own recordings, logged via `[silence-gate]`):
+/// real speech recordings measure RMS ≥ ~0.0074; silence + hallucinated "Thank you."
+/// clips measure ≤ ~0.0014. 0.003 sits cleanly between, with headroom below the quietest
+/// real speech for soft talkers / distant mics.
+pub(crate) const SILENCE_AC_FLOOR: f32 = 0.003;
+
+/// The DC offset must exceed the AC RMS by this factor to be classed "all offset, no audio"
+/// (the dead/virtual-mic fingerprint that makes Whisper emit a wall of garbled text).
+const DC_DOMINANCE_RATIO: f32 = 10.0;
+
+static TRANSCRIPTION_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn next_transcription_request_id() -> String {
+    format!(
+        "stt-{}",
+        TRANSCRIPTION_REQUEST_SEQ.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// True when a recording carries no decodable speech — either genuine silence/room-tone (AC RMS
+/// below [`SILENCE_AC_FLOOR`]) or a DC-dominated dead/virtual-mic signal. Shared by the batch
+/// silence gate AND the realtime-reuse guard (a reused live decode must NOT paste hallucinated
+/// text over what the gate would otherwise have rejected). Audio is RAW (pre-`peak_normalize`).
+pub(crate) fn is_silent_recording(audio: &[f32]) -> bool {
+    if audio.is_empty() {
+        return true;
+    }
+    let n = audio.len() as f32;
+    let mean = audio.iter().copied().sum::<f32>() / n;
+    let rms = dc_immune_rms(audio);
+    let dc_dominated = mean.abs() > rms * DC_DOMINANCE_RATIO;
+    rms < SILENCE_AC_FLOOR || dc_dominated
+}
+
+/// One cached realtime full-buffer decode, kept so the FINAL paste can reuse it instead of
+/// re-decoding the same audio. The realtime worker already decoded the whole growing buffer with
+/// the SAME engine, so when the user stops talking the last live decode == the final decode (sans
+/// post-processing). See [`TranscriptionManager::cache_realtime_reuse`] / `try_reuse_realtime`.
+#[derive(Clone, Debug)]
+struct RealtimeReuse {
+    /// Recording generation this decode belongs to (guards against reusing a previous take's text).
+    generation: u64,
+    /// Samples the cached decode covered (the live-mirror length at decode time).
+    covered: usize,
+    /// RAW engine text (pre-post-processing) of the full-buffer realtime decode.
+    raw_text: String,
+}
+
+/// Outcome of one realtime native-streaming tick (see
+/// [`TranscriptionManager::stream_accept_realtime`]).
+pub enum RealtimeStreamOutcome {
+    /// Decoded incremental text so far (possibly empty).
+    Text(String),
+    /// The engine mutex is held by a batch decode — retry next tick WITHOUT advancing the fed
+    /// watermark (the same new samples are re-fed next time).
+    Skipped,
+    /// The loaded engine is not a native-streaming engine — the caller should use the
+    /// window-redecode preview path instead.
+    NotStreaming,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelStateEvent {
     pub event_type: String,
@@ -83,7 +159,12 @@ pub struct LoadingGuard {
 
 impl Drop for LoadingGuard {
     fn drop(&mut self) {
-        let mut is_loading = self.is_loading.lock().unwrap();
+        // Recover a poisoned lock so the loading flag is always cleared (uniform
+        // with the manager's poison-recovery discipline); never panic in a Drop.
+        let mut is_loading = self
+            .is_loading
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *is_loading = false;
         self.loading_condvar.notify_all();
     }
@@ -122,6 +203,11 @@ pub struct TranscriptionManager {
     /// inherited Handy core stops reaching sideways into `crate::winstt::*` — restoring the
     /// one-way dependency edge that keeps upstream Handy merges of this file tractable.
     backend: Arc<dyn SttBackend>,
+    /// Freshest realtime full-buffer decode, for the final-paste reuse fast path. The realtime
+    /// worker writes it each tick (`cache_realtime_reuse`); the final path consumes it once on PTT
+    /// release (`try_reuse_realtime`) to skip a redundant re-decode of audio the live engine
+    /// already transcribed. `None` whenever live transcription is off or the recording changed.
+    realtime_reuse: Arc<Mutex<Option<RealtimeReuse>>>,
 }
 
 impl TranscriptionManager {
@@ -138,6 +224,7 @@ impl TranscriptionManager {
             loading_condvar: Arc::new(Condvar::new()),
             warming: Arc::new(AtomicBool::new(false)),
             backend: Arc::new(WinsttSttBackend),
+            realtime_reuse: Arc::new(Mutex::new(None)),
         };
 
         // Start the idle watcher
@@ -169,7 +256,7 @@ impl TranscriptionManager {
                     // model is never unloaded mid-session.
                     let is_recording = app_handle_cloned
                         .try_state::<Arc<AudioRecordingManager>>()
-                        .map_or(false, |a| a.is_recording());
+                        .is_some_and(|a| a.is_recording());
                     if is_recording {
                         manager_cloned.touch_activity();
                         continue;
@@ -222,6 +309,24 @@ impl TranscriptionManager {
         })
     }
 
+    /// Lock the `is_loading` flag, recovering from poison — uniform with `lock_engine`
+    /// so a panic on any sibling lock doesn't strand the load/swap state machine.
+    fn lock_is_loading(&self) -> MutexGuard<'_, bool> {
+        self.is_loading.lock().unwrap_or_else(|poisoned| {
+            warn!("is_loading mutex was poisoned by a previous panic, recovering");
+            poisoned.into_inner()
+        })
+    }
+
+    /// Lock the `current_model_id` slot, recovering from poison — uniform with
+    /// `lock_engine`.
+    fn lock_current_model(&self) -> MutexGuard<'_, Option<String>> {
+        self.current_model_id.lock().unwrap_or_else(|poisoned| {
+            warn!("current_model_id mutex was poisoned by a previous panic, recovering");
+            poisoned.into_inner()
+        })
+    }
+
     pub fn is_model_loaded(&self) -> bool {
         let engine = self.lock_engine();
         engine.is_some()
@@ -232,7 +337,7 @@ impl TranscriptionManager {
     /// clear the flag and wake waiters. Returns `None` if a load is already in
     /// progress.
     pub fn try_start_loading(&self) -> Option<LoadingGuard> {
-        let mut is_loading = self.is_loading.lock().unwrap();
+        let mut is_loading = self.lock_is_loading();
         if *is_loading {
             return None;
         }
@@ -253,7 +358,7 @@ impl TranscriptionManager {
             *engine = None;
         }
         {
-            let mut current_model = self.current_model_id.lock().unwrap();
+            let mut current_model = self.lock_current_model();
             *current_model = None;
         }
 
@@ -279,7 +384,7 @@ impl TranscriptionManager {
     fn now_ms() -> u64 {
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64
     }
 
@@ -436,7 +541,7 @@ impl TranscriptionManager {
             *engine = Some(loaded_engine);
         }
         {
-            let mut current_model = self.current_model_id.lock().unwrap();
+            let mut current_model = self.lock_current_model();
             *current_model = Some(model_id.to_string());
         }
 
@@ -479,28 +584,33 @@ impl TranscriptionManager {
     /// model switching). WinSTT-catalog ids load through the unified ort engine
     /// (`load_winstt_model`); anything else falls back to Handy's transcribe-rs `load_model`.
     pub fn initiate_model_load(&self) {
-        let mut is_loading = self.is_loading.lock().unwrap();
-        if *is_loading {
-            return; // a load is already in flight; it picks up the latest selection
-        }
+        // Cheap pre-check WITHOUT claiming the loading flag: nothing to do if we're already on
+        // the selected model. (try_start_loading below is the real, atomic gate.)
         let desired = self.desired_model_id();
         if self.is_model_loaded() && self.get_current_model().as_deref() == Some(desired.as_str()) {
             return; // already on the selected model
         }
-
-        *is_loading = true;
-        drop(is_loading);
+        // PANIC-SAFE claim of the loading flag. The `LoadingGuard` is MOVED into the worker
+        // thread so its Drop clears `is_loading` + wakes condvar waiters on EVERY exit of the
+        // thread — including a panic in `dispatch_load`. (See `load_model_blocking` for why a
+        // stuck `is_loading` permanently wedges the PTT pipeline.)
+        let guard = match self.try_start_loading() {
+            Some(g) => g,
+            None => return, // a load is already in flight; it picks up the latest selection
+        };
         let self_clone = self.clone();
         thread::spawn(move || {
+            let _guard = guard; // RAII: clears is_loading + notifies on return OR panic.
             let desired = self_clone.desired_model_id();
             // Failure-atomic: dispatch_load does NOT unload up front — a failed resolve/build
-            // leaves the previous engine resident (re-emitting loading_completed for it).
-            if let Err(e) = self_clone.dispatch_load(&desired) {
-                error!("Failed to load model '{}': {}", desired, e);
-            }
-            let mut is_loading = self_clone.is_loading.lock().unwrap();
-            *is_loading = false;
-            self_clone.loading_condvar.notify_all();
+            // leaves the previous engine resident (re-emitting loading_completed for it). Wrap in
+            // catch_unwind so a build panic can't escape and abort the thread before the guard's
+            // Drop runs (it would still run on unwind, but this keeps the log clean + explicit).
+            let _ = catch_unwind(AssertUnwindSafe(|| {
+                if let Err(e) = self_clone.dispatch_load(&desired) {
+                    error!("Failed to load model '{}': {}", desired, e);
+                }
+            }));
         });
     }
 
@@ -525,7 +635,7 @@ impl TranscriptionManager {
                     let _ = self.unload_model();
                 }
                 {
-                    let mut current = self.current_model_id.lock().unwrap();
+                    let mut current = self.lock_current_model();
                     *current = Some(model_id.to_string());
                 }
                 self.touch_activity();
@@ -548,7 +658,10 @@ impl TranscriptionManager {
         if !self.is_model_loaded() {
             return; // genuinely nothing resident (e.g. cold first-load failure)
         }
-        let model_id = match self.get_current_model().or_else(|| previous.map(str::to_string)) {
+        let model_id = match self
+            .get_current_model()
+            .or_else(|| previous.map(str::to_string))
+        {
             Some(id) => id,
             None => return,
         };
@@ -573,22 +686,33 @@ impl TranscriptionManager {
     /// `model.model` is debounced, so a re-read would load the stale/default "tiny" and "succeed").
     /// Runs on the swap orchestrator's own thread, so it never blocks the Tauri command thread.
     pub fn load_model_blocking(&self, model_id: &str) -> std::result::Result<(), String> {
-        {
-            let mut is_loading = self.is_loading.lock().unwrap();
-            if *is_loading {
-                return Err("Model load already in progress".to_string());
-            }
-            *is_loading = true;
-        }
+        // PANIC-SAFE: claim the loading flag through the RAII `LoadingGuard`. Its Drop clears
+        // `is_loading` and wakes any `transcribe()` blocked on the load condvar on EVERY exit —
+        // normal return, early return, OR a panic in `dispatch_load`. The previous manual flag
+        // flip was skipped by a panic, leaving `is_loading` stuck `true` forever → every later
+        // `transcribe()` blocked on the condvar → the FinishGuard never dropped → the
+        // TranscriptionCoordinator stayed in `Processing` → the PTT hotkey silently stopped
+        // starting recordings until an app restart. That is the "must restart after a model
+        // switch" bug.
+        let guard = match self.try_start_loading() {
+            Some(g) => g,
+            None => return Err("Model load already in progress".to_string()),
+        };
         // FAILURE-ATOMIC: dispatch_load never unloads the resident engine up front — a failed
         // resolve/build leaves the previous model dictatable (and re-emits its loading_completed),
         // instead of the old unload-first path that left NOTHING loaded on a network blip.
-        let outcome: Result<()> = self.dispatch_load(model_id);
-        {
-            let mut is_loading = self.is_loading.lock().unwrap();
-            *is_loading = false;
-            self.loading_condvar.notify_all();
-        }
+        // catch_unwind turns a build panic into an Err so the swap orchestrator can emit
+        // `model-swap-failed` (rollback + toast) instead of the worker thread dying silently.
+        let outcome: Result<()> =
+            match catch_unwind(AssertUnwindSafe(|| self.dispatch_load(model_id))) {
+                Ok(r) => r,
+                Err(_) => Err(anyhow::anyhow!(
+                    "model load panicked while building the engine"
+                )),
+            };
+        // Clear `is_loading` (and wake waiters) BEFORE spawning the warmup so the warm decode's
+        // own load-condvar wait passes immediately instead of blocking on our own guard.
+        drop(guard);
         // Warm the freshly-loaded engine so the first post-swap decode isn't cold (DML kernel JIT) —
         // but do it on a DETACHED thread so the swap completes (chip clears) on LOAD, not after the
         // cold warm-decode. (TranscriptionManager is Clone — the clone shares the Arc'd state.)
@@ -604,8 +728,8 @@ impl TranscriptionManager {
 
     /// Eagerly compile the loaded engine's kernels with a dummy 1s-silence decode so the FIRST
     /// real PTT decode is WARM — no cold DirectML kernel JIT serialized on the release path (the
-    /// dominant cause of the port feeling ~10x slower than Electron on the first dictation). Mirrors
-    /// the Electron server's `RecorderService.warmup` (decodes `np.zeros(16000)` at boot). Only the
+    /// dominant cause of the port feeling ~10x slower than the reference on the first dictation). Mirrors
+    /// the reference server's `RecorderService.warmup` (decodes `np.zeros(16000)` at boot). Only the
     /// WinSTT ort/DirectML engine pays cold-JIT; the transcribe-rs (GGML) engines don't, so we warm
     /// just that arm. Best-effort: a warmup failure must never break dictation.
     pub fn warmup(&self) {
@@ -615,7 +739,7 @@ impl TranscriptionManager {
         // ready, serializing the user's decode behind a cold ~1s warmup. Instead we only set the
         // separate `warming` flag and yield the engine to any real decode via `try_lock`.
         {
-            let mut is_loading = self.is_loading.lock().unwrap();
+            let mut is_loading = self.lock_is_loading();
             while *is_loading {
                 is_loading = self.loading_condvar.wait(is_loading).unwrap();
             }
@@ -738,7 +862,7 @@ impl TranscriptionManager {
             *guard = Some(LoadedEngine::Winstt(engine));
         }
         {
-            let mut current = self.current_model_id.lock().unwrap();
+            let mut current = self.lock_current_model();
             *current = Some(model_id.to_string());
         }
         self.touch_activity();
@@ -761,13 +885,16 @@ impl TranscriptionManager {
     }
 
     pub fn get_current_model(&self) -> Option<String> {
-        let current_model = self.current_model_id.lock().unwrap();
+        let current_model = self.lock_current_model();
         current_model.clone()
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        let request_id = next_transcription_request_id();
+
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
+            error!("[stt][{request_id}] simulated transcription failure requested");
             return Err(anyhow::anyhow!(
                 "Simulated transcription failure (HANDY_FORCE_TRANSCRIPTION_FAILURE)"
             ));
@@ -778,46 +905,36 @@ impl TranscriptionManager {
 
         let st = std::time::Instant::now();
 
-        debug!("Audio vector length: {}", audio.len());
+        debug!("[stt][{request_id}] audio_samples={}", audio.len());
 
         if audio.is_empty() {
-            debug!("Empty audio vector");
+            debug!("[stt][{request_id}] empty audio vector");
             self.maybe_unload_immediately("empty audio");
             return Ok(String::new());
         }
 
         // ── SILENCE GATE (all engine paths: cloud / transcribe-rs / winstt-catalog) ──
-        // A recording can be NON-empty yet carry NO actual audio — e.g. a Bluetooth
-        // headset mic in A2DP mode, or a muted/virtual device. Such a dead device emits a
-        // constant DC offset (raw |peak| nonzero) with ZERO real signal energy. Fed to
-        // Whisper, that silence makes the greedy decoder HALLUCINATE hundreds of garbage
-        // tokens until max_length (the observed ">12s wall of garbled multilingual text").
-        // Reject ONLY that signature: an empty result makes the caller emit
-        // `no_audio_detected` (actions.rs) → honest "no audio" pill, not garbage.
+        // A recording can be NON-empty yet carry NO actual speech — pure silence / room
+        // tone (the Silero VAD at threshold 0.3 keeps near-silent frames on some mics), or
+        // a dead Bluetooth/A2DP/virtual device emitting a constant DC offset. Fed to
+        // Whisper, that makes the greedy decoder HALLUCINATE phantom text — observed as a
+        // pasted "Thank you." on pure silence (rms≈0.00004), and as a ">12s wall of garbled
+        // multilingual text" for the DC-offset dead-mic case. Reject both: an empty result
+        // makes the caller emit `no_audio_detected` (actions.rs) → honest "no audio" pill.
         //
-        // SCOPED, not a blanket amplitude floor: the previous `rms < 0.0025` floor also
-        // dropped genuinely quiet speech (a soft talker / distant mic). Instead trip only on
-        // the DC-dominated dead-device fingerprint — vanishing AC energy (DC-immune RMS) AND
-        // a DC offset that dwarfs whatever AC remains. Real (even quiet) speech has AC > DC
-        // and an RMS well above the noise floor; a dead virtual mic has AC ≈ 0 with a large
-        // constant |mean|. Audio here is RAW (pre-`peak_normalize`).
-        let n = audio.len() as f32;
-        let mean = audio.iter().copied().sum::<f32>() / n;
-        let rms = (audio.iter().map(|&x| (x - mean) * (x - mean)).sum::<f32>() / n).sqrt();
-        // AC floor: below this there is no decodable speech energy at all. DC-dominated:
-        // the constant offset is at least an order of magnitude above the AC RMS, i.e. the
-        // signal is "all offset, no audio" — the dead/virtual-mic fingerprint.
-        const SILENCE_AC_FLOOR: f32 = 0.0008;
-        const DC_DOMINANCE_RATIO: f32 = 10.0;
-        let dc_dominated = mean.abs() > rms * DC_DOMINANCE_RATIO;
-        log::debug!(
-            "[silence-gate] rms={rms:.6} mean={mean:.6} dc_dominated={dc_dominated} \
-             (ac_floor {SILENCE_AC_FLOOR})"
-        );
-        if rms < SILENCE_AC_FLOOR && dc_dominated {
+        // Gate on DC-immune AC energy (`SILENCE_AC_FLOOR`, empirically between real speech
+        // and silence — see the const) OR the DC-dominated dead-device fingerprint. The
+        // earlier gate required `rms < 0.0008 AND dc_dominated`, which let GENUINE digital
+        // silence through (rms≈0, mean≈0 → not DC-dominated) — the "Thank you." bug. Audio
+        // here is RAW (pre-`peak_normalize`).
+        if is_silent_recording(&audio) {
+            let rms = dc_immune_rms(&audio);
             debug!(
-                "Recording RMS {rms:.6} with DC offset {mean:.6} matches dead/virtual-mic \
-                 signature — no audio (skipping decode)"
+                "[stt][{request_id}] silent recording skipped; rms={rms:.6}; ac_floor={SILENCE_AC_FLOOR}"
+            );
+            debug!(
+                "Recording RMS {rms:.6} below speech floor (ac_floor {SILENCE_AC_FLOOR}) — \
+                 no audio (skipping decode)"
             );
             self.maybe_unload_immediately("silent audio");
             return Ok(String::new());
@@ -836,7 +953,18 @@ impl TranscriptionManager {
         // decides to take the cloud path here — BEFORE the engine lock, since cloud ids have no
         // LoadedEngine — and unloads any resident local engine after.
         if self.backend.route_of(&desired) == BackendRoute::Cloud {
-            let filtered = self.backend.cloud_transcribe(&self.app_handle, &desired, &audio)?;
+            let filtered = match self
+                .backend
+                .cloud_transcribe(&self.app_handle, &desired, &audio)
+            {
+                Ok(text) => text,
+                Err(e) => {
+                    error!(
+                        "[stt][{request_id}] cloud transcription failed for model '{desired}': {e}"
+                    );
+                    return Err(e);
+                }
+            };
             self.maybe_unload_immediately("cloud transcription");
             return Ok(filtered);
         }
@@ -844,13 +972,24 @@ impl TranscriptionManager {
         // Check if model is loaded, if not try to load it
         {
             // If the model is loading, wait for it to complete.
-            let mut is_loading = self.is_loading.lock().unwrap();
+            let mut is_loading = self.lock_is_loading();
             while *is_loading {
-                is_loading = self.loading_condvar.wait(is_loading).unwrap();
+                is_loading = self
+                    .loading_condvar
+                    .wait(is_loading)
+                    .unwrap_or_else(|poisoned| {
+                        warn!(
+                        "[stt][{request_id}] is_loading mutex poisoned while waiting; recovering"
+                    );
+                        poisoned.into_inner()
+                    });
             }
 
             let engine_guard = self.lock_engine();
             if engine_guard.is_none() {
+                error!(
+                    "[stt][{request_id}] no loaded transcription engine for selected model '{desired}'"
+                );
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
             }
         }
@@ -884,7 +1023,7 @@ impl TranscriptionManager {
                 raw_language.to_string()
             } else {
                 warn!(
-                    "Language '{}' not supported by current model, falling back to auto-detect",
+                    "[stt][{request_id}] language '{}' not supported by selected model '{desired}', falling back to auto-detect",
                     raw_language
                 );
                 "auto".to_string()
@@ -910,6 +1049,9 @@ impl TranscriptionManager {
             let mut engine = match engine_guard.take() {
                 Some(e) => e,
                 None => {
+                    error!(
+                        "[stt][{request_id}] engine unavailable after load wait for selected model '{desired}'"
+                    );
                     return Err(anyhow::anyhow!(
                         "Model failed to load after auto-load attempt. Please check your model settings."
                     ));
@@ -1050,7 +1192,12 @@ impl TranscriptionManager {
                     // Success or normal error — put the engine back
                     let mut engine_guard = self.lock_engine();
                     *engine_guard = Some(engine);
-                    inner_result?
+                    inner_result.map_err(|e| {
+                        error!(
+                            "[stt][{request_id}] transcription failed for model '{desired}': {e}"
+                        );
+                        e
+                    })?
                 }
                 Err(panic_payload) => {
                     // Engine panicked — do NOT put it back (it's in an unknown state).
@@ -1063,7 +1210,7 @@ impl TranscriptionManager {
                         "unknown panic".to_string()
                     };
                     error!(
-                        "Transcription engine panicked: {}. Model has been unloaded.",
+                        "[stt][{request_id}] transcription engine panicked for model '{desired}': {}. Model has been unloaded.",
                         panic_msg
                     );
 
@@ -1119,19 +1266,17 @@ impl TranscriptionManager {
         } else {
             ""
         };
-        info!(
-            "Transcription completed in {}ms{}",
-            (et - st).as_millis(),
-            translation_note
-        );
-
         let final_result = filtered_result;
+        let output_chars = final_result.chars().count();
 
-        if final_result.is_empty() {
-            info!("Transcription result is empty");
-        } else {
-            info!("Transcription result: {}", final_result);
-        }
+        info!(
+            "[stt][{request_id}] transcription completed in {}ms{} model='{}' output_chars={} output_empty={}",
+            (et - st).as_millis(),
+            translation_note,
+            desired,
+            output_chars,
+            output_chars == 0
+        );
 
         self.maybe_unload_immediately("transcription");
 
@@ -1140,7 +1285,7 @@ impl TranscriptionManager {
 
     /// Realtime live-preview decode: ONE raw pass for the live transcription overlay.
     ///
-    /// Ported from the Electron server's `_transcribe_realtime_window` /
+    /// Ported from the reference server's `_transcribe_realtime_window` /
     /// `_safe_transcribe` (recorder_service.py:2765-2781). Key contract:
     ///
     /// * NON-BLOCKING on the engine — `try_lock` only. If the engine mutex is contended
@@ -1161,10 +1306,17 @@ impl TranscriptionManager {
     ///   poison the worker; returns `None` on panic.
     ///
     /// REUSES THE MAIN ENGINE: there is deliberately no second realtime engine in this port —
-    /// do not wire one. The Electron server's separate realtime transcriber maps to this single
+    /// do not wire one. The the reference server's separate realtime transcriber maps to this single
     /// in-proc engine, shared with the batch path under the same mutex.
     pub fn transcribe_realtime(&self, audio: &[f32], language: Option<&str>) -> Option<String> {
         if audio.is_empty() {
+            return None;
+        }
+        // Silence backstop (same floor as the batch gate): a low-AC-energy window is the
+        // ambient/silence the Silero VAD let through — decoding it makes Whisper hallucinate
+        // ("Thank you.") into the LIVE PREVIEW, which would reveal the pill on silence.
+        // Return None so the watermark/preview pick up no phantom text.
+        if dc_immune_rms(audio) < SILENCE_AC_FLOOR {
             return None;
         }
         // Non-blocking: bail the instant the engine is busy (batch decode), but RECOVER
@@ -1206,6 +1358,151 @@ impl TranscriptionManager {
                 None
             }
         }
+    }
+
+    /// Whether the currently-loaded engine's decode quality depends on cross-chunk context (an
+    /// attention enc-dec). Non-blocking peek; on contention / not-loaded it defaults to TRUE (safe:
+    /// prefer a fresh decode over reusing the chunked preview). Drives the reuse-vs-retranscribe
+    /// policy in `try_reuse_realtime`.
+    fn loaded_needs_past_context(&self) -> bool {
+        match self.engine.try_lock() {
+            Ok(guard) => {
+                matches!(&*guard, Some(LoadedEngine::Winstt(e)) if e.kind().needs_past_context())
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// Peek whether the loaded engine does NATIVE streaming (carries cross-chunk cache state so the
+    /// realtime worker can feed only new samples per tick). `Some(true/false)` when an engine is
+    /// loaded; `None` when none is loaded yet OR the lock is contended (caller keeps probing / uses
+    /// the window path). Non-blocking.
+    pub fn realtime_native_streaming(&self) -> Option<bool> {
+        match self.engine.try_lock() {
+            Ok(guard) => match &*guard {
+                Some(LoadedEngine::Winstt(e)) => Some(e.supports_native_streaming()),
+                // realtime is WinSTT-arm-only; any other loaded engine → window path (returns
+                // nothing from transcribe_realtime, so the preview is simply empty for it).
+                Some(_) => Some(false),
+                None => None,
+            },
+            Err(_) => None,
+        }
+    }
+
+    /// Feed the next chunk of NEW 16 kHz samples into the loaded native-streaming engine (cache
+    /// carried internally) and return the incremental text. NON-BLOCKING (`try_lock`, like
+    /// `transcribe_realtime`): a contended lock yields [`RealtimeStreamOutcome::Skipped`] so the
+    /// worker retries the same samples next tick instead of dropping them. A non-streaming engine
+    /// yields [`RealtimeStreamOutcome::NotStreaming`]. `catch_unwind` so a decode panic can't wedge
+    /// the worker.
+    pub fn stream_accept_realtime(&self, new_samples: &[f32]) -> RealtimeStreamOutcome {
+        if new_samples.is_empty() {
+            return RealtimeStreamOutcome::Text(String::new());
+        }
+        let mut guard = match self.engine.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::WouldBlock) => return RealtimeStreamOutcome::Skipped,
+            Err(std::sync::TryLockError::Poisoned(p)) => {
+                warn!("Engine mutex poisoned by a previous panic, recovering (stream_accept)");
+                p.into_inner()
+            }
+        };
+        let decoded =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &mut *guard {
+                Some(LoadedEngine::Winstt(e)) if e.supports_native_streaming() => {
+                    Some(e.stream_accept(new_samples).unwrap_or_default())
+                }
+                _ => None,
+            }));
+        match decoded {
+            Ok(Some(text)) => RealtimeStreamOutcome::Text(text),
+            Ok(None) => RealtimeStreamOutcome::NotStreaming,
+            Err(_) => {
+                warn!("Native stream decode panicked — skipping tick");
+                RealtimeStreamOutcome::Text(String::new())
+            }
+        }
+    }
+
+    /// Zero the loaded native-streaming engine's stream state (new utterance). No-op for a
+    /// non-streaming or unloaded engine. Non-blocking; a contended lock is a tolerable miss (the
+    /// next recording's first `stream_accept` re-creates a fresh stream regardless).
+    pub fn stream_reset_realtime(&self) {
+        if let Ok(mut guard) = self.engine.try_lock() {
+            if let Some(LoadedEngine::Winstt(e)) = &mut *guard {
+                if e.supports_native_streaming() {
+                    e.stream_reset();
+                }
+            }
+        }
+    }
+
+    /// Cache the latest realtime full-buffer decode for the final-paste reuse fast path. Called by
+    /// the realtime worker after each successful full-buffer decode; overwrites any prior entry
+    /// (only the freshest, most-complete decode matters). Empty text is never cached (so reuse can
+    /// never resurrect a blank/silent tick).
+    pub fn cache_realtime_reuse(&self, generation: u64, covered: usize, raw_text: &str) {
+        if raw_text.trim().is_empty() {
+            return;
+        }
+        *self.realtime_reuse.lock().unwrap() = Some(RealtimeReuse {
+            generation,
+            covered,
+            raw_text: raw_text.to_string(),
+        });
+    }
+
+    /// Satisfy the FINAL transcription by REUSING the realtime worker's last full-buffer decode —
+    /// avoiding a redundant re-decode of audio the live engine already transcribed (the live decode
+    /// used the same engine on the same growing buffer, so it == the final decode sans
+    /// post-processing). Returns the post-processed final text when ALL hold:
+    ///   * a cached decode exists for THIS recording `generation`,
+    ///   * the whole recording is not silent (defer to `transcribe`'s silence gate otherwise — the
+    ///     realtime path skips that gate and may have hallucinated on near-silence), and
+    ///   * the audio past what the cached decode covered carries no speech (so reusing drops no
+    ///     trailing words — the gap is the key-release / extra-buffer silence tail).
+    ///
+    /// Returns `None` (→ caller does a fresh `transcribe`) otherwise. The cache is consumed either
+    /// way so a stale decode can't leak into the next recording.
+    pub fn try_reuse_realtime(&self, generation: u64, samples: &[f32]) -> Option<String> {
+        // Consume the cache regardless so a stale decode can't leak into the next recording.
+        let entry = self.realtime_reuse.lock().unwrap().take()?;
+        // Context-dependent engines (attention enc-dec: Whisper/Canary/Cohere) must re-decode with
+        // proper VAD-segmentation — the chunked realtime watermark text has arbitrary cut points and
+        // is lower quality than a clean-boundary final. Only the frame-synchronous (CTC / transducer
+        // / native-streaming) families, which carry no cross-utterance text context, reuse the live
+        // output.
+        if self.loaded_needs_past_context() {
+            return None;
+        }
+        if entry.generation != generation {
+            return None;
+        }
+        // Whole-recording silence → let the batch path's gate emit the honest "no audio".
+        if is_silent_recording(samples) {
+            return None;
+        }
+        // Trailing audio the realtime decode never saw (last partial chunk + extra-buffer tail).
+        // If it carries speech, the user kept talking past the last live decode — a fresh decode is
+        // required so those words aren't dropped.
+        let covered = entry.covered.min(samples.len());
+        let tail = &samples[covered..];
+        if !tail.is_empty() && dc_immune_rms(tail) >= SILENCE_AC_FLOOR {
+            return None;
+        }
+        // A reuse hit IS a completed transcription — keep the idle-unload watcher from evicting the
+        // engine out from under an actively-dictating user (the `transcribe` path it bypasses is
+        // where `touch_activity` normally runs).
+        self.touch_activity();
+        // Same cleanup the WinSTT `decode` path applies, so reuse == a fresh decode would produce.
+        let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
+        let app_language = get_settings(&self.app_handle).app_language;
+        Some(crate::winstt::stt::backend::winstt_postprocess(
+            &entry.raw_text,
+            &ws,
+            &app_language,
+        ))
     }
 }
 
@@ -1349,5 +1646,53 @@ mod tests {
             "transcription.rs must not read the AppSettings language field — language is owned \
              solely by WinsttSettings.model.language (see crate::winstt::stt::backend)"
         );
+    }
+
+    // ── silence gate: AC-energy floor separates speech from silence ─────────────
+    // Real values logged by the app's `[silence-gate]` on this hardware: silence /
+    // Whisper-hallucination clips ("Thank you.") measured rms ≤ 0.0014; real speech
+    // recordings measured rms ≥ 0.0074. The 0.003 floor must reject the former and pass
+    // the latter — regression guard for the "Thank you. on silence" bug.
+
+    #[test]
+    fn dc_immune_rms_is_zero_on_constant_dc_offset() {
+        // A dead Bluetooth/virtual mic emits a constant offset (no AC). Subtracting the
+        // mean leaves zero residual → rms 0, well under the floor.
+        let dead_mic = vec![0.5_f32; 4800];
+        let rms = super::dc_immune_rms(&dead_mic);
+        assert!(
+            rms < 1e-6,
+            "constant DC must read as ~0 AC energy, got {rms}"
+        );
+        assert!(rms < super::SILENCE_AC_FLOOR);
+    }
+
+    #[test]
+    fn silence_floor_rejects_observed_silence_and_passes_observed_speech() {
+        // Synthesize signals at the measured RMS levels (a sine carries rms = amp/√2).
+        let synth = |target_rms: f32| -> Vec<f32> {
+            let amp = target_rms * std::f32::consts::SQRT_2;
+            (0..4800)
+                .map(|i| amp * (i as f32 * 0.2).sin())
+                .collect::<Vec<f32>>()
+        };
+        // Observed silence/hallucination levels → must be BELOW the floor.
+        for &silent in &[0.000_043_f32, 0.001_381] {
+            let rms = super::dc_immune_rms(&synth(silent));
+            assert!(
+                rms < super::SILENCE_AC_FLOOR,
+                "silence rms {rms} must be rejected by floor {}",
+                super::SILENCE_AC_FLOOR
+            );
+        }
+        // Observed real-speech levels → must be ABOVE the floor (not clipped).
+        for &speech in &[0.007_443_f32, 0.013_537, 0.025_773] {
+            let rms = super::dc_immune_rms(&synth(speech));
+            assert!(
+                rms >= super::SILENCE_AC_FLOOR,
+                "speech rms {rms} must pass floor {}",
+                super::SILENCE_AC_FLOOR
+            );
+        }
     }
 }

@@ -26,9 +26,8 @@ use tauri::{AppHandle, Emitter};
 
 use crate::winstt::commands::events::WakeWordDetectedPayload;
 use crate::winstt::wakeword::{
-    build_keyword_content, resolve_phrase, sensitivity_to_threshold, KwsModelPaths,
-    WakeWordConfig, WakeWordDetector, WakeWordProvider, WakeWordResult, KWS_BUNDLE_DIRNAME,
-    WAKE_WORD_PRESETS,
+    build_keyword_content, resolve_phrase, sensitivity_to_threshold, KwsModelPaths, WakeWordConfig,
+    WakeWordDetector, WakeWordProvider, WakeWordResult, KWS_BUNDLE_DIRNAME, WAKE_WORD_PRESETS,
 };
 
 /// One wake-word preset surfaced to the renderer dropdown.
@@ -134,7 +133,10 @@ impl WakeWordManager {
     }
 
     pub fn current_phrase(&self) -> String {
-        self.state.lock().map(|s| s.phrase.clone()).unwrap_or_default()
+        self.state
+            .lock()
+            .map(|s| s.phrase.clone())
+            .unwrap_or_default()
     }
 
     pub fn timeout_seconds(&self) -> f32 {
@@ -172,17 +174,29 @@ impl WakeWordManager {
         if !self.is_armed() {
             return WakeWordResult::none();
         }
-        let Ok(mut guard) = self.detector.lock() else {
-            return WakeWordResult::none();
-        };
+        // Recover a poisoned lock instead of giving up: a panic inside the native
+        // sherpa `detect()` would otherwise poison this mutex and make every later
+        // `feed_chunk` silently no-op forever. Mirrors the recorder's VAD poison
+        // discipline (warn + carry on with the inner guard).
+        let mut guard = self.detector.lock().unwrap_or_else(|p| {
+            warn!("Wake-word detector lock poisoned; recovering inner guard");
+            p.into_inner()
+        });
         let Some(det) = guard.as_mut() else {
             return WakeWordResult::none();
         };
-        let result = det.detect(chunk);
+        // Contain a native-inference panic so it can't poison the lock and freeze
+        // detection; treat a panicking frame as "no hit".
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| det.detect(chunk)))
+            .unwrap_or_else(|_| {
+                warn!("Wake-word detect panicked; treating chunk as no-hit");
+                WakeWordResult::none()
+            });
         // Drop the lock before emitting so an event handler can't deadlock by
         // re-entering the manager (e.g. a synchronous set_armed on the same path).
         drop(guard);
         if result.detected {
+            self.armed.store(false, Ordering::Release);
             self.emit_detected(&result);
         }
         result

@@ -9,7 +9,7 @@ describe("classifyAppleIntelligencePlatform", () => {
 		expect(
 			classifyAppleIntelligencePlatform({
 				platform: "Win32",
-				userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Electron/30.0.0",
+				userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
 			})
 		).toBe("other");
 	});
@@ -55,7 +55,7 @@ describe("classifyAppleIntelligencePlatform", () => {
 	});
 
 	test("recognises 'apple silicon' phrasing", () => {
-		// Some Electron versions/Safari builds embed the phrase verbatim
+		// Some WebView/Safari builds embed the phrase verbatim
 		// when running natively on M-series hardware.
 		expect(
 			classifyAppleIntelligencePlatform({

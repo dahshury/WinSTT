@@ -1,8 +1,7 @@
 <!--
 Thanks for sending a PR! Please fill in BOTH sections below.
-The template mirrors the one Handy uses (examples/Handy/.github/PULL_REQUEST_TEMPLATE.md)
-because it works: reviewers get the human "why" + the AI-assistance disclosure in one place,
-and the Community Feedback link makes the case for the change visible to everyone.
+Reviewers get the human "why" + the AI-assistance disclosure in one place, and the
+Community Feedback link makes the case for the change visible to everyone.
 
 If you're an AI coding assistant landing this PR on behalf of a human:
 DO NOT remove these sections. Fill them in honestly. Reviewers prioritise PRs
@@ -46,15 +45,13 @@ Link the GitHub Discussion or Issue this PR addresses.
 
 <!-- Mark with [x]. Empty boxes are fine — reviewers will help. -->
 
-- [ ] Code change has tests (server: pytest 100 % coverage; frontend: bun test / property tests where it makes sense; e2e via Playwright for UI flows).
-- [ ] `make` passes in `server/` (format + lint + mypy + pytest).
-- [ ] `bun typecheck && bun lint && bun test` pass in `frontend/`.
-- [ ] If the WebSocket contract or settings schema changed: `spec/openapi.yaml` edited first, then `bun --cwd frontend run generate`.
-- [ ] If shared types changed: Python `domain/` models updated to match the new schema.
-- [ ] FSD layer/import contract preserved (`bun check:fsd` clean).
-- [ ] No new `useMemo` / `useCallback` (React Compiler memoizes for us; see AGENTS.md §3).
-- [ ] No new `electron` import outside `electron/preload.ts`.
-- [ ] User-facing strings wrapped in `t()` / `use-intl`; new keys added to every locale in `frontend/messages/`.
+- [ ] Code change has tests (renderer: `bun test` / property tests where it makes sense; backend: Rust unit tests where it makes sense).
+- [ ] Renderer gates pass: `bun run lint`, `bun run build` (tsc + Vite), `bun test`, `bun run check:i18n`.
+- [ ] Backend gates pass in `src-tauri/` (via `rust-migration\cargo-env.bat`): `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check`.
+- [ ] If Tauri commands or shared types changed: `src/bindings.ts` regenerated (tauri-specta).
+- [ ] FSD layer/import contract preserved.
+- [ ] No new `useMemo` / `useCallback` (React Compiler memoizes for us).
+- [ ] User-facing strings wrapped in `t()` / `use-intl`; new keys added to every locale in `messages/`.
 
 ## AI Assistance Disclosure
 

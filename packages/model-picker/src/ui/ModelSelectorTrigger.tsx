@@ -9,7 +9,7 @@ import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import { Spinner } from "@/shared/ui/spinner";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
 import { getProviderIconWithFallback } from "../lib/provider-icons";
 import { getTriggerDataState, isMissingModelId } from "./model-selector-trigger-helpers";
@@ -139,7 +139,7 @@ export function TriggerButton({
 			/>
 			{isLoading ? (
 				<div className="flex flex-1 items-center gap-2">
-					<Spinner className="size-4" />
+					<PulseDot className="size-2.5 text-foreground-muted" />
 					<span className="font-medium text-body text-foreground-muted italic tracking-tight">
 						{placeholder}
 					</span>

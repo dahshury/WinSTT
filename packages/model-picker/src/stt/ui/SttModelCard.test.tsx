@@ -194,25 +194,88 @@ describe("SttModelCard precision-badge download affordance", () => {
 		expect(screen.queryByLabelText("Download int8 weights")).toBeNull();
 	});
 
-	test("idle Auto never STARTS a download — clicking it routes through onSelect at ''", () => {
-		// Auto ("") is a selection router: it never click-to-starts a download
-		// (the swap controller resolves + prompts the right device-appropriate
-		// precision). With nothing downloading it shows no progress chrome and a
-		// click selects at "".
-		const { onSelect, onDownloadAction } = renderDownloadCard(makeModel());
+	test('the fp32 base export ("") renders as a normal selectable badge, not "Auto"', () => {
+		// "" is the full-precision fp32 export — a real, selectable precision badge
+		// (labeled "fp32"), NOT a special "Auto" router. The recommended precision is
+		// instead a MARK on the resolved badge, and a CARD-BODY click selects it.
+		renderDownloadCard(makeModel({ availableQuantizations: [""] }));
+		// No "Auto" affordance anywhere…
+		expect(screen.queryByLabelText("Select Auto precision")).toBeNull();
 		expect(screen.queryByLabelText("Download Auto weights")).toBeNull();
-		expect(screen.queryByText("50%")).toBeNull();
-		fireEvent.click(screen.getByLabelText("Select Auto precision"));
-		expect(onSelect).toHaveBeenCalledWith("custom-my-whisper", "");
-		expect(onDownloadAction).not.toHaveBeenCalled();
+		// …but "" IS present as an fp32 badge (uncached here → the download trigger).
+		expect(screen.getByLabelText("Download fp32 weights")).toBeDefined();
 	});
 
-	test("Auto reflects + controls its EFFECTIVE precision's download (int8-preferred family)", () => {
-		// The server resolves Auto → int8 for this device, and the repo ships NO
-		// concrete int8 badge (availableQuantizations omits it). The download lives
-		// under `model@int8`, so the Auto badge is the ONLY surface that can show
-		// it — it reads the snapshot by the EFFECTIVE precision and its pause/cancel
-		// controls must dispatch that same precision (int8), not the raw "".
+	test("the badge matching effective_quantization is marked Recommended", () => {
+		// The backend's RAM/VRAM-aware pick (the model state's effective_quantization)
+		// is the recommended precision; its badge carries the "(recommended for your
+		// hardware)" aria suffix (+ a sparkle). Other badges are not marked.
+		const model = makeModel({ availableQuantizations: ["", "fp16", "int8"] });
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[model]}>
+					<Combobox.List>
+						{() => (
+							<SttModelCard
+								currentQuantization=""
+								getDownloadSnapshot={() => undefined}
+								model={model}
+								onDownloadAction={mock(() => undefined)}
+								onSelect={mock(() => undefined)}
+								selectedId={undefined}
+								state={makeState({ effective_quantization: "fp16" })}
+								systemInfo={null}
+							/>
+						)}
+					</Combobox.List>
+				</Combobox.Root>
+			</TooltipProvider.Provider>
+		);
+		expect(
+			screen.getByLabelText("Download fp16 weights (recommended for your hardware)")
+		).toBeDefined();
+		// fp32 + int8 are NOT the recommended pick → no suffix.
+		expect(
+			screen.queryByLabelText("Download fp32 weights (recommended for your hardware)")
+		).toBeNull();
+	});
+
+	test("clicking a cached CONCRETE badge routes through onSelect at that explicit precision", () => {
+		// Badge clicks stay the EXPLICIT precision router (they stopPropagation so they
+		// never reach the card-body path). A CACHED int8 badge is a SELECT affordance
+		// (not a click-to-download trigger), and selecting it passes the explicit
+		// "int8" — distinct from the card body, which selects the RECOMMENDED precision
+		// (the model state's effective_quantization).
+		const onSelect = mock(() => undefined);
+		const model = makeModel({ availableQuantizations: ["int8"] });
+		const CACHED = { state: "cached", progress: 1, downloaded_bytes: 10, total_bytes: 10 } as const;
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[model]}>
+					<Combobox.List>
+						{() => (
+							<SttModelCard
+								currentQuantization=""
+								model={model}
+								onSelect={onSelect}
+								selectedId={undefined}
+								state={makeState({ cache_by_quantization: { int8: { ...CACHED } } })}
+								systemInfo={null}
+							/>
+						)}
+					</Combobox.List>
+				</Combobox.Root>
+			</TooltipProvider.Provider>
+		);
+		fireEvent.click(screen.getByLabelText("Select int8 precision"));
+		expect(onSelect).toHaveBeenCalledWith("custom-my-whisper", "int8");
+	});
+
+	test("a CONCRETE badge reflects + controls its EFFECTIVE precision's download", () => {
+		// The server resolves the model → int8 for this device; the shelf ships a
+		// concrete int8 badge. The download lives under `model@int8`, so the int8
+		// badge reads the snapshot by that precision and its pause/cancel controls
+		// dispatch int8.
 		const onSelect = mock(() => undefined);
 		const onDownloadAction = mock(() => undefined);
 		const snapshot: QuantDownloadSnapshot = {
@@ -221,15 +284,16 @@ describe("SttModelCard precision-badge download affordance", () => {
 			progress: 50,
 			totalBytes: 10,
 		};
+		const model = makeModel({ availableQuantizations: ["int8"] });
 		render(
 			<TooltipProvider.Provider>
-				<Combobox.Root items={[makeModel()]}>
+				<Combobox.Root items={[model]}>
 					<Combobox.List>
 						{() => (
 							<SttModelCard
 								currentQuantization=""
 								getDownloadSnapshot={(_id, q) => (q === "int8" ? snapshot : undefined)}
-								model={makeModel()}
+								model={model}
 								onDownloadAction={onDownloadAction}
 								onSelect={onSelect}
 								selectedId={undefined}
@@ -241,13 +305,13 @@ describe("SttModelCard precision-badge download affordance", () => {
 				</Combobox.Root>
 			</TooltipProvider.Provider>
 		);
-		// Live percentage is shown on the Auto badge itself.
+		// Live percentage is shown on the int8 badge itself.
 		expect(screen.getByText("50%")).toBeDefined();
-		// Pause + Cancel controls appear on Auto while its effective bytes flow.
-		expect(screen.getByLabelText("Pause Auto download")).toBeDefined();
-		expect(screen.getByLabelText("Cancel Auto download")).toBeDefined();
-		// …and they dispatch the EFFECTIVE precision (int8), not the raw "".
-		fireEvent.click(screen.getByLabelText("Pause Auto download"));
+		// Pause + Cancel controls appear while its bytes flow.
+		expect(screen.getByLabelText("Pause int8 download")).toBeDefined();
+		expect(screen.getByLabelText("Cancel int8 download")).toBeDefined();
+		// …and they dispatch int8.
+		fireEvent.click(screen.getByLabelText("Pause int8 download"));
 		expect(onDownloadAction).toHaveBeenCalledWith("pause", "custom-my-whisper", "int8");
 	});
 });

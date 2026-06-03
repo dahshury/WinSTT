@@ -1,6 +1,5 @@
-// PORT IMPL — drafted against real APIs, pending compile.
 // Source: E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
-//         app/PORT/05_wakeword_diarization_loopback_wordts.md §B
+//         docs/port/05_wakeword_diarization_loopback_wordts.md §B
 //         server/src/recorder/application/diarization_stream.py + domain/speaker_timeline.py
 //         sherpa-onnx 1.13.2 SpeakerEmbeddingExtractor (verified docs.rs 2026-05):
 //           SpeakerEmbeddingExtractorConfig { model: Option<String>, num_threads: i32,
@@ -49,7 +48,11 @@ pub struct SpeakerSegment {
 
 impl SpeakerSegment {
     pub fn new(start: f64, end: f64, speaker: i64) -> Self {
-        SpeakerSegment { start, end, speaker }
+        SpeakerSegment {
+            start,
+            end,
+            speaker,
+        }
     }
 }
 
@@ -319,15 +322,26 @@ pub fn ahc_complete_linkage(
 
         let (keep, drop) = if bi < bj { (bi, bj) } else { (bj, bi) };
         let drop_members = members[drop].take().expect("drop cluster live");
-        members[keep].as_mut().expect("keep cluster live").extend(drop_members);
+        members[keep]
+            .as_mut()
+            .expect("keep cluster live")
+            .extend(drop_members);
 
         // Complete linkage: new distance = max(keep, drop) per column.
+        #[expect(
+            clippy::needless_range_loop,
+            reason = "indexes multiple rows of dm (keep/drop/c) by c"
+        )]
         for c in 0..n {
             let merged = dm[keep][c].max(dm[drop][c]);
             dm[keep][c] = merged;
             dm[c][keep] = merged;
         }
         dm[keep][keep] = f32::INFINITY;
+        #[expect(
+            clippy::needless_range_loop,
+            reason = "indexes multiple rows of dm (drop/c) by c"
+        )]
         for c in 0..n {
             dm[drop][c] = f32::INFINITY;
             dm[c][drop] = f32::INFINITY;
@@ -398,7 +412,10 @@ pub fn active_intervals(
     }
 
     // Drop intervals shorter than `min_frames`.
-    merged.into_iter().filter(|&(s, e)| e - s >= min_frames).collect()
+    merged
+        .into_iter()
+        .filter(|&(s, e)| e - s >= min_frames)
+        .collect()
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -419,13 +436,19 @@ pub struct SpeakerTimeline {
 
 impl Default for SpeakerTimeline {
     fn default() -> Self {
-        SpeakerTimeline { segments: Vec::new(), retain_seconds: DEFAULT_TIMELINE_RETENTION_S }
+        SpeakerTimeline {
+            segments: Vec::new(),
+            retain_seconds: DEFAULT_TIMELINE_RETENTION_S,
+        }
     }
 }
 
 impl SpeakerTimeline {
     pub fn new(retain_seconds: f64) -> Self {
-        SpeakerTimeline { segments: Vec::new(), retain_seconds }
+        SpeakerTimeline {
+            segments: Vec::new(),
+            retain_seconds,
+        }
     }
 
     /// Merge a window's diarization output into the absolute timeline.
@@ -501,7 +524,11 @@ impl SpeakerTimeline {
                 }
             })
             .collect();
-        out.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+        out.sort_by(|a, b| {
+            a.start
+                .partial_cmp(&b.start)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         out
     }
 
@@ -629,8 +656,15 @@ pub fn assign_speakers_to_words(
 
 /// Merge adjacent same-speaker segments split by `< merge_gap_s` into time-ordered
 /// spans. Mirrors `Diarizer._build_output` / `SessionDiarizer.diarize` tail merge.
-pub fn merge_adjacent_segments(mut triples: Vec<SpeakerSegment>, merge_gap_s: f64) -> Vec<SpeakerSegment> {
-    triples.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+pub fn merge_adjacent_segments(
+    mut triples: Vec<SpeakerSegment>,
+    merge_gap_s: f64,
+) -> Vec<SpeakerSegment> {
+    triples.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut merged: Vec<SpeakerSegment> = Vec::new();
     for seg in triples {
         if let Some(last) = merged.last_mut() {
@@ -715,7 +749,11 @@ impl<S: Segmenter, E: Embedder> Diarizer<S, E> {
 
     /// Segmentation → activity intervals → embeddings, WITHOUT clustering.
     /// Mirrors `Diarizer.diarize_with_embeddings`.
-    pub fn diarize_with_embeddings(&mut self, waveform: &[f32], sample_rate: u32) -> Vec<EmbeddedSegment> {
+    pub fn diarize_with_embeddings(
+        &mut self,
+        waveform: &[f32],
+        sample_rate: u32,
+    ) -> Vec<EmbeddedSegment> {
         if sample_rate != DIARIZER_SAMPLE_RATE || waveform.is_empty() {
             return Vec::new();
         }
@@ -735,7 +773,13 @@ impl<S: Segmenter, E: Embedder> Diarizer<S, E> {
         for local_id in 0..seg.num_local_speakers {
             // Column-extract the local speaker's probability track.
             let track: Vec<f32> = seg.probs.iter().map(|row| row[local_id]).collect();
-            for (s, e) in active_intervals(&track, self.cfg.onset, self.cfg.offset, min_frames, merge_frames) {
+            for (s, e) in active_intervals(
+                &track,
+                self.cfg.onset,
+                self.cfg.offset,
+                min_frames,
+                merge_frames,
+            ) {
                 if e - s >= min_emb_frames {
                     segments.push((local_id, s, e));
                 }
@@ -759,8 +803,7 @@ impl<S: Segmenter, E: Embedder> Diarizer<S, E> {
             };
             // Mean per-frame probability over the interval = active_ratio.
             let span = (e - s).max(1) as f32;
-            let active_ratio =
-                seg.probs[s..e].iter().map(|row| row[local]).sum::<f32>() / span;
+            let active_ratio = seg.probs[s..e].iter().map(|row| row[local]).sum::<f32>() / span;
             out.push(EmbeddedSegment {
                 start: s as f64 * frame_to_sec,
                 end: e as f64 * frame_to_sec,
@@ -805,7 +848,10 @@ pub struct SessionDiarizer<S: Segmenter, E: Embedder> {
 
 impl<S: Segmenter, E: Embedder> SessionDiarizer<S, E> {
     pub fn new(diarizer: Diarizer<S, E>, clustering: OnlineSpeakerClustering) -> Self {
-        SessionDiarizer { diarizer, clustering }
+        SessionDiarizer {
+            diarizer,
+            clustering,
+        }
     }
 
     pub fn reset(&mut self) {
@@ -875,7 +921,9 @@ impl SherpaEmbedder {
         let model = cfg
             .model
             .to_str()
-            .ok_or_else(|| anyhow::anyhow!("embedding model path not UTF-8: {}", cfg.model.display()))?
+            .ok_or_else(|| {
+                anyhow::anyhow!("embedding model path not UTF-8: {}", cfg.model.display())
+            })?
             .to_string();
         let sherpa_cfg = sherpa_onnx::SpeakerEmbeddingExtractorConfig {
             model: Some(model),
@@ -925,9 +973,9 @@ mod tests {
     fn assign_reuses_same_id_for_identical_embedding() {
         let mut c = OnlineSpeakerClustering::default();
         let a = emb(&[1.0, 0.0, 0.0]);
-        let id1 = c.assign(&[a.clone()], None)[0];
+        let id1 = c.assign(std::slice::from_ref(&a), None)[0];
         // Re-feed the SAME embedding across a later call → same id (session stable).
-        let id2 = c.assign(&[a.clone()], None)[0];
+        let id2 = c.assign(std::slice::from_ref(&a), None)[0];
         assert_eq!(id1, id2);
         assert_eq!(c.num_known_speakers(), 1);
     }
@@ -962,13 +1010,16 @@ mod tests {
     fn low_ratio_assigns_but_does_not_move_centroid() {
         let mut c = OnlineSpeakerClustering::new(0.5, 0.3, 8, 0.5);
         let a = emb(&[1.0, 0.0]);
-        c.assign(&[a.clone()], Some(&[1.0]));
+        c.assign(std::slice::from_ref(&a), Some(&[1.0]));
         let centroid_before = c.centers.as_ref().unwrap()[0].clone();
         // A drifting embedding within delta_new but below rho_update → no update.
         let drift = emb(&[0.9, 0.1]);
         c.assign(&[drift], Some(&[0.1])); // ratio 0.1 < rho_update 0.3
         let centroid_after = c.centers.as_ref().unwrap()[0].clone();
-        assert_eq!(centroid_before, centroid_after, "low ratio must not move centroid");
+        assert_eq!(
+            centroid_before, centroid_after,
+            "low ratio must not move centroid"
+        );
     }
 
     #[test]
@@ -1065,7 +1116,13 @@ mod tests {
     #[test]
     fn timeline_dominant_speaker_picks_max_overlap() {
         let mut tl = SpeakerTimeline::default();
-        tl.merge(&[SpeakerSegment::new(0.0, 1.0, 0), SpeakerSegment::new(1.0, 5.0, 1)], 0.0);
+        tl.merge(
+            &[
+                SpeakerSegment::new(0.0, 1.0, 0),
+                SpeakerSegment::new(1.0, 5.0, 1),
+            ],
+            0.0,
+        );
         // [0.5, 4.0): speaker 0 contributes 0.5s, speaker 1 contributes 3.0s.
         assert_eq!(tl.dominant_speaker(0.5, 4.0), Some(1));
     }
@@ -1094,7 +1151,11 @@ mod tests {
 
     #[test]
     fn words_get_speaker_of_containing_segment() {
-        let words = vec![TimedWord { text: "hi".into(), start: 1.2, end: 1.4 }];
+        let words = vec![TimedWord {
+            text: "hi".into(),
+            start: 1.2,
+            end: 1.4,
+        }];
         let segs = vec![SpeakerSegment::new(1.0, 2.0, 1)];
         // No smoothing → plain overlap; midpoint 1.3 inside speaker 1.
         let out = assign_speakers_to_words(&words, &segs, 0.0);
@@ -1105,7 +1166,11 @@ mod tests {
     fn smoothing_resolves_boundary_straddle_by_total_overlap() {
         // Word centered on a boundary; smoothing window leans toward the speaker
         // with more total overlap.
-        let words = vec![TimedWord { text: "x".into(), start: 1.9, end: 2.1 }];
+        let words = vec![TimedWord {
+            text: "x".into(),
+            start: 1.9,
+            end: 2.1,
+        }];
         let segs = vec![
             SpeakerSegment::new(0.0, 2.0, 0),
             SpeakerSegment::new(2.0, 10.0, 1), // far more coverage in window
@@ -1116,14 +1181,22 @@ mod tests {
 
     #[test]
     fn empty_segments_yield_minus_one() {
-        let words = vec![TimedWord { text: "a".into(), start: 0.0, end: 0.1 }];
+        let words = vec![TimedWord {
+            text: "a".into(),
+            start: 0.0,
+            end: 0.1,
+        }];
         let out = assign_speakers_to_words(&words, &[], 1.5);
         assert_eq!(out[0].speaker, -1);
     }
 
     #[test]
     fn word_outside_all_segments_falls_back_to_nearest_edge() {
-        let words = vec![TimedWord { text: "a".into(), start: 50.0, end: 50.1 }];
+        let words = vec![TimedWord {
+            text: "a".into(),
+            start: 50.0,
+            end: 50.1,
+        }];
         let segs = vec![SpeakerSegment::new(0.0, 1.0, 7)];
         // No overlap anywhere → nearest segment edge wins (speaker 7).
         let out = assign_speakers_to_words(&words, &segs, 0.0);
@@ -1138,13 +1211,17 @@ mod tests {
             // 10 frames, 2 local speakers; speaker 0 active frames 0..5,
             // speaker 1 active frames 5..10. frame_step 1600 → 0.1s/frame.
             let mut probs = vec![vec![0.0f32; 2]; 10];
-            for f in 0..5 {
-                probs[f][0] = 0.9;
+            for frame in probs.iter_mut().take(5) {
+                frame[0] = 0.9;
             }
-            for f in 5..10 {
-                probs[f][1] = 0.9;
+            for frame in probs.iter_mut().take(10).skip(5) {
+                frame[1] = 0.9;
             }
-            Some(SegmentationOutput { probs, num_local_speakers: 2, frame_step: 1600 })
+            Some(SegmentationOutput {
+                probs,
+                num_local_speakers: 2,
+                frame_step: 1600,
+            })
         }
     }
 
@@ -1166,11 +1243,11 @@ mod tests {
     fn session_diarizer_produces_stable_ids_across_calls() {
         // Build a waveform: frames 0..5 region marked +1.0, 5..10 marked -1.0.
         let mut wav = vec![0.0f32; 10 * 1600];
-        for i in 0..5 * 1600 {
-            wav[i] = 1.0;
+        for sample in wav.iter_mut().take(5 * 1600) {
+            *sample = 1.0;
         }
-        for i in 5 * 1600..10 * 1600 {
-            wav[i] = -1.0;
+        for sample in wav.iter_mut().take(10 * 1600).skip(5 * 1600) {
+            *sample = -1.0;
         }
         let diar = Diarizer::new(FakeSegmenter, FakeEmbedder, DiarizerConfig::default());
         let mut session = SessionDiarizer::new(diar, OnlineSpeakerClustering::default());
@@ -1181,18 +1258,19 @@ mod tests {
         let second = session.diarize(&wav, 16_000);
         assert_eq!(session.num_known_speakers(), 2, "no new speakers minted");
         let ids_first: std::collections::BTreeSet<i64> = first.iter().map(|s| s.speaker).collect();
-        let ids_second: std::collections::BTreeSet<i64> = second.iter().map(|s| s.speaker).collect();
+        let ids_second: std::collections::BTreeSet<i64> =
+            second.iter().map(|s| s.speaker).collect();
         assert_eq!(ids_first, ids_second);
     }
 
     #[test]
     fn offline_diarize_two_speakers() {
         let mut wav = vec![0.0f32; 10 * 1600];
-        for i in 0..5 * 1600 {
-            wav[i] = 1.0;
+        for sample in wav.iter_mut().take(5 * 1600) {
+            *sample = 1.0;
         }
-        for i in 5 * 1600..10 * 1600 {
-            wav[i] = -1.0;
+        for sample in wav.iter_mut().take(10 * 1600).skip(5 * 1600) {
+            *sample = -1.0;
         }
         let mut diar = Diarizer::new(FakeSegmenter, FakeEmbedder, DiarizerConfig::default());
         let out = diar.diarize(&wav, 16_000, None, 0.7);

@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {
 	hotkeyRegister,
-	hotkeyUnregister,
 	onHotkeyPressed,
 	onHotkeyReleased,
 	onRecordingStop,
@@ -50,7 +49,6 @@ export function usePushToTalk(): void {
 	const setPressed = useHotkeyStore((s) => s.setPressed);
 	const setActive = useHotkeyStore((s) => s.setActive);
 	const setAccelerator = useHotkeyStore((s) => s.setAccelerator);
-	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const pushToTalkKey = useSettingsStore((s) => s.settings.hotkey?.pushToTalkKey);
 	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
 	const manualToggleStop = useSettingsStore((s) => s.settings.general?.manualToggleStop ?? false);
@@ -58,24 +56,35 @@ export function usePushToTalk(): void {
 	const recordingModeRef = useRef(recordingMode);
 	recordingModeRef.current = recordingMode;
 
-	// Mirror pushToTalkKey from the settings store into the hotkey store using
-	// React's render-time adjustment pattern instead of useEffect — there's no
-	// async boundary, this is pure store-to-store derivation.
-	const [prevPushToTalkKey, setPrevPushToTalkKey] = useState(pushToTalkKey);
-	if (prevPushToTalkKey !== pushToTalkKey) {
-		setPrevPushToTalkKey(pushToTalkKey);
-		if (pushToTalkKey) {
-			setAccelerator(pushToTalkKey);
-		}
-	}
-
-	// Register the global hotkey — only re-runs when accelerator actually changes
+	// Register the global hotkey from the persisted PTT key — `settings.hotkey.pushToTalkKey`
+	// is the single source of truth. This runs on MOUNT (registering whatever was persisted,
+	// even on the very first render) and again whenever the key changes, and mirrors the value
+	// into the hotkey store so the pill's HotkeyDisplay shows the active combo.
+	//
+	// Driven off `pushToTalkKey` rather than the hotkey-store `accelerator` ON PURPOSE: that
+	// store seeds `accelerator` to the DEFAULT combo, and the previous "sync only on CHANGE"
+	// mirror left it stuck at the default whenever the persisted key was ALREADY non-default
+	// at mount (no change event fired to trigger the sync). The backend then got
+	// `change_binding(default)` and the user's custom hotkey was never registered — the
+	// "I set Win+Ctrl in settings but it stays Ctrl+Space (after a restart)" bug. The change
+	// took effect live (a real change DID fire) but reverted on the next launch.
+	// See memory/project_ptt_accelerator_default_divergence.md.
+	// NOTE: no cleanup `hotkeyUnregister` here ON PURPOSE. `hotkeyRegister` routes through the
+	// backend `change_binding`, which ATOMICALLY rebinds the single "transcribe" slot (unregister
+	// the old accelerator + register the new one on the hotkey manager thread). A separate
+	// cleanup unregister was both redundant AND racy: it goes out as a fire-and-forget `send`
+	// while the re-register is an awaited `invoke`, so under React StrictMode's mount→cleanup→
+	// mount double-invoke the unregister could land AFTER the final register and leave the hotkey
+	// DEAD — the "PTT does nothing out of the box, but starts working after a hot-reload" bug.
+	// The backend also arms the WinSTT key at init (shortcut/handy_keys.rs), so the hotkey is
+	// live before this effect even runs; this effect just keeps it in sync on key changes.
 	useEffect(() => {
-		hotkeyRegister(accelerator);
-		return () => {
-			hotkeyUnregister(accelerator);
-		};
-	}, [accelerator]);
+		if (!pushToTalkKey) {
+			return;
+		}
+		setAccelerator(pushToTalkKey);
+		hotkeyRegister(pushToTalkKey);
+	}, [pushToTalkKey, setAccelerator]);
 
 	// Sync silence endpoint based on recording mode — set once, not per keypress.
 	// PTT mode never uses the silence endpoint (Smart Endpoint doesn't apply

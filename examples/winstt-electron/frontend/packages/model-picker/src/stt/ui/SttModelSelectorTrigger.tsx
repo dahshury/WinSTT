@@ -69,7 +69,7 @@ function AuthorChip({ family, muted = false }: { family: ModelInfo["family"]; mu
 			{config.logoSrc ? (
 				<img
 					alt=""
-					className={`size-3 rounded-[2px] object-cover ${muted ? "opacity-60" : ""}`}
+					className={`size-3 rounded-[2px] object-contain ${muted ? "opacity-60" : ""}`}
 					height={12}
 					src={publicAsset(config.logoSrc)}
 					width={12}

@@ -351,16 +351,16 @@ impl HistoryManager {
         match retention_period {
             crate::settings::RecordingRetentionPeriod::Never => {
                 // Don't delete anything
-                return Ok(());
+                Ok(())
             }
             crate::settings::RecordingRetentionPeriod::PreserveLimit => {
                 // Use the old count-based logic with history_limit
                 let limit = crate::settings::get_history_limit(&self.app_handle);
-                return self.cleanup_by_count(limit);
+                self.cleanup_by_count(limit)
             }
             _ => {
                 // Use time-based logic
-                return self.cleanup_by_time(retention_period);
+                self.cleanup_by_time(retention_period)
             }
         }
     }
@@ -436,7 +436,11 @@ impl HistoryManager {
             crate::settings::RecordingRetentionPeriod::Days3 => now - (3 * 24 * 60 * 60), // 3 days in seconds
             crate::settings::RecordingRetentionPeriod::Weeks2 => now - (2 * 7 * 24 * 60 * 60), // 2 weeks in seconds
             crate::settings::RecordingRetentionPeriod::Months3 => now - (3 * 30 * 24 * 60 * 60), // 3 months in seconds (approximate)
-            _ => unreachable!("Should not reach here"),
+            // Non-time variants are pre-filtered by `cleanup_old_entries`; handle them
+            // explicitly (instead of `_ => unreachable!()`) so a new retention variant
+            // is a compile error here rather than a runtime panic.
+            crate::settings::RecordingRetentionPeriod::Never
+            | crate::settings::RecordingRetentionPeriod::PreserveLimit => return Ok(()),
         };
 
         // Get all unsaved entries older than the cutoff timestamp

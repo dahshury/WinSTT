@@ -23,6 +23,11 @@ pub fn init_shortcuts(app: &AppHandle) {
         if id == "cancel" {
             continue; // Skip cancel shortcut, it will be registered dynamically
         }
+        // Skip the WinSTT-tree hotkeys (transforms / read_aloud / repaste) — armed via
+        // `shortcut::reconcile_winstt_hotkeys` from the WinSTT settings tree.
+        if crate::shortcut::is_winstt_tree_binding(&id) {
+            continue;
+        }
         // Skip post-processing shortcut when the feature is disabled
         if id == "transcribe_with_post_process" && !user_settings.post_process_enabled {
             continue;

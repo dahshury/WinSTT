@@ -1,0 +1,113 @@
+---
+title: FAQ
+description: Direct answers about WinSTT — privacy, offline use, languages, cost, GPU requirements, models, and where your data lives.
+---
+
+Short, self-contained answers to the questions people ask most before and after installing WinSTT.
+
+<Screenshot src="main" alt="The WinSTT main window: a 9-band audio visualizer with the active hotkey, microphone, and model shown in the footer." label="WinSTT — main window" caption="Everything below describes this app's default behavior on Windows." />
+
+## Privacy & offline
+
+### Is my audio uploaded anywhere?
+
+No. Transcription runs entirely on your machine. Audio frames are processed in memory by on-device ONNX models and discarded immediately — never written to disk, never uploaded. There are no usage analytics. The only outbound traffic from a default install is: anonymized crash reports (Sentry, opt-out), first-time model downloads from `huggingface.co` (only when you pick a model that isn't cached), and optional cloud LLM cleanup or cloud STT (only if you explicitly add an API key).
+
+### Does WinSTT work fully offline?
+
+Yes. The base model is vendored with the app, so a fresh install transcribes with zero network access. You only need a connection to download additional models or to use opt-in cloud features (cloud LLM cleanup, cloud STT). Local LLM cleanup via Ollama also runs on-device, so even that path keeps your text on your machine.
+
+### Are my transcriptions stored on disk?
+
+Only the optional History dashboard persists them, and it stores to a local SQLite database — nothing leaves your machine. Recordings are saved locally too, governed by a retention setting. Set `WINSTT_LOG_NO_TEXT=1` to redact transcribed text from the rolling `debug.log`.
+
+<Callout type="success" title="Your voice stays on your machine">
+  Transcription is local-first by design. Audio never leaves your hardware, there's no
+  telemetry, and the entire codebase is MIT-licensed and auditable.
+</Callout>
+
+## Cost & licensing
+
+### Is WinSTT free?
+
+Yes. WinSTT is free and open source under the MIT license. There are no accounts, no subscriptions, and no paywalled features. You can read, audit, fork, and modify every line.
+
+### Do I have to use any cloud services?
+
+No. Cloud LLM cleanup (OpenRouter) and cloud STT (OpenAI, ElevenLabs) are strictly opt-in and locked until you add your own API key under [Integrations](/docs/settings/integrations). With no keys configured, WinSTT is 100% local. If you use a cloud provider, you pay that provider directly — WinSTT takes no cut and adds no markup.
+
+## Languages
+
+### What languages can WinSTT transcribe?
+
+That depends on the model you pick. Multilingual Whisper models cover ~99 languages; NeMo Parakeet/Canary cover ~25; English-only models (e.g. `whisper-tiny.en`) and language-specific families (GigaAM and T-One for Russian) are also available. Pin a language under [Settings → Model](/docs/settings/model) or leave it on auto-detect.
+
+### What languages is the interface in?
+
+Six: English, Spanish, French, Chinese, Hindi, and Arabic. The interface language is independent of the transcription language.
+
+## Hardware & models
+
+### Do I need a GPU?
+
+No. WinSTT runs on CPU alone — the CPU installer needs only a 64-bit AVX2 CPU (any Intel/AMD from ~2015 on). A GPU is optional and only speeds things up: the DirectML build uses any D3D12-capable GPU (AMD/Intel/NVIDIA) and auto-falls-back to CPU when none is present, so it's safe to install everywhere.
+
+### Which installer should I download?
+
+<ModelTable
+  head={["Installer", "Size", "Use when"]}
+  numeric={[1]}
+  rows={[
+    ["DirectML (default)", "~200 MB", "Any D3D12-capable GPU — AMD, Intel, or NVIDIA. Falls back to CPU."],
+    ["CPU", "~150 MB", "No GPU, headless boxes, or smallest download."],
+    ["OpenVINO", "~250 MB", "Intel ARC dGPU or recent Iris Xe / Arc iGPU."],
+  ]}
+  caption="All three wrap the same Electron app; only the bundled stt-server.exe differs. No Python or extra setup required."
+/>
+
+DirectML is the right default for almost everyone — it's vendor-agnostic and works whether or not you have a GPU. There is no CUDA installer on Windows: on our benchmark DirectML beat CUDA on both median (85 ms vs 120 ms) and tail latency while being 10x smaller.
+
+### How many models are there, and can I switch without restarting?
+
+40+ models across 8 families: Whisper, NeMo Parakeet/Canary, Moonshine, Cohere, GigaAM, Vosk/Kaldi, and T-One. All are ONNX and swappable from the UI — most model changes hot-swap live. Switching the backend family or toggling cloud vs local reconnects the engine, which takes a moment.
+
+### Can I use my own fine-tuned model?
+
+Yes. Export your fine-tune to ONNX (Optimum / onnx-community layout) and drop it under your user-data `models/custom/<slug>/` folder — the model picker has an "Open custom models folder" button that takes you straight there. See [Custom Models](/docs/models#custom-models).
+
+<Callout type="info" title="Greyed-out quantizations">
+  WinSTT doesn't quantize models itself — it surfaces whatever the upstream Hugging Face
+  repo published. If a `q4` graph isn't in the repo, that option is disabled.
+</Callout>
+
+## Data & uninstall
+
+### Where does WinSTT store my data?
+
+Settings, the model cache, history database, saved recordings, and the rolling `debug.log` live under your Windows user-data folder (`%APPDATA%/WinSTT`). The portable installer keeps the app itself self-contained — there's no system-wide install footprint.
+
+### How do I uninstall WinSTT?
+
+Quit the app, then delete the portable executable. To remove everything including downloaded models, history, and settings, also delete the `%APPDATA%/WinSTT` user-data folder. Since the build is portable, there's no registry cleanup or uninstaller to run.
+
+<Callout type="warn" title="Deleting user data is permanent">
+  Removing `%APPDATA%/WinSTT` erases your transcription history, saved recordings, and
+  downloaded models — there's no undo. Back it up first if you want to keep any of it.
+</Callout>
+
+## Related
+
+<Cards>
+  <Card title="Choose a model" href="/docs/settings/model">
+    Pick the engine, quantization, and device for your hardware.
+  </Card>
+  <Card title="Which installer?" href="/docs/install">
+    DirectML, CPU, or OpenVINO — and the requirements for each.
+  </Card>
+  <Card title="Integrations" href="/docs/settings/integrations">
+    Add an API key to opt into cloud STT or cloud LLM cleanup.
+  </Card>
+  <Card title="Troubleshooting" href="/docs/troubleshooting">
+    Blank window, slow transcription, audio devices, download failures.
+  </Card>
+</Cards>

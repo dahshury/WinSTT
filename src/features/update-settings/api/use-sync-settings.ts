@@ -49,14 +49,14 @@ export function useSyncSettings(): void {
 	const hasSyncedOnConnect = useRef(false);
 	const fromBroadcastRef = useRef(false);
 	const fromIpcLoadRef = useRef(false);
-	// Last settings value we know electron-store has — set on initial load and
+	// Last settings value we know persisted store has — set on initial load and
 	// after every successful debounced save. The broadcast merge uses this as
 	// the baseline for "what's user-dirty" so a `settings:changed` from another
 	// window can't wipe an unsaved local change the user just made.
 	const lastSavedRef = useRef<AppSettings | undefined>(undefined);
 	latestSettingsRef.current = settings;
 
-	// Reconcile with electron-store (source of truth) after localStorage hydration.
+	// Reconcile with persisted store (source of truth) after localStorage hydration.
 	// localStorage hydration already set isLoaded, so this just patches any drift.
 	useEffect(() => {
 		settingsLoad().then((loaded) => {
@@ -105,7 +105,7 @@ export function useSyncSettings(): void {
 
 	// When server signals ready (recorder fully initialized), push all saved settings.
 	// Gated on `fromIpcLoadRef.current` so we don't sync the stale Zustand-persist
-	// localStorage cache before the canonical electron-store snapshot has arrived.
+	// localStorage cache before the canonical persisted store snapshot has arrived.
 	// See shouldSyncOnConnect for the full rationale — short version: localStorage
 	// hydration flips `isLoaded` to true synchronously with potentially-stale data;
 	// without the IPC gate, the first sync after connect re-asserts the cache via
@@ -138,7 +138,7 @@ export function useSyncSettings(): void {
 		};
 	}, []);
 
-	// Sync settings changes to electron-store and STT server
+	// Sync settings changes to persisted store and STT server
 	useEffect(() => {
 		if (!isLoaded) {
 			return;
@@ -160,7 +160,7 @@ export function useSyncSettings(): void {
 		// Sync changed parameters to STT server and system settings (immediate)
 		syncToServer(DEPS, settings, prev);
 
-		// Save to electron-store: flush immediately for recording mode changes
+		// Save to persisted store: flush immediately for recording mode changes
 		// so the broadcast reaches other windows without delay.
 		// Debounce everything else to avoid rapid writes from sliders.
 		//
@@ -259,7 +259,7 @@ export function performScheduledSave(
 
 /**
  * Cancel any pending debounced save AND immediately flush the latest settings
- * to electron-store. Used on window close / unmount so a fast-close doesn't
+ * to persisted store. Used on window close / unmount so a fast-close doesn't
  * lose changes that hadn't been written yet (CC 2). Also advances
  * `lastSavedRef` so a later broadcast merge still sees the flushed state as
  * the saved baseline.

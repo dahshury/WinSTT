@@ -1,13 +1,44 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { IntlProvider as UseIntlProvider } from "use-intl/react";
 import { getSystemLocale } from "@/shared/api/ipc-client";
-import { messages, pickLocaleFromSystem, useLocaleStore } from "@/shared/i18n";
+import { loadMessages, pickLocaleFromSystem, useLocaleStore } from "@/shared/i18n";
 
 const LOCALE_STORAGE_KEY = "winstt-locale";
 
 export function IntlProvider({ children }: { children: ReactNode }) {
 	const locale = useLocaleStore((s) => s.locale);
 	const setLocale = useLocaleStore((s) => s.setLocale);
+
+	// Messages are loaded lazily per-locale (one code-split chunk each) so a
+	// window only bundles the locale it renders. We hold the active locale's
+	// bundle in state and re-fetch on locale change. `bundle` stays null until
+	// the first load resolves; children render only once messages are ready so
+	// no string flashes the raw key.
+	const [bundle, setBundle] = useState<{
+		locale: string;
+		messages: Record<string, unknown>;
+	} | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+		loadMessages(locale)
+			.then((loaded) => {
+				if (!cancelled) {
+					setBundle({ locale, messages: loaded });
+				}
+			})
+			.catch(() => {
+				// loadMessages already falls back to the default locale; a reject
+				// here means even that failed. Render with an empty bundle so the
+				// app still mounts (use-intl tolerates missing messages).
+				if (!cancelled) {
+					setBundle({ locale, messages: {} });
+				}
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [locale]);
 
 	useEffect(() => {
 		// First-launch only: if the user has already chosen a locale,
@@ -50,10 +81,18 @@ export function IntlProvider({ children }: { children: ReactNode }) {
 		document.documentElement.setAttribute("lang", locale);
 	}, [locale]);
 
+	// Render nothing until the active locale's bundle is ready. The outer
+	// Suspense fallback (per-window entry) already gates first paint on `null`,
+	// so this is consistent with the existing loading convention. Guard against
+	// a stale bundle from a previous locale during a switch.
+	if (bundle === null || bundle.locale !== locale) {
+		return null;
+	}
+
 	return (
 		<UseIntlProvider
 			locale={locale}
-			messages={messages[locale]}
+			messages={bundle.messages}
 			timeZone={Intl.DateTimeFormat().resolvedOptions().timeZone}
 		>
 			{children}

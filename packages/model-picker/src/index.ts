@@ -22,4 +22,6 @@ export { getFamilyConfig, variantDisplayName } from "./stt/lib/family-helpers";
 export { isRealtimeViable } from "./stt/lib/realtime-viability";
 export { SttModelSelector } from "./stt/ui/SttModelSelector";
 export { SttModelSelectorTriggerButton } from "./stt/ui/SttModelSelectorTrigger";
+export { TtsModelCard, type TtsModelCardProps } from "./tts/ui/TtsModelCard";
+export { TtsModelSelector, type TtsModelSelectorProps } from "./tts/ui/TtsModelSelector";
 export { OpenRouterModelSelector } from "./ui/OpenRouterModelSelector";

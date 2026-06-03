@@ -75,9 +75,7 @@ export {
 	applyVirtualScrollMakerUpdate,
 	buildVirtualItems,
 	EmptyState,
-	findActiveVirtualIndex,
 	getRowKey,
-	SectionHeader,
 	type VirtualizedItem,
 	VirtualizedRow,
 };

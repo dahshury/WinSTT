@@ -13,6 +13,13 @@ export interface SettingSectionProps {
 	 * `footer` is provided.
 	 */
 	description?: string;
+	/**
+	 * Wrap the body in the standard hairline-divided column
+	 * (`flex flex-col divide-y divide-surface-1`) so each child row is
+	 * separated by a divider. The common case for a stack of `SettingField`
+	 * rows — saves repeating the wrapper at every call site.
+	 */
+	divided?: boolean;
 	/** Custom footer content (e.g. status, hint, action). Overrides `description`. */
 	footer?: ReactNode;
 	/** Action rendered on the trailing edge of the header (e.g. a button). Renders alongside the toggle when both are provided. */
@@ -42,6 +49,7 @@ export interface SettingSectionProps {
 export function SettingSection({
 	title,
 	description,
+	divided,
 	footer,
 	children,
 	headerAction,
@@ -57,6 +65,11 @@ export function SettingSection({
 	const isDisabled = hasToggle && !toggled;
 	const renderedFooter = footer ?? (description ? <span>{description}</span> : null);
 	const hasBody = children !== undefined && children !== null && children !== false;
+	const body = divided ? (
+		<div className="flex flex-col divide-y divide-surface-1">{children}</div>
+	) : (
+		children
+	);
 
 	return (
 		<SurfaceProvider value={contentLevel}>
@@ -93,7 +106,7 @@ export function SettingSection({
 							isDisabled && "pointer-events-none opacity-40"
 						)}
 					>
-						{children}
+						{body}
 					</div>
 				) : null}
 				{renderedFooter ? (

@@ -6,6 +6,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, MouseEvent } from "react";
 import { type ModelInfo, useModelSwapStore } from "@/entities/model-catalog";
 import { Button } from "@/shared/ui/button";
+import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
 	buildSwitchingClassName,
 	SwapSweepBar,
@@ -69,7 +70,7 @@ function AuthorChip({ family, muted = false }: { family: ModelInfo["family"]; mu
 			{config.logoSrc ? (
 				<img
 					alt=""
-					className={`size-3 rounded-[2px] object-cover ${muted ? "opacity-60" : ""}`}
+					className={`size-3 rounded-[2px] object-contain ${muted ? "opacity-60" : ""}`}
 					height={12}
 					src={publicAsset(config.logoSrc)}
 					width={12}
@@ -179,7 +180,7 @@ function DownloadingBody({
 				</span>
 			)}
 			<span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-surface-secondary/60 px-2 py-0.5 font-medium text-[10px] text-foreground-secondary leading-none">
-				<span className="size-1.5 animate-pulse rounded-full bg-accent" />
+				<PulseDot className="size-1.5 text-accent" />
 				<span className="truncate">↓ {targetLabel}</span>
 				<span className="font-mono text-foreground tabular-nums">{percentLabel}</span>
 			</span>

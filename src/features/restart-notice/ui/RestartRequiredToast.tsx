@@ -1,6 +1,7 @@
 import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
+import { useTranslations } from "use-intl";
 import { onServerRestartRequired } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
@@ -13,14 +14,15 @@ const AUTO_DISMISS_MS = 15_000;
 
 /**
  * Notice for the dev-only case where a startup-only setting changed but the
- * STT server is user-run (not Electron-managed), so it can't be restarted
+ * STT server is user-run (not reference-managed), so it can't be restarted
  * automatically. Mounts once at the layout root (main window).
  *
  * Copy is intentionally static (not i18n): this path only fires in
  * developer setups where the server is launched by hand, never in the
- * packaged app where Electron always manages and restarts the server.
+ * packaged app where the reference always manages and restarts the server.
  */
 export function RestartRequiredToast() {
+	const t = useTranslations("errors");
 	const current = useRestartNotice((s) => s.current);
 	const show = useRestartNotice((s) => s.show);
 	const clear = useRestartNotice((s) => s.clear);
@@ -61,22 +63,22 @@ export function RestartRequiredToast() {
 				<div className="flex flex-1 flex-col">
 					<span className="font-medium text-body text-foreground">
 						{current.kind === "skew"
-							? "Restart the STT server — it's running an outdated build"
-							: "Restart the STT server to apply this change"}
+							? t("restartServerSkewTitle")
+							: t("restartServerUnmanagedTitle")}
 					</span>
 					<span className="text-foreground-muted text-sm">
 						{current.kind === "skew" ? (
 							<>
-								The connected STT server is missing{" "}
-								<code className="font-mono">{current.setting}</code>, so it's running stale code and
-								newer commands will silently fail. Restart your STT server process (or set{" "}
-								<code className="font-mono">STT_SERVER_DIR</code> so the app manages it).
+								{t("restartServerSkewBodyPre")}
+								<code className="font-mono">{current.setting}</code>
+								{t("restartServerSkewBodyMid")}
+								<code className="font-mono">STT_SERVER_DIR</code>
+								{t("restartServerSkewBodyPost")}
 							</>
 						) : (
 							<>
-								<code className="font-mono">{current.setting}</code> changed, but the server is
-								running externally so it couldn't be restarted automatically. Restart your STT
-								server process for it to take effect.
+								<code className="font-mono">{current.setting}</code>
+								{t("restartServerUnmanagedBody")}
 							</>
 						)}
 					</span>

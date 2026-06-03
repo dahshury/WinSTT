@@ -1,7 +1,7 @@
 // DRAFT PORT — not yet compiled. Source: frontend/electron/ipc/audio-mute.ts
 // + app/src-tauri/src/managers/audio.rs (set_mute COM pattern)
 //
-// Graduated system-audio ducking while dictating. WinSTT-Electron does this
+// Graduated system-audio ducking while dictating. WinSTT-the reference does this
 // with a PowerShell COM host; the Rust/Tauri port does it in-process via the
 // `windows` crate's IAudioEndpointVolume — the SAME interface Handy already
 // uses for set_mute (managers/audio.rs), so no new Cargo features are needed
@@ -294,7 +294,7 @@ mod tests {
     fn reduction_clamped_to_unit_range() {
         assert_eq!(reduction_target(2.0, 0), 1.0); // clamps high
         assert_eq!(reduction_target(-1.0, 0), 0.0); // clamps low
-        // pct above 100 is clamped to 100 → full mute
+                                                    // pct above 100 is clamped to 100 → full mute
         assert_eq!(reduction_target(0.9, 200), 0.0);
     }
 
@@ -357,7 +357,7 @@ mod tests {
         let mut s = DuckState::new();
         s.request_duck(100);
         s.on_duck_complete(None); // COM duck failed — no previous captured
-        // intent restore still flips desired, but effect says don't touch volume
+                                  // intent restore still flips desired, but effect says don't touch volume
         assert!(!s.should_restore());
         assert_eq!(s.request_restore(), DuckAction::Restore);
         assert!(!s.should_restore());
@@ -371,9 +371,9 @@ mod tests {
         // later completes the manager re-evaluates.
         let mut s = DuckState::new();
         s.request_duck(100); // desired=true
-        // unmute arrives before on_duck_complete
+                             // unmute arrives before on_duck_complete
         assert_eq!(s.request_restore(), DuckAction::Restore); // desired=false
-        // duck completes afterwards, captured volume
+                                                              // duck completes afterwards, captured volume
         s.on_duck_complete(Some(0.8));
         // effect is ducked; the manager, seeing desired=false, must restore.
         assert!(s.should_restore());

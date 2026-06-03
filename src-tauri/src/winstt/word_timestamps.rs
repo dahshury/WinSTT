@@ -1,7 +1,6 @@
-// PORT IMPL — drafted against real APIs, pending compile.
 // Source: E:/DL/Projects/onnx-asr/src/onnx_asr/word_timestamps.py
 //         (itself a port of openai-whisper/whisper/timing.py, MIT)
-//         app/PORT/05_wakeword_diarization_loopback_wordts.md §D
+//         docs/port/05_wakeword_diarization_loopback_wordts.md §D
 //         memory: project_word_highlight_playback
 // External crates (declared in Cargo.toml, verified docs.rs 2026-05):
 //   ndarray 0.17.2  — Array2/Array3/ArrayView for the alignment matrix math
@@ -46,14 +45,20 @@ pub const ALIGNMENT_HEADS: &[(&str, &str)] = &[
     ("tiny", "ABzY8bu8Lr0{>%RKn9Fp%m@SkK7Kt=7ytkO"),
     ("base.en", "ABzY8;40c<0{>%RzzG;p*o+Vo09|#PsxSZm00"),
     ("base", "ABzY8KQ!870{>%RzyTQH3`Q^yNP!>##QT-<FaQ7m"),
-    ("small.en", "ABzY8>?_)10{>%RpeA61k&I|OI3I$65C{;;pbCHh0B{qLQ;+}v00"),
+    (
+        "small.en",
+        "ABzY8>?_)10{>%RpeA61k&I|OI3I$65C{;;pbCHh0B{qLQ;+}v00",
+    ),
     ("small", "ABzY8DmU6=0{>%Rpa?J`kvJ6qF(V^F86#Xh7JUGMK}P<N0000"),
     (
         "medium.en",
         "ABzY8usPae0{>%R7<zz_OvQ{)4kMa0BMw6u5rT}kRKX;$NfYBv00*Hl@qhsU00",
     ),
     ("medium", "ABzY8B0Jh+0{>%R7}kK1fFL7w6%<-Pf*t^=N)Qr&0RR9"),
-    ("large-v1", "ABzY8r9j$a0{>%R7#4sLmoOs{s)o3~84-RPdcFk!JR<kSfC2yj"),
+    (
+        "large-v1",
+        "ABzY8r9j$a0{>%R7#4sLmoOs{s)o3~84-RPdcFk!JR<kSfC2yj",
+    ),
     (
         "large-v2",
         "ABzY8zd+h!0{>%R7=D0pU<_bnWW*tkYAhobTNnu$jnkEkXqp)j;w1Tzk)UH3X%SZd&fFZ2fC2yj",
@@ -90,7 +95,9 @@ pub enum WordTsError {
     Base85(String),
     #[error("gzip inflate failed: {0}")]
     Gzip(String),
-    #[error("alignment-heads blob reshapes to {got} bools, expected {expected} ({layers}x{heads})")]
+    #[error(
+        "alignment-heads blob reshapes to {got} bools, expected {expected} ({layers}x{heads})"
+    )]
     Shape {
         got: usize,
         expected: usize,
@@ -124,8 +131,12 @@ pub fn decode_alignment_heads(
     }
     // NumPy bool: any nonzero byte is True.
     let flags: Vec<bool> = raw.iter().map(|&b| b != 0).collect();
-    Array2::from_shape_vec((num_layers, num_heads), flags)
-        .map_err(|_| WordTsError::Shape { got: raw.len(), expected, layers: num_layers, heads: num_heads })
+    Array2::from_shape_vec((num_layers, num_heads), flags).map_err(|_| WordTsError::Shape {
+        got: raw.len(),
+        expected,
+        layers: num_layers,
+        heads: num_heads,
+    })
 }
 
 /// gzip-inflate a buffer (flate2 GzDecoder). Separated so tests can hit it.
@@ -171,7 +182,10 @@ fn decode_or_fallback(key: &str, num_layers: usize, num_heads: usize) -> Array2<
 }
 
 fn blob_for(key: &str) -> Option<&'static str> {
-    ALIGNMENT_HEADS.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+    ALIGNMENT_HEADS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| *v)
 }
 
 /// Default mask: every head in the upper half of layers (Whisper's default when
@@ -197,7 +211,7 @@ pub fn median_filter_1d(x: &[f32], width: usize) -> Result<Vec<f32>, WordTsError
     if width <= 1 {
         return Ok(x.to_vec());
     }
-    if width % 2 == 0 {
+    if width.is_multiple_of(2) {
         return Err(WordTsError::EvenFilterWidth(width));
     }
     let pad = width / 2;
@@ -355,7 +369,7 @@ pub fn split_tokens_into_words<F: Fn(&[i64]) -> String>(
     // Stage 2: collapse subwords into space-delimited words.
     let mut words: Vec<String> = Vec::new();
     let mut word_tokens: Vec<Vec<i64>> = Vec::new();
-    for (subword, ids) in subwords.into_iter().zip(subword_tokens.into_iter()) {
+    for (subword, ids) in subwords.into_iter().zip(subword_tokens) {
         let is_special = ids.first().map(|&t| t >= eot_id).unwrap_or(false);
         let is_space_prefixed = subword.starts_with(' ');
         let is_punct = is_ascii_punct(subword.trim());
@@ -542,8 +556,12 @@ pub fn align_words<F: Fn(&[i64]) -> String>(
     }
 
     // Group tokens into words.
-    let (words, word_tokens) =
-        split_tokens_into_words(args.text_tokens, args.decode_one, args.eot_id, args.language);
+    let (words, word_tokens) = split_tokens_into_words(
+        args.text_tokens,
+        args.decode_one,
+        args.eot_id,
+        args.language,
+    );
     if word_tokens.len() <= 1 {
         return Ok(Vec::new());
     }
@@ -658,7 +676,10 @@ pub struct MappedWord {
 
 /// Normalize a word for diff matching (lower-case, keep only alphanumerics).
 fn norm_word(w: &str) -> String {
-    w.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+    w.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
 }
 
 /// Transfer the aligner's TIMED words onto the target `text` words via a
@@ -673,7 +694,11 @@ pub fn map_timings_to_text(timed: &[WordTiming], text_words: &[String]) -> Vec<M
         // No timing → zero-duration words at t=0 (monotonic, honest).
         return text_words
             .iter()
-            .map(|w| MappedWord { text: w.clone(), start: 0.0, end: 0.0 })
+            .map(|w| MappedWord {
+                text: w.clone(),
+                start: 0.0,
+                end: 0.0,
+            })
             .collect();
     }
 
@@ -690,12 +715,20 @@ pub fn map_timings_to_text(timed: &[WordTiming], text_words: &[String]) -> Vec<M
                 // 1:1 transfer along the diagonal of the equal run.
                 let len = (a1 - a0).min(b1 - b0);
                 for k in 0..(b1 - b0) {
-                    let src = if k < len { a0 + k } else { a1.saturating_sub(1) };
+                    let src = if k < len {
+                        a0 + k
+                    } else {
+                        a1.saturating_sub(1)
+                    };
                     let t = &timed[src.min(timed.len() - 1)];
                     let start = t.start.max(last_end);
                     let end = t.end.max(start);
                     last_end = end;
-                    out.push(MappedWord { text: text_words[b0 + k].clone(), start, end });
+                    out.push(MappedWord {
+                        text: text_words[b0 + k].clone(),
+                        start,
+                        end,
+                    });
                 }
             }
             Opcode::Replace { a0, a1, b0, b1 }
@@ -719,7 +752,11 @@ pub fn map_timings_to_text(timed: &[WordTiming], text_words: &[String]) -> Vec<M
                     let start = (span_start + step * k as f64).max(last_end);
                     let end = (span_start + step * (k as f64 + 1.0)).max(start);
                     last_end = end;
-                    out.push(MappedWord { text: text_words[idx].clone(), start, end });
+                    out.push(MappedWord {
+                        text: text_words[idx].clone(),
+                        start,
+                        end,
+                    });
                 }
             }
         }
@@ -729,10 +766,30 @@ pub fn map_timings_to_text(timed: &[WordTiming], text_words: &[String]) -> Vec<M
 
 #[derive(Debug, Clone, PartialEq)]
 enum Opcode {
-    Equal { a0: usize, a1: usize, b0: usize, b1: usize },
-    Replace { a0: usize, a1: usize, b0: usize, b1: usize },
-    Insert { a0: usize, a1: usize, b0: usize, b1: usize },
-    Delete { a0: usize, a1: usize, b0: usize, b1: usize },
+    Equal {
+        a0: usize,
+        a1: usize,
+        b0: usize,
+        b1: usize,
+    },
+    Replace {
+        a0: usize,
+        a1: usize,
+        b0: usize,
+        b1: usize,
+    },
+    Insert {
+        a0: usize,
+        a1: usize,
+        b0: usize,
+        b1: usize,
+    },
+    Delete {
+        a0: usize,
+        a1: usize,
+        b0: usize,
+        b1: usize,
+    },
 }
 
 /// LCS-based opcode diff over two token lists (difflib.SequenceMatcher style:
@@ -788,7 +845,12 @@ fn diff_opcodes(a: &[String], b: &[String]) -> Vec<Opcode> {
                 break;
             }
         }
-        ops.push(Opcode::Equal { a0: ai, a1: ea, b0: bi, b1: eb });
+        ops.push(Opcode::Equal {
+            a0: ai,
+            a1: ea,
+            b0: bi,
+            b1: eb,
+        });
         ai = ea;
         bi = eb;
     }
@@ -853,7 +915,10 @@ mod tests {
         // tiny = (4 layers, 6 heads). Decodes cleanly and has at least one head set.
         let mask = decode_alignment_heads(blob_for("tiny").unwrap(), 4, 6).unwrap();
         assert_eq!(mask.dim(), (4, 6));
-        assert!(mask.iter().any(|&b| b), "tiny must select at least one head");
+        assert!(
+            mask.iter().any(|&b| b),
+            "tiny must select at least one head"
+        );
     }
 
     #[test]
@@ -888,7 +953,10 @@ mod tests {
 
     #[test]
     fn median_even_width_errors() {
-        assert!(matches!(median_filter_1d(&[1.0, 2.0, 3.0], 4), Err(WordTsError::EvenFilterWidth(4))));
+        assert!(matches!(
+            median_filter_1d(&[1.0, 2.0, 3.0], 4),
+            Err(WordTsError::EvenFilterWidth(4))
+        ));
     }
 
     #[test]
@@ -927,11 +995,8 @@ mod tests {
     #[test]
     fn dtw_monotonic_path() {
         // Any cost matrix → indices are non-decreasing and end at (N-1, M-1).
-        let cost = Array2::<f64>::from_shape_vec(
-            (2, 3),
-            vec![0.0, 1.0, 5.0, 5.0, 1.0, 0.0],
-        )
-        .unwrap();
+        let cost =
+            Array2::<f64>::from_shape_vec((2, 3), vec![0.0, 1.0, 5.0, 5.0, 1.0, 0.0]).unwrap();
         let (ti, tj) = dtw(&cost);
         assert_eq!(*ti.last().unwrap(), 1);
         assert_eq!(*tj.last().unwrap(), 2);
@@ -1008,7 +1073,7 @@ mod tests {
         // 2 layers, 1 head, all heads selected via a custom mask.
         let mut mask = Array2::from_elem((2, 1), false);
         mask[[1, 0]] = true; // upper-half head
-        // text tokens: [1(" Hello"), 2(" world"), 100(EOT)]; prompt_length 1.
+                             // text tokens: [1(" Hello"), 2(" world"), 100(EOT)]; prompt_length 1.
         let text = [1i64, 2, 100];
         // Decoder rows = prompt + text = 1 + 3 = 4 tokens; 8 encoder frames.
         let n_tokens = 4;
@@ -1059,8 +1124,18 @@ mod tests {
     #[test]
     fn map_timings_transfers_equal_words() {
         let timed = vec![
-            WordTiming { word: "test".into(), start: 0.0, end: 0.5, tokens: vec![] },
-            WordTiming { word: "that".into(), start: 0.5, end: 1.0, tokens: vec![] },
+            WordTiming {
+                word: "test".into(),
+                start: 0.0,
+                end: 0.5,
+                tokens: vec![],
+            },
+            WordTiming {
+                word: "that".into(),
+                start: 0.5,
+                end: 1.0,
+                tokens: vec![],
+            },
         ];
         // "test that" → "test this": "test" equal (keeps 0.0-0.5), "that"→"this".
         let text = vec!["test".to_string(), "this".to_string()];
@@ -1078,11 +1153,31 @@ mod tests {
     #[test]
     fn map_timings_is_monotonic() {
         let timed = vec![
-            WordTiming { word: "a".into(), start: 0.0, end: 0.3, tokens: vec![] },
-            WordTiming { word: "b".into(), start: 0.3, end: 0.6, tokens: vec![] },
-            WordTiming { word: "c".into(), start: 0.6, end: 0.9, tokens: vec![] },
+            WordTiming {
+                word: "a".into(),
+                start: 0.0,
+                end: 0.3,
+                tokens: vec![],
+            },
+            WordTiming {
+                word: "b".into(),
+                start: 0.3,
+                end: 0.6,
+                tokens: vec![],
+            },
+            WordTiming {
+                word: "c".into(),
+                start: 0.6,
+                end: 0.9,
+                tokens: vec![],
+            },
         ];
-        let text = vec!["a".to_string(), "x".to_string(), "y".to_string(), "c".to_string()];
+        let text = vec![
+            "a".to_string(),
+            "x".to_string(),
+            "y".to_string(),
+            "c".to_string(),
+        ];
         let mapped = map_timings_to_text(&timed, &text);
         assert_eq!(mapped.len(), 4);
         let mut prev = -1.0;
