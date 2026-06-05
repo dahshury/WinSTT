@@ -1,6 +1,7 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use log::{debug, error, warn};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -8,6 +9,47 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
+
+static CURRENT_DICTATION_SESSION: AtomicU64 = AtomicU64::new(0);
+static CANCELLED_DICTATION_THROUGH: AtomicU64 = AtomicU64::new(0);
+static DICTATION_PIPELINE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn begin_dictation_session() -> u64 {
+    let session_id = CURRENT_DICTATION_SESSION.fetch_add(1, Ordering::SeqCst) + 1;
+    DICTATION_PIPELINE_ACTIVE.store(true, Ordering::SeqCst);
+    session_id
+}
+
+pub(crate) fn current_dictation_session() -> u64 {
+    CURRENT_DICTATION_SESSION.load(Ordering::SeqCst)
+}
+
+pub(crate) fn cancel_current_dictation_session() -> Option<u64> {
+    if !DICTATION_PIPELINE_ACTIVE.swap(false, Ordering::SeqCst) {
+        return None;
+    }
+    let session_id = current_dictation_session();
+    CANCELLED_DICTATION_THROUGH.fetch_max(session_id, Ordering::SeqCst);
+    Some(session_id)
+}
+
+pub(crate) fn finish_dictation_session(session_id: u64) {
+    if is_current_dictation_session(session_id) {
+        DICTATION_PIPELINE_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn is_dictation_pipeline_active() -> bool {
+    DICTATION_PIPELINE_ACTIVE.load(Ordering::SeqCst)
+}
+
+pub(crate) fn is_dictation_session_cancelled(session_id: u64) -> bool {
+    session_id != 0 && session_id <= CANCELLED_DICTATION_THROUGH.load(Ordering::SeqCst)
+}
+
+pub(crate) fn is_current_dictation_session(session_id: u64) -> bool {
+    session_id != 0 && session_id == current_dictation_session()
+}
 
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
@@ -19,19 +61,22 @@ enum Command {
     },
     Cancel {
         recording_was_active: bool,
+        cancelled_through: u64,
     },
     SilenceStop {
         binding_id: String,
         recording_generation: u64,
     },
-    ProcessingFinished,
+    ProcessingFinished {
+        session_id: u64,
+    },
 }
 
 /// Pipeline lifecycle, owned exclusively by the coordinator thread.
 enum Stage {
     Idle,
-    Recording(String), // binding_id
-    Processing,
+    Recording { binding_id: String, session_id: u64 },
+    Processing { session_id: u64 },
 }
 
 /// Serialises all transcription lifecycle events through a single thread
@@ -109,11 +154,12 @@ impl TranscriptionCoordinator {
         }
     }
 
-    pub fn notify_cancel(&self, recording_was_active: bool) {
+    pub fn notify_cancel(&self, recording_was_active: bool, cancelled_through: u64) {
         if self
             .tx
             .send(Command::Cancel {
                 recording_was_active,
+                cancelled_through,
             })
             .is_err()
         {
@@ -134,8 +180,12 @@ impl TranscriptionCoordinator {
         }
     }
 
-    pub fn notify_processing_finished(&self) {
-        if self.tx.send(Command::ProcessingFinished).is_err() {
+    pub fn notify_processing_finished(&self, session_id: u64) {
+        if self
+            .tx
+            .send(Command::ProcessingFinished { session_id })
+            .is_err()
+        {
             warn!("Transcription coordinator channel closed");
         }
     }
@@ -178,7 +228,7 @@ fn handle_command(
                 if is_pressed && matches!(stage, Stage::Idle) {
                     start(app, stage, &binding_id, &hotkey_string);
                 } else if !is_pressed
-                    && matches!(&*stage, Stage::Recording(id) if id == &binding_id)
+                    && matches!(&*stage, Stage::Recording { binding_id: id, .. } if id == &binding_id)
                 {
                     stop(app, stage, &binding_id, &hotkey_string);
                     *processing_since = Some(Instant::now());
@@ -188,7 +238,7 @@ fn handle_command(
                     Stage::Idle => {
                         start(app, stage, &binding_id, &hotkey_string);
                     }
-                    Stage::Recording(id) if id == &binding_id => {
+                    Stage::Recording { binding_id: id, .. } if id == &binding_id => {
                         stop(app, stage, &binding_id, &hotkey_string);
                         *processing_since = Some(Instant::now());
                     }
@@ -200,13 +250,20 @@ fn handle_command(
         }
         Command::Cancel {
             recording_was_active,
+            cancelled_through,
         } => {
-            // Don't reset during processing — wait for the pipeline to finish.
-            if !matches!(stage, Stage::Processing)
-                && (recording_was_active || matches!(stage, Stage::Recording(_)))
-            {
+            // Escape cancels the active session immediately; stale workers self-suppress by id.
+            let stage_cancelled = match stage {
+                Stage::Recording { session_id, .. } | Stage::Processing { session_id } => {
+                    *session_id != 0 && *session_id <= cancelled_through
+                }
+                Stage::Idle => false,
+            };
+
+            if recording_was_active || stage_cancelled {
                 *stage = Stage::Idle;
                 *processing_since = None;
+                DICTATION_PIPELINE_ACTIVE.store(false, Ordering::SeqCst);
                 crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
             }
         }
@@ -215,7 +272,7 @@ fn handle_command(
             recording_generation,
         } => {
             recover_wedged_stage(app, stage, processing_since);
-            if matches!(&*stage, Stage::Recording(id) if id == &binding_id)
+            if matches!(&*stage, Stage::Recording { binding_id: id, .. } if id == &binding_id)
                 && recorder_generation(app) == Some(recording_generation)
                 && silence_auto_stop_enabled(app)
             {
@@ -227,10 +284,13 @@ fn handle_command(
                 );
             }
         }
-        Command::ProcessingFinished => {
-            *stage = Stage::Idle;
-            *processing_since = None;
-            crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
+        Command::ProcessingFinished { session_id } => {
+            if matches!(&*stage, Stage::Processing { session_id: id } if *id == session_id) {
+                *stage = Stage::Idle;
+                *processing_since = None;
+                finish_dictation_session(session_id);
+                crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
+            }
         }
     }
 }
@@ -268,12 +328,13 @@ fn recover_wedged_stage(
     processing_since: &mut Option<Instant>,
 ) {
     match stage {
-        Stage::Recording(_) if !recorder_is_recording(app) => {
+        Stage::Recording { .. } if !recorder_is_recording(app) => {
             debug!("Coordinator self-heal: Recording stage but recorder idle → Idle");
             *stage = Stage::Idle;
             *processing_since = None;
+            DICTATION_PIPELINE_ACTIVE.store(false, Ordering::SeqCst);
         }
-        Stage::Processing
+        Stage::Processing { .. }
             if processing_since.is_some_and(|t| t.elapsed() >= PROCESSING_WEDGE_TIMEOUT) =>
         {
             warn!(
@@ -282,6 +343,7 @@ fn recover_wedged_stage(
             );
             *stage = Stage::Idle;
             *processing_since = None;
+            DICTATION_PIPELINE_ACTIVE.store(false, Ordering::SeqCst);
         }
         _ => {}
     }
@@ -297,7 +359,10 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
         .try_state::<Arc<AudioRecordingManager>>()
         .is_some_and(|a| a.is_recording())
     {
-        *stage = Stage::Recording(binding_id.to_string());
+        *stage = Stage::Recording {
+            binding_id: binding_id.to_string(),
+            session_id: current_dictation_session(),
+        };
     } else {
         debug!("Start for '{binding_id}' did not begin recording; staying idle");
         crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(app);
@@ -310,5 +375,7 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
         return;
     };
     action.stop(app, binding_id, hotkey_string);
-    *stage = Stage::Processing;
+    *stage = Stage::Processing {
+        session_id: current_dictation_session(),
+    };
 }

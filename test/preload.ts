@@ -109,6 +109,21 @@ function installDefaultNativeBridge(): void {
 function installDefaultTauriInternals(): void {
 	(
 		window as unknown as {
+			__TAURI_EVENT_PLUGIN_INTERNALS__: {
+				unregisterListener: (event: string, eventId: number) => void;
+			};
+			__TAURI_INTERNALS__: {
+				invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+				transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+			};
+		}
+	).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+		unregisterListener: () => {
+			/* noop event unregister */
+		},
+	};
+	(
+		window as unknown as {
 			__TAURI_INTERNALS__: {
 				invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
 				transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;

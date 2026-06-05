@@ -1,5 +1,8 @@
 use super::kokoro::{self, KokoroConfig};
 use super::voices::KOKORO_VOICE_CATALOG;
+use crate::winstt::downloads::{
+    transfer_url_blocking, TransferControl, TransferOutcome, TransferRequest,
+};
 
 // ---------------------------------------------------------------------------
 // Asset download (resumable; mirrors asset_downloader.py + the STT slice).
@@ -35,10 +38,6 @@ pub trait DownloadControl: Send + Sync {
 /// shared runtime here is safe (we are never on the async pump). Matches the
 /// Python `download_with_progress` semantics (`.partial` + Range resume + the
 /// pause/cancel cooperative checks).
-///
-/// SPIKE: the STT slice will ship a shared `asset_downloader.rs` with the exact
-/// `.partial`/Range/pause logic; once it lands, delegate to it (one downloader
-/// in the app) instead of this self-contained copy.
 pub fn download_kokoro_assets(
     cfg: &KokoroConfig,
     control: Option<&dyn DownloadControl>,
@@ -75,65 +74,61 @@ fn download_one(
     target: &std::path::Path,
     control: Option<&dyn DownloadControl>,
 ) -> Result<(), DownloadError> {
-    use std::io::Write;
-    use tauri::async_runtime::block_on;
-
     let partial = target.with_extension("partial");
-    let resume_from = partial.metadata().map(|m| m.len()).unwrap_or(0);
-
-    let mut req = client.get(url);
-    if resume_from > 0 {
-        req = req.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
-    }
-    let mut resp = block_on(req.send()).map_err(|e| DownloadError::Network(e.to_string()))?;
-    let status = resp.status();
-    if !status.is_success() {
-        return Err(DownloadError::Network(format!("HTTP {status} for {url}")));
-    }
-    // If the server ignored Range (200 not 206), restart cleanly.
-    let resuming = resume_from > 0 && status.as_u16() == 206;
-    let mut downloaded = if resuming { resume_from } else { 0 };
-    let total = resp.content_length().map(|cl| downloaded + cl).unwrap_or(0);
-
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(resuming)
-        .write(true)
-        .truncate(!resuming)
-        .open(&partial)
-        .map_err(|e| DownloadError::Network(e.to_string()))?;
-
-    loop {
-        if let Some(c) = control {
-            if c.should_cancel() {
-                drop(file);
-                let _ = std::fs::remove_file(&partial);
-                return Err(DownloadError::Cancelled);
+    let control_adapter = DownloadControlAdapter { control };
+    let report = transfer_url_blocking(
+        client,
+        TransferRequest {
+            delete_partial_on_cancel: true,
+            final_path: Some(target),
+            known_total_bytes: None,
+            partial_path: &partial,
+            progress_interval: std::time::Duration::from_millis(100),
+            url,
+        },
+        Some(&control_adapter),
+        |progress| {
+            if let Some(c) = control {
+                c.on_progress(
+                    progress.progress_fraction.unwrap_or(0.0),
+                    progress.downloaded_bytes,
+                    progress.total_bytes.unwrap_or(0),
+                );
             }
-            if c.should_pause() {
-                // leave .partial for the next resume
-                return Err(DownloadError::Paused);
+        },
+    )
+    .map_err(|e| DownloadError::Network(e.to_string()))?;
+
+    match report.outcome {
+        TransferOutcome::Complete => {
+            if let Some(c) = control {
+                c.on_progress(
+                    1.0,
+                    report.downloaded_bytes,
+                    report.total_bytes.unwrap_or(report.downloaded_bytes),
+                );
             }
+            Ok(())
         }
-        // `chunk()` reads the next body frame; None = done.
-        let next = block_on(resp.chunk()).map_err(|e| DownloadError::Network(e.to_string()))?;
-        let Some(bytes) = next else { break };
-        file.write_all(&bytes)
-            .map_err(|e| DownloadError::Network(e.to_string()))?;
-        downloaded += bytes.len() as u64;
-        if let Some(c) = control {
-            let frac = if total > 0 {
-                downloaded as f64 / total as f64
-            } else {
-                0.0
-            };
-            c.on_progress(frac, downloaded, total);
-        }
+        TransferOutcome::Paused => Err(DownloadError::Paused),
+        TransferOutcome::Cancelled => Err(DownloadError::Cancelled),
     }
-    drop(file);
-    std::fs::rename(&partial, target).map_err(|e| DownloadError::Network(e.to_string()))?;
-    if let Some(c) = control {
-        c.on_progress(1.0, downloaded, downloaded);
+}
+
+struct DownloadControlAdapter<'a> {
+    control: Option<&'a dyn DownloadControl>,
+}
+
+impl TransferControl for DownloadControlAdapter<'_> {
+    fn should_cancel(&self) -> bool {
+        self.control
+            .map(|control| control.should_cancel())
+            .unwrap_or(false)
     }
-    Ok(())
+
+    fn should_pause(&self) -> bool {
+        self.control
+            .map(|control| control.should_pause())
+            .unwrap_or(false)
+    }
 }

@@ -1,36 +1,61 @@
 import { useTranslations } from "use-intl";
-import { jaroWinkler } from "@/shared/lib/fuzzy-match";
+import Fuse, { type IFuseOptions } from "fuse.js";
 
 /**
- * Acceptance bar for a fuzzy (typo-tolerant) token match in the settings
- * search. Mirrors the dictionary's Jaro-Winkler matcher
- * (`shared/lib/fuzzy-match`) — the same scorer that powers word correction —
- * but a hair more lenient than the dictionary's 0.88 since surfacing one extra
- * tab on a near-miss query is cheap, whereas a wrong word substitution is not.
+ * Acceptance bar for a Fuse.js typo-tolerant token match in settings search.
+ * Lower is stricter; this accepts common transpositions
+ * ("dispaly" -> "display") without matching unrelated long tokens in the
+ * sidebar's small keyword corpus.
  */
-const SETTINGS_SEARCH_JW_THRESHOLD = 0.85;
+const SETTINGS_SEARCH_FUSE_THRESHOLD = 0.3;
 
-// Fuzzy scoring only kicks in for query tokens this long. Short tokens (≤ 3
-// chars, e.g. acronyms like "vad" / "tts") are matched by exact/prefix only —
-// Jaro-Winkler is far too generous on 2–3 char inputs (e.g. "ai" scores ~0.83
-// against "main"), which would flood the list with false positives.
+// Fuzzy scoring only kicks in for query tokens this long. Short tokens (<= 3
+// chars, e.g. acronyms like "vad" / "tts") are matched by exact/prefix only so
+// a short, non-substring query like "ai" does not light up unrelated tabs.
 const MIN_FUZZY_LEN = 4;
 
 // Words are letters/digits — punctuation and brackets (e.g. "OpenRouter
 // (Cloud)") are dropped so they don't fuse into adjacent tokens.
 const TOKEN_RE = /[\p{L}\p{N}]+/gu;
 
+const SETTINGS_SEARCH_FUSE_OPTIONS: IFuseOptions<string> = {
+	threshold: SETTINGS_SEARCH_FUSE_THRESHOLD,
+	ignoreLocation: true,
+	minMatchCharLength: MIN_FUZZY_LEN,
+	shouldSort: false,
+};
+
 function tokenize(text: string): string[] {
 	return text.toLowerCase().match(TOKEN_RE) ?? [];
 }
 
 // True iff query token `qt` is satisfied by some haystack token: an exact
-// prefix (covers "lang" → "language", "disp" → "display") or — for long enough
-// tokens — a Jaro-Winkler near-match (covers typos like "dispaly" → "display").
-function someTokenMatches(qt: string, hayTokens: readonly string[]): boolean {
-	const fuzzy = qt.length >= MIN_FUZZY_LEN;
-	return hayTokens.some(
-		(ht) => ht.startsWith(qt) || (fuzzy && jaroWinkler(qt, ht) >= SETTINGS_SEARCH_JW_THRESHOLD)
+// prefix (covers "lang" -> "language", "disp" -> "display") or, for long
+// enough tokens, a Fuse.js near-match (covers typos like "dispaly" -> "display").
+function tokenHasPrefixMatch(
+	qt: string,
+	hayTokens: readonly string[],
+): boolean {
+	return hayTokens.some((ht) => ht.startsWith(qt));
+}
+
+function fuzzyTokenMatches(
+	qt: string,
+	getTokenFuse: () => Fuse<string>,
+): boolean {
+	if (qt.length < MIN_FUZZY_LEN) {
+		return false;
+	}
+	return getTokenFuse().search(qt, { limit: 1 }).length > 0;
+}
+
+function someTokenMatches(
+	qt: string,
+	hayTokens: readonly string[],
+	getTokenFuse: () => Fuse<string>,
+): boolean {
+	return (
+		tokenHasPrefixMatch(qt, hayTokens) || fuzzyTokenMatches(qt, getTokenFuse)
 	);
 }
 
@@ -38,7 +63,7 @@ function someTokenMatches(qt: string, hayTokens: readonly string[]): boolean {
  * Fuzzy settings-search predicate. A tab matches when its searchable text
  * (label + tooltip + section/setting keywords) contains the raw query as a
  * substring (handles partial phrases) OR every query token has a haystack token
- * it matches by prefix or Jaro-Winkler. Empty query matches everything.
+ * it matches by prefix or Fuse.js. Empty query matches everything.
  */
 export function matchesSearchQuery(haystack: string, query: string): boolean {
 	const q = query.trim().toLowerCase();
@@ -54,7 +79,14 @@ export function matchesSearchQuery(haystack: string, query: string): boolean {
 		return false;
 	}
 	const hayTokens = tokenize(hay);
-	return queryTokens.every((qt) => someTokenMatches(qt, hayTokens));
+	let tokenFuse: Fuse<string> | null = null;
+	const getTokenFuse = (): Fuse<string> => {
+		tokenFuse ??= new Fuse(hayTokens, SETTINGS_SEARCH_FUSE_OPTIONS);
+		return tokenFuse;
+	};
+	return queryTokens.every((qt) =>
+		someTokenMatches(qt, hayTokens, getTokenFuse),
+	);
 }
 
 /**
@@ -65,11 +97,12 @@ export function matchesSearchQuery(haystack: string, query: string): boolean {
  * translated for free; a few language-neutral acronyms ("vad", "tts", "stt")
  * are appended literally since their spelled-out labels don't contain them.
  *
- * Tabs follow the transcript's pipeline (Recording → Model → Processing →
- * Vocabulary → Output) plus cross-cutting tabs (Shortcuts, Appearance, History,
- * Integrations, About). Many settings persist under the shared `general`/`quality`/
- * `audio` store slices regardless of which tab renders them, so the keyword
- * strings pull from whatever namespaces a tab's controls actually use.
+ * Tabs follow the transcript's pipeline (Recording → Transcription →
+ * Processing → Vocabulary → Delivery / Read Aloud) plus cross-cutting tabs
+ * (Shortcuts, Appearance, History, Integrations, About). Many settings persist
+ * under the shared `general`/`quality`/`audio` store slices regardless of which
+ * tab renders them, so the keyword strings pull from whatever namespaces a
+ * tab's controls actually use.
  */
 export function useSettingsSearchKeywords(): Record<string, string> {
 	const tg = useTranslations("general");
@@ -135,13 +168,18 @@ export function useSettingsSearchKeywords(): Record<string, string> {
 		output: [
 			tg("pasteBehaviorTitle"),
 			tg("fileTranscription"),
+			"auto submit paste delivery clipboard file export output srt txt",
+		].join(" "),
+		readAloud: [
+			ta("outputDevice"),
 			tg("recordingSound"),
 			tg("muteSystemAudio"),
-			ta("outputDevice"),
 			tTts("title"),
+			tTts("model"),
 			tTts("voice"),
 			tTts("speed"),
-			"auto submit paste output device speaker text to speech tts srt",
+			tTts("hotkeyLabel"),
+			"read aloud playback output device speaker chime sound text to speech tts voice",
 		].join(" "),
 		shortcuts: [
 			th("configuration"),

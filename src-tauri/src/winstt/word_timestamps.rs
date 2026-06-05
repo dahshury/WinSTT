@@ -1,6 +1,6 @@
 // Source: E:/DL/Projects/onnx-asr/src/onnx_asr/word_timestamps.py
 //         (itself a port of openai-whisper/whisper/timing.py, MIT)
-//         docs/port/05_wakeword_diarization_loopback_wordts.md §D
+//         docs/archive/port/05_wakeword_diarization_loopback_wordts.md §D
 //         memory: project_word_highlight_playback
 // External crates (declared in Cargo.toml, verified docs.rs 2026-05):
 //   ndarray 0.17.2  — Array2/Array3/ArrayView for the alignment matrix math

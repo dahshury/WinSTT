@@ -1,4 +1,4 @@
-// DRAFT PORT — not yet compiled. Source: frontend/electron/ipc/audio-mute.ts
+// Source: frontend/electron/ipc/audio-mute.ts
 // + app/src-tauri/src/managers/audio.rs (set_mute COM pattern)
 //
 // Graduated system-audio ducking while dictating. WinSTT-the reference does this
@@ -30,6 +30,8 @@
 // ───────────────────────── pure reduction math ────────────────────────
 
 /// Clamp a scalar to [0, 1]. NaN → 0. Mirrors clampScalar.
+use std::sync::{Mutex, OnceLock};
+
 pub fn clamp_scalar(value: f32) -> f32 {
     if value.is_nan() {
         return 0.0;
@@ -86,7 +88,7 @@ pub enum DuckAction {
     NoOp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct DuckState {
     /// Intent: caller asked to duck (true) or restore (false).
     desired_muted: bool,
@@ -94,6 +96,8 @@ pub struct DuckState {
     ducked: bool,
     /// The pct captured for the active/pending duck.
     pending_reduction_pct: u8,
+    /// The playback volume captured before the active duck.
+    saved_volume: Option<f32>,
 }
 
 impl DuckState {
@@ -102,6 +106,7 @@ impl DuckState {
             desired_muted: false,
             ducked: false,
             pending_reduction_pct: 100,
+            saved_volume: None,
         }
     }
 
@@ -137,6 +142,7 @@ impl DuckState {
     /// guard in applyRestore: `if (!isDucked) return`).
     pub fn on_duck_complete(&mut self, saved: Option<f32>) {
         self.ducked = saved.is_some();
+        self.saved_volume = saved;
     }
 
     /// Report that the restore COM work completed. Mirrors applyRestore
@@ -144,6 +150,7 @@ impl DuckState {
     /// loop forever).
     pub fn on_restore_complete(&mut self) {
         self.ducked = false;
+        self.saved_volume = None;
     }
 
     /// Whether a restore should actually touch the volume (we previously
@@ -159,6 +166,10 @@ impl DuckState {
     pub fn pending_reduction_pct(&self) -> u8 {
         self.pending_reduction_pct
     }
+
+    pub fn saved_volume(&self) -> Option<f32> {
+        self.saved_volume
+    }
 }
 
 // ── IAudioEndpointVolume COM impl (real — modeled on Handy set_mute) ───
@@ -169,19 +180,81 @@ impl DuckState {
 
 /// Read the default playback device's master volume scalar (0.0–1.0).
 /// Mirrors readCurrentVolume / [Audio]::GetVolume().
+static DUCK_STATE: OnceLock<Mutex<DuckState>> = OnceLock::new();
+
+fn state() -> &'static Mutex<DuckState> {
+    DUCK_STATE.get_or_init(|| Mutex::new(DuckState::new()))
+}
+
+fn lock_state() -> std::sync::MutexGuard<'static, DuckState> {
+    match state().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("[ducking] state lock poisoned; recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
+fn spawn_restore_if_needed() {
+    std::thread::spawn(|| {
+        let saved = {
+            let guard = lock_state();
+            if !guard.should_restore() {
+                return;
+            }
+            guard.saved_volume()
+        };
+
+        let _ = perform_restore(saved);
+        lock_state().on_restore_complete();
+    });
+}
+
+/// Apply `general.systemAudioReductionWhileDictating` for a recording start.
+pub fn duck_from_settings(app: &tauri::AppHandle) {
+    let pct = crate::winstt::commands::settings::read_settings_raw(app)
+        .general
+        .system_audio_reduction_while_dictating
+        .clamp(0, 100) as u8;
+    if pct == 0 {
+        return;
+    }
+    request_duck(pct);
+}
+
+pub fn request_duck(reduction_pct: u8) {
+    let action = lock_state().request_duck(reduction_pct);
+    if let DuckAction::Duck { reduction_pct } = action {
+        std::thread::spawn(move || {
+            let saved = perform_duck(reduction_pct);
+            let should_restore = {
+                let mut guard = lock_state();
+                guard.on_duck_complete(saved);
+                !guard.desired_muted() && guard.should_restore()
+            };
+            if should_restore {
+                spawn_restore_if_needed();
+            }
+        });
+    }
+}
+
+pub fn request_restore() {
+    if lock_state().request_restore() == DuckAction::Restore {
+        spawn_restore_if_needed();
+    }
+}
+
 #[cfg(windows)]
 pub fn read_master_volume() -> Option<f32> {
     use windows::Win32::Media::Audio::{
         eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
         MMDeviceEnumerator,
     };
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
-    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    let _com = crate::windows_com::ComApartment::init_multithreaded();
     unsafe {
-        // COM may already be initialized on this thread (Tauri/other libs);
-        // re-init is harmless. Mirrors set_mute's `let _ = CoInitializeEx(...)`.
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
         let device = enumerator
@@ -201,12 +274,10 @@ pub fn set_master_volume(scalar: f32) -> bool {
         eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
         MMDeviceEnumerator,
     };
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
-    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
     let target = clamp_scalar(scalar);
+    let _com = crate::windows_com::ComApartment::init_multithreaded();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         let Ok(enumerator) =
             CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
         else {

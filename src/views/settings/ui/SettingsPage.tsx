@@ -1,7 +1,9 @@
+import { Button as BaseButton } from "@base-ui/react/button";
 import { Tabs } from "@base-ui/react/tabs";
 import {
 	AiChat02Icon,
 	AiEditingIcon,
+	AiVoiceGeneratorIcon,
 	Books02Icon,
 	Cancel01Icon,
 	ChartHistogramIcon,
@@ -13,8 +15,7 @@ import {
 	PlugSocketIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { AnimatePresence, domAnimation, LazyMotion, m, useReducedMotion, type Variants } from "motion/react";
-import { type ReactNode, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import { useSettingsStore, useSettingsTabStore } from "@/entities/setting";
 import { useLlmModelPickerStore } from "@/features/llm-model-picker";
@@ -24,6 +25,8 @@ import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { windowCloseSelf } from "@/shared/api/ipc-client";
 import { Elevated, SurfaceProvider } from "@/shared/lib/surface";
+import { useTouchActivation } from "@/shared/lib/use-touch-activation";
+import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { AboutSettingsPanel } from "@/widgets/about-settings";
 import { AppearanceSettingsPanel } from "@/widgets/appearance-settings";
@@ -32,7 +35,10 @@ import { IntegrationsSettingsPanel } from "@/widgets/integrations-settings";
 import { LlmSettingsPanel } from "@/widgets/llm-settings";
 import { ModelSettingsPanel } from "@/widgets/model-settings";
 import { OllamaModelManagerDialog } from "@/widgets/ollama-model-manager";
-import { OutputSettingsPanel } from "@/widgets/output-settings";
+import {
+	OutputSettingsPanel,
+	PlaybackSettingsPanel,
+} from "@/widgets/output-settings";
 import { ProcessingExtrasPanel } from "@/widgets/processing-extras";
 import { RecordingSettingsPanel } from "@/widgets/recording-settings";
 import { ShortcutsSettingsPanel } from "@/widgets/shortcuts-settings";
@@ -41,48 +47,6 @@ import { TranscriptionHistoryPanel } from "@/widgets/transcription-history-setti
 import { TtsModelPickerHost, TtsModelSection } from "@/widgets/tts-settings";
 import { useSettingsSearchKeywords } from "../lib/settings-search";
 import { SettingsSidebar, type SidebarLink } from "./SettingsSidebar";
-
-const SETTINGS_TAB_ORDER = [
-	"recording",
-	"model",
-	"processing",
-	"vocabulary",
-	"output",
-	"shortcuts",
-	"appearance",
-	"history",
-	"integrations",
-	"about",
-] as const;
-
-interface SettingsPanelMotion {
-	direction?: number;
-	reduceMotion?: boolean;
-}
-
-const SETTINGS_PANEL_VARIANTS = {
-	initial: ({ direction = 1, reduceMotion = false }: SettingsPanelMotion = {}) => ({
-		opacity: reduceMotion ? 1 : 0,
-		x: reduceMotion ? 0 : direction > 0 ? 8 : -8,
-		filter: reduceMotion ? "blur(0px)" : "blur(3px)",
-	}),
-	animate: {
-		opacity: 1,
-		x: 0,
-		filter: "blur(0px)",
-	},
-	exit: ({ direction = 1, reduceMotion = false }: SettingsPanelMotion = {}) => ({
-		opacity: reduceMotion ? 1 : 0,
-		x: reduceMotion ? 0 : direction > 0 ? -8 : 8,
-		filter: reduceMotion ? "blur(0px)" : "blur(3px)",
-		transition: { duration: reduceMotion ? 0 : 0.16 },
-	}),
-} satisfies Variants;
-
-function settingsTabIndex(tab: string): number {
-	const index = SETTINGS_TAB_ORDER.findIndex((key) => key === tab);
-	return index === -1 ? 0 : index;
-}
 
 function SettingsPanelContent({ tab }: { tab: string }): ReactNode {
 	switch (tab) {
@@ -105,10 +69,12 @@ function SettingsPanelContent({ tab }: { tab: string }): ReactNode {
 				</>
 			);
 		case "output":
+			return <OutputSettingsPanel />;
+		case "readAloud":
 			return (
 				<>
-					<OutputSettingsPanel />
 					<TtsModelSection />
+					<PlaybackSettingsPanel />
 				</>
 			);
 		case "shortcuts":
@@ -126,20 +92,6 @@ function SettingsPanelContent({ tab }: { tab: string }): ReactNode {
 	}
 }
 
-function useSettingsTabDirection(activeTab: string): number {
-	const [motionState, setMotionState] = useState({ direction: 1, tab: activeTab });
-	useEffect(() => {
-		setMotionState((prev) => {
-			if (prev.tab === activeTab) {
-				return prev;
-			}
-			const direction = settingsTabIndex(activeTab) >= settingsTabIndex(prev.tab) ? 1 : -1;
-			return { direction, tab: activeTab };
-		});
-	}, [activeTab]);
-	return motionState.tab === activeTab ? motionState.direction : 1;
-}
-
 /**
  * Host for the LLM Ollama model-picker modal. The dialog is a widget, so it
  * can't be rendered from the LLM settings *widget* (FSD widget→widget ban) —
@@ -154,7 +106,9 @@ function LlmModelPickerHost() {
 	const close = useLlmModelPickerStore((s) => s.close);
 	const commitInstalled = useLlmModelPickerStore((s) => s.commitInstalled);
 	const currentModel = useSettingsStore((s) =>
-		feature === "transforms" ? s.settings.llm.transforms.model : s.settings.llm.dictation.model
+		feature === "transforms"
+			? s.settings.llm.transforms.model
+			: s.settings.llm.dictation.model,
 	);
 	return (
 		<OllamaModelManagerDialog
@@ -191,9 +145,8 @@ export function SettingsPage() {
 	// ModelSettingsPanel) can navigate the sidebar by calling setActiveTab.
 	const activeTab = useSettingsTabStore((s) => s.activeTab);
 	const setActiveTab = useSettingsTabStore((s) => s.setActiveTab);
-	const tabDirection = useSettingsTabDirection(activeTab);
-	const reduceMotion = useReducedMotion();
-	const settingsPanelMotion = { direction: tabDirection, reduceMotion };
+	const closeActivation = useTouchActivation(windowCloseSelf);
+	useEscapeToClose(windowCloseSelf);
 
 	const links: SidebarLink[] = [
 		{
@@ -205,9 +158,9 @@ export function SettingsPage() {
 		},
 		{
 			key: "model",
-			label: t("tabModel"),
+			label: t("tabTranscription"),
 			icon: AiChat02Icon,
-			tooltip: t("tabModelTooltip"),
+			tooltip: t("tabTranscriptionTooltip"),
 			keywords: keywords.model,
 		},
 		{
@@ -226,10 +179,17 @@ export function SettingsPage() {
 		},
 		{
 			key: "output",
-			label: t("tabOutput"),
+			label: t("tabDelivery"),
 			icon: PackageSentIcon,
-			tooltip: t("tabOutputTooltip"),
+			tooltip: t("tabDeliveryTooltip"),
 			keywords: keywords.output,
+		},
+		{
+			key: "readAloud",
+			label: t("tabReadAloud"),
+			icon: AiVoiceGeneratorIcon,
+			tooltip: t("tabReadAloudTooltip"),
+			keywords: keywords.readAloud,
 			groupEnd: true,
 		},
 		{
@@ -289,7 +249,7 @@ export function SettingsPage() {
 						    Lifts to surface-3 (a clear ~8% step above the surface-1 sidebar) so
 						    the colour difference is obvious; nested SettingSection controls lift
 						    from there as usual. */}
-						<div className="relative min-w-0 flex-1 py-2.5 ps-2 pe-2.5">
+						<div className="relative min-w-0 flex-1 py-2.5 pe-2.5">
 							{/* Drag strip — the thin surface-1 margin above the content card. The
 							    window is frameless, so this gives the right (content) side a grab
 							    handle that lines up with the sidebar's own top drag strip, making
@@ -314,18 +274,18 @@ export function SettingsPage() {
 								    above the card; no title text — the active tab's name lives in the
 								    sidebar rail. Every tab's first section leads with a left-aligned
 								    title, so the corner button never sits over a section's controls. */}
-								<button
+								<BaseButton
 									aria-label={t("close")}
 									className="titlebar-no-drag group absolute end-1.5 top-1.5 z-titlebar flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-4 text-foreground-muted outline-none transition-colors duration-150 hover:bg-error/85 hover:text-white focus-visible:ring-2 focus-visible:ring-accent"
-									onClick={windowCloseSelf}
 									type="button"
+									{...closeActivation}
 								>
 									<HugeiconsIcon
 										className="transition-transform duration-150 ease-out group-hover:scale-110"
 										icon={Cancel01Icon}
 										size={15}
 									/>
-								</button>
+								</BaseButton>
 								<ScrollArea
 									className="min-h-0 flex-1"
 									rubberBandOnTouch
@@ -333,28 +293,9 @@ export function SettingsPage() {
 									verticalScrollbarClassName="mb-3 me-1"
 									viewportClassName="px-6 pt-6 pb-6"
 								>
-									<LazyMotion features={domAnimation} strict>
-										<AnimatePresence custom={settingsPanelMotion} initial={false} mode="wait">
-											<m.div
-												animate="animate"
-												custom={settingsPanelMotion}
-												data-settings-panel-motion="true"
-												exit="exit"
-												initial="initial"
-												key={activeTab}
-												transition={
-													reduceMotion
-														? { duration: 0 }
-														: { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
-												}
-												variants={SETTINGS_PANEL_VARIANTS}
-											>
-												<Tabs.Panel value={activeTab}>
-													<SettingsPanelContent tab={activeTab} />
-												</Tabs.Panel>
-											</m.div>
-										</AnimatePresence>
-									</LazyMotion>
+									<Tabs.Panel value={activeTab}>
+										<SettingsPanelContent tab={activeTab} />
+									</Tabs.Panel>
 								</ScrollArea>
 							</Elevated>
 						</div>

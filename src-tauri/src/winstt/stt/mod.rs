@@ -2,9 +2,9 @@
 // the per-family engines. A Rust re-port of onnx-asr onto raw `ort` 2.x. Source: the onnx-asr
 // fork (E:/DL/Projects/onnx-asr/src/onnx_asr/) and the WinSTT server
 // (server/src/recorder/infrastructure/{onnxasr_transcriber,device,bootstrap}.py); porting notes
-// in docs/port/03_stt_engine.md.
+// in docs/archive/port/03_stt_engine.md.
 //
-// Load-bearing invariants (docs/port/03_stt_engine.md §10):
+// Load-bearing invariants (docs/archive/port/03_stt_engine.md §10):
 //   * Silero VAD is CPU-only (CUDA/DML deadlock) — enforced in the VAD slice, not here.
 //   * Several families' graphs crash on DirectML → forced to the CPU EP. The list is per-engine
 //     and empirically measured (see `EngineKind::is_dml_incompatible`), NOT a blanket family ban.
@@ -73,6 +73,12 @@ pub enum SttError {
     /// DML-incompatible families surface here when the CPU override was missed.
     #[error("inference failed: {0}")]
     Inference(String),
+
+    /// Whisper greedy decode hit the 448-token cap without EOS and collapsed to a
+    /// repeated-token wall. This is not usable text; callers should treat it as
+    /// a failed decode rather than pasting it.
+    #[error("degenerate Whisper decode: {0}")]
+    DegenerateDecode(String),
 
     /// Tokenizer parse / decode failure (vocab.json, tokenizer.json, tokens.txt,
     /// or ONNX `custom_metadata_map` CMVN vectors).
@@ -150,6 +156,34 @@ pub enum Accelerator {
     OpenVino,
 }
 
+/// Resolve `model.device` to the primary STT accelerator for this target.
+///
+/// CPU-first cross-platform milestone: the shipped Windows target uses DirectML for `auto`;
+/// non-Windows defaults to CPU unless a validated provider feature is built for that target.
+pub fn resolve_accelerator(device: crate::winstt::settings_schema::DeviceType) -> Accelerator {
+    use crate::winstt::settings_schema::DeviceType;
+
+    match device {
+        DeviceType::Cpu => Accelerator::Cpu,
+        DeviceType::Auto if cfg!(windows) => Accelerator::DirectMl,
+        DeviceType::Auto if cfg!(all(target_os = "macos", feature = "coreml")) => {
+            Accelerator::CoreMl
+        }
+        DeviceType::Auto if cfg!(all(target_os = "linux", feature = "cuda")) => Accelerator::Cuda,
+        DeviceType::Auto if cfg!(all(target_os = "linux", feature = "rocm")) => Accelerator::Rocm,
+        DeviceType::Auto => Accelerator::Cpu,
+    }
+}
+
+/// Expand a primary accelerator to the ORT provider preference list.
+/// CPU is included as the op/session fallback for non-CPU providers.
+pub fn providers_for_accelerator(primary: Accelerator) -> Vec<Accelerator> {
+    match primary {
+        Accelerator::Cpu => vec![Accelerator::Cpu],
+        other => vec![other, Accelerator::Cpu],
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared ORT session/provider helpers (used by whisper.rs, moonshine.rs, families.rs)
 // ---------------------------------------------------------------------------
@@ -163,10 +197,8 @@ pub(crate) fn num_cpus_best_effort() -> usize {
 }
 
 /// Map our `Accelerator` list to ort `ExecutionProviderDispatch`es. CPU is always appended as
-/// the op-level fallback. DirectML is registered only on Windows; CUDA only when the `cuda`
-/// feature is built. CoreML/ROCm/OpenVINO aren't built into the shipped target and the resolver
-/// already routes DML-incompatible families to CPU, so those arms are no-ops here. `.build()`
-/// returns a dispatch regardless of backend presence — availability resolves at session-create.
+/// the op-level fallback. Platform/provider EPs are compiled only behind their target/feature
+/// cfgs; unavailable accelerators are skipped and fall through to CPU at session creation.
 pub(crate) fn execution_providers(
     providers: &[Accelerator],
 ) -> Vec<ort::ep::ExecutionProviderDispatch> {
@@ -183,6 +215,24 @@ pub(crate) fn execution_providers(
                 #[cfg(feature = "cuda")]
                 {
                     out.push(ort::ep::CUDA::default().build());
+                }
+            }
+            Accelerator::CoreMl => {
+                #[cfg(all(target_os = "macos", feature = "coreml"))]
+                {
+                    out.push(ort::ep::CoreML::default().build());
+                }
+            }
+            Accelerator::Rocm => {
+                #[cfg(feature = "rocm")]
+                {
+                    out.push(ort::ep::ROCm::default().build());
+                }
+            }
+            Accelerator::OpenVino => {
+                #[cfg(feature = "openvino")]
+                {
+                    out.push(ort::ep::OpenVINO::default().build());
                 }
             }
             _ => {}
@@ -319,6 +369,8 @@ impl EngineKind {
     ///   * `NemoAed` (Canary): conformer-encoder `Reshape` kernel crash (MLOperatorAuthorImpl).
     ///   * `CohereAsr`: `MultiHeadAttention` kernel crash.
     ///   * `KaldiTransducer` (zipformer/vosk), `SenseVoiceCtc`, `DolphinCtc`: silent hang/crash.
+    ///   * Sherpa streaming Conformer/Zipformer graphs: CPU-pinned because DirectML is unstable
+    ///     for the stateful streaming sessions.
     ///
     /// The NeMo CTC/TDT (parakeet) + GigaAM CTC + T-One CTC graphs RUN CORRECTLY and **2–3×
     /// FASTER on DirectML than CPU** (parakeet-ctc 73 vs 223ms, parakeet-tdt 144 vs 270ms,
@@ -333,6 +385,9 @@ impl EngineKind {
                 | EngineKind::KaldiTransducer
                 | EngineKind::SenseVoiceCtc
                 | EngineKind::DolphinCtc
+                | EngineKind::NemoCtcStreaming
+                | EngineKind::NemoRnntStreaming
+                | EngineKind::KaldiTransducerStreaming
         )
     }
 
@@ -389,6 +444,12 @@ impl EngineKind {
                 | EngineKind::CohereAsr
         )
     }
+
+    /// True when the latest realtime preview can safely be promoted to the final paste.
+    /// Context-dependent attention decoders still need a fresh full-context final decode.
+    pub fn final_reuse_safe(self) -> bool {
+        !self.needs_past_context()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +502,22 @@ pub struct Transcription {
     pub words: Option<Vec<WordResult>>,
 }
 
+/// One native-streaming update from a cache-aware engine.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NativeStreamUpdate {
+    pub text: String,
+    pub is_final: bool,
+}
+
+impl NativeStreamUpdate {
+    pub fn interim(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_final: false,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The core trait
 // ---------------------------------------------------------------------------
@@ -485,6 +562,13 @@ pub trait Transcriber: Send {
     /// DRAFT: body lives behind the de-risking spike. See 03_stt_engine.md §4–§6.
     fn transcribe(&mut self, audio: &[f32], opts: &TranscribeOptions) -> SttResult<Transcription>;
 
+    /// Run a best-effort dummy inference to initialize provider kernels/caches.
+    /// Engines can override this when full transcription on synthetic silence is
+    /// a poor health check.
+    fn warmup(&mut self, audio: &[f32], opts: &TranscribeOptions) -> SttResult<()> {
+        self.transcribe(audio, opts).map(|_| ())
+    }
+
     // ── Native-streaming hooks (default = batch-only no-ops) ──────────────────────────────
     // A cache-aware engine (T-One, streaming FastConformer/Zipformer) carries encoder/predictor
     // state across chunks, so the realtime worker can feed only the NEW samples each tick via
@@ -498,7 +582,7 @@ pub trait Transcriber: Send {
 
     /// Feed the next 16 kHz PCM chunk, advance cached state, return the incremental text so far.
     /// Only valid when `supports_native_streaming()`; default errors.
-    fn stream_accept(&mut self, _pcm: &[f32]) -> SttResult<String> {
+    fn stream_accept(&mut self, _pcm: &[f32]) -> SttResult<NativeStreamUpdate> {
         Err(SttError::Unsupported(
             "stream_accept on a batch-only engine",
         ))
@@ -708,11 +792,7 @@ pub fn fit_aware_auto_quant(
         // Resolve the ACTUAL device for (kind, q) under the user's primary: CPU-device → always CPU
         // (RAM budget); GPU primary → the per-(engine,quant) override decides DML vs CPU. Only a
         // VRAM-backed EP (DirectML/CUDA) uses the VRAM budget.
-        let providers = match primary {
-            Accelerator::Cpu => vec![Accelerator::Cpu],
-            other => vec![other, Accelerator::Cpu],
-        };
-        let routed = override_dml_to_cpu_for_kind(providers, kind, q);
+        let routed = override_dml_to_cpu_for_kind(providers_for_accelerator(primary), kind, q);
         let on_gpu = matches!(
             routed.first(),
             Some(Accelerator::DirectMl) | Some(Accelerator::Cuda)
@@ -738,7 +818,7 @@ pub fn fit_aware_auto_quant(
 /// EngineKind-based DML→CPU override. This is the runtime provider-routing policy:
 /// the reference blanket-excluded whole families; we measured per-engine with the
 /// DirectML benchmark harness and route to CPU only when DML CRASHES
-/// (`is_dml_incompatible`: AED decoders + sherpa graphs) OR is SLOWER than CPU
+/// (`is_dml_incompatible`: AED decoders + unstable sherpa graphs) OR is SLOWER than CPU
 /// (`dml_slower_than_cpu`: the RNN-T predictor-loop transducers). The NeMo CTC/TDT +
 /// GigaAM-CTC + T-One graphs run 2–3× faster on DML, so they keep the GPU EP.
 /// Only fires for non-CUDA GPU EPs; CUDA/CPU/None pass through.
@@ -775,16 +855,14 @@ pub fn ctc_greedy_collapse(ids: &[i64], blank_id: i64) -> Vec<i64> {
 }
 
 /// `intra_op_num_threads` pick from `onnxasr_transcriber._pick_intra_op_threads`:
-/// CPU EP → min(cpu_count, 8) to dodge E-core collapse on hybrid CPUs; GPU EP → 2.
+/// CPU EP uses physical cores capped at 16; GPU EP uses 2 feeder threads.
 /// (0 = "all cores" is 49–84% SLOWER — never use the default.)
 pub fn pick_intra_op_threads(is_gpu: bool, cpu_count: usize) -> usize {
     // Benchmark compatibility override: `SPIKE_INTRA_THREADS` is the existing env var used to
     // sweep the intra-op thread count without recompiling (0 = let ORT auto-pick = physical cores,
     // matching onnx-asr's default).
-    if let Ok(n) = std::env::var("SPIKE_INTRA_THREADS").map(|v| v.trim().parse::<usize>()) {
-        if let Ok(n) = n {
-            return n;
-        }
+    if let Ok(Ok(n)) = std::env::var("SPIKE_INTRA_THREADS").map(|v| v.trim().parse::<usize>()) {
+        return n;
     }
     if is_gpu {
         // GPU EP does the compute; CPU threads only feed it. 2 is enough (more contend).
@@ -906,6 +984,76 @@ mod tests {
     }
 
     #[test]
+    fn cpu_device_resolves_to_cpu_accelerator() {
+        assert_eq!(
+            resolve_accelerator(crate::winstt::settings_schema::DeviceType::Cpu),
+            Accelerator::Cpu
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn auto_device_resolves_to_directml_on_windows() {
+        assert_eq!(
+            resolve_accelerator(crate::winstt::settings_schema::DeviceType::Auto),
+            Accelerator::DirectMl
+        );
+    }
+
+    #[cfg(all(
+        not(windows),
+        not(all(target_os = "macos", feature = "coreml")),
+        not(all(target_os = "linux", feature = "cuda")),
+        not(all(target_os = "linux", feature = "rocm"))
+    ))]
+    #[test]
+    fn auto_device_resolves_to_cpu_without_non_windows_gpu_features() {
+        assert_eq!(
+            resolve_accelerator(crate::winstt::settings_schema::DeviceType::Auto),
+            Accelerator::Cpu
+        );
+    }
+
+    #[cfg(all(target_os = "macos", feature = "coreml"))]
+    #[test]
+    fn auto_device_resolves_to_coreml_on_macos_coreml_builds() {
+        assert_eq!(
+            resolve_accelerator(crate::winstt::settings_schema::DeviceType::Auto),
+            Accelerator::CoreMl
+        );
+    }
+
+    #[cfg(all(target_os = "linux", feature = "cuda"))]
+    #[test]
+    fn auto_device_resolves_to_cuda_on_linux_cuda_builds() {
+        assert_eq!(
+            resolve_accelerator(crate::winstt::settings_schema::DeviceType::Auto),
+            Accelerator::Cuda
+        );
+    }
+
+    #[cfg(all(target_os = "linux", not(feature = "cuda"), feature = "rocm"))]
+    #[test]
+    fn auto_device_resolves_to_rocm_on_linux_rocm_builds() {
+        assert_eq!(
+            resolve_accelerator(crate::winstt::settings_schema::DeviceType::Auto),
+            Accelerator::Rocm
+        );
+    }
+
+    #[test]
+    fn provider_preference_list_keeps_cpu_fallback_only_when_needed() {
+        assert_eq!(
+            providers_for_accelerator(Accelerator::Cpu),
+            vec![Accelerator::Cpu]
+        );
+        assert_eq!(
+            providers_for_accelerator(Accelerator::DirectMl),
+            vec![Accelerator::DirectMl, Accelerator::Cpu]
+        );
+    }
+
+    #[test]
     fn dml_incompatible_engine_forced_to_cpu() {
         assert_eq!(
             override_dml_to_cpu_for_kind(
@@ -915,11 +1063,27 @@ mod tests {
             ),
             vec![Accelerator::Cpu]
         );
+        assert_eq!(
+            override_dml_to_cpu_for_kind(
+                vec![Accelerator::DirectMl, Accelerator::Cpu],
+                EngineKind::NemoCtcStreaming,
+                Quantization::Default
+            ),
+            vec![Accelerator::Cpu]
+        );
         // Engine kinds measured as DML-safe keep DML.
         assert_eq!(
             override_dml_to_cpu_for_kind(
                 vec![Accelerator::DirectMl, Accelerator::Cpu],
                 EngineKind::NemoCtc,
+                Quantization::Default
+            ),
+            vec![Accelerator::DirectMl, Accelerator::Cpu]
+        );
+        assert_eq!(
+            override_dml_to_cpu_for_kind(
+                vec![Accelerator::DirectMl, Accelerator::Cpu],
+                EngineKind::ToneCtc,
                 Quantization::Default
             ),
             vec![Accelerator::DirectMl, Accelerator::Cpu]
@@ -948,13 +1112,30 @@ mod tests {
         // Word timestamps possible only on WhisperHf (still load-confirmed).
         assert!(EngineKind::WhisperHf.may_support_word_timestamps());
         assert!(!EngineKind::WhisperOrt.may_support_word_timestamps());
+        // Native streaming is a strict subset of final-reuse-safe models.
+        assert!(EngineKind::ToneCtc.supports_native_streaming());
+        assert!(EngineKind::NemoCtcStreaming.supports_native_streaming());
+        assert!(EngineKind::NemoRnntStreaming.supports_native_streaming());
+        assert!(EngineKind::KaldiTransducerStreaming.supports_native_streaming());
+        assert!(!EngineKind::NemoCtc.supports_native_streaming());
+        assert!(EngineKind::ToneCtc.final_reuse_safe());
+        assert!(EngineKind::GigaamCtc.final_reuse_safe());
+        assert!(!EngineKind::WhisperHf.final_reuse_safe());
+        assert!(!EngineKind::NemoAed.final_reuse_safe());
     }
 
     #[test]
     fn intra_op_threads_policy() {
         assert_eq!(pick_intra_op_threads(true, 16), 2); // GPU
-        assert_eq!(pick_intra_op_threads(false, 16), 8); // CPU capped at 8
-        assert_eq!(pick_intra_op_threads(false, 4), 4); // CPU under cap
+        let physical = num_cpus::get_physical();
+        assert_eq!(
+            pick_intra_op_threads(false, 16),
+            physical.min(16).clamp(1, 16)
+        );
+        assert_eq!(
+            pick_intra_op_threads(false, 4),
+            physical.min(4).clamp(1, 16)
+        );
         assert_eq!(pick_intra_op_threads(false, 0), 1); // floor
     }
 }

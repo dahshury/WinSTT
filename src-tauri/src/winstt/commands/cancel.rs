@@ -1,10 +1,10 @@
 // Source (authoritative):
 // frontend/electron/ipc/stt-commands.ts::handleAbortOperation + frontend/electron/main.ts
-// (the overlay X button + hotkey+Backspace "cancel" combo both call it) +
-// docs/port/10_frontend_port_plan.md §6 (WU-3 dictation core) + the adapter ROUTE map.
+// (the overlay X button + Escape cancel shortcut both call it) +
+// docs/archive/port/10_frontend_port_plan.md §6 (WU-3 dictation core) + the adapter ROUTE map.
 //
 // The renderer's user-initiated cancel — overlay X button, and (in the reference build)
-// the hotkey+Backspace combo — sends `STT_ABORT_OPERATION`, which the adapter
+// the Escape shortcut — sends `STT_ABORT_OPERATION`, which the adapter
 // (native-bridge-adapter.ts) routes to the Tauri command `cancel_current_operation`.
 //
 // In the reference build `handleAbortOperation` did:
@@ -32,7 +32,7 @@ use tauri::AppHandle;
 use crate::winstt::commands::dictation::SttEvents;
 
 /// `cancel_current_operation` — abort the in-flight dictation session and reset
-/// renderer state. Routes from `STT_ABORT_OPERATION` (overlay X / cancel combo).
+/// renderer state. Routes from `STT_ABORT_OPERATION` (overlay X / Escape).
 /// Runs the centralized cancel path, then broadcasts `stt:session-aborted` so the
 /// renderer drops its local "session active" state. Mirrors `handleAbortOperation`.
 #[tauri::command]
@@ -40,9 +40,11 @@ use crate::winstt::commands::dictation::SttEvents;
 pub fn cancel_current_operation(app: AppHandle) {
     // The single source-of-truth cancel: stop recording, reset tray+overlay,
     // maybe-unload, notify coordinator.
-    crate::utils::cancel_current_operation(&app);
+    let cancelled = crate::utils::cancel_current_operation(&app);
     // WinSTT epilogue: tell the renderer a user-initiated cancel just landed so it
     // can reset toggle-mode / visualizer / pill state (the renderer's
     // `onSessionAborted` → usePushToTalk `isActiveRef` reset).
-    SttEvents::session_aborted(&app);
+    if cancelled {
+        SttEvents::session_aborted(&app);
+    }
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { Button as BaseButton } from "@base-ui/react/button";
 import {
 	BinaryCodeIcon,
 	CancelCircleIcon,
@@ -11,7 +12,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
-import { AnimatedNumber } from "@/shared/ui/animated-value";
+import { formatBytes } from "@/shared/lib/format-bytes";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -66,18 +67,28 @@ export interface QuantShelfEntry {
 	canStartDownload: boolean;
 	/** Show the trailing delete control (on disk + deleter present + not a router badge). */
 	canDelete: boolean;
+	/** Show resume/cancel controls for a paused resumable download. */
+	canResumeDownload?: boolean;
 	/** Live download snapshot for `actionQuant`, if any. */
 	download: QuantDownloadSnapshot | undefined;
+	/** Download size for this exact precision, when the catalog exposes it. */
+	downloadSizeBytes?: number | null;
+	/** Preformatted download size label, used when a backend already scraped one. */
+	downloadSizeLabel?: string | null;
 	/** This badge is the active / selected precision. */
 	isActive: boolean;
 	/** Mark with the sparkle + "(recommended for your hardware)" aria suffix. */
 	isRecommended: boolean;
 	/** Human label ("fp16" / "fp32" / "Auto"). */
 	label: string;
+	/** Render label in monospace for backend tag ids such as `q4_K_M`. */
+	mono?: boolean;
 	/** Full precision-explanation tooltip text. */
 	tooltip: string;
 	/** Badge precision id — the select / start-download value. `""` is allowed. */
 	value: string;
+	/** Optional backing model id when one visible card fronts multiple repos. */
+	modelId?: string;
 }
 
 export interface QuantShelfProps {
@@ -86,13 +97,23 @@ export interface QuantShelfProps {
 	modelId: string;
 	/** Single dispatch for the four per-quant download actions. */
 	onDownloadAction?:
-		| ((action: QuantDownloadAction, modelId: string, quantization: string) => void)
+		| ((
+				action: QuantDownloadAction,
+				modelId: string,
+				quantization: string,
+		  ) => void)
 		| undefined;
 	/** Trash-icon handler — when omitted, no delete control is rendered. */
 	onRequestDeleteQuant?:
-		| ((modelId: string, quantization: string, displayName: string, quantLabel: string) => void)
+		| ((
+				modelId: string,
+				quantization: string,
+				displayName: string,
+				quantLabel: string,
+		  ) => void)
 		| undefined;
 	onSelect: (modelId: string, quantization: string) => void;
+	showIcon?: boolean;
 }
 
 type BadgeIconButtonTone = "neutral" | "danger" | "primary";
@@ -100,7 +121,8 @@ type BadgeIconButtonTone = "neutral" | "danger" | "primary";
 /** Maps a {@link BadgeIconButtonTone} to its Tailwind class string. */
 function toneClassName(tone: BadgeIconButtonTone): string {
 	const map: Record<BadgeIconButtonTone, string> = {
-		danger: "bg-foreground/[0.04] text-foreground-muted hover:bg-error/15 hover:text-error",
+		danger:
+			"bg-foreground/[0.04] text-foreground-muted hover:bg-error/15 hover:text-error",
 		primary: "bg-foreground/[0.04] text-accent hover:bg-accent/15",
 		neutral:
 			"bg-foreground/[0.04] text-foreground-muted hover:bg-foreground/[0.10] hover:text-foreground",
@@ -127,12 +149,12 @@ export function BadgeIconButton({
 }) {
 	return (
 		<Tooltip content={tooltip} side="top">
-			<button
+			<BaseButton
 				aria-label={ariaLabel}
 				className={cn(
 					"inline-flex h-6 cursor-pointer items-center justify-center border-border border-l px-1.5 leading-none transition-colors",
 					"last:rounded-r-[5px]",
-					toneClassName(tone)
+					toneClassName(tone),
 				)}
 				// Base UI's Combobox.Item starts selection on pointerdown, BEFORE click —
 				// so an onClick-only stop lets the card select first (the action gets lost).
@@ -148,7 +170,7 @@ export function BadgeIconButton({
 				type="button"
 			>
 				<HugeiconsIcon className="size-3" icon={icon} />
-			</button>
+			</BaseButton>
 		</Tooltip>
 	);
 }
@@ -172,7 +194,7 @@ export function badgeToneForCache(state: QuantCacheState | undefined): string {
 function resolveProgressFillPct(
 	cacheState: QuantCacheState | undefined,
 	cacheProgress: number | null,
-	download: QuantDownloadSnapshot | undefined
+	download: QuantDownloadSnapshot | undefined,
 ): number | null {
 	if (download && typeof download.progress === "number") {
 		return Math.max(0, Math.min(100, download.progress));
@@ -187,6 +209,40 @@ function resolveProgressFillPct(
  *  idle-not-cached (label crossfading to a download glyph on hover), or the bare
  *  label. Exported so other pickers' shelves render the IDENTICAL badge content.
  *  `mono` renders the label in the mono font (Ollama tags like `q4_K_M`). */
+function formatQuantDownloadSize(entry: QuantShelfEntry): string {
+	if (entry.download !== undefined && entry.download.totalBytes > 0) {
+		return formatBytes(
+			Math.max(entry.download.totalBytes, entry.download.downloadedBytes),
+			{ minUnit: "B" },
+		) ?? "Unknown";
+	}
+	const label = entry.downloadSizeLabel?.trim();
+	if (label) {
+		return label;
+	}
+	return formatBytes(entry.downloadSizeBytes, { minUnit: "B" }) ?? "Unknown";
+}
+
+export function buildQuantTooltipContent(
+	entry: QuantShelfEntry,
+	actionHint: string | null,
+): string {
+	const lines = [
+		`${entry.label}${entry.isRecommended ? " (recommended)" : ""}`,
+		`Status: ${
+			actionHint
+				? `${entry.cacheStatusLabel}. ${actionHint}`
+				: entry.cacheStatusLabel
+		}`,
+		`Download size: ${formatQuantDownloadSize(entry)}`,
+	];
+	const detail = entry.tooltip.trim();
+	if (detail.length > 0) {
+		lines.push(`Precision: ${detail}`);
+	}
+	return lines.join("\n");
+}
+
 export function QuantBadgeLabel({
 	canStartDownload,
 	isDownloading,
@@ -205,8 +261,15 @@ export function QuantBadgeLabel({
 			<span className="relative inline-flex items-center gap-1.5">
 				<PulseDot className="size-1.5" />
 				<span className="font-mono text-[9.5px] tabular-nums">
-					{progress === null ? "..." : <AnimatedNumber value={`${progress}%`} />}
+					{progress === null ? "..." : `${progress}%`}
 				</span>
+			</span>
+		);
+	}
+	if (progress !== null) {
+		return (
+			<span className="font-mono text-[9.5px] tabular-nums">
+				{`${progress}%`}
 			</span>
 		);
 	}
@@ -216,7 +279,7 @@ export function QuantBadgeLabel({
 				<span
 					className={cn(
 						"transition-opacity duration-150 group-hover/badge:opacity-0 motion-reduce:transition-none",
-						mono && "font-mono"
+						mono && "font-mono",
 					)}
 				>
 					{label}
@@ -229,7 +292,13 @@ export function QuantBadgeLabel({
 			</span>
 		);
 	}
-	return <span className={cn("relative inline-flex items-center", mono && "font-mono")}>{label}</span>;
+	return (
+		<span
+			className={cn("relative inline-flex items-center", mono && "font-mono")}
+		>
+			{label}
+		</span>
+	);
 }
 
 /** The 0..2 trailing action buttons appended to a precision badge in the same
@@ -249,6 +318,7 @@ function QuantActionButtons({
 	onRequestDeleteQuant: QuantShelfProps["onRequestDeleteQuant"];
 }) {
 	const { actionQuant, cacheState, download, label } = entry;
+	const actionModelId = entry.modelId ?? modelId;
 	const isDownloading = download !== undefined;
 	const canDownload = onDownloadAction !== undefined;
 	const deleteTooltip =
@@ -261,7 +331,7 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Resume ${label} download`}
 					icon={PlayIcon}
-					onClick={() => onDownloadAction("resume", modelId, actionQuant)}
+					onClick={() => onDownloadAction("resume", actionModelId, actionQuant)}
 					tone="primary"
 					tooltip="Resume download"
 				/>
@@ -270,7 +340,7 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Pause ${label} download`}
 					icon={PauseIcon}
-					onClick={() => onDownloadAction("pause", modelId, actionQuant)}
+					onClick={() => onDownloadAction("pause", actionModelId, actionQuant)}
 					tooltip="Pause download (resumable mid-file)"
 				/>
 			) : null}
@@ -278,7 +348,25 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Cancel ${label} download`}
 					icon={CancelCircleIcon}
-					onClick={() => onDownloadAction("cancel", modelId, actionQuant)}
+					onClick={() => onDownloadAction("cancel", actionModelId, actionQuant)}
+					tone="danger"
+					tooltip="Cancel download"
+				/>
+			) : null}
+			{entry.canResumeDownload && !isDownloading && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Resume ${label} download`}
+					icon={PlayIcon}
+					onClick={() => onDownloadAction("resume", actionModelId, actionQuant)}
+					tone="primary"
+					tooltip="Resume download"
+				/>
+			) : null}
+			{entry.canResumeDownload && !isDownloading && canDownload ? (
+				<BadgeIconButton
+					ariaLabel={`Cancel ${label} download`}
+					icon={CancelCircleIcon}
+					onClick={() => onDownloadAction("cancel", actionModelId, actionQuant)}
 					tone="danger"
 					tooltip="Cancel download"
 				/>
@@ -287,7 +375,9 @@ function QuantActionButtons({
 				<BadgeIconButton
 					ariaLabel={`Delete ${label} weights for ${modelDisplayName}`}
 					icon={Delete02Icon}
-					onClick={() => onRequestDeleteQuant(modelId, actionQuant, modelDisplayName, label)}
+					onClick={() =>
+						onRequestDeleteQuant(actionModelId, actionQuant, modelDisplayName, label)
+					}
 					tone="danger"
 					tooltip={deleteTooltip}
 				/>
@@ -313,16 +403,38 @@ function QuantBadge({
 	onRequestDeleteQuant: QuantShelfProps["onRequestDeleteQuant"];
 	onSelect: QuantShelfProps["onSelect"];
 }) {
-	const { canStartDownload, download, isActive, isRecommended, label, value } = entry;
+	const {
+		canResumeDownload,
+		canStartDownload,
+		download,
+		isActive,
+		isRecommended,
+		label,
+		mono,
+		value,
+	} = entry;
+	const actionModelId = entry.modelId ?? modelId;
 	const isDownloading = download !== undefined;
 	const cacheToneClass = badgeToneForCache(entry.cacheState);
-	const progressFillPct = resolveProgressFillPct(entry.cacheState, entry.cacheProgress, download);
+	const progressFillPct = resolveProgressFillPct(
+		entry.cacheState,
+		entry.cacheProgress,
+		download,
+	);
 	const hasTrailingActions =
-		(isDownloading && onDownloadAction !== undefined) || (entry.canDelete && !isDownloading);
-	const statusHint = canStartDownload ? " Click to download." : "";
+		(isDownloading && onDownloadAction !== undefined) ||
+		(canResumeDownload === true && onDownloadAction !== undefined) ||
+		(entry.canDelete && !isDownloading);
+	const actionHint = canStartDownload
+		? "Click to download."
+		: canResumeDownload
+			? "Click to resume."
+			: null;
 	let badgeAriaLabel = `Select ${label} precision`;
 	if (canStartDownload) {
 		badgeAriaLabel = `Download ${label} weights`;
+	} else if (canResumeDownload) {
+		badgeAriaLabel = `Resume ${label} weights download`;
 	} else if (isDownloading) {
 		badgeAriaLabel = `${label} downloading`;
 	}
@@ -332,20 +444,20 @@ function QuantBadge({
 	return (
 		<ButtonGroup
 			aria-label={`Precision ${label} for ${modelDisplayName}`}
-			className={cn("rounded-md ring-1 ring-inset", isRecommended ? "ring-accent/60" : "ring-border")}
+			className={cn(
+				"rounded-md ring-1 ring-inset",
+				isRecommended ? "ring-accent/60" : "ring-border",
+			)}
 		>
-			<Tooltip
-				content={`${isRecommended ? "Recommended for your hardware. " : ""}${label} — ${entry.cacheStatusLabel}.${statusHint} ${entry.tooltip}`}
-				side="top"
-			>
-				<button
+			<Tooltip content={buildQuantTooltipContent(entry, actionHint)} side="top">
+				<BaseButton
 					aria-disabled={isDownloading}
 					aria-label={badgeAriaLabel}
 					className={cn(
 						"group/badge relative inline-flex h-6 items-center gap-1.5 overflow-hidden px-2 font-medium text-[10.5px] leading-none transition-colors",
 						isDownloading ? "cursor-default" : "cursor-pointer",
 						hasTrailingActions ? "rounded-l-[5px]" : "rounded-[5px]",
-						isActive ? "bg-accent/20 text-accent" : cacheToneClass
+						isActive ? "bg-accent/20 text-accent" : cacheToneClass,
 					)}
 					onClick={(e) => {
 						e.preventDefault();
@@ -354,11 +466,15 @@ function QuantBadge({
 							return;
 						}
 						if (canStartDownload) {
-							onDownloadAction?.("start", modelId, value);
+							onDownloadAction?.("start", actionModelId, value);
+						} else if (canResumeDownload) {
+							onDownloadAction?.("resume", actionModelId, entry.actionQuant);
 						} else {
-							onSelect(modelId, value);
+							onSelect(actionModelId, value);
 						}
 					}}
+					onMouseDown={(e) => e.stopPropagation()}
+					onPointerDown={(e) => e.stopPropagation()}
 					type="button"
 				>
 					{progressFillPct !== null && !isActive ? (
@@ -379,9 +495,10 @@ function QuantBadge({
 						canStartDownload={canStartDownload}
 						isDownloading={isDownloading}
 						label={label}
-						progress={download?.progress ?? null}
+						mono={mono === true}
+						progress={progressFillPct}
 					/>
-				</button>
+				</BaseButton>
 			</Tooltip>
 			<QuantActionButtons
 				entry={entry}
@@ -407,20 +524,23 @@ export function QuantShelf({
 	onDownloadAction,
 	onRequestDeleteQuant,
 	onSelect,
+	showIcon = true,
 }: QuantShelfProps) {
 	if (entries.length === 0) {
 		return null;
 	}
 	return (
 		<div className="flex flex-wrap items-center gap-2">
-			<Tooltip
-				content="Precision — the numeric format of the model's weights. Lower precision (q4 / int8) loads + runs faster and takes less disk/RAM, at a small quality cost. Higher precision (fp32 / fp16) is the most faithful but heaviest."
-				side="top"
-			>
-				<span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
-					<HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
-				</span>
-			</Tooltip>
+			{showIcon ? (
+				<Tooltip
+					content="Precision — the numeric format of the model's weights. Lower precision (q4 / int8) loads + runs faster and takes less disk/RAM, at a small quality cost. Higher precision (fp32 / fp16) is the most faithful but heaviest."
+					side="top"
+				>
+					<span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
+						<HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
+					</span>
+				</Tooltip>
+			) : null}
 			{entries.map((entry) => (
 				<QuantBadge
 					entry={entry}

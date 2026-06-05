@@ -43,6 +43,7 @@ function toMap(entries: ModelStateEntry[]): Record<string, ModelStateEntry> {
 // request without changing the contract — every caller still awaits a
 // fresh result.
 let pendingRefresh: Promise<void> | null = null;
+let unsubscribeModelStateEvents: (() => void) | null = null;
 
 // Retry-on-failure schedule, kept as belt-and-suspenders. ``list_models_with_state``
 // is now a ``pre_ready`` server command (it reads only the catalog + local HF-cache
@@ -91,6 +92,9 @@ export const useModelStateStore = create<ModelStateStore>()((set, get) => ({
 		if (pendingRefresh) {
 			return pendingRefresh;
 		}
+		if (typeof window !== "undefined" && window.nativeBridge != null) {
+			initModelStateStore();
+		}
 		const run = async () => {
 			const payload = await fetchModelsWithState();
 			if (payload && Array.isArray(payload.states)) {
@@ -127,6 +131,8 @@ function resetRetryCycle(): void {
  *  leaked timer from one test can't fire during a sibling. */
 export function _resetModelStateRetryForTests(): void {
 	resetRetryCycle();
+	unsubscribeModelStateEvents?.();
+	unsubscribeModelStateEvents = null;
 	RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 8000, 8000, 8000];
 }
 
@@ -138,10 +144,13 @@ export function _setModelStateRetryDelaysForTests(delays: readonly number[]): vo
 }
 
 /**
- * Subscribe to push invalidations. Called once on module load alongside
- * the catalog-store init; safe to call again from tests.
+ * Subscribe to push invalidations. Initialized lazily by refresh() or surfaces
+ * that render model cache state; safe to call again from tests.
  */
 export function initModelStateStore(): () => void {
+	if (unsubscribeModelStateEvents) {
+		return unsubscribeModelStateEvents;
+	}
 	const unsubCache = onModelCacheChanged(() => {
 		// A model just finished downloading — re-fetch the full state map
 		// rather than trying to patch a single entry, because finishing
@@ -156,13 +165,13 @@ export function initModelStateStore(): () => void {
 		resetRetryCycle();
 		useModelStateStore.getState().refresh();
 	});
-	return () => {
+	const unsubscribe = () => {
 		unsubCache();
 		unsubSwap();
+		if (unsubscribeModelStateEvents === unsubscribe) {
+			unsubscribeModelStateEvents = null;
+		}
 	};
-}
-
-if (typeof window !== "undefined" && window.nativeBridge != null) {
-	useModelStateStore.getState().refresh();
-	initModelStateStore();
+	unsubscribeModelStateEvents = unsubscribe;
+	return unsubscribe;
 }

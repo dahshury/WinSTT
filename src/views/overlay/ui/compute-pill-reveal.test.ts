@@ -35,6 +35,16 @@ describe("computePillReveal", () => {
 		expect(computePillReveal({ ...BASE, isThinking: true })).toBe(true);
 	});
 
+	test("final STT decode after recording stop reveals the pill", () => {
+		expect(
+			computePillReveal({
+				...BASE,
+				isRecordingActive: true,
+				isTranscribing: true,
+			}),
+		).toBe(true);
+	});
+
 	test("idle (nothing happening) → hidden", () => {
 		expect(computePillReveal(BASE)).toBe(false);
 	});
@@ -47,5 +57,9 @@ describe("computePillReveal", () => {
 
 	test("stale text without an armed recording → hidden (between-session guard)", () => {
 		expect(computePillReveal({ ...BASE, hasText: true })).toBe(false);
+	});
+
+	test("stale transcribing without an armed recording stays hidden", () => {
+		expect(computePillReveal({ ...BASE, isTranscribing: true })).toBe(false);
 	});
 });

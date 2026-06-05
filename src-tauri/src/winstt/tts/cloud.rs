@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::types::{clamp_cloud_speed, SentenceAudio, TtsEngine, TtsError, TtsResult, VoiceInfo};
 
+const MAX_PREVIEW_BYTES: usize = 10 * 1024 * 1024;
+
 // ---------------------------------------------------------------------------
 // Cloud ElevenLabs engine (reqwest)
 // ---------------------------------------------------------------------------
@@ -206,20 +208,119 @@ impl ElevenLabsEngine {
     }
 
     /// Fetch a CDN preview mp3 for a voice (no character credits). Refuses any
-    /// non-https URL (trust-boundary check, PORT/06_tts.md §4).
+    /// non-https URL and local/private destinations (trust-boundary check,
+    /// PORT/06_tts.md §4).
     pub fn fetch_preview(&self, preview_url: &str) -> TtsResult<Vec<u8>> {
         use tauri::async_runtime::block_on;
-        if !preview_url.starts_with("https://") {
-            return Err(TtsError::Cloud("refusing non-https preview url".into()));
-        }
-        let resp = block_on(self.client.get(preview_url).send())
+        let url = validate_preview_url(preview_url).map_err(TtsError::Cloud)?;
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| TtsError::Cloud(format!("preview client failed: {e}")))?;
+        let resp = block_on(client.get(url).send())
             .map_err(|e| TtsError::Cloud(format!("preview fetch failed: {e}")))?;
         if !resp.status().is_success() {
             return Err(TtsError::Cloud(format!("preview HTTP {}", resp.status())));
         }
-        block_on(resp.bytes())
-            .map(|b| b.to_vec())
-            .map_err(|e| TtsError::Cloud(format!("preview read failed: {e}")))
+        if resp
+            .content_length()
+            .is_some_and(|len| len > MAX_PREVIEW_BYTES as u64)
+        {
+            return Err(TtsError::Cloud("preview clip is too large".into()));
+        }
+        block_on(read_preview_limited(resp))
+    }
+}
+
+pub fn validate_preview_url(preview_url: &str) -> Result<reqwest::Url, String> {
+    use std::net::ToSocketAddrs;
+
+    let url = reqwest::Url::parse(preview_url).map_err(|_| "invalid preview url".to_string())?;
+    if url.scheme() != "https" {
+        return Err("refusing non-https preview url".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("refusing preview url with credentials".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "preview url has no host".to_string())?;
+    if is_blocked_host_name(host) {
+        return Err("refusing local preview url host".to_string());
+    }
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "preview url has no port".to_string())?;
+    let mut resolved_any = false;
+    for addr in (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("preview host resolution failed: {e}"))?
+    {
+        resolved_any = true;
+        if !is_public_ip(addr.ip()) {
+            return Err("refusing local or private preview url address".to_string());
+        }
+    }
+    if !resolved_any {
+        return Err("preview host resolved to no addresses".to_string());
+    }
+    Ok(url)
+}
+
+async fn read_preview_limited(resp: reqwest::Response) -> TtsResult<Vec<u8>> {
+    use futures_util::StreamExt;
+
+    let mut stream = resp.bytes_stream();
+    let mut out = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| TtsError::Cloud(format!("preview read failed: {e}")))?;
+        if out.len().saturating_add(chunk.len()) > MAX_PREVIEW_BYTES {
+            return Err(TtsError::Cloud("preview clip is too large".into()));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
+fn is_blocked_host_name(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local")
+}
+
+fn is_documentation_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    matches!(
+        ip.octets(),
+        [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _]
+    )
+}
+
+fn is_documentation_ipv6(ip: std::net::Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    segments[0] == 0x2001 && segments[1] == 0x0db8
+}
+
+fn is_public_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                || ip.is_multicast()
+                || is_documentation_ipv4(ip))
+        }
+        std::net::IpAddr::V6(ip) => {
+            if let Some(mapped) = ip.to_ipv4_mapped() {
+                return is_public_ip(std::net::IpAddr::V4(mapped));
+            }
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || is_documentation_ipv6(ip))
+        }
     }
 }
 
@@ -293,5 +394,39 @@ impl TtsEngine for ElevenLabsEngine {
 
     fn shutdown(&self) {
         self.ready.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_preview_url_rejects_non_https() {
+        let err = validate_preview_url("http://example.com/preview.mp3").unwrap_err();
+        assert_eq!(err, "refusing non-https preview url");
+    }
+
+    #[test]
+    fn validate_preview_url_rejects_loopback_and_private_hosts() {
+        assert_eq!(
+            validate_preview_url("https://localhost/preview.mp3").unwrap_err(),
+            "refusing local preview url host"
+        );
+        assert_eq!(
+            validate_preview_url("https://127.0.0.1/preview.mp3").unwrap_err(),
+            "refusing local or private preview url address"
+        );
+        assert_eq!(
+            validate_preview_url("https://10.0.0.2/preview.mp3").unwrap_err(),
+            "refusing local or private preview url address"
+        );
+    }
+
+    #[test]
+    fn validate_preview_url_allows_public_https_ip_literal() {
+        let url = validate_preview_url("https://8.8.8.8/preview.mp3").unwrap();
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("8.8.8.8"));
     }
 }

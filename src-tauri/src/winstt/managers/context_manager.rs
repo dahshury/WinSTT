@@ -1,4 +1,4 @@
-// Source: docs/port/07_*.md §3 + lib_wiring.md §6,
+// Source: docs/archive/port/07_*.md §3 + lib_wiring.md §6,
 // frontend/electron/lib/context-reader.ts. Wraps winstt::context (pure deny-list + formatter + parser).
 //
 // ContextManager resolves the `winstt-context.exe` sidecar path and implements
@@ -13,8 +13,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::winstt::context::{
     capture_prompt_fragment, empty_context, parse_snapshot, ContextMode, ContextReader,
-    WindowContextSnapshot, MAX_BUFFER_BYTES, READ_TIMEOUT_MS,
+    WindowContextSnapshot,
 };
+#[cfg(windows)]
+use crate::winstt::context::{MAX_BUFFER_BYTES, READ_TIMEOUT_MS};
 
 pub struct ContextManager {
     app: AppHandle,
@@ -26,7 +28,7 @@ pub struct ContextManager {
 impl ContextManager {
     pub fn new(app: &AppHandle) -> Self {
         let sidecar_path = resolve_sidecar_path(app);
-        if sidecar_path.is_none() {
+        if sidecar_path.is_none() && cfg!(windows) {
             log::warn!("winstt-context sidecar not found; context capture disabled");
         }
         Self {
@@ -86,13 +88,29 @@ fn resolve_sidecar_path(app: &AppHandle) -> Option<PathBuf> {
             }
         }
     }
-    // 3. Dev fallback: the binary staged under `src-tauri/binaries/` (the
-    //    externalBin source dir), relative to the dev working directory.
+    // 3. Dev fallbacks. Prefer `src-tauri/binaries/` when present, otherwise
+    //    reuse the reference Electron sidecar from this monorepo.
     #[cfg(windows)]
     {
-        let dev = PathBuf::from("binaries").join(name);
-        if dev.exists() {
-            return Some(dev);
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let candidates = [
+            PathBuf::from("binaries").join(name),
+            manifest_dir.join("binaries").join(name),
+            manifest_dir
+                .join("..")
+                .join("examples")
+                .join("winstt-electron")
+                .join("frontend")
+                .join("electron")
+                .join("native")
+                .join("bin")
+                .join(name),
+        ];
+
+        for candidate in candidates {
+            if candidate.exists() {
+                return Some(candidate);
+            }
         }
     }
     None

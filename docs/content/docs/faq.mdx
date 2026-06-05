@@ -62,7 +62,7 @@ No. WinSTT runs on CPU alone — the CPU installer needs only a 64-bit AVX2 CPU 
     ["CPU", "~150 MB", "No GPU, headless boxes, or smallest download."],
     ["OpenVINO", "~250 MB", "Intel ARC dGPU or recent Iris Xe / Arc iGPU."],
   ]}
-  caption="All three wrap the same Electron app; only the bundled stt-server.exe differs. No Python or extra setup required."
+  caption="All three wrap the same Tauri app; only the bundled ONNX Runtime provider differs. No Python or extra setup required."
 />
 
 DirectML is the right default for almost everyone — it's vendor-agnostic and works whether or not you have a GPU. There is no CUDA installer on Windows: on our benchmark DirectML beat CUDA on both median (85 ms vs 120 ms) and tail latency while being 10x smaller.

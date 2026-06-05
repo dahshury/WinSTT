@@ -2,11 +2,9 @@
 
 import {
 	Brain01Icon,
-	BubbleChatIcon,
 	CodeIcon,
 	GlobeIcon,
 	Layers01Icon,
-	SparklesIcon,
 	Wrench01Icon,
 	ZapIcon,
 } from "@hugeicons/core-free-icons";
@@ -64,15 +62,6 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 			"Supports reasoning output. The model can show its step-by-step thinking process and explain how it arrives at conclusions.",
 		...NEUTRAL_FEATURE_CHROME,
 	},
-	include_reasoning: {
-		icon: <HugeiconsIcon className="size-3" icon={SparklesIcon} />,
-		iconSm: <HugeiconsIcon className="size-2.5" icon={SparklesIcon} />,
-		label: "Inc. Reasoning",
-		shortLabel: "+R",
-		description:
-			"Can include reasoning in response. The model can optionally include its internal reasoning process in the output when requested.",
-		...NEUTRAL_FEATURE_CHROME,
-	},
 	structured_outputs: {
 		icon: <HugeiconsIcon className="size-3" icon={CodeIcon} />,
 		iconSm: <HugeiconsIcon className="size-2.5" icon={CodeIcon} />,
@@ -80,15 +69,6 @@ const FEATURE_ICONS: Record<string, FeatureIconConfig> = {
 		shortLabel: "{}",
 		description:
 			"Supports structured output schema. The model can return data in a predefined JSON schema format, ensuring consistent output structure.",
-		...NEUTRAL_FEATURE_CHROME,
-	},
-	response_format: {
-		icon: <HugeiconsIcon className="size-3" icon={BubbleChatIcon} />,
-		iconSm: <HugeiconsIcon className="size-2.5" icon={BubbleChatIcon} />,
-		label: "JSON",
-		shortLabel: "JS",
-		description:
-			"Supports JSON response format. The model can return responses in valid JSON format, useful for programmatic integration.",
 		...NEUTRAL_FEATURE_CHROME,
 	},
 	web_search_options: {
@@ -124,7 +104,7 @@ const QUANTIZATION_LABELS: Record<string, string> = {
 	gguf: "GGUF",
 };
 
-function getQuantizationLabel(endpoint: OpenRouterEndpoint): string | undefined {
+export function getQuantizationLabel(endpoint: OpenRouterEndpoint): string | undefined {
 	const quant = endpoint.quantization;
 	if (!quant) {
 		return;
@@ -142,24 +122,14 @@ export interface ChipChromeOptions {
 	shouldShowLabel: boolean;
 }
 
-function chipSizeKey(showLabel: boolean, flat: boolean, isSmall: boolean): number {
-	// biome-ignore lint/suspicious/noBitwiseOperators: intentional bit packing for stable O(1) lookup key
-	return (showLabel ? 4 : 0) | (flat ? 2 : 0) | (isSmall ? 1 : 0);
-}
-
-const CHIP_SIZE_CLASS_MAP: Record<number, string> = {
-	[chipSizeKey(true, false, true)]: "px-1 py-0.5",
-	[chipSizeKey(true, true, true)]: "px-1 py-0.5",
-	[chipSizeKey(true, false, false)]: "px-1.5 py-0.5",
-	[chipSizeKey(true, true, false)]: "px-1.5 py-0.5",
-	[chipSizeKey(false, true, true)]: "h-4 w-4",
-	[chipSizeKey(false, true, false)]: "h-5 w-5",
-	[chipSizeKey(false, false, true)]: "h-4 w-4 p-0.5",
-	[chipSizeKey(false, false, false)]: "h-5 w-5 p-0.5",
-};
-
 export function getChipSizeClass({ flat, isSmall, shouldShowLabel }: ChipChromeOptions): string {
-	return CHIP_SIZE_CLASS_MAP[chipSizeKey(shouldShowLabel, flat, isSmall)] ?? "h-4 w-4";
+	if (shouldShowLabel) {
+		return isSmall ? "px-1 py-0.5" : "px-1.5 py-0.5";
+	}
+	if (flat) {
+		return isSmall ? "h-4 w-4" : "h-5 w-5";
+	}
+	return isSmall ? "h-4 w-4 p-0.5" : "h-5 w-5 p-0.5";
 }
 
 export function getChipIcon(config: FeatureIconConfig, isSmall: boolean): React.ReactNode {
@@ -173,7 +143,7 @@ export function getChipLabelClass(isSmall: boolean): string {
 	);
 }
 
-function buildQuantizationFeature(quantLabel: string): {
+export function buildQuantizationFeature(quantLabel: string): {
 	key: string;
 	config: FeatureIconConfig;
 } {
@@ -190,7 +160,7 @@ function buildQuantizationFeature(quantLabel: string): {
 	};
 }
 
-function resolveParamFeature(
+export function resolveParamFeature(
 	param: string,
 	supportedParamsSet: Set<string>
 ): FeatureIconConfig | null {
@@ -200,7 +170,7 @@ function resolveParamFeature(
 	return FEATURE_ICONS[param] ?? null;
 }
 
-function appendSupportedParams(
+export function appendSupportedParams(
 	features: Array<{ key: string; config: FeatureIconConfig }>,
 	supportedParamsSet: Set<string>,
 	maxIcons: number
@@ -231,15 +201,3 @@ export function buildFeatures(
 	appendSupportedParams(features, supportedParamsSet, maxIcons);
 	return features;
 }
-
-export const __endpoint_feature_icons_test_helpers__ = {
-	getChipSizeClass,
-	getChipIcon,
-	getChipLabelClass,
-	buildFeatures,
-	buildQuantizationFeature,
-	appendSupportedParams,
-	resolveParamFeature,
-	getQuantizationLabel,
-	chipSizeKey,
-};

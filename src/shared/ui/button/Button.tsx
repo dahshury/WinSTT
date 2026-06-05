@@ -10,7 +10,7 @@ export function Button({ children, type = "button", className, ...rest }: Button
 	return (
 		<BaseButton
 			className={cn(
-				"inline-flex cursor-pointer items-center justify-center border-none font-sans outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:cursor-default disabled:opacity-40",
+				"inline-flex cursor-pointer touch-manipulation select-none items-center justify-center border-none font-sans outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface disabled:cursor-default disabled:opacity-40",
 				className
 			)}
 			type={type}

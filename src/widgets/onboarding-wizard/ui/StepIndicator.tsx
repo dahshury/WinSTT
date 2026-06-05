@@ -1,5 +1,6 @@
 import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { AnimatePresence, m } from "motion/react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import type { OnboardingStepId } from "../model/wizard-store";
@@ -52,7 +53,7 @@ export function StepIndicator({ steps, current }: StepIndicatorProps) {
 						className="flex items-center gap-1.5"
 						key={step.id}
 					>
-						<span
+						<m.span
 							aria-hidden
 							className={cn(
 								"flex size-4 shrink-0 items-center justify-center rounded-sm transition-colors duration-150",
@@ -61,16 +62,42 @@ export function StepIndicator({ steps, current }: StepIndicatorProps) {
 									"bg-transparent shadow-[0_0_6px_var(--color-accent-glow-strong)] ring-2 ring-accent",
 								status === "upcoming" && cn(upcomingBox, "ring-1 ring-divider-strong")
 							)}
+							layout
+							transition={{ type: "spring", stiffness: 520, damping: 34, mass: 0.55 }}
 						>
-							{status === "complete" ? (
-								<HugeiconsIcon icon={Tick02Icon} size={10} strokeWidth={3} />
-							) : null}
-						</span>
-						{status === "current" ? (
-							<span className="text-accent">{step.label}</span>
-						) : (
-							<span className="sr-only">{step.label}</span>
-						)}
+							<AnimatePresence initial={false} mode="wait">
+								{status === "complete" ? (
+									<m.span
+										animate={{ opacity: 1, rotate: 0, scale: 1 }}
+										className="inline-flex"
+										exit={{ opacity: 0, rotate: -20, scale: 0.4 }}
+										initial={{ opacity: 0, rotate: -35, scale: 0.35 }}
+										key="complete"
+										transition={{ type: "spring", stiffness: 620, damping: 28 }}
+									>
+										<HugeiconsIcon icon={Tick02Icon} size={10} strokeWidth={3} />
+									</m.span>
+								) : null}
+							</AnimatePresence>
+						</m.span>
+						<AnimatePresence initial={false} mode="popLayout">
+							{status === "current" ? (
+								<m.span
+									animate={{ opacity: 1, width: "auto", x: 0 }}
+									className="overflow-hidden whitespace-nowrap text-accent"
+									exit={{ opacity: 0, width: 0, x: -4 }}
+									initial={{ opacity: 0, width: 0, x: 4 }}
+									key="current-label"
+									transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+								>
+									{step.label}
+								</m.span>
+							) : (
+								<span className="sr-only" key="sr-label">
+									{step.label}
+								</span>
+							)}
+						</AnimatePresence>
 					</li>
 				);
 			})}

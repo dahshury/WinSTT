@@ -1,5 +1,9 @@
 import type { OnnxQuantization } from "@/shared/config/defaults";
-import { type QuantDownloadState, useDownloadStore } from "./download-store";
+import {
+	type QuantDownloadState,
+	type SttDownloadOwner,
+	useDownloadStore,
+} from "./download-store";
 
 interface QuantActions {
 	/** Per-quant delete → AlertDialog confirm (rendered inside the picker) →
@@ -10,11 +14,12 @@ interface QuantActions {
 	handleDownloadAction: (
 		action: "start" | "pause" | "resume" | "cancel",
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
+		owner?: SttDownloadOwner,
 	) => void;
 	handleDownloadSnapshot: (
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
 	) => QuantDownloadState | undefined;
 }
 
@@ -47,22 +52,27 @@ export function useQuantActions(): QuantActions {
 	// `.catch`/`await` here. A dropped command degrades silently to the
 	// fallback (consistent with all ~64 `invokeOrDefault` call sites); the
 	// server's broadcast events are the source of truth for the final UI state.
-	const handleDeleteQuant = (modelId: string, quantization: OnnxQuantization): void => {
+	const handleDeleteQuant = (
+		modelId: string,
+		quantization: OnnxQuantization,
+	): void => {
 		discardQuantCache(modelId, quantization);
 	};
 
 	const handleDownloadSnapshot = (
 		modelId: string,
-		quantization: OnnxQuantization
-	): QuantDownloadState | undefined => quantDownloads[`${modelId}@${quantization}`];
+		quantization: OnnxQuantization,
+	): QuantDownloadState | undefined =>
+		quantDownloads[`${modelId}@${quantization}`];
 
 	const handleDownloadAction = (
 		action: "start" | "pause" | "resume" | "cancel",
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
+		owner?: SttDownloadOwner,
 	): void => {
 		if (action === "start") {
-			predownloadQuant(modelId, quantization);
+			predownloadQuant(modelId, quantization, owner);
 			return;
 		}
 		if (action === "pause") {
@@ -73,7 +83,7 @@ export function useQuantActions(): QuantActions {
 			return;
 		}
 		if (action === "resume") {
-			resumeQuantDownload(modelId, quantization);
+			resumeQuantDownload(modelId, quantization, owner);
 			return;
 		}
 		if (action === "cancel") {

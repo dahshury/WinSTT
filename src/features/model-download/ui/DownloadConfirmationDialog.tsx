@@ -1,16 +1,26 @@
 // Deep-import the lightweight cache helpers (not the `@picker` barrel) so this
 // main-window-reachable dialog doesn't drag the whole model-picker UI into the
 // main entry chunk via the barrel re-export.
-import { resolveEffectiveQuant, resolveQuantCache } from "@picker/stt/lib/cache-helpers";
+import {
+	resolveEffectiveQuant,
+	resolveQuantCache,
+} from "@picker/stt/lib/cache-helpers";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
-import type { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import type {
+	useCatalogStore,
+	useModelStateStore,
+} from "@/entities/model-catalog";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { formatBytes } from "@/shared/lib/format-bytes";
 import { surfaceClasses, useSurface } from "@/shared/lib/surface";
 import { DialogActionButton } from "@/shared/ui/dialog";
 import { DialogShell } from "@/shared/ui/dialog-shell";
-import { DownloadActions, type DownloadPhase, DownloadProgressBar } from "@/shared/ui/download";
+import {
+	DownloadActions,
+	type DownloadPhase,
+	DownloadProgressBar,
+} from "@/shared/ui/download";
 import { useDownloadStore } from "../model/download-store";
 
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
@@ -19,10 +29,16 @@ type DownloadT = ReturnType<typeof useTranslations<"download">>;
 
 /** "12 MB / 30 MB · 2 MB/s" — drives the right-side caption on the dictation
  *  progress bar. Hidden when no total has been received yet (early frames). */
-function formatStatsLine(downloaded: number, total: number, speed: number): string {
+function formatStatsLine(
+	downloaded: number,
+	total: number,
+	speed: number,
+): string {
 	const parts: string[] = [];
 	if (total > 0) {
-		parts.push(`${formatBytes(downloaded) ?? "0 B"} / ${formatBytes(total) ?? "0 B"}`);
+		parts.push(
+			`${formatBytes(downloaded) ?? "0 B"} / ${formatBytes(total) ?? "0 B"}`,
+		);
 	}
 	if (speed > 0) {
 		if (speed < 1024) {
@@ -43,8 +59,10 @@ function sizeLabel(bytes: number | null | undefined, t: DownloadT): string {
 
 export interface DownloadConfirmationDialogProps {
 	getModel: (
-		id: string
-	) => ReturnType<typeof useCatalogStore.getState>["getModel"] extends (id: string) => infer R
+		id: string,
+	) => ReturnType<typeof useCatalogStore.getState>["getModel"] extends (
+		id: string,
+	) => infer R
 		? R
 		: never;
 	onCancel: () => void;
@@ -91,7 +109,7 @@ function dialogSubtitle(
 	displayName: string,
 	sizeSuffix: string,
 	quantLabel: string,
-	t: DownloadT
+	t: DownloadT,
 ): ReactNode {
 	const name = (
 		<span className="font-medium text-foreground">
@@ -99,7 +117,9 @@ function dialogSubtitle(
 			{sizeSuffix}
 		</span>
 	);
-	const quant = <span className="font-medium text-foreground">{quantLabel}</span>;
+	const quant = (
+		<span className="font-medium text-foreground">{quantLabel}</span>
+	);
 	// Connecting phrasing is split at the two interpolated spans (model name +
 	// precision) so the bold emphasis survives translation. The trailing comma
 	// pads the wording on either side of the spans per locale.
@@ -143,7 +163,10 @@ function dismissLabel(phase: DownloadPhase, t: DownloadT): string {
 	return t("dismissCancel");
 }
 
-function resolveDownloadPhase(isDownloading: boolean, partialOnDisk: boolean): DownloadPhase {
+function resolveDownloadPhase(
+	isDownloading: boolean,
+	partialOnDisk: boolean,
+): DownloadPhase {
 	if (isDownloading) {
 		return "active";
 	}
@@ -165,16 +188,24 @@ interface DownloadFitness {
 /** Hardware fitness — surface the same heuristic the picker uses, plus
  *  concrete numbers so the user can decide. We don't refuse — the user
  *  can always proceed at their own risk. */
-function computeFitness(state: ModelState, systemInfo: SystemInfo, t: DownloadT): DownloadFitness {
+function computeFitness(
+	state: ModelState,
+	systemInfo: SystemInfo,
+	t: DownloadT,
+): DownloadFitness {
 	const hasGpu = !!systemInfo && systemInfo.gpus.length > 0;
 	const isUncomfortable =
 		!!state &&
 		state.estimated_bytes > 0 &&
 		(hasGpu ? !state.comfortable_on_gpu : !state.comfortable_on_cpu);
 	const estimatedLabel =
-		state && state.estimated_bytes > 0 ? sizeLabel(state.estimated_bytes, t) : t("unknown");
+		state && state.estimated_bytes > 0
+			? sizeLabel(state.estimated_bytes, t)
+			: t("unknown");
 	const availableLabel = hasGpu
-		? t("fitnessGpuVram", { size: sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0, t) })
+		? t("fitnessGpuVram", {
+				size: sizeLabel(systemInfo?.gpus[0]?.total_vram_bytes ?? 0, t),
+			})
 		: t("fitnessRam", { size: sizeLabel(systemInfo?.total_ram_bytes ?? 0, t) });
 	return { isUncomfortable, estimatedLabel, availableLabel };
 }
@@ -186,18 +217,36 @@ interface LiveDownload {
 	totalBytes: number;
 }
 
-function ActiveProgress({ live, t }: { live: LiveDownload; t: DownloadT }): ReactNode {
+function ActiveProgress({
+	live,
+	t,
+}: {
+	live: LiveDownload;
+	t: DownloadT;
+}): ReactNode {
 	return (
 		<DownloadProgressBar
-			label={live.progress == null ? t("progressStarting") : `${live.progress}%`}
+			label={
+				live.progress == null ? t("progressStarting") : `${live.progress}%`
+			}
 			percent={live.progress}
-			statsLabel={formatStatsLine(live.downloadedBytes, live.totalBytes, live.speedBps)}
+			statsLabel={formatStatsLine(
+				live.downloadedBytes,
+				live.totalBytes,
+				live.speedBps,
+			)}
 			variant="active"
 		/>
 	);
 }
 
-function PausedProgress({ targetCache, t }: { targetCache: TargetCache; t: DownloadT }): ReactNode {
+function PausedProgress({
+	targetCache,
+	t,
+}: {
+	targetCache: TargetCache;
+	t: DownloadT;
+}): ReactNode {
 	const pausedPercent =
 		targetCache && targetCache.total_bytes > 0
 			? Math.round((targetCache.progress ?? 0) * 100)
@@ -213,7 +262,7 @@ function PausedProgress({ targetCache, t }: { targetCache: TargetCache; t: Downl
 			statsLabel={formatStatsLine(
 				targetCache?.downloaded_bytes ?? 0,
 				targetCache?.total_bytes ?? 0,
-				0
+				0,
 			)}
 			variant="paused"
 		/>
@@ -236,12 +285,14 @@ function IdleInfoCard({
 	const pausedDownloaded = targetCache?.downloaded_bytes ?? 0;
 	const pausedTotal = targetCache?.total_bytes ?? 0;
 	// Prefer the per-quant byte count baked into the catalog by
-	// `scripts/refresh_catalog.py` — that's the exact HF-reported download
+	// `examples/winstt-electron/server/scripts/refresh_catalog.py` — that's the exact HF-reported download
 	// size for the selected precision and is known offline. Fall back to
 	// the partial-cache delta (resume scenario), then to the size_label hint.
 	let sizeLine: string;
 	if (pausedTotal > pausedDownloaded) {
-		sizeLine = t("sizeNeedToDownload", { size: sizeLabel(pausedTotal - pausedDownloaded, t) });
+		sizeLine = t("sizeNeedToDownload", {
+			size: sizeLabel(pausedTotal - pausedDownloaded, t),
+		});
 	} else if (catalogBytes > 0) {
 		sizeLine = t("sizeDownloadSize", { size: sizeLabel(catalogBytes, t) });
 	} else {
@@ -255,8 +306,8 @@ function IdleInfoCard({
 				<span className="text-foreground">{sizeLine}</span>
 			</div>
 			<div>
-				<span className="text-foreground">{t("estimatedMemory")}</span> {fitness.estimatedLabel} ·{" "}
-				{fitness.availableLabel}
+				<span className="text-foreground">{t("estimatedMemory")}</span>{" "}
+				{fitness.estimatedLabel} · {fitness.availableLabel}
 			</div>
 		</div>
 	);
@@ -308,8 +359,12 @@ function DownloadConfirmationContent({
 	const isThisDownloading = quant !== undefined && !quant.paused;
 	// "Paused" covers both an explicitly-paused live entry and a partial left on
 	// disk from a previous session (no live entry, resumable from the bytes).
-	const partialOnDisk = targetCache?.state === "partial" || (quant?.paused ?? false);
-	const phase: DownloadPhase = resolveDownloadPhase(isThisDownloading, partialOnDisk);
+	const partialOnDisk =
+		targetCache?.state === "partial" || (quant?.paused ?? false);
+	const phase: DownloadPhase = resolveDownloadPhase(
+		isThisDownloading,
+		partialOnDisk,
+	);
 	const liveForBar: LiveDownload = {
 		progress: quant?.progress ?? null,
 		downloadedBytes: quant?.downloadedBytes ?? 0,
@@ -326,7 +381,7 @@ function DownloadConfirmationContent({
 	};
 	const displayName = info?.displayName ?? pending?.modelId ?? "";
 	// Exact HF download bytes for the selected quantization — baked into the
-	// catalog by `scripts/refresh_catalog.py`. Zero when the catalog hasn't
+	// catalog by `examples/winstt-electron/server/scripts/refresh_catalog.py`. Zero when the catalog hasn't
 	// covered this variant (custom models, fresh entries before next refresh).
 	const catalogBytes = info?.sizeBytesByQuantization?.[targetQuant] ?? 0;
 	// Header label still uses the human-readable param-derived hint
@@ -344,7 +399,7 @@ function DownloadConfirmationContent({
 	// the download.
 	const startDownload = (): void => {
 		if (pending) {
-			predownloadQuant(pending.modelId, targetQuant);
+			predownloadQuant(pending.modelId, targetQuant, pending.kind);
 		}
 		onCancel();
 	};
@@ -356,9 +411,9 @@ function DownloadConfirmationContent({
 		// entry restarts the stream, which the downloader continues from the
 		// bytes already written.
 		if (quant?.paused) {
-			resumeQuantDownload(pending.modelId, targetQuant);
+			resumeQuantDownload(pending.modelId, targetQuant, pending.kind);
 		} else {
-			predownloadQuant(pending.modelId, targetQuant);
+			predownloadQuant(pending.modelId, targetQuant, pending.kind);
 		}
 		onCancel();
 	};
@@ -384,7 +439,9 @@ function DownloadConfirmationContent({
 			body={
 				<div className="flex flex-col gap-3">
 					{phase === "active" && <ActiveProgress live={liveForBar} t={t} />}
-					{phase === "paused" && <PausedProgress t={t} targetCache={targetCache} />}
+					{phase === "paused" && (
+						<PausedProgress t={t} targetCache={targetCache} />
+					)}
 					{phase === "idle" && (
 						<IdleInfoCard
 							catalogBytes={catalogBytes}
@@ -401,7 +458,13 @@ function DownloadConfirmationContent({
 					)}
 				</div>
 			}
-			description={dialogSubtitle(phase, displayName, sizeSuffix, quantLabel, t)}
+			description={dialogSubtitle(
+				phase,
+				displayName,
+				sizeSuffix,
+				quantLabel,
+				t,
+			)}
 			onOpenChange={(next) => {
 				if (!next) {
 					onCancel();

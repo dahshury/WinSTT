@@ -5,9 +5,8 @@
  * for a generated type without touching call sites.
  */
 
-export type RecordingRetentionPeriod =
+export type RecordingRetention =
 	| "never"
-	| "preserveLimit"
 	| "cap"
 	| "days3"
 	| "weeks2"

@@ -3,25 +3,34 @@ import {
 	AppWindowIcon,
 	Certificate01Icon,
 	CloudDownloadIcon,
+	Delete02Icon,
 	LicenseIcon,
 	PowerSocket01Icon,
 	RefreshIcon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
-import { DEFAULT_SETTINGS, SettingField, SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingField,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import {
 	type AboutAppInfo,
 	aboutGetAppInfo,
 	aboutGetLicense,
 	aboutGetNotices,
+	removeApplicationData,
+	removeDownloadedModels,
 	onUpdaterStatus,
 	type UpdaterStatusEntry,
 	updaterCheckNow,
 	updaterGetStatusHistory,
 	updaterQuitAndInstall,
 } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { DownloadProgressBar } from "@/shared/ui/download";
@@ -59,7 +68,7 @@ function readStartupFlags(general: GeneralSettings | undefined): StartupFlags {
 }
 
 // Brand / product name — a proper noun that is identical in every locale (see
-// the `IDENTICAL_BY_DESIGN` allowlist in scripts/check-i18n.ts). Held in a
+// the `IDENTICAL_BY_DESIGN` allowlist in tools/i18n/check-i18n.ts). Held in a
 // constant so it isn't flagged as a translatable literal.
 const APP_NAME = "WinSTT";
 
@@ -74,7 +83,9 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 	return (
 		<div className="flex items-baseline justify-between gap-4 py-1 text-body">
 			<span className="text-foreground-muted">{label}</span>
-			<span className="font-mono text-foreground tabular-nums">{value || "—"}</span>
+			<span className="font-mono text-foreground tabular-nums">
+				{value || "—"}
+			</span>
 		</div>
 	);
 }
@@ -84,18 +95,27 @@ function AppInfoSection({ info, t }: { info: AboutAppInfo; t: AboutT }) {
 		<SettingSection icon={AppWindowIcon} title={t("appInfoTitle")}>
 			<div className="flex flex-col gap-3">
 				<div className="flex flex-col">
-					<span className="font-semibold text-foreground text-title">{APP_NAME}</span>
-					<span className="text-body text-foreground-muted">{info.copyright}</span>
+					<span className="font-semibold text-foreground text-title">
+						{APP_NAME}
+					</span>
+					<span className="text-body text-foreground-muted">
+						{info.copyright}
+					</span>
 				</div>
 				<ElevatedSurface className="px-3 py-2">
 					<InfoRow label={t("appVersion")} value={info.version} />
-					<InfoRow label={t("frameworkVersion")} value={info.frameworkVersion} />
+					<InfoRow
+						label={t("frameworkVersion")}
+						value={info.frameworkVersion}
+					/>
 					<InfoRow label={t("webview2Version")} value={info.webview2Version} />
 				</ElevatedSurface>
 				{/* Hugeicons free-tier attribution — required by the Hugeicons Free
 				    License whenever the icon set is used. Keep this string
 				    visible; do not gate it behind an expander. */}
-				<p className="text-body text-foreground-muted">{t("hugeiconsAttribution")}</p>
+				<p className="text-body text-foreground-muted">
+					{t("hugeiconsAttribution")}
+				</p>
 			</div>
 		</SettingSection>
 	);
@@ -113,7 +133,15 @@ function TextBlock({ text }: { text: string }) {
 	);
 }
 
-function LicenseSection({ license, loading, t }: { license: string; loading: boolean; t: AboutT }) {
+function LicenseSection({
+	license,
+	loading,
+	t,
+}: {
+	license: string;
+	loading: boolean;
+	t: AboutT;
+}) {
 	return (
 		<SettingSection
 			description={t("licenseDescription")}
@@ -167,7 +195,11 @@ function formatDownloadStats(entry: UpdaterStatusEntry): string | undefined {
 	const transferred = entry.transferred;
 	const total = entry.total;
 	const bps = entry.bytesPerSecond;
-	if (typeof transferred !== "number" || typeof total !== "number" || total <= 0) {
+	if (
+		typeof transferred !== "number" ||
+		typeof total !== "number" ||
+		total <= 0
+	) {
 		return;
 	}
 	const tally = `${formatBytes(transferred)} / ${formatBytes(total)}`;
@@ -235,10 +267,12 @@ function UpdatesHeaderAction({
 
 function UpdatesSection({ t }: { t: AboutT }) {
 	const receivePrereleaseUpdates = useSettingsStore(
-		(s) => s.settings.general?.receivePrereleaseUpdates ?? false
+		(s) => s.settings.general?.receivePrereleaseUpdates ?? false,
 	);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
-	const [latestStatus, setLatestStatus] = useState<UpdaterStatusEntry | null>(null);
+	const [latestStatus, setLatestStatus] = useState<UpdaterStatusEntry | null>(
+		null,
+	);
 	const [checking, setChecking] = useState(false);
 
 	useEffect(() => {
@@ -287,7 +321,9 @@ function UpdatesSection({ t }: { t: AboutT }) {
 	const isDownloaded = latestStatus?.status === "downloaded";
 	// Round the percent for display only; the raw value drives the bar.
 	const percent =
-		isDownloading && typeof latestStatus?.percent === "number" ? latestStatus.percent : null;
+		isDownloading && typeof latestStatus?.percent === "number"
+			? latestStatus.percent
+			: null;
 
 	return (
 		<SettingSection
@@ -307,7 +343,10 @@ function UpdatesSection({ t }: { t: AboutT }) {
 		>
 			<div className="flex flex-col gap-3">
 				<SettingField
-					isDefault={receivePrereleaseUpdates === DEFAULT_SETTINGS.general.receivePrereleaseUpdates}
+					isDefault={
+						receivePrereleaseUpdates ===
+						DEFAULT_SETTINGS.general.receivePrereleaseUpdates
+					}
 					label={t("receivePrereleaseUpdates")}
 					labelAddon={
 						<Toggle
@@ -317,7 +356,8 @@ function UpdatesSection({ t }: { t: AboutT }) {
 					}
 					onReset={() =>
 						update({
-							receivePrereleaseUpdates: DEFAULT_SETTINGS.general.receivePrereleaseUpdates,
+							receivePrereleaseUpdates:
+								DEFAULT_SETTINGS.general.receivePrereleaseUpdates,
 						})
 					}
 					tooltip={t("receivePrereleaseUpdatesCaption")}
@@ -328,7 +368,9 @@ function UpdatesSection({ t }: { t: AboutT }) {
 							label={
 								percent === null
 									? t("updatesStatusDownloading")
-									: t("updatesDownloadingPercent", { percent: Math.round(percent) })
+									: t("updatesDownloadingPercent", {
+											percent: Math.round(percent),
+										})
 							}
 							percent={percent}
 							{...(latestStatus
@@ -342,7 +384,9 @@ function UpdatesSection({ t }: { t: AboutT }) {
 					</ElevatedSurface>
 				) : (
 					<ElevatedSurface className="px-3 py-2">
-						<span className="text-body text-foreground-muted">{formatStatus(latestStatus, t)}</span>
+						<span className="text-body text-foreground-muted">
+							{formatStatus(latestStatus, t)}
+						</span>
 					</ElevatedSurface>
 				)}
 			</div>
@@ -350,7 +394,15 @@ function UpdatesSection({ t }: { t: AboutT }) {
 	);
 }
 
-function NoticesSection({ loading, notices, t }: { loading: boolean; notices: string; t: AboutT }) {
+function NoticesSection({
+	loading,
+	notices,
+	t,
+}: {
+	loading: boolean;
+	notices: string;
+	t: AboutT;
+}) {
 	return (
 		<SettingSection
 			description={t("noticesDescription")}
@@ -368,7 +420,11 @@ interface StartupSectionProps {
 	update: UpdateFn;
 }
 
-function StartupSection({ t, general, update }: StartupSectionProps): ReactNode {
+function StartupSection({
+	t,
+	general,
+	update,
+}: StartupSectionProps): ReactNode {
 	const flags = readStartupFlags(general);
 	return (
 		<SettingSection icon={PowerSocket01Icon} title={t("startup")}>
@@ -390,8 +446,12 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 							onCheckedChange={(v) =>
 								update(
 									v
-										? { autoStart: true, startMinimized: true, minimizeToTray: true }
-										: { autoStart: false, startMinimized: false }
+										? {
+												autoStart: true,
+												startMinimized: true,
+												minimizeToTray: true,
+											}
+										: { autoStart: false, startMinimized: false },
 								)
 							}
 						/>
@@ -406,7 +466,9 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 					tooltip={t("startOnLoginTooltip")}
 				/>
 				<SettingField
-					isDefault={flags.sendCrashReports === DEFAULT_SETTINGS.general.sendCrashReports}
+					isDefault={
+						flags.sendCrashReports === DEFAULT_SETTINGS.general.sendCrashReports
+					}
 					label={t("sendCrashReports")}
 					labelAddon={
 						<Toggle
@@ -414,7 +476,11 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 							onCheckedChange={(v) => update({ sendCrashReports: v })}
 						/>
 					}
-					onReset={() => update({ sendCrashReports: DEFAULT_SETTINGS.general.sendCrashReports })}
+					onReset={() =>
+						update({
+							sendCrashReports: DEFAULT_SETTINGS.general.sendCrashReports,
+						})
+					}
 					tooltip={t("sendCrashReportsTooltip")}
 				/>
 			</div>
@@ -422,35 +488,221 @@ function StartupSection({ t, general, update }: StartupSectionProps): ReactNode 
 	);
 }
 
+interface ResetActionRowProps {
+	actionClassName: string;
+	buttonLabel: string;
+	icon: IconSvgElement;
+	onClick: () => void;
+	summary: string;
+	title: string;
+}
+
+function ResetActionRow({
+	actionClassName,
+	buttonLabel,
+	icon,
+	onClick,
+	summary,
+	title,
+}: ResetActionRowProps) {
+	return (
+		<ElevatedSurface className="p-0">
+			<div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+				<div className="flex min-w-0 gap-3">
+					<div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-foreground/5 text-foreground-muted ring-1 ring-divider">
+						<HugeiconsIcon aria-hidden="true" icon={icon} size={16} />
+					</div>
+					<div className="flex min-w-0 flex-col gap-1">
+						<span className="font-semibold text-foreground text-body">
+							{title}
+						</span>
+						<p className="text-body text-foreground-muted leading-relaxed">
+							{summary}
+						</p>
+					</div>
+				</div>
+				<Button
+					className={cn(
+						"flex min-h-[44px] w-full max-w-full shrink-0 items-center gap-2 rounded-md px-4 py-2 text-center font-medium text-body transition-colors duration-150 sm:w-auto",
+						actionClassName,
+					)}
+					onClick={onClick}
+				>
+					<HugeiconsIcon aria-hidden="true" icon={icon} size={14} />
+					<span className="min-w-0">{buttonLabel}</span>
+				</Button>
+			</div>
+		</ElevatedSurface>
+	);
+}
+
 function ResetSection(): ReactNode {
 	const resetSettings = useSettingsStore((s) => s.resetSettings);
 	const ts = useTranslations("settings");
 	const tc = useTranslations("common");
-	const [confirmOpen, setConfirmOpen] = useState(false);
+	const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+	const [removeModelsConfirmOpen, setRemoveModelsConfirmOpen] = useState(false);
+	const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
+	const [
+		deleteOllamaModelsWithModelCleanup,
+		setDeleteOllamaModelsWithModelCleanup,
+	] = useState(false);
+	const [deleteOllamaModels, setDeleteOllamaModels] = useState(false);
+	const [modelCleanupError, setModelCleanupError] = useState("");
+	const [cleanupError, setCleanupError] = useState("");
+
+	const handleRemoveDownloadedModels = () => {
+		setModelCleanupError("");
+		removeDownloadedModels(deleteOllamaModelsWithModelCleanup)
+			.then((result) => {
+				const issues = [...result.errors, ...result.ollamaErrors];
+				if (issues.length > 0) {
+					setModelCleanupError(issues.join("\n"));
+					setRemoveModelsConfirmOpen(true);
+				}
+			})
+			.catch((err) => {
+				setModelCleanupError(err instanceof Error ? err.message : String(err));
+				setRemoveModelsConfirmOpen(true);
+			});
+	};
+
+	const handleRemoveApplicationData = () => {
+		setCleanupError("");
+		removeApplicationData(deleteOllamaModels).catch((err) => {
+			setCleanupError(err instanceof Error ? err.message : String(err));
+			setRemoveConfirmOpen(true);
+		});
+	};
 
 	return (
 		<>
 			<ConfirmDialog
+				cancelLabel={tc("cancel")}
 				confirmLabel={ts("resetConfirm")}
-				description={ts("resetDescription")}
+				description={
+					<div className="flex flex-col gap-2">
+						<p>{ts("resetDescription")}</p>
+						<p className="font-medium text-error">
+							{ts("permanentActionWarning")}
+						</p>
+					</div>
+				}
 				onConfirm={resetSettings}
-				onOpenChange={setConfirmOpen}
-				open={confirmOpen}
+				onOpenChange={setResetConfirmOpen}
+				open={resetConfirmOpen}
 				title={ts("resetTitle")}
 			/>
-			<SettingSection
-				description={ts("resetDescription")}
-				headerAction={
-					<Button
-						className="h-8 rounded-md border border-error/40 bg-error/10 px-4 font-medium text-body text-error transition-colors duration-150 hover:bg-error/20"
-						onClick={() => setConfirmOpen(true)}
-					>
-						{tc("reset")}
-					</Button>
+			<ConfirmDialog
+				cancelLabel={tc("cancel")}
+				confirmLabel={ts("removeDownloadedModelsConfirm")}
+				description={
+					<div className="flex flex-col gap-3">
+						<p>{ts("removeDownloadedModelsDescription")}</p>
+						<p className="font-medium text-error">
+							{ts("permanentActionWarning")}
+						</p>
+						<div className="flex items-start justify-between gap-4 rounded-md border border-divider bg-foreground/5 p-3">
+							<div className="flex min-w-0 flex-col gap-1">
+								<span className="font-medium text-body text-foreground">
+									{ts("removeApplicationDataOllama")}
+								</span>
+								<span className="text-body text-foreground-muted">
+									{ts("removeApplicationDataOllamaDescription")}
+								</span>
+							</div>
+							<Toggle
+								aria-label={ts("removeApplicationDataOllama")}
+								checked={deleteOllamaModelsWithModelCleanup}
+								onCheckedChange={setDeleteOllamaModelsWithModelCleanup}
+							/>
+						</div>
+						{modelCleanupError ? (
+							<p className="whitespace-pre-line text-body text-error">
+								{modelCleanupError}
+							</p>
+						) : null}
+					</div>
 				}
-				icon={ArrowTurnBackwardIcon}
-				title={ts("resetDefaults")}
+				onConfirm={handleRemoveDownloadedModels}
+				onOpenChange={setRemoveModelsConfirmOpen}
+				open={removeModelsConfirmOpen}
+				title={ts("removeDownloadedModelsTitle")}
 			/>
+			<ConfirmDialog
+				cancelLabel={tc("cancel")}
+				confirmLabel={ts("removeApplicationDataConfirm")}
+				description={
+					<div className="flex flex-col gap-3">
+						<p>{ts("removeApplicationDataDescription")}</p>
+						<p className="font-medium text-error">
+							{ts("permanentActionWarning")}
+						</p>
+						<div className="flex items-start justify-between gap-4 rounded-md border border-divider bg-foreground/5 p-3">
+							<div className="flex min-w-0 flex-col gap-1">
+								<span className="font-medium text-body text-foreground">
+									{ts("removeApplicationDataOllama")}
+								</span>
+								<span className="text-body text-foreground-muted">
+									{ts("removeApplicationDataOllamaDescription")}
+								</span>
+							</div>
+							<Toggle
+								aria-label={ts("removeApplicationDataOllama")}
+								checked={deleteOllamaModels}
+								onCheckedChange={setDeleteOllamaModels}
+							/>
+						</div>
+						{cleanupError ? (
+							<p className="text-body text-error">{cleanupError}</p>
+						) : null}
+					</div>
+				}
+				onConfirm={handleRemoveApplicationData}
+				onOpenChange={setRemoveConfirmOpen}
+				open={removeConfirmOpen}
+				title={ts("removeApplicationDataTitle")}
+			/>
+			<SettingSection
+				description={ts("resetAndRemovalDescription")}
+				icon={ArrowTurnBackwardIcon}
+				title={ts("resetAndRemovalTitle")}
+			>
+				<div className="flex flex-col gap-3 pt-2">
+					<div className="grid gap-3">
+						<ResetActionRow
+							actionClassName="border border-warning/50 bg-warning/10 text-warning hover:bg-warning/20"
+							buttonLabel={ts("resetDefaults")}
+							icon={ArrowTurnBackwardIcon}
+							onClick={() => setResetConfirmOpen(true)}
+							summary={ts("resetDefaultsSummary")}
+							title={ts("resetDefaults")}
+						/>
+						<ResetActionRow
+							actionClassName="border border-warning/50 bg-warning/10 text-warning hover:bg-warning/20"
+							buttonLabel={ts("removeDownloadedModelsButton")}
+							icon={CloudDownloadIcon}
+							onClick={() => {
+								setModelCleanupError("");
+								setRemoveModelsConfirmOpen(true);
+							}}
+							summary={ts("removeDownloadedModelsSummary")}
+							title={ts("removeDownloadedModelsButton")}
+						/>
+						<ResetActionRow
+							actionClassName="border border-error/50 bg-error text-white hover:bg-error/90"
+							buttonLabel={ts("removeApplicationDataButton")}
+							icon={Delete02Icon}
+							onClick={() => {
+								setCleanupError("");
+								setRemoveConfirmOpen(true);
+							}}
+							summary={ts("removeApplicationDataSummary")}
+							title={ts("removeApplicationDataButton")}
+						/>
+					</div>
+				</div>
+			</SettingSection>
 		</>
 	);
 }

@@ -26,6 +26,9 @@ interface RawValid {
 	size_label: string;
 	supports_language_detection: boolean;
 	supports_realtime: boolean;
+	preview_capable?: boolean;
+	native_streaming?: boolean;
+	final_reuse_safe?: boolean;
 }
 
 interface Model {
@@ -91,6 +94,15 @@ function assertInvariants(real: Real, m: Model): void {
 		}
 		if (typeof mdl.supportsLanguageDetection !== "boolean") {
 			throw new Error("supportsLanguageDetection not boolean");
+		}
+		if (typeof mdl.previewCapable !== "boolean") {
+			throw new Error("previewCapable not boolean");
+		}
+		if (typeof mdl.nativeStreaming !== "boolean") {
+			throw new Error("nativeStreaming not boolean");
+		}
+		if (typeof mdl.finalReuseSafe !== "boolean") {
+			throw new Error("finalReuseSafe not boolean");
 		}
 	}
 	// 4. getFamilies returns a deduplicated set.
@@ -175,6 +187,9 @@ const rawValidArb: fc.Arbitrary<RawValid> = fc.record({
 	supports_language_detection: fc.boolean(),
 	size_label: fc.string({ maxLength: 8 }),
 	supports_realtime: fc.boolean(),
+	preview_capable: fc.boolean(),
+	native_streaming: fc.boolean(),
+	final_reuse_safe: fc.boolean(),
 	onnx_model_name: fc.option(fc.string({ maxLength: 16 }), { nil: null }),
 	description: fc.string({ maxLength: 32 }),
 	available_quantizations: fc.array(fc.string({ maxLength: 6 }), { maxLength: 3 }),

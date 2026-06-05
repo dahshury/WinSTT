@@ -1,4 +1,4 @@
-// Source: docs/port/10_frontend_port_plan.md
+// Source: docs/archive/port/10_frontend_port_plan.md
 // (WU-6: pull-cancel MISSING + warmup-status) + lib_wiring.md §3/§4b, frontend/electron/ipc/llm.ts.
 //
 // Two WU-6 commands that don't belong in the (already-landed) `commands/llm.rs` and that the

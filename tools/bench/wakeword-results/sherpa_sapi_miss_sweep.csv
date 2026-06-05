@@ -1,0 +1,121 @@
+audio,phrase,variant,threshold,boost,detected,hit_word,hit_time_s,build_ms,run_ms,rtf
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.100,3.000,false,,,497,40,0.01651
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.100,4.000,false,,,465,35,0.01430
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.100,6.000,false,,,445,35,0.01460
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.100,8.000,false,,,440,39,0.01621
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.120,3.000,false,,,508,39,0.01612
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.120,4.000,false,,,458,37,0.01516
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.120,6.000,false,,,470,35,0.01453
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.120,8.000,false,,,432,39,0.01599
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.160,3.000,false,,,471,37,0.01521
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.160,4.000,false,,,446,35,0.01433
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.160,6.000,false,,,458,37,0.01527
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.160,8.000,false,,,444,34,0.01406
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.200,3.000,false,,,470,36,0.01493
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.200,4.000,false,,,460,38,0.01554
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.200,6.000,false,,,435,37,0.01522
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.200,8.000,false,,,461,38,0.01551
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.240,3.000,false,,,460,37,0.01519
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.240,4.000,false,,,433,34,0.01409
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.240,6.000,false,,,449,35,0.01423
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Fp32,0.240,8.000,false,,,439,40,0.01628
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.100,3.000,false,,,634,41,0.01690
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.100,4.000,false,,,608,35,0.01451
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.100,6.000,false,,,618,35,0.01428
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.100,8.000,false,,,608,36,0.01466
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.120,3.000,false,,,616,36,0.01465
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.120,4.000,false,,,545,31,0.01298
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.120,6.000,false,,,586,35,0.01424
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.120,8.000,false,,,564,31,0.01260
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.160,3.000,false,,,554,32,0.01324
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.160,4.000,false,,,574,32,0.01324
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.160,6.000,false,,,538,34,0.01382
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.160,8.000,false,,,537,34,0.01413
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.200,3.000,false,,,574,34,0.01412
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.200,4.000,false,,,538,35,0.01442
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.200,6.000,false,,,538,31,0.01281
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.200,8.000,false,,,549,32,0.01299
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.240,3.000,false,,,548,31,0.01283
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.240,4.000,false,,,557,32,0.01327
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.240,6.000,false,,,547,32,0.01324
+tools\bench\wakeword-fixtures\sapi\computer.wav,computer,Int8,0.240,8.000,false,,,569,35,0.01458
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.100,3.000,false,,,498,36,0.01459
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.100,4.000,false,,,443,38,0.01544
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.100,6.000,false,,,488,38,0.01531
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.100,8.000,false,,,464,35,0.01431
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.120,3.000,false,,,456,38,0.01557
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.120,4.000,false,,,437,40,0.01616
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.120,6.000,false,,,472,38,0.01544
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.120,8.000,false,,,446,37,0.01510
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.160,3.000,false,,,459,36,0.01466
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.160,4.000,false,,,433,36,0.01449
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.160,6.000,false,,,468,40,0.01609
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.160,8.000,false,,,448,35,0.01444
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.200,3.000,false,,,459,38,0.01542
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.200,4.000,false,,,438,35,0.01410
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.200,6.000,false,,,453,37,0.01497
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.200,8.000,false,,,455,38,0.01556
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.240,3.000,false,,,425,37,0.01494
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.240,4.000,false,,,440,36,0.01481
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.240,6.000,false,,,446,38,0.01564
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Fp32,0.240,8.000,false,,,451,41,0.01650
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.100,3.000,false,,,574,30,0.01221
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.100,4.000,false,,,562,32,0.01307
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.100,6.000,false,,,568,32,0.01319
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.100,8.000,false,,,583,31,0.01251
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.120,3.000,false,,,530,34,0.01377
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.120,4.000,false,,,577,32,0.01308
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.120,6.000,false,,,551,32,0.01325
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.120,8.000,false,,,559,30,0.01239
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.160,3.000,false,,,559,34,0.01397
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.160,4.000,false,,,582,34,0.01394
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.160,6.000,false,,,546,35,0.01436
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.160,8.000,false,,,562,33,0.01350
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.200,3.000,false,,,548,30,0.01206
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.200,4.000,false,,,535,30,0.01227
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.200,6.000,false,,,546,34,0.01393
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.200,8.000,false,,,549,32,0.01292
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.240,3.000,false,,,556,33,0.01357
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.240,4.000,false,,,531,31,0.01246
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.240,6.000,false,,,564,32,0.01306
+tools\bench\wakeword-fixtures\sapi\hey_siri.wav,hey siri,Int8,0.240,8.000,false,,,544,31,0.01279
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.100,3.000,false,,,495,39,0.01550
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.100,4.000,false,,,432,38,0.01533
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.100,6.000,false,,,461,38,0.01539
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.100,8.000,false,,,446,37,0.01501
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.120,3.000,false,,,433,40,0.01599
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.120,4.000,false,,,475,38,0.01530
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.120,6.000,false,,,473,36,0.01449
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.120,8.000,false,,,458,41,0.01621
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.160,3.000,false,,,457,38,0.01530
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.160,4.000,false,,,464,38,0.01517
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.160,6.000,false,,,455,37,0.01463
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.160,8.000,false,,,466,36,0.01438
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.200,3.000,false,,,441,37,0.01486
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.200,4.000,false,,,472,38,0.01522
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.200,6.000,false,,,443,37,0.01471
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.200,8.000,false,,,459,39,0.01575
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.240,3.000,false,,,447,37,0.01486
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.240,4.000,false,,,469,40,0.01596
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.240,6.000,false,,,495,39,0.01551
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Fp32,0.240,8.000,false,,,449,35,0.01396
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.100,3.000,false,,,557,35,0.01396
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.100,4.000,false,,,580,31,0.01248
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.100,6.000,false,,,557,35,0.01414
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.100,8.000,false,,,560,33,0.01311
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.120,3.000,false,,,606,30,0.01221
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.120,4.000,false,,,560,33,0.01330
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.120,6.000,false,,,538,33,0.01321
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.120,8.000,false,,,579,34,0.01357
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.160,3.000,false,,,546,36,0.01430
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.160,4.000,false,,,599,31,0.01235
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.160,6.000,false,,,567,33,0.01308
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.160,8.000,false,,,572,33,0.01313
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.200,3.000,false,,,566,35,0.01400
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.200,4.000,false,,,583,35,0.01413
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.200,6.000,false,,,589,33,0.01340
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.200,8.000,false,,,608,35,0.01422
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.240,3.000,false,,,591,34,0.01369
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.240,4.000,false,,,615,31,0.01233
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.240,6.000,false,,,639,33,0.01335
+tools\bench\wakeword-fixtures\sapi\hey_winstt.wav,hey winstt,Int8,0.240,8.000,false,,,637,36,0.01434

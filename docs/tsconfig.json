@@ -20,7 +20,7 @@
     "paths": {
       "@/*": ["./src/*"],
       "@source/*": ["./.source/*"],
-      "@app-icon": ["../frontend/build/icon.png"]
+      "@app-icon": ["../public/icon.png"]
     }
   }
 }

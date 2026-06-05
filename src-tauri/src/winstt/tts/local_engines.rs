@@ -13,7 +13,9 @@ use std::sync::Mutex;
 use super::chatterbox::{ChatterboxConfig, ChatterboxEngine, CHATTERBOX_SAMPLE_RATE};
 use super::kitten::{KittenConfig, KittenDevice, KittenEngine, KITTEN_SAMPLE_RATE};
 use super::piper::{PiperConfig, PiperEngine};
-use super::supertonic::{SupertonicConfig, SupertonicEngine, SUPERTONIC_SAMPLE_RATE};
+use super::supertonic::{
+    SupertonicConfig, SupertonicEngine, SUPERTONIC_DEFAULT_VOICE, SUPERTONIC_SAMPLE_RATE,
+};
 use super::{Gender, SentenceAudio, TtsEngine, TtsError, TtsResult, VoiceInfo};
 
 // ---------------------------------------------------------------------------
@@ -72,67 +74,67 @@ pub const KITTEN_VOICES: &[VoiceInfo] = &[
     },
 ];
 
-/// Supertonic 10 preset voices (English): F1-F5 / M1-M5.
+/// Supertonic 3 preset style voices. Speech language is selected separately.
 pub const SUPERTONIC_VOICES: &[VoiceInfo] = &[
     VoiceInfo {
-        id: "F1",
-        label: "Supertonic Female 1",
-        language: "en-us",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "F2",
-        label: "Supertonic Female 2",
-        language: "en-us",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "F3",
-        label: "Supertonic Female 3",
-        language: "en-us",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "F4",
-        label: "Supertonic Female 4",
-        language: "en-us",
-        gender: Gender::Female,
-    },
-    VoiceInfo {
-        id: "F5",
-        label: "Supertonic Female 5",
-        language: "en-us",
-        gender: Gender::Female,
+        id: "M3",
+        label: "Robert (M3)",
+        language: "en",
+        gender: Gender::Male,
     },
     VoiceInfo {
         id: "M1",
-        label: "Supertonic Male 1",
-        language: "en-us",
+        label: "Alex (M1)",
+        language: "en",
         gender: Gender::Male,
     },
     VoiceInfo {
         id: "M2",
-        label: "Supertonic Male 2",
-        language: "en-us",
-        gender: Gender::Male,
-    },
-    VoiceInfo {
-        id: "M3",
-        label: "Supertonic Male 3",
-        language: "en-us",
+        label: "James (M2)",
+        language: "en",
         gender: Gender::Male,
     },
     VoiceInfo {
         id: "M4",
-        label: "Supertonic Male 4",
-        language: "en-us",
+        label: "Sam (M4)",
+        language: "en",
         gender: Gender::Male,
     },
     VoiceInfo {
         id: "M5",
-        label: "Supertonic Male 5",
-        language: "en-us",
+        label: "Daniel (M5)",
+        language: "en",
         gender: Gender::Male,
+    },
+    VoiceInfo {
+        id: "F1",
+        label: "Sarah (F1)",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "F2",
+        label: "Lily (F2)",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "F3",
+        label: "Jessica (F3)",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "F4",
+        label: "Olivia (F4)",
+        language: "en",
+        gender: Gender::Female,
+    },
+    VoiceInfo {
+        id: "F5",
+        label: "Emily (F5)",
+        language: "en",
+        gender: Gender::Female,
     },
 ];
 
@@ -333,12 +335,17 @@ impl TtsEngine for SupertonicLocalEngine {
         &self,
         text: &str,
         voice: &str,
-        _lang: &str,
+        lang: &str,
         speed: f32,
     ) -> TtsResult<SentenceAudio> {
+        let voice = if voice.is_empty() {
+            SUPERTONIC_DEFAULT_VOICE
+        } else {
+            voice
+        };
         let samples = self
             .engine
-            .synthesize(text, voice, speed)
+            .synthesize(text, voice, lang, speed)
             .map_err(|e| TtsError::Engine(e.to_string()))?;
         Ok(SentenceAudio::F32le {
             samples,

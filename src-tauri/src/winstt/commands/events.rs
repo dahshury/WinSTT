@@ -1,4 +1,4 @@
-// Source: docs/port/lib_wiring.md §4a.
+// Source: docs/archive/port/lib_wiring.md §4a.
 //
 // Specta-typed events the WinSTT port emits. Each derives the same set as Handy's
 // `HistoryUpdatePayload` (Clone + Serialize + Deserialize + specta::Type +
@@ -25,6 +25,7 @@ use tauri_specta::Event;
 #[serde(rename_all = "camelCase")]
 pub struct RealtimeStabilizedPayload {
     pub text: String,
+    pub is_final: bool,
 }
 
 /// Raw realtime preview (pre-stabilization) — drives the noise-break heuristic.
@@ -32,6 +33,7 @@ pub struct RealtimeStabilizedPayload {
 #[serde(rename_all = "camelCase")]
 pub struct RealtimeUpdatePayload {
     pub text: String,
+    pub is_final: bool,
 }
 
 /// Wake-word detected (INACTIVE → LISTENING transition cue).

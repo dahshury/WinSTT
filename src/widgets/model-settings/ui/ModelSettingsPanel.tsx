@@ -9,12 +9,16 @@ import {
 	Timer01Icon,
 	UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
-import { isRealtimeViable, SttModelSelector } from "@picker";
-import { type ReactNode, useEffect, useState } from "react";
+import { resolveEffectiveQuant, SttModelSelector } from "@picker";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import {
+	isVisibleSttModel,
+	isSelectableRealtimeModel,
+	modelsHaveLanguageOverlap,
+	readLastLocalSttModelHistory,
 	recordLastLocalSttModel,
 	resolveLocalDefault,
 	supportsInitialPrompt,
@@ -31,24 +35,31 @@ import {
 	useSettingsTabStore,
 } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
+import { assessDictationFitClient } from "@/entities/system-resources/lib/fit-assessor";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import {
+	canDeleteSttQuant,
 	DownloadConfirmationDialog,
 	isQuantDownloading,
+	resolveSttDeleteRecovery,
 	useQuantActions,
 } from "@/features/model-download";
-import { CloudModelSelect, useSttSourceSwitch } from "@/features/select-cloud-stt-model";
-import { type SwapController, useModelSwapController } from "@/features/swap-model";
+import {
+	CloudModelSelect,
+	useSttSourceSwitch,
+} from "@/features/select-cloud-stt-model";
+import {
+	type SwapController,
+	useModelSwapController,
+} from "@/features/swap-model";
 import { IPC } from "@/shared/api/ipc-channels";
-import { ipcSend } from "@/shared/api/ipc-client";
+import { ipcSend, type FitAssessmentEntry } from "@/shared/api/ipc-client";
 import { LANGUAGES, type OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
 import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
 import { surfaceClasses, useSurface } from "@/shared/lib/surface";
-import { Button } from "@/shared/ui/button";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { FormControl } from "@/shared/ui/form-control";
-import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -56,9 +67,7 @@ import type { SelectOption } from "@/shared/ui/select";
 import { Spinner } from "@/shared/ui/spinner";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
-import { Tooltip } from "@/shared/ui/tooltip";
 import { useLockLlmTranslate } from "../model/use-lock-llm-translate";
-import { useLockRealtimeToMain } from "../model/use-lock-realtime-to-main";
 import { useStaleModelFallback } from "../model/use-stale-model-fallback";
 import { useSwapProgress } from "../model/use-swap-progress";
 
@@ -77,6 +86,7 @@ type DeviceValue = "auto" | "cpu";
 type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
 type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
+type GetFitAssessment = (modelId: string) => FitAssessmentEntry | null;
 
 interface MainModelSectionProps {
 	catalogLoaded: boolean;
@@ -87,6 +97,7 @@ interface MainModelSectionProps {
 	 *  fetching bytes" from "the server is loading weights" so the picker
 	 *  doesn't lock down for the entire multi-GB download. */
 	downloadProgress: { modelId: string; percent: number | null } | null;
+	getFitAssessment: GetFitAssessment;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	/** True when the active model reads Whisper's free-text `initial_prompt`
 	 *  slot (Whisper + Lite-Whisper). The prompt field hides for every other
@@ -96,16 +107,17 @@ interface MainModelSectionProps {
 	langOpts: SelectOption[];
 	/** Per-quant delete handler (after the picker's AlertDialog confirms). */
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
+	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
 	/** Per-quant download action — start / pause / resume / cancel. */
 	onDownloadAction: (
 		action: "start" | "pause" | "resume" | "cancel",
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
 	) => void;
 	/** Per-quant live download snapshot lookup. */
 	onDownloadSnapshot: (
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
 	) => import("@/features/model-download").QuantDownloadState | undefined;
 	/** Which optional sub-sections to render. Each flag is `false` when the
 	 *  active model makes that control meaningless (cloud delegates language /
@@ -138,20 +150,22 @@ interface SourceAreaProps {
 	catalogModels: CatalogModels;
 	currentQuantization: OnnxQuantization;
 	downloadProgress: { modelId: string; percent: number | null } | null;
+	getFitAssessment: GetFitAssessment;
 	handleModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
 	hasAnyCloudKey: boolean;
 	initialSourceIsCloud: boolean;
 	isCloud: boolean;
 	isSwapping: boolean;
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
+	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
 	onDownloadAction: (
 		action: "start" | "pause" | "resume" | "cancel",
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
 	) => void;
 	onDownloadSnapshot: (
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
 	) => import("@/features/model-download").QuantDownloadState | undefined;
 	selectedModel: string;
 	statesById: StatesById;
@@ -174,12 +188,14 @@ function SourceArea({
 	catalogModels,
 	currentQuantization,
 	downloadProgress,
+	getFitAssessment,
 	handleModelChange,
 	hasAnyCloudKey,
 	initialSourceIsCloud,
 	isCloud,
 	isSwapping,
 	onDeleteQuant,
+	canDeleteQuant,
 	onDownloadAction,
 	onDownloadSnapshot,
 	selectedModel,
@@ -216,7 +232,12 @@ function SourceArea({
 					tooltip={tIntegrations("sourceTooltip")}
 				>
 					<ElevatedSurface className="w-52">
-						<Switcher fullWidth onChange={onSourceChange} options={sourceOpts} value={source} />
+						<Switcher
+							fullWidth
+							onChange={onSourceChange}
+							options={sourceOpts}
+							value={source}
+						/>
 					</ElevatedSurface>
 				</FormControl>
 			</div>
@@ -232,13 +253,16 @@ function SourceArea({
 							currentQuantization={currentQuantization}
 							downloadProgress={downloadProgress}
 							isLoading={!catalogLoaded || isSwapping}
+							getFitAssessment={getFitAssessment}
 							kind="main"
 							models={catalogModels}
 							onChange={handleModelChange}
+							canDeleteQuant={canDeleteQuant}
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
 							onDownloadSnapshot={onDownloadSnapshot}
 							onOpenDetached={openDetachedPicker}
+							prefilter={isVisibleSttModel}
 							statesById={statesById}
 							systemInfo={systemInfo}
 							value={isCloud ? "" : selectedModel}
@@ -293,7 +317,7 @@ function InitialPromptField({
 				aria-label={t("initialPrompt")}
 				className={cn(
 					"min-h-[64px] w-full resize-y rounded-sm px-2.5 py-2 text-body text-foreground caret-accent outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1",
-					surfaceClasses(inputLevel)
+					surfaceClasses(inputLevel),
 				)}
 				maxLength={600}
 				onBlur={() => {
@@ -319,10 +343,12 @@ function MainModelSection({
 	systemInfo,
 	currentQuantization,
 	downloadProgress,
+	getFitAssessment,
 	initialPromptSupported,
 	isSwapping,
 	langOpts,
 	onDeleteQuant,
+	canDeleteQuant,
 	onDownloadAction,
 	onDownloadSnapshot,
 	selectedModel,
@@ -353,6 +379,7 @@ function MainModelSection({
 					catalogModels={catalogModels}
 					currentQuantization={currentQuantization}
 					downloadProgress={downloadProgress}
+					getFitAssessment={getFitAssessment}
 					handleModelChange={handleModelChange}
 					hasAnyCloudKey={hasAnyCloudKey}
 					initialSourceIsCloud={effectiveSourceIsCloud}
@@ -360,6 +387,7 @@ function MainModelSection({
 					isSwapping={isSwapping}
 					key={effectiveSourceIsCloud ? "cloud" : "local"}
 					onDeleteQuant={onDeleteQuant}
+					canDeleteQuant={canDeleteQuant}
 					onDownloadAction={onDownloadAction}
 					onDownloadSnapshot={onDownloadSnapshot}
 					selectedModel={selectedModel}
@@ -370,10 +398,14 @@ function MainModelSection({
 				/>
 				{sections.language && (
 					<SettingField
-						isDefault={(settings?.language ?? "en") === DEFAULT_SETTINGS.model.language}
+						isDefault={
+							(settings?.language ?? "en") === DEFAULT_SETTINGS.model.language
+						}
 						label={t("language")}
 						layout="row"
-						onReset={() => update({ language: DEFAULT_SETTINGS.model.language })}
+						onReset={() =>
+							update({ language: DEFAULT_SETTINGS.model.language })
+						}
 					>
 						<ElevatedSurface className="w-52" inline>
 							<SearchableSelect
@@ -398,7 +430,8 @@ function MainModelSection({
 				{translateSupported && (
 					<SettingField
 						isDefault={
-							(settings?.translateToEnglish ?? false) === DEFAULT_SETTINGS.model.translateToEnglish
+							(settings?.translateToEnglish ?? false) ===
+							DEFAULT_SETTINGS.model.translateToEnglish
 						}
 						label={t("translateToEnglish")}
 						labelAddon={
@@ -407,7 +440,11 @@ function MainModelSection({
 								onCheckedChange={(v) => update({ translateToEnglish: v })}
 							/>
 						}
-						onReset={() => update({ translateToEnglish: DEFAULT_SETTINGS.model.translateToEnglish })}
+						onReset={() =>
+							update({
+								translateToEnglish: DEFAULT_SETTINGS.model.translateToEnglish,
+							})
+						}
 						tooltip={t("translateToEnglishTooltip")}
 					/>
 				)}
@@ -432,27 +469,32 @@ function ModelLifetimeSection({
 	t: TFn;
 	update: UpdateGlobalFn;
 }): ReactNode {
-	const value = global?.modelUnloadTimeout ?? DEFAULT_SETTINGS.global.modelUnloadTimeout;
+	const value =
+		global?.modelUnloadTimeout ?? DEFAULT_SETTINGS.global.modelUnloadTimeout;
 	return (
-		<SettingSection
-			description={t("modelUnloadTimeoutCaption")}
-			icon={Timer01Icon}
-			title={t("modelUnloadTimeout")}
-		>
+		<SettingSection icon={Timer01Icon} title={t("modelUnloadTimeout")}>
 			<SettingField
 				isDefault={value === DEFAULT_SETTINGS.global.modelUnloadTimeout}
 				label={t("modelUnloadTimeout")}
 				layout="row"
 				onReset={() =>
-					update({ modelUnloadTimeout: DEFAULT_SETTINGS.global.modelUnloadTimeout })
+					update({
+						modelUnloadTimeout: DEFAULT_SETTINGS.global.modelUnloadTimeout,
+					})
 				}
-				tooltip={t("modelUnloadTimeoutTooltip")}
+				tooltip={`${t("modelUnloadTimeoutCaption")} ${t("modelUnloadTimeoutTooltip")}`}
 			>
 				<ElevatedSurface className="w-52" inline>
 					<SearchableSelect
-						onChange={(v) => update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue })}
+						onChange={(v) =>
+							update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue })
+						}
 						options={[
-							{ id: "immediately", label: t("modelUnloadImmediately"), icon: FlashIcon },
+							{
+								id: "immediately",
+								label: t("modelUnloadImmediately"),
+								icon: FlashIcon,
+							},
 							{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
 							{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
 							{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
@@ -494,12 +536,12 @@ function DeviceSection({
 	update: UpdateModelFn;
 }): ReactNode {
 	return (
-		<SettingSection
-			description={t("deviceSectionCaption")}
-			icon={CpuSettingsIcon}
-			title={t("device")}
-		>
-			<FormControl caption={t("deviceCaptionGpu")} layout="row">
+		<SettingSection icon={CpuSettingsIcon} title={t("device")}>
+			<FormControl
+				label={t("device")}
+				layout="row"
+				tooltip={`${t("deviceSectionCaption")} ${t("deviceCaptionGpu")}`}
+			>
 				<ElevatedSurface className="w-52">
 					<Switcher
 						fullWidth
@@ -520,28 +562,32 @@ interface RealtimeModelSectionProps {
 	/** Same shape as MainModelSection — drives the realtime trigger's
 	 *  download-aware variant when a realtime swap is in flight. */
 	downloadProgress: { modelId: string; percent: number | null } | null;
-	handleRealtimeModelChange: (modelId: string, quantization?: OnnxQuantization) => void;
+	getFitAssessment: GetFitAssessment;
+	handleRealtimeModelChange: (
+		modelId: string,
+		quantization?: OnnxQuantization,
+	) => void;
 	isSwapping: boolean;
-	/** True when the main model is itself small enough for live-preview
-	 *  transcription. In that state the dedicated realtime slot is force-bound
-	 *  to the main model (a separate small model would just duplicate work),
-	 *  so the picker becomes informational. */
-	lockedToMainModel: boolean;
+	/** True when the main model can provide native streaming preview output. */
+	mainModelCanNativeStream: boolean;
 	mainModelId: string;
+	mainModelInfo: CatalogModels[number] | undefined;
+	/** True when the worker still uses interval-gated window re-decode. */
+	updateIntervalApplies: boolean;
+	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
 	/** Forwarded to the picker — same handler the main picker uses. */
 	onDeleteQuant: (modelId: string, quantization: OnnxQuantization) => void;
 	/** Forwarded to the picker — per-quant download action. */
 	onDownloadAction: (
 		action: "start" | "pause" | "resume" | "cancel",
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
 	) => void;
 	/** Forwarded to the picker — per-quant download snapshot lookup. */
 	onDownloadSnapshot: (
 		modelId: string,
-		quantization: OnnxQuantization
+		quantization: OnnxQuantization,
 	) => import("@/features/model-download").QuantDownloadState | undefined;
-	onUseMainModel: () => void;
 	quality: QualitySettings | undefined;
 	settings: ModelSettings | undefined;
 	statesById: StatesById;
@@ -566,101 +612,87 @@ function RealtimeModelSection({
 	systemInfo,
 	currentQuantization,
 	downloadProgress,
+	getFitAssessment,
 	isSwapping,
 	handleRealtimeModelChange,
 	mainModelId,
+	mainModelInfo,
 	onDeleteQuant,
+	canDeleteQuant,
 	onDownloadAction,
 	onDownloadSnapshot,
-	onUseMainModel,
-	lockedToMainModel,
+	mainModelCanNativeStream,
+	updateIntervalApplies,
 }: RealtimeModelSectionProps): ReactNode {
-	// The dedicated realtime picker stays interactive at all times so the user
-	// can always pick a different realtime model. The "Use Main Model" affordance
-	// is the trailing button on the picker's header.
-	//
-	// Exception: when `lockedToMainModel` is set, the main model is itself
-	// realtime-viable so we force the realtime slot to mirror it and disable
-	// the picker — a separate small model would just duplicate work without
-	// adding any quality. The label shows an info tooltip explaining why.
-	const realtimeModelId = settings?.realtimeModel ?? "tiny";
-	const modelsMatch = realtimeModelId === mainModelId;
-	const trailing = lockedToMainModel ? (
-		<InfoTooltip content={t("realtimeLockedToMainTooltip")} />
-	) : (
-		<Tooltip content={t("useMainModelTooltip")}>
-			<Button
-				className="rounded-md bg-transparent px-1.5 py-0.5 font-medium text-2xs text-foreground-muted leading-none ring-1 ring-divider-strong ring-inset transition-colors hover:not-disabled:bg-surface-2 hover:not-disabled:text-foreground"
-				disabled={modelsMatch}
-				onClick={onUseMainModel}
-			>
-				{t("useMainModel")}
-			</Button>
-		</Tooltip>
-	);
+	// The realtime slot is normally a separate native-streaming preview engine.
+	// When the main model itself can natively stream, it owns this slot too.
+	const realtimeModelId = settings?.realtimeModel ?? "";
+	const displayedRealtimeModelId = mainModelCanNativeStream
+		? mainModelId
+		: realtimeModelId;
+	const realtimeTooltip = mainModelCanNativeStream
+		? `${t("realtimeModelCaption")} ${t("useMainModelTooltip")}`
+		: `${t("realtimeModelCaption")} ${t("realtimeModelTooltip")}`;
 	return (
 		<SettingSection icon={Activity03Icon} title={t("realtimeModelSection")}>
 			<div className="flex flex-col divide-y divide-surface-1">
 				<div className="col-span-2">
-					<FormControl
-						caption={
-							lockedToMainModel ? t("realtimeLockedToMainCaption") : t("realtimeModelCaption")
-						}
-						disabled={lockedToMainModel}
-						label={t("realtimeModel")}
-						labelTrailing={trailing}
-						tooltip={t("realtimeModelTooltip")}
-					>
+					<FormControl label={t("realtimeModel")} tooltip={realtimeTooltip}>
 						<SttModelSelector
 							currentQuantization={currentQuantization}
-							disabled={lockedToMainModel}
+							disabled={mainModelCanNativeStream}
 							downloadProgress={downloadProgress}
+							getFitAssessment={getFitAssessment}
 							isLoading={!catalogLoaded || isSwapping}
 							kind="realtime"
 							models={catalogModels}
 							onChange={handleRealtimeModelChange}
+							canDeleteQuant={canDeleteQuant}
 							onDeleteQuant={onDeleteQuant}
 							onDownloadAction={onDownloadAction}
 							onDownloadSnapshot={onDownloadSnapshot}
-							// Always include the MAIN model in the realtime picker, even when it's
-							// above the realtime-viable size threshold — otherwise "Use Main Model"
-							// (and a user who deliberately picks the main model) sets `value` to a
-							// model the prefilter hid, and the selector renders "no model selected".
-							// Our single-engine design reuses the main transcriber for realtime, so
-							// the main model is always a valid realtime choice.
-							prefilter={(m) => isRealtimeViable(m) || m.id === mainModelId}
+							placeholder={t("useMainModel")}
+							prefilter={(m) =>
+								isSelectableRealtimeModel(m) &&
+								(mainModelInfo === undefined ||
+									modelsHaveLanguageOverlap(mainModelInfo, m))
+							}
 							statesById={statesById}
 							systemInfo={systemInfo}
-							value={realtimeModelId}
+							value={displayedRealtimeModelId}
 						/>
 					</FormControl>
 				</div>
-				<SettingField
-					isDefault={
-						(quality?.realtimeProcessingPause ??
-							DEFAULT_SETTINGS.quality.realtimeProcessingPause) ===
-						DEFAULT_SETTINGS.quality.realtimeProcessingPause
-					}
-					label={t("updateInterval")}
-					layout="row"
-					onReset={() =>
-						updateQuality({
-							realtimeProcessingPause: DEFAULT_SETTINGS.quality.realtimeProcessingPause,
-						})
-					}
-					tooltip={t("updateIntervalTooltip")}
-				>
-					<ElevatedSurface className="w-fit" inline>
-						<NumberStepper
-							min={0.01}
-							onChange={(v) => updateQuality({ realtimeProcessingPause: v })}
-							step={0.01}
-							value={
-								quality?.realtimeProcessingPause ?? DEFAULT_SETTINGS.quality.realtimeProcessingPause
-							}
-						/>
-					</ElevatedSurface>
-				</SettingField>
+				{updateIntervalApplies ? (
+					<SettingField
+						isDefault={
+							(quality?.realtimeProcessingPause ??
+								DEFAULT_SETTINGS.quality.realtimeProcessingPause) ===
+							DEFAULT_SETTINGS.quality.realtimeProcessingPause
+						}
+						label={t("updateInterval")}
+						layout="row"
+						onReset={() =>
+							updateQuality({
+								realtimeProcessingPause:
+									DEFAULT_SETTINGS.quality.realtimeProcessingPause,
+							})
+						}
+						tooltip={t("updateIntervalTooltip")}
+					>
+						<ElevatedSurface className="w-fit" inline>
+							<NumberStepper
+								min={0.01}
+								onChange={(v) => updateQuality({ realtimeProcessingPause: v })}
+								step={0.01}
+								value={
+									quality?.realtimeProcessingPause ??
+									DEFAULT_SETTINGS.quality.realtimeProcessingPause
+								}
+							/>
+						</ElevatedSurface>
+					</SettingField>
+				) : null}
 			</div>
 		</SettingSection>
 	);
@@ -687,14 +719,18 @@ function buildDeviceOpts(t: TFn): SwitcherOption<DeviceValue>[] {
 }
 
 type TtsSettings = SettingsStoreState["settings"]["tts"];
-type ElevenIntegration = SettingsStoreState["settings"]["integrations"]["elevenlabs"];
+type ElevenIntegration =
+	SettingsStoreState["settings"]["integrations"]["elevenlabs"];
 
 /** Whether local Kokoro TTS is the active synthesis source. It rides on the
  *  Model-tab compute device (`model.device` → `--tts-device`), so the Device
  *  control must survive a cloud STT selection while this is true. Mirrors
  *  TtsModelSection's effective-source gate (cloud needs a present + verified
  *  ElevenLabs key, else it falls back to local). */
-function isLocalTtsActive(tts: TtsSettings | undefined, elevenlabs: ElevenIntegration): boolean {
+function isLocalTtsActive(
+	tts: TtsSettings | undefined,
+	elevenlabs: ElevenIntegration,
+): boolean {
 	const cloudEffective =
 		(tts?.source ?? "local") === "cloud" &&
 		elevenlabs.apiKey.trim().length > 0 &&
@@ -718,12 +754,36 @@ interface ModelControlVisibility {
 function resolveModelControlVisibility(
 	selectedIsCloud: boolean,
 	supportedLanguages: readonly string[] | undefined,
-	localTtsActive: boolean
+	localTtsActive: boolean,
 ): ModelControlVisibility {
 	return {
 		showLanguage: !selectedIsCloud && supportedLanguages?.length !== 1,
 		showDevice: !selectedIsCloud || localTtsActive,
 	};
+}
+
+function localModelIdOrNull(
+	modelId: string | undefined,
+	enabled = true,
+): string | null {
+	if (!enabled || !modelId || providerOf(modelId) !== null) {
+		return null;
+	}
+	return modelId;
+}
+
+function quantForFit(
+	statesById: StatesById,
+	modelId: string | null,
+	currentQuantization: OnnxQuantization,
+): string {
+	return modelId
+		? resolveEffectiveQuant(statesById[modelId], currentQuantization)
+		: "";
+}
+
+function requestedDeviceForFit(deviceValue: DeviceValue): string | null {
+	return deviceValue === "cpu" ? "cpu" : null;
 }
 
 interface SwapDialogsProps {
@@ -744,7 +804,8 @@ function SwapDialogs({
 	systemInfo,
 	t,
 }: SwapDialogsProps): ReactNode {
-	const { pendingDownload, pendingFitWarning, setPendingFitWarning } = controller;
+	const { pendingDownload, pendingFitWarning, setPendingFitWarning } =
+		controller;
 	return (
 		<>
 			<DownloadConfirmationDialog
@@ -774,7 +835,9 @@ function SwapDialogs({
 					}
 				}}
 				open={pendingFitWarning !== null}
-				t={(key, vars) => t(`resourceWarning.${key}` as Parameters<typeof t>[0], vars)}
+				t={(key, vars) =>
+					t(`resourceWarning.${key}` as Parameters<typeof t>[0], vars)
+				}
 			/>
 		</>
 	);
@@ -782,7 +845,7 @@ function SwapDialogs({
 
 /**
  * Speaker diarization, copied verbatim from the General-settings panel (it now
- * lives on the Model tab — the recognition engine — instead of General). The
+ * lives on the Transcription tab — the recognition engine — instead of General). The
  * parent gates it to render only in Listen mode (`general.recordingMode ===
  * 'listen'`), matching the original gate.
  *
@@ -799,12 +862,17 @@ function SwapDialogs({
  */
 function SpeakerDiarizationSection(): ReactNode {
 	const tGeneral = useTranslations("general");
-	const enabled = useSettingsStore((s) => s.settings.general?.speakerDiarization ?? false);
+	const enabled = useSettingsStore(
+		(s) => s.settings.general?.speakerDiarization ?? false,
+	);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const pending = useDiarizationToggleStore((s) => s.pending);
 
 	return (
-		<SettingSection icon={UserMultiple02Icon} title={tGeneral("speakerDiarization")}>
+		<SettingSection
+			icon={UserMultiple02Icon}
+			title={tGeneral("speakerDiarization")}
+		>
 			<SettingField
 				isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
 				label={tGeneral("speakerDiarization")}
@@ -824,7 +892,11 @@ function SpeakerDiarizationSection(): ReactNode {
 						/>
 					</div>
 				}
-				onReset={() => update({ speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization })}
+				onReset={() =>
+					update({
+						speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization,
+					})
+				}
 				tooltip={tGeneral("speakerDiarizationTooltip")}
 			/>
 		</SettingSection>
@@ -842,21 +914,31 @@ export function ModelSettingsPanel() {
 	// boolean selector so the panel only re-renders when it flips (not on every
 	// preset edit). Drives the STT-translate ↔ LLM-translate lock below.
 	const llmTranslateEnabled = useSettingsStore((s) =>
-		s.settings.llm.dictation.presets.some((p) => p.key === "translate")
+		s.settings.llm.dictation.presets.some((p) => p.key === "translate"),
+	);
+	const llmDictationEnabled = useSettingsStore(
+		(s) => s.settings.llm.dictation.enabled,
 	);
 	// Local Kokoro TTS shares the Model-tab compute device (mirrored onto the
 	// server's `--tts-device`), so the Device control must survive a cloud STT
 	// selection while local TTS is still running. `tts` + the ElevenLabs key
 	// status mirror TtsModelSection's effective-source gate.
 	const tts = useSettingsStore((s) => s.settings.tts);
-	const elevenlabs = useSettingsStore((s) => s.settings.integrations.elevenlabs);
-	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
+	const elevenlabs = useSettingsStore(
+		(s) => s.settings.integrations.elevenlabs,
+	);
+	const recordingMode = useSettingsStore(
+		(s) => s.settings.general?.recordingMode ?? "ptt",
+	);
 	const isListenMode = recordingMode === "listen";
 	const showRecordingOverlay = useSettingsStore(
-		(s) => s.settings.general?.showRecordingOverlay ?? true
+		(s) => s.settings.general?.showRecordingOverlay ?? true,
 	);
 	const liveTranscriptionDisplay = useSettingsStore(
-		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both"
+		(s) => s.settings.general?.liveTranscriptionDisplay ?? "both",
+	);
+	const wordByWordPasting = useSettingsStore(
+		(s) => s.settings.general?.wordByWordPasting ?? false,
 	);
 	// Realtime is fully derived from the display picker — the engine has no
 	// observable output without a display surface, so there is no separate
@@ -864,12 +946,16 @@ export function ModelSettingsPanel() {
 	const realtimeEnabled = isRealtimeEnabled({
 		showRecordingOverlay,
 		liveTranscriptionDisplay,
+		llmDictationEnabled,
+		wordByWordPasting,
 	});
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const gpuAvailable = gpuInfo.length > 0;
 	const t = useTranslations("model");
 	const deviceOpts = buildDeviceOpts(t);
-	const deviceValue: DeviceValue = gpuAvailable ? (settings?.device ?? "auto") : "cpu";
+	const deviceValue: DeviceValue = gpuAvailable
+		? (settings?.device ?? "auto")
+		: "cpu";
 
 	const catalogModels = useCatalogStore((s) => s.models);
 	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
@@ -880,14 +966,21 @@ export function ModelSettingsPanel() {
 	// each time the settings panel opens; live updates come through the
 	// store's IPC subscriptions (model_cache_changed / swap_completed).
 	const statesById = useModelStateStore((s) => s.statesById);
+	const modelStatesLoaded = useModelStateStore((s) => s.isLoaded);
 	const systemInfo = useModelStateStore((s) => s.systemInfo);
 	const refreshModelState = useModelStateStore((s) => s.refresh);
 	// Live download + swap snapshot lives in its own hook so the panel stays
 	// at a reasonable cognitive-complexity score.
-	const { downloadProgress, mainSwapping, realtimeSwapping } = useSwapProgress();
+	const {
+		mainDownloadProgress,
+		realtimeDownloadProgress,
+		mainSwapping,
+		realtimeSwapping,
+	} = useSwapProgress();
 
 	// Live host resource snapshot (RAM available, free VRAM, CPU%) for the
 	// resource-aware warning modal. Refreshed when the panel mounts.
+	const liveResources = useSystemResourcesStore((s) => s.liveResources);
 	const refreshLive = useSystemResourcesStore((s) => s.refresh);
 
 	useEffect(() => {
@@ -900,9 +993,10 @@ export function ModelSettingsPanel() {
 		catalogLoaded,
 		catalogModels,
 		statesById,
+		modelStatesLoaded,
 		settings?.model,
 		settings?.realtimeModel,
-		update
+		update,
 	);
 
 	// Fallback matches the bundled offline base seeded into the HF cache by
@@ -942,21 +1036,64 @@ export function ModelSettingsPanel() {
 	// is absent or untrained. Cloud STT delegates to the provider, so it's
 	// hidden there too (same rule as the device / language / translate knobs).
 	const initialPromptSupported =
-		!selectedIsCloud && selectedInfo !== undefined && supportsInitialPrompt(selectedInfo);
+		!selectedIsCloud &&
+		selectedInfo !== undefined &&
+		supportsInitialPrompt(selectedInfo);
 	// When the STT decoder itself translates to English, force the LLM dictation
 	// "Translate" modifier off so the transcript isn't translated twice. The LLM
 	// panel additionally disables the row while this holds.
 	useLockLlmTranslate(
 		translateSupported && (settings?.translateToEnglish ?? false),
-		llmTranslateEnabled
+		llmTranslateEnabled,
 	);
-	const currentQuantization = (settings?.onnxQuantization ?? "") as OnnxQuantization;
+	const currentQuantization = (settings?.onnxQuantization ??
+		"") as OnnxQuantization;
+	const getFitAssessment = useCallback<GetFitAssessment>(
+		(modelId) => {
+			if (liveResources === null) {
+				return null;
+			}
+			const mainId = localModelIdOrNull(selectedModel, !selectedIsCloud);
+			const realtimeId = localModelIdOrNull(
+				settings?.realtimeModel,
+				realtimeEnabled && !selectedIsCloud,
+			);
+			return assessDictationFitClient(modelId, {
+				candidateQuant: quantForFit(statesById, modelId, currentQuantization),
+				live: liveResources,
+				loaded: {
+					mainId,
+					mainQuant: quantForFit(statesById, mainId, currentQuantization),
+					realtimeId,
+					realtimeQuant: quantForFit(
+						statesById,
+						realtimeId,
+						currentQuantization,
+					),
+				},
+				requestedDevice: requestedDeviceForFit(deviceValue),
+				statesById,
+			});
+		},
+		[
+			currentQuantization,
+			deviceValue,
+			liveResources,
+			realtimeEnabled,
+			selectedIsCloud,
+			selectedModel,
+			settings?.realtimeModel,
+			statesById,
+		],
+	);
 
 	const supportedLanguages = selectedInfo?.languages;
 	const langOpts =
 		!supportedLanguages || supportedLanguages.length === 0
 			? ALL_LANG_OPTS
-			: ALL_LANG_OPTS.filter((l) => l.id === "" || supportedLanguages.includes(l.id));
+			: ALL_LANG_OPTS.filter(
+					(l) => l.id === "" || supportedLanguages.includes(l.id),
+				);
 	// Which Model-tab controls stay visible. A cloud main hides the local-only
 	// knobs (language, idle-unload-timeout, device) — except Device, which
 	// local Kokoro TTS also rides on (`model.device` → `--tts-device`). The
@@ -965,7 +1102,7 @@ export function ModelSettingsPanel() {
 	const { showDevice, showLanguage } = resolveModelControlVisibility(
 		selectedIsCloud,
 		supportedLanguages,
-		isLocalTtsActive(tts, elevenlabs)
+		isLocalTtsActive(tts, elevenlabs),
 	);
 
 	// Block model switching while files are transcribing — the swap would reload
@@ -980,33 +1117,139 @@ export function ModelSettingsPanel() {
 		statesById,
 		update,
 		isQuantDownloading,
-		() => useFileTranscriptionStore.getState().queueActive
+		() => useFileTranscriptionStore.getState().queueActive,
 	);
 
 	const useMainModelFlag = quality?.useMainModelForRealtime ?? false;
-	const handleUseMainModel = () => {
-		// Mirror the main model into the realtime slot. The controller no-ops when
-		// the ids already match, so this is safe to call unconditionally. Also flip
-		// the server flag so the realtime worker actually reuses the loaded main
-		// transcriber instead of loading a duplicate.
-		controller.handleRealtimeModelChange(selectedModel);
-		if (!useMainModelFlag) {
-			updateQuality({ useMainModelForRealtime: true });
+	const mainModelStreamingKnown = selectedIsCloud || selectedInfo !== undefined;
+	const mainModelCanNativeStream =
+		!selectedIsCloud &&
+		selectedInfo !== undefined &&
+		isSelectableRealtimeModel(selectedInfo);
+	const selectedRealtimeInfo = settings?.realtimeModel
+		? getModel(settings.realtimeModel)
+		: undefined;
+	const effectiveRealtimeInfo = mainModelCanNativeStream
+		? selectedInfo
+		: selectedRealtimeInfo;
+	const updateIntervalApplies =
+		isListenMode || effectiveRealtimeInfo?.nativeStreaming !== true;
+	const handleRealtimePick = (v: string, quantization?: OnnxQuantization) => {
+		if (mainModelCanNativeStream && v !== selectedModel) {
+			return;
+		}
+		controller.handleRealtimeModelChange(v, quantization);
+		const shouldReuseMain = v === selectedModel && mainModelCanNativeStream;
+		if (shouldReuseMain !== useMainModelFlag) {
+			updateQuality({ useMainModelForRealtime: shouldReuseMain });
 		}
 	};
-	const handleRealtimePick = (v: string, quantization?: OnnxQuantization) => {
-		controller.handleRealtimeModelChange(v, quantization);
-		// Picking a model that is NOT the main model means the user wants a
-		// separate realtime model — clear the server flag so it actually loads.
-		if (v !== selectedModel && useMainModelFlag) {
+
+	useEffect(() => {
+		if (!mainModelStreamingKnown) {
+			return;
+		}
+		if (mainModelCanNativeStream) {
+			if (settings?.realtimeModel !== selectedModel) {
+				update({ realtimeModel: selectedModel });
+			}
+			if (!useMainModelFlag) {
+				updateQuality({ useMainModelForRealtime: true });
+			}
+			return;
+		}
+		if (useMainModelFlag) {
 			updateQuality({ useMainModelForRealtime: false });
 		}
-	};
+	}, [
+		mainModelCanNativeStream,
+		mainModelStreamingKnown,
+		selectedModel,
+		settings?.realtimeModel,
+		update,
+		updateQuality,
+		useMainModelFlag,
+	]);
 
 	// Per-quant badge handlers (delete + byte-level pause/resume/cancel) live
 	// in one shared feature-layer hook so the settings panel and the detached
 	// footer picker wire the exact same controls into SttModelSelector.
-	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
+	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
+		useQuantActions();
+	const canDeleteQuant = useCallback(
+		(modelId: string, quantization: OnnxQuantization) =>
+			canDeleteSttQuant(catalogModels, statesById, modelId, quantization),
+		[catalogModels, statesById],
+	);
+	const handleGuardedDeleteQuant = useCallback(
+		(modelId: string, quantization: OnnxQuantization) => {
+			const recovery = resolveSttDeleteRecovery({
+				currentMainModel: selectedModel,
+				currentQuantization,
+				currentRealtimeModel: settings?.realtimeModel,
+				mainModelInfo: selectedInfo,
+				modelId,
+				models: catalogModels,
+				previousModelIds: readLastLocalSttModelHistory(),
+				quantization,
+				statesById,
+			});
+			if (!recovery.canDelete) {
+				return;
+			}
+			const requiresRecovery =
+				recovery.mainTarget !== undefined ||
+				recovery.realtimeTarget !== undefined;
+			if (
+				requiresRecovery &&
+				useFileTranscriptionStore.getState().queueActive
+			) {
+				return;
+			}
+			if (recovery.mainTarget) {
+				controller.handleModelChange(
+					recovery.mainTarget.modelId,
+					recovery.mainTarget.quantization,
+				);
+			}
+			if (recovery.realtimeTarget !== undefined) {
+				if (recovery.realtimeTarget === null) {
+					controller.handleRealtimeModelChange("");
+					if (useMainModelFlag) {
+						updateQuality({ useMainModelForRealtime: false });
+					}
+				} else {
+					controller.handleRealtimeModelChange(
+						recovery.realtimeTarget.modelId,
+						recovery.realtimeTarget.quantization,
+					);
+					const nextMainId = recovery.mainTarget?.modelId ?? selectedModel;
+					const realtimeInfo = getModel(recovery.realtimeTarget.modelId);
+					const shouldReuseMain =
+						recovery.realtimeTarget.modelId === nextMainId &&
+						realtimeInfo !== undefined &&
+						isSelectableRealtimeModel(realtimeInfo);
+					if (shouldReuseMain !== useMainModelFlag) {
+						updateQuality({ useMainModelForRealtime: shouldReuseMain });
+					}
+				}
+			}
+			handleDeleteQuant(modelId, quantization);
+		},
+		[
+			catalogModels,
+			controller,
+			currentQuantization,
+			getModel,
+			handleDeleteQuant,
+			selectedInfo,
+			selectedModel,
+			settings?.realtimeModel,
+			statesById,
+			updateQuality,
+			useMainModelFlag,
+		],
+	);
 
 	// A precision-badge "download this variant" click opens the confirmation
 	// dialog (size + hardware-fit + Download/Cancel) for the right slot instead of
@@ -1019,40 +1262,26 @@ export function ModelSettingsPanel() {
 				controller.promptDownload(kind, modelId, quantization);
 				return;
 			}
-			handleDownloadAction(action, modelId, quantization);
+			handleDownloadAction(action, modelId, quantization, kind);
 		};
 	const handleMainDownloadAction = gateDownloadAction("main");
 	const handleRealtimeDownloadAction = gateDownloadAction("realtime");
 
-	// When the active main model is itself small enough to drive the live
-	// preview, the dedicated realtime slot has no job — a second small model
-	// would just duplicate work without improving quality.
-	const mainIsRealtimeViable =
-		!selectedIsCloud && selectedInfo !== undefined && isRealtimeViable(selectedInfo);
-	const lockRealtimeToMain = realtimeEnabled && mainIsRealtimeViable;
-	useLockRealtimeToMain(
-		lockRealtimeToMain,
-		selectedModel,
-		settings?.realtimeModel,
-		useMainModelFlag,
-		controller.handleRealtimeModelChange,
-		updateQuality
-	);
-
 	return (
 		<div className="flex flex-col gap-2">
-			<ModelLifetimeSection global={global} t={t} update={updateGlobal} />
 			{isListenMode ? null : (
 				<MainModelSection
 					catalogLoaded={catalogLoaded}
 					catalogModels={catalogModels}
 					currentQuantization={currentQuantization}
-					downloadProgress={downloadProgress}
+					downloadProgress={mainDownloadProgress}
+					getFitAssessment={getFitAssessment}
 					handleModelChange={controller.handleModelChange}
 					initialPromptSupported={initialPromptSupported}
 					isSwapping={mainSwapping}
 					langOpts={langOpts}
-					onDeleteQuant={handleDeleteQuant}
+					canDeleteQuant={canDeleteQuant}
+					onDeleteQuant={handleGuardedDeleteQuant}
 					onDownloadAction={handleMainDownloadAction}
 					onDownloadSnapshot={handleDownloadSnapshot}
 					sections={{
@@ -1072,15 +1301,18 @@ export function ModelSettingsPanel() {
 					catalogLoaded={catalogLoaded}
 					catalogModels={catalogModels}
 					currentQuantization={currentQuantization}
-					downloadProgress={downloadProgress}
+					downloadProgress={realtimeDownloadProgress}
+					getFitAssessment={getFitAssessment}
 					handleRealtimeModelChange={handleRealtimePick}
 					isSwapping={realtimeSwapping}
-					lockedToMainModel={lockRealtimeToMain}
+					mainModelCanNativeStream={mainModelCanNativeStream}
 					mainModelId={selectedModel}
-					onDeleteQuant={handleDeleteQuant}
+					mainModelInfo={selectedInfo}
+					updateIntervalApplies={updateIntervalApplies}
+					canDeleteQuant={canDeleteQuant}
+					onDeleteQuant={handleGuardedDeleteQuant}
 					onDownloadAction={handleRealtimeDownloadAction}
 					onDownloadSnapshot={handleDownloadSnapshot}
-					onUseMainModel={handleUseMainModel}
 					quality={quality}
 					settings={settings}
 					statesById={statesById}
@@ -1089,6 +1321,11 @@ export function ModelSettingsPanel() {
 					updateQuality={updateQuality}
 				/>
 			)}
+			{/* Speaker diarization - gated to Listen mode (plain cross-tab read of
+			    `general.recordingMode`), matching the original General-tab gate.
+			    Persists to `general.speakerDiarization`; the runtime toggle wiring
+			    lives in the diarization toggle store. */}
+			{isListenMode ? <SpeakerDiarizationSection /> : null}
 			{/* Compute device — standalone, shared by local STT + local TTS.
 			    Shown only when a GPU exists AND a local model needs a device
 			    (`showDevice`). With no GPU there is no choice to make (Auto
@@ -1104,11 +1341,7 @@ export function ModelSettingsPanel() {
 					update={update}
 				/>
 			)}
-			{/* Speaker diarization — gated to Listen mode (plain cross-tab read of
-			    `general.recordingMode`), matching the original General-tab gate.
-			    Persists to `general.speakerDiarization`; the runtime toggle wiring
-			    lives in the diarization toggle store. */}
-			{isListenMode ? <SpeakerDiarizationSection /> : null}
+			<ModelLifetimeSection global={global} t={t} update={updateGlobal} />
 			<SwapDialogs
 				controller={controller}
 				getModel={getModel}

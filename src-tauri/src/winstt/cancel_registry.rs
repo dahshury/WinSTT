@@ -21,7 +21,13 @@ use std::sync::Mutex;
 /// Tauri state behind a shared reference).
 #[derive(Default)]
 pub struct CancelRegistry {
-    cancelled: Mutex<HashSet<String>>,
+    state: Mutex<CancelState>,
+}
+
+#[derive(Default)]
+struct CancelState {
+    active: HashSet<String>,
+    cancelled: HashSet<String>,
 }
 
 impl CancelRegistry {
@@ -29,35 +35,46 @@ impl CancelRegistry {
         Self::default()
     }
 
-    /// Mark a single request cancelled.
-    pub fn cancel(&self, request_id: &str) {
-        if let Ok(mut set) = self.cancelled.lock() {
-            set.insert(request_id.to_string());
+    /// Register a request as in-flight. This intentionally does not clear an
+    /// existing cancellation mark: callers may cancel by id just before the
+    /// worker starts observing that id.
+    pub fn track(&self, request_id: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.active.insert(request_id.to_string());
         }
     }
 
-    /// Cancel every currently-tracked request. With presence == cancelled, every
-    /// id in the set is already cancelled, so this is intentionally a no-op kept
-    /// for API symmetry / call-site clarity (the prior HashMap version likewise
-    /// only re-flipped already-`true` values). Finished requests are reclaimed by
-    /// `clear`, so cancelled ids never accumulate across sessions. Were a separate
-    /// in-flight registry ever added, the union would go here.
-    pub fn cancel_all(&self) {}
+    /// Mark a single request cancelled.
+    pub fn cancel(&self, request_id: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled.insert(request_id.to_string());
+        }
+    }
+
+    /// Cancel every currently active request. Finished requests are reclaimed by
+    /// `clear`, so cancelled ids do not accumulate across sessions.
+    pub fn cancel_all(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            let active: Vec<String> = state.active.iter().cloned().collect();
+            state.cancelled.extend(active);
+        }
+    }
 
     /// Whether `request_id` has been cancelled. `default_when_poisoned` is the
     /// value returned if the lock is poisoned (TTS treats that as cancelled to
     /// fail safe; the others treat it as not-cancelled).
     pub fn is_cancelled(&self, request_id: &str, default_when_poisoned: bool) -> bool {
-        self.cancelled
+        self.state
             .lock()
-            .map(|set| set.contains(request_id))
+            .map(|state| state.cancelled.contains(request_id))
             .unwrap_or(default_when_poisoned)
     }
 
     /// Stop tracking `request_id` (call when the request finishes).
     pub fn clear(&self, request_id: &str) {
-        if let Ok(mut set) = self.cancelled.lock() {
-            set.remove(request_id);
+        if let Ok(mut state) = self.state.lock() {
+            state.active.remove(request_id);
+            state.cancelled.remove(request_id);
         }
     }
 }
@@ -79,8 +96,8 @@ mod tests {
     #[test]
     fn cancel_all_keeps_marked_requests_cancelled() {
         let reg = CancelRegistry::new();
-        reg.cancel("a");
-        reg.cancel("b");
+        reg.track("a");
+        reg.track("b");
         reg.cancel_all();
         // A tracked id stays cancelled so an in-flight drain loop still bails.
         assert!(reg.is_cancelled("a", false));
@@ -88,5 +105,13 @@ mod tests {
         // Completed requests are reclaimed by clear (no leak).
         reg.clear("a");
         assert!(!reg.is_cancelled("a", false));
+    }
+
+    #[test]
+    fn track_preserves_preexisting_cancel() {
+        let reg = CancelRegistry::new();
+        reg.cancel("a");
+        reg.track("a");
+        assert!(reg.is_cancelled("a", false));
     }
 }

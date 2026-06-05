@@ -2,6 +2,7 @@ import { TextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
 import { addDictionaryEntrySchema, type DictionaryEntry } from "@/shared/config/settings-schema";
 import { CrudTable } from "@/shared/ui/crud-table";
+import { dictionaryContainsTerm } from "../lib/dictionary-terms";
 
 export interface DictionaryTableProps {
 	entries: DictionaryEntry[];
@@ -13,6 +14,16 @@ export interface DictionaryTableProps {
 export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: DictionaryTableProps) {
 	const t = useTranslations("dictionary");
 	const tc = useTranslations("common");
+	const addSchema = addDictionaryEntrySchema.superRefine((entry, ctx) => {
+		if (dictionaryContainsTerm(entries, entry.term)) {
+			ctx.addIssue({
+				code: "custom",
+				message: "Already added",
+				path: ["term"],
+			});
+		}
+	});
+
 	return (
 		<CrudTable
 			columns={[{ cellClassName: "text-foreground", header: t("term"), render: (e) => e.term }]}
@@ -32,7 +43,7 @@ export function DictionaryTable({ entries, onAdd, onRemove, onClearAll }: Dictio
 			}}
 			onAdd={onAdd}
 			onRemove={onRemove}
-			schema={addDictionaryEntrySchema}
+			schema={addSchema}
 			{...(onClearAll ? { onClearAll } : {})}
 		/>
 	);

@@ -3,6 +3,14 @@
    which suppresses transitions keyed off `[data-starting-style]`. CSS
    animations are immune (the inline override only touches `transition`), so
    the popup animates in via keyframes instead. */
+.editable-list-combobox-popup {
+	--editable-list-combobox-popup-y: -6px;
+}
+
+.editable-list-combobox-popup[data-side="top"] {
+	--editable-list-combobox-popup-y: 6px;
+}
+
 .editable-list-combobox-popup[data-open] {
 	animation: editable-list-combobox-popup-in 150ms ease-out;
 }
@@ -14,21 +22,21 @@
 @keyframes editable-list-combobox-popup-in {
 	from {
 		opacity: 0;
-		transform: scale(0.95);
+		transform: translateY(var(--editable-list-combobox-popup-y)) scale(0.95);
 	}
 	to {
 		opacity: 1;
-		transform: scale(1);
+		transform: translateY(0) scale(1);
 	}
 }
 
 @keyframes editable-list-combobox-popup-out {
 	from {
 		opacity: 1;
-		transform: scale(1);
+		transform: translateY(0) scale(1);
 	}
 	to {
 		opacity: 0;
-		transform: scale(0.95);
+		transform: translateY(var(--editable-list-combobox-popup-y)) scale(0.95);
 	}
 }

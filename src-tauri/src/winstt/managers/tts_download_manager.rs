@@ -16,15 +16,19 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
+use crate::winstt::downloads::{
+    transfer_url_blocking, TransferControl, TransferOutcome, TransferProgress, TransferRequest,
+};
 use crate::winstt::tts::catalog::{self, TtsEngineId, TtsModelEntry};
 use crate::winstt::tts::local_engines::{piper_voice_def, PIPER_DEFAULT_VOICE};
+use crate::winstt::tts::voice_by_id;
 
 /// The Kitten ONNX graph filename for a catalog id. Both nano models ship the same
 /// `voices.npz` + `config.json`; only the graph file name differs per version.
@@ -36,11 +40,29 @@ fn kitten_model_file(model_id: &str) -> &'static str {
     }
 }
 
+fn catalog_model_id(model_id: &str) -> Option<&'static str> {
+    catalog::find(model_id).map(|entry| entry.id)
+}
+
+fn kokoro_voice_id(voice_id: &str) -> Option<&'static str> {
+    voice_by_id(voice_id).map(|voice| voice.id)
+}
+
 /// Per-(model,quant) cooperative download flags.
 #[derive(Default)]
 struct Flags {
     cancel: AtomicBool,
     pause: AtomicBool,
+}
+
+impl TransferControl for Flags {
+    fn should_cancel(&self) -> bool {
+        self.cancel.load(Ordering::Acquire)
+    }
+
+    fn should_pause(&self) -> bool {
+        self.pause.load(Ordering::Acquire)
+    }
 }
 
 /// Per-quant cache state (mirrors the STT `CacheState` strings the picker reads).
@@ -80,15 +102,74 @@ impl TtsDownloadManager {
             .user_agent("WinSTT/0.1")
             .build()
             .unwrap_or_default();
-        Self {
+        let manager = Self {
             app: app.clone(),
             client,
             inflight: Mutex::new(HashMap::new()),
-        }
+        };
+        manager.cleanup_legacy_supertonic_cache();
+        manager
     }
 
     fn key(model_id: &str, quant: &str) -> String {
         format!("{model_id}@{quant}")
+    }
+
+    fn partial_path_for(target: &Path) -> PathBuf {
+        target.with_file_name(format!(
+            "{}.partial",
+            target.file_name().and_then(|n| n.to_str()).unwrap_or("dl")
+        ))
+    }
+
+    fn path_len(path: &Path) -> u64 {
+        std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+    }
+
+    fn cached_or_partial_bytes(target: &Path) -> u64 {
+        if target.exists() {
+            return Self::path_len(target);
+        }
+        Self::path_len(&Self::partial_path_for(target))
+    }
+
+    fn remote_content_length(&self, url: &str) -> Option<u64> {
+        tauri::async_runtime::block_on(async {
+            self.client
+                .head(url)
+                .send()
+                .await
+                .ok()
+                .filter(|r| r.status().is_success())
+                .and_then(|r| r.content_length())
+        })
+    }
+
+    fn aggregate_total(file_totals: &[u64], fallback_total: u64) -> u64 {
+        let known_sum = file_totals.iter().copied().sum::<u64>();
+        if known_sum > 0 && file_totals.iter().all(|t| *t > 0) {
+            known_sum
+        } else {
+            known_sum.max(fallback_total)
+        }
+    }
+
+    fn emit_catalog_progress(&self, model_id: &str, quant: &str, downloaded: u64, total: u64) {
+        let progress = if total > 0 {
+            (downloaded as f64 / total as f64).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let _ = self.app.emit(
+            "tts:catalog-model-download-progress",
+            json!({
+                "model": model_id,
+                "quantization": quant,
+                "progress": progress,
+                "downloadedBytes": downloaded,
+                "totalBytes": total.max(downloaded),
+            }),
+        );
     }
 
     /// `%LOCALAPPDATA%/winstt/tts/<model-id>/`.
@@ -97,6 +178,22 @@ impl TtsDownloadManager {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join("tts")
             .join(model_id)
+    }
+
+    fn cleanup_legacy_supertonic_cache(&self) {
+        for legacy_id in ["supertonic-en", "supertonic"] {
+            let dir = self.model_cache_dir(legacy_id);
+            if !dir.exists() {
+                continue;
+            }
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => log::info!("[tts] removed legacy Supertonic cache at {}", dir.display()),
+                Err(err) => log::warn!(
+                    "[tts] failed to remove legacy Supertonic cache at {}: {err}",
+                    dir.display()
+                ),
+            }
+        }
     }
 
     /// The (HF-url, local-absolute-path) pairs to fetch for a model+quant.
@@ -146,15 +243,25 @@ impl TtsDownloadManager {
             }
             TtsEngineId::Supertonic => {
                 let mut v: Vec<(String, String)> = Vec::new();
-                for g in ["text_encoder", "latent_denoiser", "voice_decoder"] {
+                for g in [
+                    "duration_predictor",
+                    "text_encoder",
+                    "vector_estimator",
+                    "vocoder",
+                ] {
                     v.push((format!("onnx/{g}.onnx"), format!("onnx/{g}.onnx")));
-                    v.push((format!("onnx/{g}.onnx_data"), format!("onnx/{g}.onnx_data")));
                 }
+                v.push(("onnx/tts.json".into(), "onnx/tts.json".into()));
+                v.push((
+                    "onnx/unicode_indexer.json".into(),
+                    "onnx/unicode_indexer.json".into(),
+                ));
                 for nm in ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"] {
-                    v.push((format!("voices/{nm}.bin"), format!("voices/{nm}.bin")));
+                    v.push((
+                        format!("voice_styles/{nm}.json"),
+                        format!("voice_styles/{nm}.json"),
+                    ));
                 }
-                v.push(("tokenizer.json".into(), "tokenizer.json".into()));
-                v.push(("config.json".into(), "config.json".into()));
                 v
             }
             TtsEngineId::Kokoro => {
@@ -226,10 +333,7 @@ impl TtsDownloadManager {
                 downloaded += m.len();
             } else {
                 all_present = false;
-                if let Ok(m) = std::fs::metadata(local.with_extension(format!(
-                    "{}.partial",
-                    local.extension().and_then(|e| e.to_str()).unwrap_or("")
-                ))) {
+                if let Ok(m) = std::fs::metadata(Self::partial_path_for(local)) {
                     downloaded += m.len();
                 }
             }
@@ -295,18 +399,19 @@ impl TtsDownloadManager {
         let model_id = model_id.to_string();
         let quant = quant.to_string();
         std::thread::spawn(move || {
-            let cancelled = matches!(
-                this.download_blocking(&model_id, &quant, true),
-                Err(TtsDownloadErr::Cancelled)
-            );
+            let outcome = this.download_blocking(&model_id, &quant, true);
             this.inflight
                 .lock()
                 .unwrap()
                 .remove(&Self::key(&model_id, &quant));
-            let _ = this.app.emit(
-                "tts:catalog-model-download-complete",
-                json!({ "model": model_id, "quantization": quant, "cancelled": cancelled }),
-            );
+            let paused = matches!(outcome, Err(TtsDownloadErr::Paused));
+            if !paused {
+                let cancelled = matches!(outcome, Err(TtsDownloadErr::Cancelled));
+                let _ = this.app.emit(
+                    "tts:catalog-model-download-complete",
+                    json!({ "model": model_id, "quantization": quant, "cancelled": cancelled }),
+                );
+            }
             let _ = this
                 .app
                 .emit("tts:model-cache-changed", json!({ "modelId": model_id }));
@@ -327,7 +432,28 @@ impl TtsDownloadManager {
         if manifest.is_empty() {
             return Err(TtsDownloadErr::Other("no download manifest".into()));
         }
-        let total = entry.quant(quant).map(|q| q.size_bytes).unwrap_or(0);
+        let fallback_total = entry.quant(quant).map(|q| q.size_bytes).unwrap_or(0);
+        let mut file_totals: Vec<u64> = manifest
+            .iter()
+            .map(|(url, target)| {
+                let local_bytes = Self::cached_or_partial_bytes(target);
+                let remote_bytes = if target.exists() {
+                    Some(local_bytes)
+                } else {
+                    self.remote_content_length(url)
+                };
+                remote_bytes.unwrap_or(0).max(local_bytes)
+            })
+            .collect();
+        let mut file_downloaded: Vec<u64> = manifest
+            .iter()
+            .map(|(_, target)| Self::cached_or_partial_bytes(target))
+            .collect();
+        let initial_downloaded = file_downloaded.iter().copied().sum::<u64>();
+        let initial_total = Self::aggregate_total(&file_totals, fallback_total);
+        if emit && initial_total > 0 {
+            self.emit_catalog_progress(model_id, quant, initial_downloaded, initial_total);
+        }
         let flags = self
             .inflight
             .lock()
@@ -337,39 +463,32 @@ impl TtsDownloadManager {
             .clone();
         flags.pause.store(false, Ordering::Release);
 
-        let mut base: u64 = 0;
-        for (url, target) in &manifest {
+        for (index, (url, target)) in manifest.iter().enumerate() {
             if target.exists() {
-                base += std::fs::metadata(target).map(|m| m.len()).unwrap_or(0);
+                file_downloaded[index] = Self::path_len(target);
                 continue;
             }
             if let Some(p) = target.parent() {
                 std::fs::create_dir_all(p).map_err(|e| TtsDownloadErr::Network(e.to_string()))?;
             }
-            let base_snapshot = base;
-            let mut last_file_bytes = 0u64;
-            self.download_one(url, target, &flags, &mut |file_bytes| {
-                last_file_bytes = file_bytes;
-                if emit {
-                    let downloaded = base_snapshot + file_bytes;
-                    let progress = if total > 0 {
-                        (downloaded as f64 / total as f64).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    let _ = self.app.emit(
-                        "tts:catalog-model-download-progress",
-                        json!({
-                            "model": model_id,
-                            "quantization": quant,
-                            "progress": progress,
-                            "downloadedBytes": downloaded,
-                            "totalBytes": total,
-                        }),
-                    );
-                }
-            })?;
-            base += last_file_bytes;
+            let known_total = (file_totals[index] > 0).then_some(file_totals[index]);
+            self.download_one(
+                url,
+                target,
+                &flags,
+                known_total,
+                &mut |file_bytes, file_total| {
+                    file_downloaded[index] = file_bytes;
+                    if let Some(total) = file_total {
+                        file_totals[index] = file_totals[index].max(total).max(file_bytes);
+                    }
+                    if emit {
+                        let downloaded = file_downloaded.iter().copied().sum::<u64>();
+                        let total = Self::aggregate_total(&file_totals, fallback_total);
+                        self.emit_catalog_progress(model_id, quant, downloaded, total);
+                    }
+                },
+            )?;
         }
         Ok(())
     }
@@ -394,6 +513,9 @@ impl TtsDownloadManager {
         }
         match entry.engine {
             TtsEngineId::Kokoro => {
+                let Some(voice_id) = kokoro_voice_id(voice_id) else {
+                    return Ok(());
+                };
                 let target = self
                     .model_cache_dir(model_id)
                     .join("voices")
@@ -410,7 +532,7 @@ impl TtsDownloadManager {
                     entry.hf_repo
                 );
                 let flags = Flags::default();
-                self.download_one(&url, &target, &flags, &mut |_| {})
+                self.download_one(&url, &target, &flags, None, &mut |_, _| {})
             }
             TtsEngineId::Piper => {
                 // Unknown voice id → the engine falls back to the default voice (which
@@ -433,7 +555,7 @@ impl TtsDownloadManager {
                         "https://huggingface.co/{}/resolve/main/{}/{}.{ext}",
                         entry.hf_repo, def.subdir, def.stem
                     );
-                    self.download_one(&url, &target, &flags, &mut |_| {})?;
+                    self.download_one(&url, &target, &flags, None, &mut |_, _| {})?;
                 }
                 Ok(())
             }
@@ -448,58 +570,37 @@ impl TtsDownloadManager {
         url: &str,
         target: &std::path::Path,
         flags: &Flags,
-        on_bytes: &mut dyn FnMut(u64),
+        known_total_bytes: Option<u64>,
+        on_bytes: &mut dyn FnMut(u64, Option<u64>),
     ) -> Result<(), TtsDownloadErr> {
-        use std::io::Write;
-        use tauri::async_runtime::block_on;
-
-        let partial = target.with_file_name(format!(
-            "{}.partial",
-            target.file_name().and_then(|n| n.to_str()).unwrap_or("dl")
-        ));
-        let resume_from = partial.metadata().map(|m| m.len()).unwrap_or(0);
-        let mut req = self.client.get(url);
-        if resume_from > 0 {
-            req = req.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+        let partial = Self::partial_path_for(target);
+        let report = transfer_url_blocking(
+            &self.client,
+            TransferRequest {
+                delete_partial_on_cancel: true,
+                final_path: Some(target),
+                known_total_bytes,
+                partial_path: &partial,
+                progress_interval: std::time::Duration::from_millis(100),
+                url,
+            },
+            Some(flags),
+            |progress: TransferProgress| on_bytes(progress.downloaded_bytes, progress.total_bytes),
+        )
+        .map_err(|e| TtsDownloadErr::Network(e.to_string()))?;
+        match report.outcome {
+            TransferOutcome::Complete => Ok(()),
+            TransferOutcome::Paused => Err(TtsDownloadErr::Paused),
+            TransferOutcome::Cancelled => Err(TtsDownloadErr::Cancelled),
         }
-        let mut resp = block_on(req.send()).map_err(|e| TtsDownloadErr::Network(e.to_string()))?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(TtsDownloadErr::Network(format!("HTTP {status} for {url}")));
-        }
-        let resuming = resume_from > 0 && status.as_u16() == 206;
-        let mut downloaded = if resuming { resume_from } else { 0 };
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(resuming)
-            .write(true)
-            .truncate(!resuming)
-            .open(&partial)
-            .map_err(|e| TtsDownloadErr::Network(e.to_string()))?;
-        loop {
-            if flags.cancel.load(Ordering::Acquire) {
-                drop(file);
-                let _ = std::fs::remove_file(&partial);
-                return Err(TtsDownloadErr::Cancelled);
-            }
-            if flags.pause.load(Ordering::Acquire) {
-                return Err(TtsDownloadErr::Paused);
-            }
-            let next =
-                block_on(resp.chunk()).map_err(|e| TtsDownloadErr::Network(e.to_string()))?;
-            let Some(bytes) = next else { break };
-            file.write_all(&bytes)
-                .map_err(|e| TtsDownloadErr::Network(e.to_string()))?;
-            downloaded += bytes.len() as u64;
-            on_bytes(downloaded);
-        }
-        drop(file);
-        std::fs::rename(&partial, target).map_err(|e| TtsDownloadErr::Network(e.to_string()))?;
-        Ok(())
     }
 
     /// Delete a model's cached files (whole-model). Emits cache-changed.
     pub fn delete(&self, model_id: &str) {
+        let Some(model_id) = catalog_model_id(model_id) else {
+            log::warn!("[tts] refusing to delete unknown TTS model cache id: {model_id}");
+            return;
+        };
         let dir = self.model_cache_dir(model_id);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = self
@@ -526,3 +627,38 @@ impl std::fmt::Display for TtsDownloadErr {
     }
 }
 impl std::error::Error for TtsDownloadErr {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_total_prefers_known_manifest_sum_over_stale_fallback() {
+        assert_eq!(
+            TtsDownloadManager::aggregate_total(&[100, 200, 300], 1_000),
+            600
+        );
+    }
+
+    #[test]
+    fn aggregate_total_uses_fallback_until_every_file_size_is_known() {
+        assert_eq!(
+            TtsDownloadManager::aggregate_total(&[100, 0, 300], 1_000),
+            1_000
+        );
+    }
+
+    #[test]
+    fn catalog_model_id_rejects_path_components() {
+        assert_eq!(catalog_model_id("../kokoro-82m"), None);
+        assert_eq!(catalog_model_id("kokoro-82m/../../x"), None);
+        assert_eq!(catalog_model_id("kokoro-82m"), Some("kokoro-82m"));
+    }
+
+    #[test]
+    fn kokoro_voice_id_rejects_path_components() {
+        assert_eq!(kokoro_voice_id("../af_heart"), None);
+        assert_eq!(kokoro_voice_id("af_heart/../../x"), None);
+        assert_eq!(kokoro_voice_id("af_heart"), Some("af_heart"));
+    }
+}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { onAudioDeviceChangeDetected } from "@/shared/api/ipc-client";
 
 /**
  * One ``audiooutput`` device entry, denormalized from
@@ -6,15 +7,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * DOM type (which isn't available in unit tests without jsdom shims).
  */
 export interface OutputDevice {
-	deviceId: string;
-	isDefault: boolean;
-	label: string;
+  deviceId: string;
+  isDefault: boolean;
+  label: string;
 }
 
 interface UseOutputDevicesResult {
-	defaultDevice: OutputDevice | null;
-	devices: OutputDevice[];
-	refresh: () => Promise<void>;
+  defaultDevice: OutputDevice | null;
+  devices: OutputDevice[];
+  refresh: () => Promise<void>;
 }
 
 /**
@@ -22,24 +23,72 @@ interface UseOutputDevicesResult {
  * ``devicechange`` events from drivers coalesce into one re-enumeration.
  */
 const DEVICECHANGE_DEBOUNCE_MS = 200;
-const DEVICE_POLL_INTERVAL_MS = 1000;
 
 function areOutputDeviceListsEqual(
-	a: readonly OutputDevice[],
-	b: readonly OutputDevice[]
+  a: readonly OutputDevice[],
+  b: readonly OutputDevice[],
 ): boolean {
-	if (a.length !== b.length) {
-		return false;
-	}
-	return a.every((device, index) => {
-		const other = b[index];
-		return (
-			other !== undefined &&
-			device.deviceId === other.deviceId &&
-			device.label === other.label &&
-			device.isDefault === other.isDefault
-		);
-	});
+  if (a.length !== b.length) {
+    return false;
+  }
+  return a.every((device, index) => {
+    const other = b[index];
+    return (
+      other !== undefined &&
+      device.deviceId === other.deviceId &&
+      device.label === other.label &&
+      device.isDefault === other.isDefault
+    );
+  });
+}
+
+let outputDeviceCache: OutputDevice[] = [];
+let outputDeviceRefreshInFlight: Promise<void> | null = null;
+const outputDeviceSubscribers = new Set<(devices: OutputDevice[]) => void>();
+
+function publishOutputDevices(next: OutputDevice[]): void {
+  if (areOutputDeviceListsEqual(outputDeviceCache, next)) {
+    return;
+  }
+  outputDeviceCache = next;
+  for (const subscriber of outputDeviceSubscribers) {
+    subscriber(next);
+  }
+}
+
+function refreshOutputDeviceCache(): Promise<void> {
+  if (outputDeviceRefreshInFlight) {
+    return outputDeviceRefreshInFlight;
+  }
+  if (typeof navigator === "undefined" || !navigator.mediaDevices) {
+    return Promise.resolve();
+  }
+  outputDeviceRefreshInFlight = navigator.mediaDevices
+    .enumerateDevices()
+    .then((raw) => {
+      const outputs: OutputDevice[] = [];
+      let fallbackCounter = 1;
+      for (const d of raw) {
+        if (d.kind !== "audiooutput") {
+          continue;
+        }
+        // Special ``default`` / ``communications`` deviceIds appear on
+        // Chromium; the first non-special entry is the system default.
+        // `isDefault` is set on the entry whose deviceId equals ``default``
+        // (Chromium emits it as a dedicated row before the actual default
+        // device) so the consumer can highlight it.
+        outputs.push({
+          deviceId: d.deviceId,
+          label: d.label || `Output ${fallbackCounter++}`,
+          isDefault: d.deviceId === "default",
+        });
+      }
+      publishOutputDevices(outputs);
+    })
+    .finally(() => {
+      outputDeviceRefreshInFlight = null;
+    });
+  return outputDeviceRefreshInFlight;
 }
 
 /**
@@ -47,10 +96,10 @@ function areOutputDeviceListsEqual(
  * ``navigator.mediaDevices.enumerateDevices()`` (filtered to
  * ``kind === "audiooutput"``).
  *
- * Why the renderer-side enumeration (vs. PyAudio for inputs): output
+ * Why the renderer-side enumeration (vs. backend-side input enumeration): output
  * device routing is handled in the renderer — recording-sound chimes
  * play via ``HTMLAudioElement``, TTS plays via ``AudioContext``, both
- * accept ``setSinkId(deviceId)``. Python never sees the deviceId, so
+ * accept ``setSinkId(deviceId)``. The backend never sees the deviceId, so
  * adding an IPC enumeration just for outputs would be redundant.
  *
  * Permissions: enumerateDevices() returns empty ``label`` strings until
@@ -61,64 +110,56 @@ function areOutputDeviceListsEqual(
  * / ``Output 2`` / ... so the picker is still usable.
  */
 export function useOutputDevices(): UseOutputDevicesResult {
-	const [devices, setDevices] = useState<OutputDevice[]>([]);
-	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [devices, setDevices] = useState<OutputDevice[]>(
+    () => outputDeviceCache,
+  );
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	const refresh = useCallback(async () => {
-		if (typeof navigator === "undefined" || !navigator.mediaDevices) {
-			return;
-		}
-		const raw = await navigator.mediaDevices.enumerateDevices();
-		const outputs: OutputDevice[] = [];
-		let fallbackCounter = 1;
-		for (const d of raw) {
-			if (d.kind !== "audiooutput") {
-				continue;
-			}
-			// Special ``default`` / ``communications`` deviceIds appear on
-			// Chromium; the first non-special entry is the system default.
-			// `isDefault` is set on the entry whose deviceId equals ``default``
-			// (Chromium emits it as a dedicated row before the actual default
-			// device) so the consumer can highlight it.
-			outputs.push({
-				deviceId: d.deviceId,
-				label: d.label || `Output ${fallbackCounter++}`,
-				isDefault: d.deviceId === "default",
-			});
-		}
-		setDevices((current) => (areOutputDeviceListsEqual(current, outputs) ? current : outputs));
-	}, []);
+  const refresh = useCallback(() => refreshOutputDeviceCache(), []);
 
-	useEffect(() => {
-		const refreshSafely = () => {
-			refresh().catch(() => undefined);
-		};
-		refreshSafely();
-		const mediaDevices = typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
-		if (!mediaDevices) {
-			return;
-		}
-		const pollId = setInterval(refreshSafely, DEVICE_POLL_INTERVAL_MS);
-		const handler = () => {
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
-			}
-			debounceRef.current = setTimeout(() => {
-				debounceRef.current = null;
-				refreshSafely();
-			}, DEVICECHANGE_DEBOUNCE_MS);
-		};
-		mediaDevices.addEventListener("devicechange", handler);
-		return () => {
-			clearInterval(pollId);
-			mediaDevices.removeEventListener("devicechange", handler);
-			if (debounceRef.current) {
-				clearTimeout(debounceRef.current);
-				debounceRef.current = null;
-			}
-		};
-	}, [refresh]);
+  useEffect(() => {
+    outputDeviceSubscribers.add(setDevices);
+    setDevices(outputDeviceCache);
+    return () => {
+      outputDeviceSubscribers.delete(setDevices);
+    };
+  }, []);
 
-	const defaultDevice = devices.find((d) => d.isDefault) ?? devices[0] ?? null;
-	return { devices, defaultDevice, refresh };
+  useEffect(() => {
+    const refreshSafely = () => {
+      refresh().catch(() => undefined);
+    };
+    const scheduleRefresh = () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        refreshSafely();
+      }, DEVICECHANGE_DEBOUNCE_MS);
+    };
+    refreshSafely();
+    const offDeviceChangeDetected =
+      onAudioDeviceChangeDetected(scheduleRefresh);
+    const mediaDevices =
+      typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
+    mediaDevices?.addEventListener("devicechange", scheduleRefresh);
+    return () => {
+      offDeviceChangeDetected();
+      mediaDevices?.removeEventListener("devicechange", scheduleRefresh);
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+  }, [refresh]);
+
+  const defaultDevice = devices.find((d) => d.isDefault) ?? devices[0] ?? null;
+  return { devices, defaultDevice, refresh };
+}
+
+export function _resetOutputDevicesCacheForTests(): void {
+  outputDeviceCache = [];
+  outputDeviceRefreshInFlight = null;
+  outputDeviceSubscribers.clear();
 }

@@ -2,8 +2,12 @@ import { describe, expect, mock, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
-import { __author_filter_submenu_test_helpers__ as helpers } from "../lib/author-filter-submenu-test-helpers";
+import * as components from "../lib/author-filter-submenu-components";
+import * as renderHelpers from "../lib/author-filter-submenu-render";
+import * as utils from "../lib/author-filter-submenu-utils";
 import { AuthorFilterSubmenu } from "./AuthorFilterSubmenu";
+
+const helpers = { ...components, ...renderHelpers, ...utils };
 
 // Contained boundary cast — the mock only implements `stopPropagation`, the one
 // MouseEvent member handleFavoriteButtonClick touches. The runtime object is

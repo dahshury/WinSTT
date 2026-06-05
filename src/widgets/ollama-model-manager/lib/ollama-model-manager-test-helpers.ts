@@ -25,8 +25,3 @@ export function createHandlePull(
 		}
 	};
 }
-
-export const __ollama_model_manager_test_helpers__ = {
-	buildTabOptions,
-	createHandlePull,
-};

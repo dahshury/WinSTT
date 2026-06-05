@@ -15,7 +15,7 @@ describe("computeIslandSize", () => {
 				isSpeaking: false,
 				isThinking: false,
 				hasShownText: false,
-			})
+			}),
 		).toBe("empty");
 	});
 
@@ -32,7 +32,19 @@ describe("computeIslandSize", () => {
 				isSpeaking: false,
 				isThinking: true,
 				hasShownText: false,
-			})
+			}),
+		).toBe("compactMedium");
+	});
+
+	test("transcribing with NO captioned text stays compact", () => {
+		expect(
+			computeIslandSize({
+				isRecordingActive: true,
+				isSpeaking: false,
+				isThinking: false,
+				isTranscribing: true,
+				hasShownText: false,
+			}),
 		).toBe("compactMedium");
 	});
 
@@ -46,7 +58,7 @@ describe("computeIslandSize", () => {
 				isSpeaking: false,
 				isThinking: true,
 				hasShownText: true,
-			})
+			}),
 		).toBe("long");
 	});
 
@@ -57,7 +69,7 @@ describe("computeIslandSize", () => {
 				isSpeaking: false,
 				isThinking: false,
 				hasShownText: false,
-			})
+			}),
 		).toBe("compact");
 	});
 
@@ -68,7 +80,7 @@ describe("computeIslandSize", () => {
 				isSpeaking: true,
 				isThinking: false,
 				hasShownText: false,
-			})
+			}),
 		).toBe("compactMedium");
 	});
 
@@ -83,7 +95,7 @@ describe("computeIslandSize", () => {
 				isSpeaking: true,
 				isThinking: false,
 				hasShownText: true,
-			})
+			}),
 		).toBe("long");
 	});
 
@@ -97,7 +109,7 @@ describe("computeIslandSize", () => {
 				isSpeaking: true,
 				isThinking: false,
 				hasShownText: false,
-			})
+			}),
 		).toBe("compactMedium");
 	});
 
@@ -110,7 +122,7 @@ describe("computeIslandSize", () => {
 				isSpeaking: true,
 				isThinking: true,
 				hasShownText: true,
-			})
+			}),
 		).toBe("long");
 	});
 });

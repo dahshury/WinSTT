@@ -1,4 +1,4 @@
-; Custom NSIS template for Handy with portable mode support.
+; Custom NSIS template for WinSTT with portable mode support.
 ; Based on tauri-apps/tauri@tauri-v2.9.1 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
 ; Portable changes are marked with "; --- PORTABLE MODE ---" comments.
 ;
@@ -191,13 +191,13 @@ Function PageInstallType
   ${NSD_CreateLabel} 0 0 100% 24u "Choose whether to perform a normal installation or a portable installation."
   Pop $0
 
-  ${NSD_CreateRadioButton} 30u 35u -30u 12u "Normal Installation (recommended)"
+  ${NSD_CreateRadioButton} 30u 35u -30u 12u "Normal Installation"
   Pop $InstallTypeRadioNormal
 
   ${NSD_CreateLabel} 44u 49u -44u 20u "Installs to your system with Start Menu shortcuts, uninstaller, and auto-update support."
   Pop $0
 
-  ${NSD_CreateRadioButton} 30u 75u -30u 12u "Portable Installation"
+  ${NSD_CreateRadioButton} 30u 75u -30u 12u "Portable Installation (recommended)"
   Pop $InstallTypeRadioPortable
 
   ${NSD_CreateLabel} 44u 89u -44u 20u "Self-contained folder with no registry changes, shortcuts, or uninstaller. Data stored next to the app."
@@ -217,7 +217,7 @@ Function PageLeaveInstallType
   ${NSD_GetState} $InstallTypeRadioPortable $0
   ${If} $0 = ${BST_CHECKED}
     StrCpy $PortableMode 1
-    ; --- PORTABLE MODE --- Switch default directory to Desktop\Handy for portable
+    ; --- PORTABLE MODE --- Switch default directory to Desktop\WinSTT for portable
     ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ${OrIf} $INSTDIR == "$LOCALAPPDATA\${PRODUCTNAME}"
       StrCpy $INSTDIR "$DESKTOP\${PRODUCTNAME}"
@@ -553,6 +553,11 @@ Function .onInit
     StrCpy $PortableMode 1
   ${EndIf}
 
+  ; --- PORTABLE MODE --- The published Windows exe is portable by default.
+  ${If} $PortableMode <> 1
+    StrCpy $PortableMode 1
+  ${EndIf}
+
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
   !endif
@@ -587,17 +592,19 @@ Function .onInit
 
 
   ; --- PORTABLE MODE --- Auto-detect portable mode during updates.
-  ; Preserve portable installs that use either the current magic-string marker
-  ; or the legacy empty marker created by older Handy releases. Require Data/
-  ; for the legacy empty-marker case so stale scoop side-effect files do not
-  ; accidentally opt an updater run into portable mode.
+  ; Preserve portable installs that use either the current WinSTT marker,
+  ; Handy's legacy marker from the fork source, or the legacy empty marker.
+  ; Require Data/ for the legacy empty-marker case so stale scoop side-effect
+  ; files do not accidentally opt an updater run into portable mode.
   ${If} $PortableMode <> 1
   ${AndIf} $UpdateMode = 1
   ${AndIf} ${FileExists} "$INSTDIR\portable"
     FileOpen $1 "$INSTDIR\portable" r
     FileRead $1 $2
     FileClose $1
-    ${If} $2 == "Handy Portable Mode"
+    ${If} $2 == "WinSTT Portable Mode"
+      StrCpy $PortableMode 1
+    ${OrIf} $2 == "Handy Portable Mode"
       StrCpy $PortableMode 1
     ${OrIf} $2 == ""
     ${AndIf} ${FileExists} "$INSTDIR\Data"
@@ -768,7 +775,7 @@ Section Install
   ; --- PORTABLE MODE --- Create portable marker and Data directory
   ${If} $PortableMode = 1
     FileOpen $0 "$INSTDIR\portable" w
-    FileWrite $0 "Handy Portable Mode"
+    FileWrite $0 "WinSTT Portable Mode"
     FileClose $0
     CreateDirectory "$INSTDIR\Data"
     DetailPrint "Portable mode: created marker file and Data directory."

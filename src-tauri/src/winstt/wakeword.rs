@@ -7,7 +7,7 @@
 //   server/src/recorder/infrastructure/composite_wake_word.py
 //   server/src/recorder/bootstrap.py (WAKE_WORD_BACKENDS registry, L938-945)
 //   frontend/src/shared/config/settings-schema.ts (general.wakeWord/wakeWordSensitivity/wakeWordTimeout)
-//   docs/port/05_wakeword_diarization_loopback_wordts.md (§A)
+//   docs/archive/port/05_wakeword_diarization_loopback_wordts.md (§A)
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // REAL sherpa-onnx 1.13.2 KWS API (the ONLY thing that changed vs the sherpa-rs draft):
@@ -65,8 +65,14 @@
 // helpers (presets / keyword-file builder / sensitivity mapping) never touched the
 // FFI and keep their own unit tests.
 
+use std::collections::HashSet;
+use std::ffi::CString;
+use std::fs;
+use std::os::raw::{c_char, c_float, c_int, c_short, c_void};
 use std::path::{Path, PathBuf};
 
+use libloading::Library;
+use sentencepiece_rs::SentencePieceProcessor;
 use sherpa_onnx::{
     KeywordSpotter, KeywordSpotterConfig, OnlineModelConfig, OnlineStream,
     OnlineTransducerModelConfig,
@@ -183,6 +189,10 @@ pub const WAKE_WORD_PRESETS: &[WakeWordPreset] = &[
         phrase: "ok google",
     },
     WakeWordPreset {
+        name: "pico clock",
+        phrase: "pico clock",
+    },
+    WakeWordPreset {
         name: "picovoice",
         phrase: "picovoice",
     },
@@ -208,6 +218,83 @@ pub const WAKE_WORD_PRESETS: &[WakeWordPreset] = &[
         phrase: "hey rhasspy",
     },
 ];
+
+/// Wake-word runtime chosen for a persisted wake-word value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakeWordRuntimeEngine {
+    /// Legacy pvporcupine 1.9.5, downloaded at runtime and used for its bundled
+    /// built-in `.ppn` phrases only.
+    LegacyPorcupine,
+    /// sherpa-onnx open-vocabulary KWS, used for custom typed phrases and for
+    /// presets that do not have a redistributable Porcupine 1.9.5 model.
+    SherpaKws,
+}
+
+impl WakeWordRuntimeEngine {
+    pub fn id(self) -> &'static str {
+        match self {
+            WakeWordRuntimeEngine::LegacyPorcupine => "porcupine-legacy",
+            WakeWordRuntimeEngine::SherpaKws => "sherpa-kws",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WakeWordRuntimeEngine::LegacyPorcupine => "Porcupine built-in wake words",
+            WakeWordRuntimeEngine::SherpaKws => "sherpa-onnx custom wake words",
+        }
+    }
+
+    pub fn accuracy_label(self) -> &'static str {
+        match self {
+            WakeWordRuntimeEngine::LegacyPorcupine => "High accuracy built-in",
+            WakeWordRuntimeEngine::SherpaKws => "Lower accuracy custom",
+        }
+    }
+
+    pub fn download_size_label(self) -> &'static str {
+        match self {
+            WakeWordRuntimeEngine::LegacyPorcupine => "about 2 MB",
+            WakeWordRuntimeEngine::SherpaKws => "about 17 MB",
+        }
+    }
+}
+
+/// Cross-platform built-ins present in pvporcupine 1.9.5 for Windows, macOS
+/// x86_64, and Linux x86_64. Linux has a few extra `.ppn` files; keep the shared
+/// subset so the UI behaves consistently across desktop targets.
+pub const LEGACY_PORCUPINE_KEYWORDS: &[&str] = &[
+    "alexa",
+    "americano",
+    "blueberry",
+    "bumblebee",
+    "computer",
+    "grapefruit",
+    "grasshopper",
+    "hey google",
+    "hey siri",
+    "jarvis",
+    "ok google",
+    "pico clock",
+    "picovoice",
+    "porcupine",
+    "terminator",
+];
+
+pub fn wakeword_runtime_engine_for_name(name: &str) -> WakeWordRuntimeEngine {
+    if is_legacy_porcupine_keyword(name) && LegacyPorcupinePaths::platform_supported() {
+        WakeWordRuntimeEngine::LegacyPorcupine
+    } else {
+        WakeWordRuntimeEngine::SherpaKws
+    }
+}
+
+pub fn is_legacy_porcupine_keyword(name: &str) -> bool {
+    let normalized = normalize_name(name);
+    LEGACY_PORCUPINE_KEYWORDS
+        .iter()
+        .any(|keyword| normalize_name(keyword) == normalized)
+}
 
 /// Resolve a persisted wake-word name into the phrase to spot.
 ///
@@ -259,13 +346,12 @@ fn normalize_name(name: &str) -> String {
 //        ▁HE Y ▁S I RI :2.0 #0.35 @hey siri
 //        └─ tokens ──┘ └boost┘└thresh┘ └─ label ─┘
 //
-//    The token half is produced by `sherpa-onnx-cli text2token` (BPE over the
-//    model's bpe.model + tokens.txt). We do NOT reimplement BPE here — that is a
-//    model-coupled subprocess/FFI step (see SPEC §A in 05_*.md). What IS
-//    deterministic and testable is assembling the content from already-tokenized
-//    phrases plus the per-keyword sensitivity → `#threshold` mapping. The builder
-//    below operates on `KeywordSpec` rows whose `.tokens` came from text2token,
-//    and is the load-bearing logic for the per-keyword UX caveat.
+//    The token half is produced by the same SentencePiece BPE model used by
+//    `sherpa-onnx-cli text2token` (`bpe.model` + `tokens.txt`). The builder below
+//    stays deterministic and testable by accepting already-tokenized
+//    `KeywordSpec` rows; the runtime manager gets those rows from
+//    `tokenize_phrase_for_kws_model`, which prefers the bundled `bpe.model` and
+//    falls back to token-vocabulary matching if the model is unavailable.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// One fully-resolved keyword line to emit into the keywords content.
@@ -273,7 +359,8 @@ fn normalize_name(name: &str) -> String {
 pub struct KeywordSpec {
     /// Space-separated BPE tokens, e.g. `"▁HE Y ▁S I RI"` (from text2token).
     pub tokens: String,
-    /// Human-readable label echoed on a hit (the `@…` half).
+    /// Label echoed on a hit (the `@…` half). sherpa parses keyword lines by
+    /// whitespace, so this value must not contain spaces.
     pub label: String,
     /// Optional per-keyword boost (`keywords_score` override, `:value`).
     pub boost: Option<f32>,
@@ -343,7 +430,9 @@ pub fn build_keywords_file(specs: &[KeywordSpec]) -> String {
 /// (fires more easily). In sherpa-onnx KWS a HIGHER `keywords_threshold`/`#t`
 /// means a STRICTER match (the decoded token score must clear it). So we INVERT:
 ///
-///     threshold = THRESHOLD_MAX - sensitivity * (THRESHOLD_MAX - THRESHOLD_MIN)
+/// ```text
+/// threshold = THRESHOLD_MAX - sensitivity * (THRESHOLD_MAX - THRESHOLD_MIN)
+/// ```
 ///
 /// With the defaults below, sensitivity 0.6 → threshold ≈ 0.22, i.e. close to
 /// sherpa's documented default of 0.25 — preserving WinSTT's out-of-box feel.
@@ -367,21 +456,17 @@ pub fn sensitivity_to_threshold(sensitivity: f32) -> f32 {
 //    already be a token present in the model's `tokens.txt`, or the WHOLE line is
 //    rejected as OOV (`has_oov` → `EncodeBase` returns false → `KeywordSpotter`
 //    drops that keyword). The BPE `text2token` step (`sherpa-onnx-cli text2token`)
-//    is an OFFLINE preprocessing step that runs SentencePiece over `bpe.model`.
-//    We cannot run SentencePiece offline here (no `.model` reader, no subprocess),
-//    so we use two layers:
+//    runs SentencePiece over `bpe.model`; the app mirrors that in-process with
+//    `sentencepiece-rs`, then keeps two fallbacks:
 //
 //    1. A VERIFIED static map of the canonical preset phrases → their gigaspeech
-//       BPE token strings (taken from the upstream `text2token` doc examples — the
-//       `▁`-prefixed sentencepiece form). This is the optimal, fewest-decode-steps
-//       tokenization for the built-in wake words.
-//    2. A CHARACTER fallback for anything else (custom phrases, or presets the map
-//       doesn't cover): split each word into `▁<first-char> <char> <char> …`. Every
-//       single character (and its `▁`-prefixed word-start form) is GUARANTEED to be
-//       in the BPE `tokens.txt` of these models, so the line is never OOV-rejected.
-//       The transducer still reaches the keyword's terminal state — it just walks
-//       one char per step instead of one BPE piece, costing a few extra decode
-//       steps but never failing. This is the safe, always-valid path.
+//       BPE token strings. This keeps built-ins stable and avoids loading
+//       SentencePiece in unit tests.
+//    2. A token-vocabulary fallback for anything else if `bpe.model` is missing:
+//       greedily split each upper-case word into valid `tokens.txt` pieces, then
+//       fall back to character pieces only when no longer BPE piece matches. The
+//       line stays OOV-safe, but exact SentencePiece tokenization remains the
+//       preferred runtime path.
 //
 //    Both produce the exact `<space-separated tokens>` half of a keyword line; the
 //    `#threshold`/`@label` suffixes are added by [`build_keyword_content`].
@@ -400,13 +485,25 @@ const BPE_WORD_PREFIX: char = '▁';
 /// [`char_tokenize_phrase`], so a missing/incorrect entry only costs decode steps,
 /// never correctness.
 const PRESET_BPE_TOKENS: &[(&str, &str)] = &[
-    // Multi-word — verbatim from upstream `text2token` BPE examples.
+    // Generated from the bundle's `bpe.model` with SentencePiece. Keep labels
+    // keyed by resolved phrase (not persisted preset name).
+    ("alexa", "▁A LE X A"),
+    ("americano", "▁AMERICA N O"),
+    ("blueberry", "▁B LU E BER RY"),
+    ("bumblebee", "▁BU M B LE B E E"),
+    ("computer", "▁COMP U TER"),
+    ("grapefruit", "▁GRA PE F RU IT"),
+    ("grasshopper", "▁GRA S S HO P PER"),
     ("hey siri", "▁HE Y ▁S I RI"),
     ("hey google", "▁HE Y ▁GO O G LE"),
     ("ok google", "▁O K ▁GO O G LE"),
-    ("hey jarvis", "▁HE Y ▁J AR VI S"),
-    ("hey mycroft", "▁HE Y ▁MY CRO FT"),
-    ("hey rhasspy", "▁HE Y ▁R HA S S P Y"),
+    ("jarvis", "▁JA R VI S"),
+    ("picovoice", "▁PI CO VO IC E"),
+    ("porcupine", "▁P OR C U P IN E"),
+    ("terminator", "▁ TER M IN AT OR"),
+    ("hey jarvis", "▁HE Y ▁JA R VI S"),
+    ("hey mycroft", "▁HE Y ▁MY C RO F T"),
+    ("hey rhasspy", "▁HE Y ▁ R HA S S P Y"),
 ];
 
 /// Tokenize a resolved phrase into the space-separated token half of a keyword
@@ -418,12 +515,112 @@ pub fn tokenize_phrase(phrase: &str) -> String {
     if normalized.is_empty() {
         return String::new();
     }
-    for (name, tokens) in PRESET_BPE_TOKENS {
-        if *name == normalized {
-            return (*tokens).to_string();
-        }
+    if let Some(tokens) = preset_bpe_tokens(&normalized) {
+        return tokens.to_string();
     }
     char_tokenize_phrase(&normalized)
+}
+
+pub fn load_token_vocabulary(tokens_path: &Path) -> Result<HashSet<String>, String> {
+    let raw = fs::read_to_string(tokens_path)
+        .map_err(|err| format!("read KWS tokens file {}: {err}", tokens_path.display()))?;
+    let mut vocab = HashSet::new();
+    for line in raw.lines() {
+        let Some(token) = line.split_whitespace().next() else {
+            continue;
+        };
+        if !token.is_empty() {
+            vocab.insert(token.to_string());
+        }
+    }
+    if vocab.is_empty() {
+        return Err(format!(
+            "KWS tokens file {} did not contain any symbols",
+            tokens_path.display()
+        ));
+    }
+    Ok(vocab)
+}
+
+pub fn tokenize_phrase_for_kws_model(
+    phrase: &str,
+    model: &KwsModelPaths,
+) -> Result<String, String> {
+    let bpe_path = model.bpe_model();
+    if bpe_path.exists() {
+        if let Ok(tokens) = tokenize_phrase_with_sentencepiece(phrase, &bpe_path) {
+            return Ok(tokens);
+        }
+    }
+    let vocab = load_token_vocabulary(&model.tokens)?;
+    Ok(tokenize_phrase_with_vocabulary(phrase, &vocab))
+}
+
+pub fn tokenize_phrase_with_sentencepiece(phrase: &str, bpe_path: &Path) -> Result<String, String> {
+    let normalized = phrase.trim().to_lowercase();
+    if normalized.is_empty() {
+        return Ok(String::new());
+    }
+    let processor = SentencePieceProcessor::open(bpe_path)
+        .map_err(|err| format!("load KWS SentencePiece model {}: {err}", bpe_path.display()))?;
+    let pieces = processor
+        .encode(&normalized.to_uppercase())
+        .map_err(|err| format!("tokenize KWS phrase '{normalized}': {err}"))?;
+    Ok(pieces.join(" "))
+}
+
+pub fn tokenize_phrase_with_vocabulary(phrase: &str, vocab: &HashSet<String>) -> String {
+    let normalized = phrase.trim().to_lowercase();
+    if normalized.is_empty() {
+        return String::new();
+    }
+    if let Some(tokens) = preset_bpe_tokens(&normalized) {
+        return tokens.to_string();
+    }
+    if vocab.is_empty() {
+        return tokenize_phrase(&normalized);
+    }
+
+    let mut pieces = Vec::new();
+    for word in normalized.split_whitespace() {
+        let encoded_word = format!("{BPE_WORD_PREFIX}{}", word.to_uppercase());
+        let mut remaining = encoded_word.as_str();
+        while !remaining.is_empty() {
+            if let Some(piece) = longest_vocab_prefix(remaining, vocab) {
+                pieces.push(piece.to_string());
+                remaining = &remaining[piece.len()..];
+                continue;
+            }
+
+            let mut chars = remaining.chars();
+            let Some(first) = chars.next() else {
+                break;
+            };
+            pieces.push(first.to_string());
+            remaining = chars.as_str();
+        }
+    }
+    pieces.join(" ")
+}
+
+fn preset_bpe_tokens(phrase: &str) -> Option<&'static str> {
+    PRESET_BPE_TOKENS
+        .iter()
+        .find_map(|(name, tokens)| (*name == phrase).then_some(*tokens))
+}
+
+fn longest_vocab_prefix<'a>(text: &'a str, vocab: &HashSet<String>) -> Option<&'a str> {
+    let mut best = None;
+    for (idx, _) in text.char_indices().skip(1) {
+        let candidate = &text[..idx];
+        if vocab.contains(candidate) {
+            best = Some(candidate);
+        }
+    }
+    if vocab.contains(text) {
+        best = Some(text);
+    }
+    best
 }
 
 /// Character-level fallback tokenizer (always in-vocab → never OOV-rejected).
@@ -461,10 +658,23 @@ fn char_tokenize_phrase(phrase: &str) -> String {
 /// active keyword" (detector not built).
 pub fn build_keyword_content(phrase: &str, sensitivity: f32) -> String {
     let tokens = tokenize_phrase(phrase);
+    build_keyword_content_from_tokens(phrase, sensitivity, tokens)
+}
+
+pub fn build_keyword_content_with_vocabulary(
+    phrase: &str,
+    sensitivity: f32,
+    vocab: &HashSet<String>,
+) -> String {
+    let tokens = tokenize_phrase_with_vocabulary(phrase, vocab);
+    build_keyword_content_from_tokens(phrase, sensitivity, tokens)
+}
+
+fn build_keyword_content_from_tokens(phrase: &str, sensitivity: f32, tokens: String) -> String {
     if tokens.is_empty() {
         return String::new();
     }
-    let label = phrase.trim().to_lowercase();
+    let label = keyword_label(phrase);
     let spec = KeywordSpec {
         tokens,
         label,
@@ -474,17 +684,27 @@ pub fn build_keyword_content(phrase: &str, sensitivity: f32) -> String {
     build_keywords_file(std::slice::from_ref(&spec))
 }
 
+/// Label used after `@` in sherpa keyword content. It must be a single
+/// whitespace-free token; map it back to the display phrase after detection.
+pub fn keyword_label(phrase: &str) -> String {
+    phrase
+        .trim()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 4. Configuration — the inputs the manager needs to stand up a KeywordSpotter.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /// Inference provider for the KWS session.
 ///
-/// INVARIANT (PORT/README §Conventions, 03_stt_engine.md): the zipformer KWS
-/// transducer runs fine on DirectML, but we default to CPU because the KWS
-/// session is tiny (~3 MB) and runs continuously — keeping the GPU free for the
-/// STT model swap. The Silero VAD CPU-only invariant is unrelated (different
-/// session) but the same conservative posture applies here.
+/// INVARIANT: the KWS session is tiny and runs continuously, so keep it on CPU
+/// regardless of the STT accelerator. This also avoids sherpa-onnx's DirectML
+/// provider probe during startup, which logs a misleading "DirectML is for
+/// Windows only" fallback from the native library on some Windows builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WakeWordProvider {
     #[default]
@@ -493,6 +713,10 @@ pub enum WakeWordProvider {
 }
 
 impl WakeWordProvider {
+    pub fn from_stt_accelerator(_accel: crate::winstt::stt::Accelerator) -> Self {
+        WakeWordProvider::Cpu
+    }
+
     /// String passed into sherpa's `OnlineModelConfig::provider`.
     pub fn as_sherpa_str(self) -> &'static str {
         match self {
@@ -505,8 +729,8 @@ impl WakeWordProvider {
 /// Paths to the four files of a sherpa-onnx KWS zipformer model bundle.
 /// (encoder/decoder/joiner ONNX + tokens.txt). Downloaded once from the
 /// `kws-models` GitHub release — e.g. `sherpa-onnx-kws-zipformer-gigaspeech-3.3M`
-/// (English) or `…-zh-en-3M-2025-12-20` (bilingual). bpe.model lives alongside
-/// and is consumed by the text2token step (SPEC §A), not at runtime.
+/// (English) or `…-zh-en-3M-2025-12-20` (bilingual). `bpe.model` lives alongside
+/// these files and is used at runtime for exact keyword tokenization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KwsModelPaths {
     pub encoder: PathBuf,
@@ -523,7 +747,11 @@ pub const KWS_BUNDLE_DIRNAME: &str = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-
 pub const KWS_ENCODER_FILE: &str = "encoder-epoch-12-avg-2-chunk-16-left-64.onnx";
 pub const KWS_DECODER_FILE: &str = "decoder-epoch-12-avg-2-chunk-16-left-64.onnx";
 pub const KWS_JOINER_FILE: &str = "joiner-epoch-12-avg-2-chunk-16-left-64.onnx";
+pub const KWS_ENCODER_INT8_FILE: &str = "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx";
+pub const KWS_DECODER_INT8_FILE: &str = "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx";
+pub const KWS_JOINER_INT8_FILE: &str = "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx";
 pub const KWS_TOKENS_FILE: &str = "tokens.txt";
+pub const KWS_BPE_FILE: &str = "bpe.model";
 
 impl KwsModelPaths {
     /// Resolve the four bundle files under `bundle_dir` (the directory the model
@@ -538,6 +766,17 @@ impl KwsModelPaths {
         }
     }
 
+    /// Resolve the quantized int8 model files in the same upstream bundle.
+    /// The token vocabulary is shared with the fp32 files.
+    pub fn from_bundle_dir_int8(bundle_dir: &Path) -> Self {
+        KwsModelPaths {
+            encoder: bundle_dir.join(KWS_ENCODER_INT8_FILE),
+            decoder: bundle_dir.join(KWS_DECODER_INT8_FILE),
+            joiner: bundle_dir.join(KWS_JOINER_INT8_FILE),
+            tokens: bundle_dir.join(KWS_TOKENS_FILE),
+        }
+    }
+
     /// True only when all four required files exist on disk (a complete bundle).
     /// The detector cannot stand up against a partial download, so the manager
     /// gates `WakeWordDetector::new` on this.
@@ -546,6 +785,119 @@ impl KwsModelPaths {
             && self.decoder.exists()
             && self.joiner.exists()
             && self.tokens.exists()
+    }
+
+    pub fn bpe_model(&self) -> PathBuf {
+        self.tokens
+            .parent()
+            .map(|dir| dir.join(KWS_BPE_FILE))
+            .unwrap_or_else(|| PathBuf::from(KWS_BPE_FILE))
+    }
+}
+
+/// Extracted pvporcupine 1.9.5 wheel layout under the app data wakeword dir.
+/// The detector loads the native library dynamically so the main binary does not
+/// link against or bundle Porcupine by default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyPorcupinePaths {
+    pub root: PathBuf,
+}
+
+impl LegacyPorcupinePaths {
+    pub const DIRNAME: &'static str = "pvporcupine-1.9.5";
+
+    pub fn from_root(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    pub fn library(&self) -> PathBuf {
+        self.package_root().join(Self::library_relative_path())
+    }
+
+    pub fn model(&self) -> PathBuf {
+        self.package_root()
+            .join("lib")
+            .join("common")
+            .join("porcupine_params.pv")
+    }
+
+    pub fn keyword(&self, keyword: &str) -> PathBuf {
+        self.package_root()
+            .join("resources")
+            .join("keyword_files")
+            .join(Self::keyword_platform_dir())
+            .join(format!(
+                "{}_{}.ppn",
+                normalize_name(keyword),
+                Self::keyword_platform_suffix()
+            ))
+    }
+
+    pub fn all_present_for_keyword(&self, keyword: &str) -> bool {
+        self.library().exists() && self.model().exists() && self.keyword(keyword).exists()
+    }
+
+    pub fn platform_supported() -> bool {
+        Self::library_relative_path_opt().is_some()
+    }
+
+    fn package_root(&self) -> PathBuf {
+        self.root.join("pvporcupine")
+    }
+
+    fn library_relative_path() -> PathBuf {
+        Self::library_relative_path_opt().unwrap_or_else(|| PathBuf::from("__unsupported__"))
+    }
+
+    fn library_relative_path_opt() -> Option<PathBuf> {
+        #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+        {
+            return Some(PathBuf::from("lib/windows/amd64/libpv_porcupine.dll"));
+        }
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            return Some(PathBuf::from("lib/linux/x86_64/libpv_porcupine.so"));
+        }
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        {
+            return Some(PathBuf::from("lib/mac/x86_64/libpv_porcupine.dylib"));
+        }
+        #[allow(unreachable_code)]
+        None
+    }
+
+    fn keyword_platform_dir() -> &'static str {
+        #[cfg(target_os = "windows")]
+        {
+            return "windows";
+        }
+        #[cfg(target_os = "linux")]
+        {
+            return "linux";
+        }
+        #[cfg(target_os = "macos")]
+        {
+            return "mac";
+        }
+        #[allow(unreachable_code)]
+        "unsupported"
+    }
+
+    fn keyword_platform_suffix() -> &'static str {
+        #[cfg(target_os = "windows")]
+        {
+            return "windows";
+        }
+        #[cfg(target_os = "linux")]
+        {
+            return "linux";
+        }
+        #[cfg(target_os = "macos")]
+        {
+            return "mac";
+        }
+        #[allow(unreachable_code)]
+        "unsupported"
     }
 }
 
@@ -571,6 +923,8 @@ pub struct WakeWordConfig {
     /// carry it for the manager to read.
     pub timeout_seconds: f32,
     pub num_threads: Option<i32>,
+    /// Global sherpa `keywords_score`. `None` keeps the WinSTT default.
+    pub keywords_score: Option<f32>,
 }
 
 impl WakeWordConfig {
@@ -588,7 +942,7 @@ impl WakeWordConfig {
     /// (≤2 syllables) get a recall spike when boosted — see the SHORT-TRIGGER note
     /// in 05_*.md (mitigated per-keyword via `:boost`/`#threshold` suffixes).
     pub fn default_boost(&self) -> f32 {
-        3.0
+        self.keywords_score.unwrap_or(3.0)
     }
 
     /// Resolve the keyword content the detector should hand to sherpa, preferring
@@ -711,9 +1065,10 @@ impl WakeWordDetector {
             Some(result) if !result.keyword.trim().is_empty() => {
                 let label = result.keyword;
                 let idx = self.index_of(&label);
+                let word = self.display_word_for_label(&label, idx);
                 // Re-arm: clear the terminal state so we don't double-fire.
                 self.spotter.reset(&self.stream);
-                WakeWordResult::hit(idx, label)
+                WakeWordResult::hit(idx, word)
             }
             _ => WakeWordResult::none(),
         }
@@ -721,12 +1076,21 @@ impl WakeWordDetector {
 
     /// Map a detected label back to its position in the active keyword list.
     fn index_of(&self, label: &str) -> i32 {
-        let needle = label.trim().to_lowercase();
+        let needle = normalize_keyword_label(label);
         self.keywords
             .iter()
-            .position(|k| k.trim().to_lowercase() == needle)
+            .position(|k| normalize_keyword_label(k) == needle)
             .map(|p| p as i32)
             .unwrap_or(-1)
+    }
+
+    fn display_word_for_label(&self, label: &str, index: i32) -> String {
+        if index >= 0 {
+            if let Some(keyword) = self.keywords.get(index as usize) {
+                return keyword.clone();
+            }
+        }
+        label.trim().replace('_', " ")
     }
 
     /// Number of active keywords this detector is armed for.
@@ -741,6 +1105,163 @@ impl WakeWordDetector {
 
     /// No-op today (sherpa owns the session); kept for `IWakeWordDetector` parity.
     pub fn cleanup(&mut self) {}
+}
+
+type PvPorcupineInit = unsafe extern "C" fn(
+    *const c_char,
+    c_int,
+    *const *const c_char,
+    *const c_float,
+    *mut *mut c_void,
+) -> c_int;
+type PvPorcupineDelete = unsafe extern "C" fn(*mut c_void);
+type PvPorcupineProcess = unsafe extern "C" fn(*mut c_void, *const c_short, *mut c_int) -> c_int;
+type PvPorcupineFrameLength = unsafe extern "C" fn() -> c_int;
+type PvSampleRate = unsafe extern "C" fn() -> c_int;
+
+/// Runtime-loaded pvporcupine 1.9.5 detector for bundled built-in `.ppn`
+/// phrases. The wheel is downloaded/extracted on demand by the manager; this
+/// wrapper only validates the files and calls the C API.
+pub struct LegacyPorcupineDetector {
+    _library: Library,
+    handle: *mut c_void,
+    delete: PvPorcupineDelete,
+    process: PvPorcupineProcess,
+    frame_length: usize,
+    sample_rate: i32,
+    keyword: String,
+    pending: Vec<i16>,
+}
+
+// The native handle is only touched while the manager holds its detector mutex.
+unsafe impl Send for LegacyPorcupineDetector {}
+
+impl LegacyPorcupineDetector {
+    pub fn new(
+        paths: &LegacyPorcupinePaths,
+        keyword: &str,
+        sensitivity: f32,
+    ) -> anyhow::Result<Self> {
+        if !paths.all_present_for_keyword(keyword) {
+            anyhow::bail!(
+                "legacy Porcupine files for '{}' are incomplete under {}",
+                keyword,
+                paths.root.display()
+            );
+        }
+
+        let model = cstring_path(&paths.model())?;
+        let keyword_path = cstring_path(&paths.keyword(keyword))?;
+        let keyword_paths = [keyword_path.as_ptr()];
+        let sensitivities = [sensitivity.clamp(0.0, 1.0) as c_float];
+
+        let library = unsafe { Library::new(paths.library())? };
+        let init: PvPorcupineInit = unsafe { *library.get(b"pv_porcupine_init\0")? };
+        let delete: PvPorcupineDelete = unsafe { *library.get(b"pv_porcupine_delete\0")? };
+        let process: PvPorcupineProcess = unsafe { *library.get(b"pv_porcupine_process\0")? };
+        let frame_length_fn: PvPorcupineFrameLength =
+            unsafe { *library.get(b"pv_porcupine_frame_length\0")? };
+        let sample_rate_fn: PvSampleRate = unsafe { *library.get(b"pv_sample_rate\0")? };
+
+        let mut handle: *mut c_void = std::ptr::null_mut();
+        let status = unsafe {
+            init(
+                model.as_ptr(),
+                1,
+                keyword_paths.as_ptr(),
+                sensitivities.as_ptr(),
+                &mut handle,
+            )
+        };
+        if status != 0 || handle.is_null() {
+            anyhow::bail!("pv_porcupine_init failed with status {status}");
+        }
+
+        let frame_length = unsafe { frame_length_fn() };
+        let sample_rate = unsafe { sample_rate_fn() };
+        if frame_length <= 0 {
+            unsafe { delete(handle) };
+            anyhow::bail!("pv_porcupine_frame_length returned {frame_length}");
+        }
+        if sample_rate != 16_000 {
+            unsafe { delete(handle) };
+            anyhow::bail!("pv_sample_rate returned {sample_rate}; expected 16000");
+        }
+
+        Ok(Self {
+            _library: library,
+            handle,
+            delete,
+            process,
+            frame_length: frame_length as usize,
+            sample_rate,
+            keyword: normalize_name(keyword),
+            pending: Vec::with_capacity(frame_length as usize * 2),
+        })
+    }
+
+    pub fn detect(&mut self, chunk: &[f32]) -> WakeWordResult {
+        if chunk.is_empty() {
+            return WakeWordResult::none();
+        }
+
+        self.pending.extend(chunk.iter().map(|sample| {
+            let clamped = sample.clamp(-1.0, 1.0);
+            (clamped * i16::MAX as f32) as i16
+        }));
+
+        let mut consumed = 0usize;
+        while self.pending.len().saturating_sub(consumed) >= self.frame_length {
+            let frame = &self.pending[consumed..consumed + self.frame_length];
+            let mut result = -1;
+            let status = unsafe { (self.process)(self.handle, frame.as_ptr(), &mut result) };
+            consumed += self.frame_length;
+            if status != 0 {
+                log::warn!("pv_porcupine_process failed with status {status}");
+                break;
+            }
+            if result >= 0 {
+                self.pending.drain(..consumed);
+                return WakeWordResult::hit(result, self.keyword.clone());
+            }
+        }
+
+        if consumed > 0 {
+            self.pending.drain(..consumed);
+        }
+        WakeWordResult::none()
+    }
+
+    pub fn reset(&mut self) {
+        self.pending.clear();
+    }
+
+    pub fn sample_rate(&self) -> i32 {
+        self.sample_rate
+    }
+}
+
+impl Drop for LegacyPorcupineDetector {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { (self.delete)(self.handle) };
+            self.handle = std::ptr::null_mut();
+        }
+    }
+}
+
+fn cstring_path(path: &Path) -> anyhow::Result<CString> {
+    if !path.exists() {
+        anyhow::bail!("Porcupine path does not exist: {}", path.display());
+    }
+    let s = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Porcupine path is not valid UTF-8: {}", path.display()))?;
+    CString::new(s).map_err(|err| anyhow::anyhow!("Porcupine path contains NUL byte: {err}"))
+}
+
+fn normalize_keyword_label(label: &str) -> String {
+    label.trim().to_lowercase().replace('_', " ")
 }
 
 /// Validate a model path exists and render it as a UTF-8 string for the FFI
@@ -806,6 +1327,35 @@ mod tests {
     }
 
     // ── name normalization ─────────────────────────────────────────────────
+
+    #[test]
+    fn legacy_porcupine_keywords_are_known_builtins() {
+        assert!(is_legacy_porcupine_keyword("alexa"));
+        assert!(is_legacy_porcupine_keyword("hey_google"));
+        assert!(is_legacy_porcupine_keyword("pico clock"));
+        assert!(!is_legacy_porcupine_keyword("hey winstt"));
+    }
+
+    #[test]
+    fn runtime_engine_routes_custom_phrases_to_sherpa() {
+        assert_eq!(
+            wakeword_runtime_engine_for_name("hey winstt"),
+            WakeWordRuntimeEngine::SherpaKws
+        );
+    }
+
+    #[cfg(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "x86_64")
+    ))]
+    #[test]
+    fn runtime_engine_routes_supported_builtins_to_legacy_porcupine() {
+        assert_eq!(
+            wakeword_runtime_engine_for_name("computer"),
+            WakeWordRuntimeEngine::LegacyPorcupine
+        );
+    }
 
     #[test]
     fn normalize_collapses_separators() {
@@ -926,7 +1476,9 @@ mod tests {
 
     #[test]
     fn tokenize_known_preset_uses_verified_bpe() {
-        // Verbatim from the upstream text2token BPE example.
+        // Generated from the bundle's bpe.model with SentencePiece.
+        assert_eq!(tokenize_phrase("alexa"), "▁A LE X A");
+        assert_eq!(tokenize_phrase("computer"), "▁COMP U TER");
         assert_eq!(tokenize_phrase("hey siri"), "▁HE Y ▁S I RI");
         assert_eq!(tokenize_phrase("HEY SIRI"), "▁HE Y ▁S I RI");
         assert_eq!(tokenize_phrase("ok google"), "▁O K ▁GO O G LE");
@@ -934,9 +1486,26 @@ mod tests {
 
     #[test]
     fn tokenize_unknown_phrase_falls_back_to_chars() {
-        // "alexa" isn't in the BPE map → char fallback (always in-vocab).
-        assert_eq!(tokenize_phrase("alexa"), "▁A L E X A");
-        assert_eq!(tokenize_phrase("computer"), "▁C O M P U T E R");
+        assert_eq!(tokenize_phrase("hey winstt"), "▁H E Y ▁W I N S T T");
+        assert_eq!(tokenize_phrase("custom"), "▁C U S T O M");
+    }
+
+    #[test]
+    fn tokenize_with_vocabulary_prefers_model_native_pieces() {
+        let vocab = HashSet::from([
+            "▁N".to_string(),
+            "OV".to_string(),
+            "A".to_string(),
+            "▁W".to_string(),
+            "IN".to_string(),
+            "S".to_string(),
+            "T".to_string(),
+        ]);
+        assert_eq!(tokenize_phrase_with_vocabulary("nova", &vocab), "▁N OV A");
+        assert_eq!(
+            tokenize_phrase_with_vocabulary("winstt", &vocab),
+            "▁W IN S T T"
+        );
     }
 
     #[test]
@@ -953,9 +1522,9 @@ mod tests {
 
     #[test]
     fn build_keyword_content_emits_tokens_threshold_label() {
-        // alexa @0.6 sensitivity → #0.22, char-tokenized, labelled.
+        // alexa @0.6 sensitivity → #0.22, exact BPE-tokenized, labelled.
         let body = build_keyword_content("alexa", 0.6);
-        assert_eq!(body, "▁A L E X A #0.22 @alexa\n");
+        assert_eq!(body, "▁A LE X A #0.22 @alexa\n");
         assert!(body.ends_with('\n'));
     }
 
@@ -967,7 +1536,25 @@ mod tests {
     #[test]
     fn build_keyword_content_preset_uses_bpe_tokens() {
         let body = build_keyword_content("hey siri", 0.6);
-        assert_eq!(body, "▁HE Y ▁S I RI #0.22 @hey siri\n");
+        assert_eq!(body, "▁HE Y ▁S I RI #0.22 @hey_siri\n");
+    }
+
+    #[test]
+    fn keyword_label_is_single_sherpa_token() {
+        assert_eq!(keyword_label("hey google"), "hey_google");
+        assert_eq!(keyword_label("  HEY   WinSTT  "), "hey_winstt");
+    }
+
+    #[test]
+    fn build_keyword_content_with_vocabulary_uses_runtime_tokens() {
+        let vocab = HashSet::from([
+            "▁A".to_string(),
+            "LE".to_string(),
+            "X".to_string(),
+            "A".to_string(),
+        ]);
+        let body = build_keyword_content_with_vocabulary("alexa", 0.6, &vocab);
+        assert_eq!(body, "▁A LE X A #0.22 @alexa\n");
     }
 
     // ── KWS bundle path resolution ─────────────────────────────────────────
@@ -977,6 +1564,16 @@ mod tests {
         let dir = Path::new("/tmp/kws");
         let paths = KwsModelPaths::from_bundle_dir(dir);
         assert_eq!(paths.encoder, dir.join(KWS_ENCODER_FILE));
+        assert_eq!(paths.tokens, dir.join(KWS_TOKENS_FILE));
+    }
+
+    #[test]
+    fn kws_int8_paths_from_bundle_dir_joins_quantized_files() {
+        let dir = Path::new("/tmp/kws");
+        let paths = KwsModelPaths::from_bundle_dir_int8(dir);
+        assert_eq!(paths.encoder, dir.join(KWS_ENCODER_INT8_FILE));
+        assert_eq!(paths.decoder, dir.join(KWS_DECODER_INT8_FILE));
+        assert_eq!(paths.joiner, dir.join(KWS_JOINER_INT8_FILE));
         assert_eq!(paths.tokens, dir.join(KWS_TOKENS_FILE));
     }
 
@@ -1012,6 +1609,22 @@ mod tests {
         assert_eq!(WakeWordProvider::default(), WakeWordProvider::Cpu);
     }
 
+    #[test]
+    fn wakeword_provider_stays_cpu_for_all_stt_accelerators() {
+        assert_eq!(
+            WakeWordProvider::from_stt_accelerator(crate::winstt::stt::Accelerator::DirectMl),
+            WakeWordProvider::Cpu
+        );
+        assert_eq!(
+            WakeWordProvider::from_stt_accelerator(crate::winstt::stt::Accelerator::Cpu),
+            WakeWordProvider::Cpu
+        );
+        assert_eq!(
+            WakeWordProvider::from_stt_accelerator(crate::winstt::stt::Accelerator::Cuda),
+            WakeWordProvider::Cpu
+        );
+    }
+
     // ── config thresholds ──────────────────────────────────────────────────
 
     fn sample_config() -> WakeWordConfig {
@@ -1029,6 +1642,7 @@ mod tests {
             sensitivity: 0.6,
             timeout_seconds: 5.0,
             num_threads: None,
+            keywords_score: None,
         }
     }
 

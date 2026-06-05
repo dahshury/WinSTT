@@ -11,20 +11,26 @@ import {
  * State held by the resource-aware fitness UI.
  *
  * ``liveResources`` is refreshed:
- *   - once when the settings panel opens (lazy, on first use of the store)
- *   - on demand via ``refresh()`` (manual button + after a model swap completes)
+ *   - when the settings panel / detached picker opens
+ *   - while the settings sidebar is mounted (light polling for the footer meters)
+ *   - on demand via ``refresh()`` after model-cache or swap events
  *
  * It is *not* polled — per the design decision the picker rows render
  * against the most recent snapshot and the server-authoritative call
  * fires only on the actual selection click.
+ *
+ * The settings sidebar footer is now the exception: it polls lightly while
+ * visible so its RAM/VRAM meters stay current.
  */
 export interface SystemResourcesStore {
 	assessDictationFitOnServer: (
 		modelId: string,
 		quantization?: string,
-		device?: string | null
+		device?: string | null,
 	) => Promise<FitAssessmentEntry | null>;
-	assessOllamaFitOnServer: (sizeBytes: number) => Promise<FitAssessmentEntry | null>;
+	assessOllamaFitOnServer: (
+		sizeBytes: number,
+	) => Promise<FitAssessmentEntry | null>;
 	error: string | null;
 	isLoading: boolean;
 	lastFetchedAt: number | null;
@@ -36,10 +42,12 @@ export interface SystemResourcesStore {
 type Setter = (
 	partial:
 		| Partial<SystemResourcesStore>
-		| ((state: SystemResourcesStore) => Partial<SystemResourcesStore>)
+		| ((state: SystemResourcesStore) => Partial<SystemResourcesStore>),
 ) => void;
 
-function snapshotPatch(snapshot: LiveResourcesEntry | null): Partial<SystemResourcesStore> {
+export function snapshotPatch(
+	snapshot: LiveResourcesEntry | null,
+): Partial<SystemResourcesStore> {
 	return {
 		liveResources: snapshot,
 		isLoading: false,
@@ -48,15 +56,18 @@ function snapshotPatch(snapshot: LiveResourcesEntry | null): Partial<SystemResou
 	};
 }
 
-function errorMessage(err: unknown): string {
+export function errorMessage(err: unknown): string {
 	return err instanceof Error ? err.message : "unknown";
 }
 
-function errorPatch(err: unknown): Partial<SystemResourcesStore> {
+export function errorPatch(err: unknown): Partial<SystemResourcesStore> {
 	return { isLoading: false, error: errorMessage(err) };
 }
 
-async function performRefresh(set: Setter, forceRefresh: boolean): Promise<void> {
+async function performRefresh(
+	set: Setter,
+	forceRefresh: boolean,
+): Promise<void> {
 	set({ isLoading: true, error: null });
 	try {
 		const snapshot = await fetchLiveResources(forceRefresh);
@@ -85,12 +96,11 @@ export const useSystemResourcesStore = create<SystemResourcesStore>((set) => ({
 	},
 
 	reset() {
-		set({ liveResources: null, isLoading: false, error: null, lastFetchedAt: null });
+		set({
+			liveResources: null,
+			isLoading: false,
+			error: null,
+			lastFetchedAt: null,
+		});
 	},
 }));
-
-export const __system_resources_store_test_helpers__ = {
-	errorMessage,
-	errorPatch,
-	snapshotPatch,
-};

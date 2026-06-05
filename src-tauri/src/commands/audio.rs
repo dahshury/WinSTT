@@ -1,6 +1,6 @@
 use crate::audio_feedback;
 use crate::audio_toolkit::audio::{list_input_devices, list_output_devices};
-use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
+use crate::managers::audio::AudioRecordingManager;
 use crate::settings::{get_settings, write_settings};
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -151,33 +151,6 @@ pub fn open_microphone_privacy_settings() -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn update_microphone_mode(app: AppHandle, always_on: bool) -> Result<(), String> {
-    // Update settings
-    let mut settings = get_settings(&app);
-    settings.always_on_microphone = always_on;
-    write_settings(&app, settings);
-
-    // Update the audio manager mode
-    let rm = app.state::<Arc<AudioRecordingManager>>();
-    let new_mode = if always_on {
-        MicrophoneMode::AlwaysOn
-    } else {
-        MicrophoneMode::OnDemand
-    };
-
-    rm.update_mode(new_mode)
-        .map_err(|e| format!("Failed to update microphone mode: {}", e))
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn get_microphone_mode(app: AppHandle) -> Result<bool, String> {
-    let settings = get_settings(&app);
-    Ok(settings.always_on_microphone)
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn get_available_microphones() -> Result<Vec<AudioDevice>, String> {
     let devices =
         list_input_devices().map_err(|e| format!("Failed to list audio devices: {}", e))?;
@@ -256,6 +229,11 @@ pub fn set_selected_output_device(app: AppHandle, device_name: String) -> Result
         Some(device_name)
     };
     write_settings(&app, settings);
+
+    let rm = app.state::<Arc<AudioRecordingManager>>();
+    rm.update_selected_device()
+        .map_err(|e| format!("Failed to update selected device: {}", e))?;
+
     Ok(())
 }
 

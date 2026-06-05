@@ -25,5 +25,36 @@ describe("SubtitleOverlay", () => {
 		});
 		const { container } = render(<SubtitleOverlay />);
 		expect(container.textContent).toContain("Hello world.");
+		const line = container.querySelector<HTMLElement>("[data-subtitle-line]");
+		expect(line).not.toBeNull();
+		expect(line?.style.transition).toBe("opacity 140ms ease-out");
+	});
+
+	test("removes the normal subtitle layer after the final line exits", () => {
+		useTranscriptionStore.setState({
+			items: [
+				{
+					id: "1",
+					type: "final",
+					text: "Old final line.",
+					timestamp: Date.now() - 2000,
+				},
+			],
+			currentRealtime: "",
+			ephemeral: null,
+		});
+		const { container } = render(<SubtitleOverlay />);
+		expect(container.firstElementChild).toBeNull();
+	});
+
+	test("renders live text without the animated text-swap hook", () => {
+		useTranscriptionStore.setState({
+			items: [],
+			currentRealtime: "live words",
+			ephemeral: null,
+		});
+		const { container } = render(<SubtitleOverlay />);
+		expect(container.textContent).toContain("live words");
+		expect(container.querySelector(".t-text-swap")).toBeNull();
 	});
 });

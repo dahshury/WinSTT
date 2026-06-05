@@ -683,6 +683,7 @@ export function SttModelCard({
 		<ModelCard
 			actions={actions}
 			data-model-id={model.id}
+			description={model.description || undefined}
 			errorMessage={model.errorMessage}
 			favorite={
 				onToggleFavorite

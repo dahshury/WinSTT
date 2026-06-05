@@ -1,4 +1,4 @@
-// PORT IMPL — WU-3 hotkey (app/PORT/10_frontend_port_plan.md §6). Source:
+// PORT IMPL — WU-3 hotkey (docs/archive/port/10_frontend_port_plan.md §6). Source:
 // frontend/electron/ipc/hotkey.ts + the renderer wrappers in
 // src/shared/api/ipc-client.ts (hotkeyRegister / hotkeyUnregister /
 // hotkeyStartRecording / hotkeyStopRecording / onHotkeyPressed / onHotkeyReleased /
@@ -366,13 +366,63 @@ pub fn winstt_accel_to_handy(accel: &str) -> String {
         .join("+")
 }
 
+/// Translate WinSTT/reference accelerator names into `global-hotkey` / Tauri's
+/// parser vocabulary. Unlike handy-keys, global-hotkey does not preserve left/right
+/// modifier side and requires modifiers before a single non-modifier key.
+pub fn winstt_accel_to_tauri(accel: &str) -> String {
+    accel
+        .split('+')
+        .filter_map(|tok| {
+            let t = tok.trim();
+            if t.is_empty() {
+                return None;
+            }
+            Some(
+                match t.to_ascii_lowercase().as_str() {
+                    "lctrl" | "rctrl" | "ctrl_left" | "ctrl_right" | "ctrl" | "control" => "Ctrl",
+                    "lshift" | "rshift" | "shift_left" | "shift_right" | "shift" => "Shift",
+                    "lalt" | "ralt" | "alt_left" | "alt_right" | "altgr" | "alt" | "opt"
+                    | "option" => "Alt",
+                    "lmeta" | "rmeta" | "super_left" | "super_right" | "meta_left"
+                    | "meta_right" | "meta" | "super" | "win" | "windows" | "cmd" | "command" => {
+                        "Super"
+                    }
+                    "arrowleft" | "left" => "ArrowLeft",
+                    "arrowright" | "right" => "ArrowRight",
+                    "arrowup" | "up" => "ArrowUp",
+                    "arrowdown" | "down" => "ArrowDown",
+                    "forwarddelete" => "Delete",
+                    "backspace" => "Backspace",
+                    "escape" | "esc" => "Escape",
+                    "space" => "Space",
+                    "tab" => "Tab",
+                    "enter" | "return" => "Enter",
+                    s if s.len() == 1 && s.chars().all(|c| c.is_ascii_alphabetic()) => {
+                        return Some(s.to_ascii_uppercase());
+                    }
+                    other => other,
+                }
+                .to_string(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 /// `hotkey_start_recording` — begin capturing the next key combo for a rebind. Wraps
 /// Handy's key-recording listener AND installs the CaptureBridge translation so the
 /// per-key `handy-keys-event` stream becomes WinSTT's `hotkey:recording-update`
 /// {keys}. Returns whether capture started (`hotkeyStartRecording` reads a bool).
 #[tauri::command]
 #[specta::specta]
-pub fn hotkey_start_recording(app: AppHandle) -> bool {
+pub fn hotkey_start_recording(app: AppHandle, webview: tauri::WebviewWindow) -> bool {
+    if webview.label() != "settings" {
+        log::warn!(
+            "[hotkey] ignoring hotkey_start_recording from '{}' webview",
+            webview.label()
+        );
+        return false;
+    }
     // Install/refresh the translation bridge BEFORE starting the Handy listener so
     // no early key event is dropped.
     if let Some(bridge) = app.try_state::<CaptureBridge>() {
@@ -416,7 +466,14 @@ pub fn hotkey_start_recording(app: AppHandle) -> bool {
 /// nothing was captured / cancelled).
 #[tauri::command]
 #[specta::specta]
-pub fn hotkey_stop_recording(app: AppHandle) {
+pub fn hotkey_stop_recording(app: AppHandle, webview: tauri::WebviewWindow) {
+    if webview.label() != "settings" {
+        log::warn!(
+            "[hotkey] ignoring hotkey_stop_recording from '{}' webview",
+            webview.label()
+        );
+        return;
+    }
     let _ = crate::shortcut::handy_keys::stop_handy_keys_recording(app.clone());
     // Re-arm the PTT binding that `hotkey_start_recording` suspended.
     let _ = crate::shortcut::resume_binding(app.clone(), PTT_BINDING.to_string());
@@ -453,26 +510,33 @@ impl HotkeyEvents {
     /// combo capture. `onHotkeyRecordingUpdate` reads `.keys`. Keys are the WinSTT
     /// display names (e.g. `["LCtrl","LShift","V"]`), modifier-first.
     pub fn recording_update(app: &AppHandle, keys: &[String]) {
-        let _ = app.emit(
-            "hotkey:recording-update",
-            serde_json::json!({ "keys": keys }),
-        );
+        if let Some(settings) = app.get_webview_window("settings") {
+            let _ = settings.emit(
+                "hotkey:recording-update",
+                serde_json::json!({ "keys": keys }),
+            );
+        }
     }
 
     /// `hotkey:recording-done` — capture finished. `combo` is the `+`-joined combo
     /// (e.g. `"LCtrl+LShift+V"`) or `null` when nothing was captured / cancelled.
     /// `onHotkeyRecordingDone` reads `.combo`.
     pub fn recording_done(app: &AppHandle, combo: Option<&str>) {
-        let _ = app.emit(
-            "hotkey:recording-done",
-            serde_json::json!({ "combo": combo }),
-        );
+        if let Some(settings) = app.get_webview_window("settings") {
+            let _ = settings.emit(
+                "hotkey:recording-done",
+                serde_json::json!({ "combo": combo }),
+            );
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{handy_key_to_winstt_name, handy_string_to_winstt_names, winstt_accel_to_handy};
+    use super::{
+        handy_key_to_winstt_name, handy_string_to_winstt_names, winstt_accel_to_handy,
+        winstt_accel_to_tauri,
+    };
 
     #[test]
     fn lmeta_combo_translates_to_handy_super() {
@@ -507,6 +571,14 @@ mod tests {
         assert_eq!(winstt_accel_to_handy("LCtrl+ArrowUp"), "ctrl_left+up");
         assert_eq!(winstt_accel_to_handy("Delete"), "forwarddelete");
         assert_eq!(winstt_accel_to_handy("LCtrl+Space"), "ctrl_left+space");
+    }
+
+    #[test]
+    fn winstt_accel_maps_to_tauri_global_hotkey_names() {
+        assert_eq!(winstt_accel_to_tauri("LCtrl+LShift+V"), "Ctrl+Shift+V");
+        assert_eq!(winstt_accel_to_tauri("LMeta+LShift+E"), "Super+Shift+E");
+        assert_eq!(winstt_accel_to_tauri("ctrl_left+space"), "Ctrl+Space");
+        assert_eq!(winstt_accel_to_tauri("forwarddelete"), "Delete");
     }
 
     #[test]

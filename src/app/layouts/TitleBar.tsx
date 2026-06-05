@@ -1,15 +1,42 @@
 import { Separator } from "@base-ui/react/separator";
 import { Cancel01Icon, MinusSignIcon, Settings05Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import type { ReactNode } from "react";
+import { useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { HotkeyDisplay } from "@/features/push-to-talk";
 import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
+import { cn } from "@/shared/lib/cn";
 import { publicAsset } from "@/shared/lib/public-asset";
 import { diagBeacon } from "@/shared/lib/winstt-diag";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
+
+function TitleBarActionButton({
+	ariaLabel,
+	children,
+	className,
+	onActivate,
+}: {
+	ariaLabel: string;
+	children: ReactNode;
+	className: string;
+	onActivate: () => void;
+}) {
+	const activation = useTouchActivation(onActivate);
+	return (
+		<Button
+			aria-label={ariaLabel}
+			className={cn("titlebar-no-drag [touch-action:manipulation]", className)}
+			{...activation}
+		>
+			{children}
+		</Button>
+	);
+}
 
 export function TitleBar() {
 	const t = useTranslations("titleBar");
@@ -17,6 +44,10 @@ export function TitleBar() {
 	const barLevel = Math.min(substrate + 1, 8);
 	const hoverLevel = Math.min(barLevel + 2, 8);
 	const isConnected = useConnectionStore((s) => s.connectionStatus) === "connected";
+	const openSettings = useCallback(() => {
+		diagBeacon("main", "settings button onClick fired");
+		windowOpenSettings();
+	}, []);
 
 	return (
 		<SurfaceProvider value={barLevel}>
@@ -54,35 +85,32 @@ export function TitleBar() {
 				{/* Right: Settings gear + window controls */}
 				<div className="titlebar-no-drag flex items-center">
 					<Tooltip content={t("settings")}>
-						<Button
-							aria-label={t("settings")}
+						<TitleBarActionButton
+							ariaLabel={t("settings")}
 							className={`flex h-full w-8 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 ${surfaceHoverBg(hoverLevel)} hover:text-foreground-secondary`}
-							onClick={() => {
-								diagBeacon("main", "settings button onClick fired");
-								windowOpenSettings();
-							}}
+							onActivate={openSettings}
 						>
 							<HugeiconsIcon icon={Settings05Icon} size={13} />
-						</Button>
+						</TitleBarActionButton>
 					</Tooltip>
 					<Separator className="h-3 w-px self-center bg-border" orientation="vertical" />
 					<Tooltip content={t("minimize")}>
-						<Button
-							aria-label={t("minimize")}
+						<TitleBarActionButton
+							ariaLabel={t("minimize")}
 							className={`flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 ${surfaceHoverBg(hoverLevel)} hover:text-foreground-secondary`}
-							onClick={windowMinimize}
+							onActivate={windowMinimize}
 						>
 							<HugeiconsIcon icon={MinusSignIcon} size={12} />
-						</Button>
+						</TitleBarActionButton>
 					</Tooltip>
 					<Tooltip content={t("close")}>
-						<Button
-							aria-label={t("close")}
+						<TitleBarActionButton
+							ariaLabel={t("close")}
 							className="flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error hover:text-white"
-							onClick={windowClose}
+							onActivate={windowClose}
 						>
 							<HugeiconsIcon icon={Cancel01Icon} size={12} />
-						</Button>
+						</TitleBarActionButton>
 					</Tooltip>
 				</div>
 			</header>

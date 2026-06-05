@@ -36,6 +36,11 @@ type DropdownMenuContentProps = ComponentPropsWithoutRef<typeof MenuPrimitive.Po
 	style?: CSSProperties;
 };
 
+function dropdownOrigin(side: DropdownMenuContentProps["side"], align: DropdownMenuContentProps["align"]) {
+	const edge = align === "end" ? "right" : align === "center" ? "center" : "left";
+	return side === "top" ? `bottom-${edge}` : `top-${edge}`;
+}
+
 export function DropdownMenuContent({
 	className,
 	children,
@@ -59,10 +64,11 @@ export function DropdownMenuContent({
 				>
 					<MenuPrimitive.Popup
 						className={cn(
-							"min-w-[10rem] overflow-hidden rounded-md p-1 font-sans text-body text-foreground transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+							"t-dropdown min-w-[10rem] overflow-hidden rounded-md p-1 font-sans text-body text-foreground",
 							surfaceClasses(popupLevel, popupShadow),
 							className
 						)}
+						data-origin={dropdownOrigin(side, align)}
 						{...rest}
 					>
 						{children}
@@ -164,10 +170,11 @@ export function DropdownMenuSubContent({
 				>
 					<MenuPrimitive.Popup
 						className={cn(
-							"min-w-[10rem] overflow-hidden rounded-md p-1 font-sans text-body text-foreground transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+							"t-dropdown min-w-[10rem] overflow-hidden rounded-md p-1 font-sans text-body text-foreground",
 							surfaceClasses(popupLevel, popupShadow),
 							className
 						)}
+						data-origin="top-left"
 						{...rest}
 					>
 						{children}

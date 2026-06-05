@@ -21,14 +21,26 @@ import { IPC } from "@/shared/api/ipc-channels";
 
 mock.module("@/shared/api/ipc-client", () => ipcClientMock());
 
-const { useDeviceSwitchFeedback, __test_shouldResetSavedIndex } = await import(
-	"./use-device-switch-feedback"
+const {
+	useDeviceSwitchFeedback,
+	__test_shouldResetSavedIndex,
+	__test_shouldResetSavedOutputDevice,
+} = await import("./use-device-switch-feedback");
+const { _resetOutputDevicesCacheForTests } = await import(
+	"@/entities/audio-device/model/use-output-devices"
 );
 
 const originalNativeBridge = window.nativeBridge;
+const originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
+	navigator,
+	"mediaDevices"
+);
 
 // Capture mock-call records so each test can assert.
-const settingsSaveCalls: Array<{ audio: { inputDeviceIndex: number | null } | undefined }> = [];
+const settingsSaveCalls: Array<{
+	audio?: { inputDeviceIndex: number | null };
+	general?: { outputDeviceId?: string };
+}> = [];
 let onDeviceSwitchFailedCb:
 	| ((payload: {
 			errorMessage: string;
@@ -38,6 +50,7 @@ let onDeviceSwitchFailedCb:
 	| null = null;
 let audioGetDevicesImpl: () => Promise<Array<{ index: number; name: string; isDefault: boolean }>> =
 	async () => [];
+let outputEnumerateResult: Array<{ deviceId: string; kind: MediaDeviceKind; label: string }> = [];
 
 function installNativeBridgeStub(): void {
 	window.nativeBridge = {
@@ -69,6 +82,18 @@ function installNativeBridgeStub(): void {
 	};
 }
 
+function installMediaDevicesStub(): void {
+	const mediaDevices = {
+		addEventListener: () => undefined,
+		enumerateDevices: async () => outputEnumerateResult as unknown as MediaDeviceInfo[],
+		removeEventListener: () => undefined,
+	};
+	Object.defineProperty(navigator, "mediaDevices", {
+		configurable: true,
+		value: mediaDevices,
+	});
+}
+
 // Reset from the canonical schema defaults (deep-cloned) rather than an
 // import-time snapshot of the shared store — sibling suites mutate the global
 // `useSettingsStore` and module-eval order is not isolated, so a captured
@@ -80,8 +105,11 @@ function freshSettings() {
 beforeEach(() => {
 	settingsSaveCalls.length = 0;
 	audioGetDevicesImpl = async () => [];
+	outputEnumerateResult = [];
 	onDeviceSwitchFailedCb = null;
 	installNativeBridgeStub();
+	installMediaDevicesStub();
+	_resetOutputDevicesCacheForTests();
 	useSettingsStore.setState({
 		settings: {
 			...freshSettings(),
@@ -97,6 +125,12 @@ afterEach(() => {
 		act(() => handle.unmount());
 	}
 	window.nativeBridge = originalNativeBridge;
+	_resetOutputDevicesCacheForTests();
+	if (originalMediaDevicesDescriptor) {
+		Object.defineProperty(navigator, "mediaDevices", originalMediaDevicesDescriptor);
+	} else {
+		Reflect.deleteProperty(navigator, "mediaDevices");
+	}
 	useSettingsStore.setState({ settings: freshSettings() });
 	onDeviceSwitchFailedCb = null;
 	audioGetDevicesImpl = async () => [];
@@ -162,6 +196,47 @@ describe("useDeviceSwitchFeedback", () => {
 		expect(settingsSaveCalls.at(-1)?.audio?.inputDeviceIndex).toBe(null);
 	});
 
+	test("auto-resets output to system default when the saved output device disappears", async () => {
+		outputEnumerateResult = [
+			{ deviceId: "default", kind: "audiooutput", label: "Default Speakers" },
+			{ deviceId: "spk-live", kind: "audiooutput", label: "Built-in Speakers" },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: { ...freshSettings().audio, inputDeviceIndex: null },
+				general: { ...freshSettings().general, outputDeviceId: "bt-headset" },
+			},
+		});
+
+		renderHookWithProviders();
+
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.general?.outputDeviceId).toBe("");
+		});
+		expect(settingsSaveCalls.at(-1)?.general?.outputDeviceId).toBe("");
+	});
+
+	test("does not touch the saved output device when it is still in the live list", async () => {
+		outputEnumerateResult = [
+			{ deviceId: "default", kind: "audiooutput", label: "Default Speakers" },
+			{ deviceId: "bt-headset", kind: "audiooutput", label: "Bluetooth Headset" },
+		];
+		useSettingsStore.setState({
+			settings: {
+				...freshSettings(),
+				audio: { ...freshSettings().audio, inputDeviceIndex: null },
+				general: { ...freshSettings().general, outputDeviceId: "bt-headset" },
+			},
+		});
+
+		renderHookWithProviders();
+		await new Promise((r) => setTimeout(r, 20));
+
+		expect(useSettingsStore.getState().settings.general?.outputDeviceId).toBe("bt-headset");
+		expect(settingsSaveCalls.some((call) => call.general != null)).toBe(false);
+	});
+
 	test("does not touch the saved index when it matches a device in the live list", async () => {
 		audioGetDevicesImpl = async () => [
 			{ index: 6, name: "Microphone (Some Mic)", isDefault: true },
@@ -194,6 +269,28 @@ describe("useDeviceSwitchFeedback", () => {
 
 		test("true when the saved index is absent from a non-empty live list", () => {
 			expect(__test_shouldResetSavedIndex(42, list)).toBe(true);
+		});
+	});
+
+	describe("shouldResetSavedOutputDevice (pure)", () => {
+		const list = [{ deviceId: "default" }, { deviceId: "speaker-1" }];
+
+		test("false when no output device was saved", () => {
+			expect(__test_shouldResetSavedOutputDevice("", list)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice(null, list)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice(undefined, list)).toBe(false);
+		});
+
+		test("false while the output-device list is still empty", () => {
+			expect(__test_shouldResetSavedOutputDevice("speaker-1", [])).toBe(false);
+		});
+
+		test("false when the saved output device is present", () => {
+			expect(__test_shouldResetSavedOutputDevice("speaker-1", list)).toBe(false);
+		});
+
+		test("true when the saved output device is absent from a non-empty list", () => {
+			expect(__test_shouldResetSavedOutputDevice("bt-headset", list)).toBe(true);
 		});
 	});
 

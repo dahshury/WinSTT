@@ -1,4 +1,4 @@
-// PORT IMPL — WU-3 overlay visibility (app/PORT/10_frontend_port_plan.md §6).
+// PORT IMPL — WU-3 overlay visibility (docs/archive/port/10_frontend_port_plan.md §6).
 //
 // Source of truth: frontend/electron/ipc/overlay.ts (showOverlay / hideOverlay /
 // computeOverlayPosition / isOverlaySuppressedBySettings / repositionIfVisible).
@@ -22,15 +22,7 @@
 //   - floating-bottom                          → centered in work area, 60px gap
 //     above the taskbar.
 //
-// Wiring (REPORTED for lib.rs / handler — NOT edited here per HARD RULE):
-//   - The recording lifecycle (TranscribeAction::start/stop + cancel) must call
-//     `winstt::commands::overlay::show_recording_overlay(app)` /
-//     `hide_recording_overlay(app)` instead of Handy's `crate::overlay::*` so the
-//     RIGHT window (the renderer pill) is toggled. See libOther.
-//   - `general.overlayPosition` / `general.overlayMode` live-change → call
-//     `reposition_overlay_if_visible(app)`; flip to "none" → `hide_recording_overlay`.
-
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -47,9 +39,21 @@ const OVERLAY_LABEL: &str = "overlay";
 /// the previous session's grace-timer hide the freshly-shown pill.
 static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Native hit regions are accepted only while the overlay is intentionally
+/// visible. Hide disables this before the renderer's close animation can report
+/// stale rects back to Rust.
+static OVERLAY_HIT_REGIONS_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// The transparent overlay window can host both the STT pill and the TTS
+/// read-aloud island. Track each owner separately so hiding one does not tear
+/// down the other.
+static RECORDING_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
+static TTS_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 /// Overlay window inner size (logical px). Mirrors WINDOW_SPECS[overlay].
 const OVERLAY_WIDTH: f64 = 720.0;
 const OVERLAY_HEIGHT: f64 = 240.0;
+const OVERLAY_HIDE_GRACE_MS: u64 = 400;
 
 /// Grown overlay height while the editable preview-before-pasting pill is open.
 /// The multi-view edit/enhance/review content needs more room than the passive
@@ -59,6 +63,19 @@ const PREVIEW_OVERLAY_HEIGHT: f64 = 520.0;
 /// Gap above the work-area bottom edge for the floating-bottom layout. Matches
 /// the reference's `y = height - winHeight - 60` (computeOverlayPosition).
 const FLOATING_BOTTOM_GAP: f64 = 60.0;
+
+/// Renderer-measured rectangle, in overlay-window CSS/logical pixels, that
+/// should remain native-hit-testable. Windows applies this as the overlay HWND's
+/// region, so transparent pixels outside the actual pill surfaces do not block
+/// the app underneath while the overlay is interactive.
+#[derive(Clone, Debug, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayHitRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
 
 /// Resolved screen-edge for the overlay. Ports `resolveOverlayPosition`: "auto"
 /// degrades to `none` on Linux (unless WINSTT_FORCE_OVERLAY) and `bottom`
@@ -162,44 +179,59 @@ fn compute_overlay_position_h(
     Some((x, y))
 }
 
+/// Frame used while STT and TTS overlap: one transparent window spans from the
+/// top bezel to the normal floating-bottom baseline so TTS can keep the top
+/// island while STT uses the bottom pill.
+fn compute_stacked_overlay_frame(app: &AppHandle) -> Option<(f64, f64, f64)> {
+    let monitor = app.primary_monitor().ok().flatten()?;
+    let scale = monitor.scale_factor();
+    let mx = monitor.position().x as f64 / scale;
+    let my = monitor.position().y as f64 / scale;
+    let mw = monitor.size().width as f64 / scale;
+    let mh = monitor.size().height as f64 / scale;
+
+    let x = mx + ((mw - OVERLAY_WIDTH) / 2.0).round();
+    let height = (mh - FLOATING_BOTTOM_GAP).max(OVERLAY_HEIGHT).min(mh);
+    Some((x, my, height.round()))
+}
+
+fn ensure_overlay_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    match crate::winstt::commands::windows::ensure_window(app, OVERLAY_LABEL) {
+        Ok(w) => Some(w),
+        Err(_) => app.get_webview_window(OVERLAY_LABEL),
+    }
+}
+
 /// Position + reveal the overlay window without re-activating it (showInactive
 /// parity → no focus steal, so the user's target app stays the keyboard sink).
 /// `reason` ("recording" | "tts") is forwarded to the renderer's `show-overlay`
 /// event (informational; the OverlayPage paints from its Zustand stores either way).
-fn place_and_show(app: &AppHandle, mode: OverlayMode, edge: ResolvedPosition, reason: &str) {
-    // Lazily materialize the overlay window from its WINDOW_SPECS entry the first
-    // time a recording starts (the reference creates it eagerly at boot; here we create
-    // on demand so a never-recorded session never pays the webview cost). Falls
-    // back to a plain lookup if `ensure_window` ever fails.
-    let window = match crate::winstt::commands::windows::ensure_window(app, OVERLAY_LABEL) {
-        Ok(w) => w,
-        Err(_) => {
-            let Some(w) = app.get_webview_window(OVERLAY_LABEL) else {
-                return;
-            };
-            w
-        }
+fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>, reason: &str) {
+    // The overlay is normally prewarmed shortly after the main pill paints. Keep
+    // this idempotent ensure as a fallback for a recording that beats the prewarm.
+    let Some(window) = ensure_overlay_window(app) else {
+        return;
     };
     // Mark a fresh show so any in-flight deferred-hide thread cancels itself.
     OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
-    // Reset to the passive pill size — a previous (abandoned) preview may have
-    // grown the window; the recording/tts pills must always start at 720×240.
-    let _ = window.set_size(tauri::LogicalSize::new(OVERLAY_WIDTH, OVERLAY_HEIGHT));
-    if let Some((x, y)) = compute_overlay_position(app, mode, edge) {
+    OVERLAY_HIT_REGIONS_ENABLED.store(true, Ordering::SeqCst);
+    // Reset to the caller's footprint; preview and STT+TTS overlap both grow the
+    // window, and the next owner must not inherit that size.
+    let _ = window.set_size(tauri::LogicalSize::new(OVERLAY_WIDTH, height));
+    set_empty_overlay_hit_region(&window);
+    if let Some((x, y)) = position {
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     }
     // `show()` alone (no `set_focus`) keeps the pill from stealing keyboard focus
     // mid-dictation — the window is created with `focused(false)` + skip_taskbar +
     // ignore_cursor (WINDOW_SPECS[overlay]), so showing it does not activate it.
     let _ = window.show();
-    // Click-through policy depends on WHY we're showing:
-    //   - recording pill is PASSIVE — the user dictates into the app underneath, so
-    //     the window must NOT capture the cursor (stays click-through).
-    //   - TTS read-aloud island is INTERACTIVE — its pause/resume/stop/speed buttons
-    //     must be clickable, so the window must capture the cursor. (The window is
-    //     created `ignore_cursor: true`, so without this the TTS buttons were dead —
-    //     clicks fell straight through the island.)
-    let _ = window.set_ignore_cursor_events(reason != "tts");
+    // Recording and TTS both expose controls inside the overlay window (STT
+    // cancel X; TTS pause/resume/stop/speed), so the native window must capture
+    // cursor events while visible. The window is created `ignore_cursor: true`;
+    // if we leave that flag on, clicks fall through before the DOM button can
+    // receive them.
+    let _ = window.set_ignore_cursor_events(ignore_cursor_events_for_show_reason(reason));
     // On Windows, re-assert TOPMOST after showing (matches Handy's overlay path;
     // a fresh show can land below other always-on-top windows otherwise).
     #[cfg(target_os = "windows")]
@@ -207,6 +239,34 @@ fn place_and_show(app: &AppHandle, mode: OverlayMode, edge: ResolvedPosition, re
     // Tell the renderer the overlay window is now on screen (parity with Handy's
     // `show-overlay` event; the OverlayPage also self-clears on visibilitychange).
     let _ = window.emit("show-overlay", reason);
+}
+
+fn place_and_show(app: &AppHandle, mode: OverlayMode, edge: ResolvedPosition, reason: &str) {
+    place_and_show_at(
+        app,
+        OVERLAY_HEIGHT,
+        compute_overlay_position(app, mode, edge),
+        reason,
+    );
+}
+
+fn place_and_show_stacked(app: &AppHandle, reason: &str) {
+    match compute_stacked_overlay_frame(app) {
+        Some((x, y, height)) => place_and_show_at(app, height, Some((x, y)), reason),
+        None => place_and_show(
+            app,
+            OverlayMode::DynamicIsland,
+            ResolvedPosition::Top,
+            reason,
+        ),
+    }
+}
+
+/// Return the native cursor-ignore value for a newly-shown overlay.
+/// `true` means OS-level click-through; `false` means the WebView can receive
+/// mouse/touch input for its visible controls.
+fn ignore_cursor_events_for_show_reason(reason: &str) -> bool {
+    !matches!(reason, "recording" | "tts" | "preview")
 }
 
 /// Force the overlay topmost via Win32 (more reliable than always_on_top alone).
@@ -235,16 +295,137 @@ fn force_overlay_topmost(window: &tauri::WebviewWindow) {
 
 // ── Public lifecycle API (called from the recording pipeline — see libOther) ────
 
+#[cfg(target_os = "windows")]
+fn overlay_rect_to_physical(
+    rect: &OverlayHitRect,
+    scale_factor: f64,
+) -> Option<(i32, i32, i32, i32)> {
+    if rect.width <= 0.0 || rect.height <= 0.0 {
+        return None;
+    }
+    let left = (rect.x * scale_factor).floor().max(0.0) as i32;
+    let top = (rect.y * scale_factor).floor().max(0.0) as i32;
+    let right = ((rect.x + rect.width) * scale_factor).ceil().max(0.0) as i32;
+    let bottom = ((rect.y + rect.height) * scale_factor).ceil().max(0.0) as i32;
+    if right <= left || bottom <= top {
+        return None;
+    }
+    Some((left, top, right, bottom))
+}
+
+#[cfg(target_os = "windows")]
+fn apply_overlay_hit_regions(
+    window: &tauri::WebviewWindow,
+    rects: &[OverlayHitRect],
+) -> Result<(), String> {
+    use windows::Win32::Graphics::Gdi::{
+        CombineRgn, CreateRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
+    };
+
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().unwrap_or(1.0);
+
+    // Empty region = visible overlay can never capture a stale transparent box.
+    // The renderer sends a non-empty region as soon as a pill surface is present.
+    let combined = unsafe { CreateRectRgn(0, 0, 0, 0) };
+    if combined.is_invalid() {
+        return Err("failed to create overlay hit region".into());
+    }
+
+    for rect in rects.iter().take(16) {
+        let Some((left, top, right, bottom)) = overlay_rect_to_physical(rect, scale) else {
+            continue;
+        };
+        let part = unsafe { CreateRectRgn(left, top, right, bottom) };
+        if part.is_invalid() {
+            continue;
+        }
+        unsafe {
+            let _ = CombineRgn(Some(combined), Some(combined), Some(part), RGN_OR);
+            let _ = DeleteObject(part.into());
+        }
+    }
+
+    let ok = unsafe { SetWindowRgn(hwnd, Some(combined), true) };
+    if ok == 0 {
+        unsafe {
+            let _ = DeleteObject(combined.into());
+        }
+        return Err("failed to apply overlay hit region".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_overlay_hit_regions(
+    _window: &tauri::WebviewWindow,
+    _rects: &[OverlayHitRect],
+) -> Result<(), String> {
+    Ok(())
+}
+
+fn set_empty_overlay_hit_region(window: &tauri::WebviewWindow) {
+    if let Err(error) = apply_overlay_hit_regions(window, &[]) {
+        log::warn!("[overlay] failed to clear overlay hit region: {error}");
+    }
+}
+
+/// Renderer feedback loop for native hit-testing. The overlay window is larger
+/// than the visual pill so the renderer has layout room, but this command clips
+/// the native window to only the currently painted pill/control rectangles.
+#[tauri::command]
+#[specta::specta]
+pub fn set_overlay_hit_regions(app: AppHandle, rects: Vec<OverlayHitRect>) -> Result<(), String> {
+    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
+        return Ok(());
+    };
+    if !OVERLAY_HIT_REGIONS_ENABLED.load(Ordering::SeqCst) {
+        // During the close grace window, keep the last painted region alive.
+        // SetWindowRgn clips rendering, not just hit-testing, so clearing here
+        // would cut off the renderer's exit animation.
+        return Ok(());
+    }
+    apply_overlay_hit_regions(&window, &rects)
+}
+
 /// Show the WinSTT recording overlay, honoring the suppression gates + position.
 /// No-op (and HIDES any stray pill) when suppressed. Mirrors the reference `showOverlay`.
 pub fn show_recording_overlay(app: &AppHandle) {
     let Some(edge) = overlay_show_decision(app) else {
-        // Suppressed: make sure no stale pill is on screen.
-        hide_recording_overlay(app);
+        RECORDING_OVERLAY_ACTIVE.store(false, Ordering::SeqCst);
+        if TTS_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+            place_and_show(
+                app,
+                OverlayMode::DynamicIsland,
+                ResolvedPosition::Top,
+                "tts",
+            );
+        } else {
+            hide_overlay_window(app);
+        }
         return;
     };
+    RECORDING_OVERLAY_ACTIVE.store(true, Ordering::SeqCst);
+    if TTS_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+        place_and_show_stacked(app, "recording");
+        return;
+    }
     let mode = read_settings(app).general.overlay_mode;
     place_and_show(app, mode, edge, "recording");
+}
+
+/// Reserve the top island for a TTS request before audio starts. If STT is
+/// visible, immediately expand the shared overlay into the top+bottom layout;
+/// otherwise the window remains hidden until playback actually begins.
+pub fn reserve_tts_overlay(app: &AppHandle) {
+    TTS_OVERLAY_ACTIVE.store(true, Ordering::SeqCst);
+    if RECORDING_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+        place_and_show_stacked(app, "tts");
+    }
+}
+
+pub fn tts_overlay_is_active() -> bool {
+    TTS_OVERLAY_ACTIVE.load(Ordering::SeqCst)
 }
 
 /// Show the overlay window for a TTS read-aloud. The read-aloud island
@@ -253,9 +434,14 @@ pub fn show_recording_overlay(app: &AppHandle) {
 /// speed of a read — so we FORCE it top-centered and DON'T apply the recording
 /// overlay's suppression gates (mirrors the reference's forced read-aloud pill).
 /// The renderer paints the island purely from `ttsStatus`, so this only has to
-/// reveal + position the window; hide is the shared `hide_recording_overlay`
-/// (its show-generation guard correctly yields to a recording that takes over).
+/// reveal + position the window; hide is the owner-aware `hide_tts_overlay`
+/// path so an active STT pill can stay visible underneath.
 pub fn show_tts_overlay(app: &AppHandle) {
+    TTS_OVERLAY_ACTIVE.store(true, Ordering::SeqCst);
+    if RECORDING_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+        place_and_show_stacked(app, "tts");
+        return;
+    }
     place_and_show(
         app,
         OverlayMode::DynamicIsland,
@@ -264,25 +450,59 @@ pub fn show_tts_overlay(app: &AppHandle) {
     );
 }
 
-/// Hide the WinSTT recording overlay. Emits `hide-overlay` first so the renderer
+/// Hide the TTS owner of the shared overlay. If STT is still active, keep the
+/// window visible and hand it back to the STT layout instead of hiding it.
+pub fn hide_tts_overlay(app: &AppHandle) {
+    TTS_OVERLAY_ACTIVE.store(false, Ordering::SeqCst);
+    if !RECORDING_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+        hide_overlay_window(app);
+        return;
+    }
+    let Some(edge) = overlay_show_decision(app) else {
+        RECORDING_OVERLAY_ACTIVE.store(false, Ordering::SeqCst);
+        hide_overlay_window(app);
+        return;
+    };
+    let mode = read_settings(app).general.overlay_mode;
+    place_and_show(app, mode, edge, "recording");
+}
+
+/// Hide the STT owner of the shared overlay. If TTS is still active, preserve
+/// the read-aloud island instead of tearing down the whole window.
+pub fn hide_recording_overlay(app: &AppHandle) {
+    RECORDING_OVERLAY_ACTIVE.store(false, Ordering::SeqCst);
+    if TTS_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+        place_and_show(
+            app,
+            OverlayMode::DynamicIsland,
+            ResolvedPosition::Top,
+            "tts",
+        );
+    } else {
+        hide_overlay_window(app);
+    }
+}
+
+/// Hide the shared overlay window. Emits `hide-overlay` first so the renderer
 /// can play its slide-up exit, then hides the OS window after a short grace so the
 /// animation has time to land (mirrors the reference's DYNAMIC_ISLAND_HIDE_GRACE_MS).
-pub fn hide_recording_overlay(app: &AppHandle) {
+fn hide_overlay_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return;
     };
+    OVERLAY_HIT_REGIONS_ENABLED.store(false, Ordering::SeqCst);
     let _ = window.emit("hide-overlay", ());
-    // Restore click-through: a TTS read made the window interactive (cursor-capturing)
-    // for its buttons; once it's going away the overlay must not keep capturing the
-    // cursor (and the next recording pill must be passive again).
+    // Restore click-through while hidden so a stale transparent overlay can never
+    // keep capturing the cursor after the session/read has ended.
     let _ = window.set_ignore_cursor_events(true);
     // Snapshot the current generation; only hide if no newer show lands during the
     // grace window (the press→release→press race guard — the reference's `desired`).
     let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
     let win = window.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::thread::sleep(std::time::Duration::from_millis(OVERLAY_HIDE_GRACE_MS));
         if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation {
+            set_empty_overlay_hit_region(&win);
             let _ = win.hide();
         }
     });
@@ -297,6 +517,20 @@ pub fn reposition_overlay_if_visible(app: &AppHandle) {
         return;
     };
     if !window.is_visible().unwrap_or(false) {
+        return;
+    }
+    if RECORDING_OVERLAY_ACTIVE.load(Ordering::SeqCst) && TTS_OVERLAY_ACTIVE.load(Ordering::SeqCst)
+    {
+        place_and_show_stacked(app, "recording");
+        return;
+    }
+    if TTS_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+        place_and_show(
+            app,
+            OverlayMode::DynamicIsland,
+            ResolvedPosition::Top,
+            "tts",
+        );
         return;
     }
     // Recompute against the (possibly suppressed) current settings: if the live
@@ -319,36 +553,43 @@ pub fn overlay_is_active(app: &AppHandle) -> bool {
 
 /// Grow + reposition the overlay for the editable preview pill and make it
 /// INTERACTIVE (cursor-capturing) so its textarea/buttons work. Unlike the
-/// passive recording pill we do NOT force `set_focus` — clicking the textarea
+/// recording pill show path we do NOT force `set_focus` — clicking the textarea
 /// activates the window, and the paste target was already captured (see
 /// `winstt::commands::preview::capture_foreground`) BEFORE this call. The
 /// renderer keeps the pill revealed via `isPreviewActive`; teardown is
 /// `exit_preview_overlay`.
 pub fn enter_preview_overlay(app: &AppHandle) {
+    RECORDING_OVERLAY_ACTIVE.store(true, Ordering::SeqCst);
+    if TTS_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
+        place_and_show_stacked(app, "preview");
+        return;
+    }
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return;
     };
     OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
+    OVERLAY_HIT_REGIONS_ENABLED.store(true, Ordering::SeqCst);
     let _ = window.set_size(tauri::LogicalSize::new(
         OVERLAY_WIDTH,
         PREVIEW_OVERLAY_HEIGHT,
     ));
+    set_empty_overlay_hit_region(&window);
     let mode = read_settings(app).general.overlay_mode;
     let edge = overlay_show_decision(app).unwrap_or(ResolvedPosition::Top);
     if let Some((x, y)) = compute_overlay_position_h(app, mode, edge, PREVIEW_OVERLAY_HEIGHT) {
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     }
     let _ = window.show();
-    // Capture the cursor so the preview is clickable/typeable (the recording
-    // pill stays click-through; this is the same switch the TTS island uses).
+    // Capture the cursor so the preview is clickable/typeable; this is the same
+    // native switch the shown recording and TTS pills use for their controls.
     let _ = window.set_ignore_cursor_events(false);
     #[cfg(target_os = "windows")]
     force_overlay_topmost(&window);
     let _ = window.emit("show-overlay", "preview");
 }
 
-/// Tear down the preview pill: restore the passive 720×240 geometry + position,
-/// then hide via the shared grace-timer path (which also restores click-through).
+/// Tear down the preview pill: restore the passive geometry, then either hide
+/// the shared window or hand it back to the active TTS owner.
 /// Called by `confirm_paste` / `cancel_preview`.
 pub fn exit_preview_overlay(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(OVERLAY_LABEL) {
@@ -401,5 +642,25 @@ mod tests {
         assert!(!is_force_overlay_env_flag_set());
         std::env::remove_var("WINSTT_FORCE_OVERLAY");
         assert!(!is_force_overlay_env_flag_set());
+    }
+
+    #[test]
+    fn recording_show_captures_cursor_for_cancel_button() {
+        assert!(!ignore_cursor_events_for_show_reason("recording"));
+    }
+
+    #[test]
+    fn tts_show_captures_cursor_for_island_controls() {
+        assert!(!ignore_cursor_events_for_show_reason("tts"));
+    }
+
+    #[test]
+    fn preview_show_captures_cursor_for_editor_controls() {
+        assert!(!ignore_cursor_events_for_show_reason("preview"));
+    }
+
+    #[test]
+    fn unknown_show_reason_stays_click_through() {
+        assert!(ignore_cursor_events_for_show_reason("unknown"));
     }
 }

@@ -1,4 +1,4 @@
-// PORT IMPL — WU-4 (app/PORT/10_frontend_port_plan.md §6 WU-4). Source:
+// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
 //   frontend/src/shared/api/ipc-client.ts (fetchRuntimeInfo / fetchModelsWithState /
 //     assessDictationFit / assessOllamaFitOnServer + the RuntimeInfoPayload /
 //     ModelsWithStatePayload / FitAssessmentEntry shapes)
@@ -32,7 +32,6 @@ use tauri::{AppHandle, State};
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::catalog::{self as catalog, Accelerator};
 use crate::winstt::managers::DownloadManager;
-use crate::winstt::settings_schema::DeviceType;
 use crate::winstt::stt::cache_probe::{CacheState, ProbeModel};
 
 use super::catalog_data::{self, ModelCacheInfo, ModelsWithState, SystemInfoEntry};
@@ -394,7 +393,10 @@ pub(crate) fn detected_max_vram_bytes() -> u64 {
 
 /// Whether the persisted device intent is GPU (helper reused by the runtime chip + tests).
 pub fn persisted_device_is_gpu(app: &AppHandle) -> bool {
-    !matches!(read_settings(app).model.device, DeviceType::Cpu)
+    !matches!(
+        crate::winstt::stt::resolve_accelerator(read_settings(app).model.device),
+        crate::winstt::stt::Accelerator::Cpu
+    )
 }
 
 #[cfg(test)]

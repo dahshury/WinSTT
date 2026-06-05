@@ -61,7 +61,8 @@ function installNativeBridgeStub(): void {
 	};
 }
 
-const { useCatalogStore, initCatalogStore } = await import("./catalog-store");
+const { useCatalogStore, initCatalogStore, _resetCatalogStoreInitForTests } =
+	await import("./catalog-store");
 
 const INITIAL_CATALOG_STATE = useCatalogStore.getInitialState();
 
@@ -74,6 +75,9 @@ const validRaw = {
 	supports_language_detection: true,
 	size_label: "39M",
 	supports_realtime: true,
+	preview_capable: true,
+	native_streaming: false,
+	final_reuse_safe: false,
 	onnx_model_name: null,
 	description: "Smallest whisper",
 };
@@ -84,11 +88,13 @@ const invalidRaw = {
 };
 
 beforeEach(() => {
+	_resetCatalogStoreInitForTests();
 	installNativeBridgeStub();
 	useCatalogStore.setState({ models: [], isLoaded: false });
 });
 
 afterEach(() => {
+	_resetCatalogStoreInitForTests();
 	window.nativeBridge = originalNativeBridge;
 });
 
@@ -101,7 +107,40 @@ describe("useCatalogStore.setModels", () => {
 		expect(state.models[0]?.displayName).toBe("Tiny");
 		expect(state.models[0]?.supportsLanguageDetection).toBe(true);
 		expect(state.models[0]?.sizeLabel).toBe("39M");
+		expect(state.models[0]?.previewCapable).toBe(true);
+		expect(state.models[0]?.nativeStreaming).toBe(false);
+		expect(state.models[0]?.finalReuseSafe).toBe(false);
+		expect(state.models[0]?.supportsRealtime).toBe(true);
 		expect(state.isLoaded).toBe(true);
+	});
+
+	test("strips native streaming latency tokens out of display names", () => {
+		useCatalogStore.getState().setModels([
+			{
+				...validRaw,
+				id: "streaming-nemotron-en-1120ms-int8",
+				display_name: "Streaming Nemotron 1120ms INT8",
+				native_streaming: true,
+			},
+		]);
+		expect(useCatalogStore.getState().models[0]?.displayName).toBe(
+			"Streaming Nemotron",
+		);
+	});
+
+	test("falls back from split preview field to the legacy realtime flag", () => {
+		const legacyRaw = {
+			...validRaw,
+			preview_capable: undefined,
+			native_streaming: undefined,
+			final_reuse_safe: undefined,
+		};
+		useCatalogStore.getState().setModels([legacyRaw]);
+		const model = useCatalogStore.getState().models[0];
+		expect(model?.previewCapable).toBe(true);
+		expect(model?.supportsRealtime).toBe(true);
+		expect(model?.nativeStreaming).toBe(false);
+		expect(model?.finalReuseSafe).toBe(false);
 	});
 
 	test("silently drops items that fail zod validation", () => {
@@ -163,6 +202,24 @@ describe("initCatalogStore", () => {
 		// isLoaded remains false because setModels was not called
 		expect(useCatalogStore.getState().isLoaded).toBe(false);
 	});
+
+	test("retries initialization after the native bridge is installed later", async () => {
+		_resetCatalogStoreInitForTests();
+		window.nativeBridge = undefined as unknown as Window["nativeBridge"];
+
+		initCatalogStore();
+		expect(fetchInvokes).toHaveLength(0);
+		expect(onSubscriptions).toHaveLength(0);
+
+		installNativeBridgeStub();
+		catalogPayload = [validRaw];
+		initCatalogStore();
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(fetchInvokes).toEqual([IPC.STT_GET_MODEL_CATALOG]);
+		expect(onSubscriptions).toEqual([IPC.STT_MODEL_CATALOG]);
+		expect(useCatalogStore.getState().models[0]?.id).toBe("tiny");
+	});
 });
 
 describe("zod enum guards (mutation guards on enum entries)", () => {
@@ -223,5 +280,20 @@ describe("catalog-store self-init block (window.nativeBridge != null)", () => {
 		catalogListener?.([validRaw]);
 		const state = useCatalogStore.getState();
 		expect(state.models.some((m) => m.id === "tiny")).toBe(true);
+	});
+
+	test("live empty catalog update does not clear the last valid catalog", async () => {
+		catalogPayload = [validRaw];
+		useCatalogStore.setState({ models: [], isLoaded: false });
+		initCatalogStore();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(useCatalogStore.getState().models).toHaveLength(1);
+
+		catalogListener?.([]);
+
+		const state = useCatalogStore.getState();
+		expect(state.models).toHaveLength(1);
+		expect(state.models[0]?.id).toBe("tiny");
+		expect(state.isLoaded).toBe(true);
 	});
 });

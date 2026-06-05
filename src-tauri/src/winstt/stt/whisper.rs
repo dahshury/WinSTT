@@ -42,7 +42,9 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use ort::memory::{AllocationDevice, Allocator, AllocatorType, MemoryInfo, MemoryType};
 use ort::session::builder::GraphOptimizationLevel;
@@ -60,13 +62,98 @@ use crate::winstt::word_timestamps::{self, lookup_alignment_heads, AlignArgs, Cr
 
 /// Maximum decoder length (Whisper's hard cap). The loop also stops on all-EOS.
 const MAX_LENGTH: usize = 448;
+const WARMUP_DECODE_STEPS: usize = 8;
+const WHISPER_NO_SPEECH_THRESHOLD: f32 = 0.2;
+const DML_PROVIDER_LABEL: &str = "DmlExecutionProvider";
+const DML_DEGENERATE_BLOCK_THRESHOLD: usize = 2;
+const WHISPER_SUPPRESS_TOKENS: &[usize] = &[
+    1, 2, 7, 8, 9, 10, 14, 25, 26, 27, 28, 29, 31, 58, 59, 60, 61, 62, 63, 90, 91, 92, 93, 359,
+    503, 522, 542, 873, 893, 902, 918, 922, 931, 1350, 1853, 1982, 2460, 2627, 3246, 3253, 3268,
+    3536, 3846, 3961, 4183, 4667, 6585, 6647, 7273, 9061, 9383, 10428, 10929, 11938, 12033, 12331,
+    12562, 13793, 14157, 14635, 15265, 15618, 16553, 16604, 18362, 18956, 20075, 21675, 22520,
+    26130, 26161, 26435, 28279, 29464, 31650, 32302, 32470, 36865, 42863, 47425, 49870, 50254,
+    50258, 50360, 50361, 50362,
+];
+
+static DML_DEGENERATE_MODELS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DegenerateDecodeStats {
+    generated_len: usize,
+    dominant_token: i64,
+    dominant_count: usize,
+    dominant_fraction: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SelectedToken {
+    token: i64,
+    top_logit: f32,
+    runner_up_logit: f32,
+}
+
+pub(crate) fn directml_degenerate_model_blocked(model_id: &str) -> bool {
+    DML_DEGENERATE_MODELS
+        .get()
+        .and_then(|models| {
+            models
+                .lock()
+                .ok()
+                .map(|models| models.get(model_id).copied().unwrap_or(0))
+        })
+        .map(|count| count >= DML_DEGENERATE_BLOCK_THRESHOLD)
+        .unwrap_or(false)
+}
+
+fn mark_directml_degenerate_model(model_id: &str) -> usize {
+    let models = DML_DEGENERATE_MODELS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut models) = models.lock() {
+        let count = models.entry(model_id.to_string()).or_default();
+        *count += 1;
+        *count
+    } else {
+        DML_DEGENERATE_BLOCK_THRESHOLD
+    }
+}
+
+fn detect_degenerate_decode(
+    tokens: &[i64],
+    prompt_len: usize,
+    eos: i64,
+) -> Option<DegenerateDecodeStats> {
+    let generated = &tokens[prompt_len.min(tokens.len())..];
+    if tokens.last() == Some(&eos) || generated.len() < 32 {
+        return None;
+    }
+
+    let mut counts: HashMap<i64, usize> = HashMap::new();
+    for &token in generated {
+        *counts.entry(token).or_default() += 1;
+    }
+    let (dominant_token, dominant_count) = counts
+        .iter()
+        .max_by_key(|(_, count)| **count)
+        .map(|(token, count)| (*token, *count))
+        .unwrap_or((-1, 0));
+    let dominant_fraction = dominant_count as f32 / generated.len().max(1) as f32;
+    if dominant_fraction >= 0.5 {
+        Some(DegenerateDecodeStats {
+            generated_len: generated.len(),
+            dominant_token,
+            dominant_count,
+            dominant_fraction,
+        })
+    } else {
+        None
+    }
+}
 
 /// A loaded Whisper-family engine (covers `EngineKind::WhisperHf`). Holds the two ORT
 /// sessions, the parsed tokenizer, the mel front-end, and the per-load capability flags.
 pub struct WhisperEngine {
     model_name: String,
-    encoder: Session,
-    decoder: Session,
+    encoder: Option<Session>,
+    decoder: Option<Session>,
     tokenizer: WhisperTokenizer,
     mel: MelExtractor,
     providers: Vec<String>,
@@ -85,6 +172,7 @@ pub struct WhisperEngine {
     /// IoBinding simply binds host memory (still correct, ~same speed as the old host path).
     device: AllocationDevice,
     device_id: i32,
+    suppress_token_mask: Vec<bool>,
     ready: bool,
 }
 
@@ -196,11 +284,12 @@ impl WhisperEngine {
 
         let providers = cfg.providers.iter().map(provider_label).collect();
         let (device, device_id) = device_for_providers(&cfg.providers);
+        let suppress_token_mask = build_suppress_token_mask(tokenizer.vocab_size() as usize);
 
         Ok(Self {
             model_name: cfg.model_name.clone(),
-            encoder,
-            decoder,
+            encoder: Some(encoder),
+            decoder: Some(decoder),
             tokenizer,
             mel,
             providers,
@@ -211,6 +300,7 @@ impl WhisperEngine {
             cross_attn_names,
             device,
             device_id,
+            suppress_token_mask,
             ready: true,
         })
     }
@@ -224,8 +314,11 @@ impl WhisperEngine {
         let input = Tensor::from_array(([1usize, n_mels, n_frames], feats.into_boxed_slice()))
             .map_err(|e| SttError::Inference(format!("encoder input tensor: {e}")))?;
         let dev_mem = self.device_mem()?;
-        let mut binding = self
+        let encoder = self
             .encoder
+            .as_mut()
+            .ok_or_else(|| SttError::Inference("whisper encoder session is shut down".into()))?;
+        let mut binding = encoder
             .create_binding()
             .map_err(|e| SttError::Inference(format!("encoder binding: {e}")))?;
         binding
@@ -234,8 +327,7 @@ impl WhisperEngine {
         binding
             .bind_output_to_device("last_hidden_state", &dev_mem)
             .map_err(|e| SttError::Inference(format!("bind last_hidden_state: {e}")))?;
-        let mut outputs = self
-            .encoder
+        let mut outputs = encoder
             .run_binding(&binding)
             .map_err(|e| SttError::Inference(format!("encoder run_binding: {e}")))?;
         // DML/CUDA run_binding is async w.r.t. the device stream — block until the encoder output is
@@ -429,6 +521,8 @@ impl WhisperEngine {
             // present.* to the device so the cache never round-trips through the CPU.
             let mut binding = self
                 .decoder
+                .as_mut()
+                .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
                 .create_binding()
                 .map_err(|e| SttError::Inference(format!("decoder binding: {e}")))?;
             binding
@@ -481,6 +575,8 @@ impl WhisperEngine {
 
             let mut outputs = self
                 .decoder
+                .as_mut()
+                .ok_or_else(|| SttError::Inference("whisper decoder session is shut down".into()))?
                 .run_binding(&binding)
                 .map_err(|e| SttError::Inference(format!("decoder run_binding: {e}")))?;
             // DML/CUDA run_binding is async w.r.t. the device stream. The Python reference implicitly
@@ -521,19 +617,17 @@ impl WhisperEngine {
                         "decoder logits buffer shorter than declared shape".into(),
                     ));
                 }
-                let amax = argmax(&ldata[last_off..end]);
+                let selected = select_whisper_token(
+                    &ldata[last_off..end],
+                    &self.suppress_token_mask,
+                    self.tokenizer.eos_token_id,
+                    self.tokenizer.nospeech_token_id,
+                    step0.is_none(),
+                );
                 if step0.is_none() {
-                    let slice = &ldata[last_off..end];
-                    let top = slice.get(amax).copied().unwrap_or(f32::NAN);
-                    let runner = slice
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, _)| *i != amax)
-                        .map(|(_, &v)| v)
-                        .fold(f32::NEG_INFINITY, f32::max);
-                    step0 = Some((amax as i64, top, runner));
+                    step0 = Some((selected.token, selected.top_logit, selected.runner_up_logit));
                 }
-                amax as i64
+                selected.token
             };
             // EOS-sticky: once a row hit eos, freeze it.
             if *tokens.last().unwrap() == eos {
@@ -609,9 +703,9 @@ impl WhisperEngine {
                     "[whisper-garbage] DEGENERATE DECODE — model='{}' ep={:?} thread={:?} | {} generated \
                      tokens, {:.0}% are token {} ({:?}), NO EOS (hit {}-token cap) | step0: token={} \
                      top_logit={:.2} margin={:.2} (tiny margin ⇒ garbage encoder output; large ⇒ \
-                     decoder/KV-cache fault) | LIKELY CAUSE: accumulated DirectML device-state \
-                     corruption across model swaps (lite-whisper low-rank encoder is the fragile case) \
-                     — a process restart clears it. Copy this line for the next debugging session.",
+                     decoder/KV-cache fault) | LIKELY CAUSE: unreleased/overlapped DirectML ORT \
+                     session state across model swaps (lite-whisper low-rank encoder is the fragile \
+                     case). Copy this line for the next debugging session.",
                     self.model_name,
                     self.providers,
                     std::thread::current().id(),
@@ -624,6 +718,41 @@ impl WhisperEngine {
                     s0top,
                     s0top - s0run,
                 );
+                let dml_active = self.providers.iter().any(|p| p == DML_PROVIDER_LABEL);
+                let mut dml_count = 0usize;
+                if dml_active {
+                    dml_count = mark_directml_degenerate_model(&self.model_name);
+                    let action = if dml_count >= DML_DEGENERATE_BLOCK_THRESHOLD {
+                        "CPU fallback will be used on the next reload"
+                    } else {
+                        "DirectML will be recycled once on the next reload"
+                    };
+                    log::warn!(
+                        "[whisper-garbage] DirectML degenerate count for model '{}' is {}; {}",
+                        self.model_name,
+                        dml_count,
+                        action
+                    );
+                }
+                return Err(SttError::DegenerateDecode(format!(
+                    "[whisper-garbage] model='{}' ep={:?} hit {}-token cap with {:.0}% token {} ({:?}); step0_token={} top_logit={:.2} margin={:.2}{}",
+                    self.model_name,
+                    self.providers,
+                    max_length,
+                    dom_frac * 100.0,
+                    dom_tok,
+                    dom_text,
+                    s0t,
+                    s0top,
+                    s0top - s0run,
+                    if dml_active && dml_count >= DML_DEGENERATE_BLOCK_THRESHOLD {
+                        "; repeated DirectML degenerate decode, CPU fallback will be used"
+                    } else if dml_active {
+                        "; DirectML session will be recycled once before CPU fallback"
+                    } else {
+                        ""
+                    },
+                )));
             }
         }
 
@@ -845,9 +974,34 @@ impl Transcriber for WhisperEngine {
         })
     }
 
+    fn warmup(&mut self, audio: &[f32], opts: &TranscribeOptions) -> SttResult<()> {
+        if audio.is_empty() {
+            return Ok(());
+        }
+
+        let encoder_out = self.encode(audio)?;
+        let mut prompt = self.build_prompt(opts);
+        if self.tokenizer.is_multilingual {
+            let no_lang = opts
+                .language
+                .as_deref()
+                .map(|l| l.is_empty())
+                .unwrap_or(true);
+            if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
+                let lang_tok = self.detect_language(&encoder_out)?;
+                prompt[1] = lang_tok;
+            }
+        }
+
+        let max_length = (prompt.len() + WARMUP_DECODE_STEPS).min(MAX_LENGTH);
+        let _ = self.decode_greedy(&encoder_out, prompt, max_length)?;
+        Ok(())
+    }
+
     fn shutdown(&mut self) {
         self.ready = false;
-        // Sessions drop here; explicit hook lets the coordinator unload-before-load.
+        self.decoder.take();
+        self.encoder.take();
     }
 }
 
@@ -946,6 +1100,86 @@ fn patch_whisper_decoder_fp16(path: &Path) -> Result<(), String> {
     // Until the module is wired, surface a clear error so the loader falls back to fp32
     // (the documented escape hatch in 03_stt_engine.md §11).
     Err("fp16_patch module not yet wired (resolver agent owns winstt::stt::fp16_patch)".into())
+}
+
+fn build_suppress_token_mask(vocab_size: usize) -> Vec<bool> {
+    let mut mask = vec![false; vocab_size];
+    for &token in WHISPER_SUPPRESS_TOKENS {
+        if let Some(slot) = mask.get_mut(token) {
+            *slot = true;
+        }
+    }
+    mask
+}
+
+fn select_whisper_token(
+    logits: &[f32],
+    suppress_token_mask: &[bool],
+    eos_token_id: i64,
+    nospeech_token_id: Option<i64>,
+    is_first_step: bool,
+) -> SelectedToken {
+    if is_first_step
+        && nospeech_token_id
+            .and_then(|token| softmax_probability(logits, token as usize))
+            .is_some_and(|p| p > WHISPER_NO_SPEECH_THRESHOLD)
+    {
+        let eos = eos_token_id.max(0) as usize;
+        return SelectedToken {
+            token: eos_token_id,
+            top_logit: logits.get(eos).copied().unwrap_or(f32::NAN),
+            runner_up_logit: f32::NEG_INFINITY,
+        };
+    }
+
+    let eos = eos_token_id.max(0) as usize;
+    let mut best: Option<(usize, f32)> = None;
+    let mut runner_up = f32::NEG_INFINITY;
+    for (idx, &value) in logits.iter().enumerate() {
+        let suppressed = suppress_token_mask.get(idx).copied().unwrap_or(false);
+        if suppressed || (is_first_step && idx == eos) {
+            continue;
+        }
+
+        match best {
+            Some((_, best_value)) if value > best_value => {
+                runner_up = runner_up.max(best_value);
+                best = Some((idx, value));
+            }
+            Some(_) => {
+                runner_up = runner_up.max(value);
+            }
+            None => best = Some((idx, value)),
+        }
+    }
+
+    if let Some((token, top_logit)) = best {
+        SelectedToken {
+            token: token as i64,
+            top_logit,
+            runner_up_logit: runner_up,
+        }
+    } else {
+        let token = argmax(logits);
+        SelectedToken {
+            token: token as i64,
+            top_logit: logits.get(token).copied().unwrap_or(f32::NAN),
+            runner_up_logit: f32::NEG_INFINITY,
+        }
+    }
+}
+
+fn softmax_probability(logits: &[f32], token_id: usize) -> Option<f32> {
+    let target = *logits.get(token_id)?;
+    let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    if !max.is_finite() {
+        return None;
+    }
+    let denom: f32 = logits.iter().map(|v| (*v - max).exp()).sum();
+    if denom <= 0.0 || !denom.is_finite() {
+        return None;
+    }
+    Some((target - max).exp() / denom)
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,5 +1302,70 @@ mod tests {
             "DmlExecutionProvider"
         );
         assert_eq!(provider_label(&Accelerator::Cpu), "CPUExecutionProvider");
+    }
+
+    #[test]
+    fn degenerate_decode_detector_flags_repeated_token_cap_without_eos() {
+        let mut tokens = vec![1, 2, 3, 4];
+        tokens.extend(std::iter::repeat(1097).take(40));
+
+        let stats = detect_degenerate_decode(&tokens, 4, 99).unwrap();
+
+        assert_eq!(stats.generated_len, 40);
+        assert_eq!(stats.dominant_token, 1097);
+        assert_eq!(stats.dominant_count, 40);
+        assert_eq!(stats.dominant_fraction, 1.0);
+    }
+
+    #[test]
+    fn degenerate_decode_detector_ignores_eos_terminated_repetition() {
+        let mut tokens = vec![1, 2, 3, 4];
+        tokens.extend(std::iter::repeat(1097).take(40));
+        tokens.push(99);
+
+        assert_eq!(detect_degenerate_decode(&tokens, 4, 99), None);
+    }
+
+    #[test]
+    fn degenerate_decode_detector_ignores_varied_token_cap() {
+        let mut tokens = vec![1, 2, 3, 4];
+        tokens.extend(100..164);
+
+        assert_eq!(detect_degenerate_decode(&tokens, 4, 99), None);
+    }
+
+    #[test]
+    fn token_selector_forces_eos_when_no_speech_probability_is_high() {
+        let mut logits = vec![0.0; 8];
+        logits[4] = 10.0;
+
+        let selected = select_whisper_token(&logits, &[], 2, Some(4), true);
+
+        assert_eq!(selected.token, 2);
+    }
+
+    #[test]
+    fn token_selector_suppresses_non_speech_and_first_step_eos() {
+        let mut logits = vec![0.0; 8];
+        logits[1] = 12.0;
+        logits[2] = 11.0;
+        logits[5] = 1.0;
+        let mut suppress = vec![false; 8];
+        suppress[1] = true;
+
+        let selected = select_whisper_token(&logits, &suppress, 2, None, true);
+
+        assert_eq!(selected.token, 5);
+    }
+
+    #[test]
+    fn token_selector_allows_eos_after_first_step() {
+        let mut logits = vec![0.0; 8];
+        logits[2] = 11.0;
+        logits[5] = 1.0;
+
+        let selected = select_whisper_token(&logits, &[], 2, None, false);
+
+        assert_eq!(selected.token, 2);
     }
 }

@@ -1,7 +1,7 @@
 // Source: server/src/synthesizer/ (Kokoro-ONNX hexagonal subsystem),
 //   frontend/electron/ipc/{tts.ts,tts-cloud.ts,tts-reader.ts,tts-hotkey.ts},
 //   frontend/src/shared/config/settings-schema.ts (ttsSettingsSchema),
-//   docs/port/06_tts.md, docs.rs/reqwest (blocking client, POST, GET).
+//   docs/archive/port/06_tts.md, docs.rs/reqwest (blocking client, POST, GET).
 //
 // TtsManager + 54-voice Kokoro catalog + sentence-splitter + per-sentence streaming + cancel +
 // cloud ElevenLabs (reqwest). The local engine is the REAL in-process Kokoro-82M ONNX engine in

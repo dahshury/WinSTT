@@ -38,8 +38,8 @@ in the [Settings UI](/docs/settings) and persisted, not passed on the command li
 
 ## Developer spike binaries
 
-The repo ships a few **non-shipped** `cargo run --bin` harnesses used to benchmark and
-de-risk the engines during the port. They live in `src-tauri/src/bin/` and are driven by
+The repo ships a few **non-shipped** `cargo run --example` harnesses used to benchmark and
+de-risk the engines during the port. They live in `src-tauri/examples/` and are driven by
 environment variables. You only need these if you're hacking on the inference path.
 
 ### `stt_spike` — STT decode benchmark
@@ -48,9 +48,9 @@ Decodes a fixed 16 kHz JFK sample through the unified `ort` engine and prints th
 timing, so you can A/B a model, quantization, or execution provider.
 
 ```bash
-cargo run --release --bin stt_spike                       # whisper-tiny.en, CPU
-cargo run --release --bin stt_spike -- <hf_snapshot_dir> [n_mels] [lang]
-SPIKE_PROVIDER=dml cargo run --release --bin stt_spike    # measure the DirectML path
+cargo run --release --example stt_spike                       # whisper-tiny.en, CPU
+cargo run --release --example stt_spike -- <hf_snapshot_dir> [n_mels] [lang]
+SPIKE_PROVIDER=dml cargo run --release --example stt_spike    # measure the DirectML path
 ```
 
 <ModelTable
@@ -68,8 +68,8 @@ SPIKE_PROVIDER=dml cargo run --release --bin stt_spike    # measure the DirectML
 Times the shipped Kokoro synthesis path (warm/cold) on CPU or DirectML.
 
 ```bash
-cargo run --release --bin tts_spike
-SPIKE_TTS_DEVICE=dml cargo run --release --bin tts_spike   # measure the GPU path
+cargo run --release --example tts_spike
+SPIKE_TTS_DEVICE=dml cargo run --release --example tts_spike   # measure the GPU path
 ```
 
 `WINSTT_KOKORO_DIR` overrides the model/voicepack location; `SPIKE_TTS_DEVICE` selects
@@ -82,7 +82,7 @@ in the shipped app, loading their weights from `.tts-cache/<engine>/`.
 
 ```bat
 rem from the repo root — wraps the MSVC env + redirects output to spike_out.log
-rust-migration\spike.bat <engine> [voice] [text]
+tools\windows\spike.bat <engine> [voice] [text]
 ```
 
 `WINSTT_TTS_CACHE` overrides the cache root; `ESPEAK_NG_LIBRARY` points at the espeak-ng DLL

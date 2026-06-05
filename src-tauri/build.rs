@@ -1,8 +1,50 @@
 fn main() {
+    #[cfg(target_os = "windows")]
+    configure_windows_test_delay_load();
+
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     build_apple_intelligence_bridge();
 
     tauri_build::build()
+}
+
+#[cfg(target_os = "windows")]
+fn configure_windows_test_delay_load() {
+    // The lib test harness links the full Tauri/native app graph. Delay-load
+    // non-CRT app/native DLLs so pure unit tests do not abort before the Rust
+    // harness starts; tests that exercise those paths still load them on use.
+    for dll in [
+        "user32.dll",
+        "ole32.dll",
+        "comctl32.dll",
+        "ADVAPI32.dll",
+        "shlwapi.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "gdi32.dll",
+        "crypt32.dll",
+        "dwmapi.dll",
+        "shell32.dll",
+        "combase.dll",
+        "propsys.dll",
+        "bcryptprimitives.dll",
+        "ws2_32.dll",
+        "pdh.dll",
+        "powrprof.dll",
+        "oleaut32.dll",
+        "userenv.dll",
+        "iphlpapi.dll",
+        "psapi.dll",
+        "dbghelp.dll",
+        "api-ms-win-core-path-l1-1-0.dll",
+        "setupapi.dll",
+        "sherpa-onnx-c-api.dll",
+        "directml.dll",
+        "d3d12.dll",
+        "dxgi.dll",
+    ] {
+        println!("cargo:rustc-link-arg=/DELAYLOAD:{dll}");
+    }
+    println!("cargo:rustc-link-arg=delayimp.lib");
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

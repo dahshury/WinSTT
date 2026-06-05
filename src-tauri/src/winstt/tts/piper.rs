@@ -185,14 +185,6 @@ impl PiperEngine {
         Ok(())
     }
 
-    /// Sample rate of the loaded voice (read from json once warmed).
-    pub fn sample_rate(&self) -> Option<u32> {
-        self.inner
-            .lock()
-            .ok()
-            .and_then(|g| g.as_ref().map(|l| l.cfg.sample_rate))
-    }
-
     pub fn synthesize(&self, text: &str, speed: f32) -> PiperResult<(Vec<f32>, u32)> {
         let trimmed = text.trim();
         if trimmed.is_empty() {

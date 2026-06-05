@@ -15,6 +15,8 @@ beforeEach(() => {
 		currentRealtime: "",
 		ephemeral: null,
 		isRecordingActive: false,
+		isTranscribing: false,
+		transcribingStartedAt: null,
 	});
 	window.nativeBridge = {
 		...originalApi,
@@ -25,7 +27,7 @@ beforeEach(() => {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -50,6 +52,7 @@ describe("useTranscriptionFeed", () => {
 		expect(listeners.has(IPC.STT_REALTIME_TEXT)).toBe(true);
 		expect(listeners.has(IPC.STT_FULL_SENTENCE)).toBe(true);
 		expect(listeners.has(IPC.STT_NO_AUDIO_DETECTED)).toBe(true);
+		expect(listeners.has(IPC.STT_TRANSCRIPTION_START)).toBe(true);
 	});
 
 	test("realtime text updates currentRealtime in the store", () => {
@@ -92,12 +95,16 @@ describe("useTranscriptionFeed", () => {
 	});
 
 	test("transcription_failed disarms isRecordingActive (terminal event)", () => {
-		useTranscriptionStore.setState({ isRecordingActive: true });
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			isTranscribing: true,
+		});
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
 		fire(IPC.STT_TRANSCRIPTION_FAILED);
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
 	});
 
 	test("recording_start clears stale state and arms isRecordingActive", () => {
@@ -109,6 +116,8 @@ describe("useTranscriptionFeed", () => {
 			currentRealtime: "leftover from last press",
 			ephemeral: { text: "no audio detected", timestamp: 0 },
 			isRecordingActive: false,
+			isTranscribing: true,
+			transcribingStartedAt: 100,
 		});
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
@@ -118,38 +127,53 @@ describe("useTranscriptionFeed", () => {
 		expect(state.currentRealtime).toBe("");
 		expect(state.ephemeral).toBeNull();
 		expect(state.isRecordingActive).toBe(true);
+		expect(state.isTranscribing).toBe(false);
+		expect(state.transcribingStartedAt).toBeNull();
+	});
+
+	test("transcription_start marks final decode as transcribing", () => {
+		renderHook(() => useTranscriptionFeed(), {
+			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
+		});
+		fire(IPC.STT_TRANSCRIPTION_START, { audioBase64: undefined });
+		const state = useTranscriptionStore.getState();
+		expect(state.isTranscribing).toBe(true);
+		expect(typeof state.transcribingStartedAt).toBe("number");
 	});
 
 	test("full_sentence disarms isRecordingActive (terminal event)", () => {
-		useTranscriptionStore.setState({ isRecordingActive: true });
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			isTranscribing: true,
+		});
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
 		fire(IPC.STT_FULL_SENTENCE, { text: "done." });
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
 	});
 
 	test("no_audio_detected disarms isRecordingActive (terminal event)", () => {
-		useTranscriptionStore.setState({ isRecordingActive: true });
+		useTranscriptionStore.setState({
+			isRecordingActive: true,
+			isTranscribing: true,
+		});
 		renderHook(() => useTranscriptionFeed(), {
 			wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
 		});
 		fire(IPC.STT_NO_AUDIO_DETECTED);
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
 	});
 
-	test("recording_stop disarms isRecordingActive (pill survives LLM thinking via isThinking, not this flag)", () => {
-		// The pill's mount gate is `isRecordingActive || isThinking`. The
-		// transcription feed OWNS `isRecordingActive` and disarms it the instant
-		// the PTT key is released (recording_stop), like Handy — the pill is the
-		// recording indicator, not the transcribe/post-process indicator. When an
-		// Ollama/LLM post-processor is connected the SEPARATE `isThinking` flag
-		// (driven by LLM_PROCESSING_START/_END) keeps the pill visible across the
-		// recording → thinking transition, so disarming here causes no flicker.
-		// recording_stop also wipes the realtime/ephemeral preview so it can't
-		// survive into the next PTT session.
+	test("recording_stop does not disarm isRecordingActive or clear live text", () => {
+		// `recording_stop` arrives before the terminal transcription event. If
+		// it closes the floating pill here, the terminal event starts a second
+		// close path and the bottom-pill fade-out feels laggy.
 		useTranscriptionStore.setState({
 			isRecordingActive: true,
+			isTranscribing: true,
 			currentRealtime: "live preview",
 			ephemeral: { text: "stale", timestamp: 0 },
 		});
@@ -158,8 +182,9 @@ describe("useTranscriptionFeed", () => {
 		});
 		fire(IPC.STT_RECORDING_STOP);
 		const state = useTranscriptionStore.getState();
-		expect(state.isRecordingActive).toBe(false);
-		expect(state.currentRealtime).toBe("");
-		expect(state.ephemeral).toBeNull();
+		expect(state.isRecordingActive).toBe(true);
+		expect(state.isTranscribing).toBe(true);
+		expect(state.currentRealtime).toBe("live preview");
+		expect(state.ephemeral?.text).toBe("stale");
 	});
 });

@@ -39,12 +39,32 @@ use crate::winstt::managers::llm_manager::{
 };
 use crate::winstt::managers::LlmManager;
 use crate::winstt::settings_schema::{
-    LlmProvider, PresetEntry as SettingsPreset, PresetKey as SettingsPresetKey,
-    PresetLevel as SettingsLevel, ThinkingEffort as SettingsEffort, WinsttSettings,
+    EffortLevel as SettingsOpenRouterEffort, LlmFeatureBase, LlmProvider,
+    PresetEntry as SettingsPreset, PresetKey as SettingsPresetKey, PresetLevel as SettingsLevel,
+    ThinkingEffort as SettingsEffort, WinsttSettings,
 };
 
 use super::ollama_pull::{clear_pull_cancel, is_pull_cancelled};
-use super::settings::read_settings;
+use super::settings::{read_settings, SECRET_PRESENT_SENTINEL};
+
+struct LlmCommandProcessingGuard {
+    app: AppHandle,
+}
+
+impl LlmCommandProcessingGuard {
+    fn new(app: &AppHandle) -> Self {
+        crate::tray::on_llm_thinking_start(app);
+        let _ = app.emit("llm:processing-start", ());
+        Self { app: app.clone() }
+    }
+}
+
+impl Drop for LlmCommandProcessingGuard {
+    fn drop(&mut self) {
+        let _ = self.app.emit("llm:processing-end", ());
+        crate::tray::on_llm_thinking_stop(&self.app);
+    }
+}
 
 // ── Renderer payload shapes (mirror spec/openapi.yaml exactly) ─────────────────
 
@@ -89,6 +109,8 @@ pub struct OllamaModelPayload {
     pub details: Option<OllamaModelDetailsPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<u64>,
 }
 
 impl From<MgrModel> for OllamaModelPayload {
@@ -99,6 +121,7 @@ impl From<MgrModel> for OllamaModelPayload {
             modified_at: m.modified_at,
             details: m.details.map(Into::into),
             capabilities: m.capabilities,
+            context_length: m.context_length,
         }
     }
 }
@@ -252,12 +275,39 @@ fn to_llm_preset(p: &SettingsPreset) -> LlmPresetEntry {
     }
 }
 
+fn to_llm_custom(m: &crate::winstt::settings_schema::CustomModifier) -> llm::CustomModifier {
+    llm::CustomModifier {
+        id: m.id.clone(),
+        name: m.name.clone(),
+        prompt: m.prompt.clone(),
+        enabled: m.enabled,
+        levels_enabled: m.levels_enabled,
+        level: m.level.map(to_llm_level),
+    }
+}
+
 fn to_llm_effort(e: SettingsEffort) -> LlmEffort {
     match e {
         SettingsEffort::Off => LlmEffort::Off,
         SettingsEffort::Low => LlmEffort::Low,
         SettingsEffort::Medium => LlmEffort::Medium,
         SettingsEffort::High => LlmEffort::High,
+    }
+}
+
+fn openrouter_effort_value(e: SettingsOpenRouterEffort) -> &'static str {
+    match e {
+        SettingsOpenRouterEffort::Low => "low",
+        SettingsOpenRouterEffort::Medium => "medium",
+        SettingsOpenRouterEffort::High => "high",
+    }
+}
+
+fn openrouter_options(base: &LlmFeatureBase) -> llm::OpenRouterRequestOptions {
+    llm::OpenRouterRequestOptions {
+        reasoning_effort: Some(openrouter_effort_value(base.reasoning_effort).to_string()),
+        verbosity: Some(openrouter_effort_value(base.verbosity).to_string()),
+        max_output_tokens: base.max_output_tokens.filter(|v| *v > 0),
     }
 }
 
@@ -276,14 +326,25 @@ fn dictation_presets(settings: &WinsttSettings) -> Vec<LlmPresetEntry> {
         .dictation
         .custom_modifiers
         .iter()
-        .map(|m| llm::CustomModifier {
-            id: m.id.clone(),
-            name: m.name.clone(),
-            prompt: m.prompt.clone(),
-            enabled: m.enabled,
-            levels_enabled: m.levels_enabled,
-            level: m.level.map(to_llm_level),
-        })
+        .map(to_llm_custom)
+        .collect();
+    merge_presets_with_custom_modifiers(&builtins, &customs)
+}
+
+fn transforms_presets(settings: &WinsttSettings) -> Vec<LlmPresetEntry> {
+    let builtins: Vec<LlmPresetEntry> = settings
+        .llm
+        .transforms
+        .presets
+        .iter()
+        .map(to_llm_preset)
+        .collect();
+    let customs: Vec<llm::CustomModifier> = settings
+        .llm
+        .transforms
+        .custom_modifiers
+        .iter()
+        .map(to_llm_custom)
         .collect();
     merge_presets_with_custom_modifiers(&builtins, &customs)
 }
@@ -299,16 +360,27 @@ pub async fn process_text(
     text: String,
     context: String,
 ) -> Result<String, String> {
-    let settings = read_settings(&app);
+    process_dictation_text(&app, llm_manager.inner().clone(), text, context).await
+}
+
+pub(crate) async fn process_dictation_text(
+    app: &AppHandle,
+    llm_manager: Arc<LlmManager>,
+    text: String,
+    context: String,
+) -> Result<String, String> {
+    let settings = read_settings(app);
     let presets = dictation_presets(&settings);
     let vocab = build_vocab(&settings);
     let system_prompt = build_dictation_system_prompt(&presets, &context, &vocab);
+    let user_prompt = llm::dictation_user_prompt_for_presets(&presets, &text);
     let effort = to_llm_effort(settings.llm.dictation.base.thinking_effort);
 
-    let mgr = llm_manager.inner().clone();
+    let mgr = llm_manager;
     let request_id = mgr.next_request_id();
     let endpoint = settings.llm.endpoint.clone();
     let model = settings.llm.dictation.base.model.clone();
+    let _processing = LlmCommandProcessingGuard::new(app);
 
     // Provider routing (mirrors runProcessText): OpenRouter via the OpenAI-
     // compatible chat endpoint, otherwise the all-Rust Ollama streaming path.
@@ -324,17 +396,19 @@ pub async fn process_text(
                 .base
                 .openrouter_fallback_model
                 .clone();
-            let user_prompt = llm::dictation_user_prompt(&text);
             run_openrouter_with_fallback(
                 &mgr,
-                &api_key,
-                &selection,
-                &fallback,
-                &system_prompt,
-                &user_prompt,
-                &text,
-                "dictation",
-                &request_id,
+                OpenRouterFallbackRequest {
+                    api_key: &api_key,
+                    primary: &selection,
+                    fallback: &fallback,
+                    system_prompt: &system_prompt,
+                    user_prompt: &user_prompt,
+                    text: &text,
+                    feature: "dictation",
+                    request_id: &request_id,
+                    options: openrouter_options(&settings.llm.dictation.base),
+                },
             )
             .await
         }
@@ -344,6 +418,7 @@ pub async fn process_text(
                 &endpoint,
                 &model,
                 &system_prompt,
+                &user_prompt,
                 &text,
                 effort,
                 &request_id,
@@ -374,20 +449,16 @@ pub async fn process_transform(
 ) -> Result<String, String> {
     let settings = read_settings(&app);
     // Resolve the transform's own preset body (no context/vocab folding).
-    let presets: Vec<LlmPresetEntry> = settings
-        .llm
-        .transforms
-        .presets
-        .iter()
-        .map(to_llm_preset)
-        .collect();
+    let presets = transforms_presets(&settings);
     let system_prompt = build_system_prompt(&presets);
+    let user_prompt = llm::transforms_user_prompt_for_presets(&presets, &text);
     let effort = to_llm_effort(settings.llm.transforms.base.thinking_effort);
 
     let mgr = llm_manager.inner().clone();
     let request_id = mgr.next_request_id();
     let endpoint = settings.llm.endpoint.clone();
     let model = settings.llm.transforms.base.model.clone();
+    let _processing = LlmCommandProcessingGuard::new(&app);
 
     let answer = match settings.llm.transforms.base.provider {
         LlmProvider::Openrouter => {
@@ -399,17 +470,19 @@ pub async fn process_transform(
                 .base
                 .openrouter_fallback_model
                 .clone();
-            let user_prompt = llm::transforms_user_prompt(&text);
             run_openrouter_with_fallback(
                 &mgr,
-                &api_key,
-                &selection,
-                &fallback,
-                &system_prompt,
-                &user_prompt,
-                &text,
-                &transform_id,
-                &request_id,
+                OpenRouterFallbackRequest {
+                    api_key: &api_key,
+                    primary: &selection,
+                    fallback: &fallback,
+                    system_prompt: &system_prompt,
+                    user_prompt: &user_prompt,
+                    text: &text,
+                    feature: &transform_id,
+                    request_id: &request_id,
+                    options: openrouter_options(&settings.llm.transforms.base),
+                },
             )
             .await
         }
@@ -419,6 +492,7 @@ pub async fn process_transform(
                 &endpoint,
                 &model,
                 &system_prompt,
+                &user_prompt,
                 &text,
                 effort,
                 &request_id,
@@ -439,19 +513,43 @@ pub async fn process_transform(
 /// Try the primary OpenRouter selection; on failure (and when a fallback is
 /// configured), retry with the fallback model. On total failure, return the
 /// original text. Mirrors `runOpenRouterWithFallback`.
+struct OpenRouterFallbackRequest<'a> {
+    api_key: &'a str,
+    primary: &'a str,
+    fallback: &'a str,
+    system_prompt: &'a str,
+    user_prompt: &'a str,
+    text: &'a str,
+    feature: &'a str,
+    request_id: &'a str,
+    options: llm::OpenRouterRequestOptions,
+}
+
 async fn run_openrouter_with_fallback(
     mgr: &Arc<LlmManager>,
-    api_key: &str,
-    primary: &str,
-    fallback: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-    text: &str,
-    feature: &str,
-    request_id: &str,
+    request: OpenRouterFallbackRequest<'_>,
 ) -> String {
+    let OpenRouterFallbackRequest {
+        api_key,
+        primary,
+        fallback,
+        system_prompt,
+        user_prompt,
+        text,
+        feature,
+        request_id,
+        options,
+    } = request;
+
     match mgr
-        .openrouter_chat(api_key, primary, system_prompt, user_prompt, text)
+        .openrouter_chat(
+            api_key,
+            primary,
+            system_prompt,
+            user_prompt,
+            text,
+            options.clone(),
+        )
         .await
     {
         Ok(answer) => answer,
@@ -461,7 +559,7 @@ async fn run_openrouter_with_fallback(
                 llm::compact_error_for_log(&primary_err)
             );
             match mgr
-                .openrouter_chat(api_key, fallback, system_prompt, user_prompt, text)
+                .openrouter_chat(api_key, fallback, system_prompt, user_prompt, text, options)
                 .await
             {
                 Ok(answer) => answer,
@@ -699,7 +797,7 @@ pub async fn ollama_delete(
 #[tauri::command]
 #[specta::specta]
 pub async fn verify_credential(
-    _app: AppHandle,
+    app: AppHandle,
     provider: String,
     api_key: String,
 ) -> Result<VerifyCredentialPayload, String> {
@@ -715,7 +813,8 @@ pub async fn verify_credential(
             });
         }
     };
-    let key = api_key.trim();
+    let key = resolve_verify_api_key(&app, probe, &api_key);
+    let key = key.trim();
     if key.is_empty() {
         return Ok(VerifyCredentialPayload {
             ok: false,
@@ -733,6 +832,19 @@ enum VerifyProbe {
     OpenAi,
     OpenRouter,
     ElevenLabs,
+}
+
+fn resolve_verify_api_key(app: &AppHandle, probe: VerifyProbe, api_key: &str) -> String {
+    let trimmed = api_key.trim();
+    if trimmed != SECRET_PRESENT_SENTINEL {
+        return trimmed.to_string();
+    }
+    let settings = read_settings(app);
+    match probe {
+        VerifyProbe::OpenAi => settings.integrations.openai.api_key,
+        VerifyProbe::OpenRouter => settings.llm.openrouter_api_key,
+        VerifyProbe::ElevenLabs => settings.integrations.elevenlabs.api_key,
+    }
 }
 
 impl VerifyProbe {
@@ -893,7 +1005,7 @@ fn emit_pull_progress(app: &AppHandle, payload: serde_json::Value) {
 
 // ── settings → vocab / replacement-pairs ──────────────────────────────────
 
-fn build_vocab(settings: &WinsttSettings) -> Vocab {
+pub(crate) fn build_vocab(settings: &WinsttSettings) -> Vocab {
     let dictionary: Vec<String> = settings.dictionary.iter().map(|d| d.term.clone()).collect();
     let snippets: Vec<(String, String)> = settings
         .snippets
@@ -908,7 +1020,7 @@ fn build_vocab(settings: &WinsttSettings) -> Vocab {
 }
 
 /// Replacement pairs are the dictionary entries that carry a replacement value.
-fn replacement_pairs(settings: &WinsttSettings) -> Vec<(String, String)> {
+pub(crate) fn replacement_pairs(settings: &WinsttSettings) -> Vec<(String, String)> {
     settings
         .dictionary
         .iter()

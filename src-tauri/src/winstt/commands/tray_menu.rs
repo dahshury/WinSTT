@@ -1,4 +1,4 @@
-// PORT IMPL — WU-12 (app/PORT/10_frontend_port_plan.md §6 WU-12 + §4b).
+// PORT IMPL — WU-12 (docs/archive/port/10_frontend_port_plan.md §6 WU-12 + §4b).
 //
 // Tray-menu window placement. WinSTT's tray menu is NOT a native OS menu — it is
 // a custom transparent HTML BrowserWindow (`views/tray-menu`) the user pops open
@@ -46,6 +46,7 @@ const OFFSCREEN: f64 = -9999.0;
 /// `place_tray_menu` knows the webview has already painted and a reposition is
 /// all that's required (no `show()` flicker). Set by `install_tray_menu_lifecycle`.
 static TRAY_MENU_PRESHOWN: AtomicBool = AtomicBool::new(false);
+static TRAY_MENU_LIFECYCLE_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Last anchor point the tray menu was shown at, in LOGICAL screen pixels.
 /// Stored so a `tray-menu:resize` (the renderer's ResizeObserver reports the
@@ -179,6 +180,7 @@ fn is_tray_menu_on_screen(window: &tauri::WebviewWindow) -> bool {
 /// "hard flicker"). The first open before the pre-show has landed falls back to a
 /// real `show()` so the menu still appears.
 fn place_tray_menu(app: &AppHandle, anchor: (f64, f64)) -> Result<(), String> {
+    install_tray_menu_lifecycle(app);
     let window = ensure_window(app, TRAY_MENU_LABEL)?;
     position_tray_menu(app, &window, anchor)?;
     // If the window was never park-shown yet (cold first open before the
@@ -319,10 +321,15 @@ pub fn toggle_tray_menu_at_physical(app: &AppHandle, physical_x: f64, physical_y
 ///      a separate always-on-top window and the menu staying open under it is
 ///      acceptable for v1; the renderer also closes the menu on item clicks.
 pub fn install_tray_menu_lifecycle(app: &AppHandle) {
+    if TRAY_MENU_LIFECYCLE_INSTALLED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     // The window is created lazily on first open; defer wiring until then by
     // re-checking on each open is over-engineered — instead create it now (hidden)
     // so the event hook is attached exactly once.
     let Ok(window) = ensure_window(app, TRAY_MENU_LABEL) else {
+        TRAY_MENU_LIFECYCLE_INSTALLED.store(false, Ordering::SeqCst);
         log::warn!("tray-menu window unavailable; skipping lifecycle wiring");
         return;
     };

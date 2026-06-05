@@ -8,10 +8,10 @@
 // ───────────────────────── pure-logic (no new deps) ─────────────────────────
 
 /// WinSTT's full nested settings tree (9 tabs) as a specta-typed struct.
-/// See app/PORT/02_settings.md.
+/// See docs/archive/port/02_settings.md.
 pub mod settings_schema;
 
-/// Full 42-model STT catalog + quant/EP auto-policy (pure data + string logic).
+/// Full 65-model STT catalog + quant/EP auto-policy (pure data + string logic).
 pub mod catalog;
 
 /// Adaptive Silero VAD sensitivity calibrator (SNR-driven, EMA-blended).
@@ -19,6 +19,16 @@ pub mod vad_calibrator;
 
 /// Shared in-flight request cancel registry (cloud STT / LLM / TTS).
 pub mod cancel_registry;
+
+/// Shared audio conditioning for batch STT and streaming wakeword detection.
+pub mod audio_conditioning;
+
+/// Event-driven audio device hotplug watcher. Uses native OS notifications when
+/// available and keeps renderer device selectors in sync without polling.
+pub mod audio_device_watcher;
+
+/// Shared single-flight + warm-state tracking for heavyweight model lifecycles.
+pub mod model_swap;
 
 /// RealtimeSTT-faithful preview stabilizer + committed-watermark accumulator.
 pub mod realtime_stabilizer;
@@ -32,10 +42,14 @@ pub mod snippets;
 pub mod cloud_stt;
 /// Context-awareness: winstt-context.exe sidecar wrapper + deny-list.
 pub mod context;
+/// Shared HTTP asset transfers (Range resume, pause/cancel, progress, speed, ETA).
+pub mod downloads;
 /// System-audio ducking via IAudioEndpointVolume::SetMasterVolumeLevelScalar (graduated 0-100%).
 pub mod ducking;
 /// All-Rust LLM post-processing: prompt composition + Ollama NDJSON streaming + CoT salvage.
 pub mod llm;
+/// Direct Ollama HTTP client used by the LLM manager.
+pub mod ollama_client;
 // ───────────────────────── heavy ONNX crates ─────────────────────────
 /// Unified ONNX-on-`ort` STT engine: Transcriber trait + per-family engines.
 pub mod stt;

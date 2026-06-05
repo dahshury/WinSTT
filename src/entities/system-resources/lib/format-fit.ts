@@ -38,17 +38,17 @@ const HINT_KEY_BY_SEVERITY: Record<FitSeverity, string> = {
 
 type Translator = (key: string, vars?: Record<string, string | number>) => string;
 
-function hasUsableFootprint(
+export function hasUsableFootprint(
 	assessment: FitAssessmentEntry | null
 ): assessment is FitAssessmentEntry {
 	return assessment !== null && assessment.required_bytes > 0;
 }
 
-function labelBytes(bytes: number): string {
+export function labelBytes(bytes: number): string {
 	return formatBytes(bytes, { minUnit: "MB" }) ?? "?";
 }
 
-function targetLabel(target: FitTarget, t: Translator): string {
+export function targetLabel(target: FitTarget, t: Translator): string {
 	return t(TARGET_LABEL_KEY[target]);
 }
 
@@ -65,9 +65,3 @@ export function rowHint(assessment: FitAssessmentEntry | null, t: Translator): s
 		target: targetLabel(assessment.target, t),
 	});
 }
-
-export const __format_fit_test_helpers__ = {
-	hasUsableFootprint,
-	labelBytes,
-	targetLabel,
-};

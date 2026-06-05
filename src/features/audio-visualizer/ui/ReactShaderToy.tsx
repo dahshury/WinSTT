@@ -43,8 +43,6 @@ const UNIFORM_MOUSE = "iMouse";
 const UNIFORM_RESOLUTION = "iResolution";
 const UNIFORM_DEVICEORIENTATION = "iDeviceOrientation";
 
-type UniformType = keyof Uniforms;
-
 function isVectorType(t: string, v: number[] | number): v is [number, number, number, number] {
 	return !t.includes("v") && Array.isArray(v) && v.length > Number.parseInt(t.charAt(0));
 }

@@ -1,30 +1,30 @@
-import { fileQueueEnqueue, getFilePath } from "@/shared/api/ipc-client";
+import { getFilePath } from "@/shared/api/ipc-client";
 
 const SUPPORTED_EXTENSIONS = new Set([
-	".mp3",
-	".wav",
-	".flac",
-	".m4a",
-	".aac",
-	".ogg",
-	".wma",
-	".mp4",
-	".mkv",
-	".avi",
-	".mov",
-	".wmv",
-	".flv",
-	".webm",
+  ".mp3",
+  ".wav",
+  ".flac",
+  ".m4a",
+  ".aac",
+  ".ogg",
+  ".wma",
+  ".mp4",
+  ".mkv",
+  ".avi",
+  ".mov",
+  ".wmv",
+  ".flv",
+  ".webm",
 ]);
 
-function getExtension(name: string): string {
-	const i = name.lastIndexOf(".");
-	return i >= 0 ? name.slice(i).toLowerCase() : "";
+export function getExtension(name: string): string {
+  const i = name.lastIndexOf(".");
+  return i >= 0 ? name.slice(i).toLowerCase() : "";
 }
 
 export interface DroppedFile {
-	fileName: string;
-	filePath: string;
+  fileName: string;
+  filePath: string;
 }
 
 /**
@@ -34,47 +34,38 @@ export interface DroppedFile {
  * sees real, transcribable inputs. Order is preserved so the queue reflects the
  * drop order.
  */
-function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
-	const out: DroppedFile[] = [];
-	for (const file of files) {
-		if (!SUPPORTED_EXTENSIONS.has(getExtension(file.name))) {
-			continue;
-		}
-		const filePath = getFilePath(file);
-		if (!filePath) {
-			continue;
-		}
-		out.push({ filePath, fileName: file.name });
-	}
-	return out;
+export function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
+  const out: DroppedFile[] = [];
+  for (const file of files) {
+    if (!SUPPORTED_EXTENSIONS.has(getExtension(file.name))) {
+      continue;
+    }
+    const filePath = getFilePath(file);
+    if (!filePath) {
+      continue;
+    }
+    out.push({ filePath, fileName: file.name });
+  }
+  return out;
 }
 
 /**
- * Enqueue every transcribable file from a drop. Appends to the existing queue
- * (the main process never clears on a new drop), so repeated drops accumulate.
- * Returns the number of files actually enqueued.
+ * Drag/drop exposes renderer-resolved file paths, which the backend no longer
+ * accepts for file transcription. Keep collection helpers for tests/display, but
+ * do not enqueue from dropped paths.
  */
-async function enqueueDroppedFiles(files: readonly File[]): Promise<number> {
-	const collected = collectDroppedFiles(files);
-	if (collected.length > 0) {
-		await fileQueueEnqueue(collected);
-	}
-	return collected.length;
+export async function enqueueDroppedFiles(
+  files: readonly File[],
+): Promise<number> {
+  const _collected = collectDroppedFiles(files);
+  return 0;
 }
 
-function getContainerClassName(isListenMode: boolean): string {
-	const base = "relative flex flex-1 flex-col items-center justify-center overflow-hidden";
-	const border = isListenMode ? "" : "rounded-lg";
-	return `${base} ${border}`;
+export function getContainerClassName(isListenMode: boolean): string {
+  const base =
+    "relative flex flex-1 flex-col items-center justify-center overflow-hidden";
+  const border = isListenMode ? "" : "rounded-lg";
+  return `${base} ${border}`;
 }
 
-export { enqueueDroppedFiles, getContainerClassName };
-
-// Test-only exports — pure helpers extracted from drag/drop handling.
-export const __audio_display_test_helpers__ = {
-	getExtension,
-	collectDroppedFiles,
-	enqueueDroppedFiles,
-	getContainerClassName,
-	SUPPORTED_EXTENSIONS,
-};
+export { SUPPORTED_EXTENSIONS };

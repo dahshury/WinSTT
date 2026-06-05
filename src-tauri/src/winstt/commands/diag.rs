@@ -1,4 +1,4 @@
-// Source: docs/port/10_frontend_port_plan.md
+// Source: docs/archive/port/10_frontend_port_plan.md
 // §1b/§6 (WU-11), frontend/electron/ipc/diag-bundle.ts. No manager — reads logs + zips them.
 //
 // The About panel's "Open logs folder" / "Save diagnostic bundle" actions map to:

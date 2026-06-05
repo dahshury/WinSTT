@@ -1,6 +1,6 @@
 // Source (authoritative):
 // frontend/electron/ipc/file-transcribe-queue.ts (the canonical multi-file queue)
-// + docs/port/07_*.md / 10_frontend_port_plan.md §6 WU-8. Decode via symphonia
+// + docs/archive/port/07_*.md / 10_frontend_port_plan.md §6 WU-8. Decode via symphonia
 // (in-process; no external ffmpeg, unlike the Python server's ffmpeg shell-out).
 //
 // FileTranscribeManager is a faithful Rust port of WinSTT's the reference

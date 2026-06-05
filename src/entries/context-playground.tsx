@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { renderReactRoot } from "@/app/lib/render-react-root";
 import { HtmlLang } from "@/app/layouts/HtmlLang";
 import "@/app/styles/fonts.css";
 import "@/app/styles/globals.css";
@@ -12,7 +12,8 @@ if (!container) {
 	throw new Error("[context-playground] #root element missing");
 }
 
-createRoot(container).render(
+renderReactRoot(
+	container,
 	<StrictMode>
 		<HtmlLang />
 		<ContextPlaygroundPage />

@@ -8,20 +8,29 @@ use tauri::{AppHandle, Manager};
 
 // Re-export all utility modules for easy access
 pub use crate::clipboard::*;
-pub use crate::overlay::*;
 pub use crate::tray::*;
+pub use crate::winstt::commands::overlay::{
+    hide_recording_overlay, reposition_overlay_if_visible as update_overlay_position,
+    show_recording_overlay,
+};
 
 /// Centralized cancellation function that can be called from anywhere in the app.
 /// Handles cancelling both recording and transcription operations and updates UI state.
-pub fn cancel_current_operation(app: &AppHandle) {
+pub fn cancel_current_operation(app: &AppHandle) -> bool {
     info!("Initiating operation cancellation...");
 
-    // Unregister the cancel shortcut asynchronously
-    shortcut::unregister_cancel_shortcut(app);
-
-    // Cancel any ongoing recording
     let audio_manager = app.state::<Arc<AudioRecordingManager>>();
     let recording_was_active = audio_manager.is_recording();
+    let cancelled_through = crate::transcription_coordinator::cancel_current_dictation_session();
+    let dictation_was_active = recording_was_active || cancelled_through.is_some();
+
+    if !dictation_was_active {
+        info!("No active dictation operation to cancel");
+        unregister_cancel_shortcut_if_idle(app);
+        return false;
+    }
+
+    // Cancel any ongoing recording
     audio_manager.cancel_recording();
 
     // Update tray icon and hide overlay
@@ -32,12 +41,30 @@ pub fn cancel_current_operation(app: &AppHandle) {
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.maybe_unload_immediately("cancellation");
 
-    // Notify coordinator so it can keep lifecycle state coherent.
-    if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
-        coordinator.notify_cancel(recording_was_active);
+    if let Some(cloud) = app.try_state::<Arc<crate::winstt::managers::CloudSttManager>>() {
+        cloud.cancel_all();
     }
 
+    // Notify coordinator so it can keep lifecycle state coherent.
+    if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
+        coordinator.notify_cancel(recording_was_active, cancelled_through.unwrap_or(0));
+    }
+
+    unregister_cancel_shortcut_if_idle(app);
+
     info!("Operation cancellation completed - returned to idle state");
+    true
+}
+
+pub fn should_keep_cancel_shortcut_registered() -> bool {
+    crate::transcription_coordinator::is_dictation_pipeline_active()
+        || crate::winstt::commands::overlay::tts_overlay_is_active()
+}
+
+pub fn unregister_cancel_shortcut_if_idle(app: &AppHandle) {
+    if !should_keep_cancel_shortcut_registered() {
+        shortcut::unregister_cancel_shortcut(app);
+    }
 }
 
 /// Check if using the Wayland display server protocol

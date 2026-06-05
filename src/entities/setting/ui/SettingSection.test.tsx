@@ -13,17 +13,27 @@ describe("SettingSection", () => {
 		render(
 			<SettingSection title="Audio">
 				<div data-testid="ch">child</div>
-			</SettingSection>
+			</SettingSection>,
 		);
 		expect(screen.getByText("Audio")).toBeDefined();
 		expect(screen.getByTestId("ch")).toBeDefined();
+	});
+
+	test("renders description as an info pill instead of inline text", () => {
+		render(
+			<SettingSection description="Audio configuration help" title="Audio">
+				<div>child</div>
+			</SettingSection>,
+		);
+		expect(screen.queryByText("Audio configuration help")).toBeNull();
+		expect(screen.getByRole("button", { name: "More info" })).toBeDefined();
 	});
 
 	test("does not render a Toggle when onToggle is not provided", () => {
 		render(
 			<SettingSection title="Audio">
 				<div>x</div>
-			</SettingSection>
+			</SettingSection>,
 		);
 		expect(screen.queryByRole("switch")).toBeNull();
 	});
@@ -32,7 +42,7 @@ describe("SettingSection", () => {
 		render(
 			<SettingSection onToggle={() => undefined} title="LLM" toggled>
 				<div>x</div>
-			</SettingSection>
+			</SettingSection>,
 		);
 		const toggle = screen.getByRole("switch", { name: "Toggle LLM" });
 		expect(toggle.getAttribute("aria-checked")).toBe("true");
@@ -43,7 +53,7 @@ describe("SettingSection", () => {
 		render(
 			<SettingSection onToggle={onToggle} title="LLM" toggled={false}>
 				<div>x</div>
-			</SettingSection>
+			</SettingSection>,
 		);
 		fireEvent.click(screen.getByRole("switch"));
 		expect(onToggle).toHaveBeenCalledTimes(1);
@@ -58,7 +68,7 @@ describe("SettingSection", () => {
 				<SettingSection title="Audio">
 					<SurfaceProbe />
 				</SettingSection>
-			</SurfaceProvider>
+			</SurfaceProvider>,
 		);
 		expect(screen.getByTestId("surface-level").textContent).toBe("3");
 	});
@@ -67,11 +77,12 @@ describe("SettingSection", () => {
 		const { container } = render(
 			<SettingSection onToggle={() => undefined} title="LLM" toggled={false}>
 				<div data-testid="content">x</div>
-			</SettingSection>
+			</SettingSection>,
 		);
 		const wrappers = container.querySelectorAll("div");
 		// Find the wrapper of the content
-		const contentParent = screen.getByTestId("content").parentElement as HTMLElement;
+		const contentParent = screen.getByTestId("content")
+			.parentElement as HTMLElement;
 		expect(contentParent.className).toContain("pointer-events-none");
 		expect(wrappers.length).toBeGreaterThan(0);
 	});

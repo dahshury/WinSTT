@@ -1,9 +1,15 @@
 export {
+	readLastLocalSttModelHistory,
 	recordLastLocalSttModel,
 	resolveLocalDefault,
 } from "./lib/last-local-model";
 export {
+	isCanonicalRealtimeModel,
+	isSelectableRealtimeModel,
+	isVisibleSttModel,
+	modelsHaveLanguageOverlap,
 	needsModelFallback,
+	pickCachedSttModel,
 	pickDefaultSttModel,
 	supportsInitialPrompt,
 	supportsTranslateToEnglish,

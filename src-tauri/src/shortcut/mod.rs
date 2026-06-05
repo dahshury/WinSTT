@@ -16,8 +16,8 @@ mod tauri_impl;
 use log::{error, info, warn};
 use serde::Serialize;
 use specta::Type;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_autostart::ManagerExt;
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
@@ -27,6 +27,8 @@ use crate::settings::{
     APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
+
+static CANCEL_SHORTCUT_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 // Note: Commands are accessed via shortcut::handy_keys:: in lib.rs
 
@@ -56,8 +58,25 @@ pub fn init_shortcuts(app: &AppHandle) {
     }
 }
 
-/// Register the cancel shortcut (called when recording starts)
+pub(crate) fn escape_cancel_binding() -> ShortcutBinding {
+    settings::get_default_settings()
+        .bindings
+        .get("cancel")
+        .cloned()
+        .unwrap_or_else(|| ShortcutBinding {
+            id: "cancel".to_string(),
+            name: "Cancel".to_string(),
+            description: "Cancels the active dictation session.".to_string(),
+            default_binding: "escape".to_string(),
+            current_binding: "escape".to_string(),
+        })
+}
+
+/// Register the Escape cancel shortcut (called when dictation starts)
 pub fn register_cancel_shortcut(app: &AppHandle) {
+    if CANCEL_SHORTCUT_REGISTERED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let settings = get_settings(app);
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::register_cancel_shortcut(app),
@@ -65,8 +84,11 @@ pub fn register_cancel_shortcut(app: &AppHandle) {
     }
 }
 
-/// Unregister the cancel shortcut (called when recording stops)
+/// Unregister the Escape cancel shortcut (called when dictation fully finishes)
 pub fn unregister_cancel_shortcut(app: &AppHandle) {
+    if !CANCEL_SHORTCUT_REGISTERED.swap(false, Ordering::SeqCst) {
+        return;
+    }
     let settings = get_settings(app);
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::unregister_cancel_shortcut(app),
@@ -116,7 +138,7 @@ pub(crate) fn is_winstt_tree_binding(id: &str) -> bool {
 /// (`apply_settings_patch`), and after a keyboard-implementation switch — so the
 /// hotkeys go live immediately, exactly like the PTT hotkey, with no relaunch.
 /// Routes every accelerator through `change_binding`, which translates the WinSTT
-/// key names to handy's vocabulary (`winstt_accel_to_handy`) and persists + (re)registers.
+/// key names to the active shortcut backend's vocabulary and persists + (re)registers.
 pub fn reconcile_winstt_hotkeys(app: &AppHandle) {
     let ws = crate::winstt::commands::settings::read_settings(app);
     reconcile_one(
@@ -175,14 +197,13 @@ pub fn change_binding(
         return Err("Binding cannot be empty".to_string());
     }
 
-    // WinSTT fork: the renderer sends accelerators in WinSTT/the reference key names
-    // (`LCtrl+LMeta`, `LMeta+LShift+E`, …). handy-keys' parser rejects `LMeta`/`RMeta`
-    // (it wants `super_left`), so translate to its token vocabulary at this single
-    // chokepoint — covering every path (PTT register, TTS, transforms, settings-rebind).
-    // Without this the PTT/TTS hotkeys silently fail to register. Idempotent.
-    let binding = crate::winstt::commands::hotkey::winstt_accel_to_handy(&binding);
-
     let mut settings = settings::get_settings(&app);
+    // WinSTT fork: the renderer sends accelerators in WinSTT/the reference key names
+    // (`LCtrl+LMeta`, `LMeta+LShift+E`, …). Translate to the active backend's token
+    // vocabulary at this single chokepoint — covering PTT, TTS, transforms, repaste,
+    // and settings rebinds. Without this, side-aware WinSTT names are fed to parsers
+    // that do not understand them.
+    let binding = normalize_accel_for_implementation(&binding, settings.keyboard_implementation);
 
     // Get the binding to modify, or create it from defaults if it doesn't exist
     let binding_to_modify = match settings.bindings.get(&id) {
@@ -211,19 +232,16 @@ pub fn change_binding(
         }
     };
 
-    // If this is the cancel binding, just update the settings and return
-    // It's managed dynamically, so we don't register/unregister here
+    // Escape cancel is fixed so old persisted hotkey+Backspace-style bindings do not linger.
     if id == "cancel" {
-        if let Some(mut b) = settings.bindings.get(&id).cloned() {
-            b.current_binding = binding;
-            settings.bindings.insert(id.clone(), b.clone());
-            settings::write_settings(&app, settings);
-            return Ok(BindingResponse {
-                success: true,
-                binding: Some(b.clone()),
-                error: None,
-            });
-        }
+        let b = escape_cancel_binding();
+        settings.bindings.insert(id.clone(), b.clone());
+        settings::write_settings(&app, settings);
+        return Ok(BindingResponse {
+            success: true,
+            binding: Some(b),
+            error: None,
+        });
     }
 
     // Unregister the existing binding
@@ -407,6 +425,17 @@ fn validate_shortcut_for_implementation(
     match implementation {
         KeyboardImplementation::Tauri => tauri_impl::validate_shortcut(raw),
         KeyboardImplementation::HandyKeys => handy_keys::validate_shortcut(raw),
+    }
+}
+
+fn normalize_accel_for_implementation(raw: &str, implementation: KeyboardImplementation) -> String {
+    match implementation {
+        KeyboardImplementation::Tauri => {
+            crate::winstt::commands::hotkey::winstt_accel_to_tauri(raw)
+        }
+        KeyboardImplementation::HandyKeys => {
+            crate::winstt::commands::hotkey::winstt_accel_to_handy(raw)
+        }
     }
 }
 
@@ -654,52 +683,6 @@ pub fn change_debug_mode_setting(app: AppHandle, enabled: bool) -> Result<(), St
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_start_hidden_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.start_hidden = enabled;
-    settings::write_settings(&app, settings);
-
-    // Notify frontend
-    let _ = app.emit(
-        "settings-changed",
-        serde_json::json!({
-            "setting": "start_hidden",
-            "value": enabled
-        }),
-    );
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn change_autostart_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.autostart_enabled = enabled;
-    settings::write_settings(&app, settings);
-
-    // Apply the autostart setting immediately
-    let autostart_manager = app.autolaunch();
-    if enabled {
-        let _ = autostart_manager.enable();
-    } else {
-        let _ = autostart_manager.disable();
-    }
-
-    // Notify frontend
-    let _ = app.emit(
-        "settings-changed",
-        serde_json::json!({
-            "setting": "autostart_enabled",
-            "value": enabled
-        }),
-    );
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn change_update_checks_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.update_checks_enabled = enabled;
@@ -739,15 +722,6 @@ pub fn change_word_correction_threshold_setting(
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_extra_recording_buffer_setting(app: AppHandle, ms: u64) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.extra_recording_buffer_ms = ms;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn change_paste_delay_ms_setting(app: AppHandle, ms: u64) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.paste_delay_ms = ms;
@@ -765,7 +739,10 @@ pub fn change_paste_method_setting(app: AppHandle, method: String) -> Result<(),
         "none" => PasteMethod::None,
         "shift_insert" => PasteMethod::ShiftInsert,
         "ctrl_shift_v" => PasteMethod::CtrlShiftV,
-        "external_script" => PasteMethod::ExternalScript,
+        "external_script" => {
+            warn!("External script paste is disabled");
+            return Err("External script paste is disabled".into());
+        }
         other => {
             warn!("Invalid paste method '{}', defaulting to ctrl_v", other);
             PasteMethod::CtrlV
@@ -816,10 +793,8 @@ pub fn change_external_script_path_setting(
     app: AppHandle,
     path: Option<String>,
 ) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.external_script_path = path;
-    settings::write_settings(&app, settings);
-    Ok(())
+    let _ = (app, path);
+    Err("External script paste is disabled".into())
 }
 
 #[tauri::command]
@@ -1139,15 +1114,6 @@ pub fn change_append_trailing_space_setting(app: AppHandle, enabled: bool) -> Re
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_lazy_stream_close_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.lazy_stream_close = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn change_app_language_setting(app: AppHandle, language: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.app_language = language.clone();
@@ -1227,8 +1193,9 @@ pub fn change_whisper_gpu_device(app: AppHandle, device: i32) -> Result<(), Stri
 /// stays responsive — see also the startup pre-warm in `lib.rs`.
 #[tauri::command]
 #[specta::specta]
-pub async fn get_available_accelerators() -> crate::managers::transcription::AvailableAccelerators {
+pub async fn get_available_accelerators(
+) -> Result<crate::managers::transcription::AvailableAccelerators, String> {
     tauri::async_runtime::spawn_blocking(crate::managers::transcription::get_available_accelerators)
         .await
-        .expect("get_available_accelerators panicked")
+        .map_err(|err| format!("get_available_accelerators worker failed: {err}"))
 }

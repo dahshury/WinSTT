@@ -3,15 +3,12 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, useSurface } from "@/shared/lib/surface";
+import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSectionProps {
 	children?: ReactNode;
-	/**
-	 * Optional one-line description rendered as muted supporting text beneath
-	 * the section. Falls back to omitting it entirely if neither this nor
-	 * `footer` is provided.
-	 */
+	/** Optional help text shown in an info-icon tooltip next to the section title. */
 	description?: string;
 	/**
 	 * Wrap the body in the standard hairline-divided column
@@ -20,7 +17,7 @@ export interface SettingSectionProps {
 	 * rows — saves repeating the wrapper at every call site.
 	 */
 	divided?: boolean;
-	/** Custom footer content (e.g. status, hint, action). Overrides `description`. */
+	/** Custom footer content for status, warnings, or actions that must stay visible. */
 	footer?: ReactNode;
 	/** Action rendered on the trailing edge of the header (e.g. a button). Renders alongside the toggle when both are provided. */
 	headerAction?: ReactNode;
@@ -28,6 +25,8 @@ export interface SettingSectionProps {
 	icon?: IconSvgElement;
 	onToggle?: (checked: boolean) => void;
 	title: string;
+	/** Optional help text shown in an info-icon tooltip next to the section title. */
+	tooltip?: string;
 	toggleDisabled?: boolean;
 	/** When provided, renders a toggle switch on the trailing edge of the header. */
 	toggled?: boolean;
@@ -56,6 +55,7 @@ export function SettingSection({
 	icon,
 	toggled,
 	onToggle,
+	tooltip,
 	toggleDisabled,
 }: SettingSectionProps) {
 	const substrate = useSurface();
@@ -63,8 +63,10 @@ export function SettingSection({
 
 	const hasToggle = onToggle !== undefined;
 	const isDisabled = hasToggle && !toggled;
-	const renderedFooter = footer ?? (description ? <span>{description}</span> : null);
-	const hasBody = children !== undefined && children !== null && children !== false;
+	const helpText = tooltip ?? description;
+	const renderedFooter = footer ?? null;
+	const hasBody =
+		children !== undefined && children !== null && children !== false;
 	const body = divided ? (
 		<div className="flex flex-col divide-y divide-surface-1">{children}</div>
 	) : (
@@ -83,9 +85,12 @@ export function SettingSection({
 							size={15}
 						/>
 					)}
-					<h3 className="min-w-0 flex-1 font-semibold text-foreground text-subtitle tracking-[-0.01em]">
-						{title}
-					</h3>
+					<div className="flex min-w-0 flex-1 items-center gap-1.5">
+						<h3 className="min-w-0 font-semibold text-foreground text-subtitle tracking-[-0.01em]">
+							{title}
+						</h3>
+						{helpText ? <InfoTooltip content={helpText} /> : null}
+					</div>
 					{headerAction ? <div className="shrink-0">{headerAction}</div> : null}
 					{hasToggle && (
 						<div className="shrink-0">
@@ -98,19 +103,24 @@ export function SettingSection({
 						</div>
 					)}
 				</header>
-				<div aria-hidden="true" className="mt-2.5 h-px w-full bg-[var(--color-divider-strong)]" />
+				<div
+					aria-hidden="true"
+					className="mt-2.5 h-px w-full bg-[var(--color-divider-strong)]"
+				/>
 				{hasBody ? (
 					<div
 						className={cn(
 							"pt-1 transition-opacity duration-200 ease-out",
-							isDisabled && "pointer-events-none opacity-40"
+							isDisabled && "pointer-events-none opacity-40",
 						)}
 					>
 						{body}
 					</div>
 				) : null}
 				{renderedFooter ? (
-					<div className="pt-2 text-body-sm text-foreground-muted">{renderedFooter}</div>
+					<div className="pt-2 text-body-sm text-foreground-muted">
+						{renderedFooter}
+					</div>
 				) : null}
 			</section>
 		</SurfaceProvider>

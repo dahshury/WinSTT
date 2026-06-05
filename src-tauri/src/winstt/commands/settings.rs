@@ -3,74 +3,65 @@
 // winstt::settings_schema (the ~150-field nested WinsttSettings tree).
 //
 // winstt_get_settings / winstt_set_settings expose the full nested WinsttSettings tree
-// to the reused React renderer over tauri-specta. They are NOT thin getters/setters —
-// they reproduce the reference's settings:load / settings:save handlers 1:1:
+// to the reused React renderer over tauri-specta. They are NOT thin getters/setters:
 //
-//   * winstt_get_settings → reads the persisted store, OPENS the three secret fields
-//     to plaintext (every internal consumer + the renderer expect plaintext, exactly
-//     like the reference's `getStoreValue` / `decryptSecretsForRenderer`), returns the
-//     full nested tree (defaulting cleanly on a missing / partial blob).
+//   * winstt_get_settings → reads the persisted store, opens the three secret fields
+//     for backend use, then masks those fields before returning the full nested tree
+//     to the renderer (defaulting cleanly on a missing / partial blob).
 //
 //   * winstt_set_settings → merges the PARTIAL section patch the renderer posts over
 //     the persisted snapshot (so a `{ audio: ... }` calibration save can't wipe
 //     `model`/`general`), preserves the main-owned `onboarded*` fields, SEALS the
-//     secret fields at rest (`enc:v1:` envelope), persists, computes the
-//     restart-need (startup-only ∪ CONDITIONAL wakeword — NOT effective-realtime, which
-//     self-gates live; see `compute_restart_keys`), emits `stt:restart-required` for the
-//     changed key (the in-proc engine is "unmanaged" — there is no server process to
-//     auto-restart, so we surface the manual-restart notice exactly like the reference's
-//     unmanaged-server branch), and broadcasts the post-save DECRYPTED snapshot via
-//     `settings:changed`.
+//     secret fields at rest (`enc:v1:` envelope), persists, applies owned runtime
+//     side-effects in-process, and broadcasts the post-save renderer-safe snapshot
+//     via `settings:changed`.
 //
-// Hot-swap side-effects (model swap, quant, VAD knobs, autostart, …) are driven by the
-// renderer's own sync layer (`features/update-settings` → `sttSetParameter` /
-// `autostartSet` / `sttReloadModel`), NOT by this handler — byte-identical to the reference,
-// whose `settings:save` ALSO only persists + diffs restart + broadcasts. So "apply" here
-// means: persist + seal + restart-notify + broadcast. The renderer fans the per-setting
-// hot-swaps out separately (and those land in their owning slices' commands).
+// Hot-swap side-effects that are owned by this Rust port (model unload timeout,
+// same-model load-input changes, TTS warmups, LLM unload policy, wakeword runtime,
+// and WinSTT-tree hotkeys) are applied here. Renderer-owned side-effects still fan
+// out through the reused sync layer.
 //
 // Persistence rides Handy's existing tauri-plugin-store. WinSTT settings live under a
 // dedicated `winstt_settings` key in `winstt-settings.json` (separate from Handy's
 // `settings`) so the two schemas don't collide.
+//
+// Runtime invariant: settings saves in this port must not emit manual restart events.
+// Former restart-only settings are live-read or applied through targeted in-process
+// reload/arm/disarm paths.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_store::StoreExt;
 
-use crate::winstt::commands::secret_storage::{decrypt_secret, encrypt_secret, is_encrypted};
+use crate::winstt::commands::secret_storage::{try_decrypt_secret, try_encrypt_secret};
 use crate::winstt::settings_schema::{
-    is_secret, is_startup_only, AudioSettings, DictionaryEntry, GeneralSettings, GlobalSettings,
-    HotkeySettings, IntegrationsSettings, LiveTranscriptionDisplay, LlmProvider, LlmSettings,
-    ModelSettings, ModelUnloadTimeout as WinsttModelUnloadTimeout, PresetEntry, PresetKey,
-    QualitySettings, RecordingMode, SnippetEntry, TtsSettings, TtsSource, WinsttSettings,
-    SECRET_KEYS, WAKEWORD_CONFIG_KEYS,
+    is_secret, AudioSettings, DictionaryEntry, GeneralSettings, GlobalSettings, HotkeySettings,
+    IntegrationsSettings, LiveTranscriptionDisplay, LlmProvider, LlmSettings, ModelSettings,
+    ModelUnloadTimeout as WinsttModelUnloadTimeout, PresetEntry, PresetKey, QualitySettings,
+    RecordingMode, SnippetEntry, TtsSettings, TtsSource, WinsttSettings, SECRET_KEYS,
 };
 
 pub const WINSTT_SETTINGS_KEY: &str = "winstt_settings";
-const WINSTT_SETTINGS_FILE: &str = "winstt-settings.json";
+pub(crate) const WINSTT_SETTINGS_FILE: &str = "winstt-settings.json";
+pub(crate) const SECRET_PRESENT_SENTINEL: &str = "__WINSTT_SECRET_PRESENT__";
 
-/// The `settings:changed` plain event — the post-save full snapshot every other
+/// The `settings:changed` plain event — the post-save full masked snapshot every other
 /// window re-hydrates its Zustand store from. Byte-identical to WinSTT's the reference
 /// IPC shape (`{ settings }`) so the reused renderer's `onSettingsChanged`
 /// listener (ipc-client.ts) needs no changes.
-const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
+pub(crate) const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
 
 /// The `settings:save-error` plain event — emitted on validation/persist failure
 /// (the renderer's save path is fire-and-forget, so it can't see the `Result`).
 /// Shape `{ error }` matches `onSettingsSaveError` in ipc-client.ts.
 const SETTINGS_SAVE_ERROR_EVENT: &str = "settings:save-error";
 
-/// The `stt:restart-required` plain event — emitted when a startup-only / wakeword /
-/// effective-realtime setting changed but the (in-proc) engine cannot apply it
-/// without a relaunch. Shape `{ setting, kind }` matches `ServerRestartRequiredPayload`
-/// in ipc-client.ts. The in-proc engine is always "unmanaged" (no separate server
-/// process the reference could kill+respawn), so `kind` is always `"unmanaged"`.
-const RESTART_REQUIRED_EVENT: &str = "stt:restart-required";
-
 /// Result of `winstt_set_settings`: whether the change requires an engine
-/// restart, and which dot-paths drove that decision (for diagnostics / UI).
+/// restart, and which dot-paths drove that decision. Kept for renderer wire
+/// compatibility; the Rust port applies these changes in-process.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SetSettingsResult {
@@ -123,18 +114,32 @@ fn store_path() -> std::path::PathBuf {
 /// Read the persisted WinSTT settings with secrets OPENED to plaintext.
 ///
 /// This is the single read path every consumer uses (managers for LLM / cloud-STT /
-/// verify read API keys straight off the returned struct, and `winstt_get_settings`
-/// returns it to the renderer) — so it MUST hand back plaintext secrets, exactly like
-/// the reference's `getStoreValue` decrypting transparently on every read. The on-disk
-/// store holds the sealed `enc:v1:` envelopes; legacy plaintext (no prefix) passes
-/// through unchanged.
+/// verify read API keys straight off the returned struct). Renderer-facing commands
+/// must call `sanitize_settings_for_renderer` before returning or emitting this tree.
+/// The on-disk store holds the sealed `enc:v1:` envelopes; legacy plaintext (no
+/// prefix) passes through unchanged.
 ///
 /// Defaults cleanly on a missing / partial blob — every field is `#[serde(default)]`,
 /// mirroring Zod `.catch`.
 pub fn read_settings(app: &AppHandle) -> WinsttSettings {
-    let mut settings = read_settings_raw(app);
-    open_secrets(&mut settings);
-    settings
+    match try_read_settings_raw(app) {
+        Ok(mut settings) => {
+            if let Err(err) = try_open_secrets(&mut settings) {
+                log::warn!("[settings] failed to open WinSTT settings secrets: {err}");
+            }
+            settings
+        }
+        Err(err) => {
+            log::warn!("[settings] failed to read WinSTT settings: {err}");
+            WinsttSettings::default()
+        }
+    }
+}
+
+fn try_read_settings(app: &AppHandle) -> Result<WinsttSettings, String> {
+    let mut settings = try_read_settings_raw(app)?;
+    try_open_secrets(&mut settings)?;
+    Ok(settings)
 }
 
 /// Read the persisted settings WITHOUT opening secrets (the on-disk form, where the
@@ -145,12 +150,40 @@ pub fn read_settings(app: &AppHandle) -> WinsttSettings {
 /// (`realtime_manager`, `recording_mode`) — those must NOT trigger per-tick secret
 /// decryption (reg.exe spawns), so they read raw. Hence `pub(crate)`.
 pub(crate) fn read_settings_raw(app: &AppHandle) -> WinsttSettings {
-    let Ok(store) = app.store(store_path()) else {
-        return WinsttSettings::default();
-    };
+    match try_read_settings_raw(app) {
+        Ok(settings) => settings,
+        Err(err) => {
+            log::warn!("[settings] failed to read raw WinSTT settings: {err}");
+            WinsttSettings::default()
+        }
+    }
+}
+
+fn try_read_settings_raw(app: &AppHandle) -> Result<WinsttSettings, String> {
+    let store = app
+        .store(store_path())
+        .map_err(|err| format!("winstt settings store: {err}"))?;
     match store.get(WINSTT_SETTINGS_KEY) {
-        Some(value) => serde_json::from_value(value).unwrap_or_default(),
-        None => WinsttSettings::default(),
+        Some(value) => parse_settings_value(value),
+        None => Ok(WinsttSettings::default()),
+    }
+}
+
+fn parse_settings_value(value: serde_json::Value) -> Result<WinsttSettings, String> {
+    let mut settings: WinsttSettings = serde_json::from_value(value)
+        .map_err(|err| format!("invalid persisted WinSTT settings: {err}"))?;
+    normalize_cross_field_settings(&mut settings);
+    Ok(settings)
+}
+
+fn word_by_word_pasting_effective(settings: &WinsttSettings) -> bool {
+    settings.general.word_by_word_pasting
+}
+
+fn normalize_cross_field_settings(settings: &mut WinsttSettings) {
+    if settings.general.word_by_word_pasting {
+        settings.general.preview_before_pasting = false;
+        settings.llm.dictation.enabled = false;
     }
 }
 
@@ -163,22 +196,59 @@ pub fn recording_mode(app: &AppHandle) -> RecordingMode {
 
 /// Open (decrypt) the three secret fields on a settings tree in place. Idempotent
 /// on already-plaintext values (legacy passthrough).
-fn open_secrets(settings: &mut WinsttSettings) {
-    settings.llm.openrouter_api_key = decrypt_secret(&settings.llm.openrouter_api_key);
-    settings.integrations.openai.api_key = decrypt_secret(&settings.integrations.openai.api_key);
+fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
+    settings.llm.openrouter_api_key = try_decrypt_secret(&settings.llm.openrouter_api_key)?;
+    settings.integrations.openai.api_key =
+        try_decrypt_secret(&settings.integrations.openai.api_key)?;
     settings.integrations.elevenlabs.api_key =
-        decrypt_secret(&settings.integrations.elevenlabs.api_key);
+        try_decrypt_secret(&settings.integrations.elevenlabs.api_key)?;
+    Ok(())
 }
 
 /// Seal (encrypt) the three secret fields on a settings tree in place, ready for
 /// the store. A value that is already a sealed envelope (the renderer echoed it
 /// back without touching it — it can't, the IPC path always sends plaintext, but
 /// the guard keeps this total) is left as-is via `encrypt_secret`'s idempotence.
-fn seal_secrets(settings: &mut WinsttSettings) {
-    settings.llm.openrouter_api_key = encrypt_secret(&settings.llm.openrouter_api_key);
-    settings.integrations.openai.api_key = encrypt_secret(&settings.integrations.openai.api_key);
+fn try_seal_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
+    settings.llm.openrouter_api_key = try_encrypt_secret(&settings.llm.openrouter_api_key)?;
+    settings.integrations.openai.api_key =
+        try_encrypt_secret(&settings.integrations.openai.api_key)?;
     settings.integrations.elevenlabs.api_key =
-        encrypt_secret(&settings.integrations.elevenlabs.api_key);
+        try_encrypt_secret(&settings.integrations.elevenlabs.api_key)?;
+    Ok(())
+}
+
+fn mask_secret_for_renderer(value: &mut String) {
+    if !value.is_empty() {
+        *value = SECRET_PRESENT_SENTINEL.to_string();
+    }
+}
+
+fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
+    mask_secret_for_renderer(&mut settings.llm.openrouter_api_key);
+    mask_secret_for_renderer(&mut settings.integrations.openai.api_key);
+    mask_secret_for_renderer(&mut settings.integrations.elevenlabs.api_key);
+}
+
+fn preserve_masked_secret(previous: &str, next: &mut String) {
+    if next == SECRET_PRESENT_SENTINEL {
+        *next = previous.to_string();
+    }
+}
+
+fn preserve_masked_secrets(previous: &WinsttSettings, next: &mut WinsttSettings) {
+    preserve_masked_secret(
+        &previous.llm.openrouter_api_key,
+        &mut next.llm.openrouter_api_key,
+    );
+    preserve_masked_secret(
+        &previous.integrations.openai.api_key,
+        &mut next.integrations.openai.api_key,
+    );
+    preserve_masked_secret(
+        &previous.integrations.elevenlabs.api_key,
+        &mut next.integrations.elevenlabs.api_key,
+    );
 }
 
 /// Persist a full settings tree (with secrets ALREADY sealed) to the store and flush.
@@ -212,15 +282,19 @@ pub fn seed_defaults(app: &AppHandle) {
     }
 }
 
-/// `winstt_get_settings` — the full tree the renderer boots against (secrets opened).
+/// `winstt_get_settings` — the full tree the renderer boots against, with
+/// secret fields masked so renderer code can know a key exists without reading
+/// the key material.
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_get_settings(app: AppHandle) -> WinsttSettings {
-    read_settings(&app)
+    let mut settings = read_settings(&app);
+    sanitize_settings_for_renderer(&mut settings);
+    settings
 }
 
-/// `winstt_set_settings` — merge a PARTIAL section patch, validate, diff restart-need,
-/// seal secrets, persist, restart-notify, broadcast.
+/// `winstt_set_settings` merges a PARTIAL section patch, validates, seals
+/// secrets, persists, applies runtime side-effects, and broadcasts.
 ///
 /// The renderer sends **partial** top-level sections, not the whole tree
 /// (`collectChangedSections`), so we accept a `PartialWinsttSettings` (every section
@@ -257,33 +331,39 @@ pub fn apply_settings_patch(
     // `previous` here is the PLAINTEXT view (secrets opened). The renderer's patch is
     // plaintext too, so the merge + diff operate entirely in plaintext — like
     // the reference's `snapshotSettings`, which decrypts before diffing.
-    let previous = read_settings(app);
+    let previous = try_read_settings(app)?;
 
     // Merge the partial patch over the persisted full snapshot, section by section
     // (matching `applySettings` / `mergeMainOwnedFields`). Each present section
     // overwrites its counterpart wholesale; absent sections keep the persisted value;
     // `general` preserves the main-owned `onboarded*` fields.
-    let next = merge_patch_over(&previous, patch);
+    let mut next = merge_patch_over(&previous, patch);
+    preserve_masked_secrets(&previous, &mut next);
 
     // (a) cross-field validation (the Zod `.refine` equivalents).
     validate_settings(&next)?;
 
-    // (b) restart-need predicate set —
-    //     1. an unconditional startup-only key changed; OR
-    //     2. the wakeword config branch changed (CONDITIONAL on mode).
-    //     (the reference also restarted on an effective-realtime flip; this port does NOT —
-    //     the realtime worker self-gates on the live setting, so toggling live
-    //     transcription needs no relaunch. See `compute_restart_keys`.)
+    // (b) restart-need result for wire compatibility. The Rust port hot-applies
+    //     model, wakeword, and realtime changes in-process.
     let changed_startup = compute_restart_keys(&previous, &next);
     let needs_restart = !changed_startup.is_empty();
 
-    // (c) seal the secret fields at rest, then persist. Clone so the broadcast +
-    //     return keep the PLAINTEXT `next` (the renderer + every consumer want
-    //     plaintext); only the on-disk copy is sealed.
+    // (c) seal the secret fields at rest, then persist. Clone so runtime
+    //     side-effects keep the plaintext `next`; only the on-disk copy is
+    //     sealed and the renderer broadcast is masked below.
     let mut to_persist = next.clone();
-    seal_secrets(&mut to_persist);
+    try_seal_secrets(&mut to_persist)?;
     debug_assert!(SECRET_KEYS.iter().all(|k| is_secret(k)));
     write_settings_value(app, &to_persist)?;
+    if previous.general.recording_mode != next.general.recording_mode
+        || previous.general.wake_word != next.general.wake_word
+    {
+        log::info!(
+            "[settings] saved recordingMode={:?} wakeWord='{}'",
+            next.general.recording_mode,
+            next.general.wake_word
+        );
+    }
 
     // (c.1) HOT-SWAP the WinSTT-tree global hotkeys (transforms / TTS read-aloud /
     //       re-paste) when their accelerator OR enable flag changed. These are armed
@@ -298,19 +378,18 @@ pub fn apply_settings_patch(
     apply_tts_runtime_settings(app, &previous, &next);
     apply_llm_runtime_settings(app, &previous, &next);
     apply_wakeword_runtime_settings(app, &previous, &next);
+    apply_history_retention_settings(app, &previous, &next);
+    apply_audio_runtime_settings(app, &previous, &next);
+    apply_autostart_setting(app, &previous, &next);
+    crate::tray::set_tray_visualizer_style_from_general(&next.general);
 
-    // (d) surface the manual-restart notice for the in-proc (unmanaged) engine. The
-    //     renderer's `onServerRestartRequired` shows the "restart to apply" UI.
-    if needs_restart {
-        notify_restart_required(app, resolve_changed_key(&changed_startup));
-    }
-
-    // (e) broadcast the post-save PLAINTEXT full snapshot (not the raw partial) so
-    //     every other window re-hydrates the same canonical view. Sending the partial
-    //     would make `decodeSettingsPayload` fill DEFAULTS for the missing sections
-    //     and stomp customized fields — the exact reason the reference broadcasts the
-    //     decrypted snapshot, not the raw payload.
-    let snapshot = serde_json::to_value(&next).map_err(|e| e.to_string())?;
+    // (d) broadcast the post-save full snapshot (not the raw partial) so every
+    //     other window re-hydrates the same canonical view. Secret fields are
+    //     masked before crossing IPC; a later save that echoes the sentinel
+    //     preserves the stored secret, while an empty string still clears it.
+    let mut renderer_next = next.clone();
+    sanitize_settings_for_renderer(&mut renderer_next);
+    let snapshot = serde_json::to_value(&renderer_next).map_err(|e| e.to_string())?;
     let _ = app.emit(
         SETTINGS_CHANGED_EVENT,
         serde_json::json!({ "settings": snapshot }),
@@ -320,16 +399,6 @@ pub fn apply_settings_patch(
         needs_restart,
         changed_startup_keys: changed_startup,
     })
-}
-
-/// Emit `stt:restart-required { setting, kind: "unmanaged" }`. The in-proc engine has
-/// no separate server process to kill+respawn (the reference's "managed" branch), so this
-/// is always the unmanaged branch: the user must relaunch the app to apply the change.
-fn notify_restart_required(app: &AppHandle, setting: &str) {
-    let _ = app.emit(
-        RESTART_REQUIRED_EVENT,
-        serde_json::json!({ "setting": setting, "kind": "unmanaged" }),
-    );
 }
 
 pub(crate) fn core_timeout_from_winstt(
@@ -353,7 +422,13 @@ pub(crate) fn should_keep_stt_model_warm(timeout: WinsttModelUnloadTimeout) -> b
 fn apply_model_runtime_settings(app: &AppHandle, previous: &WinsttSettings, next: &WinsttSettings) {
     sync_core_model_unload_timeout(app, next.global.model_unload_timeout);
 
-    if model_warm_inputs_changed(previous, next)
+    if same_model_load_inputs_changed(previous, next) {
+        reload_stt_model_async(
+            app,
+            &next.model.model,
+            should_keep_stt_model_warm(next.global.model_unload_timeout),
+        );
+    } else if model_warm_inputs_changed(previous, next)
         && should_keep_stt_model_warm(next.global.model_unload_timeout)
     {
         warm_stt_model_async(app);
@@ -371,11 +446,45 @@ fn sync_core_model_unload_timeout(app: &AppHandle, timeout: WinsttModelUnloadTim
 }
 
 fn model_warm_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
-    previous.model.model != next.model.model
-        || previous.model.backend != next.model.backend
-        || previous.model.device != next.model.device
-        || previous.model.onnx_quantization != next.model.onnx_quantization
-        || previous.global.model_unload_timeout != next.global.model_unload_timeout
+    previous.global.model_unload_timeout != next.global.model_unload_timeout
+}
+
+fn same_model_load_inputs_changed(previous: &WinsttSettings, next: &WinsttSettings) -> bool {
+    let model = next.model.model.trim();
+    !model.is_empty()
+        && previous.model.model == next.model.model
+        && (previous.model.backend != next.model.backend
+            || previous.model.device != next.model.device
+            || previous.model.onnx_quantization != next.model.onnx_quantization)
+}
+
+fn reload_stt_model_async(app: &AppHandle, model: &str, keep_warm: bool) {
+    let model = model.trim();
+    if model.is_empty() {
+        return;
+    }
+    if !keep_warm {
+        unload_loaded_stt_model_async(app);
+        return;
+    }
+    crate::winstt::commands::swap_events::perform_model_reload(app, "main", model);
+}
+
+fn unload_loaded_stt_model_async(app: &AppHandle) {
+    let Some(transcription) =
+        app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
+    else {
+        return;
+    };
+    if !transcription.inner().is_model_loaded() {
+        return;
+    }
+    let tm = Arc::clone(transcription.inner());
+    std::thread::spawn(move || {
+        if let Err(err) = tm.unload_model() {
+            log::warn!("[settings] failed to unload STT model after load-input change: {err}");
+        }
+    });
 }
 
 pub(crate) fn warm_stt_model_async(app: &AppHandle) {
@@ -428,6 +537,68 @@ pub(crate) fn warm_tts_async(app: &AppHandle) {
 fn apply_llm_runtime_settings(app: &AppHandle, previous: &WinsttSettings, next: &WinsttSettings) {
     if llm_warm_inputs_changed(previous, next) {
         warm_llm_models_async(app);
+    }
+}
+
+fn apply_history_retention_settings(
+    app: &AppHandle,
+    previous: &WinsttSettings,
+    next: &WinsttSettings,
+) {
+    if previous.general.history_max_entries == next.general.history_max_entries
+        && previous.general.recording_retention == next.general.recording_retention
+    {
+        return;
+    }
+    let Some(history_manager) = app.try_state::<Arc<crate::managers::history::HistoryManager>>()
+    else {
+        return;
+    };
+    if let Err(err) = history_manager.cleanup_old_entries() {
+        log::warn!("[settings] failed to apply history retention change: {err}");
+    }
+}
+
+fn apply_audio_runtime_settings(app: &AppHandle, previous: &WinsttSettings, next: &WinsttSettings) {
+    let microphone_release_changed =
+        previous.audio.microphone_release != next.audio.microphone_release;
+    let input_device_changed = previous.audio.input_device_index != next.audio.input_device_index
+        || previous.audio.clamshell_microphone != next.audio.clamshell_microphone;
+    if !microphone_release_changed && !input_device_changed {
+        return;
+    }
+
+    let Some(audio_manager) = app.try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+    else {
+        return;
+    };
+
+    if microphone_release_changed {
+        let mode = crate::managers::audio::microphone_mode_from_settings(next);
+        if let Err(err) = audio_manager.update_mode(mode) {
+            log::warn!("[settings] failed to apply microphone release policy: {err}");
+        }
+    }
+
+    if input_device_changed {
+        if let Err(err) = audio_manager.update_selected_device() {
+            log::warn!("[settings] failed to apply microphone device change: {err}");
+        }
+    }
+}
+
+fn apply_autostart_setting(app: &AppHandle, previous: &WinsttSettings, next: &WinsttSettings) {
+    if previous.general.auto_start == next.general.auto_start {
+        return;
+    }
+    let autostart = app.autolaunch();
+    let result = if next.general.auto_start {
+        autostart.enable()
+    } else {
+        autostart.disable()
+    };
+    if let Err(err) = result {
+        log::warn!("[settings] failed to apply autostart setting: {err}");
     }
 }
 
@@ -489,6 +660,23 @@ enum WakewordRuntimeTransition {
     Refresh,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WakewordArmReadiness {
+    Ready,
+    MissingModelBundle,
+    DetectorUnavailable,
+}
+
+fn wakeword_arm_readiness(has_detector: bool, has_model_bundle: bool) -> WakewordArmReadiness {
+    if has_detector {
+        WakewordArmReadiness::Ready
+    } else if !has_model_bundle {
+        WakewordArmReadiness::MissingModelBundle
+    } else {
+        WakewordArmReadiness::DetectorUnavailable
+    }
+}
+
 fn wakeword_runtime_transition(
     previous: Option<&WinsttSettings>,
     next: &WinsttSettings,
@@ -531,6 +719,16 @@ fn apply_wakeword_runtime_settings(
 pub(crate) fn sync_wakeword_runtime_from_settings(app: &AppHandle) {
     let settings = read_settings_raw(app);
     apply_wakeword_runtime_transition(app, wakeword_runtime_transition(None, &settings), &settings);
+}
+
+pub(crate) fn sync_wakeword_runtime_from_settings_in_background(app: &AppHandle) {
+    let app = app.clone();
+    if let Err(err) = std::thread::Builder::new()
+        .name("winstt-wakeword-startup-arm".to_string())
+        .spawn(move || sync_wakeword_runtime_from_settings(&app))
+    {
+        log::warn!("[wakeword] failed to start startup arm thread: {err}");
+    }
 }
 
 pub(crate) fn rearm_wakeword_runtime_if_active(app: &AppHandle) {
@@ -582,6 +780,35 @@ fn arm_wakeword_runtime(app: &AppHandle, settings: &WinsttSettings) {
         return;
     }
 
+    match wakeword_arm_readiness(wakeword.has_detector(), wakeword.has_model_bundle()) {
+        WakewordArmReadiness::Ready => {}
+        WakewordArmReadiness::MissingModelBundle => {
+            wakeword.set_armed(false);
+            if wakeword.start_model_bundle_download_if_missing() {
+                log::info!(
+                    "[wakeword] KWS model bundle missing; download started before microphone arm"
+                );
+            } else if wakeword.model_bundle_download_inflight() {
+                log::debug!(
+                    "[wakeword] KWS model bundle download already in progress; delaying arm"
+                );
+            } else {
+                log::debug!(
+                    "[wakeword] KWS model bundle is still unavailable; delaying microphone arm"
+                );
+            }
+            return;
+        }
+        WakewordArmReadiness::DetectorUnavailable => {
+            wakeword.set_armed(false);
+            log::warn!(
+                "[wakeword] detector unavailable for '{}' even though the KWS model bundle exists",
+                settings.general.wake_word
+            );
+            return;
+        }
+    }
+
     if let Err(err) = audio.inner().ensure_wakeword_listening_stream() {
         let detail = err.to_string();
         log::warn!("[wakeword] failed to open microphone stream: {detail}");
@@ -592,28 +819,24 @@ fn arm_wakeword_runtime(app: &AppHandle, settings: &WinsttSettings) {
 
     wakeword.set_armed(true);
     let _ = app.emit("stt:wakeword-detection-start", ());
-    if wakeword.has_detector() {
-        log::info!(
-            "[wakeword] listening for '{}' via live microphone stream",
-            wakeword.current_phrase()
-        );
-    } else {
-        log::warn!(
-            "[wakeword] microphone stream is open, but no detector is loaded for '{}'",
-            settings.general.wake_word
-        );
-    }
+    log::info!(
+        "[wakeword] listening for '{}' via live microphone stream",
+        wakeword.current_phrase()
+    );
 }
 
 fn disarm_wakeword_runtime(app: &AppHandle) {
+    let mut stopped = false;
     if let Some(wakeword) = app.try_state::<Arc<crate::winstt::managers::WakeWordManager>>() {
-        wakeword.set_armed(false);
+        stopped |= wakeword.set_armed(false);
     }
-    let _ = app.emit("stt:wakeword-detection-end", ());
     if let Some(audio) = app.try_state::<Arc<crate::managers::audio::AudioRecordingManager>>() {
         audio.inner().stop_wakeword_listening_stream_if_idle();
     }
-    log::info!("[wakeword] detection stopped");
+    if stopped {
+        let _ = app.emit("stt:wakeword-detection-end", ());
+        log::info!("[wakeword] detection stopped");
+    }
 }
 
 fn emit_recording_error(app: &AppHandle, detail: &str) {
@@ -633,66 +856,14 @@ fn emit_recording_error(app: &AppHandle, detail: &str) {
     );
 }
 
-/// Pick the single key name to name in the restart notice (the reference's
-/// `resolveChangedKey`): the first changed startup-only key, else the wakeword group,
-/// else the realtime group. `changed` is already the ordered restart-key list.
-fn resolve_changed_key(changed: &[String]) -> &str {
-    changed.first().map(String::as_str).unwrap_or("a setting")
-}
-
-/// Compute the ordered set of restart-forcing dot-paths between two PLAINTEXT trees.
-/// Adapted from the reference's `checkForRestartNeeded` predicate, decomposed:
-///   * every diffed dot-path that is `is_startup_only` (unconditional);
-///   * the wakeword group, but ONLY when the wakeword restart condition holds
-///     (mode crosses into/out of wakeword, or a wakeword param changed while staying
-///     in wakeword) — a plain ptt↔toggle swap must NOT restart.
+/// Compute the ordered set of restart-forcing dot-paths between two plaintext trees.
 ///
-/// DIVERGENCE FROM THE REFERENCE: the reference also restarted when effective-realtime flipped
-/// (its realtime engine was configured at process startup). This port deliberately does
-/// NOT — the realtime worker (`winstt::managers::realtime_manager`) re-reads
-/// `effective_realtime` every loop tick and self-gates its decode path, so enabling OR
-/// disabling live transcription takes effect immediately with no relaunch. Surfacing a
-/// "restart the server to apply" notice for a plain feature toggle was a user-facing bug.
-fn compute_restart_keys(prev: &WinsttSettings, next: &WinsttSettings) -> Vec<String> {
-    let changed = changed_dot_paths(prev, next);
-    let mut out: Vec<String> = Vec::new();
-
-    // 1. Unconditional startup-only keys (preserve diff order for the notice).
-    for path in &changed {
-        if is_startup_only(path) {
-            out.push(path.clone());
-        }
-    }
-
-    // 2. CONDITIONAL wakeword restart (the reference `wakeWordRestartNeeded`).
-    if wakeword_restart_needed(prev, next) {
-        // Name the specific changed wakeword key (mode, wakeWord, sensitivity, …)
-        // if one is in the diff; else the recordingMode boundary itself.
-        let wake_key = WAKEWORD_CONFIG_KEYS
-            .iter()
-            .find(|k| changed.iter().any(|c| c == *k))
-            .map(|k| (*k).to_string())
-            .unwrap_or_else(|| "general.recordingMode".to_string());
-        if !out.contains(&wake_key) {
-            out.push(wake_key);
-        }
-    }
-
-    // NOTE: no effective-realtime restart branch (see the doc comment) — the realtime
-    // worker self-gates on the live setting, so toggling live transcription is hot.
-
-    out
-}
-
-// ── CONDITIONAL restart predicates (ported 1:1 from electron/ipc/settings.ts) ─────
-
-/// Did the recordingMode cross the wakeword boundary, or did a wakeword CLI param
-/// change while staying in wakeword? the reference `wakeWordRestartNeeded`.
-fn wakeword_restart_needed(prev: &WinsttSettings, next: &WinsttSettings) -> bool {
-    let old_mode = prev.general.recording_mode;
-    let new_mode = next.general.recording_mode;
-    mode_crosses_wakeword(old_mode, new_mode)
-        || wake_config_changed_while_in_wakeword(old_mode, new_mode, prev, next)
+/// The Rust port hot-applies model, wakeword, and realtime changes in-process, so
+/// no current user-editable WinSTT setting should request a relaunch.
+/// Current Tauri behavior: always return no restart keys; runtime side-effects are
+/// applied by the targeted handlers above.
+fn compute_restart_keys(_prev: &WinsttSettings, _next: &WinsttSettings) -> Vec<String> {
+    Vec::new()
 }
 
 /// Did any WinSTT-tree global hotkey's accelerator OR enable flag change between two
@@ -706,11 +877,6 @@ fn winstt_hotkeys_changed(prev: &WinsttSettings, next: &WinsttSettings) -> bool 
         || prev.tts.hotkey != next.tts.hotkey
         || prev.tts.enabled != next.tts.enabled
         || prev.general.repaste_hotkey != next.general.repaste_hotkey
-}
-
-/// `(old == wakeword) != (new == wakeword)` — entering OR leaving wakeword mode.
-fn mode_crosses_wakeword(old_mode: RecordingMode, new_mode: RecordingMode) -> bool {
-    (old_mode == RecordingMode::Wakeword) != (new_mode == RecordingMode::Wakeword)
 }
 
 /// Any of the wakeword CLI params (`wakeWord` / `wakeWordSensitivity` /
@@ -730,13 +896,18 @@ fn wake_config_changed_while_in_wakeword(
         || prev.general.wake_word_timeout != next.general.wake_word_timeout
 }
 
-/// `isRealtimeEnabled({ showRecordingOverlay, liveTranscriptionDisplay })` ported
-/// from shared/lib/realtime-enabled.ts. The pill path ("in-pill"/"both") gates on
-/// the overlay being shown; in-app/both always render.
+/// `isRealtimeEnabled({ showRecordingOverlay, liveTranscriptionDisplay, wordByWordPasting })`
+/// ported from shared/lib/realtime-enabled.ts. The pill path ("in-pill"/"both") gates on
+/// the overlay being shown; in-app/both always render. Word-by-word paste also needs the
+/// realtime worker even when the visual preview is off.
 ///
 /// Public so the realtime worker (winstt::managers::realtime_manager) gates its decode
 /// loop on the SAME source of truth instead of duplicating the branch logic.
 pub fn effective_realtime(settings: &WinsttSettings) -> bool {
+    if word_by_word_pasting_effective(settings) {
+        return true;
+    }
+
     let overlay = settings.general.show_recording_overlay;
     match settings.general.live_transcription_display {
         LiveTranscriptionDisplay::None => false,
@@ -784,6 +955,7 @@ fn merge_patch_over(current: &WinsttSettings, patch: PartialWinsttSettings) -> W
     if let Some(integrations) = patch.integrations {
         next.integrations = integrations;
     }
+    normalize_cross_field_settings(&mut next);
     next
 }
 
@@ -797,13 +969,18 @@ fn preserve_main_owned_general(
     incoming.onboarded = existing.onboarded;
     incoming.onboarded_at = existing.onboarded_at;
     incoming.onboarded_track = existing.onboarded_track;
+    if incoming.word_by_word_pasting {
+        incoming.preview_before_pasting = false;
+    }
     incoming
 }
 
 /// Re-run the Zod cross-field rules: no duplicate preset keys, at most one tone key,
 /// `level` only for summarize/concise, `targetLang` only for translate.
 fn validate_settings(settings: &WinsttSettings) -> Result<(), String> {
-    validate_presets(&settings.llm.dictation.presets)
+    validate_presets(&settings.llm.dictation.presets)?;
+    crate::winstt::llm::validate_loopback_ollama_endpoint(&settings.llm.endpoint)?;
+    Ok(())
 }
 
 fn validate_presets(presets: &[PresetEntry]) -> Result<(), String> {
@@ -859,54 +1036,13 @@ fn is_leveled_preset(key: PresetKey) -> bool {
     matches!(key, PresetKey::Concise | PresetKey::Summarize)
 }
 
-/// Compute the changed dot-paths between two settings trees via JSON diff (covers the
-/// full nested tree without per-field plumbing). camelCase keys match the renderer's
-/// dot-path convention (e.g. `general.recordingMode`).
-fn changed_dot_paths(prev: &WinsttSettings, next: &WinsttSettings) -> Vec<String> {
-    let pv = serde_json::to_value(prev).unwrap_or(serde_json::Value::Null);
-    let nv = serde_json::to_value(next).unwrap_or(serde_json::Value::Null);
-    let mut out = Vec::new();
-    diff_json("", &pv, &nv, &mut out);
-    out
-}
-
-fn diff_json(prefix: &str, a: &serde_json::Value, b: &serde_json::Value, out: &mut Vec<String>) {
-    match (a, b) {
-        (serde_json::Value::Object(ao), serde_json::Value::Object(bo)) => {
-            let mut keys: std::collections::BTreeSet<&String> = ao.keys().collect();
-            keys.extend(bo.keys());
-            for k in keys {
-                let child_prefix = if prefix.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{prefix}.{k}")
-                };
-                let av = ao.get(k).unwrap_or(&serde_json::Value::Null);
-                let bv = bo.get(k).unwrap_or(&serde_json::Value::Null);
-                diff_json(&child_prefix, av, bv, out);
-            }
-        }
-        _ => {
-            if a != b && !prefix.is_empty() {
-                out.push(prefix.to_string());
-            }
-        }
-    }
-}
-
-/// Silence the "is_encrypted unused" lint when only the seal/open helpers are used —
-/// kept as a re-export point so callers in other slices (e.g. a future secrets
-/// migration) can detect an already-sealed value without importing the submodule.
-#[allow(dead_code)]
-pub fn value_is_sealed(value: &str) -> bool {
-    is_encrypted(value)
-}
-
 #[cfg(test)]
 mod tests {
     // `super::*` already brings in PresetKey / PresetEntry / RecordingMode /
     // LiveTranscriptionDisplay / WinsttSettings (imported at module top).
     use super::*;
+    #[cfg(target_os = "windows")]
+    use crate::winstt::commands::secret_storage::is_encrypted;
 
     fn p(key: PresetKey) -> PresetEntry {
         PresetEntry {
@@ -969,16 +1105,20 @@ mod tests {
     // ── restart-need: the reference parity ──────────────────────────────────────────
 
     #[test]
-    fn startup_only_key_change_forces_restart() {
+    fn former_startup_only_key_change_does_not_force_restart() {
         let mut a = WinsttSettings::default();
         let mut b = WinsttSettings::default();
         b.model.device = crate::winstt::settings_schema::DeviceType::Cpu;
-        let keys = compute_restart_keys(&a, &b);
-        assert!(keys.iter().any(|k| k == "model.device"));
+        assert!(compute_restart_keys(&a, &b).is_empty());
+        b.quality.use_main_model_for_realtime = true;
+        b.quality.realtime_processing_pause = 0.05;
+        b.quality.init_realtime_after_seconds = 0.5;
+        b.quality.early_transcription_on_silence = 0.4;
+        b.general.send_crash_reports = false;
+        assert!(compute_restart_keys(&a, &b).is_empty());
         // and the reverse direction (cpu→auto) also restarts.
         std::mem::swap(&mut a, &mut b);
-        let keys2 = compute_restart_keys(&a, &b);
-        assert!(keys2.iter().any(|k| k == "model.device"));
+        assert!(compute_restart_keys(&a, &b).is_empty());
     }
 
     #[test]
@@ -993,34 +1133,31 @@ mod tests {
     }
 
     #[test]
-    fn entering_wakeword_forces_restart() {
+    fn entering_wakeword_does_not_force_restart() {
         let mut a = WinsttSettings::default();
         a.general.recording_mode = RecordingMode::Ptt;
         let mut b = a.clone();
         b.general.recording_mode = RecordingMode::Wakeword;
-        let keys = compute_restart_keys(&a, &b);
-        assert!(keys.iter().any(|k| k == "general.recordingMode"));
+        assert!(compute_restart_keys(&a, &b).is_empty());
     }
 
     #[test]
-    fn leaving_wakeword_forces_restart() {
+    fn leaving_wakeword_does_not_force_restart() {
         let mut a = WinsttSettings::default();
         a.general.recording_mode = RecordingMode::Wakeword;
         let mut b = a.clone();
         b.general.recording_mode = RecordingMode::Listen;
-        let keys = compute_restart_keys(&a, &b);
-        assert!(keys.iter().any(|k| k == "general.recordingMode"));
+        assert!(compute_restart_keys(&a, &b).is_empty());
     }
 
     #[test]
-    fn wake_word_change_while_in_wakeword_restarts() {
+    fn wake_word_change_while_in_wakeword_does_not_force_restart() {
         let mut a = WinsttSettings::default();
         a.general.recording_mode = RecordingMode::Wakeword;
         a.general.wake_word = "alexa".into();
         let mut b = a.clone();
         b.general.wake_word = "computer".into();
-        let keys = compute_restart_keys(&a, &b);
-        assert!(keys.iter().any(|k| k == "general.wakeWord"));
+        assert!(compute_restart_keys(&a, &b).is_empty());
     }
 
     #[test]
@@ -1100,6 +1237,26 @@ mod tests {
     }
 
     #[test]
+    fn wakeword_arm_readiness_requires_detector_before_microphone() {
+        assert_eq!(
+            wakeword_arm_readiness(true, true),
+            WakewordArmReadiness::Ready
+        );
+        assert_eq!(
+            wakeword_arm_readiness(true, false),
+            WakewordArmReadiness::Ready
+        );
+        assert_eq!(
+            wakeword_arm_readiness(false, false),
+            WakewordArmReadiness::MissingModelBundle
+        );
+        assert_eq!(
+            wakeword_arm_readiness(false, true),
+            WakewordArmReadiness::DetectorUnavailable
+        );
+    }
+
+    #[test]
     fn disabling_live_transcription_does_not_restart() {
         // both → none disables the realtime preview. The realtime worker self-gates on
         // the live setting (re-read every loop tick), so this is a HOT toggle — no
@@ -1110,6 +1267,23 @@ mod tests {
         let mut b = a.clone();
         b.general.live_transcription_display = LiveTranscriptionDisplay::None;
         assert!(compute_restart_keys(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn word_by_word_paste_enables_realtime_without_live_preview() {
+        let mut settings = WinsttSettings::default();
+        settings.general.live_transcription_display = LiveTranscriptionDisplay::None;
+        settings.general.word_by_word_pasting = true;
+        assert!(effective_realtime(&settings));
+    }
+
+    #[test]
+    fn word_by_word_realtime_override_wins_over_llm_dictation() {
+        let mut settings = WinsttSettings::default();
+        settings.general.live_transcription_display = LiveTranscriptionDisplay::None;
+        settings.general.word_by_word_pasting = true;
+        settings.llm.dictation.enabled = true;
+        assert!(effective_realtime(&settings));
     }
 
     #[test]
@@ -1139,6 +1313,37 @@ mod tests {
     fn no_change_no_restart() {
         let a = WinsttSettings::default();
         assert!(compute_restart_keys(&a, &a).is_empty());
+    }
+
+    #[test]
+    fn same_model_load_input_change_requests_reload() {
+        let a = WinsttSettings::default();
+        let mut b = a.clone();
+        b.model.device = crate::winstt::settings_schema::DeviceType::Cpu;
+        assert!(same_model_load_inputs_changed(&a, &b));
+
+        let mut quant = a.clone();
+        quant.model.onnx_quantization = "int8".into();
+        assert!(same_model_load_inputs_changed(&a, &quant));
+    }
+
+    #[test]
+    fn model_id_change_is_owned_by_swap_controller() {
+        let a = WinsttSettings::default();
+        let mut b = a.clone();
+        b.model.model = "nemo-canary-180m-flash".into();
+        assert!(!same_model_load_inputs_changed(&a, &b));
+        assert!(!model_warm_inputs_changed(&a, &b));
+    }
+
+    #[test]
+    fn keep_warm_policy_change_can_request_stt_warmup() {
+        use crate::winstt::settings_schema::ModelUnloadTimeout;
+
+        let a = WinsttSettings::default();
+        let mut b = a.clone();
+        b.global.model_unload_timeout = ModelUnloadTimeout::Immediately;
+        assert!(model_warm_inputs_changed(&a, &b));
     }
 
     #[test]
@@ -1265,6 +1470,43 @@ mod tests {
     }
 
     #[test]
+    fn parse_settings_value_defaults_missing_fields() {
+        let settings = parse_settings_value(serde_json::json!({
+            "model": {
+                "model": "nemo-canary-180m-flash"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(settings.model.model, "nemo-canary-180m-flash");
+        assert_eq!(
+            settings.general.recording_mode,
+            WinsttSettings::default().general.recording_mode
+        );
+    }
+
+    #[test]
+    fn parse_settings_value_disables_llm_dictation_when_word_by_word_enabled() {
+        let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
+        value["general"]["wordByWordPasting"] = serde_json::json!(true);
+        value["llm"]["dictation"]["enabled"] = serde_json::json!(true);
+
+        let settings = parse_settings_value(value).unwrap();
+
+        assert!(settings.general.word_by_word_pasting);
+        assert!(!settings.llm.dictation.enabled);
+    }
+
+    #[test]
+    fn parse_settings_value_rejects_malformed_field_type() {
+        let mut value = serde_json::to_value(WinsttSettings::default()).unwrap();
+        value["general"]["recordingMode"] = serde_json::json!(42);
+
+        let err = parse_settings_value(value).unwrap_err();
+        assert!(err.contains("invalid persisted WinSTT settings"));
+    }
+
+    #[test]
     fn llm_warmup_reacts_only_to_ollama_warm_inputs() {
         use crate::winstt::settings_schema::LlmProvider;
 
@@ -1293,6 +1535,7 @@ mod tests {
 
     // ── secret sealing on the persisted form ───────────────────────────────────
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn seal_then_open_round_trips_secret_fields() {
         let mut s = WinsttSettings::default();
@@ -1301,16 +1544,16 @@ mod tests {
         s.integrations.elevenlabs.api_key = "xi-el-secret".into();
 
         let mut sealed = s.clone();
-        seal_secrets(&mut sealed);
+        try_seal_secrets(&mut sealed).unwrap();
         // On disk the secret fields are NOT plaintext.
-        assert!(value_is_sealed(&sealed.llm.openrouter_api_key));
+        assert!(is_encrypted(&sealed.llm.openrouter_api_key));
         assert_ne!(sealed.llm.openrouter_api_key, s.llm.openrouter_api_key);
         // Non-secret fields untouched.
         assert_eq!(sealed.llm.endpoint, s.llm.endpoint);
 
         // Opening returns plaintext.
         let mut opened = sealed.clone();
-        open_secrets(&mut opened);
+        try_open_secrets(&mut opened).unwrap();
         assert_eq!(opened.llm.openrouter_api_key, "sk-or-v1-secret");
         assert_eq!(opened.integrations.openai.api_key, "sk-openai-secret");
         assert_eq!(opened.integrations.elevenlabs.api_key, "xi-el-secret");
@@ -1321,10 +1564,83 @@ mod tests {
         // The default tree has empty secrets — sealing must keep them empty (no
         // spurious envelope on disk), matching the reference's empty-string short-circuit.
         let mut s = WinsttSettings::default();
-        seal_secrets(&mut s);
+        try_seal_secrets(&mut s).unwrap();
         assert_eq!(s.llm.openrouter_api_key, "");
         assert_eq!(s.integrations.openai.api_key, "");
         assert_eq!(s.integrations.elevenlabs.api_key, "");
+    }
+
+    #[test]
+    fn malformed_secret_envelope_returns_error() {
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "enc:v1:not-hex-!!!".into();
+
+        let err = try_open_secrets(&mut s).unwrap_err();
+        assert!(err.contains("malformed encrypted secret envelope"));
+        assert_eq!(s.llm.openrouter_api_key, "enc:v1:not-hex-!!!");
+    }
+
+    #[test]
+    fn renderer_sanitization_masks_non_empty_secrets() {
+        let mut s = WinsttSettings::default();
+        s.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        s.integrations.openai.api_key = "sk-openai-secret".into();
+        s.integrations.elevenlabs.api_key = "xi-el-secret".into();
+
+        sanitize_settings_for_renderer(&mut s);
+
+        assert_eq!(s.llm.openrouter_api_key, SECRET_PRESENT_SENTINEL);
+        assert_eq!(s.integrations.openai.api_key, SECRET_PRESENT_SENTINEL);
+        assert_eq!(s.integrations.elevenlabs.api_key, SECRET_PRESENT_SENTINEL);
+    }
+
+    #[test]
+    fn renderer_sanitization_keeps_empty_secrets_empty() {
+        let mut s = WinsttSettings::default();
+
+        sanitize_settings_for_renderer(&mut s);
+
+        assert_eq!(s.llm.openrouter_api_key, "");
+        assert_eq!(s.integrations.openai.api_key, "");
+        assert_eq!(s.integrations.elevenlabs.api_key, "");
+    }
+
+    #[test]
+    fn masked_secret_patch_preserves_previous_plaintext_secret() {
+        let mut previous = WinsttSettings::default();
+        previous.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        previous.integrations.openai.api_key = "sk-openai-secret".into();
+        previous.integrations.elevenlabs.api_key = "xi-el-secret".into();
+
+        let mut next = previous.clone();
+        next.llm.openrouter_api_key = SECRET_PRESENT_SENTINEL.into();
+        next.integrations.openai.api_key = SECRET_PRESENT_SENTINEL.into();
+        next.integrations.elevenlabs.api_key = SECRET_PRESENT_SENTINEL.into();
+
+        preserve_masked_secrets(&previous, &mut next);
+
+        assert_eq!(next.llm.openrouter_api_key, "sk-or-v1-secret");
+        assert_eq!(next.integrations.openai.api_key, "sk-openai-secret");
+        assert_eq!(next.integrations.elevenlabs.api_key, "xi-el-secret");
+    }
+
+    #[test]
+    fn empty_secret_patch_still_clears_previous_secret() {
+        let mut previous = WinsttSettings::default();
+        previous.llm.openrouter_api_key = "sk-or-v1-secret".into();
+        previous.integrations.openai.api_key = "sk-openai-secret".into();
+        previous.integrations.elevenlabs.api_key = "xi-el-secret".into();
+
+        let mut next = previous.clone();
+        next.llm.openrouter_api_key.clear();
+        next.integrations.openai.api_key.clear();
+        next.integrations.elevenlabs.api_key.clear();
+
+        preserve_masked_secrets(&previous, &mut next);
+
+        assert_eq!(next.llm.openrouter_api_key, "");
+        assert_eq!(next.integrations.openai.api_key, "");
+        assert_eq!(next.integrations.elevenlabs.api_key, "");
     }
 
     // ── partial-patch merge (the load-bearing partial-save fix) ────────────────
@@ -1342,13 +1658,13 @@ mod tests {
         let customized_model = current.model.clone();
 
         let mut audio = serde_json::to_value(&current.audio).unwrap();
-        audio["vadSensitivity"] = serde_json::json!(0.42);
+        audio["sileroSensitivity"] = serde_json::json!(0.42);
         let patch = patch_from_json(serde_json::json!({ "audio": audio }));
         let next = merge_patch_over(&current, patch);
 
         assert_eq!(next.model, customized_model);
         let audio_val = serde_json::to_value(&next.audio).unwrap();
-        assert_eq!(audio_val["vadSensitivity"], serde_json::json!(0.42));
+        assert_eq!(audio_val["sileroSensitivity"], serde_json::json!(0.42));
     }
 
     #[test]
@@ -1373,6 +1689,47 @@ mod tests {
         );
         let general_val = serde_json::to_value(&next.general).unwrap();
         assert_eq!(general_val["recordingMode"], serde_json::json!("toggle"));
+    }
+
+    #[test]
+    fn general_patch_makes_word_by_word_and_preview_mutually_exclusive() {
+        let current = WinsttSettings::default();
+        let mut general = serde_json::to_value(&current.general).unwrap();
+        general["previewBeforePasting"] = serde_json::json!(true);
+        general["wordByWordPasting"] = serde_json::json!(true);
+        let patch = patch_from_json(serde_json::json!({ "general": general }));
+        let next = merge_patch_over(&current, patch);
+
+        assert!(next.general.word_by_word_pasting);
+        assert!(!next.general.preview_before_pasting);
+    }
+
+    #[test]
+    fn general_patch_disables_llm_dictation_when_word_by_word_enabled() {
+        let mut current = WinsttSettings::default();
+        current.llm.dictation.enabled = true;
+        let mut general = serde_json::to_value(&current.general).unwrap();
+        general["wordByWordPasting"] = serde_json::json!(true);
+        let patch = patch_from_json(serde_json::json!({ "general": general }));
+
+        let next = merge_patch_over(&current, patch);
+
+        assert!(next.general.word_by_word_pasting);
+        assert!(!next.llm.dictation.enabled);
+    }
+
+    #[test]
+    fn llm_patch_keeps_word_by_word_and_disables_dictation() {
+        let mut current = WinsttSettings::default();
+        current.general.word_by_word_pasting = true;
+        let mut llm = serde_json::to_value(&current.llm).unwrap();
+        llm["dictation"]["enabled"] = serde_json::json!(true);
+        let patch = patch_from_json(serde_json::json!({ "llm": llm }));
+
+        let next = merge_patch_over(&current, patch);
+
+        assert!(next.general.word_by_word_pasting);
+        assert!(!next.llm.dictation.enabled);
     }
 
     #[test]

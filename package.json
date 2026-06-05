@@ -15,10 +15,10 @@
     "format:frontend": "prettier --write .",
     "format:backend": "cd src-tauri && cargo fmt",
     "typecheck": "bun node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-    "check:i18n": "bun scripts/check-i18n.ts",
-    "check:i18n:strict": "bun scripts/check-i18n.ts --strict",
-    "check:translations": "bun scripts/check-i18n.ts",
-    "postinstall": "bun scripts/check-nix-deps.ts",
+    "check:i18n": "bun tools/i18n/check-i18n.ts",
+    "check:i18n:strict": "bun tools/i18n/check-i18n.ts --strict",
+    "check:translations": "bun tools/i18n/check-i18n.ts",
+    "postinstall": "bun tools/check-nix-deps.ts",
     "test": "bun run test:src:entries && bun run test:src:app && bun run test:src:entities && bun run test:src:features && bun run test:src:shared && bun run test:src:views && bun run test:src:widgets && bun run test:packages",
     "test:src": "bun test ./src",
     "test:src:entries": "bun test ./src/entries",
@@ -41,7 +41,8 @@
     "check:deadcode:exports": "knip --exports",
     "check:cleanup": "bun run lint && bun run typecheck && bun run check:deadcode",
     "docs:dev": "cd docs && bun run dev",
-    "docs:build": "cd docs && bun run build"
+    "docs:build": "cd docs && bun run build",
+    "docs:videos": "cd tools/remotion-demos && npm run render:all"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

@@ -6,6 +6,7 @@ import {
 	computeSilenceEndpointEnabled,
 	computeSilenceTiming,
 	deriveBroadcastUpdate,
+	deriveIpcLoadUpdate,
 	getManualToggleStop,
 	getPrevManualToggleStop,
 	getPrevSmartEndpoint,
@@ -358,6 +359,45 @@ describe("getRecordingMode", () => {
 	});
 });
 
+describe("deriveIpcLoadUpdate", () => {
+	test("preserves a locally changed recording mode when settingsLoad resolves late", () => {
+		const loadBaseline = {
+			general: { recordingMode: "ptt" },
+			audio: { sileroSensitivity: 0.4 },
+		} as never;
+		const loaded = {
+			general: { recordingMode: "ptt" },
+			audio: { sileroSensitivity: 0.4 },
+		} as never;
+		const current = {
+			general: { recordingMode: "wakeword" },
+			audio: { sileroSensitivity: 0.4 },
+		} as never;
+
+		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+
+		expect(result.merged.general?.recordingMode).toBe("wakeword");
+		expect(result.nextFromIpcLoad).toBe(false);
+	});
+
+	test("marks pure IPC loads so the next settings effect is skipped", () => {
+		const loadBaseline = {
+			general: { recordingMode: "ptt" },
+			audio: { sileroSensitivity: 0.4 },
+		} as never;
+		const loaded = {
+			general: { recordingMode: "toggle" },
+			audio: { sileroSensitivity: 0.4 },
+		} as never;
+		const current = loadBaseline;
+
+		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+
+		expect(result.merged.general?.recordingMode).toBe("toggle");
+		expect(result.nextFromIpcLoad).toBe(true);
+	});
+});
+
 describe("isModeChanged", () => {
 	test("returns true when recording mode changed", () => {
 		const curr = { general: { recordingMode: "toggle" } } as never;
@@ -423,7 +463,7 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	// full Zod-output type here.
 	interface Mini {
 		audio: { silero: number };
-		general: { overlayMode: string };
+		general: { overlayMode: string; wakeWord?: string };
 	}
 	const cast = <T>(v: T) => v as unknown as Parameters<typeof mergeBroadcastPreservingUserDirty>[0];
 	// Read-back boundary cast: the merge returns the real AppSettings type; we
@@ -470,6 +510,30 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 			cast(lastSaved)
 		);
 		expect(asMini(merged).general.overlayMode).toBe("dynamic-island");
+		expect(asMini(merged).audio.silero).toBe(0.5);
+		expect(preserved).toBe(true);
+	});
+
+	test("accepts clean fields inside a dirty section", () => {
+		const decoded: Mini = {
+			general: { overlayMode: "floating-bottom", wakeWord: "americano" },
+			audio: { silero: 0.5 },
+		};
+		const current: Mini = {
+			general: { overlayMode: "dynamic-island", wakeWord: "alexa" },
+			audio: { silero: 0.4 },
+		};
+		const lastSaved: Mini = {
+			general: { overlayMode: "floating-bottom", wakeWord: "alexa" },
+			audio: { silero: 0.4 },
+		};
+		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
+			cast(decoded),
+			cast(current),
+			cast(lastSaved)
+		);
+		expect(asMini(merged).general.overlayMode).toBe("dynamic-island");
+		expect(asMini(merged).general.wakeWord).toBe("americano");
 		expect(asMini(merged).audio.silero).toBe(0.5);
 		expect(preserved).toBe(true);
 	});

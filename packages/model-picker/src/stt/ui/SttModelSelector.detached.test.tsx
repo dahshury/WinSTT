@@ -12,6 +12,9 @@ function model(): ModelInfo {
 		languages: ["en"],
 		supportsLanguageDetection: true,
 		sizeLabel: "39M",
+		previewCapable: true,
+		nativeStreaming: false,
+		finalReuseSafe: false,
 		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
@@ -53,5 +56,37 @@ describe("SttModelSelector detached-open mode", () => {
 		expect(trigger.getAttribute("aria-expanded")).toBe("false");
 		expect(screen.queryByRole("listbox")).toBeNull();
 		expect(onChange).not.toHaveBeenCalled();
+	});
+
+	test("keeps the selected author chip when remounted before the catalog refills", () => {
+		const first = render(
+			<SttModelSelector
+				currentQuantization=""
+				models={[model()]}
+				onChange={mock(() => undefined)}
+				onOpenDetached={mock(() => undefined)}
+				statesById={{}}
+				systemInfo={null}
+				value="tiny"
+			/>
+		);
+		expect(screen.getByText("OpenAI")).toBeDefined();
+		first.unmount();
+
+		render(
+			<SttModelSelector
+				currentQuantization=""
+				isLoading
+				models={[]}
+				onChange={mock(() => undefined)}
+				onOpenDetached={mock(() => undefined)}
+				statesById={{}}
+				systemInfo={null}
+				value="tiny"
+			/>
+		);
+
+		expect(screen.getByText("OpenAI")).toBeDefined();
+		expect(screen.getByText("Tiny")).toBeDefined();
 	});
 });

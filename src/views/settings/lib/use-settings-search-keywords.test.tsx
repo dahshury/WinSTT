@@ -27,11 +27,18 @@ describe("useSettingsSearchKeywords (real i18n wiring)", () => {
 		expect(matchesSearchQuery(processing, "formatting")).toBe(true); // formatting section
 	});
 
-	test("Output keywords surface text-to-speech and paste behavior", () => {
+	test("Delivery keywords surface paste behavior", () => {
 		const output = kw("output");
-		expect(matchesSearchQuery(output, "voice")).toBe(true); // TTS
-		expect(matchesSearchQuery(output, "tts")).toBe(true); // acronym alias
 		expect(matchesSearchQuery(output, "paste")).toBe(true); // paste behavior
+		expect(matchesSearchQuery(output, "srt")).toBe(true); // file export format
+		expect(matchesSearchQuery(output, "voice")).toBe(false); // TTS moved to Read Aloud
+	});
+
+	test("Read Aloud keywords surface text-to-speech controls", () => {
+		const readAloud = kw("readAloud");
+		expect(matchesSearchQuery(readAloud, "voice")).toBe(true);
+		expect(matchesSearchQuery(readAloud, "tts")).toBe(true); // acronym alias
+		expect(matchesSearchQuery(readAloud, "speaker")).toBe(true);
 	});
 
 	test("Recording keywords surface VAD and the recording mode", () => {
@@ -51,6 +58,7 @@ describe("useSettingsSearchKeywords (real i18n wiring)", () => {
 			"processing",
 			"vocabulary",
 			"output",
+			"readAloud",
 			"shortcuts",
 			"appearance",
 			"history",

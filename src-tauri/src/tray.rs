@@ -6,14 +6,14 @@ use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Manager, Theme};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TrayIconState {
     Idle,
     Recording,
     Transcribing,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AppTheme {
     Dark,
     Light,
@@ -57,23 +57,90 @@ pub fn get_icon_path(theme: AppTheme, state: TrayIconState) -> &'static str {
     }
 }
 
-pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
-    let tray = app.state::<TrayIcon>();
+pub(crate) fn paint_static_tray_icon(app: &AppHandle, icon: TrayIconState) {
+    let Some(tray) = app.try_state::<TrayIcon>() else {
+        return;
+    };
     let theme = get_current_theme(app);
-
-    let icon_path = get_icon_path(theme, icon.clone());
-
-    let _ = tray.set_icon(Some(
-        Image::from_path(
-            app.path()
-                .resolve(icon_path, tauri::path::BaseDirectory::Resource)
-                .expect("failed to resolve"),
-        )
-        .expect("failed to set icon"),
-    ));
+    let icon_path = get_icon_path(theme, icon);
+    let resolved = match app
+        .path()
+        .resolve(icon_path, tauri::path::BaseDirectory::Resource)
+    {
+        Ok(path) => path,
+        Err(err) => {
+            error!("Failed to resolve tray icon path '{icon_path}': {err}");
+            return;
+        }
+    };
+    match Image::from_path(&resolved) {
+        Ok(image) => {
+            let _ = tray.set_icon(Some(image));
+        }
+        Err(err) => {
+            error!("Failed to load tray icon '{}': {err}", resolved.display());
+        }
+    }
 
     // Update menu based on state
     update_tray_menu(app, &icon, None);
+}
+
+pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
+    match icon {
+        TrayIconState::Idle => crate::tray_indicator::on_idle(app),
+        TrayIconState::Recording | TrayIconState::Transcribing => {
+            // Recording/transcribing pixels are owned by tray_indicator's live
+            // animation. Updating only the menu/tooltip avoids flashing the static
+            // red PNG before the first visualizer frame is painted.
+            update_tray_menu(app, &icon, None);
+        }
+    }
+}
+
+pub fn set_tray_visualizer_style_from_general(
+    general: &crate::winstt::settings_schema::GeneralSettings,
+) {
+    crate::tray_indicator::set_visualizer_style_from_general(general);
+}
+
+pub fn sync_tray_visualizer_style_from_settings(app: &AppHandle) {
+    crate::tray_indicator::sync_visualizer_style_from_settings(app);
+}
+
+pub fn on_tray_recording_start(app: &AppHandle) {
+    update_tray_menu(app, &TrayIconState::Recording, None);
+    crate::tray_indicator::on_recording_start(app);
+}
+
+pub fn on_tray_recording_stop(app: &AppHandle) {
+    crate::tray_indicator::on_recording_stop(app);
+}
+
+pub fn on_tray_audio_level(_app: &AppHandle, level: f32) {
+    crate::tray_indicator::on_audio_level(level);
+}
+
+pub fn on_tray_transcription_start(app: &AppHandle) {
+    update_tray_menu(app, &TrayIconState::Transcribing, None);
+    crate::tray_indicator::on_transcribing_start(app);
+}
+
+pub fn on_tray_transcription_stop(app: &AppHandle) {
+    crate::tray_indicator::on_transcribing_stop(app);
+}
+
+pub fn on_tray_idle(app: &AppHandle) {
+    crate::tray_indicator::on_idle(app);
+}
+
+pub fn on_llm_thinking_start(app: &AppHandle) {
+    update_tray_menu(app, &TrayIconState::Transcribing, None);
+    crate::tray_indicator::on_llm_thinking_start(app);
+}
+
+pub fn on_llm_thinking_stop(app: &AppHandle) {
+    crate::tray_indicator::on_llm_thinking_stop(app);
 }
 
 pub fn tray_tooltip() -> String {

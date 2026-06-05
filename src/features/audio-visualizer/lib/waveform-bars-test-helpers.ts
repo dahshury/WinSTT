@@ -307,18 +307,8 @@ function drawFrame(
 export type { CanvasMetrics };
 export {
 	ACTIVITY_SMOOTHING,
-	AMP_SMOOTHING,
-	computeActivityTarget,
-	computeRenderParams,
-	drawBaseline,
-	drawFrame,
-	getCanvasMetrics,
-};
-
-// Test-only exports — pure helpers extracted from the render loop. Not part
-// of the public surface; consumers should use the WaveformBars component.
-export const __waveform_test_helpers__ = {
 	activeWaveAmp,
+	AMP_SMOOTHING,
 	buildWavePoints,
 	computeActivityTarget,
 	computeRenderParams,
@@ -326,6 +316,7 @@ export const __waveform_test_helpers__ = {
 	computeWaveY,
 	drawBaseline,
 	drawFilledRegion,
+	drawFrame,
 	drawWavePath,
 	ensureCanvasSize,
 	getCanvasMetrics,

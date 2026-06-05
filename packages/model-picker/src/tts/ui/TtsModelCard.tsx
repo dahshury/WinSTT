@@ -24,7 +24,10 @@ import { cloningLabel, ttsLanguageMeta } from "../lib/tts-helpers";
 // Re-export the shelf download types from their canonical home so existing
 // importers of `./TtsModelCard` (selector, list) keep working unchanged after
 // the shelf moved into the shared core.
-export type { QuantDownloadAction, QuantDownloadSnapshot } from "../../core/model-card";
+export type {
+	QuantDownloadAction,
+	QuantDownloadSnapshot,
+} from "../../core/model-card";
 
 /** Single per-quant cache entry from {@link TtsModelState.cacheByQuantization}. */
 type TtsQuantCache = TtsModelState["cacheByQuantization"][string] | undefined;
@@ -32,7 +35,7 @@ type TtsQuantCache = TtsModelState["cacheByQuantization"][string] | undefined;
 /** Resolve the cache info for a specific quantization on a TTS model state. */
 function resolveTtsQuantCache(
 	state: TtsModelState | undefined,
-	quantization: string
+	quantization: string,
 ): TtsQuantCache {
 	return state?.cacheByQuantization?.[quantization];
 }
@@ -43,7 +46,10 @@ function resolveTtsQuantCache(
  * `effectiveQuantization`; concrete picks pass through unchanged. Mirrors the
  * STT `resolveEffectiveQuant`.
  */
-function resolveTtsEffectiveQuant(state: TtsModelState | undefined, selectedQuant: string): string {
+function resolveTtsEffectiveQuant(
+	state: TtsModelState | undefined,
+	selectedQuant: string,
+): string {
 	if (selectedQuant === "" && state?.effectiveQuantization) {
 		return state.effectiveQuantization;
 	}
@@ -89,8 +95,14 @@ function quantTooltip(value: string): string {
 /** The precision options the model actually ships, ordered heaviest → lightest. */
 function getTtsQuantOptions(model: TtsModelInfo): TtsQuantOption[] {
 	return [...model.availableQuantizations]
-		.map((value) => ({ value, label: quantLabel(value), tooltip: quantTooltip(value) }))
-		.sort((a, b) => (QUANT_WEIGHT[b.value] ?? -1) - (QUANT_WEIGHT[a.value] ?? -1));
+		.map((value) => ({
+			value,
+			label: quantLabel(value),
+			tooltip: quantTooltip(value),
+		}))
+		.sort(
+			(a, b) => (QUANT_WEIGHT[b.value] ?? -1) - (QUANT_WEIGHT[a.value] ?? -1),
+		);
 }
 
 /** Human cache-status phrase for the badge tooltip. */
@@ -107,15 +119,27 @@ function quantCacheStatus(cache: TtsQuantCache): string {
 interface PrecisionGroupProps {
 	currentQuantization: string;
 	getDownloadSnapshot?:
-		| ((modelId: string, quantization: string) => QuantDownloadSnapshot | undefined)
+		| ((
+				modelId: string,
+				quantization: string,
+		  ) => QuantDownloadSnapshot | undefined)
 		| undefined;
 	isSelectedModel: boolean;
 	model: TtsModelInfo;
 	onDownloadAction?:
-		| ((action: QuantDownloadAction, modelId: string, quantization: string) => void)
+		| ((
+				action: QuantDownloadAction,
+				modelId: string,
+				quantization: string,
+		  ) => void)
 		| undefined;
 	onRequestDeleteQuant?:
-		| ((modelId: string, quantization: string, displayName: string, quantLabel: string) => void)
+		| ((
+				modelId: string,
+				quantization: string,
+				displayName: string,
+				quantLabel: string,
+		  ) => void)
 		| undefined;
 	onSelect: (modelId: string, quantization: string) => void;
 	state: TtsModelState | undefined;
@@ -139,10 +163,23 @@ function buildTtsQuantEntries({
 }: PrecisionGroupProps): QuantShelfEntry[] {
 	return getTtsQuantOptions(model).map((opt) => {
 		const isAuto = opt.value === "";
-		const effectiveValue = isAuto ? resolveTtsEffectiveQuant(state, opt.value) : opt.value;
+		const effectiveValue = isAuto
+			? resolveTtsEffectiveQuant(state, opt.value)
+			: opt.value;
 		const cache = resolveTtsQuantCache(state, effectiveValue);
 		const download = getDownloadSnapshot?.(model.id, effectiveValue);
-		const isOnDisk = cache?.state === "cached" || cache?.state === "partial";
+		const isCached = cache?.state === "cached";
+		const isPartial = cache?.state === "partial";
+		const sizeBytes =
+			(download && download.totalBytes > 0
+				? Math.max(download.totalBytes, download.downloadedBytes)
+				: null) ??
+			(cache && cache.totalBytes > 0
+				? Math.max(cache.totalBytes, cache.downloadedBytes)
+				: null) ??
+			model.sizeBytesByQuantization[effectiveValue] ??
+			model.sizeBytesByQuantization[opt.value] ??
+			null;
 		return {
 			value: opt.value,
 			label: opt.label,
@@ -152,13 +189,47 @@ function buildTtsQuantEntries({
 			cacheProgress: cache?.state === "partial" ? (cache.progress ?? 0) : null,
 			cacheStatusLabel: quantCacheStatus(cache),
 			download,
+			downloadSizeBytes: sizeBytes,
 			isActive: isSelectedModel && opt.value === currentQuantization,
 			isRecommended: false,
+			canResumeDownload: isPartial && onDownloadAction !== undefined,
 			canStartDownload:
-				!(isAuto || download !== undefined || isOnDisk) && onDownloadAction !== undefined,
-			canDelete: !isAuto && onRequestDeleteQuant !== undefined && isOnDisk,
+				!(isAuto || download !== undefined || isCached || isPartial) &&
+				onDownloadAction !== undefined,
+			canDelete: !isAuto && onRequestDeleteQuant !== undefined && isCached,
 		};
 	});
+}
+
+function resolveTtsDownloadSizeBytes({
+	currentQuantization,
+	getDownloadSnapshot,
+	model,
+	state,
+}: {
+	currentQuantization: string;
+	getDownloadSnapshot: TtsModelCardProps["getDownloadSnapshot"];
+	model: TtsModelInfo;
+	state: TtsModelState | undefined;
+}): number | null {
+	const quant =
+		currentQuantization === ""
+			? (state?.effectiveQuantization ?? model.availableQuantizations[0] ?? "")
+			: resolveTtsEffectiveQuant(state, currentQuantization);
+	const download = getDownloadSnapshot?.(model.id, quant);
+	if (download && download.totalBytes > 0) {
+		return Math.max(download.totalBytes, download.downloadedBytes);
+	}
+	const cache = resolveTtsQuantCache(state, quant);
+	if (cache && cache.totalBytes > 0) {
+		return Math.max(cache.totalBytes, cache.downloadedBytes);
+	}
+	return (
+		model.sizeBytesByQuantization[quant] ??
+		state?.estimatedBytes ??
+		model.sizeBytesByQuantization[currentQuantization] ??
+		null
+	);
 }
 
 /** TTS precision shelf — builds the normalized entries and renders the shared
@@ -181,9 +252,13 @@ function PrecisionGroup(props: PrecisionGroupProps) {
 
 /** The ordered facts under the model name: number of voices, language support,
  *  and download size. */
-function buildMetaEntries(model: TtsModelInfo, bytes: string | null): MetaEntry[] {
+function buildMetaEntries(
+	model: TtsModelInfo,
+	bytes: string | null,
+): MetaEntry[] {
 	const entries: MetaEntry[] = [];
-	const voiceLabel = model.numVoices === 1 ? "1 voice" : `${model.numVoices} voices`;
+	const voiceLabel =
+		model.numVoices === 1 ? "1 voice" : `${model.numVoices} voices`;
 	entries.push({
 		key: "voices",
 		icon: UserMultiple02Icon,
@@ -191,7 +266,12 @@ function buildMetaEntries(model: TtsModelInfo, bytes: string | null): MetaEntry[
 		tooltip: `${voiceLabel} available in this model`,
 	});
 	const lang = ttsLanguageMeta(model.languages);
-	entries.push({ key: "lang", icon: GlobeIcon, value: lang.label, tooltip: lang.tooltip });
+	entries.push({
+		key: "lang",
+		icon: GlobeIcon,
+		value: lang.label,
+		tooltip: lang.tooltip,
+	});
 	if (bytes) {
 		entries.push({
 			key: "size",
@@ -227,18 +307,30 @@ export interface TtsModelCardProps {
 	/** Lookup for the active download snapshot per (modelId, quant). `undefined`
 	 *  return = no active download for that variant. */
 	getDownloadSnapshot?:
-		| ((modelId: string, quantization: string) => QuantDownloadSnapshot | undefined)
+		| ((
+				modelId: string,
+				quantization: string,
+		  ) => QuantDownloadSnapshot | undefined)
 		| undefined;
 	/** Whether `model.id` is currently starred — drives the favorite toggle. */
 	isFavorite?: ((modelId: string) => boolean) | undefined;
 	model: TtsModelInfo;
 	/** Single dispatch for the four per-quant download actions. */
 	onDownloadAction?:
-		| ((action: QuantDownloadAction, modelId: string, quantization: string) => void)
+		| ((
+				action: QuantDownloadAction,
+				modelId: string,
+				quantization: string,
+		  ) => void)
 		| undefined;
 	/** Trash-icon handler — when omitted, no delete control is rendered. */
 	onRequestDeleteQuant?:
-		| ((modelId: string, quantization: string, displayName: string, quantLabel: string) => void)
+		| ((
+				modelId: string,
+				quantization: string,
+				displayName: string,
+				quantLabel: string,
+		  ) => void)
 		| undefined;
 	onSelect: (modelId: string, quantization?: string) => void;
 	/** Star / unstar handler. When omitted, no favorite toggle is rendered. */
@@ -268,7 +360,13 @@ export function TtsModelCard({
 }: TtsModelCardProps) {
 	const isSelected = model.id === selectedId;
 	const isUnavailable = model.available === false;
-	const bytes = formatBytes(state?.estimatedBytes ?? 0);
+	const downloadSizeBytes = resolveTtsDownloadSizeBytes({
+		currentQuantization,
+		getDownloadSnapshot,
+		model,
+		state,
+	});
+	const bytes = formatBytes(downloadSizeBytes ?? 0);
 	const metaEntries = buildMetaEntries(model, bytes);
 	const cloningChip = <CloningChip model={model} />;
 	return (

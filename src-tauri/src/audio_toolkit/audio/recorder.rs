@@ -2,7 +2,7 @@ use std::{
     io::Error,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc, Arc, Condvar, Mutex,
     },
     time::Duration,
 };
@@ -48,6 +48,38 @@ enum AudioChunk {
     EndOfStream,
 }
 
+fn send_input_callback_chunk(
+    sample_tx: &mpsc::Sender<AudioChunk>,
+    samples: &[f32],
+    stop_requested: bool,
+    eos_sent: &mut bool,
+) {
+    if stop_requested && *eos_sent {
+        return;
+    }
+
+    if !samples.is_empty()
+        && sample_tx
+            .send(AudioChunk::Samples(samples.to_vec()))
+            .is_err()
+    {
+        log::error!("Failed to send samples");
+    }
+
+    if stop_requested {
+        let _ = sample_tx.send(AudioChunk::EndOfStream);
+        *eos_sent = true;
+    } else {
+        *eos_sent = false;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RealtimeAudioProgress {
+    pub len: usize,
+    pub version: u64,
+}
+
 pub struct AudioRecorder {
     device: Option<Device>,
     cmd_tx: Option<mpsc::Sender<Cmd>>,
@@ -79,6 +111,9 @@ pub struct AudioRecorder {
     /// pay the second-copy memory + per-chunk extend when the live preview is off. Defaults to
     /// `false`; the manager sets it before the first frame of a realtime recording.
     realtime_enabled: Arc<AtomicBool>,
+    /// Signals realtime workers that the live mirror length changed. This lets native streaming
+    /// block on recorder progress instead of polling the mirror on a fixed timer.
+    realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 }
 
 impl AudioRecorder {
@@ -93,6 +128,10 @@ impl AudioRecorder {
             speech_cb: None,
             live_audio: Arc::new(Mutex::new(Vec::new())),
             realtime_enabled: Arc::new(AtomicBool::new(false)),
+            realtime_audio_signal: Arc::new((
+                Mutex::new(RealtimeAudioProgress::default()),
+                Condvar::new(),
+            )),
         })
     }
 
@@ -136,6 +175,14 @@ impl AudioRecorder {
         self
     }
 
+    pub fn with_realtime_audio_signal(
+        mut self,
+        signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
+    ) -> Self {
+        self.realtime_audio_signal = signal;
+        self
+    }
+
     pub fn open(&mut self, device: Option<Device>) -> Result<(), Box<dyn std::error::Error>> {
         if self.worker_handle.is_some() {
             return Ok(()); // already open
@@ -164,6 +211,7 @@ impl AudioRecorder {
         let live_audio = Some(self.live_audio.clone());
         // Clone the realtime gate so run_consumer can skip the mirror extend when off.
         let realtime_enabled = self.realtime_enabled.clone();
+        let realtime_audio_signal = self.realtime_audio_signal.clone();
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -250,6 +298,7 @@ impl AudioRecorder {
                         speech_cb,
                         live_audio,
                         realtime_enabled,
+                        realtime_audio_signal,
                         stop_flag,
                     );
                     drop(stream);
@@ -352,14 +401,10 @@ impl AudioRecorder {
         let mut eos_sent = false;
 
         let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
-            if stop_flag.load(Ordering::Relaxed) {
-                if !eos_sent {
-                    let _ = sample_tx.send(AudioChunk::EndOfStream);
-                    eos_sent = true;
-                }
+            let stop_requested = stop_flag.load(Ordering::Relaxed);
+            if stop_requested && eos_sent {
                 return;
             }
-            eos_sent = false;
 
             output_buffer.clear();
 
@@ -379,12 +424,7 @@ impl AudioRecorder {
                 }
             }
 
-            if sample_tx
-                .send(AudioChunk::Samples(output_buffer.clone()))
-                .is_err()
-            {
-                log::error!("Failed to send samples");
-            }
+            send_input_callback_chunk(&sample_tx, &output_buffer, stop_requested, &mut eos_sent);
         };
 
         device.build_input_stream(
@@ -520,7 +560,12 @@ pub fn is_no_input_device_error(error_message: &str) -> bool {
     reason = "run_consumer is defined below the tests; keeping it in place avoids a risky reorder"
 )]
 mod tests {
-    use super::{is_microphone_access_denied, is_no_input_device_error, AudioDeviceError};
+    use std::sync::mpsc;
+
+    use super::{
+        is_microphone_access_denied, is_no_input_device_error, send_input_callback_chunk,
+        AudioChunk, AudioDeviceError,
+    };
 
     #[test]
     fn classify_routes_access_denied_to_typed_variant() {
@@ -583,6 +628,44 @@ mod tests {
         assert!(!is_no_input_device_error("permission denied"));
         assert!(!is_no_input_device_error("device not found"));
     }
+
+    #[test]
+    fn stop_callback_sends_current_samples_before_end_of_stream() {
+        let (tx, rx) = mpsc::channel();
+        let mut eos_sent = false;
+
+        send_input_callback_chunk(&tx, &[0.25, -0.5, 0.75], true, &mut eos_sent);
+
+        match rx.recv().unwrap() {
+            AudioChunk::Samples(samples) => assert_eq!(samples, vec![0.25, -0.5, 0.75]),
+            AudioChunk::EndOfStream => panic!("expected samples before end-of-stream"),
+        }
+        assert!(matches!(rx.recv().unwrap(), AudioChunk::EndOfStream));
+        assert!(eos_sent);
+    }
+
+    #[test]
+    fn stop_callback_drops_callbacks_after_end_of_stream_was_sent() {
+        let (tx, rx) = mpsc::channel();
+        let mut eos_sent = true;
+
+        send_input_callback_chunk(&tx, &[1.0], true, &mut eos_sent);
+
+        assert!(rx.try_recv().is_err());
+        assert!(eos_sent);
+    }
+}
+
+fn publish_realtime_audio_progress(
+    signal: &Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
+    len: usize,
+) {
+    let (lock, cvar) = &**signal;
+    let mut progress = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    progress.len = len;
+    progress.version = progress.version.wrapping_add(1);
+    drop(progress);
+    cvar.notify_all();
 }
 
 #[expect(
@@ -608,6 +691,7 @@ fn run_consumer(
     // Runtime gate: only grow `live_audio` while this is true (set per recording from
     // `effective_realtime`). When off, the mirror extend is skipped entirely → no second copy.
     realtime_enabled: Arc<AtomicBool>,
+    realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
     stop_flag: Arc<AtomicBool>,
 ) {
     let mut frame_resampler = FrameResampler::new(
@@ -743,10 +827,18 @@ fn run_consumer(
         // byte-identical — this only reads `processed_samples`.
         if recording && realtime_enabled.load(Ordering::Relaxed) {
             if let Some(mirror) = &live_audio {
-                let mut m = mirror.lock().unwrap();
-                let mirrored = m.len();
-                if processed_samples.len() > mirrored {
-                    m.extend_from_slice(&processed_samples[mirrored..]);
+                let new_len = {
+                    let mut m = mirror.lock().unwrap();
+                    let mirrored = m.len();
+                    if processed_samples.len() > mirrored {
+                        m.extend_from_slice(&processed_samples[mirrored..]);
+                        Some(m.len())
+                    } else {
+                        None
+                    }
+                };
+                if let Some(new_len) = new_len {
+                    publish_realtime_audio_progress(&realtime_audio_signal, new_len);
                 }
             }
         }
@@ -762,6 +854,7 @@ fn run_consumer(
                     if let Some(mirror) = &live_audio {
                         mirror.lock().unwrap().clear();
                     }
+                    publish_realtime_audio_progress(&realtime_audio_signal, 0);
                     recording = true;
                     // Fresh utterance: the next real speech onset re-fires speech_cb(true).
                     vad_speaking = false;
@@ -817,6 +910,7 @@ fn run_consumer(
                     if let Some(mirror) = &live_audio {
                         mirror.lock().unwrap().clear();
                     }
+                    publish_realtime_audio_progress(&realtime_audio_signal, 0);
 
                     // Resume the audio callback so the consumer loop can continue
                     // receiving chunks (important for always-on microphone mode).
@@ -824,6 +918,7 @@ fn run_consumer(
                 }
                 Cmd::Shutdown => {
                     stop_flag.store(true, Ordering::Relaxed);
+                    publish_realtime_audio_progress(&realtime_audio_signal, 0);
                     return;
                 }
             }

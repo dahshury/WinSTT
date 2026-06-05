@@ -30,10 +30,13 @@
 
 #![allow(dead_code)] // surface defined ahead of the engine call sites.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use super::{EngineKind, Quantization, ResolvedModel, SttError, SttResult};
+use globset::{GlobBuilder, GlobMatcher};
+use once_cell::sync::Lazy;
 
 // ---------------------------------------------------------------------------
 // 1. Alias / repo-id resolution (resolver.py `model_repos` + the `/`-in-id rule)
@@ -308,11 +311,11 @@ pub fn file_globs(model_id: &str, kind: EngineKind, quant: Quantization) -> Vec<
             g("vocab", "tokens.txt".into()),
         ],
         EngineKind::KaldiTransducerStreaming => vec![
-            // streaming Zipformer2: epoch-suffixed encoder/decoder/joiner + `tokens.txt`
-            // (same root-epoch layout as the offline icefall zipformer branch above).
-            g("encoder", format!("encoder-*{s}.onnx")),
-            g("decoder", format!("decoder-*{s}.onnx")),
-            g("joiner", format!("joiner-*{s}.onnx")),
+            // streaming Zipformer2 publishes left-64 and left-128 graph sets in the same repo.
+            // Pick left-128 deterministically so the loose epoch glob does not resolve ambiguously.
+            g("encoder", format!("encoder-*chunk-16-left-128{s}.onnx")),
+            g("decoder", format!("decoder-*chunk-16-left-128{s}.onnx")),
+            g("joiner", format!("joiner-*chunk-16-left-128{s}.onnx")),
             g("vocab", "tokens.txt".into()),
         ],
     }
@@ -365,6 +368,9 @@ fn pick_kaldi_tiebreak<'a>(
 // 3. POSIX glob matching (forward-slash; `**` / `*` / `?` semantics)
 // ---------------------------------------------------------------------------
 
+static GLOB_MATCHER_CACHE: Lazy<Mutex<HashMap<String, Option<Arc<GlobMatcher>>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 /// Match a POSIX repo path against one of our `_get_model_files` globs. Semantics mirror Python's
 /// `pathlib.Path.glob` as onnx-asr uses it:
 ///   * `**` matches any number of path segments (including zero);
@@ -376,59 +382,40 @@ fn pick_kaldi_tiebreak<'a>(
 /// stray backslash to `/` defensively so a Windows-side comparison can't silently miss.
 pub fn glob_match(glob: &str, path: &str) -> bool {
     let path = path.replace('\\', "/");
-    let g: Vec<char> = glob.chars().collect();
-    let p: Vec<char> = path.chars().collect();
-    glob_rec(&g, &p)
+    compiled_glob_matcher(glob).is_some_and(|matcher| matcher.is_match(path.as_str()))
 }
 
-fn glob_rec(g: &[char], p: &[char]) -> bool {
-    // Empty glob matches only empty remainder.
-    if g.is_empty() {
-        return p.is_empty();
-    }
+fn compiled_glob_matcher(glob: &str) -> Option<Arc<GlobMatcher>> {
     // `**` — matches any number of segments. Two forms: `**/rest` and trailing `**`.
-    if g.len() >= 2 && g[0] == '*' && g[1] == '*' {
-        // Skip the `**` and an optional following `/`.
-        let rest = if g.len() >= 3 && g[2] == '/' {
-            &g[3..]
-        } else {
-            &g[2..]
-        };
-        // `**` can consume zero or more whole segments. Try matching `rest` at the current
-        // position and after each `/`-delimited prefix.
-        if glob_rec(rest, p) {
-            return true;
-        }
-        let mut i = 0;
-        while i < p.len() {
-            if p[i] == '/' && glob_rec(rest, &p[i + 1..]) {
-                return true;
-            }
-            i += 1;
-        }
-        return false;
+    let pattern = globset_pattern(glob);
+    let mut cache = GLOB_MATCHER_CACHE.lock().ok()?;
+    if let Some(cached) = cache.get(&pattern) {
+        return cached.clone();
     }
-    match g[0] {
-        '*' => {
-            // `*` matches zero+ chars within one segment (stops at `/`).
-            if glob_rec(&g[1..], p) {
-                return true;
+
+    let matcher = GlobBuilder::new(&pattern)
+        .literal_separator(true)
+        .backslash_escape(true)
+        .build()
+        .ok()
+        .map(|glob| Arc::new(glob.compile_matcher()));
+    cache.insert(pattern, matcher.clone());
+    matcher
+}
+
+fn globset_pattern(glob: &str) -> String {
+    let mut pattern = String::with_capacity(glob.len());
+    for ch in glob.chars() {
+        match ch {
+            '*' | '?' | '/' => pattern.push(ch),
+            '[' | ']' | '{' | '}' | '\\' => {
+                pattern.push('\\');
+                pattern.push(ch);
             }
-            let mut i = 0;
-            while i < p.len() && p[i] != '/' {
-                i += 1;
-                if glob_rec(&g[1..], &p[i..]) {
-                    return true;
-                }
-            }
-            false
+            _ => pattern.push(ch),
         }
-        '?' => {
-            // Single char, not `/`.
-            !p.is_empty() && p[0] != '/' && glob_rec(&g[1..], &p[1..])
-        }
-        c => !p.is_empty() && p[0] == c && glob_rec(&g[1..], &p[1..]),
     }
+    pattern
 }
 
 // ---------------------------------------------------------------------------
@@ -615,7 +602,7 @@ struct PlannedFile {
 ///   1. If `local_dir` is set → resolve files from disk only (no HF).
 ///   2. Else: list the repo tree, match every `file_globs(kind, quant)` glob against it, pick the
 ///      one matching path per logical key (>1 match = error, 0 = ModelFileNotFound), and ALSO plan
-///      every `<stem>.onnx_data*` sidecar + `config.json`/`config.yaml`.
+///      every `<stem>.onnx_data*` / `<stem>.weights` sidecar + `config.json`/`config.yaml`.
 ///   3. Download each planned file (`local_files_only` first), forming the path map.
 ///   4. Verify external-data completeness on every downloaded `.onnx`. If any shard is missing AND
 ///      we were cache-only → flip to a network refetch and retry the WHOLE plan ONCE (spec §2.3).
@@ -801,8 +788,9 @@ async fn resolve_remote(req: &ResolveRequest, cache_only: bool) -> SttResult<Res
     }
 
     // Plan every external-data sidecar for each planned `.onnx`: `<stem>.onnx_data`, `.onnx.data`,
-    // and the sharded `.onnx_data_N` / `.onnx.data_N`. We add only the sidecars the tree actually
-    // lists (avoids a 404 on single-file graphs). Forward-slash patterns throughout (the Win bug).
+    // `<stem>.weights`, and the sharded `.onnx_data_N` / `.onnx.data_N`. We add only the sidecars
+    // the tree actually lists (avoids a 404 on single-file graphs). Forward-slash patterns
+    // throughout (the Win bug).
     for stem in &onnx_stems {
         for p in &tree_paths {
             if is_sidecar_for(stem, p) {
@@ -1121,10 +1109,14 @@ async fn list_repo_tree(
         .collect())
 }
 
-/// True iff `repo_path` is an external-data sidecar of `<stem>.onnx` (base or sharded, either
-/// separator). All forward-slash POSIX comparison.
+/// True iff `repo_path` is an external-data sidecar of `<stem>.onnx` (base, sharded, or sherpa
+/// `.weights`). All forward-slash POSIX comparison.
 fn is_sidecar_for(stem: &str, repo_path: &str) -> bool {
-    // Accept `<stem>.onnx_data`, `<stem>.onnx.data`, `<stem>.onnx_data_N`, `<stem>.onnx.data_N`.
+    // Accept `<stem>.weights` used by some sherpa-onnx NeMo exports, plus the usual
+    // `<stem>.onnx_data`, `<stem>.onnx.data`, `<stem>.onnx_data_N`, `<stem>.onnx.data_N`.
+    if repo_path == format!("{stem}.weights") {
+        return true;
+    }
     for sep in ['_', '.'] {
         let base = format!("{stem}.onnx{sep}data");
         if repo_path == base {
@@ -1318,6 +1310,33 @@ mod tests {
     }
 
     #[test]
+    fn streaming_zipformer_globs_pin_left_128_graph_set() {
+        let g = file_globs(
+            "csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26",
+            EngineKind::KaldiTransducerStreaming,
+            Quantization::Default,
+        );
+        assert!(g
+            .iter()
+            .any(|f| f.key == "encoder" && f.glob == "encoder-*chunk-16-left-128.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "decoder" && f.glob == "decoder-*chunk-16-left-128.onnx"));
+        assert!(g
+            .iter()
+            .any(|f| f.key == "joiner" && f.glob == "joiner-*chunk-16-left-128.onnx"));
+
+        let gi = file_globs(
+            "csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26",
+            EngineKind::KaldiTransducerStreaming,
+            Quantization::Int8,
+        );
+        assert!(gi
+            .iter()
+            .any(|f| f.glob == "encoder-*chunk-16-left-128?int8.onnx"));
+    }
+
+    #[test]
     fn kaldi_tiebreak_prefers_untagged_default_export() {
         // Default zipformer glob `encoder-*.onnx` matches BOTH the default and its int8 sibling.
         let a = "encoder-epoch-99-avg-1.onnx".to_string();
@@ -1393,8 +1412,10 @@ mod tests {
         assert!(is_sidecar_for(stem, "encoder_model_fp16.onnx.data"));
         assert!(is_sidecar_for(stem, "encoder_model_fp16.onnx_data_1"));
         assert!(is_sidecar_for(stem, "encoder_model_fp16.onnx.data_2"));
+        assert!(is_sidecar_for(stem, "encoder_model_fp16.weights"));
         // not a sidecar of THIS stem.
         assert!(!is_sidecar_for(stem, "decoder_model_merged_fp16.onnx_data"));
+        assert!(!is_sidecar_for(stem, "decoder_model_merged_fp16.weights"));
         // the graph file itself is not its own sidecar.
         assert!(!is_sidecar_for(stem, "encoder_model_fp16.onnx"));
         // trailing non-digit → not a shard.

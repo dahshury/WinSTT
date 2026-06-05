@@ -6,12 +6,12 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { SelectedCountBadge } from "../lib/author-filter-submenu-components";
+import { renderAuthorItem } from "../lib/author-filter-submenu-render";
 import {
 	filterByQuery,
 	type ItemContext,
-	renderAuthorItem,
-	SelectedCountBadge,
-} from "../lib/author-filter-submenu-test-helpers";
+} from "../lib/author-filter-submenu-utils";
 import { DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "./DropdownMenu";
 
 const AUTHOR_RENDER_LIMIT = 100;

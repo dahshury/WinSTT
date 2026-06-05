@@ -8,6 +8,7 @@ import {
 	useSettingsStore,
 } from "@/entities/setting";
 import { DEFAULT_LOCALE, LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
+import { shouldSuppressPillPreviewForWordByWordPaste } from "@/shared/lib/realtime-enabled";
 import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { SearchableSelect } from "@/shared/ui/searchable-select";
@@ -175,6 +176,7 @@ function OverlayModeControl({
 
 interface LiveTranscriptionDisplayControlProps {
 	general: GeneralSettings | undefined;
+	suppressWordByWordPillPreview: boolean;
 	t: GeneralT;
 	update: UpdateFn;
 }
@@ -182,12 +184,15 @@ interface LiveTranscriptionDisplayControlProps {
 function LiveTranscriptionDisplayControl({
 	t,
 	general,
+	suppressWordByWordPillPreview,
 	update,
 }: LiveTranscriptionDisplayControlProps): ReactNode {
 	const overlayDisabled = liveOverlayDisabled(general);
+	const pillDisabled = overlayDisabled || suppressWordByWordPillPreview;
 	const stored: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
 	const value = effectiveLiveDisplay(stored, overlayDisabled);
-	const { inApp, inOverlay } = liveDisplayToFlags(value);
+	const { inApp, inOverlay: storedInOverlay } = liveDisplayToFlags(value);
+	const inOverlay = suppressWordByWordPillPreview ? false : storedInOverlay;
 	const checkedIndices = new Set<number>();
 	if (inApp) {
 		checkedIndices.add(0);
@@ -199,7 +204,7 @@ function LiveTranscriptionDisplayControl({
 		update({ liveTranscriptionDisplay: flagsToLiveDisplay(next, inOverlay) });
 	};
 	const setInOverlay = (next: boolean): void => {
-		if (overlayDisabled) {
+		if (pillDisabled) {
 			return;
 		}
 		update({ liveTranscriptionDisplay: flagsToLiveDisplay(inApp, next) });
@@ -225,7 +230,7 @@ function LiveTranscriptionDisplayControl({
 					/>
 					<CheckboxItem
 						checked={inOverlay}
-						disabled={overlayDisabled}
+						disabled={pillDisabled}
 						index={1}
 						label={t("liveTranscriptionDisplayInPill")}
 						onToggle={() => setInOverlay(!inOverlay)}
@@ -565,6 +570,14 @@ function VisualizerShapeControls({ t, general, update }: VisualizerShapeControls
 
 export function AppearanceSettingsPanel() {
 	const general = useSettingsStore((s) => s.settings.general);
+	const mainModelId = useSettingsStore((s) => s.settings.model?.model ?? "");
+	const realtimeModelId = useSettingsStore((s) => s.settings.model?.realtimeModel ?? "");
+	const useMainModelForRealtime = useSettingsStore(
+		(s) => s.settings.quality?.useMainModelForRealtime ?? false,
+	);
+	const llmDictationEnabled = useSettingsStore(
+		(s) => s.settings.llm.dictation.enabled,
+	);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("general");
 
@@ -574,6 +587,13 @@ export function AppearanceSettingsPanel() {
 	const recordingMode = general?.recordingMode ?? "ptt";
 	const isListenMode = recordingMode === "listen";
 	const flags = computeDisplayFlags(isListenMode, general);
+	const suppressWordByWordPillPreview = shouldSuppressPillPreviewForWordByWordPaste({
+		llmDictationEnabled,
+		mainModelId,
+		realtimeModelId,
+		useMainModelForRealtime,
+		wordByWordPasting: general?.wordByWordPasting ?? false,
+	});
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -588,7 +608,12 @@ export function AppearanceSettingsPanel() {
 					t={t}
 					update={update}
 				/>
-				<LiveTranscriptionDisplayControl general={general} t={t} update={update} />
+				<LiveTranscriptionDisplayControl
+					general={general}
+					suppressWordByWordPillPreview={suppressWordByWordPillPreview}
+					t={t}
+					update={update}
+				/>
 			</SettingSection>
 		</div>
 	);

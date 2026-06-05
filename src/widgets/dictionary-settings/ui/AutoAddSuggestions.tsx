@@ -6,6 +6,8 @@ import { onLlmLearnedProperNouns } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
+import { InfoTooltip } from "@/shared/ui/info-tooltip";
+import { normalizeDictionaryTerm } from "../lib/dictionary-terms";
 
 export interface AutoAddSuggestionsProps {
 	/**
@@ -34,7 +36,10 @@ export interface AutoAddSuggestionsProps {
  * Already-in-dictionary terms are filtered out on arrival so the strip
  * stays signal: the user only sees genuinely new candidates.
  */
-export function AutoAddSuggestions({ existingTerms, onAccept }: AutoAddSuggestionsProps) {
+export function AutoAddSuggestions({
+	existingTerms,
+	onAccept,
+}: AutoAddSuggestionsProps) {
 	const t = useTranslations("dictionary");
 	const [pending, setPending] = useState<readonly string[]>([]);
 	const surface = useSurface();
@@ -45,17 +50,18 @@ export function AutoAddSuggestions({ existingTerms, onAccept }: AutoAddSuggestio
 		const off = onLlmLearnedProperNouns(({ nouns }) => {
 			setPending((prev) => {
 				const existing = new Set([
-					...prev.map((p) => p.toLowerCase()),
-					...existingTerms.map((e) => e.toLowerCase()),
+					...prev.map(normalizeDictionaryTerm),
+					...existingTerms.map(normalizeDictionaryTerm),
 				]);
 				const fresh: string[] = [];
 				for (const raw of nouns) {
-					const lower = raw.toLowerCase();
-					if (existing.has(lower)) {
+					const term = raw.trim();
+					const normalized = normalizeDictionaryTerm(term);
+					if (!normalized || existing.has(normalized)) {
 						continue;
 					}
-					existing.add(lower);
-					fresh.push(raw);
+					existing.add(normalized);
+					fresh.push(term);
 				}
 				if (fresh.length === 0) {
 					return prev;
@@ -82,18 +88,25 @@ export function AutoAddSuggestions({ existingTerms, onAccept }: AutoAddSuggestio
 	}
 
 	return (
-		<div className={cn("flex flex-col gap-2 rounded border border-border p-3", surfaceBg(level))}>
+		<div
+			className={cn(
+				"flex flex-col gap-2 rounded border border-border p-3",
+				surfaceBg(level),
+			)}
+		>
 			<div className="flex items-center gap-2">
 				<span aria-hidden="true">✨</span>
-				<p className="font-medium text-body-sm text-foreground">{t("autoAddTitle")}</p>
+				<p className="font-medium text-body-sm text-foreground">
+					{t("autoAddTitle")}
+				</p>
+				<InfoTooltip content={t("autoAddCaption")} />
 			</div>
-			<p className="text-body-xs text-foreground-muted">{t("autoAddCaption")}</p>
 			<div className="flex flex-wrap gap-2">
 				{pending.map((term) => (
 					<div
 						className={cn(
 							"flex items-center gap-1 rounded-full border border-border px-2 py-1",
-							surfaceBg(pillLevel)
+							surfaceBg(pillLevel),
 						)}
 						key={term}
 					>

@@ -14,10 +14,11 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 const VISIBLE_COUNT = 3;
 const FADE_OPACITIES = [1, 0.4, 0.15];
 
-/** Items start fading after this many ms since their timestamp. */
-const FADE_AFTER_MS = 5000;
-/** Items are fully transparent after this many ms. */
-const GONE_AFTER_MS = 8000;
+/** Normal PTT/toggle captions should clear quickly once the final line lands. */
+const FADE_AFTER_MS = 500;
+/** Normal PTT/toggle captions are fully transparent after this many ms. */
+const GONE_AFTER_MS = 1100;
+const SUBTITLE_EXIT_TRANSITION = "opacity 140ms ease-out";
 
 /** Ephemeral status messages (e.g. "no audio detected") fade faster. */
 const EPHEMERAL_FADE_AFTER_MS = 2000;
@@ -87,8 +88,8 @@ export function SubtitleOverlay() {
   // keeping the render pure (no `Date.now()` read during render).
   //
   // Two trigger sources:
-  //   1. A 250ms interval while there is content to fade (items / ephemeral).
-  //      No interval when there's nothing on screen — saves a 4Hz wakeup.
+  //   1. A 250ms interval while there is content to fade (normal-mode items /
+  //      ephemeral). No interval when there's nothing on screen — saves a 4Hz wakeup.
   //      The interval ALSO double-duties as the fully-faded-ephemeral
   //      eviction trigger: when it ticks, it recomputes ephemeral opacity
   //      inline and calls `clearEphemeral()` if the entry has fully faded,
@@ -102,7 +103,12 @@ export function SubtitleOverlay() {
   //      paint, so items past their fade window collapse to opacity 0
   //      immediately and there is no stale flash.
   const [now, setNow] = useState(() => Date.now());
-  const hasFadingContent = items.length > 0 || ephemeral !== null;
+  const hasTimedSubtitleContent =
+    !isListenMode &&
+    items
+      .slice(-VISIBLE_COUNT)
+      .some((item) => timeFade(item.timestamp, now) > 0);
+  const hasFadingContent = hasTimedSubtitleContent || ephemeral !== null;
   useEffect(() => {
     if (!hasFadingContent) {
       return;
@@ -196,8 +202,9 @@ export function SubtitleOverlay() {
             return (
               <p
                 className="font-sans text-foreground text-title leading-snug [text-shadow:0_1px_4px_rgba(0,0,0,0.95)]"
+                data-subtitle-line="true"
                 key={item.id}
-                style={color ? { color } : undefined}
+                {...(color ? { style: { color } } : {})}
               >
                 {spk >= 0 ? (
                   <span className="font-semibold">{`Speaker ${spk + 1}: `}</span>
@@ -209,6 +216,7 @@ export function SubtitleOverlay() {
           {liveText ? (
             <p
               className="font-sans text-foreground/75 text-title leading-snug [text-shadow:0_1px_4px_rgba(0,0,0,0.95)]"
+              data-subtitle-line="live"
               dir="auto"
             >
               {liveText}
@@ -217,11 +225,9 @@ export function SubtitleOverlay() {
           {showEphemeral && ephemeral ? (
             <p
               className="font-sans text-body text-foreground/70 italic leading-snug"
+              data-subtitle-line="ephemeral"
               dir="auto"
-              style={{
-                opacity: ephemeralOpacity,
-                transition: "opacity 200ms ease-out",
-              }}
+              style={{ opacity: ephemeralOpacity }}
             >
               {ephemeral.text}
             </p>
@@ -233,7 +239,16 @@ export function SubtitleOverlay() {
 
   // Normal mode — show last 3 items with discrete opacity + time-based fade
   const visibleItems = items.slice(-VISIBLE_COUNT);
-  const hasContent = visibleItems.length > 0 || liveText || showEphemeral;
+  const visibleSubtitleItems = visibleItems
+    .map((item, i) => {
+      const age = visibleItems.length - 1 - i;
+      const positionOpacity = FADE_OPACITIES[age] ?? 0.1;
+      const tf = timeFade(item.timestamp, now);
+      return { item, opacity: Math.min(positionOpacity, tf) };
+    })
+    .filter(({ opacity }) => opacity > 0);
+  const hasContent =
+    visibleSubtitleItems.length > 0 || liveText || showEphemeral;
 
   if (!hasContent) {
     return null;
@@ -247,45 +262,38 @@ export function SubtitleOverlay() {
           "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.55) 100%)",
       }}
     >
-      {visibleItems.map((item, i) => {
-        const age = visibleItems.length - 1 - i;
-        const positionOpacity = FADE_OPACITIES[age] ?? 0.1;
-        const tf = timeFade(item.timestamp, now);
-        const opacity = Math.min(positionOpacity, tf);
-        if (opacity <= 0) {
-          return null;
-        }
+      {visibleSubtitleItems.map(({ item, opacity }) => {
         return (
           <p
             className="max-w-full text-center font-sans text-body text-foreground leading-snug"
+            data-subtitle-line="true"
             dir="auto"
             key={item.id}
-            style={{ opacity, transition: "opacity 300ms ease-out" }}
+            style={{ opacity, transition: SUBTITLE_EXIT_TRANSITION }}
           >
             {item.text}
           </p>
         );
       })}
-      {liveText && (
+      {liveText ? (
         <p
           className="max-w-full text-center font-sans text-body text-foreground/60 italic leading-snug"
+          data-subtitle-line="live"
           dir="auto"
         >
           {liveText}
         </p>
-      )}
-      {showEphemeral && ephemeral && (
+      ) : null}
+      {showEphemeral && ephemeral ? (
         <p
           className="max-w-full text-center font-sans text-body text-foreground/70 italic leading-snug"
+          data-subtitle-line="ephemeral"
           dir="auto"
-          style={{
-            opacity: ephemeralOpacity,
-            transition: "opacity 200ms ease-out",
-          }}
+          style={{ opacity: ephemeralOpacity }}
         >
           {ephemeral.text}
         </p>
-      )}
+      ) : null}
     </div>
   );
 }

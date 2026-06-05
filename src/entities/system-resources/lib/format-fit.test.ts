@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { FitAssessmentEntry, FitSeverity, FitTarget } from "@/shared/api/ipc-client";
-import { __format_fit_test_helpers__, badgeFor, rowHint } from "./format-fit";
-
-const { hasUsableFootprint, labelBytes, targetLabel } = __format_fit_test_helpers__;
+import { badgeFor, hasUsableFootprint, labelBytes, rowHint, targetLabel } from "./format-fit";
 
 function entry(opts: Partial<FitAssessmentEntry> = {}): FitAssessmentEntry {
 	return {

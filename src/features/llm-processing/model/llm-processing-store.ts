@@ -4,7 +4,15 @@ interface LlmProcessingState {
 	appendThinking: (chunk: string) => void;
 	clearThinking: () => void;
 	isThinking: boolean;
+	isTransforming: boolean;
 	setThinking: (value: boolean) => void;
+	setTransforming: (value: boolean) => void;
+	/**
+	 * Wall-clock timestamp at which the current selected-text transform started
+	 * (`null` when not active). Kept separate from dictation thinking so the
+	 * overlay can show a transform-only pill without arming an STT session.
+	 */
+	transformStartedAt: number | null;
 	/**
 	 * Wall-clock timestamp at which the current LLM processing pass started
 	 * (`null` when not active). The pill reads this to render a live
@@ -46,6 +54,33 @@ export function thinkingPatch(
 	return value ? nextThinkingStart(currentStart) : thinkingStopPatch();
 }
 
+/** Patch for `setTransforming(true)`: duplicate START events keep one timer. */
+export function nextTransformStart(
+	currentStart: number | null,
+	now: number = Date.now()
+): { isTransforming: true; transformStartedAt: number } {
+	return {
+		isTransforming: true,
+		transformStartedAt: currentStart ?? now,
+	};
+}
+
+/** Patch for `setTransforming(false)`: clear transform-only processing state. */
+export function transformStopPatch(): {
+	isTransforming: false;
+	transformStartedAt: null;
+} {
+	return { isTransforming: false, transformStartedAt: null };
+}
+
+/** Pick the right patch for a `setTransforming(value)` call. */
+export function transformPatch(
+	value: boolean,
+	currentStart: number | null
+): { isTransforming: boolean; transformStartedAt: number | null } {
+	return value ? nextTransformStart(currentStart) : transformStopPatch();
+}
+
 /** Patch for `appendThinking(chunk)`: empty chunks are no-ops (CC 1). */
 export function appendThinkingPatch(
 	currentText: string,
@@ -56,9 +91,13 @@ export function appendThinkingPatch(
 
 export const useLlmProcessingStore = create<LlmProcessingState>()((set) => ({
 	isThinking: false,
+	isTransforming: false,
 	thinkingStartedAt: null,
 	thinkingText: "",
+	transformStartedAt: null,
 	setThinking: (value) => set((state) => thinkingPatch(value, state.thinkingStartedAt)),
+	setTransforming: (value) =>
+		set((state) => transformPatch(value, state.transformStartedAt)),
 	appendThinking: (chunk) =>
 		set((state) => appendThinkingPatch(state.thinkingText, chunk) ?? state),
 	clearThinking: () => set({ thinkingText: "" }),

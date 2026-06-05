@@ -40,6 +40,8 @@ pub struct WhisperTokenizer {
     pub transcribe_token_id: i64,
     pub translate_token_id: i64,
     pub notimestamps_token_id: i64,
+    /// `<|nospeech|>` on Whisper exports, or `<|nocaptions|>` on older variants.
+    pub nospeech_token_id: Option<i64>,
     /// `<|startofprev|>` — the initial-prompt prefix marker; None on `.en` / very old
     /// exports that drop it (then initial-prompt biasing is silently unavailable).
     pub startofprev_id: Option<i64>,
@@ -91,6 +93,10 @@ impl WhisperTokenizer {
             .copied()
             .unwrap_or(transcribe_token_id);
         let notimestamps_token_id = need("<|notimestamps|>")?;
+        let nospeech_token_id = tokens
+            .get("<|nospeech|>")
+            .or_else(|| tokens.get("<|nocaptions|>"))
+            .copied();
         let timestamp_begin_id = tokens.get("<|0.00|>").copied();
         let is_multilingual = tokens.contains_key("<|fr|>");
         let startofprev_id = tokens.get("<|startofprev|>").copied();
@@ -106,6 +112,7 @@ impl WhisperTokenizer {
             transcribe_token_id,
             translate_token_id,
             notimestamps_token_id,
+            nospeech_token_id,
             startofprev_id,
             timestamp_begin_id,
             timestamp_step_s: 0.02,
@@ -336,6 +343,7 @@ mod tests {
         m.insert("<|transcribe|>".into(), 50359);
         m.insert("<|translate|>".into(), 50358);
         m.insert("<|notimestamps|>".into(), 50363);
+        m.insert("<|nospeech|>".into(), 50362);
         m.insert("<|en|>".into(), 50259);
         m.insert("<|fr|>".into(), 50265);
         m.insert("<|0.00|>".into(), 50364);
@@ -353,6 +361,7 @@ mod tests {
         assert_eq!(tk.eos_token_id, 50257);
         assert_eq!(tk.transcribe_token_id, 50359);
         assert_eq!(tk.translate_token_id, 50358);
+        assert_eq!(tk.nospeech_token_id, Some(50362));
         assert!(tk.is_multilingual); // <|fr|> present
         assert_eq!(tk.language_token("en"), Some(50259));
         assert_eq!(tk.timestamp_begin_id, Some(50364));

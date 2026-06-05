@@ -15,6 +15,7 @@ import {
 } from "@/shared/ui/switching-trigger";
 import { publicAsset } from "../../lib/public-asset";
 import { getAuthorLabel, getFamilyConfig, variantDisplayName } from "../lib/family-helpers";
+import { findDisplayModelByBackingId } from "../lib/streaming-precision-merge";
 
 export interface SttModelSelectorTriggerProps {
 	/** Models known to the parent picker. Used to resolve the previous-model
@@ -288,7 +289,7 @@ function resolveToModel(
 	if (selectedModel && selectedModel.id === targetName) {
 		return selectedModel;
 	}
-	return catalog.find((m) => m.id === targetName) ?? undefined;
+	return findDisplayModelByBackingId(catalog, targetName) ?? undefined;
 }
 
 interface AriaLabelInputs {
@@ -356,7 +357,7 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 	const swapFromName = useModelSwapStore((s) => (kind === "main" ? s.fromMain : s.fromRealtime));
 	const isSwitching = swapTargetName !== null;
 	const fromModel = swapFromName
-		? (catalog.find((m) => m.id === swapFromName) ?? undefined)
+		? resolveToModel(swapFromName, undefined, catalog)
 		: undefined;
 	const toModel = resolveToModel(swapTargetName, selectedModel, catalog);
 	// We're in the "downloading" sub-phase of the swap when a download is
@@ -373,7 +374,7 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 	// same trigger chrome without claiming a swap is in flight.
 	const isBackgroundDownload = !isSwitching && downloadProgress != null;
 	const downloadingModel = downloadProgress
-		? (catalog.find((m) => m.id === downloadProgress.modelId) ?? undefined)
+		? resolveToModel(downloadProgress.modelId, undefined, catalog)
 		: undefined;
 	const downloadPercent =
 		isDownloadingTarget || isBackgroundDownload ? (downloadProgress?.percent ?? null) : null;

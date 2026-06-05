@@ -1,19 +1,19 @@
-// PORT IMPL — WU-0 (app/PORT/10_frontend_port_plan.md §4b + lib_wiring.md).
+// PORT IMPL — WU-0 (docs/archive/port/10_frontend_port_plan.md §4b + lib_wiring.md).
 //
-// Window-management commands for the 9-window WinSTT topology. Each WinSTT
+// Window-management commands for the WinSTT window topology. Each WinSTT
 // the reference BrowserWindow becomes a Tauri WebviewWindow loading its own HTML
-// entry (main at "/", the 8 secondary at "windows/<name>.html"). The chrome
+// entry (main at "/", secondary windows at "windows/<name>.html"). The chrome
 // (size, transparency, decorations, always-on-top, skip-taskbar) is translated
 // 1:1 from frontend/electron/main.ts + electron/ipc/*-window.ts.
 //
 // Creation policy (matches the reference's keep-alive semantics):
 //   - `main` is created eagerly in lib.rs setup (NOT here).
-//   - settings/history/onboarding/pickers/overlay/tray-menu/context-playground
+//   - settings/history/onboarding/pickers/overlay/tray-menu and optional context-playground
 //     are created LAZILY on first `open_window` and HIDDEN (not destroyed) on
 //     `close_window`, so re-open preserves renderer state.
 //
 // Two placement regimes (ported from the reference window creators):
-//   - PLAIN windows (settings/history/onboarding/context-playground): created at
+//   - PLAIN windows (settings/history/onboarding and optional context-playground): created at
 //     a fixed size, CENTERED (settings on the main pill, the rest on the primary
 //     display), opaque backgroundColor, shown + focused. Hide-on-close.
 //   - PICKER windows (model-picker/device-picker): a frameless transparent popup
@@ -34,11 +34,10 @@
 // Per-picker anchor/size is held in module-level statics (no `.manage()` needed).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-use specta::Type;
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize,
     WebviewUrl, WebviewWindowBuilder,
@@ -74,7 +73,7 @@ struct WindowSpec {
 /// the reference `backgroundColor`.
 const SUBSTRATE: Option<(u8, u8, u8, u8)> = Some((9, 9, 11, 255));
 
-/// The 9-window table (main is created in lib.rs setup; listed here for resize).
+/// Window specs (main is created in lib.rs setup; listed here for resize).
 const WINDOW_SPECS: &[WindowSpec] = &[
     WindowSpec {
         label: "main",
@@ -93,7 +92,7 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         ignore_cursor: false,
         background: None,
     },
-    // Settings — 700×560 frameless, opaque, centered on the main pill. Ported
+    // Settings — 692×560 frameless, opaque, centered on the main pill. Ported
     // from main.ts createSettingsWindow(), but reworked into a MODAL CHILD of the
     // pill (owner = main, set in `ensure_window`): it sits above the pill, can't be
     // dismissed independently, and the pill is input-disabled while it's open
@@ -104,9 +103,9 @@ const WINDOW_SPECS: &[WindowSpec] = &[
         label: "settings",
         url: "windows/settings.html",
         title: "WinSTT Settings",
-        width: 700.0,
+        width: 692.0,
         height: 560.0,
-        min_width: 700.0,
+        min_width: 692.0,
         min_height: 560.0,
         resizable: false,
         decorations: false,
@@ -231,11 +230,11 @@ const WINDOW_SPECS: &[WindowSpec] = &[
     },
     // Context-playground — debug-only framed/resizable window, always-on-top.
     // Ported from context-playground-window.ts (600×780, min 440×420).
-    // AUDIT #6: only present in debug builds. A 600×780 debug-only window must never
-    // be prewarmed (or even creatable) in release; gating the WINDOW_SPECS entry drops
+    // AUDIT #6: only present with the context-playground feature. A 600×780
+    // debug-only window must never be prewarmed in release; gating this entry drops
     // it from the prewarm loop, `spec_for`, and `open_window` in shipping builds. Pairs
     // with `CONTEXT_PLAYGROUND_ENABLED=false` in the renderer's debug-flags.ts.
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "context-playground")]
     WindowSpec {
         label: "context-playground",
         url: "windows/context-playground.html",
@@ -300,6 +299,8 @@ static PICKER_STATE: Mutex<Option<HashMap<&'static str, PickerState>>> = Mutex::
 static MODEL_PICKER_SEQ: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_FADE_SEQ: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_OPACITY_BITS: AtomicU64 = AtomicU64::new(1.0f64.to_bits());
+static SETTINGS_FADE_TARGET_BITS: AtomicU64 = AtomicU64::new(1.0f64.to_bits());
+static SETTINGS_FADE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Default seed footprint per picker (the renderer overrides it on first resize).
 fn picker_default_size(label: &str) -> (f64, f64) {
@@ -332,6 +333,7 @@ const TASKBAR_MARGIN: f64 = 8.0;
 /// `ANCHOR_GAP` in the reference pickers.
 const ANCHOR_GAP: f64 = 6.0;
 const MODEL_PICKER_CLOSE_MS: u64 = 150;
+const MODEL_PICKER_ANCHOR_REEMIT_MS: &[u64] = &[75, 250, 700];
 const SETTINGS_FADE_MS: u64 = 150;
 const SETTINGS_FADE_TICK_MS: u64 = 16;
 /// Smallest usable model-picker height before we pin it to the screen top.
@@ -381,6 +383,7 @@ fn settings_fade_alpha_in(progress: f64) -> f64 {
     progress.clamp(0.0, 1.0).powi(3)
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn settings_opacity_byte(opacity: f64) -> u8 {
     (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
 }
@@ -391,6 +394,19 @@ fn settings_fade_should_seed_hidden(label: &str, is_visible: bool) -> bool {
 
 fn settings_current_opacity() -> f64 {
     f64::from_bits(SETTINGS_OPACITY_BITS.load(Ordering::SeqCst)).clamp(0.0, 1.0)
+}
+
+fn settings_current_fade_target() -> f64 {
+    f64::from_bits(SETTINGS_FADE_TARGET_BITS.load(Ordering::SeqCst)).clamp(0.0, 1.0)
+}
+
+fn settings_fade_request_is_duplicate(
+    active: bool,
+    current_target: f64,
+    requested_target: f64,
+) -> bool {
+    active
+        && (current_target.clamp(0.0, 1.0) - requested_target.clamp(0.0, 1.0)).abs() <= f64::EPSILON
 }
 
 fn remember_settings_opacity(opacity: f64) {
@@ -432,16 +448,28 @@ fn start_settings_opacity_fade<F>(
 ) where
     F: FnOnce() + Send + 'static,
 {
-    let seq = SETTINGS_FADE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let from = settings_current_opacity();
     let to = to.clamp(0.0, 1.0);
 
+    if settings_fade_request_is_duplicate(
+        SETTINGS_FADE_ACTIVE.load(Ordering::SeqCst),
+        settings_current_fade_target(),
+        to,
+    ) {
+        return;
+    }
+
+    SETTINGS_FADE_TARGET_BITS.store(to.to_bits(), Ordering::SeqCst);
+    let seq = SETTINGS_FADE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+
     if (from - to).abs() <= f64::EPSILON {
         let _ = set_settings_window_opacity(&window, to);
+        SETTINGS_FADE_ACTIVE.store(false, Ordering::SeqCst);
         on_complete();
         return;
     }
 
+    SETTINGS_FADE_ACTIVE.store(true, Ordering::SeqCst);
     std::thread::spawn(move || {
         let start = std::time::Instant::now();
         let mut on_complete = Some(on_complete);
@@ -457,6 +485,7 @@ fn start_settings_opacity_fade<F>(
 
             if progress >= 1.0 {
                 let _ = set_settings_window_opacity(&window, to);
+                SETTINGS_FADE_ACTIVE.store(false, Ordering::SeqCst);
                 if let Some(done) = on_complete.take() {
                     done();
                 }
@@ -574,8 +603,35 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<tauri::Webvi
             .unwrap_or_else(|_| "<none>".into())
     );
 
+    if spec.label == "model-picker" || spec.label == "device-picker" {
+        let picker_label = spec.label;
+        let app_handle = app.clone();
+        window.on_window_event(move |event| {
+            if !matches!(event, tauri::WindowEvent::Focused(false)) {
+                return;
+            }
+            let Some(window) = app_handle.get_webview_window(picker_label) else {
+                return;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                return;
+            }
+            if picker_label == "model-picker" {
+                close_model_picker_with_animation(&app_handle, &window);
+            } else {
+                let _ = close_window(app_handle.clone(), picker_label.to_string());
+            }
+        });
+    }
+
+    // On Linux, Tao unwraps the native GTK window for cursor-ignore requests.
+    // Hidden prewarmed windows are not realized yet, so defer overlay click-through
+    // setup until the show path calls `set_ignore_cursor_events` after `show()`.
     if spec.ignore_cursor {
-        let _ = window.set_ignore_cursor_events(true);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = window.set_ignore_cursor_events(true);
+        }
     }
     Ok(window)
 }
@@ -590,7 +646,7 @@ fn center_window(app: &AppHandle, window: &tauri::WebviewWindow, center_on_main:
     let (w, h) = window
         .inner_size()
         .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
-        .unwrap_or((700.0, 560.0));
+        .unwrap_or((692.0, 560.0));
 
     if center_on_main {
         if let Some(main) = app.get_webview_window("main") {
@@ -678,6 +734,10 @@ fn compute_x_axis(anchor: PickerAnchor, width: f64, work_x: f64, work_w: f64) ->
     desired_x.max(work_x).min(max_x.max(work_x))
 }
 
+fn visible_picker_open_should_toggle(label: &str) -> bool {
+    label != "model-picker"
+}
+
 /// Compute the on-screen popup rect (logical px) from the anchor + desired size,
 /// clamped into the monitor work area. `min_height` differs per picker.
 fn compute_panel(
@@ -698,17 +758,6 @@ fn compute_panel(
     }
 }
 
-/// Tell the model-picker renderer to drop its last panel rect (emits a `null`
-/// `model-picker:anchor`). Called while the window is HIDDEN, so a reopen can't
-/// flash the previous open's position before the fresh anchor lands: by the time
-/// the window reshows, the panel is invisible and the new anchor reveals it in
-/// place. Race-free precisely because it happens off-screen, not at show time.
-fn reset_model_picker_panel(app: &AppHandle) {
-    // Bump first so any in-flight delayed re-emit from the prior open is stale.
-    MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst);
-    let _ = app.emit("model-picker:anchor", serde_json::Value::Null);
-}
-
 fn close_model_picker_with_animation(app: &AppHandle, window: &tauri::WebviewWindow) {
     let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let _ = app.emit("model-picker:closing", serde_json::Value::Null);
@@ -720,14 +769,12 @@ fn close_model_picker_with_animation(app: &AppHandle, window: &tauri::WebviewWin
         if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
             return;
         }
-        let app3 = app2.clone();
         let _ = app2.run_on_main_thread(move || {
             if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
                 return;
             }
             let _ = window2.hide();
             with_picker_state("model-picker", |s| s.anchor = None);
-            reset_model_picker_panel(&app3);
         });
     });
 }
@@ -737,11 +784,16 @@ fn close_model_picker_with_animation(app: &AppHandle, window: &tauri::WebviewWin
 /// panel rect so the renderer draws the visible panel above the chip.
 fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: PickerState) {
     let Some(anchor) = state.anchor else {
-        // No anchor yet (e.g. resize before open) — just show it; the next open
-        // supplies the anchor.
-        let _ = window.show();
+        // A full-screen transparent model-picker without a panel looks like the
+        // app hung and captures input. Keep it hidden until a real anchored open.
+        log::warn!("model-picker open requested without an anchor; keeping it hidden");
+        MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst);
+        let _ = window.hide();
         return;
     };
+    // Treat open as a repair/re-anchor operation. This cancels any delayed hide
+    // from a close animation before it can race a fresh click.
+    let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let work = work_area_for_point(app, (anchor.screen_left, anchor.screen_top));
     let (work_x, work_y, work_w, work_h) = work;
     let panel = compute_panel(anchor, (state.width, state.height), work, MODEL_MIN_HEIGHT);
@@ -757,32 +809,29 @@ fn place_model_picker(app: &AppHandle, window: &tauri::WebviewWindow, state: Pic
         "height": panel.height,
     });
 
-    // Window-local panel coords = screen coords minus the work-area origin. A
-    // GLOBAL emit (the established pattern in this codebase — the renderer
-    // listens with a global `listen`); the model-picker webview is the only
-    // window subscribed to `model-picker:anchor`, so a broadcast is exact.
-    let _ = app.emit("model-picker:anchor", payload.clone());
-
     let _ = window.show();
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
+    // Window-local panel coords = screen coords minus the work-area origin.
+    // Show first so a hidden/suspended WebView2 has resumed before the event.
+    let _ = app.emit("model-picker:anchor", payload.clone());
 
-    // First-open race: on the lazy create the webview may not have registered
-    // its `model-picker:anchor` listener yet when we emit above, so the panel
-    // would stay invisible until the renderer's own mount-time
-    // `MODEL_PICKER_RESIZE` round-trips. Re-emit once after a short delay so the
-    // panel reveals promptly even on a cold first open (mirrors the reference's
-    // `deferShowUntilLoaded`). Cheap, idempotent — the renderer just sets the
-    // same rect again.
-    // This open's sequence number. The delayed re-emit below fires only while
-    // it's still current — a close or reopen in the meantime bumps the counter
-    // and cancels the stray re-emit (which would re-plant a stale panel).
-    let seq = MODEL_PICKER_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    // First-open and long-idle race: the listener may not have registered
+    // or the hidden webview may need a beat after show. Duplicate anchors are
+    // cheap and idempotent; the sequence guard cancels stale retries after close.
     let app2 = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        if MODEL_PICKER_SEQ.load(Ordering::SeqCst) == seq {
-            let _ = app2.emit("model-picker:anchor", payload);
+        let started = Instant::now();
+        for delay_ms in MODEL_PICKER_ANCHOR_REEMIT_MS {
+            let target = Duration::from_millis(*delay_ms);
+            let elapsed = started.elapsed();
+            if target > elapsed {
+                std::thread::sleep(target - elapsed);
+            }
+            if MODEL_PICKER_SEQ.load(Ordering::SeqCst) != seq {
+                return;
+            }
+            let _ = app2.emit("model-picker:anchor", payload.clone());
         }
     });
 }
@@ -858,45 +907,24 @@ fn resolve_opener(
     app.get_webview_window(fallback)
 }
 
-/// Windows prewarmed EAGERLY (on the critical startup path), before any deferral.
-/// These are the most-likely-opened secondaries — the recording `overlay` (shown on
-/// the very first dictation) and the `tray-menu` (a right-click away). Building them
-/// up front keeps the first interaction flicker-free. Everything else in WINDOW_SPECS
-/// is deferred (see `prewarm_windows`).
-const EAGER_PREWARM: &[&str] = &["overlay", "tray-menu"];
+const POST_STARTUP_PREWARM_DELAY_MS: u64 = 250;
+static POST_STARTUP_PREWARM_SCHEDULED: AtomicBool = AtomicBool::new(false);
 
-/// Pre-create (hidden) the secondary windows so `open_window` only ever has to SHOW an
-/// already-built window. Building a `WebviewWindow` lazily *inside* the synchronous
-/// `open_window` command handler hangs on Windows: WebView2 creation needs the main
-/// thread's message loop to pump, but the command IS running on the main thread and
-/// blocking it — so the window object is created yet its page never navigates/loads
-/// (blank window, "nothing happens"). So we MUST still build them eagerly (off the
-/// command path), just NOT all synchronously before the pill paints.
+/// Secondary windows worth prewarming shortly after first paint.
 ///
-/// AUDIT #6: the original implementation built ALL 8 secondary WebView2 windows
-/// synchronously in `setup()` BEFORE `show_main_window`, so the pill couldn't paint
-/// until every one finished — the cost the splash existed to hide. We now split it:
-///   - `overlay` + `tray-menu` are built eagerly (most-likely-opened first).
-///   - settings / model-picker / device-picker / onboarding / history /
-///     context-playground are DEFERRED to an idle `run_on_main_thread` callback that
-///     runs after the main loop is pumping (i.e. after the pill is up). They still
-///     build eagerly off the command path — NOT lazily inside `open_window` (which
-///     hangs, see above) — just later. `open_window` → `ensure_window` is idempotent,
-///     so a first-open that races the deferred build just creates it a beat early.
-///
-/// `prewarm_windows` itself must be called AFTER `show_main_window` in lib.rs so the
-/// pill paints first. Idempotent — `ensure_window` early-returns for any window that
-/// already exists, so nothing is rebuilt.
+/// `overlay` is included here so the first PTT session only has to reveal an
+/// already-loaded transparent webview, avoiding the first-use black rectangle.
+/// `tray-menu` has a custom off-screen lifecycle warmup. Lower-probability
+/// windows stay lazy.
+const POST_STARTUP_PREWARM_LABELS: &[&str] = &["overlay", "settings", "model-picker"];
+
+/// Pre-create hidden secondary windows after the main pill paints, so first
+/// interaction paths usually show an already-loaded webview. This keeps WebView2
+/// creation off startup's first-paint path while avoiding lazy creation inside
+/// command handlers, which can hang on Windows while the main thread is blocked.
+/// Idempotent: `ensure_window` early-returns for any window that already exists.
 pub(crate) fn prewarm_windows(app: &AppHandle) {
-    // 1) Eager: the windows the user is most likely to hit first.
-    for label in EAGER_PREWARM {
-        match ensure_window(app, label) {
-            Ok(_) => log::debug!("[prewarm] '{label}' pre-created (hidden, eager)"),
-            Err(e) => log::warn!("[prewarm] '{label}' failed: {e}"),
-        }
-    }
-
-    // 2) Deferred: the rest, off the critical path. `run_on_main_thread` schedules the
+    // Deferred off the critical path. `run_on_main_thread` schedules the
     //    closure on the event loop, so it runs once `setup` has returned and the loop is
     //    pumping — i.e. after the pill is visible. WebView2 creation still happens on the
     //    main thread (required) but no longer blocks first paint.
@@ -906,11 +934,21 @@ pub(crate) fn prewarm_windows(app: &AppHandle) {
             if spec.label == "main" {
                 continue; // created in lib.rs setup
             }
-            if EAGER_PREWARM.contains(&spec.label) {
-                continue; // already built eagerly above
+            if !POST_STARTUP_PREWARM_LABELS.contains(&spec.label) {
+                continue;
             }
+            let started = Instant::now();
             match ensure_window(&app, spec.label) {
-                Ok(_) => log::debug!("[prewarm] '{}' pre-created (hidden, deferred)", spec.label),
+                Ok(_) => {
+                    log::debug!("[prewarm] '{}' pre-created (hidden, deferred)", spec.label);
+                    if crate::startup_profile_enabled() {
+                        log::info!(
+                            "[startup] prewarmed window '{}': {} ms",
+                            spec.label,
+                            started.elapsed().as_millis()
+                        );
+                    }
+                }
                 Err(e) => log::warn!("[prewarm] '{}' failed: {e}", spec.label),
             }
         }
@@ -919,13 +957,34 @@ pub(crate) fn prewarm_windows(app: &AppHandle) {
 
 // ── Settings modal (pill input gate) ────────────────────────────────────────
 
-/// Enable/disable the main pill's input while the Settings modal is up. Pairs the
-/// OS owner relationship (set in `ensure_window`) with the Win32 modal idiom
-/// (`set_enabled(false)` ⇒ clicks/focus on the owner just flash the modal) so the
-/// pill can't be focused while Settings is open and the two behave as one window.
-/// Re-enabled on every Settings close path (`close_self_window` / `close_window` /
-/// the native `CloseRequested` in lib.rs). No-op if the pill is gone. Harmless on
-/// non-Windows (`set_enabled` is cross-platform).
+/// Schedule noncritical secondary WebView2 creation after the main window is visible.
+/// Required startup model warmups keep their normal priority; this only moves
+/// hidden utility windows off the first-paint path.
+pub(crate) fn schedule_post_startup_prewarm(app: &AppHandle) {
+    if POST_STARTUP_PREWARM_SCHEDULED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(POST_STARTUP_PREWARM_DELAY_MS));
+
+        let app_for_main = app.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            let started = Instant::now();
+            if crate::startup_profile_enabled() {
+                log::info!("[startup] post-startup prewarm started");
+            }
+            crate::winstt::commands::tray_menu::install_tray_menu_lifecycle(&app_for_main);
+            prewarm_windows(&app_for_main);
+            crate::log_startup_duration("post-startup prewarm scheduled", started);
+        }) {
+            log::warn!("post-startup prewarm scheduling failed: {e}");
+        }
+    });
+}
+
+// Enable/disable the main pill's input while the Settings modal is up.
 pub(crate) fn set_main_modal(app: &AppHandle, modal_active: bool) {
     if let Some(main) = app.get_webview_window("main") {
         if let Err(e) = main.set_enabled(!modal_active) {
@@ -1004,15 +1063,12 @@ pub fn open_window(
         .inspect_err(|e| log::error!("open_window('{name}') ensure_window failed: {e}"))?;
 
     if is_picker(label) {
-        // Picker open is a TOGGLE: a second open while visible closes it (the
-        // chip/row toggles its own popup), matching the reference pickers.
-        if window.is_visible().unwrap_or(false) {
-            if label == "model-picker" {
-                close_model_picker_with_animation(&app, &window);
-            } else {
-                let _ = window.hide();
-                with_picker_state(label, |s| s.anchor = None);
-            }
+        // Device picker open is a toggle. The model picker is a full-screen
+        // transparent backdrop with a renderer-owned panel, so a visible open
+        // should repair/re-anchor a stale invisible backdrop instead of closing.
+        if window.is_visible().unwrap_or(false) && visible_picker_open_should_toggle(label) {
+            let _ = window.hide();
+            with_picker_state(label, |s| s.anchor = None);
             return Ok(());
         }
 
@@ -1079,9 +1135,6 @@ pub fn close_window(app: AppHandle, name: String) -> Result<(), String> {
     if let Some(label) = spec_for(&name).map(|s| s.label) {
         if is_picker(label) {
             with_picker_state(label, |s| s.anchor = None);
-            if label == "model-picker" {
-                reset_model_picker_panel(&app);
-            }
         }
         // The device-picker is a tray-menu submenu: choosing a device (or Esc)
         // collapses the WHOLE menu, matching the reference's device-picker
@@ -1186,35 +1239,12 @@ pub fn anchor_window(app: AppHandle, name: String, x: f64, y: f64) -> Result<(),
     Ok(())
 }
 
-/// Payload the renderer sends when finishing (or skipping) the onboarding wizard.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OnboardingFinishArgs {
-    pub completed: bool,
-    #[serde(default)]
-    pub track: String,
-}
-
-/// `onboarding_finish` — hide the onboarding window and show main. Persisting
-/// the `general.onboarded` flag rides the existing settings command; this
-/// command only handles the window transition (mirrors ONBOARDING_FINISH).
-#[allow(dead_code)] // superseded by winstt::commands::onboarding::onboarding_finish (de-command'd to avoid dup name)
-pub fn onboarding_finish(app: AppHandle, _args: OnboardingFinishArgs) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("onboarding") {
-        let _ = window.hide();
-    }
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         compute_panel, compute_x_axis, compute_y_axis, is_picker, settings_fade_alpha,
-        settings_fade_should_seed_hidden, settings_opacity_byte, spec_for, PickerAnchor,
+        settings_fade_request_is_duplicate, settings_fade_should_seed_hidden,
+        settings_opacity_byte, spec_for, visible_picker_open_should_toggle, PickerAnchor,
         ANCHOR_GAP, MODEL_MIN_HEIGHT, TASKBAR_MARGIN,
     };
 
@@ -1228,6 +1258,7 @@ mod tests {
             "device-picker",
             "tray-menu",
             "overlay",
+            #[cfg(feature = "context-playground")]
             "context-playground",
         ] {
             assert!(spec_for(label).is_some(), "missing spec for {label}");
@@ -1244,6 +1275,12 @@ mod tests {
     }
 
     #[test]
+    fn model_picker_visible_open_repairs_instead_of_toggling() {
+        assert!(!visible_picker_open_should_toggle("model-picker"));
+        assert!(visible_picker_open_should_toggle("device-picker"));
+    }
+
+    #[test]
     fn settings_open_fade_uses_cubic_ease_out() {
         assert_eq!(settings_fade_alpha(0.0), 0.0);
         assert_eq!(settings_fade_alpha(1.0), 1.0);
@@ -1253,6 +1290,15 @@ mod tests {
             (halfway - 0.875).abs() < f64::EPSILON,
             "expected cubic ease-out halfway alpha, got {halfway}"
         );
+    }
+
+    #[test]
+    fn settings_duplicate_fade_requests_do_not_restart_same_target() {
+        assert!(settings_fade_request_is_duplicate(true, 1.0, 1.0));
+        assert!(settings_fade_request_is_duplicate(true, 0.0, 0.0));
+        assert!(settings_fade_request_is_duplicate(true, 2.0, 1.0));
+        assert!(!settings_fade_request_is_duplicate(false, 1.0, 1.0));
+        assert!(!settings_fade_request_is_duplicate(true, 0.0, 1.0));
     }
 
     #[test]

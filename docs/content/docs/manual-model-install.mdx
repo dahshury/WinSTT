@@ -42,7 +42,7 @@ Open the picker in WinSTT (or check [Available Models](/docs/models)) and note t
     ["Lite-Whisper Large v3 Turbo (acc)", "onnx-community/lite-whisper-large-v3-turbo-acc-ONNX"],
     ["Kokoro-82M (TTS)", "onnx-community/Kokoro-82M-v1.0-ONNX"],
   ]}
-  caption="The catalog at server/src/recorder/domain/catalog.json is the authoritative list — the onnx_model_name field holds the exact repo ID for every entry."
+  caption="The catalog at src-tauri/src/winstt/catalog.rs is the authoritative list — the onnx_model_name field holds the exact repo ID for every entry."
 />
 </Step>
 
@@ -115,23 +115,23 @@ A manually-placed model is **indistinguishable from one WinSTT downloaded itself
 
 ## Verify without launching the app
 
-To sanity-check the layout before booting Electron, run the cache probe in isolation from `server/`:
+To sanity-check the layout before launching the app, run the Rust STT example in cache-only mode:
 
 ```bash
-cd server
-uv run python -c "from recorder.infrastructure.model_cache import probe_cache_state; print(probe_cache_state('onnx-community/whisper-tiny.en'))"
+cd src-tauri
+SPIKE_CACHE_ONLY=1 cargo run --release --example stt_spike -- --catalog tiny.en
 ```
 
-The state field tells you exactly where you stand:
+The example uses the same catalog resolver as the app and fails with the missing file or cache path if the staged snapshot is incomplete:
 
 <ModelTable
   head={["State", "Meaning", "Fix"]}
   rows={[
-    ["cached", "All expected weight files are present — the picker will show Cached.", "Nothing — you're done."],
-    ["partial", "A file is missing or an .incomplete marker is still present.", "Re-copy the snapshot; check for leftover *.incomplete files."],
-    ["not_cached", "The snapshots/<sha>/ folder isn't there at all.", "Recheck the folder name (models--<owner>--<repo>) and the commit SHA in refs/main."],
+    ["Run succeeds", "All expected weight files are present — the picker will show Cached.", "Nothing — you're done."],
+    ["Missing file error", "A required ONNX/tokenizer/config file is absent.", "Re-copy the snapshot; check for leftover *.incomplete files."],
+    ["Snapshot not found", "The snapshots/<sha>/ folder isn't there at all.", "Recheck the folder name (models--<owner>--<repo>) and the commit SHA in refs/main."],
   ]}
-  caption="probe_cache_state returns a ModelCacheState(state=…); cached reports equal downloaded/total bytes."
+  caption="Use a different catalog id after --catalog to check a different built-in model."
 />
 
 ## Bulk staging for a fleet

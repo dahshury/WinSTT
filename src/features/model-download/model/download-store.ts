@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import {
 	cancelDownload as ipcCancelDownload,
-	cancelModelDownloadQuant as ipcCancelModelDownloadQuant,
 	deleteModelCache as ipcDeleteModelCache,
 	deleteModelQuantization as ipcDeleteModelQuantization,
 	pauseModelDownload as ipcPauseModelDownload,
@@ -21,12 +20,15 @@ export interface DownloadProgressPayload {
 	totalBytes?: number;
 }
 
+export type SttDownloadOwner = "main" | "realtime";
+
 /** Per-(modelId, quantization) live download snapshot — the badge inside
  *  ``SttModelCard`` reads these so each variant shows its own progress
  *  / paused / cancelled state independently. */
 export interface QuantDownloadState {
 	downloadedBytes: number;
 	modelId: string;
+	owner?: SttDownloadOwner;
 	paused: boolean;
 	/** 0–100, null = indeterminate (first event hasn't landed yet). */
 	progress: number | null;
@@ -40,6 +42,10 @@ export interface QuantDownloadState {
  *  trailing segment. */
 function quantKey(modelId: string, quantization: string): string {
 	return `${modelId}@${quantization}`;
+}
+
+function ownerPatch(owner: SttDownloadOwner | undefined) {
+	return owner === undefined ? {} : { owner };
 }
 
 interface DownloadState {
@@ -69,7 +75,11 @@ interface DownloadState {
 	 *  "switch model + restart server" flow — this fetches into the HF
 	 *  cache without changing the loaded model so the user can keep
 	 *  using the current model while their download runs. */
-	predownloadQuant: (modelId: string, quantization: string) => void;
+	predownloadQuant: (
+		modelId: string,
+		quantization: string,
+		owner?: SttDownloadOwner,
+	) => void;
 	progress: number | null; // 0–100, null = indeterminate
 	/** Per-quant download snapshots, keyed by ``quantKey()``. Cards read
 	 *  this map to render their own progress / paused / cancelled chrome
@@ -78,18 +88,26 @@ interface DownloadState {
 	quantDownloads: Record<string, QuantDownloadState>;
 	/** Resume the in-flight per-quant download. Server re-runs the worker
 	 *  which skips already-cached files. */
-	resumeQuantDownload: (modelId: string, quantization: string) => void;
+	resumeQuantDownload: (
+		modelId: string,
+		quantization: string,
+		owner?: SttDownloadOwner,
+	) => void;
 	setDownloadComplete: (cancelled?: boolean) => void;
 	setDownloadProgress: (payload: DownloadProgressPayload) => void;
 	setDownloadStart: (model: string) => void;
 	/** Mark a quant entry as cleared from the live map — called when the
 	 *  server emits download_complete for it. */
-	setQuantDownloadComplete: (modelId: string, quantization: string, cancelled: boolean) => void;
+	setQuantDownloadComplete: (
+		modelId: string,
+		quantization: string,
+		cancelled: boolean,
+	) => void;
 	/** Update or insert the per-quant snapshot on a chunk event. */
 	setQuantDownloadProgress: (
 		modelId: string,
 		quantization: string,
-		payload: DownloadProgressPayload
+		payload: DownloadProgressPayload,
 	) => void;
 	speedBps: number;
 	totalBytes: number;
@@ -102,9 +120,20 @@ const PROGRESS_PAYLOAD_DEFAULTS = {
 	etaSeconds: 0,
 } satisfies Partial<DownloadProgressPayload>;
 
+function percentFromFraction(progress: number): number {
+	return Math.max(0, Math.min(100, Math.round(progress * 100)));
+}
+
+function monotonicPercent(
+	previous: number | null | undefined,
+	next: number,
+): number {
+	return previous == null ? next : Math.max(previous, next);
+}
+
 export function normalizeProgressPayload(payload: DownloadProgressPayload) {
 	const merged = { ...PROGRESS_PAYLOAD_DEFAULTS, ...payload };
-	return { ...merged, progress: Math.round(payload.progress * 100) };
+	return { ...merged, progress: percentFromFraction(payload.progress) };
 }
 
 export const useDownloadStore = create<DownloadState>()((set) => ({
@@ -128,23 +157,47 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			etaSeconds: 0,
 			cancelled: false,
 		}),
-	setDownloadProgress: (payload) => set(normalizeProgressPayload(payload)),
+	setDownloadProgress: (payload) =>
+		set((s) => {
+			const next = normalizeProgressPayload(payload);
+			const downloadedBytes = Math.max(s.downloadedBytes, next.downloadedBytes);
+			return {
+				...next,
+				progress: monotonicPercent(s.progress, next.progress),
+				downloadedBytes,
+				totalBytes: Math.max(s.totalBytes, next.totalBytes, downloadedBytes),
+			};
+		}),
 	setDownloadComplete: (cancelled) => {
 		if (cancelled) {
 			set({ cancelled: true });
 			// Brief display, then clear
 			setTimeout(() => {
-				set({ isDownloading: false, modelName: null, progress: null, cancelled: false });
+				set({
+					isDownloading: false,
+					modelName: null,
+					progress: null,
+					cancelled: false,
+				});
 			}, 2000);
 		} else {
-			set({ isDownloading: false, modelName: null, progress: null, cancelled: false });
+			set({
+				isDownloading: false,
+				modelName: null,
+				progress: null,
+				cancelled: false,
+			});
 		}
 	},
 	cancelDownload: () => {
-		void ipcCancelDownload().catch((e) => console.error("model download cancel failed", e));
+		void ipcCancelDownload().catch((e) =>
+			console.error("model download cancel failed", e),
+		);
 	},
 	discardCache: (modelId: string) => {
-		void ipcDeleteModelCache(modelId).catch((e) => console.error("model cache delete failed", e));
+		void ipcDeleteModelCache(modelId).catch((e) =>
+			console.error("model cache delete failed", e),
+		);
 	},
 	discardQuantCache: (modelId: string, quantization: string) => {
 		// Drop the local snapshot synchronously so the badge's
@@ -163,23 +216,33 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 			console.error("model quant delete failed", e),
 		);
 	},
-	predownloadQuant: (modelId: string, quantization: string) => {
+	predownloadQuant: (
+		modelId: string,
+		quantization: string,
+		owner?: SttDownloadOwner,
+	) => {
 		// Seed the entry so the badge flips to "downloading" instantly
 		// rather than waiting for the first server progress event.
-		set((s) => ({
-			quantDownloads: {
-				...s.quantDownloads,
-				[quantKey(modelId, quantization)]: {
-					modelId,
-					quantization,
-					progress: null,
-					downloadedBytes: 0,
-					totalBytes: 0,
-					speedBps: 0,
-					paused: false,
+		set((s) => {
+			const key = quantKey(modelId, quantization);
+			const existing = s.quantDownloads[key];
+			const resolvedOwner = owner ?? existing?.owner;
+			return {
+				quantDownloads: {
+					...s.quantDownloads,
+					[key]: {
+						modelId,
+						quantization,
+						...ownerPatch(resolvedOwner),
+						progress: existing?.progress ?? null,
+						downloadedBytes: existing?.downloadedBytes ?? 0,
+						totalBytes: existing?.totalBytes ?? 0,
+						speedBps: existing?.speedBps ?? 0,
+						paused: false,
+					},
 				},
-			},
-		}));
+			};
+		});
 		void ipcPredownloadModelQuant(modelId, quantization).catch((e) =>
 			console.error("model quant predownload failed", e),
 		);
@@ -197,19 +260,47 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 				return s;
 			}
 			return {
-				quantDownloads: { ...s.quantDownloads, [key]: { ...entry, paused: true } },
+				quantDownloads: {
+					...s.quantDownloads,
+					[key]: { ...entry, paused: true },
+				},
 			};
 		});
 	},
-	resumeQuantDownload: (modelId: string, quantization: string) => {
+	resumeQuantDownload: (
+		modelId: string,
+		quantization: string,
+		owner?: SttDownloadOwner,
+	) => {
 		set((s) => {
 			const key = quantKey(modelId, quantization);
 			const entry = s.quantDownloads[key];
 			if (!entry) {
-				return s;
+				if (owner === undefined) {
+					return s;
+				}
+				return {
+					quantDownloads: {
+						...s.quantDownloads,
+						[key]: {
+							modelId,
+							quantization,
+							...ownerPatch(owner),
+							progress: null,
+							downloadedBytes: 0,
+							totalBytes: 0,
+							speedBps: 0,
+							paused: false,
+						},
+					},
+				};
 			}
+			const resolvedOwner = owner ?? entry.owner;
 			return {
-				quantDownloads: { ...s.quantDownloads, [key]: { ...entry, paused: false } },
+				quantDownloads: {
+					...s.quantDownloads,
+					[key]: { ...entry, ...ownerPatch(resolvedOwner), paused: false },
+				},
 			};
 		});
 		void ipcResumeModelDownload(modelId, quantization).catch((e) =>
@@ -217,27 +308,41 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
 		);
 	},
 	cancelQuantDownload: (modelId: string, quantization: string) => {
-		void ipcCancelModelDownloadQuant(modelId, quantization).catch((e) =>
-			console.error("model quant cancel failed", e),
+		set((s) => {
+			const next = { ...s.quantDownloads };
+			delete next[quantKey(modelId, quantization)];
+			return { quantDownloads: next };
+		});
+		void ipcDeleteModelQuantization(modelId, quantization).catch((e) =>
+			console.error("model quant cancel/discard failed", e),
 		);
 	},
 	setQuantDownloadProgress: (modelId, quantization, payload) => {
 		set((s) => {
 			const key = quantKey(modelId, quantization);
+			const entry = s.quantDownloads[key];
 			const merged = { ...PROGRESS_PAYLOAD_DEFAULTS, ...payload };
+			const progress = percentFromFraction(payload.progress);
+			const downloadedBytes = Math.max(
+				entry?.downloadedBytes ?? 0,
+				merged.downloadedBytes,
+			);
 			return {
 				quantDownloads: {
 					...s.quantDownloads,
 					[key]: {
 						modelId,
 						quantization,
-						progress: Math.round(payload.progress * 100),
-						downloadedBytes: merged.downloadedBytes,
-						totalBytes: merged.totalBytes,
+						...ownerPatch(entry?.owner),
+						progress: monotonicPercent(entry?.progress, progress),
+						downloadedBytes,
+						totalBytes: Math.max(
+							entry?.totalBytes ?? 0,
+							merged.totalBytes,
+							downloadedBytes,
+						),
 						speedBps: merged.speedBps,
-						// Receiving a progress chunk implicitly clears the paused
-						// flag — bytes only flow when the worker isn't paused.
-						paused: false,
+						paused: entry?.paused ?? false,
 					},
 				},
 			};
@@ -257,6 +362,13 @@ export const useDownloadStore = create<DownloadState>()((set) => ({
  *  Read synchronously (not a hook) so non-React callers — notably the swap
  *  controller's selection guard, which must NOT let the user switch to a model
  *  whose target precision is still downloading — can check the live map. */
-export function isQuantDownloading(modelId: string, quantization: string): boolean {
-	return useDownloadStore.getState().quantDownloads[quantKey(modelId, quantization)] !== undefined;
+export function isQuantDownloading(
+	modelId: string,
+	quantization: string,
+): boolean {
+	return (
+		useDownloadStore.getState().quantDownloads[
+			quantKey(modelId, quantization)
+		] !== undefined
+	);
 }

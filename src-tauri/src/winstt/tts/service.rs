@@ -118,6 +118,7 @@ impl TtsManager {
         get_speed: impl Fn() -> f32,
         sink: &dyn ChunkSink,
     ) -> TtsResult<()> {
+        self.cancelled.track(request_id);
         let sentences = split_sentences(text, DEFAULT_MAX_SENTENCE_LEN);
         if sentences.is_empty() {
             // Nothing to say — still resolve cleanly so the renderer queue closes.

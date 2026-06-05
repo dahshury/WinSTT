@@ -4,10 +4,8 @@ import type { AppSettingsOutput as AppSettings } from "@/shared/config/settings-
 import {
 	AUDIO_PARAM_MAP,
 	diarizationNeedsPush,
-	micReleaseNeedsPush,
 	modelUnloadTimeoutNeedsPush,
 	readDiarizationEnabled,
-	resolveMicReleasePolicy,
 	resolveModelUnloadTimeoutSeconds,
 	type SyncDeps,
 	sendIfChanged,
@@ -17,7 +15,6 @@ import {
 	syncDiarizationParams,
 	syncModelParams,
 	syncQualityParams,
-	syncSystemParams,
 	syncTextCorrectionParams,
 	syncToServer,
 } from "./sync-actions";
@@ -25,7 +22,6 @@ import {
 function makeDeps() {
 	const calls: Array<{ kind: string; args: unknown[] }> = [];
 	const deps: SyncDeps = {
-		autostartSet: mock((enabled: boolean) => calls.push({ kind: "autostartSet", args: [enabled] })),
 		sttRequestDiarizationToggle: mock((enabled: boolean) =>
 			calls.push({ kind: "sttRequestDiarizationToggle", args: [enabled] })
 		),
@@ -45,19 +41,8 @@ beforeEach(() => {
 });
 
 describe("AUDIO_PARAM_MAP", () => {
-	test("includes the canonical audio params plus hot-swap additions", () => {
-		expect(AUDIO_PARAM_MAP).toEqual({
-			sileroSensitivity: "silero_sensitivity",
-			postSpeechSilenceDuration: "post_speech_silence_duration",
-			wakeWordActivationDelay: "wake_word_activation_delay",
-			inputDeviceIndex: "input_device_index",
-			// webrtc + silero-deactivity moved off STARTUP_ONLY_KEYS_LIST —
-			// they're now pushed via set_parameter on every change so the
-			// recorder retunes its VAD (or persists the value) without a
-			// process kill. See sync-actions.ts and recorder/__init__.py.
-			webrtcSensitivity: "webrtc_sensitivity",
-			sileroDeactivityDetection: "silero_deactivity_detection",
-		});
+	test("does not expose audio settings through no-op STT parameters", () => {
+		expect(AUDIO_PARAM_MAP).toEqual({});
 	});
 });
 
@@ -76,25 +61,25 @@ describe("shouldSendParam", () => {
 describe("sendIfChanged", () => {
 	test("invokes sttSetParameter when the gate says yes", () => {
 		const { deps, calls } = makeDeps();
-		sendIfChanged(deps, 0.5, 0.4, "silero_sensitivity", false);
-		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["silero_sensitivity", 0.5] }]);
+		sendIfChanged(deps, false, true, "filter_fillers", false);
+		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["filter_fillers", false] }]);
 	});
 
 	test("is a no-op when the value is unchanged (incremental)", () => {
 		const { deps, calls } = makeDeps();
-		sendIfChanged(deps, 0.4, 0.4, "silero_sensitivity", false);
+		sendIfChanged(deps, false, false, "filter_fillers", false);
 		expect(calls).toEqual([]);
 	});
 
 	test("is a no-op when the value is null on initial connect", () => {
 		const { deps, calls } = makeDeps();
-		sendIfChanged(deps, null, undefined, "silero_sensitivity", true);
+		sendIfChanged(deps, null, undefined, "filter_fillers", true);
 		expect(calls).toEqual([]);
 	});
 });
 
 describe("syncAudioEntries", () => {
-	test("pushes every changed audio entry under its snake-case name", () => {
+	test("does not push unsupported audio entries", () => {
 		const { deps, calls } = makeDeps();
 		syncAudioEntries(
 			deps,
@@ -107,18 +92,10 @@ describe("syncAudioEntries", () => {
 			undefined,
 			true
 		);
-		const params = calls.map((c) => c.args[0]);
-		expect(params.toSorted()).toEqual(
-			[
-				"input_device_index",
-				"post_speech_silence_duration",
-				"silero_sensitivity",
-				"wake_word_activation_delay",
-			].toSorted()
-		);
+		expect(calls).toEqual([]);
 	});
 
-	test("incremental mode only pushes changed entries", () => {
+	test("incremental mode remains a no-op for unsupported audio entries", () => {
 		const { deps, calls } = makeDeps();
 		syncAudioEntries(
 			deps,
@@ -132,8 +109,7 @@ describe("syncAudioEntries", () => {
 			} as never,
 			false
 		);
-		expect(calls).toHaveLength(1);
-		expect(calls[0]?.args[0]).toBe("post_speech_silence_duration");
+		expect(calls).toEqual([]);
 	});
 });
 
@@ -144,7 +120,7 @@ describe("syncAudioParams", () => {
 		expect(calls).toEqual([]);
 	});
 
-	test("delegates to syncAudioEntries with isInitial=!prev", () => {
+	test("does not send VAD settings through no-op STT parameters", () => {
 		const { deps, calls } = makeDeps();
 		syncAudioParams(
 			deps,
@@ -153,7 +129,22 @@ describe("syncAudioParams", () => {
 			}),
 			undefined
 		);
-		expect(calls.some((c) => c.args[0] === "silero_sensitivity")).toBe(true);
+		expect(calls).toEqual([]);
+	});
+
+	test("does not translate microphoneRelease into legacy backend parameters", () => {
+		const { deps, calls } = makeDeps();
+		syncAudioParams(
+			deps,
+			settingsWith({
+				audio: { microphoneRelease: "min1" } as never,
+			}),
+			undefined
+		);
+		const params = calls.map((c) => c.args[0]);
+		expect(params).not.toContain("always_on_microphone");
+		expect(params).not.toContain("lazy_stream_close");
+		expect(params).not.toContain("lazy_close_timeout_seconds");
 	});
 });
 
@@ -328,34 +319,6 @@ describe("syncTextCorrectionParams", () => {
 	});
 });
 
-describe("syncSystemParams", () => {
-	test("returns early on initial connect (prev is undefined)", () => {
-		const { deps, calls } = makeDeps();
-		syncSystemParams(deps, settingsWith({ general: { autoStart: true } as never }), undefined);
-		expect(calls).toEqual([]);
-	});
-
-	test("pushes autostart on a flip", () => {
-		const { deps, calls } = makeDeps();
-		syncSystemParams(
-			deps,
-			settingsWith({ general: { autoStart: true } as never }),
-			settingsWith({ general: { autoStart: false } as never })
-		);
-		expect(calls).toEqual([{ kind: "autostartSet", args: [true] }]);
-	});
-
-	test("does not push autostart on no-op", () => {
-		const { deps, calls } = makeDeps();
-		syncSystemParams(
-			deps,
-			settingsWith({ general: { autoStart: true } as never }),
-			settingsWith({ general: { autoStart: true } as never })
-		);
-		expect(calls).toEqual([]);
-	});
-});
-
 describe("readDiarizationEnabled", () => {
 	test("returns the speakerDiarization flag when set", () => {
 		expect(
@@ -449,64 +412,6 @@ describe("syncToServer", () => {
 		const kinds = calls.map((c) => c.kind);
 		expect(kinds).toContain("sttSetParameter");
 		expect(kinds).toContain("sttRequestDiarizationToggle");
-		// autostart is skipped on initial connect (matches existing behavior).
-		expect(kinds).not.toContain("autostartSet");
-	});
-});
-
-describe("resolveMicReleasePolicy", () => {
-	test("maps 'always' to alwaysOn with timeout 0", () => {
-		expect(resolveMicReleasePolicy("always")).toEqual({
-			alwaysOn: true,
-			lazyClose: false,
-			timeoutSeconds: 0,
-		});
-	});
-
-	test("maps 'immediate' to no-lazy-close with timeout 0", () => {
-		expect(resolveMicReleasePolicy("immediate")).toEqual({
-			alwaysOn: false,
-			lazyClose: false,
-			timeoutSeconds: 0,
-		});
-	});
-
-	test.each([
-		["sec30", 30],
-		["min1", 60],
-		["min5", 300],
-	])("maps '%s' to lazyClose with %d seconds", (key, seconds) => {
-		expect(resolveMicReleasePolicy(key)).toEqual({
-			alwaysOn: false,
-			lazyClose: true,
-			timeoutSeconds: seconds,
-		});
-	});
-
-	test("falls back to immediate for unknown strings", () => {
-		expect(resolveMicReleasePolicy("garbage")).toEqual({
-			alwaysOn: false,
-			lazyClose: false,
-			timeoutSeconds: 0,
-		});
-	});
-
-	test("falls back to immediate for non-string inputs", () => {
-		expect(resolveMicReleasePolicy(null)).toEqual({
-			alwaysOn: false,
-			lazyClose: false,
-			timeoutSeconds: 0,
-		});
-		expect(resolveMicReleasePolicy(undefined)).toEqual({
-			alwaysOn: false,
-			lazyClose: false,
-			timeoutSeconds: 0,
-		});
-		expect(resolveMicReleasePolicy(123)).toEqual({
-			alwaysOn: false,
-			lazyClose: false,
-			timeoutSeconds: 0,
-		});
 	});
 });
 
@@ -531,25 +436,6 @@ describe("resolveModelUnloadTimeoutSeconds", () => {
 		expect(resolveModelUnloadTimeoutSeconds(null)).toBe(300);
 		expect(resolveModelUnloadTimeoutSeconds(undefined)).toBe(300);
 		expect(resolveModelUnloadTimeoutSeconds(42)).toBe(300);
-	});
-});
-
-describe("micReleaseNeedsPush", () => {
-	test("false when current is null/undefined", () => {
-		expect(micReleaseNeedsPush(null, "immediate", false)).toBe(false);
-		expect(micReleaseNeedsPush(undefined, "immediate", true)).toBe(false);
-	});
-
-	test("true on initial when current is set", () => {
-		expect(micReleaseNeedsPush("always", undefined, true)).toBe(true);
-	});
-
-	test("true on incremental when current differs from previous", () => {
-		expect(micReleaseNeedsPush("always", "immediate", false)).toBe(true);
-	});
-
-	test("false on incremental when current === previous", () => {
-		expect(micReleaseNeedsPush("immediate", "immediate", false)).toBe(false);
 	});
 });
 

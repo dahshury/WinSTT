@@ -5,11 +5,13 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { FILTERABLE_PARAMETERS, type FilterableParameter } from "../lib/openrouter-provider-utils";
 import {
 	ClearAllSection,
-	getParamCount,
 	ParameterMenuItem,
 	SelectedCountBadge,
+} from "../lib/parameters-filter-submenu-components";
+import {
+	getParamCount,
 	toggleParameterValue,
-} from "../lib/parameters-filter-submenu-test-helpers";
+} from "../lib/parameters-filter-submenu-utils";
 import {
 	DropdownMenuGroup,
 	DropdownMenuLabel,

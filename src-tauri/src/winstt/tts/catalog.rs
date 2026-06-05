@@ -30,19 +30,6 @@ impl TtsEngineId {
             TtsEngineId::Chatterbox => "chatterbox",
         }
     }
-    // Inherent `from_str` returns `Option` (an unknown id is simply `None`, no error
-    // detail needed); the std `FromStr` trait would force a `Result` + throwaway `Err`.
-    #[allow(clippy::should_implement_trait)]
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "kokoro" => Some(TtsEngineId::Kokoro),
-            "kitten" => Some(TtsEngineId::Kitten),
-            "piper" => Some(TtsEngineId::Piper),
-            "supertonic" => Some(TtsEngineId::Supertonic),
-            "chatterbox" => Some(TtsEngineId::Chatterbox),
-            _ => None,
-        }
-    }
 }
 
 /// Voice-cloning capability — three-state (a boolean would lose the transcript
@@ -53,8 +40,6 @@ pub enum CloningKind {
     None,
     /// Zero-shot from a reference clip alone.
     ZeroShotAudio,
-    /// Zero-shot from a reference clip plus its transcript.
-    ZeroShotAudioTranscript,
 }
 
 impl CloningKind {
@@ -62,7 +47,6 @@ impl CloningKind {
         match self {
             CloningKind::None => "none",
             CloningKind::ZeroShotAudio => "zero_shot_audio",
-            CloningKind::ZeroShotAudioTranscript => "zero_shot_audio_transcript",
         }
     }
 }
@@ -114,8 +98,8 @@ impl TtsModelEntry {
 
 // ---------------------------------------------------------------------------
 // The catalog. Sizes are exact on-disk bytes (from the HF file trees, see the
-// research report). speed_score is from warm CPU RTF measured on this machine
-// (Kitten 0.155 / Piper 0.042 / Supertonic 0.039; Kokoro ~0.07 warm 332ms).
+// research report and upstream HF file trees). speed_score is a relative card
+// hint, not a runtime contract.
 // ---------------------------------------------------------------------------
 
 pub const TTS_CATALOG: &[TtsModelEntry] = &[
@@ -125,17 +109,22 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         display_name: "Kokoro 82M",
         maker: "hexgrad",
         hf_repo: "onnx-community/Kokoro-82M-v1.0-ONNX",
-        languages: &["en-us", "en-gb", "es", "fr", "hi", "it", "pt-br", "ja", "cmn"],
+        languages: &[
+            "en-us", "en-gb", "es", "fr", "hi", "it", "pt-br", "ja", "cmn",
+        ],
         num_voices: 54,
         cloning: CloningKind::None,
         sample_rate: 24_000,
         param_count_m: 82,
         // fp16 graph (163,234,740) + all 54 voice .bin files (28,725,248) — the full
         // voice set ships in the one model download (HF file sizes, verified).
-        quants: &[TtsQuant { id: "fp16", size_bytes: 191_959_988 }],
+        quants: &[TtsQuant {
+            id: "fp16",
+            size_bytes: 191_959_988,
+        }],
         quality_score: 0.90,
         speed_score: 0.85,
-        description: "Best-quality compact TTS: 54 voices across 9 languages, Apache-2.0. The default.",
+        description: "Best everyday local voice set; natural read-aloud across many languages.",
     },
     TtsModelEntry {
         id: "kitten-nano-0.1",
@@ -148,10 +137,13 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         cloning: CloningKind::None,
         sample_rate: 24_000,
         param_count_m: 15,
-        quants: &[TtsQuant { id: "fp32", size_bytes: 23_858_139 }],
+        quants: &[TtsQuant {
+            id: "fp32",
+            size_bytes: 23_858_139,
+        }],
         quality_score: 0.42,
         speed_score: 0.85,
-        description: "Tiniest TTS (~24 MB, 15M params), CPU-only, 8 voices, English. Lowest fidelity — pick for size/speed.",
+        description: "Smallest English voice model; best when disk space matters most.",
     },
     TtsModelEntry {
         id: "kitten-nano-0.2",
@@ -165,10 +157,13 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         sample_rate: 24_000,
         param_count_m: 15,
         // graph (23,804,156) + voices.npz (10,294) + config.json (177).
-        quants: &[TtsQuant { id: "fp32", size_bytes: 23_814_627 }],
+        quants: &[TtsQuant {
+            id: "fp32",
+            size_bytes: 23_814_627,
+        }],
         quality_score: 0.46,
         speed_score: 0.85,
-        description: "Newer Kitten nano (~24 MB, 15M params), CPU-only, 8 voices, English. Drop-in upgrade over 0.1 — same size, improved quality.",
+        description: "Tiny English voices with cleaner sound than Kitten 0.1.",
     },
     TtsModelEntry {
         id: "piper",
@@ -180,10 +175,10 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         // language-country). Each voice downloads ON-DEMAND when selected.
         languages: &[
             "en-us", "ar-jo", "bg-bg", "ca-es", "cs-cz", "cy-gb", "da-dk", "de-de", "el-gr",
-            "en-gb", "es", "eu-es", "fa-ir", "fi-fi", "fr", "hi", "hu-hu", "id-id", "is-is",
-            "it", "ka-ge", "kk-kz", "ku-tr", "lb-lu", "lv-lv", "ml-in", "ne-np", "nl-be",
-            "nl-nl", "no-no", "pl-pl", "pt-br", "ro-ro", "ru-ru", "sk-sk", "sl-si", "sq-al",
-            "sr-rs", "sv-se", "sw-cd", "te-in", "tr-tr", "uk-ua", "ur-pk", "vi-vn", "cmn",
+            "en-gb", "es", "eu-es", "fa-ir", "fi-fi", "fr", "hi", "hu-hu", "id-id", "is-is", "it",
+            "ka-ge", "kk-kz", "ku-tr", "lb-lu", "lv-lv", "ml-in", "ne-np", "nl-be", "nl-nl",
+            "no-no", "pl-pl", "pt-br", "ro-ro", "ru-ru", "sk-sk", "sl-si", "sq-al", "sr-rs",
+            "sv-se", "sw-cd", "te-in", "tr-tr", "uk-ua", "ur-pk", "vi-vn", "cmn",
         ],
         num_voices: 48,
         cloning: CloningKind::None,
@@ -192,27 +187,37 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         // The "model download" is just the DEFAULT voice (en_US-lessac-medium, ~63 MB);
         // the other 47 voices are fetched per-id on first selection (`ensure_voice`),
         // so nothing is bundled and the picker stays small until a language is picked.
-        quants: &[TtsQuant { id: "medium", size_bytes: 63_206_179 }],
+        quants: &[TtsQuant {
+            id: "medium",
+            size_bytes: 63_206_179,
+        }],
         quality_score: 0.62,
         speed_score: 0.98,
-        description: "Fast VITS voices (22 kHz) across 46 languages, MIT. One curated voice per language; each downloads on demand when selected.",
+        description: "Broad language coverage with fast voices that download only when needed.",
     },
     TtsModelEntry {
-        id: "supertonic-en",
+        id: "supertonic-3",
         engine: TtsEngineId::Supertonic,
-        display_name: "Supertonic",
+        display_name: "Supertonic 3",
         maker: "Supertone",
-        hf_repo: "onnx-community/Supertonic-TTS-ONNX",
-        languages: &["en-us"],
+        hf_repo: "Supertone/supertonic-3",
+        languages: &[
+            "en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi",
+            "hr", "hu", "id", "it", "lt", "lv", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv",
+            "tr", "uk", "vi",
+        ],
         num_voices: 10,
         cloning: CloningKind::None,
         sample_rate: 44_100,
-        param_count_m: 99,
-        // 3 graphs (external-data) summed: 28.4 + 132 + 101 MB ≈ 263 MB.
-        quants: &[TtsQuant { id: "fp32", size_bytes: 275_775_488 }],
-        quality_score: 0.75,
-        speed_score: 0.98,
-        description: "Fast 44.1 kHz flow-matching TTS, 10 preset voices, OpenRAIL-M. No espeak dependency.",
+        param_count_m: 100,
+        // 4 ONNX graphs + tts/unicode metadata + 10 voice style JSON files.
+        quants: &[TtsQuant {
+            id: "fp32",
+            size_bytes: 401_276_744,
+        }],
+        quality_score: 0.86,
+        speed_score: 0.88,
+        description: "High-sample-rate multilingual voices from Supertone's latest release.",
     },
     TtsModelEntry {
         id: "chatterbox-multilingual",
@@ -229,19 +234,18 @@ pub const TTS_CATALOG: &[TtsModelEntry] = &[
         sample_rate: 24_000,
         param_count_m: 500,
         // q4 backbone (354MB) + embed (68MB) + speech_encoder (591MB) + decoder (534MB) ≈ 1.55 GB.
-        quants: &[TtsQuant { id: "q4", size_bytes: 1_650_000_000 }],
+        quants: &[TtsQuant {
+            id: "q4",
+            size_bytes: 1_650_000_000,
+        }],
         quality_score: 0.80,
         speed_score: 0.20,
-        description: "Zero-shot voice cloning from a reference clip (no transcript). 23 languages, MIT. Heavy: autoregressive (CPU), slower than the others.",
+        description: "Clone a voice from a short clip; best for personalized multilingual speech.",
     },
 ];
 
 pub fn find(id: &str) -> Option<&'static TtsModelEntry> {
     TTS_CATALOG.iter().find(|m| m.id == id)
-}
-
-pub fn by_engine(engine: TtsEngineId) -> impl Iterator<Item = &'static TtsModelEntry> {
-    TTS_CATALOG.iter().filter(move |m| m.engine == engine)
 }
 
 /// The default catalog selection (Kokoro stays the default engine).
@@ -261,6 +265,15 @@ mod tests {
     }
 
     #[test]
+    fn every_entry_has_a_short_description() {
+        for m in TTS_CATALOG {
+            let description = m.description.trim();
+            assert!(!description.is_empty(), "{} has no description", m.id);
+            assert!(description.len() <= 90, "{} description is too long", m.id);
+        }
+    }
+
+    #[test]
     fn every_entry_has_a_quant_and_find_works() {
         for m in TTS_CATALOG {
             assert!(!m.quants.is_empty(), "{} has no quant", m.id);
@@ -268,18 +281,5 @@ mod tests {
             assert!(find(m.id).is_some());
         }
         assert!(find(DEFAULT_TTS_MODEL_ID).is_some());
-    }
-
-    #[test]
-    fn engine_id_roundtrip() {
-        for e in [
-            TtsEngineId::Kokoro,
-            TtsEngineId::Kitten,
-            TtsEngineId::Piper,
-            TtsEngineId::Supertonic,
-        ] {
-            assert_eq!(TtsEngineId::from_str(e.as_str()), Some(e));
-        }
-        assert_eq!(TtsEngineId::from_str("nope"), None);
     }
 }

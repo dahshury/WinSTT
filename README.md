@@ -68,18 +68,18 @@ does not jump between short and tall media.
 ## Develop
 
 Windows development needs the Visual Studio build tools, [Bun](https://bun.sh),
-and the Rust toolchain. Use the helper scripts in `rust-migration/`; they set up
+and the Rust toolchain. Use the helper scripts in `tools/windows/`; they set up
 the VS environment and run from the repository root.
 
 ```powershell
 # Dev server with hot-reload renderer + Rust backend
-rust-migration\tauri-dev.ps1
+tools\windows\tauri-dev.ps1
 
 # Release build without bundling an installer
-rust-migration\tauri-build.bat
+tools\windows\tauri-build.bat
 
 # Rust-only checks from src-tauri/
-rust-migration\cargo-env.bat check
+tools\windows\cargo-env.bat check
 ```
 
 `cargo build --release` is not enough for a standalone app because Tauri still
@@ -104,7 +104,7 @@ bun run docs:build
 | `docs/` | TanStack Start docs site and documentation assets |
 | `public/`, `windows/`, `messages/` | Static assets, secondary windows, and i18n messages |
 | `packages/` | Shared renderer packages, including the model picker |
-| `rust-migration/` | Windows build and dev environment helpers |
+| `tools/` | Developer tooling: Windows build helpers, i18n checks, benchmark helpers, and asset generation |
 | `examples/winstt-electron/` | Original Electron + Python app used as the parity reference |
 
 ## License

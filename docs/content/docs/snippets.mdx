@@ -22,7 +22,7 @@ matched span for that trigger's expansion. Matching is **fuzzy**, so small trans
 Snippets run alongside (and after) [Dictionary](/docs/dictionary) corrections — the
 dictionary nudges individual mistranscribed words toward the right spelling, while
 snippets replace a whole phrase with arbitrary, longer text. The renderer only stores
-the plaintext pairs; all matching logic lives on the Python server.
+the plaintext pairs; all matching logic lives in the Rust backend.
 
 <Callout type="info" title="Where snippets apply">
   Expansion runs on **every** transcription, regardless of recording mode — push-to-talk,
@@ -105,9 +105,9 @@ This cannot be undone."*
 
 Snippets persist as an array under `settings.snippets`, each entry shaped
 `{ id, trigger, expansion }`. The default is an empty array on first run. Like every
-WinSTT setting, the array is written to disk by the Electron main process
-(`electron-store`) and synced to the Python server over the control WebSocket — there's
-no save or apply button. The plaintext pairs never leave your machine.
+WinSTT setting, the array is written to disk by the Rust backend and applied to the
+in-process dictation pipeline — there's no save or apply button. The plaintext pairs
+never leave your machine.
 
 ## Related
 

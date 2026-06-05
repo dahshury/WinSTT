@@ -30,6 +30,8 @@ The **Audio** tab controls how WinSTT captures sound and decides when speech sta
 
 Voice activity detection (VAD) is how WinSTT tells speech apart from silence and background noise in the hands-free modes. WinSTT runs **two** detectors in series and only treats audio as speech when **both** agree (AND logic) — a fast energy gate catches the obvious silence, and a neural model confirms it's actually a voice. This keeps the overlay from popping on a cough or a keyboard clack without dropping quiet, real speech.
 
+<Video src="audio-vad-flow" chrome="card" alt="An audio pipeline animation showing microphone frames passing through WebRTC VAD and Silero VAD before the endpoint decision." caption="Audio frames pass the fast WebRTC gate and neural Silero check before endpointing." />
+
 <StepFlow>
   <Step title="WebRTC VAD — fast energy gate">
     A lightweight energy-and-spectral detector runs first. It's cheap enough to run on every

@@ -18,13 +18,11 @@ describe("OpenRouterModelSelectorProps type", () => {
 			description: "Pick a model",
 			disabled: false,
 			disabledModelIds: ["openai/gpt-4o"],
-			disabledReason: "already chosen",
 			exclusionConfig: {
 				excludedModelId: undefined,
 				excludeAllProviders: false,
 				excludedProviderSlug: undefined,
 			},
-			fallback: true,
 			isLoading: false,
 			label: "Model",
 			models: [],
@@ -32,7 +30,6 @@ describe("OpenRouterModelSelectorProps type", () => {
 			placeholder: "Search…",
 			value: "",
 		};
-		expect(full.fallback).toBe(true);
 		expect(full.disabledModelIds).toEqual(["openai/gpt-4o"]);
 	});
 });

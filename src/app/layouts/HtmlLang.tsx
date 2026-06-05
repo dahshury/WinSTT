@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { initCatalogStore } from "@/entities/model-catalog/model/catalog-store";
 import { installNativeBridge } from "@/shared/api/native-bridge-adapter";
 import { useLocaleStore } from "@/shared/i18n";
 import { installScrollbarAutoHide } from "@/shared/lib/scrollbar-autohide";
@@ -15,6 +16,11 @@ installNativeBridge();
 // gets the "reveal the native bar only while scrolling" listener. Idempotent.
 installScrollbarAutoHide();
 installTouchRubberBand();
+
+// STT catalog consumers can be imported before a window's bridge-install side
+// effect runs. Retry the catalog bootstrap here after the bridge exists so the
+// first visible model chip can resolve its author logo before any picker opens.
+initCatalogStore();
 
 /** Keeps the <html lang="…"> attribute in sync with the selected locale. */
 export function HtmlLang() {

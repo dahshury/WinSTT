@@ -1,4 +1,4 @@
-// Source: docs/port/10_frontend_port_plan.md
+// Source: docs/archive/port/10_frontend_port_plan.md
 // §6 WU-5 (recording-sound shares audio plumbing) + the AUTHORITATIVE
 // frontend/electron/lib/sound-library.ts. Verbatim port of the custom recording-sound
 // file-library manager.
@@ -27,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::winstt::commands::settings::read_settings;
 
@@ -64,6 +65,8 @@ pub struct SoundLibraryEntry {
 pub struct SoundLibraryAddResult {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancelled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub entry: Option<SoundLibraryEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -95,14 +98,44 @@ fn is_in_library(app: &AppHandle, p: &str) -> bool {
     let Ok(dir) = library_dir(app) else {
         return false;
     };
-    let resolved = std::path::absolute(p).unwrap_or_else(|_| PathBuf::from(p));
-    let dir_resolved = std::path::absolute(&dir).unwrap_or(dir);
-    resolved.starts_with(&dir_resolved)
+    is_existing_or_stale_path_inside_dir(Path::new(p), &dir)
+}
+
+fn is_existing_or_stale_path_inside_dir(path: &Path, dir: &Path) -> bool {
+    if let Some(canonical) = canonical_existing_path_inside_dir(path, dir) {
+        return canonical.starts_with(
+            dir.canonicalize()
+                .unwrap_or_else(|_| absolute_path(dir).unwrap_or_else(|| dir.to_path_buf())),
+        );
+    }
+    match (absolute_path(path), absolute_path(dir)) {
+        (Some(resolved), Some(dir_resolved)) => resolved.starts_with(&dir_resolved),
+        _ => false,
+    }
+}
+
+fn canonical_existing_path_inside_dir(path: &Path, dir: &Path) -> Option<PathBuf> {
+    let dir_resolved = dir.canonicalize().ok()?;
+    let resolved = path.canonicalize().ok()?;
+    if resolved.starts_with(&dir_resolved) {
+        Some(resolved)
+    } else {
+        None
+    }
+}
+
+fn canonical_library_file(app: &AppHandle, path: &str) -> Option<PathBuf> {
+    let dir = library_dir(app).ok()?;
+    canonical_existing_path_inside_dir(Path::new(path), &dir)
+}
+
+fn absolute_path(path: &Path) -> Option<PathBuf> {
+    std::path::absolute(path).ok()
 }
 
 /// Allowed extension (lower-cased, with dot) or `None`. Mirrors `sanitizeExtension`.
-fn sanitize_extension(source_path: &str) -> Option<String> {
-    let ext = Path::new(source_path)
+fn sanitize_extension_path(source_path: &Path) -> Option<String> {
+    let ext = source_path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| format!(".{}", e.to_lowercase()))?;
@@ -137,63 +170,96 @@ fn resolve_display_name(name: Option<&str>, source_path: &str) -> String {
     }
 }
 
-/// `sound_library_add` — copy `source_path` (.wav / .mp3 only) into the managed
-/// folder under a fresh uuid filename and return its entry. Mirrors `handleAdd`.
-#[tauri::command]
-#[specta::specta]
-pub fn sound_library_add(
-    app: AppHandle,
-    source_path: String,
-    name: Option<String>,
-) -> SoundLibraryAddResult {
-    if source_path.is_empty() {
-        return SoundLibraryAddResult {
-            ok: false,
-            error: Some("Invalid source path".into()),
-            ..Default::default()
-        };
+fn sound_add_failed(message: impl Into<String>) -> SoundLibraryAddResult {
+    SoundLibraryAddResult {
+        ok: false,
+        error: Some(message.into()),
+        ..Default::default()
     }
-    let Some(ext) = sanitize_extension(&source_path) else {
-        return SoundLibraryAddResult {
-            ok: false,
-            error: Some("Only .wav and .mp3 files are accepted".into()),
-            ..Default::default()
-        };
+}
+
+fn sound_add_cancelled() -> SoundLibraryAddResult {
+    SoundLibraryAddResult {
+        ok: false,
+        cancelled: Some(true),
+        ..Default::default()
+    }
+}
+
+fn copy_sound_into_library(
+    app: &AppHandle,
+    source_path: &Path,
+    name: Option<&str>,
+) -> Result<SoundLibraryEntry, String> {
+    let Some(ext) = sanitize_extension_path(source_path) else {
+        return Err("Only .wav and .mp3 files are accepted".into());
     };
-    if !Path::new(&source_path).exists() {
-        return SoundLibraryAddResult {
-            ok: false,
-            error: Some("Source file not found".into()),
-            ..Default::default()
-        };
+    let metadata = source_path
+        .metadata()
+        .map_err(|_| "Source file not found".to_string())?;
+    if !metadata.is_file() {
+        return Err("Source path is not a file".into());
     }
-    let dir = match library_dir(&app) {
+    let dir = match library_dir(app) {
         Ok(d) => d,
-        Err(e) => {
-            return SoundLibraryAddResult {
-                ok: false,
-                error: Some(e),
-                ..Default::default()
-            };
-        }
+        Err(e) => return Err(e),
     };
     let id = next_sound_id();
     let dest = dir.join(format!("{id}{ext}"));
-    match std::fs::copy(&source_path, &dest) {
-        Ok(_) => SoundLibraryAddResult {
-            ok: true,
-            entry: Some(SoundLibraryEntry {
-                id,
-                name: resolve_display_name(name.as_deref(), &source_path),
-                path: dest.to_string_lossy().to_string(),
-            }),
-            error: None,
-        },
-        Err(err) => SoundLibraryAddResult {
-            ok: false,
-            error: Some(format!("Failed to copy file: {err}")),
-            ..Default::default()
-        },
+    std::fs::copy(source_path, &dest).map_err(|err| format!("Failed to copy file: {err}"))?;
+    let source_display = source_path.to_string_lossy();
+    Ok(SoundLibraryEntry {
+        id,
+        name: resolve_display_name(name, &source_display),
+        path: dest.to_string_lossy().to_string(),
+    })
+}
+
+fn sound_add_success(entry: SoundLibraryEntry) -> SoundLibraryAddResult {
+    SoundLibraryAddResult {
+        ok: true,
+        entry: Some(entry),
+        ..Default::default()
+    }
+}
+
+/// `sound_library_add` is retained for older renderer code but intentionally
+/// fails closed: renderer-supplied paths are not a trusted proof of user file
+/// selection. Use `sound_library_pick_and_add`, which owns the native picker.
+#[tauri::command]
+#[specta::specta]
+pub fn sound_library_add(
+    _app: AppHandle,
+    _source_path: String,
+    _name: Option<String>,
+) -> SoundLibraryAddResult {
+    sound_add_failed("Recording sounds must be selected through the native picker")
+}
+
+/// Open the native file picker in the backend, copy the selected .wav/.mp3 into
+/// the managed library folder, and return the new library entry.
+#[tauri::command]
+#[specta::specta]
+pub async fn sound_library_pick_and_add(
+    app: AppHandle,
+    name: Option<String>,
+) -> SoundLibraryAddResult {
+    let Some(chosen) = app
+        .dialog()
+        .file()
+        .set_title("Select Recording Sound")
+        .add_filter("Audio", &["wav", "mp3"])
+        .blocking_pick_file()
+    else {
+        return sound_add_cancelled();
+    };
+    let source_path = match chosen.into_path() {
+        Ok(path) => path,
+        Err(err) => return sound_add_failed(err.to_string()),
+    };
+    match copy_sound_into_library(&app, &source_path, name.as_deref()) {
+        Ok(entry) => sound_add_success(entry),
+        Err(err) => sound_add_failed(err),
     }
 }
 
@@ -234,11 +300,12 @@ pub fn sound_library_remove(app: AppHandle, path: String) -> SoundLibraryRemoveR
 /// "couldn't load"). Mirrors `handleReadFile`.
 #[tauri::command]
 #[specta::specta]
-pub fn sound_library_read_file(path: String) -> Option<Vec<u8>> {
+pub fn sound_library_read_file(app: AppHandle, path: String) -> Option<Vec<u8>> {
     if path.is_empty() {
         return None;
     }
-    std::fs::read(&path).ok()
+    let resolved = canonical_library_file(&app, &path)?;
+    std::fs::read(resolved).ok()
 }
 
 // ── recording-sound "get-data" (SOUND_GET_DATA) ────────────────────────────────
@@ -293,7 +360,13 @@ fn active_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
     let custom = general.recording_sound_path;
     if !custom.is_empty() {
         if is_allowed_recording_sound_ext(&custom) {
-            return Some(PathBuf::from(custom));
+            if let Some(path) = canonical_library_file(app, &custom) {
+                return Some(path);
+            }
+            // Custom sounds are copied into the managed sound library before use.
+            // Refuse arbitrary persisted paths so a renderer/settings compromise
+            // cannot turn the chime preload into an unrestricted file read.
+            return default_recording_sound_path(app);
         }
         // Bad extension → fall through to the default chime (sound.ts logs + defaults).
         return default_recording_sound_path(app);
@@ -347,4 +420,40 @@ pub fn play_recording_chime(app: &AppHandle) {
             log::error!("Failed to play recording chime '{}': {e}", path.display());
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_existing_path_inside_dir_rejects_traversal() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let library = tmp.path().join("sounds");
+        std::fs::create_dir_all(&library).expect("library dir");
+        let outside = tmp.path().join("secret.wav");
+        std::fs::write(&outside, b"secret").expect("outside file");
+
+        let traversal = library.join("..").join("secret.wav");
+
+        assert!(canonical_existing_path_inside_dir(&traversal, &library).is_none());
+    }
+
+    #[test]
+    fn stale_path_check_uses_path_components_not_prefix_strings() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let library = tmp.path().join("sounds");
+        let sibling = tmp.path().join("sounds_evil");
+        std::fs::create_dir_all(&library).expect("library dir");
+        std::fs::create_dir_all(&sibling).expect("sibling dir");
+
+        assert!(is_existing_or_stale_path_inside_dir(
+            &library.join("missing.wav"),
+            &library
+        ));
+        assert!(!is_existing_or_stale_path_inside_dir(
+            &sibling.join("missing.wav"),
+            &library
+        ));
+    }
 }

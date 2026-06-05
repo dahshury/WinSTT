@@ -1,11 +1,15 @@
 import { useModelSwapStore } from "@/entities/model-catalog";
-import { useDownloadAggregate } from "@/features/model-download";
+import {
+	type QuantDownloadState,
+	type SttDownloadOwner,
+	useDownloadStore,
+} from "@/features/model-download";
 
 export interface DownloadProgressPropShape {
 	/** Mean percent across every active download; null when all in-flight
 	 *  downloads are still in their indeterminate first-tick window. */
 	averagePercent: number | null;
-	/** Total in-flight downloads (per-quant entries + the legacy singleton
+	/** Total active downloads (per-quant entries + the legacy singleton
 	 *  whole-model swap slot). ``1`` renders the trigger's single-download
 	 *  view; ``>=2`` switches it to the aggregate "Downloading N items · X%"
 	 *  view. */
@@ -18,15 +22,140 @@ export interface DownloadProgressPropShape {
 }
 
 export interface SwapProgressSnapshot {
-	/** Aggregate view of every active download. Null when idle. The picker
-	 *  trigger renders single-vs-multi chrome off ``count``, the status-bar
-	 *  chip shows the same numbers from the outside. Both surfaces share
-	 *  ``useDownloadAggregate`` so they never disagree. */
+	/** Aggregate view of every active download. Null when idle. Kept for
+	 *  all-download consumers/tests; the two in-panel selector triggers use
+	 *  the scoped fields below so one background download does not paint both. */
 	downloadProgress: DownloadProgressPropShape | null;
+	/** Active downloads that should paint the main model selector trigger. */
+	mainDownloadProgress: DownloadProgressPropShape | null;
+	/** Active downloads that should paint the realtime model selector trigger. */
+	realtimeDownloadProgress: DownloadProgressPropShape | null;
 	/** True when the server is loading main-model weights (no bytes left to fetch). */
 	mainSwapping: boolean;
 	/** True when the server is loading realtime-model weights. */
 	realtimeSwapping: boolean;
+}
+
+interface DownloadEntry {
+	modelId: string;
+	percent: number | null;
+}
+
+interface SingletonDownload {
+	active: boolean;
+	modelId: string | null;
+	percent: number | null;
+}
+
+function pickPrimary(entries: readonly DownloadEntry[]): DownloadEntry {
+	let best = entries[0];
+	if (best === undefined) {
+		throw new Error("pickPrimary called with no entries");
+	}
+	for (let i = 1; i < entries.length; i += 1) {
+		const candidate = entries[i];
+		if (candidate === undefined) {
+			continue;
+		}
+		const bestPct = best.percent ?? -1;
+		const candidatePct = candidate.percent ?? -1;
+		if (candidatePct > bestPct) {
+			best = candidate;
+		}
+	}
+	return best;
+}
+
+function averageKnownPercent(entries: readonly DownloadEntry[]): number | null {
+	const numericPercents = entries
+		.map((entry) => entry.percent)
+		.filter((percent): percent is number => typeof percent === "number");
+	if (numericPercents.length === 0) {
+		return null;
+	}
+	return Math.round(
+		numericPercents.reduce((a, b) => a + b, 0) / numericPercents.length,
+	);
+}
+
+function aggregateEntries(
+	entries: readonly DownloadEntry[],
+): DownloadProgressPropShape | null {
+	if (entries.length === 0) {
+		return null;
+	}
+	const primary = pickPrimary(entries);
+	return {
+		count: entries.length,
+		averagePercent: averageKnownPercent(entries),
+		modelId: primary.modelId,
+		percent: primary.percent,
+	};
+}
+
+function inferUnownedOwner(
+	modelId: string,
+	mainSwapTarget: string | null,
+	realtimeSwapTarget: string | null,
+): SttDownloadOwner {
+	return realtimeSwapTarget === modelId && mainSwapTarget !== modelId
+		? "realtime"
+		: "main";
+}
+
+function quantOwner(
+	entry: QuantDownloadState,
+	mainSwapTarget: string | null,
+	realtimeSwapTarget: string | null,
+): SttDownloadOwner {
+	return (
+		entry.owner ??
+		inferUnownedOwner(entry.modelId, mainSwapTarget, realtimeSwapTarget)
+	);
+}
+
+function singletonOwner(
+	singleton: SingletonDownload,
+	mainSwapTarget: string | null,
+	realtimeSwapTarget: string | null,
+): SttDownloadOwner {
+	return singleton.modelId === null
+		? "main"
+		: inferUnownedOwner(singleton.modelId, mainSwapTarget, realtimeSwapTarget);
+}
+
+function collectEntries(
+	quantDownloads: Record<string, QuantDownloadState>,
+	singleton: SingletonDownload,
+	mainSwapTarget: string | null,
+	realtimeSwapTarget: string | null,
+	owner?: SttDownloadOwner,
+): DownloadEntry[] {
+	const entries: DownloadEntry[] = [];
+	if (
+		singleton.active &&
+		singleton.modelId !== null &&
+		(owner === undefined ||
+			singletonOwner(singleton, mainSwapTarget, realtimeSwapTarget) === owner)
+	) {
+		entries.push({ modelId: singleton.modelId, percent: singleton.percent });
+	}
+	for (const key in quantDownloads) {
+		if (!Object.hasOwn(quantDownloads, key)) {
+			continue;
+		}
+		const entry = quantDownloads[key];
+		if (entry === undefined || entry.paused) {
+			continue;
+		}
+		if (
+			owner === undefined ||
+			quantOwner(entry, mainSwapTarget, realtimeSwapTarget) === owner
+		) {
+			entries.push({ modelId: entry.modelId, percent: entry.progress });
+		}
+	}
+	return entries;
 }
 
 /**
@@ -46,15 +175,41 @@ export interface SwapProgressSnapshot {
 export function useSwapProgress(): SwapProgressSnapshot {
 	const mainSwapTarget = useModelSwapStore((s) => s.activeMain);
 	const realtimeSwapTarget = useModelSwapStore((s) => s.activeRealtime);
-	const aggregate = useDownloadAggregate();
-	const downloadProgress: DownloadProgressPropShape | null = aggregate
-		? {
-				count: aggregate.count,
-				averagePercent: aggregate.averagePercent,
-				modelId: aggregate.primary.modelId,
-				percent: aggregate.primary.percent,
-			}
-		: null;
+	const quantDownloads = useDownloadStore((s) => s.quantDownloads);
+	const singletonModelId = useDownloadStore((s) => s.modelName);
+	const singletonActive = useDownloadStore((s) => s.isDownloading);
+	const singletonPercent = useDownloadStore((s) => s.progress);
+	const singleton = {
+		active: singletonActive,
+		modelId: singletonModelId,
+		percent: singletonPercent,
+	};
+	const downloadProgress = aggregateEntries(
+		collectEntries(
+			quantDownloads,
+			singleton,
+			mainSwapTarget,
+			realtimeSwapTarget,
+		),
+	);
+	const mainDownloadProgress = aggregateEntries(
+		collectEntries(
+			quantDownloads,
+			singleton,
+			mainSwapTarget,
+			realtimeSwapTarget,
+			"main",
+		),
+	);
+	const realtimeDownloadProgress = aggregateEntries(
+		collectEntries(
+			quantDownloads,
+			singleton,
+			mainSwapTarget,
+			realtimeSwapTarget,
+			"realtime",
+		),
+	);
 	// The swap-active-but-downloading guard reads the *primary* download's
 	// modelId. A user kicking off multiple per-quant downloads while a swap
 	// to one of them is in flight only freezes the picker if THAT swap
@@ -62,9 +217,19 @@ export function useSwapProgress(): SwapProgressSnapshot {
 	// downloads (e.g. precaching a second quant) shouldn't change the swap
 	// gate.
 	const mainSwapping =
-		mainSwapTarget !== null && !(downloadProgress && downloadProgress.modelId === mainSwapTarget);
+		mainSwapTarget !== null &&
+		!(mainDownloadProgress && mainDownloadProgress.modelId === mainSwapTarget);
 	const realtimeSwapping =
 		realtimeSwapTarget !== null &&
-		!(downloadProgress && downloadProgress.modelId === realtimeSwapTarget);
-	return { downloadProgress, mainSwapping, realtimeSwapping };
+		!(
+			realtimeDownloadProgress &&
+			realtimeDownloadProgress.modelId === realtimeSwapTarget
+		);
+	return {
+		downloadProgress,
+		mainDownloadProgress,
+		realtimeDownloadProgress,
+		mainSwapping,
+		realtimeSwapping,
+	};
 }

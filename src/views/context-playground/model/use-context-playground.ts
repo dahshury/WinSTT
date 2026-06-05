@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
 	ContextDebugReport,
 	ContextPlaygroundPush,
@@ -6,6 +6,7 @@ import type {
 } from "@/shared/api/context-debug-types";
 import { IPC } from "@/shared/api/ipc-channels";
 import { ipcOn, ipcSend } from "@/shared/api/ipc-client";
+import { useEscapeToClose } from "@/shared/lib/window-effects";
 
 /**
  * State controller for the context-awareness playground (debug view).
@@ -34,6 +35,8 @@ export function useContextPlayground(): ContextPlaygroundController {
 	const [waiting, setWaiting] = useState<ContextPlaygroundWaitReason | null>(null);
 	const [live, setLive] = useState(true);
 	const [deepArmed, setDeepArmed] = useState(false);
+	const close = useCallback(() => ipcSend(IPC.CONTEXT_PLAYGROUND_CLOSE), []);
+	useEscapeToClose(close);
 
 	useEffect(() => {
 		const unsubscribe = ipcOn(IPC.CONTEXT_PLAYGROUND_REPORT, (payload) => {
@@ -47,18 +50,9 @@ export function useContextPlayground(): ContextPlaygroundController {
 				setWaiting(push.reason);
 			}
 		});
-		// Esc closes the window (it's framed, but Esc is the natural debug-panel
-		// dismiss). Routed through main so teardown/poll-stop stays centralized.
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				ipcSend(IPC.CONTEXT_PLAYGROUND_CLOSE);
-			}
-		};
-		window.addEventListener("keydown", onKeyDown);
 		ipcSend(IPC.CONTEXT_PLAYGROUND_SET_LIVE, { enabled: true });
 		return () => {
 			unsubscribe();
-			window.removeEventListener("keydown", onKeyDown);
 		};
 	}, []);
 

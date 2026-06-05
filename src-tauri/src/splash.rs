@@ -36,21 +36,27 @@ pub const SPLASH_LABEL: &str = "splash";
 /// few seconds, but if the main page never loads (broken boot) a click-through
 /// always-on-top window would otherwise stay on screen forever. Mirrors the
 /// reference `SPLASH_MAX_LIFETIME_MS`.
-const SPLASH_MAX_LIFETIME_MS: u64 = 30_000;
+const SPLASH_MAX_LIFETIME_MS: u64 = 60_000;
 
-/// How long the ready-watcher waits for `(renderer painted && STT boot done)` before
-/// giving up and showing the window anyway. Mirrors the reference `READY_TIMEOUT_MS`
+/// How long the ready-watcher waits for full renderer/backend readiness before
+/// giving up and showing the window anyway. MUST stay below
 /// (the `did-finish-load` → `server-ready` gate's 15 s fallback). MUST stay below
 /// `SPLASH_MAX_LIFETIME_MS` so the real window is handed off *before* the hard
 /// backstop tears the splash down — otherwise the backstop would close the splash
 /// while leaving no window on screen.
-const READY_TIMEOUT_MS: u64 = 15_000;
+const READY_TIMEOUT_MS: u64 = 45_000;
+const SPLASH_CLOSE_ANIMATION_MS: u64 = 180;
 
 /// Set once the MAIN window's renderer reports `on_page_load(Finished)` — i.e. the
 /// React pill has actually painted ("the application fully loads"). The single
 /// source the ready-watcher polls; the reference gates its `showOnce` on the
 /// equivalent Electron `did-finish-load`.
 static RENDERER_PAINTED: AtomicBool = AtomicBool::new(false);
+
+/// Set once the MAIN React tree has mounted and completed its first critical IPC
+/// round trips. `on_page_load(Finished)` only proves that WebView loaded the HTML;
+/// it can fire before the actual app providers have loaded settings/devices.
+static RENDERER_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
 /// Set once the boot STT thread (`initiate_model_load` + `warmup`, spawned in
 /// `initialize_core_logic`) finishes — i.e. the engine is loaded + warm, OR there
@@ -59,10 +65,21 @@ static RENDERER_PAINTED: AtomicBool = AtomicBool::new(false);
 /// `server-ready` event ("the backend is up and warm").
 static STT_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 
+/// Guards the tiny CSS fade-out delay so repeated handoff/backstop calls don't
+/// spawn duplicate destroy timers against the same transient window.
+static SPLASH_CLOSING: AtomicBool = AtomicBool::new(false);
+
 /// Record that the main renderer has painted. Called from the main window's
 /// `on_page_load(Finished)` handler. Idempotent.
 pub fn mark_renderer_painted() {
     RENDERER_PAINTED.store(true, Ordering::SeqCst);
+}
+
+/// Record that the main renderer finished its first bootstrap pass. Called by
+/// `winstt_emit_ready` after the renderer has primed startup IPC state.
+/// Idempotent.
+pub fn mark_renderer_boot_done() {
+    RENDERER_BOOT_DONE.store(true, Ordering::SeqCst);
 }
 
 /// Record that the STT engine has finished its boot load+warm (or had nothing to
@@ -87,7 +104,8 @@ pub fn is_active(app: &AppHandle) -> bool {
 /// splash) synchronously inside `setup`, before the event loop pumped — so the
 /// splash was torn down at the very start of boot, before the renderer painted and
 /// long before the engine warmed, flashing a blank pill. This watcher waits off the
-/// main thread for both signals (or the timeout) and only then shows the pill.
+/// main thread for renderer paint, renderer boot, and STT boot signals (or the
+/// timeout) and only then shows the pill.
 ///
 /// `show_window`: `true` for a normal/visible launch (show the pill + close the
 /// splash once ready); `false` when launching straight to the tray (start-hidden) —
@@ -100,12 +118,13 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
         let start = std::time::Instant::now();
         let deadline = std::time::Duration::from_millis(READY_TIMEOUT_MS);
         loop {
-            let painted = RENDERER_PAINTED.load(Ordering::SeqCst);
+            let renderer_ready = RENDERER_PAINTED.load(Ordering::SeqCst)
+                && RENDERER_BOOT_DONE.load(Ordering::SeqCst);
             // STT boot only matters when a window will actually appear (so the user's
             // first dictation is warm behind the still-covered splash). With no
-            // window, paint alone is enough to drop the splash.
+            // window, renderer readiness alone is enough to drop the splash.
             let stt_ready = !show_window || STT_BOOT_DONE.load(Ordering::SeqCst);
-            if (painted && stt_ready) || start.elapsed() >= deadline {
+            if (renderer_ready && stt_ready) || start.elapsed() >= deadline {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -133,6 +152,7 @@ pub fn create_splash_window(app: &AppHandle) {
     if app.get_webview_window(SPLASH_LABEL).is_some() {
         return;
     }
+    SPLASH_CLOSING.store(false, Ordering::SeqCst);
 
     let mut builder =
         WebviewWindowBuilder::new(app, SPLASH_LABEL, WebviewUrl::App("splash.html".into()))
@@ -168,10 +188,15 @@ pub fn create_splash_window(app: &AppHandle) {
             // Purely decorative — never trap a click. The transparent margin
             // around the card would otherwise swallow clicks aimed at whatever
             // is behind it (the reference `setIgnoreMouseEvents(true)`).
+            #[cfg(not(target_os = "linux"))]
             let _ = window.set_ignore_cursor_events(true);
             // Show WITHOUT activating (we built it unfocused + the renderer pill
             // should grab focus, not the splash).
             let _ = window.show();
+            // Tao's Linux backend can receive the cursor-ignore request before GTK
+            // has realized the native window if it is sent before `show()`.
+            #[cfg(target_os = "linux")]
+            let _ = window.set_ignore_cursor_events(true);
             let _ = window.set_always_on_top(true);
             log::info!("[splash] shown");
 
@@ -195,10 +220,21 @@ pub fn create_splash_window(app: &AppHandle) {
 /// `destroy()` force-removes it without emitting `CloseRequested`.
 pub fn close_splash_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(SPLASH_LABEL) {
-        if let Err(e) = window.destroy() {
-            log::warn!("[splash] destroy failed: {e}");
-        } else {
-            log::info!("[splash] destroyed");
+        if SPLASH_CLOSING.swap(true, Ordering::SeqCst) {
+            return;
         }
+        if let Err(e) = window.eval("document.body.classList.add('is-closing');") {
+            log::warn!("[splash] close animation eval failed: {e}");
+        }
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(SPLASH_CLOSE_ANIMATION_MS));
+            if let Err(e) = window.destroy() {
+                log::warn!("[splash] destroy failed: {e}");
+                SPLASH_CLOSING.store(false, Ordering::SeqCst);
+            } else {
+                log::info!("[splash] destroyed");
+                SPLASH_CLOSING.store(false, Ordering::SeqCst);
+            }
+        });
     }
 }

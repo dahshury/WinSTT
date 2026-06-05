@@ -10,9 +10,12 @@ export function SnippetsSettingsPanel() {
 	const t = useTranslations("snippets");
 
 	return (
-		<SettingSection icon={StickyNote01Icon} title={t("title")}>
+		<SettingSection
+			description={t("description")}
+			icon={StickyNote01Icon}
+			title={t("title")}
+		>
 			<div className="py-2">
-				<p className="mb-3 text-body-sm text-foreground-muted">{t("description")}</p>
 				<SnippetsTable
 					entries={snippets}
 					onAdd={(entry) => {

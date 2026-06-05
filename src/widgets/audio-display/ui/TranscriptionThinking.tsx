@@ -1,6 +1,12 @@
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
+import { useTranscriptionStore } from "@/entities/transcription";
 import { useLlmProcessingStore } from "@/features/llm-processing";
-import { ThinkingIndicator } from "@/shared/ui/thinking-indicator";
+import {
+	getProcessingStartedAt,
+	ThinkingIndicator,
+} from "@/shared/ui/thinking-indicator";
+
+const TRANSCRIBING_WORDS = ["Transcribing"] as const;
 
 /**
  * Main-window twin of the pill's thinking state.
@@ -20,11 +26,27 @@ export function TranscriptionThinking() {
 	const isThinking = useLlmProcessingStore((s) => s.isThinking);
 	const thinkingText = useLlmProcessingStore((s) => s.thinkingText);
 	const thinkingStartedAt = useLlmProcessingStore((s) => s.thinkingStartedAt);
+	const isTranscribing = useTranscriptionStore((s) => s.isTranscribing);
+	const transcribingStartedAt = useTranscriptionStore(
+		(s) => s.transcribingStartedAt,
+	);
+
+	const isProcessing = isThinking || isTranscribing;
+	const startedAt = getProcessingStartedAt({
+		isThinking,
+		isTranscribing,
+		thinkingStartedAt,
+		transcribingStartedAt,
+	});
+	const reasoning = isThinking ? thinkingText : "";
+	const wordProps = isThinking
+		? { reserveDefaultWords: true }
+		: { reserveDefaultWords: true, words: TRANSCRIBING_WORDS };
 
 	return (
 		<LazyMotion features={domAnimation} strict>
 			<AnimatePresence>
-				{isThinking && (
+				{isProcessing && (
 					<m.div
 						animate={{ opacity: 1 }}
 						className="pointer-events-none absolute inset-0 z-overlay flex items-center justify-center px-4"
@@ -38,7 +60,11 @@ export function TranscriptionThinking() {
 								aria-hidden="true"
 								className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-[oklch(62%_0.19_260/0.5)] to-transparent"
 							/>
-							<ThinkingIndicator reasoning={thinkingText} startedAt={thinkingStartedAt} />
+							<ThinkingIndicator
+								reasoning={reasoning}
+								startedAt={startedAt}
+								{...wordProps}
+							/>
 						</div>
 					</m.div>
 				)}

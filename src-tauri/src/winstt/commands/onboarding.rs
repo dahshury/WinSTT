@@ -1,9 +1,8 @@
-// PORT IMPL — WU-12 (app/PORT/10_frontend_port_plan.md §6 WU-12).
+// PORT IMPL — WU-12 (docs/archive/port/10_frontend_port_plan.md §6 WU-12).
 //
 // `onboarding_finish` — the backend side of WinSTT's first-run wizard
 // (`views/onboarding` + `widgets/onboarding-wizard`). Ports the reference
-// `onboarding-window.ts` FINISH handler, which does TWO things the WU-0 stub in
-// `windows.rs` omitted:
+// `onboarding-window.ts` FINISH handler:
 //
 //   1. Persist the MAIN-owned onboarding flags so the wizard never re-opens:
 //        general.onboarded      = true
@@ -19,26 +18,18 @@
 // settings command, so any open window re-hydrates its Zustand store (and the
 // renderer's onboarding gate sees `onboarded = true`).
 //
-// HARD-RULE-safe: NEW file under winstt/commands/. The orchestrator should
-// register THIS `onboarding_finish` in `collect_commands![]` IN PLACE OF the
-// WU-0 `windows::onboarding_finish` stub (same command name, fuller behavior).
-// Reuses the PUBLIC `settings::read_settings` + the same store key/path so there
-// is exactly one `winstt_settings` blob.
+// Reuses `settings::read_settings` + the same store key/path so there is exactly
+// one `winstt_settings` blob.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 
+use crate::winstt::commands::settings::{
+    SETTINGS_CHANGED_EVENT, WINSTT_SETTINGS_FILE, WINSTT_SETTINGS_KEY,
+};
 use crate::winstt::settings_schema::OnboardedTrack;
-
-/// Store key + relative file the WinSTT settings blob lives under. MUST match
-/// `winstt::commands::settings` (single source of truth for the on-disk shape).
-const WINSTT_SETTINGS_KEY: &str = "winstt_settings";
-const WINSTT_SETTINGS_FILE: &str = "winstt-settings.json";
-/// Same `settings:changed` event the settings command emits — byte-identical
-/// `{ settings }` shape so the renderer's `onSettingsChanged` needs no changes.
-const SETTINGS_CHANGED_EVENT: &str = "settings:changed";
 
 /// Payload the renderer sends when finishing (or skipping) the wizard. Mirrors
 /// `OnboardingWizard.handleFinish({ completed, track })`. `track` is the raw

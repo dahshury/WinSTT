@@ -1,21 +1,32 @@
 export type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both";
 
 interface DisplayState {
-	liveTranscriptionDisplay: LiveTranscriptionDisplay;
-	showRecordingOverlay: boolean;
+  liveTranscriptionDisplay: LiveTranscriptionDisplay;
+  llmDictationEnabled?: boolean;
+  showRecordingOverlay: boolean;
+  wordByWordPasting?: boolean;
+}
+
+interface WordByWordPillPreviewState {
+  llmDictationEnabled?: boolean;
+  mainModelId: string | null | undefined;
+  realtimeModelId: string | null | undefined;
+  useMainModelForRealtime?: boolean;
+  wordByWordPasting?: boolean;
 }
 
 // The recording pill is visible iff the floating overlay is on AND the live-
 // transcription mode includes the pill ("in-pill" or "both"). Pure predicate
 // on the General-tab toggles — independent of recording mode.
 export function isPillVisible({
-	showRecordingOverlay,
-	liveTranscriptionDisplay,
+  showRecordingOverlay,
+  liveTranscriptionDisplay,
 }: DisplayState): boolean {
-	return (
-		showRecordingOverlay &&
-		(liveTranscriptionDisplay === "in-pill" || liveTranscriptionDisplay === "both")
-	);
+  return (
+    showRecordingOverlay &&
+    (liveTranscriptionDisplay === "in-pill" ||
+      liveTranscriptionDisplay === "both")
+  );
 }
 
 // Per-display gating for `isRealtimeEnabled`. Each entry returns the boolean
@@ -27,13 +38,13 @@ export function isPillVisible({
 //   - "in-pill": only the pill renders, which itself requires the overlay
 //                window to be visible.
 const REALTIME_ENABLED_BY_DISPLAY: Record<
-	LiveTranscriptionDisplay,
-	(showRecordingOverlay: boolean) => boolean
+  LiveTranscriptionDisplay,
+  (showRecordingOverlay: boolean) => boolean
 > = {
-	none: () => false,
-	"in-app": () => true,
-	both: () => true,
-	"in-pill": (showRecordingOverlay) => showRecordingOverlay,
+  none: () => false,
+  "in-app": () => true,
+  both: () => true,
+  "in-pill": (showRecordingOverlay) => showRecordingOverlay,
 };
 
 // True iff at least one consumer of realtime text actually renders. Realtime
@@ -48,8 +59,28 @@ const REALTIME_ENABLED_BY_DISPLAY: Record<
 // "I want the panel but not the engine" configuration to preserve. So this
 // function (composed with no other state) IS the effective on/off switch.
 export function isRealtimeEnabled({
-	showRecordingOverlay,
-	liveTranscriptionDisplay,
+  showRecordingOverlay,
+  liveTranscriptionDisplay,
+  wordByWordPasting = false,
 }: DisplayState): boolean {
-	return REALTIME_ENABLED_BY_DISPLAY[liveTranscriptionDisplay](showRecordingOverlay);
+  if (wordByWordPasting) {
+    return true;
+  }
+  return REALTIME_ENABLED_BY_DISPLAY[liveTranscriptionDisplay](
+    showRecordingOverlay,
+  );
+}
+
+export function shouldSuppressPillPreviewForWordByWordPaste({
+  mainModelId,
+  realtimeModelId,
+  useMainModelForRealtime = false,
+  wordByWordPasting = false,
+}: WordByWordPillPreviewState): boolean {
+  return (
+    wordByWordPasting &&
+    useMainModelForRealtime &&
+    !!mainModelId &&
+    mainModelId === realtimeModelId
+  );
 }

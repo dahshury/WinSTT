@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type {
 	HistoryEntry,
 	PaginatedHistory,
-	RecordingRetentionPeriod,
+	RecordingRetention,
 } from "../model/transcription-history";
 import { effectiveText, entryWordCount, formatEntryTimestamp } from "./format";
 
@@ -13,8 +13,8 @@ import { effectiveText, entryWordCount, formatEntryTimestamp } from "./format";
 const _typeProbe = (
 	entry: HistoryEntry,
 	page: PaginatedHistory,
-	period: RecordingRetentionPeriod
-): [HistoryEntry, PaginatedHistory, RecordingRetentionPeriod] => [entry, page, period];
+	period: RecordingRetention
+): [HistoryEntry, PaginatedHistory, RecordingRetention] => [entry, page, period];
 void _typeProbe;
 
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {

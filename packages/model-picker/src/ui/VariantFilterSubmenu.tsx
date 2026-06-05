@@ -3,11 +3,10 @@
 import { FilterIcon, Tag01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ModelVariant } from "../lib/model-variant-utils";
+import { SelectedTick, VariantMenuItem } from "../lib/variant-filter-submenu-components";
 import {
 	getVariantCount,
-	SelectedTick,
-	VariantMenuItem,
-} from "../lib/variant-filter-submenu-test-helpers";
+} from "../lib/variant-filter-submenu-utils";
 import {
 	DropdownMenuGroup,
 	DropdownMenuItem,

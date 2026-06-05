@@ -1,4 +1,4 @@
-// Source: docs/port/05_*.md (Diarization),
+// Source: docs/archive/port/05_*.md (Diarization),
 // onnx-asr/src/onnx_asr/diarization.py, server diarization_stream.py + domain/speaker_timeline.py.
 //
 // DiarizationManager owns the per-utterance `SessionDiarizer` and the continuous

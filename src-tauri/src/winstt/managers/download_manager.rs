@@ -1,4 +1,4 @@
-// PORT IMPL — models slice (app/PORT/10_frontend_port_plan.md §6 WU-4). Source:
+// PORT IMPL — models slice (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
 //   frontend/electron/ipc/stt-commands.ts + frontend/src/shared/api/ipc-client.ts
 //     (predownload/pause/resume/cancel/delete + the model_download_start/progress/complete +
 //      model_cache_changed broadcasts — the EXACT renderer-facing IPC shapes)
@@ -33,6 +33,9 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::catalog;
+use crate::winstt::downloads::{
+    transfer_url_blocking, TransferControl, TransferOutcome, TransferRequest,
+};
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
 use crate::winstt::stt::resolver;
 use crate::winstt::stt::Quantization;
@@ -54,6 +57,7 @@ struct DownloadHandle {
     cancelled: AtomicBool,
     parked: AtomicBool,
     agg: Arc<ProgressAgg>,
+    partial_path: Mutex<Option<std::path::PathBuf>>,
     start: Instant,
 }
 
@@ -64,8 +68,19 @@ impl DownloadHandle {
             cancelled: AtomicBool::new(false),
             parked: AtomicBool::new(false),
             agg: Arc::new(ProgressAgg::new()),
+            partial_path: Mutex::new(None),
             start: Instant::now(),
         }
+    }
+}
+
+impl TransferControl for DownloadHandle {
+    fn should_cancel(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn should_pause(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
     }
 }
 
@@ -374,6 +389,11 @@ impl DownloadManager {
                     h.cancelled.store(true, Ordering::Release);
                     h.paused.store(false, Ordering::Release);
                     if h.parked.load(Ordering::Acquire) {
+                        if let Ok(mut partial_path) = h.partial_path.lock() {
+                            if let Some(path) = partial_path.take() {
+                                let _ = std::fs::remove_file(path);
+                            }
+                        }
                         map.remove(&k);
                         true
                     } else {
@@ -630,7 +650,6 @@ impl DownloadManager {
                     agg.update_file(p, 0, sz);
                 }
             }
-            self.emit_agg(&model, &quantization, &agg, start);
         }
 
         for repo_path in &planned {
@@ -762,7 +781,6 @@ impl DownloadManager {
         agg: &ProgressAgg,
         start: Instant,
     ) -> StreamOutcome {
-        use std::io::Write;
         use tauri::async_runtime::block_on;
 
         let Some((owner, name)) = resolver::resolve_repo(model) else {
@@ -813,6 +831,9 @@ impl DownloadManager {
             agg.update_file(repo_path, size, size);
             agg.mark_file_complete(repo_path);
             self.emit_agg(model, quantization, agg, start);
+            if let Ok(mut partial_path) = handle.partial_path.lock() {
+                *partial_path = None;
+            }
             return StreamOutcome::Completed;
         }
 
@@ -822,90 +843,55 @@ impl DownloadManager {
                 return StreamOutcome::Failed;
             }
         }
-        let resume_from = staging.metadata().map(|m| m.len()).unwrap_or(0);
-
-        let mut req = http.get(&url);
-        if resume_from > 0 {
-            req = req.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
+        if let Ok(mut partial_path) = handle.partial_path.lock() {
+            *partial_path = Some(staging.clone());
         }
-        let mut resp = match block_on(req.send()) {
-            Ok(r) => r,
-            Err(e) => {
-                log::warn!("[stt-download] GET failed {model}@{quantization} {repo_path}: {e}");
-                return StreamOutcome::Failed;
-            }
-        };
-        let status = resp.status();
-        if !status.is_success() {
-            log::warn!("[stt-download] GET {status} for {model}@{quantization} {repo_path}");
-            return StreamOutcome::Failed;
-        }
-        // Honor a 206 (Range accepted) → append; anything else (e.g. 200 ignoring Range) → restart.
-        let resuming = resume_from > 0 && status.as_u16() == 206;
-        let mut downloaded = if resuming { resume_from } else { 0 };
-        let mut file = match std::fs::OpenOptions::new()
-            .create(true)
-            .append(resuming)
-            .write(true)
-            .truncate(!resuming)
-            .open(&staging)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                log::warn!("[stt-download] open staging file failed {model}@{quantization}: {e}");
-                return StreamOutcome::Failed;
-            }
-        };
-
-        // `size` from HEAD is the authoritative total; a Range response's Content-Length is only the
-        // remaining bytes, so never let it shrink the denominator.
-        let total = size.max(downloaded);
-        agg.update_file(repo_path, downloaded, total);
-        self.emit_agg(model, quantization, agg, start);
-        let mut last_emit = Instant::now();
-
-        loop {
-            if handle.cancelled.load(Ordering::Acquire) {
-                // Leave `.incomplete` on disk (resumable). The badge clears via finish_quant.
-                drop(file);
-                return StreamOutcome::Cancelled;
-            }
-            if handle.paused.load(Ordering::Acquire) {
-                drop(file);
-                return StreamOutcome::Paused;
-            }
-            let next = match block_on(resp.chunk()) {
-                Ok(n) => n,
-                Err(e) => {
-                    log::warn!(
-                        "[stt-download] chunk failed {model}@{quantization} {repo_path}: {e}"
-                    );
-                    return StreamOutcome::Failed;
-                }
-            };
-            let Some(bytes) = next else { break };
-            if let Err(e) = file.write_all(&bytes) {
-                log::warn!("[stt-download] write failed {model}@{quantization} {repo_path}: {e}");
-                return StreamOutcome::Failed;
-            }
-            downloaded += bytes.len() as u64;
-            // Coalesce emits to ~12fps; the renderer also coalesces, but this keeps the Tauri event
-            // channel from being stormed on a fast link (chunks arrive far more often).
-            if last_emit.elapsed() >= std::time::Duration::from_millis(80) {
-                agg.update_file(repo_path, downloaded, total.max(downloaded));
+        let report = match transfer_url_blocking(
+            http,
+            TransferRequest {
+                delete_partial_on_cancel: true,
+                final_path: Some(&snapshot),
+                known_total_bytes: (size > 0).then_some(size),
+                partial_path: &staging,
+                progress_interval: Duration::from_millis(80),
+                url: &url,
+            },
+            Some(handle),
+            |progress| {
+                let total = progress
+                    .total_bytes
+                    .unwrap_or(progress.downloaded_bytes)
+                    .max(progress.downloaded_bytes);
+                agg.update_file(repo_path, progress.downloaded_bytes, total);
                 self.emit_agg(model, quantization, agg, start);
-                last_emit = Instant::now();
+            },
+        ) {
+            Ok(report) => report,
+            Err(e) => {
+                log::warn!("[stt-download] stream failed {model}@{quantization} {repo_path}: {e}");
+                return StreamOutcome::Failed;
+            }
+        };
+        if report.outcome != TransferOutcome::Paused {
+            if let Ok(mut partial_path) = handle.partial_path.lock() {
+                *partial_path = None;
             }
         }
-        drop(file);
-
-        // Move the staged bytes to the FINAL snapshot path (no kept blob copy) + write refs/main.
-        if let Err(e) = std::fs::rename(&staging, &snapshot) {
-            log::warn!(
-                "[stt-download] snapshot rename failed {model}@{quantization} {repo_path}: {e}"
-            );
-            return StreamOutcome::Failed;
+        match report.outcome {
+            TransferOutcome::Cancelled => return StreamOutcome::Cancelled,
+            TransferOutcome::Paused => return StreamOutcome::Paused,
+            TransferOutcome::Complete => {}
         }
+
+        let final_total = report
+            .total_bytes
+            .unwrap_or(report.downloaded_bytes)
+            .max(report.downloaded_bytes);
+        agg.update_file(repo_path, report.downloaded_bytes, final_total);
+        self.emit_agg(model, quantization, agg, start);
+
+        // The shared transfer moved the staged bytes to the FINAL snapshot path (no kept blob copy).
+        // Finish the HF cache pointer and verify cache-only resolution can see it.
         if let Err(e) = ensure_cache_ref(&ref_file, &commit) {
             log::warn!("[stt-download] ref write failed {model}@{quantization}: {e}");
             return StreamOutcome::Failed;
@@ -919,7 +905,7 @@ impl DownloadManager {
             );
             return StreamOutcome::Failed;
         }
-        agg.update_file(repo_path, downloaded, downloaded);
+        agg.update_file(repo_path, report.downloaded_bytes, final_total);
         agg.mark_file_complete(repo_path);
         self.emit_agg(model, quantization, agg, start);
         StreamOutcome::Completed
@@ -1189,7 +1175,8 @@ impl hf_hub::progress::ProgressHandler for FileReporter {
                     // so later 0-total events can't lower it. A multi-file plan sums each
                     // file's own Start total.
                     self.agg.update_file(&self.filename, 0, *total_bytes);
-                    self.emit();
+                    // Do not emit denominator-only progress. On a resumed partial download, the
+                    // first visible frame must be the existing byte offset, not a transient 0%.
                 }
                 DownloadEvent::Progress { files } => {
                     for f in files {
@@ -1287,6 +1274,14 @@ fn file_belongs_to_quant(name: &str, quant: Quantization) -> bool {
     if file.ends_with(".onnx") {
         return resolver::file_quantization(file) == quant;
     }
+    // Sidecar: `<graph_stem>.weights` — quant is on the graph stem.
+    if let Some(graph_stem) = file.strip_suffix(".weights") {
+        let last = graph_stem.rsplit(['_', '.']).next().unwrap_or("");
+        let tag = Quantization::parse(last)
+            .filter(|q| *q != Quantization::Default)
+            .unwrap_or(Quantization::Default);
+        return tag == quant;
+    }
     // Sidecar: `<graph_stem>.onnx_data*` / `.onnx.data*` — quant is on the graph stem.
     if let Some(idx) = file.find(".onnx") {
         let graph_stem = &file[..idx]; // up to but excluding ".onnx"
@@ -1350,6 +1345,18 @@ mod tests {
         ));
         assert!(!file_belongs_to_quant(
             "onnx/decoder_model_merged_fp16.onnx_data",
+            Quantization::Default
+        ));
+        assert!(file_belongs_to_quant(
+            "onnx/encoder.weights",
+            Quantization::Default
+        ));
+        assert!(file_belongs_to_quant(
+            "onnx/encoder.int8.weights",
+            Quantization::Int8
+        ));
+        assert!(!file_belongs_to_quant(
+            "onnx/encoder.int8.weights",
             Quantization::Default
         ));
         // Non-onnx text files belong to no quant (shared across quants).

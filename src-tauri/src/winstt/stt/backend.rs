@@ -40,6 +40,7 @@
 use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::settings::get_settings;
+use crate::winstt::audio_conditioning::peak_normalize;
 use crate::winstt::stt::{EngineConfig, TranscribeOptions, Transcriber};
 use anyhow::Result;
 use tauri::{AppHandle, Manager};
@@ -107,7 +108,12 @@ pub trait SttBackend: Send + Sync {
     /// [`EngineConfig`] — WITHOUT building any ORT session and WITHOUT touching the resident
     /// engine. Returning `Err` here leaves the previously-loaded model fully intact (the core
     /// re-emits its `loading_completed`).
-    fn resolve_catalog(&self, app: &AppHandle, model_id: &str) -> Result<ResolvedSpec>;
+    fn resolve_catalog(
+        &self,
+        app: &AppHandle,
+        model_id: &str,
+        quantization_override: Option<&str>,
+    ) -> Result<ResolvedSpec>;
 
     /// PHASE 2 of a catalog load: build the engine from a [`ResolvedSpec`]. The core calls this
     /// only AFTER it has unloaded the old engine (resolve already succeeded), so there are never
@@ -137,9 +143,9 @@ pub trait SttBackend: Send + Sync {
     ) -> Option<String>;
 
     /// Warm the winstt-arm engine with a dummy 1s-silence decode so the first real PTT decode is
-    /// not cold (DML kernel JIT). Best-effort: failures are swallowed. Called from inside the
+    /// not cold (DML kernel JIT). Called from inside the
     /// core's warmup `catch_unwind` on an engine the core `try_lock`'d; must NOT lock the mutex.
-    fn warmup(&self, engine: &mut dyn Transcriber);
+    fn warmup(&self, engine: &mut dyn Transcriber) -> Result<()>;
 
     /// The full cloud-STT round-trip for a `<provider>:<id>` model: ship the captured audio to
     /// the provider via `CloudSttManager`, then apply the WinSTT dictionary + filler
@@ -165,6 +171,21 @@ pub trait SttBackend: Send + Sync {
 /// (settings store, `CloudSttManager` managed state) — the same way the old inline core code did.
 pub struct WinsttSttBackend;
 
+fn quantization_log_label(q: crate::winstt::stt::Quantization) -> &'static str {
+    match q.suffix() {
+        "" => "default",
+        suffix => suffix,
+    }
+}
+
+fn quantization_log_label_raw(raw: &str) -> &str {
+    if raw.is_empty() {
+        "default"
+    } else {
+        raw
+    }
+}
+
 impl SttBackend for WinsttSttBackend {
     fn route_of(&self, model_id: &str) -> BackendRoute {
         if crate::winstt::cloud_stt::provider_of(model_id).is_some() {
@@ -177,15 +198,14 @@ impl SttBackend for WinsttSttBackend {
     }
 
     fn display_name_for(&self, model_id: &str) -> String {
-        crate::winstt::catalog::find(model_id)
-            .map(|e| e.display_name.to_string())
-            .unwrap_or_else(|| model_id.to_string())
+        crate::winstt::catalog::display_name_for_id(model_id)
     }
 
     fn selected_model_id(&self, app: &AppHandle) -> String {
-        crate::winstt::commands::settings::read_settings(app)
+        let model = crate::winstt::commands::settings::read_settings(app)
             .model
-            .model
+            .model;
+        crate::winstt::catalog::canonical_model_id(&model).to_string()
     }
 
     fn picker_language(&self, app: &AppHandle) -> String {
@@ -194,15 +214,19 @@ impl SttBackend for WinsttSttBackend {
             .language
     }
 
-    fn resolve_catalog(&self, app: &AppHandle, model_id: &str) -> Result<ResolvedSpec> {
-        use crate::winstt::catalog::Family;
-        use crate::winstt::settings_schema::DeviceType;
+    fn resolve_catalog(
+        &self,
+        app: &AppHandle,
+        model_id: &str,
+        quantization_override: Option<&str>,
+    ) -> Result<ResolvedSpec> {
         use crate::winstt::stt::resolver::{self, ResolveRequest};
-        use crate::winstt::stt::{self, Accelerator, Quantization};
+        use crate::winstt::stt::{self, Quantization};
 
+        let model_id = crate::winstt::catalog::canonical_model_id(model_id);
         let entry = crate::winstt::catalog::find(model_id)
             .ok_or_else(|| anyhow::anyhow!("model '{}' not in WinSTT catalog", model_id))?;
-        let family_slug = family_policy_slug(entry.family);
+        let family_slug = entry.family.as_str();
         let kind = engine_kind_for(entry).ok_or_else(|| {
             anyhow::anyhow!(
                 "model '{}' (family {:?}) has no Rust engine yet — only the Whisper family is wired",
@@ -214,21 +238,14 @@ impl SttBackend for WinsttSttBackend {
         let settings = crate::winstt::commands::settings::read_settings(app);
 
         // device → primary accelerator (CPU vs the shipped GPU flavor)
-        let primary = match settings.model.device {
-            DeviceType::Cpu => Accelerator::Cpu,
-            DeviceType::Auto => {
-                if cfg!(windows) {
-                    Accelerator::DirectMl
-                } else {
-                    Accelerator::Cpu
-                }
-            }
-        };
+        let primary = stt::resolve_accelerator(settings.model.device);
 
         // requested quant from settings. The empty string `""` now means EXPLICIT fp32 (the
         // unsuffixed base export → Quantization::Default); the literal `"auto"` is the RAM/VRAM-aware
         // "recommended" sentinel. (They were previously conflated under the empty string.)
-        let raw = settings.model.onnx_quantization.trim();
+        let raw = quantization_override
+            .map(str::trim)
+            .unwrap_or_else(|| settings.model.onnx_quantization.trim());
         let available: Vec<Quantization> = entry
             .available_quantizations
             .iter()
@@ -238,11 +255,11 @@ impl SttBackend for WinsttSttBackend {
         // hardware (NOT a blind int8/fp32). A concrete user pick is respected verbatim (the picker
         // exposes every published quant off-CUDA, incl `""`=fp32). Footprint = param × bytes-per-param;
         // budget is the device the (engine, quant) runs on (VRAM for DML, available RAM for CPU).
-        let effective = if raw.eq_ignore_ascii_case("auto") {
-            let mut sys = sysinfo::System::new();
-            sys.refresh_memory();
-            let available_ram = sys.available_memory();
-            let vram = crate::winstt::commands::runtime::detected_max_vram_bytes();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let available_ram = sys.available_memory();
+        let vram = crate::winstt::commands::runtime::detected_max_vram_bytes();
+        let auto_quant = || {
             stt::fit_aware_auto_quant(
                 &available,
                 kind,
@@ -251,19 +268,46 @@ impl SttBackend for WinsttSttBackend {
                 available_ram,
                 vram,
             )
+        };
+        let effective = if raw.eq_ignore_ascii_case("auto") {
+            auto_quant()
         } else {
-            Quantization::parse(raw).unwrap_or(Quantization::Default) // "" → Default(fp32); "int8" → Int8; ...
+            let requested = Quantization::parse(raw).unwrap_or(Quantization::Default);
+            if available.contains(&requested) {
+                requested
+            } else {
+                let fallback = auto_quant();
+                log::warn!(
+                    "[stt] requested quantization '{}' for '{}' is not published (available: [{}]); using '{}'",
+                    quantization_log_label_raw(raw),
+                    model_id,
+                    available
+                        .iter()
+                        .map(|q| quantization_log_label(*q))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    quantization_log_label(fallback),
+                );
+                fallback
+            }
         };
 
         // provider list (primary + CPU fallback), then the DML-incompatible-ENGINE override.
         // EngineKind-based (empirical), NOT family-based: parakeet-ctc/tdt/rnnt + gigaam + t-one
         // run 2-3× faster on DML; only the AED decoders (canary/cohere) + sherpa graphs
-        // (kaldi/sense_voice/dolphin) are forced to CPU. See EngineKind::is_dml_incompatible.
-        let providers = match primary {
-            Accelerator::Cpu => vec![Accelerator::Cpu],
-            other => vec![other, Accelerator::Cpu],
-        };
-        let providers = stt::override_dml_to_cpu_for_kind(providers, kind, effective);
+        // (kaldi/sense_voice/dolphin) are forced to CPU. Native sherpa streaming rows are
+        // included in that CPU-forced set. See EngineKind::is_dml_incompatible.
+        let providers = stt::providers_for_accelerator(primary);
+        let mut providers = stt::override_dml_to_cpu_for_kind(providers, kind, effective);
+        if kind == stt::EngineKind::WhisperHf
+            && providers.first() == Some(&stt::Accelerator::DirectMl)
+            && stt::whisper::directml_degenerate_model_blocked(model_id)
+        {
+            log::warn!(
+                "[stt] routing model '{model_id}' to CPU after repeated DirectML degenerate decodes"
+            );
+            providers = vec![stt::Accelerator::Cpu];
+        }
 
         // resolve the on-disk file set (cache-first; one network refetch if a shard is missing).
         // OFFLINE-FIRST (`local_files_only: true`, no network, no ORT session) — the riskiest step
@@ -280,7 +324,8 @@ impl SttBackend for WinsttSttBackend {
             .map_err(|e| anyhow::anyhow!("resolve {}: {}", model_id, e))?;
 
         let whisper_fp16_workaround =
-            matches!(entry.family, Family::Whisper) && effective == Quantization::Fp16;
+            matches!(entry.family, crate::winstt::catalog::Family::Whisper)
+                && effective == Quantization::Fp16;
 
         let config = EngineConfig {
             model_name: model_id.to_string(),
@@ -294,7 +339,9 @@ impl SttBackend for WinsttSttBackend {
         Ok(ResolvedSpec {
             config,
             model_id: model_id.to_string(),
-            display_name: entry.display_name.to_string(),
+            display_name: crate::winstt::catalog::display_name_without_export_qualifiers(
+                entry.display_name,
+            ),
         })
     }
 
@@ -334,12 +381,11 @@ impl SttBackend for WinsttSttBackend {
         // Peak-normalize is the WinSTT-arm-ONLY audio-conditioning chokepoint (the transcribe-rs
         // arms in the core get RAW audio).
         let conditioned = peak_normalize(audio);
-        // Long recordings would hit fixed per-decode windows (Whisper truncates at 30 s in mel.rs;
-        // the AED decoders cap at ~1024 tokens) and silently drop everything past the cap. For
-        // those, VAD-segment into ≤MAX_CHUNK_S chunks on silence boundaries and decode each
-        // independently (whisperX / onnx-asr long-form). Short recordings — the common PTT case —
-        // take the single-pass path unchanged, and the VAD model is only loaded when actually
-        // needed (never for normal dictation).
+        // Long non-streaming recordings would hit fixed per-decode windows (Whisper truncates at
+        // 30 s in mel.rs; AED decoders cap at ~1024 tokens) and silently drop everything past the
+        // cap. Segment only those engines. Native-streaming engines already drive unlimited
+        // whole-buffer decode internally, and context-sensitive engines keep prior chunk text when
+        // their prompt slot supports it.
         const MAX_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
         let transcribe_once = |engine: &mut dyn Transcriber| -> Result<String> {
             engine
@@ -347,13 +393,16 @@ impl SttBackend for WinsttSttBackend {
                 .map(|t| t.text)
                 .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e))
         };
-        let text = if conditioned.len() > (MAX_CHUNK_S * 16_000.0) as usize {
+        let kind = engine.kind();
+        let needs_long_form_segmenting = conditioned.len() > (MAX_CHUNK_S * 16_000.0) as usize
+            && !kind.supports_native_streaming();
+        let text = if needs_long_form_segmenting {
             match build_segmentation_vad(app) {
                 Ok(mut vad) => crate::winstt::stt::vad_segment::vad_segment_decode(
                     engine,
                     &conditioned,
                     MAX_CHUNK_S,
-                    false, // independent per-chunk decode (whisperX/onnx-asr default)
+                    kind.needs_past_context(),
                     &mut vad,
                     &opts,
                 )
@@ -393,11 +442,13 @@ impl SttBackend for WinsttSttBackend {
         engine.transcribe(&conditioned, &opts).ok().map(|t| t.text)
     }
 
-    fn warmup(&self, engine: &mut dyn Transcriber) {
+    fn warmup(&self, engine: &mut dyn Transcriber) -> Result<()> {
         // Decode dummy silence DIRECTLY (the core bypasses the RMS silence-gate for this).
         let dummy = vec![0.0f32; 16_000];
         let conditioned = peak_normalize(&dummy);
-        let _ = engine.transcribe(&conditioned, &TranscribeOptions::default());
+        engine
+            .warmup(&conditioned, &TranscribeOptions::default())
+            .map_err(|e| anyhow::anyhow!("WinSTT warmup failed: {}", e))
     }
 
     fn cloud_transcribe(&self, app: &AppHandle, model_id: &str, audio: &[f32]) -> Result<String> {
@@ -507,7 +558,7 @@ fn engine_kind_for(
     use crate::winstt::stt::EngineKind;
     let kind = crate::winstt::stt::cache_probe::engine_kind_for(
         entry.id,
-        family_policy_slug(entry.family),
+        entry.family.as_str(),
         entry.onnx_model_name,
     );
     // Gate on the resolved ENGINE KIND (not just family) — `Family::Nemo` spans both the
@@ -541,24 +592,6 @@ fn engine_kind_for(
     }
 }
 
-/// Catalog family → the policy slug string passed to quantization resolution. Provider routing is
-/// engine-kind based (`override_dml_to_cpu_for_kind`) after the concrete engine is resolved.
-fn family_policy_slug(family: crate::winstt::catalog::Family) -> &'static str {
-    use crate::winstt::catalog::Family;
-    match family {
-        Family::Whisper => "whisper",
-        Family::Moonshine => "moonshine",
-        Family::Cohere => "cohere",
-        Family::Nemo => "nemo",
-        Family::SenseVoice => "sense_voice",
-        Family::GigaAm => "gigaam",
-        Family::Kaldi => "kaldi",
-        Family::TOne => "t-one",
-        Family::Dolphin => "dolphin",
-        Family::Custom => "custom",
-    }
-}
-
 /// Normalize the WinSTT picker's language string to the engine wire form: empty / "auto" →
 /// `None` (auto-detect); the two Chinese script tags map to the base "zh" the engines understand;
 /// everything else passes through. This is the SINGLE language source every decode reads.
@@ -571,17 +604,6 @@ fn normalize_winstt_language(raw: &str) -> Option<String> {
     } else {
         Some(l.to_string())
     }
-}
-
-/// Peak-normalize to 0.95 — the single audio-conditioning chokepoint the WinSTT engines expect
-/// (mirrors Python `_peak_normalize`; the `Transcriber` contract says the caller conditions).
-fn peak_normalize(audio: &[f32]) -> Vec<f32> {
-    let peak = audio.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
-    if peak <= 0.0 {
-        return audio.to_vec();
-    }
-    let g = 0.95 / peak;
-    audio.iter().map(|&x| x * g).collect()
 }
 
 /// Build a one-shot Silero VAD for offline FINAL-decode segmentation (long recordings only). This
@@ -649,15 +671,5 @@ mod tests {
         // Everything else passes through (trimmed).
         assert_eq!(normalize_winstt_language("en"), Some("en".to_string()));
         assert_eq!(normalize_winstt_language(" fr "), Some("fr".to_string()));
-    }
-
-    #[test]
-    fn peak_normalize_scales_to_095() {
-        // Silence stays silent (no division by zero).
-        assert_eq!(peak_normalize(&[0.0, 0.0]), vec![0.0, 0.0]);
-        // Peak is scaled to 0.95 and the ratio between samples is preserved.
-        let out = peak_normalize(&[0.5, -0.25]);
-        assert!((out[0] - 0.95).abs() < 1e-6);
-        assert!((out[1] - (-0.475)).abs() < 1e-6);
     }
 }

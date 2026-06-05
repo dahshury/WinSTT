@@ -63,6 +63,7 @@ function renderCard(model: ModelInfo) {
 					{() => (
 						<SttModelCard
 							currentQuantization=""
+							key={model.id}
 							model={model}
 							onSelect={onSelect}
 							selectedId={undefined}
@@ -83,6 +84,17 @@ describe("SttModelCard custom-model handling", () => {
 		// The card strips the family-label prefix; "Custom" is the label, so
 		// "Acme Voice" survives unchanged.
 		expect(screen.getByText("Acme Voice")).toBeDefined();
+	});
+
+	test("renders the model description when the catalog provides one", () => {
+		renderCard(
+			makeModel({
+				description: "Fast English notes with a lightweight footprint.",
+			})
+		);
+		expect(
+			screen.getByText("Fast English notes with a lightweight footprint.")
+		).toBeDefined();
 	});
 
 	test("does NOT render the 'Broken' badge on a healthy custom entry", () => {
@@ -146,6 +158,7 @@ function renderDownloadCard(model: ModelInfo, snapshot?: QuantDownloadSnapshot |
 						<SttModelCard
 							currentQuantization=""
 							getDownloadSnapshot={() => snapshot}
+							key={model.id}
 							model={model}
 							onDownloadAction={onDownloadAction}
 							onSelect={onSelect}
@@ -215,6 +228,7 @@ describe("SttModelCard precision-badge download affordance", () => {
 		// controls must dispatch that same precision (int8), not the raw "".
 		const onSelect = mock(() => undefined);
 		const onDownloadAction = mock(() => undefined);
+		const model = makeModel();
 		const snapshot: QuantDownloadSnapshot = {
 			downloadedBytes: 5,
 			paused: false,
@@ -223,13 +237,14 @@ describe("SttModelCard precision-badge download affordance", () => {
 		};
 		render(
 			<TooltipProvider.Provider>
-				<Combobox.Root items={[makeModel()]}>
+				<Combobox.Root items={[model]}>
 					<Combobox.List>
 						{() => (
 							<SttModelCard
 								currentQuantization=""
 								getDownloadSnapshot={(_id, q) => (q === "int8" ? snapshot : undefined)}
-								model={makeModel()}
+								key={model.id}
+								model={model}
 								onDownloadAction={onDownloadAction}
 								onSelect={onSelect}
 								selectedId={undefined}

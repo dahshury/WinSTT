@@ -18,10 +18,6 @@ export function getParamCount(
 	return parameterCounts.get(param) ?? 0;
 }
 
-export function shouldShowSelectedTick(visible: boolean): boolean {
-	return visible;
-}
-
 export function shouldShowCountBadge(count: number): boolean {
 	return count > 0;
 }

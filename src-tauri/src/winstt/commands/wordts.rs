@@ -1,11 +1,11 @@
-// Source: docs/port/05_*.md (Word-timestamps)
+// Source: docs/archive/port/05_*.md (Word-timestamps)
 // + lib_wiring.md §3, memory project_word_highlight_playback. Wraps managers::WordAligner.
 //
 // align_words: lazy cross-attention DTW for history playback (karaoke highlight).
 // Loads the history entry's recording + transcript, runs the timestamped whisper
 // export, and returns per-word start/end seconds.
 //
-// WU-10 (docs/port/10_frontend_port_plan.md): the audio-load-by-id is wired here
+// WU-10 (docs/archive/port/10_frontend_port_plan.md): the audio-load-by-id is wired here
 // (was a stub). The renderer's `alignTranscriptionHistoryAudio(id)` passes the
 // STRING id from the legacy `TranscriptionHistoryEntry` (= the DB row's integer
 // id rendered as a string — see winstt/commands/history.rs `to_transcription_entry`).

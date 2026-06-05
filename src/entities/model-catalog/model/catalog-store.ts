@@ -42,7 +42,8 @@ export interface ModelInfo {
 	onnxModelName: string | null;
 	/**
 	 * Exact on-HF download size in bytes for each available quantization.
-	 * Baked into `catalog.json` by `scripts/refresh_catalog.py` from
+	 * Baked into `catalog.json` by
+	 * `examples/winstt-electron/server/scripts/refresh_catalog.py` from
 	 * `HfApi.model_info(files_metadata=True)`. Empty for custom-model entries
 	 * and catalog rows the refresh hasn't covered; consumers fall back to
 	 * `sizeLabel` (the param-derived human label) in that case. The
@@ -57,6 +58,13 @@ export interface ModelInfo {
 	 */
 	speedScore: number;
 	supportsLanguageDetection: boolean;
+	/** Can drive live preview, possibly through rolling/window re-decode. */
+	previewCapable: boolean;
+	/** Uses a stateful decoder that accepts only new audio chunks. */
+	nativeStreaming: boolean;
+	/** Live preview can be reused as the final paste without re-decoding. */
+	finalReuseSafe: boolean;
+	/** @deprecated Use `previewCapable`; this legacy field is a compatibility alias. */
 	supportsRealtime: boolean;
 }
 
@@ -69,7 +77,10 @@ const rawModelInfoSchema = z.object({
 	languages: z.array(z.string()),
 	supports_language_detection: z.boolean(),
 	size_label: z.string(),
-	supports_realtime: z.boolean(),
+	supports_realtime: z.boolean().optional(),
+	preview_capable: z.boolean().optional(),
+	native_streaming: z.boolean().default(false),
+	final_reuse_safe: z.boolean().default(false),
 	onnx_model_name: z.string().nullable(),
 	description: z.string(),
 	available_quantizations: z.array(z.string()).default([""]),
@@ -93,16 +104,42 @@ const rawModelInfoSchema = z.object({
 
 type RawModelInfo = z.infer<typeof rawModelInfoSchema>;
 
+const STREAMING_LATENCY_TOKEN_RE = /^\d+ms$/i;
+const STREAMING_LATENCY_QUANT_TOKEN_RE = /^(?:int8|fp16|fp32)$/i;
+
+function displayNameWithoutStreamingLatency(displayName: string): string {
+	const tokens = displayName.trim().split(/\s+/);
+	const out: string[] = [];
+	let skipQuantAfterLatency = false;
+	for (const token of tokens) {
+		if (skipQuantAfterLatency && STREAMING_LATENCY_QUANT_TOKEN_RE.test(token)) {
+			skipQuantAfterLatency = false;
+			continue;
+		}
+		skipQuantAfterLatency = false;
+		if (STREAMING_LATENCY_TOKEN_RE.test(token)) {
+			skipQuantAfterLatency = true;
+			continue;
+		}
+		out.push(token);
+	}
+	return out.join(" ");
+}
+
 function mapModel(raw: RawModelInfo): ModelInfo {
+	const previewCapable = raw.preview_capable ?? raw.supports_realtime ?? false;
 	return {
 		id: raw.id,
-		displayName: raw.display_name,
+		displayName: displayNameWithoutStreamingLatency(raw.display_name),
 		backend: raw.backend,
 		family: raw.family,
 		languages: raw.languages,
 		supportsLanguageDetection: raw.supports_language_detection,
 		sizeLabel: raw.size_label,
-		supportsRealtime: raw.supports_realtime,
+		previewCapable,
+		nativeStreaming: raw.native_streaming,
+		finalReuseSafe: raw.final_reuse_safe,
+		supportsRealtime: previewCapable,
 		onnxModelName: raw.onnx_model_name,
 		description: raw.description,
 		availableQuantizations: raw.available_quantizations,
@@ -134,6 +171,16 @@ function applyRaw(raw: unknown[]): { models: ModelInfo[]; isLoaded: boolean } {
 	return { models, isLoaded: true };
 }
 
+function applyNonEmptyRaw(raw: unknown[]): void {
+	const next = applyRaw(raw);
+	if (next.models.length > 0) {
+		useCatalogStore.setState(next);
+	}
+}
+
+let catalogStoreInitialized = false;
+let unsubscribeModelCatalog: (() => void) | null = null;
+
 export const useCatalogStore = create<CatalogState>()((set, get) => ({
 	models: [],
 	isLoaded: false,
@@ -144,20 +191,35 @@ export const useCatalogStore = create<CatalogState>()((set, get) => ({
 
 /**
  * Fetches the cached model catalog from the main process and subscribes to
- * live catalog updates. Called automatically on module load in the reference windows.
+ * live catalog updates. Safe to retry after bootstrap installs `nativeBridge`.
  * Exported for unit tests that need to trigger initialization manually.
  */
 export function initCatalogStore(): void {
+	if (
+		typeof window === "undefined" ||
+		window.nativeBridge == null ||
+		catalogStoreInitialized
+	) {
+		return;
+	}
+	catalogStoreInitialized = true;
 	fetchModelCatalog().then((raw) => {
-		if (Array.isArray(raw) && raw.length > 0) {
-			useCatalogStore.getState().setModels(raw);
+		if (Array.isArray(raw)) {
+			applyNonEmptyRaw(raw);
 		}
 	});
-	onModelCatalog((raw) => useCatalogStore.getState().setModels(raw));
+	unsubscribeModelCatalog = onModelCatalog(applyNonEmptyRaw);
+}
+
+export function _resetCatalogStoreInitForTests(): void {
+	unsubscribeModelCatalog?.();
+	unsubscribeModelCatalog = null;
+	catalogStoreInitialized = false;
 }
 
 // Self-initializing: fetch cached catalog from main process on import,
-// and subscribe to live updates. Works in every window (main + settings).
+// and subscribe to live updates when the bridge already exists. Window bootstraps
+// also call initCatalogStore() after installing the bridge, covering early imports.
 // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator,StringLiteral,BlockStatement: guard for non-bridge environments (SSR / tests w/o nativeBridge). Mutating this branch is an equivalent mutant in unit tests since initCatalogStore() is also called explicitly elsewhere.
 if (typeof window !== "undefined" && window.nativeBridge != null) {
 	initCatalogStore();

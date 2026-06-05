@@ -45,25 +45,29 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::winstt::context::{ContextMode, ContextReader};
+use crate::managers::history::HistoryManager;
+use crate::winstt::context::{ContextMode, ContextReader, WindowContextSnapshot};
 use crate::winstt::llm::{
-    self, build_system_prompt, merge_presets_with_custom_modifiers, transforms_user_prompt,
+    self, build_dictation_system_prompt, build_system_prompt, merge_presets_with_custom_modifiers,
     PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey, PresetLevel as LlmPresetLevel,
     ThinkingEffort as LlmEffort,
 };
 use crate::winstt::managers::{ContextManager, LlmManager};
 use crate::winstt::settings_schema::{
-    CustomModifier as SettingsCustomModifier, LlmProvider, PresetEntry as SettingsPreset,
-    PresetKey as SettingsPresetKey, PresetLevel as SettingsLevel, ThinkingEffort as SettingsEffort,
-    WinsttSettings,
+    CustomModifier as SettingsCustomModifier, EffortLevel as SettingsOpenRouterEffort,
+    LlmFeatureBase, LlmProvider, PresetEntry as SettingsPreset, PresetKey as SettingsPresetKey,
+    PresetLevel as SettingsLevel, ThinkingEffort as SettingsEffort, WinsttSettings,
 };
 
+use super::llm as llm_commands;
 use super::settings::read_settings;
 
 // ── event channel names (BYTE-IDENTICAL to WinSTT's IPC strings) ───────────────
 
 const EVT_APPLIED: &str = "transforms:applied";
 const EVT_FAILED: &str = "transforms:failed";
+const EVT_PROCESSING_START: &str = "transforms:processing-start";
+const EVT_PROCESSING_END: &str = "transforms:processing-end";
 
 // ── clipboard-sandwich tuning (mirrors selection-capture.ts constants) ─────────
 
@@ -71,6 +75,9 @@ const EVT_FAILED: &str = "transforms:failed";
 const CLIPBOARD_POLL_TIMEOUT_MS: u64 = 700;
 /// Polling interval — fast enough to feel instant, slow enough not to spin.
 const CLIPBOARD_POLL_INTERVAL_MS: u64 = 25;
+/// Playground previews are diagnostic and user-driven; they should fail loudly
+/// instead of leaving the modal in a spinner forever on a slow local model.
+const PLAYGROUND_PREVIEW_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ── public payload shapes (mirror the renderer's TransformApplyResult) ─────────
 
@@ -116,6 +123,35 @@ impl TransformApplyResult {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TransformCaptureScope {
+    Selection,
+    FocusedField,
+}
+
+#[derive(Clone, Debug)]
+struct TransformCapture {
+    scope: TransformCaptureScope,
+    source: TransformSource,
+    text: String,
+}
+
+impl TransformCapture {
+    fn empty() -> Self {
+        Self {
+            scope: TransformCaptureScope::Selection,
+            source: TransformSource::Empty,
+            text: String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TransformPastePlan {
+    ReplaceFocusedField(String),
+    ReplaceSelection(String),
+}
+
 // ── settings → prompt-shape conversions (local; llm.rs keeps its own private) ───
 
 fn to_llm_level(level: SettingsLevel) -> LlmPresetLevel {
@@ -158,6 +194,39 @@ fn to_llm_effort(e: SettingsEffort) -> LlmEffort {
     }
 }
 
+fn openrouter_effort_value(e: SettingsOpenRouterEffort) -> &'static str {
+    match e {
+        SettingsOpenRouterEffort::Low => "low",
+        SettingsOpenRouterEffort::Medium => "medium",
+        SettingsOpenRouterEffort::High => "high",
+    }
+}
+
+fn parse_openrouter_effort_value(s: &str) -> String {
+    match s {
+        "low" => "low",
+        "high" => "high",
+        _ => "medium",
+    }
+    .to_string()
+}
+
+fn openrouter_options(base: &LlmFeatureBase) -> llm::OpenRouterRequestOptions {
+    llm::OpenRouterRequestOptions {
+        reasoning_effort: Some(openrouter_effort_value(base.reasoning_effort).to_string()),
+        verbosity: Some(openrouter_effort_value(base.verbosity).to_string()),
+        max_output_tokens: base.max_output_tokens.filter(|v| *v > 0),
+    }
+}
+
+fn openrouter_options_from_preview(cfg: &LlmPreviewConfig) -> llm::OpenRouterRequestOptions {
+    llm::OpenRouterRequestOptions {
+        reasoning_effort: Some(parse_openrouter_effort_value(&cfg.reasoning_effort)),
+        verbosity: Some(parse_openrouter_effort_value(&cfg.verbosity)),
+        max_output_tokens: cfg.max_output_tokens.filter(|v| *v > 0),
+    }
+}
+
 fn to_llm_custom(m: &SettingsCustomModifier) -> llm::CustomModifier {
     llm::CustomModifier {
         id: m.id.clone(),
@@ -178,6 +247,80 @@ fn transforms_presets(
     let builtins: Vec<LlmPresetEntry> = presets.iter().map(to_llm_preset).collect();
     let customs: Vec<llm::CustomModifier> = customs.iter().map(to_llm_custom).collect();
     merge_presets_with_custom_modifiers(&builtins, &customs)
+}
+
+fn preview_requires_visible_change(presets: &[LlmPresetEntry]) -> bool {
+    presets.iter().any(|entry| match entry {
+        LlmPresetEntry::Builtin {
+            key: LlmPresetKey::Neutral,
+            ..
+        } => false,
+        LlmPresetEntry::Builtin { .. } | LlmPresetEntry::Custom { .. } => true,
+    })
+}
+
+fn is_transforms_feature(feature: &str) -> bool {
+    feature == "transforms"
+}
+
+fn preview_user_prompt(feature: &str, presets: &[LlmPresetEntry], text: &str) -> String {
+    if is_transforms_feature(feature) {
+        llm::transforms_user_prompt_for_presets(presets, text)
+    } else {
+        llm::dictation_user_prompt_for_presets(presets, text)
+    }
+}
+
+fn preview_system_prompt(settings: &WinsttSettings, presets: &[LlmPresetEntry]) -> String {
+    let vocab = llm_commands::build_vocab(settings);
+    let mut prompt = build_dictation_system_prompt(presets, "", &vocab);
+    if preview_requires_visible_change(presets) {
+        prompt.push_str(
+            "\n\nPlayground preview: Non-neutral tone/modifier instructions are active. \
+             Apply them visibly. Do not return the input verbatim unless the input is empty \
+             or pure noise.",
+        );
+    }
+    prompt
+}
+
+fn finalize_preview_answer(settings: &WinsttSettings, answer: &str) -> String {
+    let pairs = llm_commands::replacement_pairs(settings);
+    llm::apply_replacement_pairs(answer, &pairs)
+}
+
+fn provider_label(provider: LlmProvider) -> &'static str {
+    match provider {
+        LlmProvider::AppleIntelligence => "apple-intelligence",
+        LlmProvider::Openrouter => "openrouter",
+        LlmProvider::Ollama => "ollama",
+    }
+}
+
+fn ensure_preview_changed_if_required(
+    requires_visible_change: bool,
+    input: &str,
+    output: &str,
+    provider: LlmProvider,
+    model: &str,
+) -> Result<(), String> {
+    if !requires_visible_change || input.trim() != output.trim() {
+        return Ok(());
+    }
+    Err(format!(
+        "LLM preview returned the input unchanged even though active tone/modifier instructions were selected (provider={}, model={}).",
+        provider_label(provider),
+        if model.trim().is_empty() { "auto" } else { model.trim() }
+    ))
+}
+
+fn preview_timeout_error(provider: LlmProvider, model: &str) -> String {
+    format!(
+        "LLM preview timed out after {} seconds (provider={}, model={}). Try a smaller model or set thinking effort to Off/Low.",
+        PLAYGROUND_PREVIEW_TIMEOUT.as_secs(),
+        provider_label(provider),
+        if model.trim().is_empty() { "auto" } else { model.trim() }
+    )
 }
 
 // ── enable gate (mirrors transforms.ts isTransformsEnabled) ────────────────────
@@ -211,6 +354,7 @@ async fn run_transform_provider(
     mgr: &Arc<LlmManager>,
     settings: &WinsttSettings,
     system_prompt: &str,
+    user_prompt: &str,
     text: &str,
     effort: LlmEffort,
     model: &str,
@@ -229,7 +373,6 @@ async fn run_transform_provider(
                 .base
                 .openrouter_fallback_model
                 .clone();
-            let user_prompt = transforms_user_prompt(text);
             // OpenRouter's structured-output path already returns the fallback
             // text on a total failure (never throws across the boundary), so the
             // pipeline can paste-replace with the original on a dead provider.
@@ -239,16 +382,25 @@ async fn run_transform_provider(
                 &selection,
                 &fallback,
                 system_prompt,
-                &user_prompt,
+                user_prompt,
                 text,
+                openrouter_options(&settings.llm.transforms.base),
             )
             .await)
         }
         LlmProvider::Ollama => {
             let endpoint = settings.llm.endpoint.clone();
             let request_id = mgr.next_request_id();
-            mgr.ollama_transform(&endpoint, model, system_prompt, text, effort, &request_id)
-                .await
+            mgr.ollama_transform(
+                &endpoint,
+                model,
+                system_prompt,
+                user_prompt,
+                text,
+                effort,
+                &request_id,
+            )
+            .await
         }
     }
 }
@@ -264,17 +416,114 @@ async fn run_openrouter_with_fallback(
     system_prompt: &str,
     user_prompt: &str,
     text: &str,
+    options: llm::OpenRouterRequestOptions,
 ) -> String {
     match mgr
-        .openrouter_chat(api_key, primary, system_prompt, user_prompt, text)
+        .openrouter_chat(
+            api_key,
+            primary,
+            system_prompt,
+            user_prompt,
+            text,
+            options.clone(),
+        )
         .await
     {
         Ok(answer) => answer,
         Err(_primary_err) if !fallback.is_empty() => mgr
-            .openrouter_chat(api_key, fallback, system_prompt, user_prompt, text)
+            .openrouter_chat(api_key, fallback, system_prompt, user_prompt, text, options)
             .await
             .unwrap_or_else(|_| text.to_string()),
         Err(_) => text.to_string(),
+    }
+}
+
+/// Preview-specific OpenRouter routing. Unlike the runtime transform path, the
+/// playground must surface provider failures instead of making them look like
+/// "the model decided not to change anything".
+async fn run_openrouter_preview_with_fallback(
+    mgr: &Arc<LlmManager>,
+    api_key: &str,
+    primary: &str,
+    fallback: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    feature: &str,
+    request_id: &str,
+    options: llm::OpenRouterRequestOptions,
+) -> Result<String, String> {
+    match mgr
+        .openrouter_chat(
+            api_key,
+            primary,
+            system_prompt,
+            user_prompt,
+            "",
+            options.clone(),
+        )
+        .await
+    {
+        Ok(answer) if !answer.trim().is_empty() => Ok(answer),
+        Ok(_) if !fallback.is_empty() => {
+            log::warn!(
+                "[llm][{request_id}] preview {feature} OpenRouter primary model '{primary}' returned no text; trying fallback '{fallback}'"
+            );
+            mgr.openrouter_chat(
+                api_key,
+                fallback,
+                system_prompt,
+                user_prompt,
+                "",
+                options.clone(),
+            )
+                .await
+                .and_then(|answer| {
+                    if answer.trim().is_empty() {
+                        Err(format!(
+                            "OpenRouter fallback model '{fallback}' returned no transformed text"
+                        ))
+                    } else {
+                        Ok(answer)
+                    }
+                })
+                .map_err(|fallback_err| {
+                    format!(
+                        "OpenRouter primary model '{primary}' returned no transformed text; fallback model '{fallback}' failed: {}",
+                        llm::compact_error_for_log(&fallback_err)
+                    )
+                })
+        }
+        Ok(_) => Err(format!(
+            "OpenRouter model '{primary}' returned no transformed text"
+        )),
+        Err(primary_err) if !fallback.is_empty() => {
+            log::warn!(
+                "[llm][{request_id}] preview {feature} OpenRouter primary model '{primary}' failed; trying fallback '{fallback}': {}",
+                llm::compact_error_for_log(&primary_err)
+            );
+            mgr.openrouter_chat(api_key, fallback, system_prompt, user_prompt, "", options)
+                .await
+                .and_then(|answer| {
+                    if answer.trim().is_empty() {
+                        Err(format!(
+                            "OpenRouter fallback model '{fallback}' returned no transformed text"
+                        ))
+                    } else {
+                        Ok(answer)
+                    }
+                })
+                .map_err(|fallback_err| {
+                    format!(
+                        "OpenRouter primary model '{primary}' failed: {}; fallback model '{fallback}' failed: {}",
+                        llm::compact_error_for_log(&primary_err),
+                        llm::compact_error_for_log(&fallback_err)
+                    )
+                })
+        }
+        Err(primary_err) => Err(format!(
+            "OpenRouter model '{primary}' failed: {}",
+            llm::compact_error_for_log(&primary_err)
+        )),
     }
 }
 
@@ -282,28 +531,32 @@ async fn run_openrouter_with_fallback(
 
 /// Capture the user's current selection. UIA (`--selection` via the context
 /// sidecar) is the primary path; the clipboard-sandwich is the fallback. Returns
-/// `(text, source)`; an empty capture yields `("", Empty)`. Mirrors
+/// the captured text plus whether it came from a true selection or the whole
+/// focused field; an empty capture yields [`TransformCapture::empty`]. Mirrors
 /// `captureSelection` in selection-capture.ts.
-fn capture_selection(context: &ContextManager, app: &AppHandle) -> (String, TransformSource) {
+fn capture_selection(context: &ContextManager, app: &AppHandle) -> TransformCapture {
     // 1. UIA selection (side-effect-free) via the context sidecar. Mirrors
     //    tryUiaSelection: the sidecar's `--selection` mode reports the live
     //    TextPattern selection in `selected_text`, falling back to `focused_text`
-    //    when the control only exposes the focused value.
+    //    when the control only exposes the focused value. The latter is a
+    //    full-field transform, so paste-back must select-all first.
     if context.is_available() {
         let snap = ContextReader::read(context, ContextMode::Selection);
-        let selected = snap
-            .selected_text
-            .clone()
-            .or_else(|| {
-                if snap.focused_text.trim().is_empty() {
-                    None
-                } else {
-                    Some(snap.focused_text.clone())
-                }
-            })
-            .unwrap_or_default();
-        if !selected.trim().is_empty() {
-            return (selected, TransformSource::Uia);
+        if let Some(selected) = snap.selected_text.clone() {
+            if !selected.trim().is_empty() {
+                return TransformCapture {
+                    scope: TransformCaptureScope::Selection,
+                    source: TransformSource::Uia,
+                    text: selected,
+                };
+            }
+        }
+        if !snap.focused_text.trim().is_empty() {
+            return TransformCapture {
+                scope: TransformCaptureScope::FocusedField,
+                source: TransformSource::Uia,
+                text: snap.focused_text,
+            };
         }
     }
 
@@ -325,13 +578,13 @@ pub fn capture_selection_text(app: &AppHandle) -> String {
     match app.try_state::<Arc<ContextManager>>() {
         Some(ctx) => {
             let ctx = ctx.inner().clone();
-            capture_selection(ctx.as_ref(), app).0
+            capture_selection(ctx.as_ref(), app).text
         }
         None => String::new(),
     }
 }
 
-fn capture_via_clipboard(app: &AppHandle) -> (String, TransformSource) {
+fn capture_via_clipboard(app: &AppHandle) -> TransformCapture {
     let original = read_clipboard(app).unwrap_or_default();
 
     // Simulate Ctrl+C in the focused app. A failure here (no Enigo state) just
@@ -346,7 +599,7 @@ fn capture_via_clipboard(app: &AppHandle) -> (String, TransformSource) {
     // report empty (mirrors clipboardCaptureFailed → restoreClipboard → EMPTY).
     if captured == original || captured.trim().is_empty() {
         restore_clipboard(app, &original);
-        return (String::new(), TransformSource::Empty);
+        return TransformCapture::empty();
     }
 
     // Restore the user's original clipboard immediately. The paste-back
@@ -354,7 +607,11 @@ fn capture_via_clipboard(app: &AppHandle) -> (String, TransformSource) {
     // selection never has to live on the clipboard past this point — the user's
     // clipboard is left exactly as it was before the transform.
     restore_clipboard(app, &original);
-    (captured, TransformSource::Clipboard)
+    TransformCapture {
+        scope: TransformCaptureScope::Selection,
+        source: TransformSource::Clipboard,
+        text: captured,
+    }
 }
 
 /// Send a synthetic Ctrl+C (Cmd+C on macOS) through the managed Enigo instance so
@@ -443,6 +700,61 @@ fn restore_clipboard(app: &AppHandle, original: &str) {
     let _ = app.clipboard().write_text(original.to_string());
 }
 
+fn replace_unique_occurrence(haystack: &str, needle: &str, replacement: &str) -> Option<String> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut matches = haystack.match_indices(needle);
+    let (start, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+
+    let mut out = String::with_capacity(haystack.len() - needle.len() + replacement.len());
+    out.push_str(&haystack[..start]);
+    out.push_str(replacement);
+    out.push_str(&haystack[start + needle.len()..]);
+    Some(out)
+}
+
+fn field_replacement_for_lost_selection(
+    focused_text: &str,
+    captured_text: &str,
+    transformed: &str,
+) -> Option<String> {
+    if focused_text.trim().is_empty() || captured_text.trim().is_empty() {
+        return None;
+    }
+    if focused_text == captured_text {
+        return Some(transformed.to_string());
+    }
+    replace_unique_occurrence(focused_text, captured_text, transformed)
+}
+
+fn plan_transform_paste(
+    capture: &TransformCapture,
+    transformed: &str,
+    current: Option<&WindowContextSnapshot>,
+) -> TransformPastePlan {
+    if capture.scope == TransformCaptureScope::FocusedField {
+        return TransformPastePlan::ReplaceFocusedField(transformed.to_string());
+    }
+
+    let Some(snapshot) = current else {
+        return TransformPastePlan::ReplaceSelection(transformed.to_string());
+    };
+    let selected = snapshot.selected_text.as_deref().unwrap_or("");
+    if selected == capture.text {
+        return TransformPastePlan::ReplaceSelection(transformed.to_string());
+    }
+    if let Some(field_text) =
+        field_replacement_for_lost_selection(&snapshot.focused_text, &capture.text, transformed)
+    {
+        return TransformPastePlan::ReplaceFocusedField(field_text);
+    }
+    TransformPastePlan::ReplaceSelection(transformed.to_string())
+}
+
 // ── emit helpers ───────────────────────────────────────────────────────────────
 
 fn emit_applied(app: &AppHandle, result: &TransformApplyResult) {
@@ -458,6 +770,89 @@ fn emit_applied(app: &AppHandle, result: &TransformApplyResult) {
 
 fn emit_failed(app: &AppHandle, reason: &str) {
     let _ = app.emit(EVT_FAILED, serde_json::json!({ "reason": reason }));
+}
+
+fn selected_transform_model(settings: &WinsttSettings) -> Option<String> {
+    let model = match settings.llm.transforms.base.provider {
+        LlmProvider::Openrouter => {
+            let primary = settings.llm.transforms.base.openrouter_model.trim();
+            let fallback = settings
+                .llm
+                .transforms
+                .base
+                .openrouter_fallback_model
+                .trim();
+            if primary.is_empty() {
+                fallback
+            } else {
+                primary
+            }
+        }
+        LlmProvider::AppleIntelligence | LlmProvider::Ollama => {
+            settings.llm.transforms.base.model.trim()
+        }
+    };
+    if model.is_empty() {
+        None
+    } else {
+        Some(model.to_string())
+    }
+}
+
+fn transform_llm_meta(settings: &WinsttSettings, processing_ms: i64) -> Option<String> {
+    selected_transform_model(settings).map(|model| {
+        serde_json::json!({
+            "model": model,
+            "processingMs": processing_ms,
+        })
+        .to_string()
+    })
+}
+
+fn persist_transform_history(
+    app: &AppHandle,
+    settings: &WinsttSettings,
+    result: &TransformApplyResult,
+    processing_ms: i64,
+) {
+    if result.before.trim().is_empty() && result.after.trim().is_empty() {
+        return;
+    }
+    let Some(history_manager) = app.try_state::<Arc<HistoryManager>>() else {
+        log::warn!("transforms: history manager not initialized; transform history not saved");
+        return;
+    };
+    let meta = transform_llm_meta(settings, processing_ms);
+    match history_manager.save_transform_entry(
+        result.before.clone(),
+        result.after.clone(),
+        result.source.as_str().to_string(),
+        meta,
+    ) {
+        Ok(entry) => super::history::emit_transform_history_added(app, &entry),
+        Err(err) => log::warn!("transforms: failed to save transform history: {err}"),
+    }
+}
+
+struct TransformProcessingGuard {
+    app: AppHandle,
+}
+
+impl TransformProcessingGuard {
+    fn new(app: &AppHandle) -> Self {
+        crate::utils::show_recording_overlay(app);
+        crate::tray::on_llm_thinking_start(app);
+        let _ = app.emit(EVT_PROCESSING_START, ());
+        Self { app: app.clone() }
+    }
+}
+
+impl Drop for TransformProcessingGuard {
+    fn drop(&mut self) {
+        let _ = self.app.emit(EVT_PROCESSING_END, ());
+        crate::tray::on_llm_thinking_stop(&self.app);
+        crate::utils::hide_recording_overlay(&self.app);
+    }
 }
 
 // ── end-to-end pipeline (shared by the command AND the global hotkey) ───────────
@@ -495,33 +890,37 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
 
     // Capture the current selection (UIA → clipboard-sandwich fallback). This
     // touches the clipboard/keyboard, so run it off the async pump.
-    let context_state = app.try_state::<Arc<ContextManager>>();
-    let (selected, source) = match context_state {
+    let context_manager = app
+        .try_state::<Arc<ContextManager>>()
+        .map(|state| state.inner().clone());
+    let capture = match context_manager.clone() {
         Some(ctx) => {
-            let ctx = ctx.inner().clone();
             let app_for_capture = app.clone();
             match tauri::async_runtime::spawn_blocking(move || {
                 capture_selection(ctx.as_ref(), &app_for_capture)
             })
             .await
             {
-                Ok(pair) => pair,
-                Err(_) => (String::new(), TransformSource::Empty),
+                Ok(capture) => capture,
+                Err(_) => TransformCapture::empty(),
             }
         }
-        None => (String::new(), TransformSource::Empty),
+        None => TransformCapture::empty(),
     };
 
-    if selected.trim().is_empty() {
+    if capture.text.trim().is_empty() {
         // No-selection: WinSTT broadcasts `transforms:failed { "No text selected" }`
         // AND returns an `ApplyResult` with empty before/after.
         emit_failed(app, "No text selected");
         return TransformApplyResult {
             before: String::new(),
             after: String::new(),
-            source,
+            source: capture.source,
         };
     }
+
+    let selected = capture.text.clone();
+    let _processing = TransformProcessingGuard::new(app);
 
     // Compose the transforms system prompt (presets + enabled custom modifiers).
     let presets = transforms_presets(
@@ -529,39 +928,68 @@ pub async fn run_transform_pipeline(app: &AppHandle) -> TransformApplyResult {
         &settings.llm.transforms.custom_modifiers,
     );
     let system_prompt = build_system_prompt(&presets);
+    let user_prompt = llm::transforms_user_prompt_for_presets(&presets, &selected);
     let effort = to_llm_effort(settings.llm.transforms.base.thinking_effort);
     let model = settings.llm.transforms.base.model.clone();
 
     // Run the LLM over the CONFIGURED provider. On a hard error, emit failure +
     // return the original-as-before so the toast surfaces the message (mirrors
     // `runLlm`'s catch → broadcast `transforms:failed` → rethrow).
-    let transformed =
-        match run_transform_provider(&mgr, &settings, &system_prompt, &selected, effort, &model)
-            .await
-        {
-            Ok(out) => out,
-            Err(reason) => {
-                emit_failed(app, &reason);
-                return TransformApplyResult {
-                    before: selected,
-                    after: String::new(),
-                    source,
-                };
-            }
-        };
+    let processing_started = Instant::now();
+    let transformed = match run_transform_provider(
+        &mgr,
+        &settings,
+        &system_prompt,
+        &user_prompt,
+        &selected,
+        effort,
+        &model,
+    )
+    .await
+    {
+        Ok(out) => out,
+        Err(reason) => {
+            emit_failed(app, &reason);
+            return TransformApplyResult {
+                before: selected,
+                after: String::new(),
+                source: capture.source,
+            };
+        }
+    };
+    let processing_ms = processing_started
+        .elapsed()
+        .as_millis()
+        .min(i64::MAX as u128) as i64;
 
-    // Paste replaces the still-highlighted selection (clipboard + Ctrl+V). Use the
-    // REPLACE-mode paste (no trailing space, no auto-submit Enter — this is a rewrite-in-place,
-    // not a dictation) and schedule it on the MAIN thread: this pipeline runs on the async
-    // runtime, and input synthesis must not run off it (the discipline actions.rs keeps). The
-    // paste runs its own clipboard sandwich, so the user's clipboard is restored.
-    let _ = crate::clipboard::paste_on_main_thread(app, transformed.clone(), true);
+    let current_snapshot = match context_manager.clone() {
+        Some(ctx) if ctx.is_available() => tauri::async_runtime::spawn_blocking(move || {
+            ContextReader::read(ctx.as_ref(), ContextMode::Selection)
+        })
+        .await
+        .ok(),
+        _ => None,
+    };
+    match plan_transform_paste(&capture, &transformed, current_snapshot.as_ref()) {
+        TransformPastePlan::ReplaceSelection(text) => {
+            // Paste replaces the still-highlighted selection (clipboard + Ctrl+V). Use the
+            // REPLACE-mode paste (no trailing space, no auto-submit Enter — this is a rewrite-in-place,
+            // not a dictation) and schedule it on the MAIN thread: this pipeline runs on the async
+            // runtime, and input synthesis must not run off it (the discipline actions.rs keeps). The
+            // paste runs its own clipboard sandwich, so the user's clipboard is restored.
+            let _ = crate::clipboard::paste_on_main_thread(app, text, true);
+        }
+        TransformPastePlan::ReplaceFocusedField(text) => {
+            let _ = crate::clipboard::paste_replace_field_on_main_thread(app, text);
+        }
+    }
 
     let result = TransformApplyResult {
         before: selected,
         after: transformed,
-        source,
+        source: capture.source,
     };
+    persist_transform_history(app, &settings, &result, processing_ms);
     emit_applied(app, &result);
     result
 }
@@ -595,6 +1023,12 @@ pub struct LlmPreviewConfig {
     #[serde(default)]
     pub openrouter_fallback_model: String,
     #[serde(default)]
+    pub reasoning_effort: String,
+    #[serde(default)]
+    pub verbosity: String,
+    #[serde(default)]
+    pub max_output_tokens: Option<i64>,
+    #[serde(default)]
     pub thinking_effort: String,
     #[serde(default)]
     pub presets: Vec<SettingsPreset>,
@@ -624,89 +1058,156 @@ pub async fn apply_transform_preview(
     // Resolve system-prompt / model / effort / provider — config override first,
     // else the feature's saved settings. The override's `provider` string maps to
     // the LlmProvider enum so the Playground can exercise any provider.
-    let (system_prompt, effort, model, provider, openrouter_model, openrouter_fallback) =
-        if let Some(cfg) = config {
-            let presets = transforms_presets(&cfg.presets, &cfg.custom_modifiers);
-            let sys = build_system_prompt(&presets);
-            let eff = parse_effort(&cfg.thinking_effort);
-            let model = if cfg.model.trim().is_empty() {
-                saved_model(&settings, is_dictation)
-            } else {
-                cfg.model.clone()
-            };
+    let (
+        system_prompt,
+        user_prompt,
+        effort,
+        model,
+        provider,
+        openrouter_model,
+        openrouter_fallback,
+        openrouter_request_options,
+        requires_visible_change,
+    ) = if let Some(cfg) = config {
+        let presets = transforms_presets(&cfg.presets, &cfg.custom_modifiers);
+        let requires_visible_change = preview_requires_visible_change(&presets);
+        let sys = preview_system_prompt(&settings, &presets);
+        let user = preview_user_prompt(&feature, &presets, &text);
+        let eff = parse_effort(&cfg.thinking_effort);
+        let model = if cfg.model.trim().is_empty() {
+            saved_model(&settings, is_dictation)
+        } else {
+            cfg.model.clone()
+        };
+        (
+            sys,
+            user,
+            eff,
+            model,
+            parse_provider(&cfg.provider, &settings, is_dictation),
+            cfg.openrouter_model.clone(),
+            cfg.openrouter_fallback_model.clone(),
+            openrouter_options_from_preview(&cfg),
+            requires_visible_change,
+        )
+    } else {
+        let base = if is_dictation {
+            &settings.llm.dictation.base
+        } else {
+            &settings.llm.transforms.base
+        };
+        let (presets_src, customs_src) = if is_dictation {
             (
-                sys,
-                eff,
-                model,
-                parse_provider(&cfg.provider, &settings, is_dictation),
-                cfg.openrouter_model.clone(),
-                cfg.openrouter_fallback_model.clone(),
+                &settings.llm.dictation.presets,
+                &settings.llm.dictation.custom_modifiers,
             )
         } else {
-            let base = if is_dictation {
-                &settings.llm.dictation.base
-            } else {
-                &settings.llm.transforms.base
-            };
-            let (presets_src, customs_src) = if is_dictation {
-                (
-                    &settings.llm.dictation.presets,
-                    &settings.llm.dictation.custom_modifiers,
-                )
-            } else {
-                (
-                    &settings.llm.transforms.presets,
-                    &settings.llm.transforms.custom_modifiers,
-                )
-            };
-            let presets = transforms_presets(presets_src, customs_src);
-            let sys = build_system_prompt(&presets);
             (
-                sys,
-                to_llm_effort(base.thinking_effort),
-                base.model.clone(),
-                base.provider,
-                base.openrouter_model.clone(),
-                base.openrouter_fallback_model.clone(),
+                &settings.llm.transforms.presets,
+                &settings.llm.transforms.custom_modifiers,
             )
         };
+        let presets = transforms_presets(presets_src, customs_src);
+        let requires_visible_change = preview_requires_visible_change(&presets);
+        let sys = preview_system_prompt(&settings, &presets);
+        let user = preview_user_prompt(&feature, &presets, &text);
+        (
+            sys,
+            user,
+            to_llm_effort(base.thinking_effort),
+            base.model.clone(),
+            base.provider,
+            base.openrouter_model.clone(),
+            base.openrouter_fallback_model.clone(),
+            openrouter_options(base),
+            requires_visible_change,
+        )
+    };
 
     let mgr = llm_manager.inner().clone();
+    let preview_model = match provider {
+        LlmProvider::Openrouter => openrouter_model.as_str(),
+        LlmProvider::AppleIntelligence | LlmProvider::Ollama => model.as_str(),
+    }
+    .to_string();
+    let started = Instant::now();
 
-    // Route the preview over the resolved provider (no selection/paste). On any
-    // failure, fall back to the original input text so the Playground never errors.
-    let out = match provider {
-        LlmProvider::AppleIntelligence => text.clone(),
-        LlmProvider::Openrouter => {
-            let api_key = settings.llm.openrouter_api_key.clone();
-            let user_prompt = transforms_user_prompt(&text);
-            run_openrouter_with_fallback(
-                &mgr,
-                &api_key,
-                &openrouter_model,
-                &openrouter_fallback,
-                &system_prompt,
-                &user_prompt,
-                &text,
-            )
-            .await
+    // Route the preview over the resolved provider (no selection/paste). Unlike
+    // runtime dictation, the playground rejects provider failures so a broken
+    // model call cannot masquerade as an intentional no-op.
+    let out = tokio::time::timeout(PLAYGROUND_PREVIEW_TIMEOUT, async {
+        match provider {
+            LlmProvider::AppleIntelligence => Ok(text.clone()),
+            LlmProvider::Openrouter => {
+                let api_key = settings.llm.openrouter_api_key.clone();
+                let request_id = mgr.next_request_id();
+                run_openrouter_preview_with_fallback(
+                    &mgr,
+                    &api_key,
+                    &openrouter_model,
+                    &openrouter_fallback,
+                    &system_prompt,
+                    &user_prompt,
+                    &feature,
+                    &request_id,
+                    openrouter_request_options,
+                )
+                .await
+            }
+            LlmProvider::Ollama => {
+                let endpoint = settings.llm.endpoint.clone();
+                let request_id = mgr.next_request_id();
+                if is_transforms_feature(&feature) {
+                    mgr.ollama_transform(
+                        &endpoint,
+                        &model,
+                        &system_prompt,
+                        &user_prompt,
+                        &text,
+                        effort,
+                        &request_id,
+                    )
+                    .await
+                } else {
+                    mgr.ollama_dictation(
+                        &endpoint,
+                        &model,
+                        &system_prompt,
+                        &user_prompt,
+                        &text,
+                        effort,
+                        &request_id,
+                    )
+                    .await
+                }
+            }
         }
-        LlmProvider::Ollama => {
-            let endpoint = settings.llm.endpoint.clone();
-            let request_id = mgr.next_request_id();
-            mgr.ollama_transform(
-                &endpoint,
-                &model,
-                &system_prompt,
-                &text,
-                effort,
-                &request_id,
-            )
-            .await
-            .unwrap_or_else(|_| text.clone())
-        }
-    };
-    Ok(out)
+    })
+    .await
+    .map_err(|_| preview_timeout_error(provider, &preview_model))??;
+    let final_out = finalize_preview_answer(&settings, &out);
+    log::info!(
+        "[llm-preview] feature={feature} provider={} model='{}' active_modifier={} input_chars={} output_chars={} unchanged={} elapsed_ms={}",
+        provider_label(provider),
+        if preview_model.trim().is_empty() {
+            "auto"
+        } else {
+            preview_model.trim()
+        },
+        requires_visible_change,
+        text.chars().count(),
+        final_out.chars().count(),
+        text.trim() == final_out.trim(),
+        started.elapsed().as_millis()
+    );
+    ensure_preview_changed_if_required(
+        requires_visible_change,
+        &text,
+        &final_out,
+        provider,
+        &preview_model,
+    )?;
+    Ok(final_out)
 }
 
 fn saved_model(settings: &WinsttSettings, is_dictation: bool) -> String {
@@ -747,6 +1248,7 @@ fn parse_effort(s: &str) -> LlmEffort {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::winstt::settings_schema::DictionaryEntry;
 
     #[test]
     fn source_strings_match_renderer() {
@@ -761,6 +1263,71 @@ mod tests {
         assert!(r.before.is_empty());
         assert!(r.after.is_empty());
         assert_eq!(r.source, TransformSource::Empty);
+    }
+
+    fn transform_capture(scope: TransformCaptureScope, text: &str) -> TransformCapture {
+        TransformCapture {
+            scope,
+            source: TransformSource::Uia,
+            text: text.to_string(),
+        }
+    }
+
+    fn paste_snapshot(focused_text: &str, selected_text: Option<&str>) -> WindowContextSnapshot {
+        WindowContextSnapshot {
+            focused_text: focused_text.to_string(),
+            selected_text: selected_text.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn focused_field_capture_replaces_whole_field() {
+        let capture = transform_capture(TransformCaptureScope::FocusedField, "old field");
+        assert_eq!(
+            plan_transform_paste(&capture, "new field", None),
+            TransformPastePlan::ReplaceFocusedField("new field".into())
+        );
+    }
+
+    #[test]
+    fn active_original_selection_keeps_normal_replace_paste() {
+        let capture = transform_capture(TransformCaptureScope::Selection, "selected text");
+        let snapshot = paste_snapshot("before selected text after", Some("selected text"));
+        assert_eq!(
+            plan_transform_paste(&capture, "replacement", Some(&snapshot)),
+            TransformPastePlan::ReplaceSelection("replacement".into())
+        );
+    }
+
+    #[test]
+    fn lost_selection_reconstructs_focused_field_when_source_is_unique() {
+        let capture = transform_capture(TransformCaptureScope::Selection, "selected text");
+        let snapshot = paste_snapshot("before selected text after", None);
+        assert_eq!(
+            plan_transform_paste(&capture, "replacement", Some(&snapshot)),
+            TransformPastePlan::ReplaceFocusedField("before replacement after".into())
+        );
+    }
+
+    #[test]
+    fn lost_selection_replaces_whole_field_when_field_equals_source() {
+        let capture = transform_capture(TransformCaptureScope::Selection, "selected text");
+        let snapshot = paste_snapshot("selected text", None);
+        assert_eq!(
+            plan_transform_paste(&capture, "replacement", Some(&snapshot)),
+            TransformPastePlan::ReplaceFocusedField("replacement".into())
+        );
+    }
+
+    #[test]
+    fn lost_selection_does_not_guess_when_source_repeats() {
+        let capture = transform_capture(TransformCaptureScope::Selection, "same");
+        let snapshot = paste_snapshot("same and same", None);
+        assert_eq!(
+            plan_transform_paste(&capture, "replacement", Some(&snapshot)),
+            TransformPastePlan::ReplaceSelection("replacement".into())
+        );
     }
 
     #[test]
@@ -847,5 +1414,97 @@ mod tests {
         ));
         // Unknown → saved transforms provider (default Ollama).
         assert!(matches!(parse_provider("", &s, false), LlmProvider::Ollama));
+    }
+
+    #[test]
+    fn preview_system_prompt_uses_dictation_post_processing_layers() {
+        let settings = WinsttSettings::default();
+        let presets = transforms_presets(&settings.llm.dictation.presets, &[]);
+        let prompt = preview_system_prompt(&settings, &presets);
+
+        assert!(prompt.contains("How to interpret the dictation:"));
+        assert!(prompt.contains("Output only the transformed text"));
+        assert!(!prompt.contains("Non-neutral tone/modifier instructions are active"));
+    }
+
+    #[test]
+    fn preview_system_prompt_marks_active_modifiers() {
+        let settings = WinsttSettings::default();
+        let presets = vec![LlmPresetEntry::Builtin {
+            key: LlmPresetKey::Formal,
+            level: None,
+            target_lang: None,
+        }];
+        let prompt = preview_system_prompt(&settings, &presets);
+
+        assert!(preview_requires_visible_change(&presets));
+        assert!(prompt.contains("Non-neutral tone/modifier instructions are active"));
+    }
+
+    #[test]
+    fn preview_user_prompt_uses_feature_specific_wording() {
+        let plain_presets = vec![LlmPresetEntry::Builtin {
+            key: LlmPresetKey::Neutral,
+            level: None,
+            target_lang: None,
+        }];
+        let dictation = preview_user_prompt("dictation", &plain_presets, "hello");
+        assert!(dictation.contains("Text to transform:\nhello"));
+        assert!(dictation.contains("style guide above"));
+
+        let transforms = preview_user_prompt("transforms", &plain_presets, "hello");
+        assert!(transforms.contains("Text:\nhello"));
+        assert!(transforms.contains("Apply the system instructions above"));
+
+        let translate_presets = vec![LlmPresetEntry::Builtin {
+            key: LlmPresetKey::Translate,
+            level: None,
+            target_lang: Some("Arabic".to_string()),
+        }];
+        let translation = preview_user_prompt("dictation", &translate_presets, "hello");
+        assert!(translation.contains("translate the following text into Arabic"));
+        assert!(translation.contains("Text to translate:\nhello"));
+    }
+
+    #[test]
+    fn unchanged_preview_is_error_when_modifier_active() {
+        let err = ensure_preview_changed_if_required(
+            true,
+            "make this better",
+            "make this better",
+            LlmProvider::Ollama,
+            "gemma4:12b",
+        )
+        .unwrap_err();
+
+        assert!(err.contains("returned the input unchanged"));
+        assert!(err.contains("provider=ollama"));
+    }
+
+    #[test]
+    fn unchanged_preview_is_allowed_for_neutral_cleanup() {
+        assert!(ensure_preview_changed_if_required(
+            false,
+            "Already clean.",
+            "Already clean.",
+            LlmProvider::Ollama,
+            "gemma4:12b",
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn finalize_preview_answer_applies_replacement_pairs() {
+        let mut settings = WinsttSettings::default();
+        settings.dictionary.push(DictionaryEntry {
+            id: "github".to_string(),
+            term: "github".to_string(),
+            replacement: Some("GitHub".to_string()),
+        });
+
+        assert_eq!(
+            finalize_preview_answer(&settings, "push it to github"),
+            "push it to GitHub"
+        );
     }
 }

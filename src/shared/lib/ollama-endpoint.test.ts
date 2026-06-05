@@ -69,6 +69,11 @@ describe("normalizeOllamaEndpoint", () => {
 		expect(normalizeOllamaEndpoint("not-a-url//")).toBe("not-a-url");
 	});
 
+	test("handles whitespace before trailing slashes in invalid URLs in one pass", () => {
+		expect(normalizeOllamaEndpoint("! /")).toBe("!");
+		expect(normalizeOllamaEndpoint("not-a-url /api")).toBe("not-a-url");
+	});
+
 	test("preserves https scheme and port", () => {
 		expect(normalizeOllamaEndpoint("https://example.com:8443/api")).toBe(
 			"https://example.com:8443"

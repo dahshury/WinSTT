@@ -41,15 +41,16 @@ export function parseSizeLabel(label: string): number | null {
 
 /**
  * True when a model is small enough to drive the live-preview transcription
- * comfortably. `supports_realtime` from the catalog is necessary but not
- * sufficient — the server marks all models true. We apply a parameter-count
- * threshold so Whisper Medium / Large don't get flagged as realtime.
+ * comfortably. `preview_capable` from the catalog is necessary but not
+ * sufficient: it says the backend can produce live preview, not that the model
+ * will keep up comfortably on every machine. We apply a parameter-count
+ * threshold so Whisper Medium / Large don't get flagged as live-preview picks.
  *
  * When the size label is empty or unparseable (some Russian models), we fall
- * back to the catalog flag — the model author opted in deliberately.
+ * back to the preview-capable flag because the model author opted in deliberately.
  */
 export function isRealtimeViable(model: ModelInfo): boolean {
-	if (!model.supportsRealtime) {
+	if (!model.previewCapable) {
 		return false;
 	}
 	const params = parseSizeLabel(model.sizeLabel);

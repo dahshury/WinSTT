@@ -1,4 +1,4 @@
-// PORT IMPL — WU-3 (app/PORT/10_frontend_port_plan.md §6 "Main window: dictation
+// PORT IMPL — WU-3 (docs/archive/port/10_frontend_port_plan.md §6 "Main window: dictation
 // overlay + PTT + live transcription"). Source: frontend/electron/ipc/stt-commands.ts
 // + relay.ts (the IPC → recorder bridge) + frontend/src/shared/api/ipc-client.ts
 // (sttSetParameter / sttGetParameter / sttCallMethod / sttReloadModel wrappers).
@@ -199,8 +199,9 @@ pub fn winstt_call_method(app: AppHandle, method: String, args: Option<Vec<serde
         // renderer's `abortServerRecorderIfConnected("abort")` path would tear down
         // the recorder but leave the pill armed.
         "abort" | "stop" | "shutdown" => {
-            crate::utils::cancel_current_operation(&app);
-            SttEvents::session_aborted(&app);
+            if crate::utils::cancel_current_operation(&app) {
+                SttEvents::session_aborted(&app);
+            }
         }
         "clear_audio_queue" => {
             if let Some(rm) = app.try_state::<Arc<AudioRecordingManager>>() {
@@ -263,13 +264,13 @@ fn request_diarization_toggle(app: &AppHandle, enabled: bool) {
 // ── STT_RELOAD_MODEL ────────────────────────────────────────────────────────────
 
 /// `set_winstt_model` — request a (main | realtime) model reload. The reused
-/// renderer's `sttReloadModel(kind, name)` sends `{ kind, name }`. The actual engine
+/// renderer's `sttReloadModel(kind, name, quantization?)` sends `{ kind, name, quantization }`. The actual engine
 /// swap is WU-4 (lib_wiring §7, internal to TranscriptionManager); for WU-3 this
 /// kicks Handy's `initiate_model_load` so the main-model reload path is live, and
 /// returns a structural ack. Realtime-kind reloads are owned by 04_*.
 #[tauri::command]
 #[specta::specta]
-pub fn set_winstt_model(app: AppHandle, kind: String, name: String) {
+pub fn set_winstt_model(app: AppHandle, kind: String, name: String, quantization: Option<String>) {
     if kind == "realtime" {
         // SPIKE (04_*): realtime worker model rebuild — owned by the realtime slice.
         return;
@@ -277,13 +278,18 @@ pub fn set_winstt_model(app: AppHandle, kind: String, name: String) {
     // Drive the FULL swap lifecycle (started → load → completed/failed + runtime-info push) so the
     // picker's "Switching…" chip resolves and a FAILED load surfaces as `stt:model-swap-failed`
     // (rollback + toast) instead of being swallowed → the renderer silently adopting runtime "tiny".
-    crate::winstt::commands::swap_events::perform_model_swap(&app, &kind, &name);
+    crate::winstt::commands::swap_events::perform_model_swap_with_quantization(
+        &app,
+        &kind,
+        &name,
+        quantization.as_deref(),
+    );
 }
 
 // ── STT lifecycle / level EVENT emitters (MISSING set — WU-3) ───────────────────
 //
 // Plain string events in WinSTT's byte-identical IPC shape. The renderer's
-// ipc-client.ts wrappers read: onRealtimeText → `{text}`, onFullSentence → `{text}`,
+// ipc-client.ts wrappers read: onRealtimeText → `{text,is_final}`, onFullSentence → `{text}`,
 // onAudioLevel → `{level}`, onTranscriptionStart → `{audioBase64}`, onConnectionChange
 // → `{connected}`, onServerStatus → `{status}`; the no-payload events
 // (recording-start/stop, vad-start/stop, no-audio-detected, transcription-failed,
@@ -300,12 +306,16 @@ impl SttEvents {
     /// realtime/ephemeral state and arms `isRecordingActive` (the overlay pill gate).
     pub fn recording_start(app: &AppHandle) {
         log::info!("[stt] emit stt:recording-start (visualizer arm)");
+        crate::winstt::ducking::duck_from_settings(app);
+        crate::tray::on_tray_recording_start(app);
         let _ = app.emit("stt:recording-start", ());
     }
 
     /// `stt:recording-stop` — the recorder stopped (VAD silence or PTT release). The
     /// renderer snaps the visualizer to zero; the pill stays until a terminal event.
     pub fn recording_stop(app: &AppHandle) {
+        crate::winstt::ducking::request_restore();
+        crate::tray::on_tray_recording_stop(app);
         let _ = app.emit("stt:recording-stop", ());
     }
 
@@ -322,6 +332,7 @@ impl SttEvents {
     /// `stt:transcription-start` — transcription kicked off; carries the recorded
     /// audio (base64) for history playback. `audio_base64` may be `None`.
     pub fn transcription_start(app: &AppHandle, audio_base64: Option<&str>) {
+        crate::tray::on_tray_transcription_start(app);
         let _ = app.emit(
             "stt:transcription-start",
             serde_json::json!({ "audioBase64": audio_base64 }),
@@ -331,6 +342,8 @@ impl SttEvents {
     /// `stt:full-sentence` — a finalized transcription (post-LLM-cleanup if enabled).
     /// `onFullSentence` reads `.text`. This is a TERMINAL event (resets pill).
     pub fn full_sentence(app: &AppHandle, text: &str) {
+        crate::tray::on_tray_transcription_stop(app);
+        crate::tray::on_tray_idle(app);
         let _ = app.emit("stt:full-sentence", serde_json::json!({ "text": text }));
     }
 
@@ -348,6 +361,9 @@ impl SttEvents {
 
     /// `stt:no-audio-detected` — the recorder captured nothing usable. TERMINAL.
     pub fn no_audio_detected(app: &AppHandle) {
+        crate::winstt::ducking::request_restore();
+        crate::tray::on_tray_transcription_stop(app);
+        crate::tray::on_tray_idle(app);
         let _ = app.emit("stt:no-audio-detected", ());
     }
 
@@ -355,6 +371,9 @@ impl SttEvents {
     /// misleading "no audio detected"). TERMINAL. Memory:
     /// project_whisper_incomplete_vocab_and_transcription_failed.
     pub fn transcription_failed(app: &AppHandle) {
+        crate::winstt::ducking::request_restore();
+        crate::tray::on_tray_transcription_stop(app);
+        crate::tray::on_tray_idle(app);
         let _ = app.emit("stt:transcription-failed", ());
     }
 
@@ -362,15 +381,24 @@ impl SttEvents {
     /// High-frequency: emitted per audio chunk from the consumer; `onAudioLevel`
     /// reads `.level`.
     pub fn audio_level(app: &AppHandle, level: f32) {
+        crate::tray::on_tray_audio_level(app, level);
         let _ = app.emit("stt:audio-level", serde_json::json!({ "level": level }));
     }
 
     /// `stt:realtime-text` — the live (raw) realtime preview. NOTE: the adapter maps
-    /// STT_REALTIME_TEXT → the `realtime-update` event (RealtimeUpdatePayload `{text}`),
-    /// so the realtime worker emits THAT; this helper exists for parity / direct use.
+    /// STT_REALTIME_TEXT → the `realtime-update` event
+    /// (RealtimeUpdatePayload `{text,is_final}`), so the realtime worker emits THAT; this
+    /// helper exists for parity / direct use.
     /// ORDERING (risk §6): emit `realtime-stabilized` BEFORE `realtime-update`.
     pub fn realtime_text(app: &AppHandle, text: &str) {
-        let _ = app.emit("realtime-update", serde_json::json!({ "text": text }));
+        Self::realtime_text_with_final(app, text, false);
+    }
+
+    pub fn realtime_text_with_final(app: &AppHandle, text: &str, is_final: bool) {
+        let _ = app.emit(
+            "realtime-update",
+            serde_json::json!({ "text": text, "is_final": is_final }),
+        );
     }
 
     /// `realtime-stabilized` — the UI-safe MONOTONIC live preview (stabilizer output).
@@ -379,13 +407,23 @@ impl SttEvents {
     /// recorder_service.py:2852-2853). The renderer's live-preview pane consumes this;
     /// `realtime-update` carries the raw assembled text for noise-break/logging consumers.
     pub fn realtime_stabilized(app: &AppHandle, text: &str) {
-        let _ = app.emit("realtime-stabilized", serde_json::json!({ "text": text }));
+        Self::realtime_stabilized_with_final(app, text, false);
+    }
+
+    pub fn realtime_stabilized_with_final(app: &AppHandle, text: &str, is_final: bool) {
+        let _ = app.emit(
+            "realtime-stabilized",
+            serde_json::json!({ "text": text, "is_final": is_final }),
+        );
     }
 
     /// `stt:session-aborted` — a user-initiated cancel just landed. The renderer
     /// resets toggle/visualizer/pill state. Emitted from `cancel_current_operation`'s
     /// WinSTT wiring (the abort epilogue).
     pub fn session_aborted(app: &AppHandle) {
+        crate::winstt::ducking::request_restore();
+        crate::tray::on_tray_transcription_stop(app);
+        crate::tray::on_tray_idle(app);
         let _ = app.emit("stt:session-aborted", ());
     }
 
@@ -406,15 +444,15 @@ impl SttEvents {
     }
 }
 
-/// Emit the one-shot "engine is up" pair on startup so the renderer's connection
-/// store leaves its cold-boot "connecting" state. Call from `lib.rs setup` AFTER
-/// the managers are managed (the renderer treats connected+running as ready). The
-/// `STT_IS_CONNECTED` / server-status *invoke* shims are handled in the adapter
-/// (return true/"running"); this is the matching push so listeners also fire.
+/// Emit the one-shot "engine is up" pair once the renderer has completed its
+/// first startup IPC round trips. Also releases the splash handoff gate: Tauri's
+/// page-load event can fire before the React providers have loaded settings and
+/// devices, so the renderer calls this command after those startup tasks settle.
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_emit_ready(app: AppHandle) {
     let _ = read_settings(&app); // touch settings so a corrupt blob surfaces early
+    crate::splash::mark_renderer_boot_done();
     SttEvents::connection_change(&app, true);
     SttEvents::server_status(&app, "running");
 }

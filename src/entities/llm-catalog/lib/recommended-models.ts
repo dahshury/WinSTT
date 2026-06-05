@@ -5,26 +5,26 @@ const GB = 1_000_000_000;
 /**
  * Curated local LLMs suggested for post-processing dictated text (grammar /
  * tone / rewrite / transform) via Ollama. Picked for STRONG instruction-following
- * at SMALL sizes that run at good speeds on consumer hardware — every entry is
- * ≤ 9B params and its default (≈ q4) download stays well under a 16 GB RAM budget,
- * so even the largest runs comfortably on a 16 GB machine (and the picker's
+ * at SMALL sizes that run at good speeds on consumer hardware. Defaults are
+ * compact Q4_K_M-style pulls that stay under a 16 GB RAM budget, so even the
+ * largest curated local pick is viable on a 16 GB machine (and the picker's
  * "won't fit" chip warns per-device). Ordered smallest → largest.
  *
  * EVERY entry is the LATEST generation of its family available on
- * `ollama.com/library`, verified live (2026-05). Superseded versions were removed
+ * `ollama.com/library`, verified live (2026-06). Superseded versions were removed
  * outright: gemma3 → **gemma4**, qwen3/qwen2.5 → **qwen3.5** (qwen3.6 is large-only,
  * no small sizes), granite3.x → **granite4.1**, tinyllama dropped. Notes:
  *   - Llama 4 is MoE-only (Scout 67 GB+), so **llama3.2** remains the latest SMALL
  *     Llama — kept, not outdated.
  *   - SmolLM3 has no official library entry (404), so **smollm2** is the latest
  *     SmolLM on Ollama.
- *   - gemma4's smallest is the efficient `e2b` (MatFormer; ~2B effective, heavier
- *     download) — there is no tiny gemma4, so the tiny tier leans on qwen3.5 / smollm2.
- *   - Reasoning/"thinking" models are excluded (a `<think>` preamble is pure
- *     latency for short rewrites).
+ *   - gemma4 is offered at the current local sizes requested from Ollama:
+ *     `e2b`, `e4b`, and full `12b`.
+ *   - Reasoning/"thinking" models are excluded by default (a `<think>` preamble
+ *     is pure latency for short rewrites), except explicit requested picks.
  *
  * Users can still browse the full library in the picker for anything not curated
- * here (e.g. gemma4:e4b, qwen3.5:27b, command-a — bigger but heavier/slower).
+ * here (e.g. qwen3.5:27b, command-a — bigger but heavier/slower).
  */
 export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 	{
@@ -64,6 +64,16 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		description:
 			"Meta Llama 3.2 1B instruct — the latest small Llama (Llama 4 is large MoE-only). Low VRAM, safe default.",
 		tags: ["fast", "tiny", "instruct"],
+	},
+	{
+		name: "lfm2.5-thinking:1.2b",
+		displayName: "LFM2.5 Thinking 1.2B",
+		family: "lfm",
+		paramSize: "1.2B",
+		sizeBytes: Math.round(0.731 * GB),
+		description:
+			"Liquid AI LFM2.5 Thinking 1.2B. Compact hybrid reasoning model with a 125K context window for longer cleanup and rewrite tasks.",
+		tags: ["fast", "instruct"],
 	},
 	{
 		name: "llama3.2:3b",
@@ -152,8 +162,28 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		paramSize: "E2B",
 		sizeBytes: Math.round(7.2 * GB),
 		description:
-			"Google Gemma 4 (E2B, efficient MatFormer ≈ 2B active). The latest Gemma — strong multilingual quality; heavier download, best on a GPU.",
+			"Google Gemma 4 E2B, the efficient edge-size variant. Strong multilingual cleanup with the smallest Gemma 4 local footprint.",
 		tags: ["instruct"],
+	},
+	{
+		name: "gemma4:e4b",
+		displayName: "Gemma 4 E4B",
+		family: "gemma",
+		paramSize: "E4B",
+		sizeBytes: Math.round(9.6 * GB),
+		description:
+			"Google Gemma 4 E4B, the larger edge variant. Better quality than E2B when you have more RAM or GPU headroom.",
+		tags: ["instruct"],
+	},
+	{
+		name: "gemma4:12b",
+		displayName: "Gemma 4 12B",
+		family: "gemma",
+		paramSize: "12B",
+		sizeBytes: Math.round(7.6 * GB),
+		description:
+			"Google Gemma 4 12B, the full local workstation model. Highest-quality curated Gemma 4 choice with a 256K context window.",
+		tags: ["instruct", "recommended"],
 	},
 ];
 

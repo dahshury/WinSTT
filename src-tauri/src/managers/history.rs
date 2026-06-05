@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri_specta::Event;
 
-/// Database migrations for transcription history.
+use crate::winstt::settings_schema::RecordingRetention;
+
+/// Database migrations for transcription and transform history.
 /// Each migration is applied in order. The library tracks which migrations
 /// have been applied using SQLite's user_version pragma.
 ///
@@ -34,6 +36,17 @@ static MIGRATIONS: &[M] = &[
     // JSON telemetry of the LLM post-process pass — `{model, processingMs, tokens}`.
     // NULL when no LLM ran. Reshaped into the history footer's model/duration/speed chips.
     M::up("ALTER TABLE transcription_history ADD COLUMN llm_meta TEXT;"),
+    M::up(
+        "CREATE TABLE IF NOT EXISTS transform_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            before_text TEXT NOT NULL,
+            after_text TEXT NOT NULL,
+            source TEXT NOT NULL,
+            llm_meta TEXT
+        );",
+    ),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -72,6 +85,17 @@ pub struct HistoryEntry {
     /// JSON telemetry of the LLM pass (`{model, processingMs, tokens}`), or
     /// `None` when no LLM ran. Carried verbatim; parsed by the renderer-facing
     /// mapping in `winstt::commands::history`.
+    pub llm_meta: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransformHistoryDbEntry {
+    pub id: i64,
+    pub timestamp: i64,
+    pub title: String,
+    pub before_text: String,
+    pub after_text: String,
+    pub source: String,
     pub llm_meta: Option<String>,
 }
 
@@ -221,6 +245,20 @@ impl HistoryManager {
         })
     }
 
+    fn map_transform_history_entry(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<TransformHistoryDbEntry> {
+        Ok(TransformHistoryDbEntry {
+            id: row.get("id")?,
+            timestamp: row.get("timestamp")?,
+            title: row.get("title")?,
+            before_text: row.get("before_text")?,
+            after_text: row.get("after_text")?,
+            source: row.get("source")?,
+            llm_meta: row.get("llm_meta")?,
+        })
+    }
+
     pub fn recordings_dir(&self) -> &std::path::Path {
         &self.recordings_dir
     }
@@ -294,6 +332,53 @@ impl HistoryManager {
         Ok(entry)
     }
 
+    pub fn save_transform_entry(
+        &self,
+        before_text: String,
+        after_text: String,
+        source: String,
+        llm_meta: Option<String>,
+    ) -> Result<TransformHistoryDbEntry> {
+        let timestamp = Utc::now().timestamp();
+        let title = self.format_timestamp_title(timestamp);
+
+        let conn = self.get_connection()?;
+        conn.execute(
+            "INSERT INTO transform_history (
+                timestamp,
+                title,
+                before_text,
+                after_text,
+                source,
+                llm_meta
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                timestamp,
+                &title,
+                &before_text,
+                &after_text,
+                &source,
+                &llm_meta,
+            ],
+        )?;
+
+        let entry = TransformHistoryDbEntry {
+            id: conn.last_insert_rowid(),
+            timestamp,
+            title,
+            before_text,
+            after_text,
+            source,
+            llm_meta,
+        };
+
+        debug!("Saved transform history entry with id {}", entry.id);
+
+        self.cleanup_old_entries()?;
+
+        Ok(entry)
+    }
+
     /// Update an existing history entry with new transcription results (used by retry).
     pub fn update_transcription(
         &self,
@@ -346,21 +431,23 @@ impl HistoryManager {
     }
 
     pub fn cleanup_old_entries(&self) -> Result<()> {
-        let retention_period = crate::settings::get_recording_retention_period(&self.app_handle);
+        let settings = crate::winstt::commands::settings::read_settings_raw(&self.app_handle);
+        let retention_period = settings.general.recording_retention;
 
         match retention_period {
-            crate::settings::RecordingRetentionPeriod::Never => {
+            RecordingRetention::Never => {
                 // Don't delete anything
                 Ok(())
             }
-            crate::settings::RecordingRetentionPeriod::PreserveLimit => {
-                // Use the old count-based logic with history_limit
-                let limit = crate::settings::get_history_limit(&self.app_handle);
-                self.cleanup_by_count(limit)
+            RecordingRetention::Cap => {
+                let limit = clamp_history_limit(settings.general.history_max_entries);
+                self.cleanup_by_count(limit)?;
+                self.cleanup_transforms_by_count(limit)
             }
             _ => {
                 // Use time-based logic
-                self.cleanup_by_time(retention_period)
+                self.cleanup_by_time(retention_period)?;
+                self.cleanup_transforms_by_time(retention_period)
             }
         }
     }
@@ -424,23 +511,61 @@ impl HistoryManager {
         Ok(())
     }
 
-    fn cleanup_by_time(
-        &self,
-        retention_period: crate::settings::RecordingRetentionPeriod,
-    ) -> Result<()> {
+    fn delete_transform_entries_by_ids(&self, ids: &[i64]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.get_connection()?;
+        let mut deleted_count = 0;
+        for id in ids {
+            let deleted =
+                conn.execute("DELETE FROM transform_history WHERE id = ?1", params![id])?;
+            deleted_count += deleted;
+        }
+        Ok(deleted_count)
+    }
+
+    fn cleanup_transforms_by_count(&self, limit: usize) -> Result<()> {
+        let conn = self.get_connection()?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM transform_history ORDER BY timestamp DESC, id DESC")?;
+
+        let rows = stmt.query_map([], |row| row.get::<_, i64>("id"))?;
+
+        let mut ids: Vec<i64> = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+
+        if ids.len() > limit {
+            let ids_to_delete = &ids[limit..];
+            let deleted_count = self.delete_transform_entries_by_ids(ids_to_delete)?;
+
+            if deleted_count > 0 {
+                debug!(
+                    "Cleaned up {} old transform history entries by count",
+                    deleted_count
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_by_time(&self, retention_period: RecordingRetention) -> Result<()> {
         let conn = self.get_connection()?;
 
         // Calculate cutoff timestamp (current time minus retention period)
         let now = Utc::now().timestamp();
         let cutoff_timestamp = match retention_period {
-            crate::settings::RecordingRetentionPeriod::Days3 => now - (3 * 24 * 60 * 60), // 3 days in seconds
-            crate::settings::RecordingRetentionPeriod::Weeks2 => now - (2 * 7 * 24 * 60 * 60), // 2 weeks in seconds
-            crate::settings::RecordingRetentionPeriod::Months3 => now - (3 * 30 * 24 * 60 * 60), // 3 months in seconds (approximate)
+            RecordingRetention::Days3 => now - (3 * 24 * 60 * 60), // 3 days in seconds
+            RecordingRetention::Weeks2 => now - (2 * 7 * 24 * 60 * 60), // 2 weeks in seconds
+            RecordingRetention::Months3 => now - (3 * 30 * 24 * 60 * 60), // 3 months in seconds (approximate)
             // Non-time variants are pre-filtered by `cleanup_old_entries`; handle them
             // explicitly (instead of `_ => unreachable!()`) so a new retention variant
             // is a compile error here rather than a runtime panic.
-            crate::settings::RecordingRetentionPeriod::Never
-            | crate::settings::RecordingRetentionPeriod::PreserveLimit => return Ok(()),
+            RecordingRetention::Never | RecordingRetention::Cap => return Ok(()),
         };
 
         // Get all unsaved entries older than the cutoff timestamp
@@ -467,6 +592,49 @@ impl HistoryManager {
         }
 
         Ok(())
+    }
+
+    fn cleanup_transforms_by_time(&self, retention_period: RecordingRetention) -> Result<()> {
+        let now = Utc::now().timestamp();
+        let cutoff_timestamp = match retention_period {
+            RecordingRetention::Days3 => now - (3 * 24 * 60 * 60),
+            RecordingRetention::Weeks2 => now - (2 * 7 * 24 * 60 * 60),
+            RecordingRetention::Months3 => now - (3 * 30 * 24 * 60 * 60),
+            RecordingRetention::Never | RecordingRetention::Cap => return Ok(()),
+        };
+
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare("SELECT id FROM transform_history WHERE timestamp < ?1")?;
+        let rows = stmt.query_map(params![cutoff_timestamp], |row| row.get::<_, i64>("id"))?;
+
+        let mut ids_to_delete: Vec<i64> = Vec::new();
+        for row in rows {
+            ids_to_delete.push(row?);
+        }
+
+        let deleted_count = self.delete_transform_entries_by_ids(&ids_to_delete)?;
+
+        if deleted_count > 0 {
+            debug!(
+                "Cleaned up {} old transform history entries based on retention period",
+                deleted_count
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn get_transform_history_entries(&self) -> Result<Vec<TransformHistoryDbEntry>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, title, before_text, after_text, source, llm_meta
+             FROM transform_history
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], Self::map_transform_history_entry)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub async fn get_history_entries(
@@ -663,6 +831,15 @@ impl HistoryManager {
         Ok(())
     }
 
+    pub fn delete_transform_entry(&self, id: i64) -> Result<bool> {
+        let conn = self.get_connection()?;
+        let deleted = conn.execute("DELETE FROM transform_history WHERE id = ?1", params![id])?;
+        if deleted > 0 {
+            debug!("Deleted transform history entry with id: {}", id);
+        }
+        Ok(deleted > 0)
+    }
+
     fn format_timestamp_title(&self, timestamp: i64) -> String {
         if let Some(utc_datetime) = DateTime::from_timestamp(timestamp, 0) {
             // Convert UTC to local timezone
@@ -672,6 +849,10 @@ impl HistoryManager {
             format!("Recording {}", timestamp)
         }
     }
+}
+
+fn clamp_history_limit(limit: i64) -> usize {
+    limit.clamp(10, 10_000) as usize
 }
 
 #[cfg(test)]
@@ -759,5 +940,12 @@ mod tests {
 
         assert_eq!(entry.timestamp, 100);
         assert_eq!(entry.transcription_text, "completed");
+    }
+
+    #[test]
+    fn clamp_history_limit_matches_winstt_schema_bounds() {
+        assert_eq!(clamp_history_limit(1), 10);
+        assert_eq!(clamp_history_limit(1000), 1000);
+        assert_eq!(clamp_history_limit(50_000), 10_000);
     }
 }

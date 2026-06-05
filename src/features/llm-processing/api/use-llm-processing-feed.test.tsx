@@ -50,8 +50,10 @@ beforeEach(() => {
 	installNativeBridgeStub();
 	useLlmProcessingStore.setState({
 		isThinking: INITIAL_STATE.isThinking,
+		isTransforming: INITIAL_STATE.isTransforming,
 		thinkingStartedAt: INITIAL_STATE.thinkingStartedAt,
 		thinkingText: INITIAL_STATE.thinkingText,
+		transformStartedAt: INITIAL_STATE.transformStartedAt,
 	});
 });
 
@@ -59,18 +61,22 @@ afterEach(() => {
 	window.nativeBridge = originalNativeBridge;
 	useLlmProcessingStore.setState({
 		isThinking: INITIAL_STATE.isThinking,
+		isTransforming: INITIAL_STATE.isTransforming,
 		thinkingStartedAt: INITIAL_STATE.thinkingStartedAt,
 		thinkingText: INITIAL_STATE.thinkingText,
+		transformStartedAt: INITIAL_STATE.transformStartedAt,
 	});
 });
 
 describe("useLlmProcessingFeed", () => {
-	test("subscribes to all four LLM/recording channels on mount", () => {
+	test("subscribes to LLM, transform, and recording channels on mount", () => {
 		renderHook(() => useLlmProcessingFeed());
 		expect(listeners.has(IPC.STT_RECORDING_START)).toBe(true);
 		expect(listeners.has(IPC.LLM_PROCESSING_START)).toBe(true);
 		expect(listeners.has(IPC.LLM_PROCESSING_END)).toBe(true);
 		expect(listeners.has(IPC.LLM_REASONING_DELTA)).toBe(true);
+		expect(listeners.has(IPC.TRANSFORMS_PROCESSING_START)).toBe(true);
+		expect(listeners.has(IPC.TRANSFORMS_PROCESSING_END)).toBe(true);
 	});
 
 	test("processing-start clears stale thinking text and flips isThinking on", () => {
@@ -113,28 +119,76 @@ describe("useLlmProcessingFeed", () => {
 		expect(state.thinkingStartedAt).toBeNull();
 	});
 
+	test("transform-processing-start clears stale thinking text and flips transform state on", () => {
+		useLlmProcessingStore.setState({
+			thinkingText: "stale transform reasoning",
+			isThinking: true,
+			isTransforming: false,
+		});
+		renderHook(() => useLlmProcessingFeed());
+		fire(IPC.TRANSFORMS_PROCESSING_START);
+		const state = useLlmProcessingStore.getState();
+		expect(state.isThinking).toBe(false);
+		expect(state.isTransforming).toBe(true);
+		expect(state.transformStartedAt).not.toBeNull();
+		expect(state.thinkingText).toBe("");
+	});
+
+	test("reasoning-delta accumulates while transform processing is active", () => {
+		renderHook(() => useLlmProcessingFeed());
+		fire(IPC.TRANSFORMS_PROCESSING_START);
+		fire(IPC.LLM_REASONING_DELTA, { delta: "Re" });
+		fire(IPC.LLM_REASONING_DELTA, { delta: "writing" });
+		expect(useLlmProcessingStore.getState().thinkingText).toBe("Rewriting");
+	});
+
+	test("transform-processing-end flips transform state off and clears thinking", () => {
+		renderHook(() => useLlmProcessingFeed());
+		fire(IPC.TRANSFORMS_PROCESSING_START);
+		useLlmProcessingStore.setState({ isThinking: true, thinkingStartedAt: 50 });
+		fire(IPC.LLM_REASONING_DELTA, { delta: "thinking..." });
+		expect(useLlmProcessingStore.getState().isTransforming).toBe(true);
+
+		fire(IPC.TRANSFORMS_PROCESSING_END);
+		const state = useLlmProcessingStore.getState();
+		expect(state.isThinking).toBe(false);
+		expect(state.thinkingStartedAt).toBeNull();
+		expect(state.isTransforming).toBe(false);
+		expect(state.transformStartedAt).toBeNull();
+		expect(state.thinkingText).toBe("");
+	});
+
 	test("recording-start resets a leaked thinking state from a prior utterance", () => {
 		// Simulate a stuck thinking state (overlay never got its END event).
-		useLlmProcessingStore.setState({ isThinking: true, thinkingText: "leaked" });
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			isTransforming: true,
+			thinkingText: "leaked",
+			transformStartedAt: 100,
+		});
 		renderHook(() => useLlmProcessingFeed());
 		fire(IPC.STT_RECORDING_START);
 		const state = useLlmProcessingStore.getState();
 		expect(state.isThinking).toBe(false);
+		expect(state.isTransforming).toBe(false);
+		expect(state.transformStartedAt).toBeNull();
 		expect(state.thinkingText).toBe("");
 	});
 
 	test("unsubscribes every channel on unmount (no listener leak)", () => {
 		const { unmount } = renderHook(() => useLlmProcessingFeed());
-		expect(listeners.size).toBe(4);
+		expect(listeners.size).toBe(6);
 		unmount();
-		// All four unsubscribers ran...
-		expect(unsubscribeCalls).toHaveLength(4);
+		// All six unsubscribers ran...
+		expect(unsubscribeCalls).toHaveLength(6);
 		expect(new Set(unsubscribeCalls)).toEqual(
 			new Set([
 				IPC.STT_RECORDING_START,
 				IPC.LLM_PROCESSING_START,
 				IPC.LLM_PROCESSING_END,
 				IPC.LLM_REASONING_DELTA,
+				IPC.TRANSFORMS_PROCESSING_START,
+				IPC.TRANSFORMS_PROCESSING_END,
 			])
 		);
 		// ...and the channel→callback map is now empty (no dangling refs).

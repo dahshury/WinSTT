@@ -28,6 +28,7 @@ function surfaces(over: Partial<SurfaceSnapshot> = {}): SurfaceSnapshot {
 }
 
 function model(over: Partial<ModelInfo> & Pick<ModelInfo, "id">): ModelInfo {
+	const previewCapable = over.previewCapable ?? over.supportsRealtime ?? false;
 	return {
 		displayName: over.displayName ?? over.id,
 		backend: over.backend ?? "onnx_asr",
@@ -35,7 +36,10 @@ function model(over: Partial<ModelInfo> & Pick<ModelInfo, "id">): ModelInfo {
 		languages: [],
 		supportsLanguageDetection: false,
 		sizeLabel: "",
-		supportsRealtime: over.supportsRealtime ?? false,
+		previewCapable,
+		nativeStreaming: over.nativeStreaming ?? false,
+		finalReuseSafe: over.finalReuseSafe ?? previewCapable,
+		supportsRealtime: previewCapable,
 		onnxModelName: null,
 		description: "",
 		availableQuantizations: [],

@@ -11,12 +11,9 @@
 //
 //   * the capture lifecycle (start/stop, idempotent, serialized — concurrent WASAPI start/stop
 //     crash the backend),
-//   * a consumer thread that VAD-gates the f32 stream (Silero), accumulates speech, and on a
-//     sustained-silence endpoint (`POST_SPEECH_SILENCE_DURATION` = 2.0 s, the longer threshold
-//     the Python uses for continuous loopback audio) flushes the buffered utterance to the
-//     shared `TranscriptionManager`, emits the `stt:full-sentence` event, runs diarization, and
-//     pastes the text — exactly the path mic dictation takes, but driven by VAD endpoints instead
-//     of a hotkey.
+//   * a consumer thread that VAD-gates the f32 stream (Silero), keeps audio bounded with rolling
+//     commits plus a sustained-silence tail flush, and sends final chunks to the shared
+//     `TranscriptionManager` worker.
 //
 // Why the manager owns the consumer (not the recorder): cpal's `AudioRecorder` is mic-only and
 // hotkey-driven; loopback is a second, continuous producer with its own VAD endpoint loop. Per
@@ -29,9 +26,9 @@
 // `start_loopback`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -42,14 +39,24 @@ use crate::audio_toolkit::vad::{
 use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::commands::listen_events::{emit_speaker_segments, EmitSpeakerSegment};
+use crate::winstt::commands::settings::read_settings_raw;
 use crate::winstt::loopback::LoopbackCapture;
 use crate::winstt::managers::DiarizationManager;
 
-/// Silence (seconds) after speech that closes a loopback utterance. The Python
-/// (`loopback.py` / `_start_locked`) raises `post_speech_silence_duration` to 2.0
-/// for loopback because system audio is continuous — a shorter window would chop
-/// a sentence mid-stream. Bit-faithful to the server.
-const POST_SPEECH_SILENCE_DURATION: f64 = 2.0;
+/// Silence (seconds) after speech that closes the current loopback tail. Rolling
+/// commits are the primary finalization path for continuous listen-mode audio.
+const POST_SPEECH_SILENCE_DURATION: f64 = 4.0;
+
+/// Maximum speech window sent to one final transcription job. This keeps long movies / lectures
+/// from becoming one unbounded decode while still giving the model sentence-level context.
+const LISTEN_STREAM_COMMIT_SECONDS: f64 = 20.0;
+
+/// Hard cap for the in-memory consumer buffer when transcription falls behind.
+const LISTEN_MAX_BUFFER_SECONDS: f64 = 60.0;
+
+/// Bounded final-transcription backlog. If this fills, capture stays responsive and we log/drop
+/// excess buffered audio instead of hanging the app.
+const LISTEN_COMMIT_QUEUE_CAPACITY: usize = 2;
 
 // VAD sensitivity (`VAD_SPEECH_THRESHOLD`) and the 30 ms frame size
 // (`VAD_FRAME_SAMPLES`) are shared with the mic path from `audio_toolkit::vad` so
@@ -200,11 +207,9 @@ impl Drop for LoopbackManager {
     }
 }
 
-/// The Listen-mode consumer: VAD-gate the 16 kHz mono f32 stream, accumulate
-/// speech, and on a sustained-silence endpoint flush the utterance to the shared
-/// transcriber, emit the sentence + diarization, and paste. Mirrors the Python
-/// `_capture_loop` + `feed_audio`'s VAD endpointing, but with the longer
-/// `POST_SPEECH_SILENCE_DURATION` the server uses for continuous loopback audio.
+/// The Listen-mode consumer: VAD-gate the 16 kHz mono f32 stream, keep capture responsive, and
+/// queue bounded chunks for final transcription. Silence only flushes the current tail; continuous
+/// speech is finalized by rolling commits.
 fn consumer_loop(
     app: AppHandle,
     rx: Receiver<Vec<f32>>,
@@ -213,6 +218,21 @@ fn consumer_loop(
 ) {
     // How many consecutive silence frames close an utterance.
     let silence_frames_to_end = ((POST_SPEECH_SILENCE_DURATION * 1000.0) / 30.0).round() as usize;
+    let commit_samples = samples_for_seconds(LISTEN_STREAM_COMMIT_SECONDS);
+    let max_buffer_samples = samples_for_seconds(LISTEN_MAX_BUFFER_SECONDS);
+
+    let (commit_tx, commit_rx) = mpsc::sync_channel::<Vec<f32>>(LISTEN_COMMIT_QUEUE_CAPACITY);
+    let worker_app = app.clone();
+    let worker = match std::thread::Builder::new()
+        .name("loopback-transcriber".into())
+        .spawn(move || transcription_worker_loop(worker_app, commit_rx))
+    {
+        Ok(handle) => handle,
+        Err(e) => {
+            log::error!("[loopback] failed to spawn transcription worker: {e}");
+            return;
+        }
+    };
 
     let mut speech: Vec<f32> = Vec::new();
     // Re-frame buffer: the capture emits 30 ms frames, but guard against a
@@ -220,6 +240,7 @@ fn consumer_loop(
     let mut frame_acc: Vec<f32> = Vec::new();
     let mut in_speech = false;
     let mut silence_frames = 0usize;
+    let mut last_preview = Instant::now();
 
     loop {
         if stop_flag.load(Ordering::Acquire) {
@@ -261,29 +282,150 @@ fn consumer_loop(
                 speech.extend_from_slice(&frame);
                 silence_frames += 1;
                 if silence_frames >= silence_frames_to_end {
-                    flush_utterance(&app, &mut speech);
-                    in_speech = false;
-                    silence_frames = 0;
+                    if queue_commit(&commit_tx, &mut speech, None) {
+                        clear_realtime_preview(&app);
+                        in_speech = false;
+                        silence_frames = 0;
+                    }
                 }
             }
+            if speech.len() >= commit_samples {
+                if queue_commit(&commit_tx, &mut speech, Some(commit_samples)) {
+                    clear_realtime_preview(&app);
+                    last_preview = Instant::now();
+                }
+            }
+            enforce_buffer_cap(&mut speech, max_buffer_samples);
             // else: not in speech and no voice → drop (idle system audio).
         }
+
+        publish_realtime_preview_if_due(&app, &speech, &mut last_preview);
     }
 
     // Session ending: flush whatever speech remains so the last sentence isn't
     // lost when the user stops Listen mode mid-utterance.
-    flush_utterance(&app, &mut speech);
+    send_blocking_commit(&commit_tx, &mut speech);
+    drop(commit_tx);
+    let _ = worker.join();
 }
 
-/// Transcribe a completed speech buffer and route the result the same way mic
-/// dictation does: emit `stt:full-sentence`, run diarization, paste. Clears
-/// `speech` afterward. No-op for sub-threshold buffers (a stray chime).
-fn flush_utterance(app: &AppHandle, speech: &mut Vec<f32>) {
+fn samples_for_seconds(seconds: f64) -> usize {
+    ((seconds * WHISPER_SAMPLE_RATE as f64).round() as usize).max(1)
+}
+
+fn take_commit(speech: &mut Vec<f32>, max_take: Option<usize>) -> Option<Vec<f32>> {
     if speech.len() < MIN_SPEECH_SAMPLES {
-        speech.clear();
+        if max_take.is_none() {
+            speech.clear();
+        }
+        return None;
+    }
+
+    let take = max_take.unwrap_or(speech.len()).min(speech.len());
+    if take < MIN_SPEECH_SAMPLES {
+        return None;
+    }
+    Some(speech.drain(..take).collect())
+}
+
+fn queue_commit(tx: &SyncSender<Vec<f32>>, speech: &mut Vec<f32>, max_take: Option<usize>) -> bool {
+    let Some(audio) = take_commit(speech, max_take) else {
+        return true;
+    };
+
+    match tx.try_send(audio) {
+        Ok(()) => true,
+        Err(TrySendError::Full(audio)) => {
+            let mut restored = audio;
+            restored.extend_from_slice(speech);
+            *speech = restored;
+            false
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            speech.clear();
+            false
+        }
+    }
+}
+
+fn send_blocking_commit(tx: &SyncSender<Vec<f32>>, speech: &mut Vec<f32>) {
+    let Some(audio) = take_commit(speech, None) else {
+        return;
+    };
+    let _ = tx.send(audio);
+}
+
+fn enforce_buffer_cap(speech: &mut Vec<f32>, max_samples: usize) {
+    if speech.len() <= max_samples {
         return;
     }
-    let audio = std::mem::take(speech);
+    let drop = speech.len() - max_samples;
+    speech.drain(..drop);
+    log::warn!(
+        "[loopback] transcription is falling behind; dropped {:.1}s of buffered audio",
+        drop as f64 / WHISPER_SAMPLE_RATE as f64
+    );
+}
+
+fn clear_realtime_preview(app: &AppHandle) {
+    SttEvents::realtime_stabilized(app, "");
+    SttEvents::realtime_text(app, "");
+}
+
+fn listen_realtime_interval(app: &AppHandle) -> Duration {
+    let settings = read_settings_raw(app);
+    Duration::from_secs_f64(listen_realtime_interval_seconds(
+        settings.quality.realtime_processing_pause,
+    ))
+}
+
+fn listen_realtime_interval_seconds(configured: f64) -> f64 {
+    configured.max(0.01)
+}
+
+fn loopback_language(app: &AppHandle) -> Option<String> {
+    let settings = read_settings_raw(app);
+    let language = settings.model.language.trim();
+    if language.is_empty() || language == "auto" {
+        None
+    } else {
+        Some(language.to_string())
+    }
+}
+
+fn publish_realtime_preview_if_due(app: &AppHandle, speech: &[f32], last_preview: &mut Instant) {
+    if speech.len() < MIN_SPEECH_SAMPLES || last_preview.elapsed() < listen_realtime_interval(app) {
+        return;
+    }
+    *last_preview = Instant::now();
+
+    let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() else {
+        return;
+    };
+    let language = loopback_language(app);
+    let Some(text) = tm.transcribe_realtime(speech, language.as_deref()) else {
+        return;
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    SttEvents::realtime_stabilized(app, trimmed);
+    SttEvents::realtime_text(app, trimmed);
+}
+
+fn transcription_worker_loop(app: AppHandle, rx: Receiver<Vec<f32>>) {
+    while let Ok(audio) = rx.recv() {
+        transcribe_and_emit(&app, audio);
+    }
+}
+
+/// Transcribe a completed speech buffer and route the result the same way mic dictation does:
+/// emit `stt:full-sentence`, run diarization, paste. No-op for sub-threshold buffers.
+fn transcribe_and_emit(app: &AppHandle, audio: Vec<f32>) {
+    if audio.len() < MIN_SPEECH_SAMPLES {
+        return;
+    }
 
     let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() else {
         log::warn!("[loopback] TranscriptionManager not available; dropping utterance");
@@ -354,10 +496,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn silence_frames_threshold_matches_two_seconds() {
-        // 2.0 s / 30 ms = ~67 frames.
+    fn silence_frames_threshold_matches_four_seconds() {
+        // 4.0 s / 30 ms = ~133 frames.
         let frames = ((POST_SPEECH_SILENCE_DURATION * 1000.0) / 30.0).round() as usize;
-        assert_eq!(frames, 67);
+        assert_eq!(frames, 133);
     }
 
     #[test]
@@ -368,5 +510,22 @@ mod tests {
     #[test]
     fn min_speech_is_150ms() {
         assert_eq!(MIN_SPEECH_SAMPLES, 2400);
+    }
+
+    #[test]
+    fn listen_commit_window_is_twenty_seconds() {
+        assert_eq!(samples_for_seconds(LISTEN_STREAM_COMMIT_SECONDS), 320_000);
+    }
+
+    #[test]
+    fn listen_buffer_cap_is_sixty_seconds() {
+        assert_eq!(samples_for_seconds(LISTEN_MAX_BUFFER_SECONDS), 960_000);
+    }
+
+    #[test]
+    fn listen_realtime_interval_honors_configured_pause() {
+        assert_eq!(listen_realtime_interval_seconds(0.02), 0.02);
+        assert_eq!(listen_realtime_interval_seconds(0.5), 0.5);
+        assert_eq!(listen_realtime_interval_seconds(0.0), 0.01);
     }
 }

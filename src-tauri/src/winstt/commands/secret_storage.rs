@@ -22,17 +22,21 @@ pub fn is_encrypted(value: &str) -> bool {
 /// A value already wrapped is returned unchanged so re-saving the settings tree
 /// does not double-seal an encrypted value.
 pub fn encrypt_secret(plain: &str) -> String {
+    try_encrypt_secret(plain).unwrap_or_else(|err| panic!("{err}"))
+}
+
+pub fn try_encrypt_secret(plain: &str) -> Result<String, String> {
     if plain.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     if is_encrypted(plain) {
-        return plain.to_string();
+        return Ok(plain.to_string());
     }
 
-    let sealed = seal_bytes(plain.as_bytes()).unwrap_or_else(|err| {
-        panic!("secret storage: failed to encrypt secret with OS-protected storage: {err}")
-    });
-    format!("{ENC_PREFIX}{}", to_hex(&sealed))
+    let sealed = seal_bytes(plain.as_bytes()).map_err(|err| {
+        format!("secret storage: failed to encrypt secret with OS-protected storage: {err}")
+    })?;
+    Ok(format!("{ENC_PREFIX}{}", to_hex(&sealed)))
 }
 
 /// Open an at-rest value to plaintext.
@@ -42,21 +46,25 @@ pub fn encrypt_secret(plain: &str) -> String {
 /// empty string here would hide data loss and can trick callers into persisting a
 /// cleared API key.
 pub fn decrypt_secret(stored: &str) -> String {
+    try_decrypt_secret(stored).unwrap_or_else(|err| panic!("{err}"))
+}
+
+pub fn try_decrypt_secret(stored: &str) -> Result<String, String> {
     if stored.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     if !is_encrypted(stored) {
-        return stored.to_string();
+        return Ok(stored.to_string());
     }
 
     let hex = &stored[ENC_PREFIX.len()..];
     let bytes = from_hex(hex)
-        .unwrap_or_else(|| panic!("secret storage: malformed encrypted secret envelope"));
-    let plain = open_bytes(&bytes).unwrap_or_else(|err| {
-        panic!("secret storage: failed to decrypt secret with OS-protected storage: {err}")
-    });
+        .ok_or_else(|| "secret storage: malformed encrypted secret envelope".to_string())?;
+    let plain = open_bytes(&bytes).map_err(|err| {
+        format!("secret storage: failed to decrypt secret with OS-protected storage: {err}")
+    })?;
     String::from_utf8(plain)
-        .unwrap_or_else(|_| panic!("secret storage: decrypted secret is not valid UTF-8"))
+        .map_err(|_| "secret storage: decrypted secret is not valid UTF-8".to_string())
 }
 
 // -- OS-protected storage ------------------------------------------------------
@@ -64,7 +72,6 @@ pub fn decrypt_secret(stored: &str) -> String {
 #[cfg(target_os = "windows")]
 fn seal_bytes(plain: &[u8]) -> Result<Vec<u8>, String> {
     use windows::core::w;
-    use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
         CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
@@ -78,6 +85,9 @@ fn seal_bytes(plain: &[u8]) -> Result<Vec<u8>, String> {
     };
     let mut output = CRYPT_INTEGER_BLOB::default();
 
+    // SAFETY: `input` points at `plain`, which outlives the call. On success,
+    // DPAPI initializes `output` with a LocalAlloc-owned buffer; `DpapiBlob`
+    // takes ownership immediately and frees it in Drop.
     unsafe {
         CryptProtectData(
             &input,
@@ -90,15 +100,13 @@ fn seal_bytes(plain: &[u8]) -> Result<Vec<u8>, String> {
         )
         .map_err(|err| format!("CryptProtectData failed: {err}"))?;
 
-        let sealed = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
-        let _ = LocalFree(Some(HLOCAL(output.pbData.cast())));
-        Ok(sealed)
+        let sealed = DpapiBlob::from_crypt_blob(output, "CryptProtectData")?;
+        Ok(sealed.to_vec())
     }
 }
 
 #[cfg(target_os = "windows")]
 fn open_bytes(sealed: &[u8]) -> Result<Vec<u8>, String> {
-    use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
         CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
     };
@@ -112,6 +120,9 @@ fn open_bytes(sealed: &[u8]) -> Result<Vec<u8>, String> {
     };
     let mut output = CRYPT_INTEGER_BLOB::default();
 
+    // SAFETY: `input` points at `sealed`, which outlives the call. On success,
+    // DPAPI initializes `output` with a LocalAlloc-owned buffer; `DpapiBlob`
+    // takes ownership immediately and frees it in Drop.
     unsafe {
         CryptUnprotectData(
             &input,
@@ -124,9 +135,57 @@ fn open_bytes(sealed: &[u8]) -> Result<Vec<u8>, String> {
         )
         .map_err(|err| format!("CryptUnprotectData failed: {err}"))?;
 
-        let plain = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
-        let _ = LocalFree(Some(HLOCAL(output.pbData.cast())));
-        Ok(plain)
+        let plain = DpapiBlob::from_crypt_blob(output, "CryptUnprotectData")?;
+        Ok(plain.to_vec())
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct DpapiBlob {
+    ptr: *mut u8,
+    len: usize,
+}
+
+#[cfg(target_os = "windows")]
+impl DpapiBlob {
+    fn from_crypt_blob(
+        blob: windows::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB,
+        source: &str,
+    ) -> Result<Self, String> {
+        let len = usize::try_from(blob.cbData)
+            .map_err(|_| format!("{source} returned an oversized output blob"))?;
+        if len > 0 && blob.pbData.is_null() {
+            return Err(format!("{source} returned a null output buffer"));
+        }
+        Ok(Self {
+            ptr: blob.pbData,
+            len,
+        })
+    }
+
+    fn to_vec(&self) -> Vec<u8> {
+        if self.len == 0 {
+            return Vec::new();
+        }
+        // SAFETY: `from_crypt_blob` rejects null non-empty buffers and DPAPI
+        // owns `ptr` until this guard is dropped.
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len).to_vec() }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for DpapiBlob {
+    fn drop(&mut self) {
+        if self.ptr.is_null() {
+            return;
+        }
+        // SAFETY: DPAPI allocates output buffers with LocalAlloc; LocalFree is
+        // the documented deallocator and is called exactly once by this guard.
+        unsafe {
+            let _ = windows::Win32::Foundation::LocalFree(Some(
+                windows::Win32::Foundation::HLOCAL(self.ptr.cast()),
+            ));
+        }
     }
 }
 
@@ -211,15 +270,19 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "secret storage: malformed encrypted secret envelope")]
     fn corrupt_envelope_does_not_decrypt_to_empty() {
-        let _ = decrypt_secret("enc:v1:not-hex-!!!");
+        assert_eq!(
+            try_decrypt_secret("enc:v1:not-hex-!!!").unwrap_err(),
+            "secret storage: malformed encrypted secret envelope"
+        );
     }
 
     #[test]
-    #[should_panic(expected = "secret storage: malformed encrypted secret envelope")]
     fn odd_length_envelope_does_not_decrypt_to_empty() {
-        let _ = decrypt_secret("enc:v1:abc");
+        assert_eq!(
+            try_decrypt_secret("enc:v1:abc").unwrap_err(),
+            "secret storage: malformed encrypted secret envelope"
+        );
     }
 
     #[test]

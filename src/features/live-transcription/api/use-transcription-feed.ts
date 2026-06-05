@@ -6,9 +6,9 @@ import {
 	onNoAudioDetected,
 	onRealtimeText,
 	onRecordingStart,
-	onRecordingStop,
 	onSpeakerSegments,
 	onSttSessionAborted,
+	onTranscriptionStart,
 	onTranscriptionFailed,
 } from "@/shared/api/ipc-client";
 
@@ -18,6 +18,7 @@ export function useTranscriptionFeed(): void {
 	const attachSpeakerSegments = useTranscriptionStore((s) => s.attachSpeakerSegments);
 	const setRealtimeText = useTranscriptionStore((s) => s.setRealtimeText);
 	const setRecordingActive = useTranscriptionStore((s) => s.setRecordingActive);
+	const setTranscribing = useTranscriptionStore((s) => s.setTranscribing);
 	const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
 	const clearEphemeral = useTranscriptionStore((s) => s.clearEphemeral);
 
@@ -29,40 +30,31 @@ export function useTranscriptionFeed(): void {
 		const unsubStart = onRecordingStart(() => {
 			setRealtimeText("");
 			clearEphemeral();
+			setTranscribing(false);
 			setRecordingActive(true);
 		});
 
-		// Pill = the RECORDING indicator: hide it the instant the PTT key is released
-		// (recording_stop), like Handy — NOT keep it up through the whole transcribe.
-		// The pill's mount gate is `isRecordingActive || isThinking`, so when an Ollama/LLM
-		// post-processor is connected the `isThinking` branch keeps it visible for the
-		// reasoning phase; otherwise it vanishes immediately on release. The final text
-		// lands via full_sentence (pasted), not in the pill.
-		//
-		// Also wipe the realtime/ephemeral preview here so it can't survive into the next
-		// PTT session. The overlay is a persistent window (hidden, not destroyed), so its
-		// store state lives across sessions; clearing on release enforces "the pill never
-		// carries the previous transcription" at the consumer, independent of the backend's
-		// per-recording reset. Invisible to the user — the pill is hidden the same tick
-		// (and the live caption is gated on `isRecordingActive`, which just went false).
-		const unsubStop = onRecordingStop(() => {
-			setRecordingActive(false);
-			setRealtimeText("");
-			clearEphemeral();
-		});
-
-		const unsubRealtime = onRealtimeText((text) => {
+		// `recording_stop` only snaps the visualizer level to zero. Keep the
+		// pill armed until a terminal event so the floating-bottom close runs
+		// once instead of closing on key release and again after transcription.
+		const unsubRealtime = onRealtimeText(({ text }) => {
 			setRealtimeText(text);
 		});
 
+		const unsubTranscriptionStart = onTranscriptionStart(() => {
+			setTranscribing(true);
+		});
+
 		const unsubFinal = onFullSentence((text) => {
-			addFinalSentence(text);
 			setRecordingActive(false);
+			setTranscribing(false);
+			addFinalSentence(text);
 		});
 
 		const unsubNoAudio = onNoAudioDetected(() => {
 			showEphemeral(t("noAudioDetected"));
 			setRecordingActive(false);
+			setTranscribing(false);
 		});
 
 		// Genuine backend transcriber error — report it honestly in the same
@@ -70,6 +62,7 @@ export function useTranscriptionFeed(): void {
 		const unsubTranscriptionFailed = onTranscriptionFailed(() => {
 			showEphemeral(t("transcriptionFailed"));
 			setRecordingActive(false);
+			setTranscribing(false);
 		});
 
 		// User-initiated cancel. The relay's session-aborted gate drops the
@@ -82,9 +75,10 @@ export function useTranscriptionFeed(): void {
 		// as a terminal event so the renderer state matches the server's
 		// post-abort INACTIVE state.
 		const unsubAborted = onSttSessionAborted(() => {
+			setRecordingActive(false);
+			setTranscribing(false);
 			setRealtimeText("");
 			clearEphemeral();
-			setRecordingActive(false);
 		});
 
 		// Diarization arrives a beat after fullSentence — the store attaches
@@ -95,8 +89,8 @@ export function useTranscriptionFeed(): void {
 
 		return () => {
 			unsubStart();
-			unsubStop();
 			unsubRealtime();
+			unsubTranscriptionStart();
 			unsubFinal();
 			unsubNoAudio();
 			unsubTranscriptionFailed();
@@ -108,6 +102,7 @@ export function useTranscriptionFeed(): void {
 		attachSpeakerSegments,
 		setRealtimeText,
 		setRecordingActive,
+		setTranscribing,
 		showEphemeral,
 		clearEphemeral,
 		t,

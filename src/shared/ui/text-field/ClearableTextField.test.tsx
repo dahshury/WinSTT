@@ -28,7 +28,7 @@ describe("ClearableTextField", () => {
 		expect(screen.getByRole("button", { name: "Clear search" })).toBeDefined();
 	});
 
-	test("clears through the dissolve wrapper", () => {
+	test("clears immediately without animation layers", () => {
 		const onValueChange = mock((_next: string) => undefined);
 		const { container } = render(
 			<ClearableTextField
@@ -39,7 +39,8 @@ describe("ClearableTextField", () => {
 			/>
 		);
 
-		expect(container.querySelector(".t-clear")?.className).toContain("has-value");
+		expect(container.querySelector(".t-clear-mirror")).toBeNull();
+		expect(container.querySelector(".t-clear-glow")).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
 		expect(onValueChange).toHaveBeenCalledWith("");
 	});

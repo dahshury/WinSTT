@@ -38,7 +38,7 @@ Every model is loaded as ONNX through the engine below — WinSTT runs no PyTorc
 ## Text-to-speech
 
 - **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** — the bundled ONNX TTS voice model. Apache 2.0.
-- **[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)** — torch-free Python wrapper. MIT.
+- **[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)** — reference implementation that helped validate the ONNX voice model. MIT.
 
 ## Inference & audio runtime
 
@@ -46,11 +46,11 @@ Every model is loaded as ONNX through the engine below — WinSTT runs no PyTorc
 - **[DirectML](https://github.com/microsoft/DirectML)** — the execution provider that makes the default GPU build vendor-agnostic (AMD / Intel / NVIDIA via DirectX 12). MIT.
 - **[OpenVINO](https://github.com/openvinotoolkit/openvino)** — the EP for the Intel-tuned build (ARC dGPU / Iris Xe). Apache 2.0.
 - **[PortAudio](http://www.portaudio.com/)** — cross-platform audio I/O. MIT-style.
-- **[onnx-asr](https://github.com/istupakov/onnx-asr)** — the ASR abstraction layer. WinSTT ships a [pinned fork](https://github.com/dahshury/onnx-asr) adding the Moonshine / Cohere tokenizers and the Lite-Whisper FP16 patch. MIT.
+- **[onnx-asr](https://github.com/istupakov/onnx-asr)** — reference ASR implementation used by the original Electron app and retained for parity benchmarking. MIT.
 
 ## Frontend & desktop
 
-- **[Electron](https://www.electronjs.org/)** — desktop runtime. MIT.
+- **[Tauri](https://tauri.app/)** — desktop runtime and WebView shell. MIT / Apache 2.0.
 - **[Vite](https://vitejs.dev/)** — renderer build tool. MIT.
 - **[React](https://react.dev/)** + **[React Compiler](https://react.dev/learn/react-compiler)** — UI library + Babel plugin that frees the renderer from `useMemo` / `useCallback`. MIT.
 - **[Base UI](https://base-ui.com/)** — accessible unstyled component primitives. MIT.
@@ -61,16 +61,11 @@ Every model is loaded as ONNX through the engine below — WinSTT runs no PyTorc
 
 ## Backend & build tooling
 
-- **[uv](https://docs.astral.sh/uv/)** (Astral) — Python toolchain manager. MIT / Apache 2.0.
-- **[ruff](https://docs.astral.sh/ruff/)** (Astral) — Python linter and formatter. MIT.
-- **[mypy](https://github.com/python/mypy)** — strict type checker. MIT.
-- **[pytest](https://docs.pytest.org/)** — server test harness. MIT.
-- **[Pydantic](https://docs.pydantic.dev/)** — config schemas. MIT.
-- **[huggingface_hub](https://github.com/huggingface/huggingface_hub)** — model download / cache layer. Apache 2.0.
+- **[Rust](https://www.rust-lang.org/)** — native backend language and toolchain. MIT / Apache 2.0.
+- **[Cargo](https://doc.rust-lang.org/cargo/)** — Rust package manager and build runner. MIT / Apache 2.0.
+- **[hf-hub](https://github.com/huggingface/hf-hub)** — Hugging Face model download / cache layer. MIT / Apache 2.0.
 - **[Bun](https://bun.sh/)** — JavaScript runtime + package manager. MIT.
-- **[Biome](https://biomejs.dev/)** + **[ultracite](https://github.com/triglavia/ultracite)** — TypeScript linter / formatter. MIT.
-- **[electron-builder](https://www.electron.build/)** — packaging. MIT.
-- **[PyInstaller](https://pyinstaller.org/)** — Python → exe. GPL with linking exception.
+- **[ESLint](https://eslint.org/)** + **[typescript-eslint](https://typescript-eslint.io/)** — TypeScript linting. MIT.
 - **[Sentry](https://sentry.io/)** — opt-out crash reporting. BSL.
 
 ## Documentation
@@ -80,7 +75,7 @@ Every model is loaded as ONNX through the engine below — WinSTT runs no PyTorc
 ## Inspiration & adjacent projects
 
 - **[Handy](https://github.com/cjpais/Handy)** by CJ Pais — a Tauri-based local STT app whose docs structure and several settings (mic-lifecycle, paste pipeline) shaped these pages. MIT.
-- **[RealtimeSTT](https://github.com/KoljaB/RealtimeSTT)** — the upstream Python monolith WinSTT's hexagonal refactor was derived from. Kept in-tree under `examples/RealtimeSTT/` for behavioral parity. MIT.
+- **[RealtimeSTT](https://github.com/KoljaB/RealtimeSTT)** — one of the upstream projects that informed the original WinSTT reference app. MIT.
 - **[Whisper.cpp](https://github.com/ggerganov/whisper.cpp)** — the project that proved Whisper could run efficiently on CPU. MIT.
 
 ## And a personal thanks

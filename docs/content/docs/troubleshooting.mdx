@@ -5,10 +5,10 @@ description: Symptom-to-fix table for the issues people actually hit — blank w
 
 Match your symptom in the table below, then jump to the section for the full fix. Almost every reported issue resolves here; when one doesn't, [Debug Mode](/docs/debug-mode) gathers the logs you'll attach to a bug report.
 
-<Screenshot src="tray-menu" alt="The WinSTT tray menu with Restart STT server, Open settings, and Quit entries." label="Tray menu" caption="Right-click the tray icon for the fastest recovery actions — Restart STT server clears most stuck states." />
+<Screenshot src="tray-menu" alt="The WinSTT tray menu with settings, diagnostics, and Quit entries." label="Tray menu" caption="Right-click the tray icon for quick access to settings, logs, diagnostics, and Quit." />
 
 <Callout type="info" title="Attach a diagnostic bundle to every report">
-  **Settings → Advanced → Save Diagnostic Bundle…** writes one zip with `debug.log`, `stt-server.log`, GPU info, and a redacted settings file. It shortcuts at least three rounds of back-and-forth — see [Debug Mode](/docs/debug-mode).
+  **Settings → Advanced → Save Diagnostic Bundle…** writes one zip with the available app logs, system info, and redacted diagnostics. It shortcuts at least three rounds of back-and-forth — see [Debug Mode](/docs/debug-mode).
 </Callout>
 
 ## Symptom → fix
@@ -16,13 +16,13 @@ Match your symptom in the table below, then jump to the section for the full fix
 <ModelTable
   head={["Symptom", "Likely cause", "Fix"]}
   rows={[
-    ["Window flashes and closes", "stt-server.exe blocked or missing VC++ runtime", "Install VC++ x64; whitelist the exe — see Blank or black window"],
+    ["Window flashes and closes", "Native backend startup failed or a runtime dependency is missing", "Install VC++ x64; check logs — see Blank or black window"],
     ["Main window opens but stays black", "Vite chunk-split regression (React / Base UI)", "Re-pull main — see Blank or black window"],
     ["Live preview lags 5+ seconds", "Server fell back to CPU; realtime model too big", "Confirm the accelerator, pick a smaller realtime model — see Transcription is slow"],
     ["First turn after launch is slow", "Lazy model load on first transcription", "Expected once; later turns are sub-second"],
     ["GPU present but server uses CPU", "GPU not D3D12-capable, or incomplete CUDA wheels", "Read the accelerator line — see GPU fallback"],
     ["Mic missing / overlay stuck recording", "Device enumerated once at boot; phantom device state", "Restart the server; run Fix-Audio.ps1 — see Mic stuck"],
-    ["“Reconnecting…” forever", "Server crashed on warmup / session create", "Check stt-server.log; switch quant or device — see Reconnecting forever"],
+    ["“Reconnecting…” forever", "Engine failed during warmup / session create", "Check the diagnostic logs; switch quant or device — see Reconnecting forever"],
     ["No audio when playing back a recording", "Recording muted at OS level, or wrong output device", "Unmute WinSTT; pick the right playback device — see No audio on playback"],
     ["Model download stalls at 0%", "huggingface.co blocked by proxy / firewall", "Set HTTPS_PROXY or install manually — see Model downloads fail"],
     ["PTT hotkey never fires", "Low-level hooks blocked by group policy", "Use Toggle mode or run as Admin — see Hotkeys blocked"],
@@ -34,28 +34,28 @@ Match your symptom in the table below, then jump to the section for the full fix
 ## Blank or black window
 
 <Callout type="error" title="Window flashes and disappears (packaged build)">
-  The bundled `stt-server.exe` failed to start. Open `%APPDATA%/WinSTT/debug.log` — the last lines name the cause, usually a missing Visual C++ Redistributable or a virus-scanner quarantine. Then:
+  The native backend failed during startup. Open the logs folder and inspect the latest log — the last lines name the cause, usually a missing Visual C++ Redistributable or a virus-scanner quarantine. Then:
 
   - Install the [latest VC++ x64 redistributable](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist).
-  - Whitelist `%LOCALAPPDATA%/Programs/WinSTT/resources/app.asar.unpacked/stt-server/stt-server.exe` in your antivirus.
+  - Whitelist the WinSTT executable and its bundled native libraries in your antivirus.
   - Run the installer as Administrator if `%APPDATA%/WinSTT/` is on a path your user can't write to.
 </Callout>
 
 If the window opens but **stays black** while dev mode looks fine, open the renderer console (**Settings → Advanced → Open DevTools**). The tell is `Cannot read properties of undefined (reading 'useLayoutEffect')` — a Vite chunk-split regression that separates `@base-ui/react` from `react` / `react-dom` into a circular ESM import.
 
 <Callout type="info" title="Fix for the black window">
-  Re-pull `main`. `frontend/vite.config.ts` keeps `@base-ui/react` and React in the same `manualChunks` group; the black screen returns only if that grouping regresses. If you're on a release build, update to the latest installer.
+  Re-pull `main`. `vite.config.ts` keeps `@base-ui/react` and React in the same `manualChunks` group; the black screen returns only if that grouping regresses. If you're on a release build, update to the latest installer.
 </Callout>
 
-In **dev mode**, a blank window usually means the renderer is waiting for the STT server. Confirm `uv run stt-server` is running and listening on `127.0.0.1:8011` / `:8012`. If you changed ports with `-c` / `-d`, mirror them via `WINSTT_CONTROL_PORT` / `WINSTT_DATA_PORT` before `bun electron:dev`.
+In **dev mode**, a blank window usually means the renderer dev server did not start or Tauri is pointing at the wrong URL. Launch through `tools\windows\tauri-dev.ps1` and confirm Vite is serving port 1420.
 
 ## Transcription is slow
 
 The first transcription after a fresh launch or a model swap pays the model-load cost — that one is **expected**. If *every* turn is slow, the server is almost always running on the wrong device.
 
 <StepFlow>
-  <Step title="Confirm which device the server picked">
-    Launch with `--debug` and read the first second of `stt-server.log` for a line like `Accelerator: directml` or `Accelerator: cpu`.
+  <Step title="Confirm which device the backend picked">
+    Launch with `--debug` and read the first second of the app log for a line like `Accelerator: directml` or `Accelerator: cpu`.
   </Step>
   <Step title="If it says cpu but you want GPU">
     A DirectML build that reports `cpu` means your GPU isn't D3D12-capable — see <a href="#gpu-fallback">GPU fallback</a>. If you have the CPU build, install the DirectML installer (`WinSTT-Portable-<version>.exe`).
@@ -80,21 +80,12 @@ WinSTT's accelerator auto-degrades to CPU whenever the requested GPU path isn't 
   head={["You see", "Why", "What to do"]}
   rows={[
     ["DirectML build logs Accelerator: cpu", "GPU isn't DirectX 12-capable", "Update the GPU driver; otherwise accept CPU speeds or use a smaller model"],
-    ["NVIDIA GPU, still on CPU", "Incomplete NVIDIA cu12 wheel set", "Install the full [gpu] extra — every wheel is mandatory at session create"],
+    ["NVIDIA GPU, still on CPU", "The Windows build uses DirectML by default, not CUDA", "Use the DirectML build or a development CUDA build"],
     ["GPU works then drops to CPU mid-session", "ORT session-create failure on a quant (e.g. Canary + int8 on DML)", "Switch quantization or device in Settings → Model"],
   ]}
 />
 
-The released Windows installers ship **no CUDA** — DirectML is faster and ~10× lighter on this workload. CUDA is a development-only / future-Linux path:
-
-```bash
-cd server
-uv sync --extra gpu      # onnxruntime-gpu + the full NVIDIA cu12 wheel set
-```
-
-<Callout type="warn" title="Never trim the [gpu] extra">
-  ORT's CUDA EP delay-loads **every** NVIDIA wheel (`cufft`, `cusparse`, `cusolver`, `curand`, and the rest) at session-create time, regardless of your model graph. Dropping any one silently demotes the whole session to CPU.
-</Callout>
+The released Windows installers ship **no CUDA** — DirectML is faster and much lighter on this workload. CUDA is a development-only path for custom builds.
 
 ## Mic stuck or missing
 
@@ -103,8 +94,8 @@ PortAudio enumerates input devices **once** when the server starts. A mic plugge
 <Screenshot src="device-picker" alt="The input-device picker dropdown listing available microphones with the active one checked." chrome="card" label="Input device picker" caption="Pick the explicit microphone by name — avoid virtual “Stereo Mix” devices that map to your speakers." />
 
 <StepFlow>
-  <Step title="Restart the STT server">
-    Use **Restart STT server** in the tray menu (or kill `stt-server.exe` and let it respawn). This re-enumerates devices and clears most stuck-recording states.
+  <Step title="Restart WinSTT">
+    Quit and relaunch WinSTT. This re-enumerates devices and clears most stuck-recording states.
   </Step>
   <Step title="Re-pick the device">
     Open the input-device picker and select your microphone by name. Some headsets (Logitech, Razer) expose a virtual "Stereo Mix" that maps to your speakers rather than the mic.
@@ -119,7 +110,7 @@ PortAudio enumerates input devices **once** when the server starts. A mic plugge
 
 ### Reconnecting forever
 
-A renderer stuck on "Reconnecting…" means the server process died — usually during warmup or ONNX session create, not from a network fault. Open `stt-server.log`.
+A renderer stuck on "Reconnecting…" means the backend engine failed — usually during warmup or ONNX session create, not from a network fault. Open the diagnostic logs.
 
 <ModelTable
   head={["Log signature", "Cause", "Fix"]}
@@ -173,10 +164,10 @@ A custom model folder must contain a complete onnx-community / Optimum export: `
 
 ## Hotkeys blocked
 
-Every WinSTT hotkey except re-paste uses passive `uiohook-napi`. Re-paste (`general.repasteHotkey`, default <Combo keys="LCtrl+LShift+V" />) is the **only** one that goes through Electron's `globalShortcut`.
+Every WinSTT hotkey except re-paste uses the passive keyboard listener path. Re-paste (`general.repasteHotkey`, default <Combo keys="LCtrl+LShift+V" />) is the **only** one registered as an exclusive global shortcut.
 
 <ShortcutLegend rows={[
-  { action: "Re-paste last (globalShortcut)", keys: "LCtrl+LShift+V", note: "If another app grabbed it, registration fails — pick another combo." },
+  { action: "Re-paste last (exclusive)", keys: "LCtrl+LShift+V", note: "If another app grabbed it, registration fails — pick another combo." },
 ]} />
 
 <ModelTable
@@ -222,7 +213,7 @@ For terminals, VMs, or RDP where the host clipboard isn't reachable, switch **Se
     **Settings → Advanced → Save Diagnostic Bundle…**
   </Step>
   <Step title="Reproduce with --debug">
-    So `debug.log` and `stt-server.log` carry the verbose trace — see [Debug Mode](/docs/debug-mode).
+    So the app logs carry the verbose trace — see [Debug Mode](/docs/debug-mode).
   </Step>
   <Step title="File a bug with the bundle attached">
     At [github.com/dahshury/WinSTT/issues](https://github.com/dahshury/WinSTT/issues). Feature ideas and questions live in [Discussions](https://github.com/dahshury/WinSTT/discussions).
@@ -233,7 +224,7 @@ For terminals, VMs, or RDP where the host clipboard isn't reachable, switch **Se
 
 <Cards>
   <Card title="Debug Mode" href="/docs/debug-mode">
-    Gather `debug.log`, `stt-server.log`, and a redacted diagnostic bundle for bug reports.
+    Gather the app logs and a redacted diagnostic bundle for bug reports.
   </Card>
   <Card title="Manual Model Install" href="/docs/manual-model-install">
     Offline, proxy, and firewalled installs of the built-in models.

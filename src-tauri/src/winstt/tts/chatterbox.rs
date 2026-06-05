@@ -236,21 +236,6 @@ impl ChatterboxEngine {
         }
         self.ready.store(false, Ordering::Release);
     }
-
-    /// Report each session's I/O names (debugging the contract).
-    pub fn io_report(&self) -> Option<String> {
-        let g = self.inner.lock().ok()?;
-        let l = g.as_ref()?;
-        Some(format!(
-            "speech_encoder out={:?}\nembed_tokens in={:?} out={:?}\nlanguage_model in={:?} out={:?}\nconditional_decoder in={:?}",
-            out_names(&l.speech_encoder),
-            in_names(&l.embed_tokens),
-            out_names(&l.embed_tokens),
-            in_names(&l.language_model),
-            out_names(&l.language_model),
-            in_names(&l.conditional_decoder),
-        ))
-    }
 }
 
 fn build_session(path: &Path) -> ChatterboxResult<Session> {

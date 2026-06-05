@@ -13,6 +13,17 @@ function stripTrailingApiSegments(value: string): string {
 	return result;
 }
 
+function normalizeLooseEndpoint(value: string): string {
+	let result = value.trim();
+	while (true) {
+		const next = stripTrailingApiSegments(result).trim();
+		if (next === result) {
+			return result;
+		}
+		result = next;
+	}
+}
+
 export function normalizeOllamaEndpoint(endpoint: string): string {
 	const trimmed = endpoint.trim();
 	try {
@@ -28,7 +39,7 @@ export function normalizeOllamaEndpoint(endpoint: string): string {
 		// Empty input and non-URL strings both flow here. The while loop
 		// is a no-op for empty input, so the early-return guard is also
 		// redundant.
-		return stripTrailingApiSegments(trimmed);
+		return normalizeLooseEndpoint(trimmed);
 	}
 }
 

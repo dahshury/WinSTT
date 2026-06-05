@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import type { OllamaLibraryHit, OllamaModel, RecommendedOllamaModel } from "@/shared/api/models";
-import { buildMakerGroups, type MakerGroup } from "./OllamaModelSelector";
+import {
+	buildMakerGroups,
+	buildOllamaDescriptionIndex,
+	ollamaDescriptionForName,
+	type MakerGroup,
+} from "./OllamaModelSelector";
 
 function installed(name: string): OllamaModel {
 	return { name, model: name, size: 0, digest: "", modified_at: "" } as OllamaModel;
@@ -71,5 +76,27 @@ describe("buildMakerGroups", () => {
 		// gemma3 is the only Google entry and isn't deduped here (nothing covers
 		// it), so Google exists with one library hit.
 		expect(group(groups, "google")?.library.map((h) => h.name)).toEqual(["gemma3"]);
+	});
+});
+
+describe("buildOllamaDescriptionIndex", () => {
+	it("maps installed tags back to their base Ollama library descriptions", () => {
+		const descriptions = buildOllamaDescriptionIndex([
+			{ name: "gemma4", description: "Gemma 4 from Ollama." },
+		]);
+
+		expect(ollamaDescriptionForName("gemma4:e2b", descriptions)).toBe(
+			"Gemma 4 from Ollama."
+		);
+	});
+
+	it("leaves models without an Ollama description blank", () => {
+		const descriptions = buildOllamaDescriptionIndex([
+			{ name: "blank", description: "   " },
+			{ name: "missing" },
+		]);
+
+		expect(ollamaDescriptionForName("blank:latest", descriptions)).toBeUndefined();
+		expect(ollamaDescriptionForName("missing:latest", descriptions)).toBeUndefined();
 	});
 });

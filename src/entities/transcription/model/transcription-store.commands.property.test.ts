@@ -8,6 +8,7 @@ const MAX_LIVE_ITEMS = 500;
 interface Model {
 	ephemeralText: string | null;
 	isRecordingActive: boolean;
+	isTranscribing: boolean;
 	itemTexts: string[];
 	lastItemHasSegments: boolean;
 	realtime: string;
@@ -26,8 +27,10 @@ function resetStore(): void {
 			currentRealtime: "",
 			ephemeral: null,
 			isRecordingActive: false,
+			isTranscribing: false,
+			transcribingStartedAt: null,
 		},
-		false
+		false,
 	);
 }
 
@@ -37,6 +40,7 @@ function freshModel(): Model {
 		realtime: "",
 		ephemeralText: null,
 		isRecordingActive: false,
+		isTranscribing: false,
 		lastItemHasSegments: false,
 	};
 }
@@ -56,6 +60,7 @@ class AddFinalCmd implements fc.Command<Model, Real> {
 			m.itemTexts = m.itemTexts.slice(-MAX_LIVE_ITEMS);
 		}
 		m.realtime = "";
+		m.isTranscribing = false;
 		m.lastItemHasSegments = false;
 		const state = snapshot(real);
 		if (state.items.length > MAX_LIVE_ITEMS) {
@@ -66,6 +71,9 @@ class AddFinalCmd implements fc.Command<Model, Real> {
 		}
 		if (state.currentRealtime !== "") {
 			throw new Error("addFinalSentence did not clear currentRealtime");
+		}
+		if (state.isTranscribing) {
+			throw new Error("addFinalSentence did not clear isTranscribing");
 		}
 		// last item text must match what we pushed
 		const last = state.items.at(-1);
@@ -124,6 +132,33 @@ class SetRecordingActiveCmd implements fc.Command<Model, Real> {
 	}
 }
 
+class SetTranscribingCmd implements fc.Command<Model, Real> {
+	readonly active: boolean;
+	constructor(active: boolean) {
+		this.active = active;
+	}
+	check(): boolean {
+		return true;
+	}
+	run(m: Model, real: Real): void {
+		real.getState().setTranscribing(this.active);
+		m.isTranscribing = this.active;
+		const state = snapshot(real);
+		if (state.isTranscribing !== this.active) {
+			throw new Error("setTranscribing did not persist");
+		}
+		if (this.active && typeof state.transcribingStartedAt !== "number") {
+			throw new Error("setTranscribing(true) did not set a timestamp");
+		}
+		if (!this.active && state.transcribingStartedAt !== null) {
+			throw new Error("setTranscribing(false) did not clear timestamp");
+		}
+	}
+	toString(): string {
+		return `setTranscribing(${this.active})`;
+	}
+}
+
 class ShowEphemeralCmd implements fc.Command<Model, Real> {
 	readonly text: string;
 	constructor(text: string) {
@@ -171,6 +206,7 @@ class ClearAllCmd implements fc.Command<Model, Real> {
 		m.realtime = "";
 		m.ephemeralText = null;
 		m.isRecordingActive = false;
+		m.isTranscribing = false;
 		m.lastItemHasSegments = false;
 		const s = snapshot(real);
 		if (s.items.length !== 0) {
@@ -184,6 +220,9 @@ class ClearAllCmd implements fc.Command<Model, Real> {
 		}
 		if (s.isRecordingActive !== false) {
 			throw new Error("clearAll did not clear isRecordingActive");
+		}
+		if (s.isTranscribing !== false || s.transcribingStartedAt !== null) {
+			throw new Error("clearAll did not clear transcribing state");
 		}
 	}
 	toString(): string {
@@ -235,12 +274,13 @@ const commandsArb = fc.commands(
 		fc.string({ maxLength: 32 }).map((s) => new AddFinalCmd(s)),
 		fc.string({ maxLength: 16 }).map((s) => new SetRealtimeCmd(s)),
 		fc.boolean().map((b) => new SetRecordingActiveCmd(b)),
+		fc.boolean().map((b) => new SetTranscribingCmd(b)),
 		fc.string({ maxLength: 16 }).map((s) => new ShowEphemeralCmd(s)),
 		fc.constant(new ClearEphemeralCmd()),
 		fc.constant(new ClearAllCmd()),
 		fc.array(segmentArb, { maxLength: 5 }).map((segs) => new AttachSegmentsCmd(segs)),
 	],
-	{ maxCommands: 40 }
+	{ maxCommands: 40 },
 );
 
 test("transcription-store: arbitrary command sequence preserves invariants", () => {
@@ -251,7 +291,7 @@ test("transcription-store: arbitrary command sequence preserves invariants", () 
 			const real: Real = useTranscriptionStore;
 			fc.modelRun(() => ({ model, real }), cmds);
 		}),
-		{ numRuns: 80 }
+		{ numRuns: 80 },
 	);
 });
 
@@ -268,6 +308,7 @@ test("transcription-store: clearAll is idempotent (twice == once)", () => {
 				}
 				useTranscriptionStore.getState().showEphemeral(ephem);
 				useTranscriptionStore.getState().setRecordingActive(true);
+				useTranscriptionStore.getState().setTranscribing(true);
 				useTranscriptionStore.getState().clearAll();
 				const after1 = useTranscriptionStore.getState();
 				useTranscriptionStore.getState().clearAll();
@@ -277,11 +318,13 @@ test("transcription-store: clearAll is idempotent (twice == once)", () => {
 					after2.items.length === 0 &&
 					after1.currentRealtime === after2.currentRealtime &&
 					after1.ephemeral === after2.ephemeral &&
-					after1.isRecordingActive === after2.isRecordingActive
+					after1.isRecordingActive === after2.isRecordingActive &&
+					after1.isTranscribing === after2.isTranscribing &&
+					after1.transcribingStartedAt === after2.transcribingStartedAt
 				);
-			}
+			},
 		),
-		{ numRuns: 50 }
+		{ numRuns: 50 },
 	);
 });
 
@@ -296,6 +339,6 @@ test("transcription-store: items count never exceeds MAX_LIVE_ITEMS", () => {
 			const len = useTranscriptionStore.getState().items.length;
 			return len <= MAX_LIVE_ITEMS && len === Math.min(count, MAX_LIVE_ITEMS);
 		}),
-		{ numRuns: 30 }
+		{ numRuns: 30 },
 	);
 });

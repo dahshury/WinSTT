@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/entities/connection";
 import { useSettingsStore } from "@/entities/setting";
 import {
-	autostartSet,
 	onSettingsChanged,
 	settingsLoad,
 	settingsSave,
@@ -26,13 +25,13 @@ import { type SyncDeps, syncToServer } from "../lib/sync-actions";
 import {
 	advanceSkipRefs,
 	deriveBroadcastUpdate,
+	deriveIpcLoadUpdate,
 	isModeChanged,
 	scheduleSave,
 	shouldSyncOnConnect,
 } from "../lib/sync-helpers";
 
 const DEPS: SyncDeps = {
-	autostartSet,
 	sttRequestDiarizationToggle,
 	sttSetParameter,
 };
@@ -49,6 +48,7 @@ export function useSyncSettings(): void {
 	const hasSyncedOnConnect = useRef(false);
 	const fromBroadcastRef = useRef(false);
 	const fromIpcLoadRef = useRef(false);
+	const hasIpcLoadResolvedRef = useRef(false);
 	// Last settings value we know persisted store has — set on initial load and
 	// after every successful debounced save. The broadcast merge uses this as
 	// the baseline for "what's user-dirty" so a `settings:changed` from another
@@ -59,11 +59,15 @@ export function useSyncSettings(): void {
 	// Reconcile with persisted store (source of truth) after localStorage hydration.
 	// localStorage hydration already set isLoaded, so this just patches any drift.
 	useEffect(() => {
+		const loadBaseline = useSettingsStore.getState().settings;
 		settingsLoad().then((loaded) => {
-			fromIpcLoadRef.current = true;
+			const current = useSettingsStore.getState().settings;
+			const { merged, nextFromIpcLoad } = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+			hasIpcLoadResolvedRef.current = true;
+			fromIpcLoadRef.current = nextFromIpcLoad;
 			lastSavedRef.current = loaded;
 			markIpcLoadResolved();
-			setSettings(loaded);
+			setSettings(merged);
 		});
 	}, [setSettings]);
 
@@ -104,7 +108,7 @@ export function useSyncSettings(): void {
 	}, [setSettings]);
 
 	// When server signals ready (recorder fully initialized), push all saved settings.
-	// Gated on `fromIpcLoadRef.current` so we don't sync the stale Zustand-persist
+	// Gated on `hasIpcLoadResolvedRef.current` so we don't sync the stale Zustand-persist
 	// localStorage cache before the canonical persisted store snapshot has arrived.
 	// See shouldSyncOnConnect for the full rationale — short version: localStorage
 	// hydration flips `isLoaded` to true synchronously with potentially-stale data;
@@ -116,7 +120,7 @@ export function useSyncSettings(): void {
 				serverStatus,
 				isLoaded,
 				hasSyncedOnConnect.current,
-				fromIpcLoadRef.current
+				hasIpcLoadResolvedRef.current
 			)
 		) {
 			hasSyncedOnConnect.current = true;
@@ -230,6 +234,14 @@ function hasAnyKey(obj: Partial<AppSettings>): boolean {
 	return Object.keys(obj).length > 0;
 }
 
+function patchIncludesRecordingModeChange(
+	patch: Partial<AppSettings>,
+	lastSaved: AppSettings | undefined
+): boolean {
+	const nextMode = patch.general?.recordingMode;
+	return nextMode != null && nextMode !== lastSaved?.general?.recordingMode;
+}
+
 /**
  * Body of the debounced scheduleSave callback, extracted so the IPC-load
  * guard, the diff-vs-baseline check, and the lastSavedRef advance are
@@ -243,17 +255,21 @@ function hasAnyKey(obj: Partial<AppSettings>): boolean {
  */
 export function performScheduledSave(
 	latestSettingsRef: { current: AppSettings },
-	lastSavedRef: { current: AppSettings | undefined }
+	lastSavedRef: { current: AppSettings | undefined },
+	saveSettings: (settings: Partial<AppSettings>) => void = settingsSave
 ): void {
-	if (Date.now() - recentIpcLoadAt() < SAVE_IPC_LOAD_GUARD_MS) {
-		return;
-	}
 	const s = latestSettingsRef.current;
 	const patch = diffAgainstLastSaved(s, lastSavedRef.current);
 	if (!hasAnyKey(patch)) {
 		return;
 	}
-	settingsSave(patch);
+	if (
+		Date.now() - recentIpcLoadAt() < SAVE_IPC_LOAD_GUARD_MS &&
+		!patchIncludesRecordingModeChange(patch, lastSavedRef.current)
+	) {
+		return;
+	}
+	saveSettings(patch);
 	lastSavedRef.current = s;
 }
 

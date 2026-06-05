@@ -40,6 +40,9 @@ function makeModel(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		languages: [],
 		supportsLanguageDetection: false,
 		sizeLabel: "",
+		previewCapable: true,
+		nativeStreaming: false,
+		finalReuseSafe: true,
 		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
@@ -63,6 +66,7 @@ function renderCard(model: ModelInfo) {
 					{() => (
 						<SttModelCard
 							currentQuantization=""
+							key={model.id}
 							model={model}
 							onSelect={onSelect}
 							selectedId={undefined}
@@ -72,7 +76,7 @@ function renderCard(model: ModelInfo) {
 					)}
 				</Combobox.List>
 			</Combobox.Root>
-		</TooltipProvider.Provider>
+		</TooltipProvider.Provider>,
 	);
 	return { ...utils, onSelect };
 }
@@ -85,6 +89,38 @@ describe("SttModelCard custom-model handling", () => {
 		expect(screen.getByText("Acme Voice")).toBeDefined();
 	});
 
+	test("renders the model description when the catalog provides one", () => {
+		renderCard(
+			makeModel({
+				description: "Fast English notes with a lightweight footprint.",
+			}),
+		);
+		expect(
+			screen.getByText("Fast English notes with a lightweight footprint."),
+		).toBeDefined();
+	});
+
+	test("surfaces native streaming without adding a non-streaming final-policy fact", () => {
+		renderCard(
+			makeModel({
+				id: "streaming-nemotron-en-1120ms-int8",
+				nativeStreaming: true,
+				finalReuseSafe: true,
+			}),
+		);
+		expect(screen.getByText("Native stream · 1.12 s")).toBeDefined();
+
+		renderCard(
+			makeModel({
+				id: "custom-full-final",
+				nativeStreaming: false,
+				previewCapable: true,
+				finalReuseSafe: false,
+			}),
+		);
+		expect(screen.queryByText("Full final")).toBeNull();
+	});
+
 	test("does NOT render the 'Broken' badge on a healthy custom entry", () => {
 		renderCard(makeModel({ available: true, errorMessage: "" }));
 		expect(screen.queryByText("Broken")).toBeNull();
@@ -95,7 +131,7 @@ describe("SttModelCard custom-model handling", () => {
 			makeModel({
 				available: false,
 				errorMessage: "missing tokenizer.json in my-whisper",
-			})
+			}),
 		);
 		// The badge is the visible signal that the row is greyed-out.
 		expect(screen.getByText("Broken")).toBeDefined();
@@ -103,7 +139,7 @@ describe("SttModelCard custom-model handling", () => {
 
 	test("disables broken cards via the Combobox.Item disabled prop", () => {
 		const { container } = renderCard(
-			makeModel({ available: false, errorMessage: "missing decoder.onnx" })
+			makeModel({ available: false, errorMessage: "missing decoder.onnx" }),
 		);
 		// Base UI sets ``data-disabled`` on the rendered <div> when the item
 		// is disabled — we assert against that rather than reaching into the
@@ -115,7 +151,10 @@ describe("SttModelCard custom-model handling", () => {
 
 	test("surfaces the error message as the title attribute on broken cards", () => {
 		const { container } = renderCard(
-			makeModel({ available: false, errorMessage: "missing tokenizer.json in my-whisper" })
+			makeModel({
+				available: false,
+				errorMessage: "missing tokenizer.json in my-whisper",
+			}),
 		);
 		// The native title attribute is the OS-level tooltip the user sees
 		// when hovering the greyed-out card. Inline tooltips also work but
@@ -128,14 +167,19 @@ describe("SttModelCard custom-model handling", () => {
 		// "Precision" is the label of the PrecisionGroup header — its
 		// absence confirms the broken card hides the precision row (loading
 		// broken weights at a different precision wouldn't help anyway).
-		renderCard(makeModel({ available: false, errorMessage: "missing encoder.onnx" }));
+		renderCard(
+			makeModel({ available: false, errorMessage: "missing encoder.onnx" }),
+		);
 		expect(screen.queryByText("Precision")).toBeNull();
 	});
 });
 
 /** Render variant that wires the download dispatcher + snapshot lookup so the
  *  precision-badge download behaviour can be exercised. */
-function renderDownloadCard(model: ModelInfo, snapshot?: QuantDownloadSnapshot | undefined) {
+function renderDownloadCard(
+	model: ModelInfo,
+	snapshot?: QuantDownloadSnapshot | undefined,
+) {
 	const onSelect = mock(() => undefined);
 	const onDownloadAction = mock(() => undefined);
 	const utils = render(
@@ -146,6 +190,7 @@ function renderDownloadCard(model: ModelInfo, snapshot?: QuantDownloadSnapshot |
 						<SttModelCard
 							currentQuantization=""
 							getDownloadSnapshot={() => snapshot}
+							key={model.id}
 							model={model}
 							onDownloadAction={onDownloadAction}
 							onSelect={onSelect}
@@ -156,15 +201,49 @@ function renderDownloadCard(model: ModelInfo, snapshot?: QuantDownloadSnapshot |
 					)}
 				</Combobox.List>
 			</Combobox.Root>
-		</TooltipProvider.Provider>
+		</TooltipProvider.Provider>,
 	);
 	return { ...utils, onSelect, onDownloadAction };
 }
 
 describe("SttModelCard precision-badge download affordance", () => {
+	test("card meta uses the selected quant download size, not the runtime estimate", () => {
+		const model = makeModel({
+			availableQuantizations: ["", "int8"],
+			sizeBytesByQuantization: {
+				"": 1_073_741_824,
+				int8: 83_886_080,
+			},
+		});
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[model]}>
+					<Combobox.List>
+						{() => (
+							<SttModelCard
+								currentQuantization="int8"
+								key={model.id}
+								model={model}
+								onSelect={mock(() => undefined)}
+								selectedId={undefined}
+								state={makeState({
+									estimated_bytes: 5_368_709_120,
+									effective_quantization: "int8",
+								})}
+								systemInfo={null}
+							/>
+						)}
+					</Combobox.List>
+				</Combobox.Root>
+			</TooltipProvider.Provider>,
+		);
+		expect(screen.getByText("80 MB")).toBeDefined();
+		expect(screen.queryByText("5.0 GB")).toBeNull();
+	});
+
 	test("an uncached CONCRETE badge IS the download trigger — no separate download button", () => {
 		const { onSelect, onDownloadAction } = renderDownloadCard(
-			makeModel({ availableQuantizations: ["int8"] })
+			makeModel({ availableQuantizations: ["int8"] }),
 		);
 		// The int8 quant is uncached (state=undefined). Exactly one control
 		// carries the download label: the badge itself. The old standalone
@@ -173,7 +252,11 @@ describe("SttModelCard precision-badge download affordance", () => {
 		expect(triggers.length).toBe(1);
 		fireEvent.click(triggers[0] as HTMLElement);
 		// Clicking the badge starts a background predownload, NOT a swap.
-		expect(onDownloadAction).toHaveBeenCalledWith("start", "custom-my-whisper", "int8");
+		expect(onDownloadAction).toHaveBeenCalledWith(
+			"start",
+			"custom-my-whisper",
+			"int8",
+		);
 		expect(onSelect).not.toHaveBeenCalled();
 	});
 
@@ -184,14 +267,61 @@ describe("SttModelCard precision-badge download affordance", () => {
 			progress: 50,
 			totalBytes: 10,
 		};
-		renderDownloadCard(makeModel({ availableQuantizations: ["int8"] }), snapshot);
+		const { container } = renderDownloadCard(
+			makeModel({ availableQuantizations: ["int8"] }),
+			snapshot,
+		);
 		// Label is replaced by the live percentage.
 		expect(screen.getByText("50%")).toBeDefined();
+		expect(container.querySelector(".t-digit-group")).toBeNull();
 		// Pause + Cancel controls appear while bytes are flowing.
 		expect(screen.getByLabelText("Pause int8 download")).toBeDefined();
 		expect(screen.getByLabelText("Cancel int8 download")).toBeDefined();
 		// It no longer advertises "Download … weights" (it's already downloading).
 		expect(screen.queryByLabelText("Download int8 weights")).toBeNull();
+	});
+
+	test("a partial CONCRETE badge shows stored progress and resumes before a live snapshot exists", () => {
+		const onSelect = mock(() => undefined);
+		const onDownloadAction = mock(() => undefined);
+		const model = makeModel({ availableQuantizations: ["int8"] });
+		const PARTIAL = {
+			state: "partial",
+			progress: 0.37,
+			downloaded_bytes: 37,
+			total_bytes: 100,
+		} as const;
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[model]}>
+					<Combobox.List>
+						{() => (
+							<SttModelCard
+								currentQuantization=""
+								key={model.id}
+								model={model}
+								onDownloadAction={onDownloadAction}
+								onSelect={onSelect}
+								selectedId={undefined}
+								state={makeState({
+									cache_by_quantization: { int8: { ...PARTIAL } },
+								})}
+								systemInfo={null}
+							/>
+						)}
+					</Combobox.List>
+				</Combobox.Root>
+			</TooltipProvider.Provider>,
+		);
+
+		expect(screen.getByText("37%")).toBeDefined();
+		fireEvent.click(screen.getByLabelText("Resume int8 weights download"));
+		expect(onDownloadAction).toHaveBeenCalledWith(
+			"resume",
+			"custom-my-whisper",
+			"int8",
+		);
+		expect(onSelect).not.toHaveBeenCalled();
 	});
 
 	test('the fp32 base export ("") renders as a normal selectable badge, not "Auto"', () => {
@@ -219,6 +349,7 @@ describe("SttModelCard precision-badge download affordance", () => {
 							<SttModelCard
 								currentQuantization=""
 								getDownloadSnapshot={() => undefined}
+								key={model.id}
 								model={model}
 								onDownloadAction={mock(() => undefined)}
 								onSelect={mock(() => undefined)}
@@ -229,14 +360,18 @@ describe("SttModelCard precision-badge download affordance", () => {
 						)}
 					</Combobox.List>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(
-			screen.getByLabelText("Download fp16 weights (recommended for your hardware)")
+			screen.getByLabelText(
+				"Download fp16 weights (recommended for your hardware)",
+			),
 		).toBeDefined();
 		// fp32 + int8 are NOT the recommended pick → no suffix.
 		expect(
-			screen.queryByLabelText("Download fp32 weights (recommended for your hardware)")
+			screen.queryByLabelText(
+				"Download fp32 weights (recommended for your hardware)",
+			),
 		).toBeNull();
 	});
 
@@ -248,7 +383,12 @@ describe("SttModelCard precision-badge download affordance", () => {
 		// (the model state's effective_quantization).
 		const onSelect = mock(() => undefined);
 		const model = makeModel({ availableQuantizations: ["int8"] });
-		const CACHED = { state: "cached", progress: 1, downloaded_bytes: 10, total_bytes: 10 } as const;
+		const CACHED = {
+			state: "cached",
+			progress: 1,
+			downloaded_bytes: 10,
+			total_bytes: 10,
+		} as const;
 		render(
 			<TooltipProvider.Provider>
 				<Combobox.Root items={[model]}>
@@ -256,19 +396,58 @@ describe("SttModelCard precision-badge download affordance", () => {
 						{() => (
 							<SttModelCard
 								currentQuantization=""
+								key={model.id}
 								model={model}
 								onSelect={onSelect}
 								selectedId={undefined}
-								state={makeState({ cache_by_quantization: { int8: { ...CACHED } } })}
+								state={makeState({
+									cache_by_quantization: { int8: { ...CACHED } },
+								})}
 								systemInfo={null}
 							/>
 						)}
 					</Combobox.List>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		fireEvent.click(screen.getByLabelText("Select int8 precision"));
 		expect(onSelect).toHaveBeenCalledWith("custom-my-whisper", "int8");
+	});
+
+	test("a cached badge hides delete when canDeleteQuant rejects it", () => {
+		const model = makeModel({ availableQuantizations: ["int8"] });
+		const CACHED = {
+			state: "cached",
+			progress: 1,
+			downloaded_bytes: 10,
+			total_bytes: 10,
+		} as const;
+		render(
+			<TooltipProvider.Provider>
+				<Combobox.Root items={[model]}>
+					<Combobox.List>
+						{() => (
+							<SttModelCard
+								canDeleteQuant={() => false}
+								currentQuantization=""
+								key={model.id}
+								model={model}
+								onRequestDeleteQuant={mock(() => undefined)}
+								onSelect={mock(() => undefined)}
+								selectedId={undefined}
+								state={makeState({
+									cache_by_quantization: { int8: { ...CACHED } },
+								})}
+								systemInfo={null}
+							/>
+						)}
+					</Combobox.List>
+				</Combobox.Root>
+			</TooltipProvider.Provider>,
+		);
+		expect(
+			screen.queryByLabelText("Delete int8 weights for My Whisper"),
+		).toBeNull();
 	});
 
 	test("a CONCRETE badge reflects + controls its EFFECTIVE precision's download", () => {
@@ -292,7 +471,10 @@ describe("SttModelCard precision-badge download affordance", () => {
 						{() => (
 							<SttModelCard
 								currentQuantization=""
-								getDownloadSnapshot={(_id, q) => (q === "int8" ? snapshot : undefined)}
+								getDownloadSnapshot={(_id, q) =>
+									q === "int8" ? snapshot : undefined
+								}
+								key={model.id}
 								model={model}
 								onDownloadAction={onDownloadAction}
 								onSelect={onSelect}
@@ -303,7 +485,7 @@ describe("SttModelCard precision-badge download affordance", () => {
 						)}
 					</Combobox.List>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		// Live percentage is shown on the int8 badge itself.
 		expect(screen.getByText("50%")).toBeDefined();
@@ -312,6 +494,10 @@ describe("SttModelCard precision-badge download affordance", () => {
 		expect(screen.getByLabelText("Cancel int8 download")).toBeDefined();
 		// …and they dispatch int8.
 		fireEvent.click(screen.getByLabelText("Pause int8 download"));
-		expect(onDownloadAction).toHaveBeenCalledWith("pause", "custom-my-whisper", "int8");
+		expect(onDownloadAction).toHaveBeenCalledWith(
+			"pause",
+			"custom-my-whisper",
+			"int8",
+		);
 	});
 });

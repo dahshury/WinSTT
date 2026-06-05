@@ -134,17 +134,22 @@ describe("preset-prompts", () => {
 		// Regression: restructure numbered every sentence of a connected
 		// statement+question ("…Whisper models… Is that correct?") as 1-/2-/3-.
 		const r = getPresetPrompt("restructure");
-		expect(r.toLowerCase()).toContain("default to keeping the speaker");
+		expect(r.toLowerCase()).toContain("actively identify content");
 		expect(r).toContain("Do NOT convert text to a list merely because it has several sentences");
-		expect(r.toLowerCase()).toContain("never turn a question into a list item");
+		expect(r.toLowerCase()).toContain("never turn a standalone question into a list item");
+		expect(r).toContain("numbered lines for real steps");
+		expect(r).toContain("bullet lines for parallel items");
 	});
 
-	test("Polish base forbids unprompted list/structure and stray blank lines", () => {
+	test("Polish base handles cleanup and forbids unprompted list/structure", () => {
 		// Regression: with no restructure modifier the model spontaneously
 		// turned a few sentences into a numbered list with blank lines.
 		const base = getPresetPrompt("neutral");
 		expect(base).toContain("do not reorganize prose into lists");
 		expect(base).toContain("do not introduce blank lines");
+		expect(base).toContain("Convert spoken numbers to written numeric forms");
+		expect(base).toContain("one point five gigabytes");
+		expect(base).toContain("Use one space between words");
 		// Spoken layout commands must still survive the prohibition.
 		expect(base).toContain("new paragraph");
 	});
@@ -177,7 +182,7 @@ describe("preset-prompts", () => {
 	test("translate is folded LAST so cleanup/style run in the source language", () => {
 		const out = buildSystemPrompt([{ key: "formal" }, { key: "translate", targetLang: "French" }]);
 		const formalIdx = out.indexOf(getPresetPrompt("formal"));
-		const translateIdx = out.indexOf("Translate the cleaned, styled result into French");
+		const translateIdx = out.indexOf("translate the cleaned, styled result into French");
 		expect(formalIdx).toBeGreaterThan(-1);
 		expect(translateIdx).toBeGreaterThan(formalIdx);
 	});
@@ -201,6 +206,7 @@ describe("preset-prompts", () => {
 		expect(out).toContain(`- ${getPresetPrompt("formal")}`);
 		expect(out).toContain(`- ${getPresetPrompt("summarize", "light")}`);
 		expect(out).toContain(`- ${getPresetPrompt("reorder")}`);
+		expect(out).toContain("Move any direct request");
 		// Explicit anti-numbered-list check: no "1." / "2." / "3." prefixes.
 		expect(out).not.toMatch(/^\s*1\./m);
 	});

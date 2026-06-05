@@ -7,7 +7,7 @@ edition = "2021"
 license = "MIT"
 default-run = "winstt"
 # NOTE(port): [lib] name stays `handy_app_lib` for now (main.rs references it);
-# rename to winstt_app_lib during the compile loop. Tracked in app/PORT/PROGRESS.md.
+# rename to winstt_app_lib during the compile loop. Tracked in docs/archive/port/PROGRESS.md.
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
@@ -36,20 +36,25 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-# Opt-in CUDA execution provider for the ONNX STT engine. The shipped Windows build
-# is DirectML (compiled via transcribe-rs's `ort-directml`), and the resolver overrides
-# CUDA→CPU on non-CUDA targets, so this is a build-time opt-in. Pulls in ort's CUDA EP
-# so `ort::ep::CUDA` exists when the feature is enabled (whisper.rs `Accelerator::Cuda` arm).
-cuda = ["ort/cuda"]
-# DEBUG-ONLY context-awareness extras (`commands::context::debug_read_context`); mirrors
-# CONTEXT_PLAYGROUND_ENABLED in the reference build. Off in shipped builds. NOTE: the live
-# playground commands (`context_playground.rs`) are de-gated and compile unconditionally;
-# this gate only covers the older `debug_read_context` mode probe.
+# Opt-in execution providers for the ONNX STT engine. The shipped Windows build is DirectML
+# (compiled via transcribe-rs's `ort-directml`). Non-Windows GPU EPs are native-runner
+# features; the resolver only selects them on matching targets and otherwise uses CPU.
+cuda = ["ort/cuda", "transcribe-rs/ort-cuda"]
+coreml = ["ort/coreml", "transcribe-rs/ort-coreml"]
+rocm = ["ort/rocm", "transcribe-rs/ort-rocm"]
+openvino = ["ort/openvino"]
+webgpu = ["ort/webgpu", "transcribe-rs/ort-webgpu"]
+# Native fallback switches for a future Handy-style whisper.cpp route. Metal is macOS-only;
+# Vulkan is Linux/Windows-with-Vulkan-SDK only. They are intentionally not default target deps.
+whisper-metal = ["transcribe-rs/whisper-metal"]
+whisper-vulkan = ["transcribe-rs/whisper-vulkan"]
+# Keep WebView devtools out of default/release builds; enable with
+# `cargo tauri dev --features devtools` when inspection is needed.
+devtools = ["tauri/devtools"]
+# DEBUG-ONLY context-awareness extras (`commands::context::debug_read_context` and the live
+# playground IPC commands); mirrors CONTEXT_PLAYGROUND_ENABLED in the reference build.
+# Off in shipped builds.
 context-playground = []
-
-# [[bin]]
-# name = "cli"
-# path = "src/audio_toolkit/bin/cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -63,7 +68,6 @@ tauri = { version = "2.10.2", features = [
   "macos-private-api",
   "tray-icon",
   'image-png',
-  "devtools",
 ] }
 tauri-plugin-log = "2.7.1"
 tauri-plugin-opener = "2.5.2"
@@ -89,16 +93,18 @@ tokio = "1.43.0"
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
-reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "multipart", "rustls"] }
 futures-util = "0.3"
 rustfft = "6.4.0"
 strsim = "0.11.0"
 natural = "0.5.0"
 regex = "1"
+unicode-normalization = "0.1"
 chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
+bzip2 = "0.4.4"
 sha2 = "0.10"
 transcribe-rs = { version = "0.3.8", features = ["whisper-cpp", "onnx"] }
 # WinSTT unified ONNX STT engine (blueprint S2). ort/ndarray already resolve to one version each
@@ -109,10 +115,12 @@ ndarray = "0.17.2"
 num_cpus = "1"  # physical-core count for the STT intra-op thread pick (matches onnx-asr's default)
 rayon = "1"     # parallel per-frame fbank/mel feature extraction (long-audio throughput)
 thiserror = "2"
-# WinSTT port — remaining subsystem deps (versions per app/PORT/00_cargo_additions.md, verified 2026-05)
+# WinSTT port — remaining subsystem deps (versions per docs/archive/port/00_cargo_additions.md, verified 2026-05)
 hf-hub = "1.0.0-rc.1"            # HF snapshot resolver for STT model files (resolver/download)
+globset = "0.4.18"               # STT resolver POSIX glob matching (`**`, `*`, `?`) without custom recursion
 prost = "0.13"                   # ONNX-proto edit for the fp16 decoder patch (03_stt_engine.md §6.1)
 tokenizers = { version = "0.22.1", default-features = false, features = ["onig"] }  # DistilBERT + custom models
+sentencepiece-rs = "0.2.2"        # Pure-Rust SentencePiece `.model` reader for sherpa KWS keyword tokenization
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }        # diag bundle
 symphonia = { version = "0.6.0", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "isomp4", "aac", "flac", "ogg", "vorbis"] }  # file-transcribe decode
 base85 = "2.0.0"                 # Whisper alignment-heads table (RFC1924)
@@ -123,7 +131,7 @@ half = "2"                       # f16 tensor element type (matches ort's half)
 sherpa-onnx = { version = "1.13.2", default-features = false, features = ["shared"] }  # KWS wake word + diarization embedder
 # TTS: kokoroxide DROPPED (pins yanked ort ^1.16, conflicts with our ort 2.0.0-rc.12).
 # Instead we run the Kokoro-82M ONNX on OUR ort 2.0.0-rc.12 + an espeak-ng phonemizer
-# (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine). See app/PORT/06_tts.md.
+# (same runtime as STT; WinSTT is open-source so espeak-ng GPL-v3 is fine). See docs/archive/port/06_tts.md.
 handy-keys = "0.2.4"
 ferrous-opencc = "0.2.3"
 # TTS G2P: in-process espeak-ng phonemizer. We dlopen the espeak-ng shared lib
@@ -150,9 +158,10 @@ tauri-plugin-updater = "2.10.0"
 [target.'cfg(windows)'.dependencies]
 # WinSTT port: dropped `whisper-vulkan` (needs the Vulkan SDK). Our STT engine is unified ONNX on
 # `ort`/DirectML (blueprint S2), so whisper.cpp's GPU backend is unused; whisper-cpp (from the base
-# dep) falls back to its CPU backend. Tracked in app/PORT/PROGRESS.md.
+# dep) falls back to its CPU backend. Tracked in docs/archive/port/PROGRESS.md.
 transcribe-rs = { version = "0.3.3", features = ["ort-directml"] }
 wasapi = "0.23.0"  # WASAPI loopback capture for listen mode
+windows-core = "0.61.2"
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_Media_Audio",
@@ -161,8 +170,12 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Variant",
   "Win32_System_ProcessStatus",
   "Win32_System_Threading",
+  "Win32_System_Power",
+  "Win32_System_SystemServices",
+  "Win32_System_LibraryLoader",
   "Win32_Security_Cryptography",
   "Win32_Foundation",
+  "Win32_Graphics_Gdi",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_Graphics_Dxgi",
@@ -172,14 +185,14 @@ winreg = "0.55"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-transcribe-rs = { version = "0.3.3", features = ["whisper-metal"] }
+objc2-core-audio = { version = "0.3.1", default-features = false, features = ["std", "AudioHardware"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
-transcribe-rs = { version = "0.3.3", features = ["whisper-vulkan"] }
 
 [patch.crates-io]
+handy-keys = { path = "vendor/handy-keys" }
 tauri-runtime = { git = "https://github.com/cjpais/tauri.git", branch = "handy-2.10.2" }
 tauri-runtime-wry = { git = "https://github.com/cjpais/tauri.git", branch = "handy-2.10.2" }
 tauri-utils = { git = "https://github.com/cjpais/tauri.git", branch = "handy-2.10.2" }

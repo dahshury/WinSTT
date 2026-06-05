@@ -1,12 +1,22 @@
+import { Button as BaseButton } from "@base-ui/react/button";
 import { Mic01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
-import { buildInputDeviceOptions, useInputDevices } from "@/entities/audio-device";
+import {
+  buildInputDeviceOptions,
+  useInputDevices,
+} from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
-import { ipcSend, onSettingsChanged, settingsLoad, settingsSave } from "@/shared/api/ipc-client";
+import {
+  ipcSend,
+  onSettingsChanged,
+  settingsLoad,
+  settingsSave,
+} from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceClasses } from "@/shared/lib/surface";
+import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { MenuHighlightLayer } from "@/shared/ui/menu-highlight";
 
 // This picker pops out of the tray menu's mic row. The tray menu now sits at
@@ -19,7 +29,7 @@ const PANEL_LEVEL = 5;
 const PANEL_SHADOW_LEVEL = 7;
 
 function close(): void {
-	ipcSend(IPC.DEVICE_PICKER_CLOSE);
+  ipcSend(IPC.DEVICE_PICKER_CLOSE);
 }
 
 /**
@@ -39,119 +49,120 @@ function close(): void {
  * UI's `data-highlighted` does inside `Select`).
  */
 export function DevicePickerWindow() {
-	const t = useTranslations("audio");
-	const { devices, defaultDevice } = useInputDevices();
-	const [inputDeviceIndex, setInputDeviceIndex] = useState<number | null>(null);
-	const [highlightedId, setHighlightedId] = useState<string | null>(null);
-	const containerRef = useRef<HTMLDivElement | null>(null);
-	const listRef = useRef<HTMLDivElement | null>(null);
+  const t = useTranslations("audio");
+  const { devices, defaultDevice } = useInputDevices();
+  const [inputDeviceIndex, setInputDeviceIndex] = useState<number | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEscapeToClose(close);
 
-	useEffect(() => {
-		settingsLoad().then((s) => setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null));
-		return onSettingsChanged((s) => setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null));
-	}, []);
+  useEffect(() => {
+    settingsLoad().then((s) =>
+      setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null),
+    );
+    return onSettingsChanged((s) =>
+      setInputDeviceIndex(s.audio?.inputDeviceIndex ?? null),
+    );
+  }, []);
 
-	// Report the live content size so the main process can hug the window to
-	// the list and re-anchor it above the row (device count varies).
-	useEffect(() => {
-		const el = containerRef.current;
-		if (!el) {
-			return;
-		}
-		const report = () => {
-			const r = el.getBoundingClientRect();
-			ipcSend(IPC.DEVICE_PICKER_RESIZE, { width: r.width, height: r.height });
-		};
-		const observer = new ResizeObserver(report);
-		observer.observe(el);
-		report();
-		return () => observer.disconnect();
-	}, []);
+  // Report the live content size so the main process can hug the window to
+  // the list and re-anchor it above the row (device count varies).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) {
+      return;
+    }
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      ipcSend(IPC.DEVICE_PICKER_RESIZE, { width: r.width, height: r.height });
+    };
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    report();
+    return () => observer.disconnect();
+  }, []);
 
-	useEffect(() => {
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				close();
-			}
-		};
-		window.addEventListener("keydown", onKeyDown);
-		return () => window.removeEventListener("keydown", onKeyDown);
-	}, []);
+  const handleSelect = async (id: string) => {
+    const next = id === "default" ? null : Number.parseInt(id, 10);
+    const settings = await settingsLoad();
+    await settingsSave({
+      ...settings,
+      audio: { ...settings.audio, inputDeviceIndex: next },
+    });
+    close();
+  };
 
-	const handleSelect = async (id: string) => {
-		const next = id === "default" ? null : Number.parseInt(id, 10);
-		const settings = await settingsLoad();
-		await settingsSave({
-			...settings,
-			audio: { ...settings.audio, inputDeviceIndex: next },
-		});
-		close();
-	};
+  const defaultLabel = defaultDevice
+    ? `${t("systemDefault")} (${defaultDevice.name})`
+    : t("systemDefault");
+  const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
+    devices,
+    inputDeviceIndex,
+    defaultLabel,
+    defaultDevice?.name,
+  );
 
-	const defaultLabel = defaultDevice
-		? `${t("systemDefault")} (${defaultDevice.name})`
-		: t("systemDefault");
-	const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
-		devices,
-		inputDeviceIndex,
-		defaultLabel,
-		defaultDevice?.name
-	);
-
-	return (
-		<div className="flex h-screen w-screen items-end overflow-hidden">
-			<div
-				className={cn(
-					"max-h-screen w-full overflow-y-auto rounded-xl p-1 ring-1 ring-divider-strong",
-					surfaceClasses(PANEL_LEVEL, PANEL_SHADOW_LEVEL),
-					"font-sans text-body-sm text-foreground"
-				)}
-				ref={containerRef}
-			>
-				{/* `position: relative` anchor the gliding pills measure against; rows
+  return (
+    <div className="flex h-screen w-screen items-end overflow-hidden">
+      <div
+        className={cn(
+          "max-h-screen w-full overflow-y-auto rounded-xl p-1 ring-1 ring-divider-strong",
+          surfaceClasses(PANEL_LEVEL, PANEL_SHADOW_LEVEL),
+          "font-sans text-body-sm text-foreground",
+        )}
+        ref={containerRef}
+      >
+        {/* `position: relative` anchor the gliding pills measure against; rows
 				    carry `data-menu-option` and scroll inside the panel together with it. */}
-				<div className="relative" ref={listRef}>
-					<MenuHighlightLayer containerRef={listRef} value={currentDeviceId} />
-					{deviceOptions.map((opt) => {
-						const active = opt.id === currentDeviceId;
-						return (
-							<button
-								aria-pressed={active}
-								className={cn(
-									"relative z-raised flex w-full cursor-default select-none items-center gap-2 rounded-xs px-3 py-2 text-left text-body leading-normal outline-none",
-									active ? "font-medium text-foreground" : "text-foreground"
-								)}
-								data-menu-option={opt.id}
-								key={opt.id}
-								onBlur={() => setHighlightedId((cur) => (cur === opt.id ? null : cur))}
-								onClick={() => handleSelect(opt.id)}
-								onFocus={() => setHighlightedId(opt.id)}
-								onMouseEnter={() => setHighlightedId(opt.id)}
-								onMouseLeave={() => setHighlightedId((cur) => (cur === opt.id ? null : cur))}
-								type="button"
-								{...(highlightedId === opt.id ? { "data-highlighted": "" } : {})}
-							>
-								<HugeiconsIcon
-									aria-hidden="true"
-									className="shrink-0 text-foreground-muted"
-									icon={opt.icon ?? Mic01Icon}
-									size={16}
-									strokeWidth={active ? 2 : 1.5}
-								/>
-								<span className="min-w-0 flex-1 truncate">{opt.label}</span>
-								{active ? (
-									<HugeiconsIcon
-										aria-hidden="true"
-										className="ms-auto shrink-0 text-accent"
-										icon={Tick02Icon}
-										size={16}
-									/>
-								) : null}
-							</button>
-						);
-					})}
-				</div>
-			</div>
-		</div>
-	);
+        <div className="relative" ref={listRef}>
+          <MenuHighlightLayer containerRef={listRef} value={currentDeviceId} />
+          {deviceOptions.map((opt) => {
+            const active = opt.id === currentDeviceId;
+            return (
+              <BaseButton
+                aria-pressed={active}
+                className={cn(
+                  "relative z-raised flex w-full cursor-default select-none items-center gap-2 rounded-xs px-3 py-2 text-left text-body leading-normal outline-none",
+                  active ? "font-medium text-foreground" : "text-foreground",
+                )}
+                data-menu-option={opt.id}
+                key={opt.id}
+                onBlur={() =>
+                  setHighlightedId((cur) => (cur === opt.id ? null : cur))
+                }
+                onClick={() => handleSelect(opt.id)}
+                onFocus={() => setHighlightedId(opt.id)}
+                onMouseEnter={() => setHighlightedId(opt.id)}
+                onMouseLeave={() =>
+                  setHighlightedId((cur) => (cur === opt.id ? null : cur))
+                }
+                type="button"
+                {...(highlightedId === opt.id
+                  ? { "data-highlighted": "" }
+                  : {})}
+              >
+                <HugeiconsIcon
+                  aria-hidden="true"
+                  className="shrink-0 text-foreground-muted"
+                  icon={opt.icon ?? Mic01Icon}
+                  size={16}
+                  strokeWidth={active ? 2 : 1.5}
+                />
+                <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                {active ? (
+                  <HugeiconsIcon
+                    aria-hidden="true"
+                    className="ms-auto shrink-0 text-accent"
+                    icon={Tick02Icon}
+                    size={16}
+                  />
+                ) : null}
+              </BaseButton>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }

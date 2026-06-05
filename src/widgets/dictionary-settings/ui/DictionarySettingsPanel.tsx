@@ -1,10 +1,16 @@
 import { BookOpenTextIcon } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
-import { DEFAULT_SETTINGS, SettingField, SettingSection, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingField,
+	SettingSection,
+	useSettingsStore,
+} from "@/entities/setting";
 import type { DictionaryEntry } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
+import { dictionaryContainsTerm } from "../lib/dictionary-terms";
 import { AutoAddSuggestions } from "./AutoAddSuggestions";
 import { DictionaryTable } from "./DictionaryTable";
 
@@ -12,23 +18,38 @@ export function DictionarySettingsPanel() {
 	const dictionary = useSettingsStore((s) => s.settings.dictionary) ?? [];
 	const updateDictionary = useSettingsStore((s) => s.updateDictionary);
 	const general = useSettingsStore((s) => s.settings.general);
-	const updateGeneralSettings = useSettingsStore((s) => s.updateGeneralSettings);
+	const updateGeneralSettings = useSettingsStore(
+		(s) => s.updateGeneralSettings,
+	);
 	const t = useTranslations("dictionary");
 
 	// Compute existing terms inline (React Compiler memoises this — per
 	// project convention, no manual useMemo).
 	const existingTerms = dictionary.map((e) => e.term);
 	const threshold =
-		general?.wordCorrectionThreshold ?? DEFAULT_SETTINGS.general.wordCorrectionThreshold;
+		general?.wordCorrectionThreshold ??
+		DEFAULT_SETTINGS.general.wordCorrectionThreshold;
 
 	const handleAdd = (entry: Omit<DictionaryEntry, "id">): void => {
-		updateDictionary([...dictionary, { ...entry, id: generateId() }]);
+		const term = entry.term.trim();
+		const currentDictionary =
+			useSettingsStore.getState().settings.dictionary ?? [];
+		if (!term || dictionaryContainsTerm(currentDictionary, term)) {
+			return;
+		}
+		updateDictionary([
+			...currentDictionary,
+			{ ...entry, term, id: generateId() },
+		]);
 	};
 
 	return (
-		<SettingSection icon={BookOpenTextIcon} title={t("title")}>
+		<SettingSection
+			description={t("description")}
+			icon={BookOpenTextIcon}
+			title={t("title")}
+		>
 			<div className="flex flex-col gap-3 py-2">
-				<p className="text-body-sm text-foreground-muted">{t("description")}</p>
 				<AutoAddSuggestions
 					existingTerms={existingTerms}
 					onAccept={(term) => handleAdd({ term })}
@@ -53,7 +74,8 @@ export function DictionarySettingsPanel() {
 					layout="row"
 					onReset={() =>
 						updateGeneralSettings({
-							wordCorrectionThreshold: DEFAULT_SETTINGS.general.wordCorrectionThreshold,
+							wordCorrectionThreshold:
+								DEFAULT_SETTINGS.general.wordCorrectionThreshold,
 						})
 					}
 					tooltip={`${t("thresholdTooltip")} ${t("thresholdCaption")}`}
@@ -63,7 +85,9 @@ export function DictionarySettingsPanel() {
 						<NumberStepper
 							max={1.0}
 							min={0.0}
-							onChange={(v) => updateGeneralSettings({ wordCorrectionThreshold: v })}
+							onChange={(v) =>
+								updateGeneralSettings({ wordCorrectionThreshold: v })
+							}
 							step={0.02}
 							value={threshold}
 						/>

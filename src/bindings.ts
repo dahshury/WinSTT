@@ -53,22 +53,6 @@ async changeSoundThemeSetting(theme: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async changeStartHiddenSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_start_hidden_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async changeAutostartSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_autostart_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async changeTranslateToEnglishSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_translate_to_english_setting", { enabled }) };
@@ -104,14 +88,6 @@ async changeDebugModeSetting(enabled: boolean) : Promise<Result<null, string>> {
 async changeWordCorrectionThresholdSetting(threshold: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_word_correction_threshold_setting", { threshold }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async changeExtraRecordingBufferSetting(ms: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_extra_recording_buffer_setting", { ms }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -311,14 +287,6 @@ async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
-async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_lazy_stream_close_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async changeAppLanguageSetting(language: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_app_language_setting", { language }) };
@@ -389,14 +357,19 @@ async changeWhisperGpuDevice(device: number) : Promise<Result<null, string>> {
 },
 /**
  * Return which accelerators and GPU devices are available for this build.
- * 
+ *
  * First-call cost is dominated by enumerating GPU devices through the
  * whisper.cpp Metal/Vulkan backend, which loads dynamic libraries and
  * probes hardware. Run it on the blocking pool so the webview thread
  * stays responsive — see also the startup pre-warm in `lib.rs`.
  */
-async getAvailableAccelerators() : Promise<AvailableAccelerators> {
-    return await TAURI_INVOKE("get_available_accelerators");
+async getAvailableAccelerators() : Promise<Result<AvailableAccelerators, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_available_accelerators") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Start key recording mode
@@ -435,6 +408,9 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async quitApp() : Promise<void> {
+    await TAURI_INVOKE("quit_app");
 },
 /**
  * Copy the most recent *completed* transcription to the system clipboard. Invoked
@@ -511,6 +487,22 @@ async openLogDir() : Promise<Result<null, string>> {
 async openAppDataDir() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_app_data_dir") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeApplicationData(deleteOllamaModels: boolean) : Promise<Result<RemoveApplicationDataResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_application_data", { deleteOllamaModels }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeDownloadedModels(deleteOllamaModels: boolean) : Promise<Result<RemoveDownloadedModelsResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("remove_downloaded_models", { deleteOllamaModels }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -631,22 +623,6 @@ async hasAnyModelsAvailable() : Promise<Result<boolean, string>> {
 async hasAnyModelsOrDownloads() : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("has_any_models_or_downloads") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateMicrophoneMode(alwaysOn: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_microphone_mode", { alwaysOn }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getMicrophoneMode() : Promise<Result<boolean, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_microphone_mode") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -795,25 +771,8 @@ async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
-async updateHistoryLimit(limit: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_history_limit", { limit }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_recording_retention_period", { period }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
- * Stub implementation for non-macOS platforms
- * Always returns false since laptop detection is macOS-specific
+ * Checks if Windows reports a built-in lid switch.
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -824,20 +783,22 @@ async isLaptop() : Promise<Result<boolean, string>> {
 }
 },
 /**
- * `winstt_get_settings` — the full tree the renderer boots against (secrets opened).
+ * `winstt_get_settings` — the full tree the renderer boots against, with
+ * secret fields masked so renderer code can know a key exists without reading
+ * the key material.
  */
 async winsttGetSettings() : Promise<WinsttSettings> {
     return await TAURI_INVOKE("winstt_get_settings");
 },
 /**
- * `winstt_set_settings` — merge a PARTIAL section patch, validate, diff restart-need,
- * seal secrets, persist, restart-notify, broadcast.
- * 
+ * `winstt_set_settings` merges a PARTIAL section patch, validates, seals
+ * secrets, persists, applies runtime side-effects, and broadcasts.
+ *
  * The renderer sends **partial** top-level sections, not the whole tree
  * (`collectChangedSections`), so we accept a `PartialWinsttSettings` (every section
  * `Option`) and merge each present section over the persisted snapshot — exactly
  * the reference's per-section `applySettings`.
- * 
+ *
  * On any failure the renderer's fire-and-forget save can't observe the `Err`, so we
  * ALSO emit `settings:save-error { error }` (and still return `Err`).
  */
@@ -850,12 +811,12 @@ async winsttSetSettings(settings: PartialWinsttSettings) : Promise<Result<SetSet
 }
 },
 /**
- * `list_models` — the full 42-model RICH catalog (editorial fields the picker renders:
+ * `list_models` — the full 65-model RICH catalog (editorial fields the picker renders:
  * backend / languages / description / size_label / per-quant byte sizes / accuracy+speed scores).
  * Backed by the embedded `catalog_data.json` (see `catalog_data.rs`); the per-device quant set is
  * CUDA-filtered. The adapter routes `STT_GET_MODEL_CATALOG` here, and the renderer's
  * `fetchModelCatalog` → `rawModelInfoSchema.safeParse` consumes these rows verbatim.
- * 
+ *
  * NOTE: the WITH_STATE channel needs the `{models,states,system_info}` OBJECT shape instead — that
  * is `list_models_with_state` (commands/runtime.rs). The adapter routes `STT_GET_MODEL_CATALOG`
  * here and `STT_LIST_MODELS_WITH_STATE` → `list_models_with_state` (native-bridge-adapter.ts ROUTE).
@@ -872,10 +833,8 @@ async pickerQuantizationsFor(modelId: string) : Promise<string[]> {
 },
 /**
  * `get_live_resources` — CPU/RAM/GPU host snapshot for the picker fitness hints. Returns the
- * renderer's `LiveResourcesEntry` shape (ipc-client.ts). `forceRefresh` is accepted (and ignored
- * for now) so the wrapper's `{ forceRefresh }` arg deserializes cleanly.
- * SPIKE: populate via `sysinfo` (RAM/CPU) + DXGI adapter VRAM. Zeros until then — the renderer's
- * fit assessors degrade to `unknown_footprint` (no false warnings).
+ * renderer's `LiveResourcesEntry` shape (ipc-client.ts). `forceRefresh` is accepted for the
+ * renderer's polling contract; the snapshot itself is cheap enough to refresh on every call.
  */
 async getLiveResources(forceRefresh: boolean | null) : Promise<LiveResources> {
     return await TAURI_INVOKE("get_live_resources", { forceRefresh });
@@ -1001,7 +960,7 @@ async ttsDownloadEstimate() : Promise<Result<DownloadEstimatePayload, string>> {
 },
 /**
  * `tts_install_pause` — cooperatively pause the engine-pack download.
- * 
+ *
  * The local Kokoro install is just the two model FILES (no separate engine pack),
  * and the current downloader runs synchronously inside `warm_up`/first-synth, so
  * there is no long-lived resumable job to pause yet. We emit `tts:install-paused`
@@ -1026,7 +985,7 @@ async ttsInstallResume() : Promise<Result<null, string>> {
 },
 /**
  * `tts_install_cancel` — cancel the install + clean up the partial download.
- * 
+ *
  * Emits `tts:model-download-complete { cancelled: true }` for UI parity. Partial-
  * file removal happens lazily on the next resume (HTTP Range re-validates).
  */
@@ -1245,11 +1204,26 @@ async setWakeWord(name: string, sensitivity: number, timeoutSeconds: number) : P
 async listWakeWordPresets() : Promise<WakeWordPresetPayload[]> {
     return await TAURI_INVOKE("list_wake_word_presets");
 },
+async wakewordModelStatus() : Promise<WakeWordModelStatusPayload> {
+    return await TAURI_INVOKE("wakeword_model_status");
+},
+async wakewordStartModelDownload() : Promise<WakeWordModelStatusPayload> {
+    return await TAURI_INVOKE("wakeword_start_model_download");
+},
+async wakewordPauseModelDownload() : Promise<WakeWordModelStatusPayload> {
+    return await TAURI_INVOKE("wakeword_pause_model_download");
+},
+async wakewordResumeModelDownload() : Promise<WakeWordModelStatusPayload> {
+    return await TAURI_INVOKE("wakeword_resume_model_download");
+},
+async wakewordCancelModelDownload() : Promise<WakeWordModelStatusPayload> {
+    return await TAURI_INVOKE("wakeword_cancel_model_download");
+},
 /**
  * `start_listen` — begin loopback capture on `device_index` (the positional
  * ordinal from `loopback_list_devices`) and arm diarization when the persisted
  * `general.speaker_diarization` setting is on.
- * 
+ *
  * Emits `stt:loopback-started { deviceName }` on success so the renderer's
  * `useListenMode` shows the active device name in the listen pill. The native
  * WASAPI loop is a compile-loop spike (see `LoopbackManager::start`); the
@@ -1296,6 +1270,13 @@ async fileTranscribeEnqueue(files: DroppedFile[]) : Promise<string[]> {
     return await TAURI_INVOKE("file_transcribe_enqueue", { files });
 },
 /**
+ * Open a backend-owned native picker and enqueue only selected supported media
+ * files. This keeps local/UNC paths out of renderer-controlled IPC.
+ */
+async fileTranscribePickAndEnqueue() : Promise<string[]> {
+    return await TAURI_INVOKE("file_transcribe_pick_and_enqueue");
+},
+/**
  * `file_transcribe_pause` — optional `{id}`.
  * • with `id` → per-row manual pause.
  * • no `id`   → PTT whole-queue auto-pause (the model is busy dictating).
@@ -1328,13 +1309,13 @@ async winsttExpandSnippets(text: string) : Promise<string> {
 },
 /**
  * `set_winstt_model` — request a (main | realtime) model reload. The reused
- * renderer's `sttReloadModel(kind, name)` sends `{ kind, name }`. The actual engine
+ * renderer's `sttReloadModel(kind, name, quantization?)` sends `{ kind, name, quantization }`. The actual engine
  * swap is WU-4 (lib_wiring §7, internal to TranscriptionManager); for WU-3 this
  * kicks Handy's `initiate_model_load` so the main-model reload path is live, and
  * returns a structural ack. Realtime-kind reloads are owned by 04_*.
  */
-async setWinsttModel(kind: string, name: string) : Promise<void> {
-    await TAURI_INVOKE("set_winstt_model", { kind, name });
+async setWinsttModel(kind: string, name: string, quantization: string | null) : Promise<void> {
+    await TAURI_INVOKE("set_winstt_model", { kind, name, quantization });
 },
 /**
  * `winstt_call_method` — dispatch the ~3 recorder methods the renderer invokes by
@@ -1347,11 +1328,10 @@ async winsttCallMethod(method: string, args: JsonValue[] | null) : Promise<void>
     await TAURI_INVOKE("winstt_call_method", { method, args });
 },
 /**
- * Emit the one-shot "engine is up" pair on startup so the renderer's connection
- * store leaves its cold-boot "connecting" state. Call from `lib.rs setup` AFTER
- * the managers are managed (the renderer treats connected+running as ready). The
- * `STT_IS_CONNECTED` / server-status *invoke* shims are handled in the adapter
- * (return true/"running"); this is the matching push so listeners also fire.
+ * Emit the one-shot "engine is up" pair once the renderer has completed its
+ * first startup IPC round trips. Also releases the splash handoff gate: Tauri's
+ * page-load event can fire before the React providers have loaded settings and
+ * devices, so the renderer calls this command after those startup tasks settle.
  */
 async winsttEmitReady() : Promise<void> {
     await TAURI_INVOKE("winstt_emit_ready");
@@ -1374,7 +1354,7 @@ async winsttGetParameter(parameter: string) : Promise<JsonValue> {
  * knobs that don't need an immediate reaction are folded into the live recorder
  * settings; the rest are accepted as no-ops until their owning subsystem lands so
  * the renderer's fire-and-forget `send()` never errors.
- * 
+ *
  * The `language` / `translate_to_english` / `initial_prompt` / `custom_words` /
  * `word_correction_threshold` / `filter_fillers` knobs route into the persisted
  * settings so the next `TranscriptionManager::transcribe` (which re-reads
@@ -1417,7 +1397,7 @@ async downloadCancelQuant(modelId: string, quantization: string) : Promise<void>
 /**
  * `delete_model_quantization` — drop just the weight files matching `quantization` from the HF
  * cache of `model_id` (other quants intact). Re-broadcasts `stt:model-cache-changed`.
- * 
+ *
  * `async` so the blocking HF-cache scan + unlink runs on the blocking pool instead of stalling
  * the main thread (async commands register identically to sync ones).
  */
@@ -1432,7 +1412,7 @@ async deleteModelQuantization(modelId: string, quantization: string) : Promise<R
 /**
  * `delete_model_cache` — wipe the entire HF snapshot directory for `model_id`. Positional-string
  * channel (`POSITIONAL_STRING_PARAM` → `{ modelId }`). Re-broadcasts cache-changed.
- * 
+ *
  * `async` so the blocking snapshot-dir scan + remove runs on the blocking pool instead of
  * stalling the main thread (async commands register identically to sync ones).
  */
@@ -1458,13 +1438,13 @@ async getRuntimeInfo() : Promise<RuntimeInfoPayload> {
  * `list_models_with_state` — the `{ models, states, system_info }` payload `fetchModelsWithState`
  * consumes (model-state-store.ts). `states[*].cache_by_quantization` is keyed per precision and the
  * `effective_quantization` badge bridge tells the picker WHICH precision's cache state to trust.
- * 
+ *
  * Cache states are sourced from a REAL probe of the HuggingFace cache (the same cache the resolver
  * downloads into) overlaid with the DownloadManager's in-flight registry; system_info is the
  * live-resources snapshot reshaped to `SystemInfoEntry`. The effective-quant bridge keys the
  * overall badge off the precision the loader will ACTUALLY load, so "Downloaded" never lies into a
  * silent re-download.
- * 
+ *
  * Async (audit #7): this `await`s the HF cache scan via `DownloadManager::cache_snapshot_async`
  * rather than `block_on`-ing it on the command thread, so the whole-catalog cache walk (the Rust
  * re-incarnation of the documented Python `list_models_onnx_parse_loop_starvation` bug) no longer
@@ -1512,7 +1492,7 @@ async gpuGetInfo() : Promise<GpuInfoEntry[]> {
  * to handy's token vocabulary happens inside `change_binding`, which then validates
  * + (un)registers it. An empty accelerator is treated as "unbound" (no-op success)
  * so the renderer's cold-boot register-then-rebind sequence can't error.
- * 
+ *
  * Returns whether the accelerator is now active (the renderer's `hotkeyRegister`
  * wrapper reads a `boolean`, defaulting to `false`).
  */
@@ -1554,6 +1534,12 @@ async hotkeyStopRecording() : Promise<void> {
  */
 async getAudioDevices() : Promise<AudioDevicePayload[]> {
     return await TAURI_INVOKE("get_audio_devices");
+},
+/**
+ * Force a fresh OS input-device enumeration from the renderer IPC surface.
+ */
+async refreshAudioDevices() : Promise<AudioDevicePayload[]> {
+    return await TAURI_INVOKE("refresh_audio_devices");
 },
 /**
  * `loopback_list_devices` — enumerate WASAPI loopback-capable output devices for
@@ -1818,6 +1804,56 @@ async historyLoadAudio(id: string) : Promise<Result<string | null, string>> {
 }
 },
 /**
+ * Feature-gated context playground command. Kept in the checked-in bindings so
+ * adapter route coverage can validate the optional command name even when the
+ * default export test runs without the `context-playground` Cargo feature.
+ */
+async contextPlaygroundSetLive(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("context_playground_set_live", { enabled });
+},
+/**
+ * Feature-gated context playground command. See `contextPlaygroundSetLive`.
+ */
+async contextPlaygroundArmDeep() : Promise<void> {
+    await TAURI_INVOKE("context_playground_arm_deep");
+},
+/**
+ * `transform-history:get-all` — every transform row reshaped to the same table
+ * shape as transcription history: final text plus `originalText` for the diff.
+ */
+async transformHistoryGetAll() : Promise<Result<TransformHistoryEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transform_history_get_all") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `transform-history:clear` — delete all transform rows. Uses the same
+ * `ClearResult` envelope as transcription history so the frontend can share
+ * the clear-confirm flow.
+ */
+async transformHistoryClear() : Promise<Result<ClearResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transform_history_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * `transform-history:delete` (STRING id) — delete one transform row.
+ */
+async transformHistoryDelete(id: string) : Promise<Result<DeletedResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transform_history_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * `about_get_app_info` — version + framework/webview versions + copyright.
  */
 async aboutGetAppInfo() : Promise<AboutAppInfo> {
@@ -1853,11 +1889,19 @@ async diagSaveBundle() : Promise<DiagSaveBundleResult> {
     return await TAURI_INVOKE("diag_save_bundle");
 },
 /**
- * `sound_library_add` — copy `source_path` (.wav / .mp3 only) into the managed
- * folder under a fresh uuid filename and return its entry. Mirrors `handleAdd`.
+ * `sound_library_add` is retained for older renderer code but intentionally
+ * fails closed: renderer-supplied paths are not a trusted proof of user file
+ * selection. Use `sound_library_pick_and_add`, which owns the native picker.
  */
 async soundLibraryAdd(sourcePath: string, name: string | null) : Promise<SoundLibraryAddResult> {
     return await TAURI_INVOKE("sound_library_add", { sourcePath, name });
+},
+/**
+ * Open the native file picker in the backend, copy the selected .wav/.mp3 into
+ * the managed library folder, and return the new library entry.
+ */
+async soundLibraryPickAndAdd(name: string | null) : Promise<SoundLibraryAddResult> {
+    return await TAURI_INVOKE("sound_library_pick_and_add", { name });
 },
 /**
  * `sound_library_read_file` — read a sound file's bytes for the renderer's Web
@@ -1878,7 +1922,7 @@ async soundLibraryRemove(path: string) : Promise<SoundLibraryRemoveResult> {
  * `apply_transform` — end-to-end Transforms pipeline (renderer `applyTransform()`
  * + the `transforms.hotkey` global-hotkey path). Delegates to
  * [`run_transform_pipeline`] so the command and the hotkey are byte-identical.
- * 
+ *
  * NEVER throws past this layer — the renderer's `invokeOrDefault` would mask it
  * and the toast would never fire.
  */
@@ -1908,10 +1952,11 @@ async applyTransformPreview(text: string, feature: string, config: LlmPreviewCon
 }
 },
 /**
- * Send: restore the captured target window to the foreground, paste `text` into
- * it (honoring the configured paste method / trailing space / auto-submit), then
- * tear down the preview overlay. Mirrors the auto-paste epilogue in
- * `TranscribeAction::stop` that this feature deferred.
+ * Send: restore the captured target window to the foreground, paste the
+ * user-confirmed preview text into it (honoring the configured paste method /
+ * trailing space / auto-submit), then tear down the preview overlay. Mirrors
+ * the auto-paste epilogue in `TranscribeAction::stop` that this feature
+ * deferred.
  */
 async confirmPaste(text: string) : Promise<Result<null, string>> {
     try {
@@ -1934,6 +1979,19 @@ async cancelPreview() : Promise<Result<null, string>> {
 }
 },
 /**
+ * Renderer feedback loop for native hit-testing. The overlay window is larger
+ * than the visual pill so the renderer has layout room, but this command clips
+ * the native window to only the currently painted pill/control rectangles.
+ */
+async setOverlayHitRegions(rects: OverlayHitRect[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_overlay_hit_regions", { rects }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * `winstt_diag` — webview → backend log bridge. The secondary windows (settings /
  * model-picker / …) are separate webviews whose console + uncaught errors are
  * invisible to the Rust log, so a blank/non-rendering window leaves no trace. The
@@ -1946,7 +2004,7 @@ async winsttDiag(label: string, level: string, message: string) : Promise<void> 
 },
 /**
  * `open_window` — create-if-needed, then show + focus the labelled window.
- * 
+ *
  * For the anchored pickers the renderer passes the trigger's viewport rect
  * (`x`/`y`/`width`/`height`); we convert it to a screen anchor via the CALLING
  * window (`webview`) and place the popup. For the plain windows the rect is
@@ -1990,7 +2048,7 @@ async closeSelfWindow() : Promise<Result<null, string>> {
 },
 /**
  * `resize_window` — set the desired footprint of the labelled window.
- * 
+ *
  * For the pickers the renderer's ResizeObserver reports the real content size
  * after mount; we store it and, if the popup is currently up, re-place it so it
  * stays glued to the same trigger with the now-correct size (and the model
@@ -2081,7 +2139,7 @@ async soundGetData() : Promise<number[] | null> {
 },
 /**
  * `cancel_current_operation` — abort the in-flight dictation session and reset
- * renderer state. Routes from `STT_ABORT_OPERATION` (overlay X / cancel combo).
+ * renderer state. Routes from `STT_ABORT_OPERATION` (overlay X / Escape).
  * Runs the centralized cancel path, then broadcasts `stt:session-aborted` so the
  * renderer drops its local "session active" state. Mirrors `handleAbortOperation`.
  */
@@ -2107,31 +2165,6 @@ async openCustomModelsFolder() : Promise<string> {
  */
 async winsttCancelDownload() : Promise<void> {
     await TAURI_INVOKE("winstt_cancel_download");
-},
-/**
- * `context_playground_set_live` — flip live polling on/off. A freshly-mounted
- * renderer sends `{ enabled: true }`, which BOTH enables live mode AND signals
- * "renderer ready" so a capture lands promptly (re-primes the loop). Mirrors
- * `handleSetLive`.
- */
-async contextPlaygroundSetLive(enabled: boolean) : Promise<void> {
-    await TAURI_INVOKE("context_playground_set_live", { enabled });
-},
-/**
- * `context_playground_arm_deep` — arm a deep (all-modes) capture; the next
- * external tick runs all four UIA modes side-by-side, then disarms. Mirrors
- * `handleArmDeep`.
- */
-async contextPlaygroundArmDeep() : Promise<void> {
-    await TAURI_INVOKE("context_playground_arm_deep");
-},
-/**
- * One-shot capture (kept for parity with `debug_read_context`'s mode probe; the
- * live loop is the primary path). Returns the full report so a caller can read
- * it synchronously without subscribing to the push channel.
- */
-async contextPlaygroundCapture(deep: boolean) : Promise<ContextDebugReport> {
-    return await TAURI_INVOKE("context_playground_capture", { deep });
 }
 }
 
@@ -2171,88 +2204,88 @@ wordAlignmentPayload: "word-alignment-payload"
  * `AboutAppInfo` interface exactly (camelCase) so the value round-trips through
  * `invoke` with no reshape.
  */
-export type AboutAppInfo = { version: string; 
+export type AboutAppInfo = { version: string;
 /**
  * Desktop-framework version — the Tauri framework version.
  */
-frameworkVersion: string; 
+frameworkVersion: string;
 /**
  * Embedded-WebView version (WebView2 on Windows).
  */
 webview2Version: string; copyright: string }
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeoutLegacy; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number }
+export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; update_checks_enabled?: boolean; selected_model?: string; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeoutLegacy; word_correction_threshold?: number; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
  */
-export type AudioDevicePayload = { 
+export type AudioDevicePayload = {
 /**
  * cpal positional enumeration ordinal (the renderer persists this as
  * `audio.inputDeviceIndex`).
  */
-index: number; name: string; isDefault: boolean; 
+index: number; name: string; isDefault: boolean;
 /**
  * Spec-present for parity with PyAudio's enumeration; the renderer doesn't
  * read these, so a faithful constant keeps the shape stable without a
  * second probe per device.
  */
 maxInputChannels: number; defaultSampleRate: number }
-export type AudioSettings = { 
+export type AudioSettings = {
 /**
  * Mic index; `null` = system default. HOT-SWAP.
  */
-inputDeviceIndex?: number | null; 
+inputDeviceIndex?: number | null;
 /**
  * Capture sample rate. STARTUP (CLI).
  */
-sampleRate?: number; 
+sampleRate?: number;
 /**
  * Audio chunk size. STARTUP (CLI).
  */
-bufferSize?: number; 
+bufferSize?: number;
 /**
  * Silero VAD sensitivity; trip threshold = `1 - value`. Range 0..1. HOT-SWAP.
  * INVARIANT: Silero VAD must load CPU-only (CUDA deadlock).
  */
-sileroSensitivity?: number; 
+sileroSensitivity?: number;
 /**
  * Use ONNX Silero variant. STARTUP (CLI).
  */
-sileroUseOnnx?: boolean; 
+sileroUseOnnx?: boolean;
 /**
  * Silero-based deactivity (Handy parity; config-only, no live consumer). HOT-SWAP (persist-only).
  */
-sileroDeactivityDetection?: boolean; 
+sileroDeactivityDetection?: boolean;
 /**
  * WebRTC VAD aggressiveness. Range 0..3. HOT-SWAP (`set_mode`).
  */
-webrtcSensitivity?: number; 
+webrtcSensitivity?: number;
 /**
  * Silence after speech before VAD stop (s). HOT-SWAP.
  */
-postSpeechSilenceDuration?: number; 
+postSpeechSilenceDuration?: number;
 /**
  * Min gap between consecutive recordings (s). HOT-SWAP.
  */
-minGapBetweenRecordings?: number; 
+minGapBetweenRecordings?: number;
 /**
  * Pre-roll buffer captured before trigger (s). STARTUP.
  */
-preRecordingBufferDuration?: number; 
+preRecordingBufferDuration?: number;
 /**
  * Adaptive-VAD calibration keyed by input-device name (server publishes
  * `vad_sensitivity_adapted`). HOT-SWAP (re-applied on device switch).
  * Zod `.catch({})`.
  */
-sileroSensitivityByDeviceName?: Partial<{ [key in string]: number }>; 
+sileroSensitivityByDeviceName?: Partial<{ [key in string]: number }>;
 /**
- * Alt mic index when laptop lid closed; `null` = disabled. STARTUP. Zod `.catch(null)`.
+ * Alt mic index when laptop lid closed; `null` = disabled. HOT-SWAP. Zod `.catch(null)`.
  */
-clamshellMicrophone?: number | null; 
+clamshellMicrophone?: number | null;
 /**
  * Mic-stream lifecycle policy. HOT-SWAP. Zod `.catch("immediate")`.
  */
-microphoneRelease?: MicrophoneRelease; 
+microphoneRelease?: MicrophoneRelease;
 /**
  * Tail-capture window (ms) after user stop. Range 0..2000. HOT-SWAP. Zod `.catch(0)`.
  */
@@ -2269,23 +2302,42 @@ export type CancelPullResult = { cancelled: boolean }
  * One rich catalog row as the picker consumes it. snake_case on the wire to match
  * `rawModelInfoSchema` (catalog-store.ts) exactly — the renderer does no remapping of the keys.
  */
-export type CatalogModelInfo = { id: string; display_name: string; 
+export type CatalogModelInfo = { id: string; display_name: string;
 /**
  * Always `"onnx_asr"` post-torch-drop (server `_backend_from_str` defaults to it).
  */
-backend: string; family: string; languages: string[]; supports_language_detection: boolean; size_label: string; supports_realtime: boolean; onnx_model_name: string | null; description: string; 
+backend: string; family: string; languages: string[]; supports_language_detection: boolean; size_label: string;
+/**
+ * Legacy alias for `preview_capable`. Kept for older renderer builds.
+ */
+supports_realtime: boolean;
+/**
+ * Whether this model can drive the live preview UI at all. This may be a
+ * simulated rolling/window re-decode path rather than native streaming.
+ */
+preview_capable: boolean;
+/**
+ * Whether the loaded engine consumes only new audio through a stateful/native
+ * streaming decoder (`Transcriber::stream_accept`).
+ */
+native_streaming: boolean;
+/**
+ * Whether realtime text can be promoted to final paste without a fresh
+ * full-context final decode.
+ */
+final_reuse_safe: boolean; onnx_model_name: string | null; description: string;
 /**
  * Quant suffixes (filtered to the CUDA-compatible set on CUDA EPs; full set otherwise).
  */
-available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>; 
+available_quantizations: string[]; size_bytes_by_quantization: Partial<{ [key in string]: number }>;
 /**
  * Shipped catalog rows are always available; custom-scan failures would set false.
  */
-available: boolean; error_message: string; local_path: string | null; 
+available: boolean; error_message: string; local_path: string | null;
 /**
  * 0..1 normalized speed score (log-scaled RTFx). 0.5 = unknown → renderer hides the bar.
  */
-speed_score: number; 
+speed_score: number;
 /**
  * 0..1 normalized accuracy score (linear-ramped WER). 0.5 = unknown.
  */
@@ -2312,20 +2364,12 @@ export type CloudVoiceCatalogPayload = { voices: CloudVoicePayload[]; error: str
  * `CloudTtsVoice` wire shape (`{ id, name, language, category, previewUrl }`).
  */
 export type CloudVoicePayload = { id: string; name: string; language: string | null; category: string; previewUrl: string | null }
-export type ContextDebugReport = { asrPromptTail: string; asrPromptTailRaw: string; capturedAt: number; contentless: boolean; contextAwarenessEnabled: boolean; deep: boolean; denied: boolean; deniedReason: string | null; durationMs: number; filteredSnapshot: ContextSnapshotView; hasCaret: boolean; isIde: boolean; isTerminal: boolean; metrics: ContextMetrics; modes?: ContextModeResult[] | null; ocrUsed: boolean; promptFragment: string; rawSnapshot: ContextSnapshotView }
-export type ContextMetrics = { axHtmlCap: number; axHtmlChars: number; denyListSize: number; focusedTextChars: number; promptFragmentChars: number; textAfterChars: number; textBeforeChars: number }
-export type ContextModeResult = { durationMs: number; 
-/**
- * "tree" | "split" | "default" | "selection"
- */
-mode: string; ok: boolean; snapshot: ContextSnapshotView }
-export type ContextSnapshotView = { appExe?: string | null; axHtml?: string | null; elementName: string; focusedText: string; ocrText?: string | null; textAfter?: string | null; textBefore?: string | null; url?: string | null; windowTitle: string }
 /**
  * `customModifierSchema` — user-authored cleanup modifier. Persists the full
  * definition even while `enabled` is false so the authored name/prompt survives
  * a toggle.
  */
-export type CustomModifier = { id: string; name?: string; prompt?: string; enabled?: boolean; 
+export type CustomModifier = { id: string; name?: string; prompt?: string; enabled?: boolean;
 /**
  * When true a Low/Medium/High switcher tunes the prompt's intensity hint.
  */
@@ -2339,7 +2383,7 @@ export type DeletedResult = { deleted: boolean }
  * `model.device` — `DeviceTypeSchema` = `["auto", "cpu"]`.
  * ONNX-only WinSTT exposes only auto-vs-CPU; the actual accelerator (DirectML
  * vs CPU) is chosen by the packaging flavor + `device.py`'s EP probe, NOT a
- * persisted user knob. STARTUP-ONLY (binds the ORT EP at session create).
+ * persisted user knob. In this port, changes trigger an in-process model reload.
  */
 export type DeviceType = "auto" | "cpu"
 /**
@@ -2390,179 +2434,190 @@ export type FileTranscriptionFormat = "txt" | "srt"
  * (`invokeOrDefault(..., null)`); the per-row badges render from the mirror regardless.
  */
 export type FitAssessmentEntry = { severity: string; target: string; required_bytes: number; available_bytes: number; reasons: string[] }
-export type GeneralSettings = { 
+export type GeneralSettings = {
 /**
  * Launch on OS login. HOT-SWAP (Tauri autostart).
  */
-autoStart?: boolean; 
+autoStart?: boolean;
 /**
  * Close → tray instead of quit. HOT-SWAP.
  */
-minimizeToTray?: boolean; 
+minimizeToTray?: boolean;
 /**
  * Start hidden in tray. HOT-SWAP.
  */
-startMinimized?: boolean; 
+startMinimized?: boolean;
 /**
  * Duck system playback to `(100-v)%` while dictating; 0=off, 100=mute.
  * Range 0..100, UI step 20. HOT-SWAP. Zod `.catch(0)`.
  */
-systemAudioReductionWhileDictating?: number; 
+systemAudioReductionWhileDictating?: number;
 /**
  * Play chime on record start/stop. HOT-SWAP.
  */
-recordingSound?: boolean; 
+recordingSound?: boolean;
 /**
  * Active chime clip; `""` = built-in default, else absolute path. HOT-SWAP.
  */
-recordingSoundPath?: string; 
+recordingSoundPath?: string;
 /**
  * User-uploaded chime clips (copied into `userData/sounds/`). HOT-SWAP. Zod `.catch([])`.
  */
-recordingSoundLibrary?: SoundLibraryEntry[]; 
+recordingSoundLibrary?: SoundLibraryEntry[];
 /**
  * Output format for file transcription. HOT-SWAP.
  */
-fileTranscriptionFormat?: FileTranscriptionFormat; 
+fileTranscriptionFormat?: FileTranscriptionFormat;
 /**
  * `auto` = beside source, `ask` = save dialog. HOT-SWAP.
  */
-fileTranscriptionSaveLocation?: FileSaveLocation; 
+fileTranscriptionSaveLocation?: FileSaveLocation;
 /**
- * How a recording session starts. CONDITIONAL restart (wakeword boundary).
+ * How a recording session starts. HOT-SWAP, including wakeword arm/disarm.
  */
-recordingMode?: RecordingMode; 
+recordingMode?: RecordingMode;
 /**
  * In toggle mode: continuous press-to-press, disable VAD/silence stop. HOT-SWAP.
  */
-manualToggleStop?: boolean; 
+manualToggleStop?: boolean;
 /**
  * Re-paste last transcription — exclusive global shortcut (uiohook accel
  * format; converted to a Tauri accelerator at registration). HOT-SWAP.
  * Must be non-empty (Zod `.min(1).catch`).
  */
-repasteHotkey?: string; 
+repasteHotkey?: string;
 /**
  * Loopback device index for `listen` mode; `null` = default. HOT-SWAP.
  */
-loopbackDeviceIndex?: number | null; 
+loopbackDeviceIndex?: number | null;
 /**
- * Wake word in `wakeword` mode (Porcupine / openWakeWord keyword; KWS in the
- * Rust port). CONDITIONAL restart (in wakeword mode).
+ * Wake phrase in `wakeword` mode. Presets and custom phrases both run
+ * through the local sherpa KWS detector. HOT-SWAP via wakeword runtime refresh.
  */
-wakeWord?: string; 
+wakeWord?: string;
 /**
- * Wake-word detector sensitivity. Range 0..1. CONDITIONAL restart.
+ * User-saved custom wake phrases for the renderer combobox. Runtime listens
+ * only to `wake_word`; this list is persisted UI catalog state.
  */
-wakeWordSensitivity?: number; 
+customWakeWords?: string[];
 /**
- * Seconds the gate stays armed after detection. Range 1..30. CONDITIONAL restart.
+ * Wake-word detector sensitivity. Range 0..1. HOT-SWAP via runtime refresh.
  */
-wakeWordTimeout?: number; 
+wakeWordSensitivity?: number;
+/**
+ * Seconds the gate stays armed after detection. Range 1..30. HOT-SWAP via runtime refresh.
+ */
+wakeWordTimeout?: number;
 /**
  * Show floating recording pill. HOT-SWAP (affects effective-realtime, which the
  * realtime worker re-reads live — no restart).
  */
-showRecordingOverlay?: boolean; 
+showRecordingOverlay?: boolean;
 /**
  * Overlay visual layout. HOT-SWAP. Zod `.catch`.
  */
-overlayMode?: OverlayMode; 
+overlayMode?: OverlayMode;
 /**
  * Whether/where the pill appears. HOT-SWAP. Zod `.catch`.
  */
-overlayPosition?: OverlayPosition; 
+overlayPosition?: OverlayPosition;
 /**
  * Overlay visualizer height preset. HOT-SWAP. Zod `.catch`.
  */
-visualizerSize?: VisualizerSize; 
+visualizerSize?: VisualizerSize;
 /**
  * Where live preview renders; also gates effective-realtime. HOT-SWAP (worker
  * re-reads it live — no restart, even when disabled). Zod `.catch`.
  */
-liveTranscriptionDisplay?: LiveTranscriptionDisplay; 
+liveTranscriptionDisplay?: LiveTranscriptionDisplay;
 /**
  * Visualizer style. HOT-SWAP.
  */
-visualizerType?: VisualizerType; 
+visualizerType?: VisualizerType;
 /**
  * Bars in the visualizer. Range 3..21. HOT-SWAP. Zod `.catch(9)`.
  */
-visualizerBarCount?: number; visualizerRadialDotCount?: number; visualizerRadialRadius?: number; visualizerGridRows?: number; visualizerGridColumns?: number; visualizerGridSpeed?: number; visualizerWaveLineWidth?: number; visualizerWaveSmoothing?: number; visualizerWaveColorShift?: number; visualizerAuraShape?: VisualizerAuraShape; visualizerAuraBlur?: number; visualizerAuraBloom?: number; visualizerAuraColorShift?: number; 
+visualizerBarCount?: number; visualizerRadialDotCount?: number; visualizerRadialRadius?: number; visualizerGridRows?: number; visualizerGridColumns?: number; visualizerGridSpeed?: number; visualizerWaveLineWidth?: number; visualizerWaveSmoothing?: number; visualizerWaveColorShift?: number; visualizerAuraShape?: VisualizerAuraShape; visualizerAuraBlur?: number; visualizerAuraBloom?: number; visualizerAuraColorShift?: number;
 /**
  * Read focused-window text (UIA/AX) → feed LLM cleanup. HOT-SWAP.
  */
-contextAwareness?: boolean; 
+contextAwareness?: boolean;
 /**
  * Deny-list for context capture (exe basenames / URL host suffixes). HOT-SWAP.
  * Seeded with common password managers. Zod `.catch(<same seed>)`.
  */
-contextDenyList?: string[]; 
+contextDenyList?: string[];
 /**
  * Per-utterance speaker diarization (~32 MB models, first-run download).
  * HOT-SWAP (runtime toggle via diarization-toggle method).
  */
-speakerDiarization?: boolean; 
+speakerDiarization?: boolean;
 /**
- * Sentry crash-reporting opt-out. STARTUP-ONLY (Sentry `init()` reads once).
+ * Sentry crash-reporting opt-out. Persisted live; never prompts for restart.
  */
-sendCrashReports?: boolean; 
+sendCrashReports?: boolean;
 /**
  * Opt-in pre-release auto-updates. HOT-SWAP.
  */
-receivePrereleaseUpdates?: boolean; 
+receivePrereleaseUpdates?: boolean;
 /**
  * First-run wizard gate (MAIN-owned). Zod `.catch(false)`.
  */
-onboarded?: boolean; 
+onboarded?: boolean;
 /**
  * Epoch-ms when wizard finished/skipped (MAIN-owned). Zod `.catch(null)`.
  */
-onboardedAt?: number | null; 
+onboardedAt?: number | null;
 /**
  * Which STT track the wizard picked (MAIN-owned). Zod `.catch("")`.
  */
-onboardedTrack?: OnboardedTrack; 
+onboardedTrack?: OnboardedTrack;
 /**
  * Output device for TTS + chimes (`MediaDeviceInfo.deviceId`; `""`=default).
  * HOT-SWAP. Zod `.catch("")`.
  */
-outputDeviceId?: string; 
+outputDeviceId?: string;
 /**
  * Auto-press a submit key after each paste. HOT-SWAP. Zod `.catch(false)`.
  */
-autoSubmit?: boolean; 
+autoSubmit?: boolean;
 /**
  * Which key combo to inject on auto-submit. HOT-SWAP. Zod `.catch("enter")`.
  */
-autoSubmitKey?: AutoSubmitKey; 
+autoSubmitKey?: AutoSubmitKey;
 /**
  * Gate auto-paste behind an editable preview pill the user confirms before
  * pasting. HOT-SWAP. Only effective when the recording pill is shown (the
  * preview IS the pill). Zod `.catch(false)`.
  */
-previewBeforePasting?: boolean; 
+previewBeforePasting?: boolean;
+/**
+ * Stream generated realtime text directly into the focused app while recording.
+ * HOT-SWAP. Effective only for native-streaming main models. Mutually exclusive
+ * with preview-before-pasting. Zod `.catch(false)`.
+ */
+wordByWordPasting?: boolean;
 /**
  * Cap on persisted history entries. Range 10..10000. HOT-SWAP. Zod `.catch(1000)`.
  */
-historyMaxEntries?: number; 
+historyMaxEntries?: number;
 /**
  * Auto-delete saved WAV recordings policy. HOT-SWAP. Zod `.catch("cap")`.
  */
-recordingRetention?: RecordingRetention; 
+recordingRetention?: RecordingRetention;
 /**
  * Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
  */
-wordCorrectionThreshold?: number; 
+wordCorrectionThreshold?: number;
 /**
  * Strip filler words + collapse 3+ stutters. HOT-SWAP. Zod `.catch(true)`.
  */
-filterFillers?: boolean; 
+filterFillers?: boolean;
 /**
  * Per-user override of the filler-word table. HOT-SWAP. Zod `.catch([])`.
  */
 customFillerWords?: string[] }
-export type GlobalSettings = { 
+export type GlobalSettings = {
 /**
  * Idle-unload policy shared by local STT, realtime preview, local TTS, and
  * Ollama keep-alive. HOT-SWAP. Zod `.catch("min5")`.
@@ -2574,7 +2629,7 @@ export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number 
  * quality settings GPU chip. SPIKE: enumerate adapters via DXGI; empty list = "no GPU detected".
  */
 export type GpuInfoEntry = { name: string; total_vram_bytes: number }
-export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean; 
+export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean;
 /**
  * JSON telemetry of the LLM pass (`{model, processingMs, tokens}`), or
  * `None` when no LLM ran. Carried verbatim; parsed by the renderer-facing
@@ -2587,7 +2642,7 @@ llm_meta: string | null }
  */
 export type HistoryRow = { id: number; fileName: string; timestamp: number; saved: boolean; title: string; transcriptionText: string; postProcessedText: string | null; postProcessPrompt: string | null; postProcessRequested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
-export type HotkeySettings = { 
+export type HotkeySettings = {
 /**
  * Primary PTT/toggle hotkey (uiohook accelerator). HOT-SWAP (passive).
  * Must be non-empty (Zod `.min(1).catch`).
@@ -2596,7 +2651,7 @@ pushToTalkKey?: string }
 /**
  * Result of changing keyboard implementation
  */
-export type ImplementationChangeResult = { success: boolean; 
+export type ImplementationChangeResult = { success: boolean;
 /**
  * List of binding IDs that were reset to defaults due to incompatibility
  */
@@ -2617,8 +2672,7 @@ export type LiveGpuEntry = { name: string; total_vram_bytes: number; free_vram_b
 /**
  * Live host snapshot — byte-identical to the renderer's `LiveResourcesEntry` (ipc-client.ts) so
  * the picker's client-side fit mirror (`assessDictationFitClient`) reads it verbatim. A zeroed
- * snapshot is valid (the fit assessors degrade to `unknown_footprint`); real numbers are a
- * compile-loop spike (`sysinfo` + DXGI VRAM) deferred to avoid adding a crate mid-port.
+ * snapshot is valid (the fit assessors degrade to `unknown_footprint`).
  */
 export type LiveResources = { cpu_count_logical: number; cpu_count_physical: number; cpu_percent: number; gpus: LiveGpuEntry[]; ram_available_bytes: number; ram_total_bytes: number }
 /**
@@ -2628,17 +2682,17 @@ export type LiveResources = { cpu_count_logical: number; cpu_count_physical: num
  * disabling live transcription entirely) takes effect with no restart.
  */
 export type LiveTranscriptionDisplay = "none" | "in-app" | "in-pill" | "both"
-export type LlmDictation = 
+export type LlmDictation =
 /**
  * Flattened so the shared fields sit at `llm.dictation.<field>` (matches
  * Zod's `...llmFeatureBaseShape` spread). Inner-field defaults handle a
  * partial JSON; see the note on `LlmFeatureBase`.
  */
-({ provider?: LlmProvider; 
+({ provider?: LlmProvider;
 /**
  * Ollama model name.
  */
-model?: string; 
+model?: string;
 /**
  * `modelId` or `modelId@providerSlug`; `""` = Auto.
  */
@@ -2648,37 +2702,37 @@ openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: Ef
  * the reference main `FeatureLlmConfig`). Connection values (endpoint, key) are
  * read from settings regardless, so they are NOT carried here.
  */
-export type LlmPreviewConfig = { provider?: string; model?: string; openrouterModel?: string; openrouterFallbackModel?: string; thinkingEffort?: string; presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
+export type LlmPreviewConfig = { provider?: string; model?: string; openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: string; verbosity?: string; maxOutputTokens?: number | null; thinkingEffort?: string; presets?: PresetEntry[]; customModifiers?: CustomModifier[] }
 /**
  * LLM provider for a per-feature config (`llm.dictation` / `llm.transforms`).
  */
 export type LlmProvider = "ollama" | "openrouter" | "apple-intelligence"
-export type LlmSettings = { 
+export type LlmSettings = {
 /**
  * Shared Ollama endpoint URL.
  */
-endpoint?: string; 
+endpoint?: string;
 /**
  * SECRET — OpenRouter API key. Encrypt at rest (see 02_settings.md).
  */
-openrouterApiKey?: string; dictation?: LlmDictation; transforms?: LlmTransforms; 
+openrouterApiKey?: string; dictation?: LlmDictation; transforms?: LlmTransforms;
 /**
  * Client request timeout (ms). Range 1000..30000. Persisted but NOT applied at network layer.
  */
 timeout?: number }
-export type LlmTransforms = ({ provider?: LlmProvider; 
+export type LlmTransforms = ({ provider?: LlmProvider;
 /**
  * Ollama model name.
  */
-model?: string; 
+model?: string;
 /**
  * `modelId` or `modelId@providerSlug`; `""` = Auto.
  */
-openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: EffortLevel; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[]; 
+openrouterModel?: string; openrouterFallbackModel?: string; reasoningEffort?: EffortLevel; verbosity?: EffortLevel; maxOutputTokens?: number | null; thinkingEffort?: ThinkingEffort }) & { enabled?: boolean; presets?: PresetEntry[]; customModifiers?: CustomModifier[];
 /**
  * Always non-empty (Zod `.min(1).catch`). The transform's invoke hotkey.
  */
-hotkey?: string; 
+hotkey?: string;
 /**
  * User-configurable text transforms (built-ins carry `builtin: true`).
  */
@@ -2693,82 +2747,80 @@ export type LocalVoicePayload = { id: string; label: string; language: string; g
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * One loopback-capable output device, in the renderer's expected shape.
- * 
+ *
  * `index` is the positional ordinal in the WASAPI render-device enumeration
  * (NOT a PyAudio host-API index — there's no PyAudio here). `start_listen`
  * resolves it back to the endpoint id by re-enumerating in the same order.
  */
-export type LoopbackDevicePayload = { index: number; name: string; 
+export type LoopbackDevicePayload = { index: number; name: string;
 /**
  * WASAPI render endpoints are mixed at 48 kHz on Windows; the renderer only
  * displays this and never gates on it, so a fixed default is faithful to the
  * shared-mode mix the loopback capture actually sees.
  */
-defaultSampleRate: number; 
+defaultSampleRate: number;
 /**
  * Loopback capture mirrors the render mix as 2-channel; the renderer only
  * uses this for display.
  */
 maxOutputChannels: number; isDefault: boolean }
 /**
- * `audio.microphoneRelease`. Consolidates Handy's
- * `always_on_microphone` + `lazy_stream_close` + `lazy_close_timeout_seconds`
- * into one picker; the spawn layer fans it back out into those CLI flags.
- * HOT-SWAP (audio-source reconfigure in place).
+ * `audio.microphoneRelease`. Single WinSTT-owned microphone release policy.
+ * HOT-SWAP (audio manager reconfigures in place).
  */
 export type MicrophoneRelease = "always" | "immediate" | "sec_30" | "min_1" | "min_5"
 /**
  * Per-precision cache snapshot, mirroring the renderer's `ModelCacheInfo`.
  */
-export type ModelCacheInfo = { 
+export type ModelCacheInfo = {
 /**
  * "cached" | "partial" | "not_cached".
  */
-state: string; downloaded_bytes: number; total_bytes: number; 
+state: string; downloaded_bytes: number; total_bytes: number;
 /**
  * 0.0..1.0 (1.0 when cached).
  */
 progress: number }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
-export type ModelSettings = { 
+export type ModelSettings = {
 /**
  * Catalog id (`tiny`…`large-v3-turbo`, onnx families) OR `<provider>:<id>`
  * for cloud (`openai:whisper-1`, `elevenlabs:...`) OR a custom-folder id.
  * HOT-SWAP (in-place engine swap).
  */
-model?: string; 
+model?: string;
 /**
  * Realtime/live-preview model (must support realtime). HOT-SWAP.
  */
-realtimeModel?: string; 
+realtimeModel?: string;
 /**
  * Forced decode language (`""` = auto-detect). HOT-SWAP.
  */
-language?: string; 
+language?: string;
 /**
- * CPU vs auto-GPU. STARTUP-ONLY.
+ * CPU vs auto-GPU. HOT-SWAP through targeted model reload.
  */
-device?: DeviceType; 
+device?: DeviceType;
 /**
  * Transcriber engine (auto-derived from model id on load). HOT-SWAP.
  */
-backend?: TranscriberBackend; 
+backend?: TranscriberBackend;
 /**
  * ONNX file quant suffix (`""`, `int8`, `fp16`, `uint8`, `q4`, `q4f16`,
  * `bnb4`). Free-string (not an enum) — the catalog gates valid values per
  * model and the server resolves `""`/`auto`. HOT-SWAP.
  */
-onnxQuantization?: string; 
+onnxQuantization?: string;
 /**
  * Whisper decoder-bias prompt (main). HOT-SWAP (read per-utterance).
  * INVARIANT: Canary/Cohere ignore this slot (untrained) — do not bias them.
  */
-initialPrompt?: string; 
+initialPrompt?: string;
 /**
  * Decoder-bias prompt for the realtime worker (build-time). HOT-SWAP.
  */
-initialPromptRealtime?: string; 
+initialPromptRealtime?: string;
 /**
  * Whisper task=translate (multilingual Whisper only). HOT-SWAP. Zod `.catch(false)`.
  */
@@ -2776,7 +2828,7 @@ translateToEnglish?: boolean }
 /**
  * Per-model cache + fitness state — mirrors the renderer's `ModelStateEntry` (model-state-store.ts).
  */
-export type ModelStateEntry = { id: string; cache: ModelCacheInfo; cache_by_quantization: Partial<{ [key in string]: ModelCacheInfo }>; available_quantizations: string[]; 
+export type ModelStateEntry = { id: string; cache: ModelCacheInfo; cache_by_quantization: Partial<{ [key in string]: ModelCacheInfo }>; available_quantizations: string[];
 /**
  * The precision the loader will ACTUALLY load under the current device — the badge bridge
  * (memory project_effective_quantization_bridge). The picker keys "downloaded?" off this.
@@ -2813,7 +2865,7 @@ export type OllamaModelDetailsPayload = { format?: string | null; family?: strin
 /**
  * `OllamaModel` (camelCase per spec). Consumed by `OllamaScanResult.models[]`.
  */
-export type OllamaModelPayload = { name: string; size?: number | null; modifiedAt?: string | null; details?: OllamaModelDetailsPayload | null; capabilities?: string[] | null }
+export type OllamaModelPayload = { name: string; size?: number | null; modifiedAt?: string | null; details?: OllamaModelDetailsPayload | null; capabilities?: string[] | null; contextLength?: number | null }
 /**
  * `OllamaPullResult` — `{ success, model, cancelled?, error? }`.
  */
@@ -2847,6 +2899,13 @@ export type OpenRouterModelPayload = { id: string; name: string; description?: s
 export type OpenRouterScanResultPayload = { models: OpenRouterModelPayload[]; reachable: boolean; error?: string | null }
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 /**
+ * Renderer-measured rectangle, in overlay-window CSS/logical pixels, that
+ * should remain native-hit-testable. Windows applies this as the overlay HWND's
+ * region, so transparent pixels outside the actual pill surfaces do not block
+ * the app underneath while the overlay is interactive.
+ */
+export type OverlayHitRect = { x: number; y: number; width: number; height: number }
+/**
  * `general.overlayMode`.
  */
 export type OverlayMode = "floating-bottom" | "dynamic-island"
@@ -2862,14 +2921,14 @@ export type PaginatedHistory = { entries: HistoryRow[]; hasMore: boolean }
 export type PaginatedHistoryLegacy = { entries: HistoryEntry[]; has_more: boolean }
 /**
  * The partial section patch the renderer posts to `winstt_set_settings`.
- * 
+ *
  * The renderer (`collectChangedSections` in `features/update-settings`) diffs
  * against its last-saved baseline and sends only the changed top-level sections
  * (e.g. VAD calibration and device-switch-feedback post just `{ audio }` after
  * every utterance). Every field is `Option` so an absent section deserializes
  * to `None` (= "leave the persisted value untouched") rather than resetting to a
  * default — the clobber the old full-`WinsttSettings` parameter caused.
- * 
+ *
  * Sections are always posted whole (the renderer copies the entire section
  * value), so an `Option<Section>` round-trips losslessly.
  */
@@ -2881,7 +2940,7 @@ export type PostProcessProvider = { id: string; label: string; base_url: string;
  * `presetEntrySchema`. `level` valid only for summarize/concise; `targetLang`
  * valid only for translate (cross-field constraints enforced at the app layer).
  */
-export type PresetEntry = { key: PresetKey; level?: PresetLevel | null; 
+export type PresetEntry = { key: PresetKey; level?: PresetLevel | null;
 /**
  * English name of the target language; only meaningful for `Translate`.
  */
@@ -2902,61 +2961,61 @@ export type PresetLevel = "light" | "medium" | "high"
  * MUST be encrypted at rest (`enc:v1:<base64>`); the persistence layer
  * transparently encrypts on save / decrypts on read.
  */
-export type ProviderIntegrationStatus = { 
+export type ProviderIntegrationStatus = {
 /**
  * SECRET — encrypt at rest.
  */
-apiKey?: string; 
+apiKey?: string;
 /**
  * Result of the last probe; `null` = never probed.
  */
-verified?: boolean | null; 
+verified?: boolean | null;
 /**
  * Epoch-ms of last successful probe.
  */
 lastVerifiedAt?: number | null }
-export type QualitySettings = { 
+export type QualitySettings = {
 /**
- * Use main model (vs separate realtime model) for live preview. STARTUP-ONLY.
+ * Use main model (vs separate realtime model) for live preview. HOT-SWAP / parity-only.
  */
-useMainModelForRealtime?: boolean; 
+useMainModelForRealtime?: boolean;
 /**
- * Pause between realtime passes (s). STARTUP-ONLY.
+ * Pause between realtime passes (s). HOT-SWAP.
  */
-realtimeProcessingPause?: number; 
+realtimeProcessingPause?: number;
 /**
- * Delay before spinning up the realtime worker (s). STARTUP-ONLY.
+ * Delay before spinning up the realtime worker (s). HOT-SWAP.
  */
-initRealtimeAfterSeconds?: number; 
+initRealtimeAfterSeconds?: number;
 /**
- * Early-finalize-on-silence threshold (s). STARTUP-ONLY.
+ * Early-finalize-on-silence threshold (s). HOT-SWAP / config-only in this port.
  */
-earlyTranscriptionOnSilence?: number; 
+earlyTranscriptionOnSilence?: number;
 /**
  * Capitalize first letter of output. HOT-SWAP.
  */
-ensureSentenceStartingUppercase?: boolean; 
+ensureSentenceStartingUppercase?: boolean;
 /**
  * Append terminal period. HOT-SWAP.
  */
-ensureSentenceEndsWithPeriod?: boolean; 
+ensureSentenceEndsWithPeriod?: boolean;
 /**
  * DistilBERT sentence-completion classifier for endpointing. HOT-SWAP.
  */
-smartEndpoint?: boolean; 
+smartEndpoint?: boolean;
 /**
  * Pause multiplier `(model+whisper)*speed`; higher = more patient.
  * Range 0.5..3.0. HOT-SWAP.
  */
-smartEndpointSpeed?: number; 
+smartEndpointSpeed?: number;
 /**
  * Silence after `.!?` before stop (silence-timing fallback). Range 0.1..5.0. HOT-SWAP.
  */
-endOfSentenceDetectionPause?: number; 
+endOfSentenceDetectionPause?: number;
 /**
  * Silence after `...` before stop. Range 0.1..10.0. HOT-SWAP.
  */
-midSentenceDetectionPause?: number; 
+midSentenceDetectionPause?: number;
 /**
  * Silence after no-terminator speech before stop. Range 0.1..5.0. HOT-SWAP.
  */
@@ -2964,39 +3023,40 @@ unknownSentenceDetectionPause?: number }
 /**
  * Realtime preview after stabilization (committed-watermark accumulator).
  */
-export type RealtimeStabilizedPayload = { text: string }
+export type RealtimeStabilizedPayload = { text: string; isFinal: boolean }
 /**
  * Raw realtime preview (pre-stabilization) — drives the noise-break heuristic.
  */
-export type RealtimeUpdatePayload = { text: string }
+export type RealtimeUpdatePayload = { text: string; isFinal: boolean }
 /**
- * `general.recordingMode`. CONDITIONAL restart: only crossing into/out of
- * `wakeword` (or changing wakeword config while in it) restarts the engine.
+ * `general.recordingMode`. HOT-SWAP: crossing into/out of wakeword arms or
+ * disarms the detector in-process.
  */
 export type RecordingMode = "ptt" | "toggle" | "listen" | "wakeword"
 /**
  * `general.recordingRetention`. `never` = keep all; `cap` = oldest beyond
  * historyMaxEntries; days3/weeks2/months3 = absolute age cutoff.
  */
-export type RecordingRetention = "never" | "cap" | "days_3" | "weeks_2" | "months_3"
-export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+export type RecordingRetention = "never" | "cap" | "days3" | "weeks2" | "months3"
+export type RemoveApplicationDataResult = { scheduled: boolean; portable: boolean; deletePortableAppDir: boolean; deletedOllamaModels: string[]; ollamaErrors: string[] }
+export type RemoveDownloadedModelsResult = { deletedModelCaches: number; disabledFeatures: string[]; deletedOllamaModels: string[]; ollamaErrors: string[]; errors: string[] }
 /**
  * Active-runtime snapshot — byte-identical to the renderer's `RuntimeInfoPayload` (ipc-client.ts):
  * drives the GPU/CPU chip + the `useSyncActiveModel` reconciliation.
  */
-export type RuntimeInfoPayload = { 
+export type RuntimeInfoPayload = {
 /**
  * "cpu" | "directml" | "cuda" | "auto" (the resolved EP label).
  */
-device: string; is_gpu: boolean; 
+device: string; is_gpu: boolean;
 /**
  * The currently-loaded MAIN model id (`None` until a model loads).
  */
-model: string | null; 
+model: string | null;
 /**
  * Active ORT execution providers (e.g. ["DmlExecutionProvider","CPUExecutionProvider"]).
  */
-providers: string[]; 
+providers: string[];
 /**
  * The currently-loaded REALTIME model id (`None` when realtime isn't loaded).
  */
@@ -3004,7 +3064,8 @@ realtime_model: string | null }
 export type SecretMap = Partial<{ [key in string]: string }>
 /**
  * Result of `winstt_set_settings`: whether the change requires an engine
- * restart, and which dot-paths drove that decision (for diagnostics / UI).
+ * restart, and which dot-paths drove that decision. Kept for renderer wire
+ * compatibility; the Rust port applies these changes in-process.
  */
 export type SetSettingsResult = { needsRestart: boolean; changedStartupKeys: string[] }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
@@ -3015,11 +3076,11 @@ export type SnippetEntry = { id: string; trigger: string; expansion: string }
 /**
  * Result of `sound_library_add` (matches `SoundLibraryAddResult`).
  */
-export type SoundLibraryAddResult = { ok: boolean; entry?: SoundLibraryEntryResult | null; error?: string | null }
+export type SoundLibraryAddResult = { ok: boolean; cancelled?: boolean | null; entry?: SoundLibraryEntryResult | null; error?: string | null }
 /**
  * `soundLibraryEntrySchema` — one user-uploaded recording-chime clip.
  */
-export type SoundLibraryEntry = { id: string; name: string; 
+export type SoundLibraryEntry = { id: string; name: string;
 /**
  * Absolute path on disk under `userData/sounds/`.
  */
@@ -3071,12 +3132,12 @@ export type TranscriberBackend = "faster_whisper" | "onnx_asr"
  * Legacy `TranscriptionHistoryEntry` (ipc-client.ts) — the karaoke `HistoryTable`
  * + the settings panel sync. STRING id, epoch-MILLIS timestamp.
  */
-export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null; 
+export type TranscriptionHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; audioFilePath?: string | null; originalText?: string | null; llmModel?: string | null;
 /**
  * LLM post-processing wall-time in ms (the footer's "processing time"),
  * when an LLM ran.
  */
-llmProcessingMs?: number | null; 
+llmProcessingMs?: number | null;
 /**
  * LLM generation speed (output tokens / processing second), when the
  * provider reported token usage and the pass took a measurable duration.
@@ -3095,6 +3156,12 @@ export type Transform = { id: string; name?: string; prompt?: string; hotkey?: s
  */
 export type TransformApplyResult = { before: string; after: string; source: TransformSource }
 /**
+ * Legacy-table compatible transform row for the settings History tab. It uses
+ * the same core fields as `TranscriptionHistoryEntry` so the current table,
+ * copy controls, and before/after diff view can be shared unchanged.
+ */
+export type TransformHistoryEntry = { id: string; text: string; timestamp: number; wordCount: number; durationMs: number; originalText?: string | null; llmModel?: string | null; llmProcessingMs?: number | null; llmTokensPerSecond?: number | null; source: string }
+/**
  * The selection source the capture resolved. Mirrors WinSTT's
  * `ApplyResult.source` ("uia" | "clipboard" | "empty").
  */
@@ -3103,23 +3170,23 @@ export type TransformSource = "uia" | "clipboard" | "empty"
  * Per-quant cache state, camelCase (matches the renderer's `TtsModelCacheInfo`).
  */
 export type TtsCacheInfoDto = { state: string; downloadedBytes: number; totalBytes: number; progress: number }
-export type TtsCloud = { 
+export type TtsCloud = {
 /**
  * ElevenLabs account voice_id.
  */
-voice?: string; model?: string; 
+voice?: string; model?: string;
 /**
  * 0..1.
  */
-stability?: number; 
+stability?: number;
 /**
  * 0..1.
  */
-similarity?: number; 
+similarity?: number;
 /**
  * 0..1.
  */
-style?: number; 
+style?: number;
 /**
  * 0.7..1.2.
  */
@@ -3131,11 +3198,11 @@ export type TtsInitResult = { ready: boolean }
 /**
  * TTS lifecycle event (started / completed / failed / download-progress).
  */
-export type TtsLifecyclePayload = { requestId: string; 
+export type TtsLifecyclePayload = { requestId: string;
 /**
  * "started" | "completed" | "failed" | "download-progress"
  */
-phase: string; message: string | null; 
+phase: string; message: string | null;
 /**
  * 0.0..1.0 for download-progress.
  */
@@ -3150,25 +3217,25 @@ export type TtsModelInfoDto = { id: string; engine: string; display_name: string
  */
 export type TtsModelStateDto = { id: string; cacheByQuantization: Partial<{ [key in string]: TtsCacheInfoDto }>; effectiveQuantization: string; estimatedBytes: number }
 export type TtsModelsWithStateDto = { models: TtsModelInfoDto[]; states: TtsModelStateDto[] }
-export type TtsSettings = { enabled?: boolean; 
+export type TtsSettings = { enabled?: boolean;
 /**
  * Local TTS catalog id selecting WHICH engine/model synthesizes
- * (kokoro-82m / kitten-nano-0.1 / kitten-nano-0.2 / piper / supertonic-en).
+ * (kokoro-82m / kitten-nano-0.1 / kitten-nano-0.2 / piper / supertonic-3).
  * `voice` below is the voice WITHIN this model. Cloud source ignores this.
  */
-model?: string; 
+model?: string;
 /**
  * Voice catalog id WITHIN the selected model.
  */
-voice?: string; lang?: string; 
+voice?: string; lang?: string;
 /**
  * 0.5..2.0 multiplier.
  */
-speed?: number; 
+speed?: number;
 /**
  * Read-selection-aloud hotkey. Must be non-empty (Zod `.min(1).catch`).
  */
-hotkey?: string; 
+hotkey?: string;
 /**
  * Local Kokoro vs cloud ElevenLabs.
  */
@@ -3216,6 +3283,8 @@ export type VoiceCatalogPayload = { voices: LocalVoicePayload[]; languages: Lang
  * Wake-word detected (INACTIVE → LISTENING transition cue).
  */
 export type WakeWordDetectedPayload = { word: string; wordIndex: number }
+export type WakeWordDownloadPhase = "idle" | "downloading" | "paused" | "complete" | "failed"
+export type WakeWordModelStatusPayload = { available: boolean; artifactLabel: string; downloadedBytes: number | null; downloadSizeLabel: string; downloading: boolean; engine: string; engineLabel: string; etaSeconds: number | null; error: string | null; phase: WakeWordDownloadPhase; progress: number | null; qualityLabel: string; speedBps: number | null; totalBytes: number | null }
 /**
  * One wake-word preset for the renderer dropdown.
  */
@@ -3223,14 +3292,14 @@ export type WakeWordPresetPayload = { name: string; phrase: string }
 export type WhisperAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
- * The complete WinSTT settings tree, nested by the 9 settings tabs, ported
+ * The complete WinSTT settings tree, nested by the settings sections, ported
  * 1:1 from `appSettingsSchema` (Zod). Serializes to the exact camelCase JSON
  * the reused React renderer expects.
- * 
+ *
  * Persisted via the Tauri store (one JSON value). Secrets are encrypted at
  * rest by the persistence layer — they are plaintext on this struct.
  */
-export type WinsttSettings = { global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings; 
+export type WinsttSettings = { global?: GlobalSettings; model?: ModelSettings; quality?: QualitySettings; audio?: AudioSettings; general?: GeneralSettings; hotkey?: HotkeySettings;
 /**
  * `[]` default; Zod `.catch([])` (pre-v10 entries fail the parser → wiped).
  */

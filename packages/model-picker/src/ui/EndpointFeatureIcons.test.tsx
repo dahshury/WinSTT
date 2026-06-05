@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
 import type { OpenRouterEndpoint } from "@/shared/api/models";
-import { __endpoint_feature_icons_test_helpers__ as helpers } from "../lib/endpoint-feature-icons-test-helpers";
+import * as helpers from "../lib/endpoint-feature-icons-test-helpers";
 import { EndpointFeatureIcons } from "./EndpointFeatureIcons";
 
 function makeEndpoint(opts?: Partial<OpenRouterEndpoint>): OpenRouterEndpoint {
@@ -75,22 +75,6 @@ describe("getChipSizeClass", () => {
 		expect(helpers.getChipSizeClass({ flat: true, isSmall: false, shouldShowLabel: true })).toBe(
 			"px-1.5 py-0.5"
 		);
-	});
-});
-
-describe("chipSizeKey", () => {
-	test("produces distinct keys for different combos", () => {
-		const keys = new Set([
-			helpers.chipSizeKey(true, true, true),
-			helpers.chipSizeKey(true, true, false),
-			helpers.chipSizeKey(true, false, true),
-			helpers.chipSizeKey(true, false, false),
-			helpers.chipSizeKey(false, true, true),
-			helpers.chipSizeKey(false, true, false),
-			helpers.chipSizeKey(false, false, true),
-			helpers.chipSizeKey(false, false, false),
-		]);
-		expect(keys.size).toBe(8);
 	});
 });
 

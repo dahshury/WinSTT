@@ -183,6 +183,44 @@ function familySlugFromName(name: string): string {
 	return (LEADING_LETTERS_RE.exec(name)?.[0] ?? "").toLowerCase();
 }
 
+const EMPTY_DESCRIPTION_BY_BASE: ReadonlyMap<string, string> = new Map();
+let cachedDescriptionIndex: {
+	catalog: readonly OllamaLibraryHit[];
+	descriptions: ReadonlyMap<string, string>;
+} | null = null;
+
+function cleanOllamaDescription(value: string | null | undefined): string | undefined {
+	const trimmed = value?.trim();
+	return trimmed ? trimmed : undefined;
+}
+
+export function buildOllamaDescriptionIndex(
+	catalog: readonly OllamaLibraryHit[] | undefined
+): ReadonlyMap<string, string> {
+	if (!catalog || catalog.length === 0) {
+		return EMPTY_DESCRIPTION_BY_BASE;
+	}
+	if (cachedDescriptionIndex?.catalog === catalog) {
+		return cachedDescriptionIndex.descriptions;
+	}
+	const descriptions = new Map<string, string>();
+	for (const hit of catalog) {
+		const description = cleanOllamaDescription(hit.description);
+		if (description) {
+			descriptions.set(libraryBaseSlug(hit.name), description);
+		}
+	}
+	cachedDescriptionIndex = { catalog, descriptions };
+	return descriptions;
+}
+
+export function ollamaDescriptionForName(
+	name: string,
+	descriptionsByBase: ReadonlyMap<string, string>
+): string | undefined {
+	return descriptionsByBase.get(libraryBaseSlug(name));
+}
+
 // ── Shared chips (used by trigger + row) ──────────────────────────────
 
 /** The small publisher logo rendered before a model name inside the shared
@@ -1150,12 +1188,14 @@ function OllamaDeleteButton({
 
 function OllamaModelRow({
 	model,
+	description,
 	isSelected,
 	isFavorited,
 	onDelete,
 	onToggleFavorite,
 	shelfDeps,
 }: {
+	description: string | undefined;
 	isFavorited: boolean;
 	isSelected: boolean;
 	model: OllamaModel;
@@ -1173,6 +1213,7 @@ function OllamaModelRow({
 			as="combobox-item"
 			badges={<ThinkingChip capabilities={model.capabilities} />}
 			data-model-id={model.name}
+			description={description}
 			favorite={{
 				isFavorited,
 				label: displayName,
@@ -1581,6 +1622,7 @@ function PullPane({ pull, paused }: PullPaneProps) {
 }
 
 interface RecommendedRowProps {
+	description: string | undefined;
 	fit: OllamaFitInfo | undefined;
 	isFavorited: boolean;
 	model: RecommendedOllamaModel;
@@ -1654,6 +1696,7 @@ function recommendedSelfTag(model: RecommendedOllamaModel): OllamaLibraryTag {
 
 function RecommendedRow({
 	model,
+	description,
 	fit,
 	isFavorited,
 	onToggleFavorite,
@@ -1690,7 +1733,7 @@ function RecommendedRow({
 					<WontFitChip fit={fit} />
 				</>
 			}
-			description={model.description}
+			description={description ?? model.description}
 			favorite={{
 				isFavorited,
 				label: model.displayName,
@@ -1766,7 +1809,11 @@ function CustomPullRow({
  *  so users typing "google" surface their installed Gemma models, "meta"
  *  surfaces Llama, "alibaba" or "qwen" surface Qwen, and so on — the same
  *  search affordance the OpenRouter picker offers. */
-function matchesInstalledQuery(m: OllamaModel, query: string): boolean {
+function matchesInstalledQuery(
+	m: OllamaModel,
+	query: string,
+	descriptionsByBase: ReadonlyMap<string, string> = EMPTY_DESCRIPTION_BY_BASE
+): boolean {
 	const q = query.trim().toLowerCase();
 	if (!q) {
 		return true;
@@ -1779,6 +1826,7 @@ function matchesInstalledQuery(m: OllamaModel, query: string): boolean {
 		family,
 		publisher.label,
 		publisher.slug,
+		ollamaDescriptionForName(m.name, descriptionsByBase) ?? "",
 		m.details?.parameterSize ?? "",
 		m.details?.quantizationLevel ?? "",
 	]
@@ -2027,6 +2075,7 @@ interface ListBodyProps {
 /** Props for the installed-models section — the part that flips between the
  *  per-publisher groups and the single flat "Sorted" column. */
 interface InstalledModelsSectionProps {
+	descriptionsByBase: ReadonlyMap<string, string>;
 	grouped: [string, OllamaModel[]][];
 	isFavorite: (name: string) => boolean;
 	onDelete: ((name: string) => void) | undefined;
@@ -2047,6 +2096,7 @@ interface InstalledModelsSectionProps {
  * and are unaffected — the sort applies only to installed models.
  */
 function InstalledModelsSection({
+	descriptionsByBase,
 	grouped,
 	isFavorite,
 	onDelete,
@@ -2064,6 +2114,7 @@ function InstalledModelsSection({
 				<div className="flex flex-col gap-0.5 p-1">
 					{sortedInstalled.map((m) => (
 						<OllamaModelRow
+							description={ollamaDescriptionForName(m.name, descriptionsByBase)}
 							isFavorited={isFavorite(m.name)}
 							isSelected={m.name === value}
 							key={m.name}
@@ -2086,6 +2137,7 @@ function InstalledModelsSection({
 					<div className="flex flex-col gap-0.5 p-1">
 						{items.map((m) => (
 							<OllamaModelRow
+								description={ollamaDescriptionForName(m.name, descriptionsByBase)}
 								isFavorited={isFavorite(m.name)}
 								isSelected={m.name === value}
 								key={m.name}
@@ -2106,6 +2158,7 @@ function InstalledModelsSection({
 /** Everything one maker group's rows need, bundled so the section signature
  *  stays small. */
 interface MakerGroupDeps {
+	descriptionsByBase: ReadonlyMap<string, string>;
 	getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
 	installedNames: ReadonlySet<string>;
 	isFavorite: (name: string) => boolean;
@@ -2128,6 +2181,7 @@ function MakerGroupSection({ group, deps }: { deps: MakerGroupDeps; group: Maker
 			<div className="flex flex-col gap-1.5 p-1.5">
 				{group.installed.map((m) => (
 					<OllamaModelRow
+						description={ollamaDescriptionForName(m.name, deps.descriptionsByBase)}
 						isFavorited={deps.isFavorite(m.name)}
 						isSelected={m.name === deps.value}
 						key={m.name}
@@ -2140,6 +2194,7 @@ function MakerGroupSection({ group, deps }: { deps: MakerGroupDeps; group: Maker
 				))}
 				{group.recommended.map((m) => (
 					<RecommendedRow
+						description={ollamaDescriptionForName(m.name, deps.descriptionsByBase)}
 						fit={deps.getFit?.(m.sizeBytes)}
 						isFavorited={deps.isFavorite(m.name)}
 						key={m.name}
@@ -2215,6 +2270,10 @@ function ListBody(props: ListBodyProps) {
 					<div className="flex flex-col gap-1.5 p-1.5">
 						{favoritesVisible.map((m) => (
 							<OllamaModelRow
+								description={ollamaDescriptionForName(
+									m.name,
+									makerDeps.descriptionsByBase
+								)}
 								isFavorited
 								isSelected={m.name === value}
 								key={`fav-${m.name}`}
@@ -2227,6 +2286,10 @@ function ListBody(props: ListBodyProps) {
 						))}
 						{favoriteRecommended.map((m) => (
 							<RecommendedRow
+								description={ollamaDescriptionForName(
+									m.name,
+									makerDeps.descriptionsByBase
+								)}
 								fit={makerDeps.getFit?.(m.sizeBytes)}
 								isFavorited
 								key={`fav-${m.name}`}
@@ -2261,6 +2324,7 @@ function ListBody(props: ListBodyProps) {
 				))
 			) : (
 				<InstalledModelsSection
+					descriptionsByBase={makerDeps.descriptionsByBase}
 					grouped={[]}
 					isFavorite={makerDeps.isFavorite}
 					onDelete={onDelete}
@@ -2501,6 +2565,7 @@ export function OllamaModelSelector({
 	const { favorites: favoriteAuthors, toggleFavorite: toggleAuthorFavorite } = useFavoriteSet(
 		"winstt:ollama-favorite-authors"
 	);
+	const descriptionsByBase = buildOllamaDescriptionIndex(librarySearch?.catalog);
 
 	const showRecommendedSection = !!(
 		recommendedModels &&
@@ -2511,7 +2576,7 @@ export function OllamaModelSelector({
 	);
 
 	const installedFiltered = query.trim()
-		? models.filter((m) => matchesInstalledQuery(m, query))
+		? models.filter((m) => matchesInstalledQuery(m, query, descriptionsByBase))
 		: models;
 
 	// When a sort is active, the maker groups collapse into one globally-sorted
@@ -2620,7 +2685,8 @@ export function OllamaModelSelector({
 	// Combobox.Root's built-in filter is used so keyboard typeahead +
 	// item-focus stay in sync with our visible installed rows. We mirror
 	// the filtered list for our own grouping/recommended rendering.
-	const filter = (m: OllamaModel, q: string) => matchesInstalledQuery(m, q);
+	const filter = (m: OllamaModel, q: string) =>
+		matchesInstalledQuery(m, q, descriptionsByBase);
 
 	const customQuery = query.trim();
 	const customPullProgress = customQuery ? pulls[customQuery] : undefined;
@@ -2649,6 +2715,7 @@ export function OllamaModelSelector({
 	// Shared row deps for every maker group — installed + recommended + library
 	// rows all draw from this one bundle.
 	const makerDeps: MakerGroupDeps = {
+		descriptionsByBase,
 		getFit: systemFit,
 		installedNames: installedNameSet,
 		isFavorite,

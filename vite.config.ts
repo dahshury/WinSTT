@@ -11,7 +11,7 @@ const host = process.env.TAURI_DEV_HOST;
 
 // Multi-page Vite config for the Tauri renderer (ported from WinSTT's the reference
 // renderer `frontend/vite.config.ts`). Each Tauri WebviewWindow loads its own
-// HTML file (main at the root, 8 secondary under windows/). Output → `dist`
+// HTML file (main at the root, secondary windows under windows/). Output → `dist`
 // (Tauri `frontendDist: "../dist"`); dev server on the Tauri-fixed port 1420.
 //
 // `base: "./"` keeps asset paths relative so the packaged `file://`-style load
@@ -21,6 +21,12 @@ export default defineConfig(({ command }) => {
 	// matters for production (ships memoization), and at dev time it dominates
 	// first-window paint (~8 s). Gate it on `vite build` (production) only.
 	const isProdBuild = command === "build";
+	const isAnalyzeBuild =
+		isProdBuild && (process.env.ANALYZE === "1" || process.env.VITE_ANALYZE === "1");
+	const includeContextPlayground =
+		!isProdBuild ||
+		process.env.CONTEXT_PLAYGROUND === "1" ||
+		process.env.VITE_CONTEXT_PLAYGROUND === "1";
 	return {
 		root: rootDir,
 		base: "./",
@@ -31,9 +37,10 @@ export default defineConfig(({ command }) => {
 			react(),
 			...(isProdBuild ? [babel({ presets: [reactCompilerPreset()] })] : []),
 			tailwindcss(),
-			// Build-only bundle treemap → dist/stats.html, so chunk layout (and the
-			// per-locale lazy split) stays visible. Never runs in dev.
-			...(isProdBuild
+			// Optional build-only bundle treemap writes dist/stats.html. Enable with
+			// ANALYZE=1 or VITE_ANALYZE=1 when inspecting chunk layout (including
+			// the per-locale lazy split).
+			...(isAnalyzeBuild
 				? [
 						visualizer({
 							filename: "dist/stats.html",
@@ -85,7 +92,7 @@ export default defineConfig(({ command }) => {
 			rollupOptions: {
 				input: {
 					// `main` stays at the root so the Tauri dev server serves it from `/`.
-					// The 8 secondary windows live under `windows/`; build output mirrors
+					// Secondary windows live under `windows/`; build output mirrors
 					// the input layout (dist/windows/*).
 					main: resolve(rootDir, "index.html"),
 					settings: resolve(rootDir, "windows/settings.html"),
@@ -95,8 +102,11 @@ export default defineConfig(({ command }) => {
 					"device-picker": resolve(rootDir, "windows/device-picker.html"),
 					onboarding: resolve(rootDir, "windows/onboarding.html"),
 					history: resolve(rootDir, "windows/history.html"),
-					// Debug-only context-awareness playground (CONTEXT_PLAYGROUND_ENABLED).
-					"context-playground": resolve(rootDir, "windows/context-playground.html"),
+					...(includeContextPlayground
+						? {
+								"context-playground": resolve(rootDir, "windows/context-playground.html"),
+							}
+						: {}),
 				},
 				output: {
 					manualChunks: (id) => {
@@ -147,7 +157,7 @@ export default defineConfig(({ command }) => {
 				ignored: ["**/src-tauri/**"],
 			},
 			// Warm only the main entry so its module graph is transformed in the
-			// background; warming all 9 entries regresses first-paint.
+			// background; warming every entry regresses first-paint.
 			warmup: { clientFiles: ["./src/entries/main.tsx"] },
 		},
 	};

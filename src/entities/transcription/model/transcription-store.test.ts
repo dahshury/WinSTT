@@ -28,6 +28,11 @@ describe("useTranscriptionStore initial state (factory defaults)", () => {
 		// renderer mount until a real recording_start event flips this true.
 		expect(useTranscriptionStore.getInitialState().isRecordingActive).toBe(false);
 	});
+
+	test("starts with transcribing state cleared", () => {
+		expect(useTranscriptionStore.getInitialState().isTranscribing).toBe(false);
+		expect(useTranscriptionStore.getInitialState().transcribingStartedAt).toBeNull();
+	});
 });
 
 beforeEach(() => {
@@ -36,12 +41,15 @@ beforeEach(() => {
 		currentRealtime: "",
 		ephemeral: null,
 		isRecordingActive: false,
+		isTranscribing: false,
+		transcribingStartedAt: null,
 	});
 });
 
 describe("useTranscriptionStore", () => {
 	test("addFinalSentence appends a new final item with id+timestamp and clears realtime", () => {
 		useTranscriptionStore.getState().setRealtimeText("typing…");
+		useTranscriptionStore.getState().setTranscribing(true);
 		useTranscriptionStore.getState().addFinalSentence("Hello world.");
 		const state = useTranscriptionStore.getState();
 		expect(state.items).toHaveLength(1);
@@ -50,6 +58,8 @@ describe("useTranscriptionStore", () => {
 		expect(typeof state.items[0]?.id).toBe("string");
 		expect(typeof state.items[0]?.timestamp).toBe("number");
 		expect(state.currentRealtime).toBe("");
+		expect(state.isTranscribing).toBe(false);
+		expect(state.transcribingStartedAt).toBeNull();
 	});
 
 	test("subsequent addFinalSentence pushes a new item without dropping previous ones", () => {
@@ -99,11 +109,14 @@ describe("useTranscriptionStore", () => {
 		useTranscriptionStore.getState().addFinalSentence("a");
 		useTranscriptionStore.getState().setRealtimeText("b");
 		useTranscriptionStore.getState().showEphemeral("c");
+		useTranscriptionStore.getState().setTranscribing(true);
 		useTranscriptionStore.getState().clearAll();
 		const state = useTranscriptionStore.getState();
 		expect(state.items).toEqual([]);
 		expect(state.currentRealtime).toBe("");
 		expect(state.ephemeral).toBeNull();
+		expect(state.isTranscribing).toBe(false);
+		expect(state.transcribingStartedAt).toBeNull();
 	});
 
 	test("setRecordingActive toggles the isRecordingActive flag", () => {
@@ -113,10 +126,24 @@ describe("useTranscriptionStore", () => {
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
 	});
 
+	test("setTranscribing toggles the transcribing flag and timestamp", () => {
+		useTranscriptionStore.getState().setTranscribing(true);
+		const started = useTranscriptionStore.getState().transcribingStartedAt;
+		expect(useTranscriptionStore.getState().isTranscribing).toBe(true);
+		expect(typeof started).toBe("number");
+		useTranscriptionStore.getState().setTranscribing(true);
+		expect(useTranscriptionStore.getState().transcribingStartedAt).toBe(started);
+		useTranscriptionStore.getState().setTranscribing(false);
+		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
+		expect(useTranscriptionStore.getState().transcribingStartedAt).toBeNull();
+	});
+
 	test("clearAll also resets isRecordingActive to false", () => {
 		useTranscriptionStore.getState().setRecordingActive(true);
+		useTranscriptionStore.getState().setTranscribing(true);
 		useTranscriptionStore.getState().clearAll();
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
+		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
 	});
 
 	test("attachSpeakerSegments is a no-op when the live feed is empty", () => {

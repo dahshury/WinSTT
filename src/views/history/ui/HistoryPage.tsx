@@ -1,6 +1,6 @@
-import { Delete02Icon, FavouriteIcon, PlayIcon } from "@hugeicons/core-free-icons";
+import { CopyCheckIcon, Delete02Icon, FavouriteIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
 	deleteHistoryRow,
@@ -12,9 +12,15 @@ import {
 	toggleHistoryRow,
 	useHistoryViewStore,
 } from "@/entities/transcription-history";
-import { IPC } from "@/shared/api/ipc-channels";
+import {
+	clipboardWriteText,
+	onHistoryRowAdded,
+	onHistoryRowDeleted,
+	onHistoryRowToggled,
+} from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { useLongPress } from "@/shared/lib/use-long-press";
 import { Button } from "@/shared/ui/button";
 
 function subscribeBroadcasts(callbacks: {
@@ -22,23 +28,15 @@ function subscribeBroadcasts(callbacks: {
 	onDeleted: (id: number) => void;
 	onToggled: (id: number, saved: boolean) => void;
 }): () => void {
-	// `window.nativeBridge` is typed globally (src/shared/lib/native-bridge.d.ts) and injected by
-	// the preload bridge; guard for non-bridge contexts (tests) at runtime.
-	const api = window.nativeBridge;
-	if (!api) {
-		return () => undefined;
-	}
-	const offAdded = api.on(IPC.HISTORY_ROW_ADDED, (entry: unknown) => {
-		callbacks.onAdded(entry as HistoryEntry);
+	const offAdded = onHistoryRowAdded<HistoryEntry>((entry) => {
+		callbacks.onAdded(entry);
 	});
-	const offDeleted = api.on(IPC.HISTORY_ROW_DELETED, (payload: unknown) => {
-		const p = payload as { id?: number };
+	const offDeleted = onHistoryRowDeleted((p) => {
 		if (typeof p?.id === "number") {
 			callbacks.onDeleted(p.id);
 		}
 	});
-	const offToggled = api.on(IPC.HISTORY_ROW_TOGGLED, (payload: unknown) => {
-		const p = payload as { id?: number; saved?: boolean };
+	const offToggled = onHistoryRowToggled((p) => {
 		if (typeof p?.id === "number" && typeof p?.saved === "boolean") {
 			callbacks.onToggled(p.id, p.saved);
 		}
@@ -51,6 +49,80 @@ function subscribeBroadcasts(callbacks: {
 }
 
 const PAGE_SIZE = 25;
+const TOUCH_COPY_FEEDBACK_MS = 1600;
+
+function copyHistoryText(text: string): void {
+	const webClipboard = globalThis.navigator?.clipboard;
+	if (webClipboard?.writeText) {
+		webClipboard.writeText(text).catch(() => {
+			clipboardWriteText(text).catch(() => undefined);
+		});
+		return;
+	}
+	clipboardWriteText(text).catch(() => undefined);
+}
+
+function LongPressTranscript({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+	const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(
+		() => () => {
+			if (copyFeedbackTimerRef.current) {
+				clearTimeout(copyFeedbackTimerRef.current);
+			}
+		},
+		[]
+	);
+
+	const handleLongPressCopy = useCallback(() => {
+		if (!text) {
+			return;
+		}
+		copyHistoryText(text);
+		globalThis.navigator?.vibrate?.(10);
+		setCopied(true);
+		if (copyFeedbackTimerRef.current) {
+			clearTimeout(copyFeedbackTimerRef.current);
+		}
+		copyFeedbackTimerRef.current = setTimeout(
+			() => setCopied(false),
+			TOUCH_COPY_FEEDBACK_MS
+		);
+	}, [text]);
+
+	const longPress = useLongPress(handleLongPressCopy, { disabled: text.length === 0 });
+	const touchCopyState = copied ? "copied" : longPress.pressing ? "pressing" : undefined;
+
+	return (
+		<div className="relative min-w-0">
+			<p
+				className={cn(
+					"touch-copy-transcript min-w-0 whitespace-pre-wrap break-words rounded-sm text-sm transition-[background-color,box-shadow,transform] duration-150 [touch-action:pan-y]",
+					longPress.pressing &&
+						"scale-[0.998] bg-accent/10 shadow-[inset_0_0_0_1px_var(--color-border-accent)]",
+					copied &&
+						"scale-100 bg-success/10 shadow-[inset_0_0_0_1px_var(--color-success)]"
+				)}
+				data-long-press-copy="transcript"
+				data-touch-copy-state={touchCopyState}
+				dir="auto"
+				{...longPress.handlers}
+			>
+				{text}
+			</p>
+			<span
+				aria-hidden="true"
+				className={cn(
+					"pointer-events-none absolute -top-1 end-0 inline-flex size-5 items-center justify-center rounded-full bg-success-dim text-success shadow-sm transition-[opacity,transform] duration-150",
+					copied ? "scale-100 opacity-100" : "scale-75 opacity-0"
+				)}
+			>
+				<HugeiconsIcon icon={CopyCheckIcon} size={13} />
+			</span>
+		</div>
+	);
+}
 
 export function HistoryPage() {
 	const t = useTranslations("history");
@@ -136,53 +208,62 @@ export function HistoryPage() {
 				</p>
 			</header>
 
-			<ul className="flex flex-1 flex-col gap-2 overflow-y-auto">
-				{entries.map((entry) => (
-					<li
-						className={cn(
-							"flex flex-col gap-1 rounded-md border border-border p-2",
-							surfaceBg(entryLevel)
-						)}
-						key={entry.id}
-					>
-						<div className="flex items-center justify-between text-xs">
-							<span className="text-foreground-secondary">{formatEntryTimestamp(entry)}</span>
-							<div className="flex gap-1">
-								<Button
-									className="flex items-center gap-1 px-2 py-1 text-xs"
-									onClick={() => handlePlay(entry.id)}
-									title="Play recording"
-								>
-									<HugeiconsIcon icon={PlayIcon} size={14} />
-								</Button>
-								<Button
-									className={`flex items-center gap-1 px-2 py-1 text-xs ${
-										entry.saved ? "text-warning" : ""
-									}`}
-									onClick={() => handleToggle(entry.id)}
-									title={entry.saved ? "Unpin" : "Pin (preserve from retention)"}
-								>
-									<HugeiconsIcon icon={FavouriteIcon} size={14} />
-								</Button>
-								<Button
-									className="flex items-center gap-1 px-2 py-1 text-xs hover:text-error"
-									onClick={() => handleDelete(entry.id)}
-									title="Delete"
-								>
-									<HugeiconsIcon icon={Delete02Icon} size={14} />
-								</Button>
+			<ul
+				className="flex flex-1 flex-col gap-2 overflow-y-auto"
+				style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
+			>
+				{entries.map((entry) => {
+					const text = effectiveText(entry);
+					return (
+						<li
+							className={cn(
+								"flex flex-col gap-1 rounded-md border border-border p-2",
+								surfaceBg(entryLevel)
+							)}
+							key={entry.id}
+						>
+							<div className="flex items-center justify-between text-xs">
+								<span className="text-foreground-secondary">{formatEntryTimestamp(entry)}</span>
+								<div className="flex gap-1">
+									<Button
+										className="flex items-center gap-1 px-2 py-1 text-xs"
+										onClick={() => handlePlay(entry.id)}
+										title="Play recording"
+									>
+										<HugeiconsIcon icon={PlayIcon} size={14} />
+									</Button>
+									<Button
+										className={`flex items-center gap-1 px-2 py-1 text-xs ${
+											entry.saved ? "text-warning" : ""
+										}`}
+										onClick={() => handleToggle(entry.id)}
+										title={entry.saved ? "Unpin" : "Pin (preserve from retention)"}
+									>
+										<HugeiconsIcon icon={FavouriteIcon} size={14} />
+									</Button>
+									<Button
+										className="flex items-center gap-1 px-2 py-1 text-xs hover:text-error"
+										onClick={() => handleDelete(entry.id)}
+										title="Delete"
+									>
+										<HugeiconsIcon icon={Delete02Icon} size={14} />
+									</Button>
+								</div>
 							</div>
-						</div>
-						<p className="text-sm" dir="auto">
-							{effectiveText(entry)}
-						</p>
-						{playingId === entry.id && audioUrl ? (
-							<audio aria-label="Transcription recording playback" autoPlay controls src={audioUrl}>
-								<track default kind="captions" label="No captions available" srcLang="en" />
-							</audio>
-						) : null}
-					</li>
-				))}
+							<LongPressTranscript text={text} />
+							{playingId === entry.id && audioUrl ? (
+								<audio
+									aria-label="Transcription recording playback"
+									autoPlay
+									controls
+									src={audioUrl}
+								>
+									<track default kind="captions" label="No captions available" srcLang="en" />
+								</audio>
+							) : null}
+						</li>
+					);
+				})}
 			</ul>
 
 			{hasMore ? (

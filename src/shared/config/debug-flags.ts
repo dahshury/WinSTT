@@ -6,9 +6,8 @@
  * `ipc-channels.ts` is consumed by the preload + handlers).
  *
  * These gate developer-only tooling that must NEVER ship visible to end users.
- * Flip a flag to `false` to fully remove the surface — the gated window, IPC,
- * polling loop, and tray entry all disappear. The code stays in the bundle but
- * is unreachable, which is exactly the "enable now, disable later" workflow.
+ * Flip a flag to `false` to remove the visible surface. Production builds also
+ * drop the context-playground entry unless `VITE_CONTEXT_PLAYGROUND=1`.
  */
 
 /**

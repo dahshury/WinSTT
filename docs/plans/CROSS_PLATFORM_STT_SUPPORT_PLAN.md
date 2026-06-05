@@ -1,7 +1,7 @@
 # Cross-Platform STT Support - Implementation Plan
 
-Status: revised on 2026-06-03 from the current WinSTT tree and
-`examples/handy`.
+Status: revised on 2026-06-04 from the current WinSTT tree and
+`examples/handy`; Phase 0 implementation is now in progress in the codebase.
 
 This replaces the older survey-style handoff with an implementation plan. The
 goal is to make the Rust/Tauri WinSTT STT path work on Windows, macOS, and
@@ -51,37 +51,43 @@ The WinSTT app is not just the Handy path:
 - The primary catalog engine lives under `src-tauri/src/winstt/stt/`.
 - `src-tauri/src/winstt/stt/mod.rs` has
   `Accelerator::{Cpu, Cuda, DirectMl, CoreMl, Rocm, OpenVino}`.
-- `execution_providers()` currently registers DirectML only behind
-  `cfg(windows)` and CUDA only behind the `cuda` feature. CoreML, ROCm, and
-  OpenVINO are labels/enums only in this helper today.
-- `src-tauri/src/winstt/stt/families.rs::register_providers` still treats
-  CoreML/ROCm/OpenVINO as CPU fallback and uses deprecated
-  `*ExecutionProvider` aliases. This should be unified with the modern
-  `ort::ep::*` helper.
-- `src-tauri/src/winstt/stt/backend.rs::resolve_catalog` maps
-  `model.device = auto` to DirectML on Windows and CPU everywhere else.
-- `src-tauri/src/winstt/commands/stt.rs::picker_accelerator` uses the same
-  Windows-only DirectML mapping for the picker.
+- `execution_providers()` now registers DirectML behind `cfg(windows)`, CUDA
+  behind `cuda`, CoreML behind `macOS + coreml`, ROCm behind `rocm`, OpenVINO
+  behind `openvino`, and always appends CPU fallback.
+- `src-tauri/src/winstt/stt/families.rs::register_providers` now delegates to
+  the shared modern `ort::ep::*` provider helper instead of maintaining a
+  second provider map.
+- `src-tauri/src/winstt/stt/backend.rs::resolve_catalog`,
+  `src-tauri/src/winstt/commands/stt.rs::picker_accelerator`, runtime device
+  checks, and wake-word provider resolution now share
+  `winstt::stt::resolve_accelerator`.
+- `model.device = auto` currently resolves to DirectML on Windows, CoreML on
+  macOS only when built with `--features coreml`, CUDA on Linux when built with
+  `--features cuda`, ROCm on Linux when built with `--features rocm`, and CPU
+  otherwise.
 - `src-tauri/src/winstt/settings_schema.rs` exposes only
   `DeviceType::{Auto, Cpu}` for `model.device`.
 - `src/shared/api/schema.zod.ts` also has `DeviceTypeSchema = ["auto", "cpu"]`.
-- `src-tauri/Cargo.toml` has direct `ort` features `["ndarray", "half"]` and a
-  package feature `cuda = ["ort/cuda"]`. DirectML is available on Windows via
+- `src-tauri/Cargo.toml` has direct `ort` features `["ndarray", "half"]` and
+  package feature aliases for CUDA, CoreML, ROCm, OpenVINO, WebGPU, and optional
+  whisper.cpp Metal/Vulkan fallback builds. DirectML is available on Windows via
   the target-specific `transcribe-rs` `ort-directml` feature, which unifies the
   `ort/directml` feature into the build.
-- `transcribe-rs` whisper.cpp dependencies are still present: base
-  `whisper-cpp`, macOS `whisper-metal`, Linux `whisper-vulkan`. They are not
-  the primary WinSTT catalog route.
+- `transcribe-rs` whisper.cpp support remains present through the base
+  `whisper-cpp` dependency. `whisper-metal` and `whisper-vulkan` are now
+  explicit native-platform opt-in Cargo features rather than default macOS/Linux
+  target dependencies. They are not the primary WinSTT catalog route and should
+  be verified only on matching native hosts.
 - `src-tauri/src/managers/transcription.rs::apply_accelerator_settings` still
   applies Handy/transcribe-rs accelerator globals for the fallback route.
-- `src-tauri/src/winstt/commands/runtime.rs` can label CoreML/ROCm/OpenVINO,
-  but the current resolver never returns those accelerators.
+- `src-tauri/src/winstt/commands/runtime.rs` can label CoreML/ROCm/OpenVINO, but
+  runtime reporting still needs to distinguish "compiled/requested" from
+  "session actually initialized with this provider."
 - GPU enumeration and VRAM sizing are Windows/DXGI-only today. Non-Windows
   returns no GPUs and `detected_max_vram_bytes()` returns `0`.
-- Wake-word device resolution currently maps `model.device = auto` to DirectML
-  without a platform guard in
-  `src-tauri/src/winstt/managers/wakeword_manager.rs`. That must be fixed before
-  claiming non-Windows CPU support.
+- Wake-word device resolution now routes through the shared STT resolver and
+  only requests sherpa DirectML when the resolved STT accelerator is DirectML;
+  non-Windows CPU builds request sherpa CPU.
 
 ### Optimization boundary
 
@@ -223,7 +229,7 @@ Actions:
 2. Benchmark every family/quant/provider pair.
    - Matrix dimensions: engine kind, quantization, provider, model size, cold
      load, warm decode, correctness, crash/fallback reason.
-   - Record results in `.deep-research/STT_BENCH_MATRIX.md` or a new adjacent
+   - Record results in `docs/archive/research/STT_BENCH_MATRIX.md` or a new adjacent
      matrix file.
 
 3. Feed the matrix back into runtime.
@@ -308,7 +314,15 @@ Actions:
    - Run at least Whisper/lite-whisper plus one CTC/transducer family on CPU.
    - Run one GPU smoke per available OS/hardware.
 
-4. Document release flavors.
+4. Add local platform verification harnesses.
+   - Windows native: `tools/platform/verify-windows.ps1`.
+   - Linux from Windows: `tools/platform/verify-linux-docker.ps1` using Docker
+     and `tools/platform/linux.Dockerfile`.
+   - Orchestrator: `tools/platform/verify-all.ps1`.
+   - Full Linux profile should compile, test, build Tauri no-bundle, and run a
+     short `xvfb`/`dbus-run-session` launch smoke.
+
+5. Document release flavors.
    - Default builds should not bundle CUDA runtime payloads.
    - CUDA/ROCm builds should be opt-in and clearly labeled.
    - macOS CoreML should be the default macOS GPU candidate only after the matrix

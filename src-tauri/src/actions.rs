@@ -8,9 +8,10 @@ use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
-use crate::utils::{
-    self, show_processing_overlay, show_recording_overlay, show_transcribing_overlay,
-};
+use crate::utils::{self, show_recording_overlay};
+use crate::winstt::context::ContextMode;
+use crate::winstt::managers::{ContextManager, LlmManager};
+use crate::winstt::settings_schema::{LlmProvider, RecordingMode, WinsttSettings};
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
 use log::{debug, error, warn};
@@ -54,14 +55,51 @@ fn last_transcription() -> String {
         .unwrap_or_default()
 }
 
+fn cancelled_session_cleanup(app: &AppHandle, session_id: u64, phase: &str) -> bool {
+    if !crate::transcription_coordinator::is_dictation_session_cancelled(session_id) {
+        return false;
+    }
+    debug!("Dictation session {session_id} cancelled during {phase}; suppressing output");
+    utils::hide_recording_overlay(app);
+    change_tray_icon(app, TrayIconState::Idle);
+    true
+}
+
 /// Drop guard that notifies the [`TranscriptionCoordinator`] when the
 /// transcription pipeline finishes — whether it completes normally or panics.
-struct FinishGuard(AppHandle);
+struct FinishGuard {
+    app: AppHandle,
+    session_id: u64,
+}
+
 impl Drop for FinishGuard {
     fn drop(&mut self) {
-        if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
-            c.notify_processing_finished();
+        if crate::transcription_coordinator::is_current_dictation_session(self.session_id) {
+            crate::transcription_coordinator::finish_dictation_session(self.session_id);
+            utils::unregister_cancel_shortcut_if_idle(&self.app);
         }
+        if let Some(c) = self.app.try_state::<TranscriptionCoordinator>() {
+            c.notify_processing_finished(self.session_id);
+        }
+    }
+}
+
+struct LlmProcessingGuard {
+    app: AppHandle,
+}
+
+impl LlmProcessingGuard {
+    fn new(app: &AppHandle) -> Self {
+        crate::tray::on_llm_thinking_start(app);
+        let _ = app.emit("llm:processing-start", ());
+        Self { app: app.clone() }
+    }
+}
+
+impl Drop for LlmProcessingGuard {
+    fn drop(&mut self) {
+        let _ = self.app.emit("llm:processing-end", ());
+        crate::tray::on_llm_thinking_stop(&self.app);
     }
 }
 
@@ -101,6 +139,7 @@ pub(crate) struct PostProcessMeta {
 }
 
 async fn post_process_transcription(
+    app: &AppHandle,
     settings: &AppSettings,
     transcription: &str,
 ) -> Option<(String, PostProcessMeta)> {
@@ -158,6 +197,7 @@ async fn post_process_transcription(
         "Starting LLM post-processing with provider '{}' (model: {})",
         provider.id, model
     );
+    let _processing = LlmProcessingGuard::new(app);
 
     let api_key = settings
         .post_process_api_keys
@@ -348,6 +388,83 @@ async fn post_process_transcription(
     }
 }
 
+fn dictation_llm_model(settings: &WinsttSettings) -> String {
+    let base = &settings.llm.dictation.base;
+    match base.provider {
+        LlmProvider::Openrouter => base.openrouter_model.trim().to_string(),
+        LlmProvider::AppleIntelligence | LlmProvider::Ollama => base.model.trim().to_string(),
+    }
+}
+
+fn has_winstt_dictation_model(settings: &WinsttSettings) -> bool {
+    let base = &settings.llm.dictation.base;
+    match base.provider {
+        LlmProvider::Openrouter => !settings.llm.openrouter_api_key.trim().is_empty(),
+        LlmProvider::AppleIntelligence | LlmProvider::Ollama => !base.model.trim().is_empty(),
+    }
+}
+
+fn should_run_winstt_dictation_llm(settings: &WinsttSettings) -> bool {
+    settings.llm.dictation.enabled
+        && settings.general.recording_mode != RecordingMode::Listen
+        && has_winstt_dictation_model(settings)
+}
+
+fn should_run_winstt_dictation_llm_from_app(app: &AppHandle) -> bool {
+    let settings = crate::winstt::commands::settings::read_settings(app);
+    should_run_winstt_dictation_llm(&settings)
+}
+
+fn capture_winstt_dictation_context(app: &AppHandle, settings: &WinsttSettings) -> String {
+    if !settings.general.context_awareness {
+        return String::new();
+    }
+
+    let Some(context) = app.try_state::<Arc<ContextManager>>() else {
+        debug!("Context awareness is enabled but ContextManager is unavailable");
+        return String::new();
+    };
+
+    context.capture_fragment(ContextMode::Tree, &settings.general.context_deny_list)
+}
+
+async fn process_winstt_dictation_llm(
+    app: &AppHandle,
+    settings: &WinsttSettings,
+    transcription: &str,
+) -> Option<(String, PostProcessMeta)> {
+    let Some(llm_manager) = app.try_state::<Arc<LlmManager>>() else {
+        warn!("Dictation LLM is enabled but LlmManager is unavailable");
+        return None;
+    };
+
+    let context = capture_winstt_dictation_context(app, settings);
+    let model = dictation_llm_model(settings);
+    let started = Instant::now();
+
+    match crate::winstt::commands::llm::process_dictation_text(
+        app,
+        llm_manager.inner().clone(),
+        transcription.to_string(),
+        context,
+    )
+    .await
+    {
+        Ok(processed_text) => Some((
+            processed_text,
+            PostProcessMeta {
+                model,
+                duration_ms: started.elapsed().as_millis() as i64,
+                completion_tokens: None,
+            },
+        )),
+        Err(err) => {
+            error!("Dictation LLM post-processing failed: {}", err);
+            None
+        }
+    }
+}
+
 async fn maybe_convert_chinese_variant(
     selected_language: &str,
     transcription: &str,
@@ -399,6 +516,7 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    pub post_process_requested: bool,
     /// JSON telemetry of the LLM pass (`{model, processingMs, tokens}`), or
     /// `None` when no LLM ran (raw transcript, Chinese-variant convert, or
     /// snippet-only expansion). Persisted to `transcription_history.llm_meta`
@@ -412,6 +530,9 @@ pub(crate) async fn process_transcription_output(
     post_process: bool,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
+    let winstt_settings = crate::winstt::commands::settings::read_settings(app);
+    let winstt_dictation_llm = should_run_winstt_dictation_llm(&winstt_settings);
+    let post_process_requested = post_process || winstt_dictation_llm;
     let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
@@ -420,18 +541,29 @@ pub(crate) async fn process_transcription_output(
     // Source the language from the single store (WinsttSettings.model.language). AppSettings
     // .selected_language is no longer written by the renderer, so the zh-variant convert reads
     // the canonical picker value.
-    let selected_language = crate::winstt::commands::settings::read_settings(app)
-        .model
-        .language;
+    let selected_language = &winstt_settings.model.language;
     if let Some(converted_text) =
-        maybe_convert_chinese_variant(&selected_language, transcription).await
+        maybe_convert_chinese_variant(selected_language, transcription).await
     {
         final_text = converted_text;
     }
 
-    if post_process {
+    if winstt_dictation_llm {
         if let Some((processed_text, meta)) =
-            post_process_transcription(&settings, &final_text).await
+            process_winstt_dictation_llm(app, &winstt_settings, &final_text).await
+        {
+            post_processed_text = Some(processed_text.clone());
+            final_text = processed_text;
+            llm_meta = serde_json::to_string(&serde_json::json!({
+                "model": meta.model,
+                "processingMs": meta.duration_ms,
+                "tokens": meta.completion_tokens,
+            }))
+            .ok();
+        }
+    } else if post_process {
+        if let Some((processed_text, meta)) =
+            post_process_transcription(app, &settings, &final_text).await
         {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
@@ -454,7 +586,9 @@ pub(crate) async fn process_transcription_output(
                 }
             }
         }
-    } else if final_text != transcription {
+    }
+
+    if post_processed_text.is_none() && final_text != transcription {
         post_processed_text = Some(final_text.clone());
     }
 
@@ -471,6 +605,7 @@ pub(crate) async fn process_transcription_output(
         final_text,
         post_processed_text,
         post_process_prompt,
+        post_process_requested,
         llm_meta,
     }
 }
@@ -494,12 +629,19 @@ impl ShortcutAction for TranscribeAction {
         });
 
         let binding_id = binding_id.to_string();
+        let session_id = crate::transcription_coordinator::begin_dictation_session();
+        debug!("Starting dictation session {session_id}");
+        shortcut::register_cancel_shortcut(app);
+        crate::winstt::commands::tts::request_tts_playback_pause_for_dictation(app);
         change_tray_icon(app, TrayIconState::Recording);
         show_recording_overlay(app);
 
-        // Get the microphone mode to determine audio feedback timing
-        let settings = get_settings(app);
-        let is_always_on = settings.always_on_microphone;
+        // Get the microphone mode to determine audio feedback timing.
+        let settings = crate::winstt::commands::settings::read_settings_raw(app);
+        let is_always_on = matches!(
+            crate::managers::audio::microphone_mode_from_settings(&settings),
+            crate::managers::audio::MicrophoneMode::AlwaysOn
+        );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
         let mut recording_error: Option<String> = None;
@@ -547,6 +689,12 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_error.is_none() {
+            if crate::transcription_coordinator::is_dictation_session_cancelled(session_id) {
+                rm.cancel_recording();
+                let _ = cancelled_session_cleanup(app, session_id, "recording start");
+                utils::unregister_cancel_shortcut_if_idle(app);
+                return;
+            }
             // WinSTT lifecycle: a new recording cycle began. The reused renderer's
             // useVisualizerSync (onRecordingStart) arms the rAF level loop + shows the
             // overlay pill, and useTranscriptionFeed wipes ephemeral state + sets
@@ -570,9 +718,9 @@ impl ShortcutAction for TranscribeAction {
             // Listen mode goes through loopback_manager (not this path), matching the
             // reference's "suppressed in listen mode".
             crate::winstt::commands::sound::play_recording_chime(app);
-            // Dynamically register the cancel shortcut in a separate task to avoid deadlock
-            shortcut::register_cancel_shortcut(app);
         } else {
+            crate::transcription_coordinator::finish_dictation_session(session_id);
+            utils::unregister_cancel_shortcut_if_idle(app);
             // Starting failed (for example due to blocked microphone permissions).
             // Revert UI state so we don't stay stuck in the recording overlay.
             utils::hide_recording_overlay(app);
@@ -602,9 +750,6 @@ impl ShortcutAction for TranscribeAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
-        // Unregister the cancel shortcut when transcription stops
-        shortcut::unregister_cancel_shortcut(app);
-
         let stop_time = Instant::now();
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
 
@@ -614,7 +759,7 @@ impl ShortcutAction for TranscribeAction {
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
         change_tray_icon(app, TrayIconState::Transcribing);
-        show_transcribing_overlay(app);
+        show_recording_overlay(app);
 
         // WinSTT lifecycle: the recorder stopped (PTT release / toggle-off). The
         // renderer's useVisualizerSync (onRecordingStop) snaps the visualizer to
@@ -634,6 +779,7 @@ impl ShortcutAction for TranscribeAction {
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
+        let session_id = crate::transcription_coordinator::current_dictation_session();
         // Snapshot the recording generation BEFORE `stop_recording` so the realtime-reuse check
         // matches the generation the realtime worker tagged its live decodes with. (Generation is
         // bumped only on the NEXT recording's start, so reading it here — recording still active —
@@ -642,7 +788,10 @@ impl ShortcutAction for TranscribeAction {
         let generation = rm.recording_generation();
 
         tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone());
+            let _guard = FinishGuard {
+                app: ah.clone(),
+                session_id,
+            };
             debug!(
                 "Starting async transcription task for binding: {}",
                 binding_id
@@ -655,6 +804,10 @@ impl ShortcutAction for TranscribeAction {
                     stop_recording_time.elapsed(),
                     samples.len()
                 );
+
+                if cancelled_session_cleanup(&ah, session_id, "recording stop") {
+                    return;
+                }
 
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
@@ -682,33 +835,60 @@ impl ShortcutAction for TranscribeAction {
                     // skip the base64 encode in the hot path.
                     crate::winstt::commands::dictation::SttEvents::transcription_start(&ah, None);
 
+                    if cancelled_session_cleanup(&ah, session_id, "transcription start") {
+                        return;
+                    }
+
+                    let preview_requested = {
+                        let settings = crate::winstt::commands::settings::read_settings(&ah);
+                        settings.general.preview_before_pasting
+                            && !settings.general.word_by_word_pasting
+                            && crate::winstt::commands::overlay::overlay_is_active(&ah)
+                    };
+
                     // Transcribe concurrently with WAV save. The decode is a multi-second
                     // SYNC call (ONNX/GGML) — run it on the blocking pool so it never stalls
                     // a tokio worker thread (mirrors commands/history.rs). Flatten a task
                     // panic into the same `Result` shape the match below expects.
                     let transcription_time = Instant::now();
-                    // FAST PATH: reuse the realtime worker's last full-buffer decode when the user
-                    // has stopped talking — the live decode used the same engine on the same audio,
-                    // so final == that decode + post-processing, and we skip a redundant re-decode.
-                    // Falls back to a fresh decode when live transcription was off, the cache belongs
-                    // to a different recording, the recording is silent, or speech continued past the
-                    // last live decode (see TranscriptionManager::try_reuse_realtime).
-                    let transcription_result = if let Some(reused) =
-                        tm.try_reuse_realtime(generation, &samples)
-                    {
-                        debug!(
-                            "Reused realtime decode for final transcription ({} chars)",
-                            reused.len()
-                        );
-                        Ok(reused)
-                    } else {
-                        match tauri::async_runtime::spawn_blocking(move || tm.transcribe(samples))
-                            .await
+                    // FAST PATH: reuse the realtime stream when possible. Native streaming engines
+                    // feed the captured tail and wait for `stream_finalize()` in this blocking task,
+                    // so final paste follows the model's end-of-stream result instead of a fixed
+                    // post-key-up delay. Falls back to a fresh decode when reuse is not safe.
+                    let tm_for_decode = Arc::clone(&tm);
+                    let transcription_result =
+                        match tauri::async_runtime::spawn_blocking(move || {
+                            if preview_requested {
+                                debug!(
+                                    "Preview-before-pasting active; skipping realtime reuse for batch final transcript"
+                                );
+                                tm_for_decode.clear_realtime_reuse();
+                                return (false, tm_for_decode.transcribe(samples));
+                            }
+
+                            if let Some(reused) =
+                                tm_for_decode.try_reuse_realtime(generation, &samples)
+                            {
+                                (true, Ok(reused))
+                            } else {
+                                (false, tm_for_decode.transcribe(samples))
+                            }
+                        })
+                        .await
                         {
-                            Ok(res) => res,
+                            Ok((reused_realtime, result)) => {
+                                if reused_realtime {
+                                    if let Ok(text) = &result {
+                                        debug!(
+                                            "Reused finalized realtime stream for final transcription ({} chars)",
+                                            text.len()
+                                        );
+                                    }
+                                }
+                                result
+                            }
                             Err(e) => Err(anyhow::anyhow!("Transcription task panicked: {e}")),
-                        }
-                    };
+                        };
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -734,6 +914,10 @@ impl ShortcutAction for TranscribeAction {
                         }
                     };
 
+                    if cancelled_session_cleanup(&ah, session_id, "transcription") {
+                        return;
+                    }
+
                     match transcription_result {
                         Ok(transcription) => {
                             // Do NOT log the dictated text — it lands in the persistent
@@ -744,12 +928,21 @@ impl ShortcutAction for TranscribeAction {
                                 transcription.len()
                             );
 
-                            if post_process {
-                                show_processing_overlay(&ah);
+                            let will_run_post_stt_llm =
+                                post_process || should_run_winstt_dictation_llm_from_app(&ah);
+                            if will_run_post_stt_llm {
+                                show_recording_overlay(&ah);
+                            }
+                            if cancelled_session_cleanup(&ah, session_id, "post-processing start") {
+                                return;
                             }
                             let processed =
                                 process_transcription_output(&ah, &transcription, post_process)
                                     .await;
+
+                            if cancelled_session_cleanup(&ah, session_id, "post-processing") {
+                                return;
+                            }
 
                             // Keep the raw transcript for the preview pill's
                             // "original" (re-process source) — `save_entry`
@@ -761,7 +954,7 @@ impl ShortcutAction for TranscribeAction {
                                 if let Err(err) = hm.save_entry(
                                     file_name,
                                     transcription,
-                                    post_process,
+                                    processed.post_process_requested,
                                     processed.post_processed_text.clone(),
                                     processed.post_process_prompt.clone(),
                                     processed.llm_meta.clone(),
@@ -793,6 +986,15 @@ impl ShortcutAction for TranscribeAction {
                                 // setLastTranscription alongside its paste.
                                 set_last_transcription(&processed.final_text);
 
+                                let streamed_paste_handled = ah
+                                    .try_state::<Arc<crate::winstt::managers::RealtimeManager>>()
+                                    .is_some_and(|rt| {
+                                        rt.finish_word_by_word_session(
+                                            generation,
+                                            &processed.final_text,
+                                        )
+                                    });
+
                                 // Preview-before-pasting: when enabled AND the pill is
                                 // shown, hold the auto-paste back and show the editable
                                 // preview pill. Capture the foreground (paste target)
@@ -801,13 +1003,19 @@ impl ShortcutAction for TranscribeAction {
                                 // overlay + make it interactive and emit the raw +
                                 // processed text. The paste fires later on
                                 // `confirm_paste`; dismiss → `cancel_preview`.
-                                let preview_enabled =
-                                    crate::winstt::commands::settings::read_settings(&ah)
-                                        .general
-                                        .preview_before_pasting
-                                        && crate::winstt::commands::overlay::overlay_is_active(&ah);
-                                if preview_enabled {
-                                    crate::winstt::commands::preview::capture_foreground(&ah);
+                                let preview_enabled = preview_requested;
+                                if streamed_paste_handled {
+                                    crate::winstt::commands::dictation::SttEvents::full_sentence(
+                                        &ah,
+                                        &processed.final_text,
+                                    );
+                                    utils::hide_recording_overlay(&ah);
+                                    change_tray_icon(&ah, TrayIconState::Idle);
+                                } else if preview_enabled {
+                                    crate::winstt::commands::preview::capture_foreground(
+                                        &ah,
+                                        &processed.final_text,
+                                    );
                                     crate::winstt::commands::overlay::enter_preview_overlay(&ah);
                                     // preview_ready BEFORE full_sentence so the renderer sets
                                     // `isPreviewActive` before full_sentence flips
@@ -887,6 +1095,9 @@ impl ShortcutAction for TranscribeAction {
                 }
             } else {
                 debug!("No samples retrieved from recording stop");
+                if cancelled_session_cleanup(&ah, session_id, "recording cancellation") {
+                    return;
+                }
                 // WinSTT terminal: stop_recording returned None (binding mismatch /
                 // already stopped). Reset the renderer's armed pill so it doesn't
                 // hang on isRecordingActive=true with no terminal event to clear it.
@@ -908,7 +1119,14 @@ struct CancelAction;
 
 impl ShortcutAction for CancelAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        utils::cancel_current_operation(app);
+        if utils::cancel_current_operation(app) {
+            crate::winstt::commands::dictation::SttEvents::session_aborted(app);
+            return;
+        }
+        if crate::winstt::commands::tts::cancel_tts_playback_layer(app) {
+            return;
+        }
+        utils::unregister_cancel_shortcut_if_idle(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
@@ -1023,6 +1241,7 @@ impl ShortcutAction for ReadAloudAction {
             };
             let mgr = tts.inner().clone();
             let rid = mgr.next_request_id();
+            crate::winstt::commands::tts::reserve_tts_playback_layer(&app);
             // Empty voice/lang → the manager fills them from the active source's
             // settings (same as the `tts_speak_selection` command path). Speed is
             // sampled per sentence so a mid-read change applies to the next one.
@@ -1119,15 +1338,16 @@ fn schedule_wakeword_followup_timeout(app: &AppHandle) {
 
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(250));
-        let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
-            return;
+        let recording_generation = {
+            let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {
+                return;
+            };
+            if !audio.is_recording() {
+                crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(&app);
+                return;
+            }
+            audio.recording_generation()
         };
-        if !audio.is_recording() {
-            crate::winstt::commands::settings::rearm_wakeword_runtime_if_active(&app);
-            return;
-        }
-        let recording_generation = audio.recording_generation();
-        drop(audio);
 
         std::thread::sleep(timeout);
         let Some(audio) = app.try_state::<Arc<AudioRecordingManager>>() else {

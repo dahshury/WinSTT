@@ -16,8 +16,9 @@ use tauri::{AppHandle, Emitter, Manager};
 // The ONLY `crate::winstt::*` symbols this inherited Handy core names (audit #14): the engine
 // type (`Transcriber`) the `LoadedEngine::Winstt` arm boxes, and the backend trait surface the
 // core delegates every WinSTT-specific step to. All WinSTT logic lives behind `SttBackend`.
+use crate::winstt::model_swap::ModelSwapCoordinator;
 use crate::winstt::stt::{
-    BackendRoute, SttBackend, Transcriber as WinsttTranscriber, WinsttSttBackend,
+    BackendRoute, SttBackend, SttResult, Transcriber as WinsttTranscriber, WinsttSttBackend,
 };
 use transcribe_rs::{
     onnx::{
@@ -57,6 +58,9 @@ pub(crate) const SILENCE_AC_FLOOR: f32 = 0.003;
 /// The DC offset must exceed the AC RMS by this factor to be classed "all offset, no audio"
 /// (the dead/virtual-mic fingerprint that makes Whisper emit a wall of garbled text).
 const DC_DOMINANCE_RATIO: f32 = 10.0;
+const LOCAL_FINAL_DECODE_SILENCE_PAD_MS: usize = 700;
+const NATIVE_STREAM_FINAL_SILENCE_PAD_MS: usize = 2000;
+const NATIVE_STREAM_SAMPLE_RATE: usize = 16_000;
 
 static TRANSCRIPTION_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -82,6 +86,52 @@ pub(crate) fn is_silent_recording(audio: &[f32]) -> bool {
     rms < SILENCE_AC_FLOOR || dc_dominated
 }
 
+fn generic_realtime_language(language: &str) -> Option<String> {
+    let trimmed = language.trim();
+    if trimmed.is_empty() || trimmed == "auto" {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn transcribe_rs_language(language: &str) -> Option<String> {
+    generic_realtime_language(language).map(|normalized| {
+        if normalized == "zh-Hans" || normalized == "zh-Hant" {
+            "zh".to_string()
+        } else {
+            normalized
+        }
+    })
+}
+
+fn native_stream_final_tail_with_silence(tail: &[f32]) -> Vec<f32> {
+    let pad_samples = NATIVE_STREAM_SAMPLE_RATE * NATIVE_STREAM_FINAL_SILENCE_PAD_MS / 1000;
+    let mut padded = Vec::with_capacity(tail.len() + pad_samples);
+    padded.extend_from_slice(tail);
+    padded.resize(padded.len() + pad_samples, 0.0);
+    padded
+}
+
+fn local_final_decode_audio_with_silence(audio: &[f32]) -> Vec<f32> {
+    let pad_samples = NATIVE_STREAM_SAMPLE_RATE * LOCAL_FINAL_DECODE_SILENCE_PAD_MS / 1000;
+    let mut padded = Vec::with_capacity(audio.len() + pad_samples);
+    padded.extend_from_slice(audio);
+    padded.resize(padded.len() + pad_samples, 0.0);
+    padded
+}
+
+fn sense_voice_realtime_language(language: &str) -> Option<String> {
+    match language.trim() {
+        "zh" | "zh-Hans" | "zh-Hant" => Some("zh".to_string()),
+        "en" => Some("en".to_string()),
+        "ja" => Some("ja".to_string()),
+        "ko" => Some("ko".to_string()),
+        "yue" => Some("yue".to_string()),
+        _ => None,
+    }
+}
+
 /// One cached realtime full-buffer decode, kept so the FINAL paste can reuse it instead of
 /// re-decoding the same audio. The realtime worker already decoded the whole growing buffer with
 /// the SAME engine, so when the user stops talking the last live decode == the final decode (sans
@@ -96,11 +146,41 @@ struct RealtimeReuse {
     raw_text: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct LoadedTranscriptionCapabilities {
+    /// Whether realtime text can be promoted to the final paste without re-decoding.
+    final_reuse_safe: bool,
+    /// Whether realtime accepts only new samples through a stateful/native stream.
+    native_streaming: bool,
+}
+
+impl LoadedTranscriptionCapabilities {
+    const CONSERVATIVE: Self = Self {
+        final_reuse_safe: false,
+        native_streaming: false,
+    };
+}
+
 /// Outcome of one realtime native-streaming tick (see
 /// [`TranscriptionManager::stream_accept_realtime`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RealtimeStreamText {
+    pub text: String,
+    pub is_final: bool,
+}
+
+impl RealtimeStreamText {
+    fn interim(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_final: false,
+        }
+    }
+}
+
 pub enum RealtimeStreamOutcome {
-    /// Decoded incremental text so far (possibly empty).
-    Text(String),
+    /// Decoded incremental text so far (possibly empty) with official-style finality metadata.
+    Text(RealtimeStreamText),
     /// The engine mutex is held by a batch decode — retry next tick WITHOUT advancing the fed
     /// watermark (the same new samples are re-fed next time).
     Skipped,
@@ -133,6 +213,15 @@ enum LoadedEngine {
     Winstt(Box<dyn WinsttTranscriber>),
 }
 
+impl LoadedEngine {
+    fn shutdown(&mut self) {
+        match self {
+            LoadedEngine::Winstt(engine) => engine.shutdown(),
+            _ => {}
+        }
+    }
+}
+
 /// What a single decode produced inside the panic-guarded closure. The transcribe-rs (GGML)
 /// arms return a `Raw` `TranscriptionResult` that the core still post-processes (custom words +
 /// filler). The WinSTT arm's decode is owned by [`crate::winstt::stt::SttBackend::decode`], which
@@ -145,7 +234,7 @@ enum TranscribeOutcome {
     Final(String),
 }
 
-// The WinSTT-specific helpers `engine_kind_for`, `family_policy_slug`, `normalize_winstt_language`,
+// The WinSTT-specific helpers `engine_kind_for`, `normalize_winstt_language`,
 // and `peak_normalize` used to live HERE in the inherited Handy core. They were moved into
 // `crate::winstt::stt::backend` (audit #14) — the core now reaches them only through the
 // `SttBackend` trait, restoring the one-way dependency edge (winstt → core, never the reverse).
@@ -180,6 +269,13 @@ impl Drop for WarmingGuard<'_> {
     }
 }
 
+const WHISPER_GARBAGE_MARKER: &str = "[whisper-garbage]";
+
+fn is_degenerate_decode_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains(WHISPER_GARBAGE_MARKER) || msg.contains("degenerate Whisper decode")
+}
+
 #[derive(Clone)]
 pub struct TranscriptionManager {
     engine: Arc<Mutex<Option<LoadedEngine>>>,
@@ -197,6 +293,9 @@ pub struct TranscriptionManager {
     /// `transcribe()` simply wins the engine mutex; warmup `try_lock`s and yields when the
     /// engine is busy.
     warming: Arc<AtomicBool>,
+    /// Shared warm-state tracker for the currently-resident model. The heavyweight load gate stays
+    /// in `is_loading`; this coordinator records whether that resident engine has paid warmup.
+    model_lifecycle: Arc<ModelSwapCoordinator>,
     /// The WinSTT-owned STT backend (audit #14). Every WinSTT-specific load/decode/cloud step
     /// (catalog resolve+build, the unified ort engine decode + post-processing, the cloud
     /// round-trip, language/dictionary/filler from the picker store) is delegated here so this
@@ -223,6 +322,7 @@ impl TranscriptionManager {
             is_loading: Arc::new(Mutex::new(false)),
             loading_condvar: Arc::new(Condvar::new()),
             warming: Arc::new(AtomicBool::new(false)),
+            model_lifecycle: Arc::new(ModelSwapCoordinator::new()),
             backend: Arc::new(WinsttSttBackend),
             realtime_reuse: Arc::new(Mutex::new(None)),
         };
@@ -327,9 +427,56 @@ impl TranscriptionManager {
         })
     }
 
+    fn clear_warmed_model(&self) {
+        self.model_lifecycle.clear_all_warm();
+    }
+
+    fn is_model_warm(&self, model_id: &str) -> bool {
+        self.model_lifecycle.is_warm(model_id)
+    }
+
+    fn mark_model_warmed_if_current(&self, model_id: &str) {
+        if self.backend.route_of(model_id) == BackendRoute::Cloud || !self.is_model_loaded() {
+            return;
+        }
+        let current = self.lock_current_model();
+        if current.as_deref() == Some(model_id) {
+            self.model_lifecycle.mark_warm(model_id);
+        }
+    }
+
+    fn wait_for_loading_to_finish(&self) {
+        let mut is_loading = self.lock_is_loading();
+        while *is_loading {
+            is_loading = self
+                .loading_condvar
+                .wait(is_loading)
+                .unwrap_or_else(|poisoned| {
+                    warn!("is_loading mutex poisoned while waiting; recovering");
+                    poisoned.into_inner()
+                });
+        }
+    }
+
     pub fn is_model_loaded(&self) -> bool {
         let engine = self.lock_engine();
         engine.is_some()
+    }
+
+    fn is_model_ready_for(&self, model_id: &str) -> bool {
+        let current_matches = self.get_current_model().as_deref() == Some(model_id);
+        match self.backend.route_of(model_id) {
+            BackendRoute::Cloud => current_matches,
+            BackendRoute::Catalog | BackendRoute::None => current_matches && self.is_model_loaded(),
+        }
+    }
+
+    fn spawn_warmup_if_needed(&self, model_id: &str) {
+        if self.backend.route_of(model_id) == BackendRoute::Cloud || self.is_model_warm(model_id) {
+            return;
+        }
+        let me = self.clone();
+        thread::spawn(move || me.warmup());
     }
 
     /// Atomically check whether a model load is in progress and, if not, mark
@@ -352,15 +499,18 @@ impl TranscriptionManager {
         let unload_start = std::time::Instant::now();
         debug!("Starting to unload model");
 
-        {
+        let mut old_engine = {
             let mut engine = self.lock_engine();
-            // Dropping the engine frees all resources
-            *engine = None;
+            engine.take()
+        };
+        if let Some(engine) = old_engine.as_mut() {
+            engine.shutdown();
         }
         {
             let mut current_model = self.lock_current_model();
             *current_model = None;
         }
+        self.clear_warmed_model();
 
         // Emit unloaded event
         let _ = self.app_handle.emit(
@@ -455,6 +605,29 @@ impl TranscriptionManager {
             );
         };
 
+        // If a WinSTT ORT engine is resident, free its sessions before the legacy loader builds
+        // another local engine. The WinSTT catalog path already does this after offline resolve;
+        // this keeps the fallback Handy path from overlapping DirectML/ORT sessions.
+        let old_engine = {
+            let mut engine = self.lock_engine();
+            if matches!(engine.as_ref(), Some(LoadedEngine::Winstt(_))) {
+                engine.take()
+            } else {
+                None
+            }
+        };
+        if let Some(mut engine) = old_engine {
+            info!(
+                "[stt] shutting down resident WinSTT engine before loading legacy model '{model_id}'"
+            );
+            engine.shutdown();
+            {
+                let mut current_model = self.lock_current_model();
+                *current_model = None;
+            }
+            self.clear_warmed_model();
+        }
+
         let loaded_engine = match model_info.engine_type {
             EngineType::Whisper => {
                 let engine = WhisperEngine::load(&model_path).map_err(|e| {
@@ -535,10 +708,16 @@ impl TranscriptionManager {
             }
         };
 
-        // Update the current engine and model ID
-        {
+        // Update the current engine and model ID. A new engine starts cold even when the id is the
+        // same (same-model quant/device reload), so invalidate the warm marker only after the
+        // replacement engine has been built successfully.
+        self.clear_warmed_model();
+        let mut old_engine = {
             let mut engine = self.lock_engine();
-            *engine = Some(loaded_engine);
+            engine.replace(loaded_engine)
+        };
+        if let Some(engine) = old_engine.as_mut() {
+            engine.shutdown();
         }
         {
             let mut current_model = self.lock_current_model();
@@ -607,7 +786,7 @@ impl TranscriptionManager {
             // catch_unwind so a build panic can't escape and abort the thread before the guard's
             // Drop runs (it would still run on unwind, but this keeps the log clean + explicit).
             let _ = catch_unwind(AssertUnwindSafe(|| {
-                if let Err(e) = self_clone.dispatch_load(&desired) {
+                if let Err(e) = self_clone.dispatch_load(&desired, None) {
                     error!("Failed to load model '{}': {}", desired, e);
                 }
             }));
@@ -622,7 +801,7 @@ impl TranscriptionManager {
     /// ids go through `load_model`, which builds-then-installs (overwriting the old engine) — GGML,
     /// no session race. On any error, the previously-loaded model is still resident, so we re-emit
     /// `loading_completed` for it so the picker chip clears on a model the user can still dictate with.
-    fn dispatch_load(&self, model_id: &str) -> Result<()> {
+    fn dispatch_load(&self, model_id: &str, quantization_override: Option<&str>) -> Result<()> {
         // Snapshot the still-resident model BEFORE attempting the swap, for the rollback re-emit.
         let previous = self.get_current_model();
 
@@ -641,7 +820,7 @@ impl TranscriptionManager {
                 self.touch_activity();
                 Ok(())
             }
-            BackendRoute::Catalog => self.load_winstt_model(model_id),
+            BackendRoute::Catalog => self.load_winstt_model(model_id, quantization_override),
             BackendRoute::None => self.load_model(model_id),
         };
 
@@ -686,44 +865,81 @@ impl TranscriptionManager {
     /// `model.model` is debounced, so a re-read would load the stale/default "tiny" and "succeed").
     /// Runs on the swap orchestrator's own thread, so it never blocks the Tauri command thread.
     pub fn load_model_blocking(&self, model_id: &str) -> std::result::Result<(), String> {
-        // PANIC-SAFE: claim the loading flag through the RAII `LoadingGuard`. Its Drop clears
-        // `is_loading` and wakes any `transcribe()` blocked on the load condvar on EVERY exit —
-        // normal return, early return, OR a panic in `dispatch_load`. The previous manual flag
-        // flip was skipped by a panic, leaving `is_loading` stuck `true` forever → every later
-        // `transcribe()` blocked on the condvar → the FinishGuard never dropped → the
-        // TranscriptionCoordinator stayed in `Processing` → the PTT hotkey silently stopped
-        // starting recordings until an app restart. That is the "must restart after a model
-        // switch" bug.
-        let guard = match self.try_start_loading() {
-            Some(g) => g,
-            None => return Err("Model load already in progress".to_string()),
-        };
-        // FAILURE-ATOMIC: dispatch_load never unloads the resident engine up front — a failed
-        // resolve/build leaves the previous model dictatable (and re-emits its loading_completed),
-        // instead of the old unload-first path that left NOTHING loaded on a network blip.
-        // catch_unwind turns a build panic into an Err so the swap orchestrator can emit
-        // `model-swap-failed` (rollback + toast) instead of the worker thread dying silently.
-        let outcome: Result<()> =
-            match catch_unwind(AssertUnwindSafe(|| self.dispatch_load(model_id))) {
+        self.load_model_blocking_inner(model_id, false, None)
+    }
+
+    pub fn load_model_blocking_with_quantization(
+        &self,
+        model_id: &str,
+        quantization_override: Option<&str>,
+    ) -> std::result::Result<(), String> {
+        self.load_model_blocking_inner(model_id, false, quantization_override)
+    }
+
+    /// Same as [`Self::load_model_blocking`], but intentionally rebuilds even when `model_id` is
+    /// already current. Used for same-model load-input changes such as quantization/device swaps.
+    pub fn reload_model_blocking(&self, model_id: &str) -> std::result::Result<(), String> {
+        self.load_model_blocking_inner(model_id, true, None)
+    }
+
+    fn load_model_blocking_inner(
+        &self,
+        model_id: &str,
+        force_reload: bool,
+        quantization_override: Option<&str>,
+    ) -> std::result::Result<(), String> {
+        let model_id = model_id.trim();
+        if model_id.is_empty() {
+            return Err("model id is empty".to_string());
+        }
+
+        loop {
+            if !force_reload && self.is_model_ready_for(model_id) {
+                self.spawn_warmup_if_needed(model_id);
+                return Ok(());
+            }
+
+            // PANIC-SAFE: claim the loading flag through the RAII `LoadingGuard`. Its Drop clears
+            // `is_loading` and wakes any `transcribe()` blocked on the load condvar on EVERY exit —
+            // normal return, early return, OR a panic in `dispatch_load`.
+            let guard = match self.try_start_loading() {
+                Some(g) => g,
+                None => {
+                    // Another swap/warm path is already doing the expensive work. Wait for it
+                    // instead of returning a false "already loading" failure; if it loaded our
+                    // target, reuse the warmed/loaded engine, otherwise claim the slot and try.
+                    self.wait_for_loading_to_finish();
+                    continue;
+                }
+            };
+
+            // FAILURE-ATOMIC: dispatch_load never unloads the resident engine up front — a failed
+            // resolve/build leaves the previous model dictatable (and re-emits loading_completed),
+            // instead of the old unload-first path that left NOTHING loaded on a network blip.
+            // catch_unwind turns a build panic into an Err so the swap orchestrator can emit
+            // `model-swap-failed` (rollback + toast) instead of the worker thread dying silently.
+            let outcome: Result<()> = match catch_unwind(AssertUnwindSafe(|| {
+                self.dispatch_load(model_id, quantization_override)
+            })) {
                 Ok(r) => r,
                 Err(_) => Err(anyhow::anyhow!(
                     "model load panicked while building the engine"
                 )),
             };
-        // Clear `is_loading` (and wake waiters) BEFORE spawning the warmup so the warm decode's
-        // own load-condvar wait passes immediately instead of blocking on our own guard.
-        drop(guard);
-        // Warm the freshly-loaded engine so the first post-swap decode isn't cold (DML kernel JIT) —
-        // but do it on a DETACHED thread so the swap completes (chip clears) on LOAD, not after the
-        // cold warm-decode. (TranscriptionManager is Clone — the clone shares the Arc'd state.)
-        if outcome.is_ok() {
-            let me = self.clone();
-            thread::spawn(move || me.warmup());
+            // Clear `is_loading` (and wake waiters) BEFORE spawning the warmup so the warm decode's
+            // own load-condvar wait passes immediately instead of blocking on our own guard.
+            drop(guard);
+            // Warm the freshly-loaded engine so the first post-swap decode isn't cold (DML kernel
+            // JIT), but detach it so the swap completes on LOAD. The warm-state guard makes this
+            // idempotent when settings/save and explicit swap paths both request warmup.
+            if outcome.is_ok() {
+                self.spawn_warmup_if_needed(model_id);
+            }
+            return outcome.map_err(|e| {
+                error!("Failed to load model '{model_id}': {e}");
+                e.to_string()
+            });
         }
-        outcome.map_err(|e| {
-            error!("Failed to load model '{model_id}': {e}");
-            e.to_string()
-        })
     }
 
     /// Eagerly compile the loaded engine's kernels with a dummy 1s-silence decode so the FIRST
@@ -738,19 +954,28 @@ impl TranscriptionManager {
         // WAITED on transcribe()'s loading condvar even though the engine was fully loaded and
         // ready, serializing the user's decode behind a cold ~1s warmup. Instead we only set the
         // separate `warming` flag and yield the engine to any real decode via `try_lock`.
-        {
-            let mut is_loading = self.lock_is_loading();
-            while *is_loading {
-                is_loading = self.loading_condvar.wait(is_loading).unwrap();
-            }
+        self.wait_for_loading_to_finish();
+        let Some(model_id) = self.get_current_model() else {
+            return;
+        };
+        if self.is_model_warm(&model_id) {
+            debug!("[stt] warmup skipped — model '{model_id}' is already warm");
+            return;
         }
         if !self.is_model_loaded() {
             return; // cloud id, or load failed — nothing local to warm
         }
 
-        self.warming.store(true, Ordering::SeqCst);
+        if self
+            .warming
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            debug!("[stt] warmup skipped — another warmup is already running");
+            return;
+        }
         // Clear `warming` on EVERY exit path (early return / panic) via RAII.
-        let _warming_guard = WarmingGuard(&self.warming);
+        let warming_guard = WarmingGuard(&self.warming);
 
         // PREEMPTABLE: grab the engine with `try_lock`, NOT a blocking `lock()`. If a real
         // transcribe() already holds it, the warmup yields (the user's decode IS the warmup) —
@@ -770,15 +995,44 @@ impl TranscriptionManager {
         // is left resident (matching transcribe()'s catch_unwind discipline; only differs in that
         // we don't take() it out). The WinSTT-specific dummy-decode body lives in the backend
         // (audit #14); this core owns only the `try_lock` preemption + `catch_unwind`.
-        if let Some(LoadedEngine::Winstt(e)) = engine_guard.as_mut() {
-            let backend = self.backend.clone();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                backend.warmup(e.as_mut());
-            }));
-        }
+        let warmup_result: std::result::Result<(), anyhow::Error> =
+            if let Some(LoadedEngine::Winstt(e)) = engine_guard.as_mut() {
+                let backend = self.backend.clone();
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    backend.warmup(e.as_mut())
+                })) {
+                    Ok(result) => result,
+                    Err(_) => Err(anyhow::anyhow!("WinSTT warmup panicked")),
+                }
+            } else if engine_guard.is_some() {
+                // The legacy transcribe-rs arms do not need an explicit kernel warmup, so consider
+                // their resident engine warm for scheduling purposes.
+                Ok(())
+            } else {
+                Ok(())
+            };
         drop(engine_guard);
+
+        if let Err(err) = warmup_result {
+            let degenerate = is_degenerate_decode_error(&err);
+            warn!("[stt] engine warmup failed for '{model_id}': {err}");
+            if degenerate {
+                warn!(
+                    "[stt] recycling '{model_id}' after DirectML degenerate decode during warmup"
+                );
+                drop(warming_guard);
+                if let Err(reload_err) = self.load_model_blocking_inner(&model_id, true, None) {
+                    error!(
+                        "[stt] CPU fallback reload failed for '{model_id}' after degenerate warmup: {reload_err}"
+                    );
+                }
+            }
+            return;
+        }
+
+        self.mark_model_warmed_if_current(&model_id);
         self.touch_activity();
-        log::info!("[stt] engine warmup complete");
+        log::info!("[stt] engine warmup complete for '{model_id}'");
     }
 
     /// Load a WinSTT-catalog model through the unified ort-ONNX engine (the proven STT spike
@@ -794,7 +1048,7 @@ impl TranscriptionManager {
     /// the new one. A failed resolve returns `Err` with the old engine STILL RESIDENT — the caller
     /// re-emits `loading_completed` for it so the picker chip clears on a model the user can still
     /// dictate with.
-    fn load_winstt_model(&self, model_id: &str) -> Result<()> {
+    fn load_winstt_model(&self, model_id: &str, quantization_override: Option<&str>) -> Result<()> {
         let load_start = std::time::Instant::now();
 
         // Best-effort display name (catalog → display, else raw id) for the events. The backend's
@@ -829,14 +1083,18 @@ impl TranscriptionManager {
 
         // PHASE 1 — offline resolve (no ORT session, leaves the resident engine untouched). On
         // failure the old engine is still resident; emit loading_failed with the best-effort name.
-        let spec = match self.backend.resolve_catalog(&self.app_handle, model_id) {
-            Ok(spec) => spec,
-            Err(e) => {
-                let msg = e.to_string();
-                emit_failed(&msg, &display_name);
-                return Err(e);
-            }
-        };
+        let spec =
+            match self
+                .backend
+                .resolve_catalog(&self.app_handle, model_id, quantization_override)
+            {
+                Ok(spec) => spec,
+                Err(e) => {
+                    let msg = e.to_string();
+                    emit_failed(&msg, &display_name);
+                    return Err(e);
+                }
+            };
 
         // FAILURE-ATOMIC SWAP: now that the file set is verified present on disk (resolve
         // succeeded), the build is essentially guaranteed — so it's safe to free the OLD engine's
@@ -857,6 +1115,7 @@ impl TranscriptionManager {
             }
         };
 
+        self.clear_warmed_model();
         {
             let mut guard = self.lock_engine();
             *guard = Some(LoadedEngine::Winstt(engine));
@@ -969,6 +1228,13 @@ impl TranscriptionManager {
             return Ok(filtered);
         }
 
+        let local_audio = local_final_decode_audio_with_silence(&audio);
+        debug!(
+            "[stt][{request_id}] local_final_decode_samples={} final_silence_pad_ms={}",
+            local_audio.len(),
+            LOCAL_FINAL_DECODE_SILENCE_PAD_MS
+        );
+
         // Check if model is loaded, if not try to load it
         {
             // If the model is loading, wait for it to complete.
@@ -1069,7 +1335,7 @@ impl TranscriptionManager {
                     // mutex; the backend never locks it.
                     if let LoadedEngine::Winstt(winstt_engine) = &mut engine {
                         return backend
-                            .decode(&app_handle, winstt_engine.as_mut(), &audio)
+                            .decode(&app_handle, winstt_engine.as_mut(), &local_audio)
                             .map(TranscribeOutcome::Final);
                     }
                     // transcribe-rs (GGML) arms — produce a Raw result the core post-processes.
@@ -1100,7 +1366,7 @@ impl TranscriptionManager {
                             };
 
                             whisper_engine
-                                .transcribe_with(&audio, &params)
+                                .transcribe_with(&local_audio, &params)
                                 .map_err(|e| anyhow::anyhow!("Whisper transcription failed: {}", e))
                         }
                         LoadedEngine::Parakeet(parakeet_engine) => {
@@ -1109,16 +1375,16 @@ impl TranscriptionManager {
                                 ..Default::default()
                             };
                             parakeet_engine
-                                .transcribe_with(&audio, &params)
+                                .transcribe_with(&local_audio, &params)
                                 .map_err(|e| {
                                     anyhow::anyhow!("Parakeet transcription failed: {}", e)
                                 })
                         }
                         LoadedEngine::Moonshine(moonshine_engine) => moonshine_engine
-                            .transcribe(&audio, &TranscribeOptions::default())
+                            .transcribe(&local_audio, &TranscribeOptions::default())
                             .map_err(|e| anyhow::anyhow!("Moonshine transcription failed: {}", e)),
                         LoadedEngine::MoonshineStreaming(streaming_engine) => streaming_engine
-                            .transcribe(&audio, &TranscribeOptions::default())
+                            .transcribe(&local_audio, &TranscribeOptions::default())
                             .map_err(|e| {
                                 anyhow::anyhow!("Moonshine streaming transcription failed: {}", e)
                             }),
@@ -1136,13 +1402,13 @@ impl TranscriptionManager {
                                 use_itn: Some(true),
                             };
                             sense_voice_engine
-                                .transcribe_with(&audio, &params)
+                                .transcribe_with(&local_audio, &params)
                                 .map_err(|e| {
                                     anyhow::anyhow!("SenseVoice transcription failed: {}", e)
                                 })
                         }
                         LoadedEngine::GigaAM(gigaam_engine) => gigaam_engine
-                            .transcribe(&audio, &TranscribeOptions::default())
+                            .transcribe(&local_audio, &TranscribeOptions::default())
                             .map_err(|e| anyhow::anyhow!("GigaAM transcription failed: {}", e)),
                         LoadedEngine::Canary(canary_engine) => {
                             let lang = if validated_language == "auto" {
@@ -1156,7 +1422,7 @@ impl TranscriptionManager {
                                 ..Default::default()
                             };
                             canary_engine
-                                .transcribe(&audio, &options)
+                                .transcribe(&local_audio, &options)
                                 .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
                         }
                         LoadedEngine::Cohere(cohere_engine) => {
@@ -1174,7 +1440,7 @@ impl TranscriptionManager {
                                 ..Default::default()
                             };
                             cohere_engine
-                                .transcribe(&audio, &options)
+                                .transcribe(&local_audio, &options)
                                 .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                         }
                         // The WinSTT arm was handled by the early `return` above (backend.decode);
@@ -1189,6 +1455,36 @@ impl TranscriptionManager {
 
             match transcribe_result {
                 Ok(inner_result) => {
+                    if let Err(e) = &inner_result {
+                        if is_degenerate_decode_error(e) {
+                            error!(
+                                "[stt][{request_id}] transcription failed for model '{desired}': {e}"
+                            );
+                            warn!(
+                                "[stt][{request_id}] dropping corrupted engine for model '{desired}' after degenerate decode; next load will recycle DirectML unless repeated failures trigger CPU fallback"
+                            );
+                            engine.shutdown();
+                            {
+                                let mut current_model = self
+                                    .current_model_id
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                *current_model = None;
+                            }
+                            self.clear_warmed_model();
+                            let detail = e.to_string();
+                            let _ = self.app_handle.emit(
+                                "model-state-changed",
+                                ModelStateEvent {
+                                    event_type: "unloaded".to_string(),
+                                    model_id: None,
+                                    model_name: None,
+                                    error: Some(detail.clone()),
+                                },
+                            );
+                            return Err(anyhow::anyhow!(detail));
+                        }
+                    }
                     // Success or normal error — put the engine back
                     let mut engine_guard = self.lock_engine();
                     *engine_guard = Some(engine);
@@ -1213,6 +1509,7 @@ impl TranscriptionManager {
                         "[stt][{request_id}] transcription engine panicked for model '{desired}': {}. Model has been unloaded.",
                         panic_msg
                     );
+                    engine.shutdown();
 
                     // Clear the model ID so it will be reloaded on next attempt
                     {
@@ -1222,6 +1519,7 @@ impl TranscriptionManager {
                             .unwrap_or_else(|e| e.into_inner());
                         *current_model = None;
                     }
+                    self.clear_warmed_model();
 
                     let _ = self.app_handle.emit(
                         "model-state-changed",
@@ -1268,6 +1566,7 @@ impl TranscriptionManager {
         };
         let final_result = filtered_result;
         let output_chars = final_result.chars().count();
+        self.mark_model_warmed_if_current(&desired);
 
         info!(
             "[stt][{request_id}] transcription completed in {}ms{} model='{}' output_chars={} output_empty={}",
@@ -1340,36 +1639,185 @@ impl TranscriptionManager {
         // recovery + `catch_unwind` discipline. The backend borrows `&mut dyn Transcriber` in
         // place (PEEK, never `take()`); it must NOT lock the mutex.
         let backend = self.backend.clone();
+        let settings = get_settings(&self.app_handle);
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             match &mut *guard {
                 Some(LoadedEngine::Winstt(e)) => {
                     backend.decode_realtime(e.as_mut(), audio, language)
                 }
-                // No engine loaded, taken out by a batch decode, or a non-ort engine arm:
-                // realtime is whisper/ort-only for now.
+                Some(LoadedEngine::Whisper(whisper_engine)) => {
+                    let whisper_language = language.and_then(transcribe_rs_language);
+                    let params = WhisperInferenceParams {
+                        language: whisper_language,
+                        translate: settings.translate_to_english,
+                        initial_prompt: if settings.custom_words.is_empty() {
+                            None
+                        } else {
+                            Some(settings.custom_words.join(", "))
+                        },
+                        ..Default::default()
+                    };
+                    whisper_engine
+                        .transcribe_with(audio, &params)
+                        .ok()
+                        .map(|raw| raw.text)
+                }
+                Some(LoadedEngine::Parakeet(parakeet_engine)) => {
+                    let params = ParakeetParams {
+                        timestamp_granularity: Some(TimestampGranularity::Segment),
+                        ..Default::default()
+                    };
+                    parakeet_engine
+                        .transcribe_with(audio, &params)
+                        .ok()
+                        .map(|raw| raw.text)
+                }
+                Some(LoadedEngine::Moonshine(moonshine_engine)) => moonshine_engine
+                    .transcribe(audio, &TranscribeOptions::default())
+                    .ok()
+                    .map(|raw| raw.text),
+                Some(LoadedEngine::MoonshineStreaming(streaming_engine)) => streaming_engine
+                    .transcribe(audio, &TranscribeOptions::default())
+                    .ok()
+                    .map(|raw| raw.text),
+                Some(LoadedEngine::SenseVoice(sense_voice_engine)) => {
+                    let params = SenseVoiceParams {
+                        language: language.and_then(sense_voice_realtime_language),
+                        use_itn: Some(true),
+                    };
+                    sense_voice_engine
+                        .transcribe_with(audio, &params)
+                        .ok()
+                        .map(|raw| raw.text)
+                }
+                Some(LoadedEngine::GigaAM(gigaam_engine)) => gigaam_engine
+                    .transcribe(audio, &TranscribeOptions::default())
+                    .ok()
+                    .map(|raw| raw.text),
+                Some(LoadedEngine::Canary(canary_engine)) => {
+                    let options = TranscribeOptions {
+                        language: language.and_then(generic_realtime_language),
+                        translate: settings.translate_to_english,
+                        ..Default::default()
+                    };
+                    canary_engine
+                        .transcribe(audio, &options)
+                        .ok()
+                        .map(|raw| raw.text)
+                }
+                Some(LoadedEngine::Cohere(cohere_engine)) => {
+                    let options = TranscribeOptions {
+                        language: language.and_then(transcribe_rs_language),
+                        ..Default::default()
+                    };
+                    cohere_engine
+                        .transcribe(audio, &options)
+                        .ok()
+                        .map(|raw| raw.text)
+                }
+                // No local engine loaded, or taken out by a batch decode.
                 _ => None,
             }
         }));
 
-        match decoded {
+        let text = match decoded {
             Ok(text) => text,
             Err(_) => {
                 warn!("Realtime decode panicked — skipping tick");
                 None
             }
+        };
+        drop(guard);
+        if text.is_some() {
+            if let Some(model_id) = self.get_current_model() {
+                self.mark_model_warmed_if_current(&model_id);
+            }
+        }
+        text
+    }
+
+    /// Capability peek for final-reuse policy. This blocks because final reuse runs on the
+    /// transcription blocking pool after release; waiting here lets any in-flight realtime
+    /// `stream_accept` finish and publish its covered-sample cache before finalization consumes it.
+    fn loaded_capabilities(&self) -> LoadedTranscriptionCapabilities {
+        let guard = self.engine.lock().unwrap_or_else(|p| {
+            warn!("Engine mutex poisoned by a previous panic, recovering (capability peek)");
+            p.into_inner()
+        });
+        match &*guard {
+            Some(LoadedEngine::Winstt(e)) => {
+                let kind = e.kind();
+                LoadedTranscriptionCapabilities {
+                    final_reuse_safe: kind.final_reuse_safe(),
+                    native_streaming: e.supports_native_streaming(),
+                }
+            }
+            Some(_) | None => LoadedTranscriptionCapabilities::CONSERVATIVE,
         }
     }
 
-    /// Whether the currently-loaded engine's decode quality depends on cross-chunk context (an
-    /// attention enc-dec). Non-blocking peek; on contention / not-loaded it defaults to TRUE (safe:
-    /// prefer a fresh decode over reusing the chunked preview). Drives the reuse-vs-retranscribe
-    /// policy in `try_reuse_realtime`.
-    fn loaded_needs_past_context(&self) -> bool {
-        match self.engine.try_lock() {
-            Ok(guard) => {
-                matches!(&*guard, Some(LoadedEngine::Winstt(e)) if e.kind().needs_past_context())
+    fn run_native_stream_finalize(
+        engine: &mut Option<LoadedEngine>,
+        tail: &[f32],
+    ) -> Option<SttResult<String>> {
+        match engine {
+            Some(LoadedEngine::Winstt(e)) if e.supports_native_streaming() => {
+                if !tail.is_empty() {
+                    if let Err(err) = e.stream_accept(tail) {
+                        return Some(Err(err));
+                    }
+                }
+                Some(e.stream_finalize())
             }
-            Err(_) => true,
+            _ => None,
+        }
+    }
+
+    /// Feed any final tail samples the realtime tick did not see, then flush the loaded
+    /// native-streaming engine's right context and return its final stream text.
+    /// This is deliberately blocking and is called from the transcription blocking pool: after
+    /// release, final paste should wait for the engine's own end-of-stream callback instead of
+    /// guessing a fixed microphone hold-open duration.
+    fn finalize_native_stream_text(&self, tail: &[f32]) -> Option<String> {
+        let started = std::time::Instant::now();
+        let final_tail = native_stream_final_tail_with_silence(tail);
+        info!(
+            "[realtime-final] native stream finalizing captured_tail_samples={} silence_pad_ms={} fed_tail_samples={} fed_tail_ms={}",
+            tail.len(),
+            NATIVE_STREAM_FINAL_SILENCE_PAD_MS,
+            final_tail.len(),
+            (final_tail.len() as f32 / NATIVE_STREAM_SAMPLE_RATE as f32 * 1000.0).round() as u64
+        );
+        let mut guard = self.engine.lock().unwrap_or_else(|p| {
+            warn!("Engine mutex poisoned by a previous panic, recovering (stream_finalize)");
+            p.into_inner()
+        });
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Self::run_native_stream_finalize(&mut guard, &final_tail)
+        }));
+        let text = match decoded {
+            Ok(Some(Ok(text))) => text,
+            Ok(Some(Err(err))) => {
+                warn!("Native stream finalize failed: {err}");
+                return None;
+            }
+            Ok(None) => return None,
+            Err(_) => {
+                warn!("Native stream finalize panicked");
+                return None;
+            }
+        };
+        drop(guard);
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            info!(
+                "[realtime-final] native stream finalized in {}ms final_chars={}",
+                started.elapsed().as_millis(),
+                trimmed.chars().count()
+            );
+            Some(trimmed.to_string())
         }
     }
 
@@ -1396,9 +1844,14 @@ impl TranscriptionManager {
     /// worker retries the same samples next tick instead of dropping them. A non-streaming engine
     /// yields [`RealtimeStreamOutcome::NotStreaming`]. `catch_unwind` so a decode panic can't wedge
     /// the worker.
-    pub fn stream_accept_realtime(&self, new_samples: &[f32]) -> RealtimeStreamOutcome {
+    pub fn stream_accept_realtime(
+        &self,
+        generation: u64,
+        covered: usize,
+        new_samples: &[f32],
+    ) -> RealtimeStreamOutcome {
         if new_samples.is_empty() {
-            return RealtimeStreamOutcome::Text(String::new());
+            return RealtimeStreamOutcome::Text(RealtimeStreamText::interim(String::new()));
         }
         let mut guard = match self.engine.try_lock() {
             Ok(g) => g,
@@ -1411,29 +1864,65 @@ impl TranscriptionManager {
         let decoded =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &mut *guard {
                 Some(LoadedEngine::Winstt(e)) if e.supports_native_streaming() => {
-                    Some(e.stream_accept(new_samples).unwrap_or_default())
+                    Some(e.stream_accept(new_samples))
                 }
                 _ => None,
             }));
-        match decoded {
-            Ok(Some(text)) => RealtimeStreamOutcome::Text(text),
-            Ok(None) => RealtimeStreamOutcome::NotStreaming,
+        let (outcome, did_decode, cache_text) = match decoded {
+            Ok(Some(Ok(update))) => {
+                let text = update.text;
+                (
+                    RealtimeStreamOutcome::Text(RealtimeStreamText {
+                        text: text.clone(),
+                        is_final: update.is_final,
+                    }),
+                    true,
+                    Some(text),
+                )
+            }
+            Ok(Some(Err(err))) => {
+                warn!("Native stream decode failed; retrying same samples: {err}");
+                (RealtimeStreamOutcome::Skipped, false, None)
+            }
+            Ok(None) => (RealtimeStreamOutcome::NotStreaming, false, None),
             Err(_) => {
-                warn!("Native stream decode panicked — skipping tick");
-                RealtimeStreamOutcome::Text(String::new())
+                warn!("Native stream decode panicked; retrying same samples");
+                (RealtimeStreamOutcome::Skipped, false, None)
+            }
+        };
+        if let Some(raw_text) = cache_text {
+            info!(
+                "[realtime-final] cached native stream generation={} covered_samples={} chars={}",
+                generation,
+                covered,
+                raw_text.chars().count()
+            );
+            *self.realtime_reuse.lock().unwrap() = Some(RealtimeReuse {
+                generation,
+                covered,
+                raw_text,
+            });
+        }
+        drop(guard);
+        if did_decode {
+            if let Some(model_id) = self.get_current_model() {
+                self.mark_model_warmed_if_current(&model_id);
             }
         }
+        outcome
     }
 
     /// Zero the loaded native-streaming engine's stream state (new utterance). No-op for a
-    /// non-streaming or unloaded engine. Non-blocking; a contended lock is a tolerable miss (the
-    /// next recording's first `stream_accept` re-creates a fresh stream regardless).
+    /// non-streaming or unloaded engine. This waits for any in-flight final decode so a quick
+    /// release+re-press cannot carry the previous stream's text/cache into the new recording.
     pub fn stream_reset_realtime(&self) {
-        if let Ok(mut guard) = self.engine.try_lock() {
-            if let Some(LoadedEngine::Winstt(e)) = &mut *guard {
-                if e.supports_native_streaming() {
-                    e.stream_reset();
-                }
+        let mut guard = self.engine.lock().unwrap_or_else(|p| {
+            warn!("Engine mutex poisoned by a previous panic, recovering (stream_reset)");
+            p.into_inner()
+        });
+        if let Some(LoadedEngine::Winstt(e)) = &mut *guard {
+            if e.supports_native_streaming() {
+                e.stream_reset();
             }
         }
     }
@@ -1453,6 +1942,13 @@ impl TranscriptionManager {
         });
     }
 
+    /// Drop the realtime-reuse cache without promoting it to the final transcript.
+    /// Preview-before-pasting needs a fresh batch decode so the editable/rewrite
+    /// surface starts from the main finalization path, not the live preview cache.
+    pub fn clear_realtime_reuse(&self) {
+        let _ = self.realtime_reuse.lock().unwrap().take();
+    }
+
     /// Satisfy the FINAL transcription by REUSING the realtime worker's last full-buffer decode —
     /// avoiding a redundant re-decode of audio the live engine already transcribed (the live decode
     /// used the same engine on the same growing buffer, so it == the final decode sans
@@ -1460,20 +1956,23 @@ impl TranscriptionManager {
     ///   * a cached decode exists for THIS recording `generation`,
     ///   * the whole recording is not silent (defer to `transcribe`'s silence gate otherwise — the
     ///     realtime path skips that gate and may have hallucinated on near-silence), and
-    ///   * the audio past what the cached decode covered carries no speech (so reusing drops no
-    ///     trailing words — the gap is the key-release / extra-buffer silence tail).
+    ///   * for non-native streaming, the audio past what the cached decode covered carries no speech.
+    ///     Native-streaming engines receive that tail before finalizing the stream.
     ///
     /// Returns `None` (→ caller does a fresh `transcribe`) otherwise. The cache is consumed either
     /// way so a stale decode can't leak into the next recording.
     pub fn try_reuse_realtime(&self, generation: u64, samples: &[f32]) -> Option<String> {
-        // Consume the cache regardless so a stale decode can't leak into the next recording.
-        let entry = self.realtime_reuse.lock().unwrap().take()?;
         // Context-dependent engines (attention enc-dec: Whisper/Canary/Cohere) must re-decode with
         // proper VAD-segmentation — the chunked realtime watermark text has arbitrary cut points and
         // is lower quality than a clean-boundary final. Only the frame-synchronous (CTC / transducer
         // / native-streaming) families, which carry no cross-utterance text context, reuse the live
         // output.
-        if self.loaded_needs_past_context() {
+        let capabilities = self.loaded_capabilities();
+        // Consume the cache after the capability wait above. For native streaming, that wait also
+        // lets an in-flight realtime `stream_accept` publish the newest covered sample count before
+        // finalization computes and feeds the remaining tail.
+        let entry = self.realtime_reuse.lock().unwrap().take()?;
+        if !capabilities.final_reuse_safe {
             return None;
         }
         if entry.generation != generation {
@@ -1484,13 +1983,42 @@ impl TranscriptionManager {
             return None;
         }
         // Trailing audio the realtime decode never saw (last partial chunk + extra-buffer tail).
-        // If it carries speech, the user kept talking past the last live decode — a fresh decode is
-        // required so those words aren't dropped.
+        // Native-streaming engines can accept that tail before finalizing. Window-redecode engines
+        // cannot, so speech-bearing tail must fall back to a fresh final decode.
         let covered = entry.covered.min(samples.len());
         let tail = &samples[covered..];
-        if !tail.is_empty() && dc_immune_rms(tail) >= SILENCE_AC_FLOOR {
-            return None;
-        }
+        info!(
+            "[realtime-final] reuse candidate generation={} native={} covered_samples={} total_samples={} tail_samples={} cached_chars={}",
+            generation,
+            capabilities.native_streaming,
+            covered,
+            samples.len(),
+            tail.len(),
+            entry.raw_text.chars().count()
+        );
+        let raw_text = if capabilities.native_streaming {
+            let finalized = if tail.is_empty() {
+                self.finalize_native_stream_text(tail)
+                    .unwrap_or_else(|| entry.raw_text.clone())
+            } else {
+                self.finalize_native_stream_text(tail)?
+            };
+            if !tail.is_empty()
+                && finalized.chars().count() <= entry.raw_text.chars().count()
+                && dc_immune_rms(tail) >= SILENCE_AC_FLOOR
+            {
+                info!(
+                    "[realtime-final] native stream final text did not grow despite speech-bearing tail; falling back to fresh decode"
+                );
+                return None;
+            }
+            finalized
+        } else {
+            if !tail.is_empty() && dc_immune_rms(tail) >= SILENCE_AC_FLOOR {
+                return None;
+            }
+            entry.raw_text
+        };
         // A reuse hit IS a completed transcription — keep the idle-unload watcher from evicting the
         // engine out from under an actively-dictating user (the `transcribe` path it bypasses is
         // where `touch_activity` normally runs).
@@ -1499,7 +2027,7 @@ impl TranscriptionManager {
         let ws = crate::winstt::commands::settings::read_settings(&self.app_handle);
         let app_language = get_settings(&self.app_handle).app_language;
         Some(crate::winstt::stt::backend::winstt_postprocess(
-            &entry.raw_text,
+            &raw_text,
             &ws,
             &app_language,
         ))
@@ -1623,6 +2151,14 @@ impl Drop for TranscriptionManager {
                 debug!("Idle watcher thread joined successfully");
             }
         }
+
+        let mut engine = {
+            let mut guard = self.lock_engine();
+            guard.take()
+        };
+        if let Some(engine) = engine.as_mut() {
+            engine.shutdown();
+        }
     }
 }
 
@@ -1694,5 +2230,29 @@ mod tests {
                 super::SILENCE_AC_FLOOR
             );
         }
+    }
+
+    #[test]
+    fn native_stream_final_tail_appends_silence_pad_after_captured_audio() {
+        let tail = vec![0.1_f32, -0.2, 0.3];
+        let padded = super::native_stream_final_tail_with_silence(&tail);
+        let expected_pad =
+            super::NATIVE_STREAM_SAMPLE_RATE * super::NATIVE_STREAM_FINAL_SILENCE_PAD_MS / 1000;
+
+        assert_eq!(&padded[..tail.len()], tail.as_slice());
+        assert_eq!(padded.len(), tail.len() + expected_pad);
+        assert!(padded[tail.len()..].iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn local_final_decode_audio_appends_silence_pad_after_captured_audio() {
+        let audio = vec![0.4_f32, -0.1, 0.2];
+        let padded = super::local_final_decode_audio_with_silence(&audio);
+        let expected_pad =
+            super::NATIVE_STREAM_SAMPLE_RATE * super::LOCAL_FINAL_DECODE_SILENCE_PAD_MS / 1000;
+
+        assert_eq!(&padded[..audio.len()], audio.as_slice());
+        assert_eq!(padded.len(), audio.len() + expected_pad);
+        assert!(padded[audio.len()..].iter().all(|sample| *sample == 0.0));
     }
 }

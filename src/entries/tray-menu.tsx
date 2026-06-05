@@ -1,5 +1,5 @@
 import { StrictMode, Suspense } from "react";
-import { createRoot } from "react-dom/client";
+import { renderReactRoot } from "@/app/lib/render-react-root";
 import { HtmlLang } from "@/app/layouts/HtmlLang";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import "@/app/styles/fonts.css";
@@ -11,7 +11,8 @@ if (!container) {
 	throw new Error("[tray-menu] #root element missing");
 }
 
-createRoot(container).render(
+renderReactRoot(
+	container,
 	<StrictMode>
 		<HtmlLang />
 		<Suspense fallback={null}>

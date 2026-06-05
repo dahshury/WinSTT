@@ -1,11 +1,14 @@
-use crate::audio_toolkit::{list_input_devices, vad::SmoothedVad, AudioRecorder, SileroVad};
+use crate::audio_toolkit::{
+    list_input_devices, vad::SmoothedVad, AudioRecorder, CpalDeviceInfo, RealtimeAudioProgress,
+    SileroVad,
+};
 use crate::helpers::clamshell;
-use crate::settings::{get_settings, AppSettings};
+use crate::settings::get_settings;
 use crate::winstt::commands::settings::read_settings_raw;
-use crate::winstt::settings_schema::{RecordingMode, WinsttSettings};
-use log::{debug, error, info};
+use crate::winstt::settings_schema::{MicrophoneRelease, RecordingMode, WinsttSettings};
+use log::{debug, error, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
@@ -34,6 +37,22 @@ pub(crate) fn silence_auto_stop_delay(settings: &WinsttSettings) -> Option<Durat
     );
 
     Some(Duration::from_millis((seconds * 1000.0).round() as u64))
+}
+
+pub(crate) fn microphone_mode_from_settings(settings: &WinsttSettings) -> MicrophoneMode {
+    match settings.audio.microphone_release {
+        MicrophoneRelease::Always => MicrophoneMode::AlwaysOn,
+        _ => MicrophoneMode::OnDemand,
+    }
+}
+
+fn lazy_close_delay(settings: &WinsttSettings) -> Option<Duration> {
+    match settings.audio.microphone_release {
+        MicrophoneRelease::Sec30 => Some(Duration::from_secs(30)),
+        MicrophoneRelease::Min1 => Some(Duration::from_secs(60)),
+        MicrophoneRelease::Min5 => Some(Duration::from_secs(300)),
+        MicrophoneRelease::Always | MicrophoneRelease::Immediate => None,
+    }
 }
 
 fn schedule_toggle_silence_stop(
@@ -110,7 +129,7 @@ fn set_mute(mute: bool) {
                     eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
                     MMDeviceEnumerator,
                 },
-                System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
+                System::Com::{CoCreateInstance, CLSCTX_ALL},
             };
 
             macro_rules! unwrap_or_return {
@@ -122,9 +141,7 @@ fn set_mute(mute: bool) {
                 };
             }
 
-            // Initialize the COM library for this thread.
-            // If already initialized (e.g., by another library like Tauri), this does nothing.
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let _com = crate::windows_com::ComApartment::init_multithreaded();
 
             let all_devices: IMMDeviceEnumerator =
                 unwrap_or_return!(CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL));
@@ -191,6 +208,7 @@ const WHISPER_SAMPLE_RATE: usize = 16000;
 pub enum RecordingState {
     Idle,
     Recording { binding_id: String },
+    Stopping,
 }
 
 #[derive(Clone, Debug)]
@@ -205,6 +223,7 @@ fn create_audio_recorder(
     vad_path: &str,
     app_handle: &tauri::AppHandle,
     speech_seen: Arc<AtomicBool>,
+    realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let silero = SileroVad::new(vad_path, 0.3)
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
@@ -214,6 +233,7 @@ fn create_audio_recorder(
     // the frontend.
     let recorder = AudioRecorder::new()
         .map_err(|e| anyhow::anyhow!("Failed to create AudioRecorder: {}", e))?
+        .with_realtime_audio_signal(realtime_audio_signal)
         .with_vad(Box::new(smoothed_vad))
         .with_level_callback({
             let app_handle = app_handle.clone();
@@ -307,18 +327,18 @@ pub struct AudioRecordingManager {
     /// the two recordings) still starts the new utterance with a clean watermark
     /// and never emits the previous one's in-flight realtime text.
     recording_generation: Arc<AtomicU64>,
+    /// Recorder progress signal for native realtime streaming. The recorder updates this whenever
+    /// the VAD-filtered live mirror grows or resets, so native streaming can sleep on audio events
+    /// instead of polling the mirror.
+    realtime_audio_signal: Arc<(Mutex<RealtimeAudioProgress>, Condvar)>,
 }
 
 impl AudioRecordingManager {
     /* ---------- construction ------------------------------------------------ */
 
     pub fn new(app: &tauri::AppHandle) -> Result<Self, anyhow::Error> {
-        let settings = get_settings(app);
-        let mode = if settings.always_on_microphone {
-            MicrophoneMode::AlwaysOn
-        } else {
-            MicrophoneMode::OnDemand
-        };
+        let settings = read_settings_raw(app);
+        let mode = microphone_mode_from_settings(&settings);
 
         let manager = Self {
             state: Arc::new(Mutex::new(RecordingState::Idle)),
@@ -332,6 +352,10 @@ impl AudioRecordingManager {
             close_generation: Arc::new(AtomicU64::new(0)),
             speech_seen: Arc::new(AtomicBool::new(false)),
             recording_generation: Arc::new(AtomicU64::new(0)),
+            realtime_audio_signal: Arc::new((
+                Mutex::new(RealtimeAudioProgress::default()),
+                Condvar::new(),
+            )),
         };
 
         // Always-on?  Open immediately.
@@ -344,20 +368,7 @@ impl AudioRecordingManager {
 
     /* ---------- helper methods --------------------------------------------- */
 
-    fn get_effective_microphone_device(&self, settings: &AppSettings) -> Option<cpal::Device> {
-        // Check if we're in clamshell mode and have a clamshell microphone configured
-        let use_clamshell_mic = if let Ok(is_clamshell) = clamshell::is_clamshell() {
-            is_clamshell && settings.clamshell_microphone.is_some()
-        } else {
-            false
-        };
-
-        let device_name: Option<&String> = if use_clamshell_mic {
-            settings.clamshell_microphone.as_ref()
-        } else {
-            settings.selected_microphone.as_ref()
-        };
-
+    fn get_effective_microphone_device(&self) -> Option<cpal::Device> {
         // Some Windows hosts expose SILENT virtual/loopback inputs ("WO Mic",
         // "Stereo Mix", "Voicemeeter", …). When "Default" is selected we honor the OS
         // default input first; only if THAT is one of these known-silent virtual
@@ -397,12 +408,61 @@ impl AudioRecordingManager {
                 .any(|tok| WORD_MARKERS.contains(&tok))
         }
 
+        fn device_matches_index(device: &CpalDeviceInfo, selected_index: i64) -> bool {
+            selected_index >= 0 && device.index.parse::<i64>().ok() == Some(selected_index)
+        }
+
+        fn choose_default_device(devices: &[CpalDeviceInfo]) -> Option<usize> {
+            devices
+                .iter()
+                .position(|d| d.is_default && !is_likely_virtual(&d.name))
+                .or_else(|| devices.iter().position(|d| !is_likely_virtual(&d.name)))
+                .or_else(|| devices.iter().position(|d| d.is_default))
+                .or_else(|| (!devices.is_empty()).then_some(0usize))
+        }
+
+        let settings = read_settings_raw(&self.app_handle);
+        let legacy_settings = get_settings(&self.app_handle);
+        let use_clamshell_mic = clamshell::is_clamshell().unwrap_or(false)
+            && (settings.audio.clamshell_microphone.is_some()
+                || legacy_settings.clamshell_microphone.is_some());
+
+        let selected_index = if use_clamshell_mic {
+            settings.audio.clamshell_microphone
+        } else {
+            settings.audio.input_device_index
+        };
+
+        let device_name: Option<&String> = if selected_index.is_some() {
+            None
+        } else if use_clamshell_mic {
+            legacy_settings.clamshell_microphone.as_ref()
+        } else {
+            legacy_settings.selected_microphone.as_ref()
+        };
+
         match list_input_devices() {
             Ok(devices) => {
-                let chosen = if let Some(name) = device_name {
+                let chosen = if let Some(index) = selected_index {
+                    let found = devices
+                        .iter()
+                        .position(|device| device_matches_index(device, index));
+                    if found.is_none() {
+                        warn!(
+                            "[audio] selected microphone index {index} is unavailable; falling back to default input"
+                        );
+                    }
+                    found.or_else(|| choose_default_device(&devices))
+                } else if let Some(name) = device_name {
                     // Explicit by-name selection ALWAYS wins — even if it looks virtual,
                     // the user picked it deliberately.
-                    devices.iter().position(|d| d.name == *name)
+                    let found = devices.iter().position(|d| d.name == *name);
+                    if found.is_none() {
+                        warn!(
+                            "[audio] selected microphone '{name}' is unavailable; falling back to default input"
+                        );
+                    }
+                    found.or_else(|| choose_default_device(&devices))
                 } else {
                     // "Default" selected → honor the OS default input first…
                     devices
@@ -428,10 +488,11 @@ impl AudioRecordingManager {
     }
 
     fn schedule_lazy_close(&self) {
-        let gen = self.close_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let app = self.app_handle.clone();
+        let delay = lazy_close_delay(&read_settings_raw(&app)).unwrap_or(STREAM_IDLE_TIMEOUT);
+        let gen = self.close_generation.fetch_add(1, Ordering::SeqCst) + 1;
         std::thread::spawn(move || {
-            std::thread::sleep(STREAM_IDLE_TIMEOUT);
+            std::thread::sleep(delay);
             let rm = app.state::<Arc<AudioRecordingManager>>();
             // Hold state lock across the check AND close to serialize against
             // try_start_recording, preventing a race where the stream is closed
@@ -443,10 +504,7 @@ impl AudioRecordingManager {
             {
                 // stop_microphone_stream does not acquire the state lock,
                 // so holding it here is safe (no deadlock).
-                info!(
-                    "Closing idle microphone stream after {:?}",
-                    STREAM_IDLE_TIMEOUT
-                );
+                info!("Closing idle microphone stream after {:?}", delay);
                 rm.stop_microphone_stream();
             }
         });
@@ -494,6 +552,7 @@ impl AudioRecordingManager {
                 vad_str,
                 &self.app_handle,
                 Arc::clone(&self.speech_seen),
+                Arc::clone(&self.realtime_audio_signal),
             )?);
         }
         Ok(())
@@ -532,8 +591,7 @@ impl AudioRecordingManager {
         *did_mute_guard = false;
 
         // Get the selected device from settings, considering clamshell mode
-        let settings = get_settings(&self.app_handle);
-        let selected_device = self.get_effective_microphone_device(&settings);
+        let selected_device = self.get_effective_microphone_device();
 
         // Pre-flight check: if no device was selected/configured AND no devices
         // exist at all, fail early with a clear error instead of letting cpal
@@ -674,18 +732,8 @@ impl AudioRecordingManager {
             RecordingState::Recording {
                 binding_id: ref active,
             } if active == binding_id => {
-                *state = RecordingState::Idle;
+                *state = RecordingState::Stopping;
                 drop(state);
-
-                // Optionally keep recording for a bit longer to capture trailing audio
-                let settings = get_settings(&self.app_handle);
-                if settings.extra_recording_buffer_ms > 0 {
-                    debug!(
-                        "Extra recording buffer: sleeping {}ms before stopping",
-                        settings.extra_recording_buffer_ms
-                    );
-                    std::thread::sleep(Duration::from_millis(settings.extra_recording_buffer_ms));
-                }
 
                 let samples = if let Some(rec) = lock_recover(&self.recorder).as_ref() {
                     match rec.stop() {
@@ -706,12 +754,9 @@ impl AudioRecordingManager {
                 if matches!(*lock_recover(&self.mode), MicrophoneMode::OnDemand)
                     && !self.wakeword_mode_active()
                 {
-                    if get_settings(&self.app_handle).lazy_stream_close {
-                        self.schedule_lazy_close();
-                    } else {
-                        self.stop_microphone_stream();
-                    }
+                    self.stop_microphone_stream();
                 }
+                *lock_recover(&self.state) = RecordingState::Idle;
 
                 // Pad if very short
                 let s_len = samples.len();
@@ -728,7 +773,10 @@ impl AudioRecordingManager {
         }
     }
     pub fn is_recording(&self) -> bool {
-        matches!(*lock_recover(&self.state), RecordingState::Recording { .. })
+        matches!(
+            *lock_recover(&self.state),
+            RecordingState::Recording { .. } | RecordingState::Stopping
+        )
     }
 
     /// Monotonic recording-start counter (see the field doc). The realtime worker
@@ -768,6 +816,25 @@ impl AudioRecordingManager {
             .unwrap_or((0, Vec::new()))
     }
 
+    /// Block until the realtime mirror grows past `offset`, or until a recording-boundary reset
+    /// wakes the waiter. Returns true only when new audio is available for `snapshot_audio_from`.
+    pub fn wait_for_realtime_audio_after(&self, offset: usize, timeout: Duration) -> bool {
+        let (lock, cvar) = &*self.realtime_audio_signal;
+        let progress = lock_recover(lock);
+        if progress.len > offset {
+            return true;
+        }
+        let start_version = progress.version;
+        let result = cvar.wait_timeout_while(progress, timeout, |progress| {
+            progress.len <= offset && progress.version == start_version
+        });
+        let (progress, _) = match result {
+            Ok(waited) => waited,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        progress.len > offset
+    }
+
     /// Enable/disable the recorder's realtime `live_audio` mirror. When disabled, the recorder
     /// skips the per-chunk second-copy extend entirely. The realtime worker flips this per
     /// recording based on `effective_realtime` so plain dictation never pays the mirror cost.
@@ -782,26 +849,34 @@ impl AudioRecordingManager {
     pub fn cancel_recording(&self) {
         let mut state = lock_recover(&self.state);
 
-        if let RecordingState::Recording { .. } = *state {
-            *state = RecordingState::Idle;
-            drop(state);
+        match *state {
+            RecordingState::Recording { .. } => {
+                *state = RecordingState::Idle;
+                drop(state);
 
-            if let Some(rec) = lock_recover(&self.recorder).as_ref() {
-                let _ = rec.stop(); // Discard the result
-            }
+                if let Some(rec) = lock_recover(&self.recorder).as_ref() {
+                    let _ = rec.stop(); // Discard the result
+                }
 
-            *lock_recover(&self.is_recording) = false;
+                *lock_recover(&self.is_recording) = false;
 
-            // In on-demand mode, close the mic (lazily if the setting is enabled)
-            if matches!(*lock_recover(&self.mode), MicrophoneMode::OnDemand)
-                && !self.wakeword_mode_active()
-            {
-                if get_settings(&self.app_handle).lazy_stream_close {
-                    self.schedule_lazy_close();
-                } else {
-                    self.stop_microphone_stream();
+                // In on-demand mode, close the mic (lazily if the setting is enabled)
+                if matches!(*lock_recover(&self.mode), MicrophoneMode::OnDemand)
+                    && !self.wakeword_mode_active()
+                {
+                    if lazy_close_delay(&read_settings_raw(&self.app_handle)).is_some() {
+                        self.schedule_lazy_close();
+                    } else {
+                        self.stop_microphone_stream();
+                    }
                 }
             }
+            RecordingState::Stopping => {
+                // A normal stop is already draining the release tail. Session cancellation
+                // suppresses the eventual paste; interrupting the drain here can drop the same
+                // trailing audio this path is meant to preserve.
+            }
+            RecordingState::Idle => {}
         }
     }
 }

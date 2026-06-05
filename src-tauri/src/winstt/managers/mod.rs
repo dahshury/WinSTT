@@ -1,4 +1,4 @@
-// Source: docs/port/lib_wiring.md §1c/§2.
+// Source: docs/archive/port/lib_wiring.md §1c/§2.
 //
 // The WinSTT manager layer. Each manager is an `Arc`-friendly struct holding the
 // relevant engine/state, constructed with `new(&AppHandle)` and exposing the
@@ -29,7 +29,7 @@ pub mod tts_download_manager;
 pub mod tts_manager;
 pub mod wakeword_manager;
 pub mod word_aligner;
-// ── slice: model download (docs/port/10_frontend_port_plan.md §6 WU-4) ──
+// ── slice: model download (docs/archive/port/10_frontend_port_plan.md §6 WU-4) ──
 /// Per-quant streaming download manager (predownload/pause/resume/cancel/delete +
 /// the stt:model-download-* / stt:model-cache-changed broadcasts).
 pub mod download_manager;
@@ -47,5 +47,5 @@ pub use llm_manager::LlmManager;
 pub use loopback_manager::LoopbackManager;
 pub use realtime_manager::RealtimeManager;
 pub use tts_manager::TtsManager;
-pub use wakeword_manager::WakeWordManager;
+pub use wakeword_manager::{WakeWordManager, WakeWordModelStatusPayload};
 pub use word_aligner::WordAligner;

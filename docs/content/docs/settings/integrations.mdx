@@ -7,6 +7,8 @@ The **Integrations** tab holds every external credential WinSTT can use: the loc
 Ollama endpoint, plus API keys for OpenAI, ElevenLabs, and OpenRouter. Local transcription
 needs none of these — they only unlock cloud STT and LLM cleanup.
 
+<Video src="integrations-secrets" chrome="card" alt="An integrations animation showing API-key fields verifying through the Rust backend, then sealing credentials in a local secret store." caption="Keys verify through the Rust backend and are stored encrypted; the renderer sees status only." />
+
 ## What each credential unlocks
 
 Two keys are for **cloud speech-to-text**; the endpoint and one key are for **LLM
@@ -27,12 +29,12 @@ text cleanup**. They never overlap.
   </BentoCell>
 </BentoGrid>
 
-<Callout type="success" title="Cloud audio never touches the Python server — and keys never reach the renderer">
-  When you transcribe with a cloud model, audio goes from the Electron main process
-  **directly** to the provider over HTTPS (via the Vercel AI SDK) and never passes through
-  the local Python STT server. The keys themselves are stored by Electron main and are
-  **never** sent to the renderer UI — the settings window only ever sees the verification
-  status, not the secret. Local models still keep everything on-device.
+<Callout type="success" title="Cloud audio goes through the Rust backend — and keys never reach the renderer">
+  When you transcribe with a cloud model, audio goes from the Rust backend
+  **directly** to the provider over HTTPS and never passes through a separate local server.
+  The keys themselves are stored by the backend and are **never** sent to the renderer UI —
+  the settings window only ever sees the verification status, not the secret. Local models
+  still keep everything on-device.
 </Callout>
 
 ## Ollama endpoint
@@ -124,9 +126,9 @@ text transforms. It is **not** a cloud STT provider — it never transcribes aud
 Every key — OpenAI, ElevenLabs, and OpenRouter — is encrypted before it touches disk.
 
 <Callout type="success" title="DPAPI-backed encryption">
-  Keys are written through Electron's `safeStorage`, which on Windows is backed by **DPAPI**
-  (tied to your Windows user account). The encrypted blob lives in the app's settings store;
-  the plaintext never leaves the Electron main process and is never persisted in the clear.
+  Keys are sealed by the Rust backend using the Windows user profile secret store. The
+  encrypted blob lives in the app's settings store; the plaintext never leaves the backend
+  and is never persisted in the clear.
 </Callout>
 
 ## Related

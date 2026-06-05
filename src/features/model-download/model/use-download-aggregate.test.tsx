@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 
 // download-store imports ipc-client at module-eval time (for its action
 // implementations). Install the complete, behavior-faithful fake so the
@@ -22,7 +22,8 @@ const INITIAL_STATE = useDownloadStore.getInitialState();
 function makeQuantEntry(
 	modelId: string,
 	quantization: string,
-	progress: number | null
+	progress: number | null,
+	paused = false
 ): QuantDownloadState {
 	return {
 		modelId,
@@ -31,7 +32,7 @@ function makeQuantEntry(
 		downloadedBytes: 0,
 		totalBytes: 0,
 		speedBps: 0,
-		paused: false,
+		paused,
 	};
 }
 
@@ -128,6 +129,31 @@ describe("useDownloadAggregate", () => {
 		expect(result.current?.primary).toEqual({ modelId: "whisper-base", percent: 70 });
 	});
 
+	test("excludes paused per-quant entries from the outside aggregate", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"whisper-base@q4": makeQuantEntry("whisper-base", "q4", 30, true),
+			},
+		});
+		const { result } = renderHook(() => useDownloadAggregate());
+		expect(result.current).toBeNull();
+	});
+
+	test("aggregates active per-quant entries while ignoring paused siblings", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"whisper-base@q4": makeQuantEntry("whisper-base", "q4", 30, true),
+				"whisper-base@fp16": makeQuantEntry("whisper-base", "fp16", 70),
+			},
+		});
+		const { result } = renderHook(() => useDownloadAggregate());
+		expect(result.current).toEqual({
+			count: 1,
+			averagePercent: 70,
+			primary: { modelId: "whisper-base", percent: 70 },
+		});
+	});
+
 	test("combines the legacy singleton AND per-quant entries", () => {
 		useDownloadStore.setState({
 			isDownloading: true,
@@ -216,10 +242,12 @@ describe("useDownloadAggregate", () => {
 	test("re-renders when the store updates", () => {
 		const { result, rerender } = renderHook(() => useDownloadAggregate());
 		expect(result.current).toBeNull();
-		useDownloadStore.setState({
-			isDownloading: true,
-			modelName: "late-arrival",
-			progress: 12,
+		act(() => {
+			useDownloadStore.setState({
+				isDownloading: true,
+				modelName: "late-arrival",
+				progress: 12,
+			});
 		});
 		rerender();
 		expect(result.current?.count).toBe(1);

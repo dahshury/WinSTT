@@ -144,7 +144,8 @@ export function DynamicIslandProvider({
 	});
 
 	const setSize = (size: SizePresets) => dispatch({ type: "set", size });
-	const scheduleAnimation = (steps: AnimationStep[]) => dispatch({ type: "schedule", steps });
+	const scheduleAnimation = (steps: AnimationStep[]) =>
+		dispatch({ type: "schedule", steps });
 
 	// Drive the queue: when isAnimating, wait the head step's delay, commit
 	// its size, then advance. The effect re-runs after each advance so the
@@ -171,13 +172,19 @@ export function DynamicIslandProvider({
 		presets,
 	};
 
-	return <DynamicIslandContext.Provider value={value}>{children}</DynamicIslandContext.Provider>;
+	return (
+		<DynamicIslandContext.Provider value={value}>
+			{children}
+		</DynamicIslandContext.Provider>
+	);
 }
 
 export function useDynamicIslandSize(): ContextValue {
 	const ctx = use(DynamicIslandContext);
 	if (!ctx) {
-		throw new Error("useDynamicIslandSize must be used within a DynamicIslandProvider");
+		throw new Error(
+			"useDynamicIslandSize must be used within a DynamicIslandProvider",
+		);
 	}
 	return ctx;
 }
@@ -187,19 +194,12 @@ export function useDynamicIslandSize(): ContextValue {
  * ref so step-array identity changes on subsequent renders don't restart
  * the queue — the schedule is a one-shot, mount-time behavior.
  */
-const shellTransition = { type: "spring" as const, stiffness: 420, damping: 32, mass: 1 };
-
-// Panel-slide reveal — mirrors the transitions.dev "panel reveal" spec, but
-// inverted so the island drops in from ABOVE its final position. translateY
-// + opacity + blur run together on the same ease/duration so a short travel
-// still reads as a full open / close. Replaces the previous behavior where
-// the empty (0×0) preset spring-grew its width/height, which looked like the
-// island was "expanding from the middle and downward" on first appear.
-const REVEAL_EASE = [0.22, 1, 0.36, 1] as const;
-const REVEAL_OPEN_DUR = 0.4;
-const REVEAL_CLOSE_DUR = 0.35;
-const REVEAL_OFFSET_PX = 12;
-const REVEAL_BLUR_PX = 2;
+const shellTransition = {
+	type: "spring" as const,
+	stiffness: 420,
+	damping: 32,
+	mass: 1,
+};
 
 export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
 	children?: ReactNode;
@@ -236,8 +236,11 @@ export interface DynamicIslandProps extends Omit<HTMLMotionProps<"div">, "id"> {
  */
 function useFitContentHeight(
 	fitContent: boolean,
-	isVisible: boolean
-): { contentRef: RefObject<HTMLDivElement | null>; sizingHeight: number | null } {
+	isVisible: boolean,
+): {
+	contentRef: RefObject<HTMLDivElement | null>;
+	sizingHeight: number | null;
+} {
 	const contentRef = useRef<HTMLDivElement | null>(null);
 	const [contentHeight, setContentHeight] = useState<number | null>(null);
 	useEffect(() => {
@@ -263,15 +266,24 @@ function useFitContentHeight(
 	// size instead of collapsing to 0 when the content unmounts (mirrors
 	// `lastVisiblePreset`). A measured 0 means "content gone / not yet measured",
 	// so it never overwrites the frozen value.
-	const [lastVisibleHeight, setLastVisibleHeight] = useState<number | null>(null);
-	const measuredHeight = contentHeight && contentHeight > 0 ? contentHeight : null;
-	if (isVisible && measuredHeight !== null && measuredHeight !== lastVisibleHeight) {
+	const [lastVisibleHeight, setLastVisibleHeight] = useState<number | null>(
+		null,
+	);
+	const measuredHeight =
+		contentHeight && contentHeight > 0 ? contentHeight : null;
+	if (
+		isVisible &&
+		measuredHeight !== null &&
+		measuredHeight !== lastVisibleHeight
+	) {
 		setLastVisibleHeight(measuredHeight);
 	}
 	// While visible, prefer the fresh measurement but fall back to the frozen
 	// height during the first frame after a re-open (before ResizeObserver
 	// re-measures) so the island never flashes collapsed.
-	const sizingHeight = isVisible ? (measuredHeight ?? lastVisibleHeight) : lastVisibleHeight;
+	const sizingHeight = isVisible
+		? (measuredHeight ?? lastVisibleHeight)
+		: lastVisibleHeight;
 	return { contentRef, sizingHeight };
 }
 
@@ -309,7 +321,9 @@ export function DynamicIsland({
 	// whenever the island is visible; when the next render flips `isVisible`
 	// to false, the state still holds the preset from the previous visible
 	// render and the closing tween animates at that final size.
-	const [lastVisiblePreset, setLastVisiblePreset] = useState<Preset | null>(null);
+	const [lastVisiblePreset, setLastVisiblePreset] = useState<Preset | null>(
+		null,
+	);
 	if (isVisible && lastVisiblePreset !== preset) {
 		setLastVisiblePreset(preset);
 	}
@@ -319,7 +333,10 @@ export function DynamicIsland({
 	// tweened as a CSS property (NOT Framer `layout`/FLIP) so the shell stretches
 	// by reflow without scale-distorting the text. See `useFitContentHeight` and
 	// the `fitContent` prop doc.
-	const { contentRef, sizingHeight } = useFitContentHeight(fitContent, isVisible);
+	const { contentRef, sizingHeight } = useFitContentHeight(
+		fitContent,
+		isVisible,
+	);
 
 	const baseClasses = [
 		"relative overflow-hidden bg-black text-white",
@@ -340,9 +357,6 @@ export function DynamicIsland({
 		borderTopRightRadius: topRadius,
 		borderBottomLeftRadius: sizingPreset.borderRadius,
 		borderBottomRightRadius: sizingPreset.borderRadius,
-		opacity: isVisible ? 1 : 0,
-		y: isVisible ? 0 : -REVEAL_OFFSET_PX,
-		filter: isVisible ? "blur(0px)" : `blur(${REVEAL_BLUR_PX}px)`,
 	};
 	if (fitContent) {
 		// Animated as a CSS property (reflow) — never via transform scale, so
@@ -355,61 +369,46 @@ export function DynamicIsland({
 		animateTarget.height = sizingPreset.height;
 	}
 
-	const revealTransition = {
-		duration: isVisible ? REVEAL_OPEN_DUR : REVEAL_CLOSE_DUR,
-		ease: REVEAL_EASE,
-	};
 	const transition = {
 		default: shellTransition,
-		opacity: revealTransition,
-		y: revealTransition,
-		filter: revealTransition,
 	};
-
-	const motionStyle = {
-		willChange: "transform, opacity, filter",
-		...(style ?? {}),
-	};
+	const motionStyle = style ?? {};
 
 	return (
-		// No Framer `layout`/FLIP here on purpose. Width AND height are both
-		// animated as CSS PROPERTIES (`width` from the preset, `height` from the
-		// measured content height) via the `shellTransition` spring — they
-		// reflow rather than scale, so the island visibly stretches while the
-		// text inside never scale-distorts. (Property tweens also sidestep the
-		// old "transparent rectangle on first appear" bug, where layout
-		// projection scaled the box up from the `empty` 0×0 origin and dragged
-		// the soft drop-shadow into a faint wide rectangle for a few frames.)
-		<m.div
-			animate={animateTarget}
-			className={baseClasses.join(" ")}
-			id={id}
-			initial={false}
-			style={motionStyle}
-			transition={transition}
-			{...rest}
-		>
-			{fitContent ? (
-				// Normal-flow children in a measured wrapper; its intrinsic
-				// height drives the shell's animated `height` (see the
-				// ResizeObserver above). The shell stays `relative`, so the
-				// absolute-positioned cancel button among `children` still
-				// anchors to the shell, not this static wrapper.
-				<div ref={contentRef}>{children}</div>
-			) : (
-				<AnimatePresence initial={false} mode="popLayout">
-					<m.div
-						animate={{ opacity: 1 }}
-						className="absolute inset-0"
-						exit={{ opacity: 0 }}
-						initial={{ opacity: 0 }}
-						key={state.size}
-						transition={{ duration: 0.16 }}
-					>
-						{children}
-					</m.div>
-				</AnimatePresence>
-			)}
-		</m.div>
+		// Panel reveal opacity lives on this wrapper; width and height live on
+		// the inner Motion shell so content updates cannot replay the fade.
+		<div className="t-panel-slide-top" data-open={isVisible ? "true" : "false"}>
+			<m.div
+				animate={animateTarget}
+				className={baseClasses.join(" ")}
+				id={id}
+				initial={false}
+				style={motionStyle}
+				transition={transition}
+				{...rest}
+			>
+				{fitContent ? (
+					// Normal-flow children in a measured wrapper; its intrinsic
+					// height drives the shell's animated `height` (see the
+					// ResizeObserver above). The shell stays `relative`, so the
+					// absolute-positioned cancel button among `children` still
+					// anchors to the shell, not this static wrapper.
+					<div ref={contentRef}>{children}</div>
+				) : (
+					<AnimatePresence initial={false} mode="popLayout">
+						<m.div
+							animate={{ opacity: 1 }}
+							className="absolute inset-0"
+							exit={{ opacity: 0 }}
+							initial={{ opacity: 0 }}
+							key={state.size}
+							transition={{ duration: 0.16 }}
+						>
+							{children}
+						</m.div>
+					</AnimatePresence>
+				)}
+			</m.div>
+		</div>
 	);
 }

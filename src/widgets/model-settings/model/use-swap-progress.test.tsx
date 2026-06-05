@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useModelSwapStore } from "@/entities/model-catalog";
-import { type QuantDownloadState, useDownloadStore } from "@/features/model-download";
+import {
+	type QuantDownloadState,
+	type SttDownloadOwner,
+	useDownloadStore,
+} from "@/features/model-download";
 import { useSwapProgress } from "./use-swap-progress";
 
 // Both source stores are real Zustand stores (the established pattern — see
@@ -10,15 +14,21 @@ import { useSwapProgress } from "./use-swap-progress";
 const swapInitial = useModelSwapStore.getState();
 const downloadInitial = useDownloadStore.getState();
 
-function quantEntry(modelId: string, progress: number | null): QuantDownloadState {
+function quantEntry(
+	modelId: string,
+	progress: number | null,
+	owner?: SttDownloadOwner,
+	paused = false,
+): QuantDownloadState {
 	return {
 		modelId,
 		quantization: "",
+		...(owner === undefined ? {} : { owner }),
 		progress,
 		downloadedBytes: 0,
 		totalBytes: 0,
 		speedBps: 0,
-		paused: false,
+		paused,
 	};
 }
 
@@ -46,6 +56,8 @@ describe("useSwapProgress", () => {
 	test("is fully idle when nothing is downloading or swapping", () => {
 		const { result } = renderHook(() => useSwapProgress());
 		expect(result.current.downloadProgress).toBeNull();
+		expect(result.current.mainDownloadProgress).toBeNull();
+		expect(result.current.realtimeDownloadProgress).toBeNull();
 		expect(result.current.mainSwapping).toBe(false);
 		expect(result.current.realtimeSwapping).toBe(false);
 	});
@@ -63,6 +75,8 @@ describe("useSwapProgress", () => {
 		expect(dp?.modelId).toBe("cohere");
 		expect(dp?.percent).toBe(42);
 		expect(dp?.averagePercent).toBe(42);
+		expect(result.current.mainDownloadProgress?.modelId).toBe("cohere");
+		expect(result.current.realtimeDownloadProgress).toBeNull();
 	});
 
 	test("aggregates two concurrent quant downloads (count + average + highest primary)", () => {
@@ -80,6 +94,56 @@ describe("useSwapProgress", () => {
 		expect(dp?.percent).toBe(80);
 		// Average of 20 and 80, rounded.
 		expect(dp?.averagePercent).toBe(50);
+		expect(result.current.mainDownloadProgress?.count).toBe(2);
+		expect(result.current.realtimeDownloadProgress).toBeNull();
+	});
+
+	test("excludes paused quant downloads from selector progress", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"paused@q4": quantEntry("paused-model", 44, "main", true),
+			},
+		});
+		const { result } = renderHook(() => useSwapProgress());
+		expect(result.current.downloadProgress).toBeNull();
+		expect(result.current.mainDownloadProgress).toBeNull();
+		expect(result.current.realtimeDownloadProgress).toBeNull();
+	});
+
+	test("keeps active scoped progress when a sibling quant download is paused", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"paused@q4": quantEntry("paused-model", 44, "main", true),
+				"active@q8": quantEntry("active-model", 80, "main"),
+			},
+		});
+		const { result } = renderHook(() => useSwapProgress());
+		expect(result.current.downloadProgress).toEqual({
+			count: 1,
+			averagePercent: 80,
+			modelId: "active-model",
+			percent: 80,
+		});
+		expect(result.current.mainDownloadProgress).toEqual({
+			count: 1,
+			averagePercent: 80,
+			modelId: "active-model",
+			percent: 80,
+		});
+		expect(result.current.realtimeDownloadProgress).toBeNull();
+	});
+
+	test("scopes a realtime-owned background download away from the main selector", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"rt@q8": quantEntry("tiny-rt", 64, "realtime"),
+			},
+		});
+		const { result } = renderHook(() => useSwapProgress());
+		expect(result.current.downloadProgress?.modelId).toBe("tiny-rt");
+		expect(result.current.mainDownloadProgress).toBeNull();
+		expect(result.current.realtimeDownloadProgress?.modelId).toBe("tiny-rt");
+		expect(result.current.realtimeDownloadProgress?.percent).toBe(64);
 	});
 
 	test("reports null averagePercent while every download is still indeterminate", () => {
@@ -159,8 +223,8 @@ describe("useSwapProgress", () => {
 		useModelSwapStore.setState({ activeRealtime: "tiny-rt" });
 		useDownloadStore.setState({
 			quantDownloads: {
-				rt: quantEntry("tiny-rt", 10),
-				other: quantEntry("other", 90),
+				rt: quantEntry("tiny-rt", 10, "realtime"),
+				other: quantEntry("other", 90, "realtime"),
 			},
 		});
 		const { result } = renderHook(() => useSwapProgress());
@@ -184,7 +248,10 @@ describe("useSwapProgress", () => {
 	});
 
 	test("can flag both main and realtime swapping at once", () => {
-		useModelSwapStore.setState({ activeMain: "cohere", activeRealtime: "tiny-rt" });
+		useModelSwapStore.setState({
+			activeMain: "cohere",
+			activeRealtime: "tiny-rt",
+		});
 		const { result } = renderHook(() => useSwapProgress());
 		expect(result.current.mainSwapping).toBe(true);
 		expect(result.current.realtimeSwapping).toBe(true);
@@ -194,11 +261,15 @@ describe("useSwapProgress", () => {
 		const { result, rerender } = renderHook(() => useSwapProgress());
 		expect(result.current.mainSwapping).toBe(false);
 
-		useModelSwapStore.setState({ activeMain: "cohere" });
+		act(() => {
+			useModelSwapStore.setState({ activeMain: "cohere" });
+		});
 		rerender();
 		expect(result.current.mainSwapping).toBe(true);
 
-		useModelSwapStore.setState({ activeMain: null });
+		act(() => {
+			useModelSwapStore.setState({ activeMain: null });
+		});
 		rerender();
 		expect(result.current.mainSwapping).toBe(false);
 	});

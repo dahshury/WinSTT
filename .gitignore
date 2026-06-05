@@ -27,9 +27,13 @@ dist-ssr
 *.sw?
 
 .claude/
+.agents/
+.codex/
+skills-lock.json
+.deep-research/
 
 /target/
-recording_*
+/recording_*
 .crush/
 
 # Playwright
@@ -54,6 +58,7 @@ examples/*
 
 # Custom cargo target dirs (spike / moon / verify builds). `/target/` is already
 # ignored above; these are alternate build outputs that must never be committed.
+src-tauri/target*/
 target-moon/
 target-spike/
 target-verify*/
@@ -62,9 +67,8 @@ target-verify*/
 .ruff_cache/
 
 # TTS engine-spike model cache (kitten/piper/supertonic/chatterbox/oute weights,
-# loaded by src-tauri/src/bin/tts_engine_spike.rs). Re-downloadable; never commit.
+# loaded by src-tauri/examples/tts_engine_spike.rs). Re-downloadable; never commit.
 .tts-cache/
 
-# Deep research scratch binaries/models. The markdown findings are useful; the
-# downloaded whisper.cpp runtime/model artifacts are re-creatable and too large for Git.
-.deep-research/whispercpp/
+tools/windows/*.log
+spike_out.log

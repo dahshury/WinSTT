@@ -448,11 +448,12 @@ pub fn fp16_decoder_path_from_error(msg: &str) -> Option<PathBuf> {
     let path_str = rest[..onnx_end].trim();
     let path = PathBuf::from(path_str);
     // Only patch a Whisper merged-decoder file (guard against an unrelated future "Subgraph output").
-    let is_merged_decoder = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.starts_with("decoder_model_merged"))
-        .unwrap_or(false);
+    let file_name = path_str
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(path_str);
+    let is_merged_decoder = file_name.starts_with("decoder_model_merged");
     if is_merged_decoder {
         Some(path)
     } else {

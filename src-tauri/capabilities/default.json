@@ -29,6 +29,7 @@
     "core:window:allow-set-size",
     "core:window:allow-center",
     "opener:default",
+    "opener:allow-open-path",
     "store:default",
     "updater:default",
     "process:default",
@@ -42,12 +43,6 @@
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-unregister-all",
-    "macos-permissions:default",
-    "fs:read-files",
-    "fs:allow-resource-read-recursive",
-    {
-      "identifier": "fs:scope",
-      "allow": [{ "path": "$APPDATA" }, { "path": "$APPDATA/**/*" }]
-    }
+    "macos-permissions:default"
   ]
 }

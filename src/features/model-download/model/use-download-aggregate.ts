@@ -7,7 +7,7 @@ interface DownloadEntry {
 }
 
 /**
- * Aggregate view of every in-flight download in ``quantDownloads`` plus the
+ * Aggregate view of every active download in ``quantDownloads`` plus the
  * legacy singleton slot. Consumed by the model-selector trigger AND the
  * main window's status-bar chip so both surfaces show consistent
  * "Downloading N items · X%" chrome when more than one ``(model, quant)``
@@ -35,7 +35,7 @@ export interface DownloadAggregate {
 	/** Mean percent across every download with a known percent; null when
 	 *  all active downloads are still indeterminate. */
 	averagePercent: number | null;
-	/** Count of in-flight downloads (per-quant + the legacy singleton). */
+	/** Count of active downloads (per-quant + the legacy singleton). */
 	count: number;
 	/** The download to show in the "single-item" view — highest progress,
 	 *  ties broken by iteration order. */
@@ -86,7 +86,7 @@ function collectEntries(
 			continue;
 		}
 		const entry = quantDownloads[key];
-		if (entry === undefined) {
+		if (entry === undefined || entry.paused) {
 			continue;
 		}
 		entries.push({ modelId: entry.modelId, percent: entry.progress });

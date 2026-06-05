@@ -6,14 +6,14 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { renderProviderRow } from "../lib/endpoint-provider-filter-submenu-render";
 import {
 	ALL_PROVIDERS_VALUE,
 	applyProviderChange,
 	filterEndpointProviders,
 	type ItemContext,
-	renderProviderRow,
 	resolveComboboxValue,
-} from "../lib/endpoint-provider-filter-submenu-test-helpers";
+} from "../lib/endpoint-provider-filter-submenu-utils";
 import { DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "./DropdownMenu";
 
 const PROVIDER_RENDER_LIMIT = 100;

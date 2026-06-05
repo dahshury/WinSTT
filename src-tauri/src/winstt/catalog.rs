@@ -1,4 +1,4 @@
-// DRAFT PORT — not yet compiled. Source: WinSTT server/src/recorder/domain/catalog.json
+// Source: WinSTT server/src/recorder/domain/catalog.json
 //   + server/src/recorder/domain/model_registry.py (ModelCatalog, _GPU_COMPATIBLE_QUANTIZATIONS,
 //     _DML_INCOMPATIBLE_FAMILIES, gpu_filter_quantizations)
 //   + server/src/recorder/bootstrap.py (_resolve_quantization, _FP16_AUTO_PARAM_THRESHOLD,
@@ -22,9 +22,10 @@
 //   * Canary/Cohere `<|startofcontext|>` prompt slot is UNTRAINED — no initial-prompt bias for
 //     them (handled in the engine slice, NOT here — noted for cross-reference).
 //
-// The const `STT_CATALOG` below has exactly 42 entries (whisper 15, moonshine 10, nemo 8,
-// kaldi 3, gigaam 2, cohere 1, sense_voice 1, t-one 1, dolphin 1). Every entry has
-// `supports_realtime = true` in WinSTT today, but the field is kept per-row so it can diverge.
+// The const `STT_CATALOG` below has exactly 69 entries (whisper 15, moonshine 10, nemo 34,
+// kaldi 4, gigaam 2, cohere 1, sense_voice 1, t-one 1, dolphin 1). Every entry is
+// preview-capable in WinSTT today; native streaming and final-reuse policy are derived from
+// `EngineKind`, not this legacy field.
 
 #![allow(dead_code)]
 
@@ -169,10 +170,10 @@ pub const FP16_AUTO_PARAM_THRESHOLD: u64 = 500_000_000;
 /// `model_registry._GPU_COMPATIBLE_QUANTIZATIONS`.
 pub const GPU_COMPATIBLE_QUANTIZATIONS: &[&str] = &["", "fp16"];
 
-/// The full STT catalog: 42 shipped models. Verbatim from `catalog.json` (id / display_name /
+/// The full STT catalog: 69 shipped models. Verbatim from `catalog.json` (id / display_name /
 /// family / onnx_model_name / available_quantizations / param_count / supports_realtime).
 ///
-/// Counts (asserted in tests): whisper 15, moonshine 10, nemo 8, kaldi 3, gigaam 2,
+/// Counts (asserted in tests): whisper 15, moonshine 10, nemo 34, kaldi 4, gigaam 2,
 /// cohere 1, sense_voice 1, t-one 1, dolphin 1.
 pub const STT_CATALOG: &[ModelEntry] = &[
     // ── Whisper family (15) ──────────────────────────────────────────────────────────────
@@ -422,7 +423,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
         param_count: 234_000_000,
         supports_realtime: true,
     },
-    // ── NeMo family (8) ──────────────────────────────────────────────────────────────────
+    // ── NeMo family + native streaming rows ───────────────────────────────────────────────
     ModelEntry {
         id: "nemo-parakeet-ctc-0.6b",
         display_name: "NeMo Parakeet CTC 0.6B",
@@ -472,7 +473,7 @@ pub const STT_CATALOG: &[ModelEntry] = &[
     },
     ModelEntry {
         id: "streaming-nemo-ctc-en",
-        display_name: "Streaming NeMo FastConformer CTC (English)",
+        display_name: "Streaming NeMo FastConformer CTC 80ms (English)",
         family: Family::Nemo,
         onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms",
         available_quantizations: &[""],
@@ -481,11 +482,242 @@ pub const STT_CATALOG: &[ModelEntry] = &[
     },
     ModelEntry {
         id: "streaming-nemo-rnnt-en",
-        display_name: "Streaming NeMo FastConformer RNN-T (English)",
+        display_name: "Streaming NeMo FastConformer RNN-T 480ms (English)",
         family: Family::Nemo,
         onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-480ms",
         available_quantizations: &[""],
         param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-ctc-en-480ms",
+        display_name: "Streaming NeMo FastConformer CTC 480ms (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-480ms",
+        available_quantizations: &[""],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-ctc-en-1040ms",
+        display_name: "Streaming NeMo FastConformer CTC 1040ms (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-1040ms",
+        available_quantizations: &[""],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-ctc-en-80ms-int8",
+        display_name: "Streaming NeMo FastConformer CTC (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
+        available_quantizations: &["int8"],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-ctc-en-480ms-int8",
+        display_name: "Streaming NeMo FastConformer CTC 480ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-480ms-int8",
+        available_quantizations: &["int8"],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-ctc-en-1040ms-int8",
+        display_name: "Streaming NeMo FastConformer CTC 1040ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-1040ms-int8",
+        available_quantizations: &["int8"],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-rnnt-en-80ms",
+        display_name: "Streaming NeMo FastConformer RNN-T 80ms (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms",
+        available_quantizations: &[""],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-rnnt-en-1040ms",
+        display_name: "Streaming NeMo FastConformer RNN-T 1040ms (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms",
+        available_quantizations: &[""],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-rnnt-en-80ms-int8",
+        display_name: "Streaming NeMo FastConformer RNN-T (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms-int8",
+        available_quantizations: &["int8"],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-rnnt-en-480ms-int8",
+        display_name: "Streaming NeMo FastConformer RNN-T 480ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-480ms-int8",
+        available_quantizations: &["int8"],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemo-rnnt-en-1040ms-int8",
+        display_name: "Streaming NeMo FastConformer RNN-T 1040ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-1040ms-int8",
+        available_quantizations: &["int8"],
+        param_count: 114_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-parakeet-unified-en-240ms",
+        display_name: "Streaming Parakeet Unified 240ms (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-240ms",
+        available_quantizations: &[""],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-parakeet-unified-en-560ms",
+        display_name: "Streaming Parakeet Unified 560ms (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-560ms",
+        available_quantizations: &[""],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-parakeet-unified-en-1120ms",
+        display_name: "Streaming Parakeet Unified 1120ms (English)",
+        family: Family::Nemo,
+        onnx_model_name: "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-streaming-1120ms",
+        available_quantizations: &[""],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-parakeet-unified-en-240ms-int8",
+        display_name: "Streaming Parakeet Unified (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-240ms",
+        available_quantizations: &["int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-parakeet-unified-en-560ms-int8",
+        display_name: "Streaming Parakeet Unified 560ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-560ms",
+        available_quantizations: &["int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-parakeet-unified-en-1120ms-int8",
+        display_name: "Streaming Parakeet Unified 1120ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-1120ms",
+        available_quantizations: &["int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-80ms",
+        display_name: "Streaming Nemotron 80ms (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-2026-04-25",
+        available_quantizations: &[""],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-160ms",
+        display_name: "Streaming Nemotron 160ms (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-2026-04-25",
+        available_quantizations: &[""],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-560ms",
+        display_name: "Streaming Nemotron 560ms (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-2026-04-25",
+        available_quantizations: &[""],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-1120ms",
+        display_name: "Streaming Nemotron 1120ms (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-2026-04-25",
+        available_quantizations: &[""],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-80ms-int8",
+        display_name: "Streaming Nemotron (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-80ms-int8-2026-04-25",
+        available_quantizations: &["int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-160ms-int8",
+        display_name: "Streaming Nemotron 160ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
+        available_quantizations: &["int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-560ms-int8",
+        display_name: "Streaming Nemotron 560ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25",
+        available_quantizations: &["int8"],
+        param_count: 600_000_000,
+        supports_realtime: true,
+    },
+    ModelEntry {
+        id: "streaming-nemotron-en-1120ms-int8",
+        display_name: "Streaming Nemotron 1120ms INT8 (English)",
+        family: Family::Nemo,
+        onnx_model_name:
+            "csukuangfj2/sherpa-onnx-nemotron-speech-streaming-en-0.6b-1120ms-int8-2026-04-25",
+        available_quantizations: &["int8"],
+        param_count: 600_000_000,
         supports_realtime: true,
     },
     ModelEntry {
@@ -597,9 +829,129 @@ pub const STT_CATALOG: &[ModelEntry] = &[
     },
 ];
 
-/// Look up a catalog row by id. Linear scan over 42 entries — cheap and avoids a lazy map.
+pub fn canonical_model_id(id: &str) -> &str {
+    match id {
+        "streaming-nemo-ctc-en" | "streaming-nemo-ctc-en-480ms" => "streaming-nemo-ctc-en-1040ms",
+        "streaming-nemo-ctc-en-80ms-int8" | "streaming-nemo-ctc-en-480ms-int8" => {
+            "streaming-nemo-ctc-en-1040ms-int8"
+        }
+        "streaming-nemo-rnnt-en" | "streaming-nemo-rnnt-en-80ms" => "streaming-nemo-rnnt-en-1040ms",
+        "streaming-nemo-rnnt-en-80ms-int8" | "streaming-nemo-rnnt-en-480ms-int8" => {
+            "streaming-nemo-rnnt-en-1040ms-int8"
+        }
+        "streaming-parakeet-unified-en-240ms" | "streaming-parakeet-unified-en-560ms" => {
+            "streaming-parakeet-unified-en-1120ms"
+        }
+        "streaming-parakeet-unified-en-240ms-int8" | "streaming-parakeet-unified-en-560ms-int8" => {
+            "streaming-parakeet-unified-en-1120ms-int8"
+        }
+        // The April 2026 sherpa-onnx Nemotron bundles documented upstream are int8. The
+        // non-int8 HF repos currently contain only tiny placeholder/incomplete graphs despite
+        // the old catalog advertising them as fp32, so old selections are routed to the real
+        // highest-latency int8 bundle.
+        "streaming-nemotron-en-80ms"
+        | "streaming-nemotron-en-160ms"
+        | "streaming-nemotron-en-560ms"
+        | "streaming-nemotron-en-1120ms" => "streaming-nemotron-en-1120ms-int8",
+        "streaming-nemotron-en-80ms-int8"
+        | "streaming-nemotron-en-160ms-int8"
+        | "streaming-nemotron-en-560ms-int8" => "streaming-nemotron-en-1120ms-int8",
+        _ => id,
+    }
+}
+
+/// Look up a catalog row by id. Linear scan over 69 entries — cheap and avoids a lazy map.
 pub fn find(id: &str) -> Option<&'static ModelEntry> {
+    let id = canonical_model_id(id);
     STT_CATALOG.iter().find(|m| m.id == id)
+}
+
+const LANGUAGE_DISPLAY_QUALIFIERS: &[&str] = &[
+    "english",
+    "en",
+    "russian",
+    "ru",
+    "arabic",
+    "ar",
+    "chinese",
+    "zh",
+    "japanese",
+    "ja",
+    "korean",
+    "ko",
+    "french",
+    "fr",
+    "german",
+    "de",
+    "spanish",
+    "es",
+    "italian",
+    "it",
+    "portuguese",
+    "pt",
+    "hindi",
+    "hi",
+    "ukrainian",
+    "uk",
+    "vietnamese",
+    "vi",
+];
+
+fn is_streaming_latency_token(token: &str) -> bool {
+    let Some(value) = token
+        .strip_suffix("ms")
+        .or_else(|| token.strip_suffix("MS"))
+    else {
+        return false;
+    };
+    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn strip_streaming_latency(display_name: &str) -> String {
+    let mut out = Vec::new();
+    let mut skip_quant_after_latency = false;
+    for token in display_name.split_whitespace() {
+        if skip_quant_after_latency && token.eq_ignore_ascii_case("int8") {
+            skip_quant_after_latency = false;
+            continue;
+        }
+        skip_quant_after_latency = false;
+        if is_streaming_latency_token(token) {
+            skip_quant_after_latency = true;
+            continue;
+        }
+        out.push(token);
+    }
+    out.join(" ")
+}
+
+pub fn display_name_without_export_qualifiers(display_name: &str) -> String {
+    let trimmed = display_name.trim();
+    let without_language = if let Some(open) = trimmed.rfind(" (") {
+        if trimmed.ends_with(')') {
+            let qualifier = trimmed[open + 2..trimmed.len() - 1].trim();
+            if LANGUAGE_DISPLAY_QUALIFIERS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(qualifier))
+            {
+                trimmed[..open].trim_end()
+            } else {
+                trimmed
+            }
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+    strip_streaming_latency(without_language)
+}
+
+pub fn display_name_for_id(id: &str) -> String {
+    let id = canonical_model_id(id);
+    find(id)
+        .map(|m| display_name_without_export_qualifiers(m.display_name))
+        .unwrap_or_else(|| id.to_string())
 }
 
 /// The published quantization list for `id`. Thin wrapper over the catalog field; kept as a named
@@ -782,11 +1134,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_total_count_is_42() {
+    fn catalog_total_count_is_69() {
         assert_eq!(
             STT_CATALOG.len(),
-            42,
-            "catalog.json ships exactly 42 STT models"
+            69,
+            "catalog.json ships exactly 69 STT models"
         );
     }
 
@@ -795,8 +1147,8 @@ mod tests {
         let count = |f: Family| STT_CATALOG.iter().filter(|m| m.family == f).count();
         assert_eq!(count(Family::Whisper), 15, "whisper count");
         assert_eq!(count(Family::Moonshine), 10, "moonshine count");
-        assert_eq!(count(Family::Nemo), 8, "nemo count");
-        assert_eq!(count(Family::Kaldi), 3, "kaldi count");
+        assert_eq!(count(Family::Nemo), 34, "nemo count");
+        assert_eq!(count(Family::Kaldi), 4, "kaldi count");
         assert_eq!(count(Family::GigaAm), 2, "gigaam count");
         assert_eq!(count(Family::Cohere), 1, "cohere count");
         assert_eq!(count(Family::SenseVoice), 1, "sense_voice count");
@@ -808,7 +1160,7 @@ mod tests {
             "custom never appears in the shipped catalog"
         );
         // The nine family counts must sum to the catalog total.
-        let summed = 15 + 10 + 8 + 3 + 2 + 1 + 1 + 1 + 1;
+        let summed = 15 + 10 + 34 + 4 + 2 + 1 + 1 + 1 + 1;
         assert_eq!(summed, STT_CATALOG.len());
     }
 
@@ -818,6 +1170,99 @@ mod tests {
         for m in STT_CATALOG {
             assert!(seen.insert(m.id), "duplicate catalog id: {}", m.id);
         }
+    }
+
+    #[test]
+    fn streaming_export_aliases_canonicalize_to_high_latency_rows() {
+        for (alias, canonical) in [
+            ("streaming-nemo-ctc-en", "streaming-nemo-ctc-en-1040ms"),
+            (
+                "streaming-nemo-ctc-en-480ms",
+                "streaming-nemo-ctc-en-1040ms",
+            ),
+            (
+                "streaming-nemo-ctc-en-80ms-int8",
+                "streaming-nemo-ctc-en-1040ms-int8",
+            ),
+            (
+                "streaming-nemo-ctc-en-480ms-int8",
+                "streaming-nemo-ctc-en-1040ms-int8",
+            ),
+            ("streaming-nemo-rnnt-en", "streaming-nemo-rnnt-en-1040ms"),
+            (
+                "streaming-nemo-rnnt-en-80ms",
+                "streaming-nemo-rnnt-en-1040ms",
+            ),
+            (
+                "streaming-nemo-rnnt-en-80ms-int8",
+                "streaming-nemo-rnnt-en-1040ms-int8",
+            ),
+            (
+                "streaming-nemo-rnnt-en-480ms-int8",
+                "streaming-nemo-rnnt-en-1040ms-int8",
+            ),
+            (
+                "streaming-parakeet-unified-en-240ms",
+                "streaming-parakeet-unified-en-1120ms",
+            ),
+            (
+                "streaming-parakeet-unified-en-560ms",
+                "streaming-parakeet-unified-en-1120ms",
+            ),
+            (
+                "streaming-parakeet-unified-en-240ms-int8",
+                "streaming-parakeet-unified-en-1120ms-int8",
+            ),
+            (
+                "streaming-parakeet-unified-en-560ms-int8",
+                "streaming-parakeet-unified-en-1120ms-int8",
+            ),
+            (
+                "streaming-nemotron-en-80ms",
+                "streaming-nemotron-en-1120ms-int8",
+            ),
+            (
+                "streaming-nemotron-en-160ms",
+                "streaming-nemotron-en-1120ms-int8",
+            ),
+            (
+                "streaming-nemotron-en-560ms",
+                "streaming-nemotron-en-1120ms-int8",
+            ),
+            (
+                "streaming-nemotron-en-1120ms",
+                "streaming-nemotron-en-1120ms-int8",
+            ),
+            (
+                "streaming-nemotron-en-80ms-int8",
+                "streaming-nemotron-en-1120ms-int8",
+            ),
+            (
+                "streaming-nemotron-en-160ms-int8",
+                "streaming-nemotron-en-1120ms-int8",
+            ),
+            (
+                "streaming-nemotron-en-560ms-int8",
+                "streaming-nemotron-en-1120ms-int8",
+            ),
+        ] {
+            assert_eq!(canonical_model_id(alias), canonical);
+            assert_eq!(find(alias).unwrap().id, canonical);
+            assert_eq!(find(canonical).unwrap().id, canonical);
+        }
+    }
+
+    #[test]
+    fn display_name_for_id_strips_language_and_streaming_latency() {
+        assert_eq!(
+            display_name_for_id("streaming-nemo-rnnt-en-80ms-int8"),
+            "Streaming NeMo FastConformer RNN-T"
+        );
+        assert_eq!(
+            display_name_for_id("streaming-nemotron-en-1120ms"),
+            "Streaming Nemotron"
+        );
+        assert_eq!(display_name_for_id("tiny.en"), "Whisper Tiny");
     }
 
     #[test]
@@ -838,11 +1283,15 @@ mod tests {
     }
 
     #[test]
-    fn all_shipped_models_support_realtime() {
-        // WinSTT ships every catalog row with supports_realtime=true today. If this ever
-        // changes upstream, this test is the early-warning canary.
+    fn all_shipped_models_are_preview_capable() {
+        // WinSTT ships every catalog row with supports_realtime=true as the legacy
+        // preview-capable flag. Native streaming is a separate EngineKind capability.
         for m in STT_CATALOG {
-            assert!(m.supports_realtime, "{} unexpectedly not realtime", m.id);
+            assert!(
+                m.supports_realtime,
+                "{} unexpectedly not preview-capable",
+                m.id
+            );
         }
     }
 

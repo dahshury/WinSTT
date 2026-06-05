@@ -62,7 +62,7 @@ LLVM (for `bindgen`), and CMake + Ninja (for `sherpa-onnx`):
 - **CMake** and **Ninja** → on `PATH`.
 
 These must be visible to `cargo`. The simplest way is to build from a **Developer Command
-Prompt** (which runs `vcvars64.bat` for you), or use the repo's `rust-migration/*.bat` helpers
+Prompt** (which runs `vcvars64.bat` for you), or use the repo's `tools/windows/*.bat` helpers
 described below, which set up the MSVC environment and `PATH` automatically.
 </Step>
 
@@ -91,11 +91,11 @@ On Windows, the easiest path is the bundled helper, which sets up `vcvars` + `PA
 (`cargo`, `bun`, LLVM, CMake/Ninja) and runs the command for you:
 
 ```bat
-rust-migration\tauri-dev.bat
+tools\windows\tauri-dev.bat
 ```
 
-<Callout title="The rust-migration helpers" type="info">
-  `rust-migration/` holds Windows build helpers that wrap `cargo`/`bun` in the MSVC environment.
+<Callout title="The Windows helpers" type="info">
+  `tools/windows/` holds Windows build helpers that wrap `cargo`/`bun` in the MSVC environment.
   The paths inside them (Visual Studio, LLVM) are machine-specific — edit them to match your
   install, or build from a Developer Command Prompt instead.
 
@@ -122,8 +122,8 @@ bun run tauri build --no-bundle   # exe only, no installer
 
 | Command | Description |
 |---------|-------------|
-| `rust-migration\cargo-env.bat check` | `cargo check --all-targets` in the MSVC env |
-| `rust-migration\cargo-env.bat build` | `cargo build` |
+| `tools\windows\cargo-env.bat check` | `cargo check --all-targets` in the MSVC env |
+| `tools\windows\cargo-env.bat build` | `cargo build` |
 | `bun run format:backend` | `cargo fmt` |
 | `cargo clippy --all-targets -- -D warnings` | Lint (the CI gate; run inside the MSVC env) |
 
@@ -150,17 +150,17 @@ bun run tauri build --no-bundle   # exe only, no installer
 <Accordion title="link.exe / cl.exe not found, or 'MSVC not installed'">
 Cargo can't see the MSVC toolchain. Install the **Desktop development with C++** workload in
 Visual Studio Build Tools, then build from a **Developer Command Prompt** or via
-`rust-migration\cargo-env.bat` / `tauri-dev.bat` (they call `vcvars64.bat` first).
+`tools\windows\cargo-env.bat` / `tauri-dev.bat` (they call `vcvars64.bat` first).
 </Accordion>
 
 <Accordion title="'Unable to find libclang' during build">
 A native `-sys` crate uses `bindgen`, which needs `libclang`. Install LLVM and set
-`LIBCLANG_PATH` to its `bin/` directory (the `rust-migration` bats set this for you).
+`LIBCLANG_PATH` to its `bin/` directory (the `tools/windows` bats set this for you).
 </Accordion>
 
 <Accordion title="CMake or Ninja errors building sherpa-onnx">
 The wake-word / diarization deps build native code. Install CMake **and** Ninja and ensure both
-are on `PATH` (the `rust-migration` bats add the Visual Studio-bundled copies).
+are on `PATH` (the `tools/windows` bats add the Visual Studio-bundled copies).
 </Accordion>
 
 <Accordion title="The app window is blank / won't open">

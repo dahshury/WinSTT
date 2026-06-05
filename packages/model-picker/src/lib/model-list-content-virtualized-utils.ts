@@ -588,10 +588,14 @@ export function applyScrollToMakerRequest(
 	if (!isNewScrollNonce(lastNonce, scrollToMakerRequest.nonce)) {
 		return lastNonce;
 	}
-	const targetIndex = findScrollTargetIndex(virtualItems, scrollToMakerRequest);
-	if (targetIndex >= 0) {
-		scrollToIndex?.(targetIndex, { align: "start" } satisfies ScrollToIndexOpts);
+	if (!scrollToIndex) {
+		return lastNonce;
 	}
+	const targetIndex = findScrollTargetIndex(virtualItems, scrollToMakerRequest);
+	if (targetIndex < 0) {
+		return lastNonce;
+	}
+	scrollToIndex(targetIndex, { align: "start" } satisfies ScrollToIndexOpts);
 	return scrollToMakerRequest.nonce;
 }
 

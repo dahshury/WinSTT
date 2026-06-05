@@ -46,7 +46,7 @@ The sidebar also has a **Dictionary** panel (fuzzy corrections), a **Snippets** 
 
 ## How changes are saved
 
-Settings save automatically the moment you change them — there is no "Save" or "Apply" button. The Electron main process writes them to disk (`electron-store`) and syncs them to the Python STT server over the control WebSocket channel.
+Settings save automatically the moment you change them — there is no "Save" or "Apply" button. The Rust backend writes them to the Tauri app-data store and applies live-safe changes through the in-process manager layer.
 
 <Screenshot src="settings-model" alt="The Model settings panel showing the main-model source toggle, model selector, language, device, and unload timeout." label="Settings — Model" caption="Most model changes hot-swap live; the overlay shows a brief 'swapping' state." />
 

@@ -3,6 +3,7 @@ import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/r
 import {
 	createContext,
 	type HTMLAttributes,
+	type MouseEvent as ReactMouseEvent,
 	type ReactNode,
 	type Ref,
 	use,
@@ -310,7 +311,7 @@ export interface CheckboxItemProps {
 	label: string;
 	leading?: ReactNode;
 	onToggle: () => void;
-	ref?: Ref<HTMLLabelElement>;
+	ref?: Ref<HTMLDivElement>;
 	trailing?: ReactNode;
 }
 
@@ -325,7 +326,8 @@ export function CheckboxItem({
 	ref,
 	trailing,
 }: CheckboxItemProps) {
-	const internalRef = useRef<HTMLLabelElement | null>(null);
+	const internalRef = useRef<HTMLDivElement | null>(null);
+	const checkboxRef = useRef<HTMLElement | null>(null);
 	const { activeIndex, registerItem } = useCheckboxGroupCtx();
 
 	useEffect(() => {
@@ -339,12 +341,12 @@ export function CheckboxItem({
 
 	const isActive = !disabled && activeIndex === index;
 
-	const setRef = (node: HTMLLabelElement | null) => {
+	const setRef = (node: HTMLDivElement | null) => {
 		internalRef.current = node;
 		if (typeof ref === "function") {
 			ref(node);
 		} else if (ref) {
-			(ref as { current: HTMLLabelElement | null }).current = node;
+			(ref as { current: HTMLDivElement | null }).current = node;
 		}
 	};
 
@@ -355,14 +357,29 @@ export function CheckboxItem({
 		onToggle();
 	};
 
+	const handleRowClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+		const target = event.target;
+		if (target instanceof HTMLInputElement) {
+			return;
+		}
+
+		event.preventDefault();
+		if (disabled) {
+			return;
+		}
+
+		checkboxRef.current?.focus({ preventScroll: true });
+		if (target instanceof HTMLElement && target.closest('[role="checkbox"]')) {
+			return;
+		}
+		onToggle();
+	};
+
 	return (
-		// `<label>` is the right semantic for "click anywhere in the row to
-		// toggle the checkbox inside" — clicking a label forwards activation
-		// to the wrapped form control. Keyboard focus and a11y semantics
-		// (`role="checkbox"`, `aria-checked`) live on the inner Checkbox.Root,
-		// which BaseUI renders as a `<button role="checkbox">`.
-		// biome-ignore lint/a11y/noLabelWithoutControl: the inner Checkbox.Root (rendered as <button role="checkbox">) IS the form control — biome only matches native <input>
-		<label
+		// Row text clicks focus the visible checkbox without scrolling; direct
+		// checkbox clicks still go through Base UI's own controlled path.
+		// biome-ignore lint/a11y/noStaticElementInteractions: full-row activation mirrors a native checkbox label; the Base UI checkbox owns the a11y semantics
+		<div
 			aria-disabled={disabled || undefined}
 			className={cn(
 				"relative z-raised flex min-w-0 items-center gap-2.5 rounded-lg px-3 py-1.5 outline-none",
@@ -370,9 +387,11 @@ export function CheckboxItem({
 				className
 			)}
 			data-proximity-index={disabled ? undefined : index}
+			onClick={handleRowClick}
 			ref={setRef}
 		>
 			<Checkbox.Root
+				aria-label={label}
 				checked={checked}
 				className={cn(
 					"relative h-[15px] w-[15px] shrink-0 appearance-none border-0 bg-transparent p-0 outline-none",
@@ -380,6 +399,7 @@ export function CheckboxItem({
 				)}
 				disabled={disabled}
 				onCheckedChange={handleToggle}
+				ref={checkboxRef}
 			>
 				<span
 					className={cn(
@@ -485,6 +505,6 @@ export function CheckboxItem({
 					{trailing}
 				</span>
 			) : null}
-		</label>
+		</div>
 	);
 }

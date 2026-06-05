@@ -20,6 +20,8 @@ The renderer holds no model code and opens no sockets. It calls into Rust throug
 commands** (typed request/response) and receives **events** (push notifications) — all
 type-checked end-to-end by [`tauri-specta`](https://github.com/specta-rs/tauri-specta).
 
+<Video src="architecture-flow" chrome="card" alt="An architecture flow animation showing the React renderer, Tauri commands and events, Rust managers, ONNX Runtime, and the local settings store." caption="One native process: React calls typed Tauri commands; Rust runs audio, STT, TTS, settings, and events." />
+
 <Callout type="info" title="What changed from the Electron build">
   The original WinSTT was two processes — a Python STT server and an Electron client talking
   over dual WebSockets. The Rust+Tauri port collapses both into one binary: the Python server

@@ -1,44 +1,82 @@
-// PORT IMPL — Supertonic TTS (3-graph flow-matching) on ort 2.0.0-rc.12.
+// Supertonic 3 TTS on ort 2.0.0-rc.12.
 //
-// Recipe verified verbatim from transformers.js modeling_supertonic.js +
-// text-to-audio.js + onnx-community/Supertonic-TTS-ONNX config.json/tokenizer.json
-// (see TTS research run, model:supertonic):
-//   text --char tokenizer (WordLevel, 81 vocab)--> input_ids + attention_mask
-//   text_encoder(input_ids, attention_mask, style[1,101,128]) -> last_hidden_state, durations
-//   ds = raw_durations / speed * 44100;  latent_len = ceil(ds / 3072);  channels = 144
-//   noisy = randn([1,144,latent_len]);  latent_mask = ones[1,latent_len]
-//   for step in 0..5: latent_denoiser(style, noisy, latent_mask, encoder_outputs=last_hidden,
-//                       attention_mask, timestep=step, num_inference_steps=5) -> noisy
-//   voice_decoder(latents=noisy) -> waveform f32 @ 44100, trim to ceil(ds)
+// Upstream assets come from Supertone/supertonic-3:
+//   onnx/duration_predictor.onnx
+//   onnx/text_encoder.onnx
+//   onnx/vector_estimator.onnx
+//   onnx/vocoder.onnx
+//   onnx/tts.json
+//   onnx/unicode_indexer.json
+//   voice_styles/{F1..M5}.json
 //
-// No espeak/phonemizer (char tokenizer). Each .onnx has a sibling .onnx_data
-// (external weights) loaded automatically from the same dir.
+// Inference mirrors the official Hugging Face Space:
+//   preprocess text -> Unicode indexer ids
+//   duration_predictor(text_ids, style_dp, text_mask) -> duration seconds
+//   text_encoder(text_ids, style_ttl, text_mask) -> text_emb
+//   vector_estimator(noisy_latent, text_emb, style_ttl, text_mask, latent_mask,
+//                    total_step, current_step) -> denoised_latent
+//   vocoder(latent) -> wav_tts @ 44.1 kHz
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
-/// config.json constants.
+use serde::Deserialize;
+use unicode_normalization::UnicodeNormalization;
+
 pub const SUPERTONIC_SAMPLE_RATE: u32 = 44_100;
 const BASE_CHUNK_SIZE: usize = 512;
 const CHUNK_COMPRESS_FACTOR: usize = 6;
 const LATENT_DIM: usize = 24;
-const STYLE_DIM: usize = 128;
-const LATENT_SIZE: usize = BASE_CHUNK_SIZE * CHUNK_COMPRESS_FACTOR; // 3072
-const LATENT_CHANNELS: usize = LATENT_DIM * CHUNK_COMPRESS_FACTOR; // 144
-const STYLE_SEQ: usize = 101; // voice .bin = 101*128 f32
-                              // Flow-matching denoise steps. Supertonic's own guidance: "5 (low) to 12 (high),
-                              // default 8 (medium)" — steps have a HUGE impact on intelligibility. At 5 (the
-                              // low end) the model slurs/drops words (e.g. "jumps" in the fox pangram); 8 is the
-                              // official default and recovers them at a small latency cost (~8/5 the denoiser
-                              // runs; still RTF << 1 on CPU).
+const LATENT_SIZE: usize = BASE_CHUNK_SIZE * CHUNK_COMPRESS_FACTOR;
+const LATENT_CHANNELS: usize = LATENT_DIM * CHUNK_COMPRESS_FACTOR;
+const STYLE_TTL_SEQ: usize = 50;
+const STYLE_TTL_DIM: usize = 256;
+const STYLE_DP_SEQ: usize = 8;
+const STYLE_DP_DIM: usize = 16;
 const NUM_INFERENCE_STEPS: usize = 8;
-pub const SUPERTONIC_DEFAULT_VOICE: &str = "M1";
-pub const SUPERTONIC_VOICES: &[&str] =
+const SPEED_MIN: f32 = 0.8;
+const SPEED_MAX: f32 = 1.3;
+const SPEED_OFFSET: f32 = 0.05;
+
+pub const SUPERTONIC_DEFAULT_VOICE: &str = "M3";
+pub const SUPERTONIC_VOICE_IDS: &[&str] =
     &["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"];
+pub const SUPERTONIC_LANGUAGES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("ko", "Korean"),
+    ("ja", "Japanese"),
+    ("ar", "Arabic"),
+    ("bg", "Bulgarian"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("es", "Spanish"),
+    ("et", "Estonian"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("hi", "Hindi"),
+    ("hr", "Croatian"),
+    ("hu", "Hungarian"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("lt", "Lithuanian"),
+    ("lv", "Latvian"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("sk", "Slovak"),
+    ("sl", "Slovenian"),
+    ("sv", "Swedish"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("vi", "Vietnamese"),
+];
 
 #[derive(Debug)]
 pub enum SupertonicError {
@@ -47,6 +85,7 @@ pub enum SupertonicError {
     Voice(String),
     Inference(String),
 }
+
 impl std::fmt::Display for SupertonicError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -57,101 +96,155 @@ impl std::fmt::Display for SupertonicError {
         }
     }
 }
+
 impl std::error::Error for SupertonicError {}
+
 pub type SupertonicResult<T> = Result<T, SupertonicError>;
 
 // ---------------------------------------------------------------------------
-// Char tokenizer (WordLevel, 81 vocab). NFKD is skipped (no-op for English /
-// already-decomposed input); the normalizer's \s+→space + en/em-dash→'-' +
-// drop-out-of-class rules are applied. Out-of-vocab chars are dropped.
+// Text preprocessing + tokenizer
 // ---------------------------------------------------------------------------
 
-static SUPERTONIC_VOCAB: OnceLock<HashMap<char, i64>> = OnceLock::new();
+fn supported_language(code: &str) -> Option<&'static str> {
+    SUPERTONIC_LANGUAGES
+        .iter()
+        .find(|(lang, _)| *lang == code)
+        .map(|(lang, _)| *lang)
+}
 
-fn supertonic_vocab() -> &'static HashMap<char, i64> {
-    SUPERTONIC_VOCAB.get_or_init(|| {
-        let mut m: HashMap<char, i64> = HashMap::new();
-        // verbatim from tokenizer.json model.vocab
-        let punct: &[(char, i64)] = &[
-            (' ', 0),
-            ('!', 1),
-            ('"', 2),
-            ('$', 3),
-            ('%', 4),
-            ('&', 5),
-            ('\'', 6),
-            ('(', 7),
-            (')', 8),
-            ('*', 9),
-            ('+', 10),
-            (',', 11),
-            ('-', 12),
-            ('.', 13),
-        ];
-        for &(c, i) in punct {
-            m.insert(c, i);
-        }
-        for d in 0..10u8 {
-            m.insert((b'0' + d) as char, 14 + d as i64); // '0'..'9' → 14..23
-        }
-        m.insert(':', 24);
-        m.insert(';', 25);
-        m.insert('?', 26);
-        for (k, c) in (b'A'..=b'Z').enumerate() {
-            m.insert(c as char, 27 + k as i64); // A..Z → 27..52
-        }
-        for (k, c) in (b'a'..=b'z').enumerate() {
-            m.insert(c as char, 53 + k as i64); // a..z → 53..78
-        }
-        m.insert('\u{00A3}', 79); // £
-        m.insert('\u{0301}', 80); // combining acute (also unk_token)
-        m
+fn resolve_language(lang: &str) -> &'static str {
+    let normalized = lang.trim().to_lowercase().replace('_', "-");
+    if let Some(lang) = supported_language(&normalized) {
+        return lang;
+    }
+    let prefix = normalized.split('-').next().unwrap_or_default();
+    supported_language(prefix).unwrap_or("en")
+}
+
+fn resolve_voice_id(voice: &str) -> &'static str {
+    let requested = voice.trim();
+    SUPERTONIC_VOICE_IDS
+        .iter()
+        .copied()
+        .find(|id| id.eq_ignore_ascii_case(requested))
+        .unwrap_or(SUPERTONIC_DEFAULT_VOICE)
+}
+
+fn is_emoji_or_symbol(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x1F600..=0x1F64F
+            | 0x1F300..=0x1F5FF
+            | 0x1F680..=0x1F6FF
+            | 0x2600..=0x26FF
+            | 0x2700..=0x27BF
+            | 0x1F1E6..=0x1F1FF
+    )
+}
+
+fn has_terminal_punctuation(s: &str) -> bool {
+    s.chars().last().is_some_and(|c| {
+        matches!(
+            c,
+            '.' | '!'
+                | '?'
+                | ';'
+                | ':'
+                | ','
+                | '\''
+                | '"'
+                | ')'
+                | ']'
+                | '}'
+                | '\u{2026}'
+                | '\u{3002}'
+                | '\u{300D}'
+                | '\u{300F}'
+                | '\u{3011}'
+                | '\u{3009}'
+                | '\u{300B}'
+                | '\u{203A}'
+                | '\u{00BB}'
+        )
     })
 }
 
-/// Normalize + char-tokenize → (input_ids, attention_mask). attention_mask is all
-/// 1s (single sequence, no padding).
-fn supertonic_tokenize(text: &str) -> (Vec<i64>, Vec<i64>) {
-    let vocab = supertonic_vocab();
-    let mut ids: Vec<i64> = Vec::with_capacity(text.len());
-    let mut prev_space = false;
-    for raw in text.chars() {
-        // \s+ → single space
-        if raw.is_whitespace() {
-            if !prev_space {
-                if let Some(&id) = vocab.get(&' ') {
-                    ids.push(id);
-                }
-                prev_space = true;
-            }
+fn collapse_spaces(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn normalize_spacing(mut s: String) -> String {
+    for punct in [".", ",", "!", "?", ";", ":"] {
+        let before = format!(" {punct}");
+        while s.contains(&before) {
+            s = s.replace(&before, punct);
+        }
+    }
+    while s.contains("''") {
+        s = s.replace("''", "'");
+    }
+    while s.contains("\"\"") {
+        s = s.replace("\"\"", "\"");
+    }
+    collapse_spaces(&s)
+}
+
+fn preprocess_text(text: &str, lang: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    for c in text.nfkd() {
+        if is_emoji_or_symbol(c) {
             continue;
         }
-        prev_space = false;
-        // en/em dash → '-'
-        let c = if raw == '\u{2013}' || raw == '\u{2014}' {
-            '-'
-        } else {
-            raw
-        };
-        if let Some(&id) = vocab.get(&c) {
-            ids.push(id);
+        match c {
+            '\u{2013}' | '\u{2014}' | '\u{2011}' => normalized.push('-'),
+            '_' | '[' | ']' | '|' | '/' | '#' | '\u{2192}' | '\u{2190}' => normalized.push(' '),
+            '\u{201C}' | '\u{201D}' => normalized.push('"'),
+            '\u{2018}' | '\u{2019}' | '\u{00B4}' | '`' => normalized.push('\''),
+            '@' => normalized.push_str(" at "),
+            '\\' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' => {}
+            other => normalized.push(other),
         }
-        // out-of-class chars are dropped (the normalizer filter)
     }
-    // trim a trailing lone space id to mirror typical normalization edges
-    let mask = vec![1i64; ids.len()];
-    (ids, mask)
+
+    let mut s = normalized
+        .replace("e.g.,", "for example,")
+        .replace("E.g.,", "For example,")
+        .replace("i.e.,", "that is,")
+        .replace("I.e.,", "That is,");
+    s = normalize_spacing(s);
+    if s.is_empty() {
+        s.push('.');
+    } else if !has_terminal_punctuation(&s) {
+        s.push('.');
+    }
+
+    let lang = resolve_language(lang);
+    format!("<{lang}>{s}</{lang}>")
+}
+
+fn tokenize_with_indexer(text: &str, indexer: &[i64]) -> Vec<i64> {
+    text.chars()
+        .map(|c| {
+            let code = c as usize;
+            let id = indexer.get(code).copied().unwrap_or(-1);
+            if id >= 0 {
+                id
+            } else {
+                0
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic Gaussian noise (xorshift64* + Box–Muller). Fixed seed → stable
-// flow-matching init (any valid sample works; determinism aids reproducibility).
+// Deterministic Gaussian noise (xorshift64* + Box-Muller).
 // ---------------------------------------------------------------------------
 
 struct Gauss {
     state: u64,
     spare: Option<f32>,
 }
+
 impl Gauss {
     fn new(seed: u64) -> Self {
         Self {
@@ -159,6 +252,7 @@ impl Gauss {
             spare: None,
         }
     }
+
     fn next_u64(&mut self) -> u64 {
         let mut x = self.state;
         x ^= x >> 12;
@@ -167,8 +261,8 @@ impl Gauss {
         self.state = x;
         x.wrapping_mul(0x2545F4914F6CDD1D)
     }
+
     fn next_uniform(&mut self) -> f32 {
-        // (0,1)
         let v = (self.next_u64() >> 11) as f32 / (1u64 << 53) as f32;
         if v <= 0.0 {
             f32::MIN_POSITIVE
@@ -176,6 +270,7 @@ impl Gauss {
             v
         }
     }
+
     fn next_normal(&mut self) -> f32 {
         if let Some(s) = self.spare.take() {
             return s;
@@ -195,34 +290,72 @@ impl Gauss {
 
 #[derive(Clone, Debug)]
 pub struct SupertonicConfig {
-    /// Directory holding `onnx/{text_encoder,latent_denoiser,voice_decoder}.onnx`
-    /// (+ `.onnx_data`) and `voices/{F1..M5}.bin`.
+    /// Directory holding the upstream Supertonic 3 repo layout.
     pub cache_dir: PathBuf,
 }
+
 impl SupertonicConfig {
     fn onnx_dir(&self) -> PathBuf {
         self.cache_dir.join("onnx")
     }
+
     fn graph_path(&self, name: &str) -> PathBuf {
         self.onnx_dir().join(format!("{name}.onnx"))
     }
-    fn voice_path(&self, voice: &str) -> PathBuf {
-        self.cache_dir.join("voices").join(format!("{voice}.bin"))
+
+    fn style_path(&self, voice: &str) -> PathBuf {
+        self.cache_dir
+            .join("voice_styles")
+            .join(format!("{voice}.json"))
     }
+
+    fn unicode_indexer_path(&self) -> PathBuf {
+        self.onnx_dir().join("unicode_indexer.json")
+    }
+
     pub fn assets_present(&self) -> bool {
-        self.graph_path("text_encoder").exists()
-            && self.graph_path("latent_denoiser").exists()
-            && self.graph_path("voice_decoder").exists()
+        [
+            "duration_predictor",
+            "text_encoder",
+            "vector_estimator",
+            "vocoder",
+        ]
+        .iter()
+        .all(|graph| self.graph_path(graph).exists())
+            && self.onnx_dir().join("tts.json").exists()
+            && self.unicode_indexer_path().exists()
     }
 }
 
 struct Loaded {
+    duration_predictor: ort::session::Session,
     text_encoder: ort::session::Session,
-    latent_denoiser: ort::session::Session,
-    voice_decoder: ort::session::Session,
+    vector_estimator: ort::session::Session,
+    vocoder: ort::session::Session,
+    dp_outputs: Vec<String>,
     te_outputs: Vec<String>,
-    ld_outputs: Vec<String>,
-    vd_outputs: Vec<String>,
+    ve_outputs: Vec<String>,
+    vocoder_outputs: Vec<String>,
+    unicode_indexer: Vec<i64>,
+}
+
+struct StyleEmbeddings {
+    ttl: Vec<f32>,
+    dp: Vec<f32>,
+}
+
+#[derive(Deserialize)]
+struct StyleFile {
+    style_ttl: StyleTensor,
+    style_dp: StyleTensor,
+}
+
+#[derive(Deserialize)]
+struct StyleTensor {
+    data: serde_json::Value,
+    dims: Vec<usize>,
+    #[serde(rename = "type")]
+    _dtype: Option<String>,
 }
 
 pub struct SupertonicEngine {
@@ -239,23 +372,9 @@ impl SupertonicEngine {
             ready: AtomicBool::new(false),
         }
     }
+
     pub fn is_ready(&self) -> bool {
         self.ready.load(Ordering::Acquire)
-    }
-
-    /// Report each session's input/output node names (debugging the I/O contract).
-    pub fn io_report(&self) -> Option<String> {
-        let guard = self.inner.lock().ok()?;
-        let l = guard.as_ref()?;
-        Some(format!(
-            "text_encoder  in={:?} out={:?}\nlatent_denoiser in={:?} out={:?}\nvoice_decoder in={:?} out={:?}",
-            input_names(&l.text_encoder),
-            l.te_outputs,
-            input_names(&l.latent_denoiser),
-            l.ld_outputs,
-            input_names(&l.voice_decoder),
-            l.vd_outputs,
-        ))
     }
 
     pub fn warm_up(&self) -> SupertonicResult<()> {
@@ -273,58 +392,64 @@ impl SupertonicEngine {
     fn load(&self) -> SupertonicResult<Loaded> {
         if !self.config.assets_present() {
             return Err(SupertonicError::AssetsMissing(format!(
-                "expected graphs under {}",
-                self.config.onnx_dir().display()
+                "expected Supertonic 3 graphs and metadata under {}",
+                self.config.cache_dir.display()
             )));
         }
+
+        let duration_predictor = build_session(&self.config.graph_path("duration_predictor"))?;
         let text_encoder = build_session(&self.config.graph_path("text_encoder"))?;
-        let latent_denoiser = build_session(&self.config.graph_path("latent_denoiser"))?;
-        let voice_decoder = build_session(&self.config.graph_path("voice_decoder"))?;
+        let vector_estimator = build_session(&self.config.graph_path("vector_estimator"))?;
+        let vocoder = build_session(&self.config.graph_path("vocoder"))?;
+        let dp_outputs = output_names(&duration_predictor);
         let te_outputs = output_names(&text_encoder);
-        let ld_outputs = output_names(&latent_denoiser);
-        let vd_outputs = output_names(&voice_decoder);
+        let ve_outputs = output_names(&vector_estimator);
+        let vocoder_outputs = output_names(&vocoder);
+        let unicode_indexer = load_unicode_indexer(&self.config.unicode_indexer_path())?;
+
         Ok(Loaded {
+            duration_predictor,
             text_encoder,
-            latent_denoiser,
-            voice_decoder,
+            vector_estimator,
+            vocoder,
+            dp_outputs,
             te_outputs,
-            ld_outputs,
-            vd_outputs,
+            ve_outputs,
+            vocoder_outputs,
+            unicode_indexer,
         })
     }
 
-    /// Load a voice's 101*128 style embedding from `voices/{voice}.bin`.
-    fn load_style(&self, voice: &str) -> SupertonicResult<Vec<f32>> {
-        let v = if SUPERTONIC_VOICES.contains(&voice) {
-            voice
-        } else {
-            SUPERTONIC_DEFAULT_VOICE
-        };
-        let path = self.config.voice_path(v);
+    fn load_style(&self, voice: &str) -> SupertonicResult<StyleEmbeddings> {
+        let voice = resolve_voice_id(voice);
+        let path = self.config.style_path(voice);
         let bytes = std::fs::read(&path)
             .map_err(|e| SupertonicError::Voice(format!("read {}: {e}", path.display())))?;
-        let expected = STYLE_SEQ * STYLE_DIM * 4;
-        if bytes.len() != expected {
-            return Err(SupertonicError::Voice(format!(
-                "voice {v} is {} bytes, expected {expected} (101*128 f32)",
-                bytes.len()
-            )));
-        }
-        let mut data = Vec::with_capacity(STYLE_SEQ * STYLE_DIM);
-        for chunk in bytes.chunks_exact(4) {
-            data.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-        }
-        Ok(data)
+        let style_file: StyleFile = serde_json::from_slice(&bytes)
+            .map_err(|e| SupertonicError::Voice(format!("parse {}: {e}", path.display())))?;
+        let ttl = flatten_style_tensor(
+            &style_file.style_ttl,
+            &[1, STYLE_TTL_SEQ, STYLE_TTL_DIM],
+            "style_ttl",
+        )?;
+        let dp = flatten_style_tensor(
+            &style_file.style_dp,
+            &[1, STYLE_DP_SEQ, STYLE_DP_DIM],
+            "style_dp",
+        )?;
+        Ok(StyleEmbeddings { ttl, dp })
     }
 
-    /// Synthesize ONE sentence → mono f32 PCM @ 44.1 kHz.
-    pub fn synthesize(&self, text: &str, voice: &str, speed: f32) -> SupertonicResult<Vec<f32>> {
+    /// Synthesize one sentence into mono f32 PCM at 44.1 kHz.
+    pub fn synthesize(
+        &self,
+        text: &str,
+        voice: &str,
+        lang: &str,
+        speed: f32,
+    ) -> SupertonicResult<Vec<f32>> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            return Ok(Vec::new());
-        }
-        let (ids, mask) = supertonic_tokenize(trimmed);
-        if ids.is_empty() {
             return Ok(Vec::new());
         }
         let style = self.load_style(voice)?;
@@ -338,7 +463,14 @@ impl SupertonicEngine {
             self.ready.store(true, Ordering::Release);
         }
         let loaded = guard.as_mut().expect("just initialized");
-        run_pipeline(loaded, &ids, &mask, &style, speed)
+        let preprocessed = preprocess_text(trimmed, lang);
+        let ids = tokenize_with_indexer(&preprocessed, &loaded.unicode_indexer);
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let text_mask = vec![1.0_f32; ids.len()];
+
+        run_pipeline(loaded, &ids, &text_mask, &style, speed)
     }
 
     pub fn shutdown(&self) {
@@ -347,6 +479,62 @@ impl SupertonicEngine {
         }
         self.ready.store(false, Ordering::Release);
     }
+}
+
+fn flatten_style_tensor(
+    tensor: &StyleTensor,
+    expected_dims: &[usize],
+    field: &str,
+) -> SupertonicResult<Vec<f32>> {
+    if tensor.dims.as_slice() != expected_dims {
+        return Err(SupertonicError::Voice(format!(
+            "{field} dims {:?}, expected {:?}",
+            tensor.dims, expected_dims
+        )));
+    }
+    let expected_len = expected_dims.iter().product();
+    let mut data = Vec::with_capacity(expected_len);
+    flatten_json_numbers(&tensor.data, &mut data).map_err(|e| {
+        SupertonicError::Voice(format!("{field} contains non-float tensor data: {e}"))
+    })?;
+    if data.len() != expected_len {
+        return Err(SupertonicError::Voice(format!(
+            "{field} has {} floats, expected {expected_len}",
+            data.len()
+        )));
+    }
+    Ok(data)
+}
+
+fn flatten_json_numbers(value: &serde_json::Value, out: &mut Vec<f32>) -> Result<(), String> {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                flatten_json_numbers(value, out)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .map(|v| out.push(v as f32))
+            .ok_or_else(|| "number is not representable as f64".to_string()),
+        other => Err(format!("unexpected JSON value {other}")),
+    }
+}
+
+fn load_unicode_indexer(path: &Path) -> SupertonicResult<Vec<i64>> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| SupertonicError::AssetsMissing(format!("read {}: {e}", path.display())))?;
+    let indexer: Vec<i64> = serde_json::from_slice(&bytes)
+        .map_err(|e| SupertonicError::AssetsMissing(format!("parse {}: {e}", path.display())))?;
+    if indexer.len() != 65_536 {
+        return Err(SupertonicError::AssetsMissing(format!(
+            "{} has {} entries, expected 65536",
+            path.display(),
+            indexer.len()
+        )));
+    }
+    Ok(indexer)
 }
 
 fn build_session(path: &Path) -> SupertonicResult<ort::session::Session> {
@@ -361,124 +549,174 @@ fn build_session(path: &Path) -> SupertonicResult<ort::session::Session> {
         .map_err(|e| SupertonicError::Session(format!("commit_from_file {}: {e}", path.display())))
 }
 
-fn input_names(s: &ort::session::Session) -> Vec<String> {
-    s.inputs().iter().map(|o| o.name().to_string()).collect()
-}
 fn output_names(s: &ort::session::Session) -> Vec<String> {
     s.outputs().iter().map(|o| o.name().to_string()).collect()
 }
-/// Output index for `target` name, else `default` positional index.
+
 fn out_idx(names: &[String], target: &str, default: usize) -> usize {
     names.iter().position(|n| n == target).unwrap_or(default)
+}
+
+fn clamp_supertonic_speed(speed: f32) -> f32 {
+    if speed.is_finite() {
+        speed.clamp(SPEED_MIN, SPEED_MAX)
+    } else {
+        1.0
+    }
 }
 
 fn run_pipeline(
     loaded: &mut Loaded,
     ids: &[i64],
-    mask: &[i64],
-    style: &[f32],
+    text_mask: &[f32],
+    style: &StyleEmbeddings,
     speed: f32,
 ) -> SupertonicResult<Vec<f32>> {
     use ort::value::Tensor;
-    let t = ids.len();
-    let style_shape = vec![1usize, STYLE_SEQ, STYLE_DIM];
 
-    // ---- 1. text_encoder ----
-    let te_out = {
-        let input_ids = Tensor::from_array(([1usize, t], ids.to_vec().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("input_ids: {e}")))?;
-        let attn = Tensor::from_array(([1usize, t], mask.to_vec().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("attention_mask: {e}")))?;
-        let style_t = Tensor::from_array((style_shape.clone(), style.to_vec().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("style: {e}")))?;
-        loaded
-            .text_encoder
+    let text_len = ids.len();
+
+    let duration_sec = {
+        let text_ids = Tensor::from_array(([1usize, text_len], ids.to_vec().into_boxed_slice()))
+            .map_err(|e| SupertonicError::Inference(format!("text_ids(duration): {e}")))?;
+        let style_dp = Tensor::from_array((
+            [1usize, STYLE_DP_SEQ, STYLE_DP_DIM],
+            style.dp.clone().into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("style_dp: {e}")))?;
+        let text_mask_t = Tensor::from_array((
+            [1usize, 1usize, text_len],
+            text_mask.to_vec().into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("text_mask(duration): {e}")))?;
+        let out = loaded
+            .duration_predictor
             .run(ort::inputs! {
-                "input_ids" => input_ids,
-                "attention_mask" => attn,
-                "style" => style_t,
+                "text_ids" => text_ids,
+                "style_dp" => style_dp,
+                "text_mask" => text_mask_t,
             })
-            .map_err(|e| SupertonicError::Inference(format!("text_encoder: {e}")))?
+            .map_err(|e| SupertonicError::Inference(format!("duration_predictor: {e}")))?;
+        let idx = out_idx(&loaded.dp_outputs, "duration", 0);
+        let (_shape, duration) = out[idx]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| SupertonicError::Inference(format!("extract duration: {e}")))?;
+        let raw = duration.first().copied().unwrap_or(0.0);
+        let factor = 1.0 / (clamp_supertonic_speed(speed) + SPEED_OFFSET);
+        raw * factor
     };
-    let lh_idx = out_idx(&loaded.te_outputs, "last_hidden_state", 0);
-    let dur_idx = out_idx(&loaded.te_outputs, "durations", 1);
-    let (lh_shape_ref, lh_data) = te_out[lh_idx]
-        .try_extract_tensor::<f32>()
-        .map_err(|e| SupertonicError::Inference(format!("extract last_hidden_state: {e}")))?;
-    let lh_shape: Vec<usize> = lh_shape_ref.iter().map(|&d| d as usize).collect();
-    let last_hidden: Vec<f32> = lh_data.to_vec();
-    let (_d_shape, d_data) = te_out[dur_idx]
-        .try_extract_tensor::<f32>()
-        .map_err(|e| SupertonicError::Inference(format!("extract durations: {e}")))?;
-    let raw_duration = d_data.first().copied().unwrap_or(0.0);
-    drop(te_out);
 
-    // ---- 2. latent prep ----
-    let speed = if speed > 0.0 { speed } else { 1.0 };
-    let ds = (raw_duration / speed) * SUPERTONIC_SAMPLE_RATE as f32; // sample count (float)
-    if !ds.is_finite() || ds <= 0.0 {
+    if !duration_sec.is_finite() || duration_sec <= 0.0 {
         return Err(SupertonicError::Inference(format!(
-            "non-positive predicted duration {ds} (raw {raw_duration})"
+            "non-positive predicted duration {duration_sec}"
         )));
     }
-    let latent_len = (ds / LATENT_SIZE as f32).ceil() as usize;
-    let latent_len = latent_len.max(1);
-    let n_latents = LATENT_CHANNELS * latent_len;
-    // randn([1,144,latent_len]); batch 1 → every time position is valid (no pad mask).
-    let mut g = Gauss::new(0x9E3779B97F4A7C15 ^ (t as u64).wrapping_mul(2654435761));
-    let mut noisy: Vec<f32> = (0..n_latents).map(|_| g.next_normal()).collect();
-    let noisy_shape = vec![1usize, LATENT_CHANNELS, latent_len];
-    let latent_mask: Vec<i64> = vec![1i64; latent_len];
-    let num_steps_val = vec![NUM_INFERENCE_STEPS as f32];
 
-    // ---- 3. denoise loop ----
-    let den_idx = out_idx(&loaded.ld_outputs, "denoised_latents", 0);
-    for step in 0..NUM_INFERENCE_STEPS {
-        let style_t = Tensor::from_array((style_shape.clone(), style.to_vec().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("style(step): {e}")))?;
-        let noisy_t = Tensor::from_array((noisy_shape.clone(), noisy.clone().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("noisy_latents: {e}")))?;
-        let lmask_t =
-            Tensor::from_array(([1usize, latent_len], latent_mask.clone().into_boxed_slice()))
-                .map_err(|e| SupertonicError::Inference(format!("latent_mask: {e}")))?;
-        let enc_t = Tensor::from_array((lh_shape.clone(), last_hidden.clone().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("encoder_outputs: {e}")))?;
-        let attn_t = Tensor::from_array(([1usize, t], mask.to_vec().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("attention_mask(step): {e}")))?;
-        let ts_t = Tensor::from_array(([1usize], vec![step as f32].into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("timestep: {e}")))?;
-        let nsteps_t = Tensor::from_array(([1usize], num_steps_val.clone().into_boxed_slice()))
-            .map_err(|e| SupertonicError::Inference(format!("num_inference_steps: {e}")))?;
+    let (text_emb_shape, text_emb) = {
+        let text_ids = Tensor::from_array(([1usize, text_len], ids.to_vec().into_boxed_slice()))
+            .map_err(|e| SupertonicError::Inference(format!("text_ids(encoder): {e}")))?;
+        let style_ttl = Tensor::from_array((
+            [1usize, STYLE_TTL_SEQ, STYLE_TTL_DIM],
+            style.ttl.clone().into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("style_ttl(encoder): {e}")))?;
+        let text_mask_t = Tensor::from_array((
+            [1usize, 1usize, text_len],
+            text_mask.to_vec().into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("text_mask(encoder): {e}")))?;
         let out = loaded
-            .latent_denoiser
+            .text_encoder
             .run(ort::inputs! {
-                "style" => style_t,
-                "noisy_latents" => noisy_t,
-                "latent_mask" => lmask_t,
-                "encoder_outputs" => enc_t,
-                "attention_mask" => attn_t,
-                "timestep" => ts_t,
-                "num_inference_steps" => nsteps_t,
+                "text_ids" => text_ids,
+                "style_ttl" => style_ttl,
+                "text_mask" => text_mask_t,
             })
-            .map_err(|e| SupertonicError::Inference(format!("latent_denoiser step {step}: {e}")))?;
-        let (_s, data) = out[den_idx]
+            .map_err(|e| SupertonicError::Inference(format!("text_encoder: {e}")))?;
+        let idx = out_idx(&loaded.te_outputs, "text_emb", 0);
+        let (shape, data) = out[idx]
             .try_extract_tensor::<f32>()
-            .map_err(|e| SupertonicError::Inference(format!("extract denoised: {e}")))?;
-        noisy = data.to_vec();
+            .map_err(|e| SupertonicError::Inference(format!("extract text_emb: {e}")))?;
+        (
+            shape.iter().map(|&d| d as usize).collect::<Vec<_>>(),
+            data.to_vec(),
+        )
+    };
+
+    let wav_len = (duration_sec * SUPERTONIC_SAMPLE_RATE as f32).floor() as usize;
+    let wav_len = wav_len.max(1);
+    let latent_len = ((wav_len + LATENT_SIZE - 1) / LATENT_SIZE).max(1);
+    let latent_shape = vec![1usize, LATENT_CHANNELS, latent_len];
+    let latent_mask_shape = vec![1usize, 1usize, latent_len];
+    let latent_mask = vec![1.0_f32; latent_len];
+    let mut g = Gauss::new(
+        0x9E37_79B9_7F4A_7C15 ^ (text_len as u64).wrapping_mul(2_654_435_761) ^ (wav_len as u64),
+    );
+    let mut latent: Vec<f32> = (0..LATENT_CHANNELS * latent_len)
+        .map(|_| g.next_normal())
+        .collect();
+
+    let denoised_idx = out_idx(&loaded.ve_outputs, "denoised_latent", 0);
+    for step in 0..NUM_INFERENCE_STEPS {
+        let noisy_latent =
+            Tensor::from_array((latent_shape.clone(), latent.clone().into_boxed_slice()))
+                .map_err(|e| SupertonicError::Inference(format!("noisy_latent: {e}")))?;
+        let text_emb_t =
+            Tensor::from_array((text_emb_shape.clone(), text_emb.clone().into_boxed_slice()))
+                .map_err(|e| SupertonicError::Inference(format!("text_emb(input): {e}")))?;
+        let style_ttl = Tensor::from_array((
+            [1usize, STYLE_TTL_SEQ, STYLE_TTL_DIM],
+            style.ttl.clone().into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("style_ttl(vector): {e}")))?;
+        let text_mask_t = Tensor::from_array((
+            [1usize, 1usize, text_len],
+            text_mask.to_vec().into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("text_mask(vector): {e}")))?;
+        let latent_mask_t = Tensor::from_array((
+            latent_mask_shape.clone(),
+            latent_mask.clone().into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("latent_mask: {e}")))?;
+        let total_step = Tensor::from_array((
+            [1usize],
+            vec![NUM_INFERENCE_STEPS as f32].into_boxed_slice(),
+        ))
+        .map_err(|e| SupertonicError::Inference(format!("total_step: {e}")))?;
+        let current_step = Tensor::from_array(([1usize], vec![step as f32].into_boxed_slice()))
+            .map_err(|e| SupertonicError::Inference(format!("current_step: {e}")))?;
+        let out = loaded
+            .vector_estimator
+            .run(ort::inputs! {
+                "noisy_latent" => noisy_latent,
+                "text_emb" => text_emb_t,
+                "style_ttl" => style_ttl,
+                "text_mask" => text_mask_t,
+                "latent_mask" => latent_mask_t,
+                "total_step" => total_step,
+                "current_step" => current_step,
+            })
+            .map_err(|e| {
+                SupertonicError::Inference(format!("vector_estimator step {step}: {e}"))
+            })?;
+        let (_shape, denoised) = out[denoised_idx]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| SupertonicError::Inference(format!("extract denoised_latent: {e}")))?;
+        latent = denoised.to_vec();
     }
 
-    // ---- 4. voice_decoder ----
-    let wav_idx = out_idx(&loaded.vd_outputs, "waveform", 0);
-    let latents_t = Tensor::from_array((noisy_shape.clone(), noisy.into_boxed_slice()))
-        .map_err(|e| SupertonicError::Inference(format!("latents: {e}")))?;
-    let dec = loaded
-        .voice_decoder
-        .run(ort::inputs! { "latents" => latents_t })
-        .map_err(|e| SupertonicError::Inference(format!("voice_decoder: {e}")))?;
-    let (_w_shape, wav) = dec[wav_idx]
+    let wav_idx = out_idx(&loaded.vocoder_outputs, "wav_tts", 0);
+    let latent_t = Tensor::from_array((latent_shape, latent.into_boxed_slice()))
+        .map_err(|e| SupertonicError::Inference(format!("latent(vocoder): {e}")))?;
+    let out = loaded
+        .vocoder
+        .run(ort::inputs! { "latent" => latent_t })
+        .map_err(|e| SupertonicError::Inference(format!("vocoder: {e}")))?;
+    let (_shape, wav) = out[wav_idx]
         .try_extract_tensor::<f32>()
-        .map_err(|e| SupertonicError::Inference(format!("extract waveform: {e}")))?;
-    let trim_len = (ds.ceil() as usize).min(wav.len());
+        .map_err(|e| SupertonicError::Inference(format!("extract wav_tts: {e}")))?;
+    let trim_len = wav_len.min(wav.len());
     Ok(wav[..trim_len].to_vec())
 }
 
@@ -486,36 +724,46 @@ fn run_pipeline(
 mod tests {
     use super::*;
 
-    #[test]
-    fn vocab_matches_tokenizer_json() {
-        let v = supertonic_vocab();
-        assert_eq!(v.len(), 81);
-        assert_eq!(v.get(&' '), Some(&0));
-        assert_eq!(v.get(&'!'), Some(&1));
-        assert_eq!(v.get(&'.'), Some(&13));
-        assert_eq!(v.get(&'0'), Some(&14));
-        assert_eq!(v.get(&'9'), Some(&23));
-        assert_eq!(v.get(&'A'), Some(&27));
-        assert_eq!(v.get(&'Z'), Some(&52));
-        assert_eq!(v.get(&'a'), Some(&53));
-        assert_eq!(v.get(&'z'), Some(&78));
-        assert_eq!(v.get(&'\u{00A3}'), Some(&79));
+    fn ascii_indexer() -> Vec<i64> {
+        let mut indexer = vec![-1; 65_536];
+        for code in 0..128 {
+            indexer[code] = code as i64;
+        }
+        indexer
     }
 
     #[test]
-    fn tokenize_collapses_space_and_drops_unknown() {
-        let (ids, mask) = supertonic_tokenize("Hi  there~");
-        // '~' is out of class → dropped; double space → single.
-        // H(34) i(61) space(0) t(72) h(60) e(57) r(70) e(57)
-        assert_eq!(ids, vec![34, 61, 0, 72, 60, 57, 70, 57]);
-        assert_eq!(mask.len(), ids.len());
+    fn resolves_region_language_to_supertonic_code() {
+        assert_eq!(resolve_language("en-us"), "en");
+        assert_eq!(resolve_language("pt-BR"), "pt");
+        assert_eq!(resolve_language("cmn"), "en");
+        assert_eq!(resolve_language("ja"), "ja");
     }
 
     #[test]
-    fn dash_normalized() {
-        let (ids, _) = supertonic_tokenize("a\u{2014}b");
-        // em dash → '-' (12)
-        assert_eq!(ids, vec![53, 12, 54]);
+    fn preprocesses_text_like_space() {
+        let text = preprocess_text("Hi @ Sam -- okay", "en-us");
+        assert_eq!(text, "<en>Hi at Sam -- okay.</en>");
+    }
+
+    #[test]
+    fn tokenizer_uses_unicode_indexer_array() {
+        let ids = tokenize_with_indexer("<en>Hi.</en>", &ascii_indexer());
+        assert_eq!(
+            ids,
+            vec![60, 101, 110, 62, 72, 105, 46, 60, 47, 101, 110, 62]
+        );
+    }
+
+    #[test]
+    fn flatten_style_tensor_validates_dims_and_data() {
+        let tensor = StyleTensor {
+            data: serde_json::json!([[[1.0, 2.0], [3.0, 4.0]]]),
+            dims: vec![1, 2, 2],
+            _dtype: Some("float32".to_string()),
+        };
+        let data = flatten_style_tensor(&tensor, &[1, 2, 2], "style").unwrap();
+        assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]

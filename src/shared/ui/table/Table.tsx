@@ -205,7 +205,7 @@ export function TableRow({ className, index, ref, style, ...props }: TableRowPro
 						? { opacity: 1, transition: { duration: 0 } }
 						: { opacity: 0, y: -4, filter: "blur(2px)", transition: { duration: 0.12 } }
 				}
-				initial={reduceMotion ? false : { opacity: 0, y: 4, filter: "blur(2px)" }}
+				initial={false}
 				ref={setRef}
 				{...props}
 				{...(reduceMotion ? {} : { layout: "position" as const })}

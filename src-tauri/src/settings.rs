@@ -168,16 +168,6 @@ pub enum AutoSubmitKey {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
-pub enum RecordingRetentionPeriod {
-    Never,
-    PreserveLimit,
-    Days3,
-    Weeks2,
-    Months3,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
 pub enum KeyboardImplementation {
     Tauri,
     HandyKeys,
@@ -185,10 +175,7 @@ pub enum KeyboardImplementation {
 
 impl Default for KeyboardImplementation {
     fn default() -> Self {
-        #[cfg(target_os = "linux")]
-        return KeyboardImplementation::Tauri;
-        #[cfg(not(target_os = "linux"))]
-        return KeyboardImplementation::HandyKeys;
+        KeyboardImplementation::HandyKeys
     }
 }
 
@@ -372,16 +359,10 @@ pub struct AppSettings {
     pub audio_feedback_volume: f32,
     #[serde(default = "default_sound_theme")]
     pub sound_theme: SoundTheme,
-    #[serde(default = "default_start_hidden")]
-    pub start_hidden: bool,
-    #[serde(default = "default_autostart_enabled")]
-    pub autostart_enabled: bool,
     #[serde(default = "default_update_checks_enabled")]
     pub update_checks_enabled: bool,
     #[serde(default = "default_model")]
     pub selected_model: String,
-    #[serde(default = "default_always_on_microphone")]
-    pub always_on_microphone: bool,
     #[serde(default)]
     pub selected_microphone: Option<String>,
     #[serde(default)]
@@ -404,10 +385,6 @@ pub struct AppSettings {
     pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default = "default_word_correction_threshold")]
     pub word_correction_threshold: f64,
-    #[serde(default = "default_history_limit")]
-    pub history_limit: usize,
-    #[serde(default = "default_recording_retention_period")]
-    pub recording_retention_period: RecordingRetentionPeriod,
     #[serde(default)]
     pub paste_method: PasteMethod,
     #[serde(default)]
@@ -438,11 +415,6 @@ pub struct AppSettings {
     pub app_language: String,
     #[serde(default)]
     pub experimental_enabled: bool,
-    // Keep the mic stream WARM after a dictation (lazy 30s close, like Handy) instead of tearing
-    // it down immediately — a cold cpal re-open + triple WASAPI device enumeration on the NEXT
-    // press was a big chunk of the "2s from hotkey to listening". Default-on for responsiveness.
-    #[serde(default = "default_lazy_stream_close")]
-    pub lazy_stream_close: bool,
     #[serde(default)]
     pub keyboard_implementation: KeyboardImplementation,
     #[serde(default = "default_show_tray_icon")]
@@ -460,31 +432,13 @@ pub struct AppSettings {
     pub ort_accelerator: OrtAcceleratorSetting,
     #[serde(default = "default_whisper_gpu_device")]
     pub whisper_gpu_device: i32,
-    #[serde(default)]
-    pub extra_recording_buffer_ms: u64,
 }
 
 fn default_model() -> String {
     "".to_string()
 }
 
-fn default_always_on_microphone() -> bool {
-    false
-}
-
-fn default_lazy_stream_close() -> bool {
-    true
-}
-
 fn default_translate_to_english() -> bool {
-    false
-}
-
-fn default_start_hidden() -> bool {
-    false
-}
-
-fn default_autostart_enabled() -> bool {
     false
 }
 
@@ -523,14 +477,6 @@ fn default_paste_delay_ms() -> u64 {
 
 fn default_auto_submit() -> bool {
     false
-}
-
-fn default_history_limit() -> usize {
-    5
-}
-
-fn default_recording_retention_period() -> RecordingRetentionPeriod {
-    RecordingRetentionPeriod::PreserveLimit
 }
 
 fn default_audio_feedback_volume() -> f32 {
@@ -806,7 +752,7 @@ pub fn get_default_settings() -> AppSettings {
         ShortcutBinding {
             id: "cancel".to_string(),
             name: "Cancel".to_string(),
-            description: "Cancels the current recording.".to_string(),
+            description: "Cancels the active dictation session.".to_string(),
             default_binding: "escape".to_string(),
             current_binding: "escape".to_string(),
         },
@@ -845,11 +791,8 @@ pub fn get_default_settings() -> AppSettings {
         audio_feedback: false,
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),
-        start_hidden: default_start_hidden(),
-        autostart_enabled: default_autostart_enabled(),
         update_checks_enabled: default_update_checks_enabled(),
         selected_model: "".to_string(),
-        always_on_microphone: false,
         selected_microphone: None,
         clamshell_microphone: None,
         selected_output_device: None,
@@ -861,8 +804,6 @@ pub fn get_default_settings() -> AppSettings {
         custom_words: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
-        history_limit: default_history_limit(),
-        recording_retention_period: default_recording_retention_period(),
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),
@@ -878,7 +819,6 @@ pub fn get_default_settings() -> AppSettings {
         append_trailing_space: false,
         app_language: default_app_language(),
         experimental_enabled: false,
-        lazy_stream_close: false,
         keyboard_implementation: KeyboardImplementation::default(),
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
@@ -888,7 +828,6 @@ pub fn get_default_settings() -> AppSettings {
         whisper_accelerator: WhisperAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         whisper_gpu_device: default_whisper_gpu_device(),
-        extra_recording_buffer_ms: 0,
     }
 }
 
@@ -1029,16 +968,6 @@ pub fn get_stored_binding(app: &AppHandle, id: &str) -> ShortcutBinding {
             default_binding: String::new(),
             current_binding: String::new(),
         })
-}
-
-pub fn get_history_limit(app: &AppHandle) -> usize {
-    let settings = get_settings(app);
-    settings.history_limit
-}
-
-pub fn get_recording_retention_period(app: &AppHandle) -> RecordingRetentionPeriod {
-    let settings = get_settings(app);
-    settings.recording_retention_period
 }
 
 #[cfg(test)]

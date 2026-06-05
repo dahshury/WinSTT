@@ -50,15 +50,43 @@ function extractRouteCmds(adapterSource: string): string[] {
 	return [...collectCaptures(adapterSource, /\bcmd:\s*"([a-z0-9_]+)"/g)].sort();
 }
 
+/** IPC keys that the adapter routes: every `[IPC.KEY]:` in ROUTE. */
+function extractRouteKeys(adapterSource: string): Set<string> {
+	const start = adapterSource.indexOf("const ROUTE:");
+	const end = adapterSource.indexOf("const POSITIONAL_STRING_PARAM");
+	if (start === -1 || end === -1 || end <= start) {
+		throw new Error("Could not isolate native bridge ROUTE table");
+	}
+	return collectCaptures(adapterSource.slice(start, end), /\[IPC\.([A-Z0-9_]+)\]\s*:/g);
+}
+
+/** IPC keys that declare an active bridge direction in IPC_DIRECTIONS. */
+function extractRequiredIpcKeys(ipcSource: string): string[] {
+	const out = new Set<string>();
+	for (const match of ipcSource.matchAll(
+		/\[IPC\.([A-Z0-9_]+)\]\s*:\s*\[([^\]]*)\]/g,
+	)) {
+		const key = match[1];
+		const directions = match[2] ?? "";
+		if (key !== undefined && /"(?:send|invoke|on|secure)"/.test(directions)) {
+			out.add(key);
+		}
+	}
+	return [...out].sort();
+}
+
 /** Backend command names tauri-specta generated: every `TAURI_INVOKE("…")`. */
 function extractBindingsCmds(bindingsSource: string): Set<string> {
 	return collectCaptures(bindingsSource, /TAURI_INVOKE\(\s*"([a-z0-9_]+)"/g);
 }
 
 const adapterSource = read("native-bridge-adapter.ts");
+const ipcSource = read("ipc-channels.ts");
 const bindingsSource = read("../../bindings.ts");
 
 const routeCmds = extractRouteCmds(adapterSource);
+const routeKeys = extractRouteKeys(adapterSource);
+const requiredIpcKeys = extractRequiredIpcKeys(ipcSource);
 const bindingsCmds = extractBindingsCmds(bindingsSource);
 
 describe("IPC route coverage (adapter ROUTE ↔ generated bindings)", () => {
@@ -72,6 +100,14 @@ describe("IPC route coverage (adapter ROUTE ↔ generated bindings)", () => {
 		// A non-empty list means a renamed/deleted Rust command (or a typo in the
 		// adapter): the route would 404 silently at runtime. The message names the
 		// offenders so the fix is obvious.
+		expect(missing).toEqual([]);
+	});
+
+	test("every IPC channel with a bridge direction has an adapter route", () => {
+		const missing = requiredIpcKeys.filter((key) => !routeKeys.has(key));
+		// A missing event route means listeners never fire. A missing invoke/send
+		// route can still be hidden by a typed-command wrapper today, but the
+		// adapter should remain complete as the fallback transport.
 		expect(missing).toEqual([]);
 	});
 

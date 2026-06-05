@@ -1,5 +1,5 @@
 // Source (authoritative):
-// frontend/electron/ipc/custom-models.ts + docs/port/10_frontend_port_plan.md §6 (WU-11).
+// frontend/electron/ipc/custom-models.ts + docs/archive/port/10_frontend_port_plan.md §6 (WU-11).
 //
 // The Settings → Models "Open custom-models folder" button sends
 // `CUSTOM_MODELS_OPEN_FOLDER`. The adapter (native-bridge-adapter.ts) routes it as

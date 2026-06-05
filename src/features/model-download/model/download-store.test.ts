@@ -17,9 +17,8 @@ mock.module("@/shared/api/ipc-client", () => ({
 	cancelDownload: cancelSpy,
 }));
 
-const { useDownloadStore, normalizeProgressPayload, isQuantDownloading } = await import(
-	"./download-store"
-);
+const { useDownloadStore, normalizeProgressPayload, isQuantDownloading } =
+	await import("./download-store");
 
 beforeEach(() => {
 	cancelSpy.mockClear();
@@ -32,6 +31,7 @@ beforeEach(() => {
 		speedBps: 0,
 		etaSeconds: 0,
 		cancelled: false,
+		quantDownloads: {},
 	});
 });
 
@@ -45,6 +45,7 @@ afterEach(() => {
 		speedBps: 0,
 		etaSeconds: 0,
 		cancelled: false,
+		quantDownloads: {},
 	});
 });
 
@@ -142,6 +143,113 @@ describe("useDownloadStore", () => {
 	test("cancelDownload calls the IPC client's cancelDownload", () => {
 		useDownloadStore.getState().cancelDownload();
 		expect(cancelSpy).toHaveBeenCalledTimes(1);
+	});
+
+	test("predownloadQuant preserves existing progress when re-issued", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"m@int8": {
+					modelId: "m",
+					quantization: "int8",
+					progress: 42,
+					downloadedBytes: 420,
+					totalBytes: 1000,
+					speedBps: 12,
+					paused: true,
+				},
+			},
+		});
+		useDownloadStore.getState().predownloadQuant("m", "int8");
+		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
+			modelId: "m",
+			quantization: "int8",
+			progress: 42,
+			downloadedBytes: 420,
+			totalBytes: 1000,
+			speedBps: 12,
+			paused: false,
+		});
+	});
+
+	test("predownloadQuant stores and progress updates preserve the initiating selector owner", () => {
+		useDownloadStore.getState().predownloadQuant("m", "int8", "realtime");
+		expect(useDownloadStore.getState().quantDownloads["m@int8"]?.owner).toBe(
+			"realtime",
+		);
+
+		useDownloadStore.getState().setQuantDownloadProgress("m", "int8", {
+			progress: 0.25,
+			downloadedBytes: 250,
+			totalBytes: 1000,
+			speedBps: 5,
+		});
+
+		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
+			modelId: "m",
+			quantization: "int8",
+			owner: "realtime",
+			progress: 25,
+			downloadedBytes: 250,
+			totalBytes: 1000,
+			speedBps: 5,
+			paused: false,
+		});
+	});
+
+	test("resumeQuantDownload can seed a resumed partial with an owner", () => {
+		useDownloadStore.getState().resumeQuantDownload("m", "int8", "realtime");
+		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
+			modelId: "m",
+			quantization: "int8",
+			owner: "realtime",
+			progress: null,
+			downloadedBytes: 0,
+			totalBytes: 0,
+			speedBps: 0,
+			paused: false,
+		});
+	});
+
+	test("setQuantDownloadProgress is monotonic and keeps pause sticky", () => {
+		useDownloadStore.setState({
+			quantDownloads: {
+				"m@int8": {
+					modelId: "m",
+					quantization: "int8",
+					progress: 72,
+					downloadedBytes: 720,
+					totalBytes: 1000,
+					speedBps: 10,
+					paused: true,
+				},
+			},
+		});
+		useDownloadStore.getState().setQuantDownloadProgress("m", "int8", {
+			progress: 0.03,
+			downloadedBytes: 30,
+			totalBytes: 900,
+			speedBps: 5,
+		});
+		expect(useDownloadStore.getState().quantDownloads["m@int8"]).toEqual({
+			modelId: "m",
+			quantization: "int8",
+			progress: 72,
+			downloadedBytes: 720,
+			totalBytes: 1000,
+			speedBps: 5,
+			paused: true,
+		});
+	});
+
+	test("setQuantDownloadProgress keeps total bytes at least downloaded bytes", () => {
+		useDownloadStore.getState().setQuantDownloadProgress("m", "int8", {
+			progress: 1,
+			downloadedBytes: 1_200,
+			totalBytes: 1_000,
+		});
+		expect(
+			useDownloadStore.getState().quantDownloads["m@int8"]?.totalBytes,
+		).toBe(1_200);
 	});
 });
 

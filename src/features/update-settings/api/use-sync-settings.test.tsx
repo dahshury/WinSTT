@@ -23,6 +23,15 @@ const originalApi = window.nativeBridge;
 const initialSettings = useSettingsStore.getState().settings;
 const sentChannels: Array<{ channel: string; args: unknown[] }> = [];
 const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+const savedPatches: Array<Partial<AppSettings>> = [];
+
+function recordSave(settings: Partial<AppSettings>): void {
+	savedPatches.push(settings);
+}
+
+function lastSavedPatch(): Partial<AppSettings> | undefined {
+	return savedPatches.at(-1);
+}
 
 function makeApi() {
 	listeners.clear();
@@ -56,12 +65,14 @@ beforeEach(() => {
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
 	useConnectionStore.setState({ serverStatus: "idle" });
 	window.nativeBridge = makeApi();
+	savedPatches.length = 0;
 });
 
 afterEach(() => {
 	window.nativeBridge = originalApi;
 	useSettingsStore.setState({ settings: initialSettings, isLoaded: false });
 	useConnectionStore.setState({ serverStatus: "idle" });
+	savedPatches.length = 0;
 });
 
 describe("sectionsDiffer", () => {
@@ -110,8 +121,29 @@ describe("performScheduledSave", () => {
 		const latestSettingsRef = { current: initialSettings };
 		const lastSavedRef: { current: AppSettings | undefined } = { current: initialSettings };
 		markIpcLoadResolved();
-		performScheduledSave(latestSettingsRef, lastSavedRef);
-		expect(sentChannels.find((s) => s.channel === IPC.SETTINGS_SAVE)).toBeUndefined();
+		performScheduledSave(latestSettingsRef, lastSavedRef, recordSave);
+		expect(lastSavedPatch()).toBeUndefined();
+	});
+
+	test("does not suppress an immediate recording-mode save inside the IPC-load guard", () => {
+		window.nativeBridge = makeApi();
+		const baseline = {
+			...initialSettings,
+			general: { ...initialSettings.general, recordingMode: "ptt" as const },
+		};
+		const changed = {
+			...baseline,
+			general: { ...baseline.general, recordingMode: "wakeword" as const },
+		};
+		const latestSettingsRef = { current: changed };
+		const lastSavedRef: { current: AppSettings | undefined } = { current: baseline };
+		markIpcLoadResolved();
+
+		performScheduledSave(latestSettingsRef, lastSavedRef, recordSave);
+
+		const patch = lastSavedPatch();
+		expect(patch).toBeDefined();
+		expect(patch?.general?.recordingMode).toBe("wakeword");
 	});
 
 	test("is a no-op when the latest settings match lastSaved (empty patch)", () => {
@@ -119,8 +151,8 @@ describe("performScheduledSave", () => {
 		_resetIpcLoadTimingForTests();
 		const latestSettingsRef = { current: initialSettings };
 		const lastSavedRef: { current: AppSettings | undefined } = { current: initialSettings };
-		performScheduledSave(latestSettingsRef, lastSavedRef);
-		expect(sentChannels.find((s) => s.channel === IPC.SETTINGS_SAVE)).toBeUndefined();
+		performScheduledSave(latestSettingsRef, lastSavedRef, recordSave);
+		expect(lastSavedPatch()).toBeUndefined();
 	});
 
 	test("sends a settings:save with the diff and advances lastSavedRef when changes exist", () => {
@@ -133,9 +165,8 @@ describe("performScheduledSave", () => {
 		const changed = asSettings({ audio: { sileroSensitivity: 0.7 } });
 		const latestSettingsRef = { current: changed };
 		const lastSavedRef: { current: AppSettings | undefined } = { current: baseline };
-		performScheduledSave(latestSettingsRef, lastSavedRef);
-		const saveCall = sentChannels.find((s) => s.channel === IPC.SETTINGS_SAVE);
-		expect(saveCall).toBeDefined();
+		performScheduledSave(latestSettingsRef, lastSavedRef, recordSave);
+		expect(lastSavedPatch()).toBeDefined();
 		expect(lastSavedRef.current).toBe(changed);
 	});
 });

@@ -1,4 +1,4 @@
-// Source: docs/port/lib_wiring.md §3.
+// Source: docs/archive/port/lib_wiring.md §3.
 //
 // The WinSTT Tauri command layer. Every `#[tauri::command] #[specta::specta]` fn
 // here wraps a manager (winstt/managers/*.rs) or a pure module (catalog,
@@ -18,7 +18,7 @@ pub mod secret_storage;
 pub mod settings;
 pub mod stt;
 
-// ── slice: model catalog + picker + download (docs/port/10_frontend_port_plan.md §6 — WU-4) ──
+// ── slice: model catalog + picker + download (docs/archive/port/10_frontend_port_plan.md §6 — WU-4) ──
 /// The RICH editorial catalog (embedded catalog_data.json → CatalogModelInfo + ModelStateEntry
 /// + ModelsWithState) the detached picker renders. Pure data; no commands. Consumed by stt::list_models
 ///   and runtime::list_models_with_state.
@@ -35,9 +35,9 @@ pub mod runtime;
 /// TranscriptionManager (lib_wiring §7). NOT collected.
 pub mod swap_events;
 
-// ── slice: dictation core + hotkey (docs/port/10_frontend_port_plan.md §6 — WU-3) ──
+// ── slice: dictation core + hotkey (docs/archive/port/10_frontend_port_plan.md §6 — WU-3) ──
 /// User-initiated dictation cancel: `cancel_current_operation` (STT_ABORT_OPERATION
-/// → overlay X / cancel combo). Wraps the centralized `utils::cancel_current_operation`
+/// → overlay X / Escape). Wraps the centralized `utils::cancel_current_operation`
 /// + emits `stt:session-aborted`. Registered in lib.rs collect_commands![].
 pub mod cancel;
 /// STT_SET/GET_PARAMETER + STT_CALL_METHOD + STT_RELOAD_MODEL command seam the
@@ -60,7 +60,7 @@ pub mod overlay;
 /// the auto-paste; see `winstt::commands::overlay::enter_preview_overlay`.
 pub mod preview;
 pub mod tts;
-// ── slice: LLM/Ollama long-tail (docs/port/10_frontend_port_plan.md — WU-6) ──
+// ── slice: LLM/Ollama long-tail (docs/archive/port/10_frontend_port_plan.md — WU-6) ──
 pub mod cloud_stt;
 /// Ollama public-library scraper: ollama_fetch_library / ollama_fetch_tags /
 /// ollama_search_library (no JSON API → HTML scrape, mirrors ollama-registry.ts).
@@ -74,7 +74,7 @@ pub mod listen;
 /// unified OpenAI / ElevenLabs / OpenRouter probe returning `{ ok, code?, message? }`.
 pub mod verify;
 pub mod wakeword;
-// ── slice: loopback device list (docs/port/10_frontend_port_plan.md WU-9) ──
+// ── slice: loopback device list (docs/archive/port/10_frontend_port_plan.md WU-9) ──
 /// PLAIN-event emit helpers for the WU-9 listen channels (vad-sensitivity-adapted,
 /// device-switch-failed, speaker-segments). No commands — called by the producers
 /// (calibrator consumer / device-switch path / DiarizationManager). NOT collected.
@@ -82,7 +82,7 @@ pub mod listen_events;
 /// `loopback_list_devices` — enumerate WASAPI loopback output devices for the
 /// listen-mode device picker. Registered in lib.rs collect_commands![].
 pub mod loopback;
-// ── slice: audio input devices (docs/port/10_frontend_port_plan.md WU-9 — entities/audio-device) ──
+// ── slice: audio input devices (docs/archive/port/10_frontend_port_plan.md WU-9 — entities/audio-device) ──
 /// `get_audio_devices` — enumerate audio INPUT devices in the WinSTT spec
 /// `AudioDevice` shape for the renderer's mic pickers. Registered in lib.rs
 /// collect_commands![].
@@ -94,13 +94,13 @@ pub mod file_transcribe;
 pub mod sound;
 pub mod wordts;
 
-// ── slice: custom-models folder (docs/port/10_frontend_port_plan.md §6 — WU-11) ──
+// ── slice: custom-models folder (docs/archive/port/10_frontend_port_plan.md §6 — WU-11) ──
 /// `open_custom_models_folder` — return the per-user custom-models dir
 /// (`<appData>/models/custom`) for the opener-plugin route (CUSTOM_MODELS_OPEN_FOLDER).
 /// Registered in lib.rs collect_commands![].
 pub mod custom_models;
 
-// ── slice: history (docs/port/10_frontend_port_plan.md §6 — WU-10) ──
+// ── slice: history (docs/archive/port/10_frontend_port_plan.md §6 — WU-10) ──
 /// History command surface: backs BOTH the dedicated history window (SQLite-store
 /// channels, NUMBER id — history_list/recent/delete_row/toggle/load_audio_by_row/
 /// add) AND the settings-panel karaoke table (legacy persisted store channels,
@@ -113,7 +113,7 @@ pub mod custom_models;
 /// initialize_core_logic.
 pub mod history;
 
-// ── slice: about / diagnostics (docs/port/10_frontend_port_plan.md §1b/§6 — WU-11) ──
+// ── slice: about / diagnostics (docs/archive/port/10_frontend_port_plan.md §1b/§6 — WU-11) ──
 /// About-panel metadata + bundled LICENSE / THIRD_PARTY_NOTICES readers
 /// (about_get_license / about_get_notices / about_get_app_info). Registered in
 /// lib.rs collect_commands![].
@@ -123,24 +123,25 @@ pub mod about;
 /// (diag_open_logs_folder / diag_save_bundle). Registered in lib.rs collect_commands![].
 pub mod diag;
 
-// ── slice: transforms + context-playground (docs/port/10_frontend_port_plan.md §6 — WU-13) ──
+// ── slice: transforms + context-playground (docs/archive/port/10_frontend_port_plan.md §6 — WU-13) ──
 /// Transforms apply/preview pipeline (`apply_transform` / `apply_transform_preview`)
 /// + the `transforms:applied` / `transforms:failed` renderer feedback events.
 pub mod transforms;
 
 /// DEBUG-ONLY context-awareness playground backend: live poll loop +
 /// `context-playground:report` push (`context_playground_set_live` /
-/// `context_playground_arm_deep` / `context_playground_capture`). The whole file
-/// is `#![cfg(feature = "context-playground")]`, so it vanishes from shipped builds.
+/// `context_playground_arm_deep` / `context_playground_capture`). These commands
+/// stay registered so the renderer debug flag can be flipped without a backend
+/// feature rebuild; the older `debug_read_context` probe remains feature-gated.
 pub mod context_playground;
 
-// ── slice: window management (docs/port/10_frontend_port_plan.md §4b — WU-0) ──
-/// The 9-window WinSTT topology: open_window / close_window / resize_window /
-/// anchor_window / onboarding_finish. Lazy-create + hide-on-close (the reference
-/// keep-alive semantics). Registered in lib.rs collect_commands![].
+// ── slice: window management (docs/archive/port/10_frontend_port_plan.md §4b — WU-0) ──
+/// The WinSTT window topology: open_window / close_window / resize_window /
+/// anchor_window. Lazy-create + hide-on-close (the reference keep-alive
+/// semantics). Registered in lib.rs collect_commands![].
 pub mod windows;
 
-// ── slice: tray-menu placement (docs/port/10_frontend_port_plan.md §6 — WU-12) ──
+// ── slice: tray-menu placement (docs/archive/port/10_frontend_port_plan.md §6 — WU-12) ──
 /// WinSTT's custom HTML tray menu (`views/tray-menu`): show_tray_menu /
 /// reanchor_tray_menu / hide_tray_menu. Anchors the transparent BrowserWindow
 /// at the tray-icon/cursor point, clamped to the monitor work area (ports the
@@ -148,13 +149,11 @@ pub mod windows;
 /// collect_commands![]; needs `.manage(TrayMenuAnchor::default())`.
 pub mod tray_menu;
 
-// ── slice: onboarding wizard finish (docs/port/10_frontend_port_plan.md §6 — WU-12) ──
+// ── slice: onboarding wizard finish (docs/archive/port/10_frontend_port_plan.md §6 — WU-12) ──
 /// `onboarding_finish` — persists the MAIN-owned onboarding flags
 /// (general.onboarded / onboardedAt / onboardedTrack), broadcasts
 /// `settings:changed`, then hides the wizard + shows main. Ports the reference
-/// `onboarding-window.ts` FINISH handler (the WU-0 `windows::onboarding_finish`
-/// stub does the window transition only). Register THIS in lib.rs
-/// collect_commands![] IN PLACE OF `windows::onboarding_finish`.
+/// `onboarding-window.ts` FINISH handler. Registered in lib.rs collect_commands![].
 pub mod onboarding;
 
 /// Snippet expansion: `winstt_expand_snippets` (read-only preview/playground seam) +

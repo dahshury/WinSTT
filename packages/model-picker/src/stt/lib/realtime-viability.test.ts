@@ -11,6 +11,9 @@ function model(overrides: Partial<ModelInfo> = {}): ModelInfo {
 		languages: ["en"],
 		supportsLanguageDetection: true,
 		sizeLabel: "39M",
+		previewCapable: true,
+		nativeStreaming: false,
+		finalReuseSafe: false,
 		supportsRealtime: true,
 		onnxModelName: null,
 		description: "",
@@ -48,8 +51,8 @@ describe("parseSizeLabel", () => {
 });
 
 describe("isRealtimeViable", () => {
-	test("false when the catalog flag is off", () => {
-		expect(isRealtimeViable(model({ supportsRealtime: false }))).toBe(false);
+	test("false when the preview-capable flag is off", () => {
+		expect(isRealtimeViable(model({ previewCapable: false }))).toBe(false);
 	});
 
 	test("true for a small, realtime-flagged model", () => {

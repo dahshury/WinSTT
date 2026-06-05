@@ -165,6 +165,33 @@ function recordPausedSnapshot(
 
 /** State transition for a cancelled status — preserve the last known progress
  *  in pausedPulls so the UI can offer Resume. */
+function maxOptionalNumber(previous: number | undefined, next: number | undefined): number | undefined {
+	if (previous === undefined) {
+		return next;
+	}
+	if (next === undefined) {
+		return previous;
+	}
+	return Math.max(previous, next);
+}
+
+function mergePullProgress(previous: OllamaPullProgress | undefined, next: OllamaPullProgress): OllamaPullProgress {
+	const merged: OllamaPullProgress = { ...next };
+	const percent = maxOptionalNumber(previous?.percent, next.percent);
+	const completed = maxOptionalNumber(previous?.completed, next.completed);
+	const total = maxOptionalNumber(previous?.total, next.total);
+	if (percent !== undefined) {
+		merged.percent = percent;
+	}
+	if (completed !== undefined) {
+		merged.completed = completed;
+	}
+	if (total !== undefined) {
+		merged.total = total;
+	}
+	return merged;
+}
+
 function applyCancelled(slices: PullSlices, progress: OllamaPullProgress): Partial<PullSlices> {
 	const existing = slices.pulls[progress.model];
 	const nextPulls = withoutKey(slices.pulls, progress.model);
@@ -187,17 +214,20 @@ function applyTerminalClear(slices: PullSlices, model: string): Partial<PullSlic
 }
 
 /** State transition for any non-terminal progress — upsert the active pull
- *  entry (preserving startedAt) and drop any paused entry so the UI doesn't
- *  show both bars. */
+ *  entry only when the pull is active or resume-seeded; late frames after Stop
+ *  stay visually paused. */
 function applyActiveProgress(
 	slices: PullSlices,
 	progress: OllamaPullProgress
 ): Partial<PullSlices> {
 	const existing = slices.pulls[progress.model];
+	if (!existing && slices.pausedPulls[progress.model]) {
+		return {};
+	}
 	const nextPulls = {
 		...slices.pulls,
 		[progress.model]: {
-			progress,
+			progress: mergePullProgress(existing?.progress, progress),
 			startedAt: existing?.startedAt ?? Date.now(),
 		},
 	};

@@ -1,4 +1,4 @@
-// PORT IMPL — Source: app/PORT/06_tts.md + lib_wiring.md §3,
+// PORT IMPL — Source: docs/archive/port/06_tts.md + lib_wiring.md §3,
 // frontend/electron/ipc/{tts,tts-cloud,tts-reader}.ts. Wraps managers::TtsManager.
 //
 // TTS commands. Local synthesis runs blocking on a worker (spawn_blocking) so the
@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::winstt::managers::tts_manager::{
     CloudSubscriptionPayload, CloudVoiceCatalogPayload, DownloadEstimatePayload,
@@ -30,6 +30,14 @@ pub struct SpeakResult {
     pub request_id: String,
 }
 
+/// Reserve the overlay's read-aloud layer and keep Escape armed while a TTS
+/// session exists. Playback may not have started yet, but the user should still
+/// be able to cancel the pending synthesis with Escape.
+pub fn reserve_tts_playback_layer(app: &AppHandle) {
+    crate::winstt::commands::overlay::reserve_tts_overlay(app);
+    crate::shortcut::register_cancel_shortcut(app);
+}
+
 /// `tts_speak` — read `text` aloud (the renderer "Speak" button / dictation).
 /// Returns the request id so the renderer can correlate the `tts://chunk` stream
 /// + cancel it. Enabled-gate, source selection (local/cloud), and settings
@@ -39,7 +47,7 @@ pub struct SpeakResult {
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_speak(
-    _app: AppHandle,
+    app: AppHandle,
     tts: State<'_, Arc<TtsManager>>,
     text: String,
     // `voice`/`lang`/`speed` are optional in the renderer's `ttsSpeak` wrapper.
@@ -49,6 +57,7 @@ pub async fn tts_speak(
 ) -> Result<SpeakResult, String> {
     let mgr = tts.inner().clone();
     let request_id = mgr.next_request_id();
+    reserve_tts_playback_layer(&app);
     let rid = request_id.clone();
     let voice = voice.unwrap_or_default();
     let lang = lang.unwrap_or_default();
@@ -58,11 +67,17 @@ pub async fn tts_speak(
         mgr.set_speed(sp);
     }
     let speed_mgr = mgr.clone();
+    let panic_rid = request_id.clone();
     // Run the blocking synthesis off the async pump.
     tauri::async_runtime::spawn_blocking(move || {
-        mgr.read_aloud(&rid, &text, &voice, &lang, move || {
-            speed_mgr.current_speed()
-        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mgr.read_aloud(&rid, &text, &voice, &lang, move || {
+                speed_mgr.current_speed()
+            });
+        }));
+        if result.is_err() {
+            mgr.fail_request(&panic_rid, "TTS synthesis panicked");
+        }
     });
     Ok(SpeakResult { request_id })
 }
@@ -93,6 +108,7 @@ pub async fn tts_speak_selection(
         );
         return Ok(SpeakResult::default());
     }
+    reserve_tts_playback_layer(&app);
     let rid = request_id.clone();
     let voice = voice.unwrap_or_default();
     let lang = lang.unwrap_or_default();
@@ -100,10 +116,16 @@ pub async fn tts_speak_selection(
         mgr.set_speed(sp);
     }
     let speed_mgr = mgr.clone();
+    let panic_rid = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        mgr.read_aloud(&rid, &text, &voice, &lang, move || {
-            speed_mgr.current_speed()
-        });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mgr.read_aloud(&rid, &text, &voice, &lang, move || {
+                speed_mgr.current_speed()
+            });
+        }));
+        if result.is_err() {
+            mgr.fail_request(&panic_rid, "TTS synthesis panicked");
+        }
     });
     Ok(SpeakResult { request_id })
 }
@@ -128,6 +150,36 @@ pub fn tts_cancel(tts: State<'_, Arc<TtsManager>>, request_id: Option<String>) {
 #[specta::specta]
 pub fn tts_set_speed(tts: State<'_, Arc<TtsManager>>, speed: f32) {
     tts.set_speed(speed);
+}
+
+/// Ask the overlay-owned Web Audio queue to pause read-aloud playback before
+/// microphone capture starts. This is intentionally playback-only: synthesis and
+/// the request id remain alive so the TTS session can be resumed from the island.
+pub fn request_tts_playback_pause_for_dictation(app: &AppHandle) {
+    let _ = app.emit(
+        "tts:pause-playback",
+        serde_json::json!({ "reason": "dictation" }),
+    );
+}
+
+/// Cancel the active read-aloud layer in response to Escape. The Web Audio queue
+/// lives in the overlay renderer, so Rust asks that window to discard playback
+/// and also cancels backend synthesis as a fallback.
+pub fn cancel_tts_playback_layer(app: &AppHandle) -> bool {
+    if !crate::winstt::commands::overlay::tts_overlay_is_active() {
+        return false;
+    }
+
+    let _ = app.emit(
+        "tts:discard-playback",
+        serde_json::json!({ "reason": "escape" }),
+    );
+    if let Some(tts) = app.try_state::<Arc<TtsManager>>() {
+        tts.cancel_all();
+    }
+    crate::winstt::commands::overlay::hide_tts_overlay(app);
+    crate::utils::unregister_cancel_shortcut_if_idle(app);
+    true
 }
 
 /// `tts_report_playback_started` — the window that owns the Web Audio queue (the
@@ -158,7 +210,8 @@ pub fn tts_report_playback_ended(app: AppHandle, request_id: String) {
     // Read finished / cancelled / failed → hide the island. The shared hide's
     // show-generation guard means a dictation session that just took over (which
     // re-shows + repositions the overlay) is NOT hidden by this call.
-    crate::winstt::commands::overlay::hide_recording_overlay(&app);
+    crate::winstt::commands::overlay::hide_tts_overlay(&app);
+    crate::utils::unregister_cancel_shortcut_if_idle(&app);
     let _ = app.emit(
         "tts:playback-ended",
         serde_json::json!({ "requestId": request_id }),
@@ -300,6 +353,7 @@ pub fn tts_install_cancel(app: AppHandle) {
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_preview_cloud(
+    app: AppHandle,
     tts: State<'_, Arc<TtsManager>>,
     preview_url: String,
 ) -> Result<SpeakResult, String> {
@@ -308,6 +362,7 @@ pub async fn tts_preview_cloud(
     }
     let mgr = tts.inner().clone();
     let request_id = mgr.next_request_id();
+    reserve_tts_playback_layer(&app);
     let rid = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         mgr.read_preview_url(&rid, &preview_url);

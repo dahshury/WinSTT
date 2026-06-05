@@ -9,19 +9,21 @@ pub struct AppleLLMResponse {
     pub error_message: *mut c_char,
 }
 
-// Link to the Swift functions
-extern "C" {
+// Link to the Swift functions.
+unsafe extern "C" {
     pub fn is_apple_intelligence_available() -> c_int;
     pub fn free_apple_llm_response(response: *mut AppleLLMResponse);
 }
 
 // Safe wrapper functions
 pub fn check_apple_intelligence_availability() -> bool {
+    // SAFETY: the Swift bridge exposes a nullary availability probe with no
+    // ownership transfer or pointer arguments.
     unsafe { is_apple_intelligence_available() == 1 }
 }
 
-// Link to the Swift function for system prompt support
-extern "C" {
+// Link to the Swift function for system prompt support.
+unsafe extern "C" {
     pub fn process_text_with_system_prompt_apple(
         system_prompt: *const c_char,
         user_content: *const c_char,
@@ -38,6 +40,9 @@ pub fn process_text_with_system_prompt(
     let system_cstr = CString::new(system_prompt).map_err(|e| e.to_string())?;
     let user_cstr = CString::new(user_content).map_err(|e| e.to_string())?;
 
+    // SAFETY: `system_cstr` and `user_cstr` are valid NUL-terminated strings
+    // that outlive the call. The returned pointer is checked for null and
+    // released exactly once with `free_apple_llm_response` below.
     let response_ptr = unsafe {
         process_text_with_system_prompt_apple(system_cstr.as_ptr(), user_cstr.as_ptr(), max_tokens)
     };
@@ -46,27 +51,33 @@ pub fn process_text_with_system_prompt(
         return Err("Null response from Apple LLM".to_string());
     }
 
+    // SAFETY: `response_ptr` was checked for null and is owned by the Swift
+    // bridge until we free it at the end of this function.
     let response = unsafe { &*response_ptr };
 
     let result = if response.success == 1 {
         if response.response.is_null() {
             Ok(String::new())
         } else {
+            // SAFETY: on success the Swift bridge returns a valid
+            // NUL-terminated response string or null, handled above.
             let c_str = unsafe { CStr::from_ptr(response.response) };
             let rust_str = c_str.to_string_lossy().into_owned();
             Ok(rust_str)
         }
     } else {
-        let error_c_str = if !response.error_message.is_null() {
-            unsafe { CStr::from_ptr(response.error_message) }
+        let error_msg = if !response.error_message.is_null() {
+            // SAFETY: on failure the Swift bridge returns a valid
+            // NUL-terminated error string or null, handled by the fallback.
+            let error_c_str = unsafe { CStr::from_ptr(response.error_message) };
+            error_c_str.to_string_lossy().into_owned()
         } else {
-            CStr::from_bytes_with_nul(b"Unknown error\0").unwrap()
+            "Unknown error".to_string()
         };
-        let error_msg = error_c_str.to_string_lossy().into_owned();
         Err(error_msg)
     };
 
-    // Clean up the response
+    // SAFETY: `response_ptr` came from the Swift bridge and has not been freed.
     unsafe { free_apple_llm_response(response_ptr) };
 
     result

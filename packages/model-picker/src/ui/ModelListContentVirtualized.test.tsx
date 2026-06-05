@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { Combobox } from "@base-ui/react/combobox";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
-import { BookOpen02Icon } from "@hugeicons/core-free-icons";
 import { asInvalid } from "@test/lib/cast";
 import { render, renderHook } from "@testing-library/react";
 import type { OpenRouterEndpoint, OpenRouterModel } from "@/shared/api/models";
-import {
-	__model_list_content_virtualized_test_helpers__ as helpers,
-	useProvidersOpenedFlag,
-	type VirtualizedItem,
-} from "../lib/model-list-content-virtualized-test-helpers";
+import { useOpenedFlag } from "../core/Collapsible";
+import * as components from "../lib/model-list-content-virtualized-components";
+import * as utils from "../lib/model-list-content-virtualized-utils";
+import type { VirtualizedItem } from "../lib/model-list-content-virtualized-utils";
 import { ModelListContentVirtualized } from "./ModelListContentVirtualized";
+
+const helpers = { ...components, ...utils, useProvidersOpenedFlag: useOpenedFlag };
 
 describe("ModelListContentVirtualized", () => {
 	test("renders empty state for empty grouped list", () => {
@@ -685,18 +685,18 @@ describe("getEmptyStateLabel / getEmptyStateBody", () => {
 
 describe("useProvidersOpenedFlag", () => {
 	test("starts false when isOpen is false", () => {
-		const { result } = renderHook(() => useProvidersOpenedFlag(false));
+		const { result } = renderHook(() => helpers.useProvidersOpenedFlag(false));
 		expect(result.current).toBe(false);
 	});
 
 	test("starts true when isOpen is true", () => {
-		const { result } = renderHook(() => useProvidersOpenedFlag(true));
+		const { result } = renderHook(() => helpers.useProvidersOpenedFlag(true));
 		expect(result.current).toBe(true);
 	});
 
 	test("latches true once opened (stays true when closed again)", () => {
 		let isOpen = true;
-		const { result, rerender } = renderHook(() => useProvidersOpenedFlag(isOpen));
+		const { result, rerender } = renderHook(() => helpers.useProvidersOpenedFlag(isOpen));
 		expect(result.current).toBe(true);
 		isOpen = false;
 		rerender();
@@ -706,7 +706,7 @@ describe("useProvidersOpenedFlag", () => {
 
 	test("transitions from false to true when isOpen becomes true", () => {
 		let isOpen = false;
-		const { result, rerender } = renderHook(() => useProvidersOpenedFlag(isOpen));
+		const { result, rerender } = renderHook(() => helpers.useProvidersOpenedFlag(isOpen));
 		expect(result.current).toBe(false);
 		isOpen = true;
 		rerender();
@@ -888,6 +888,13 @@ describe("applyScrollToMakerRequest", () => {
 		expect(scrolledIndices[0]).toBe(0);
 	});
 
+	test("does not consume a request before scrollToIndex is ready", () => {
+		const items = [makeVirtualItem("openai", "openai/gpt-4o", 0)];
+		const request = { maker: "openai", modelId: "openai/gpt-4o", nonce: 2 };
+		const result = helpers.applyScrollToMakerRequest(request, null, items, undefined);
+		expect(result).toBeNull();
+	});
+
 	test("does not scroll when targetIndex < 0", () => {
 		const items = [makeVirtualItem("anthropic", "anthropic/c", 0)];
 		const request = { maker: "nobody", nonce: 1 };
@@ -895,308 +902,12 @@ describe("applyScrollToMakerRequest", () => {
 		const result = helpers.applyScrollToMakerRequest(request, null, items, () => {
 			scrollCalled = true;
 		});
-		expect(result).toBe(1);
+		expect(result).toBeNull();
 		expect(scrollCalled).toBe(false);
 	});
 });
 
 /* ── Component render tests ─────────────────────────────────────────── */
-
-describe("VariantBadge", () => {
-	const { VariantBadge } = helpers;
-
-	test("returns null when no variant", () => {
-		const { container } = render(<VariantBadge variant={undefined} variantClasses={null} />);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("returns null when variantClasses is null despite variant present", () => {
-		const { container } = render(<VariantBadge variant="free" variantClasses={null} />);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders badge with variant label when both variant and classes provided", () => {
-		const model = makeModel({ variant: "free" });
-		const variantClasses = helpers.computeVariantClasses(model);
-		const { container } = render(<VariantBadge variant="free" variantClasses={variantClasses} />);
-		expect(container.firstChild).not.toBeNull();
-		expect(container.textContent).toContain("Free");
-	});
-});
-
-describe("ModelVariantStrip", () => {
-	const { ModelVariantStrip } = helpers;
-
-	test("returns null when no variant", () => {
-		const { container } = render(<ModelVariantStrip variant={undefined} variantClasses={null} />);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("returns null when variantClasses is null", () => {
-		const { container } = render(<ModelVariantStrip variant="nitro" variantClasses={null} />);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders accent strip when variant and classes both present", () => {
-		const model = makeModel({ variant: "nitro" });
-		const variantClasses = helpers.computeVariantClasses(model);
-		const { container } = render(
-			<ModelVariantStrip variant="nitro" variantClasses={variantClasses} />
-		);
-		expect(container.firstChild).not.toBeNull();
-	});
-});
-
-describe("MakerIcon", () => {
-	const { MakerIcon } = helpers;
-
-	test("returns null when maker is undefined", () => {
-		const { container } = render(<MakerIcon maker={undefined} />);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders icon element when maker is known", () => {
-		const { container } = render(<MakerIcon maker="openai" />);
-		// resolveMakerIconSrc returns a string for openai, so should render
-		expect(container.firstChild).not.toBeNull();
-	});
-});
-
-describe("ContextChip", () => {
-	const { ContextChip } = helpers;
-
-	test("returns null when contextLength is null", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ContextChip contextLength={null} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.querySelector("[class]")).toBeNull();
-	});
-
-	test("renders chip when contextLength is positive", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ContextChip contextLength={128_000} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.textContent?.length).toBeGreaterThan(0);
-	});
-});
-
-describe("PricingChip", () => {
-	const { PricingChip } = helpers;
-
-	test("returns null when pricingInfo is null", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<PricingChip pricingInfo={null} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.querySelector("[class]")).toBeNull();
-	});
-
-	test("renders chip when pricingInfo is provided", () => {
-		const _pricingInfo = helpers.getPricingClassName(
-			{ tier: "free", label: "Free", className: "x" },
-			true
-		);
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<PricingChip pricingInfo={{ tier: "free", label: "Free", className: "x" }} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.textContent).toContain("Free");
-	});
-});
-
-describe("ProviderStatChip", () => {
-	const { ProviderStatChip } = helpers;
-
-	test("returns null when value is null", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ProviderStatChip
-					icon={BookOpen02Icon}
-					tooltipBody="body"
-					tooltipTitle="title"
-					value={null}
-				/>
-			</TooltipProvider.Provider>
-		);
-		expect(container.querySelector("[class]")).toBeNull();
-	});
-
-	test("renders when value is positive", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ProviderStatChip
-					icon={BookOpen02Icon}
-					tooltipBody="body"
-					tooltipTitle="title"
-					value={4096}
-				/>
-			</TooltipProvider.Provider>
-		);
-		expect(container.textContent?.length).toBeGreaterThan(0);
-	});
-});
-
-describe("ProviderStatsRow", () => {
-	const { ProviderStatsRow } = helpers;
-
-	test("returns null when both contextLength and maxOut are null", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ProviderStatsRow contextLength={null} maxOut={null} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.querySelector("[class]")).toBeNull();
-	});
-
-	test("renders when contextLength is provided", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ProviderStatsRow contextLength={128_000} maxOut={null} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.textContent?.length).toBeGreaterThan(0);
-	});
-});
-
-describe("FeaturedEndpointChip", () => {
-	const { FeaturedEndpointChip } = helpers;
-
-	test("returns null when endpoint is null", () => {
-		const { container } = render(<FeaturedEndpointChip endpoint={null} />);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders when endpoint is provided", () => {
-		const { container } = render(<FeaturedEndpointChip endpoint={makeEndpoint()} />);
-		expect(container.firstChild).not.toBeNull();
-	});
-});
-
-describe("ModelDescription", () => {
-	const { ModelDescription } = helpers;
-
-	test("returns null when description is undefined", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ModelDescription description={undefined} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.querySelector("p")).toBeNull();
-	});
-
-	test("renders description text when present", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ModelDescription description="Some model description" />
-			</TooltipProvider.Provider>
-		);
-		expect(container.textContent).toContain("Some model description");
-	});
-});
-
-describe("ModelHeaderTitleRow", () => {
-	const { ModelHeaderTitleRow } = helpers;
-
-	test("renders model name", () => {
-		const m = makeModel({ model_name: "GPT-4o" });
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ModelHeaderTitleRow model={m} variantClasses={null} />
-			</TooltipProvider.Provider>
-		);
-		expect(container.textContent).toContain("GPT-4o");
-	});
-
-	test("does not render the variant badge — it moved to the meta line", () => {
-		const m = makeModel({ variant: "free", model_name: "GPT-4o" });
-		const variantClasses = helpers.computeVariantClasses(m);
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ModelHeaderTitleRow model={m} variantClasses={variantClasses} />
-			</TooltipProvider.Provider>
-		);
-		// The variant token ("Free") now lives in InlineModelMeta, not the title row.
-		expect(container.textContent).not.toContain("Free");
-		expect(container.textContent).toContain("GPT-4o");
-	});
-});
-
-describe("InlineModelMeta", () => {
-	const { InlineModelMeta } = helpers;
-
-	test("returns null when no context, pricing, or endpoint", () => {
-		const m = makeModel({ context_length: asInvalid<never>(null), endpoints: [] });
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<InlineModelMeta
-					hasEndpoints={false}
-					hasProviders={false}
-					model={m}
-					pricingInfo={null}
-					uniqueEndpoints={[]}
-				/>
-			</TooltipProvider.Provider>
-		);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders when context_length is present", () => {
-		const m = makeModel({ context_length: 128_000 });
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<InlineModelMeta
-					hasEndpoints={true}
-					hasProviders={false}
-					model={m}
-					pricingInfo={null}
-					uniqueEndpoints={[makeEndpoint()]}
-				/>
-			</TooltipProvider.Provider>
-		);
-		expect(container.querySelector("[data-slot='inline-model-meta']")).not.toBeNull();
-	});
-});
-
-describe("ModelHeaderProvidersButton", () => {
-	const { ModelHeaderProvidersButton } = helpers;
-
-	test("returns null when hasProviders is false", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ModelHeaderProvidersButton
-					hasProviders={false}
-					isExpanded={false}
-					modelId="openai/x"
-					onToggleExpanded={() => undefined}
-					providerCount={0}
-				/>
-			</TooltipProvider.Provider>
-		);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders expand button when hasProviders is true", () => {
-		const { container } = render(
-			<TooltipProvider.Provider>
-				<ModelHeaderProvidersButton
-					hasProviders={true}
-					isExpanded={false}
-					modelId="openai/x"
-					onToggleExpanded={() => undefined}
-					providerCount={3}
-				/>
-			</TooltipProvider.Provider>
-		);
-		expect(container.firstChild).not.toBeNull();
-		expect(container.textContent).toContain("3");
-	});
-});
 
 describe("VirtualizedRow", () => {
 	const { VirtualizedRow } = helpers;

@@ -1,4 +1,4 @@
-// Source: docs/port/05_*.md (Word-timestamps),
+// Source: docs/archive/port/05_*.md (Word-timestamps),
 // server/src/recorder/infrastructure/word_aligner.py (the tiered native + use-our-words strategy),
 // onnx-asr/src/onnx_asr/word_timestamps.py (DTW + median filter + alignment heads + word grouping).
 //

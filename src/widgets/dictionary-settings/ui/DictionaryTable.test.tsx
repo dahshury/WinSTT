@@ -10,8 +10,13 @@ function renderWith(props: Partial<Parameters<typeof DictionaryTable>[0]>) {
 	const onRemove = mock(() => undefined);
 	const utils = render(
 		<IntlProvider>
-			<DictionaryTable entries={[]} onAdd={onAdd} onRemove={onRemove} {...props} />
-		</IntlProvider>
+			<DictionaryTable
+				entries={[]}
+				onAdd={onAdd}
+				onRemove={onRemove}
+				{...props}
+			/>
+		</IntlProvider>,
 	);
 	return { ...utils, onAdd, onRemove };
 }
@@ -30,7 +35,9 @@ describe("DictionaryTable", () => {
 
 	test("clicking the per-row delete button calls onRemove with the entry id", () => {
 		const { onRemove } = renderWith({ entries: [sampleEntry] });
-		const deleteBtn = screen.getByRole("button", { name: /delete\s+"Kubernetes"/i });
+		const deleteBtn = screen.getByRole("button", {
+			name: /delete\s+"Kubernetes"/i,
+		});
 		fireEvent.click(deleteBtn);
 		expect(onRemove).toHaveBeenCalledWith("1");
 	});
@@ -43,11 +50,23 @@ describe("DictionaryTable", () => {
 		expect((addBtn as HTMLButtonElement).disabled).toBe(true);
 	});
 
+	test("rejects duplicate terms case-insensitively", () => {
+		const { onAdd } = renderWith({ entries: [sampleEntry] });
+		const input = screen.getByRole("textbox");
+		fireEvent.change(input, { target: { value: " kubernetes " } });
+		fireEvent.click(screen.getByRole("button", { name: /add/i }));
+
+		expect(onAdd).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert").textContent).toContain("Already added");
+	});
+
 	test("renders a 'Delete All' control when onClearAll is provided", () => {
 		const onClearAll = mock(() => undefined);
 		renderWith({ entries: [sampleEntry], onClearAll });
 		const buttons = screen.getAllByRole("button");
-		const deleteAll = buttons.find((b) => (b.textContent ?? "").toLowerCase().includes("all"));
+		const deleteAll = buttons.find((b) =>
+			(b.textContent ?? "").toLowerCase().includes("all"),
+		);
 		expect(deleteAll).toBeDefined();
 	});
 });

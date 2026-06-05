@@ -21,8 +21,3 @@ export function findModelStatus(
 	}
 	return searchStatus(status, model);
 }
-
-// Test-only exports
-export const __warmup_banner_test_helpers__ = {
-	findModelStatus,
-};

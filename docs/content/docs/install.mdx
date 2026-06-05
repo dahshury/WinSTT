@@ -9,7 +9,7 @@ WinSTT ships as a self-contained portable `.exe`: download one file, run it, and
 
 ## Which installer?
 
-Every release publishes three portable builds on the [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page. All three wrap the **same** Electron app and the same speech engine — only the bundled ONNX Runtime (ORT) execution provider differs. Pick by your hardware:
+Every release publishes three portable builds on the [GitHub Releases](https://github.com/dahshury/WinSTT/releases) page. All three wrap the **same** Tauri app and Rust speech engine — only the bundled ONNX Runtime (ORT) execution provider differs. Pick by your hardware:
 
 <ModelTable
   head={["Installer", "Size", "ORT wheel", "When to use"]}
@@ -33,7 +33,7 @@ No CUDA installer is shipped on Windows. On our workload DirectML is faster and 
 
 ## Auto-fallback to CPU
 
-The GPU builds degrade gracefully. At startup the server probes the active execution provider, and if the requested GPU path isn't viable — no D3D12 GPU for DirectML, no Intel accelerator for OpenVINO — it silently falls back to CPU. You get a working app either way, so installing the DirectML build on a GPU-less machine is harmless.
+The GPU builds degrade gracefully. At startup the Rust backend probes the active execution provider, and if the requested GPU path isn't viable — no D3D12 GPU for DirectML, no Intel accelerator for OpenVINO — it silently falls back to CPU. You get a working app either way, so installing the DirectML build on a GPU-less machine is harmless.
 
 <Callout type="info" title="Force CPU manually">
   You can pin CPU regardless of the installed build from the **Model** tab's Device
@@ -62,8 +62,8 @@ All three builds share the same baseline; the GPU builds add an optional acceler
 </SettingRow>
 
 <Callout type="success" title="No Python, no accounts, no telemetry">
-  End users never install Python, uv, or any model files — the bundled `stt-server.exe` is
-  a self-contained PyInstaller artifact. Models download on demand from the UI. Transcription
+  End users never install Python, uv, or any model files. STT and TTS run inside the
+  bundled Rust/Tauri executable. Models download on demand from the UI. Transcription
   runs entirely on your machine; there are no usage analytics. (Anonymized crash reports via
   Sentry are opt-out.)
 </Callout>

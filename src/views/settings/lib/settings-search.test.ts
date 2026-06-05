@@ -24,7 +24,7 @@ describe("matchesSearchQuery", () => {
 		expect(matchesSearchQuery(general, "disp")).toBe(true);
 	});
 
-	test("fuzzy-matches a typo'd token (Jaro-Winkler, like the dictionary)", () => {
+	test("fuzzy-matches a typo'd token with Fuse", () => {
 		expect(matchesSearchQuery(general, "dispaly")).toBe(true);
 		expect(matchesSearchQuery(general, "languege")).toBe(true);
 	});
@@ -43,20 +43,27 @@ describe("matchesSearchQuery", () => {
 		expect(matchesSearchQuery(general, "zzzznomatch")).toBe(false);
 	});
 
-	test("does not fuzzy-match short (≤3 char) tokens to avoid noise", () => {
-		// Jaro-Winkler scores "ai" ~0.83 vs "main" — high enough to clear a
-		// lenient bar. Gating fuzzy to ≥4 chars keeps a short, non-substring
-		// query from fuzzily matching an unrelated word. ("ai" is NOT a
-		// substring of "model device", so the contains-search can't rescue it.)
+	test("does not fuzzy-match short tokens to avoid noise", () => {
+		// Gating fuzzy to length >= 4 keeps a short, non-substring query from
+		// fuzzily matching an unrelated word. ("ai" is NOT a substring of
+		// "model device", so the contains-search can't rescue it.)
 		expect(matchesSearchQuery("model device options", "ai")).toBe(false);
 		// But when the short token genuinely appears (substring), it still
-		// matches — contains-search is intentionally permissive for short input
+		// matches because contains-search is intentionally permissive for short input
 		// and narrows as the user types more.
 		expect(matchesSearchQuery("Main Model", "ai")).toBe(true);
 	});
 
 	test("short acronyms still match exactly / by prefix", () => {
-		expect(matchesSearchQuery("Voice Activity Detection vad", "vad")).toBe(true);
+		expect(matchesSearchQuery("Voice Activity Detection vad", "vad")).toBe(
+			true,
+		);
 		expect(matchesSearchQuery("Text-to-Speech tts voice", "tts")).toBe(true);
+	});
+
+	test("allows a short prefix token alongside a longer fuzzy token", () => {
+		expect(matchesSearchQuery("Text-to-Speech tts voice", "tts voiec")).toBe(
+			true,
+		);
 	});
 });

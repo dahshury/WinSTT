@@ -1,5 +1,5 @@
-// PORT IMPL — WU-4 (app/PORT/10_frontend_port_plan.md §6 WU-4). Source:
-//   server/src/recorder/domain/catalog.json (the 42-model editorial catalog)
+// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
+//   server/src/recorder/domain/catalog.json (the 69-model editorial catalog)
 //   + server/src/recorder/domain/model_registry.py (_serialize_model / _size_label /
 //     _accuracy_score / _speed_score / _backend_from_str)
 //   + server/src/recorder/infrastructure/model_state.py (model_state_dict / fitness)
@@ -78,7 +78,17 @@ pub struct CatalogModelInfo {
     pub languages: Vec<String>,
     pub supports_language_detection: bool,
     pub size_label: String,
+    /// Legacy alias for `preview_capable`. Kept for older renderer builds.
     pub supports_realtime: bool,
+    /// Whether this model can drive the live preview UI at all. This may be a
+    /// simulated rolling/window re-decode path rather than native streaming.
+    pub preview_capable: bool,
+    /// Whether the loaded engine consumes only new audio through a stateful/native
+    /// streaming decoder (`Transcriber::stream_accept`).
+    pub native_streaming: bool,
+    /// Whether realtime text can be promoted to final paste without a fresh
+    /// full-context final decode.
+    pub final_reuse_safe: bool,
     pub onnx_model_name: Option<String>,
     pub description: String,
     /// Quant suffixes (filtered to the CUDA-compatible set on CUDA EPs; full set otherwise).
@@ -198,6 +208,153 @@ pub fn speed_score(rtfx: f64) -> f64 {
     round3(clamp((rtfx + 1.0).log10() / 2001.0_f64.log10(), 0.05, 0.99))
 }
 
+fn streaming_wer_estimate(id: &str) -> Option<f64> {
+    if id == "streaming-zipformer-en" {
+        return Some(9.5);
+    }
+    if id.starts_with("streaming-nemo-ctc-en") {
+        return Some(if id.contains("1040ms") {
+            8.0
+        } else if id.contains("480ms") {
+            8.2
+        } else {
+            8.5
+        });
+    }
+    if id.starts_with("streaming-nemo-rnnt-en") {
+        return Some(if id.contains("1040ms") {
+            6.3
+        } else if id.contains("480ms") {
+            6.5
+        } else {
+            6.8
+        });
+    }
+    if id.starts_with("streaming-parakeet-unified-en") {
+        return Some(if id.contains("1120ms") {
+            4.3
+        } else if id.contains("560ms") {
+            4.5
+        } else {
+            4.7
+        });
+    }
+    if id.starts_with("streaming-nemotron-en") {
+        return Some(if id.contains("1120ms") {
+            3.9
+        } else if id.contains("560ms") {
+            4.0
+        } else if id.contains("160ms") {
+            4.1
+        } else {
+            4.2
+        });
+    }
+    None
+}
+
+fn streaming_rtfx_estimate(id: &str) -> Option<f64> {
+    if id == "streaming-zipformer-en" {
+        return Some(1100.0);
+    }
+    if id.starts_with("streaming-nemo-ctc-en") {
+        let base = if id.contains("1040ms") {
+            900.0
+        } else if id.contains("480ms") {
+            820.0
+        } else {
+            700.0
+        };
+        return Some(if id.contains("int8") {
+            base * 1.45
+        } else {
+            base
+        });
+    }
+    if id.starts_with("streaming-nemo-rnnt-en") {
+        let base = if id.contains("1040ms") {
+            780.0
+        } else if id.contains("480ms") {
+            700.0
+        } else {
+            600.0
+        };
+        return Some(if id.contains("int8") {
+            base * 1.45
+        } else {
+            base
+        });
+    }
+    if id.starts_with("streaming-parakeet-unified-en") {
+        let base = if id.contains("1120ms") {
+            300.0
+        } else if id.contains("560ms") {
+            260.0
+        } else {
+            220.0
+        };
+        return Some(if id.contains("int8") {
+            base * 1.95
+        } else {
+            base
+        });
+    }
+    if id.starts_with("streaming-nemotron-en") {
+        return Some(if id.contains("1120ms") {
+            700.0
+        } else if id.contains("560ms") {
+            640.0
+        } else if id.contains("160ms") {
+            560.0
+        } else {
+            520.0
+        });
+    }
+    None
+}
+
+fn effective_wer(entry: &RawCatalogEntry, native_streaming: bool) -> f64 {
+    if entry.wer > 0.0 || !native_streaming {
+        return entry.wer;
+    }
+    streaming_wer_estimate(&entry.id).unwrap_or(entry.wer)
+}
+
+fn effective_rtfx(entry: &RawCatalogEntry, native_streaming: bool) -> f64 {
+    if entry.rtfx > 0.0 || !native_streaming {
+        return entry.rtfx;
+    }
+    streaming_rtfx_estimate(&entry.id).unwrap_or(entry.rtfx)
+}
+
+fn streaming_description(id: &str) -> Option<&'static str> {
+    if id == "streaming-zipformer-en" {
+        return Some("Compact native-streaming English model for the fastest live preview.");
+    }
+    if id.starts_with("streaming-nemo-ctc-en") {
+        return Some("Very low-latency English CTC stream for lightweight live transcription.");
+    }
+    if id.starts_with("streaming-nemo-rnnt-en") {
+        return Some("Balanced English transducer stream with cleaner partials than the CTC path.");
+    }
+    if id.starts_with("streaming-parakeet-unified-en") {
+        return Some(
+            "High-accuracy English Parakeet stream for reusable live text on stronger CPUs.",
+        );
+    }
+    if id.starts_with("streaming-nemotron-en") {
+        return Some("Highest-quality English native stream for reusable final dictation text.");
+    }
+    None
+}
+
+fn catalog_description(entry: &RawCatalogEntry) -> String {
+    if let Some(description) = streaming_description(&entry.id) {
+        return description.to_string();
+    }
+    entry.description.clone()
+}
+
 // ── Fitness heuristics (port of model_state.py) ────────────────────────────────────────────────
 
 const BYTES_PER_PARAM_INT8: f64 = 1.5;
@@ -235,13 +392,15 @@ fn is_comfortable_on_cpu(param_count: u64, sys: &SystemInfoEntry) -> bool {
 // ── Public builders (the two commands consume these) ───────────────────────────────────────────
 
 fn family_quants_for(entry: &RawCatalogEntry, accel: Accelerator) -> Vec<String> {
-    // Mirror catalog::picker_quantizations_for: CUDA drops sub-fp16, others keep the full set.
+    // Mirror catalog::picker_quantizations_for: CUDA drops sub-fp16 for ORT-loaded rows. Native
+    // sherpa streaming rows run through sherpa's CPU provider, so keep their published int8 rows.
     let avail: Vec<&str> = entry
         .available_quantizations
         .iter()
         .map(String::as_str)
         .collect();
-    if accel.is_cuda() {
+    let kind = engine_kind_for(entry);
+    if accel.is_cuda() && !kind.supports_native_streaming() {
         avail
             .into_iter()
             .filter(|q| catalog::GPU_COMPATIBLE_QUANTIZATIONS.contains(q))
@@ -250,6 +409,93 @@ fn family_quants_for(entry: &RawCatalogEntry, accel: Accelerator) -> Vec<String>
     } else {
         avail.into_iter().map(str::to_string).collect()
     }
+}
+
+fn engine_kind_for(entry: &RawCatalogEntry) -> crate::winstt::stt::EngineKind {
+    crate::winstt::stt::cache_probe::engine_kind_for(
+        &entry.id,
+        &entry.family,
+        &entry.onnx_model_name,
+    )
+}
+
+const LANGUAGE_DISPLAY_QUALIFIERS: &[&str] = &[
+    "english",
+    "en",
+    "russian",
+    "ru",
+    "arabic",
+    "ar",
+    "chinese",
+    "zh",
+    "japanese",
+    "ja",
+    "korean",
+    "ko",
+    "french",
+    "fr",
+    "german",
+    "de",
+    "spanish",
+    "es",
+    "italian",
+    "it",
+    "portuguese",
+    "pt",
+    "hindi",
+    "hi",
+    "ukrainian",
+    "uk",
+    "vietnamese",
+    "vi",
+];
+
+fn display_name_without_language_qualifier(display_name: &str) -> String {
+    let trimmed = display_name.trim();
+    let Some(open) = trimmed.rfind(" (") else {
+        return display_name_without_streaming_latency(trimmed);
+    };
+    if !trimmed.ends_with(')') {
+        return display_name_without_streaming_latency(trimmed);
+    }
+    let qualifier = trimmed[open + 2..trimmed.len() - 1].trim();
+    let without_language = if LANGUAGE_DISPLAY_QUALIFIERS
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(qualifier))
+    {
+        trimmed[..open].trim_end()
+    } else {
+        trimmed
+    };
+    display_name_without_streaming_latency(without_language)
+}
+
+fn is_streaming_latency_token(token: &str) -> bool {
+    let Some(value) = token
+        .strip_suffix("ms")
+        .or_else(|| token.strip_suffix("MS"))
+    else {
+        return false;
+    };
+    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn display_name_without_streaming_latency(display_name: &str) -> String {
+    let mut out = Vec::new();
+    let mut skip_quant_after_latency = false;
+    for token in display_name.split_whitespace() {
+        if skip_quant_after_latency && token.eq_ignore_ascii_case("int8") {
+            skip_quant_after_latency = false;
+            continue;
+        }
+        skip_quant_after_latency = false;
+        if is_streaming_latency_token(token) {
+            skip_quant_after_latency = true;
+            continue;
+        }
+        out.push(token);
+    }
+    out.join(" ")
 }
 
 /// One rich catalog row (CUDA-filtered quant set + size map), ready for `fetchModelCatalog`.
@@ -261,31 +507,46 @@ fn to_catalog_row(entry: &RawCatalogEntry, accel: Accelerator) -> CatalogModelIn
         .filter(|(q, _)| quants.contains(*q))
         .map(|(q, b)| (q.clone(), *b))
         .collect();
+    let kind = engine_kind_for(entry);
+    let native_streaming = kind.supports_native_streaming();
+    let preview_capable = entry.supports_realtime;
     CatalogModelInfo {
         id: entry.id.clone(),
-        display_name: entry.display_name.clone(),
+        display_name: display_name_without_language_qualifier(&entry.display_name),
         backend: "onnx_asr".into(),
         family: entry.family.clone(),
         languages: entry.languages.clone(),
         supports_language_detection: entry.supports_language_detection,
         size_label: size_label(entry.param_count),
-        supports_realtime: entry.supports_realtime,
+        supports_realtime: preview_capable,
+        preview_capable,
+        native_streaming,
+        final_reuse_safe: kind.final_reuse_safe(),
         onnx_model_name: Some(entry.onnx_model_name.clone()),
-        description: entry.description.clone(),
+        description: catalog_description(entry),
         available_quantizations: quants,
         size_bytes_by_quantization: sizes,
         available: true,
         error_message: String::new(),
         local_path: None,
-        speed_score: speed_score(entry.rtfx),
-        accuracy_score: accuracy_score(entry.wer),
+        speed_score: speed_score(effective_rtfx(entry, native_streaming)),
+        accuracy_score: accuracy_score(effective_wer(entry, native_streaming)),
     }
+}
+
+fn is_visible_local_catalog_entry(entry: &RawCatalogEntry) -> bool {
+    // The April 2026 sherpa-onnx Nemotron ONNX release documents int8 bundles only. The
+    // non-int8 rows were imported with fp32 size labels, but their repos currently contain
+    // tiny/incomplete graphs, so keep them out of the picker while catalog::find() still maps
+    // old persisted ids to the real 1120ms int8 row.
+    !(entry.id.starts_with("streaming-nemotron-en-") && !entry.id.ends_with("-int8"))
 }
 
 /// The full rich catalog (CUDA-aware quant filtering). Drives `fetchModelCatalog`.
 pub fn catalog_rows(accel: Accelerator) -> Vec<CatalogModelInfo> {
     raw_catalog()
         .iter()
+        .filter(|e| is_visible_local_catalog_entry(e))
         .map(|e| to_catalog_row(e, accel))
         .collect()
 }
@@ -377,15 +638,19 @@ pub fn models_with_state(
         s.available_memory()
     };
     let vram_bytes = crate::winstt::commands::runtime::detected_max_vram_bytes();
-    let models = raw_catalog()
+    let visible_entries: Vec<_> = raw_catalog()
         .iter()
-        .map(|e| to_catalog_row(e, accel))
+        .filter(|e| is_visible_local_catalog_entry(e))
         .collect();
-    let states = raw_catalog()
+    let models = visible_entries
+        .iter()
+        .map(|e| to_catalog_row(*e, accel))
+        .collect();
+    let states = visible_entries
         .iter()
         .map(|e| {
             let states = cache_by_model.get(&e.id).unwrap_or(&empty);
-            to_state_entry(e, accel, &sys, states, available_ram_bytes, vram_bytes)
+            to_state_entry(*e, accel, &sys, states, available_ram_bytes, vram_bytes)
         })
         .collect();
     ModelsWithState {
@@ -467,11 +732,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_parses_42_rows() {
+    fn catalog_parses_69_rows() {
         assert_eq!(
             raw_catalog().len(),
-            42,
-            "embedded catalog must carry all 42 shipped models"
+            69,
+            "embedded catalog must carry all 69 shipped models"
         );
     }
 
@@ -502,6 +767,129 @@ mod tests {
         assert!(!tiny.languages.is_empty());
         assert!(!tiny.description.is_empty());
         assert_eq!(tiny.size_label, "38M");
+        assert_eq!(tiny.supports_realtime, tiny.preview_capable);
+    }
+
+    #[test]
+    fn rich_rows_split_preview_native_streaming_and_final_reuse() {
+        let rows = catalog_rows(Accelerator::Cpu);
+        assert!(rows
+            .iter()
+            .all(|r| r.supports_realtime == r.preview_capable));
+
+        let tiny = rows
+            .iter()
+            .find(|r| r.id == "tiny")
+            .expect("whisper tiny present");
+        assert!(tiny.preview_capable);
+        assert!(!tiny.native_streaming);
+        assert!(!tiny.final_reuse_safe);
+
+        let gigaam_ctc = rows
+            .iter()
+            .find(|r| r.id == "gigaam-v3-e2e-ctc")
+            .expect("gigaam ctc present");
+        assert!(gigaam_ctc.preview_capable);
+        assert!(!gigaam_ctc.native_streaming);
+        assert!(gigaam_ctc.final_reuse_safe);
+
+        let t_one = rows
+            .iter()
+            .find(|r| r.id == "t-tech/t-one")
+            .expect("t-one present");
+        assert!(t_one.native_streaming);
+        assert!(t_one.final_reuse_safe);
+
+        let streaming_rows: Vec<_> = rows
+            .iter()
+            .filter(|r| r.id.starts_with("streaming-"))
+            .collect();
+        assert_eq!(streaming_rows.len(), 23);
+        for row in streaming_rows {
+            let id = &row.id;
+            assert!(row.preview_capable, "{id} must be preview-capable");
+            assert!(row.native_streaming, "{id} must be native streaming");
+            assert!(row.final_reuse_safe, "{id} final text must be reusable");
+        }
+    }
+
+    #[test]
+    fn native_streaming_rows_have_visible_perf_and_human_descriptions() {
+        let rows = catalog_rows(Accelerator::Cpu);
+        let streaming_rows: Vec<_> = rows
+            .iter()
+            .filter(|r| r.id.starts_with("streaming-"))
+            .collect();
+        assert_eq!(streaming_rows.len(), 23);
+        for row in streaming_rows {
+            let id = &row.id;
+            assert!(
+                row.accuracy_score > 0.5,
+                "{id} must expose a non-neutral accuracy score"
+            );
+            assert!(
+                row.speed_score > 0.5,
+                "{id} must expose a non-neutral speed score"
+            );
+            assert!(
+                !row.description.trim().is_empty(),
+                "{id} must have a card description"
+            );
+            assert!(
+                !row.description.to_ascii_lowercase().contains(" export"),
+                "{id} should not expose export mechanics as the card description"
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_rows_strip_language_and_streaming_latency_display_qualifiers() {
+        let rows = catalog_rows(Accelerator::Cpu);
+        let streaming = rows
+            .iter()
+            .find(|r| r.id == "streaming-zipformer-en")
+            .expect("streaming zipformer row present");
+        assert_eq!(streaming.display_name, "Streaming Zipformer");
+
+        let streaming_rnnt = rows
+            .iter()
+            .find(|r| r.id == "streaming-nemo-rnnt-en-1040ms-int8")
+            .expect("streaming rnnt row present");
+        assert_eq!(
+            streaming_rnnt.display_name,
+            "Streaming NeMo FastConformer RNN-T"
+        );
+
+        assert!(
+            rows.iter()
+                .all(|r| !(r.id.starts_with("streaming-nemotron-en-") && !r.id.ends_with("-int8"))),
+            "non-int8 Nemotron rows should stay hidden until a complete fp32 export is available"
+        );
+
+        let streaming_nemotron = rows
+            .iter()
+            .find(|r| r.id == "streaming-nemotron-en-1120ms-int8")
+            .expect("streaming nemotron row present");
+        assert_eq!(streaming_nemotron.display_name, "Streaming Nemotron");
+        assert_eq!(
+            streaming_nemotron.available_quantizations.as_slice(),
+            ["int8"]
+        );
+
+        let tiny_en = rows
+            .iter()
+            .find(|r| r.id == "tiny.en")
+            .expect("english-only whisper row present");
+        assert_eq!(tiny_en.display_name, "Whisper Tiny");
+
+        let accelerated = rows
+            .iter()
+            .find(|r| r.id == "lite-whisper-large-v3-turbo-acc")
+            .expect("accelerated lite-whisper row present");
+        assert_eq!(
+            accelerated.display_name,
+            "Lite-Whisper Large v3 Turbo (Accelerated)"
+        );
     }
 
     #[test]
@@ -509,9 +897,17 @@ mod tests {
         let rows = catalog_rows(Accelerator::Cuda);
         for r in &rows {
             for q in &r.available_quantizations {
-                assert!(q.is_empty() || q == "fp16", "CUDA must drop sub-fp16: {q}");
+                assert!(
+                    r.native_streaming || q.is_empty() || q == "fp16",
+                    "CUDA must drop sub-fp16 for non-streaming rows: {q}"
+                );
             }
         }
+        let streaming_int8 = rows
+            .iter()
+            .find(|r| r.id == "streaming-nemo-ctc-en-80ms-int8")
+            .expect("streaming int8 row present on CUDA");
+        assert_eq!(streaming_int8.available_quantizations.as_slice(), ["int8"]);
     }
 
     #[test]

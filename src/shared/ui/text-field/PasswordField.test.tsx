@@ -10,11 +10,13 @@ describe("PasswordField", () => {
 	});
 
 	test("toggle button unmasks then re-masks the value", () => {
-		render(<PasswordField placeholder="key" revealLabel="Show" />);
+		const { container } = render(<PasswordField placeholder="key" revealLabel="Show" />);
 		const input = screen.getByPlaceholderText("key") as HTMLInputElement;
 		const toggle = screen.getByRole("button", { name: "Show" });
+		expect(container.querySelector(".t-icon-swap")).not.toBeNull();
 		fireEvent.click(toggle);
 		expect(input.type).toBe("text");
+		expect(container.querySelector(".t-secret-reveal")).not.toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "Hide" }));
 		expect(input.type).toBe("password");
 	});

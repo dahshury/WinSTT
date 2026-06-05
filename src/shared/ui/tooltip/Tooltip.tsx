@@ -54,7 +54,7 @@ function TooltipBody({
 						style={{ zIndex: Z_INDEX.tooltip }}
 					>
 						<TooltipPrimitive.Popup
-							className={`max-w-[260px] origin-(--transform-origin) rounded-md ${surfaceClasses(popupLevel, popupShadow)} px-2.5 py-1.5 font-sans text-[11.5px] text-foreground-secondary leading-[16px] transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 data-[instant]:transition-none`}
+							className={`max-w-[260px] whitespace-pre-line origin-(--transform-origin) rounded-md ${surfaceClasses(popupLevel, popupShadow)} px-2.5 py-1.5 font-sans text-[11.5px] text-foreground-secondary leading-[16px] transition-[transform,opacity] duration-150 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 data-[instant]:transition-none`}
 						>
 							{content}
 							{footer ? (

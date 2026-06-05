@@ -200,7 +200,7 @@ export function getRecordingMode(settings: AppSettings): string {
  * PERSISTED STORE (not just from the Zustand-persist localStorage cache),
  * and we haven't already synced in this session.
  *
- * The `fromIpcLoad` gate is load-bearing: `isLoaded` flips to `true` the
+ * The `hasIpcLoadResolved` gate is load-bearing: `isLoaded` flips to `true` the
  * moment localStorage hydration completes (synchronous, during the store's
  * `create` call). That cached snapshot can be STALE relative to
  * persisted store — most commonly when the user changed `model.model` in a
@@ -216,7 +216,7 @@ export function getRecordingMode(settings: AppSettings): string {
  * stt-process.ts), so the only "initial sync" worth doing is one that
  * reflects the same disk state.
  *
- * `fromIpcLoad` is set inside `useSyncSettings` the moment the
+ * `hasIpcLoadResolved` is set inside `useSyncSettings` the moment the
  * `settingsLoad()` IPC promise resolves with the disk snapshot, so this
  * gate buys us "wait one async tick for the canonical state before
  * touching the server." On a clean install where localStorage and disk
@@ -231,9 +231,9 @@ export function shouldSyncOnConnect(
 	serverStatus: string,
 	isLoaded: boolean,
 	alreadySynced: boolean,
-	fromIpcLoad: boolean
+	hasIpcLoadResolved: boolean
 ): boolean {
-	return isLiveServerReady(serverStatus, isLoaded) && fromIpcLoad && !alreadySynced;
+	return isLiveServerReady(serverStatus, isLoaded) && hasIpcLoadResolved && !alreadySynced;
 }
 
 /**
@@ -278,8 +278,8 @@ function settingsSectionsEqual(a: unknown, b: unknown): boolean {
 
 /**
  * Merge a broadcast `settings:changed` payload with the current zustand state
- * so user-dirty top-level sections (those that differ from the last-saved
- * baseline) survive the broadcast.
+ * so user-dirty leaf fields (those that differ from the last-saved baseline)
+ * survive the broadcast.
  *
  * Without this, an unrelated save in another window (e.g. `useVadCalibration`
  * pushing a new silero sensitivity) lands at the settings panel right in the
@@ -289,7 +289,7 @@ function settingsSectionsEqual(a: unknown, b: unknown): boolean {
  * cancels the pending save — silently discarding the click.
  *
  * Returns the merged settings plus a `preserved` flag indicating whether any
- * section was kept from `current`. Callers use the flag to decide whether to
+ * field was kept from `current`. Callers use the flag to decide whether to
  * mark `fromBroadcastRef` (pure broadcasts skip the next save effect) or let
  * the effect re-schedule a save for the merged state (so user-dirty fields
  * actually persist).
@@ -300,14 +300,51 @@ function settingsSectionsEqual(a: unknown, b: unknown): boolean {
  * distinguished from "we haven't synced with disk yet" and accepting the
  * broadcast is the safer default.
  */
-function pickSection(
+interface MergePick {
+	preserved: boolean;
+	value: unknown;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeDirtyValue(
 	decodedValue: unknown,
 	currentValue: unknown,
 	lastSavedValue: unknown
-): { value: unknown; preserved: boolean } {
+): MergePick {
 	return settingsSectionsEqual(currentValue, lastSavedValue)
 		? { value: decodedValue, preserved: false }
-		: { value: currentValue, preserved: true };
+		: mergeChangedValue(decodedValue, currentValue, lastSavedValue);
+}
+
+function mergeChangedValue(
+	decodedValue: unknown,
+	currentValue: unknown,
+	lastSavedValue: unknown
+): MergePick {
+	if (
+		!isPlainRecord(decodedValue) ||
+		!isPlainRecord(currentValue) ||
+		!isPlainRecord(lastSavedValue)
+	) {
+		return { value: currentValue, preserved: true };
+	}
+
+	let preserved = false;
+	const result: Record<string, unknown> = {};
+	const keys = new Set([
+		...Object.keys(decodedValue),
+		...Object.keys(currentValue),
+		...Object.keys(lastSavedValue),
+	]);
+	for (const key of keys) {
+		const picked = mergeDirtyValue(decodedValue[key], currentValue[key], lastSavedValue[key]);
+		result[key] = picked.value;
+		preserved = preserved || picked.preserved;
+	}
+	return { value: result, preserved };
 }
 
 function mergeSections(
@@ -319,7 +356,7 @@ function mergeSections(
 	const result: Record<string, unknown> = {};
 	for (const [key, decodedValue] of Object.entries(decoded)) {
 		const typedKey = key as keyof AppSettings;
-		const picked = pickSection(decodedValue, current[typedKey], lastSaved[typedKey]);
+		const picked = mergeDirtyValue(decodedValue, current[typedKey], lastSaved[typedKey]);
 		result[key] = picked.value;
 		preserved = preserved || picked.preserved;
 	}
@@ -353,4 +390,19 @@ export function deriveBroadcastUpdate(
 	const decoded = decodeSettingsPayload(incoming);
 	const { merged, preserved } = mergeBroadcastPreservingUserDirty(decoded, current, lastSaved);
 	return { merged, nextFromBroadcast: !preserved || fromBroadcastNow };
+}
+
+/**
+ * Pure projection of the initial `settingsLoad()` reconciliation in
+ * `useSyncSettings`. If local state changed after the load was requested but
+ * before it resolved, preserve that dirty section instead of stamping the
+ * older persisted snapshot over it.
+ */
+export function deriveIpcLoadUpdate(
+	loaded: AppSettings,
+	current: AppSettings,
+	loadBaseline: AppSettings
+): { merged: AppSettings; nextFromIpcLoad: boolean } {
+	const { merged, preserved } = mergeSections(loaded, current, loadBaseline);
+	return { merged, nextFromIpcLoad: !preserved };
 }

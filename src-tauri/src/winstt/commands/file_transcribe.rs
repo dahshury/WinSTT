@@ -1,4 +1,4 @@
-// Source: docs/port/07_*.md +
+// Source: docs/archive/port/07_*.md +
 // 10_frontend_port_plan.md §6 WU-8 + lib_wiring.md §3, and the authoritative
 // frontend/electron/ipc/file-transcribe-queue.ts. Wraps managers::FileTranscribeManager.
 //
@@ -26,9 +26,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::winstt::managers::FileTranscribeManager;
+
+const MAX_PICKED_FILES: usize = 32;
+const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
+const SUPPORTED_MEDIA_EXTENSIONS: &[&str] = &[
+    "mp3", "wav", "flac", "m4a", "aac", "ogg", "wma", "mp4", "mkv", "avi", "mov", "wmv", "flv",
+    "webm",
+];
 
 /// One dropped file: its native path + display name (resolved renderer-side via
 /// the `getPathForFile` drag-drop bridge). Mirrors the reference enqueue payload.
@@ -40,6 +48,47 @@ pub struct DroppedFile {
     pub file_name: String,
 }
 
+fn is_supported_media_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            SUPPORTED_MEDIA_EXTENSIONS
+                .iter()
+                .any(|allowed| ext.eq_ignore_ascii_case(allowed))
+        })
+        .unwrap_or(false)
+}
+
+fn prepare_backend_selected_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
+    paths
+        .into_iter()
+        .take(MAX_PICKED_FILES)
+        .filter(|path| is_supported_media_path(path))
+        .filter_map(|path| {
+            let meta = std::fs::metadata(&path).ok()?;
+            if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+                return None;
+            }
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("audio")
+                .to_string();
+            Some((path, file_name))
+        })
+        .collect()
+}
+
+fn enqueue_prepared(
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    prepared: Vec<(PathBuf, String)>,
+) -> Vec<String> {
+    if prepared.is_empty() {
+        return Vec::new();
+    }
+    file_tx.inner().clone().enqueue(prepared)
+}
+
 /// `file_transcribe_enqueue` — append files to the sequential queue (drop order
 /// preserved; repeated calls accumulate). Returns the assigned row ids (the
 /// renderer correlates these with the `file:queue-*` events). The shared STT
@@ -47,15 +96,39 @@ pub struct DroppedFile {
 #[tauri::command]
 #[specta::specta]
 pub fn file_transcribe_enqueue(
-    file_tx: State<'_, Arc<FileTranscribeManager>>,
+    _file_tx: State<'_, Arc<FileTranscribeManager>>,
     files: Vec<DroppedFile>,
 ) -> Vec<String> {
-    let mgr = file_tx.inner().clone();
-    let prepared: Vec<(PathBuf, String)> = files
+    let count = files.len();
+    log::warn!(
+        "[file-transcribe] refused renderer-supplied enqueue of {count} file path(s); use file_transcribe_pick_and_enqueue"
+    );
+    Vec::new()
+}
+
+/// Open a backend-owned native picker and enqueue only selected supported media
+/// files. This keeps local/UNC paths out of renderer-controlled IPC.
+#[tauri::command]
+#[specta::specta]
+pub fn file_transcribe_pick_and_enqueue(
+    app: AppHandle,
+    file_tx: State<'_, Arc<FileTranscribeManager>>,
+) -> Vec<String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .set_title("Select Audio or Video Files")
+        .add_filter("Audio or Video", SUPPORTED_MEDIA_EXTENSIONS)
+        .blocking_pick_files()
+    else {
+        return Vec::new();
+    };
+    let paths = selected
         .into_iter()
-        .map(|f| (PathBuf::from(f.file_path), f.file_name))
-        .collect();
-    mgr.enqueue(prepared)
+        .filter_map(|file_path| file_path.into_path().ok())
+        .collect::<Vec<_>>();
+    let prepared = prepare_backend_selected_files(paths);
+    enqueue_prepared(file_tx, prepared)
 }
 
 /// `file_transcribe_cancel` `{id}` — drop a queued/paused row, or cancel the

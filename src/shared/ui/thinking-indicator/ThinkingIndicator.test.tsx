@@ -19,6 +19,33 @@ describe("ThinkingIndicator", () => {
 		expect(screen.getByTestId("ti").textContent).toContain("Crunching");
 	});
 
+	test("renders a single status word node so rotations update text in place", () => {
+		const { container } = render(
+			<ThinkingIndicator data-testid="ti" words={["Crunching", "Thinking"]} />,
+		);
+		const activeWords = Array.from(
+			container.querySelectorAll(".shimmer-text"),
+		).filter((node) => !node.className.includes("invisible"));
+		expect(activeWords).toHaveLength(1);
+	});
+
+	test("keeps the same output element when switching from transcribing to thinking", () => {
+		const { getByTestId, rerender } = render(
+			<ThinkingIndicator
+				data-testid="ti"
+				reserveDefaultWords
+				words={["Transcribing"]}
+			/>,
+		);
+		const node = getByTestId("ti");
+		expect(node.getAttribute("data-thinking-word")).toBe("Transcribing");
+
+		rerender(<ThinkingIndicator data-testid="ti" reserveDefaultWords />);
+
+		expect(getByTestId("ti")).toBe(node);
+		expect(node.getAttribute("data-thinking-word")).toBe("Thinking");
+	});
+
 	test("merges custom className", () => {
 		render(<ThinkingIndicator className="extra" data-testid="ti" />);
 		expect(screen.getByTestId("ti").className).toContain("extra");

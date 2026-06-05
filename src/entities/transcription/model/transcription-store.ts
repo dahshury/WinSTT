@@ -23,10 +23,13 @@ interface TranscriptionState {
 	currentRealtime: string;
 	ephemeral: EphemeralMessage | null;
 	isRecordingActive: boolean;
+	isTranscribing: boolean;
 	items: TranscriptionItem[];
 	setRealtimeText: (text: string) => void;
 	setRecordingActive: (active: boolean) => void;
+	setTranscribing: (active: boolean) => void;
 	showEphemeral: (text: string) => void;
+	transcribingStartedAt: number | null;
 }
 
 /**
@@ -36,7 +39,7 @@ interface TranscriptionState {
  */
 function withSpeakerSegmentsApplied(
 	items: readonly TranscriptionItem[],
-	segments: SpeakerSegment[]
+	segments: SpeakerSegment[],
 ): TranscriptionItem[] | null {
 	const lastIndex = items.length - 1;
 	const last = items[lastIndex];
@@ -57,13 +60,20 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	// realtime/ephemeral text in the brief window between `showOverlay()` in
 	// the main process and the renderer processing STT_RECORDING_START.
 	isRecordingActive: false,
+	isTranscribing: false,
+	transcribingStartedAt: null,
 	addFinalSentence: (text) => {
 		const id = crypto.randomUUID();
 		const timestamp = Date.now();
 		set((state) => {
 			const appended = [...state.items, { id, type: "final" as const, text, timestamp }];
 			const trimmed = appended.length > MAX_LIVE_ITEMS ? appended.slice(-MAX_LIVE_ITEMS) : appended;
-			return { items: trimmed, currentRealtime: "" };
+			return {
+				items: trimmed,
+				currentRealtime: "",
+				isTranscribing: false,
+				transcribingStartedAt: null,
+			};
 		});
 	},
 	// The server emits ``speaker_segments`` right after the matching
@@ -78,8 +88,25 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	},
 	setRealtimeText: (text) => set({ currentRealtime: text }),
 	setRecordingActive: (active) => set({ isRecordingActive: active }),
+	setTranscribing: (active) =>
+		set((state) => {
+			if (active) {
+				return {
+					isTranscribing: true,
+					transcribingStartedAt: state.transcribingStartedAt ?? Date.now(),
+				};
+			}
+			return { isTranscribing: false, transcribingStartedAt: null };
+		}),
 	showEphemeral: (text) => set({ ephemeral: { text, timestamp: Date.now() } }),
 	clearEphemeral: () => set({ ephemeral: null }),
 	clearAll: () =>
-		set({ items: [], currentRealtime: "", ephemeral: null, isRecordingActive: false }),
+		set({
+			items: [],
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: false,
+			isTranscribing: false,
+			transcribingStartedAt: null,
+		}),
 }));

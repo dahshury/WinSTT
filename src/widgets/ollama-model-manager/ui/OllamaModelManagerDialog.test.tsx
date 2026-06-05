@@ -31,7 +31,7 @@ mock.module("@/shared/api/ipc-client", () => ({
 const dlg = await import("./OllamaModelManagerDialog");
 const OllamaModelManagerDialog = dlg.OllamaModelManagerDialog;
 const helpersModule = await import("../lib/ollama-model-manager-test-helpers");
-const helpers = helpersModule.__ollama_model_manager_test_helpers__;
+const helpers = helpersModule;
 
 // The installed-models list comes from the global llm-catalog Zustand store.
 // Sibling suites populate it and bun:test never isolates module state, so a

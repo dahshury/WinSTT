@@ -1,5 +1,5 @@
-// Source: docs/port/05_*.md (Loopback/Diarization)
-// + docs/port/10_frontend_port_plan.md (WU-9) + lib_wiring.md §3/§4b,
+// Source: docs/archive/port/05_*.md (Loopback/Diarization)
+// + docs/archive/port/10_frontend_port_plan.md (WU-9) + lib_wiring.md §3/§4b,
 // server/src/stt_server/control_handler.py `_handle_start_loopback`/`_handle_stop_loopback`.
 // Wraps managers::{LoopbackManager, DiarizationManager}.
 //

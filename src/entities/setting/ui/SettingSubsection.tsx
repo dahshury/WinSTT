@@ -2,10 +2,11 @@ import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
+import { InfoTooltip } from "@/shared/ui/info-tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
 export interface SettingSubsectionProps {
-	/** One-line description rendered under the title. */
+	/** Help text shown in an info-icon tooltip next to the title. */
 	caption?: string;
 	children: ReactNode;
 	/** Action rendered on the trailing edge of the title row, before any toggle. */
@@ -51,7 +52,10 @@ export function SettingSubsection({
 						<HugeiconsIcon icon={icon} size={13} />
 					</span>
 				)}
-				<h4 className="font-medium text-foreground text-subtitle">{title}</h4>
+				<h4 className="min-w-0 font-medium text-foreground text-subtitle">
+					{title}
+				</h4>
+				{caption ? <InfoTooltip content={caption} /> : null}
 				{headerAction || hasToggle ? (
 					<div className="ml-auto flex items-center gap-1.5">
 						{headerAction}
@@ -66,13 +70,10 @@ export function SettingSubsection({
 					</div>
 				) : null}
 			</div>
-			{caption ? (
-				<p className="-mt-1 mb-3 text-body-sm text-foreground-muted leading-snug">{caption}</p>
-			) : null}
 			<div
 				className={cn(
 					"transition-opacity duration-200 ease-out",
-					isDisabled && "pointer-events-none opacity-40"
+					isDisabled && "pointer-events-none opacity-40",
 				)}
 			>
 				{children}

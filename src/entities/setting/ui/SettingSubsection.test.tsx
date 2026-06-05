@@ -3,14 +3,18 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { SettingSubsection } from "./SettingSubsection";
 
 describe("SettingSubsection", () => {
-	test("renders title, caption and children", () => {
+	test("renders title, info pill and children", () => {
 		render(
-			<SettingSubsection caption="Cleans dictated text" title="Dictation post-processing">
+			<SettingSubsection
+				caption="Cleans dictated text"
+				title="Dictation post-processing"
+			>
 				<div data-testid="ch">child</div>
-			</SettingSubsection>
+			</SettingSubsection>,
 		);
 		expect(screen.getByText("Dictation post-processing")).toBeDefined();
-		expect(screen.getByText("Cleans dictated text")).toBeDefined();
+		expect(screen.queryByText("Cleans dictated text")).toBeNull();
+		expect(screen.getByRole("button", { name: "More info" })).toBeDefined();
 		expect(screen.getByTestId("ch")).toBeDefined();
 	});
 
@@ -18,7 +22,7 @@ describe("SettingSubsection", () => {
 		render(
 			<SettingSubsection title="Dictation">
 				<div>x</div>
-			</SettingSubsection>
+			</SettingSubsection>,
 		);
 		expect(screen.queryByRole("switch")).toBeNull();
 	});
@@ -27,7 +31,7 @@ describe("SettingSubsection", () => {
 		render(
 			<SettingSubsection onToggle={() => undefined} title="Transforms" toggled>
 				<div>x</div>
-			</SettingSubsection>
+			</SettingSubsection>,
 		);
 		const toggle = screen.getByRole("switch", { name: "Toggle Transforms" });
 		expect(toggle.getAttribute("aria-checked")).toBe("true");
@@ -38,7 +42,7 @@ describe("SettingSubsection", () => {
 		render(
 			<SettingSubsection onToggle={onToggle} title="Transforms" toggled={false}>
 				<div>x</div>
-			</SettingSubsection>
+			</SettingSubsection>,
 		);
 		fireEvent.click(screen.getByRole("switch"));
 		expect(onToggle).toHaveBeenCalledTimes(1);
@@ -46,11 +50,16 @@ describe("SettingSubsection", () => {
 
 	test("dims content when its own toggle is off", () => {
 		render(
-			<SettingSubsection onToggle={() => undefined} title="Transforms" toggled={false}>
+			<SettingSubsection
+				onToggle={() => undefined}
+				title="Transforms"
+				toggled={false}
+			>
 				<div data-testid="content">x</div>
-			</SettingSubsection>
+			</SettingSubsection>,
 		);
-		const contentParent = screen.getByTestId("content").parentElement as HTMLElement;
+		const contentParent = screen.getByTestId("content")
+			.parentElement as HTMLElement;
 		expect(contentParent.className).toContain("pointer-events-none");
 	});
 });

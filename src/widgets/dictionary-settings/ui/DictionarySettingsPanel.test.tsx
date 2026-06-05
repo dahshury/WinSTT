@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useSettingsStore } from "@/entities/setting";
 import { DictionarySettingsPanel } from "./DictionarySettingsPanel";
@@ -19,7 +19,7 @@ describe("DictionarySettingsPanel", () => {
 		const { container } = render(
 			<IntlProvider>
 				<DictionarySettingsPanel />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});
@@ -34,8 +34,54 @@ describe("DictionarySettingsPanel", () => {
 		const { container } = render(
 			<IntlProvider>
 				<DictionarySettingsPanel />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		expect(container.textContent).toContain("Kubernetes");
+	});
+
+	test("adds the first term into an empty table immediately", async () => {
+		render(
+			<IntlProvider>
+				<DictionarySettingsPanel />
+			</IntlProvider>,
+		);
+
+		fireEvent.change(await screen.findByRole("textbox", { name: /term/i }), {
+			target: { value: "Kubernetes" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /add/i }));
+
+		await waitFor(() => {
+			expect(
+				useSettingsStore
+					.getState()
+					.settings.dictionary.map((entry) => entry.term),
+			).toEqual(["Kubernetes"]);
+		});
+		expect(screen.getByText("Kubernetes")).toBeDefined();
+	});
+
+	test("does not append a duplicate term", async () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				dictionary: [{ id: "1", term: "Kubernetes" }],
+			},
+		});
+
+		render(
+			<IntlProvider>
+				<DictionarySettingsPanel />
+			</IntlProvider>,
+		);
+
+		fireEvent.change(await screen.findByRole("textbox", { name: /term/i }), {
+			target: { value: " kubernetes " },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /add/i }));
+
+		await waitFor(() => {
+			expect(useSettingsStore.getState().settings.dictionary).toHaveLength(1);
+		});
 	});
 });

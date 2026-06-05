@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, render, screen, type RenderResult } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
+import { useCatalogStore } from "@/entities/model-catalog";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 
@@ -16,8 +17,29 @@ import { ModelSettingsPanel } from "./ModelSettingsPanel";
 // mounts correctly regardless of file order.
 let rendered: RenderResult | null = null;
 
+function rawModel(id: string, nativeStreaming: boolean) {
+	return {
+		id,
+		display_name: id,
+		backend: "onnx_asr",
+		family: nativeStreaming ? "nemo" : "whisper",
+		languages: ["en"],
+		supports_language_detection: false,
+		size_label: "1M",
+		preview_capable: true,
+		native_streaming: nativeStreaming,
+		final_reuse_safe: nativeStreaming,
+		onnx_model_name: id,
+		description: id,
+	};
+}
+
 beforeEach(() => {
 	useConnectionStore.setState({ gpuInfo: [] });
+	useCatalogStore.getState().setModels([
+		rawModel("tiny", false),
+		rawModel("streaming-en", true),
+	]);
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
 });
 
@@ -33,6 +55,7 @@ afterEach(() => {
 		rendered = null;
 	}
 	useConnectionStore.setState({ gpuInfo: [] });
+	useCatalogStore.setState({ models: [], isLoaded: false });
 	useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
 });
 
@@ -61,5 +84,66 @@ describe("ModelSettingsPanel", () => {
 			</IntlProvider>
 		);
 		expect(screen.getAllByText("Model Unload Timeout").length).toBeGreaterThan(0);
+	});
+
+	test("hides update interval for a native-streaming realtime model in dictation modes", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "tiny",
+					realtimeModel: "streaming-en",
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+		rendered = render(
+			<IntlProvider>
+				<ModelSettingsPanel />
+			</IntlProvider>
+		);
+		expect(screen.queryByText("Update Interval")).toBeNull();
+	});
+
+	test("keeps update interval visible for non-streaming realtime fallback", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "tiny",
+					realtimeModel: "tiny",
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+		rendered = render(
+			<IntlProvider>
+				<ModelSettingsPanel />
+			</IntlProvider>
+		);
+		expect(screen.getByText("Update Interval")).toBeTruthy();
+	});
+
+	test("keeps update interval visible in listen mode", () => {
+		useSettingsStore.setState({
+			settings: {
+				...DEFAULT_SETTINGS,
+				general: {
+					...DEFAULT_SETTINGS.general,
+					recordingMode: "listen",
+				},
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "tiny",
+					realtimeModel: "streaming-en",
+				},
+			} as typeof DEFAULT_SETTINGS,
+		});
+		rendered = render(
+			<IntlProvider>
+				<ModelSettingsPanel />
+			</IntlProvider>
+		);
+		expect(screen.getByText("Update Interval")).toBeTruthy();
 	});
 });

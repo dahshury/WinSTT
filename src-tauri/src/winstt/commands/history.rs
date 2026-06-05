@@ -1,4 +1,4 @@
-// PORT IMPL — WU-10 (app/PORT/10_frontend_port_plan.md §6 WU-10 + §1b History rows).
+// PORT IMPL — WU-10 (docs/archive/port/10_frontend_port_plan.md §6 WU-10 + §1b History rows).
 //
 // History command surface for the WinSTT renderer. The WinSTT renderer drives
 // history through TWO disjoint channel groups (both routed by the WU-0 adapter,
@@ -42,8 +42,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_specta::Event;
 
 use crate::managers::history::{
-    HistoryEntry as DbHistoryEntry, HistoryManager, HistoryUpdatePayload,
+    HistoryEntry as DbHistoryEntry, HistoryManager, HistoryUpdatePayload, TransformHistoryDbEntry,
 };
+
+const EVT_TRANSFORM_HISTORY_ADDED: &str = "transform-history:added";
+const EVT_TRANSFORM_HISTORY_DELETED: &str = "transform-history:deleted";
 
 // ── Renderer-facing payload shapes (camelCase, byte-identical to WinSTT) ────────
 
@@ -71,6 +74,28 @@ pub struct TranscriptionHistoryEntry {
     /// provider reported token usage and the pass took a measurable duration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_tokens_per_second: Option<f64>,
+}
+
+/// Legacy-table compatible transform row for the settings History tab. It uses
+/// the same core fields as `TranscriptionHistoryEntry` so the current table,
+/// copy controls, and before/after diff view can be shared unchanged.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TransformHistoryEntry {
+    pub id: String,
+    pub text: String,
+    pub timestamp: i64,
+    pub word_count: i64,
+    pub duration_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_processing_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_tokens_per_second: Option<f64>,
+    pub source: String,
 }
 
 /// Entity `HistoryEntry` (entities/transcription-history/model) — the dedicated
@@ -187,6 +212,48 @@ fn to_transcription_entry(
         llm_processing_ms: meta.processing_ms,
         llm_tokens_per_second,
     }
+}
+
+fn to_transform_entry(entry: &TransformHistoryDbEntry) -> TransformHistoryEntry {
+    let meta = entry
+        .llm_meta
+        .as_deref()
+        .map(parse_llm_meta)
+        .unwrap_or_default();
+    let llm_tokens_per_second = match (meta.tokens, meta.processing_ms) {
+        (Some(tokens), Some(ms)) if tokens > 0 && ms > 0 => {
+            Some(tokens as f64 / (ms as f64 / 1000.0))
+        }
+        _ => None,
+    };
+    TransformHistoryEntry {
+        id: entry.id.to_string(),
+        word_count: count_words(&entry.after_text),
+        text: entry.after_text.clone(),
+        timestamp: entry.timestamp.saturating_mul(1000),
+        duration_ms: 0,
+        original_text: if entry.before_text.trim().is_empty() {
+            None
+        } else {
+            Some(entry.before_text.clone())
+        },
+        llm_model: meta.model,
+        llm_processing_ms: meta.processing_ms,
+        llm_tokens_per_second,
+        source: entry.source.clone(),
+    }
+}
+
+pub fn emit_transform_history_added(app: &AppHandle, entry: &TransformHistoryDbEntry) {
+    let payload = to_transform_entry(entry);
+    let _ = app.emit(EVT_TRANSFORM_HISTORY_ADDED, &payload);
+}
+
+fn emit_transform_history_deleted(app: &AppHandle, id: i64) {
+    let _ = app.emit(
+        EVT_TRANSFORM_HISTORY_DELETED,
+        serde_json::json!({ "id": id.to_string() }),
+    );
 }
 
 /// Parsed `llm_meta` telemetry. All fields optional so a malformed / partial
@@ -560,6 +627,62 @@ pub async fn history_load_audio(
     }
     let path = history_manager.get_audio_file_path(&entry.file_name);
     Ok(wav_to_data_uri(&path))
+}
+
+/// `transform-history:get-all` — every transform row reshaped to the same table
+/// shape as transcription history: final text plus `originalText` for the diff.
+#[tauri::command]
+#[specta::specta]
+pub async fn transform_history_get_all(
+    history_manager: State<'_, Arc<HistoryManager>>,
+) -> Result<Vec<TransformHistoryEntry>, String> {
+    let rows = history_manager
+        .get_transform_history_entries()
+        .map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(to_transform_entry).collect())
+}
+
+/// `transform-history:clear` — delete all transform rows. Uses the same
+/// `ClearResult` envelope as transcription history so the frontend can share
+/// the clear-confirm flow.
+#[tauri::command]
+#[specta::specta]
+pub async fn transform_history_clear(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+) -> Result<ClearResult, String> {
+    let rows = history_manager
+        .get_transform_history_entries()
+        .map_err(|e| e.to_string())?;
+    for entry in rows {
+        if history_manager
+            .delete_transform_entry(entry.id)
+            .map_err(|e| e.to_string())?
+        {
+            emit_transform_history_deleted(&app, entry.id);
+        }
+    }
+    Ok(ClearResult { cleared: true })
+}
+
+/// `transform-history:delete` (STRING id) — delete one transform row.
+#[tauri::command]
+#[specta::specta]
+pub async fn transform_history_delete(
+    app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    id: String,
+) -> Result<DeletedResult, String> {
+    let Ok(numeric) = id.parse::<i64>() else {
+        return Ok(DeletedResult { deleted: false });
+    };
+    let deleted = history_manager
+        .delete_transform_entry(numeric)
+        .map_err(|e| e.to_string())?;
+    if deleted {
+        emit_transform_history_deleted(&app, numeric);
+    }
+    Ok(DeletedResult { deleted })
 }
 
 // ── Event bridge: collected HistoryUpdatePayload → WinSTT plain events ───────────

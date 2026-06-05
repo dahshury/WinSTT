@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod cleanup;
 pub mod history;
 pub mod models;
 pub mod transcription;
@@ -12,6 +13,7 @@ use tauri_plugin_opener::OpenerExt;
 #[specta::specta]
 pub fn cancel_operation(app: AppHandle) {
     cancel_current_operation(&app);
+    crate::winstt::commands::dictation::SttEvents::session_aborted(&app);
 }
 
 #[tauri::command]

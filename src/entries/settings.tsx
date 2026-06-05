@@ -1,6 +1,6 @@
 import { Tooltip } from "@base-ui/react/tooltip";
 import { StrictMode, Suspense, useEffect } from "react";
-import { createRoot } from "react-dom/client";
+import { renderReactRoot } from "@/app/lib/render-react-root";
 import { HtmlLang } from "@/app/layouts/HtmlLang";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import "@/app/styles/fonts.css";
@@ -8,6 +8,7 @@ import "@/app/styles/globals.css";
 import { useConnectionStore } from "@/entities/connection";
 import { useConnectionListener } from "@/features/connect-server";
 import { useDownloadListener } from "@/features/model-download";
+import { useRealtimePreviewFallback } from "@/features/realtime-preview-fallback";
 import { useSyncActiveModel } from "@/features/sync-active-model";
 import { useSyncSettings } from "@/features/update-settings";
 import { gpuGetInfo } from "@/shared/api/ipc-client";
@@ -41,6 +42,7 @@ function SettingsBootstrap() {
 	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
 	useSyncSettings(); // settingsLoad() -> hydrate store + write-back on change (THE blank fix)
 	useSyncActiveModel(); // active-model reconcile for the model tab
+	useRealtimePreviewFallback(); // cached realtime model or main-model preview fallback
 	useDownloadListener(); // per-quant download progress for the model tab
 	useConnectionListener(); // server/runtime status for the badges
 	useEffect(() => {
@@ -61,7 +63,8 @@ function SettingsBootstrap() {
 	return <SettingsPage />;
 }
 
-createRoot(container).render(
+renderReactRoot(
+	container,
 	<StrictMode>
 		<HtmlLang />
 		<Suspense fallback={null}>

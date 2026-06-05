@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
-import { __waveform_test_helpers__ } from "../lib/waveform-bars-test-helpers";
+import * as helpers from "../lib/waveform-bars-test-helpers";
 import { WaveformBars } from "./WaveformBars";
 
 const {
@@ -21,7 +21,7 @@ const {
 	lerpColor,
 	tracePath,
 	vadAmpBoost,
-} = __waveform_test_helpers__;
+} = helpers;
 
 describe("WaveformBars", () => {
 	test("renders an aria-hidden canvas wrapper", () => {

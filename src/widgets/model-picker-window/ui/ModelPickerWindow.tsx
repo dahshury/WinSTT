@@ -1,15 +1,29 @@
-import { STT_PICKER_WIDTH_PX, SttModelSelector } from "@picker";
-import { useEffect, useRef, useState } from "react";
+import {
+	resolveEffectiveQuant,
+	STT_PICKER_WIDTH_PX,
+	SttModelSelector,
+} from "@picker";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
-import { useCatalogStore, useModelStateStore, useModelSwapStore } from "@/entities/model-catalog";
+import {
+	isSelectableRealtimeModel,
+	isVisibleSttModel,
+	readLastLocalSttModelHistory,
+	useCatalogStore,
+	useModelStateStore,
+	useModelSwapStore,
+} from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
+import { assessDictationFitClient } from "@/entities/system-resources/lib/fit-assessor";
 import { useConnectionListener } from "@/features/connect-server";
 import {
 	DownloadConfirmationDialog,
+	canDeleteSttQuant,
 	isQuantDownloading,
+	resolveSttDeleteRecovery,
 	useDownloadListener,
 	useQuantActions,
 } from "@/features/model-download";
@@ -19,12 +33,14 @@ import { useSyncSettings } from "@/features/update-settings";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
 	fileQueueGetActive,
+	type FitAssessmentEntry,
 	gpuGetInfo,
 	ipcOn,
 	ipcSend,
 	onFileQueueActive,
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
+import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 
 // Desired footprint reported once to the main process. Main caps the height
@@ -38,6 +54,15 @@ import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
 const DESIRED_WIDTH = STT_PICKER_WIDTH_PX;
 const DESIRED_HEIGHT = 560;
 const PANEL_HEIGHT = "h-full";
+// Keep in sync with `MODEL_PICKER_CLOSE_MS` in `src-tauri/.../windows.rs`.
+const MODEL_PICKER_CLOSE_MS = 150;
+
+function isPrimaryInlineModelList(element: HTMLElement): boolean {
+	return (
+		element.getAttribute("role") === "listbox" &&
+		element.closest('[data-slot="model-picker-inline"]') !== null
+	);
+}
 
 // Window-local rect (CSS px) for the visible panel inside the full-screen
 // backdrop window. Null until the main process reports it.
@@ -58,6 +83,28 @@ type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
 type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
 type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
 type QuantActions = ReturnType<typeof useQuantActions>;
+type GetFitAssessment = (modelId: string) => FitAssessmentEntry | null;
+
+function localModelIdOrNull(modelId: string | undefined): string | null {
+	if (!modelId || providerOf(modelId) !== null) {
+		return null;
+	}
+	return modelId;
+}
+
+function quantForFit(
+	statesById: StatesById,
+	modelId: string | null,
+	currentQuantization: OnnxQuantization,
+): string {
+	return modelId
+		? resolveEffectiveQuant(statesById[modelId], currentQuantization)
+		: "";
+}
+
+function requestedDeviceForFit(deviceValue: "auto" | "cpu"): string | null {
+	return deviceValue === "cpu" ? "cpu" : null;
+}
 
 interface PickerBodyProps {
 	catalogLoaded: boolean;
@@ -65,8 +112,10 @@ interface PickerBodyProps {
 	currentModel: string;
 	currentQuantization: OnnxQuantization;
 	fileQueueBusy: boolean;
+	getFitAssessment: GetFitAssessment;
 	hasAnyCloudKey: boolean;
 	onDeleteQuant: QuantActions["handleDeleteQuant"];
+	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
 	onDownloadAction: QuantActions["handleDownloadAction"];
 	onDownloadSnapshot: QuantActions["handleDownloadSnapshot"];
 	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
@@ -88,8 +137,10 @@ function PickerBody({
 	currentModel,
 	currentQuantization,
 	fileQueueBusy,
+	getFitAssessment,
 	hasAnyCloudKey,
 	onDeleteQuant,
+	canDeleteQuant,
 	onDownloadAction,
 	onDownloadSnapshot,
 	onSelect,
@@ -122,21 +173,28 @@ function PickerBody({
 			{showCloud ? (
 				// Auto-open: the detached window exists only to show the picker, so a
 				// closed combobox would force a pointless second click.
-				<CloudModelSelect defaultOpen onSelect={onSelect} selectedId={currentModel} />
+				<CloudModelSelect
+					defaultOpen
+					onSelect={onSelect}
+					selectedId={currentModel}
+				/>
 			) : (
 				<div className="min-h-0 flex-1 [&>*]:size-full">
 					<SttModelSelector
 						currentQuantization={currentQuantization}
 						disabled={fileQueueBusy}
+						getFitAssessment={getFitAssessment}
 						inline
 						isLoading={!catalogLoaded}
 						kind="main"
 						models={catalogModels}
 						onChange={onSelect}
+						canDeleteQuant={canDeleteQuant}
 						onDeleteQuant={onDeleteQuant}
 						onDownloadAction={onDownloadAction}
 						onDownloadSnapshot={onDownloadSnapshot}
 						popupHeightClass={PANEL_HEIGHT}
+						prefilter={isVisibleSttModel}
 						statesById={statesById}
 						systemInfo={systemInfo}
 						value={isCloud ? "" : currentModel}
@@ -177,7 +235,8 @@ export function ModelPickerWindow() {
 	const hasAnyCloudKey =
 		integrations.openai.apiKey.trim().length > 0 ||
 		integrations.elevenlabs.apiKey.trim().length > 0;
-	const effectiveSourceIsCloud = providerOf(currentModel ?? "") !== null && hasAnyCloudKey;
+	const effectiveSourceIsCloud =
+		providerOf(currentModel ?? "") !== null && hasAnyCloudKey;
 	const gpuInfo = useConnectionStore((s) => s.gpuInfo);
 	const tModel = useTranslations("model");
 
@@ -187,6 +246,7 @@ export function ModelPickerWindow() {
 	const statesById = useModelStateStore((s) => s.statesById);
 	const systemInfo = useModelStateStore((s) => s.systemInfo);
 	const refreshModelState = useModelStateStore((s) => s.refresh);
+	const liveResources = useSystemResourcesStore((s) => s.liveResources);
 	const refreshLive = useSystemResourcesStore((s) => s.refresh);
 	const mainSwapping = useModelSwapStore((s) => s.activeMain !== null);
 
@@ -196,15 +256,52 @@ export function ModelPickerWindow() {
 	}, [refreshModelState, refreshLive]);
 
 	const gpuAvailable = gpuInfo.length > 0;
-	const currentQuantization = (modelSettings?.onnxQuantization ?? "") as OnnxQuantization;
+	const currentQuantization = (modelSettings?.onnxQuantization ??
+		"") as OnnxQuantization;
 	const deviceValue = gpuAvailable ? (modelSettings?.device ?? "auto") : "cpu";
+	const getFitAssessment = useCallback<GetFitAssessment>(
+		(modelId) => {
+			if (liveResources === null) {
+				return null;
+			}
+			const mainId = localModelIdOrNull(currentModel);
+			const realtimeId = localModelIdOrNull(modelSettings?.realtimeModel);
+			return assessDictationFitClient(modelId, {
+				candidateQuant: quantForFit(statesById, modelId, currentQuantization),
+				live: liveResources,
+				loaded: {
+					mainId,
+					mainQuant: quantForFit(statesById, mainId, currentQuantization),
+					realtimeId,
+					realtimeQuant: quantForFit(
+						statesById,
+						realtimeId,
+						currentQuantization,
+					),
+				},
+				requestedDevice: requestedDeviceForFit(deviceValue),
+				statesById,
+			});
+		},
+		[
+			currentModel,
+			currentQuantization,
+			deviceValue,
+			liveResources,
+			modelSettings?.realtimeModel,
+			statesById,
+		],
+	);
 	// This detached window doesn't mount the global IPC listener, so subscribe
 	// directly: disable model switching while the file-transcription queue is
 	// busy (the swap would reload the shared transcriber mid-queue). The
 	// broadcast is edge-triggered, so also pull the current value on mount —
 	// the window is created lazily and may open mid-transcription.
 	const [fileQueueBusy, setFileQueueBusy] = useState(false);
-	useEffect(() => onFileQueueActive((data) => setFileQueueBusy(data.active)), []);
+	useEffect(
+		() => onFileQueueActive((data) => setFileQueueBusy(data.active)),
+		[],
+	);
 	useEffect(() => {
 		fileQueueGetActive().then(setFileQueueBusy);
 	}, []);
@@ -218,8 +315,44 @@ export function ModelPickerWindow() {
 		statesById,
 		update,
 		isQuantDownloading,
-		() => fileQueueBusy
+		() => fileQueueBusy,
 	);
+	const currentModelIsCloud = providerOf(currentModel ?? "") !== null;
+	const currentModelInfo = currentModel ? getModel(currentModel) : undefined;
+	const currentModelStreamingKnown =
+		currentModel === undefined || currentModelIsCloud || currentModelInfo !== undefined;
+	const currentModelCanNativeStream =
+		!currentModelIsCloud &&
+		currentModelInfo !== undefined &&
+		isSelectableRealtimeModel(currentModelInfo);
+	const quality = useSettingsStore((s) => s.settings.quality);
+	const updateQuality = useSettingsStore((s) => s.updateQualitySettings);
+
+	useEffect(() => {
+		if (!currentModelStreamingKnown) {
+			return;
+		}
+		if (currentModelCanNativeStream) {
+			if (modelSettings?.realtimeModel !== currentModel) {
+				update({ realtimeModel: currentModel ?? "" });
+			}
+			if (!(quality?.useMainModelForRealtime ?? false)) {
+				updateQuality({ useMainModelForRealtime: true });
+			}
+			return;
+		}
+		if (quality?.useMainModelForRealtime ?? false) {
+			updateQuality({ useMainModelForRealtime: false });
+		}
+	}, [
+		currentModel,
+		currentModelCanNativeStream,
+		currentModelStreamingKnown,
+		modelSettings?.realtimeModel,
+		quality?.useMainModelForRealtime,
+		update,
+		updateQuality,
+	]);
 
 	// Close once a swap actually starts (server emitted model_swap_started →
 	// activeMain set). Selecting a model that needs a download/resource
@@ -240,7 +373,82 @@ export function ModelPickerWindow() {
 	// delete / download / pause controls). useDownloadListener (above) keeps
 	// this window's download store hydrated, and the IPC delete/download sends
 	// reach the main process regardless of which window fired them.
-	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } = useQuantActions();
+	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
+		useQuantActions();
+	const canDeleteQuant = useCallback(
+		(modelId: string, quantization: OnnxQuantization) =>
+			canDeleteSttQuant(catalogModels, statesById, modelId, quantization),
+		[catalogModels, statesById],
+	);
+	const handleGuardedDeleteQuant = useCallback(
+		(modelId: string, quantization: OnnxQuantization) => {
+			const recovery = resolveSttDeleteRecovery({
+				currentMainModel: currentModel ?? "",
+				currentQuantization,
+				currentRealtimeModel: modelSettings?.realtimeModel,
+				mainModelInfo: getModel(currentModel ?? "") ?? undefined,
+				modelId,
+				models: catalogModels,
+				previousModelIds: readLastLocalSttModelHistory(),
+				quantization,
+				statesById,
+			});
+			if (!recovery.canDelete) {
+				return;
+			}
+			const requiresRecovery =
+				recovery.mainTarget !== undefined ||
+				recovery.realtimeTarget !== undefined;
+			if (requiresRecovery && fileQueueBusy) {
+				return;
+			}
+			if (recovery.mainTarget) {
+				controller.handleModelChange(
+					recovery.mainTarget.modelId,
+					recovery.mainTarget.quantization,
+				);
+			}
+			if (recovery.realtimeTarget !== undefined) {
+				if (recovery.realtimeTarget === null) {
+					controller.handleRealtimeModelChange("");
+					if (quality?.useMainModelForRealtime ?? false) {
+						updateQuality({ useMainModelForRealtime: false });
+					}
+				} else {
+					controller.handleRealtimeModelChange(
+						recovery.realtimeTarget.modelId,
+						recovery.realtimeTarget.quantization,
+					);
+					const nextMainId = recovery.mainTarget?.modelId ?? currentModel ?? "";
+					const realtimeInfo = getModel(recovery.realtimeTarget.modelId);
+					const shouldReuseMain =
+						recovery.realtimeTarget.modelId === nextMainId &&
+						realtimeInfo !== undefined &&
+						isSelectableRealtimeModel(realtimeInfo);
+					if (
+						shouldReuseMain !==
+						(quality?.useMainModelForRealtime ?? false)
+					) {
+						updateQuality({ useMainModelForRealtime: shouldReuseMain });
+					}
+				}
+			}
+			handleDeleteQuant(modelId, quantization);
+		},
+		[
+			catalogModels,
+			controller,
+			currentModel,
+			currentQuantization,
+			fileQueueBusy,
+			getModel,
+			handleDeleteQuant,
+			modelSettings?.realtimeModel,
+			quality?.useMainModelForRealtime,
+			statesById,
+			updateQuality,
+		],
+	);
 
 	// A precision-badge "download this variant" click opens the confirmation
 	// dialog (size + hardware-fit + Download/Cancel) instead of silently starting
@@ -249,7 +457,7 @@ export function ModelPickerWindow() {
 	const handleDownloadActionGated: QuantActions["handleDownloadAction"] = (
 		action,
 		modelId,
-		quantization
+		quantization,
 	) => {
 		if (action === "start") {
 			controller.promptDownload("main", modelId, quantization);
@@ -271,57 +479,86 @@ export function ModelPickerWindow() {
 	// Main reports where to draw the panel inside the full-screen window
 	// (recomputed on every open and on resize, so it always reflects the
 	// current chip position / clamped height).
-	const [panel, setPanel] = useState<PanelRect | null>(null);
-	const [panelPhase, setPanelPhase] = useState<PanelPhase>("hidden");
+	const [panel, setPanelState] = useState<PanelRect | null>(null);
+	const [panelPhase, setPanelPhaseState] = useState<PanelPhase>("hidden");
 	const panelRef = useRef<PanelRect | null>(null);
-	useEffect(() => {
-		panelRef.current = panel;
-	}, [panel]);
-	// A `null` payload means "the window was hidden — drop the stale rect" so the
-	// next open re-warms invisibly and reveals only once the fresh anchor lands
-	// (no flash of the previous open's position). A real rect positions + reveals.
+	const panelPhaseRef = useRef<PanelPhase>("hidden");
+	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const openGenerationRef = useRef(0);
+	const setPanel = useCallback((next: PanelRect | null) => {
+		panelRef.current = next;
+		setPanelState(next);
+	}, []);
+	const setPanelPhase = useCallback((next: PanelPhase) => {
+		panelPhaseRef.current = next;
+		setPanelPhaseState(next);
+	}, []);
+	const clearCloseTimer = useCallback(() => {
+		if (closeTimerRef.current !== null) {
+			clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = null;
+		}
+	}, []);
+	useEffect(() => clearCloseTimer, [clearCloseTimer]);
+	// A real rect positions + reveals. Legacy/null anchors can still arrive from
+	// an older hidden-window close path; ignore them once a fresh open is active
+	// so a stale close cannot blank the panel while the backdrop is visible.
 	useEffect(
 		() =>
 			ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => {
 				if (rect) {
+					openGenerationRef.current += 1;
+					clearCloseTimer();
 					setPanel(rect as PanelRect);
 					setPanelPhase("open");
 					return;
 				}
+				if (panelPhaseRef.current === "open") {
+					return;
+				}
+				clearCloseTimer();
 				setPanel(null);
 				setPanelPhase("hidden");
 			}),
-		[]
+		[clearCloseTimer, setPanel, setPanelPhase],
 	);
 	useEffect(
 		() =>
 			ipcOn(IPC.MODEL_PICKER_CLOSING, () => {
 				if (panelRef.current !== null) {
+					const closeGeneration = openGenerationRef.current;
+					clearCloseTimer();
 					setPanelPhase("closing");
+					closeTimerRef.current = setTimeout(() => {
+						closeTimerRef.current = null;
+						if (
+							openGenerationRef.current !== closeGeneration ||
+							panelPhaseRef.current !== "closing"
+						) {
+							return;
+						}
+						setPanel(null);
+						setPanelPhase("hidden");
+					}, MODEL_PICKER_CLOSE_MS);
 				}
 			}),
-		[]
+		[clearCloseTimer, setPanel, setPanelPhase],
 	);
 
 	// Report the desired footprint once. Main clamps it to the room above
 	// the chip and sends back the final panel rect via MODEL_PICKER_ANCHOR.
 	useEffect(() => {
-		ipcSend(IPC.MODEL_PICKER_RESIZE, { width: DESIRED_WIDTH, height: DESIRED_HEIGHT });
+		ipcSend(IPC.MODEL_PICKER_RESIZE, {
+			width: DESIRED_WIDTH,
+			height: DESIRED_HEIGHT,
+		});
 	}, []);
 
 	// Esc dismisses the window. The picker is force-open in inline mode, so
 	// Base UI's own open/close events are NOT a reliable dismiss signal
 	// (clicking the author rail or a filter also fires them) — only an
 	// explicit Escape or an outside-the-window click (window blur) closes.
-	useEffect(() => {
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				close();
-			}
-		};
-		window.addEventListener("keydown", onKeyDown);
-		return () => window.removeEventListener("keydown", onKeyDown);
-	}, []);
+	useEscapeToClose(close, { ignoreLayer: isPrimaryInlineModelList });
 
 	// Pre-warm the (heavy) picker body during the window's idle pre-create
 	// rather than on first open. The detached picker window is created hidden +
@@ -339,7 +576,12 @@ export function ModelPickerWindow() {
 	// already-warm tree (a cheap re-render) instead of mounting the whole picker.
 	const panelRevealed = panel !== null;
 	const panelInteractive = panelRevealed && panelPhase === "open";
-	const warmPanel = panel ?? { x: 0, y: 0, width: DESIRED_WIDTH, height: DESIRED_HEIGHT };
+	const warmPanel = panel ?? {
+		x: 0,
+		y: 0,
+		width: DESIRED_WIDTH,
+		height: DESIRED_HEIGHT,
+	};
 	const shouldMountBody = panelRevealed || catalogLoaded;
 	const dropdownStateClass =
 		panelPhase === "closing" ? "is-closing" : panelRevealed ? "is-open" : "";
@@ -388,11 +630,13 @@ export function ModelPickerWindow() {
 						currentModel={currentModel ?? ""}
 						currentQuantization={currentQuantization}
 						fileQueueBusy={fileQueueBusy}
+						getFitAssessment={getFitAssessment}
 						hasAnyCloudKey={hasAnyCloudKey}
 						// Re-mount so `source` re-initialises when the persisted model's
 						// source flips (or a key is added/removed) — no derived effect.
 						key={effectiveSourceIsCloud ? "cloud" : "local"}
-						onDeleteQuant={handleDeleteQuant}
+						canDeleteQuant={canDeleteQuant}
+						onDeleteQuant={handleGuardedDeleteQuant}
 						onDownloadAction={handleDownloadActionGated}
 						onDownloadSnapshot={handleDownloadSnapshot}
 						onSelect={selectModel}
@@ -428,7 +672,9 @@ export function ModelPickerWindow() {
 					}
 				}}
 				open={controller.pendingFitWarning !== null}
-				t={(key, vars) => tModel(`resourceWarning.${key}` as Parameters<typeof tModel>[0], vars)}
+				t={(key, vars) =>
+					tModel(`resourceWarning.${key}` as Parameters<typeof tModel>[0], vars)
+				}
 			/>
 		</div>
 	);

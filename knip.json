@@ -5,7 +5,7 @@
     "windows/*.html",
     "src/entries/*.{ts,tsx}",
     "src/**/*.{test,spec}.{ts,tsx}",
-    "scripts/*.ts",
+    "tools/**/*.ts",
     "test/**/*.ts",
     "packages/model-picker/src/**/*.{test,spec}.{ts,tsx}",
     "packages/model-picker/src/index.ts"

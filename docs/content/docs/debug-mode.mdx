@@ -9,14 +9,15 @@ When something goes wrong, the fastest path to a fix is attaching a diagnostic b
 
 ## What gets logged
 
-WinSTT keeps two rolling log files in its user-data folder. Both are written at **verbose** level all the time, so the full trace is captured even on a normal launch — you do not have to reproduce in a special mode first.
+WinSTT writes rolling logs in its app log folder. They are written at **verbose** level all the time, so the full trace is captured even on a normal launch — you do not have to reproduce in a special mode first.
 
 | File | Source | Rotation |
 |---|---|---|
-| `debug.log` | Electron main + renderer (process spawn, WebSocket, hotkeys, settings, IPC). | Rolls at 5 MB to `debug.old.log`. |
-| `stt-server.log` | The Python STT server (bootstrap, recorder, model swaps). | Same 5 MB roll. |
+| `WinSTT.log` | Tauri/Rust backend plus renderer diagnostics. | Managed by the Tauri log plugin. |
+| `debug.log` / `debug.old.log` | Legacy-compatible app log names, included when present. | Rolls when configured by the app. |
+| `stt-server.log` | Legacy-compatible engine log name, included when present. | Included only if a previous or compatibility path wrote it. |
 
-Both files live in `%APPDATA%\WinSTT\` (the Electron user-data path). Log lines use the format `[HH:MM:SS.mmm] [scope] message`.
+Installed builds store logs under the WinSTT app-data log folder; portable builds use their local `Data/logs` folder. Use **Open Logs Folder** from the tray or About panel instead of guessing the path.
 
 <Callout type="success" title="The log does not contain your audio">
   Audio frames are processed in memory and discarded; only summary statistics
@@ -30,8 +31,8 @@ Both files live in `%APPDATA%\WinSTT\` (the Electron user-data path). Log lines 
 Two entries near the bottom of the tray menu do everything. Right-click the WinSTT tray icon to open it.
 
 <SettingRow label="Open Logs Folder">
-  Opens `%APPDATA%\WinSTT\` in File Explorer so you can inspect `debug.log` and
-  `stt-server.log` directly, or copy them out by hand.
+  Opens the active log directory in File Explorer so you can inspect the current logs
+  directly.
 </SettingRow>
 
 <SettingRow label="Save Diagnostic Bundle">
@@ -61,13 +62,14 @@ The archive holds every log that currently exists plus a freshly generated syste
 
 ```
 winstt-diag-<timestamp>.zip
-├── debug.log              (Electron main + renderer)
+├── WinSTT.log             (Tauri/Rust app log, when present)
+├── debug.log              (legacy-compatible app log, when present)
 ├── debug.old.log          (only if a rotation happened recently)
-├── stt-server.log         (Python STT server)
+├── stt-server.log         (legacy-compatible engine log, when present)
 └── system-info.txt        (versions, OS, CPU, RAM, GPU)
 ```
 
-`system-info.txt` is a plain key-value list: the generation timestamp, WinSTT / Electron / Node / Chrome versions, platform and architecture, OS release, total and free RAM, CPU model and core count, and a JSON dump of the GPU info Electron reports. No settings, API keys, or tokens are written into the bundle.
+`system-info.txt` is a plain key-value list: WinSTT / Tauri / WebView versions, platform and architecture, and portable-mode status. No settings, API keys, or tokens are written into the bundle.
 
 <Callout type="info" title="If the zip is over GitHub's 25 MB limit">
   Attach `system-info.txt` plus the tail of each log inline
@@ -79,23 +81,22 @@ winstt-diag-<timestamp>.zip
 
 Both files share the `[HH:MM:SS.mmm] [scope] message` format. Filter by scope to find the relevant lines.
 
-Electron side (`debug.log`):
+Application log:
 
 | Scope | What it covers |
 |---|---|
-| `stt-process` | Spawn / restart of the bundled `stt-server.exe`. An early "exit code 1" is usually the cause of a windowed crash. |
-| `ws-client` | The WebSocket client to the server — reconnects and disconnect storms. |
-| `relay` | The IPC relay between Electron main and the renderer windows. |
+| `backend` / `winstt` | Rust backend startup, model loading, and command handling. |
+| `ipc` / `relay` | The bridge between Tauri commands/events and renderer windows. |
 | `settings` | Settings persistence. Look here when a setting appears to revert. |
 | `hotkey` | Global hotkey registration. A `register false` line means another app claimed the chord. |
 | `diag-bundle` | The bundle generator itself. |
 | `tray-menu` | Tray actions, including **Open Logs Folder**. |
 
-Server side (`stt-server.log`):
+Engine compatibility log, when present:
 
 | Scope | What it covers |
 |---|---|
-| `bootstrap` | Adapter wiring at startup — the first lines say which audio device, VAD, transcriber, and wake-word backend were resolved. |
+| `bootstrap` | Engine wiring at startup — the first lines say which audio device, VAD, transcriber, and wake-word backend were resolved. |
 | `recorder.application` | `RecorderService` lifecycle and state-machine transitions. |
 | `recorder.pipeline` | The VAD loop, per-chunk decisions, and turn boundaries. Very chatty. |
 | `model_swap` | Hot-swap of STT models. Failures here usually mean a quantization that is incompatible with the chosen backend. |
@@ -112,7 +113,7 @@ This only changes what prints to the terminal. The bundle and the log files alre
 
 ## Crash reports
 
-If a crash escapes, the Electron main process forwards a redacted exception payload to Sentry. This is **opt-out** at **Settings → General → Anonymous crash reports**; the redactor strips file paths, the home directory, and anything that pattern-matches an API key. Sentry sees the *crash*, not the *behavior leading up to it* — so it is never a substitute for the diagnostic bundle, which captures the latter.
+If a crash escapes, WinSTT forwards a redacted exception payload to Sentry. This is **opt-out** at **Settings → General → Anonymous crash reports**; the redactor strips file paths, the home directory, and anything that pattern-matches an API key. Sentry sees the *crash*, not the *behavior leading up to it* — so it is never a substitute for the diagnostic bundle, which captures the latter.
 
 ## Related
 

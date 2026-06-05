@@ -10,6 +10,7 @@ export function renderAuthorItem(provider: string, ctx: ItemContext) {
 			count={count}
 			isFavorite={ctx.favoritesSet.has(provider)}
 			isSelected={ctx.selectedSet.has(provider)}
+			key={provider}
 			onToggleFavorite={ctx.onToggleFavorite}
 			provider={provider}
 		/>

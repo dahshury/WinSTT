@@ -1,5 +1,10 @@
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
-import { type ComponentPropsWithoutRef, useEffect, useReducer, useRef, useState } from "react";
+import {
+	type ComponentPropsWithoutRef,
+	useEffect,
+	useReducer,
+	useRef,
+} from "react";
 import { cn } from "@/shared/lib/cn";
 
 const CIRCLE_A =
@@ -208,6 +213,40 @@ function initialWordIndex(words: readonly string[]): number {
 	return idx >= 0 ? idx : 0;
 }
 
+function longestWord(words: readonly string[]): string {
+	return words.reduce(
+		(longest, word) => (word.length > longest.length ? word : longest),
+		"",
+	);
+}
+
+interface WordState {
+	index: number;
+	words: readonly string[];
+}
+
+type WordAction =
+	| { type: "rotate" }
+	| { type: "sync"; words: readonly string[] };
+
+function wordStateFor(words: readonly string[]): WordState {
+	return { index: initialWordIndex(words), words };
+}
+
+function wordReducer(state: WordState, action: WordAction): WordState {
+	if (action.type === "sync") {
+		return state.words === action.words ? state : wordStateFor(action.words);
+	}
+	if (state.words.length <= 1) {
+		return state;
+	}
+	// Pick any word except the current one so the rotation always visibly
+	// changes. With N>=2 entries this is a single re-roll at worst.
+	const pick = Math.floor(Math.random() * (state.words.length - 1));
+	const index = pick >= state.index ? pick + 1 : pick;
+	return { ...state, index };
+}
+
 // Cap the streamed reasoning to a sliding tail so a chatty model can't
 // blow up the pill height or churn DOM as tokens arrive. The mask at the
 // top of the band fades older characters into the bubble surface anyway.
@@ -220,10 +259,6 @@ const REASONING_TAIL_CHARS = 360;
 const MONO_STACK =
 	'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, "Liberation Mono", monospace';
 
-function longestWord(words: readonly string[]): string {
-	return words.reduce((a, b) => (a.length >= b.length ? a : b));
-}
-
 function tailOf(text: string, max: number): string {
 	if (text.length <= max) {
 		return text;
@@ -231,7 +266,8 @@ function tailOf(text: string, max: number): string {
 	return text.slice(-max);
 }
 
-export interface ThinkingIndicatorProps extends ComponentPropsWithoutRef<"output"> {
+export interface ThinkingIndicatorProps
+	extends ComponentPropsWithoutRef<"output"> {
 	/**
 	 * Let the streamed-reasoning band fill its container's width (`w-full`)
 	 * instead of using its intrinsic `clamp(220px,32vw,420px)`. Set when the
@@ -259,6 +295,11 @@ export interface ThinkingIndicatorProps extends ComponentPropsWithoutRef<"output
 	startedAt?: number | null;
 	/** Cycle of status words shown one at a time with a shimmer animation. */
 	words?: readonly string[];
+	/**
+	 * Reserve enough headline width for the default thinking vocabulary even
+	 * while a temporary custom label such as "Transcribing" is displayed.
+	 */
+	reserveDefaultWords?: boolean;
 }
 
 function formatElapsed(ms: number): string {
@@ -283,22 +324,26 @@ export function ThinkingIndicator({
 	reasoning = "",
 	startedAt = null,
 	fluidWidth = false,
+	reserveDefaultWords = false,
 	...rest
 }: ThinkingIndicatorProps) {
-	const [index, setIndex] = useState(() => initialWordIndex(words));
+	const [wordState, dispatchWord] = useReducer(
+		wordReducer,
+		words,
+		wordStateFor,
+	);
+	const syncedWordState =
+		wordState.words === words ? wordState : wordStateFor(words);
+	if (wordState.words !== words) {
+		dispatchWord({ type: "sync", words });
+	}
 
 	useEffect(() => {
 		if (words.length <= 1) {
 			return;
 		}
 		const id = setInterval(() => {
-			setIndex((i) => {
-				// Pick any word except the current one so the rotation always
-				// visibly changes. With N≥2 entries this is a single re-roll
-				// at worst — cheap, and never loops.
-				const pick = Math.floor(Math.random() * (words.length - 1));
-				return pick >= i ? pick + 1 : pick;
-			});
+			dispatchWord({ type: "rotate" });
 		}, WORD_ROTATION_MS);
 		return () => clearInterval(id);
 	}, [words]);
@@ -314,7 +359,7 @@ export function ThinkingIndicator({
 	const [timer, dispatchTimer] = useReducer(
 		(
 			s: { now: number; trackedStart: number | null },
-			a: { type: "tick"; now: number } | { type: "sync"; start: number | null }
+			a: { type: "tick"; now: number } | { type: "sync"; start: number | null },
 		): { now: number; trackedStart: number | null } => {
 			if (a.type === "sync") {
 				if (a.start === s.trackedStart) {
@@ -325,7 +370,10 @@ export function ThinkingIndicator({
 			return s.now === a.now ? s : { ...s, now: a.now };
 		},
 		startedAt,
-		(start: number | null) => ({ now: start ?? Date.now(), trackedStart: start })
+		(start: number | null) => ({
+			now: start ?? Date.now(),
+			trackedStart: start,
+		}),
 	);
 	if (timer.trackedStart !== startedAt) {
 		dispatchTimer({ type: "sync", start: startedAt });
@@ -334,13 +382,23 @@ export function ThinkingIndicator({
 		if (startedAt === null) {
 			return;
 		}
-		const id = setInterval(() => dispatchTimer({ type: "tick", now: Date.now() }), 100);
+		const id = setInterval(
+			() => dispatchTimer({ type: "tick", now: Date.now() }),
+			100,
+		);
 		return () => clearInterval(id);
 	}, [startedAt]);
 	const now = timer.now;
 
-	const current = words[index] ?? "";
-	const widestWord = longestWord(words);
+	const current =
+		syncedWordState.words[syncedWordState.index] ??
+		syncedWordState.words[0] ??
+		"";
+	const reservedWords =
+		reserveDefaultWords && words !== DEFAULT_WORDS
+			? [...DEFAULT_WORDS, ...words]
+			: words;
+	const widestWord = longestWord(reservedWords);
 	const reasoningTail = tailOf(reasoning, REASONING_TAIL_CHARS);
 	const showReasoning = reasoningTail.length > 0;
 	const elapsedMs = startedAt === null ? 0 : Math.max(0, now - startedAt);
@@ -362,7 +420,11 @@ export function ThinkingIndicator({
 		<LazyMotion features={domAnimation} strict>
 			<output
 				aria-live="polite"
-				className={cn("inline-flex flex-col items-stretch gap-1.5 px-3 py-1.5", className)}
+				className={cn(
+					"inline-flex flex-col items-stretch gap-1.5 px-3 py-1.5",
+					className,
+				)}
+				data-thinking-word={current}
 				{...rest}
 			>
 				{/* HEADLINE REGISTER — unchanged from the original indicator.
@@ -381,7 +443,9 @@ export function ThinkingIndicator({
 						width={18}
 					>
 						<m.path
-							animate={{ d: [CIRCLE_A, INFINITY_PATH, CIRCLE_B, INFINITY_PATH, CIRCLE_A] }}
+							animate={{
+								d: [CIRCLE_A, INFINITY_PATH, CIRCLE_B, INFINITY_PATH, CIRCLE_A],
+							}}
 							// Concrete base `d` so the path is valid at static-export
 							// paint and at every keyframe boundary — without it Motion
 							// briefly writes `d="undefined"` and the browser logs an
@@ -399,23 +463,33 @@ export function ThinkingIndicator({
 						/>
 					</m.svg>
 					<span className="inline-grid overflow-hidden font-medium text-[13px] leading-tight">
-						<span aria-hidden="true" className="shimmer-text invisible col-start-1 row-start-1">
+						<span
+							aria-hidden="true"
+							className="shimmer-text invisible col-start-1 row-start-1"
+						>
 							{widestWord}
 						</span>
 						<AnimatePresence initial={false} mode="popLayout">
 							<m.span
 								animate={{
-									y: 0,
 									opacity: 1,
-									transition: { duration: 0.24, ease: [0.4, 0, 0.2, 1] },
+									y: 0,
+									transition: {
+										duration: 0.24,
+										ease: [0.4, 0, 0.2, 1],
+									},
 								}}
 								className="shimmer-text col-start-1 row-start-1"
+								data-thinking-current-word="true"
 								exit={{
-									y: "-80%",
 									opacity: 0,
-									transition: { duration: 0.16, ease: [0.4, 0, 0.2, 1] },
+									y: "-80%",
+									transition: {
+										duration: 0.16,
+										ease: [0.4, 0, 0.2, 1],
+									},
 								}}
-								initial={{ y: "80%", opacity: 0 }}
+								initial={{ opacity: 0, y: "80%" }}
 								key={current}
 							>
 								{current}
@@ -425,7 +499,12 @@ export function ThinkingIndicator({
 					{showTimer && (
 						<span
 							className="text-[10.5px] text-white/45 tabular-nums leading-tight"
-							style={{ fontFamily: MONO_STACK, letterSpacing: "-0.005em" }}
+							style={{
+								fontFamily: MONO_STACK,
+								letterSpacing: "-0.005em",
+								minWidth: "5.5ch",
+								textAlign: "right",
+							}}
 						>
 							{formatElapsed(elapsedMs)}
 						</span>
@@ -443,7 +522,7 @@ export function ThinkingIndicator({
 							animate={{ opacity: 1, height: "auto" }}
 							className={cn(
 								"flex flex-col items-stretch overflow-hidden",
-								fluidWidth ? "w-full" : "w-[clamp(220px,32vw,420px)]"
+								fluidWidth ? "w-full" : "w-[clamp(220px,32vw,420px)]",
 							)}
 							exit={{
 								opacity: 0,
@@ -478,7 +557,9 @@ export function ThinkingIndicator({
 										"linear-gradient(to bottom, transparent 0, rgba(0,0,0,0.4) 25%, rgba(0,0,0,1) 60%)",
 								}}
 							>
-								<span className="whitespace-pre-wrap break-words">{reasoningTail}</span>
+								<span className="whitespace-pre-wrap break-words">
+									{reasoningTail}
+								</span>
 								<m.span
 									animate={{ opacity: [0.25, 0.85, 0.25] }}
 									aria-hidden="true"

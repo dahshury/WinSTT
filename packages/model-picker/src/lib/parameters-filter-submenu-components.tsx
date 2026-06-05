@@ -5,22 +5,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { DropdownMenuItem, DropdownMenuSeparator } from "../ui/DropdownMenu";
 import { getParameterIcon } from "./filter-icons";
 import { type FilterableParameter, PARAMETER_INFO } from "./openrouter-provider-utils";
-import {
-	shouldShowClearAll,
-	shouldShowCountBadge,
-	shouldShowSelectedTick,
-} from "./parameters-filter-submenu-utils";
-
-interface SelectedTickProps {
-	visible: boolean;
-}
-
-export function SelectedTick({ visible }: SelectedTickProps) {
-	if (!shouldShowSelectedTick(visible)) {
-		return null;
-	}
-	return <HugeiconsIcon className="ms-2 size-4 text-accent" icon={Tick01Icon} />;
-}
+import { shouldShowClearAll, shouldShowCountBadge } from "./parameters-filter-submenu-utils";
 
 interface SelectedCountBadgeProps {
 	count: number;
@@ -70,7 +55,7 @@ export function ParameterMenuItem({ count, isSelected, onToggle, param }: Parame
 		<DropdownMenuItem closeOnClick={false} key={param} onClick={onToggle}>
 			{getParameterIcon(param)}
 			<span className="ms-2 flex-1">{info.label}</span>
-			<SelectedTick visible={isSelected} />
+			{isSelected ? <HugeiconsIcon className="ms-2 size-4 text-accent" icon={Tick01Icon} /> : null}
 			<span className="text-2xs text-foreground-muted">({count})</span>
 		</DropdownMenuItem>
 	);

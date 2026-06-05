@@ -21,20 +21,23 @@ describe("IntegrationsSettingsPanel", () => {
 		// OpenAI/ElevenLabs cloud-STT keys sit under "Cloud Speech-to-Text".
 		// A user who adds only an OpenRouter key should see it grouped away
 		// from the STT section — that's the whole point of the split.
-		const { getByText } = render(
+		const { getAllByRole, getByText, queryByText } = render(
 			<IntlProvider>
 				<IntegrationsSettingsPanel />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		expect(getByText("Language Models (LLM)")).toBeDefined();
 		expect(getByText("Cloud Speech-to-Text")).toBeDefined();
-		// The STT caption points the user at the Model-tab Cloud source so
-		// they know where the key takes effect.
+		// Section help copy is kept behind info pills so it remains discoverable
+		// without adding static body text to the settings page.
 		expect(
-			getByText(
-				"Transcribe with a cloud provider instead of a local model. Add a key here to unlock the Cloud source in the Model tab."
-			)
-		).toBeDefined();
+			queryByText(
+				"Transcribe with a cloud provider instead of a local model. Add a key here to unlock the Cloud source in the Transcription tab.",
+			),
+		).toBeNull();
+		expect(
+			getAllByRole("button", { name: "More info" }).length,
+		).toBeGreaterThan(0);
 	});
 
 	test("renders the Ollama endpoint and OpenRouter API key inputs", () => {
@@ -51,7 +54,7 @@ describe("IntegrationsSettingsPanel", () => {
 		const { container } = render(
 			<IntlProvider>
 				<IntegrationsSettingsPanel />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		const inputs = container.querySelectorAll("input");
 		// One TextField + one PasswordField rendered.
@@ -65,15 +68,19 @@ describe("IntegrationsSettingsPanel", () => {
 		const { container } = render(
 			<IntlProvider>
 				<IntegrationsSettingsPanel />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		const endpointInput = container.querySelector(
-			'input[placeholder="http://localhost:11434"]'
+			'input[placeholder="http://localhost:11434"]',
 		) as HTMLInputElement | null;
 		expect(endpointInput).not.toBeNull();
 		if (endpointInput) {
-			fireEvent.change(endpointInput, { target: { value: "http://example.com:9999" } });
-			expect(useSettingsStore.getState().settings.llm.endpoint).toBe("http://example.com:9999");
+			fireEvent.change(endpointInput, {
+				target: { value: "http://example.com:9999" },
+			});
+			expect(useSettingsStore.getState().settings.llm.endpoint).toBe(
+				"http://example.com:9999",
+			);
 		}
 	});
 
@@ -85,10 +92,10 @@ describe("IntegrationsSettingsPanel", () => {
 		const { container } = render(
 			<IntlProvider>
 				<IntegrationsSettingsPanel />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		const keyInput = container.querySelector(
-			'input[placeholder^="sk-or-"]'
+			'input[placeholder^="sk-or-"]',
 		) as HTMLInputElement | null;
 		expect(keyInput).not.toBeNull();
 		if (keyInput) {
@@ -96,7 +103,9 @@ describe("IntegrationsSettingsPanel", () => {
 			// Local input reflects the typed value (controlled).
 			expect(keyInput.value).toBe("sk-or-new-key");
 			// Settings store reflects the typed value synchronously.
-			expect(useSettingsStore.getState().settings.llm.openrouterApiKey).toBe("sk-or-new-key");
+			expect(useSettingsStore.getState().settings.llm.openrouterApiKey).toBe(
+				"sk-or-new-key",
+			);
 		}
 	});
 });

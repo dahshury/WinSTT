@@ -43,6 +43,7 @@ export interface SelectOptionGroup {
 
 export interface SelectProps {
 	"aria-label"?: string;
+	disabled?: boolean;
 	/**
 	 * Grouped options rendered with one `Menu.Group` header per section.
 	 * Mutually exclusive with `options` (groups take precedence); the trigger's
@@ -95,9 +96,10 @@ function SelectRow({ option, value }: { option: SelectOption; value: string }) {
 	const active = option.id === value;
 	return (
 		<Menu.RadioItem
-			className="relative z-raised mx-1 flex cursor-default select-none items-center gap-2 rounded-xs px-2 py-2 text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground"
+			className="relative z-raised mx-1 flex cursor-default select-none items-center gap-2 rounded-xs px-2 py-2 text-body text-foreground leading-normal outline-none data-[checked]:font-medium data-[checked]:text-foreground data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
 			closeOnClick
 			data-menu-option={option.id}
+			disabled={option.disabled}
 			value={option.id}
 		>
 			<OptionContent active={active} option={option} />
@@ -127,7 +129,14 @@ function SelectGroupHeader({ badge, label }: { badge?: string | undefined; label
 	);
 }
 
-export function Select({ options, groups, value, onChange, "aria-label": ariaLabel }: SelectProps) {
+export function Select({
+	options,
+	groups,
+	value,
+	onChange,
+	"aria-label": ariaLabel,
+	disabled,
+}: SelectProps) {
 	// Grouped mode flattens for the trigger's selected-value lookup; the popup
 	// still renders grouped.
 	const flat = groups ? groups.flatMap((g) => [...g.options]) : (options ?? []);
@@ -149,7 +158,8 @@ export function Select({ options, groups, value, onChange, "aria-label": ariaLab
 		<Menu.Root>
 			<Menu.Trigger
 				aria-label={ariaLabel}
-				className={`flex h-8 w-full cursor-pointer select-none items-center justify-between gap-1.5 rounded-sm ${surfaceClasses(triggerLevel)} px-2.5 text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1`}
+				className={`flex h-8 w-full cursor-pointer select-none items-center justify-between gap-1.5 rounded-sm ${surfaceClasses(triggerLevel)} px-2.5 text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 disabled:cursor-not-allowed disabled:opacity-60`}
+				disabled={disabled}
 			>
 				<span className="flex min-w-0 flex-1 items-center gap-2">
 					{selected ? (

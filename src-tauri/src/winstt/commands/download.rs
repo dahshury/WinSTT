@@ -1,4 +1,4 @@
-// PORT IMPL — WU-4 (app/PORT/10_frontend_port_plan.md §6 WU-4). Source:
+// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
 //   frontend/src/shared/api/ipc-client.ts (predownloadModelQuant / pauseModelDownload /
 //     resumeModelDownload / cancelModelDownloadQuant / deleteModelQuantization /
 //     deleteModelCache / cancelDownload — the exact arg shapes)
@@ -25,7 +25,25 @@ use std::sync::Arc;
 
 use tauri::State;
 
+use crate::winstt::catalog::{self, ModelEntry};
 use crate::winstt::managers::DownloadManager;
+
+fn catalog_model(model_id: &str) -> Result<&'static ModelEntry, String> {
+    catalog::find(model_id).ok_or_else(|| {
+        format!("Refusing to delete cache for unknown STT catalog model '{model_id}'")
+    })
+}
+
+fn validate_catalog_quantization(model_id: &str, quantization: &str) -> Result<(), String> {
+    let entry = catalog_model(model_id)?;
+    if entry.available_quantizations.contains(&quantization) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Refusing to delete unpublished quantization '{quantization}' for STT model '{model_id}'"
+        ))
+    }
+}
 
 /// `predownload_quant` — start a byte-level pause/resume capable download for one
 /// `(model_id, quantization)` tuple, INTO the HF cache without changing the loaded model.
@@ -90,6 +108,7 @@ pub async fn delete_model_quantization(
     model_id: String,
     quantization: String,
 ) -> Result<(), String> {
+    validate_catalog_quantization(&model_id, &quantization)?;
     let downloads = downloads.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         downloads.delete_quantization(&model_id, &quantization);
@@ -109,6 +128,7 @@ pub async fn delete_model_cache(
     downloads: State<'_, Arc<DownloadManager>>,
     model_id: String,
 ) -> Result<(), String> {
+    catalog_model(&model_id)?;
     let downloads = downloads.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         downloads.delete_model_cache(&model_id);

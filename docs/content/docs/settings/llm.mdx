@@ -200,7 +200,7 @@ spelled correctly. These controls live next to the LLM config and **disappear en
 when the dictation LLM is not configured** — the capture pipeline never runs in that case.
 
 <SettingRow label="Context Awareness" settingKey="general.contextAwareness" default="false">
-  Off by default. When on, the Electron client reads the focused window's text via Windows
+  Off by default. When on, the backend reads the focused window's text via Windows
   UI Automation immediately before each dictation and feeds it to the cleanup step.
   Enabling it requires an explicit opt-in dialog because it reads content from any focused
   app.

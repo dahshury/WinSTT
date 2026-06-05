@@ -44,8 +44,8 @@ type F16 = half::f16;
 
 use super::{
     ctc_greedy_collapse, num_cpus_best_effort, pick_intra_op_threads, vocab_is_uppercase,
-    Accelerator, EngineConfig, EngineKind, ResolvedModel, SttError, SttResult, TranscribeOptions,
-    Transcriber, Transcription,
+    Accelerator, EngineConfig, EngineKind, NativeStreamUpdate, ResolvedModel, SttError, SttResult,
+    TranscribeOptions, Transcriber, Transcription,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -93,43 +93,14 @@ fn build_session(path: &Path, providers: &[Accelerator]) -> SttResult<Session> {
 }
 
 /// Register the execution providers onto a `SessionBuilder`. The provider list is the FINAL,
-/// already-DML-overridden list from `EngineConfig.providers`; these families are forced to CPU
-/// for DML/ROCm/CoreML upstream, so in practice this sees `[Cpu]` or `[Cuda, Cpu]`. CPU is always
-/// appended last for per-op fallback (mirrors Python `[<gpu_ep>, CPUExecutionProvider]`).
+/// already-policy-routed list from `EngineConfig.providers`; CPU is always appended last for
+/// per-op fallback by the shared helper (mirrors Python `[<gpu_ep>, CPUExecutionProvider]`).
 fn register_providers(
     builder: ort::session::builder::SessionBuilder,
     providers: &[Accelerator],
 ) -> SttResult<ort::session::builder::SessionBuilder> {
-    use ort::execution_providers::{
-        CPUExecutionProvider, CUDAExecutionProvider, DirectMLExecutionProvider,
-        ExecutionProviderDispatch,
-    };
-
-    let mut dispatch: Vec<ExecutionProviderDispatch> = Vec::with_capacity(providers.len() + 1);
-    let mut saw_cpu = false;
-    for acc in providers {
-        match acc {
-            Accelerator::Cpu => {
-                dispatch.push(CPUExecutionProvider::default().build());
-                saw_cpu = true;
-            }
-            // CUDA is reserved for the future Linux NVIDIA build; on Windows it never reaches here
-            // for these families (DML→CPU override), but honor it if the resolver hands it to us.
-            Accelerator::Cuda => dispatch.push(CUDAExecutionProvider::default().build()),
-            Accelerator::DirectMl => dispatch.push(DirectMLExecutionProvider::default().build()),
-            // ROCm / CoreML / OpenVino: not built into the Windows `ort` feature set — these
-            // families are CPU-forced anyway. Fall through to CPU.
-            Accelerator::Rocm | Accelerator::CoreMl | Accelerator::OpenVino => {
-                dispatch.push(CPUExecutionProvider::default().build());
-                saw_cpu = true;
-            }
-        }
-    }
-    if !saw_cpu {
-        dispatch.push(CPUExecutionProvider::default().build());
-    }
     builder
-        .with_execution_providers(dispatch)
+        .with_execution_providers(super::execution_providers(providers))
         .map_err(|e| SttError::SessionCreate(format!("register EPs: {e}")))
 }
 
@@ -2858,7 +2829,7 @@ impl Transcriber for ToneEngine {
     /// to 8 kHz, buffers, runs every full `chunk_size` window carrying state, and snapshots. The
     /// per-tick resample is per-call (slight boundary artifacts vs the single offline resample — the
     /// reference carries the same f16-state drift, so text parity holds; see the T-one spec).
-    fn stream_accept(&mut self, pcm: &[f32]) -> SttResult<String> {
+    fn stream_accept(&mut self, pcm: &[f32]) -> SttResult<NativeStreamUpdate> {
         if self.stream.is_none() {
             self.stream_reset();
         }
@@ -2878,7 +2849,11 @@ impl Transcriber for ToneEngine {
                 &chunk,
             )?;
         }
-        tone_snapshot_text(&self.vocab, self.blank_idx, &st.all_logprobs)
+        Ok(NativeStreamUpdate::interim(tone_snapshot_text(
+            &self.vocab,
+            self.blank_idx,
+            &st.all_logprobs,
+        )?))
     }
 
     /// Flush the streaming tail: fill the partial pending window + one trailing drain chunk (mirrors

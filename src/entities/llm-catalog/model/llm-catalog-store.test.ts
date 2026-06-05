@@ -474,7 +474,7 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		expect(useLlmCatalogStore.getState().pausedPulls.phi).toBeUndefined();
 	});
 
-	test("a non-terminal progress drops any paused entry for the same model (resume started)", () => {
+	test("late non-terminal progress after stop does not resurrect an active pull", () => {
 		useLlmCatalogStore.setState({
 			pulls: {},
 			pausedPulls: {
@@ -488,8 +488,50 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 			.getState()
 			.setPullProgress({ model: "phi", status: "downloading", percent: 35 });
 		const state = useLlmCatalogStore.getState();
-		expect(state.pausedPulls.phi).toBeUndefined();
-		expect(state.pulls.phi).toBeDefined();
+		expect(state.pulls.phi).toBeUndefined();
+		expect(state.pausedPulls.phi?.progress.percent).toBe(30);
+	});
+
+	test("active progress is monotonic across resume frames", () => {
+		useLlmCatalogStore.setState({
+			pulls: {
+				phi: {
+					progress: {
+						model: "phi",
+						status: "pulling",
+						statusText: "resuming",
+						percent: 80,
+						completed: 800,
+						total: 1000,
+					},
+					startedAt: 1,
+				},
+			},
+			pausedPulls: {},
+		});
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "phi",
+			status: "downloading",
+			percent: 2,
+			completed: 20,
+			total: 900,
+		});
+		let state = useLlmCatalogStore.getState();
+		expect(state.pulls.phi?.progress.percent).toBe(80);
+		expect(state.pulls.phi?.progress.completed).toBe(800);
+		expect(state.pulls.phi?.progress.total).toBe(1000);
+		expect(state.pulls.phi?.progress.status).toBe("downloading");
+
+		useLlmCatalogStore.getState().setPullProgress({
+			model: "phi",
+			status: "downloading",
+			percent: 85,
+			completed: 850,
+			total: 1000,
+		});
+		state = useLlmCatalogStore.getState();
+		expect(state.pulls.phi?.progress.percent).toBe(85);
+		expect(state.pulls.phi?.progress.completed).toBe(850);
 	});
 
 	test("discardPausedPull removes the entry without touching active pulls", () => {
@@ -531,6 +573,10 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 		});
 		const result = await useLlmCatalogStore.getState().resumePull("phi");
 		expect(result.success).toBe(true);
+		const state = useLlmCatalogStore.getState();
+		expect(state.pausedPulls.phi).toBeUndefined();
+		expect(state.pulls.phi?.progress.percent).toBe(80);
+		expect(state.pulls.phi?.progress.statusText).toBe("resuming");
 	});
 });
 

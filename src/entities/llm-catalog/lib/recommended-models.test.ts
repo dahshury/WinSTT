@@ -97,12 +97,34 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 		expect(llama1b).toBeDefined();
 		expect(llama1b?.sizeBytes).toBeGreaterThan(1_000_000_000);
 	});
+
+	test("offers the requested Gemma 4 local variants", () => {
+		const gemmaNames = RECOMMENDED_OLLAMA_MODELS.filter((m) => m.family === "gemma").map(
+			(m) => m.name
+		);
+		expect(gemmaNames).toEqual(["gemma4:e2b", "gemma4:e4b", "gemma4:12b"]);
+	});
+
+	test("omits the plain non-instruct SmolLM 2 1.7B tag", () => {
+		const smollmNames = RECOMMENDED_OLLAMA_MODELS.filter((m) => m.family === "smollm").map(
+			(m) => m.name
+		);
+		expect(smollmNames).toEqual(["smollm2:135m", "smollm2:360m"]);
+		expect(findRecommendedModel("smollm2:1.7b")).toBeUndefined();
+	});
+
+	test("offers the requested LFM2.5 Thinking model", () => {
+		const lfm = findRecommendedModel("lfm2.5-thinking:1.2b");
+		expect(lfm?.displayName).toBe("LFM2.5 Thinking 1.2B");
+		expect(lfm?.family).toBe("lfm");
+		expect(lfm?.sizeBytes).toBe(Math.round(0.731 * 1_000_000_000));
+	});
 });
 
 describe("findRecommendedModel", () => {
 	test("returns the matching entry by exact name", () => {
-		const found = findRecommendedModel("gemma4:e2b");
-		expect(found?.displayName).toBe("Gemma 4 E2B");
+		const found = findRecommendedModel("gemma4:12b");
+		expect(found?.displayName).toBe("Gemma 4 12B");
 		expect(found?.family).toBe("gemma");
 	});
 

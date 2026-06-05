@@ -1,4 +1,4 @@
-// DRAFT PORT — not yet compiled. Source: WinSTT frontend/src/shared/config/settings-schema.ts
+// Source: WinSTT frontend/src/shared/config/settings-schema.ts
 // (the authoritative Zod `appSettingsSchema`; the OpenAPI spec is STALE).
 //
 // This module ports WinSTT's ~150-field nested settings tree into a single
@@ -21,10 +21,9 @@
 //     in this struct but MUST be encrypted at rest by the persistence layer
 //     (Handy's `SecretMap` / Tauri `safeStorage` equivalent). See 02_settings.md.
 //
-// HOT-SWAP vs STARTUP-ONLY: annotated per group below; the canonical machine-
-// readable set is `STARTUP_ONLY_KEYS` at the bottom of this file (mirrors
-// WinSTT's `STARTUP_ONLY_KEYS_LIST` in electron/ipc/settings.ts, minus the
-// retired `model.computeType` — WinSTT is ONNX-only now).
+// HOT-SWAP classification: annotated per group below. `STARTUP_ONLY_KEYS`
+// intentionally stays empty in this Tauri port because runtime-owned settings
+// are live-read or applied through targeted in-process reloads.
 
 // reason: explicit Default impls document the settings-schema defaults (parity with the Zod schema)
 #![allow(clippy::derivable_impls)]
@@ -40,7 +39,7 @@ use std::collections::HashMap;
 /// `model.device` — `DeviceTypeSchema` = `["auto", "cpu"]`.
 /// ONNX-only WinSTT exposes only auto-vs-CPU; the actual accelerator (DirectML
 /// vs CPU) is chosen by the packaging flavor + `device.py`'s EP probe, NOT a
-/// persisted user knob. STARTUP-ONLY (binds the ORT EP at session create).
+/// persisted user knob. In this port, changes trigger an in-process model reload.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceType {
@@ -74,10 +73,8 @@ pub enum ModelUnloadTimeout {
     Hour1,
 }
 
-/// `audio.microphoneRelease`. Consolidates Handy's
-/// `always_on_microphone` + `lazy_stream_close` + `lazy_close_timeout_seconds`
-/// into one picker; the spawn layer fans it back out into those CLI flags.
-/// HOT-SWAP (audio-source reconfigure in place).
+/// `audio.microphoneRelease`. Single WinSTT-owned microphone release policy.
+/// HOT-SWAP (audio manager reconfigures in place).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum MicrophoneRelease {
@@ -104,8 +101,8 @@ pub enum FileSaveLocation {
     Ask,
 }
 
-/// `general.recordingMode`. CONDITIONAL restart: only crossing into/out of
-/// `wakeword` (or changing wakeword config while in it) restarts the engine.
+/// `general.recordingMode`. HOT-SWAP: crossing into/out of wakeword arms or
+/// disarms the detector in-process.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum RecordingMode {
@@ -198,12 +195,15 @@ pub enum AutoSubmitKey {
 /// `general.recordingRetention`. `never` = keep all; `cap` = oldest beyond
 /// historyMaxEntries; days3/weeks2/months3 = absolute age cutoff.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum RecordingRetention {
     Never,
     Cap,
+    #[serde(alias = "days_3")]
     Days3,
+    #[serde(alias = "weeks_2")]
     Weeks2,
+    #[serde(alias = "months_3")]
     Months3,
 }
 
@@ -356,7 +356,8 @@ pub struct Transform {
 
 // ===========================================================================
 // SECTION: model  (modelSettingsSchema)
-// Mostly HOT-SWAP. STARTUP-ONLY here: `device` (binds ORT EP at session create).
+// Model changes are hot-applied. Same-model load-input changes reload the
+// resident engine in-process.
 // ===========================================================================
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
@@ -373,7 +374,7 @@ pub struct ModelSettings {
     /// Forced decode language (`""` = auto-detect). HOT-SWAP.
     #[serde(default = "ModelSettings::default_language")]
     pub language: String,
-    /// CPU vs auto-GPU. STARTUP-ONLY.
+    /// CPU vs auto-GPU. HOT-SWAP through targeted model reload.
     #[serde(default)]
     pub device: DeviceType,
     /// Transcriber engine (auto-derived from model id on load). HOT-SWAP.
@@ -459,24 +460,24 @@ impl Default for GlobalSettings {
 
 // ===========================================================================
 // SECTION: quality  (qualitySettingsSchema)
-// STARTUP-ONLY: useMainModelForRealtime, realtimeProcessingPause,
-// initRealtimeAfterSeconds, earlyTranscriptionOnSilence (realtime pipeline
-// bootstrap). The rest are HOT-SWAP.
+// All HOT-SWAP / live-read in the Rust port. The realtime worker re-reads the
+// timing knobs every loop tick, and `useMainModelForRealtime` is retained only
+// for renderer/store parity because this port uses a single shared STT engine.
 // ===========================================================================
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct QualitySettings {
-    /// Use main model (vs separate realtime model) for live preview. STARTUP-ONLY.
+    /// Use main model (vs separate realtime model) for live preview. HOT-SWAP / parity-only.
     #[serde(default)]
     pub use_main_model_for_realtime: bool,
-    /// Pause between realtime passes (s). STARTUP-ONLY.
+    /// Pause between realtime passes (s). HOT-SWAP.
     #[serde(default = "QualitySettings::default_realtime_processing_pause")]
     pub realtime_processing_pause: f64,
-    /// Delay before spinning up the realtime worker (s). STARTUP-ONLY.
+    /// Delay before spinning up the realtime worker (s). HOT-SWAP.
     #[serde(default = "QualitySettings::default_init_realtime_after_seconds")]
     pub init_realtime_after_seconds: f64,
-    /// Early-finalize-on-silence threshold (s). STARTUP-ONLY.
+    /// Early-finalize-on-silence threshold (s). HOT-SWAP / config-only in this port.
     #[serde(default = "QualitySettings::default_early_transcription_on_silence")]
     pub early_transcription_on_silence: f64,
     /// Capitalize first letter of output. HOT-SWAP.
@@ -547,8 +548,8 @@ impl Default for QualitySettings {
 
 // ===========================================================================
 // SECTION: audio  (audioSettingsSchema)
-// sampleRate / bufferSize / sileroUseOnnx / preRecordingBufferDuration /
-// clamshellMicrophone are STARTUP (CLI). The rest are HOT-SWAP.
+// sampleRate / bufferSize / sileroUseOnnx / preRecordingBufferDuration are
+// STARTUP (CLI). The rest are HOT-SWAP.
 // ===========================================================================
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
@@ -590,7 +591,7 @@ pub struct AudioSettings {
     /// Zod `.catch({})`.
     #[serde(default)]
     pub silero_sensitivity_by_device_name: HashMap<String, f64>,
-    /// Alt mic index when laptop lid closed; `null` = disabled. STARTUP. Zod `.catch(null)`.
+    /// Alt mic index when laptop lid closed; `null` = disabled. HOT-SWAP. Zod `.catch(null)`.
     #[serde(default)]
     pub clamshell_microphone: Option<i64>,
     /// Mic-stream lifecycle policy. HOT-SWAP. Zod `.catch("immediate")`.
@@ -651,9 +652,8 @@ impl Default for AudioSettings {
 
 // ===========================================================================
 // SECTION: general  (generalSettingsSchema) — the largest section.
-// STARTUP-ONLY: sendCrashReports (Sentry init reads once).
-// CONDITIONAL restart: recordingMode↔wakeword boundary; wakeWord /
-// wakeWordSensitivity / wakeWordTimeout while in wakeword mode.
+// Wakeword mode/config is HOT-SWAP in the Rust port: the wakeword runtime
+// arms/disarms/reconfigures its detector from the saved settings.
 // HOT-SWAP: liveTranscriptionDisplay / showRecordingOverlay (effective-realtime is
 // re-read live by the realtime worker — no restart even when fully disabled).
 // MAIN-owned (not user controls): onboarded, onboardedAt, onboardedTrack.
@@ -691,7 +691,7 @@ pub struct GeneralSettings {
     /// `auto` = beside source, `ask` = save dialog. HOT-SWAP.
     #[serde(default)]
     pub file_transcription_save_location: FileSaveLocation,
-    /// How a recording session starts. CONDITIONAL restart (wakeword boundary).
+    /// How a recording session starts. HOT-SWAP, including wakeword arm/disarm.
     #[serde(default)]
     pub recording_mode: RecordingMode,
     /// In toggle mode: continuous press-to-press, disable VAD/silence stop. HOT-SWAP.
@@ -705,14 +705,18 @@ pub struct GeneralSettings {
     /// Loopback device index for `listen` mode; `null` = default. HOT-SWAP.
     #[serde(default)]
     pub loopback_device_index: Option<i64>,
-    /// Wake word in `wakeword` mode (Porcupine / openWakeWord keyword; KWS in the
-    /// Rust port). CONDITIONAL restart (in wakeword mode).
+    /// Wake phrase in `wakeword` mode. Presets and custom phrases both run
+    /// through the local sherpa KWS detector. HOT-SWAP via wakeword runtime refresh.
     #[serde(default = "GeneralSettings::default_wake_word")]
     pub wake_word: String,
-    /// Wake-word detector sensitivity. Range 0..1. CONDITIONAL restart.
+    /// User-saved custom wake phrases for the renderer combobox. Runtime listens
+    /// only to `wake_word`; this list is persisted UI catalog state.
+    #[serde(default)]
+    pub custom_wake_words: Vec<String>,
+    /// Wake-word detector sensitivity. Range 0..1. HOT-SWAP via runtime refresh.
     #[serde(default = "GeneralSettings::default_wake_word_sensitivity")]
     pub wake_word_sensitivity: f64,
-    /// Seconds the gate stays armed after detection. Range 1..30. CONDITIONAL restart.
+    /// Seconds the gate stays armed after detection. Range 1..30. HOT-SWAP via runtime refresh.
     #[serde(default = "GeneralSettings::default_wake_word_timeout")]
     pub wake_word_timeout: f64,
     /// Show floating recording pill. HOT-SWAP (affects effective-realtime, which the
@@ -777,7 +781,7 @@ pub struct GeneralSettings {
     /// HOT-SWAP (runtime toggle via diarization-toggle method).
     #[serde(default)]
     pub speaker_diarization: bool,
-    /// Sentry crash-reporting opt-out. STARTUP-ONLY (Sentry `init()` reads once).
+    /// Sentry crash-reporting opt-out. Persisted live; never prompts for restart.
     #[serde(default = "bool_true")]
     pub send_crash_reports: bool,
     /// Opt-in pre-release auto-updates. HOT-SWAP.
@@ -807,6 +811,11 @@ pub struct GeneralSettings {
     /// preview IS the pill). Zod `.catch(false)`.
     #[serde(default)]
     pub preview_before_pasting: bool,
+    /// Stream generated realtime text directly into the focused app while recording.
+    /// HOT-SWAP. Effective only for native-streaming main models. Mutually exclusive
+    /// with preview-before-pasting. Zod `.catch(false)`.
+    #[serde(default)]
+    pub word_by_word_pasting: bool,
     /// Cap on persisted history entries. Range 10..10000. HOT-SWAP. Zod `.catch(1000)`.
     #[serde(default = "GeneralSettings::default_history_max_entries")]
     pub history_max_entries: i64,
@@ -967,6 +976,7 @@ impl Default for GeneralSettings {
             repaste_hotkey: Self::default_repaste_hotkey(),
             loopback_device_index: None,
             wake_word: Self::default_wake_word(),
+            custom_wake_words: Vec::new(),
             wake_word_sensitivity: Self::default_wake_word_sensitivity(),
             wake_word_timeout: Self::default_wake_word_timeout(),
             show_recording_overlay: true,
@@ -1000,6 +1010,7 @@ impl Default for GeneralSettings {
             auto_submit: false,
             auto_submit_key: AutoSubmitKey::default(),
             preview_before_pasting: false,
+            word_by_word_pasting: false,
             history_max_entries: Self::default_history_max_entries(),
             recording_retention: RecordingRetention::default(),
             word_correction_threshold: Self::default_word_correction_threshold(),
@@ -1280,7 +1291,7 @@ pub struct TtsSettings {
     #[serde(default)]
     pub enabled: bool,
     /// Local TTS catalog id selecting WHICH engine/model synthesizes
-    /// (kokoro-82m / kitten-nano-0.1 / kitten-nano-0.2 / piper / supertonic-en).
+    /// (kokoro-82m / kitten-nano-0.1 / kitten-nano-0.2 / piper / supertonic-3).
     /// `voice` below is the voice WITHIN this model. Cloud source ignores this.
     #[serde(default = "TtsSettings::default_model")]
     pub model: String,
@@ -1547,33 +1558,23 @@ fn default_neutral_presets() -> Vec<PresetEntry> {
 }
 
 // ===========================================================================
-// Hot-swap classification (machine-readable; mirrors WinSTT's
-// STARTUP_ONLY_KEYS_LIST in electron/ipc/settings.ts, minus the retired
-// `model.computeType` — WinSTT is ONNX-only).
+// Hot-swap classification.
 //
-// A settings change triggers an engine restart ONLY when:
-//   1. a key in STARTUP_ONLY_KEYS changed; OR
-//   2. the wakeword config branch changed (see WAKEWORD_CONFIG_KEYS) while in /
-//      crossing wakeword mode.
-// Everything else is hot-swapped in place — INCLUDING effective-realtime
-// (liveTranscriptionDisplay / showRecordingOverlay): the realtime worker re-reads it
-// live, so toggling live transcription never restarts. (the reference DID restart here; see
-// commands::settings::compute_restart_keys for the deliberate divergence.)
+// The Rust/Tauri port has no externally managed STT server process. Settings that
+// used to be CLI/startup-only in the Electron+Python app are either read live
+// (realtime timing/display, wakeword config, crash-report opt-out) or applied by
+// a targeted in-process reload (model.device / quantization). Therefore no
+// settings path should surface "restart the STT server/app" while the app is running.
 // ===========================================================================
 
-/// Dot-paths that force a full engine restart when changed.
-pub const STARTUP_ONLY_KEYS: &[&str] = &[
-    "model.device",
-    "quality.useMainModelForRealtime",
-    "quality.realtimeProcessingPause",
-    "quality.initRealtimeAfterSeconds",
-    "quality.earlyTranscriptionOnSilence",
-    // Sentry init reads once at startup; cannot be cleanly reversed at runtime.
-    "general.sendCrashReports",
-];
+/// Dot-paths that require a full app relaunch when changed.
+///
+/// Intentionally empty: every setting is hot-applied, persisted-only, or handled
+/// by an in-process model/wakeword reload.
+pub const STARTUP_ONLY_KEYS: &[&str] = &[];
 
-/// Dot-paths that force a restart only while in (or crossing into/out of)
-/// wakeword recording mode.
+/// Dot-paths that drive wakeword runtime reconfiguration while in (or crossing
+/// into/out of) wakeword recording mode.
 pub const WAKEWORD_CONFIG_KEYS: &[&str] = &[
     "general.recordingMode",
     "general.wakeWord",
@@ -1598,9 +1599,8 @@ pub const SECRET_KEYS: &[&str] = &[
     "integrations.elevenlabs.apiKey",
 ];
 
-/// Returns true if a change to `dot_path` unconditionally requires an engine
-/// restart (the startup-only set). Wakeword / realtime conditional restarts are
-/// state-dependent and handled by the settings-apply layer, not by this fn.
+/// Returns true if a change to `dot_path` unconditionally requires an app/server
+/// restart. This should remain false for all user-editable settings in the Rust port.
 pub fn is_startup_only(dot_path: &str) -> bool {
     STARTUP_ONLY_KEYS.contains(&dot_path)
 }
@@ -1617,6 +1617,18 @@ pub fn is_secret(dot_path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_retention_uses_frontend_wire_values() {
+        assert_eq!(
+            serde_json::to_value(RecordingRetention::Days3).unwrap(),
+            serde_json::json!("days3")
+        );
+        assert_eq!(
+            serde_json::from_value::<RecordingRetention>(serde_json::json!("days_3")).unwrap(),
+            RecordingRetention::Days3
+        );
+    }
 
     #[test]
     fn defaults_match_zod_schema() {
@@ -1665,6 +1677,7 @@ mod tests {
         assert_eq!(s.general.repaste_hotkey, "LCtrl+LShift+V");
         assert_eq!(s.general.recording_mode, RecordingMode::Ptt);
         assert_eq!(s.general.wake_word, "alexa");
+        assert!(s.general.custom_wake_words.is_empty());
         assert_eq!(s.general.wake_word_sensitivity, 0.6);
         assert_eq!(s.general.wake_word_timeout, 5.0);
         assert_eq!(
@@ -1687,6 +1700,7 @@ mod tests {
         assert_eq!(s.general.recording_retention, RecordingRetention::Cap);
         assert_eq!(s.general.word_correction_threshold, 0.18);
         assert_eq!(s.general.auto_submit_key, AutoSubmitKey::Enter);
+        assert!(!s.general.word_by_word_pasting);
         assert_eq!(s.general.onboarded_track, OnboardedTrack::Unset);
         assert_eq!(
             s.general.context_deny_list,
@@ -1860,9 +1874,10 @@ mod tests {
 
     #[test]
     fn startup_only_classification() {
-        assert!(is_startup_only("model.device"));
-        assert!(is_startup_only("quality.useMainModelForRealtime"));
-        assert!(is_startup_only("general.sendCrashReports"));
+        assert!(STARTUP_ONLY_KEYS.is_empty());
+        assert!(!is_startup_only("model.device"));
+        assert!(!is_startup_only("quality.useMainModelForRealtime"));
+        assert!(!is_startup_only("general.sendCrashReports"));
         // ONNX-only: computeType was retired and must NOT be startup-only.
         assert!(!is_startup_only("model.computeType"));
         // Hot-swap settings must not be startup-only.

@@ -1,5 +1,5 @@
 // Source: E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
-//         docs/port/05_wakeword_diarization_loopback_wordts.md §B
+//         docs/archive/port/05_wakeword_diarization_loopback_wordts.md §B
 //         server/src/recorder/application/diarization_stream.py + domain/speaker_timeline.py
 //         sherpa-onnx 1.13.2 SpeakerEmbeddingExtractor (verified docs.rs 2026-05):
 //           SpeakerEmbeddingExtractorConfig { model: Option<String>, num_threads: i32,

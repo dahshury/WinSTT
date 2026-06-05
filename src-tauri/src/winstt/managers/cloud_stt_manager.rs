@@ -98,8 +98,10 @@ impl CloudSttManager {
         request_id: &str,
         req: CloudTranscribeRequest,
     ) -> Result<CloudTranscription, CloudSttError> {
+        self.cancelled.track(request_id);
         let provider = req.provider;
         if let Err(e) = preflight(&req) {
+            self.clear(request_id);
             self.emit_error(provider, &e);
             return Err(e);
         }
@@ -109,6 +111,10 @@ impl CloudSttManager {
         }
 
         let result = self.do_upload(req).await;
+        if self.is_cancelled(request_id) {
+            self.clear(request_id);
+            return Err(CloudSttError::new(CloudSttErrorCode::Aborted, "cancelled"));
+        }
         self.clear(request_id);
         if let Err(ref e) = result {
             self.emit_error(provider, e);

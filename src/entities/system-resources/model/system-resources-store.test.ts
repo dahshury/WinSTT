@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { __system_resources_store_test_helpers__ } from "./system-resources-store";
-
-const { errorMessage, errorPatch, snapshotPatch } = __system_resources_store_test_helpers__;
+import { errorMessage, errorPatch, snapshotPatch } from "./system-resources-store";
 
 describe("errorMessage", () => {
 	test("returns the message of an Error instance", () => {

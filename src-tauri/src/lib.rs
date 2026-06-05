@@ -10,7 +10,6 @@ mod helpers;
 mod input;
 mod llm_client;
 mod managers;
-mod overlay;
 pub mod portable;
 mod settings;
 mod shortcut;
@@ -18,7 +17,10 @@ mod signal_handle;
 mod splash;
 mod transcription_coordinator;
 mod tray;
+mod tray_indicator;
 mod utils;
+#[cfg(windows)]
+mod windows_com;
 pub mod winstt;
 
 pub use cli::CliArgs;
@@ -37,6 +39,7 @@ use signal_hook::consts::{SIGUSR1, SIGUSR2};
 use signal_hook::iterator::Signals;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::image::Image;
 pub use transcription_coordinator::TranscriptionCoordinator;
 
@@ -85,11 +88,68 @@ fn build_console_filter() -> env_filter::Filter {
     builder.build()
 }
 
+pub(crate) fn startup_profile_enabled() -> bool {
+    std::env::var("WINSTT_PROFILE_STARTUP")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn log_startup_duration(label: &str, started: Instant) {
+    if startup_profile_enabled() {
+        log::info!("[startup] {label}: {} ms", started.elapsed().as_millis());
+    }
+}
+
+struct StartupProfiler {
+    enabled: bool,
+    start: Instant,
+    last: Instant,
+}
+
+impl StartupProfiler {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            enabled: startup_profile_enabled(),
+            start: now,
+            last: now,
+        }
+    }
+
+    fn mark(&mut self, label: &str) {
+        if !self.enabled {
+            return;
+        }
+        let now = Instant::now();
+        log::info!(
+            "[startup] {label}: +{} ms ({} ms total)",
+            now.duration_since(self.last).as_millis(),
+            now.duration_since(self.start).as_millis()
+        );
+        self.last = now;
+    }
+}
+
+#[cfg(all(windows, debug_assertions))]
+fn hard_exit_main_window_in_dev() -> bool {
+    log::info!("Main window closed - Windows dev hard exit.");
+    signal_handle::terminate_process_success();
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn hard_exit_main_window_in_dev() -> bool {
+    false
+}
+
 fn show_main_window(app: &AppHandle) {
     // Hand off from the splash: the real window is about to be visible. Idempotent
     // and a no-op if the page-load handler already closed it (mirrors the reference's
     // showOnce → closeSplashWindow).
-    splash::close_splash_window(app);
     if let Some(main_window) = app.get_webview_window("main") {
         if let Err(e) = main_window.unminimize() {
             log::error!("Failed to unminimize webview window: {}", e);
@@ -97,6 +157,9 @@ fn show_main_window(app: &AppHandle) {
         if let Err(e) = main_window.show() {
             log::error!("Failed to show webview window: {}", e);
         }
+        // Hand off from the splash after the real window is visible, so the
+        // splash fade-out runs over a painted renderer instead of blank desktop.
+        splash::close_splash_window(app);
         // Force the pill ABOVE every other app's window. On Windows `set_focus()`
         // alone is unreliable when another process owns the foreground
         // (SetForegroundWindow is restricted to the foreground-owning process), so
@@ -118,8 +181,11 @@ fn show_main_window(app: &AppHandle) {
                 log::error!("Failed to set activation policy to Regular: {}", e);
             }
         }
+        winstt::commands::windows::schedule_post_startup_prewarm(app);
         return;
     }
+
+    splash::close_splash_window(app);
 
     let webview_labels = app.webview_windows().keys().cloned().collect::<Vec<_>>();
     log::error!(
@@ -154,7 +220,7 @@ fn should_force_show_permissions_window(app: &AppHandle) -> bool {
     false
 }
 
-fn initialize_core_logic(app_handle: &AppHandle) {
+fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) {
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
     // The frontend is responsible for calling the `initialize_enigo` command
     // after onboarding completes. This avoids triggering permission dialogs
@@ -172,6 +238,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     );
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
+    startup.mark("core managers constructed");
 
     // Apply accelerator preferences before any model loads
     managers::transcription::apply_accelerator_settings(app_handle);
@@ -181,6 +248,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    startup.mark("core managers registered");
+
+    helpers::clamshell::install_lid_state_monitor(app_handle);
+    startup.mark("lid monitor initialized");
 
     // Pre-warm the Silero VAD + audio recorder OFF the PTT press path. Neither
     // WinSTT nor upstream Handy preloads this, so the COLD first push-to-talk
@@ -193,30 +264,25 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // no-ops).
     {
         let rm = recording_manager.clone();
+        let profile_vad = startup_profile_enabled();
         std::thread::spawn(move || {
+            let started = Instant::now();
             if let Err(e) = rm.preload_vad() {
                 log::debug!("Startup VAD pre-load failed: {e}");
             }
+            if profile_vad {
+                log::info!(
+                    "[startup] VAD preload thread completed: {} ms",
+                    started.elapsed().as_millis()
+                );
+            }
         });
     }
+    startup.mark("VAD preload scheduled");
 
     // Seed WinSTT settings defaults BEFORE managers read them (first-run materialization).
     winstt::commands::settings::seed_defaults(app_handle);
-
-    // Point the TTS phonemizer at the BUNDLED espeak-ng (src-tauri/resources/espeakng_loader/,
-    // shipped via tauri.conf `resources/**/*`) for PACKAGED builds — the in-process FFI resolver
-    // (phonemize.rs::resolve_espeak_lib) reads ESPEAK_NG_LIBRARY first and finds espeak-ng-data as
-    // the lib's sibling. Dev already resolves the %LOCALAPPDATA% extraction, so this only fills the
-    // shipping gap; best-effort — if the resource isn't present we leave it to the resolver's tiers.
-    if std::env::var_os("ESPEAK_NG_LIBRARY").is_none() {
-        if let Ok(res_dir) = app_handle.path().resource_dir() {
-            let lib = res_dir.join("resources/espeakng_loader/espeak-ng.dll");
-            if lib.exists() {
-                std::env::set_var("ESPEAK_NG_LIBRARY", &lib);
-                log::info!("[tts] using bundled espeak-ng at {}", lib.display());
-            }
-        }
-    }
+    startup.mark("settings defaults seeded");
 
     // ── WinSTT managers (lib_wiring.md §2) ──
     {
@@ -272,11 +338,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         realtime_manager.start();
         app_handle.manage(realtime_manager);
     }
+    startup.mark("WinSTT managers registered and warmups scheduled");
     // If the persisted WinSTT mode is wakeword, arm the detector and open the
     // microphone stream during startup. The renderer treats wakeword as
     // server-driven, so this backend sync is the only place that can make a cold
     // launch start listening.
-    winstt::commands::settings::sync_wakeword_runtime_from_settings(app_handle);
+    winstt::commands::settings::sync_wakeword_runtime_from_settings_in_background(app_handle);
+    startup.mark("wakeword runtime sync scheduled");
 
     // Tray-menu placement state + the custom-HTML-tray + history live-event bridge.
     app_handle.manage(crate::winstt::commands::tray_menu::TrayMenuAnchor::default());
@@ -292,7 +360,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // `cancel_preview` find it via `app.try_state::<PreviewState>()`.
     app_handle.manage(crate::winstt::commands::preview::PreviewState::default());
     winstt::commands::history::install_history_event_bridge(app_handle);
-    winstt::commands::tray_menu::install_tray_menu_lifecycle(app_handle);
     // Snippet expansion cache: warm at startup + rebuild on every settings:changed.
     winstt::commands::snippets::install_snippet_reload_bridge(app_handle);
     // Wakeword → dictation: a wake_word_detected hit (emitted by WakeWordManager.feed_chunk
@@ -304,6 +371,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             crate::actions::start_dictation_from_wakeword(&app_for_ww);
         });
     }
+    startup.mark("event bridges installed");
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -311,7 +379,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // This matches the pattern used for Enigo initialization.
 
     #[cfg(unix)]
-    let signals = Signals::new(&[SIGUSR1, SIGUSR2]).unwrap();
+    let signals = Signals::new([SIGUSR1, SIGUSR2]).unwrap();
     // Set up signal handlers for toggling transcription
     #[cfg(unix)]
     signal_handle::setup_signal_handler(app_handle.clone(), signals);
@@ -321,13 +389,15 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // no `^C^C` race). See the handler doc for why this is a hard exit, not app.exit(0).
     #[cfg(windows)]
     signal_handle::setup_windows_ctrl_handler();
+    startup.mark("signal handlers installed");
 
     // Apply macOS Accessory policy if starting hidden and tray is available.
     // If the tray icon is disabled, keep the dock icon so the user can reopen.
     #[cfg(target_os = "macos")]
     {
-        let settings = settings::get_settings(app_handle);
-        if settings.start_hidden && settings.show_tray_icon {
+        let core_settings = settings::get_settings(app_handle);
+        let settings = winstt::commands::settings::read_settings_raw(app_handle);
+        if settings.general.start_minimized && core_settings.show_tray_icon {
             let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
         }
     }
@@ -392,6 +462,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         .build(app_handle)
         .unwrap();
     app_handle.manage(tray);
+    tray::sync_tray_visualizer_style_from_settings(app_handle);
+    startup.mark("tray icon created");
 
     // Initialize tray menu with idle state
     utils::update_tray_menu(app_handle, &utils::TrayIconState::Idle, None);
@@ -410,15 +482,16 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Get the autostart manager and configure based on user setting
     let autostart_manager = app_handle.autolaunch();
-    let settings = settings::get_settings(app_handle);
+    let settings = winstt::commands::settings::read_settings_raw(app_handle);
 
-    if settings.autostart_enabled {
+    if settings.general.auto_start {
         // Enable autostart if user has opted in
         let _ = autostart_manager.enable();
     } else {
         // Disable autostart if user has opted out
         let _ = autostart_manager.disable();
     }
+    startup.mark("tray settings and autostart applied");
 
     // AUDIT #9: Handy's separate `recording_overlay` window is no longer created — the
     // WinSTT recording pill is the React `overlay` WebviewWindow, and every show path
@@ -432,15 +505,24 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // cleanly for cloud ids / failed loads. Mirrors the reference server's boot `recorder.warmup()`.
     {
         let tm = transcription_manager.clone();
+        let profile_stt = startup_profile_enabled();
         std::thread::spawn(move || {
+            let started = Instant::now();
             tm.initiate_model_load(); // spawns its own background load thread
             tm.warmup(); // waits out that load, then dummy-decodes to compile kernels
                          // Signal the splash ready-watcher that the backend is up + warm (or had
                          // nothing to load). The single-process analog of the reference's
                          // `server-ready`; one of the two gates before the pill is shown.
+            if profile_stt {
+                log::info!(
+                    "[startup] STT boot/warmup thread completed: {} ms",
+                    started.elapsed().as_millis()
+                );
+            }
             splash::mark_stt_boot_done();
         });
     }
+    startup.mark("STT boot/warmup scheduled");
 }
 
 #[tauri::command]
@@ -462,252 +544,277 @@ fn show_main_window_command(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+#[specta::specta]
+fn quit_app(_app: AppHandle) {
+    #[cfg(all(windows, debug_assertions))]
+    {
+        log::info!("Quit requested - Windows dev hard exit.");
+        signal_handle::terminate_process_success();
+    }
+
+    #[cfg(not(all(windows, debug_assertions)))]
+    _app.exit(0);
+}
+
 /// Build the tauri-specta `Builder` with the full command + event registry.
 /// Single source of truth for both `run()` (which mounts it on the live app) and
 /// the `export_bindings` test (which calls `.export(...)` without starting the app).
 pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new()
-        .commands(collect_commands![
-            shortcut::change_binding,
-            shortcut::reset_binding,
-            shortcut::change_ptt_setting,
-            shortcut::change_audio_feedback_setting,
-            shortcut::change_audio_feedback_volume_setting,
-            shortcut::change_sound_theme_setting,
-            shortcut::change_start_hidden_setting,
-            shortcut::change_autostart_setting,
-            shortcut::change_translate_to_english_setting,
-            shortcut::change_selected_language_setting,
-            shortcut::change_overlay_position_setting,
-            shortcut::change_debug_mode_setting,
-            shortcut::change_word_correction_threshold_setting,
-            shortcut::change_extra_recording_buffer_setting,
-            shortcut::change_paste_delay_ms_setting,
-            shortcut::change_paste_method_setting,
-            shortcut::get_available_typing_tools,
-            shortcut::change_typing_tool_setting,
-            shortcut::change_external_script_path_setting,
-            shortcut::change_clipboard_handling_setting,
-            shortcut::change_auto_submit_setting,
-            shortcut::change_auto_submit_key_setting,
-            shortcut::change_post_process_enabled_setting,
-            shortcut::change_experimental_enabled_setting,
-            shortcut::change_post_process_base_url_setting,
-            shortcut::change_post_process_api_key_setting,
-            shortcut::change_post_process_model_setting,
-            shortcut::set_post_process_provider,
-            shortcut::fetch_post_process_models,
-            shortcut::add_post_process_prompt,
-            shortcut::update_post_process_prompt,
-            shortcut::delete_post_process_prompt,
-            shortcut::set_post_process_selected_prompt,
-            shortcut::update_custom_words,
-            shortcut::suspend_binding,
-            shortcut::resume_binding,
-            shortcut::change_mute_while_recording_setting,
-            shortcut::change_append_trailing_space_setting,
-            shortcut::change_lazy_stream_close_setting,
-            shortcut::change_app_language_setting,
-            shortcut::change_update_checks_setting,
-            shortcut::change_keyboard_implementation_setting,
-            shortcut::get_keyboard_implementation,
-            shortcut::change_show_tray_icon_setting,
-            shortcut::change_whisper_accelerator_setting,
-            shortcut::change_ort_accelerator_setting,
-            shortcut::change_whisper_gpu_device,
-            shortcut::get_available_accelerators,
-            shortcut::handy_keys::start_handy_keys_recording,
-            shortcut::handy_keys::stop_handy_keys_recording,
-            trigger_update_check,
-            show_main_window_command,
-            tray::copy_last_transcript,
-            commands::cancel_operation,
-            commands::is_portable,
-            commands::get_app_dir_path,
-            commands::get_app_settings,
-            commands::get_default_settings,
-            commands::get_log_dir_path,
-            commands::set_log_level,
-            commands::open_recordings_folder,
-            commands::open_log_dir,
-            commands::open_app_data_dir,
-            commands::check_apple_intelligence_available,
-            commands::initialize_enigo,
-            commands::initialize_shortcuts,
-            commands::models::get_available_models,
-            commands::models::get_model_info,
-            commands::models::download_model,
-            commands::models::delete_model,
-            commands::models::cancel_download,
-            commands::models::set_active_model,
-            commands::models::get_current_model,
-            commands::models::get_transcription_model_status,
-            commands::models::is_model_loading,
-            commands::models::has_any_models_available,
-            commands::models::has_any_models_or_downloads,
-            commands::audio::update_microphone_mode,
-            commands::audio::get_microphone_mode,
-            commands::audio::get_windows_microphone_permission_status,
-            commands::audio::open_microphone_privacy_settings,
-            commands::audio::get_available_microphones,
-            commands::audio::set_selected_microphone,
-            commands::audio::get_selected_microphone,
-            commands::audio::get_available_output_devices,
-            commands::audio::set_selected_output_device,
-            commands::audio::get_selected_output_device,
-            commands::audio::play_test_sound,
-            commands::audio::check_custom_sounds,
-            commands::audio::set_clamshell_microphone,
-            commands::audio::get_clamshell_microphone,
-            commands::audio::is_recording,
-            commands::transcription::set_model_unload_timeout,
-            commands::transcription::get_model_load_status,
-            commands::transcription::unload_model_manually,
-            commands::history::get_history_entries,
-            commands::history::toggle_history_entry_saved,
-            commands::history::get_audio_file_path,
-            commands::history::delete_history_entry,
-            commands::history::retry_history_entry_transcription,
-            commands::history::update_history_limit,
-            commands::history::update_recording_retention_period,
-            helpers::clamshell::is_laptop,
-            // ── WinSTT commands (lib_wiring.md §3) ──
-            winstt::commands::settings::winstt_get_settings,
-            winstt::commands::settings::winstt_set_settings,
-            winstt::commands::stt::list_models,
-            winstt::commands::stt::picker_quantizations_for,
-            winstt::commands::stt::get_live_resources,
-            winstt::commands::stt::set_custom_model,
-            winstt::commands::tts::tts_speak,
-            winstt::commands::tts::tts_speak_selection,
-            winstt::commands::tts::tts_cancel,
-            winstt::commands::tts::tts_cancel_all,
-            winstt::commands::tts::tts_init,
-            winstt::commands::tts::tts_list_voices,
-            winstt::commands::tts::tts_list_cloud_voices,
-            winstt::commands::tts::tts_cloud_subscription,
-            winstt::commands::tts::tts_download_estimate,
-            winstt::commands::tts::tts_install_pause,
-            winstt::commands::tts::tts_install_resume,
-            winstt::commands::tts::tts_install_cancel,
-            winstt::commands::tts::tts_preview_cloud,
-            winstt::commands::tts::tts_list_models,
-            winstt::commands::tts::tts_list_models_with_state,
-            winstt::commands::tts::tts_predownload_model,
-            winstt::commands::tts::tts_download_pause,
-            winstt::commands::tts::tts_download_resume,
-            winstt::commands::tts::tts_download_cancel,
-            winstt::commands::tts::tts_delete_model,
-            winstt::commands::llm::process_text,
-            winstt::commands::llm::process_transform,
-            winstt::commands::llm::scan_ollama_models,
-            winstt::commands::llm::scan_openrouter_models,
-            winstt::commands::llm::ollama_detect,
-            winstt::commands::llm::ollama_start,
-            winstt::commands::llm::ollama_pull,
-            winstt::commands::llm::ollama_delete,
-            winstt::commands::llm::verify_credential,
-            winstt::commands::cloud_stt::verify_cloud_stt_credential,
-            winstt::commands::cloud_stt::cloud_stt_cancel,
-            winstt::commands::wakeword::set_wake_word,
-            winstt::commands::wakeword::list_wake_word_presets,
-            winstt::commands::listen::start_listen,
-            winstt::commands::listen::stop_listen,
-            winstt::commands::wordts::align_words,
-            winstt::commands::file_transcribe::file_transcribe_enqueue,
-            winstt::commands::file_transcribe::file_transcribe_pause,
-            winstt::commands::file_transcribe::file_transcribe_resume,
-            winstt::commands::file_transcribe::file_transcribe_cancel,
-            // ── frontend-port slice commands (10_frontend_port_plan.md WU-3..13) ──
-            winstt::commands::snippets::winstt_expand_snippets,
-            winstt::commands::dictation::set_winstt_model,
-            winstt::commands::dictation::winstt_call_method,
-            winstt::commands::dictation::winstt_emit_ready,
-            winstt::commands::dictation::winstt_get_parameter,
-            winstt::commands::dictation::winstt_set_parameter,
-            winstt::commands::download::predownload_quant,
-            winstt::commands::download::download_pause_quant,
-            winstt::commands::download::download_resume_quant,
-            winstt::commands::download::download_cancel_quant,
-            winstt::commands::download::delete_model_quantization,
-            winstt::commands::download::delete_model_cache,
-            winstt::commands::runtime::get_runtime_info,
-            winstt::commands::runtime::list_models_with_state,
-            winstt::commands::runtime::assess_dictation_fit,
-            winstt::commands::runtime::assess_ollama_fit,
-            winstt::commands::runtime::gpu_get_info,
-            winstt::commands::hotkey::hotkey_register,
-            winstt::commands::hotkey::hotkey_unregister,
-            winstt::commands::hotkey::hotkey_start_recording,
-            winstt::commands::hotkey::hotkey_stop_recording,
-            winstt::commands::audio_devices::get_audio_devices,
-            winstt::commands::loopback::loopback_list_devices,
-            winstt::commands::tts::tts_set_speed,
-            winstt::commands::tts::tts_report_playback_started,
-            winstt::commands::tts::tts_report_playback_ended,
-            winstt::commands::ollama_library::ollama_fetch_library,
-            winstt::commands::ollama_library::ollama_fetch_tags,
-            winstt::commands::ollama_library::ollama_search_library,
-            winstt::commands::ollama_pull::ollama_cancel_pull,
-            winstt::commands::ollama_pull::llm_get_warmup_status,
-            winstt::commands::verify::verify_integration_credential,
-            winstt::commands::file_transcribe::file_transcribe_clear,
-            winstt::commands::file_transcribe::file_transcribe_copy,
-            winstt::commands::file_transcribe::file_transcribe_discard_all,
-            winstt::commands::file_transcribe::file_transcribe_get_active,
-            winstt::commands::file_transcribe::file_transcribe_retry,
-            winstt::commands::history::history_list,
-            winstt::commands::history::history_recent,
-            winstt::commands::history::history_add,
-            winstt::commands::history::history_toggle,
-            winstt::commands::history::history_delete_row,
-            winstt::commands::history::history_load_audio_by_row,
-            winstt::commands::history::history_get_all,
-            winstt::commands::history::history_clear,
-            winstt::commands::history::history_delete,
-            winstt::commands::history::history_load_audio,
-            winstt::commands::about::about_get_app_info,
-            winstt::commands::about::about_get_license,
-            winstt::commands::about::about_get_notices,
-            winstt::commands::diag::diag_open_logs_folder,
-            winstt::commands::diag::diag_save_bundle,
-            winstt::commands::sound::sound_library_add,
-            winstt::commands::sound::sound_library_read_file,
-            winstt::commands::sound::sound_library_remove,
-            winstt::commands::transforms::apply_transform,
-            winstt::commands::transforms::apply_transform_preview,
-            winstt::commands::preview::confirm_paste,
-            winstt::commands::preview::cancel_preview,
-            winstt::commands::windows::winstt_diag,
-            winstt::commands::windows::open_window,
-            winstt::commands::windows::close_window,
-            winstt::commands::windows::close_self_window,
-            winstt::commands::windows::resize_window,
-            winstt::commands::windows::anchor_window,
-            winstt::commands::onboarding::onboarding_finish,
-            winstt::commands::tray_menu::show_tray_menu,
-            winstt::commands::tray_menu::reanchor_tray_menu,
-            winstt::commands::tray_menu::hide_tray_menu,
-            // ── de-brand/completion slice ──
-            winstt::commands::sound::sound_get_data,
-            winstt::commands::cancel::cancel_current_operation,
-            winstt::commands::custom_models::open_custom_models_folder,
-            winstt::commands::download::winstt_cancel_download,
-            winstt::commands::context_playground::context_playground_set_live,
-            winstt::commands::context_playground::context_playground_arm_deep,
-            winstt::commands::context_playground::context_playground_capture,
-        ])
-        .events(collect_events![
-            managers::history::HistoryUpdatePayload,
-            winstt::commands::events::RealtimeStabilizedPayload,
-            winstt::commands::events::RealtimeUpdatePayload,
-            winstt::commands::events::WakeWordDetectedPayload,
-            winstt::commands::events::SpeakerSegmentsPayload,
-            winstt::commands::events::WordAlignmentPayload,
-            winstt::commands::events::VadSensitivityAdaptedPayload,
-            winstt::commands::events::TtsLifecyclePayload,
-            winstt::commands::events::FileTranscribeProgressPayload,
-        ])
+    let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
+        shortcut::change_binding,
+        shortcut::reset_binding,
+        shortcut::change_ptt_setting,
+        shortcut::change_audio_feedback_setting,
+        shortcut::change_audio_feedback_volume_setting,
+        shortcut::change_sound_theme_setting,
+        shortcut::change_translate_to_english_setting,
+        shortcut::change_selected_language_setting,
+        shortcut::change_overlay_position_setting,
+        shortcut::change_debug_mode_setting,
+        shortcut::change_word_correction_threshold_setting,
+        shortcut::change_paste_delay_ms_setting,
+        shortcut::change_paste_method_setting,
+        shortcut::get_available_typing_tools,
+        shortcut::change_typing_tool_setting,
+        shortcut::change_external_script_path_setting,
+        shortcut::change_clipboard_handling_setting,
+        shortcut::change_auto_submit_setting,
+        shortcut::change_auto_submit_key_setting,
+        shortcut::change_post_process_enabled_setting,
+        shortcut::change_experimental_enabled_setting,
+        shortcut::change_post_process_base_url_setting,
+        shortcut::change_post_process_api_key_setting,
+        shortcut::change_post_process_model_setting,
+        shortcut::set_post_process_provider,
+        shortcut::fetch_post_process_models,
+        shortcut::add_post_process_prompt,
+        shortcut::update_post_process_prompt,
+        shortcut::delete_post_process_prompt,
+        shortcut::set_post_process_selected_prompt,
+        shortcut::update_custom_words,
+        shortcut::suspend_binding,
+        shortcut::resume_binding,
+        shortcut::change_mute_while_recording_setting,
+        shortcut::change_append_trailing_space_setting,
+        shortcut::change_app_language_setting,
+        shortcut::change_update_checks_setting,
+        shortcut::change_keyboard_implementation_setting,
+        shortcut::get_keyboard_implementation,
+        shortcut::change_show_tray_icon_setting,
+        shortcut::change_whisper_accelerator_setting,
+        shortcut::change_ort_accelerator_setting,
+        shortcut::change_whisper_gpu_device,
+        shortcut::get_available_accelerators,
+        shortcut::handy_keys::start_handy_keys_recording,
+        shortcut::handy_keys::stop_handy_keys_recording,
+        trigger_update_check,
+        show_main_window_command,
+        quit_app,
+        tray::copy_last_transcript,
+        commands::cancel_operation,
+        commands::is_portable,
+        commands::get_app_dir_path,
+        commands::get_app_settings,
+        commands::get_default_settings,
+        commands::get_log_dir_path,
+        commands::set_log_level,
+        commands::open_recordings_folder,
+        commands::open_log_dir,
+        commands::open_app_data_dir,
+        commands::cleanup::remove_application_data,
+        commands::cleanup::remove_downloaded_models,
+        commands::check_apple_intelligence_available,
+        commands::initialize_enigo,
+        commands::initialize_shortcuts,
+        commands::models::get_available_models,
+        commands::models::get_model_info,
+        commands::models::download_model,
+        commands::models::delete_model,
+        commands::models::cancel_download,
+        commands::models::set_active_model,
+        commands::models::get_current_model,
+        commands::models::get_transcription_model_status,
+        commands::models::is_model_loading,
+        commands::models::has_any_models_available,
+        commands::models::has_any_models_or_downloads,
+        commands::audio::get_windows_microphone_permission_status,
+        commands::audio::open_microphone_privacy_settings,
+        commands::audio::get_available_microphones,
+        commands::audio::set_selected_microphone,
+        commands::audio::get_selected_microphone,
+        commands::audio::get_available_output_devices,
+        commands::audio::set_selected_output_device,
+        commands::audio::get_selected_output_device,
+        commands::audio::play_test_sound,
+        commands::audio::check_custom_sounds,
+        commands::audio::set_clamshell_microphone,
+        commands::audio::get_clamshell_microphone,
+        commands::audio::is_recording,
+        commands::transcription::set_model_unload_timeout,
+        commands::transcription::get_model_load_status,
+        commands::transcription::unload_model_manually,
+        commands::history::get_history_entries,
+        commands::history::toggle_history_entry_saved,
+        commands::history::get_audio_file_path,
+        commands::history::delete_history_entry,
+        commands::history::retry_history_entry_transcription,
+        helpers::clamshell::is_laptop,
+        // ── WinSTT commands (lib_wiring.md §3) ──
+        winstt::commands::settings::winstt_get_settings,
+        winstt::commands::settings::winstt_set_settings,
+        winstt::commands::stt::list_models,
+        winstt::commands::stt::picker_quantizations_for,
+        winstt::commands::stt::get_live_resources,
+        winstt::commands::stt::set_custom_model,
+        winstt::commands::tts::tts_speak,
+        winstt::commands::tts::tts_speak_selection,
+        winstt::commands::tts::tts_cancel,
+        winstt::commands::tts::tts_cancel_all,
+        winstt::commands::tts::tts_init,
+        winstt::commands::tts::tts_list_voices,
+        winstt::commands::tts::tts_list_cloud_voices,
+        winstt::commands::tts::tts_cloud_subscription,
+        winstt::commands::tts::tts_download_estimate,
+        winstt::commands::tts::tts_install_pause,
+        winstt::commands::tts::tts_install_resume,
+        winstt::commands::tts::tts_install_cancel,
+        winstt::commands::tts::tts_preview_cloud,
+        winstt::commands::tts::tts_list_models,
+        winstt::commands::tts::tts_list_models_with_state,
+        winstt::commands::tts::tts_predownload_model,
+        winstt::commands::tts::tts_download_pause,
+        winstt::commands::tts::tts_download_resume,
+        winstt::commands::tts::tts_download_cancel,
+        winstt::commands::tts::tts_delete_model,
+        winstt::commands::llm::process_text,
+        winstt::commands::llm::process_transform,
+        winstt::commands::llm::scan_ollama_models,
+        winstt::commands::llm::scan_openrouter_models,
+        winstt::commands::llm::ollama_detect,
+        winstt::commands::llm::ollama_start,
+        winstt::commands::llm::ollama_pull,
+        winstt::commands::llm::ollama_delete,
+        winstt::commands::llm::verify_credential,
+        winstt::commands::cloud_stt::verify_cloud_stt_credential,
+        winstt::commands::cloud_stt::cloud_stt_cancel,
+        winstt::commands::wakeword::set_wake_word,
+        winstt::commands::wakeword::list_wake_word_presets,
+        winstt::commands::wakeword::wakeword_model_status,
+        winstt::commands::wakeword::wakeword_start_model_download,
+        winstt::commands::wakeword::wakeword_pause_model_download,
+        winstt::commands::wakeword::wakeword_resume_model_download,
+        winstt::commands::wakeword::wakeword_cancel_model_download,
+        winstt::commands::listen::start_listen,
+        winstt::commands::listen::stop_listen,
+        winstt::commands::wordts::align_words,
+        winstt::commands::file_transcribe::file_transcribe_enqueue,
+        winstt::commands::file_transcribe::file_transcribe_pick_and_enqueue,
+        winstt::commands::file_transcribe::file_transcribe_pause,
+        winstt::commands::file_transcribe::file_transcribe_resume,
+        winstt::commands::file_transcribe::file_transcribe_cancel,
+        // ── frontend-port slice commands (10_frontend_port_plan.md WU-3..13) ──
+        winstt::commands::snippets::winstt_expand_snippets,
+        winstt::commands::dictation::set_winstt_model,
+        winstt::commands::dictation::winstt_call_method,
+        winstt::commands::dictation::winstt_emit_ready,
+        winstt::commands::dictation::winstt_get_parameter,
+        winstt::commands::dictation::winstt_set_parameter,
+        winstt::commands::download::predownload_quant,
+        winstt::commands::download::download_pause_quant,
+        winstt::commands::download::download_resume_quant,
+        winstt::commands::download::download_cancel_quant,
+        winstt::commands::download::delete_model_quantization,
+        winstt::commands::download::delete_model_cache,
+        winstt::commands::runtime::get_runtime_info,
+        winstt::commands::runtime::list_models_with_state,
+        winstt::commands::runtime::assess_dictation_fit,
+        winstt::commands::runtime::assess_ollama_fit,
+        winstt::commands::runtime::gpu_get_info,
+        winstt::commands::hotkey::hotkey_register,
+        winstt::commands::hotkey::hotkey_unregister,
+        winstt::commands::hotkey::hotkey_start_recording,
+        winstt::commands::hotkey::hotkey_stop_recording,
+        winstt::commands::audio_devices::get_audio_devices,
+        winstt::commands::audio_devices::refresh_audio_devices,
+        winstt::commands::loopback::loopback_list_devices,
+        winstt::commands::tts::tts_set_speed,
+        winstt::commands::tts::tts_report_playback_started,
+        winstt::commands::tts::tts_report_playback_ended,
+        winstt::commands::ollama_library::ollama_fetch_library,
+        winstt::commands::ollama_library::ollama_fetch_tags,
+        winstt::commands::ollama_library::ollama_search_library,
+        winstt::commands::ollama_pull::ollama_cancel_pull,
+        winstt::commands::ollama_pull::llm_get_warmup_status,
+        winstt::commands::verify::verify_integration_credential,
+        winstt::commands::file_transcribe::file_transcribe_clear,
+        winstt::commands::file_transcribe::file_transcribe_copy,
+        winstt::commands::file_transcribe::file_transcribe_discard_all,
+        winstt::commands::file_transcribe::file_transcribe_get_active,
+        winstt::commands::file_transcribe::file_transcribe_retry,
+        winstt::commands::history::history_list,
+        winstt::commands::history::history_recent,
+        winstt::commands::history::history_add,
+        winstt::commands::history::history_toggle,
+        winstt::commands::history::history_delete_row,
+        winstt::commands::history::history_load_audio_by_row,
+        winstt::commands::history::history_get_all,
+        winstt::commands::history::history_clear,
+        winstt::commands::history::history_delete,
+        winstt::commands::history::history_load_audio,
+        winstt::commands::history::transform_history_get_all,
+        winstt::commands::history::transform_history_clear,
+        winstt::commands::history::transform_history_delete,
+        winstt::commands::about::about_get_app_info,
+        winstt::commands::about::about_get_license,
+        winstt::commands::about::about_get_notices,
+        winstt::commands::diag::diag_open_logs_folder,
+        winstt::commands::diag::diag_save_bundle,
+        winstt::commands::sound::sound_library_add,
+        winstt::commands::sound::sound_library_pick_and_add,
+        winstt::commands::sound::sound_library_read_file,
+        winstt::commands::sound::sound_library_remove,
+        winstt::commands::transforms::apply_transform,
+        winstt::commands::transforms::apply_transform_preview,
+        winstt::commands::preview::confirm_paste,
+        winstt::commands::preview::cancel_preview,
+        winstt::commands::overlay::set_overlay_hit_regions,
+        winstt::commands::windows::winstt_diag,
+        winstt::commands::windows::open_window,
+        winstt::commands::windows::close_window,
+        winstt::commands::windows::close_self_window,
+        winstt::commands::windows::resize_window,
+        winstt::commands::windows::anchor_window,
+        winstt::commands::onboarding::onboarding_finish,
+        winstt::commands::tray_menu::show_tray_menu,
+        winstt::commands::tray_menu::reanchor_tray_menu,
+        winstt::commands::tray_menu::hide_tray_menu,
+        // ── de-brand/completion slice ──
+        winstt::commands::sound::sound_get_data,
+        winstt::commands::cancel::cancel_current_operation,
+        winstt::commands::custom_models::open_custom_models_folder,
+        winstt::commands::download::winstt_cancel_download,
+    ]);
+
+    #[cfg(feature = "context-playground")]
+    let builder = builder.commands(collect_commands![
+        winstt::commands::context::debug_read_context,
+        winstt::commands::context_playground::context_playground_set_live,
+        winstt::commands::context_playground::context_playground_arm_deep,
+        winstt::commands::context_playground::context_playground_capture,
+    ]);
+
+    builder.events(collect_events![
+        managers::history::HistoryUpdatePayload,
+        winstt::commands::events::RealtimeStabilizedPayload,
+        winstt::commands::events::RealtimeUpdatePayload,
+        winstt::commands::events::WakeWordDetectedPayload,
+        winstt::commands::events::SpeakerSegmentsPayload,
+        winstt::commands::events::WordAlignmentPayload,
+        winstt::commands::events::VadSensitivityAdaptedPayload,
+        winstt::commands::events::TtsLifecyclePayload,
+        winstt::commands::events::FileTranscribeProgressPayload,
+    ])
 }
 
 /// Point hf-hub at the standard Hugging Face cache when the user hasn't set one.
@@ -846,7 +953,10 @@ pub fn run(cli_args: CliArgs) {
         ))
         .manage(cli_args.clone())
         .setup(move |app| {
+            let mut startup = StartupProfiler::new();
+            startup.mark("setup entered");
             specta_builder.mount_events(app);
+            startup.mark("events mounted");
 
             // Global panic hook → the file log. The log plugin's logger is installed by now, so
             // this captures EVERY panic (thread name + location + payload) even when a
@@ -873,6 +983,7 @@ pub fn run(cli_args: CliArgs) {
                     prev_hook(info);
                 }));
             }
+            startup.mark("panic hook installed");
 
             // Show the startup splash the instant setup begins — BEFORE the slow
             // path (initialize_core_logic + prewarm_windows building all 8
@@ -881,9 +992,12 @@ pub fn run(cli_args: CliArgs) {
             // closed by the main window's on_page_load(Finished) below (with a
             // 30 s backstop inside create_splash_window).
             let app_handle_for_splash = app.handle().clone();
-            if !cli_args.start_hidden {
+            let startup_winstt_settings =
+                winstt::commands::settings::read_settings_raw(&app_handle_for_splash);
+            if !cli_args.start_hidden && !startup_winstt_settings.general.start_minimized {
                 splash::create_splash_window(&app_handle_for_splash);
             }
+            startup.mark("splash initialized");
 
             // Create main window programmatically so we can set data_directory
             // for portable mode (redirects WebView2 cache to portable Data dir)
@@ -897,11 +1011,10 @@ pub fn run(cli_args: CliArgs) {
                     .decorations(false)
                     .maximizable(false)
                     // Record that the renderer has PAINTED — one of the two signals
-                    // the splash ready-watcher waits on before handing off to the
-                    // real window (the reference `did-finish-load` half of its
-                    // `showOnce` gate). Do NOT close the splash here: the watcher
-                    // also waits for the STT boot to finish, then shows the pill +
-                    // closes the splash in one handoff.
+                    // the splash ready-watcher treats as the shallow WebView-load
+                    // signal. Do NOT close the splash here: the watcher also waits
+                    // for React bootstrap readiness and STT boot, then shows the
+                    // pill + closes the splash in one handoff.
                     .on_page_load(move |_w, payload| {
                         if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
                             splash::mark_renderer_painted();
@@ -914,6 +1027,7 @@ pub fn run(cli_args: CliArgs) {
             }
 
             win_builder.build()?;
+            startup.mark("main webview built");
 
             let mut settings = get_settings(app.handle());
 
@@ -929,14 +1043,20 @@ pub fn run(cli_args: CliArgs) {
             FILE_LOG_LEVEL.store(file_log_level.to_level_filter() as u8, Ordering::Relaxed);
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
+            startup.mark("settings loaded and coordinator registered");
 
-            initialize_core_logic(&app_handle);
+            crate::winstt::audio_device_watcher::install_audio_device_watcher(&app_handle);
+            startup.mark("audio device watcher scheduled");
+
+            initialize_core_logic(&app_handle, &mut startup);
+            startup.mark("core logic initialized");
 
             // Register the global hotkeys at startup. The WinSTT renderer (ported from the reference,
             // where shortcuts lived in main.ts) never calls `initialize_shortcuts`, so without this
             // the dictation/cancel hotkeys are NEVER registered and pressing them does nothing.
             // Must run BEFORE the transforms hook below so HandyKeysState is initialized first.
             crate::shortcut::init_shortcuts(&app_handle);
+            startup.mark("base shortcuts initialized");
 
             // Initialize Enigo (keyboard simulation used to PASTE the transcription) at
             // startup. On macOS this needs accessibility permission so Handy left it to a
@@ -952,6 +1072,7 @@ pub fn run(cli_args: CliArgs) {
                 }
                 Err(e) => log::warn!("Enigo init at startup failed: {e}"),
             }
+            startup.mark("paste automation initialized");
 
             // WinSTT-tree global hotkeys: arm the transforms (`llm.transforms.hotkey`),
             // TTS read-aloud (`tts.hotkey`) and re-paste (`general.repasteHotkey`) combos
@@ -962,6 +1083,7 @@ pub fn run(cli_args: CliArgs) {
             // no relaunch. Mirrors the reference's setupTransformHotkeys / setupTtsHotkey /
             // setupRepasteHotkey, which all ran in main.ts at boot.
             crate::shortcut::reconcile_winstt_hotkeys(&app_handle);
+            startup.mark("WinSTT hotkeys reconciled");
 
             // Pre-warm GPU/accelerator enumeration on a background thread.
             // The first call into transcribe_rs::whisper_cpp::gpu::list_gpu_devices
@@ -970,25 +1092,37 @@ pub fn run(cli_args: CliArgs) {
             // first time the user opens the Advanced settings page (which calls
             // the get_available_accelerators command), causing a UI freeze.
             // Result is cached in a OnceLock inside the transcription manager.
-            std::thread::spawn(|| {
+            let profile_accelerators = startup_profile_enabled();
+            std::thread::spawn(move || {
+                let started = Instant::now();
                 let _ = crate::managers::transcription::get_available_accelerators();
+                if profile_accelerators {
+                    log::info!(
+                        "[startup] accelerator enumeration thread completed: {} ms",
+                        started.elapsed().as_millis()
+                    );
+                }
             });
+            startup.mark("accelerator enumeration scheduled");
 
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {
                 tray::set_tray_visibility(&app_handle, false);
             }
+            startup.mark("tray CLI visibility applied");
 
             // Show main window only if not starting hidden.
             // CLI --start-hidden flag overrides the setting.
             // But if permission onboarding is required, always show the window.
-            let should_hide = settings.start_hidden || cli_args.start_hidden;
+            let visibility_settings = winstt::commands::settings::read_settings_raw(&app_handle);
+            let should_hide = visibility_settings.general.start_minimized || cli_args.start_hidden;
             let should_force_show = should_force_show_permissions_window(&app_handle);
 
             // If start_hidden but tray is disabled, we must show the window
             // anyway. Without a tray icon, the dock is the only way back in.
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
             let will_show = should_force_show || !should_hide || !tray_available;
+            startup.mark("startup visibility decided");
 
             // Hand off from the splash to the real window only once the app is READY.
             //
@@ -999,8 +1133,9 @@ pub fn run(cli_args: CliArgs) {
             // engine warmed — flashing a blank pill (the reported "splash killed early"
             // bug). The intended `on_page_load(Finished)` close could never win that race.
             //
-            // Instead the ready-watcher (off the main thread) waits for BOTH the renderer
-            // paint AND the STT boot (or a 15 s fallback), then shows the pill + closes the
+            // Instead the ready-watcher (off the main thread) waits for renderer paint,
+            // React bootstrap readiness, and STT boot (or a 45 s fallback), then shows
+            // the pill + closes the
             // splash in one handoff — mirroring the reference's gated `showOnce`
             // (did-finish-load + server-ready). When no splash exists (the `--start-hidden`
             // CLI flag skips its creation), fall back to the old immediate show.
@@ -1009,14 +1144,12 @@ pub fn run(cli_args: CliArgs) {
             } else if will_show {
                 show_main_window(&app_handle);
             }
+            startup.mark("startup handoff scheduled");
 
-            // AUDIT #6: prewarm the secondary windows AFTER showing the pill so first
-            // paint isn't blocked by building 8 WebView2 instances. `prewarm_windows`
-            // builds `overlay` + `tray-menu` eagerly and defers the rest onto an idle
-            // `run_on_main_thread` callback (still eager, just off the critical path —
-            // NOT lazy-build-inside-open_window, which hangs on Windows). The webviews
-            // must still be pre-built so `open_window` is a pure show().
-            winstt::commands::windows::prewarm_windows(&app_handle);
+            // Secondary WebView2 prewarm is scheduled by `show_main_window` after the
+            // pill is visible. Keeping it out of setup prevents hidden utility windows
+            // from competing with renderer paint and required model warmup.
+            startup.mark("setup complete");
 
             Ok(())
         })
@@ -1034,6 +1167,20 @@ pub fn run(cli_args: CliArgs) {
                 // hasn't terminated the process within the deadline. Mirrors the reference
                 // app.exit(0)+watchdog pattern. (No blocking joins are added to any Drop.)
                 if window.label() == "main" {
+                    let settings =
+                        winstt::commands::settings::read_settings_raw(&window.app_handle());
+                    let core_settings = get_settings(&window.app_handle());
+                    let tray_available = core_settings.show_tray_icon
+                        && !window.app_handle().state::<CliArgs>().no_tray;
+                    if settings.general.minimize_to_tray && tray_available {
+                        api.prevent_close();
+                        log::info!("Main window close requested - hiding to tray.");
+                        let _ = window.hide();
+                        return;
+                    }
+                    if hard_exit_main_window_in_dev() {
+                        return;
+                    }
                     log::info!("Main window closed — exiting.");
                     // Watchdog: if graceful shutdown stalls, force-terminate. 3 s is far
                     // longer than a healthy store/DB flush but short enough not to feel hung.

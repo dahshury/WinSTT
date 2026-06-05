@@ -1,4 +1,5 @@
 import { createProviderIconResolver } from "./provider-icon-resolver";
+import { parseModelSelection } from "./openrouter-model-selection";
 import { publicAsset } from "./public-asset";
 
 const PROVIDER_NAME_ALIASES: Record<string, string> = {
@@ -17,13 +18,15 @@ const getProviderIcon = createProviderIconResolver(PROVIDER_NAME_ALIASES);
 
 /**
  * Reduce an LLM model id to a maker token the icon table can match.
- * - OpenRouter pins (`model::provider`) → drop the `::provider` suffix.
+ * - OpenRouter pins (`model@provider`) → drop the `@provider` suffix.
+ * - Legacy OpenRouter pins (`model::provider`) → drop the `::provider` suffix.
  * - OpenRouter ids (`vendor/model`) → the `vendor` segment.
  * - Ollama ids (`qwen2.5:7b`) → the family before the `:tag`.
  * Fuzzy matching in {@link getProviderIcon} then maps e.g. `qwen2.5` → `qwen`.
  */
 export function makerFromModelId(model: string): string {
-  const withoutPin = model.split("::")[0] ?? model;
+  const modelId = parseModelSelection(model).modelId;
+  const withoutPin = modelId.split("::")[0] ?? modelId;
   const vendor = withoutPin.includes("/")
     ? withoutPin.split("/")[0]
     : withoutPin;

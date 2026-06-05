@@ -1,4 +1,3 @@
-// DRAFT PORT — not yet compiled.
 // Sources:
 //   - server/src/recorder/application/realtime_stabilizer.py (the algorithm)
 //   - server/src/recorder/application/recorder_service.py    (committed-watermark accumulator)
@@ -481,39 +480,39 @@ mod tests {
     fn commit_chunk_frames_floor() {
         // fps small enough that the product < 1 still yields >= 1.
         assert_eq!(RealtimeAccumulator::commit_chunk_frames(0.0), 1);
-        // 2.0s * 31.25 fps (512 @ 16k) = 62.5 -> 62 frames.
-        assert_eq!(RealtimeAccumulator::commit_chunk_frames(31.25), 62);
+        // 20.0s * 31.25 fps (512 @ 16k) = 625 frames.
+        assert_eq!(RealtimeAccumulator::commit_chunk_frames(31.25), 625);
     }
 
     #[test]
     fn commit_advances_watermark_and_appends() {
         let mut acc = RealtimeAccumulator::new();
-        let fps = 100.0; // commit_chunk = 200 frames
+        let fps = 100.0; // commit_chunk = 2000 frames
                          // Not enough fresh frames -> no commit, watermark stays 0.
-        let wm = acc.commit_if_needed(150, fps, |_s, _e| Some("nope".into()));
+        let wm = acc.commit_if_needed(1500, fps, |_s, _e| Some("nope".into()));
         assert_eq!(wm, 0);
         assert_eq!(acc.committed_text(), "");
 
-        // Enough fresh frames (> 200) -> commit one chunk.
-        let wm2 = acc.commit_if_needed(500, fps, |s, e| {
-            assert_eq!((s, e), (0, 200));
+        // Enough fresh frames (> 2000) -> commit one chunk.
+        let wm2 = acc.commit_if_needed(2500, fps, |s, e| {
+            assert_eq!((s, e), (0, 2000));
             Some("first chunk".into())
         });
-        assert_eq!(wm2, 200);
+        assert_eq!(wm2, 2000);
         assert_eq!(acc.committed_text(), "first chunk");
     }
 
     #[test]
     fn commit_advances_even_on_empty_or_none() {
         let mut acc = RealtimeAccumulator::new();
-        let fps = 100.0; // commit_chunk = 200
+        let fps = 100.0; // commit_chunk = 2000
                          // None (mid-swap): watermark still advances, no text appended.
-        let wm = acc.commit_if_needed(500, fps, |_s, _e| None);
-        assert_eq!(wm, 200);
+        let wm = acc.commit_if_needed(2500, fps, |_s, _e| None);
+        assert_eq!(wm, 2000);
         assert_eq!(acc.committed_text(), "");
         // Empty string: still advances, no append.
-        let wm2 = acc.commit_if_needed(900, fps, |_s, _e| Some("   ".into()));
-        assert_eq!(wm2, 400);
+        let wm2 = acc.commit_if_needed(4500, fps, |_s, _e| Some("   ".into()));
+        assert_eq!(wm2, 4000);
         assert_eq!(acc.committed_text(), "");
     }
 

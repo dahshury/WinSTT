@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render } from "@testing-library/react";
-import { __model_filters_menu_test_helpers__ as helpers } from "../lib/model-filters-menu-test-helpers";
+import * as components from "../lib/model-filters-menu-components";
+import * as utils from "../lib/model-filters-menu-utils";
 import { DropdownMenu } from "./DropdownMenu";
 import { ModelFiltersMenu } from "./ModelFiltersMenu";
+
+const helpers = { ...components, ...utils };
 
 describe("ModelFiltersMenu", () => {
 	test("renders without crashing", () => {

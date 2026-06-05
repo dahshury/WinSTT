@@ -2,12 +2,10 @@
 // frontend/electron/ipc/context-playground-window.ts + frontend/electron/lib/context-debug.ts
 // + src/shared/api/context-debug-types.ts (the renderer's ContextDebugReport /
 //   ContextPlaygroundPush contract) + src/views/context-playground/model/use-context-playground.ts
-// + docs/port/10_frontend_port_plan.md §6 WU-13 + memory project_context_playground_debug.
+// + docs/archive/port/10_frontend_port_plan.md §6 WU-13 + memory project_context_playground_debug.
 //
-// DEBUG-ONLY context-awareness playground backend. The renderer hides entry
-// points behind CONTEXT_PLAYGROUND_ENABLED, but the backend commands stay
-// registered so generated bindings and native-bridge routes never point at
-// missing commands in dev builds.
+// DEBUG-ONLY context-awareness playground backend. Enable Cargo feature
+// `context-playground` plus the renderer flag/env var when tuning capture.
 //
 // The renderer (`views/context-playground`) drives three channels; the adapter
 // (native-bridge-adapter.ts) routes them:

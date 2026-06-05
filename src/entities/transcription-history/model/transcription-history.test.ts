@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type {
 	HistoryEntry,
 	PaginatedHistory,
-	RecordingRetentionPeriod,
+	RecordingRetention,
 } from "./transcription-history";
 
 // This module is type-only (no runtime code), so there is nothing to execute.
@@ -102,19 +102,18 @@ describe("PaginatedHistory shape", () => {
 	});
 });
 
-describe("RecordingRetentionPeriod union", () => {
-	test("admits exactly the six documented retention policies", () => {
+describe("RecordingRetention union", () => {
+	test("admits exactly the five documented retention policies", () => {
 		// Each literal must remain assignable; a removed/renamed member breaks
 		// compilation here (the settings UI keys its dropdown off these values).
-		const all: RecordingRetentionPeriod[] = [
+		const all: RecordingRetention[] = [
 			"never",
-			"preserveLimit",
 			"cap",
 			"days3",
 			"weeks2",
 			"months3",
 		];
-		expect(all).toHaveLength(6);
-		expect(new Set(all).size).toBe(6);
+		expect(all).toHaveLength(5);
+		expect(new Set(all).size).toBe(5);
 	});
 });

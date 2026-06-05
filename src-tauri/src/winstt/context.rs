@@ -1,4 +1,4 @@
-// DRAFT PORT — not yet compiled. Source: frontend/electron/native/src/winstt-context.c
+// Source: frontend/electron/native/src/winstt-context.c
 // + frontend/electron/lib/context-reader.ts + frontend/electron/lib/context-snapshot.ts
 //
 // Context-awareness for the dictation cleanup path. ZERO reimplementation of

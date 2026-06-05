@@ -5,6 +5,14 @@
    suppresses any opening transition keyed off `[data-starting-style]` or
    `@starting-style`. Animations are immune — the inline override only
    touches the `transition` property — so the popup actually animates in. */
+.searchable-select-popup {
+	--searchable-select-popup-y: -6px;
+}
+
+.searchable-select-popup[data-side="top"] {
+	--searchable-select-popup-y: 6px;
+}
+
 .searchable-select-popup[data-open] {
 	animation: searchable-select-popup-in 150ms ease-out;
 }
@@ -16,22 +24,22 @@
 @keyframes searchable-select-popup-in {
 	from {
 		opacity: 0;
-		transform: scale(0.95);
+		transform: translateY(var(--searchable-select-popup-y)) scale(0.98);
 	}
 	to {
 		opacity: 1;
-		transform: scale(1);
+		transform: translateY(0) scale(1);
 	}
 }
 
 @keyframes searchable-select-popup-out {
 	from {
 		opacity: 1;
-		transform: scale(1);
+		transform: translateY(0) scale(1);
 	}
 	to {
 		opacity: 0;
-		transform: scale(0.95);
+		transform: translateY(var(--searchable-select-popup-y)) scale(0.99);
 	}
 }
 

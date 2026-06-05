@@ -2,9 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "WinSTT",
   "version": "0.1.0",
-  "identifier": "com.winstt.app",
+  "identifier": "com.winstt.winstt",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": {
+      "script": "bun tools/tauri-vite-dev.ts",
+      "cwd": ".."
+    },
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
@@ -26,8 +29,13 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": "all",
-    "resources": ["resources/**/*"],
+    "targets": ["nsis", "appimage", "deb", "rpm"],
+    "resources": [
+      "resources/*.json",
+      "resources/*.png",
+      "resources/*.wav",
+      "resources/models/**/*"
+    ],
     "license": "MIT",
     "icon": [
       "icons/32x32.png",
@@ -65,7 +73,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "TODO_REPLACE_WITH_WINSTT_MINISIGN_PUBKEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2NUJGRjA1NDg4OEY4MUQKUldRZCtJaElCZjlidHFxWm9MeDdoNDdqN2Z4Q2huUTRYTU5YQlJwdVNJRnlOSzZXa3YxSEsyMG4K",
       "endpoints": [
         "https://github.com/dahshury/WinSTT/releases/latest/download/latest.json"
       ]

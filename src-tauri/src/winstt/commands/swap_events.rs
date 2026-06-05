@@ -1,4 +1,4 @@
-// PORT IMPL — WU-4 (app/PORT/10_frontend_port_plan.md §6 WU-4 + lib_wiring.md §7). Source:
+// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4 + lib_wiring.md §7). Source:
 //   frontend/src/shared/api/ipc-client.ts (onModelSwapStarted / onModelSwapCompleted /
 //     onModelSwapFailed / onRuntimeInfo + ModelSwapPayload / ModelSwapFailedPayload /
 //     RuntimeInfoPayload shapes)
@@ -134,6 +134,31 @@ impl SwapEvents {
 /// load result for every supported local engine. This module owns only the renderer lifecycle
 /// events around that load.
 pub fn perform_model_swap(app: &AppHandle, kind: &str, name: &str) {
+    perform_model_swap_inner(app, kind, name, false, None);
+}
+
+pub fn perform_model_swap_with_quantization(
+    app: &AppHandle,
+    kind: &str,
+    name: &str,
+    quantization_override: Option<&str>,
+) {
+    perform_model_swap_inner(app, kind, name, false, quantization_override);
+}
+
+/// Force a rebuild for same-model load-input changes (device / quantization). Normal model-id
+/// swaps use [`perform_model_swap`] so they can reuse an already-resident warmed engine.
+pub fn perform_model_reload(app: &AppHandle, kind: &str, name: &str) {
+    perform_model_swap_inner(app, kind, name, true, None);
+}
+
+fn perform_model_swap_inner(
+    app: &AppHandle,
+    kind: &str,
+    name: &str,
+    force_reload: bool,
+    quantization_override: Option<&str>,
+) {
     // Realtime-kind reloads are owned by the realtime slice (04_*) — only the main model swaps here.
     if kind != "main" {
         return;
@@ -143,13 +168,16 @@ pub fn perform_model_swap(app: &AppHandle, kind: &str, name: &str) {
     let app = app.clone();
     let kind = kind.to_string();
     let name = name.to_string();
+    let quantization_override = quantization_override.map(str::to_string);
     std::thread::spawn(move || {
         // Load the REQUESTED model synchronously and observe the real result. We pass `name`
         // explicitly (NOT re-reading settings) because the renderer's persist of `model.model` is
         // debounced ~300ms — re-reading here would load the stale/default "tiny" and "succeed".
         let load_result: Result<(), String> =
             match app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>() {
-                Some(tm) => tm.load_model_blocking(&name),
+                Some(tm) if force_reload => tm.reload_model_blocking(&name),
+                Some(tm) => tm
+                    .load_model_blocking_with_quantization(&name, quantization_override.as_deref()),
                 None => Err("transcription manager not initialized".to_string()),
             };
 

@@ -50,4 +50,35 @@ describe("CheckboxItem trailing-control propagation", () => {
 
 		expect(onToggle).toHaveBeenCalledTimes(1);
 	});
+
+	test("clicking the row text focuses without moving a surrounding scroller", () => {
+		const onToggle = mock(() => undefined);
+		const originalFocus = HTMLElement.prototype.focus;
+		const scroller = document.createElement("div");
+		scroller.scrollTop = 160;
+		const focus = mock(function (this: HTMLElement, options?: FocusOptions) {
+			if (options?.preventScroll !== true) {
+				scroller.scrollTop = 0;
+			}
+		});
+		HTMLElement.prototype.focus = focus as unknown as typeof HTMLElement.prototype.focus;
+
+		try {
+			const { container } = render(
+				<CheckboxGroup checkedIndices={new Set()}>
+					<CheckboxItem checked={false} index={0} label="Concise" onToggle={onToggle} />
+				</CheckboxGroup>
+			);
+			const row = container.querySelector("[data-proximity-index='0']");
+
+			expect(row).not.toBeNull();
+			fireEvent.click(row as HTMLElement);
+
+			expect(onToggle).toHaveBeenCalledTimes(1);
+			expect(scroller.scrollTop).toBe(160);
+			expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+		} finally {
+			HTMLElement.prototype.focus = originalFocus;
+		}
+	});
 });

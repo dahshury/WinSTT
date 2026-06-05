@@ -1,3 +1,4 @@
+import { Button as BaseButton } from "@base-ui/react/button";
 import { SparklesIcon } from "@hugeicons/core-free-icons";
 import type { useTranslations } from "use-intl";
 import {
@@ -82,13 +83,13 @@ interface CloudSliderFieldProps {
 function PremiumVoiceBadge() {
   return (
     <Tooltip content={PREMIUM_BADGE_TOOLTIP} side="left">
-      <button
+      <BaseButton
         className="shrink-0 cursor-pointer rounded-xs border border-accent/40 bg-accent/10 px-1.5 py-0.5 font-semibold text-[9px] text-accent uppercase tracking-wider"
         onClick={() => window.open(ELEVENLABS_PRICING_URL, "_blank")}
         type="button"
       >
         {PREMIUM_BADGE_TEXT}
-      </button>
+      </BaseButton>
     </Tooltip>
   );
 }

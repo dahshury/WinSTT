@@ -1,8 +1,8 @@
-// Source: docs/port/07_llm_cloud_context_longtail.md §1,
+// Source: docs/archive/port/07_llm_cloud_context_longtail.md §1,
 // frontend/electron/ipc/llm.ts + ollama.ts. Wraps winstt::llm (pure prompt/leakage logic).
 //
-// LlmManager owns the reqwest client, the Ollama `/api/show` capability cache,
-// in-flight chat cancel tokens, and the dictation/transform compose entry points.
+// LlmManager owns LLM orchestration, request ids, cancellation, and renderer events.
+// Ollama's raw HTTP transport lives in winstt::ollama_client.
 // The pure prompt composition + CoT-leakage/salvage + Ollama body builders all
 // live in `winstt::llm`; this manager is the stateful, async, app-aware shell.
 //
@@ -23,24 +23,22 @@ use crate::winstt::commands::ollama_pull::{
 };
 use crate::winstt::commands::settings::{enabled_ollama_models, read_settings};
 use crate::winstt::llm::{
-    self, build_ollama_api_url, build_ollama_chat_body_with_keep_alive, dictation_user_prompt,
-    finalize_chat_answer, normalize_ollama_endpoint, ollama_keep_alive_from_core_timeout,
-    parse_chat_stream_line, transforms_user_prompt, OllamaStreamState, ReasoningSink,
-    ThinkingEffort,
+    self, apply_openrouter_runtime_options, build_ollama_chat_body_with_keep_alive,
+    finalize_chat_answer, ollama_keep_alive_from_core_timeout, validate_loopback_ollama_endpoint,
+    OpenRouterRequestOptions, ReasoningSink, ThinkingEffort,
 };
+use crate::winstt::model_swap::ModelSwapCoordinator;
+pub use crate::winstt::ollama_client::{
+    OllamaCapabilities, OllamaModelDetails, OllamaModelInfo, PullOutcome,
+};
+use crate::winstt::ollama_client::{OllamaClient, OllamaLoadResult};
 
 const OLLAMA_WARMUP_INTERVAL: Duration = Duration::from_secs(4 * 60);
 const OLLAMA_WARMUP_TIMEOUT: Duration = Duration::from_secs(120);
 const OLLAMA_EVICT_TIMEOUT: Duration = Duration::from_secs(5);
 const OLLAMA_BOOT_WAIT: Duration = Duration::from_secs(10);
-
-/// One Ollama model's capabilities (from `/api/show`). Cached so the per-dictation
-/// path doesn't re-probe whether the model can `think` on every request.
-#[derive(Clone, Debug, Default)]
-pub struct OllamaCapabilities {
-    pub supports_thinking: bool,
-    pub context_length: Option<u64>,
-}
+const OLLAMA_RECENT_WARM_SKIP: Duration = Duration::from_secs(30);
+const LLM_WARMUP_PASS_KEY: &str = "llm:warmup-pass";
 
 /// Thin emit sink that forwards live reasoning deltas to the renderer pill.
 /// Mirrors the `llm-reasoning-delta` plain-string event (07_* §4b).
@@ -58,14 +56,6 @@ impl llm::ReasoningSink for EmitReasoningSink {
     }
 }
 
-struct WarmupRunGuard<'a>(&'a AtomicBool);
-
-impl Drop for WarmupRunGuard<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
 fn warmup_timestamp() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -73,49 +63,64 @@ fn warmup_timestamp() -> f64 {
         .unwrap_or(0.0)
 }
 
+fn llm_model_key(endpoint: &str, model: &str) -> String {
+    format!("llm\0{endpoint}\0{model}")
+}
+
+fn llm_endpoint_prefix(endpoint: &str) -> String {
+    format!("llm\0{endpoint}\0")
+}
+
+fn llm_model_from_key<'a>(key: &'a str, endpoint: &str) -> Option<&'a str> {
+    key.strip_prefix(&llm_endpoint_prefix(endpoint))
+}
+
 fn is_loopback_ollama_endpoint(endpoint: &str) -> bool {
-    let normalized = normalize_ollama_endpoint(endpoint);
-    if normalized.is_empty() {
-        return false;
+    validate_loopback_ollama_endpoint(endpoint).is_ok()
+}
+
+fn ensure_ollama_stream_has_content(state: &llm::OllamaStreamState) -> Result<(), String> {
+    if !state.content.trim().is_empty() {
+        return Ok(());
     }
-    let Ok(url) = reqwest::Url::parse(&normalized) else {
-        return false;
-    };
-    matches!(
-        url.host_str().unwrap_or("").to_ascii_lowercase().as_str(),
-        "localhost" | "127.0.0.1" | "::1" | ""
-    )
+    Err(format!(
+        "Ollama returned no content (done={}, done_reason={}, thinking_chars={})",
+        state.done,
+        state.done_reason.as_deref().unwrap_or("none"),
+        state.thinking.chars().count()
+    ))
 }
 
 /// All-Rust LLM post-processing manager.
 pub struct LlmManager {
     app: AppHandle,
     client: reqwest::Client,
-    /// `/api/show` capability cache keyed by Ollama model id.
-    caps_cache: Mutex<HashMap<String, OllamaCapabilities>>,
+    ollama: OllamaClient,
     /// Cancelled request ids — the Ollama drain loop checks this between chunks.
     cancelled: CancelRegistry,
     /// Monotonic request-id source for fire-and-emit calls without a renderer id.
     seq: AtomicU64,
-    /// Prevents overlapping warmup passes when a settings save lands during the periodic tick.
-    warmup_running: AtomicBool,
     /// Guards the app-lifetime periodic keep-alive loop against duplicate startup wiring.
     warmup_loop_started: AtomicBool,
-    /// Models this process has warmed and may evict when no longer selected.
-    warmed_models: Mutex<HashSet<String>>,
+    /// Coalesces Ollama warmup passes and tracks models this process warmed.
+    lifecycle: ModelSwapCoordinator,
+    /// OpenRouter `supported_parameters` from the latest model scan. The chat
+    /// path uses this to avoid sending unsupported model-specific controls.
+    openrouter_supported_parameters: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl LlmManager {
     pub fn new(app: &AppHandle) -> Self {
+        let client = reqwest::Client::new();
         Self {
             app: app.clone(),
-            client: reqwest::Client::new(),
-            caps_cache: Mutex::new(HashMap::new()),
+            client: client.clone(),
+            ollama: OllamaClient::new(client),
             cancelled: CancelRegistry::new(),
             seq: AtomicU64::new(1),
-            warmup_running: AtomicBool::new(false),
             warmup_loop_started: AtomicBool::new(false),
-            warmed_models: Mutex::new(HashSet::new()),
+            lifecycle: ModelSwapCoordinator::new(),
+            openrouter_supported_parameters: Mutex::new(HashMap::new()),
         }
     }
 
@@ -142,14 +147,9 @@ impl LlmManager {
     }
 
     pub async fn warm_enabled_models(&self) {
-        if self
-            .warmup_running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        let Some(_pass) = self.lifecycle.try_claim(LLM_WARMUP_PASS_KEY) else {
             return;
-        }
-        let _guard = WarmupRunGuard(&self.warmup_running);
+        };
 
         let settings = read_settings(&self.app);
         let endpoint = settings.llm.endpoint.clone();
@@ -209,15 +209,9 @@ impl LlmManager {
         let keep_alive = self.ollama_keep_alive();
         let mut results = Vec::with_capacity(models.len());
         for model in &models {
-            results.push(self.warmup_ollama_model(&endpoint, model, keep_alive).await);
-        }
-        if let Ok(mut warmed) = self.warmed_models.lock() {
-            warmed.clear();
-            warmed.extend(
-                results
-                    .iter()
-                    .filter(|r| r.outcome == LlmWarmupOutcome::Ok)
-                    .map(|r| r.model.clone()),
+            results.push(
+                self.warmup_ollama_model(&endpoint, model, keep_alive.clone())
+                    .await,
             );
         }
 
@@ -240,6 +234,10 @@ impl LlmManager {
         self.cancelled.cancel_all();
     }
 
+    fn track_cancel(&self, request_id: &str) {
+        self.cancelled.track(request_id);
+    }
+
     fn is_cancelled(&self, request_id: &str) -> bool {
         self.cancelled.is_cancelled(request_id, false)
     }
@@ -248,7 +246,7 @@ impl LlmManager {
         self.cancelled.clear(request_id);
     }
 
-    fn ollama_keep_alive(&self) -> &'static str {
+    fn ollama_keep_alive(&self) -> serde_json::Value {
         let timeout = read_settings(&self.app).global.model_unload_timeout;
         let timeout = crate::winstt::commands::settings::core_timeout_from_winstt(timeout);
         ollama_keep_alive_from_core_timeout(timeout)
@@ -286,42 +284,36 @@ impl LlmManager {
     }
 
     async fn evict_stale_warmed_models(&self, endpoint: &str, active_models: &[String]) {
-        let stale = self.stale_warmed_models(active_models);
+        let stale = self.stale_warmed_models(endpoint, active_models);
         for model in stale {
             self.unload_ollama_model(endpoint, &model).await;
+            self.lifecycle.clear_warm(&llm_model_key(endpoint, &model));
         }
     }
 
-    fn stale_warmed_models(&self, active_models: &[String]) -> Vec<String> {
-        let active: HashSet<&str> = active_models.iter().map(String::as_str).collect();
-        self.warmed_models
-            .lock()
-            .map(|warmed| {
-                warmed
-                    .iter()
-                    .filter(|model| !active.contains(model.as_str()))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+    fn stale_warmed_models(&self, endpoint: &str, active_models: &[String]) -> Vec<String> {
+        let active: HashSet<String> = active_models
+            .iter()
+            .map(|model| llm_model_key(endpoint, model))
+            .collect();
+        self.lifecycle
+            .warm_keys()
+            .into_iter()
+            .filter(|key| key.starts_with(&llm_endpoint_prefix(endpoint)))
+            .filter(|key| !active.contains(key))
+            .filter_map(|key| llm_model_from_key(&key, endpoint).map(str::to_string))
+            .collect()
     }
 
     async fn unload_ollama_model(&self, endpoint: &str, model: &str) {
-        let url = build_ollama_api_url(endpoint, "/api/generate");
-        let result = self
-            .client
-            .post(url)
-            .json(&serde_json::json!({
-                "model": model,
-                "prompt": "",
-                "stream": false,
-                "keep_alive": 0,
-            }))
-            .timeout(OLLAMA_EVICT_TIMEOUT)
-            .send()
+        self.ollama
+            .unload_model(endpoint, model, OLLAMA_EVICT_TIMEOUT)
             .await;
-        if let Err(err) = result {
-            log::debug!("[llm] Ollama evict failed for {model}: {err}");
+    }
+
+    fn mark_ollama_model_warm(&self, endpoint: &str, model: &str) {
+        if !model.trim().is_empty() {
+            self.lifecycle.mark_warm(llm_model_key(endpoint, model));
         }
     }
 
@@ -329,7 +321,7 @@ impl LlmManager {
         &self,
         endpoint: &str,
         model: &str,
-        keep_alive: &str,
+        keep_alive: serde_json::Value,
     ) -> LlmWarmupModelStatus {
         if model.trim().is_empty() {
             return LlmWarmupModelStatus {
@@ -339,35 +331,45 @@ impl LlmManager {
             };
         }
 
-        let url = build_ollama_api_url(endpoint, "/api/generate");
-        let response = self
-            .client
-            .post(url)
-            .json(&serde_json::json!({
-                "model": model,
-                "prompt": "",
-                "stream": false,
-                "keep_alive": keep_alive,
-            }))
-            .timeout(OLLAMA_WARMUP_TIMEOUT)
-            .send()
-            .await;
-
-        let response = match response {
-            Ok(response) => response,
-            Err(err) => {
-                return LlmWarmupModelStatus {
-                    model: model.to_string(),
-                    outcome: LlmWarmupOutcome::Unreachable,
-                    error_body: Some(err.to_string()),
-                };
-            }
+        let model_key = llm_model_key(endpoint, model);
+        if self
+            .lifecycle
+            .is_warm_within(&model_key, OLLAMA_RECENT_WARM_SKIP)
+        {
+            return LlmWarmupModelStatus {
+                model: model.to_string(),
+                outcome: LlmWarmupOutcome::Ok,
+                error_body: None,
+            };
+        }
+        let Some(_claim) = self.lifecycle.try_claim(model_key.clone()) else {
+            return LlmWarmupModelStatus {
+                model: model.to_string(),
+                outcome: LlmWarmupOutcome::Loading,
+                error_body: None,
+            };
         };
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return LlmWarmupModelStatus {
+        match self
+            .ollama
+            .warmup_model(endpoint, model, keep_alive, OLLAMA_WARMUP_TIMEOUT)
+            .await
+        {
+            OllamaLoadResult::Ok => {
+                self.lifecycle.mark_warm(model_key);
+                log::debug!("[llm] Ollama warm-up OK: {model}");
+                LlmWarmupModelStatus {
+                    model: model.to_string(),
+                    outcome: LlmWarmupOutcome::Ok,
+                    error_body: None,
+                }
+            }
+            OllamaLoadResult::Transport(err) => LlmWarmupModelStatus {
+                model: model.to_string(),
+                outcome: LlmWarmupOutcome::Unreachable,
+                error_body: Some(err),
+            },
+            OllamaLoadResult::Http { status, body } => LlmWarmupModelStatus {
                 model: model.to_string(),
                 outcome: if status == 404 {
                     LlmWarmupOutcome::ModelNotFound
@@ -375,21 +377,50 @@ impl LlmManager {
                     LlmWarmupOutcome::LoadFailed
                 },
                 error_body: if body.is_empty() { None } else { Some(body) },
-            };
-        }
-
-        let _ = response.bytes().await;
-        log::debug!("[llm] Ollama warm-up OK: {model}");
-        LlmWarmupModelStatus {
-            model: model.to_string(),
-            outcome: LlmWarmupOutcome::Ok,
-            error_body: None,
+            },
         }
     }
 
     fn publish_warmup_status(&self, status: LlmWarmupStatus) {
         set_warmup_status(status.clone());
         let _ = self.app.emit("llm:warmup-status", status);
+    }
+
+    fn remember_openrouter_supported_parameters(&self, models: &[OpenRouterModelInfo]) {
+        let Ok(mut cache) = self.openrouter_supported_parameters.lock() else {
+            return;
+        };
+        for model in models {
+            if let Some(params) = &model.supported_parameters {
+                cache.insert(model.id.clone(), params.clone());
+            }
+        }
+    }
+
+    fn cached_openrouter_supported_parameters(&self, model: &str) -> Option<Vec<String>> {
+        self.openrouter_supported_parameters
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(model).cloned())
+    }
+
+    async fn openrouter_supported_parameters(
+        &self,
+        api_key: &str,
+        model: &str,
+        options: &OpenRouterRequestOptions,
+    ) -> Option<Vec<String>> {
+        if !options.has_any_runtime_param() || model == "openrouter/auto" {
+            return None;
+        }
+        if let Some(params) = self.cached_openrouter_supported_parameters(model) {
+            return Some(params);
+        }
+        let scan = self.scan_openrouter(api_key).await;
+        if scan.error.is_some() || scan.models.is_empty() {
+            return None;
+        }
+        self.cached_openrouter_supported_parameters(model)
     }
 
     // ── Ollama capability probe (`/api/show`) ──────────────────────────────
@@ -401,34 +432,7 @@ impl LlmManager {
         endpoint: &str,
         model: &str,
     ) -> Result<OllamaCapabilities, String> {
-        if let Some(hit) = self
-            .caps_cache
-            .lock()
-            .ok()
-            .and_then(|m| m.get(model).cloned())
-        {
-            return Ok(hit);
-        }
-        let url = build_ollama_api_url(endpoint, "/api/show");
-        let resp = self
-            .client
-            .post(url)
-            .json(&serde_json::json!({ "model": model }))
-            .send()
-            .await
-            .map_err(|e| format!("Ollama /api/show failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("Ollama /api/show HTTP {}", resp.status().as_u16()));
-        }
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("Ollama /api/show parse: {e}"))?;
-        let caps = parse_ollama_show(&json);
-        if let Ok(mut m) = self.caps_cache.lock() {
-            m.insert(model.to_string(), caps.clone());
-        }
-        Ok(caps)
+        self.ollama.capabilities(endpoint, model).await
     }
 
     // ── dictation / transform compose ──────────────────────────────────────
@@ -441,10 +445,12 @@ impl LlmManager {
         endpoint: &str,
         model: &str,
         system_prompt: &str,
+        user_prompt: &str,
         text: &str,
         effort: ThinkingEffort,
         request_id: &str,
     ) -> Result<String, String> {
+        self.track_cancel(request_id);
         let caps = self
             .ollama_capabilities(endpoint, model)
             .await
@@ -452,14 +458,19 @@ impl LlmManager {
         let body = build_ollama_chat_body_with_keep_alive(
             model,
             system_prompt,
-            &dictation_user_prompt(text),
+            user_prompt,
             text.len(),
             caps.supports_thinking,
             effort,
             self.ollama_keep_alive(),
         );
-        self.stream_ollama_chat(endpoint, body, text, request_id)
-            .await
+        let result = self
+            .stream_ollama_chat(endpoint, body, text, request_id)
+            .await;
+        if result.is_ok() {
+            self.mark_ollama_model_warm(endpoint, model);
+        }
+        result
     }
 
     /// Run a transform-on-selection over Ollama (system prompt is the transform's
@@ -469,10 +480,12 @@ impl LlmManager {
         endpoint: &str,
         model: &str,
         system_prompt: &str,
+        user_prompt: &str,
         text: &str,
         effort: ThinkingEffort,
         request_id: &str,
     ) -> Result<String, String> {
+        self.track_cancel(request_id);
         let caps = self
             .ollama_capabilities(endpoint, model)
             .await
@@ -480,14 +493,19 @@ impl LlmManager {
         let body = build_ollama_chat_body_with_keep_alive(
             model,
             system_prompt,
-            &transforms_user_prompt(text),
+            user_prompt,
             text.len(),
             caps.supports_thinking,
             effort,
             self.ollama_keep_alive(),
         );
-        self.stream_ollama_chat(endpoint, body, text, request_id)
-            .await
+        let result = self
+            .stream_ollama_chat(endpoint, body, text, request_id)
+            .await;
+        if result.is_ok() {
+            self.mark_ollama_model_warm(endpoint, model);
+        }
+        result
     }
 
     /// POST `/api/chat` (stream=true), drain NDJSON, fold via OllamaStreamState,
@@ -499,53 +517,28 @@ impl LlmManager {
         fallback: &str,
         request_id: &str,
     ) -> Result<String, String> {
-        use futures_util::StreamExt;
-
-        let url = build_ollama_api_url(endpoint, "/api/chat");
-        let resp = self
-            .client
-            .post(url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("Ollama POST failed: {e}"))?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let t = resp.text().await.unwrap_or_default();
-            return Err(format!("Ollama HTTP {status}: {t}"));
-        }
-
         let sink = EmitReasoningSink {
             app: self.app.clone(),
             request_id: request_id.to_string(),
         };
-        let mut state = OllamaStreamState::default();
-        let mut buf = String::new();
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            if self.is_cancelled(request_id) {
-                break;
-            }
-            let bytes = chunk.map_err(|e| e.to_string())?;
-            buf.push_str(&String::from_utf8_lossy(&bytes));
-            while let Some(nl) = buf.find('\n') {
-                let line: String = buf.drain(..=nl).collect();
-                if let Some(c) = parse_chat_stream_line(&line) {
-                    let deltas = state.apply_chunk(&c);
-                    if let Some(t) = deltas.thinking {
-                        sink.on_delta(&t);
-                    }
-                }
-            }
-        }
-        if let Some(c) = parse_chat_stream_line(&buf) {
-            state.apply_chunk(&c);
-        }
+        let state = self
+            .ollama
+            .stream_chat(
+                endpoint,
+                body,
+                || self.is_cancelled(request_id),
+                |delta| {
+                    sink.on_delta(delta);
+                },
+            )
+            .await;
         self.clear_cancel(request_id);
+        let state = state?;
 
         if let Some(err) = state.error {
             return Err(format!("Ollama stream error: {err}"));
         }
+        ensure_ollama_stream_has_content(&state)?;
         // Surface any learned proper nouns the model emitted in the structured
         // envelope to the dictionary auto-add UI (mirrors broadcastLearnedProperNouns
         // → `llm-learned-proper-nouns`). Empty batches are dropped.
@@ -570,41 +563,12 @@ impl LlmManager {
 
     /// List local Ollama models (`/api/tags`). Returns the raw model ids.
     pub async fn ollama_list_models(&self, endpoint: &str) -> Result<Vec<String>, String> {
-        let url = build_ollama_api_url(endpoint, "/api/tags");
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| format!("Ollama /api/tags failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("Ollama /api/tags HTTP {}", resp.status().as_u16()));
-        }
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("Ollama /api/tags parse: {e}"))?;
-        let models = json
-            .get("models")
-            .and_then(|m| m.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(models)
+        self.ollama.list_models(endpoint).await
     }
 
     /// True iff an Ollama server answers at the endpoint (`GET /api/version`).
     pub async fn ollama_detect(&self, endpoint: &str) -> bool {
-        let url = build_ollama_api_url(endpoint, "/api/version");
-        self.client
-            .get(url)
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
+        self.ollama.detect(endpoint).await
     }
 
     /// List local Ollama models (`/api/tags`) as full detail rows (name + size +
@@ -616,59 +580,13 @@ impl LlmManager {
         &self,
         endpoint: &str,
     ) -> Result<Vec<OllamaModelInfo>, String> {
-        let url = build_ollama_api_url(endpoint, "/api/tags");
-        let resp = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| format!("Ollama /api/tags failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("Ollama /api/tags HTTP {}", resp.status().as_u16()));
-        }
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("Ollama /api/tags parse: {e}"))?;
-        let mut models = parse_ollama_tags(&json);
-        // Enrich each model with its `/api/show` capability set. Concurrency is
-        // fine to keep sequential here — the local daemon answers from metadata
-        // cache and the model count is tiny.
-        for m in &mut models {
-            if let Ok(caps) = self.ollama_capabilities(endpoint, &m.name).await {
-                if caps.supports_thinking {
-                    // The renderer only consumes a small capability vocabulary;
-                    // surface "thinking" so reasoning badges + think-gating work.
-                    m.capabilities = Some(vec!["thinking".to_string()]);
-                }
-            }
-        }
-        Ok(models)
+        self.ollama.list_models_detailed(endpoint).await
     }
 
     /// Delete a local Ollama model (`DELETE /api/delete { model }`). Returns
     /// `(success, error)`. Mirrors `deleteOllamaModel`.
     pub async fn ollama_delete(&self, endpoint: &str, model: &str) -> (bool, Option<String>) {
-        let url = build_ollama_api_url(endpoint, "/api/delete");
-        match self
-            .client
-            .delete(url)
-            .json(&serde_json::json!({ "model": model }))
-            .timeout(std::time::Duration::from_secs(15))
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => (true, None),
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                let body = resp.text().await.unwrap_or_default();
-                (
-                    false,
-                    Some(format!("Ollama /api/delete HTTP {status}: {body}")),
-                )
-            }
-            Err(e) => (false, Some(format!("Ollama /api/delete failed: {e}"))),
-        }
+        self.ollama.delete(endpoint, model).await
     }
 
     /// Stream a model pull (`POST /api/pull`, stream=true), emitting
@@ -688,129 +606,13 @@ impl LlmManager {
         is_cancelled: F,
     ) -> PullOutcome
     where
-        F: Fn() -> bool,
+        F: Fn() -> bool + Send,
     {
-        use futures_util::StreamExt;
-
-        let url = build_ollama_api_url(endpoint, "/api/pull");
-        let resp = match self
-            .client
-            .post(url)
-            .json(&serde_json::json!({ "model": model, "stream": true, "insecure": false }))
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                let msg = format!("Ollama /api/pull failed: {e}");
-                self.emit_pull(pull_progress_json(
-                    model,
-                    "error",
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(&msg),
-                ));
-                return PullOutcome::Error(msg);
-            }
-        };
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            let msg = format!("Ollama /api/pull HTTP {status}: {body}");
-            self.emit_pull(pull_progress_json(
-                model,
-                "error",
-                None,
-                None,
-                None,
-                None,
-                Some(&msg),
-            ));
-            return PullOutcome::Error(msg);
-        }
-
-        let mut buf = String::new();
-        let mut stream = resp.bytes_stream();
-        let mut success = false;
-        let mut last_error: Option<String> = None;
-        let mut layers = PullLayers::default();
-
-        loop {
-            if is_cancelled() {
-                return PullOutcome::Cancelled;
-            }
-            let next = stream.next().await;
-            let Some(chunk) = next else { break };
-            let bytes = match chunk {
-                Ok(b) => b,
-                Err(e) => {
-                    let msg = format!("Ollama /api/pull stream error: {e}");
-                    self.emit_pull(pull_progress_json(
-                        model,
-                        "error",
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(&msg),
-                    ));
-                    return PullOutcome::Error(msg);
-                }
-            };
-            buf.push_str(&String::from_utf8_lossy(&bytes));
-            while let Some(nl) = buf.find('\n') {
-                let line: String = buf.drain(..=nl).collect();
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if let Some((status, payload)) = parse_pull_line(model, trimmed, &mut layers) {
-                    if status == "success" {
-                        success = true;
-                    }
-                    if let Some(err) = payload
-                        .get("error")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                    {
-                        last_error = Some(err);
-                    }
-                    self.emit_pull(payload);
-                }
-            }
-            if is_cancelled() {
-                return PullOutcome::Cancelled;
-            }
-        }
-        // Drain any trailing partial frame.
-        let trimmed = buf.trim();
-        if !trimmed.is_empty() {
-            if let Some((status, payload)) = parse_pull_line(model, trimmed, &mut layers) {
-                if status == "success" {
-                    success = true;
-                }
+        self.ollama
+            .pull_stream(endpoint, model, is_cancelled, |payload| {
                 self.emit_pull(payload);
-            }
-        }
-
-        if success {
-            PullOutcome::Success
-        } else {
-            let msg =
-                last_error.unwrap_or_else(|| "Pull did not complete successfully".to_string());
-            self.emit_pull(pull_progress_json(
-                model,
-                "error",
-                None,
-                None,
-                None,
-                None,
-                Some(&msg),
-            ));
-            PullOutcome::Error(msg)
-        }
+            })
+            .await
     }
 
     /// Broadcast one `llm:pull-progress` frame to every renderer.
@@ -820,7 +622,7 @@ impl LlmManager {
 
     /// Run a dictation/transform over OpenRouter's OpenAI-compatible
     /// `/api/v1/chat/completions`. `api_key` is the stored OpenRouter key,
-    /// `selection` is the `model[::providerSlug]` picker value (`""` → auto).
+    /// `selection` is the `model[@providerSlug]` picker value (`""` → auto).
     /// Requests a `{ "text": "..." }` JSON object via `response_format` so the
     /// answer is plain transformed text, then extracts the `text` field.
     /// Mirrors `processWithOpenRouter` (structured output via generateObject).
@@ -832,6 +634,7 @@ impl LlmManager {
         system_prompt: &str,
         user_prompt: &str,
         fallback: &str,
+        options: OpenRouterRequestOptions,
     ) -> Result<String, String> {
         if api_key.is_empty() {
             return Err("OpenRouter API key is required".to_string());
@@ -864,6 +667,15 @@ impl LlmManager {
                 }
             }
         });
+        let supported_parameters = self
+            .openrouter_supported_parameters(api_key, &model, &options)
+            .await;
+        apply_openrouter_runtime_options(
+            &mut body,
+            &model,
+            supported_parameters.as_deref(),
+            &options,
+        );
         // Provider routing + response-healing plugin (mirrors buildModelOptions +
         // OPENROUTER_DICTATION_PROVIDER_OPTIONS).
         if let serde_json::Value::Object(ref mut map) = body {
@@ -952,11 +764,13 @@ impl LlmManager {
                 };
             }
         };
-        OpenRouterScan {
+        let scan = OpenRouterScan {
             reachable: true,
             models: parse_openrouter_models(&json),
             error: None,
-        }
+        };
+        self.remember_openrouter_supported_parameters(&scan.models);
+        scan
     }
 
     pub fn client(&self) -> &reqwest::Client {
@@ -966,36 +780,6 @@ impl LlmManager {
     pub fn app(&self) -> &AppHandle {
         &self.app
     }
-}
-
-/// Outcome of a streaming pull (drives the command's `OllamaPullResult`).
-pub enum PullOutcome {
-    Success,
-    Cancelled,
-    Error(String),
-}
-
-/// One Ollama model row as parsed from `/api/tags` (+ enriched capabilities).
-/// Field names mirror the spec `OllamaModel` so serde camelCase serialization
-/// matches the renderer's `OllamaScanResult.models[]`.
-#[derive(Clone, Debug, Default)]
-pub struct OllamaModelInfo {
-    pub name: String,
-    pub size: Option<i64>,
-    pub modified_at: Option<String>,
-    pub details: Option<OllamaModelDetails>,
-    pub capabilities: Option<Vec<String>>,
-}
-
-/// Per-model detail metadata (`/api/tags` `details` object). Mirrors the spec
-/// `OllamaModelDetails`.
-#[derive(Clone, Debug, Default)]
-pub struct OllamaModelDetails {
-    pub format: Option<String>,
-    pub family: Option<String>,
-    pub families: Option<Vec<String>>,
-    pub parameter_size: Option<String>,
-    pub quantization_level: Option<String>,
 }
 
 /// One OpenRouter catalog model (the subset the picker rows consume).
@@ -1020,59 +804,8 @@ pub struct OpenRouterScan {
     pub error: Option<String>,
 }
 
-/// Parse the `/api/tags` JSON into detail rows.
-fn parse_ollama_tags(json: &serde_json::Value) -> Vec<OllamaModelInfo> {
-    json.get("models")
-        .and_then(|m| m.as_array())
-        .map(|arr| arr.iter().filter_map(parse_ollama_tags_model).collect())
-        .unwrap_or_default()
-}
-
-fn parse_ollama_tags_model(m: &serde_json::Value) -> Option<OllamaModelInfo> {
-    let name = m.get("name").and_then(|n| n.as_str())?.to_string();
-    let size = m.get("size").and_then(serde_json::Value::as_i64);
-    let modified_at = m
-        .get("modified_at")
-        .or_else(|| m.get("modifiedAt"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let details = m.get("details").and_then(parse_ollama_details);
-    Some(OllamaModelInfo {
-        name,
-        size,
-        modified_at,
-        details,
-        capabilities: None,
-    })
-}
-
 fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).map(str::to_string)
-}
-
-fn parse_ollama_details(d: &serde_json::Value) -> Option<OllamaModelDetails> {
-    let families = d.get("families").and_then(|f| f.as_array()).map(|arr| {
-        arr.iter()
-            .filter_map(|x| x.as_str().map(str::to_string))
-            .collect::<Vec<_>>()
-    });
-    let out = OllamaModelDetails {
-        format: str_field(d, "format"),
-        family: str_field(d, "family"),
-        families,
-        parameter_size: str_field(d, "parameter_size"),
-        quantization_level: str_field(d, "quantization_level"),
-    };
-    let any = out.format.is_some()
-        || out.family.is_some()
-        || out.families.is_some()
-        || out.parameter_size.is_some()
-        || out.quantization_level.is_some();
-    if any {
-        Some(out)
-    } else {
-        None
-    }
 }
 
 /// Parse the OpenRouter `/api/v1/models` payload into picker rows. Mirrors
@@ -1142,135 +875,6 @@ fn parse_maker_and_name(id: &str) -> (Option<String>, Option<String>, Option<Str
     }
 }
 
-/// Coalesce a raw Ollama pull status string into one of the spec's stable
-/// stages. Mirrors `classifyPullStatus` / `PULL_STATUS_PREFIXES`.
-fn classify_pull_status(status_text: &str) -> &'static str {
-    let lower = status_text.to_lowercase();
-    if lower.starts_with("success") {
-        "success"
-    } else if lower.starts_with("pulling manifest") || lower.starts_with("retrieving") {
-        "pulling"
-    } else if lower.starts_with("pulling ") || lower.starts_with("downloading") {
-        "downloading"
-    } else if lower.starts_with("verifying") {
-        "verifying"
-    } else if lower.starts_with("writing") || lower.starts_with("removing") {
-        "writing"
-    } else {
-        "pulling"
-    }
-}
-
-/// Per-digest (per-layer) byte accumulator for a single pull. Ollama's
-/// `/api/pull` stream reports `completed`/`total` scoped to the layer it's
-/// currently fetching, so naively emitting that ratio makes the bar sweep
-/// 0→100 once per blob. Summing across layers yields ONE overall bar (the
-/// dominant GGUF blob is ~all the bytes, so tiny config/template layers no
-/// longer each flash a full sweep).
-#[derive(Default)]
-struct PullLayers {
-    by_digest: std::collections::HashMap<String, (i64, i64)>,
-}
-
-impl PullLayers {
-    fn record(&mut self, digest: Option<&str>, completed: Option<i64>, total: Option<i64>) {
-        if let (Some(d), Some(t)) = (digest, total) {
-            if t > 0 {
-                let c = completed.unwrap_or(0).clamp(0, t);
-                self.by_digest.insert(d.to_string(), (c, t));
-            }
-        }
-    }
-
-    fn aggregate(&self) -> Option<(i64, i64)> {
-        if self.by_digest.is_empty() {
-            return None;
-        }
-        let (mut completed, mut total) = (0i64, 0i64);
-        for (c, t) in self.by_digest.values() {
-            completed += c;
-            total += t;
-        }
-        Some((completed, total))
-    }
-}
-
-/// Parse one NDJSON pull frame into `(coalesced_status, OllamaPullProgress json)`,
-/// folding the layer's bytes into `layers` so the emitted `percent`/`completed`/
-/// `total` reflect the whole pull rather than just the current blob.
-fn parse_pull_line(
-    model: &str,
-    line: &str,
-    layers: &mut PullLayers,
-) -> Option<(&'static str, serde_json::Value)> {
-    let json: serde_json::Value = serde_json::from_str(line).ok()?;
-    let status_text = json.get("status").and_then(|s| s.as_str()).unwrap_or("");
-    let status = classify_pull_status(status_text);
-    let completed = json.get("completed").and_then(serde_json::Value::as_i64);
-    let total = json.get("total").and_then(serde_json::Value::as_i64);
-    let digest = json.get("digest").and_then(|d| d.as_str());
-    let error = json.get("error").and_then(|e| e.as_str());
-
-    layers.record(digest, completed, total);
-    // Report aggregate bytes once any layer is known; `success` forces a full
-    // bar (a layer may not emit a final completed==total frame).
-    let (agg_completed, agg_total) = match (status, layers.aggregate()) {
-        ("success", Some((_, t))) => (Some(t), Some(t)),
-        (_, Some((c, t))) => (Some(c), Some(t)),
-        (_, None) => (completed, total),
-    };
-
-    let payload = pull_progress_json(
-        model,
-        status,
-        Some(status_text),
-        digest,
-        agg_completed,
-        agg_total,
-        error,
-    );
-    Some((status, payload))
-}
-
-/// Build an `OllamaPullProgress`-shaped JSON value (camelCase, spec-faithful).
-#[allow(clippy::too_many_arguments)]
-fn pull_progress_json(
-    model: &str,
-    status: &str,
-    status_text: Option<&str>,
-    digest: Option<&str>,
-    completed: Option<i64>,
-    total: Option<i64>,
-    error: Option<&str>,
-) -> serde_json::Value {
-    let percent = match (completed, total) {
-        (Some(c), Some(t)) if t > 0 => Some(((c as f64 / t as f64) * 100.0).clamp(0.0, 100.0)),
-        _ => None,
-    };
-    let mut obj = serde_json::Map::new();
-    obj.insert("model".into(), serde_json::json!(model));
-    obj.insert("status".into(), serde_json::json!(status));
-    if let Some(s) = status_text {
-        obj.insert("statusText".into(), serde_json::json!(s));
-    }
-    if let Some(d) = digest {
-        obj.insert("digest".into(), serde_json::json!(d));
-    }
-    if let Some(c) = completed {
-        obj.insert("completed".into(), serde_json::json!(c));
-    }
-    if let Some(t) = total {
-        obj.insert("total".into(), serde_json::json!(t));
-    }
-    if let Some(p) = percent {
-        obj.insert("percent".into(), serde_json::json!(p));
-    }
-    if let Some(e) = error {
-        obj.insert("error".into(), serde_json::json!(e));
-    }
-    serde_json::Value::Object(obj)
-}
-
 /// Extract the `text` field from an OpenRouter structured-output content string
 /// (`{ "text": "..." }`). Strips markdown fences first (some providers wrap JSON
 /// in ```json). Falls back to the raw trimmed content, then to `fallback` when
@@ -1298,78 +902,9 @@ fn extract_openrouter_text(content: &str, fallback: &str) -> String {
     fallback.to_string()
 }
 
-/// Parse `/api/show` JSON into capabilities. Ollama exposes a `capabilities`
-/// array (containing `"thinking"` for reasoning models) and a flattened
-/// `model_info` with `*.context_length`.
-fn parse_ollama_show(json: &serde_json::Value) -> OllamaCapabilities {
-    let supports_thinking = json
-        .get("capabilities")
-        .and_then(|c| c.as_array())
-        .map(|arr| arr.iter().any(|v| v.as_str() == Some("thinking")))
-        .unwrap_or(false);
-    let context_length = json
-        .get("model_info")
-        .and_then(|mi| mi.as_object())
-        .and_then(|obj| {
-            obj.iter()
-                .find(|(k, _)| k.ends_with(".context_length"))
-                .and_then(|(_, v)| v.as_u64())
-        });
-    OllamaCapabilities {
-        supports_thinking,
-        context_length,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_show_detects_thinking_and_ctx() {
-        let json = serde_json::json!({
-            "capabilities": ["completion", "thinking"],
-            "model_info": { "qwen3.context_length": 32768u64 }
-        });
-        let caps = parse_ollama_show(&json);
-        assert!(caps.supports_thinking);
-        assert_eq!(caps.context_length, Some(32768));
-    }
-
-    #[test]
-    fn parse_show_non_thinking_model() {
-        let json = serde_json::json!({ "capabilities": ["completion"] });
-        let caps = parse_ollama_show(&json);
-        assert!(!caps.supports_thinking);
-        assert_eq!(caps.context_length, None);
-    }
-
-    #[test]
-    fn parse_tags_extracts_name_size_details() {
-        let json = serde_json::json!({
-            "models": [
-                {
-                    "name": "llama3.2:1b",
-                    "size": 1_300_000_000i64,
-                    "modified_at": "2025-01-01T00:00:00Z",
-                    "details": {
-                        "format": "gguf",
-                        "family": "llama",
-                        "families": ["llama"],
-                        "parameter_size": "1.2B",
-                        "quantization_level": "Q4_K_M"
-                    }
-                }
-            ]
-        });
-        let models = parse_ollama_tags(&json);
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0].name, "llama3.2:1b");
-        assert_eq!(models[0].size, Some(1_300_000_000));
-        let d = models[0].details.as_ref().unwrap();
-        assert_eq!(d.family.as_deref(), Some("llama"));
-        assert_eq!(d.quantization_level.as_deref(), Some("Q4_K_M"));
-    }
 
     #[test]
     fn maker_name_variant_split() {
@@ -1385,83 +920,6 @@ mod tests {
     }
 
     #[test]
-    fn classify_pull_status_stages() {
-        assert_eq!(classify_pull_status("pulling manifest"), "pulling");
-        assert_eq!(classify_pull_status("pulling 1a2b3c"), "downloading");
-        assert_eq!(classify_pull_status("downloading"), "downloading");
-        assert_eq!(classify_pull_status("verifying sha256"), "verifying");
-        assert_eq!(classify_pull_status("writing manifest"), "writing");
-        assert_eq!(classify_pull_status("success"), "success");
-    }
-
-    #[test]
-    fn pull_progress_json_has_percent() {
-        let v = pull_progress_json(
-            "m",
-            "downloading",
-            Some("pulling x"),
-            None,
-            Some(50),
-            Some(100),
-            None,
-        );
-        assert_eq!(v.get("percent").and_then(|p| p.as_f64()), Some(50.0));
-        assert_eq!(
-            v.get("status").and_then(|s| s.as_str()),
-            Some("downloading")
-        );
-        assert_eq!(v.get("model").and_then(|s| s.as_str()), Some("m"));
-    }
-
-    #[test]
-    fn pull_layers_sum_across_digests() {
-        let mut layers = PullLayers::default();
-        layers.record(Some("sha256:a"), Some(50), Some(100));
-        layers.record(Some("sha256:b"), Some(200), Some(400));
-        assert_eq!(layers.aggregate(), Some((250, 500)));
-    }
-
-    #[test]
-    fn pull_layers_clamp_and_ignore_undigested() {
-        let mut layers = PullLayers::default();
-        layers.record(Some("sha256:x"), Some(250), Some(100)); // clamp to 100
-        layers.record(None, Some(10), Some(20)); // no digest → ignored
-        layers.record(Some("sha256:y"), Some(5), None); // no total → ignored
-        assert_eq!(layers.aggregate(), Some((100, 100)));
-    }
-
-    #[test]
-    fn parse_pull_line_reports_aggregate_not_per_layer() {
-        // A tiny config layer completes first, then the dominant blob appears at 0 bytes.
-        let mut layers = PullLayers::default();
-        let cfg = serde_json::json!({
-            "status": "pulling cfg", "digest": "sha256:cfg", "total": 1000, "completed": 1000
-        })
-        .to_string();
-        let gguf = serde_json::json!({
-            "status": "pulling gguf", "digest": "sha256:gguf", "total": 4_000_000_000i64, "completed": 0
-        })
-        .to_string();
-        parse_pull_line("m", &cfg, &mut layers);
-        let (_, payload) = parse_pull_line("m", &gguf, &mut layers).unwrap();
-        // Per-layer math would have flashed 100 (cfg) then 0 (gguf); aggregate ≈ 0.
-        assert!(payload.get("percent").and_then(|p| p.as_f64()).unwrap() < 1.0);
-    }
-
-    #[test]
-    fn parse_pull_line_success_forces_full_bar() {
-        let mut layers = PullLayers::default();
-        let dl = serde_json::json!({
-            "status": "pulling gguf", "digest": "sha256:gguf", "total": 100, "completed": 40
-        })
-        .to_string();
-        parse_pull_line("m", &dl, &mut layers);
-        let success = serde_json::json!({ "status": "success" }).to_string();
-        let (_, payload) = parse_pull_line("m", &success, &mut layers).unwrap();
-        assert_eq!(payload.get("percent").and_then(|p| p.as_f64()), Some(100.0));
-    }
-
-    #[test]
     fn parse_openrouter_models_maps_rows() {
         let json = serde_json::json!({
             "data": [
@@ -1473,5 +931,32 @@ mod tests {
         assert_eq!(models[0].id, "openai/gpt-4o");
         assert_eq!(models[0].maker.as_deref(), Some("openai"));
         assert_eq!(models[0].context_length, Some(128000));
+    }
+
+    #[test]
+    fn empty_ollama_stream_is_provider_error() {
+        let state = llm::OllamaStreamState {
+            done: true,
+            done_reason: Some("stop".to_string()),
+            thinking: "reasoning only".to_string(),
+            ..Default::default()
+        };
+
+        let err = ensure_ollama_stream_has_content(&state).unwrap_err();
+        assert!(err.contains("Ollama returned no content"));
+        assert!(err.contains("done_reason=stop"));
+        assert!(err.contains("thinking_chars=14"));
+    }
+
+    #[test]
+    fn non_empty_ollama_stream_is_usable() {
+        let state = llm::OllamaStreamState {
+            content: r#"{"text":"changed"}"#.to_string(),
+            done: true,
+            done_reason: Some("stop".to_string()),
+            ..Default::default()
+        };
+
+        assert!(ensure_ollama_stream_has_content(&state).is_ok());
     }
 }

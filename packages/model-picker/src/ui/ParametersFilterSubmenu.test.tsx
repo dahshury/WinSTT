@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { render } from "@testing-library/react";
 import type { FilterableParameter } from "../lib/openrouter-provider-utils";
-import { __parameters_filter_submenu_test_helpers__ as helpers } from "../lib/parameters-filter-submenu-test-helpers";
+import * as components from "../lib/parameters-filter-submenu-components";
+import * as utils from "../lib/parameters-filter-submenu-utils";
 import { DropdownMenu } from "./DropdownMenu";
 import { ParametersFilterSubmenu } from "./ParametersFilterSubmenu";
+
+const helpers = { ...components, ...utils };
 
 describe("ParametersFilterSubmenu", () => {
 	test("module exports the component (full render requires a parent Menu popup)", () => {
@@ -45,15 +48,6 @@ describe("ParametersFilterSubmenu helpers", () => {
 		});
 	});
 
-	describe("shouldShowSelectedTick", () => {
-		test("returns true when visible", () => {
-			expect(helpers.shouldShowSelectedTick(true)).toBe(true);
-		});
-		test("returns false when not visible", () => {
-			expect(helpers.shouldShowSelectedTick(false)).toBe(false);
-		});
-	});
-
 	describe("shouldShowCountBadge", () => {
 		test("returns true when count > 0", () => {
 			expect(helpers.shouldShowCountBadge(1)).toBe(true);
@@ -72,20 +66,6 @@ describe("ParametersFilterSubmenu helpers", () => {
 		test("returns false when count is 0", () => {
 			expect(helpers.shouldShowClearAll(0)).toBe(false);
 		});
-	});
-});
-
-describe("SelectedTick", () => {
-	const { SelectedTick } = helpers;
-
-	test("returns null when visible=false", () => {
-		const { container } = render(<SelectedTick visible={false} />);
-		expect(container.firstChild).toBeNull();
-	});
-
-	test("renders icon when visible=true", () => {
-		const { container } = render(<SelectedTick visible={true} />);
-		expect(container.firstChild).not.toBeNull();
 	});
 });
 
