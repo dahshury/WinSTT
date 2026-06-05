@@ -87,8 +87,14 @@ if ($DryRun) {
     return
 }
 
-& gh release view $Tag *> $null
-$ReleaseExists = $LASTEXITCODE -eq 0
+$PreviousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & gh release view $Tag 1>$null 2>$null
+    $ReleaseExists = $LASTEXITCODE -eq 0
+} finally {
+    $ErrorActionPreference = $PreviousErrorActionPreference
+}
 
 if ($ReleaseExists) {
     Invoke-Gh release edit $Tag --title $Title --notes $Notes
