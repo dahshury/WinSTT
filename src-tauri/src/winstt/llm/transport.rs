@@ -181,7 +181,17 @@ pub fn normalize_ollama_endpoint(endpoint: &str) -> String {
 }
 
 /// Build an /api/<path> URL on the normalized endpoint. Mirrors buildOllamaApiUrl.
-pub fn build_ollama_api_url(endpoint: &str, api_path: &str) -> String {
+///
+/// NOT SSRF-safe: this performs NO host validation — it interpolates whatever
+/// `endpoint` it is given straight into the request URL. Callers MUST validate
+/// or otherwise trust the host before using the result. Production code MUST
+/// instead use `build_loopback_ollama_api_url`, which rejects any non-loopback
+/// host (and credentials / non-http schemes) via `validate_loopback_ollama_endpoint`.
+/// `pub(crate)` (not `pub`) so this can never become a public unvalidated entry point.
+/// It currently has no production callers — only the unit test below exercises it — so it is
+/// gated behind `#[cfg(test)]` to keep the unvalidated path out of the shipped binary entirely.
+#[cfg(test)]
+pub(crate) fn build_ollama_api_url(endpoint: &str, api_path: &str) -> String {
     let base = normalize_ollama_endpoint(endpoint);
     let path = if api_path.starts_with('/') {
         api_path.to_string()

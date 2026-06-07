@@ -91,6 +91,27 @@ mod tests {
     }
 
     #[test]
+    fn resolve_repo_rejects_unsafe_slashed_ids() {
+        // SSRF / path-traversal guard: a well-formed HF id resolves verbatim …
+        assert_eq!(
+            resolve_repo("openai/whisper-tiny"),
+            Some(("openai".into(), "whisper-tiny".into()))
+        );
+        // … but path-traversal and URL meta-characters are rejected BEFORE they reach a URL.
+        assert_eq!(resolve_repo("../etc/passwd"), None);
+        assert_eq!(resolve_repo("owner/../name"), None);
+        assert_eq!(resolve_repo("owner/..%2f"), None);
+        assert_eq!(resolve_repo("owner/name?x=1"), None);
+        assert_eq!(resolve_repo("owner/name#frag"), None);
+        assert_eq!(resolve_repo("ev il/name"), None);
+        assert_eq!(resolve_repo("owner/na me"), None);
+        assert_eq!(resolve_repo("owner@host/name"), None);
+        // an empty component (leading / trailing / double slash) is rejected too.
+        assert_eq!(resolve_repo("/name"), None);
+        assert_eq!(resolve_repo("owner/"), None);
+    }
+
+    #[test]
     fn catalog_bare_ids_resolve_via_onnx_model_name() {
         // REGRESSION (download-stuck-at-0%): these catalog ids are bare (no `/`) and are NOT in
         // MODEL_REPOS — they were only resolvable via the catalog's `onnx_model_name`. Before the

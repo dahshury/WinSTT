@@ -82,6 +82,19 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
     ),
 ];
 
+/// True iff `s` is a well-formed Hugging Face repo-id component (an `owner` or a `name`): non-empty,
+/// no path-traversal (`..`), no leading/trailing `/` artifacts, and drawn ONLY from the HF id
+/// charset `[A-Za-z0-9._-]`. This is the boundary guard that keeps an untrusted, user-supplied
+/// `owner/name` from carrying URL meta-characters or `..` into the fixed HF host URL (SSRF /
+/// path-traversal). Mirrors the `[A-Za-z0-9._\-/]` repo-id charset, applied per slash-split component.
+fn is_valid_hf_repo_component(s: &str) -> bool {
+    if s.is_empty() || s.contains("..") {
+        return false;
+    }
+    s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 /// Map a catalog id / bare alias to a `(owner, name)` HF repo pair. A model id that already
 /// contains `/` is split as-is (`onnx-community/whisper-tiny` → `("onnx-community", "whisper-tiny")`);
 /// a bare id is resolved through THREE sources, in order:
@@ -103,6 +116,14 @@ pub const MODEL_REPOS: &[(&str, &str)] = &[
 /// directly, an alias falls to step 2. The single-level guard (`!= model`) prevents any self-loop.
 pub fn resolve_repo(model: &str) -> Option<(String, String)> {
     if let Some((owner, name)) = model.split_once('/') {
+        // SSRF / path-traversal guard: a slashed id is taken verbatim and later
+        // interpolated into the fixed HF host URL (e.g. hf-hub `client.model(owner, name)`
+        // and `https://huggingface.co/api/models/{owner}/{name}` in http_meta.rs). Reject any
+        // owner/name that isn't a well-formed HF id BEFORE it can reach a URL. A real HF repo id
+        // only ever uses `[A-Za-z0-9._-]` per component and never contains `..`.
+        if !is_valid_hf_repo_component(owner) || !is_valid_hf_repo_component(name) {
+            return None;
+        }
         return Some((owner.to_string(), name.to_string()));
     }
     // 1. Catalog id → real repo / alias (the engine-load path's source of truth).
