@@ -38,23 +38,22 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
     icon: AiChipIcon,
     label: "NeMo",
     chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-    logoSrc: "/provider-icons/nvidia.png",
+    logoSrc: "/provider-icons/nvidia.svg",
   },
   granite: {
     icon: AiChipIcon,
     label: "Granite",
     chip: "bg-stone-500/15 text-stone-600 dark:text-stone-400",
-    logoSrc: "/provider-icons/ibm-granite.webp",
+    logoSrc: "/provider-icons/ibm-granite.svg",
   },
   gigaam: {
     icon: Radio01Icon,
     label: "GigaAM",
     chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
-    // Sber's sphere emblem (transparent PNG) — the HF org avatar was a
-    // full-bleed opaque tile that read as a solid rectangle in the chip.
-    // PNG, not SVG: the emblem's clipped gradient ring rendered as a solid
-    // square in WebView2's SVG image-mode (clip-path quirk).
-    logoSrc: "/provider-icons/sber.png",
+    // Sber/GigaChat swirl emblem (single-path SVG, recolored white for the
+    // dark UI). The earlier HF org avatar was a full-bleed opaque tile that
+    // read as a solid rectangle in the chip.
+    logoSrc: "/provider-icons/sber.svg",
   },
   kaldi: {
     icon: CpuIcon,
@@ -82,7 +81,7 @@ const FAMILY_CONFIG: Record<FamilyKey, FamilyConfig> = {
     icon: AiChipIcon,
     label: "Cohere",
     chip: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
-    logoSrc: "/provider-icons/cohere.png",
+    logoSrc: "/provider-icons/cohere.svg",
   },
   sense_voice: {
     icon: AudioWave02Icon,

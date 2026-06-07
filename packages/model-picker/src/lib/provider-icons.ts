@@ -42,6 +42,6 @@ export function getProviderIconWithFallback(
   // in packaged builds (the absolute "/provider-icons/x.png" form only works
   // against the dev server root). See public-asset.ts.
   return publicAsset(
-    getProviderIcon(provider) || fallback || "/provider-icons/openrouter.png",
+    getProviderIcon(provider) || fallback || "/provider-icons/openrouter.svg",
   );
 }

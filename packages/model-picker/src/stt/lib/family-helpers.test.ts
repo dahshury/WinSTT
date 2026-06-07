@@ -78,14 +78,14 @@ describe("getFamilyConfig", () => {
     const corpus = buildModelSearchCorpus(granite);
 
     expect(cfg.label).toBe("Granite");
-    expect(cfg.logoSrc).toBe("/provider-icons/ibm-granite.webp");
+    expect(cfg.logoSrc).toBe("/provider-icons/ibm-granite.svg");
     expect(getAuthorLabel("granite")).toBe("IBM");
     expect(corpus).toContain("ibm");
     expect(corpus).toContain("granite speech");
   });
 
   test("uses transparent brand logos for every STT family", () => {
-    expect(getFamilyConfig("gigaam").logoSrc).toBe("/provider-icons/sber.png");
+    expect(getFamilyConfig("gigaam").logoSrc).toBe("/provider-icons/sber.svg");
     expect(getFamilyConfig("t-one").logoSrc).toBe("/provider-icons/t-bank.svg");
     expect(getFamilyConfig("kaldi").logoSrc).toBe("/provider-icons/vosk.png");
     expect(getFamilyConfig("moonshine").logoSrc).toBe(
