@@ -2,7 +2,11 @@ import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect } from "react";
 import { useTranslations } from "use-intl";
-import { applyTransform, onTransformApplied, onTransformFailed } from "@/shared/api/ipc-client";
+import {
+	applyTransform,
+	onTransformApplied,
+	onTransformFailed,
+} from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
@@ -26,7 +30,9 @@ function truncate(text: string, max: number): string {
 
 function resolveToastBody(notification: TransformNotification): string {
 	if (notification.kind === "applied") {
-		return notification.after ? truncate(notification.after, PREVIEW_CHARS) : "";
+		return notification.after
+			? truncate(notification.after, PREVIEW_CHARS)
+			: "";
 	}
 	return notification.reason || "Transform failed";
 }
@@ -77,7 +83,8 @@ export function TransformToast() {
 		return null;
 	}
 
-	const isFailure = current.kind === "failed" || current.kind === "no-selection";
+	const isFailure =
+		current.kind === "failed" || current.kind === "no-selection";
 	const headline = HEADLINE;
 	const body = resolveToastBody(current);
 
@@ -90,7 +97,7 @@ export function TransformToast() {
 			aria-live="polite"
 			className={cn(
 				"fixed right-4 bottom-4 z-toast w-[360px] max-w-[90vw] rounded-md border border-border p-3 shadow-lg",
-				surfaceBg(level)
+				surfaceBg(level),
 			)}
 		>
 			<div className="mb-1 flex items-start gap-2">
@@ -99,7 +106,9 @@ export function TransformToast() {
 						isFailure ? "bg-error" : "bg-accent"
 					}`}
 				/>
-				<span className="flex-1 font-medium text-body text-foreground">{headline}</span>
+				<span className="flex-1 font-medium text-body text-foreground">
+					{headline}
+				</span>
 				<Button
 					aria-label="Dismiss"
 					className="rounded p-1 text-foreground-muted hover:bg-surface-tertiary hover:text-foreground"
@@ -116,7 +125,7 @@ export function TransformToast() {
 					<Button
 						className={cn(
 							"flex items-center gap-1 rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
-							surfaceBg(detailsLevel)
+							surfaceBg(detailsLevel),
 						)}
 						onClick={handleRetry}
 					>

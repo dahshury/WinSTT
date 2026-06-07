@@ -29,7 +29,10 @@ export function getOllamaPrimaryAction(showRun: boolean): OllamaPrimaryAction {
  * Determine the label key for OllamaPrimaryButton based on the current
  * starting state and whether the run vs. download path is shown.
  */
-export function getOllamaPrimaryLabelKey(showRun: boolean, starting: boolean): string {
+export function getOllamaPrimaryLabelKey(
+	showRun: boolean,
+	starting: boolean,
+): string {
 	if (showRun) {
 		return starting ? "starting" : "runOllama";
 	}
@@ -42,7 +45,7 @@ export function getOllamaPrimaryLabelKey(showRun: boolean, starting: boolean): s
  */
 export function buildOllamaStartError(
 	error: string | undefined,
-	fallbackKey: string
+	fallbackKey: string,
 ): { errorMessage: string; started: false } {
 	return { started: false, errorMessage: error ?? fallbackKey };
 }
@@ -51,7 +54,9 @@ export function buildOllamaStartError(
  * Read an optional input element's current value, returning an empty string
  * when the element is not yet mounted.
  */
-export function readInputValue(element: HTMLInputElement | null | undefined): string {
+export function readInputValue(
+	element: HTMLInputElement | null | undefined,
+): string {
 	return element?.value ?? "";
 }
 
@@ -62,7 +67,7 @@ export function readInputValue(element: HTMLInputElement | null | undefined): st
 export function ollamaModelSyncNeeded(
 	prev: { provider: string; models: readonly { name: string }[] },
 	provider: string,
-	models: readonly { name: string }[]
+	models: readonly { name: string }[],
 ): boolean {
 	return prev.provider !== provider || prev.models !== models;
 }
@@ -82,9 +87,9 @@ export function applyOllamaModelReplacementIfNeeded(
 	shouldSync: (
 		provider: string,
 		models: readonly { name: string }[],
-		current: string
+		current: string,
 	) => string | null,
-	update: (patch: { model: string }) => void
+	update: (patch: { model: string }) => void,
 ): void {
 	const replacement = shouldSync(provider, models, current);
 	if (replacement) {

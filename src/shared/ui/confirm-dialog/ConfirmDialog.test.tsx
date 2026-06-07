@@ -13,7 +13,7 @@ function renderDialog(opts?: Partial<Parameters<typeof ConfirmDialog>[0]>) {
 			open={opts?.open ?? true}
 			title="Confirm Delete"
 			{...opts}
-		/>
+		/>,
 	);
 	return { ...utils, onConfirm, onOpenChange };
 }
@@ -45,8 +45,8 @@ describe("ConfirmDialog", () => {
 
 	test("clicking the confirm button invokes onConfirm and then closes the dialog", () => {
 		const { onConfirm, onOpenChange } = renderDialog({ confirmLabel: "Run" });
-		const confirmBtn = Array.from(document.querySelectorAll("button")).find((b) =>
-			(b.textContent ?? "").includes("Run")
+		const confirmBtn = Array.from(document.querySelectorAll("button")).find(
+			(b) => (b.textContent ?? "").includes("Run"),
 		);
 		expect(confirmBtn).toBeDefined();
 		fireEvent.click(confirmBtn!);

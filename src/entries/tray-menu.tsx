@@ -20,5 +20,5 @@ renderReactRoot(
 				<TrayMenuPage />
 			</IntlProvider>
 		</Suspense>
-	</StrictMode>
+	</StrictMode>,
 );

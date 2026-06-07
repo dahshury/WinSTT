@@ -35,5 +35,6 @@ export const useRevertNoticeStore = create<RevertNoticeState>()((set) => ({
 				{ id: nextNoticeId(), provider },
 			],
 		})),
-	dismiss: (id) => set((state) => ({ notices: state.notices.filter((n) => n.id !== id) })),
+	dismiss: (id) =>
+		set((state) => ({ notices: state.notices.filter((n) => n.id !== id) })),
 }));

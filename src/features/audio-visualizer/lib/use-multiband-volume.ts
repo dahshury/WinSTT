@@ -23,7 +23,7 @@ export const SILENCE_THRESHOLD = 0.01;
  */
 export function computeAmplified(
 	audioLevel: number,
-	prevPeak: number
+	prevPeak: number,
 ): { amplified: number; peak: number } {
 	const peak = Math.max(PEAK_FLOOR, audioLevel, prevPeak * PEAK_DECAY);
 	const amplified = Math.sqrt(Math.min(1, audioLevel / peak));
@@ -39,7 +39,7 @@ export function computeBandValue(
 	bandIndex: number,
 	bands: number,
 	time: number,
-	amplified: number
+	amplified: number,
 ): number {
 	const phase = (bandIndex / bands) * Math.PI * 2;
 	const v1 = 0.3 * Math.sin(time * 3.7 + phase);
@@ -49,7 +49,9 @@ export function computeBandValue(
 }
 
 export function useMultibandVolume(bands: number): number[] {
-	const [volumes, setVolumes] = useState<number[]>(() => new Array(bands).fill(0));
+	const [volumes, setVolumes] = useState<number[]>(() =>
+		new Array(bands).fill(0),
+	);
 	const rafRef = useRef(0);
 	const bandsRef = useRef(bands);
 	const peakRef = useRef(PEAK_FLOOR);
@@ -91,7 +93,10 @@ export function useMultibandVolume(bands: number): number[] {
 			} else {
 				zeroSettled = false;
 				// AGC: track a slow-decaying max of recent levels, normalize against it.
-				const { peak, amplified } = computeAmplified(audioLevel, peakRef.current);
+				const { peak, amplified } = computeAmplified(
+					audioLevel,
+					peakRef.current,
+				);
 				peakRef.current = peak;
 
 				const next: number[] = [];
@@ -113,7 +118,10 @@ export function useMultibandVolume(bands: number): number[] {
 		};
 
 		const unsubscribe = useVisualizerStore.subscribe((state, prev) => {
-			if (state.audioLevel >= SILENCE_THRESHOLD && prev.audioLevel < SILENCE_THRESHOLD) {
+			if (
+				state.audioLevel >= SILENCE_THRESHOLD &&
+				prev.audioLevel < SILENCE_THRESHOLD
+			) {
 				ensureRunning();
 			}
 		});

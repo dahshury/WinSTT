@@ -65,7 +65,11 @@ const pausedPullsSchema = z.record(z.string(), pausedPullStateSchema);
 /** Load persisted paused pulls — renderer only (gated on `nativeBridge` so the
  *  bun:test environment, which has a localStorage but no bridge, starts clean). */
 function loadPersistedPausedPulls(): Record<string, PausedPullState> {
-	if (typeof window === "undefined" || window.nativeBridge == null || !window.localStorage) {
+	if (
+		typeof window === "undefined" ||
+		window.nativeBridge == null ||
+		!window.localStorage
+	) {
 		return {};
 	}
 	try {
@@ -73,18 +77,29 @@ function loadPersistedPausedPulls(): Record<string, PausedPullState> {
 		const parsed = pausedPullsSchema.safeParse(raw ? JSON.parse(raw) : null);
 		// `progress` widens to `OllamaPullProgress` (status is the same enum) — the
 		// cast crosses the generated-type ↔ zod boundary, not unchecked input.
-		return parsed.success ? (parsed.data as Record<string, PausedPullState>) : {};
+		return parsed.success
+			? (parsed.data as Record<string, PausedPullState>)
+			: {};
 	} catch {
 		return {};
 	}
 }
 
-function persistPausedPulls(pausedPulls: Record<string, PausedPullState>): void {
-	if (typeof window === "undefined" || window.nativeBridge == null || !window.localStorage) {
+function persistPausedPulls(
+	pausedPulls: Record<string, PausedPullState>,
+): void {
+	if (
+		typeof window === "undefined" ||
+		window.nativeBridge == null ||
+		!window.localStorage
+	) {
 		return;
 	}
 	try {
-		window.localStorage.setItem(PAUSED_PULLS_STORAGE_KEY, JSON.stringify(pausedPulls));
+		window.localStorage.setItem(
+			PAUSED_PULLS_STORAGE_KEY,
+			JSON.stringify(pausedPulls),
+		);
 	} catch {
 		// Best-effort hint — ignore quota / serialization failures.
 	}
@@ -92,7 +107,9 @@ function persistPausedPulls(pausedPulls: Record<string, PausedPullState>): void 
 
 interface LlmCatalogState {
 	cancelPull: (model: string) => Promise<void>;
-	deleteModel: (model: string) => Promise<{ success: boolean; error?: string | undefined }>;
+	deleteModel: (
+		model: string,
+	) => Promise<{ success: boolean; error?: string | undefined }>;
 	/** Forget a paused pull from the UI. Doesn't touch disk — the partial
 	 *  blobs stay until the next pull either consumes them or Ollama GCs. */
 	discardPausedPull: (model: string) => void;
@@ -102,9 +119,13 @@ interface LlmCatalogState {
 	isScanning: boolean;
 	models: OllamaModel[];
 	pausedPulls: Record<string, PausedPullState>;
-	pullModel: (model: string) => Promise<{ success: boolean; error?: string | undefined }>;
+	pullModel: (
+		model: string,
+	) => Promise<{ success: boolean; error?: string | undefined }>;
 	pulls: Record<string, PullState>;
-	resumePull: (model: string) => Promise<{ success: boolean; error?: string | undefined }>;
+	resumePull: (
+		model: string,
+	) => Promise<{ success: boolean; error?: string | undefined }>;
 	scanModels: () => Promise<void>;
 	setError: (error: string | null) => void;
 	setModels: (models: OllamaModel[]) => void;
@@ -144,7 +165,10 @@ interface PullSlices {
 }
 
 /** Drop an entry from a record without mutating the original. */
-function withoutKey<V>(record: Record<string, V>, key: string): Record<string, V> {
+function withoutKey<V>(
+	record: Record<string, V>,
+	key: string,
+): Record<string, V> {
 	const next = { ...record };
 	delete next[key];
 	return next;
@@ -155,7 +179,7 @@ function withoutKey<V>(record: Record<string, V>, key: string): Record<string, V
 function recordPausedSnapshot(
 	pausedPulls: Record<string, PausedPullState>,
 	model: string,
-	progress: OllamaPullProgress
+	progress: OllamaPullProgress,
 ): Record<string, PausedPullState> {
 	return {
 		...pausedPulls,
@@ -165,7 +189,10 @@ function recordPausedSnapshot(
 
 /** State transition for a cancelled status — preserve the last known progress
  *  in pausedPulls so the UI can offer Resume. */
-function maxOptionalNumber(previous: number | undefined, next: number | undefined): number | undefined {
+function maxOptionalNumber(
+	previous: number | undefined,
+	next: number | undefined,
+): number | undefined {
 	if (previous === undefined) {
 		return next;
 	}
@@ -175,7 +202,10 @@ function maxOptionalNumber(previous: number | undefined, next: number | undefine
 	return Math.max(previous, next);
 }
 
-function mergePullProgress(previous: OllamaPullProgress | undefined, next: OllamaPullProgress): OllamaPullProgress {
+function mergePullProgress(
+	previous: OllamaPullProgress | undefined,
+	next: OllamaPullProgress,
+): OllamaPullProgress {
 	const merged: OllamaPullProgress = { ...next };
 	const percent = maxOptionalNumber(previous?.percent, next.percent);
 	const completed = maxOptionalNumber(previous?.completed, next.completed);
@@ -192,7 +222,10 @@ function mergePullProgress(previous: OllamaPullProgress | undefined, next: Ollam
 	return merged;
 }
 
-function applyCancelled(slices: PullSlices, progress: OllamaPullProgress): Partial<PullSlices> {
+function applyCancelled(
+	slices: PullSlices,
+	progress: OllamaPullProgress,
+): Partial<PullSlices> {
 	const existing = slices.pulls[progress.model];
 	const nextPulls = withoutKey(slices.pulls, progress.model);
 	if (!existing) {
@@ -200,13 +233,20 @@ function applyCancelled(slices: PullSlices, progress: OllamaPullProgress): Parti
 	}
 	return {
 		pulls: nextPulls,
-		pausedPulls: recordPausedSnapshot(slices.pausedPulls, progress.model, existing.progress),
+		pausedPulls: recordPausedSnapshot(
+			slices.pausedPulls,
+			progress.model,
+			existing.progress,
+		),
 	};
 }
 
 /** State transition for terminal success/error — clear the active pull and
  *  any paused state for the same model (partial bytes are consumed or moot). */
-function applyTerminalClear(slices: PullSlices, model: string): Partial<PullSlices> {
+function applyTerminalClear(
+	slices: PullSlices,
+	model: string,
+): Partial<PullSlices> {
 	return {
 		pulls: withoutKey(slices.pulls, model),
 		pausedPulls: withoutKey(slices.pausedPulls, model),
@@ -218,7 +258,7 @@ function applyTerminalClear(slices: PullSlices, model: string): Partial<PullSlic
  *  stay visually paused. */
 function applyActiveProgress(
 	slices: PullSlices,
-	progress: OllamaPullProgress
+	progress: OllamaPullProgress,
 ): Partial<PullSlices> {
 	const existing = slices.pulls[progress.model];
 	if (!existing && slices.pausedPulls[progress.model]) {
@@ -242,7 +282,10 @@ function applyActiveProgress(
 }
 
 /** Pick the right state transition for a given progress frame. */
-function nextPullSlices(slices: PullSlices, progress: OllamaPullProgress): Partial<PullSlices> {
+function nextPullSlices(
+	slices: PullSlices,
+	progress: OllamaPullProgress,
+): Partial<PullSlices> {
 	if (!isTerminalStatus(progress.status)) {
 		return applyActiveProgress(slices, progress);
 	}
@@ -255,7 +298,10 @@ function nextPullSlices(slices: PullSlices, progress: OllamaPullProgress): Parti
 /** Build the seed progress for a fresh or resumed pull — when resuming from
  *  a paused entry, preserve the last known percent so the bar doesn't flash
  *  back to 0% before the server's first progress frame arrives. */
-function seedPullProgress(model: string, paused: PausedPullState | undefined): OllamaPullProgress {
+function seedPullProgress(
+	model: string,
+	paused: PausedPullState | undefined,
+): OllamaPullProgress {
 	if (paused) {
 		return { ...paused.progress, status: "pulling", statusText: "resuming" };
 	}
@@ -264,7 +310,10 @@ function seedPullProgress(model: string, paused: PausedPullState | undefined): O
 
 /** State delta to apply when starting a pull — installs the seeded entry in
  *  `pulls` and clears any paused entry being resumed. */
-function buildStartPullState(slices: PullSlices, model: string): Partial<PullSlices> {
+function buildStartPullState(
+	slices: PullSlices,
+	model: string,
+): Partial<PullSlices> {
 	const paused = slices.pausedPulls[model];
 	const seededProgress = seedPullProgress(model, paused);
 	const nextPulls = {
@@ -338,7 +387,11 @@ export const useLlmCatalogStore = create<LlmCatalogState>()((set, get) => ({
 		if (existing) {
 			set({
 				pulls: withoutKey(pulls, model),
-				pausedPulls: recordPausedSnapshot(pausedPulls, model, existing.progress),
+				pausedPulls: recordPausedSnapshot(
+					pausedPulls,
+					model,
+					existing.progress,
+				),
 			});
 		}
 		await cancelOllamaModelPull(model);
@@ -376,7 +429,9 @@ if (typeof window !== "undefined" && window.nativeBridge != null) {
 	// Stryker disable next-line ArrowFunction
 	onLlmCatalog((models) => useLlmCatalogStore.getState().setModels(models));
 	// Stryker disable next-line ArrowFunction
-	onOllamaPullProgress((progress) => useLlmCatalogStore.getState().setPullProgress(progress));
+	onOllamaPullProgress((progress) =>
+		useLlmCatalogStore.getState().setPullProgress(progress),
+	);
 	// Persist paused pulls (only) when they change, so partial downloads survive a
 	// settings-window close. Change-detected by reference so frequent active-pull
 	// progress frames don't thrash localStorage.

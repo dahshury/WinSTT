@@ -59,7 +59,7 @@ function languageBadge(language: string): string {
 // it, and the groups themselves sorted by language code.
 function buildCloudVoiceGroups(
 	voices: readonly CloudTtsVoice[],
-	lockedIds: ReadonlySet<string>
+	lockedIds: ReadonlySet<string>,
 ): SelectOptionGroup[] {
 	const byLang = new Map<string, SelectOption[]>();
 	for (const voice of voices) {
@@ -110,11 +110,16 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 	// `tts.cloud` is `.prefault({})` so it's always present after parse, but the
 	// selector type still admits `undefined` (pre-hydration); fall back to the
 	// schema default so the spread always carries every required field.
-	const cloud = useSettingsStore((s) => s.settings.tts?.cloud ?? DEFAULT_SETTINGS.tts.cloud);
+	const cloud = useSettingsStore(
+		(s) => s.settings.tts?.cloud ?? DEFAULT_SETTINGS.tts.cloud,
+	);
 	const cloudVoice = cloud.voice;
 	const update = useSettingsStore((s) => s.updateTtsSettings);
 
-	const [catalog, setCatalog] = useState<CloudTtsVoiceCatalog>({ voices: [], error: null });
+	const [catalog, setCatalog] = useState<CloudTtsVoiceCatalog>({
+		voices: [],
+		error: null,
+	});
 	// ElevenLabs plan name (null = unknown / not yet fetched, or the key lacks
 	// user-read scope). A "free" tier hides cloned/professional voices.
 	const [tier, setTier] = useState<string | null>(null);
@@ -161,7 +166,9 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 				// Steer the stale-voice fallback to a usable voice unless the plan is a
 				// CONFIRMED paid tier (free OR unknown both avoid premium voices).
 				const paid = subscription.tier !== null && subscription.tier !== "free";
-				const usable = paid ? result.voices : result.voices.filter((v) => !needsSubscription(v));
+				const usable = paid
+					? result.voices
+					: result.voices.filter((v) => !needsSubscription(v));
 				if (usable.length === 0) {
 					return;
 				}
@@ -171,7 +178,9 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 				}
 				const first = usable[0];
 				if (first) {
-					updateRef.current({ cloud: { ...cloudRef.current, voice: first.id } });
+					updateRef.current({
+						cloud: { ...cloudRef.current, voice: first.id },
+					});
 				}
 			})
 			.finally(() => {
@@ -191,7 +200,9 @@ export function useCloudTtsVoices(enabled: boolean): UseCloudTtsVoices {
 	// `option.disabled`; the preview still works.
 	const hasPaidPlan = tier !== null && tier !== "free";
 	const lockedVoiceIds: ReadonlySet<string> = new Set(
-		hasPaidPlan ? [] : catalog.voices.filter(needsSubscription).map((v) => v.id)
+		hasPaidPlan
+			? []
+			: catalog.voices.filter(needsSubscription).map((v) => v.id),
 	);
 
 	return {

@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { FitAssessmentEntry, ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import type {
+	FitAssessmentEntry,
+	ModelStateEntry,
+	SystemInfoEntry,
+} from "@/shared/api/ipc-client";
 import { isUncomfortable, severityFor } from "./hardware-fit";
 
-function assessment(severity: FitAssessmentEntry["severity"]): FitAssessmentEntry {
+function assessment(
+	severity: FitAssessmentEntry["severity"],
+): FitAssessmentEntry {
 	return {
 		severity,
 		target: "gpu",
@@ -20,7 +26,12 @@ function entry(overrides: Partial<ModelStateEntry> = {}): ModelStateEntry {
 		comfortable_on_gpu: true,
 		available_quantizations: [""],
 		cache_by_quantization: {},
-		cache: { state: "not_cached", downloaded_bytes: 0, progress: 0, total_bytes: 1 },
+		cache: {
+			state: "not_cached",
+			downloaded_bytes: 0,
+			progress: 0,
+			total_bytes: 1,
+		},
 		...overrides,
 	};
 }
@@ -46,31 +57,46 @@ describe("isUncomfortable", () => {
 
 	test("false when comfortable on CPU regardless of GPU", () => {
 		expect(
-			isUncomfortable(entry({ comfortable_on_cpu: true, comfortable_on_gpu: false }), null)
+			isUncomfortable(
+				entry({ comfortable_on_cpu: true, comfortable_on_gpu: false }),
+				null,
+			),
 		).toBe(false);
 	});
 
 	test("false when a GPU is present and comfortable on GPU", () => {
 		expect(
-			isUncomfortable(entry({ comfortable_on_cpu: false, comfortable_on_gpu: true }), sys(1))
+			isUncomfortable(
+				entry({ comfortable_on_cpu: false, comfortable_on_gpu: true }),
+				sys(1),
+			),
 		).toBe(false);
 	});
 
 	test("true when fits nowhere with no GPU", () => {
 		expect(
-			isUncomfortable(entry({ comfortable_on_cpu: false, comfortable_on_gpu: true }), null)
+			isUncomfortable(
+				entry({ comfortable_on_cpu: false, comfortable_on_gpu: true }),
+				null,
+			),
 		).toBe(true);
 	});
 
 	test("true when fits nowhere with a GPU present but not GPU-comfortable", () => {
 		expect(
-			isUncomfortable(entry({ comfortable_on_cpu: false, comfortable_on_gpu: false }), sys(1))
+			isUncomfortable(
+				entry({ comfortable_on_cpu: false, comfortable_on_gpu: false }),
+				sys(1),
+			),
 		).toBe(true);
 	});
 
 	test("treats an empty gpus array as no GPU", () => {
 		expect(
-			isUncomfortable(entry({ comfortable_on_cpu: false, comfortable_on_gpu: true }), sys(0))
+			isUncomfortable(
+				entry({ comfortable_on_cpu: false, comfortable_on_gpu: true }),
+				sys(0),
+			),
 		).toBe(true);
 	});
 
@@ -80,8 +106,8 @@ describe("isUncomfortable", () => {
 			isUncomfortable(
 				entry({ comfortable_on_cpu: true, comfortable_on_gpu: true }),
 				sys(1),
-				assessment("critical")
-			)
+				assessment("critical"),
+			),
 		).toBe(true);
 	});
 
@@ -91,8 +117,8 @@ describe("isUncomfortable", () => {
 			isUncomfortable(
 				entry({ comfortable_on_cpu: false, comfortable_on_gpu: false }),
 				sys(1),
-				assessment("ok")
-			)
+				assessment("ok"),
+			),
 		).toBe(false);
 	});
 });
@@ -103,11 +129,17 @@ describe("severityFor", () => {
 	});
 
 	test("falls back to binary uncomfortable when no live data", () => {
-		expect(severityFor(entry({ comfortable_on_cpu: false, comfortable_on_gpu: false }), null)).toBe(
-			"critical"
-		);
-		expect(severityFor(entry({ comfortable_on_cpu: true, comfortable_on_gpu: true }), sys(1))).toBe(
-			"ok"
-		);
+		expect(
+			severityFor(
+				entry({ comfortable_on_cpu: false, comfortable_on_gpu: false }),
+				null,
+			),
+		).toBe("critical");
+		expect(
+			severityFor(
+				entry({ comfortable_on_cpu: true, comfortable_on_gpu: true }),
+				sys(1),
+			),
+		).toBe("ok");
 	});
 });

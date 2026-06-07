@@ -7,7 +7,9 @@ import { DemoPreview } from "@/shared/ui/demo-preview";
 import { Tooltip } from "@/shared/ui/tooltip";
 import type { SwitcherOption } from "./switcher-option";
 
-type SwitcherCssVars = CSSProperties & { "--switcher-color"?: string | undefined };
+type SwitcherCssVars = CSSProperties & {
+	"--switcher-color"?: string | undefined;
+};
 
 export interface SwitcherOptionToggleProps<T extends string> {
 	/** Stamped on the toggle's `data-switcher-index` attribute so the parent
@@ -69,7 +71,7 @@ export function SwitcherOptionToggle<T extends string>({
 				"relative z-raised inline-flex items-center justify-center gap-1.5 bg-transparent px-3 py-1 font-medium text-body-sm outline-none transition-colors focus-visible:outline-none",
 				textClass,
 				option.disabled && "cursor-not-allowed opacity-60",
-				grid ? "w-full" : fullWidth && "flex-1"
+				grid ? "w-full" : fullWidth && "flex-1",
 			)}
 			data-switcher-index={dataIndex}
 			disabled={option.disabled}
@@ -81,7 +83,12 @@ export function SwitcherOptionToggle<T extends string>({
 			value={option.value}
 		>
 			{option.icon ? (
-				<HugeiconsIcon aria-hidden="true" className="shrink-0" icon={option.icon} size={13} />
+				<HugeiconsIcon
+					aria-hidden="true"
+					className="shrink-0"
+					icon={option.icon}
+					size={13}
+				/>
 			) : null}
 			<span className="inline-grid whitespace-nowrap">
 				<span
@@ -94,7 +101,9 @@ export function SwitcherOptionToggle<T extends string>({
 				<span
 					className="col-start-1 row-start-1 transition-[font-variation-settings] duration-100"
 					style={{
-						fontVariationSettings: isSelected ? fontWeights.semibold : fontWeights.normal,
+						fontVariationSettings: isSelected
+							? fontWeights.semibold
+							: fontWeights.normal,
 					}}
 				>
 					{option.label}
@@ -117,7 +126,11 @@ export function SwitcherOptionToggle<T extends string>({
 	// disabled button which doesn't fire hover, so those rely on the badge.
 	if (option.tooltip) {
 		return (
-			<Tooltip content={option.tooltip} footer={option.tooltipFooter} side="top">
+			<Tooltip
+				content={option.tooltip}
+				footer={option.tooltipFooter}
+				side="top"
+			>
 				{toggleEl}
 			</Tooltip>
 		);

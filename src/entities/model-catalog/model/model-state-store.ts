@@ -58,7 +58,9 @@ let unsubscribeModelStateEvents: (() => void) | null = null;
 // happened to re-trigger it. These capped-backoff delays keep retrying until the
 // server answers (≈39s of coverage), then stop on the first success. Push events
 // reset the counter so a later refresh gets a fresh budget.
-let RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 8000, 8000, 8000];
+let RETRY_DELAYS_MS: readonly number[] = [
+	1000, 2000, 4000, 8000, 8000, 8000, 8000,
+];
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryAttempt = 0;
 
@@ -87,7 +89,8 @@ export const useModelStateStore = create<ModelStateStore>()((set, get) => ({
 	statesById: {},
 	systemInfo: null,
 	isLoaded: false,
-	setAll: (entries, systemInfo) => set({ statesById: toMap(entries), systemInfo, isLoaded: true }),
+	setAll: (entries, systemInfo) =>
+		set({ statesById: toMap(entries), systemInfo, isLoaded: true }),
 	refresh: () => {
 		if (pendingRefresh) {
 			return pendingRefresh;
@@ -138,7 +141,9 @@ export function _resetModelStateRetryForTests(): void {
 
 /** Test-only: shrink the retry backoff so retry behavior is observable
  *  without waiting the production delays. */
-export function _setModelStateRetryDelaysForTests(delays: readonly number[]): void {
+export function _setModelStateRetryDelaysForTests(
+	delays: readonly number[],
+): void {
 	RETRY_DELAYS_MS = delays;
 	retryAttempt = 0;
 }

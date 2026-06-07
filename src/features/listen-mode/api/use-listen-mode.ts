@@ -38,19 +38,23 @@ export function validateDevices(raw: unknown[]): LoopbackDevice[] {
 function shouldStartLoopback(
 	recordingMode: string,
 	loopbackDeviceIndex: number | null,
-	connectionStatus: string
+	connectionStatus: string,
 ): loopbackDeviceIndex is number {
 	return (
-		recordingMode === "listen" && loopbackDeviceIndex != null && connectionStatus === "connected"
+		recordingMode === "listen" &&
+		loopbackDeviceIndex != null &&
+		connectionStatus === "connected"
 	);
 }
 
 function shouldStopLoopback(
 	recordingMode: string,
 	wasListen: boolean,
-	connectionStatus: string
+	connectionStatus: string,
 ): boolean {
-	return wasListen && recordingMode !== "listen" && connectionStatus === "connected";
+	return (
+		wasListen && recordingMode !== "listen" && connectionStatus === "connected"
+	);
 }
 
 /**
@@ -61,9 +65,11 @@ export function applyLoopbackTransition(
 	recordingMode: string,
 	wasListen: boolean,
 	loopbackDeviceIndex: number | null,
-	connectionStatus: string
+	connectionStatus: string,
 ): void {
-	if (shouldStartLoopback(recordingMode, loopbackDeviceIndex, connectionStatus)) {
+	if (
+		shouldStartLoopback(recordingMode, loopbackDeviceIndex, connectionStatus)
+	) {
 		loopbackStart(loopbackDeviceIndex);
 	} else if (shouldStopLoopback(recordingMode, wasListen, connectionStatus)) {
 		loopbackStop();
@@ -74,7 +80,10 @@ export function applyLoopbackTransition(
  * Logs a loopback device-list fetch failure unless the effect was cancelled.
  * Extracted for testability — keeps the `.catch()` closure trivial.
  */
-export function handleLoopbackListError(err: unknown, isCancelled: boolean): void {
+export function handleLoopbackListError(
+	err: unknown,
+	isCancelled: boolean,
+): void {
 	if (isCancelled) {
 		return;
 	}
@@ -82,9 +91,11 @@ export function handleLoopbackListError(err: unknown, isCancelled: boolean): voi
 }
 
 export function useListenMode(): void {
-	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
+	const recordingMode = useSettingsStore(
+		(s) => s.settings.general?.recordingMode ?? "ptt",
+	);
 	const loopbackDeviceIndex = useSettingsStore(
-		(s) => s.settings.general?.loopbackDeviceIndex ?? null
+		(s) => s.settings.general?.loopbackDeviceIndex ?? null,
 	);
 	const connectionStatus = useConnectionStore((s) => s.connectionStatus);
 	const setListening = useListenStore((s) => s.setListening);
@@ -135,7 +146,12 @@ export function useListenMode(): void {
 	useEffect(() => {
 		const wasListen = prevModeRef.current === "listen";
 		prevModeRef.current = recordingMode;
-		applyLoopbackTransition(recordingMode, wasListen, loopbackDeviceIndex, connectionStatus);
+		applyLoopbackTransition(
+			recordingMode,
+			wasListen,
+			loopbackDeviceIndex,
+			connectionStatus,
+		);
 	}, [recordingMode, loopbackDeviceIndex, connectionStatus]);
 
 	// Stop loopback on unmount if active
@@ -145,6 +161,6 @@ export function useListenMode(): void {
 				loopbackStop();
 			}
 		},
-		[]
+		[],
 	);
 }

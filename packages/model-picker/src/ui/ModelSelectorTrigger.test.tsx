@@ -50,7 +50,7 @@ describe("ModelSelectorTrigger", () => {
 						selectedModel={undefined}
 					/>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		// The trigger renders "OpenRouter Auto" content when nothing is selected;
 		// 'placeholder' is used by the inner search input, not the trigger label.
@@ -70,7 +70,7 @@ describe("ModelSelectorTrigger", () => {
 						selectedModel={sampleModel}
 					/>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		// Some piece of the model id appears
 		expect(container.textContent).toContain("GPT-4o");
@@ -89,7 +89,7 @@ describe("ModelSelectorTrigger", () => {
 						selectedModel={undefined}
 					/>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("Pick a model");
 	});
@@ -107,7 +107,7 @@ describe("ModelSelectorTrigger", () => {
 						selectedModel={undefined}
 					/>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("Loading...");
 		const dot = container.querySelector('[data-slot="pulse-dot"]');
@@ -132,7 +132,7 @@ describe("TriggerButton", () => {
 		const { container } = render(
 			<TooltipProvider.Provider>
 				<TriggerButton {...baseProps} isLoading placeholder="Loading..." />
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("Loading...");
 		expect(container.querySelector('[data-slot="pulse-dot"]')).not.toBeNull();
@@ -143,7 +143,7 @@ describe("TriggerButton", () => {
 		const { container } = render(
 			<TooltipProvider.Provider>
 				<TriggerButton {...baseProps} />
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("Auto");
 	});
@@ -151,8 +151,12 @@ describe("TriggerButton", () => {
 	test("renders placeholder when parsedModelId present but no model resolved", () => {
 		const { container } = render(
 			<TooltipProvider.Provider>
-				<TriggerButton {...baseProps} parsedModelId="some/unknown" placeholder="Unknown" />
-			</TooltipProvider.Provider>
+				<TriggerButton
+					{...baseProps}
+					parsedModelId="some/unknown"
+					placeholder="Unknown"
+				/>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("Unknown");
 	});
@@ -160,8 +164,12 @@ describe("TriggerButton", () => {
 	test("renders model name when selectedModel is provided", () => {
 		const { container } = render(
 			<TooltipProvider.Provider>
-				<TriggerButton {...baseProps} parsedModelId={sampleModel.id} selectedModel={sampleModel} />
-			</TooltipProvider.Provider>
+				<TriggerButton
+					{...baseProps}
+					parsedModelId={sampleModel.id}
+					selectedModel={sampleModel}
+				/>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("GPT-4o");
 	});
@@ -170,7 +178,7 @@ describe("TriggerButton", () => {
 		const { container } = render(
 			<TooltipProvider.Provider>
 				<TriggerButton {...baseProps} open />
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		const button = container.querySelector("[data-state='open']");
 		expect(button).not.toBeNull();

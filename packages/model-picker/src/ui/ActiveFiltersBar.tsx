@@ -10,7 +10,10 @@ import {
 	PARAMETER_INFO,
 } from "../lib/openrouter-provider-utils";
 import { ActiveFilterBadge } from "./ActiveFilterBadge";
-import { getVariantLabel, hasActiveFilters } from "./active-filters-bar-helpers";
+import {
+	getVariantLabel,
+	hasActiveFilters,
+} from "./active-filters-bar-helpers";
 
 export interface ActiveFiltersBarProps {
 	className?: string;
@@ -26,9 +29,18 @@ export interface ActiveFiltersBarProps {
 }
 
 const FADE_TRANSITION = { duration: 0.15, ease: "easeOut" } as const;
-const FADE_EXIT = { opacity: 0, transition: { duration: 0.3, ease: "easeIn" } } as const;
+const FADE_EXIT = {
+	opacity: 0,
+	transition: { duration: 0.3, ease: "easeIn" },
+} as const;
 
-function AnimatedBadge({ children, id }: { children: React.ReactNode; id: string }) {
+function AnimatedBadge({
+	children,
+	id,
+}: {
+	children: React.ReactNode;
+	id: string;
+}) {
 	return (
 		<m.div
 			animate={{ opacity: 1 }}
@@ -54,7 +66,12 @@ export function ActiveFiltersBar({
 	className,
 }: ActiveFiltersBarProps) {
 	if (
-		!hasActiveFilters(selectedMakers, selectedVariant, selectedEndpointProvider, selectedParameters)
+		!hasActiveFilters(
+			selectedMakers,
+			selectedVariant,
+			selectedEndpointProvider,
+			selectedParameters,
+		)
 	) {
 		return null;
 	}
@@ -64,7 +81,7 @@ export function ActiveFiltersBar({
 			aria-label="Active filters"
 			className={cn(
 				"flex flex-wrap items-center gap-1.5 border-border/60 border-b px-2 py-2",
-				className
+				className,
 			)}
 			data-has-filters
 			data-slot="active-filters-bar"
@@ -81,7 +98,10 @@ export function ActiveFiltersBar({
 						</AnimatedBadge>
 					))}
 					{selectedVariant !== null && (
-						<AnimatedBadge id={`variant-${selectedVariant}`} key={`variant-${selectedVariant}`}>
+						<AnimatedBadge
+							id={`variant-${selectedVariant}`}
+							key={`variant-${selectedVariant}`}
+						>
 							<ActiveFilterBadge
 								label="Variant"
 								onRemove={() => onVariantSelect(null)}

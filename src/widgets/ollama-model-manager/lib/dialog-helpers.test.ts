@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { OllamaPullProgress } from "@/shared/api/models";
-import { buildPullsMap, computePullPercent, pullStatusToI18nKey } from "./dialog-helpers";
+import {
+	buildPullsMap,
+	computePullPercent,
+	pullStatusToI18nKey,
+} from "./dialog-helpers";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeProgress(overrides: Partial<OllamaPullProgress> = {}): OllamaPullProgress {
+function makeProgress(
+	overrides: Partial<OllamaPullProgress> = {},
+): OllamaPullProgress {
 	return {
 		model: "llama3.2:1b",
 		status: "pulling",

@@ -21,7 +21,8 @@ function makeTranslator(): ReturnType<typeof translatorFactory> {
 // helpers exercise; this contains the single boundary cast to the real
 // translator type — the returned function is the exact `t` passed in.
 type StubTranslator = (key: string, values?: Record<string, string>) => string;
-const asTranslator = (fn: StubTranslator) => fn as unknown as Parameters<typeof buildPhaseLabel>[0];
+const asTranslator = (fn: StubTranslator) =>
+	fn as unknown as Parameters<typeof buildPhaseLabel>[0];
 
 function translatorFactory() {
 	const phrases: Record<string, string> = {
@@ -35,7 +36,10 @@ function translatorFactory() {
 		if (!values) {
 			return base;
 		}
-		return Object.entries(values).reduce((acc, [k, v]) => `${acc}|${k}=${v}`, base);
+		return Object.entries(values).reduce(
+			(acc, [k, v]) => `${acc}|${k}=${v}`,
+			base,
+		);
 	}
 	// Mirrors the next-intl Translator overloads enough for the helpers we test.
 	return asTranslator(t);
@@ -43,11 +47,15 @@ function translatorFactory() {
 
 describe("buildPhaseLabel", () => {
 	test("'engine' phase maps to the engine label", () => {
-		expect(buildPhaseLabel(makeTranslator(), "engine")).toBe("Installing TTS engine");
+		expect(buildPhaseLabel(makeTranslator(), "engine")).toBe(
+			"Installing TTS engine",
+		);
 	});
 
 	test("'model' phase maps to the voice-model label", () => {
-		expect(buildPhaseLabel(makeTranslator(), "model")).toBe("Downloading voice model");
+		expect(buildPhaseLabel(makeTranslator(), "model")).toBe(
+			"Downloading voice model",
+		);
 	});
 
 	test("'ready' phase resolves to empty (no prefix)", () => {
@@ -96,7 +104,7 @@ describe("buildProgressLabel", () => {
 				downloadedBytes: 0,
 				totalBytes: 0,
 				paused: false,
-			})
+			}),
 		).toBe("Downloading…");
 	});
 
@@ -120,7 +128,7 @@ describe("buildProgressLabel", () => {
 describe("composeBarLabel", () => {
 	test("prefixes the phase label with ' · ' when present", () => {
 		expect(composeBarLabel("Installing TTS engine", "Downloading…")).toBe(
-			"Installing TTS engine · Downloading…"
+			"Installing TTS engine · Downloading…",
 		);
 	});
 
@@ -159,7 +167,7 @@ beforeEach(() => {
 				unsubscribed.push(channel);
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -176,7 +184,9 @@ function fire(channel: string, ...args: unknown[]): void {
 	}
 }
 
-function renderProgress(installPhase: Parameters<typeof useTtsDownloadProgress>[0] = null) {
+function renderProgress(
+	installPhase: Parameters<typeof useTtsDownloadProgress>[0] = null,
+) {
 	return renderHook(({ phase }) => useTtsDownloadProgress(phase), {
 		initialProps: { phase: installPhase },
 		wrapper: ({ children }) => <IntlProvider>{children}</IntlProvider>,
@@ -217,7 +227,7 @@ describe("useTtsDownloadProgress", () => {
 				downloadedBytes: 262_144,
 				progress: 0.25,
 				totalBytes: 1_048_576,
-			})
+			}),
 		);
 		expect(result.current.active).toBe(true);
 		expect(result.current.paused).toBe(false);
@@ -237,7 +247,7 @@ describe("useTtsDownloadProgress", () => {
 				downloadedBytes: 262_144, // 256 KB
 				progress: 0.5,
 				totalBytes: 524_288, // 512 KB
-			})
+			}),
 		);
 		expect(result.current.label).toContain("KB");
 		expect(result.current.label).not.toContain("0 MB");
@@ -256,7 +266,7 @@ describe("useTtsDownloadProgress", () => {
 				downloadedBytes: 10,
 				progress: 0.5,
 				totalBytes: 20,
-			})
+			}),
 		);
 		expect(result.current.paused).toBe(false);
 		expect(result.current.percent).toBe(50);
@@ -269,7 +279,7 @@ describe("useTtsDownloadProgress", () => {
 				downloadedBytes: 5,
 				progress: 0.1,
 				totalBytes: 50,
-			})
+			}),
 		);
 		act(() => fire(IPC.TTS_INSTALL_PAUSED));
 		expect(result.current.paused).toBe(true);
@@ -294,7 +304,7 @@ describe("useTtsDownloadProgress", () => {
 				downloadedBytes: 9,
 				progress: 0.9,
 				totalBytes: 10,
-			})
+			}),
 		);
 		expect(result.current.active).toBe(true);
 		act(() => fire(IPC.TTS_MODEL_DOWNLOAD_COMPLETE, { cancelled: false }));
@@ -316,9 +326,11 @@ describe("useTtsDownloadProgress", () => {
 				downloadedBytes: 50,
 				progress: 0.5,
 				totalBytes: 100,
-			})
+			}),
 		);
-		expect(result.current.label.startsWith("Installing voice model · ")).toBe(true);
+		expect(result.current.label.startsWith("Installing voice model · ")).toBe(
+			true,
+		);
 		expect(result.current.label).toContain("50%");
 	});
 
@@ -326,9 +338,13 @@ describe("useTtsDownloadProgress", () => {
 		const { result, rerender } = renderProgress("engine");
 		expect(result.current.label.startsWith("Installing engine")).toBe(true);
 		rerender({ phase: "model" });
-		expect(result.current.label.startsWith("Installing voice model")).toBe(true);
+		expect(result.current.label.startsWith("Installing voice model")).toBe(
+			true,
+		);
 		// Effects have empty deps → exactly one subscription per channel, no churn.
-		expect((listeners.get(IPC.TTS_MODEL_DOWNLOAD_PROGRESS) ?? []).length).toBe(1);
+		expect((listeners.get(IPC.TTS_MODEL_DOWNLOAD_PROGRESS) ?? []).length).toBe(
+			1,
+		);
 	});
 
 	test("unmount tears down every channel subscription (no listener leak)", () => {

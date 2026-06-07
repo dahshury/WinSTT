@@ -30,14 +30,18 @@ export type OllamaScanResult = OllamaScanResultPayload;
 // frozen OpenAPI spec.
 export type OllamaDetectResult = components["schemas"]["OllamaDetectResult"];
 export type OllamaPullProgress = components["schemas"]["OllamaPullProgress"];
-export type OllamaPullProgressStatus = components["schemas"]["OllamaPullProgressStatus"];
+export type OllamaPullProgressStatus =
+	components["schemas"]["OllamaPullProgressStatus"];
 export type OllamaPullResult = components["schemas"]["OllamaPullResult"];
 export type OllamaDeleteResult = components["schemas"]["OllamaDeleteResult"];
-export type RecommendedOllamaModel = components["schemas"]["RecommendedOllamaModel"];
+export type RecommendedOllamaModel =
+	components["schemas"]["RecommendedOllamaModel"];
 export type OllamaLibraryHit = components["schemas"]["OllamaLibraryHit"];
-export type OllamaLibraryCatalogResult = components["schemas"]["OllamaLibraryCatalogResult"];
+export type OllamaLibraryCatalogResult =
+	components["schemas"]["OllamaLibraryCatalogResult"];
 export type OllamaLibraryTag = components["schemas"]["OllamaLibraryTag"];
-export type OllamaLibraryTagsResult = components["schemas"]["OllamaLibraryTagsResult"];
+export type OllamaLibraryTagsResult =
+	components["schemas"]["OllamaLibraryTagsResult"];
 
 // ── OpenRouter ──────────────────────────────────────────────────────────────
 // The Rust command (`scan_openrouter_models`) types `pricing` and
@@ -118,7 +122,8 @@ export type OpenRouterVariant =
  * shapes and `variant` to its literal union; `endpoints` is renderer-only
  * (absent at runtime today, defensively read as `?? []`).
  */
-export interface OpenRouterModel extends Pick<OpenRouterModelPayload, "id" | "name"> {
+export interface OpenRouterModel
+	extends Pick<OpenRouterModelPayload, "id" | "name"> {
 	architecture?: OpenRouterArchitecture;
 	context_length?: number;
 	description?: string;

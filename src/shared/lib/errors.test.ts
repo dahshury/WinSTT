@@ -41,7 +41,9 @@ describe("ApplicationError", () => {
 		expect(json.message).toBe("boom");
 		expect(json.context).toEqual({ x: 1 });
 		expect(typeof json.timestamp).toBe("number");
-		expect(typeof json.stack === "string" || json.stack === undefined).toBe(true);
+		expect(typeof json.stack === "string" || json.stack === undefined).toBe(
+			true,
+		);
 	});
 });
 
@@ -295,8 +297,8 @@ describe("retryAsync", () => {
 					calls += 1;
 					throw new Error(`fail-${calls}`);
 				},
-				{ maxAttempts: 3, delayMs: 1, backoffMultiplier: 1 }
-			)
+				{ maxAttempts: 3, delayMs: 1, backoffMultiplier: 1 },
+			),
 		).rejects.toThrow("fail-3");
 		expect(calls).toBe(3);
 	});
@@ -309,8 +311,8 @@ describe("retryAsync", () => {
 					timestamps.push(Date.now());
 					throw new Error("nope");
 				},
-				{ maxAttempts: 3, delayMs: 50, backoffMultiplier: 3 }
-			)
+				{ maxAttempts: 3, delayMs: 50, backoffMultiplier: 3 },
+			),
 		).rejects.toThrow();
 		expect(timestamps).toHaveLength(3);
 		// Gap 1 → ~50ms (50 * 3^0), gap 2 → ~150ms (50 * 3^1).
@@ -333,7 +335,7 @@ describe("retryAsync", () => {
 				}
 				return "ok";
 			},
-			{ maxAttempts: 5, delayMs: 1, backoffMultiplier: 1 }
+			{ maxAttempts: 5, delayMs: 1, backoffMultiplier: 1 },
 		);
 		expect(result).toBe("ok");
 		expect(calls).toBe(3);
@@ -351,8 +353,8 @@ describe("retryAsync", () => {
 					delayMs: 1,
 					backoffMultiplier: 1,
 					onRetry: (_, attempt) => seen.push(attempt),
-				}
-			)
+				},
+			),
 		).rejects.toThrow("nope");
 		// onRetry fires for failed attempts that will be retried (1 and 2; 3 is the final throw)
 		expect(seen).toEqual([1, 2]);
@@ -370,8 +372,8 @@ describe("retryAsync", () => {
 					maxAttempts: 5,
 					delayMs: 1,
 					shouldRetry: () => false,
-				}
-			)
+				},
+			),
 		).rejects.toThrow("hard fail");
 		expect(calls).toBe(1);
 	});
@@ -382,7 +384,7 @@ describe("retryAsync", () => {
 			retryAsync(async () => {
 				calls += 1;
 				throw new Error("default-failure");
-			})
+			}),
 		).rejects.toThrow("default-failure");
 		expect(calls).toBe(3);
 	}, 10_000);
@@ -400,8 +402,8 @@ describe("retryAsync", () => {
 					timestamps.push(Date.now());
 					throw new Error("nope");
 				},
-				{ maxAttempts: 3, delayMs: 80 } // backoffMultiplier omitted → uses default 2
-			)
+				{ maxAttempts: 3, delayMs: 80 }, // backoffMultiplier omitted → uses default 2
+			),
 		).rejects.toThrow();
 		expect(timestamps).toHaveLength(3);
 		const gap1 = (timestamps[1] ?? 0) - (timestamps[0] ?? 0);
@@ -426,7 +428,7 @@ describe("wrapAsync", () => {
 			},
 			(error, args) => {
 				captured = { error, args: [...args] };
-			}
+			},
 		);
 		const originalConsoleError = console.error;
 		console.error = () => {

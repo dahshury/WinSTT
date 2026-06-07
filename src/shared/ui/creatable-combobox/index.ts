@@ -1,4 +1,4 @@
 export {
-  CreatableCombobox,
-  type CreatableComboboxItem,
+	CreatableCombobox,
+	type CreatableComboboxItem,
 } from "./CreatableCombobox";

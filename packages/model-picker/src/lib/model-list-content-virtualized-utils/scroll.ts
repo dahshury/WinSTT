@@ -9,7 +9,7 @@ interface ItemSizeHandle {
 export function findActiveVirtualIndex(
 	handle: ItemSizeHandle,
 	itemCount: number,
-	offset: number
+	offset: number,
 ): number {
 	const threshold = offset + 1;
 	for (let i = 0; i < itemCount; i++) {
@@ -22,14 +22,22 @@ export function findActiveVirtualIndex(
 	return itemCount - 1;
 }
 
-export function findIndexByModelId(items: VirtualizedItem[], modelId: string | undefined): number {
+export function findIndexByModelId(
+	items: VirtualizedItem[],
+	modelId: string | undefined,
+): number {
 	if (!modelId) {
 		return -1;
 	}
-	return items.findIndex((item) => item.type === "model" && item.model.id === modelId);
+	return items.findIndex(
+		(item) => item.type === "model" && item.model.id === modelId,
+	);
 }
 
-export function findIndexByMaker(items: VirtualizedItem[], maker: string): number {
+export function findIndexByMaker(
+	items: VirtualizedItem[],
+	maker: string,
+): number {
 	return items.findIndex((item) => item.sectionId === maker);
 }
 
@@ -39,7 +47,10 @@ export interface ScrollRequest {
 	nonce: number;
 }
 
-export function findScrollTargetIndex(items: VirtualizedItem[], request: ScrollRequest): number {
+export function findScrollTargetIndex(
+	items: VirtualizedItem[],
+	request: ScrollRequest,
+): number {
 	const byId = findIndexByModelId(items, request.modelId);
 	if (byId >= 0) {
 		return byId;
@@ -47,24 +58,36 @@ export function findScrollTargetIndex(items: VirtualizedItem[], request: ScrollR
 	return findIndexByMaker(items, request.maker);
 }
 
-export function resolveActiveMaker(items: VirtualizedItem[], idx: number): string | null {
+export function resolveActiveMaker(
+	items: VirtualizedItem[],
+	idx: number,
+): string | null {
 	return items[idx]?.sectionId ?? null;
 }
 
-export function shouldNotifyMaker(nextMaker: string | null, lastMaker: string | null): boolean {
+export function shouldNotifyMaker(
+	nextMaker: string | null,
+	lastMaker: string | null,
+): boolean {
 	return nextMaker !== lastMaker;
 }
 
-export function isNewScrollNonce(lastNonce: number | null, nonce: number): boolean {
+export function isNewScrollNonce(
+	lastNonce: number | null,
+	nonce: number,
+): boolean {
 	return lastNonce !== nonce;
 }
 
 export function applyVirtualScrollMakerUpdate(
-	handle: { getItemOffset: (i: number) => number; getItemSize: (i: number) => number } | null,
+	handle: {
+		getItemOffset: (i: number) => number;
+		getItemSize: (i: number) => number;
+	} | null,
 	virtualItems: VirtualizedItem[],
 	offset: number,
 	lastNotifiedMaker: string | null,
-	onActiveMakerChange: ((maker: string | null) => void) | undefined
+	onActiveMakerChange: ((maker: string | null) => void) | undefined,
 ): string | null {
 	if (!handle || virtualItems.length === 0) {
 		return lastNotifiedMaker;
@@ -82,7 +105,9 @@ export function applyScrollToMakerRequest(
 	scrollToMakerRequest: ScrollRequest | null | undefined,
 	lastNonce: number | null,
 	virtualItems: VirtualizedItem[],
-	scrollToIndex: ((index: number, opts?: ScrollToIndexOpts) => void) | undefined
+	scrollToIndex:
+		| ((index: number, opts?: ScrollToIndexOpts) => void)
+		| undefined,
 ): number | null {
 	if (!scrollToMakerRequest) {
 		return lastNonce;

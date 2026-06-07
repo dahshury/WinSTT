@@ -31,12 +31,12 @@ const mockInvoke = mock(async (_channel: string, _payload?: unknown) => ({
 
 mock.module("@/shared/api/ipc-client", () => ({
 	...ipcClientMock(),
-	ipcInvoke: (channel: string, payload?: unknown) => mockInvoke(channel, payload),
+	ipcInvoke: (channel: string, payload?: unknown) =>
+		mockInvoke(channel, payload),
 }));
 
-const { applyVerifyResponse, errorMessage, invokeVerify, missingKeyResponse } = await import(
-	"./verify-credential"
-);
+const { applyVerifyResponse, errorMessage, invokeVerify, missingKeyResponse } =
+	await import("./verify-credential");
 
 beforeEach(() => {
 	mockInvoke.mockReset();
@@ -48,7 +48,10 @@ beforeEach(() => {
 	});
 });
 
-const providerArb: fc.Arbitrary<CloudSttProvider> = fc.constantFrom("openai", "elevenlabs");
+const providerArb: fc.Arbitrary<CloudSttProvider> = fc.constantFrom(
+	"openai",
+	"elevenlabs",
+);
 
 /**
  * Build a VerifyResponse without including the `message` key when it's
@@ -58,9 +61,10 @@ const providerArb: fc.Arbitrary<CloudSttProvider> = fc.constantFrom("openai", "e
 function buildResponse(
 	ok: boolean,
 	code?: CloudSttErrorCode,
-	message?: string
+	message?: string,
 ): { ok: boolean; code?: CloudSttErrorCode; message?: string } {
-	const response: { ok: boolean; code?: CloudSttErrorCode; message?: string } = { ok };
+	const response: { ok: boolean; code?: CloudSttErrorCode; message?: string } =
+		{ ok };
 	if (code !== undefined) {
 		response.code = code;
 	}
@@ -78,7 +82,7 @@ const errorCodeArb: fc.Arbitrary<CloudSttErrorCode | string> = fc.constantFrom(
 	"key_missing",
 	"unknown",
 	"rate_limited",
-	"forbidden"
+	"forbidden",
 );
 
 describe("errorMessage — total function property", () => {
@@ -94,7 +98,7 @@ describe("errorMessage — total function property", () => {
 		fc.integer(),
 		fc.boolean(),
 		fc.constant(null),
-		fc.constant(undefined)
+		fc.constant(undefined),
 	);
 
 	test("returns a string for every realistic thrown value (never throws)", () => {
@@ -103,14 +107,14 @@ describe("errorMessage — total function property", () => {
 				const result = errorMessage(value);
 				return typeof result === "string";
 			}),
-			{ numRuns: 500 }
+			{ numRuns: 500 },
 		);
 	});
 
 	test("returns Error.message verbatim for any Error instance", () => {
 		fc.assert(
 			fc.property(fc.string(), (msg) => errorMessage(new Error(msg)) === msg),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -118,9 +122,9 @@ describe("errorMessage — total function property", () => {
 		fc.assert(
 			fc.property(
 				fc.oneof(fc.string(), fc.integer(), fc.boolean(), fc.constant(null)),
-				(value) => errorMessage(value) === String(value)
+				(value) => errorMessage(value) === String(value),
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -140,13 +144,18 @@ describe("missingKeyResponse — stable constant property", () => {
 	test("every call produces an equal value", () => {
 		fc.assert(
 			fc.property(fc.integer({ min: 1, max: 10 }), (callCount) => {
-				const results = Array.from({ length: callCount }, () => missingKeyResponse());
+				const results = Array.from({ length: callCount }, () =>
+					missingKeyResponse(),
+				);
 				const first = results[0];
 				return results.every(
-					(r) => r.ok === first?.ok && r.code === first?.code && r.message === first?.message
+					(r) =>
+						r.ok === first?.ok &&
+						r.code === first?.code &&
+						r.message === first?.message,
 				);
 			}),
-			{ numRuns: 50 }
+			{ numRuns: 50 },
 		);
 	});
 
@@ -156,7 +165,7 @@ describe("missingKeyResponse — stable constant property", () => {
 				const r = missingKeyResponse();
 				return r.ok === false && r.code === "key_missing";
 			}),
-			{ numRuns: 50 }
+			{ numRuns: 50 },
 		);
 	});
 });
@@ -175,31 +184,41 @@ describe("applyVerifyResponse — reference-identity property", () => {
 				(provider, ok, code, message) => {
 					const input = buildResponse(ok, code as CloudSttErrorCode, message);
 					return applyVerifyResponse(provider, input) === input;
-				}
+				},
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
 	test("ok=true always maps to status 'verified'", () => {
 		fc.assert(
-			fc.property(providerArb, fc.option(fc.string(), { nil: undefined }), (provider, msg) => {
-				applyVerifyResponse(provider, buildResponse(true, undefined, msg));
-				const status = useCredentialStatusStore.getState().byProvider[provider]?.status;
-				return status === "verified";
-			}),
-			{ numRuns: 100 }
+			fc.property(
+				providerArb,
+				fc.option(fc.string(), { nil: undefined }),
+				(provider, msg) => {
+					applyVerifyResponse(provider, buildResponse(true, undefined, msg));
+					const status =
+						useCredentialStatusStore.getState().byProvider[provider]?.status;
+					return status === "verified";
+				},
+			),
+			{ numRuns: 100 },
 		);
 	});
 
 	test("ok=false + code=network always maps to status 'offline'", () => {
 		fc.assert(
-			fc.property(providerArb, fc.option(fc.string(), { nil: undefined }), (provider, msg) => {
-				applyVerifyResponse(provider, buildResponse(false, "network", msg));
-				const status = useCredentialStatusStore.getState().byProvider[provider]?.status;
-				return status === "offline";
-			}),
-			{ numRuns: 100 }
+			fc.property(
+				providerArb,
+				fc.option(fc.string(), { nil: undefined }),
+				(provider, msg) => {
+					applyVerifyResponse(provider, buildResponse(false, "network", msg));
+					const status =
+						useCredentialStatusStore.getState().byProvider[provider]?.status;
+					return status === "offline";
+				},
+			),
+			{ numRuns: 100 },
 		);
 	});
 
@@ -211,12 +230,16 @@ describe("applyVerifyResponse — reference-identity property", () => {
 				nonNetworkCodeArb,
 				fc.option(fc.string(), { nil: undefined }),
 				(provider, code, msg) => {
-					applyVerifyResponse(provider, buildResponse(false, code as CloudSttErrorCode, msg));
-					const status = useCredentialStatusStore.getState().byProvider[provider]?.status;
+					applyVerifyResponse(
+						provider,
+						buildResponse(false, code as CloudSttErrorCode, msg),
+					);
+					const status =
+						useCredentialStatusStore.getState().byProvider[provider]?.status;
 					return status === "invalid";
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });
@@ -232,15 +255,15 @@ describe("invokeVerify — error-classification property", () => {
 					fc.string(),
 					fc.integer(),
 					fc.constant(null),
-					fc.constant(undefined)
+					fc.constant(undefined),
 				),
 				async (provider, key, errVal) => {
 					mockInvoke.mockImplementationOnce(() => Promise.reject(errVal));
 					const r = await invokeVerify(provider, key);
 					return r.ok === false && r.code === "network";
-				}
+				},
 			),
-			{ numRuns: 80 }
+			{ numRuns: 80 },
 		);
 	});
 
@@ -256,9 +279,9 @@ describe("invokeVerify — error-classification property", () => {
 					mockInvoke.mockImplementationOnce(async () => expected);
 					const r = await invokeVerify(provider, key);
 					return r.ok === expected.ok && r.code === expected.code;
-				}
+				},
 			),
-			{ numRuns: 100 }
+			{ numRuns: 100 },
 		);
 	});
 });

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
-import { act, type RenderHookResult, renderHook, waitFor } from "@testing-library/react";
+import {
+	act,
+	type RenderHookResult,
+	renderHook,
+	waitFor,
+} from "@testing-library/react";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
 
@@ -17,24 +22,30 @@ const settingsSaveCalls: Array<{
 	};
 }> = [];
 let onVadAdaptedCb:
-	| ((payload: { newSensitivity: number; noiseFloorRms: number; speechPeakRms: number }) => void)
+	| ((payload: {
+			newSensitivity: number;
+			noiseFloorRms: number;
+			speechPeakRms: number;
+	  }) => void)
 	| null = null;
-let audioGetDevicesImpl: () => Promise<Array<{ index: number; name: string; isDefault: boolean }>> =
-	async () => [];
+let audioGetDevicesImpl: () => Promise<
+	Array<{ index: number; name: string; isDefault: boolean }>
+> = async () => [];
 
 function installNativeBridgeStub(): void {
 	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: (channel: string, payload?: unknown) => {
 			if (channel === IPC.SETTINGS_SAVE) {
-				const settings = (payload as { settings?: unknown } | undefined)?.settings;
+				const settings = (payload as { settings?: unknown } | undefined)
+					?.settings;
 				settingsSaveCalls.push(
 					settings as {
 						audio: {
 							sileroSensitivity: number;
 							sileroSensitivityByDeviceName: Record<string, number>;
 						};
-					}
+					},
 				);
 			}
 		},
@@ -108,7 +119,9 @@ async function waitForDeviceListLoaded(name: string) {
 
 describe("useVadCalibration — adapt event persistence", () => {
 	test("on adapt event with a known current device, persists per-device + bumps live value", async () => {
-		audioGetDevicesImpl = async () => [{ index: 5, name: "Bluetooth Headset", isDefault: false }];
+		audioGetDevicesImpl = async () => [
+			{ index: 5, name: "Bluetooth Headset", isDefault: false },
+		];
 		// Saved selection = index 5 → Bluetooth Headset
 		useSettingsStore.setState({
 			settings: {
@@ -135,11 +148,15 @@ describe("useVadCalibration — adapt event persistence", () => {
 
 		const after = useSettingsStore.getState().settings.audio;
 		expect(after?.sileroSensitivity).toBe(0.53);
-		expect(after?.sileroSensitivityByDeviceName?.["Bluetooth Headset"]).toBe(0.53);
+		expect(after?.sileroSensitivityByDeviceName?.["Bluetooth Headset"]).toBe(
+			0.53,
+		);
 		// Persisted to persisted store immediately so a fast close doesn't lose it.
 		expect(settingsSaveCalls.length).toBeGreaterThanOrEqual(1);
 		expect(
-			settingsSaveCalls.at(-1)?.audio?.sileroSensitivityByDeviceName?.["Bluetooth Headset"]
+			settingsSaveCalls.at(-1)?.audio?.sileroSensitivityByDeviceName?.[
+				"Bluetooth Headset"
+			],
 		).toBe(0.53);
 	});
 
@@ -158,13 +175,17 @@ describe("useVadCalibration — adapt event persistence", () => {
 		const after = useSettingsStore.getState().settings.audio;
 		expect(after?.sileroSensitivity).toBe(0.42);
 		// Map untouched
-		expect(Object.keys(after?.sileroSensitivityByDeviceName ?? {}).length).toBe(0);
+		expect(Object.keys(after?.sileroSensitivityByDeviceName ?? {}).length).toBe(
+			0,
+		);
 	});
 });
 
 describe("useVadCalibration — device-switch sync", () => {
 	test("seeds live sensitivity from the per-device map when device changes", async () => {
-		audioGetDevicesImpl = async () => [{ index: 7, name: "USB Mic", isDefault: false }];
+		audioGetDevicesImpl = async () => [
+			{ index: 7, name: "USB Mic", isDefault: false },
+		];
 		useSettingsStore.setState({
 			settings: {
 				...freshSettings(),
@@ -180,12 +201,16 @@ describe("useVadCalibration — device-switch sync", () => {
 		renderHookWithProviders();
 		// Wait for the seed effect.
 		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.audio?.sileroSensitivity).toBe(0.62);
+			expect(
+				useSettingsStore.getState().settings.audio?.sileroSensitivity,
+			).toBe(0.62);
 		});
 	});
 
 	test("does NOT seed when the per-device entry equals the current live value", async () => {
-		audioGetDevicesImpl = async () => [{ index: 7, name: "USB Mic", isDefault: false }];
+		audioGetDevicesImpl = async () => [
+			{ index: 7, name: "USB Mic", isDefault: false },
+		];
 		useSettingsStore.setState({
 			settings: {
 				...freshSettings(),
@@ -198,15 +223,20 @@ describe("useVadCalibration — device-switch sync", () => {
 			},
 		});
 
-		const before = useSettingsStore.getState().settings.audio?.sileroSensitivity;
+		const before =
+			useSettingsStore.getState().settings.audio?.sileroSensitivity;
 		renderHookWithProviders();
 		await new Promise((r) => setTimeout(r, 30));
 		// Unchanged
-		expect(useSettingsStore.getState().settings.audio?.sileroSensitivity).toBe(before);
+		expect(useSettingsStore.getState().settings.audio?.sileroSensitivity).toBe(
+			before,
+		);
 	});
 
 	test("does NOT seed when the device is not in the persisted map (uses live baseline)", async () => {
-		audioGetDevicesImpl = async () => [{ index: 4, name: "Built-in Microphone", isDefault: true }];
+		audioGetDevicesImpl = async () => [
+			{ index: 4, name: "Built-in Microphone", isDefault: true },
+		];
 		useSettingsStore.setState({
 			settings: {
 				...freshSettings(),
@@ -221,6 +251,8 @@ describe("useVadCalibration — device-switch sync", () => {
 		renderHookWithProviders();
 		await new Promise((r) => setTimeout(r, 30));
 		// Live baseline untouched — no per-device override applies.
-		expect(useSettingsStore.getState().settings.audio?.sileroSensitivity).toBe(0.4);
+		expect(useSettingsStore.getState().settings.audio?.sileroSensitivity).toBe(
+			0.4,
+		);
 	});
 });

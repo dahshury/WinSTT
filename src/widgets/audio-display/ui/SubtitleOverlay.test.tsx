@@ -4,11 +4,19 @@ import { useTranscriptionStore } from "@/entities/transcription";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 
 beforeEach(() => {
-	useTranscriptionStore.setState({ items: [], currentRealtime: "", ephemeral: null });
+	useTranscriptionStore.setState({
+		items: [],
+		currentRealtime: "",
+		ephemeral: null,
+	});
 });
 
 afterEach(() => {
-	useTranscriptionStore.setState({ items: [], currentRealtime: "", ephemeral: null });
+	useTranscriptionStore.setState({
+		items: [],
+		currentRealtime: "",
+		ephemeral: null,
+	});
 });
 
 describe("SubtitleOverlay", () => {
@@ -19,7 +27,9 @@ describe("SubtitleOverlay", () => {
 
 	test("renders the latest items as subtitles", () => {
 		useTranscriptionStore.setState({
-			items: [{ id: "1", type: "final", text: "Hello world.", timestamp: Date.now() }],
+			items: [
+				{ id: "1", type: "final", text: "Hello world.", timestamp: Date.now() },
+			],
 			currentRealtime: "",
 			ephemeral: null,
 		});

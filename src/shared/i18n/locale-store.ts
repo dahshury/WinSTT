@@ -13,6 +13,6 @@ export const useLocaleStore = create<LocaleState>()(
 			locale: DEFAULT_LOCALE,
 			setLocale: (locale) => set({ locale }),
 		}),
-		{ name: "winstt-locale" }
-	)
+		{ name: "winstt-locale" },
+	),
 );

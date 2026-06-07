@@ -14,7 +14,11 @@ import {
 	type ItemContext,
 	resolveComboboxValue,
 } from "../lib/endpoint-provider-filter-submenu-utils";
-import { DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "./DropdownMenu";
+import {
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
+} from "./DropdownMenu";
 
 const PROVIDER_RENDER_LIMIT = 100;
 
@@ -33,7 +37,10 @@ export function EndpointProviderFilterSubmenu({
 	const level = Math.min(useSurface() + 1, 8);
 	const queryLower = search.toLowerCase();
 	const filtered = filterEndpointProviders(endpointProviders, queryLower);
-	const items: string[] = [ALL_PROVIDERS_VALUE, ...filtered.map(([name]) => name)];
+	const items: string[] = [
+		ALL_PROVIDERS_VALUE,
+		...filtered.map(([name]) => name),
+	];
 	const counts = new Map(filtered);
 
 	const handleChange = (value: string | null) => {
@@ -63,7 +70,7 @@ export function EndpointProviderFilterSubmenu({
 							<Combobox.Input
 								className={cn(
 									"h-8 w-full rounded-sm border border-border px-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
-									surfaceBg(level)
+									surfaceBg(level),
 								)}
 								placeholder="Search providers"
 							/>

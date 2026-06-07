@@ -49,7 +49,9 @@ describe("getCalendarSystem", () => {
 	});
 
 	test("returns the gregorian system for 'gregorian'", () => {
-		expect(getCalendarSystem("gregorian").yearLabel(new Date(2025, 0, 1))).toBe("2025");
+		expect(getCalendarSystem("gregorian").yearLabel(new Date(2025, 0, 1))).toBe(
+			"2025",
+		);
 	});
 
 	test("returns gregorian for any non-'hijri' id (default branch)", () => {
@@ -74,11 +76,14 @@ describe("gregorian", () => {
 
 		test("always in 1..31 (property)", () => {
 			fc.assert(
-				fc.property(validDate(new Date(1970, 0, 1), new Date(2100, 0, 1)), (d) => {
-					const n = gregorian.dayNumber(d);
-					return n >= 1 && n <= 31;
-				}),
-				{ numRuns: 300 }
+				fc.property(
+					validDate(new Date(1970, 0, 1), new Date(2100, 0, 1)),
+					(d) => {
+						const n = gregorian.dayNumber(d);
+						return n >= 1 && n <= 31;
+					},
+				),
+				{ numRuns: 300 },
 			);
 		});
 	});
@@ -104,23 +109,38 @@ describe("gregorian", () => {
 
 	describe("isSameDisplayMonth", () => {
 		test("true for two dates in the same month/year", () => {
-			expect(gregorian.isSameDisplayMonth(new Date(2025, 5, 1), new Date(2025, 5, 30))).toBe(true);
+			expect(
+				gregorian.isSameDisplayMonth(
+					new Date(2025, 5, 1),
+					new Date(2025, 5, 30),
+				),
+			).toBe(true);
 		});
 
 		test("false across a month boundary (same year)", () => {
-			expect(gregorian.isSameDisplayMonth(new Date(2025, 5, 30), new Date(2025, 6, 1))).toBe(false);
+			expect(
+				gregorian.isSameDisplayMonth(
+					new Date(2025, 5, 30),
+					new Date(2025, 6, 1),
+				),
+			).toBe(false);
 		});
 
 		test("false for same month index but different year", () => {
-			expect(gregorian.isSameDisplayMonth(new Date(2024, 5, 15), new Date(2025, 5, 15))).toBe(
-				false
-			);
+			expect(
+				gregorian.isSameDisplayMonth(
+					new Date(2024, 5, 15),
+					new Date(2025, 5, 15),
+				),
+			).toBe(false);
 		});
 	});
 
 	describe("startOfDisplayMonth", () => {
 		test("snaps to the first of the month at local midnight", () => {
-			const s = gregorian.startOfDisplayMonth(new Date(2025, 5, 17, 13, 45, 30));
+			const s = gregorian.startOfDisplayMonth(
+				new Date(2025, 5, 17, 13, 45, 30),
+			);
 			expect(s.getFullYear()).toBe(2025);
 			expect(s.getMonth()).toBe(5);
 			expect(s.getDate()).toBe(1);
@@ -164,9 +184,9 @@ describe("gregorian", () => {
 						const back = gregorian.addMonths(fwd, -n);
 						const start = gregorian.startOfDisplayMonth(d);
 						return back.getTime() === start.getTime();
-					}
+					},
 				),
-				{ numRuns: 300 }
+				{ numRuns: 300 },
 			);
 		});
 	});
@@ -192,10 +212,12 @@ describe("gregorian", () => {
 					fc.integer({ min: -50, max: 50 }),
 					(d, n) => {
 						const back = gregorian.addYears(gregorian.addYears(d, n), -n);
-						return back.getTime() === gregorian.startOfDisplayMonth(d).getTime();
-					}
+						return (
+							back.getTime() === gregorian.startOfDisplayMonth(d).getTime()
+						);
+					},
 				),
-				{ numRuns: 200 }
+				{ numRuns: 200 },
 			);
 		});
 	});
@@ -214,7 +236,9 @@ describe("gregorian", () => {
 		});
 
 		test("labels are distinct (12 different short month names)", () => {
-			const labels = gregorian.monthsOfYear(new Date(2025, 0, 1)).map((e) => e.label);
+			const labels = gregorian
+				.monthsOfYear(new Date(2025, 0, 1))
+				.map((e) => e.label);
 			expect(new Set(labels).size).toBe(12);
 		});
 	});
@@ -238,19 +262,29 @@ describe("gregorian", () => {
 		test("odd count centres exactly (half rounds down)", () => {
 			const cells = gregorian.yearsAround(new Date(2025, 0, 1), 5);
 			// half = 2 -> first = 2023, last = 2027, centre index 2 = 2025.
-			expect(cells.map((c) => c.label)).toEqual(["2023", "2024", "2025", "2026", "2027"]);
+			expect(cells.map((c) => c.label)).toEqual([
+				"2023",
+				"2024",
+				"2025",
+				"2026",
+				"2027",
+			]);
 		});
 	});
 
 	describe("yearRangeLabel", () => {
 		test("computes the inclusive range for an even count", () => {
 			// half = floor(12/2) = 6; first = 2025 - 6 = 2019; last = 2019 + 12 - 1 = 2030.
-			expect(gregorian.yearRangeLabel(new Date(2025, 0, 1), 12)).toBe("2019 – 2030");
+			expect(gregorian.yearRangeLabel(new Date(2025, 0, 1), 12)).toBe(
+				"2019 – 2030",
+			);
 		});
 
 		test("computes the range for an odd count (centre = year)", () => {
 			// half = 2; first = 2023; last = 2023 + 5 - 1 = 2027.
-			expect(gregorian.yearRangeLabel(new Date(2025, 0, 1), 5)).toBe("2023 – 2027");
+			expect(gregorian.yearRangeLabel(new Date(2025, 0, 1), 5)).toBe(
+				"2023 – 2027",
+			);
 		});
 
 		test("the range endpoints match yearsAround's first/last labels", () => {
@@ -264,9 +298,9 @@ describe("gregorian", () => {
 						const range = gregorian.yearRangeLabel(date, count);
 						const expected = `${cells[0]?.label} – ${cells.at(-1)?.label}`;
 						return range === expected;
-					}
+					},
 				),
-				{ numRuns: 200 }
+				{ numRuns: 200 },
 			);
 		});
 	});
@@ -283,11 +317,14 @@ describe("hijri", () => {
 
 		test("is always within 1..30 across a full sweep of dates (property)", () => {
 			fc.assert(
-				fc.property(validDate(new Date(1980, 0, 1), new Date(2090, 0, 1)), (d) => {
-					const n = hijri.dayNumber(d);
-					return n >= 1 && n <= 30;
-				}),
-				{ numRuns: 400 }
+				fc.property(
+					validDate(new Date(1980, 0, 1), new Date(2090, 0, 1)),
+					(d) => {
+						const n = hijri.dayNumber(d);
+						return n >= 1 && n <= 30;
+					},
+				),
+				{ numRuns: 400 },
 			);
 		});
 	});
@@ -356,16 +393,18 @@ describe("hijri", () => {
 			fc.assert(
 				fc.property(
 					validDate(new Date(1990, 0, 1), new Date(2080, 0, 1)),
-					(d) => hijriParts(hijri.startOfDisplayMonth(d)).d === 1
+					(d) => hijriParts(hijri.startOfDisplayMonth(d)).d === 1,
 				),
-				{ numRuns: 300 }
+				{ numRuns: 300 },
 			);
 		});
 	});
 
 	describe("addMonths", () => {
 		test("addMonths(d, 0) == startOfDisplayMonth(d)", () => {
-			expect(hijri.addMonths(ref, 0).getTime()).toBe(hijri.startOfDisplayMonth(ref).getTime());
+			expect(hijri.addMonths(ref, 0).getTime()).toBe(
+				hijri.startOfDisplayMonth(ref).getTime(),
+			);
 		});
 
 		test("addMonths(d, 1) advances exactly one Hijri month and lands on day 1", () => {
@@ -407,9 +446,9 @@ describe("hijri", () => {
 						const fwd = hijri.addMonths(d, n);
 						const back = hijri.addMonths(fwd, -n);
 						return back.getTime() === hijri.startOfDisplayMonth(d).getTime();
-					}
+					},
 				),
-				{ numRuns: 150 }
+				{ numRuns: 150 },
 			);
 		});
 
@@ -445,8 +484,12 @@ describe("hijri", () => {
 		});
 
 		test("addYears is addMonths(., n*12)", () => {
-			expect(hijri.addYears(ref, 2).getTime()).toBe(hijri.addMonths(ref, 24).getTime());
-			expect(hijri.addYears(ref, -3).getTime()).toBe(hijri.addMonths(ref, -36).getTime());
+			expect(hijri.addYears(ref, 2).getTime()).toBe(
+				hijri.addMonths(ref, 24).getTime(),
+			);
+			expect(hijri.addYears(ref, -3).getTime()).toBe(
+				hijri.addMonths(ref, -36).getTime(),
+			);
 		});
 	});
 
@@ -474,18 +517,24 @@ describe("hijri", () => {
 			const months = hijri.monthsOfYear(ref);
 			for (let i = 1; i < months.length; i++) {
 				expect((months[i]?.date as Date).getTime()).toBeGreaterThan(
-					(months[i - 1]?.date as Date).getTime()
+					(months[i - 1]?.date as Date).getTime(),
 				);
 			}
 		});
 
 		test("starts at month 1 for several different anchor dates (property)", () => {
 			fc.assert(
-				fc.property(validDate(new Date(2000, 0, 1), new Date(2060, 0, 1)), (d) => {
-					const months = hijri.monthsOfYear(d);
-					return months.length === 12 && hijriParts(months[0]?.date as Date).m === 1;
-				}),
-				{ numRuns: 120 }
+				fc.property(
+					validDate(new Date(2000, 0, 1), new Date(2060, 0, 1)),
+					(d) => {
+						const months = hijri.monthsOfYear(d);
+						return (
+							months.length === 12 &&
+							hijriParts(months[0]?.date as Date).m === 1
+						);
+					},
+				),
+				{ numRuns: 120 },
 			);
 		});
 	});
@@ -539,18 +588,23 @@ describe("hijri", () => {
 			const cells = hijri.yearsAround(ref, 9);
 			for (let i = 1; i < cells.length; i++) {
 				expect(Number.parseInt(cells[i]?.label ?? "0", 10)).toBe(
-					Number.parseInt(cells[i - 1]?.label ?? "0", 10) + 1
+					Number.parseInt(cells[i - 1]?.label ?? "0", 10) + 1,
 				);
 			}
 		});
 
 		test("yearsAround anchors stay inside their label-year across many ref dates (property)", () => {
 			fc.assert(
-				fc.property(validDate(new Date(2005, 0, 1), new Date(2055, 0, 1)), (d) => {
-					const cells = hijri.yearsAround(d, 13);
-					return cells.every((c) => hijriParts(c.date).y === Number.parseInt(c.label, 10));
-				}),
-				{ numRuns: 120 }
+				fc.property(
+					validDate(new Date(2005, 0, 1), new Date(2055, 0, 1)),
+					(d) => {
+						const cells = hijri.yearsAround(d, 13);
+						return cells.every(
+							(c) => hijriParts(c.date).y === Number.parseInt(c.label, 10),
+						);
+					},
+				),
+				{ numRuns: 120 },
 			);
 		});
 	});

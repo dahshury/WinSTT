@@ -72,15 +72,18 @@ const CURATED_CLOUD_MODELS: Record<CloudSttProvider, readonly CloudModel[]> = {
 export const CLOUD_CATALOG: Record<CloudSttProvider, readonly CloudModel[]> = {
 	openai: mergeCloudModels(
 		CURATED_CLOUD_MODELS.openai,
-		GENERATED_CLOUD_MODEL_IDS.openai.map((id) => ({ id }))
+		GENERATED_CLOUD_MODEL_IDS.openai.map((id) => ({ id })),
 	),
 	elevenlabs: mergeCloudModels(
 		CURATED_CLOUD_MODELS.elevenlabs,
-		GENERATED_CLOUD_MODEL_IDS.elevenlabs.map((id) => ({ id }))
+		GENERATED_CLOUD_MODEL_IDS.elevenlabs.map((id) => ({ id })),
 	),
 };
 
-export const CLOUD_PROVIDERS: readonly CloudSttProvider[] = ["openai", "elevenlabs"];
+export const CLOUD_PROVIDERS: readonly CloudSttProvider[] = [
+	"openai",
+	"elevenlabs",
+];
 
 export function providerOf(modelId: string): CloudSttProvider | null {
 	if (modelId.startsWith("openai:")) {
@@ -97,7 +100,9 @@ export function providerOf(modelId: string): CloudSttProvider | null {
  * `isDefault`, or the first entry as a fallback. Returns `null` when the
  * catalog is empty — `defaultCloudModelId` turns that into a thrown error.
  */
-export function pickDefaultCloudModel(catalog: readonly CloudModel[]): CloudModel | null {
+export function pickDefaultCloudModel(
+	catalog: readonly CloudModel[],
+): CloudModel | null {
 	const explicit = catalog.find((m) => m.isDefault);
 	if (explicit !== undefined) {
 		return explicit;
@@ -147,7 +152,7 @@ export function prettifyModelId(id: string): string {
  */
 export function mergeCloudModels(
 	curated: readonly CloudModel[],
-	dynamic: readonly { id: string; displayName?: string }[]
+	dynamic: readonly { id: string; displayName?: string }[],
 ): CloudModel[] {
 	const seen = new Set(curated.map((m) => m.id));
 	const merged: CloudModel[] = [...curated];
@@ -156,7 +161,10 @@ export function mergeCloudModels(
 			continue;
 		}
 		seen.add(entry.id);
-		merged.push({ id: entry.id, displayName: entry.displayName ?? prettifyModelId(entry.id) });
+		merged.push({
+			id: entry.id,
+			displayName: entry.displayName ?? prettifyModelId(entry.id),
+		});
 	}
 	return merged;
 }

@@ -41,10 +41,12 @@ describe("SttModelSelector detached-open mode", () => {
 				statesById={{}}
 				systemInfo={null}
 				value="tiny"
-			/>
+			/>,
 		);
 
-		const trigger = document.querySelector('[data-slot="stt-model-selector-trigger"]');
+		const trigger = document.querySelector(
+			'[data-slot="stt-model-selector-trigger"]',
+		);
 		expect(trigger).not.toBeNull();
 
 		fireEvent.click(trigger as Element);
@@ -68,7 +70,7 @@ describe("SttModelSelector detached-open mode", () => {
 				statesById={{}}
 				systemInfo={null}
 				value="tiny"
-			/>
+			/>,
 		);
 		expect(screen.getByText("OpenAI")).toBeDefined();
 		first.unmount();
@@ -83,7 +85,7 @@ describe("SttModelSelector detached-open mode", () => {
 				statesById={{}}
 				systemInfo={null}
 				value="tiny"
-			/>
+			/>,
 		);
 
 		expect(screen.getByText("OpenAI")).toBeDefined();

@@ -4,13 +4,13 @@ import { providerOf } from "@/entities/cloud-stt-provider";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import type { SwitcherOption } from "@/shared/ui/switcher";
 import type {
-  DeviceValue,
-  ElevenIntegration,
-  LanguageControlMode,
-  ModelControlVisibility,
-  StatesById,
-  TFn,
-  TtsSettings,
+	DeviceValue,
+	ElevenIntegration,
+	LanguageControlMode,
+	ModelControlVisibility,
+	StatesById,
+	TFn,
+	TtsSettings,
 } from "./types";
 
 export type { DeviceValue, ModelControlVisibility };
@@ -19,10 +19,10 @@ export type { DeviceValue, ModelControlVisibility };
 // DeviceSection), so it is always the full Auto/CPU pair — Auto picks the
 // fastest device per model; CPU is the manual override.
 export function buildDeviceOpts(t: TFn): SwitcherOption<DeviceValue>[] {
-  return [
-    { value: "auto", label: t("deviceAutoLabel"), icon: AiSettingIcon },
-    { value: "cpu", label: t("deviceCpuLabel"), icon: CpuIcon },
-  ];
+	return [
+		{ value: "auto", label: t("deviceAutoLabel"), icon: AiSettingIcon },
+		{ value: "cpu", label: t("deviceCpuLabel"), icon: CpuIcon },
+	];
 }
 
 /** Whether local Kokoro TTS is the active synthesis source. It rides on the
@@ -31,14 +31,14 @@ export function buildDeviceOpts(t: TFn): SwitcherOption<DeviceValue>[] {
  *  TtsModelSection's effective-source gate (cloud needs a present + verified
  *  ElevenLabs key, else it falls back to local). */
 export function isLocalTtsActive(
-  tts: TtsSettings | undefined,
-  elevenlabs: ElevenIntegration,
+	tts: TtsSettings | undefined,
+	elevenlabs: ElevenIntegration,
 ): boolean {
-  const cloudEffective =
-    (tts?.source ?? "local") === "cloud" &&
-    elevenlabs.apiKey.trim().length > 0 &&
-    elevenlabs.verified === true;
-  return (tts?.enabled ?? false) && !cloudEffective;
+	const cloudEffective =
+		(tts?.source ?? "local") === "cloud" &&
+		elevenlabs.apiKey.trim().length > 0 &&
+		elevenlabs.verified === true;
+	return (tts?.enabled ?? false) && !cloudEffective;
 }
 
 /** Which Model-tab controls stay visible for the active main model. A cloud
@@ -50,36 +50,36 @@ export function isLocalTtsActive(
  *  are both cloud. A single-language local model also hides language
  *  (auto-detect + one language is a no-op choice). */
 export function resolveModelControlVisibility(
-  selectedIsCloud: boolean,
-  languageControlMode: LanguageControlMode,
-  localTtsActive: boolean,
+	selectedIsCloud: boolean,
+	languageControlMode: LanguageControlMode,
+	localTtsActive: boolean,
 ): ModelControlVisibility {
-  return {
-    showLanguage: !selectedIsCloud && languageControlMode !== "hidden",
-    showDevice: !selectedIsCloud || localTtsActive,
-  };
+	return {
+		showLanguage: !selectedIsCloud && languageControlMode !== "hidden",
+		showDevice: !selectedIsCloud || localTtsActive,
+	};
 }
 
 export function localModelIdOrNull(
-  modelId: string | undefined,
-  enabled = true,
+	modelId: string | undefined,
+	enabled = true,
 ): string | null {
-  if (!enabled || !modelId || providerOf(modelId) !== null) {
-    return null;
-  }
-  return modelId;
+	if (!enabled || !modelId || providerOf(modelId) !== null) {
+		return null;
+	}
+	return modelId;
 }
 
 export function quantForFit(
-  statesById: StatesById,
-  modelId: string | null,
-  currentQuantization: OnnxQuantization,
+	statesById: StatesById,
+	modelId: string | null,
+	currentQuantization: OnnxQuantization,
 ): string {
-  return modelId
-    ? resolveEffectiveQuant(statesById[modelId], currentQuantization)
-    : "";
+	return modelId
+		? resolveEffectiveQuant(statesById[modelId], currentQuantization)
+		: "";
 }
 
 export function requestedDeviceForFit(deviceValue: DeviceValue): string | null {
-  return deviceValue === "cpu" ? "cpu" : null;
+	return deviceValue === "cpu" ? "cpu" : null;
 }

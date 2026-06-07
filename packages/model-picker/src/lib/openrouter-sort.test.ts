@@ -3,12 +3,13 @@ import type { OpenRouterModel } from "@/shared/api/models";
 import { sortOpenRouterModels } from "./openrouter-sort";
 
 function model(
-	overrides: Partial<OpenRouterModel> & { id: string; name: string }
+	overrides: Partial<OpenRouterModel> & { id: string; name: string },
 ): OpenRouterModel {
 	return overrides as OpenRouterModel;
 }
 
-const ids = (models: readonly OpenRouterModel[]): string[] => models.map((m) => m.id);
+const ids = (models: readonly OpenRouterModel[]): string[] =>
+	models.map((m) => m.id);
 
 describe("sortOpenRouterModels", () => {
 	it("sorts by name A→Z, case-insensitively", () => {
@@ -26,7 +27,11 @@ describe("sortOpenRouterModels", () => {
 			model({ id: "huge", name: "Huge", context_length: 1_000_000 }),
 			model({ id: "mid", name: "Mid", context_length: 128_000 }),
 		];
-		expect(ids(sortOpenRouterModels(models, "context"))).toEqual(["huge", "mid", "small"]);
+		expect(ids(sortOpenRouterModels(models, "context"))).toEqual([
+			"huge",
+			"mid",
+			"small",
+		]);
 	});
 
 	it("sorts models with missing/zero context to the end (context key)", () => {
@@ -46,7 +51,11 @@ describe("sortOpenRouterModels", () => {
 			model({ id: "free", name: "Free", pricing: { prompt: "0" } }),
 			model({ id: "cheap", name: "Cheap", pricing: { prompt: "0.000001" } }),
 		];
-		expect(ids(sortOpenRouterModels(models, "price"))).toEqual(["free", "cheap", "pricey"]);
+		expect(ids(sortOpenRouterModels(models, "price"))).toEqual([
+			"free",
+			"cheap",
+			"pricey",
+		]);
 	});
 
 	it("sorts models with missing/unparseable price to the end (price key)", () => {
@@ -77,7 +86,10 @@ describe("sortOpenRouterModels", () => {
 	});
 
 	it("orders missing-price models among themselves by name", () => {
-		const models = [model({ id: "z", name: "Zeta" }), model({ id: "a", name: "Alpha" })];
+		const models = [
+			model({ id: "z", name: "Zeta" }),
+			model({ id: "a", name: "Alpha" }),
+		];
 		expect(ids(sortOpenRouterModels(models, "price"))).toEqual(["a", "z"]);
 	});
 

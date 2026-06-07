@@ -41,9 +41,15 @@ export const useVisualizerStore = create<VisualizerState>()((set) => ({
 	audioLevel: 0,
 	sentencePulse: 0,
 
-	recordingStarted: () => set({ isRecording: true, audioLevel: 0, sentencePulse: 0 }),
+	recordingStarted: () =>
+		set({ isRecording: true, audioLevel: 0, sentencePulse: 0 }),
 	recordingStopped: () =>
-		set({ isRecording: false, isSpeaking: false, audioLevel: 0, sentencePulse: 0 }),
+		set({
+			isRecording: false,
+			isSpeaking: false,
+			audioLevel: 0,
+			sentencePulse: 0,
+		}),
 	setRecording: (v) => set({ isRecording: v }),
 	setSpeaking: (v) => set({ isSpeaking: v }),
 	setAudioLevel: (v) => set({ audioLevel: v }),

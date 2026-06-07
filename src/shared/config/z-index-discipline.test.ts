@@ -22,7 +22,7 @@ const WHITELIST = new Set(
 		"src/shared/config/z-index.test.ts",
 		"src/shared/config/z-index-discipline.test.ts",
 		"src/app/styles/globals.css",
-	].map((p) => p.replaceAll("/", "\\"))
+	].map((p) => p.replaceAll("/", "\\")),
 );
 const WHITELIST_POSIX = new Set([
 	"src/shared/config/z-index.ts",

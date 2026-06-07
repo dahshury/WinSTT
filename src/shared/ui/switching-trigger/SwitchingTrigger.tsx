@@ -26,7 +26,11 @@ interface SwitchingFromToRowProps {
 
 /** `[from] -> dot -> [to]` body row. Renders the pulse dot unconditionally so the
  *  switch reads as "active" even when one leg is unknown. */
-export function SwitchingFromToRow({ from, to, ariaLabel }: SwitchingFromToRowProps) {
+export function SwitchingFromToRow({
+	from,
+	to,
+	ariaLabel,
+}: SwitchingFromToRowProps) {
 	return (
 		<output
 			aria-label={ariaLabel}

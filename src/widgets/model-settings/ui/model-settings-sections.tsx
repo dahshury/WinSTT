@@ -1,19 +1,19 @@
 import {
-  CpuSettingsIcon,
-  FlashIcon,
-  InfinityIcon,
-  Timer01Icon,
-  UserMultiple02Icon,
+	CpuSettingsIcon,
+	FlashIcon,
+	InfinityIcon,
+	Timer01Icon,
+	UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
 import { useCatalogStore } from "@/entities/model-catalog";
 import {
-  DEFAULT_SETTINGS,
-  SettingField,
-  SettingSection,
-  useDiarizationToggleStore,
-  useSettingsStore,
+	DEFAULT_SETTINGS,
+	SettingField,
+	SettingSection,
+	useDiarizationToggleStore,
+	useSettingsStore,
 } from "@/entities/setting";
 import { DownloadConfirmationDialog } from "@/features/model-download";
 import type { SwapController } from "@/features/swap-model";
@@ -25,64 +25,64 @@ import { Spinner } from "@/shared/ui/spinner";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import { Toggle } from "@/shared/ui/toggle";
 import type {
-  DeviceValue,
-  GlobalSettings,
-  ModelUnloadTimeoutValue,
-  StatesById,
-  SystemInfo,
-  TFn,
-  UpdateGlobalFn,
-  UpdateModelFn,
+	DeviceValue,
+	GlobalSettings,
+	ModelUnloadTimeoutValue,
+	StatesById,
+	SystemInfo,
+	TFn,
+	UpdateGlobalFn,
+	UpdateModelFn,
 } from "../lib/types";
 
 export function ModelLifetimeSection({
-  global,
-  t,
-  update,
+	global,
+	t,
+	update,
 }: {
-  global: GlobalSettings | undefined;
-  t: TFn;
-  update: UpdateGlobalFn;
+	global: GlobalSettings | undefined;
+	t: TFn;
+	update: UpdateGlobalFn;
 }): ReactNode {
-  const value =
-    global?.modelUnloadTimeout ?? DEFAULT_SETTINGS.global.modelUnloadTimeout;
-  return (
-    <SettingSection icon={Timer01Icon} title={t("modelUnloadTimeout")}>
-      <SettingField
-        isDefault={value === DEFAULT_SETTINGS.global.modelUnloadTimeout}
-        label={t("modelUnloadTimeout")}
-        layout="row"
-        onReset={() =>
-          update({
-            modelUnloadTimeout: DEFAULT_SETTINGS.global.modelUnloadTimeout,
-          })
-        }
-        tooltip={`${t("modelUnloadTimeoutCaption")} ${t("modelUnloadTimeoutTooltip")}`}
-      >
-        <ElevatedSurface className="w-52" inline>
-          <SearchableSelect
-            onChange={(v) =>
-              update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue })
-            }
-            options={[
-              {
-                id: "immediately",
-                label: t("modelUnloadImmediately"),
-                icon: FlashIcon,
-              },
-              { id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
-              { id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
-              { id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
-              { id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
-              { id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
-              { id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
-            ]}
-            value={value}
-          />
-        </ElevatedSurface>
-      </SettingField>
-    </SettingSection>
-  );
+	const value =
+		global?.modelUnloadTimeout ?? DEFAULT_SETTINGS.global.modelUnloadTimeout;
+	return (
+		<SettingSection icon={Timer01Icon} title={t("modelUnloadTimeout")}>
+			<SettingField
+				isDefault={value === DEFAULT_SETTINGS.global.modelUnloadTimeout}
+				label={t("modelUnloadTimeout")}
+				layout="row"
+				onReset={() =>
+					update({
+						modelUnloadTimeout: DEFAULT_SETTINGS.global.modelUnloadTimeout,
+					})
+				}
+				tooltip={`${t("modelUnloadTimeoutCaption")} ${t("modelUnloadTimeoutTooltip")}`}
+			>
+				<ElevatedSurface className="w-52" inline>
+					<SearchableSelect
+						onChange={(v) =>
+							update({ modelUnloadTimeout: v as ModelUnloadTimeoutValue })
+						}
+						options={[
+							{
+								id: "immediately",
+								label: t("modelUnloadImmediately"),
+								icon: FlashIcon,
+							},
+							{ id: "never", label: t("modelUnloadNever"), icon: InfinityIcon },
+							{ id: "min2", label: t("modelUnloadMin2"), icon: Timer01Icon },
+							{ id: "min5", label: t("modelUnloadMin5"), icon: Timer01Icon },
+							{ id: "min10", label: t("modelUnloadMin10"), icon: Timer01Icon },
+							{ id: "min15", label: t("modelUnloadMin15"), icon: Timer01Icon },
+							{ id: "hour1", label: t("modelUnloadHour1"), icon: Timer01Icon },
+						]}
+						value={value}
+					/>
+				</ElevatedSurface>
+			</SettingField>
+		</SettingSection>
+	);
 }
 
 /**
@@ -100,91 +100,91 @@ export function ModelLifetimeSection({
  * escape hatch for GPU contention / driver issues).
  */
 export function DeviceSection({
-  deviceOpts,
-  deviceValue,
-  t,
-  update,
+	deviceOpts,
+	deviceValue,
+	t,
+	update,
 }: {
-  deviceOpts: SwitcherOption<DeviceValue>[];
-  deviceValue: DeviceValue;
-  t: TFn;
-  update: UpdateModelFn;
+	deviceOpts: SwitcherOption<DeviceValue>[];
+	deviceValue: DeviceValue;
+	t: TFn;
+	update: UpdateModelFn;
 }): ReactNode {
-  return (
-    <SettingSection icon={CpuSettingsIcon} title={t("device")}>
-      <FormControl
-        label={t("device")}
-        layout="row"
-        tooltip={`${t("deviceSectionCaption")} ${t("deviceCaptionGpu")}`}
-      >
-        <ElevatedSurface className="w-52">
-          <Switcher
-            fullWidth
-            onChange={(v) => update({ device: v })}
-            options={deviceOpts}
-            value={deviceValue}
-          />
-        </ElevatedSurface>
-      </FormControl>
-    </SettingSection>
-  );
+	return (
+		<SettingSection icon={CpuSettingsIcon} title={t("device")}>
+			<FormControl
+				label={t("device")}
+				layout="row"
+				tooltip={`${t("deviceSectionCaption")} ${t("deviceCaptionGpu")}`}
+			>
+				<ElevatedSurface className="w-52">
+					<Switcher
+						fullWidth
+						onChange={(v) => update({ device: v })}
+						options={deviceOpts}
+						value={deviceValue}
+					/>
+				</ElevatedSurface>
+			</FormControl>
+		</SettingSection>
+	);
 }
 
 interface SwapDialogsProps {
-  controller: SwapController;
-  getModel: ReturnType<typeof useCatalogStore.getState>["getModel"];
-  statesById: StatesById;
-  systemInfo: SystemInfo;
-  t: TFn;
+	controller: SwapController;
+	getModel: ReturnType<typeof useCatalogStore.getState>["getModel"];
+	statesById: StatesById;
+	systemInfo: SystemInfo;
+	t: TFn;
 }
 
 /** Thin composition of the two model-swap gates (download confirmation +
  *  resource warning). Rendered by every surface that drives a swap so the
  *  modals appear regardless of which picker the user touched. */
 export function SwapDialogs({
-  controller,
-  getModel,
-  statesById,
-  systemInfo,
-  t,
+	controller,
+	getModel,
+	statesById,
+	systemInfo,
+	t,
 }: SwapDialogsProps): ReactNode {
-  const { pendingDownload, pendingFitWarning, setPendingFitWarning } =
-    controller;
-  return (
-    <>
-      <DownloadConfirmationDialog
-        getModel={getModel}
-        onCancel={controller.cancelPendingDownload}
-        pending={pendingDownload}
-        statesById={statesById}
-        systemInfo={systemInfo}
-      />
-      <ResourceWarningDialog
-        assessment={pendingFitWarning?.assessment ?? null}
-        cancelLabel={t("resourceWarning.cancel")}
-        candidateName={pendingFitWarning?.candidateName ?? ""}
-        confirmLabel={t("resourceWarning.proceedAnyway")}
-        kind="dictation"
-        onCancel={() => setPendingFitWarning(null)}
-        onConfirm={() => {
-          const next = pendingFitWarning?.next;
-          setPendingFitWarning(null);
-          if (next) {
-            next();
-          }
-        }}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPendingFitWarning(null);
-          }
-        }}
-        open={pendingFitWarning !== null}
-        t={(key, vars) =>
-          t(`resourceWarning.${key}` as Parameters<typeof t>[0], vars)
-        }
-      />
-    </>
-  );
+	const { pendingDownload, pendingFitWarning, setPendingFitWarning } =
+		controller;
+	return (
+		<>
+			<DownloadConfirmationDialog
+				getModel={getModel}
+				onCancel={controller.cancelPendingDownload}
+				pending={pendingDownload}
+				statesById={statesById}
+				systemInfo={systemInfo}
+			/>
+			<ResourceWarningDialog
+				assessment={pendingFitWarning?.assessment ?? null}
+				cancelLabel={t("resourceWarning.cancel")}
+				candidateName={pendingFitWarning?.candidateName ?? ""}
+				confirmLabel={t("resourceWarning.proceedAnyway")}
+				kind="dictation"
+				onCancel={() => setPendingFitWarning(null)}
+				onConfirm={() => {
+					const next = pendingFitWarning?.next;
+					setPendingFitWarning(null);
+					if (next) {
+						next();
+					}
+				}}
+				onOpenChange={(open) => {
+					if (!open) {
+						setPendingFitWarning(null);
+					}
+				}}
+				open={pendingFitWarning !== null}
+				t={(key, vars) =>
+					t(`resourceWarning.${key}` as Parameters<typeof t>[0], vars)
+				}
+			/>
+		</>
+	);
 }
 
 /**
@@ -205,44 +205,44 @@ export function SwapDialogs({
  * and is read/written via `updateGeneralSettings` — only the visual home moved.
  */
 export function SpeakerDiarizationSection(): ReactNode {
-  const tGeneral = useTranslations("general");
-  const enabled = useSettingsStore(
-    (s) => s.settings.general?.speakerDiarization ?? false,
-  );
-  const update = useSettingsStore((s) => s.updateGeneralSettings);
-  const pending = useDiarizationToggleStore((s) => s.pending);
+	const tGeneral = useTranslations("general");
+	const enabled = useSettingsStore(
+		(s) => s.settings.general?.speakerDiarization ?? false,
+	);
+	const update = useSettingsStore((s) => s.updateGeneralSettings);
+	const pending = useDiarizationToggleStore((s) => s.pending);
 
-  return (
-    <SettingSection
-      icon={UserMultiple02Icon}
-      title={tGeneral("speakerDiarization")}
-    >
-      <SettingField
-        isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
-        label={tGeneral("speakerDiarization")}
-        labelAddon={
-          <div className="flex items-center gap-2">
-            {pending ? (
-              <Spinner
-                aria-label={tGeneral("speakerDiarization")}
-                className="size-3.5 text-foreground-muted"
-              />
-            ) : null}
-            <Toggle
-              aria-label={tGeneral("speakerDiarization")}
-              checked={enabled}
-              disabled={pending}
-              onCheckedChange={(v) => update({ speakerDiarization: v })}
-            />
-          </div>
-        }
-        onReset={() =>
-          update({
-            speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization,
-          })
-        }
-        tooltip={tGeneral("speakerDiarizationTooltip")}
-      />
-    </SettingSection>
-  );
+	return (
+		<SettingSection
+			icon={UserMultiple02Icon}
+			title={tGeneral("speakerDiarization")}
+		>
+			<SettingField
+				isDefault={enabled === DEFAULT_SETTINGS.general.speakerDiarization}
+				label={tGeneral("speakerDiarization")}
+				labelAddon={
+					<div className="flex items-center gap-2">
+						{pending ? (
+							<Spinner
+								aria-label={tGeneral("speakerDiarization")}
+								className="size-3.5 text-foreground-muted"
+							/>
+						) : null}
+						<Toggle
+							aria-label={tGeneral("speakerDiarization")}
+							checked={enabled}
+							disabled={pending}
+							onCheckedChange={(v) => update({ speakerDiarization: v })}
+						/>
+					</div>
+				}
+				onReset={() =>
+					update({
+						speakerDiarization: DEFAULT_SETTINGS.general.speakerDiarization,
+					})
+				}
+				tooltip={tGeneral("speakerDiarizationTooltip")}
+			/>
+		</SettingSection>
+	);
 }

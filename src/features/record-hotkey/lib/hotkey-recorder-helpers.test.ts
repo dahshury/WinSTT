@@ -17,7 +17,9 @@ describe("formatCombo", () => {
 	});
 
 	test("formats each side of every modifier variant", () => {
-		expect(formatCombo("RCtrl+RAlt+RShift+RMeta")).toBe("R Ctrl + R Alt + R Shift + R Win");
+		expect(formatCombo("RCtrl+RAlt+RShift+RMeta")).toBe(
+			"R Ctrl + R Alt + R Shift + R Win",
+		);
 		expect(formatCombo("LAlt+LMeta")).toBe("L Alt + L Win");
 	});
 
@@ -39,26 +41,39 @@ describe("resolveDisplayText", () => {
 	const PRESS_LABEL = "Press keys…";
 
 	test("not recording → formats the persisted currentKey", () => {
-		expect(resolveDisplayText(false, [], "LCtrl+V", PRESS_LABEL)).toBe("L Ctrl + V");
+		expect(resolveDisplayText(false, [], "LCtrl+V", PRESS_LABEL)).toBe(
+			"L Ctrl + V",
+		);
 	});
 
 	test("not recording ignores liveKeys entirely", () => {
 		// Even if liveKeys somehow has content, the !recording branch wins.
-		expect(resolveDisplayText(false, ["LAlt"], "LCtrl+V", PRESS_LABEL)).toBe("L Ctrl + V");
-	});
-
-	test("recording with live keys → formats the live key list", () => {
-		expect(resolveDisplayText(true, ["LCtrl", "LShift", "A"], "LCtrl+V", PRESS_LABEL)).toBe(
-			"L Ctrl + L Shift + A"
+		expect(resolveDisplayText(false, ["LAlt"], "LCtrl+V", PRESS_LABEL)).toBe(
+			"L Ctrl + V",
 		);
 	});
 
+	test("recording with live keys → formats the live key list", () => {
+		expect(
+			resolveDisplayText(
+				true,
+				["LCtrl", "LShift", "A"],
+				"LCtrl+V",
+				PRESS_LABEL,
+			),
+		).toBe("L Ctrl + L Shift + A");
+	});
+
 	test("recording with a single live key → that key's label", () => {
-		expect(resolveDisplayText(true, ["RMeta"], "LCtrl+V", PRESS_LABEL)).toBe("R Win");
+		expect(resolveDisplayText(true, ["RMeta"], "LCtrl+V", PRESS_LABEL)).toBe(
+			"R Win",
+		);
 	});
 
 	test("recording but no live keys yet → the press-keys prompt", () => {
-		expect(resolveDisplayText(true, [], "LCtrl+V", PRESS_LABEL)).toBe(PRESS_LABEL);
+		expect(resolveDisplayText(true, [], "LCtrl+V", PRESS_LABEL)).toBe(
+			PRESS_LABEL,
+		);
 	});
 
 	test("recording + empty liveKeys returns the prompt VERBATIM (i18n string passthrough)", () => {
@@ -68,8 +83,9 @@ describe("resolveDisplayText", () => {
 });
 
 describe("findConflict", () => {
-	const combos = (entries: Array<{ combo: string; label: string }>): readonly ForbiddenCombo[] =>
-		entries;
+	const combos = (
+		entries: Array<{ combo: string; label: string }>,
+	): readonly ForbiddenCombo[] => entries;
 
 	test("returns null when forbiddenCombos is undefined", () => {
 		expect(findConflict("LCtrl+V", undefined)).toBeNull();

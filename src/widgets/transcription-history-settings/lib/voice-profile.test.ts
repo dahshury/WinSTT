@@ -2,14 +2,18 @@ import { describe, expect, test } from "bun:test";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
 import { computeVoiceProfile, tokenizeWords } from "./voice-profile";
 
-function makeEntry(partial: Partial<TranscriptionHistoryEntry>): TranscriptionHistoryEntry {
+function makeEntry(
+	partial: Partial<TranscriptionHistoryEntry>,
+): TranscriptionHistoryEntry {
 	return {
 		id: partial.id ?? "id",
 		timestamp: partial.timestamp ?? 0,
 		text: partial.text ?? "",
 		wordCount: partial.wordCount ?? 0,
 		durationMs: partial.durationMs ?? 0,
-		...(partial.originalText === undefined ? {} : { originalText: partial.originalText }),
+		...(partial.originalText === undefined
+			? {}
+			: { originalText: partial.originalText }),
 	};
 }
 
@@ -56,7 +60,10 @@ describe("computeVoiceProfile", () => {
 	test("most corrected word counts the raw side of AI rewrites", () => {
 		const entries = [
 			makeEntry({ originalText: "open cursor now", text: "open Cursor now" }),
-			makeEntry({ originalText: "launch cursor please", text: "launch Cursor please" }),
+			makeEntry({
+				originalText: "launch cursor please",
+				text: "launch Cursor please",
+			}),
 			// No originalText → ignored by the corrected-word tally.
 			makeEntry({ text: "cursor cursor cursor" }),
 		];

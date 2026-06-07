@@ -21,9 +21,9 @@ export const FAVORITES_GROUP_VALUE = "favorites";
 
 /** Narrowing helper — true for the synthetic favourites group value. */
 export function isFavoritesGroupValue(
-  value: string,
+	value: string,
 ): value is typeof FAVORITES_GROUP_VALUE {
-  return value === FAVORITES_GROUP_VALUE;
+	return value === FAVORITES_GROUP_VALUE;
 }
 
 /**
@@ -35,28 +35,28 @@ export function isFavoritesGroupValue(
  * only adds the Favorites group / rail tile once at least one model is starred).
  */
 export function collectFavorites<M>(
-  groups: ReadonlyArray<{ items: readonly M[] }>,
-  isFavorite: (id: string) => boolean,
-  getId: (model: M) => string,
+	groups: ReadonlyArray<{ items: readonly M[] }>,
+	isFavorite: (id: string) => boolean,
+	getId: (model: M) => string,
 ): M[] {
-  const favorites: M[] = [];
-  const seen = new Set<string>();
-  for (const group of groups) {
-    for (const model of group.items) {
-      const id = getId(model);
-      if (isFavorite(id) && !seen.has(id)) {
-        seen.add(id);
-        favorites.push(model);
-      }
-    }
-  }
-  return favorites;
+	const favorites: M[] = [];
+	const seen = new Set<string>();
+	for (const group of groups) {
+		for (const model of group.items) {
+			const id = getId(model);
+			if (isFavorite(id) && !seen.has(id)) {
+				seen.add(id);
+				favorites.push(model);
+			}
+		}
+	}
+	return favorites;
 }
 
 /** A grouped-list entry widened to admit the synthetic Favorites bucket. */
 export interface FavoriteAwareGroup<M, V extends string> {
-  items: M[];
-  value: V | typeof FAVORITES_GROUP_VALUE;
+	items: M[];
+	value: V | typeof FAVORITES_GROUP_VALUE;
 }
 
 /**
@@ -65,13 +65,13 @@ export interface FavoriteAwareGroup<M, V extends string> {
  * TTS, Ollama, and OpenRouter adapters.
  */
 export function withFavoritesGroup<M, V extends string>(
-  groups: ReadonlyArray<{ items: M[]; value: V }>,
-  isFavorite: (id: string) => boolean,
-  getId: (model: M) => string,
+	groups: ReadonlyArray<{ items: M[]; value: V }>,
+	isFavorite: (id: string) => boolean,
+	getId: (model: M) => string,
 ): FavoriteAwareGroup<M, V>[] {
-  const favorites = collectFavorites(groups, isFavorite, getId);
-  if (favorites.length === 0) {
-    return [...groups];
-  }
-  return [{ value: FAVORITES_GROUP_VALUE, items: favorites }, ...groups];
+	const favorites = collectFavorites(groups, isFavorite, getId);
+	if (favorites.length === 0) {
+		return [...groups];
+	}
+	return [{ value: FAVORITES_GROUP_VALUE, items: favorites }, ...groups];
 }

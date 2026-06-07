@@ -10,7 +10,8 @@ export function PulseDot({
 	"aria-labelledby": ariaLabelledBy,
 	...props
 }: ComponentProps<"span">) {
-	const hasAccessibleName = ariaLabel !== undefined || ariaLabelledBy !== undefined;
+	const hasAccessibleName =
+		ariaLabel !== undefined || ariaLabelledBy !== undefined;
 
 	return (
 		<>
@@ -36,7 +37,8 @@ export function PulseDot({
 				data-slot="pulse-dot"
 				role={role ?? (hasAccessibleName ? "status" : undefined)}
 				style={{
-					animation: "loading-ui-pulse-dot var(--duration, 1.2s) ease-in-out infinite",
+					animation:
+						"loading-ui-pulse-dot var(--duration, 1.2s) ease-in-out infinite",
 					...style,
 				}}
 				{...props}

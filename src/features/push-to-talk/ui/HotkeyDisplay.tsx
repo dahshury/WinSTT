@@ -3,7 +3,11 @@ import { formatKeyName } from "@/shared/lib/format-key-name";
 import { Elevated } from "@/shared/lib/surface";
 import type { InputGroupTone } from "@/shared/ui/input-group";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { FOOTER_TOOLTIP_DELAY, resolveTone, TONE_TEXT } from "../lib/hotkey-display-helpers";
+import {
+	FOOTER_TOOLTIP_DELAY,
+	resolveTone,
+	TONE_TEXT,
+} from "../lib/hotkey-display-helpers";
 import { useHotkeyStore } from "../model/hotkey-store";
 
 // Decorative, aria-hidden separator glyph between keycaps — a visual symbol,
@@ -27,7 +31,9 @@ export function HotkeyDisplay({
 	const keys = accelerator.split("+").map(formatKeyName);
 	const t = useTranslations("hotkey");
 
-	const tooltipContent = isConnected ? t("displayTooltip") : t("displayTooltipDisconnected");
+	const tooltipContent = isConnected
+		? t("displayTooltip")
+		: t("displayTooltipDisconnected");
 	const tone: InputGroupTone = resolveTone(isConnected, isPressed);
 	const showPulse = isPressed && isConnected;
 

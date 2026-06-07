@@ -165,7 +165,9 @@ function CapabilityChips({
 							</span>
 						)}
 					/>
-					<TooltipContent>Reported by Ollama for this local model.</TooltipContent>
+					<TooltipContent>
+						Reported by Ollama for this local model.
+					</TooltipContent>
 				</Tooltip>
 			))}
 		</>

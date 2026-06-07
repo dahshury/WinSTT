@@ -51,7 +51,9 @@ function Header({
 				{label}
 			</Field.Label>
 			{tooltip ? <InfoTooltip content={tooltip} /> : null}
-			{labelTrailing ? <span className="flex items-center">{labelTrailing}</span> : null}
+			{labelTrailing ? (
+				<span className="flex items-center">{labelTrailing}</span>
+			) : null}
 		</div>
 	);
 }
@@ -72,7 +74,11 @@ function ErrorMessage({ error }: { error?: string | undefined }) {
 		return null;
 	}
 	return (
-		<div aria-live="assertive" className="text-error text-xs-tight leading-[14px]" role="alert">
+		<div
+			aria-live="assertive"
+			className="text-error text-xs-tight leading-[14px]"
+			role="alert"
+		>
 			{error}
 		</div>
 	);
@@ -92,7 +98,9 @@ export function FormControl({
 }: FormControlProps) {
 	const hasChildren = children !== undefined;
 	const controlBox = hasChildren ? (
-		<div className={disabled ? "pointer-events-none" : undefined}>{children}</div>
+		<div className={disabled ? "pointer-events-none" : undefined}>
+			{children}
+		</div>
 	) : null;
 
 	// "row" — a compact control (small switcher / number stepper) sits on the
@@ -103,15 +111,21 @@ export function FormControl({
 				className={cn(
 					"flex items-center gap-4 py-3",
 					disabled && "cursor-not-allowed opacity-40",
-					className
+					className,
 				)}
 			>
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
-					<Header label={label} labelTrailing={labelTrailing} tooltip={tooltip} />
+					<Header
+						label={label}
+						labelTrailing={labelTrailing}
+						tooltip={tooltip}
+					/>
 					<Caption caption={caption} />
 					<ErrorMessage error={error} />
 				</div>
-				{labelAddon ? <div className="flex shrink-0 items-center">{labelAddon}</div> : null}
+				{labelAddon ? (
+					<div className="flex shrink-0 items-center">{labelAddon}</div>
+				) : null}
 				{controlBox ? <div className="shrink-0">{controlBox}</div> : null}
 			</Field.Root>
 		);
@@ -128,15 +142,26 @@ export function FormControl({
 			className={cn(
 				"flex flex-col gap-1.5 py-3",
 				disabled && "cursor-not-allowed opacity-40",
-				className
+				className,
 			)}
 		>
-			<div className={cn("flex gap-4", controlBox ? "items-start" : "items-center")}>
+			<div
+				className={cn(
+					"flex gap-4",
+					controlBox ? "items-start" : "items-center",
+				)}
+			>
 				<div className="flex min-w-0 flex-1 flex-col gap-1">
-					<Header label={label} labelTrailing={labelTrailing} tooltip={tooltip} />
+					<Header
+						label={label}
+						labelTrailing={labelTrailing}
+						tooltip={tooltip}
+					/>
 					<Caption caption={caption} />
 				</div>
-				{labelAddon ? <div className="flex shrink-0 items-center">{labelAddon}</div> : null}
+				{labelAddon ? (
+					<div className="flex shrink-0 items-center">{labelAddon}</div>
+				) : null}
 			</div>
 			{controlBox ? <div className="mt-1">{controlBox}</div> : null}
 			<ErrorMessage error={error} />

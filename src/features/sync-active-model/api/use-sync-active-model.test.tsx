@@ -119,7 +119,10 @@ beforeEach(() => {
 	});
 	useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
 	useSettingsStore.setState({
-		settings: { ...DEFAULT_SETTINGS, model: { ...DEFAULT_SETTINGS.model, model: "tiny" } },
+		settings: {
+			...DEFAULT_SETTINGS,
+			model: { ...DEFAULT_SETTINGS.model, model: "tiny" },
+		},
 		isLoaded: true,
 	});
 	_resetSwapFailureTimingForTests();
@@ -186,10 +189,15 @@ describe("useSyncActiveModel", () => {
 			},
 			isLoaded: true,
 		});
-		useModelSwapStore.setState({ activeMain: "large-v3-turbo", activeRealtime: null });
+		useModelSwapStore.setState({
+			activeMain: "large-v3-turbo",
+			activeRealtime: null,
+		});
 		useConnectionStore.setState({ runtimeInfo: withModel("tiny") });
 		renderHook(() => useSyncActiveModel());
-		expect(useSettingsStore.getState().settings.model.model).toBe("large-v3-turbo");
+		expect(useSettingsStore.getState().settings.model.model).toBe(
+			"large-v3-turbo",
+		);
 	});
 
 	test("user picking a new model does NOT trigger reconciliation (regression #1)", async () => {
@@ -201,7 +209,10 @@ describe("useSyncActiveModel", () => {
 		// Simulate the user picking a new model. The model-swap-store will be
 		// updated by the in-flight swap; runtime_info won't refresh until
 		// after model_swap_completed fires.
-		useModelSwapStore.setState({ activeMain: "large-v3-turbo", activeRealtime: null });
+		useModelSwapStore.setState({
+			activeMain: "large-v3-turbo",
+			activeRealtime: null,
+		});
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
@@ -210,7 +221,9 @@ describe("useSyncActiveModel", () => {
 			isLoaded: true,
 		});
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		expect(useSettingsStore.getState().settings.model.model).toBe("large-v3-turbo");
+		expect(useSettingsStore.getState().settings.model.model).toBe(
+			"large-v3-turbo",
+		);
 	});
 
 	test("swap completion alone does NOT trigger reconciliation against stale runtime (regression #2)", async () => {
@@ -223,7 +236,10 @@ describe("useSyncActiveModel", () => {
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
-				model: { ...DEFAULT_SETTINGS.model, model: "lite-whisper-large-v3-turbo-fast" },
+				model: {
+					...DEFAULT_SETTINGS.model,
+					model: "lite-whisper-large-v3-turbo-fast",
+				},
 			},
 			isLoaded: true,
 		});
@@ -240,7 +256,7 @@ describe("useSyncActiveModel", () => {
 		useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(useSettingsStore.getState().settings.model.model).toBe(
-			"lite-whisper-large-v3-turbo-fast"
+			"lite-whisper-large-v3-turbo-fast",
 		);
 	});
 
@@ -292,7 +308,10 @@ describe("useSyncActiveModel", () => {
 		// refreshes, swap clears — reconciler sees match and no-ops.
 		useConnectionStore.setState({ runtimeInfo: withModel("tiny") });
 		renderHook(() => useSyncActiveModel());
-		useModelSwapStore.setState({ activeMain: "large-v3-turbo", activeRealtime: null });
+		useModelSwapStore.setState({
+			activeMain: "large-v3-turbo",
+			activeRealtime: null,
+		});
 		useSettingsStore.setState({
 			settings: {
 				...DEFAULT_SETTINGS,
@@ -304,7 +323,9 @@ describe("useSyncActiveModel", () => {
 		useModelSwapStore.setState({ activeMain: null, activeRealtime: null });
 		useConnectionStore.setState({ runtimeInfo: withModel("large-v3-turbo") });
 		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.model.model).toBe("large-v3-turbo");
+			expect(useSettingsStore.getState().settings.model.model).toBe(
+				"large-v3-turbo",
+			);
 		});
 	});
 });
@@ -324,7 +345,9 @@ describe("shouldOpenImplicitSwap", () => {
 	});
 
 	test("skips the first observation (no previous model yet)", () => {
-		expect(shouldOpenImplicitSwap({ ...base, previousModel: undefined })).toBe(false);
+		expect(shouldOpenImplicitSwap({ ...base, previousModel: undefined })).toBe(
+			false,
+		);
 	});
 
 	test("skips a no-op transition (from === to)", () => {
@@ -336,7 +359,9 @@ describe("shouldOpenImplicitSwap", () => {
 	});
 
 	test("skips a settingsLoad-induced revert (within the ipc-load guard window)", () => {
-		expect(shouldOpenImplicitSwap({ ...base, lastIpcLoadAt: base.now - 200 })).toBe(false);
+		expect(
+			shouldOpenImplicitSwap({ ...base, lastIpcLoadAt: base.now - 200 }),
+		).toBe(false);
 	});
 
 	test("REVERSAL GUARD: skips a failure-induced rollback within the swap-failure window", () => {
@@ -355,6 +380,8 @@ describe("shouldOpenImplicitSwap", () => {
 	});
 
 	test("re-opens normally once the swap-failure guard window has elapsed", () => {
-		expect(shouldOpenImplicitSwap({ ...base, lastSwapFailedAt: base.now - 5000 })).toBe(true);
+		expect(
+			shouldOpenImplicitSwap({ ...base, lastSwapFailedAt: base.now - 5000 }),
+		).toBe(true);
 	});
 });

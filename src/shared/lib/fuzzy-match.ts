@@ -36,7 +36,13 @@ function jaroMatchWindow(a: string, b: string): number {
 
 // True iff `b[j]` is still available AND its character matches `a[i]`. Lifted
 // out of the inner loop so the loop body is a plain "if hit then record".
-function isUnmatchedEquivalent(a: string, b: string, i: number, j: number, state: JaroMatchState) {
+function isUnmatchedEquivalent(
+	a: string,
+	b: string,
+	i: number,
+	j: number,
+	state: JaroMatchState,
+) {
 	return !state.bMatches[j] && a[i] === b[j];
 }
 
@@ -53,7 +59,7 @@ function tryMatchAtIndex(
 	b: string,
 	i: number,
 	matchWindow: number,
-	state: JaroMatchState
+	state: JaroMatchState,
 ): boolean {
 	const start = Math.max(0, i - matchWindow);
 	const end = Math.min(b.length, i + matchWindow + 1);
@@ -67,7 +73,11 @@ function tryMatchAtIndex(
 }
 
 // Phase 1 of Jaro: count matched characters within the match window.
-function countJaroMatches(a: string, b: string, matchWindow: number): JaroMatchState {
+function countJaroMatches(
+	a: string,
+	b: string,
+	matchWindow: number,
+): JaroMatchState {
 	const state = createJaroMatchState(a.length, b.length);
 	for (let i = 0; i < a.length; i++) {
 		if (tryMatchAtIndex(a, b, i, matchWindow, state)) {
@@ -80,7 +90,10 @@ function countJaroMatches(a: string, b: string, matchWindow: number): JaroMatchS
 // Walk `bMatches` forward from `k` until we land on a matched index. Used by
 // `countJaroTranspositions` to step through `b`'s matched positions in lockstep
 // with `a`'s matched positions.
-function advanceToNextMatchedB(bMatches: readonly boolean[], k: number): number {
+function advanceToNextMatchedB(
+	bMatches: readonly boolean[],
+	k: number,
+): number {
 	let cursor = k;
 	while (!bMatches[cursor]) {
 		cursor++;
@@ -91,13 +104,22 @@ function advanceToNextMatchedB(bMatches: readonly boolean[], k: number): number 
 // Single transposition tick: returns 1 if the matched a-character at `i`
 // disagrees with the next matched b-character, 0 otherwise. Extracted so the
 // loop body in `countJaroTranspositions` is just sum-and-step.
-function transpositionDelta(a: string, b: string, i: number, k: number): number {
+function transpositionDelta(
+	a: string,
+	b: string,
+	i: number,
+	k: number,
+): number {
 	return a[i] === b[k] ? 0 : 1;
 }
 
 // Phase 2 of Jaro: count half-transpositions between the matched characters
 // (walked in order on both strings). The Jaro formula divides this by two.
-function countJaroTranspositions(a: string, b: string, state: JaroMatchState): number {
+function countJaroTranspositions(
+	a: string,
+	b: string,
+	state: JaroMatchState,
+): number {
 	let k = 0;
 	let transpositions = 0;
 	for (let i = 0; i < a.length; i++) {
@@ -113,8 +135,15 @@ function countJaroTranspositions(a: string, b: string, state: JaroMatchState): n
 
 // Combine the Jaro counters into the final 0..1 similarity score per the
 // canonical formula `(m/|a| + m/|b| + (m - t)/m) / 3`.
-function jaroFormula(aLen: number, bLen: number, matches: number, transpositions: number): number {
-	return (matches / aLen + matches / bLen + (matches - transpositions) / matches) / 3;
+function jaroFormula(
+	aLen: number,
+	bLen: number,
+	matches: number,
+	transpositions: number,
+): number {
+	return (
+		(matches / aLen + matches / bLen + (matches - transpositions) / matches) / 3
+	);
 }
 
 // Trivial Jaro values that don't require the two-phase match/transposition
@@ -190,7 +219,10 @@ function keyMatchesPair(key: string, b: readonly [string, string]): boolean {
 	return key === b[0] || key === b[1];
 }
 
-function phoneticOverlap(a: readonly [string, string], b: readonly [string, string]): boolean {
+function phoneticOverlap(
+	a: readonly [string, string],
+	b: readonly [string, string],
+): boolean {
 	return keyMatchesPair(a[0], b) || keyMatchesPair(a[1], b);
 }
 
@@ -221,7 +253,7 @@ function considerDictionaryTerm(
 	lower: string,
 	wordMp: readonly [string, string],
 	term: PhoneticTerm,
-	current: DictionaryCandidate
+	current: DictionaryCandidate,
 ): DictionaryCandidate {
 	const jw = jaroWinkler(lower, term.lower);
 	if (jw <= current.score) {
@@ -237,7 +269,7 @@ function considerDictionaryTerm(
 function reduceDictionaryBest(
 	lower: string,
 	wordMp: readonly [string, string],
-	terms: readonly PhoneticTerm[]
+	terms: readonly PhoneticTerm[],
 ): string | null {
 	let current: DictionaryCandidate = { canonical: null, score: 0 };
 	for (const t of terms) {
@@ -248,14 +280,20 @@ function reduceDictionaryBest(
 
 // First pass: case-insensitive exact match — canonical form wins so casing
 // snaps to the user's preferred spelling. Returns null when no entry matches.
-function exactDictionaryMatch(lower: string, terms: readonly PhoneticTerm[]): string | null {
+function exactDictionaryMatch(
+	lower: string,
+	terms: readonly PhoneticTerm[],
+): string | null {
 	const exact = terms.find((t) => t.lower === lower);
 	return exact ? exact.canonical : null;
 }
 
 // Inputs that cannot possibly yield a match: empty term list or empty word.
 // Pulled out so `bestDictionaryMatch` skips its own guard branch.
-function hasNoMatchableInput(word: string, terms: readonly PhoneticTerm[]): boolean {
+function hasNoMatchableInput(
+	word: string,
+	terms: readonly PhoneticTerm[],
+): boolean {
 	return terms.length === 0 || word.length === 0;
 }
 
@@ -266,7 +304,10 @@ function hasNoMatchableInput(word: string, terms: readonly PhoneticTerm[]): bool
  * user's preferred form. Otherwise: a JW above 0.88 wins outright; a JW
  * above 0.80 paired with a phonetic overlap wins by phonetic confirmation.
  */
-export function bestDictionaryMatch(word: string, terms: readonly PhoneticTerm[]): string | null {
+export function bestDictionaryMatch(
+	word: string,
+	terms: readonly PhoneticTerm[],
+): string | null {
 	if (hasNoMatchableInput(word, terms)) {
 		return null;
 	}
@@ -322,7 +363,9 @@ interface SnippetWindow {
 	mp: readonly [string, string];
 }
 
-function buildSnippetWindow(matches: readonly RegExpMatchArray[]): SnippetWindow {
+function buildSnippetWindow(
+	matches: readonly RegExpMatchArray[],
+): SnippetWindow {
 	const words = matches.map((m) => m[0].toLowerCase());
 	return {
 		joined: words.join(" "),
@@ -334,7 +377,10 @@ function buildSnippetWindow(matches: readonly RegExpMatchArray[]): SnippetWindow
 // True iff the window passes both fuzzy gates against the trigger context:
 // the JW threshold AND a phonetic overlap. Either gate alone is too noisy
 // (JW alone matches "cool" → "cold"; metaphone alone matches "see" → "sea").
-function windowMatchesTrigger(window: SnippetWindow, trigger: TriggerContext): boolean {
+function windowMatchesTrigger(
+	window: SnippetWindow,
+	trigger: TriggerContext,
+): boolean {
 	if (jaroWinkler(window.joined, trigger.joined) < SNIPPET_JW_THRESHOLD) {
 		return false;
 	}
@@ -345,7 +391,9 @@ function windowMatchesTrigger(window: SnippetWindow, trigger: TriggerContext): b
 // underlying RegExpMatchArray entries are missing index info (defensive — the
 // global `u` flag guarantees `.index`, but the optional typing requires the
 // guard).
-function snippetSpan(matches: readonly RegExpMatchArray[]): { end: number; start: number } | null {
+function snippetSpan(
+	matches: readonly RegExpMatchArray[],
+): { end: number; start: number } | null {
 	const first = matches[0];
 	const last = matches.at(-1);
 	if (first?.index === undefined || last?.index === undefined) {
@@ -357,7 +405,10 @@ function snippetSpan(matches: readonly RegExpMatchArray[]): { end: number; start
 // Index where the window starting at `i` begins inside `text`. Returns -1 if
 // the first match is missing (defensive). Equivalent to the original
 // `(first?.index ?? -1)` expression.
-function windowStartIndex(wordMatches: readonly RegExpMatchArray[], i: number): number {
+function windowStartIndex(
+	wordMatches: readonly RegExpMatchArray[],
+	i: number,
+): number {
 	return wordMatches[i]?.index ?? -1;
 }
 
@@ -371,14 +422,18 @@ function windowStartIndex(wordMatches: readonly RegExpMatchArray[], i: number): 
 export function findSnippetMatches(
 	text: string,
 	trigger: string,
-	expansion: string
+	expansion: string,
 ): readonly SnippetMatch[] {
 	const tWords = triggerWords(trigger);
 	const wordMatches = Array.from(text.matchAll(WORD_RE));
 	if (tWords.length === 0 || wordMatches.length < tWords.length) {
 		return [];
 	}
-	return collectSnippetMatches(buildTriggerContext(tWords), wordMatches, expansion);
+	return collectSnippetMatches(
+		buildTriggerContext(tWords),
+		wordMatches,
+		expansion,
+	);
 }
 
 // Slide a fixed-width window across `wordMatches`, emit non-overlapping spans
@@ -386,7 +441,7 @@ export function findSnippetMatches(
 function collectSnippetMatches(
 	trigger: TriggerContext,
 	wordMatches: readonly RegExpMatchArray[],
-	expansion: string
+	expansion: string,
 ): SnippetMatch[] {
 	const results: SnippetMatch[] = [];
 	const span = wordMatches.length - trigger.words.length;
@@ -410,7 +465,7 @@ function tryMatchAtWindow(
 	trigger: TriggerContext,
 	wordMatches: readonly RegExpMatchArray[],
 	expansion: string,
-	cursor: number
+	cursor: number,
 ): SnippetMatch | null {
 	if (windowStartIndex(wordMatches, i) < cursor) {
 		return null;
@@ -425,7 +480,7 @@ function tryMatchAtWindow(
 function nextSnippetMatch(
 	matches: readonly RegExpMatchArray[],
 	trigger: TriggerContext,
-	expansion: string
+	expansion: string,
 ): SnippetMatch | null {
 	const window = buildSnippetWindow(matches);
 	if (!windowMatchesTrigger(window, trigger)) {
@@ -440,17 +495,26 @@ function nextSnippetMatch(
  * term, leaving surrounding whitespace and punctuation intact. Operates word-
  * by-word; multi-word terms are out of scope for the single-column model.
  */
-export function replaceWithDictionary(text: string, terms: readonly PhoneticTerm[]): string {
+export function replaceWithDictionary(
+	text: string,
+	terms: readonly PhoneticTerm[],
+): string {
 	if (terms.length === 0) {
 		return text;
 	}
-	return text.replace(WORD_RE, (word) => bestDictionaryMatch(word, terms) ?? word);
+	return text.replace(
+		WORD_RE,
+		(word) => bestDictionaryMatch(word, terms) ?? word,
+	);
 }
 
 // Splice the matches into `text` right-to-left so earlier indices remain
 // valid as later spans are replaced. Defensive `!m` guard preserves behavior
 // for the (impossible) sparse-array case.
-function applySnippetMatchesReverse(text: string, matches: readonly SnippetMatch[]): string {
+function applySnippetMatchesReverse(
+	text: string,
+	matches: readonly SnippetMatch[],
+): string {
 	let result = text;
 	for (let i = matches.length - 1; i >= 0; i--) {
 		const m = matches[i];
@@ -464,9 +528,14 @@ function applySnippetMatchesReverse(text: string, matches: readonly SnippetMatch
 
 // Apply one snippet's matches to `text`, returning the (possibly unchanged)
 // result. No-op when the trigger has zero matches.
-function applySnippet(text: string, snip: { trigger: string; expansion: string }): string {
+function applySnippet(
+	text: string,
+	snip: { trigger: string; expansion: string },
+): string {
 	const matches = findSnippetMatches(text, snip.trigger, snip.expansion);
-	return matches.length === 0 ? text : applySnippetMatchesReverse(text, matches);
+	return matches.length === 0
+		? text
+		: applySnippetMatchesReverse(text, matches);
 }
 
 /**
@@ -476,7 +545,7 @@ function applySnippet(text: string, snip: { trigger: string; expansion: string }
  */
 export function replaceWithSnippets(
 	text: string,
-	snippets: readonly { trigger: string; expansion: string }[]
+	snippets: readonly { trigger: string; expansion: string }[],
 ): string {
 	let result = text;
 	for (const snip of snippets) {

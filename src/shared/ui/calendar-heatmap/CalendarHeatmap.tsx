@@ -1,8 +1,4 @@
-import {
-	type CSSProperties,
-	type ReactNode,
-	useReducer,
-} from "react";
+import { type CSSProperties, type ReactNode, useReducer } from "react";
 import { cn } from "@/shared/lib/cn";
 import {
 	applyRangeClick,

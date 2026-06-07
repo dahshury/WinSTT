@@ -30,12 +30,17 @@ export function GroupHeader({
 	subtitle,
 }: GroupHeaderProps) {
 	return (
-		<div className={cn(GROUP_HEADER_CLASSES, className)} data-rail-section={railSection}>
+		<div
+			className={cn(GROUP_HEADER_CLASSES, className)}
+			data-rail-section={railSection}
+		>
 			{icon}
 			<span className="font-semibold text-[10px] text-foreground-muted uppercase tracking-[0.12em]">
 				{label}
 			</span>
-			{subtitle ? <span className="text-[10px] text-foreground-dim">{subtitle}</span> : null}
+			{subtitle ? (
+				<span className="text-[10px] text-foreground-dim">{subtitle}</span>
+			) : null}
 		</div>
 	);
 }
@@ -55,7 +60,7 @@ export function NeutralHeaderIcon({
 				"flex size-4 items-center justify-center rounded",
 				tone === "favorites"
 					? "bg-amber-400/[0.12] text-amber-400"
-					: "bg-foreground/[0.06] text-foreground-muted"
+					: "bg-foreground/[0.06] text-foreground-muted",
 			)}
 		>
 			<HugeiconsIcon

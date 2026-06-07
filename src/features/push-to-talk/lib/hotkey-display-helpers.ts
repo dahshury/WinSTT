@@ -11,7 +11,10 @@ export const TONE_TEXT: Record<InputGroupTone, string> = {
 	muted: "text-foreground-dim opacity-70",
 };
 
-export function resolveTone(isConnected: boolean, isPressed: boolean): InputGroupTone {
+export function resolveTone(
+	isConnected: boolean,
+	isPressed: boolean,
+): InputGroupTone {
 	if (!isConnected) {
 		return "muted";
 	}

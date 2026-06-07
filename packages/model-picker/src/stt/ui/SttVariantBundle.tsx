@@ -4,9 +4,9 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type {
-  FitAssessmentEntry,
-  ModelStateEntry,
-  SystemInfoEntry,
+	FitAssessmentEntry,
+	ModelStateEntry,
+	SystemInfoEntry,
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { cn } from "@/shared/lib/cn";
@@ -14,64 +14,64 @@ import { Tooltip } from "@/shared/ui/tooltip";
 import { Collapsible } from "../../core/Collapsible";
 import type { VariantBundle } from "../lib/family-helpers";
 import {
-  type QuantDownloadAction,
-  type QuantDownloadSnapshot,
-  SttModelCard,
+	type QuantDownloadAction,
+	type QuantDownloadSnapshot,
+	SttModelCard,
 } from "./SttModelCard";
 
 export interface SttVariantBundleProps {
-  bundle: VariantBundle;
-  currentQuantization: OnnxQuantization;
-  /** Whether the bundle's nested variants are visible. */
-  expanded: boolean;
-  /** Forwarded to every card → its PrecisionGroup. */
-  getDownloadSnapshot?:
-    | ((
-        modelId: string,
-        quantization: OnnxQuantization,
-      ) => QuantDownloadSnapshot | undefined)
-    | undefined;
-  /** Optional live RAM/VRAM fit assessment lookup per model row. */
-  getFitAssessment?:
-    | ((modelId: string) => FitAssessmentEntry | null)
-    | undefined;
-  /** Forwarded to each card so its star toggle reflects the live state. */
-  isFavorite?: ((modelId: string) => boolean) | undefined;
-  /** Forwarded to every card → its PrecisionGroup. */
-  onDownloadAction?:
-    | ((
-        action: QuantDownloadAction,
-        modelId: string,
-        quantization: OnnxQuantization,
-      ) => void)
-    | undefined;
-  /** Forwarded to each card so the per-quant trash icon can call back
-   *  into the selector-level confirm dialog. */
-  onRequestDeleteQuant?:
-    | ((
-        modelId: string,
-        quantization: OnnxQuantization,
-        displayName: string,
-        quantLabel: string,
-      ) => void)
-    | undefined;
-  /** Optional per-quant delete guard. */
-  canDeleteQuant?:
-    | ((modelId: string, quantization: OnnxQuantization) => boolean)
-    | undefined;
-  onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
-  /** Toggle handler — fires on chevron click; should not propagate to the row. */
-  onToggleExpanded: (baseId: string) => void;
-  /** Forwarded to each card so its star toggle stars / unstars the model. */
-  onToggleFavorite?: ((modelId: string) => void) | undefined;
-  selectedId: string | undefined;
-  statesById: Record<string, ModelStateEntry>;
-  systemInfo: SystemInfoEntry | null;
+	bundle: VariantBundle;
+	currentQuantization: OnnxQuantization;
+	/** Whether the bundle's nested variants are visible. */
+	expanded: boolean;
+	/** Forwarded to every card → its PrecisionGroup. */
+	getDownloadSnapshot?:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+		  ) => QuantDownloadSnapshot | undefined)
+		| undefined;
+	/** Optional live RAM/VRAM fit assessment lookup per model row. */
+	getFitAssessment?:
+		| ((modelId: string) => FitAssessmentEntry | null)
+		| undefined;
+	/** Forwarded to each card so its star toggle reflects the live state. */
+	isFavorite?: ((modelId: string) => boolean) | undefined;
+	/** Forwarded to every card → its PrecisionGroup. */
+	onDownloadAction?:
+		| ((
+				action: QuantDownloadAction,
+				modelId: string,
+				quantization: OnnxQuantization,
+		  ) => void)
+		| undefined;
+	/** Forwarded to each card so the per-quant trash icon can call back
+	 *  into the selector-level confirm dialog. */
+	onRequestDeleteQuant?:
+		| ((
+				modelId: string,
+				quantization: OnnxQuantization,
+				displayName: string,
+				quantLabel: string,
+		  ) => void)
+		| undefined;
+	/** Optional per-quant delete guard. */
+	canDeleteQuant?:
+		| ((modelId: string, quantization: OnnxQuantization) => boolean)
+		| undefined;
+	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
+	/** Toggle handler — fires on chevron click; should not propagate to the row. */
+	onToggleExpanded: (baseId: string) => void;
+	/** Forwarded to each card so its star toggle stars / unstars the model. */
+	onToggleFavorite?: ((modelId: string) => void) | undefined;
+	selectedId: string | undefined;
+	statesById: Record<string, ModelStateEntry>;
+	systemInfo: SystemInfoEntry | null;
 }
 
 /** Visual label for the variant-count chip on the trigger. */
 function siblingChip(siblingCount: number): string {
-  return siblingCount === 1 ? "+1 variant" : `+${siblingCount} variants`;
+	return siblingCount === 1 ? "+1 variant" : `+${siblingCount} variants`;
 }
 
 /**
@@ -90,63 +90,63 @@ function siblingChip(siblingCount: number): string {
  * - Anticipation: the trigger lights up on hover before activation.
  */
 function ExpandTrigger({
-  baseId,
-  expanded,
-  onToggleExpanded,
-  primaryName,
-  siblingCount,
+	baseId,
+	expanded,
+	onToggleExpanded,
+	primaryName,
+	siblingCount,
 }: {
-  baseId: string;
-  expanded: boolean;
-  onToggleExpanded: (baseId: string) => void;
-  primaryName: string;
-  siblingCount: number;
+	baseId: string;
+	expanded: boolean;
+	onToggleExpanded: (baseId: string) => void;
+	primaryName: string;
+	siblingCount: number;
 }) {
-  const toggleVariantExpansion = (e: React.MouseEvent<HTMLButtonElement>) => {
-    // Lives visually inside the primary card; intercept so the
-    // Combobox.Item doesn't also fire its "select" action.
-    e.preventDefault();
-    e.stopPropagation();
-    onToggleExpanded(baseId);
-  };
-  const chipLabel = siblingChip(siblingCount);
-  return (
-    <Tooltip
-      content={
-        expanded ? "Hide variants" : `Show ${chipLabel.replace("+", "").trim()}`
-      }
-      side="top"
-    >
-      <BaseButton
-        aria-controls={`bundle-siblings-${baseId}`}
-        aria-expanded={expanded}
-        aria-label={
-          expanded
-            ? `Collapse ${primaryName} variants`
-            : `Expand ${primaryName} variants`
-        }
-        className={cn(
-          "inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5",
-          "font-medium text-[10px] leading-none transition-[transform,background-color,color,box-shadow] duration-150 ease-out",
-          "active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100",
-          expanded
-            ? "bg-foreground/[0.10] text-foreground ring-1 ring-foreground/15"
-            : "bg-surface-5 text-foreground-muted shadow-surface-1 ring-1 ring-border hover:bg-surface-6 hover:text-foreground-secondary",
-        )}
-        onClick={toggleVariantExpansion}
-        type="button"
-      >
-        <span className="tabular-nums">{chipLabel}</span>
-        <HugeiconsIcon
-          className={cn(
-            "size-3 transition-transform duration-200 ease-out motion-reduce:transition-none",
-            expanded && "rotate-180",
-          )}
-          icon={ArrowDown01Icon}
-        />
-      </BaseButton>
-    </Tooltip>
-  );
+	const toggleVariantExpansion = (e: React.MouseEvent<HTMLButtonElement>) => {
+		// Lives visually inside the primary card; intercept so the
+		// Combobox.Item doesn't also fire its "select" action.
+		e.preventDefault();
+		e.stopPropagation();
+		onToggleExpanded(baseId);
+	};
+	const chipLabel = siblingChip(siblingCount);
+	return (
+		<Tooltip
+			content={
+				expanded ? "Hide variants" : `Show ${chipLabel.replace("+", "").trim()}`
+			}
+			side="top"
+		>
+			<BaseButton
+				aria-controls={`bundle-siblings-${baseId}`}
+				aria-expanded={expanded}
+				aria-label={
+					expanded
+						? `Collapse ${primaryName} variants`
+						: `Expand ${primaryName} variants`
+				}
+				className={cn(
+					"inline-flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5",
+					"font-medium text-[10px] leading-none transition-[transform,background-color,color,box-shadow] duration-150 ease-out",
+					"active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100",
+					expanded
+						? "bg-foreground/[0.10] text-foreground ring-1 ring-foreground/15"
+						: "bg-surface-5 text-foreground-muted shadow-surface-1 ring-1 ring-border hover:bg-surface-6 hover:text-foreground-secondary",
+				)}
+				onClick={toggleVariantExpansion}
+				type="button"
+			>
+				<span className="tabular-nums">{chipLabel}</span>
+				<HugeiconsIcon
+					className={cn(
+						"size-3 transition-transform duration-200 ease-out motion-reduce:transition-none",
+						expanded && "rotate-180",
+					)}
+					icon={ArrowDown01Icon}
+				/>
+			</BaseButton>
+		</Tooltip>
+	);
 }
 
 /**
@@ -162,102 +162,102 @@ function ExpandTrigger({
  * re-renders driven by filter / search changes.
  */
 export function SttVariantBundle({
-  bundle,
-  currentQuantization,
-  expanded,
-  isFavorite,
-  onSelect,
-  onRequestDeleteQuant,
-  canDeleteQuant,
-  getDownloadSnapshot,
-  getFitAssessment,
-  onDownloadAction,
-  onToggleExpanded,
-  onToggleFavorite,
-  selectedId,
-  statesById,
-  systemInfo,
+	bundle,
+	currentQuantization,
+	expanded,
+	isFavorite,
+	onSelect,
+	onRequestDeleteQuant,
+	canDeleteQuant,
+	getDownloadSnapshot,
+	getFitAssessment,
+	onDownloadAction,
+	onToggleExpanded,
+	onToggleFavorite,
+	selectedId,
+	statesById,
+	systemInfo,
 }: SttVariantBundleProps) {
-  const [primary, ...siblings] = bundle.variants;
-  if (primary === undefined) {
-    return null;
-  }
-  const sharedCardProps = {
-    currentQuantization,
-    isFavorite,
-    onSelect,
-    onRequestDeleteQuant,
-    canDeleteQuant,
-    getDownloadSnapshot,
-    onDownloadAction,
-    onToggleFavorite,
-    selectedId,
-    // All variants in the bundle — lets each card keep its size token when
-    // two siblings would otherwise collide (e.g. Canary 180M/1B Flash).
-    siblings: bundle.variants,
-    statesById,
-    systemInfo,
-  };
-  if (siblings.length === 0) {
-    // No siblings — flat card identical to the legacy rendering so
-    // families without derivatives look unchanged.
-    return (
-      <SttModelCard
-        {...sharedCardProps}
-        fitAssessment={getFitAssessment?.(primary.id) ?? null}
-        model={primary}
-        state={statesById[primary.id]}
-      />
-    );
-  }
-  // "Has the user picked one of the hidden siblings?" — drives a softer
-  // highlight on the primary so the bundle is findable at a glance even
-  // when its strongest-highlight selected sibling lives below the chevron.
-  const hasSelectedVariant = siblings.some((m) => m.id === selectedId);
-  // Wrapper is a layout-only Fragment so the primary card keeps its own
-  // `mx-2 my-1` outer margins — every SttModelCard in the list (singleton
-  // or bundle primary) now resolves to the same `parent − 16px` width.
-  // The bundle affordance lives in the chevron + "+N variants" chip in
-  // the card's actions slot, plus the indented siblings panel below.
-  return (
-    <>
-      <SttModelCard
-        {...sharedCardProps}
-        actions={
-          <ExpandTrigger
-            baseId={bundle.baseId}
-            expanded={expanded}
-            onToggleExpanded={onToggleExpanded}
-            primaryName={primary.displayName}
-            siblingCount={siblings.length}
-          />
-        }
-        fitAssessment={getFitAssessment?.(primary.id) ?? null}
-        hasSelectedVariant={hasSelectedVariant}
-        model={primary}
-        state={statesById[primary.id]}
-      />
-      <Collapsible
-        className={cn("px-2", expanded && "pb-1")}
-        data-slot="stt-variant-siblings"
-        isOpen={expanded}
-      >
-        <div
-          className="ml-1 flex flex-col border-border/60 border-l-2 pl-1"
-          id={`bundle-siblings-${bundle.baseId}`}
-        >
-          {siblings.map((m) => (
-            <SttModelCard
-              key={m.id}
-              {...sharedCardProps}
-              fitAssessment={getFitAssessment?.(m.id) ?? null}
-              model={m}
-              nested
-              state={statesById[m.id]}
-            />
-          ))}
-        </div>
-      </Collapsible>
-    </>
-  );
+	const [primary, ...siblings] = bundle.variants;
+	if (primary === undefined) {
+		return null;
+	}
+	const sharedCardProps = {
+		currentQuantization,
+		isFavorite,
+		onSelect,
+		onRequestDeleteQuant,
+		canDeleteQuant,
+		getDownloadSnapshot,
+		onDownloadAction,
+		onToggleFavorite,
+		selectedId,
+		// All variants in the bundle — lets each card keep its size token when
+		// two siblings would otherwise collide (e.g. Canary 180M/1B Flash).
+		siblings: bundle.variants,
+		statesById,
+		systemInfo,
+	};
+	if (siblings.length === 0) {
+		// No siblings — flat card identical to the legacy rendering so
+		// families without derivatives look unchanged.
+		return (
+			<SttModelCard
+				{...sharedCardProps}
+				fitAssessment={getFitAssessment?.(primary.id) ?? null}
+				model={primary}
+				state={statesById[primary.id]}
+			/>
+		);
+	}
+	// "Has the user picked one of the hidden siblings?" — drives a softer
+	// highlight on the primary so the bundle is findable at a glance even
+	// when its strongest-highlight selected sibling lives below the chevron.
+	const hasSelectedVariant = siblings.some((m) => m.id === selectedId);
+	// Wrapper is a layout-only Fragment so the primary card keeps its own
+	// `mx-2 my-1` outer margins — every SttModelCard in the list (singleton
+	// or bundle primary) now resolves to the same `parent − 16px` width.
+	// The bundle affordance lives in the chevron + "+N variants" chip in
+	// the card's actions slot, plus the indented siblings panel below.
+	return (
+		<>
+			<SttModelCard
+				{...sharedCardProps}
+				actions={
+					<ExpandTrigger
+						baseId={bundle.baseId}
+						expanded={expanded}
+						onToggleExpanded={onToggleExpanded}
+						primaryName={primary.displayName}
+						siblingCount={siblings.length}
+					/>
+				}
+				fitAssessment={getFitAssessment?.(primary.id) ?? null}
+				hasSelectedVariant={hasSelectedVariant}
+				model={primary}
+				state={statesById[primary.id]}
+			/>
+			<Collapsible
+				className={cn("px-2", expanded && "pb-1")}
+				data-slot="stt-variant-siblings"
+				isOpen={expanded}
+			>
+				<div
+					className="ml-1 flex flex-col border-border/60 border-l-2 pl-1"
+					id={`bundle-siblings-${bundle.baseId}`}
+				>
+					{siblings.map((m) => (
+						<SttModelCard
+							key={m.id}
+							{...sharedCardProps}
+							fitAssessment={getFitAssessment?.(m.id) ?? null}
+							model={m}
+							nested
+							state={statesById[m.id]}
+						/>
+					))}
+				</div>
+			</Collapsible>
+		</>
+	);
 }

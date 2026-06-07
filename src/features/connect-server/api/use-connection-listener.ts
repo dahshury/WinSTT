@@ -25,7 +25,7 @@ export function useConnectionListener(): void {
 			.catch((error: unknown) => {
 				console.error(
 					"[useConnectionListener] Failed to query connection status:",
-					getErrorMessage(error)
+					getErrorMessage(error),
 				);
 			});
 	}, [setConnectionStatus]);
@@ -41,7 +41,7 @@ export function useConnectionListener(): void {
 			.catch((error: unknown) => {
 				console.error(
 					"[useConnectionListener] Failed to query server-ready status:",
-					getErrorMessage(error)
+					getErrorMessage(error),
 				);
 			});
 	}, [setServerStatus]);
@@ -55,7 +55,7 @@ export function useConnectionListener(): void {
 					setServerStatus("idle");
 				}
 			}),
-		[setConnectionStatus, setServerStatus]
+		[setConnectionStatus, setServerStatus],
 	);
 
 	// Server-ready signal subscription.
@@ -64,7 +64,7 @@ export function useConnectionListener(): void {
 			onServerStatus((status) => {
 				setServerStatus(status);
 			}),
-		[setServerStatus]
+		[setServerStatus],
 	);
 
 	// Runtime info — initial fetch covers renderers that mount after the

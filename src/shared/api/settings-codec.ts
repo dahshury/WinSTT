@@ -20,7 +20,7 @@ import { resolveHotkeyTriple } from "@/shared/lib/hotkey-conflict";
  */
 function hotkeyTripleUnchanged(
 	values: { pushToTalkKey: string; repasteHotkey: string; ttsHotkey: string },
-	parsed: AppSettingsOutput
+	parsed: AppSettingsOutput,
 ): boolean {
 	return (
 		values.pushToTalkKey === parsed.hotkey.pushToTalkKey &&
@@ -41,7 +41,7 @@ function normalizeHotkeys(parsed: AppSettingsOutput): AppSettingsOutput {
 			pushToTalkKey: defaults.hotkey.pushToTalkKey,
 			repasteHotkey: defaults.general.repasteHotkey,
 			ttsHotkey: defaults.tts.hotkey,
-		}
+		},
 	);
 	// Preserve referential equality downstream (Zustand selector memoization,
 	// React Compiler) when nothing actually changed.
@@ -100,8 +100,12 @@ function partialDecodeBySections(payload: unknown): AppSettingsOutput {
 	const defaults = appSettingsSchema.parse({});
 	const payloadRecord = migrateLegacyGlobalSection(payload);
 	const result: Record<string, unknown> = { ...defaults };
-	for (const [key, sectionSchema] of Object.entries(appSettingsSectionSchemas)) {
-		const sectionParsed = (sectionSchema as z.ZodType).safeParse(payloadRecord[key]);
+	for (const [key, sectionSchema] of Object.entries(
+		appSettingsSectionSchemas,
+	)) {
+		const sectionParsed = (sectionSchema as z.ZodType).safeParse(
+			payloadRecord[key],
+		);
 		if (sectionParsed.success) {
 			result[key] = sectionParsed.data;
 		}

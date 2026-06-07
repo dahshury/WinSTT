@@ -32,7 +32,7 @@ export function resolveDisplayText(
 	recording: boolean,
 	liveKeys: string[],
 	currentKey: string,
-	pressKeysLabel: string
+	pressKeysLabel: string,
 ): string {
 	if (!recording) {
 		return formatCombo(currentKey);
@@ -49,7 +49,7 @@ export function resolveDisplayText(
  */
 export function findConflict(
 	candidate: string,
-	forbiddenCombos: readonly ForbiddenCombo[] | undefined
+	forbiddenCombos: readonly ForbiddenCombo[] | undefined,
 ): ForbiddenCombo | null {
 	if (!forbiddenCombos) {
 		return null;

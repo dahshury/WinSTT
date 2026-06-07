@@ -4,8 +4,15 @@ import { buildOllamaApiUrl, normalizeOllamaEndpoint } from "./ollama-endpoint";
 
 // Endpoint host arbitrary: http/https + simple host:port + optional path.
 const schemeArb = fc.constantFrom("http", "https");
-const hostArb = fc.constantFrom("localhost", "example.com", "10.0.0.1", "host.local");
-const portArb = fc.option(fc.integer({ min: 1, max: 65_535 }), { nil: undefined });
+const hostArb = fc.constantFrom(
+	"localhost",
+	"example.com",
+	"10.0.0.1",
+	"host.local",
+);
+const portArb = fc.option(fc.integer({ min: 1, max: 65_535 }), {
+	nil: undefined,
+});
 const basePathArb = fc.constantFrom("", "/proxy", "/sub/path", "/llm");
 
 const validEndpointArb = fc
@@ -24,7 +31,7 @@ const trailingSuffixArb = fc.constantFrom(
 	"/api/",
 	"/v1/",
 	"/api/v1",
-	"/v1/api"
+	"/v1/api",
 );
 
 describe("normalizeOllamaEndpoint property tests", () => {
@@ -36,7 +43,7 @@ describe("normalizeOllamaEndpoint property tests", () => {
 				const twice = normalizeOllamaEndpoint(once);
 				return once === twice;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -47,7 +54,7 @@ describe("normalizeOllamaEndpoint property tests", () => {
 				const twice = normalizeOllamaEndpoint(once);
 				return once === twice;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -57,7 +64,7 @@ describe("normalizeOllamaEndpoint property tests", () => {
 				const out = normalizeOllamaEndpoint(input);
 				return out === "" || !out.endsWith("/");
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -67,7 +74,7 @@ describe("normalizeOllamaEndpoint property tests", () => {
 				const out = normalizeOllamaEndpoint(`${base}${suffix}`);
 				return !/\/(api|v1)$/i.test(out);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -76,9 +83,11 @@ describe("normalizeOllamaEndpoint property tests", () => {
 			fc.property(validEndpointArb, trailingSuffixArb, (base, suffix) => {
 				const input = `${base}${suffix}`;
 				const padded = `   ${input}   `;
-				return normalizeOllamaEndpoint(input) === normalizeOllamaEndpoint(padded);
+				return (
+					normalizeOllamaEndpoint(input) === normalizeOllamaEndpoint(padded)
+				);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });
@@ -92,9 +101,9 @@ describe("buildOllamaApiUrl property tests", () => {
 				(endpoint, apiPath) => {
 					const out = buildOllamaApiUrl(endpoint, apiPath as `/api/${string}`);
 					return out.endsWith(apiPath);
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -105,14 +114,17 @@ describe("buildOllamaApiUrl property tests", () => {
 				trailingSuffixArb,
 				fc.constantFrom("/api/tags", "/api/show"),
 				(base, suffix, apiPath) => {
-					const out = buildOllamaApiUrl(`${base}${suffix}`, apiPath as `/api/${string}`);
+					const out = buildOllamaApiUrl(
+						`${base}${suffix}`,
+						apiPath as `/api/${string}`,
+					);
 					// Skip the protocol "://" portion when scanning for doubled slashes.
 					const idx = out.indexOf("://");
 					const afterScheme = idx === -1 ? out : out.slice(idx + 3);
 					return !afterScheme.includes("//");
-				}
+				},
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -127,9 +139,9 @@ describe("buildOllamaApiUrl property tests", () => {
 					const a = buildOllamaApiUrl(input, apiPath as `/api/${string}`);
 					const b = buildOllamaApiUrl(input, apiPath as `/api/${string}`);
 					return a === b;
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });

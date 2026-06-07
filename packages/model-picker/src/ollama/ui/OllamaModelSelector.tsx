@@ -1,10 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useState } from "react";
-import type {
-	OllamaModel,
-	OllamaPullProgress,
-} from "@/shared/api/models";
+import type { OllamaModel, OllamaPullProgress } from "@/shared/api/models";
 import {
 	ALL_AUTHORS_RAIL_ID,
 	buildAllAuthorsRailItem,
@@ -21,7 +18,11 @@ import {
 	writePersistedSelectorState,
 } from "../../lib/persisted-selector-state";
 import { getOllamaPublisherBySlug } from "../lib/family-helpers";
-import { OLLAMA_SORT_KEYS, type OllamaSortValue, sortOllamaModels } from "../lib/sort-state";
+import {
+	OLLAMA_SORT_KEYS,
+	type OllamaSortValue,
+	sortOllamaModels,
+} from "../lib/sort-state";
 import { useFavoriteOllamaModels } from "../lib/use-favorite-ollama-models";
 import {
 	buildOllamaDescriptionIndex,
@@ -80,7 +81,10 @@ const DEFAULT_PERSISTED_OLLAMA_SELECTOR_UI_STATE: PersistedOllamaSelectorUiState
 	};
 
 function isOllamaSortValue(value: unknown): value is OllamaSortValue {
-	return value === null || (typeof value === "string" && OLLAMA_SORT_KEY_SET.has(value));
+	return (
+		value === null ||
+		(typeof value === "string" && OLLAMA_SORT_KEY_SET.has(value))
+	);
 }
 
 function isPersistedOllamaSelectorUiState(

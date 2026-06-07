@@ -21,7 +21,7 @@ describe("ErrorBoundary", () => {
 		render(
 			<ErrorBoundary>
 				<div data-testid="ok">ok</div>
-			</ErrorBoundary>
+			</ErrorBoundary>,
 		);
 		expect(screen.getByTestId("ok")).toBeDefined();
 	});
@@ -33,7 +33,7 @@ describe("ErrorBoundary", () => {
 			render(
 				<ErrorBoundary>
 					<Bomb />
-				</ErrorBoundary>
+				</ErrorBoundary>,
 			);
 			expect(screen.getByText("Component Error")).toBeDefined();
 			expect(screen.getByText("bang")).toBeDefined();
@@ -50,10 +50,11 @@ describe("ErrorBoundary", () => {
 			render(
 				<ErrorBoundary onError={onError}>
 					<Bomb />
-				</ErrorBoundary>
+				</ErrorBoundary>,
 			);
 			expect(onError).toHaveBeenCalledTimes(1);
-			const args = (onError as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+			const args = (onError as unknown as { mock: { calls: unknown[][] } }).mock
+				.calls[0];
 			expect(args?.[0]).toBeInstanceOf(Error);
 			expect(typeof args?.[1]).toBe("string"); // component stack
 		} finally {
@@ -73,7 +74,7 @@ describe("ErrorBoundary", () => {
 			render(
 				<ErrorBoundary fallback={fallback}>
 					<Bomb />
-				</ErrorBoundary>
+				</ErrorBoundary>,
 			);
 			expect(screen.getByText("custom-fallback: bang")).toBeDefined();
 		} finally {
@@ -88,7 +89,7 @@ describe("ErrorBoundary", () => {
 			render(
 				<ErrorBoundary>
 					<Bomb throwOn="render" />
-				</ErrorBoundary>
+				</ErrorBoundary>,
 			);
 			const tryAgain = screen.getByRole("button", { name: "Try again" });
 			fireEvent.click(tryAgain);
@@ -109,7 +110,7 @@ describe("ErrorBoundary", () => {
 			render(
 				<ErrorBoundary>
 					<ContextBomb />
-				</ErrorBoundary>
+				</ErrorBoundary>,
 			);
 			expect(screen.getByText("Error Details")).toBeDefined();
 		} finally {

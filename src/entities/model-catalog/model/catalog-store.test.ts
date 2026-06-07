@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import { IPC } from "@/shared/api/ipc-channels";
-import { ModelFamilySchema, TranscriberBackendSchema } from "@/shared/api/schema.zod";
+import {
+	ModelFamilySchema,
+	TranscriberBackendSchema,
+} from "@/shared/api/schema.zod";
 
 // ---------------------------------------------------------------------------
 // Why this test routes through `window.nativeBridge` instead of overriding
@@ -223,12 +226,15 @@ describe("initCatalogStore", () => {
 });
 
 describe("zod enum guards (mutation guards on enum entries)", () => {
-	test.each(TranscriberBackendSchema.options)("backend enum accepts %s", (backend) => {
-		useCatalogStore.setState({ models: [], isLoaded: false });
-		useCatalogStore.getState().setModels([{ ...validRaw, backend }]);
-		expect(useCatalogStore.getState().models).toHaveLength(1);
-		expect(useCatalogStore.getState().models[0]?.backend).toBe(backend);
-	});
+	test.each(TranscriberBackendSchema.options)(
+		"backend enum accepts %s",
+		(backend) => {
+			useCatalogStore.setState({ models: [], isLoaded: false });
+			useCatalogStore.getState().setModels([{ ...validRaw, backend }]);
+			expect(useCatalogStore.getState().models).toHaveLength(1);
+			expect(useCatalogStore.getState().models[0]?.backend).toBe(backend);
+		},
+	);
 
 	test.each(ModelFamilySchema.options)("family enum accepts %s", (family) => {
 		useCatalogStore.setState({ models: [], isLoaded: false });
@@ -239,14 +245,18 @@ describe("zod enum guards (mutation guards on enum entries)", () => {
 
 	test("backend enum rejects unknown values (string-mutation distinguisher)", () => {
 		useCatalogStore.setState({ models: [], isLoaded: false });
-		useCatalogStore.getState().setModels([{ ...validRaw, backend: "unknown_backend" }]);
+		useCatalogStore
+			.getState()
+			.setModels([{ ...validRaw, backend: "unknown_backend" }]);
 		// Item must be DROPPED by zod safeParse → length 0.
 		expect(useCatalogStore.getState().models).toHaveLength(0);
 	});
 
 	test("family enum rejects unknown values", () => {
 		useCatalogStore.setState({ models: [], isLoaded: false });
-		useCatalogStore.getState().setModels([{ ...validRaw, family: "unknown_family" }]);
+		useCatalogStore
+			.getState()
+			.setModels([{ ...validRaw, family: "unknown_family" }]);
 		expect(useCatalogStore.getState().models).toHaveLength(0);
 	});
 });

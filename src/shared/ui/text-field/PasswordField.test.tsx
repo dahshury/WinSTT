@@ -10,7 +10,9 @@ describe("PasswordField", () => {
 	});
 
 	test("toggle button unmasks then re-masks the value", () => {
-		const { container } = render(<PasswordField placeholder="key" revealLabel="Show" />);
+		const { container } = render(
+			<PasswordField placeholder="key" revealLabel="Show" />,
+		);
 		const input = screen.getByPlaceholderText("key") as HTMLInputElement;
 		const toggle = screen.getByRole("button", { name: "Show" });
 		expect(container.querySelector(".t-icon-swap")).not.toBeNull();
@@ -31,7 +33,9 @@ describe("PasswordField", () => {
 
 	test("forwards value and onChange (controlled)", () => {
 		const onChange = mock(() => undefined);
-		render(<PasswordField onChange={onChange} placeholder="x" value="sk-or-test" />);
+		render(
+			<PasswordField onChange={onChange} placeholder="x" value="sk-or-test" />,
+		);
 		const input = screen.getByPlaceholderText("x") as HTMLInputElement;
 		expect(input.value).toBe("sk-or-test");
 		fireEvent.change(input, { target: { value: "sk-or-other" } });

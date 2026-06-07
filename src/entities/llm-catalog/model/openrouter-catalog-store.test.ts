@@ -17,7 +17,9 @@ mock.module("@/shared/api/ipc-client", () => ({
 	fetchOpenRouterModels: fetchSpy,
 }));
 
-const { useOpenRouterCatalogStore } = await import("./openrouter-catalog-store");
+const { useOpenRouterCatalogStore } = await import(
+	"./openrouter-catalog-store"
+);
 
 describe("useOpenRouterCatalogStore initial state", () => {
 	// Use getInitialState() to inspect the literal defaults from the store

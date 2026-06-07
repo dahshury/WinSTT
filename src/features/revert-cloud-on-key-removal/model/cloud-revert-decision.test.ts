@@ -55,7 +55,10 @@ function model(over: Partial<ModelInfo> & Pick<ModelInfo, "id">): ModelInfo {
 
 describe("detectClearedKeys", () => {
 	test("no transition → empty set", () => {
-		const cleared = detectClearedKeys(keys({ openai: "sk" }), keys({ openai: "sk" }));
+		const cleared = detectClearedKeys(
+			keys({ openai: "sk" }),
+			keys({ openai: "sk" }),
+		);
 		expect(cleared.size).toBe(0);
 	});
 
@@ -70,7 +73,10 @@ describe("detectClearedKeys", () => {
 	});
 
 	test("clearing to whitespace still counts (next trims to empty)", () => {
-		const cleared = detectClearedKeys(keys({ elevenlabs: "el" }), keys({ elevenlabs: "  " }));
+		const cleared = detectClearedKeys(
+			keys({ elevenlabs: "el" }),
+			keys({ elevenlabs: "  " }),
+		);
 		expect([...cleared]).toEqual(["elevenlabs"]);
 	});
 
@@ -83,12 +89,18 @@ describe("detectClearedKeys", () => {
 
 describe("planReverts", () => {
 	test("no cleared keys → no work", () => {
-		const plan = planReverts(new Set(), surfaces({ model: "openai:whisper-1" }));
+		const plan = planReverts(
+			new Set(),
+			surfaces({ model: "openai:whisper-1" }),
+		);
 		expect(planHasWork(plan)).toBe(false);
 	});
 
 	test("openai cleared while the active model is openai reverts STT", () => {
-		const plan = planReverts(new Set(["openai"]), surfaces({ model: "openai:whisper-1" }));
+		const plan = planReverts(
+			new Set(["openai"]),
+			surfaces({ model: "openai:whisper-1" }),
+		);
 		expect(plan.stt).toBe(true);
 	});
 
@@ -98,14 +110,20 @@ describe("planReverts", () => {
 	});
 
 	test("openai cleared while on an elevenlabs model does NOT revert STT", () => {
-		const plan = planReverts(new Set(["openai"]), surfaces({ model: "elevenlabs:scribe_v1" }));
+		const plan = planReverts(
+			new Set(["openai"]),
+			surfaces({ model: "elevenlabs:scribe_v1" }),
+		);
 		expect(plan.stt).toBe(false);
 	});
 
 	test("openrouter cleared reverts only the features using it", () => {
 		const plan = planReverts(
 			new Set(["openrouter"]),
-			surfaces({ dictationProvider: "openrouter", transformsProvider: "ollama" })
+			surfaces({
+				dictationProvider: "openrouter",
+				transformsProvider: "ollama",
+			}),
 		);
 		expect(plan.llmDictation).toBe(true);
 		expect(plan.llmTransforms).toBe(false);
@@ -114,7 +132,7 @@ describe("planReverts", () => {
 	test("elevenlabs cleared reverts both STT and cloud TTS when both are active", () => {
 		const plan = planReverts(
 			new Set(["elevenlabs"]),
-			surfaces({ model: "elevenlabs:scribe_v1", ttsSource: "cloud" })
+			surfaces({ model: "elevenlabs:scribe_v1", ttsSource: "cloud" }),
 		);
 		expect(plan.stt).toBe(true);
 		expect(plan.ttsCloud).toBe(true);
@@ -123,7 +141,13 @@ describe("planReverts", () => {
 
 describe("affectedProviders", () => {
 	function plan(over: Partial<RevertPlan>): RevertPlan {
-		return { stt: false, llmDictation: false, llmTransforms: false, ttsCloud: false, ...over };
+		return {
+			stt: false,
+			llmDictation: false,
+			llmTransforms: false,
+			ttsCloud: false,
+			...over,
+		};
 	}
 
 	test("STT revert maps to the active model's provider", () => {
@@ -137,7 +161,10 @@ describe("affectedProviders", () => {
 	});
 
 	test("elevenlabs STT + cloud TTS dedupe to a single notice", () => {
-		const set = affectedProviders(plan({ stt: true, ttsCloud: true }), "elevenlabs:scribe_v1");
+		const set = affectedProviders(
+			plan({ stt: true, ttsCloud: true }),
+			"elevenlabs:scribe_v1",
+		);
 		expect([...set]).toEqual(["elevenlabs"]);
 	});
 });
@@ -151,7 +178,10 @@ describe("resolveLocalSttTarget", () => {
 	});
 
 	test("picks a catalog model and pairs its backend", () => {
-		const target = resolveLocalSttTarget([model({ id: "tiny", backend: "onnx_asr" })], {});
+		const target = resolveLocalSttTarget(
+			[model({ id: "tiny", backend: "onnx_asr" })],
+			{},
+		);
 		expect(target).toEqual({ model: "tiny", backend: "onnx_asr" });
 	});
 });

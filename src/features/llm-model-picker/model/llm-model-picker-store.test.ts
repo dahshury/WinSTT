@@ -63,7 +63,9 @@ describe("useLlmModelPickerStore", () => {
 		useLlmModelPickerStore.getState().close();
 		const before = useSettingsStore.getState().settings.llm.dictation.model;
 		useLlmModelPickerStore.getState().commitInstalled("ghost-model");
-		expect(useSettingsStore.getState().settings.llm.dictation.model).toBe(before);
+		expect(useSettingsStore.getState().settings.llm.dictation.model).toBe(
+			before,
+		);
 	});
 
 	test("commitInstalled routes to the transforms feature when it is pending", () => {

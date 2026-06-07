@@ -5,7 +5,10 @@ import { useTranscriptionStore } from "@/entities/transcription";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import { Elevated, surfaceBg90, useSurface } from "@/shared/lib/surface";
-import { enqueueDroppedFiles, getContainerClassName } from "../lib/audio-display-test-helpers";
+import {
+	enqueueDroppedFiles,
+	getContainerClassName,
+} from "../lib/audio-display-test-helpers";
 import { FileOverlay } from "./FileOverlay";
 import { SubtitleOverlay } from "./SubtitleOverlay";
 import { TranscriptionThinking } from "./TranscriptionThinking";
@@ -19,7 +22,13 @@ import { TranscriptionThinking } from "./TranscriptionThinking";
  */
 const VISUALIZER_DIMMED_OPACITY = 0.2;
 
-function DropZoneOverlay({ visible, label }: { visible: boolean; label: string }) {
+function DropZoneOverlay({
+	visible,
+	label,
+}: {
+	visible: boolean;
+	label: string;
+}) {
 	const substrate = useSurface();
 	if (!visible) {
 		return null;
@@ -34,7 +43,8 @@ function DropZoneOverlay({ visible, label }: { visible: boolean; label: string }
 }
 
 export function AudioDisplay() {
-	const isListenMode = useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
+	const isListenMode =
+		useSettingsStore((s) => s.settings.general?.recordingMode) === "listen";
 	const t = useTranslations("audioDisplay");
 
 	// Dim the visualizer whenever dictation text is being shown in the main
@@ -44,7 +54,8 @@ export function AudioDisplay() {
 	const liveText = useTranscriptionStore((s) => s.currentRealtime);
 	const isRecordingActive = useTranscriptionStore((s) => s.isRecordingActive);
 	const hasFinalText = useTranscriptionStore((s) => s.items.length > 0);
-	const dimVisualizer = liveText.length > 0 || (isRecordingActive && hasFinalText);
+	const dimVisualizer =
+		liveText.length > 0 || (isRecordingActive && hasFinalText);
 
 	// Drives the page-slide: cross-fade to the queue while it has files, back to
 	// the visualizer when it drains (FileOverlay lingers its rows for the fade).

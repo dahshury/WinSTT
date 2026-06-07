@@ -15,7 +15,10 @@ interface ModelSwapChipProps {
 
 /** Read-only chip shown in place of the model chip while a swap is in
  *  flight. Same compact footprint so the bar doesn't shift. */
-export function ModelSwapChip({ label, tooltip }: ModelSwapChipProps): ReactNode {
+export function ModelSwapChip({
+	label,
+	tooltip,
+}: ModelSwapChipProps): ReactNode {
 	return (
 		<Tooltip content={tooltip} delay={FOOTER_TOOLTIP_DELAY} side="top">
 			<span

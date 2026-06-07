@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { create } from "zustand";
-import type { BuiltinPresetEntry, CustomModifier } from "@/entities/llm-catalog";
+import type {
+	BuiltinPresetEntry,
+	CustomModifier,
+} from "@/entities/llm-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
 import { generateId } from "@/shared/lib/generate-id";
 import type { PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
@@ -63,7 +66,9 @@ const SESSION_KEY = "winstt:llm-playground-session";
 /** Deep-ish clone so editing a draft (or applying a config) never mutates a
  *  stored configuration or the live settings snapshot it was seeded from.
  *  Arrays of plain entry objects are copied one level deep — entries are flat. */
-export function cloneLlmConfiguration(config: LlmConfiguration): LlmConfiguration {
+export function cloneLlmConfiguration(
+	config: LlmConfiguration,
+): LlmConfiguration {
 	return {
 		...config,
 		presets: config.presets.map((p) => ({ ...p })),
@@ -106,7 +111,7 @@ function carrierSignature(carrier: PresetCarrier): string {
  *  `PresetCarrier`, so a config is compared directly. */
 export function matchConfigurationId(
 	carrier: PresetCarrier,
-	configs: readonly SavedConfiguration[]
+	configs: readonly SavedConfiguration[],
 ): string {
 	const sig = carrierSignature(carrier);
 	return configs.find((c) => carrierSignature(c.config) === sig)?.id ?? "";
@@ -128,7 +133,9 @@ const savedConfigurationSchema = z.object({
  *  Falls back to the legacy playground-presets key for pre-rename data. */
 function loadConfigurations(): SavedConfiguration[] {
 	try {
-		const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
+		const raw =
+			localStorage.getItem(STORAGE_KEY) ??
+			localStorage.getItem(LEGACY_STORAGE_KEY);
 		if (!raw) {
 			return [];
 		}
@@ -173,22 +180,28 @@ interface ConfigurationsState {
  * writes straight back through, so a config saved in one combobox appears in the
  * others immediately.
  */
-export const useLlmConfigurationsStore = create<ConfigurationsState>()((set, get) => ({
-	configurations: loadConfigurations(),
-	saveConfiguration: (name, config) => {
-		const id = generateId();
-		const entry: SavedConfiguration = { id, name, config: cloneLlmConfiguration(config) };
-		const next = [...get().configurations, entry];
-		set({ configurations: next });
-		persistConfigurations(next);
-		return id;
-	},
-	removeConfiguration: (id) => {
-		const next = get().configurations.filter((c) => c.id !== id);
-		set({ configurations: next });
-		persistConfigurations(next);
-	},
-}));
+export const useLlmConfigurationsStore = create<ConfigurationsState>()(
+	(set, get) => ({
+		configurations: loadConfigurations(),
+		saveConfiguration: (name, config) => {
+			const id = generateId();
+			const entry: SavedConfiguration = {
+				id,
+				name,
+				config: cloneLlmConfiguration(config),
+			};
+			const next = [...get().configurations, entry];
+			set({ configurations: next });
+			persistConfigurations(next);
+			return id;
+		},
+		removeConfiguration: (id) => {
+			const next = get().configurations.filter((c) => c.id !== id);
+			set({ configurations: next });
+			persistConfigurations(next);
+		},
+	}),
+);
 
 // The persisted session must carry a runnable config, so unlike the loose
 // configuration guard we assert the fields the playground actually reads back

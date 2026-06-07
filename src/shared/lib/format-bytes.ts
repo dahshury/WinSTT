@@ -42,7 +42,12 @@ interface Tier {
 	suffix: ByteUnit;
 }
 
-const DEFAULTS = { minUnit: "MB", mbDecimals: 0, gbDecimals: 1, kbDecimals: 1 } as const;
+const DEFAULTS = {
+	minUnit: "MB",
+	mbDecimals: 0,
+	gbDecimals: 1,
+	kbDecimals: 1,
+} as const;
 const UNIT_RANK: Record<ByteUnit, number> = { B: 0, KB: 1, MB: 2, GB: 3 };
 
 /** Largest → smallest. `floor` is collapsed to 0 for the chosen `minUnit`. */
@@ -73,11 +78,18 @@ function pickTier(bytes: number, tiers: Tier[]): Tier {
 	return match ?? tiers.at(-1) ?? FALLBACK_TIER;
 }
 
-const FALLBACK_TIER: Tier = { suffix: "B", rank: 0, divisor: 1, decimals: null, floor: 0 };
+const FALLBACK_TIER: Tier = {
+	suffix: "B",
+	rank: 0,
+	divisor: 1,
+	decimals: null,
+	floor: 0,
+};
 
 function renderTier(bytes: number, tier: Tier): string {
 	const scaled = bytes / tier.divisor;
-	const text = tier.decimals === null ? `${scaled}` : scaled.toFixed(tier.decimals);
+	const text =
+		tier.decimals === null ? `${scaled}` : scaled.toFixed(tier.decimals);
 	return `${text} ${tier.suffix}`;
 }
 
@@ -88,7 +100,7 @@ function renderTier(bytes: number, tier: Tier): string {
  */
 export function formatBytes(
 	bytes: number | null | undefined,
-	options: FormatBytesOptions = {}
+	options: FormatBytesOptions = {},
 ): string | null {
 	if (!isValidByteCount(bytes)) {
 		return null;

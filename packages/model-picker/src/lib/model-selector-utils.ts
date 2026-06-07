@@ -169,7 +169,11 @@ function isVersionMergeablePrev(prev: string | undefined): prev is string {
 	return prev !== undefined && VERSION_HYPHEN_PREFIXES.has(prev);
 }
 
-function shouldMergeVersion(prev: string | undefined, cur: string, index: number): boolean {
+function shouldMergeVersion(
+	prev: string | undefined,
+	cur: string,
+	index: number,
+): boolean {
 	if (index === 0) {
 		return false;
 	}
@@ -209,9 +213,15 @@ function tokenizeModelCore(core: string): string[] {
  * display form ("Anthropic") so "anthropic/claude-3" doesn't render as
  * "Anthropic Claude 3" next to an Anthropic chip.
  */
-function dropLeadingMakerToken(tokens: string[], maker: string, makerFormatted: string): string[] {
+function dropLeadingMakerToken(
+	tokens: string[],
+	maker: string,
+	makerFormatted: string,
+): string[] {
 	const firstLower = (tokens[0] as string).toLowerCase();
-	const matches = firstLower === maker.toLowerCase() || firstLower === makerFormatted.toLowerCase();
+	const matches =
+		firstLower === maker.toLowerCase() ||
+		firstLower === makerFormatted.toLowerCase();
 	return matches ? tokens.slice(1) : tokens;
 }
 
@@ -222,7 +232,10 @@ function dropLeadingMakerToken(tokens: string[], maker: string, makerFormatted: 
  * case-insensitively against both the raw slug and `formatMaker(maker)`) is
  * dropped — so the rendered string doesn't duplicate the adjacent maker badge.
  */
-export function formatModelName(name?: string | null, maker?: string | null): string {
+export function formatModelName(
+	name?: string | null,
+	maker?: string | null,
+): string {
 	if (!name) {
 		return "";
 	}
@@ -233,6 +246,8 @@ export function formatModelName(name?: string | null, maker?: string | null): st
 	}
 	const merged = mergeVersionTokens(tokens);
 	const final =
-		maker && merged.length > 1 ? dropLeadingMakerToken(merged, maker, formatMaker(maker)) : merged;
+		maker && merged.length > 1
+			? dropLeadingMakerToken(merged, maker, formatMaker(maker))
+			: merged;
 	return final.join(" ");
 }

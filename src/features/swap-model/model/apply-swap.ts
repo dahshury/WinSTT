@@ -145,11 +145,8 @@ function applyMainSwap(
 	);
 	Object.assign(
 		patch,
-		realtimePatchForMainSwap(
-			info,
-			args.currentRealtimeModel,
-			args.getModel,
-		) ?? {},
+		realtimePatchForMainSwap(info, args.currentRealtimeModel, args.getModel) ??
+			{},
 	);
 	args.update(patch);
 	return true;
@@ -167,8 +164,12 @@ function applyRealtimeSwap(
 			return false;
 		}
 		args.prevRealtimeModelRef.current = args.previous;
-		useModelSwapStore.getState().beginSwap("realtime", args.previous, args.value);
-		args.update(buildRealtimeSwapPatch("", args.quantization, quantizationChanging));
+		useModelSwapStore
+			.getState()
+			.beginSwap("realtime", args.previous, args.value);
+		args.update(
+			buildRealtimeSwapPatch("", args.quantization, quantizationChanging),
+		);
 		return true;
 	}
 	const realtimeInfo = args.getModel(args.value);

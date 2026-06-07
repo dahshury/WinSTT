@@ -33,7 +33,9 @@ describe("EndpointProviderFilterSubmenu helpers", () => {
 		});
 
 		test("filters case-insensitively by substring", () => {
-			expect(helpers.filterEndpointProviders(providers, "deep")).toEqual([["DeepInfra", 5]]);
+			expect(helpers.filterEndpointProviders(providers, "deep")).toEqual([
+				["DeepInfra", 5],
+			]);
 		});
 
 		test("returns empty array when nothing matches", () => {
@@ -76,11 +78,15 @@ describe("EndpointProviderFilterSubmenu helpers", () => {
 		});
 
 		test("returns ALL_PROVIDERS_VALUE when null", () => {
-			expect(helpers.resolveComboboxValue(null)).toBe(helpers.ALL_PROVIDERS_VALUE);
+			expect(helpers.resolveComboboxValue(null)).toBe(
+				helpers.ALL_PROVIDERS_VALUE,
+			);
 		});
 
 		test("returns ALL_PROVIDERS_VALUE when empty string", () => {
-			expect(helpers.resolveComboboxValue("")).toBe(helpers.ALL_PROVIDERS_VALUE);
+			expect(helpers.resolveComboboxValue("")).toBe(
+				helpers.ALL_PROVIDERS_VALUE,
+			);
 		});
 	});
 
@@ -139,7 +145,7 @@ describe("renderProviderRow", () => {
 						{(provider: string) => helpers.renderProviderRow(provider, ctx)}
 					</Combobox.Collection>
 				</Combobox.List>
-			</Combobox.Root>
+			</Combobox.Root>,
 		);
 		expect(container.textContent).toContain("All Providers");
 	});

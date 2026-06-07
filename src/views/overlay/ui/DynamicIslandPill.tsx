@@ -291,8 +291,4 @@ function DynamicIslandPill(args: IslandStateArgs & { revealed: boolean }) {
 	);
 }
 
-export {
-	type IslandFlags,
-	type IslandStateArgs,
-	DynamicIslandPill,
-};
+export { type IslandFlags, type IslandStateArgs, DynamicIslandPill };

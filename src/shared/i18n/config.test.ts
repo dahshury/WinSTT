@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_LOCALE, isLocale, LOCALE_NAMES, LOCALES, pickLocaleFromSystem } from "./config";
+import {
+	DEFAULT_LOCALE,
+	isLocale,
+	LOCALE_NAMES,
+	LOCALES,
+	pickLocaleFromSystem,
+} from "./config";
 
 describe("LOCALES", () => {
 	test("is a non-empty list of unique strings", () => {
@@ -72,7 +78,9 @@ describe("pickLocaleFromSystem", () => {
 		// Pick synthetic two-letter codes that are guaranteed to be outside LOCALES,
 		// so adding a new translation can't accidentally invalidate this test.
 		const candidates = ["xx", "qq", "zz", "yy", "ww"] as const;
-		const unsupported = candidates.filter((code) => !(LOCALES as readonly string[]).includes(code));
+		const unsupported = candidates.filter(
+			(code) => !(LOCALES as readonly string[]).includes(code),
+		);
 		expect(unsupported.length).toBeGreaterThan(0);
 		for (const code of unsupported) {
 			expect(pickLocaleFromSystem(code)).toBe(DEFAULT_LOCALE);

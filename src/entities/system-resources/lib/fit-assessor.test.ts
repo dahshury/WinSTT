@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { LiveResourcesEntry, ModelStateEntry } from "@/shared/api/ipc-client";
+import type {
+	LiveResourcesEntry,
+	ModelStateEntry,
+} from "@/shared/api/ipc-client";
 import {
 	assessDictationFitClient,
 	assessOllamaFitClient,
@@ -34,7 +37,7 @@ function gpuOf(opts: { total?: number; free?: number } = {}) {
 }
 
 function entryOf(
-	opts: Partial<ModelStateEntry> & { id: string; estimated_bytes: number }
+	opts: Partial<ModelStateEntry> & { id: string; estimated_bytes: number },
 ): ModelStateEntry {
 	return {
 		id: opts.id,
@@ -58,7 +61,12 @@ describe("assessDictationFitClient", () => {
 			statesById: {},
 			candidateQuant: "",
 			requestedDevice: null,
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf(),
 		});
 		expect(result.severity).toBe("ok");
@@ -67,10 +75,17 @@ describe("assessDictationFitClient", () => {
 
 	test("fits on a roomy GPU", () => {
 		const result = assessDictationFitClient("tiny", {
-			statesById: { tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }) },
+			statesById: {
+				tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }),
+			},
 			candidateQuant: "",
 			requestedDevice: null,
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ gpus: [gpuOf({ total: 24 * GB, free: 24 * GB })] }),
 		});
 		expect(result.target).toBe("gpu");
@@ -84,7 +99,12 @@ describe("assessDictationFitClient", () => {
 			},
 			candidateQuant: "",
 			requestedDevice: null,
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ gpus: [gpuOf({ total: 4 * GB, free: 1 * GB })] }),
 		});
 		expect(result.severity).toBe("critical");
@@ -93,10 +113,17 @@ describe("assessDictationFitClient", () => {
 
 	test("routes int8 to CPU even on a GPU host", () => {
 		const result = assessDictationFitClient("tiny", {
-			statesById: { tiny: entryOf({ id: "tiny", estimated_bytes: 100_000_000 }) },
+			statesById: {
+				tiny: entryOf({ id: "tiny", estimated_bytes: 100_000_000 }),
+			},
 			candidateQuant: "int8",
 			requestedDevice: null,
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ gpus: [gpuOf()] }),
 		});
 		expect(result.target).toBe("cpu");
@@ -111,7 +138,12 @@ describe("assessDictationFitClient", () => {
 			},
 			candidateQuant: "",
 			requestedDevice: null,
-			loaded: { mainId: null, mainQuant: "", realtimeId: "base", realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: "base",
+				realtimeQuant: "",
+			},
 			live: liveOf({ ram_total_bytes: 8 * GB, ram_available_bytes: 6 * GB }),
 		});
 		expect(result.reasons).toContain("stt_already_uses_ram");
@@ -119,10 +151,17 @@ describe("assessDictationFitClient", () => {
 
 	test("excludes outgoing model when swapping the same slot", () => {
 		const result = assessDictationFitClient("tiny", {
-			statesById: { tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }) },
+			statesById: {
+				tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }),
+			},
 			candidateQuant: "",
 			requestedDevice: null,
-			loaded: { mainId: "tiny", mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: "tiny",
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ ram_total_bytes: 8 * GB, ram_available_bytes: 4 * GB }),
 		});
 		expect(result.reasons).not.toContain("stt_already_uses_ram");
@@ -130,10 +169,17 @@ describe("assessDictationFitClient", () => {
 
 	test("no GPU + non-CPU device adds no_gpu_available reason", () => {
 		const result = assessDictationFitClient("tiny", {
-			statesById: { tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }) },
+			statesById: {
+				tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }),
+			},
 			candidateQuant: "",
 			requestedDevice: null,
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ ram_total_bytes: 32 * GB, ram_available_bytes: 24 * GB }),
 		});
 		expect(result.target).toBe("cpu");
@@ -145,7 +191,12 @@ describe("assessOllamaFitClient", () => {
 	test("zero size returns ok", () => {
 		const result = assessOllamaFitClient(0, {
 			statesById: {},
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf(),
 		});
 		expect(result.severity).toBe("ok");
@@ -154,7 +205,12 @@ describe("assessOllamaFitClient", () => {
 	test("fits on a roomy GPU", () => {
 		const result = assessOllamaFitClient(1 * GB, {
 			statesById: {},
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ gpus: [gpuOf({ total: 24 * GB, free: 24 * GB })] }),
 		});
 		expect(result.target).toBe("gpu");
@@ -164,7 +220,12 @@ describe("assessOllamaFitClient", () => {
 	test("critical when exceeds VRAM", () => {
 		const result = assessOllamaFitClient(8 * GB, {
 			statesById: {},
-			loaded: { mainId: null, mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: null,
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ gpus: [gpuOf({ total: 4 * GB, free: 4 * GB })] }),
 		});
 		expect(result.severity).toBe("critical");
@@ -176,7 +237,12 @@ describe("assessOllamaFitClient", () => {
 			statesById: {
 				tiny: entryOf({ id: "tiny", estimated_bytes: 500_000_000 }),
 			},
-			loaded: { mainId: "tiny", mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: "tiny",
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ gpus: [gpuOf({ total: 24 * GB, free: 20 * GB })] }),
 		});
 		expect(result.reasons).toContain("stt_already_uses_gpu");
@@ -187,7 +253,12 @@ describe("assessOllamaFitClient", () => {
 			statesById: {
 				large: entryOf({ id: "large", estimated_bytes: 3 * GB }),
 			},
-			loaded: { mainId: "large", mainQuant: "", realtimeId: null, realtimeQuant: "" },
+			loaded: {
+				mainId: "large",
+				mainQuant: "",
+				realtimeId: null,
+				realtimeQuant: "",
+			},
 			live: liveOf({ ram_total_bytes: 16 * GB, ram_available_bytes: 16 * GB }),
 		});
 		expect(result.reasons).toContain("stt_already_uses_ram");
@@ -203,7 +274,7 @@ describe("loadedDictationFootprint", () => {
 		const total = loadedDictationFootprint(
 			states,
 			{ mainId: "a", mainQuant: "", realtimeId: "b", realtimeQuant: "" },
-			null
+			null,
 		);
 		// Both at default factor → 2x base estimate (×4/1.2 each)
 		expect(total).toBeGreaterThan(0);
@@ -216,7 +287,7 @@ describe("loadedDictationFootprint", () => {
 		const total = loadedDictationFootprint(
 			states,
 			{ mainId: "a", mainQuant: "", realtimeId: null, realtimeQuant: "" },
-			"a"
+			"a",
 		);
 		expect(total).toBe(0);
 	});
@@ -225,7 +296,7 @@ describe("loadedDictationFootprint", () => {
 		const total = loadedDictationFootprint(
 			{},
 			{ mainId: "ghost", mainQuant: "", realtimeId: null, realtimeQuant: "" },
-			null
+			null,
 		);
 		expect(total).toBe(0);
 	});

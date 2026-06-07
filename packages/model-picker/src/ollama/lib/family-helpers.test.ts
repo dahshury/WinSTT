@@ -96,7 +96,7 @@ describe("groupOllamaModelsByPublisher", () => {
 			model("llama3.2:1b", "llama"),
 		];
 		const labels = groupOllamaModelsByPublisher(models).map(
-			([slug]) => getOllamaPublisherBySlug(slug).label
+			([slug]) => getOllamaPublisherBySlug(slug).label,
 		);
 		expect(labels).toEqual(["Google", "Meta", "Microsoft"]);
 	});
@@ -105,6 +105,8 @@ describe("groupOllamaModelsByPublisher", () => {
 		const models = [model("mystery:1b", "mystery")];
 		const groups = groupOllamaModelsByPublisher(models);
 		expect(groups[0]?.[0]).toBe("community");
-		expect(getOllamaPublisherBySlug(groups[0]?.[0] ?? "").label).toBe("Community");
+		expect(getOllamaPublisherBySlug(groups[0]?.[0] ?? "").label).toBe(
+			"Community",
+		);
 	});
 });

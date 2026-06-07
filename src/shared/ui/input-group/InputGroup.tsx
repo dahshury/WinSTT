@@ -39,7 +39,10 @@ const SIZE_RADIUS: Record<InputGroupSize, string> = {
 // The wash is a box-shadow (no extra DOM) so it shares the ring's transition.
 // The minimal set drops every shadow/glow and stays neutral on focus — bg
 // lifts a hair and the ring firms to `border`, never to accent.
-const TONE_FRAME: Record<InputGroupAppearance, Record<InputGroupTone, string>> = {
+const TONE_FRAME: Record<
+	InputGroupAppearance,
+	Record<InputGroupTone, string>
+> = {
 	elevated: {
 		default:
 			"ring-1 ring-divider hover:ring-border focus-within:ring-accent/70 focus-within:shadow-[0_0_0_4px_var(--color-accent-glow),var(--shadow-elevated)]",
@@ -101,12 +104,13 @@ export function InputGroup({
 					"transition-[box-shadow,background-color,color] duration-150 ease-out",
 					// Only the elevated shell paints a raised surface + drop shadow;
 					// minimal stays transparent and lets the frame do the talking.
-					appearance === "elevated" && cn("shadow-elevated", surfaceClasses(level)),
+					appearance === "elevated" &&
+						cn("shadow-elevated", surfaceClasses(level)),
 					SIZE_HEIGHT[size],
 					SIZE_RADIUS[size],
 					TONE_FRAME[appearance][tone],
 					TONE_TEXT[tone],
-					className
+					className,
 				)}
 				data-appearance={appearance}
 				data-size={size}
@@ -128,13 +132,17 @@ export interface InputGroupContentProps extends HTMLAttributes<HTMLDivElement> {
  * formatted value, or any other non-editable display. Mirrors the
  * padding/typography of `InputGroupInput` so swapping is seamless.
  */
-export function InputGroupContent({ children, className, ...rest }: InputGroupContentProps) {
+export function InputGroupContent({
+	children,
+	className,
+	...rest
+}: InputGroupContentProps) {
 	return (
 		<div
 			className={cn(
 				"flex min-w-0 flex-1 items-center justify-start overflow-hidden font-mono leading-none",
 				"pr-2 pl-3",
-				className
+				className,
 			)}
 			{...rest}
 		>
@@ -159,7 +167,7 @@ export function InputGroupInput({ className, ...rest }: InputGroupInputProps) {
 				"min-w-0 flex-1 bg-transparent px-1 text-body text-foreground caret-accent outline-none",
 				"placeholder:text-foreground-muted",
 				"disabled:cursor-not-allowed disabled:opacity-60",
-				className
+				className,
 			)}
 			{...rest}
 		/>
@@ -192,7 +200,7 @@ export function InputGroupAddon({
 			className={cn(
 				"flex shrink-0 items-center gap-2 text-foreground-secondary",
 				ADDON_ALIGN[align],
-				className
+				className,
 			)}
 			data-align={align}
 			{...rest}
@@ -206,12 +214,16 @@ export interface InputGroupTextProps extends HTMLAttributes<HTMLSpanElement> {
 	children: ReactNode;
 }
 
-export function InputGroupText({ children, className, ...rest }: InputGroupTextProps) {
+export function InputGroupText({
+	children,
+	className,
+	...rest
+}: InputGroupTextProps) {
 	return (
 		<span
 			className={cn(
 				"select-none font-medium font-sans text-2xs text-foreground-muted uppercase leading-none tracking-[0.04em]",
-				className
+				className,
 			)}
 			{...rest}
 		>
@@ -220,7 +232,8 @@ export function InputGroupText({ children, className, ...rest }: InputGroupTextP
 	);
 }
 
-export interface InputGroupButtonProps extends ComponentPropsWithRef<typeof BaseButton> {
+export interface InputGroupButtonProps
+	extends ComponentPropsWithRef<typeof BaseButton> {
 	children: ReactNode;
 	tone?: "default" | "danger" | "ghost" | "surface";
 }
@@ -243,7 +256,8 @@ const BUTTON_TONE: Record<"default" | "danger" | "ghost", string> = {
 		"shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.18),0_1px_2px_0_oklch(0%_0_0/0.45),0_6px_18px_-6px_oklch(59%_0.22_25/0.5)]",
 		"hover:bg-error/95 hover:shadow-[inset_0_1px_0_0_oklch(100%_0_0/0.22),0_1px_2px_0_oklch(0%_0_0/0.45),0_10px_28px_-8px_oklch(59%_0.22_25/0.6)]",
 	].join(" "),
-	ghost: "bg-transparent text-foreground-muted hover:bg-foreground/[0.06] hover:text-foreground",
+	ghost:
+		"bg-transparent text-foreground-muted hover:bg-foreground/[0.06] hover:text-foreground",
 };
 
 /**
@@ -270,7 +284,7 @@ export function InputGroupButton({
 			? cn(
 					surfaceBg(Math.min(level + 1, 8)),
 					surfaceHoverBg(Math.min(level + 2, 8)),
-					"text-foreground-secondary shadow-sm ring-1 ring-divider hover:text-foreground hover:ring-border"
+					"text-foreground-secondary shadow-sm ring-1 ring-divider hover:text-foreground hover:ring-border",
 				)
 			: BUTTON_TONE[tone];
 	return (
@@ -281,7 +295,7 @@ export function InputGroupButton({
 				"focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
 				"disabled:cursor-not-allowed disabled:opacity-40",
 				toneClass,
-				className
+				className,
 			)}
 			type={type}
 			{...rest}

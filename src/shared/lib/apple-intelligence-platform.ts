@@ -32,7 +32,11 @@ interface ClassifyOpts {
  * decision (mac? → arch?) instead of inlining the OR-chains.
  */
 function detectMac(platform: string, userAgent: string): boolean {
-	return platform.includes("mac") || userAgent.includes("mac os") || userAgent.includes("macos");
+	return (
+		platform.includes("mac") ||
+		userAgent.includes("mac os") ||
+		userAgent.includes("macos")
+	);
 }
 
 /**
@@ -53,13 +57,17 @@ function detectAppleSilicon(platform: string, userAgent: string): boolean {
  * Map (platform, userAgent) to one of three buckets. Pure function — no
  * `navigator` access — so the tests can drive it with synthetic strings.
  */
-export function classifyAppleIntelligencePlatform(opts: ClassifyOpts): AppleIntelligencePlatform {
+export function classifyAppleIntelligencePlatform(
+	opts: ClassifyOpts,
+): AppleIntelligencePlatform {
 	const platform = (opts.platform ?? "").toLowerCase();
 	const userAgent = (opts.userAgent ?? "").toLowerCase();
 	if (!detectMac(platform, userAgent)) {
 		return "other";
 	}
-	return detectAppleSilicon(platform, userAgent) ? "apple-silicon" : "intel-mac";
+	return detectAppleSilicon(platform, userAgent)
+		? "apple-silicon"
+		: "intel-mac";
 }
 
 /**
@@ -71,7 +79,9 @@ export function detectAppleIntelligencePlatform(): AppleIntelligencePlatform {
 	if (typeof navigator === "undefined") {
 		return "other";
 	}
-	const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+	const nav = navigator as Navigator & {
+		userAgentData?: { platform?: string };
+	};
 	const userAgentDataPlatform = nav.userAgentData?.platform ?? "";
 	return classifyAppleIntelligencePlatform({
 		platform: `${nav.platform ?? ""} ${userAgentDataPlatform}`,

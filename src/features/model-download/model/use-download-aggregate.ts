@@ -75,7 +75,7 @@ function pickPrimary(entries: DownloadEntry[]): DownloadEntry {
  */
 function collectEntries(
 	quantDownloads: Record<string, QuantDownloadState>,
-	singleton: { active: boolean; name: string | null; percent: number | null }
+	singleton: { active: boolean; name: string | null; percent: number | null },
 ): DownloadEntry[] {
 	const entries: DownloadEntry[] = [];
 	if (singleton.active && singleton.name !== null) {
@@ -106,7 +106,9 @@ function averageKnownPercent(entries: DownloadEntry[]): number | null {
 	if (numericPercents.length === 0) {
 		return null;
 	}
-	return Math.round(numericPercents.reduce((a, b) => a + b, 0) / numericPercents.length);
+	return Math.round(
+		numericPercents.reduce((a, b) => a + b, 0) / numericPercents.length,
+	);
 }
 
 export function useDownloadAggregate(): DownloadAggregate | null {

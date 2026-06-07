@@ -19,18 +19,21 @@ import { DEFAULT_LOCALE } from "./config";
 // non-Vite runtimes such as `bun test`, where `import.meta.glob` is undefined
 // and the call would throw — there we fall back to an empty map so importing
 // this module never crashes.
-const loaders: Record<string, () => Promise<{ default: Record<string, unknown> }>> =
-	(() => {
-		try {
-			return import.meta.glob<{ default: Record<string, unknown> }>(
-				"../../../messages/*.json"
-			);
-		} catch {
-			return {};
-		}
-	})();
+const loaders: Record<
+	string,
+	() => Promise<{ default: Record<string, unknown> }>
+> = (() => {
+	try {
+		return import.meta.glob<{ default: Record<string, unknown> }>(
+			"../../../messages/*.json",
+		);
+	} catch {
+		return {};
+	}
+})();
 
-const localePath = (locale: string): string => `../../../messages/${locale}.json`;
+const localePath = (locale: string): string =>
+	`../../../messages/${locale}.json`;
 
 // Locales that physically have a `messages/<code>.json` bundle on disk. Derived
 // from the glob so it can never drift from the actual files. `config.ts`'s
@@ -48,8 +51,11 @@ export const SUPPORTED_LOCALES: readonly string[] = Object.keys(loaders)
  * to lag `en` in key coverage — use-intl falls back to `en` at runtime, and
  * `bun check:i18n` is the parity gate.
  */
-export async function loadMessages(locale: string): Promise<Record<string, unknown>> {
-	const loader = loaders[localePath(locale)] ?? loaders[localePath(DEFAULT_LOCALE)];
+export async function loadMessages(
+	locale: string,
+): Promise<Record<string, unknown>> {
+	const loader =
+		loaders[localePath(locale)] ?? loaders[localePath(DEFAULT_LOCALE)];
 	if (!loader) {
 		// Should be unreachable: en.json always exists. Return an empty bundle so
 		// the provider can still render (use-intl tolerates missing messages).

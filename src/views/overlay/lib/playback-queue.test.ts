@@ -12,7 +12,8 @@ import {
 // AudioContext that records buffer creation, source scheduling, resume /
 // close calls, and exposes hooks for tests to drive ``onended``.
 
-const OriginalAudioContext = (globalThis as { AudioContext?: unknown }).AudioContext;
+const OriginalAudioContext = (globalThis as { AudioContext?: unknown })
+	.AudioContext;
 
 interface FakeSource {
 	buffer: FakeBuffer | null;
@@ -68,7 +69,9 @@ class FakeAudioContext {
 		createdContexts.push(this);
 		if (provideSetSinkId) {
 			(
-				this as unknown as { setSinkId: (id: string | { type: "none" }) => Promise<void> }
+				this as unknown as {
+					setSinkId: (id: string | { type: "none" }) => Promise<void>;
+				}
 			).setSinkId = (id) => {
 				setSinkIdCalls.push(id);
 				return setSinkIdShouldReject
@@ -83,7 +86,11 @@ class FakeAudioContext {
 	get destination() {
 		return {};
 	}
-	createBuffer(channels: number, frames: number, sampleRate: number): FakeBuffer {
+	createBuffer(
+		channels: number,
+		frames: number,
+		sampleRate: number,
+	): FakeBuffer {
 		const channelData: Float32Array[] = [];
 		for (let i = 0; i < channels; i++) {
 			channelData.push(new Float32Array(frames));
@@ -96,13 +103,16 @@ class FakeAudioContext {
 			channelData,
 			// `copyToChannel` is a method on real AudioBuffer; attach inline.
 		} as FakeBuffer;
-		(buf as unknown as { copyToChannel: (data: Float32Array, ch: number) => void }).copyToChannel =
-			(data, ch) => {
-				const target = channelData[ch];
-				if (target) {
-					target.set(data.subarray(0, target.length));
-				}
-			};
+		(
+			buf as unknown as {
+				copyToChannel: (data: Float32Array, ch: number) => void;
+			}
+		).copyToChannel = (data, ch) => {
+			const target = channelData[ch];
+			if (target) {
+				target.set(data.subarray(0, target.length));
+			}
+		};
 		createdBuffers.push(buf);
 		return buf;
 	}
@@ -176,7 +186,8 @@ class FakeAudioContext {
 // fake and the real type (FakeAudioContext → AudioContext for injection, and
 // AudioBuffer → FakeBuffer to read back the recorded channel data). Each helper
 // returns the exact same object it was given.
-const asAudioContext = (ctx: FakeAudioContext) => ctx as unknown as AudioContext;
+const asAudioContext = (ctx: FakeAudioContext) =>
+	ctx as unknown as AudioContext;
 const asFakeBuffer = (buffer: AudioBuffer) => buffer as unknown as FakeBuffer;
 
 // Flush ALL pending microtasks. The encoded-decode path chains
@@ -184,7 +195,8 @@ const asFakeBuffer = (buffer: AudioBuffer) => buffer as unknown as FakeBuffer;
 // Promise.resolve()` hops don't drain it (notably the `finally` that decrements
 // `pendingDecodes`). A `setTimeout(0)` macrotask runs after the microtask queue
 // is empty, so awaiting it guarantees the whole decode chain has settled.
-const flushMicrotasks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+const flushMicrotasks = (): Promise<void> =>
+	new Promise((resolve) => setTimeout(resolve, 0));
 
 function reset(): void {
 	createdSources = [];
@@ -210,14 +222,15 @@ function reset(): void {
 
 beforeEach(reset);
 afterEach(() => {
-	(globalThis as { AudioContext?: unknown }).AudioContext = OriginalAudioContext;
+	(globalThis as { AudioContext?: unknown }).AudioContext =
+		OriginalAudioContext;
 });
 
 function makeF32leChunk(
 	requestId: string,
 	samples: number[],
 	channels = 1,
-	sampleRate = 24_000
+	sampleRate = 24_000,
 ): ChunkInput {
 	const arr = new Float32Array(samples);
 	return {
@@ -244,7 +257,9 @@ function makeEncodedChunk(requestId: string, format = "mp3"): ChunkInput {
 
 describe("parseFloat32Samples", () => {
 	test("returns null for non-f32le formats", () => {
-		expect(parseFloat32Samples({ ...makeF32leChunk("r", [0]), format: "s16le" })).toBeNull();
+		expect(
+			parseFloat32Samples({ ...makeF32leChunk("r", [0]), format: "s16le" }),
+		).toBeNull();
 	});
 
 	test("returns null for empty PCM payload", () => {
@@ -695,7 +710,11 @@ describe("TtsPlaybackQueue.setOutputDeviceId", () => {
 			await Promise.resolve();
 			await Promise.resolve();
 			expect(setSinkIdCalls).toEqual(["device-bad"]);
-			expect(warnings.some((w) => String(w[0]).includes("setSinkId re-route failed"))).toBe(true);
+			expect(
+				warnings.some((w) =>
+					String(w[0]).includes("setSinkId re-route failed"),
+				),
+			).toBe(true);
 		} finally {
 			console.warn = originalWarn;
 		}

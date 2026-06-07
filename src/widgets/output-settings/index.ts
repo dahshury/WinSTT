@@ -1,4 +1,4 @@
 export {
-  OutputSettingsPanel,
-  PlaybackSettingsPanel,
+	OutputSettingsPanel,
+	PlaybackSettingsPanel,
 } from "./ui/OutputSettingsPanel";

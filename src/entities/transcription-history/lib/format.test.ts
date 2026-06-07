@@ -13,8 +13,12 @@ import { effectiveText, entryWordCount, formatEntryTimestamp } from "./format";
 const _typeProbe = (
 	entry: HistoryEntry,
 	page: PaginatedHistory,
-	period: RecordingRetention
-): [HistoryEntry, PaginatedHistory, RecordingRetention] => [entry, page, period];
+	period: RecordingRetention,
+): [HistoryEntry, PaginatedHistory, RecordingRetention] => [
+	entry,
+	page,
+	period,
+];
 void _typeProbe;
 
 function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
@@ -47,14 +51,19 @@ describe("effectiveText", () => {
 	});
 
 	test("falls back to raw when postProcessedText is whitespace-only", () => {
-		const entry = makeEntry({ transcriptionText: "raw", postProcessedText: "   " });
+		const entry = makeEntry({
+			transcriptionText: "raw",
+			postProcessedText: "   ",
+		});
 		expect(effectiveText(entry)).toBe("raw");
 	});
 });
 
 describe("entryWordCount", () => {
 	test("counts whitespace-delimited tokens", () => {
-		expect(entryWordCount(makeEntry({ transcriptionText: "one two three" }))).toBe(3);
+		expect(
+			entryWordCount(makeEntry({ transcriptionText: "one two three" })),
+		).toBe(3);
 	});
 
 	test("returns 0 for empty/whitespace-only text", () => {
@@ -67,8 +76,8 @@ describe("entryWordCount", () => {
 				makeEntry({
 					transcriptionText: "one",
 					postProcessedText: "one two three four",
-				})
-			)
+				}),
+			),
 		).toBe(4);
 	});
 });

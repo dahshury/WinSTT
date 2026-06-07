@@ -10,14 +10,21 @@ export interface InfoTooltipProps {
 	content: string;
 }
 
-export function InfoTooltip({ content, ariaLabel = "More info" }: InfoTooltipProps) {
+export function InfoTooltip({
+	content,
+	ariaLabel = "More info",
+}: InfoTooltipProps) {
 	return (
 		<Tooltip content={content}>
 			<Button
 				aria-label={ariaLabel}
 				className="rounded-full bg-transparent p-0 text-foreground-muted transition-colors hover:text-foreground-secondary"
 			>
-				<HugeiconsIcon aria-hidden="true" icon={InformationCircleIcon} size={13} />
+				<HugeiconsIcon
+					aria-hidden="true"
+					icon={InformationCircleIcon}
+					size={13}
+				/>
 			</Button>
 		</Tooltip>
 	);

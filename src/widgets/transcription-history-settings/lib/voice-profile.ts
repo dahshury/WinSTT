@@ -18,12 +18,71 @@ export function tokenizeWords(text: string): string[] {
  * The plain "most used word" tile keeps these in.
  */
 const STOPWORDS = new Set([
-	"a", "about", "an", "and", "are", "as", "at", "be", "but", "by", "can", "did",
-	"do", "for", "from", "had", "has", "have", "he", "her", "his", "i", "if", "in",
-	"is", "it", "its", "just", "like", "me", "my", "no", "not", "of", "off", "ok",
-	"okay", "on", "or", "our", "out", "so", "that", "the", "their", "them", "then",
-	"they", "this", "to", "uh", "um", "up", "was", "we", "were", "what", "when",
-	"will", "with", "would", "yeah", "yes", "you", "your",
+	"a",
+	"about",
+	"an",
+	"and",
+	"are",
+	"as",
+	"at",
+	"be",
+	"but",
+	"by",
+	"can",
+	"did",
+	"do",
+	"for",
+	"from",
+	"had",
+	"has",
+	"have",
+	"he",
+	"her",
+	"his",
+	"i",
+	"if",
+	"in",
+	"is",
+	"it",
+	"its",
+	"just",
+	"like",
+	"me",
+	"my",
+	"no",
+	"not",
+	"of",
+	"off",
+	"ok",
+	"okay",
+	"on",
+	"or",
+	"our",
+	"out",
+	"so",
+	"that",
+	"the",
+	"their",
+	"them",
+	"then",
+	"they",
+	"this",
+	"to",
+	"uh",
+	"um",
+	"up",
+	"was",
+	"we",
+	"were",
+	"what",
+	"when",
+	"will",
+	"with",
+	"would",
+	"yeah",
+	"yes",
+	"you",
+	"your",
 ]);
 
 export interface WordCount {
@@ -49,7 +108,10 @@ export interface VoiceProfileStats {
  * reached the count (Map iteration is insertion order) — deterministic for a
  * given input. `skip` drops words from consideration (used for stopwords).
  */
-function topWord(counts: Map<string, number>, skip?: ReadonlySet<string>): WordCount | null {
+function topWord(
+	counts: Map<string, number>,
+	skip?: ReadonlySet<string>,
+): WordCount | null {
 	let best: WordCount | null = null;
 	for (const [word, count] of counts) {
 		if (skip?.has(word)) {
@@ -75,7 +137,9 @@ function bump(counts: Map<string, number>, key: string): void {
  *   - peakTime — the busiest (weekday, hour) bucket by local time.
  * Every field is `null` when there's no signal, so the UI can show a dash.
  */
-export function computeVoiceProfile(entries: TranscriptionHistoryEntry[]): VoiceProfileStats {
+export function computeVoiceProfile(
+	entries: TranscriptionHistoryEntry[],
+): VoiceProfileStats {
 	const wordCounts = new Map<string, number>();
 	const correctedCounts = new Map<string, number>();
 	const timeCounts = new Map<string, PeakTime>();
@@ -85,7 +149,10 @@ export function computeVoiceProfile(entries: TranscriptionHistoryEntry[]): Voice
 			bump(wordCounts, word);
 		}
 
-		if (typeof entry.originalText === "string" && entry.originalText.length > 0) {
+		if (
+			typeof entry.originalText === "string" &&
+			entry.originalText.length > 0
+		) {
 			const diff = buildTranscriptDiff(entry.originalText, entry.text);
 			if (diff !== null) {
 				for (const change of diff.changes) {

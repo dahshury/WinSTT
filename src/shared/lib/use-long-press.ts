@@ -41,13 +41,15 @@ export function useLongPress(
 		disabled = false,
 		moveTolerance = DEFAULT_MOVE_TOLERANCE_PX,
 		pointerTypes = DEFAULT_POINTER_TYPES,
-	}: UseLongPressOptions = {}
+	}: UseLongPressOptions = {},
 ): UseLongPressResult {
 	const [pressing, setPressing] = useState(false);
 	const activePointerRef = useRef<ActivePointer | null>(null);
 	const onLongPressRef = useRef(onLongPress);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const contextMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const contextMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 	const suppressContextMenuRef = useRef(false);
 
 	useEffect(() => {
@@ -85,7 +87,7 @@ export function useLongPress(
 				clearTimeout(contextMenuTimerRef.current);
 			}
 		},
-		[clearTimer]
+		[clearTimer],
 	);
 
 	const pointerAllowed = useCallback(
@@ -95,7 +97,7 @@ export function useLongPress(
 			}
 			return pointerTypes.includes(event.pointerType);
 		},
-		[disabled, pointerTypes]
+		[disabled, pointerTypes],
 	);
 
 	const onPointerDown = useCallback(
@@ -118,7 +120,7 @@ export function useLongPress(
 				onLongPressRef.current();
 			}, delay);
 		},
-		[clearTimer, delay, pointerAllowed, suppressNextContextMenu]
+		[clearTimer, delay, pointerAllowed, suppressNextContextMenu],
 	);
 
 	const onPointerMove = useCallback(
@@ -133,7 +135,7 @@ export function useLongPress(
 				cancel();
 			}
 		},
-		[cancel, moveTolerance]
+		[cancel, moveTolerance],
 	);
 
 	const onContextMenu = useCallback((event: ReactMouseEvent<HTMLElement>) => {
@@ -157,7 +159,7 @@ export function useLongPress(
 			onPointerMove,
 			onPointerUp: cancel,
 		}),
-		[cancel, onContextMenu, onPointerDown, onPointerMove]
+		[cancel, onContextMenu, onPointerDown, onPointerMove],
 	);
 
 	return { handlers, pressing };

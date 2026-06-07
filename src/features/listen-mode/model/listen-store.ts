@@ -20,6 +20,9 @@ export const useListenStore = create<ListenStore>()((set) => ({
 	deviceName: "",
 	devices: [],
 	setListening: (listening, deviceName) =>
-		set({ isListening: listening, deviceName: listening ? (deviceName ?? "") : "" }),
+		set({
+			isListening: listening,
+			deviceName: listening ? (deviceName ?? "") : "",
+		}),
 	setDevices: (devices) => set({ devices }),
 }));

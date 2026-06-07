@@ -5,7 +5,11 @@ import {
 	TextFontIcon,
 } from "@hugeicons/core-free-icons";
 import { useTranslations } from "use-intl";
-import { type AggregateStats, formatDuration, formatWpm } from "../lib/word-stats";
+import {
+	type AggregateStats,
+	formatDuration,
+	formatWpm,
+} from "../lib/word-stats";
 import { StatTile, type StatTileData } from "./StatTile";
 
 interface HistorySummaryProps {

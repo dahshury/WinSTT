@@ -23,20 +23,13 @@ import { computePillReveal, useStickyPillReveal } from "../lib/overlay-reveal";
 import { useTtsPlaybackStore } from "../model/tts-playback-store";
 import { DynamicIslandPill } from "./DynamicIslandPill";
 import { DynamicTransformIslandLayer } from "./DynamicTransformIsland";
-import {
-	FloatingBottomPill,
-	FloatingTransformPill,
-} from "./FloatingPill";
+import { FloatingBottomPill, FloatingTransformPill } from "./FloatingPill";
 import {
 	useOverlayNativeHitRegions,
 	useResetOnOverlayShow,
 	useTransparentBody,
 } from "./overlay-hit-regions";
-import {
-	ICON_PRESET_PX,
-	PRESET_HEIGHT_PX,
-	toPreset,
-} from "./overlay-shell";
+import { ICON_PRESET_PX, PRESET_HEIGHT_PX, toPreset } from "./overlay-shell";
 import { TtsIslandLayer, useTtsIslandBridge } from "./TtsIsland";
 import { TtsPlaybackMount } from "./TtsPlaybackMount";
 

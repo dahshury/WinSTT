@@ -3,7 +3,7 @@ import { IPC } from "./ipc-channels";
 import type { MicrophoneLevelMonitorTarget } from "./ipc/stt-audio";
 
 export const noop = () => {
-  /* outside a bridge context */
+	/* outside a bridge context */
 };
 
 export type FallbackValue<T> = T | (() => T);
@@ -33,27 +33,27 @@ export type FallbackValue<T> = T | (() => T);
  * as critical. Channels in neither set stay fully tolerant (silent fallback).
  */
 const CRITICAL_REJECT_CHANNELS: ReadonlySet<string> = new Set<string>([
-  IPC.STT_PREDOWNLOAD_QUANT,
-  IPC.STT_DOWNLOAD_PAUSE,
-  IPC.STT_DOWNLOAD_RESUME,
-  IPC.STT_DOWNLOAD_CANCEL_QUANT,
-  IPC.STT_CANCEL_DOWNLOAD,
-  IPC.STT_DELETE_MODEL_QUANTIZATION,
-  IPC.STT_DELETE_MODEL_CACHE,
-  IPC.STT_RELOAD_MODEL,
-  IPC.SETTINGS_REMOVE_APPLICATION_DATA,
-  IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS,
-  IPC.TRANSFORMS_PREVIEW,
+	IPC.STT_PREDOWNLOAD_QUANT,
+	IPC.STT_DOWNLOAD_PAUSE,
+	IPC.STT_DOWNLOAD_RESUME,
+	IPC.STT_DOWNLOAD_CANCEL_QUANT,
+	IPC.STT_CANCEL_DOWNLOAD,
+	IPC.STT_DELETE_MODEL_QUANTIZATION,
+	IPC.STT_DELETE_MODEL_CACHE,
+	IPC.STT_RELOAD_MODEL,
+	IPC.SETTINGS_REMOVE_APPLICATION_DATA,
+	IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS,
+	IPC.TRANSFORMS_PREVIEW,
 ]);
 
 const CRITICAL_LOG_ONLY_CHANNELS: ReadonlySet<string> = new Set<string>([
-  IPC.SETTINGS_LOAD,
-  IPC.SETTINGS_SAVE,
-  // model-state read: the caller (`model-state-store.refresh`) inspects the
-  // resolved payload and falls through to a backed-off `scheduleRetry()` on a
-  // timeout/malformed result. Re-rejecting here would skip that retry path, so
-  // surface the failure loudly (console.error) but STILL return the fallback.
-  IPC.STT_LIST_MODELS_WITH_STATE,
+	IPC.SETTINGS_LOAD,
+	IPC.SETTINGS_SAVE,
+	// model-state read: the caller (`model-state-store.refresh`) inspects the
+	// resolved payload and falls through to a backed-off `scheduleRetry()` on a
+	// timeout/malformed result. Re-rejecting here would skip that retry path, so
+	// surface the failure loudly (console.error) but STILL return the fallback.
+	IPC.STT_LIST_MODELS_WITH_STATE,
 ]);
 
 // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent —
@@ -63,29 +63,29 @@ const CRITICAL_LOG_ONLY_CHANNELS: ReadonlySet<string> = new Set<string>([
 // always true and any mutation to it is unobservable. The RHS `window.nativeBridge != null`
 // is what every test exercises (via setting nativeBridge to undefined or a mock).
 export function hasNativeBridge(): boolean {
-  return typeof window !== "undefined" && window.nativeBridge != null;
+	return typeof window !== "undefined" && window.nativeBridge != null;
 }
 
 function hasTauriRuntime(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  const maybeWindow = window as Window & {
-    __TAURI_INTERNALS__?: unknown;
-  };
-  return maybeWindow.__TAURI_INTERNALS__ != null;
+	if (typeof window === "undefined") {
+		return false;
+	}
+	const maybeWindow = window as Window & {
+		__TAURI_INTERNALS__?: unknown;
+	};
+	return maybeWindow.__TAURI_INTERNALS__ != null;
 }
 
 function canUseDevSettingsBridge(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.location.port === "1420" &&
-    !hasTauriRuntime()
-  );
+	return (
+		typeof window !== "undefined" &&
+		window.location.port === "1420" &&
+		!hasTauriRuntime()
+	);
 }
 
 export function hasSettingsBackend(): boolean {
-  return hasTauriRuntime() || canUseDevSettingsBridge();
+	return hasTauriRuntime() || canUseDevSettingsBridge();
 }
 
 /**
@@ -96,7 +96,7 @@ export function hasSettingsBackend(): boolean {
  * strip (numbers, strings, booleans, null).
  */
 function isObjectArg(arg: unknown): arg is object {
-  return arg !== null && typeof arg === "object";
+	return arg !== null && typeof arg === "object";
 }
 
 /**
@@ -110,7 +110,7 @@ function isObjectArg(arg: unknown): arg is object {
  * handles it natively — guarding on it keeps `isObjectArg` clean.
  */
 function jsonRoundTripArg(arg: unknown): unknown {
-  return isObjectArg(arg) ? JSON.parse(JSON.stringify(arg)) : arg;
+	return isObjectArg(arg) ? JSON.parse(JSON.stringify(arg)) : arg;
 }
 
 /**
@@ -135,23 +135,23 @@ function jsonRoundTripArg(arg: unknown): unknown {
  * pinpointable instead of silently masked.
  */
 function toCloneableArgs(channel: string, args: unknown[]): unknown[] {
-  try {
-    return structuredClone(args);
-  } catch {
-    try {
-      console.warn(
-        `[ipc] non-cloneable payload on "${channel}" — sanitizing via JSON round-trip`,
-      );
-      return args.map(jsonRoundTripArg);
-    } catch {
-      // Circular / wholly unserialisable — drop to empty args rather than
-      // throwing and crashing the renderer.
-      console.warn(
-        `[ipc] payload on "${channel}" unserialisable — sending no args`,
-      );
-      return [];
-    }
-  }
+	try {
+		return structuredClone(args);
+	} catch {
+		try {
+			console.warn(
+				`[ipc] non-cloneable payload on "${channel}" — sanitizing via JSON round-trip`,
+			);
+			return args.map(jsonRoundTripArg);
+		} catch {
+			// Circular / wholly unserialisable — drop to empty args rather than
+			// throwing and crashing the renderer.
+			console.warn(
+				`[ipc] payload on "${channel}" unserialisable — sending no args`,
+			);
+			return [];
+		}
+	}
 }
 
 /**
@@ -163,57 +163,57 @@ function toCloneableArgs(channel: string, args: unknown[]): unknown[] {
  * map — they stay on the adapter's `POSITIONAL_STRING_PARAM` path.
  */
 function firstObjArg(args: unknown[]): Record<string, unknown> {
-  const first = args[0];
-  if (first !== null && typeof first === "object" && !Array.isArray(first)) {
-    return first as Record<string, unknown>;
-  }
-  return {};
+	const first = args[0];
+	if (first !== null && typeof first === "object" && !Array.isArray(first)) {
+		return first as Record<string, unknown>;
+	}
+	return {};
 }
 
 async function readDevSettingsBridgeJson(
-  response: Response,
+	response: Response,
 ): Promise<Record<string, unknown>> {
-  let body: unknown = {};
-  try {
-    body = await response.json();
-  } catch {
-    // Keep the original HTTP status as the useful failure signal below.
-  }
-  if (!response.ok) {
-    const message =
-      body !== null &&
-      typeof body === "object" &&
-      "error" in body &&
-      typeof body.error === "string"
-        ? body.error
-        : `HTTP ${response.status}`;
-    throw new Error(message);
-  }
-  return body !== null && typeof body === "object"
-    ? (body as Record<string, unknown>)
-    : {};
+	let body: unknown = {};
+	try {
+		body = await response.json();
+	} catch {
+		// Keep the original HTTP status as the useful failure signal below.
+	}
+	if (!response.ok) {
+		const message =
+			body !== null &&
+			typeof body === "object" &&
+			"error" in body &&
+			typeof body.error === "string"
+				? body.error
+				: `HTTP ${response.status}`;
+		throw new Error(message);
+	}
+	return body !== null && typeof body === "object"
+		? (body as Record<string, unknown>)
+		: {};
 }
 
 async function devSettingsLoad(): Promise<unknown> {
-  const response = await fetch("/__winstt/settings", {
-    headers: { Accept: "application/json" },
-  });
-  const body = await readDevSettingsBridgeJson(response);
-  return body.settings ?? {};
+	const response = await fetch("/__winstt/settings", {
+		headers: { Accept: "application/json" },
+	});
+	const body = await readDevSettingsBridgeJson(response);
+	return body.settings ?? {};
 }
 
 async function devSettingsSave(args: unknown[]): Promise<void> {
-  const payload = firstObjArg(args);
-  const settings = "settings" in payload ? payload.settings : {};
-  const response = await fetch("/__winstt/settings", {
-    method: "PATCH",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ settings }),
-  });
-  await readDevSettingsBridgeJson(response);
+	const payload = firstObjArg(args);
+	const settings = "settings" in payload ? payload.settings : {};
+	const response = await fetch("/__winstt/settings", {
+		method: "PATCH",
+		headers: {
+			Accept: "application/json",
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ settings }),
+	});
+	await readDevSettingsBridgeJson(response);
 }
 
 /**
@@ -227,22 +227,22 @@ async function devSettingsSave(args: unknown[]): Promise<void> {
  *  - raw   → returned unchanged
  */
 function unwrapResult(v: unknown): unknown {
-  if (
-    v !== null &&
-    typeof v === "object" &&
-    "status" in v &&
-    ((v as { status: unknown }).status === "ok" ||
-      (v as { status: unknown }).status === "error")
-  ) {
-    const r = v as
-      | { status: "ok"; data: unknown }
-      | { status: "error"; error: unknown };
-    if (r.status === "ok") {
-      return r.data;
-    }
-    throw r.error;
-  }
-  return v;
+	if (
+		v !== null &&
+		typeof v === "object" &&
+		"status" in v &&
+		((v as { status: unknown }).status === "ok" ||
+			(v as { status: unknown }).status === "error")
+	) {
+		const r = v as
+			| { status: "ok"; data: unknown }
+			| { status: "error"; error: unknown };
+		if (r.status === "ok") {
+			return r.data;
+		}
+		throw r.error;
+	}
+	return v;
 }
 
 /**
@@ -265,223 +265,223 @@ function unwrapResult(v: unknown): unknown {
  * wrapper arg-shape doesn't line up 1:1 with the command params.
  */
 const COMMAND_INVOKERS: Partial<
-  Record<string, (a: Record<string, unknown>) => Promise<unknown>>
+	Record<string, (a: Record<string, unknown>) => Promise<unknown>>
 > = {
-  // ── STT dictation core ──
-  [IPC.STT_SET_PARAMETER]: (a) =>
-    commands.winsttSetParameter(a.parameter as string, a.value as never),
-  [IPC.STT_GET_PARAMETER]: (a) =>
-    commands.winsttGetParameter(a.parameter as string),
-  [IPC.STT_CALL_METHOD]: (a) =>
-    commands.winsttCallMethod(
-      a.method as string,
-      (a.args as never[] | undefined) ?? null,
-    ),
-  [IPC.STT_ABORT_OPERATION]: () => commands.cancelCurrentOperation(),
-  [IPC.STT_RELOAD_MODEL]: (a) =>
-    commands.setWinsttModel(
-      a.kind as string,
-      a.name as string,
-      (a.quantization as string | null | undefined) ?? null,
-    ),
+	// ── STT dictation core ──
+	[IPC.STT_SET_PARAMETER]: (a) =>
+		commands.winsttSetParameter(a.parameter as string, a.value as never),
+	[IPC.STT_GET_PARAMETER]: (a) =>
+		commands.winsttGetParameter(a.parameter as string),
+	[IPC.STT_CALL_METHOD]: (a) =>
+		commands.winsttCallMethod(
+			a.method as string,
+			(a.args as never[] | undefined) ?? null,
+		),
+	[IPC.STT_ABORT_OPERATION]: () => commands.cancelCurrentOperation(),
+	[IPC.STT_RELOAD_MODEL]: (a) =>
+		commands.setWinsttModel(
+			a.kind as string,
+			a.name as string,
+			(a.quantization as string | null | undefined) ?? null,
+		),
 
-  // ── Model catalog / runtime / fitness ──
-  [IPC.STT_GET_MODEL_CATALOG]: () => commands.listModels(),
-  [IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.listModelsWithState(),
-  [IPC.STT_GET_RUNTIME_INFO]: () => commands.getRuntimeInfo(),
-  [IPC.STT_GET_LIVE_RESOURCES]: (a) =>
-    commands.getLiveResources((a.forceRefresh as boolean | undefined) ?? null),
-  [IPC.STT_ASSESS_DICTATION_FIT]: (a) =>
-    commands.assessDictationFit(
-      a.modelId as string,
-      (a.quantization as string | null | undefined) ?? null,
-      (a.device as string | null | undefined) ?? null,
-    ),
-  [IPC.STT_ASSESS_OLLAMA_FIT]: (a) =>
-    commands.assessOllamaFit(a.sizeBytes as number),
+	// ── Model catalog / runtime / fitness ──
+	[IPC.STT_GET_MODEL_CATALOG]: () => commands.listModels(),
+	[IPC.STT_LIST_MODELS_WITH_STATE]: () => commands.listModelsWithState(),
+	[IPC.STT_GET_RUNTIME_INFO]: () => commands.getRuntimeInfo(),
+	[IPC.STT_GET_LIVE_RESOURCES]: (a) =>
+		commands.getLiveResources((a.forceRefresh as boolean | undefined) ?? null),
+	[IPC.STT_ASSESS_DICTATION_FIT]: (a) =>
+		commands.assessDictationFit(
+			a.modelId as string,
+			(a.quantization as string | null | undefined) ?? null,
+			(a.device as string | null | undefined) ?? null,
+		),
+	[IPC.STT_ASSESS_OLLAMA_FIT]: (a) =>
+		commands.assessOllamaFit(a.sizeBytes as number),
 
-  // ── Per-quant download lifecycle ──
-  [IPC.STT_PREDOWNLOAD_QUANT]: (a) =>
-    commands.predownloadQuant(a.modelId as string, a.quantization as string),
-  [IPC.STT_DOWNLOAD_PAUSE]: (a) =>
-    commands.downloadPauseQuant(a.modelId as string, a.quantization as string),
-  [IPC.STT_DOWNLOAD_RESUME]: (a) =>
-    commands.downloadResumeQuant(a.modelId as string, a.quantization as string),
-  [IPC.STT_DOWNLOAD_CANCEL_QUANT]: (a) =>
-    commands.downloadCancelQuant(a.modelId as string, a.quantization as string),
-  [IPC.STT_DELETE_MODEL_QUANTIZATION]: (a) =>
-    commands.deleteModelQuantization(
-      a.modelId as string,
-      a.quantization as string,
-    ),
-  [IPC.STT_CANCEL_DOWNLOAD]: () => commands.winsttCancelDownload(),
+	// ── Per-quant download lifecycle ──
+	[IPC.STT_PREDOWNLOAD_QUANT]: (a) =>
+		commands.predownloadQuant(a.modelId as string, a.quantization as string),
+	[IPC.STT_DOWNLOAD_PAUSE]: (a) =>
+		commands.downloadPauseQuant(a.modelId as string, a.quantization as string),
+	[IPC.STT_DOWNLOAD_RESUME]: (a) =>
+		commands.downloadResumeQuant(a.modelId as string, a.quantization as string),
+	[IPC.STT_DOWNLOAD_CANCEL_QUANT]: (a) =>
+		commands.downloadCancelQuant(a.modelId as string, a.quantization as string),
+	[IPC.STT_DELETE_MODEL_QUANTIZATION]: (a) =>
+		commands.deleteModelQuantization(
+			a.modelId as string,
+			a.quantization as string,
+		),
+	[IPC.STT_CANCEL_DOWNLOAD]: () => commands.winsttCancelDownload(),
 
-  // ── Settings ──
-  [IPC.SETTINGS_LOAD]: () => commands.winsttGetSettings(),
-  [IPC.SETTINGS_SAVE]: (a) => commands.winsttSetSettings(a.settings as never),
-  [IPC.SETTINGS_REMOVE_APPLICATION_DATA]: (a) =>
-    commands.removeApplicationData(
-      (a.deleteOllamaModels as boolean | undefined) ?? false,
-    ),
-  [IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS]: (a) =>
-    commands.removeDownloadedModels(
-      (a.deleteOllamaModels as boolean | undefined) ?? false,
-    ),
+	// ── Settings ──
+	[IPC.SETTINGS_LOAD]: () => commands.winsttGetSettings(),
+	[IPC.SETTINGS_SAVE]: (a) => commands.winsttSetSettings(a.settings as never),
+	[IPC.SETTINGS_REMOVE_APPLICATION_DATA]: (a) =>
+		commands.removeApplicationData(
+			(a.deleteOllamaModels as boolean | undefined) ?? false,
+		),
+	[IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS]: (a) =>
+		commands.removeDownloadedModels(
+			(a.deleteOllamaModels as boolean | undefined) ?? false,
+		),
 
-  // ── Hotkey ──
-  [IPC.HOTKEY_REGISTER]: (a) =>
-    commands.hotkeyRegister(a.accelerator as string),
-  [IPC.HOTKEY_UNREGISTER]: (a) =>
-    commands.hotkeyUnregister(a.accelerator as string),
-  [IPC.HOTKEY_START_RECORDING]: () => commands.hotkeyStartRecording(),
-  [IPC.HOTKEY_STOP_RECORDING]: () => commands.hotkeyStopRecording(),
+	// ── Hotkey ──
+	[IPC.HOTKEY_REGISTER]: (a) =>
+		commands.hotkeyRegister(a.accelerator as string),
+	[IPC.HOTKEY_UNREGISTER]: (a) =>
+		commands.hotkeyUnregister(a.accelerator as string),
+	[IPC.HOTKEY_START_RECORDING]: () => commands.hotkeyStartRecording(),
+	[IPC.HOTKEY_STOP_RECORDING]: () => commands.hotkeyStopRecording(),
 
-  // ── System ──
-  [IPC.AUDIO_GET_DEVICES]: () => commands.getAudioDevices(),
-  [IPC.AUDIO_REFRESH_DEVICES]: () => commands.refreshAudioDevices(),
-  [IPC.AUDIO_SET_SELECTED_MICROPHONE]: (a) =>
-    commands.setSelectedMicrophone(a.deviceName as string),
-  [IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR]: (a) =>
-    commands.startMicrophoneLevelMonitor(
-      a.targets as MicrophoneLevelMonitorTarget[],
-    ),
-  [IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR]: () =>
-    commands.stopMicrophoneLevelMonitor(),
-  [IPC.GPU_GET_INFO]: () => commands.gpuGetInfo(),
-  [IPC.CONTEXT_LIST_APPS]: () => commands.listContextApps(),
+	// ── System ──
+	[IPC.AUDIO_GET_DEVICES]: () => commands.getAudioDevices(),
+	[IPC.AUDIO_REFRESH_DEVICES]: () => commands.refreshAudioDevices(),
+	[IPC.AUDIO_SET_SELECTED_MICROPHONE]: (a) =>
+		commands.setSelectedMicrophone(a.deviceName as string),
+	[IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR]: (a) =>
+		commands.startMicrophoneLevelMonitor(
+			a.targets as MicrophoneLevelMonitorTarget[],
+		),
+	[IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR]: () =>
+		commands.stopMicrophoneLevelMonitor(),
+	[IPC.GPU_GET_INFO]: () => commands.gpuGetInfo(),
+	[IPC.CONTEXT_LIST_APPS]: () => commands.listContextApps(),
 
-  // ── TTS ──
-  [IPC.TTS_SPEAK]: (a) =>
-    commands.ttsSpeak(
-      a.text as string,
-      (a.voice as string | null | undefined) ?? null,
-      (a.lang as string | null | undefined) ?? null,
-      (a.speed as number | null | undefined) ?? null,
-    ),
-  [IPC.TTS_CANCEL]: (a) =>
-    commands.ttsCancel((a.requestId as string | null | undefined) ?? null),
-  [IPC.TTS_SET_SPEED]: (a) => commands.ttsSetSpeed(a.speed as number),
-  [IPC.TTS_INIT]: () => commands.ttsInit(),
-  [IPC.TTS_LIST_VOICES]: (a) =>
-    commands.ttsListVoices((a.modelId as string | null | undefined) ?? null),
-  [IPC.TTS_CLOUD_LIST_VOICES]: () => commands.ttsListCloudVoices(),
-  [IPC.TTS_CLOUD_PREVIEW]: (a) =>
-    commands.ttsPreviewCloud(a.previewUrl as string),
-  [IPC.TTS_CLOUD_SUBSCRIPTION]: () => commands.ttsCloudSubscription(),
-  [IPC.TTS_DOWNLOAD_ESTIMATE]: () => commands.ttsDownloadEstimate(),
-  [IPC.TTS_INSTALL_PAUSE]: () => commands.ttsInstallPause(),
-  [IPC.TTS_INSTALL_RESUME]: () => commands.ttsInstallResume(),
-  [IPC.TTS_INSTALL_CANCEL]: () => commands.ttsInstallCancel(),
-  [IPC.TTS_REPORT_PLAYBACK_STARTED]: (a) =>
-    commands.ttsReportPlaybackStarted(a.requestId as string),
-  [IPC.TTS_REPORT_PLAYBACK_ENDED]: (a) =>
-    commands.ttsReportPlaybackEnded(a.requestId as string),
-  [IPC.TTS_LIST_MODELS]: () => commands.ttsListModels(),
-  [IPC.TTS_LIST_MODELS_WITH_STATE]: () => commands.ttsListModelsWithState(),
-  [IPC.TTS_PREDOWNLOAD]: (a) =>
-    commands.ttsPredownloadModel(a.modelId as string, a.quantization as string),
-  [IPC.TTS_DOWNLOAD_PAUSE]: (a) =>
-    commands.ttsDownloadPause(a.modelId as string, a.quantization as string),
-  [IPC.TTS_DOWNLOAD_RESUME]: (a) =>
-    commands.ttsDownloadResume(a.modelId as string, a.quantization as string),
-  [IPC.TTS_DOWNLOAD_CANCEL]: (a) =>
-    commands.ttsDownloadCancel(a.modelId as string, a.quantization as string),
-  [IPC.TTS_DELETE_MODEL]: (a) =>
-    commands.ttsDeleteModel(a.modelId as string, a.quantization as string),
+	// ── TTS ──
+	[IPC.TTS_SPEAK]: (a) =>
+		commands.ttsSpeak(
+			a.text as string,
+			(a.voice as string | null | undefined) ?? null,
+			(a.lang as string | null | undefined) ?? null,
+			(a.speed as number | null | undefined) ?? null,
+		),
+	[IPC.TTS_CANCEL]: (a) =>
+		commands.ttsCancel((a.requestId as string | null | undefined) ?? null),
+	[IPC.TTS_SET_SPEED]: (a) => commands.ttsSetSpeed(a.speed as number),
+	[IPC.TTS_INIT]: () => commands.ttsInit(),
+	[IPC.TTS_LIST_VOICES]: (a) =>
+		commands.ttsListVoices((a.modelId as string | null | undefined) ?? null),
+	[IPC.TTS_CLOUD_LIST_VOICES]: () => commands.ttsListCloudVoices(),
+	[IPC.TTS_CLOUD_PREVIEW]: (a) =>
+		commands.ttsPreviewCloud(a.previewUrl as string),
+	[IPC.TTS_CLOUD_SUBSCRIPTION]: () => commands.ttsCloudSubscription(),
+	[IPC.TTS_DOWNLOAD_ESTIMATE]: () => commands.ttsDownloadEstimate(),
+	[IPC.TTS_INSTALL_PAUSE]: () => commands.ttsInstallPause(),
+	[IPC.TTS_INSTALL_RESUME]: () => commands.ttsInstallResume(),
+	[IPC.TTS_INSTALL_CANCEL]: () => commands.ttsInstallCancel(),
+	[IPC.TTS_REPORT_PLAYBACK_STARTED]: (a) =>
+		commands.ttsReportPlaybackStarted(a.requestId as string),
+	[IPC.TTS_REPORT_PLAYBACK_ENDED]: (a) =>
+		commands.ttsReportPlaybackEnded(a.requestId as string),
+	[IPC.TTS_LIST_MODELS]: () => commands.ttsListModels(),
+	[IPC.TTS_LIST_MODELS_WITH_STATE]: () => commands.ttsListModelsWithState(),
+	[IPC.TTS_PREDOWNLOAD]: (a) =>
+		commands.ttsPredownloadModel(a.modelId as string, a.quantization as string),
+	[IPC.TTS_DOWNLOAD_PAUSE]: (a) =>
+		commands.ttsDownloadPause(a.modelId as string, a.quantization as string),
+	[IPC.TTS_DOWNLOAD_RESUME]: (a) =>
+		commands.ttsDownloadResume(a.modelId as string, a.quantization as string),
+	[IPC.TTS_DOWNLOAD_CANCEL]: (a) =>
+		commands.ttsDownloadCancel(a.modelId as string, a.quantization as string),
+	[IPC.TTS_DELETE_MODEL]: (a) =>
+		commands.ttsDeleteModel(a.modelId as string, a.quantization as string),
 
-  // ── LLM / Ollama / OpenRouter ──
-  [IPC.LLM_SCAN_MODELS]: () => commands.scanOllamaModels(),
-  [IPC.LLM_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterModels(),
-  [IPC.LLM_DETECT_OLLAMA]: () => commands.ollamaDetect(),
-  [IPC.LLM_START_OLLAMA]: () => commands.ollamaStart(),
-  [IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a.model as string),
-  [IPC.LLM_CANCEL_PULL_MODEL]: (a) =>
-    commands.ollamaCancelPull(a.model as string),
-  [IPC.LLM_DELETE_MODEL]: (a) => commands.ollamaDelete(a.model as string),
-  [IPC.LLM_FETCH_OLLAMA_LIBRARY]: () => commands.ollamaFetchLibrary(),
-  [IPC.LLM_FETCH_OLLAMA_TAGS]: (a) =>
-    commands.ollamaFetchTags(a.model as string),
-  [IPC.LLM_GET_WARMUP_STATUS]: () => commands.llmGetWarmupStatus(),
+	// ── LLM / Ollama / OpenRouter ──
+	[IPC.LLM_SCAN_MODELS]: () => commands.scanOllamaModels(),
+	[IPC.LLM_SCAN_OPENROUTER_MODELS]: () => commands.scanOpenrouterModels(),
+	[IPC.LLM_DETECT_OLLAMA]: () => commands.ollamaDetect(),
+	[IPC.LLM_START_OLLAMA]: () => commands.ollamaStart(),
+	[IPC.LLM_PULL_MODEL]: (a) => commands.ollamaPull(a.model as string),
+	[IPC.LLM_CANCEL_PULL_MODEL]: (a) =>
+		commands.ollamaCancelPull(a.model as string),
+	[IPC.LLM_DELETE_MODEL]: (a) => commands.ollamaDelete(a.model as string),
+	[IPC.LLM_FETCH_OLLAMA_LIBRARY]: () => commands.ollamaFetchLibrary(),
+	[IPC.LLM_FETCH_OLLAMA_TAGS]: (a) =>
+		commands.ollamaFetchTags(a.model as string),
+	[IPC.LLM_GET_WARMUP_STATUS]: () => commands.llmGetWarmupStatus(),
 
-  // ── Transforms ──
-  [IPC.LLM_PROCESS_TEXT]: (a) =>
-    commands.processText(
-      a.text as string,
-      (a.context as string | undefined) ?? "",
-    ),
-  [IPC.LLM_PROCESS_TEXT_CUSTOM]: (a) =>
-    commands.processText(
-      a.text as string,
-      (a.context as string | undefined) ?? "",
-    ),
+	// ── Transforms ──
+	[IPC.LLM_PROCESS_TEXT]: (a) =>
+		commands.processText(
+			a.text as string,
+			(a.context as string | undefined) ?? "",
+		),
+	[IPC.LLM_PROCESS_TEXT_CUSTOM]: (a) =>
+		commands.processText(
+			a.text as string,
+			(a.context as string | undefined) ?? "",
+		),
 
-  [IPC.TRANSFORMS_APPLY]: () => commands.applyTransform(),
-  [IPC.TRANSFORMS_PREVIEW]: (a) =>
-    commands.applyTransformPreview(
-      a.text as string,
-      a.feature as string,
-      (a.config as never | undefined) ?? null,
-    ),
-  [IPC.TRANSFORM_HISTORY_GET_ALL]: () => commands.transformHistoryGetAll(),
-  [IPC.TRANSFORM_HISTORY_CLEAR]: () => commands.transformHistoryClear(),
-  [IPC.TRANSFORM_HISTORY_DELETE]: (a) =>
-    commands.transformHistoryDelete(a.id as string),
+	[IPC.TRANSFORMS_APPLY]: () => commands.applyTransform(),
+	[IPC.TRANSFORMS_PREVIEW]: (a) =>
+		commands.applyTransformPreview(
+			a.text as string,
+			a.feature as string,
+			(a.config as never | undefined) ?? null,
+		),
+	[IPC.TRANSFORM_HISTORY_GET_ALL]: () => commands.transformHistoryGetAll(),
+	[IPC.TRANSFORM_HISTORY_CLEAR]: () => commands.transformHistoryClear(),
+	[IPC.TRANSFORM_HISTORY_DELETE]: (a) =>
+		commands.transformHistoryDelete(a.id as string),
 
-  // ── Preview-before-pasting ──
-  [IPC.PREVIEW_CONFIRM_PASTE]: (a) => commands.confirmPaste(a.text as string),
-  [IPC.PREVIEW_CANCEL]: () => commands.cancelPreview(),
+	// ── Preview-before-pasting ──
+	[IPC.PREVIEW_CONFIRM_PASTE]: (a) => commands.confirmPaste(a.text as string),
+	[IPC.PREVIEW_CANCEL]: () => commands.cancelPreview(),
 
-  // ── File transcription queue ──
-  [IPC.FILE_QUEUE_ENQUEUE]: (a) =>
-    commands.fileTranscribeEnqueue(a.files as never[]),
-  [IPC.FILE_QUEUE_PICK_AND_ENQUEUE]: () =>
-    commands.fileTranscribePickAndEnqueue(),
-  [IPC.FILE_QUEUE_CANCEL]: (a) => commands.fileTranscribeCancel(a.id as string),
-  [IPC.FILE_QUEUE_RETRY]: (a) => commands.fileTranscribeRetry(a.id as string),
-  [IPC.FILE_QUEUE_COPY]: (a) => commands.fileTranscribeCopy(a.id as string),
-  [IPC.FILE_QUEUE_CLEAR]: () => commands.fileTranscribeClear(),
-  [IPC.FILE_QUEUE_PAUSE]: (a) =>
-    commands.fileTranscribePause((a.id as string | null | undefined) ?? null),
-  [IPC.FILE_QUEUE_RESUME]: (a) =>
-    commands.fileTranscribeResume((a.id as string | null | undefined) ?? null),
-  [IPC.FILE_QUEUE_DISCARD_ALL]: () => commands.fileTranscribeDiscardAll(),
-  [IPC.FILE_QUEUE_GET_ACTIVE]: () => commands.fileTranscribeGetActive(),
+	// ── File transcription queue ──
+	[IPC.FILE_QUEUE_ENQUEUE]: (a) =>
+		commands.fileTranscribeEnqueue(a.files as never[]),
+	[IPC.FILE_QUEUE_PICK_AND_ENQUEUE]: () =>
+		commands.fileTranscribePickAndEnqueue(),
+	[IPC.FILE_QUEUE_CANCEL]: (a) => commands.fileTranscribeCancel(a.id as string),
+	[IPC.FILE_QUEUE_RETRY]: (a) => commands.fileTranscribeRetry(a.id as string),
+	[IPC.FILE_QUEUE_COPY]: (a) => commands.fileTranscribeCopy(a.id as string),
+	[IPC.FILE_QUEUE_CLEAR]: () => commands.fileTranscribeClear(),
+	[IPC.FILE_QUEUE_PAUSE]: (a) =>
+		commands.fileTranscribePause((a.id as string | null | undefined) ?? null),
+	[IPC.FILE_QUEUE_RESUME]: (a) =>
+		commands.fileTranscribeResume((a.id as string | null | undefined) ?? null),
+	[IPC.FILE_QUEUE_DISCARD_ALL]: () => commands.fileTranscribeDiscardAll(),
+	[IPC.FILE_QUEUE_GET_ACTIVE]: () => commands.fileTranscribeGetActive(),
 
-  // ── Loopback / listen ──
-  [IPC.LOOPBACK_LIST_DEVICES]: () => commands.loopbackListDevices(),
-  [IPC.LOOPBACK_START]: (a) => commands.startListen(a.deviceIndex as number),
-  [IPC.LOOPBACK_STOP]: () => commands.stopListen(),
+	// ── Loopback / listen ──
+	[IPC.LOOPBACK_LIST_DEVICES]: () => commands.loopbackListDevices(),
+	[IPC.LOOPBACK_START]: (a) => commands.startListen(a.deviceIndex as number),
+	[IPC.LOOPBACK_STOP]: () => commands.stopListen(),
 
-  // ── Sound library ──
-  [IPC.SOUND_LIBRARY_ADD]: (a) =>
-    commands.soundLibraryAdd(
-      a.sourcePath as string,
-      (a.name as string | null | undefined) ?? null,
-    ),
-  [IPC.SOUND_LIBRARY_PICK_AND_ADD]: (a) =>
-    commands.soundLibraryPickAndAdd(
-      (a.name as string | null | undefined) ?? null,
-    ),
-  [IPC.SOUND_LIBRARY_REMOVE]: (a) =>
-    commands.soundLibraryRemove(a.path as string),
-  [IPC.SOUND_LIBRARY_READ_FILE]: (a) =>
-    commands.soundLibraryReadFile(a.path as string),
+	// ── Sound library ──
+	[IPC.SOUND_LIBRARY_ADD]: (a) =>
+		commands.soundLibraryAdd(
+			a.sourcePath as string,
+			(a.name as string | null | undefined) ?? null,
+		),
+	[IPC.SOUND_LIBRARY_PICK_AND_ADD]: (a) =>
+		commands.soundLibraryPickAndAdd(
+			(a.name as string | null | undefined) ?? null,
+		),
+	[IPC.SOUND_LIBRARY_REMOVE]: (a) =>
+		commands.soundLibraryRemove(a.path as string),
+	[IPC.SOUND_LIBRARY_READ_FILE]: (a) =>
+		commands.soundLibraryReadFile(a.path as string),
 
-  // ── History (object-arg commands only; bare-positional-string channels
-  //    STT_DELETE_MODEL_CACHE / HISTORY_DELETE / HISTORY_LOAD_AUDIO /
-  //    HISTORY_ALIGN_AUDIO stay on the adapter's POSITIONAL_STRING_PARAM path) ──
-  [IPC.HISTORY_GET_ALL]: () => commands.historyGetAll(),
-  [IPC.HISTORY_CLEAR]: () => commands.historyClear(),
-  // ── Transcript quick-actions / diagnostics / about ──
-  [IPC.TRANSCRIPT_COPY_LAST]: () => commands.copyLastTranscript(),
-  [IPC.DIAG_SAVE_BUNDLE]: () => commands.diagSaveBundle(),
-  [IPC.DIAG_WEBVIEW_LOG]: (a) =>
-    commands.winsttDiag(
-      a.label as string,
-      a.level as string,
-      a.message as string,
-    ),
-  [IPC.ABOUT_GET_APP_INFO]: () => commands.aboutGetAppInfo(),
+	// ── History (object-arg commands only; bare-positional-string channels
+	//    STT_DELETE_MODEL_CACHE / HISTORY_DELETE / HISTORY_LOAD_AUDIO /
+	//    HISTORY_ALIGN_AUDIO stay on the adapter's POSITIONAL_STRING_PARAM path) ──
+	[IPC.HISTORY_GET_ALL]: () => commands.historyGetAll(),
+	[IPC.HISTORY_CLEAR]: () => commands.historyClear(),
+	// ── Transcript quick-actions / diagnostics / about ──
+	[IPC.TRANSCRIPT_COPY_LAST]: () => commands.copyLastTranscript(),
+	[IPC.DIAG_SAVE_BUNDLE]: () => commands.diagSaveBundle(),
+	[IPC.DIAG_WEBVIEW_LOG]: (a) =>
+		commands.winsttDiag(
+			a.label as string,
+			a.level as string,
+			a.message as string,
+		),
+	[IPC.ABOUT_GET_APP_INFO]: () => commands.aboutGetAppInfo(),
 };
 
 /**
@@ -491,69 +491,69 @@ const COMMAND_INVOKERS: Partial<
  * `CRITICAL_SEND_CHANNELS`.
  */
 const CRITICAL_SEND_CHANNELS: ReadonlySet<string> = new Set<string>([
-  IPC.STT_RELOAD_MODEL,
-  IPC.SETTINGS_SAVE,
+	IPC.STT_RELOAD_MODEL,
+	IPC.SETTINGS_SAVE,
 ]);
 
 export function send(channel: string, ...args: unknown[]) {
-  if (channel === IPC.SETTINGS_SAVE && canUseDevSettingsBridge()) {
-    void devSettingsSave(args).catch((err) => {
-      console.error(
-        `[ipc] critical send "${channel}" via dev settings bridge failed:`,
-        err,
-      );
-    });
-    return;
-  }
-  if (hasNativeBridge()) {
-    const invoker = COMMAND_INVOKERS[channel];
-    if (invoker) {
-      // `unwrapResult` is the load-bearing step here: a fallible `commands.*`
-      // returns a specta `Result`, and when the backend returns `Err(String)`
-      // the @tauri-apps `invoke` rejects with a plain STRING, so the generated
-      // wrapper does NOT rethrow — it RESOLVES `{status:"error"}`. Without this
-      // `.then(unwrapResult)` a failed critical send (e.g. SETTINGS_SAVE) would
-      // resolve that error-Result and slip past the critical `.catch` below,
-      // silently swallowing the write failure (the audit-#13 regression the
-      // adapter's raw `core.invoke` reject path used to surface).
-      const p = invoker(firstObjArg(args)).then(unwrapResult);
-      if (CRITICAL_SEND_CHANNELS.has(channel)) {
-        // Mirror the adapter's critical-send log so a failed swap / save is
-        // diagnosable instead of looking like a no-op.
-        void p.catch((err) => {
-          console.error(
-            `[ipc] critical send "${channel}" via typed command failed:`,
-            err,
-          );
-        });
-      } else {
-        void p.catch(() => {
-          /* fire-and-forget tolerant */
-        });
-      }
-      return;
-    }
-    window.nativeBridge.send(channel, ...toCloneableArgs(channel, args));
-  }
+	if (channel === IPC.SETTINGS_SAVE && canUseDevSettingsBridge()) {
+		void devSettingsSave(args).catch((err) => {
+			console.error(
+				`[ipc] critical send "${channel}" via dev settings bridge failed:`,
+				err,
+			);
+		});
+		return;
+	}
+	if (hasNativeBridge()) {
+		const invoker = COMMAND_INVOKERS[channel];
+		if (invoker) {
+			// `unwrapResult` is the load-bearing step here: a fallible `commands.*`
+			// returns a specta `Result`, and when the backend returns `Err(String)`
+			// the @tauri-apps `invoke` rejects with a plain STRING, so the generated
+			// wrapper does NOT rethrow — it RESOLVES `{status:"error"}`. Without this
+			// `.then(unwrapResult)` a failed critical send (e.g. SETTINGS_SAVE) would
+			// resolve that error-Result and slip past the critical `.catch` below,
+			// silently swallowing the write failure (the audit-#13 regression the
+			// adapter's raw `core.invoke` reject path used to surface).
+			const p = invoker(firstObjArg(args)).then(unwrapResult);
+			if (CRITICAL_SEND_CHANNELS.has(channel)) {
+				// Mirror the adapter's critical-send log so a failed swap / save is
+				// diagnosable instead of looking like a no-op.
+				void p.catch((err) => {
+					console.error(
+						`[ipc] critical send "${channel}" via typed command failed:`,
+						err,
+					);
+				});
+			} else {
+				void p.catch(() => {
+					/* fire-and-forget tolerant */
+				});
+			}
+			return;
+		}
+		window.nativeBridge.send(channel, ...toCloneableArgs(channel, args));
+	}
 }
 
 export function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-  if (channel === IPC.SETTINGS_LOAD && canUseDevSettingsBridge()) {
-    return devSettingsLoad() as Promise<T>;
-  }
-  if (hasNativeBridge()) {
-    const invoker = COMMAND_INVOKERS[channel];
-    if (invoker) {
-      // A thrown Result-error propagates to invokeOrDefault's catch →
-      // handleInvokeError, preserving the #13 critical-channel logging.
-      return invoker(firstObjArg(args)).then((v) => unwrapResult(v) as T);
-    }
-    return window.nativeBridge.invoke(
-      channel,
-      ...toCloneableArgs(channel, args),
-    ) as Promise<T>;
-  }
-  return Promise.resolve(undefined as T);
+	if (channel === IPC.SETTINGS_LOAD && canUseDevSettingsBridge()) {
+		return devSettingsLoad() as Promise<T>;
+	}
+	if (hasNativeBridge()) {
+		const invoker = COMMAND_INVOKERS[channel];
+		if (invoker) {
+			// A thrown Result-error propagates to invokeOrDefault's catch →
+			// handleInvokeError, preserving the #13 critical-channel logging.
+			return invoker(firstObjArg(args)).then((v) => unwrapResult(v) as T);
+		}
+		return window.nativeBridge.invoke(
+			channel,
+			...toCloneableArgs(channel, args),
+		) as Promise<T>;
+	}
+	return Promise.resolve(undefined as T);
 }
 
 // Stryker disable next-line ConditionalExpression: equivalent — invokeSecure
@@ -563,10 +563,10 @@ export function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 // synchronously, gets caught upstream, and the fallback runs anyway —
 // observably identical to the original behaviour.
 function invokeSecure<T>(channel: string, payload?: unknown): Promise<T> {
-  if (hasNativeBridge()) {
-    return window.nativeBridge.secureInvoke(channel, payload) as Promise<T>;
-  }
-  return Promise.resolve(undefined as T);
+	if (hasNativeBridge()) {
+		return window.nativeBridge.secureInvoke(channel, payload) as Promise<T>;
+	}
+	return Promise.resolve(undefined as T);
 }
 
 // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent —
@@ -579,40 +579,40 @@ function invokeSecure<T>(channel: string, payload?: unknown): Promise<T> {
 // path, where the suite either accepts the throw (catches happen upstream)
 // or doesn't trigger this branch at all.
 function resolveFallback<T>(fallback: FallbackValue<T>): T {
-  return typeof fallback === "function" ? (fallback as () => T)() : fallback;
+	return typeof fallback === "function" ? (fallback as () => T)() : fallback;
 }
 
 export async function invokeOrDefault<T>(
-  channel: string,
-  fallback: FallbackValue<T>,
-  ...args: unknown[]
+	channel: string,
+	fallback: FallbackValue<T>,
+	...args: unknown[]
 ): Promise<T> {
-  try {
-    const value = await invoke<T | undefined>(channel, ...args);
-    // A resolved `undefined` is the BENIGN "void command / unwired feature"
-    // path — falling through to the fallback here is expected, so stay quiet.
-    return value === undefined ? resolveFallback(fallback) : value;
-  } catch (err) {
-    // Only the THROW/REJECT path lands here — distinct from the quiet
-    // resolved-undefined path above — so a backend error is never silent.
-    return handleInvokeError(channel, fallback, err, args);
-  }
+	try {
+		const value = await invoke<T | undefined>(channel, ...args);
+		// A resolved `undefined` is the BENIGN "void command / unwired feature"
+		// path — falling through to the fallback here is expected, so stay quiet.
+		return value === undefined ? resolveFallback(fallback) : value;
+	} catch (err) {
+		// Only the THROW/REJECT path lands here — distinct from the quiet
+		// resolved-undefined path above — so a backend error is never silent.
+		return handleInvokeError(channel, fallback, err, args);
+	}
 }
 
 export async function invokeSecureOrDefault<T>(
-  channel: string,
-  payload: unknown,
-  fallback: FallbackValue<T>,
+	channel: string,
+	payload: unknown,
+	fallback: FallbackValue<T>,
 ): Promise<T> {
-  try {
-    const value = await invokeSecure<T | undefined>(channel, payload);
-    return value === undefined ? resolveFallback(fallback) : value;
-  } catch (err) {
-    // Mirror invokeOrDefault. None of today's secure channels are critical, but
-    // the shared classifier keeps a future critical secure channel from
-    // regressing into a silent fallback.
-    return handleInvokeError(channel, fallback, err, [payload]);
-  }
+	try {
+		const value = await invokeSecure<T | undefined>(channel, payload);
+		return value === undefined ? resolveFallback(fallback) : value;
+	} catch (err) {
+		// Mirror invokeOrDefault. None of today's secure channels are critical, but
+		// the shared classifier keeps a future critical secure channel from
+		// regressing into a silent fallback.
+		return handleInvokeError(channel, fallback, err, [payload]);
+	}
 }
 
 /**
@@ -622,25 +622,25 @@ export async function invokeSecureOrDefault<T>(
  * long strings are truncated.
  */
 function summarizeArgs(args: unknown[]): string {
-  if (args.length === 0) {
-    return "(no args)";
-  }
-  const digest = (arg: unknown): unknown => {
-    if (typeof arg === "string") {
-      return arg.length > 80
-        ? `${arg.slice(0, 80)}…(${arg.length} chars)`
-        : arg;
-    }
-    if (arg !== null && typeof arg === "object" && !Array.isArray(arg)) {
-      return Object.keys(arg as Record<string, unknown>);
-    }
-    return arg;
-  };
-  try {
-    return JSON.stringify(args.map(digest));
-  } catch {
-    return "(unserialisable args)";
-  }
+	if (args.length === 0) {
+		return "(no args)";
+	}
+	const digest = (arg: unknown): unknown => {
+		if (typeof arg === "string") {
+			return arg.length > 80
+				? `${arg.slice(0, 80)}…(${arg.length} chars)`
+				: arg;
+		}
+		if (arg !== null && typeof arg === "object" && !Array.isArray(arg)) {
+			return Object.keys(arg as Record<string, unknown>);
+		}
+		return arg;
+	};
+	try {
+		return JSON.stringify(args.map(digest));
+	} catch {
+		return "(unserialisable args)";
+	}
 }
 
 /**
@@ -661,58 +661,58 @@ function summarizeArgs(args: unknown[]): string {
  * Centralised so `invokeOrDefault` and `invokeSecureOrDefault` can't drift.
  */
 function handleInvokeError<T>(
-  channel: string,
-  fallback: FallbackValue<T>,
-  err: unknown,
-  args: unknown[],
+	channel: string,
+	fallback: FallbackValue<T>,
+	err: unknown,
+	args: unknown[],
 ): T {
-  const where = `[ipc] invoke "${channel}" args=${summarizeArgs(args)}`;
-  if (CRITICAL_REJECT_CHANNELS.has(channel)) {
-    console.error(`${where} failed (critical):`, err);
-    throw err;
-  }
-  if (CRITICAL_LOG_ONLY_CHANNELS.has(channel)) {
-    // Surfaced (no longer silent) but tolerant — re-rejecting a high-fan-out
-    // read would break consumers that only `.then(...)` it.
-    console.error(`${where} failed (tolerated):`, err);
-    return resolveFallback(fallback);
-  }
-  // Uncategorised channels were previously SILENT here — exactly the audit #13
-  // "backend error looks like no value" bug. Warn (tolerant) so it's observable.
-  console.warn(`${where} failed — returning fallback:`, err);
-  return resolveFallback(fallback);
+	const where = `[ipc] invoke "${channel}" args=${summarizeArgs(args)}`;
+	if (CRITICAL_REJECT_CHANNELS.has(channel)) {
+		console.error(`${where} failed (critical):`, err);
+		throw err;
+	}
+	if (CRITICAL_LOG_ONLY_CHANNELS.has(channel)) {
+		// Surfaced (no longer silent) but tolerant — re-rejecting a high-fan-out
+		// read would break consumers that only `.then(...)` it.
+		console.error(`${where} failed (tolerated):`, err);
+		return resolveFallback(fallback);
+	}
+	// Uncategorised channels were previously SILENT here — exactly the audit #13
+	// "backend error looks like no value" bug. Warn (tolerant) so it's observable.
+	console.warn(`${where} failed — returning fallback:`, err);
+	return resolveFallback(fallback);
 }
 
 export function on(
-  channel: string,
-  callback: (...args: unknown[]) => void,
+	channel: string,
+	callback: (...args: unknown[]) => void,
 ): () => void {
-  if (hasNativeBridge()) {
-    return window.nativeBridge.on(channel, callback);
-  }
-  return noop;
+	if (hasNativeBridge()) {
+		return window.nativeBridge.on(channel, callback);
+	}
+	return noop;
 }
 
 export { invoke as ipcInvoke, on as ipcOn, send as ipcSend };
 
 /** Subscribe to an IPC channel, cast the payload to `T`, extract a value, and pass it to the callback. */
 export function onTyped<T, V>(
-  channel: string,
-  extract: (data: T) => V,
-  cb: (value: V) => void,
+	channel: string,
+	extract: (data: T) => V,
+	cb: (value: V) => void,
 ): () => void {
-  return on(channel, (data) => cb(extract(data as T)));
+	return on(channel, (data) => cb(extract(data as T)));
 }
 
 /** Subscribe to an IPC channel, cast the entire payload to `T`, and pass it to the callback. */
 export function onCast<T>(channel: string, cb: (value: T) => void): () => void {
-  return on(channel, (data) => cb(data as T));
+	return on(channel, (data) => cb(data as T));
 }
 
 /** Get the native file path for a dropped File object (works with sandbox: true). */
 export function getFilePath(file: File): string {
-  if (hasNativeBridge()) {
-    return window.nativeBridge.getPathForFile(file);
-  }
-  return "";
+	if (hasNativeBridge()) {
+		return window.nativeBridge.getPathForFile(file);
+	}
+	return "";
 }

@@ -1,16 +1,29 @@
 import { Separator } from "@base-ui/react/separator";
-import { Cancel01Icon, MinusSignIcon, Settings05Icon } from "@hugeicons/core-free-icons";
+import {
+	Cancel01Icon,
+	MinusSignIcon,
+	Settings05Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ReactNode } from "react";
 import { useCallback } from "react";
 import { useTranslations } from "use-intl";
 import { useConnectionStore } from "@/entities/connection";
 import { HotkeyDisplay } from "@/features/push-to-talk";
-import { windowClose, windowMinimize, windowOpenSettings } from "@/shared/api/ipc-client";
+import {
+	windowClose,
+	windowMinimize,
+	windowOpenSettings,
+} from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { publicAsset } from "@/shared/lib/public-asset";
 import { diagBeacon } from "@/shared/lib/winstt-diag";
-import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import {
+	SurfaceProvider,
+	surfaceClasses,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
 import { useTouchActivation } from "@/shared/lib/use-touch-activation";
 import { Button } from "@/shared/ui/button";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -43,7 +56,8 @@ export function TitleBar() {
 	const substrate = useSurface();
 	const barLevel = Math.min(substrate + 1, 8);
 	const hoverLevel = Math.min(barLevel + 2, 8);
-	const isConnected = useConnectionStore((s) => s.connectionStatus) === "connected";
+	const isConnected =
+		useConnectionStore((s) => s.connectionStatus) === "connected";
 	const openSettings = useCallback(() => {
 		diagBeacon("main", "settings button onClick fired");
 		windowOpenSettings();
@@ -93,7 +107,10 @@ export function TitleBar() {
 							<HugeiconsIcon icon={Settings05Icon} size={13} />
 						</TitleBarActionButton>
 					</Tooltip>
-					<Separator className="h-3 w-px self-center bg-border" orientation="vertical" />
+					<Separator
+						className="h-3 w-px self-center bg-border"
+						orientation="vertical"
+					/>
 					<Tooltip content={t("minimize")}>
 						<TitleBarActionButton
 							ariaLabel={t("minimize")}

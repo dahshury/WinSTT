@@ -117,7 +117,10 @@ function cpuRamBudget(sys: SystemInfoEntry): number {
 }
 
 /** Pick GPU vs CPU strategy for a host with known system info. */
-function assessOnHost(required: number, systemInfo: SystemInfoEntry): OllamaFitAssessment {
+function assessOnHost(
+	required: number,
+	systemInfo: SystemInfoEntry,
+): OllamaFitAssessment {
 	if (hasGpu(systemInfo)) {
 		return assessOnGpu(required, largestGpuVramBytes(systemInfo));
 	}
@@ -140,7 +143,7 @@ function assessOnHost(required: number, systemInfo: SystemInfoEntry): OllamaFitA
  */
 export function assessOllamaFit(
 	sizeBytes: number,
-	systemInfo: SystemInfoEntry | null
+	systemInfo: SystemInfoEntry | null,
 ): OllamaFitAssessment {
 	if (sizeBytes <= 0 || systemInfo === null) {
 		return unknownAssessment(sizeBytes);
@@ -151,7 +154,7 @@ export function assessOllamaFit(
 /** Convenience predicate matching the STT selector's `isUncomfortable` shape. */
 export function isOllamaUncomfortable(
 	sizeBytes: number,
-	systemInfo: SystemInfoEntry | null
+	systemInfo: SystemInfoEntry | null,
 ): boolean {
 	return !assessOllamaFit(sizeBytes, systemInfo).fits;
 }

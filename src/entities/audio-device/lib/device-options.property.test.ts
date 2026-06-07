@@ -24,7 +24,7 @@ describe("buildInputDeviceOptions (property-based)", () => {
 				// Output includes the prepended "default" row.
 				return result.deviceOptions.length - 1 <= devices.length;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -35,7 +35,7 @@ describe("buildInputDeviceOptions (property-based)", () => {
 				const result = buildInputDeviceOptions(devices, null, "System Default");
 				return result.deviceOptions.length === uniqueNames.size + 1;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -55,29 +55,38 @@ describe("buildInputDeviceOptions (property-based)", () => {
 						defaultSampleRate: 44_100,
 						maxInputChannels: 2,
 					}));
-				const second = buildInputDeviceOptions(dedupedDevices, null, "System Default");
+				const second = buildInputDeviceOptions(
+					dedupedDevices,
+					null,
+					"System Default",
+				);
 				return first.deviceOptions.length === second.deviceOptions.length;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
 	test("order-independent for the SET of labels: shuffling devices yields the same set of labels", () => {
 		fc.assert(
 			fc.property(
-				fc
-					.array(deviceGen(), { maxLength: 15 })
-					.chain((devices) =>
-						fc.tuple(
-							fc.constant(devices),
-							fc.shuffledSubarray(devices, { minLength: devices.length, maxLength: devices.length })
-						)
+				fc.array(deviceGen(), { maxLength: 15 }).chain((devices) =>
+					fc.tuple(
+						fc.constant(devices),
+						fc.shuffledSubarray(devices, {
+							minLength: devices.length,
+							maxLength: devices.length,
+						}),
 					),
+				),
 				([devicesA, devicesB]) => {
 					const a = buildInputDeviceOptions(devicesA, null, "System Default");
 					const b = buildInputDeviceOptions(devicesB, null, "System Default");
-					const labelsA = new Set(a.deviceOptions.map((o) => dedupKey(o.label)));
-					const labelsB = new Set(b.deviceOptions.map((o) => dedupKey(o.label)));
+					const labelsA = new Set(
+						a.deviceOptions.map((o) => dedupKey(o.label)),
+					);
+					const labelsB = new Set(
+						b.deviceOptions.map((o) => dedupKey(o.label)),
+					);
 					if (labelsA.size !== labelsB.size) {
 						return false;
 					}
@@ -87,9 +96,9 @@ describe("buildInputDeviceOptions (property-based)", () => {
 						}
 					}
 					return true;
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -103,7 +112,7 @@ describe("buildInputDeviceOptions (property-based)", () => {
 					result.deviceOptions[0]?.label === "Sys Default"
 				);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });

@@ -30,26 +30,39 @@ describe("useFileTranscriptionStore", () => {
 	});
 
 	test("setItems replaces the whole queue", () => {
-		useFileTranscriptionStore.getState().setItems([makeItem({ id: "a" }), makeItem({ id: "b" })]);
-		expect(useFileTranscriptionStore.getState().items.map((i) => i.id)).toEqual(["a", "b"]);
+		useFileTranscriptionStore
+			.getState()
+			.setItems([makeItem({ id: "a" }), makeItem({ id: "b" })]);
+		expect(useFileTranscriptionStore.getState().items.map((i) => i.id)).toEqual(
+			["a", "b"],
+		);
 	});
 
 	test("patchProgress updates only the matching row's progress + stage", () => {
+		useFileTranscriptionStore.getState().setItems([
+			makeItem({
+				id: "a",
+				status: "transcribing",
+				progress: 0.1,
+				stage: "transcribing",
+			}),
+			makeItem({ id: "b", progress: 0 }),
+		]);
 		useFileTranscriptionStore
 			.getState()
-			.setItems([
-				makeItem({ id: "a", status: "transcribing", progress: 0.1, stage: "transcribing" }),
-				makeItem({ id: "b", progress: 0 }),
-			]);
-		useFileTranscriptionStore.getState().patchProgress("a", 0.6, "transcribing");
+			.patchProgress("a", 0.6, "transcribing");
 		const items = useFileTranscriptionStore.getState().items;
 		expect(items.find((i) => i.id === "a")?.progress).toBe(0.6);
 		expect(items.find((i) => i.id === "b")?.progress).toBe(0);
 	});
 
 	test("patchProgress is a no-op for an unknown id", () => {
-		useFileTranscriptionStore.getState().setItems([makeItem({ id: "a", progress: 0.2 })]);
-		useFileTranscriptionStore.getState().patchProgress("missing", 0.9, "transcribing");
+		useFileTranscriptionStore
+			.getState()
+			.setItems([makeItem({ id: "a", progress: 0.2 })]);
+		useFileTranscriptionStore
+			.getState()
+			.patchProgress("missing", 0.9, "transcribing");
 		expect(useFileTranscriptionStore.getState().items[0]?.progress).toBe(0.2);
 	});
 

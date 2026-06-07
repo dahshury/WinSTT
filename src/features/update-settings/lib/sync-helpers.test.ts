@@ -19,7 +19,7 @@ import {
 	shouldSendOnChange,
 	shouldSyncOnConnect,
 	silenceEndpointNeedsUpdate,
-	silenceTimingNeedsUpdate
+	silenceTimingNeedsUpdate,
 } from "./sync-helpers";
 
 describe("shouldSendInitial", () => {
@@ -117,35 +117,61 @@ describe("computeSilenceEndpointEnabled", () => {
 
 describe("silenceTimingNeedsUpdate", () => {
 	test("returns true on initial connect regardless of changes", () => {
-		expect(silenceTimingNeedsUpdate(false, false, "ptt", "ptt", true)).toBe(true);
+		expect(silenceTimingNeedsUpdate(false, false, "ptt", "ptt", true)).toBe(
+			true,
+		);
 	});
 
 	test("returns true when recording mode changed", () => {
-		expect(silenceTimingNeedsUpdate(false, false, "toggle", "ptt", false)).toBe(true);
+		expect(silenceTimingNeedsUpdate(false, false, "toggle", "ptt", false)).toBe(
+			true,
+		);
 	});
 
 	test("returns true when smartEndpoint toggled", () => {
-		expect(silenceTimingNeedsUpdate(true, false, "ptt", "ptt", false)).toBe(true);
+		expect(silenceTimingNeedsUpdate(true, false, "ptt", "ptt", false)).toBe(
+			true,
+		);
 	});
 
 	test("returns false when nothing changed (incremental)", () => {
-		expect(silenceTimingNeedsUpdate(false, false, "ptt", "ptt", false)).toBe(false);
+		expect(silenceTimingNeedsUpdate(false, false, "ptt", "ptt", false)).toBe(
+			false,
+		);
 	});
 
 	test("returns true when both mode and smartEndpoint changed", () => {
-		expect(silenceTimingNeedsUpdate(true, false, "listen", "ptt", false)).toBe(true);
+		expect(silenceTimingNeedsUpdate(true, false, "listen", "ptt", false)).toBe(
+			true,
+		);
 	});
 
 	test("returns true when manualToggleStop flipped", () => {
-		expect(silenceTimingNeedsUpdate(false, false, "toggle", "toggle", false, true, false)).toBe(
-			true
-		);
+		expect(
+			silenceTimingNeedsUpdate(
+				false,
+				false,
+				"toggle",
+				"toggle",
+				false,
+				true,
+				false,
+			),
+		).toBe(true);
 	});
 
 	test("returns false when manualToggleStop is unchanged and everything else stable", () => {
-		expect(silenceTimingNeedsUpdate(false, false, "toggle", "toggle", false, true, true)).toBe(
-			false
-		);
+		expect(
+			silenceTimingNeedsUpdate(
+				false,
+				false,
+				"toggle",
+				"toggle",
+				false,
+				true,
+				true,
+			),
+		).toBe(false);
 	});
 });
 
@@ -159,18 +185,26 @@ describe("silenceEndpointNeedsUpdate", () => {
 	});
 
 	test("returns true when manualToggleStop flipped", () => {
-		expect(silenceEndpointNeedsUpdate("toggle", "toggle", false, true, false)).toBe(true);
+		expect(
+			silenceEndpointNeedsUpdate("toggle", "toggle", false, true, false),
+		).toBe(true);
 	});
 
 	test("returns false when nothing relevant changed", () => {
-		expect(silenceEndpointNeedsUpdate("toggle", "toggle", false, false, false)).toBe(false);
+		expect(
+			silenceEndpointNeedsUpdate("toggle", "toggle", false, false, false),
+		).toBe(false);
 	});
 });
 
 describe("getManualToggleStop / getPrevManualToggleStop", () => {
 	test("getManualToggleStop reads the flag when present", () => {
-		expect(getManualToggleStop({ general: { manualToggleStop: true } } as never)).toBe(true);
-		expect(getManualToggleStop({ general: { manualToggleStop: false } } as never)).toBe(false);
+		expect(
+			getManualToggleStop({ general: { manualToggleStop: true } } as never),
+		).toBe(true);
+		expect(
+			getManualToggleStop({ general: { manualToggleStop: false } } as never),
+		).toBe(false);
 	});
 
 	test("getManualToggleStop returns false when general is absent", () => {
@@ -186,7 +220,9 @@ describe("getManualToggleStop / getPrevManualToggleStop", () => {
 	});
 
 	test("getPrevManualToggleStop returns the flag when present", () => {
-		expect(getPrevManualToggleStop({ general: { manualToggleStop: true } } as never)).toBe(true);
+		expect(
+			getPrevManualToggleStop({ general: { manualToggleStop: true } } as never),
+		).toBe(true);
 	});
 });
 
@@ -248,7 +284,7 @@ describe("advanceSkipRefs", () => {
 		return {
 			loadedOnce: { current: loaded },
 			fromBroadcast: { current: broadcast },
-			fromIpcLoad: { current: ipcLoad }
+			fromIpcLoad: { current: ipcLoad },
 		};
 	}
 
@@ -317,8 +353,12 @@ describe("shouldSyncOnConnect", () => {
 
 describe("getSmartEndpoint", () => {
 	test("returns the smartEndpoint value when present", () => {
-		expect(getSmartEndpoint({ quality: { smartEndpoint: true } } as never)).toBe(true);
-		expect(getSmartEndpoint({ quality: { smartEndpoint: false } } as never)).toBe(false);
+		expect(
+			getSmartEndpoint({ quality: { smartEndpoint: true } } as never),
+		).toBe(true);
+		expect(
+			getSmartEndpoint({ quality: { smartEndpoint: false } } as never),
+		).toBe(false);
 	});
 
 	test("defaults to true when quality is absent", () => {
@@ -332,7 +372,9 @@ describe("getSmartEndpoint", () => {
 
 describe("getPrevSmartEndpoint", () => {
 	test("returns the smartEndpoint value when prev is provided", () => {
-		expect(getPrevSmartEndpoint({ quality: { smartEndpoint: true } } as never)).toBe(true);
+		expect(
+			getPrevSmartEndpoint({ quality: { smartEndpoint: true } } as never),
+		).toBe(true);
 	});
 
 	test("defaults to true when prev is undefined", () => {
@@ -346,8 +388,12 @@ describe("getPrevSmartEndpoint", () => {
 
 describe("getRecordingMode", () => {
 	test("returns the recording mode when set", () => {
-		expect(getRecordingMode({ general: { recordingMode: "toggle" } } as never)).toBe("toggle");
-		expect(getRecordingMode({ general: { recordingMode: "listen" } } as never)).toBe("listen");
+		expect(
+			getRecordingMode({ general: { recordingMode: "toggle" } } as never),
+		).toBe("toggle");
+		expect(
+			getRecordingMode({ general: { recordingMode: "listen" } } as never),
+		).toBe("listen");
 	});
 
 	test("returns 'ptt' when general is absent", () => {
@@ -363,15 +409,15 @@ describe("deriveIpcLoadUpdate", () => {
 	test("preserves a locally changed recording mode when settingsLoad resolves late", () => {
 		const loadBaseline = {
 			general: { recordingMode: "ptt" },
-			audio: { sileroSensitivity: 0.4 }
+			audio: { sileroSensitivity: 0.4 },
 		} as never;
 		const loaded = {
 			general: { recordingMode: "ptt" },
-			audio: { sileroSensitivity: 0.4 }
+			audio: { sileroSensitivity: 0.4 },
 		} as never;
 		const current = {
 			general: { recordingMode: "wakeword" },
-			audio: { sileroSensitivity: 0.4 }
+			audio: { sileroSensitivity: 0.4 },
 		} as never;
 
 		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
@@ -383,11 +429,11 @@ describe("deriveIpcLoadUpdate", () => {
 	test("marks pure IPC loads so the next settings effect is skipped", () => {
 		const loadBaseline = {
 			general: { recordingMode: "ptt" },
-			audio: { sileroSensitivity: 0.4 }
+			audio: { sileroSensitivity: 0.4 },
 		} as never;
 		const loaded = {
 			general: { recordingMode: "toggle" },
-			audio: { sileroSensitivity: 0.4 }
+			audio: { sileroSensitivity: 0.4 },
 		} as never;
 		const current = loadBaseline;
 
@@ -401,11 +447,11 @@ describe("deriveIpcLoadUpdate", () => {
 		const localDictionary = [{ id: "local-1", term: "Kubernetes" }];
 		const loadBaseline = {
 			dictionary: localDictionary,
-			snippets: []
+			snippets: [],
 		} as never;
 		const loaded = {
 			dictionary: [],
-			snippets: []
+			snippets: [],
 		} as never;
 		const current = loadBaseline;
 
@@ -419,11 +465,11 @@ describe("deriveIpcLoadUpdate", () => {
 		const centralDictionary = [{ id: "central-1", term: "DirectML" }];
 		const loadBaseline = {
 			dictionary: [{ id: "local-1", term: "Kubernetes" }],
-			snippets: []
+			snippets: [],
 		} as never;
 		const loaded = {
 			dictionary: centralDictionary,
-			snippets: []
+			snippets: [],
 		} as never;
 		const current = loadBaseline;
 
@@ -434,14 +480,16 @@ describe("deriveIpcLoadUpdate", () => {
 	});
 
 	test("migrates local-only snippets into the central settings snapshot", () => {
-		const localSnippets = [{ id: "snippet-1", trigger: "/sig", expansion: "kind regards" }];
+		const localSnippets = [
+			{ id: "snippet-1", trigger: "/sig", expansion: "kind regards" },
+		];
 		const loadBaseline = {
 			dictionary: [],
-			snippets: localSnippets
+			snippets: localSnippets,
 		} as never;
 		const loaded = {
 			dictionary: [],
-			snippets: []
+			snippets: [],
 		} as never;
 		const current = loadBaseline;
 
@@ -492,7 +540,7 @@ describe("scheduleSave", () => {
 	test("schedules a debounced call when immediate=false", async () => {
 		const saveFn = mock(() => undefined);
 		const debounceRef: { current: ReturnType<typeof setTimeout> | null } = {
-			current: null
+			current: null,
 		};
 		scheduleSave(settings, false, debounceRef, saveFn, 10);
 		expect(saveFn).not.toHaveBeenCalled();
@@ -506,7 +554,7 @@ describe("scheduleSave", () => {
 		const saveFn = mock(() => undefined);
 		const prevTimer = setTimeout(() => undefined, 10_000);
 		const debounceRef: { current: ReturnType<typeof setTimeout> | null } = {
-			current: prevTimer
+			current: prevTimer,
 		};
 		scheduleSave(settings, true, debounceRef, saveFn, 300);
 		// prevTimer was cleared; immediate save ran
@@ -523,7 +571,8 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 		audio: { silero: number };
 		general: { overlayMode: string; wakeWord?: string };
 	}
-	const cast = <T>(v: T) => v as unknown as Parameters<typeof mergeBroadcastPreservingUserDirty>[0];
+	const cast = <T>(v: T) =>
+		v as unknown as Parameters<typeof mergeBroadcastPreservingUserDirty>[0];
 	// Read-back boundary cast: the merge returns the real AppSettings type; we
 	// view it as the local Mini shape to assert on the handful of fields we set.
 	const asMini = (v: unknown) => v as unknown as Mini;
@@ -531,16 +580,16 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	test("returns identity (use decoded) when there is no lastSaved baseline", () => {
 		const decoded: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const current: Mini = {
 			general: { overlayMode: "dynamic-island" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
-			undefined
+			undefined,
 		);
 		expect(merged).toBe(cast(decoded));
 		expect(preserved).toBe(false);
@@ -549,17 +598,17 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	test("uses decoded when current matches lastSaved for every section (pure broadcast)", () => {
 		const decoded: Mini = {
 			general: { overlayMode: "dynamic-island" },
-			audio: { silero: 0.5 }
+			audio: { silero: 0.5 },
 		};
 		const current: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const lastSaved: Mini = { ...current };
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
-			cast(lastSaved)
+			cast(lastSaved),
 		);
 		expect(merged).toEqual(cast(decoded));
 		expect(preserved).toBe(false);
@@ -573,20 +622,20 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 		// accepting decoded.audio.
 		const decoded: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.5 }
+			audio: { silero: 0.5 },
 		};
 		const current: Mini = {
 			general: { overlayMode: "dynamic-island" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const lastSaved: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
-			cast(lastSaved)
+			cast(lastSaved),
 		);
 		expect(asMini(merged).general.overlayMode).toBe("dynamic-island");
 		expect(asMini(merged).audio.silero).toBe(0.5);
@@ -596,20 +645,20 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	test("accepts clean fields inside a dirty section", () => {
 		const decoded: Mini = {
 			general: { overlayMode: "floating-bottom", wakeWord: "americano" },
-			audio: { silero: 0.5 }
+			audio: { silero: 0.5 },
 		};
 		const current: Mini = {
 			general: { overlayMode: "dynamic-island", wakeWord: "alexa" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const lastSaved: Mini = {
 			general: { overlayMode: "floating-bottom", wakeWord: "alexa" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
-			cast(lastSaved)
+			cast(lastSaved),
 		);
 		expect(asMini(merged).general.overlayMode).toBe("dynamic-island");
 		expect(asMini(merged).general.wakeWord).toBe("americano");
@@ -620,22 +669,22 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	test("treats deep-equal sections as not dirty (reference inequality alone is not enough)", () => {
 		const decoded: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.5 }
+			audio: { silero: 0.5 },
 		};
 		// Same structural content as lastSaved but a fresh object reference —
 		// must not be flagged as user-dirty.
 		const current: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const lastSaved: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
-			cast(lastSaved)
+			cast(lastSaved),
 		);
 		expect(asMini(merged).general.overlayMode).toBe("floating-bottom");
 		expect(asMini(merged).audio.silero).toBe(0.5);
@@ -645,20 +694,20 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	test("preserves multiple dirty sections simultaneously", () => {
 		const decoded: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const current: Mini = {
 			general: { overlayMode: "dynamic-island" },
-			audio: { silero: 0.7 }
+			audio: { silero: 0.7 },
 		};
 		const lastSaved: Mini = {
 			general: { overlayMode: "floating-bottom" },
-			audio: { silero: 0.4 }
+			audio: { silero: 0.4 },
 		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
-			cast(lastSaved)
+			cast(lastSaved),
 		);
 		expect(asMini(merged).general.overlayMode).toBe("dynamic-island");
 		expect(asMini(merged).audio.silero).toBe(0.7);
@@ -679,10 +728,16 @@ describe("deriveBroadcastUpdate", () => {
 
 	// Boundary cast: expose the writable `audio` slice on the opaque AppSettings
 	// value so a test can hand-craft a user-dirty section.
-	const asAudioWritable = (s: AnySettings) => s as unknown as { audio: { silero: number } };
+	const asAudioWritable = (s: AnySettings) =>
+		s as unknown as { audio: { silero: number } };
 
 	test("pure broadcast (no preserved dirt) flips nextFromBroadcast=true", () => {
-		const result = deriveBroadcastUpdate(freshDefaults(), freshDefaults(), undefined, false);
+		const result = deriveBroadcastUpdate(
+			freshDefaults(),
+			freshDefaults(),
+			undefined,
+			false,
+		);
 		expect(result.nextFromBroadcast).toBe(true);
 	});
 
@@ -693,7 +748,12 @@ describe("deriveBroadcastUpdate", () => {
 		// current that doesn't match lastSaved.
 		asAudioWritable(current).audio = { silero: 0.99 };
 		asAudioWritable(lastSaved).audio = { silero: 0.5 };
-		const result = deriveBroadcastUpdate(freshDefaults(), current, lastSaved, false);
+		const result = deriveBroadcastUpdate(
+			freshDefaults(),
+			current,
+			lastSaved,
+			false,
+		);
 		expect(result.nextFromBroadcast).toBe(false);
 	});
 
@@ -702,7 +762,12 @@ describe("deriveBroadcastUpdate", () => {
 		const lastSaved = freshDefaults();
 		asAudioWritable(current).audio = { silero: 0.99 };
 		asAudioWritable(lastSaved).audio = { silero: 0.5 };
-		const result = deriveBroadcastUpdate(freshDefaults(), current, lastSaved, true);
+		const result = deriveBroadcastUpdate(
+			freshDefaults(),
+			current,
+			lastSaved,
+			true,
+		);
 		expect(result.nextFromBroadcast).toBe(true);
 	});
 });

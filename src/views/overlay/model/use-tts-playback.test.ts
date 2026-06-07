@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { MutableRefObject } from "react";
 import type { TtsChunkPayload } from "@/shared/api/ipc-client";
 import type { TtsPlaybackQueue } from "../lib/playback-queue";
-import { handleTtsChunkPayload, handleTtsCompletedPayload, stopTts } from "./use-tts-playback";
+import {
+	handleTtsChunkPayload,
+	handleTtsCompletedPayload,
+	stopTts,
+} from "./use-tts-playback";
 
 // Lightweight queue stub — verifies that the module-level handlers
 // forward exactly the right payloads without coupling to the real
@@ -30,15 +34,20 @@ interface TauriInvokeCall {
 }
 
 interface TauriInternals {
-	invoke: (cmd: string, args?: Record<string, unknown>, options?: unknown) => Promise<unknown>;
+	invoke: (
+		cmd: string,
+		args?: Record<string, unknown>,
+		options?: unknown,
+	) => Promise<unknown>;
 }
 
 function installTauriInvokeRecorder(): {
 	calls: TauriInvokeCall[];
 	restore: () => void;
 } {
-	const internals = (window as unknown as { __TAURI_INTERNALS__?: TauriInternals })
-		.__TAURI_INTERNALS__;
+	const internals = (
+		window as unknown as { __TAURI_INTERNALS__?: TauriInternals }
+	).__TAURI_INTERNALS__;
 	if (!internals) {
 		throw new Error("expected test Tauri internals to be installed");
 	}
@@ -76,7 +85,10 @@ function makeRef(value: string | null): MutableRefObject<string | null> {
 	return { current: value };
 }
 
-function makeChunk(requestId: string, overrides: Partial<TtsChunkPayload> = {}): TtsChunkPayload {
+function makeChunk(
+	requestId: string,
+	overrides: Partial<TtsChunkPayload> = {},
+): TtsChunkPayload {
 	return {
 		requestId,
 		sampleRate: 24_000,

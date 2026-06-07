@@ -33,7 +33,11 @@ export interface DataGridLabels {
 	previousPage: string;
 	rowsPerPage: string;
 	search: string;
-	formatPaginationInfo: (info: { count: number; from: number; to: number }) => string;
+	formatPaginationInfo: (info: {
+		count: number;
+		from: number;
+		to: number;
+	}) => string;
 	formatSortBy: (column: string) => string;
 }
 

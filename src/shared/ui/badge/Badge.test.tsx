@@ -15,25 +15,24 @@ describe("Badge", () => {
 		expect(node.className).toContain("bg-accent");
 	});
 
-	test.each([
-		"default",
-		"secondary",
-		"outline",
-	] as const)("applies variant class for %s", (variant) => {
-		render(
-			<Badge data-testid="b" variant={variant}>
-				x
-			</Badge>
-		);
-		const node = screen.getByTestId("b");
-		expect(node.className.length).toBeGreaterThan(0);
-	});
+	test.each(["default", "secondary", "outline"] as const)(
+		"applies variant class for %s",
+		(variant) => {
+			render(
+				<Badge data-testid="b" variant={variant}>
+					x
+				</Badge>,
+			);
+			const node = screen.getByTestId("b");
+			expect(node.className.length).toBeGreaterThan(0);
+		},
+	);
 
 	test("merges user-supplied className with built-ins", () => {
 		render(
 			<Badge className="custom" data-testid="b">
 				x
-			</Badge>
+			</Badge>,
 		);
 		expect(screen.getByTestId("b").className).toContain("custom");
 	});
@@ -42,8 +41,10 @@ describe("Badge", () => {
 		render(
 			<Badge id="badge-1" role="status">
 				x
-			</Badge>
+			</Badge>,
 		);
-		expect(document.getElementById("badge-1")?.getAttribute("role")).toBe("status");
+		expect(document.getElementById("badge-1")?.getAttribute("role")).toBe(
+			"status",
+		);
 	});
 });

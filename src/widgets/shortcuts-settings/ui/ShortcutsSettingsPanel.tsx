@@ -11,21 +11,29 @@ import { FormControl } from "@/shared/ui/form-control";
 import { HotkeyShortcutsLegend } from "./HotkeyShortcutsLegend";
 
 export function ShortcutsSettingsPanel() {
-	const recordingMode = useSettingsStore((s) => s.settings.general?.recordingMode ?? "ptt");
+	const recordingMode = useSettingsStore(
+		(s) => s.settings.general?.recordingMode ?? "ptt",
+	);
 	const hotkey = useSettingsStore((s) => s.settings.hotkey);
 	const updateHotkey = useSettingsStore((s) => s.updateHotkeySettings);
-	const repasteHotkey = useSettingsStore((s) => s.settings.general?.repasteHotkey ?? "");
+	const repasteHotkey = useSettingsStore(
+		(s) => s.settings.general?.repasteHotkey ?? "",
+	);
 	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
 	const ttsHotkey = useSettingsStore((s) => s.settings.tts?.hotkey ?? "");
 	const updateTts = useSettingsStore((s) => s.updateTtsSettings);
-	const transformHotkey = useSettingsStore((s) => s.settings.llm?.transforms?.hotkey ?? "");
+	const transformHotkey = useSettingsStore(
+		(s) => s.settings.llm?.transforms?.hotkey ?? "",
+	);
 	const updateTransforms = useSettingsStore((s) => s.updateLlmTransforms);
 	// A hotkey is meaningless while its feature is off — the backend doesn't even
 	// register it (see `reconcile_winstt_hotkeys`, gated on the same flags). Mirror
 	// that here: keep the row VISIBLE (so users know the shortcut exists) but
 	// disabled (dimmed + non-interactive) until the feature is enabled.
 	const ttsEnabled = useSettingsStore((s) => s.settings.tts?.enabled ?? false);
-	const transformsEnabled = useSettingsStore((s) => s.settings.llm?.transforms?.enabled ?? false);
+	const transformsEnabled = useSettingsStore(
+		(s) => s.settings.llm?.transforms?.enabled ?? false,
+	);
 	const th = useTranslations("hotkey");
 	const tt = useTranslations("tts");
 	const tl = useTranslations("llm");
@@ -70,7 +78,11 @@ export function ShortcutsSettingsPanel() {
 							disabled={recordingMode === "listen"}
 							isDefault={pttKey === DEFAULT_SETTINGS.hotkey.pushToTalkKey}
 							label={th("pushToTalkKey")}
-							onReset={() => updateHotkey({ pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey })}
+							onReset={() =>
+								updateHotkey({
+									pushToTalkKey: DEFAULT_SETTINGS.hotkey.pushToTalkKey,
+								})
+							}
 							tooltip={th("pushToTalkKeyTooltip")}
 						>
 							<HotkeyRecorder
@@ -82,9 +94,15 @@ export function ShortcutsSettingsPanel() {
 					</div>
 					<div className="py-2">
 						<SettingField
-							isDefault={repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey}
+							isDefault={
+								repasteHotkey === DEFAULT_SETTINGS.general.repasteHotkey
+							}
 							label={th("repasteKey")}
-							onReset={() => updateGeneral({ repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey })}
+							onReset={() =>
+								updateGeneral({
+									repasteHotkey: DEFAULT_SETTINGS.general.repasteHotkey,
+								})
+							}
 							tooltip={th("repasteKeyTooltip")}
 						>
 							<HotkeyRecorder
@@ -116,9 +134,15 @@ export function ShortcutsSettingsPanel() {
 					<div className="py-2">
 						<SettingField
 							disabled={!transformsEnabled}
-							isDefault={transformHotkey === DEFAULT_SETTINGS.llm.transforms.hotkey}
+							isDefault={
+								transformHotkey === DEFAULT_SETTINGS.llm.transforms.hotkey
+							}
 							label={tl("subTransformTitle")}
-							onReset={() => updateTransforms({ hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey })}
+							onReset={() =>
+								updateTransforms({
+									hotkey: DEFAULT_SETTINGS.llm.transforms.hotkey,
+								})
+							}
 							tooltip={`${tl("transformHotkeyTooltip")} ${tl("transformHotkeyCaption")}`}
 						>
 							<HotkeyRecorder

@@ -40,12 +40,16 @@ const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 // assertions read. The Tauri command names + arg keys are the source of truth in
 // `src/bindings.ts` (winstt_set_parameter {parameter,value}, winstt_call_method
 // {method,args}, hotkey_register/unregister {accelerator}).
-type TauriInvoke = (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
+type TauriInvoke = (
+	cmd: string,
+	args?: unknown,
+	options?: unknown,
+) => Promise<unknown>;
 
 const TAURI_INTERNALS_KEY = "__TAURI_INTERNALS__";
-const originalTauriInternals = (window as unknown as Record<string, { invoke: TauriInvoke }>)[
-	TAURI_INTERNALS_KEY
-];
+const originalTauriInternals = (
+	window as unknown as Record<string, { invoke: TauriInvoke }>
+)[TAURI_INTERNALS_KEY];
 
 /** Tauri command name → the IPC channel the renderer wrappers used to hit. The
  * command's `args` object is already in the `{accelerator}` / `{parameter,value}`
@@ -62,7 +66,10 @@ const INVOKE_COMMAND_CHANNELS: Record<string, string> = {
 	hotkey_register: IPC.HOTKEY_REGISTER,
 };
 
-function instrumentedTauriInvoke(cmd: string, args?: unknown): Promise<unknown> {
+function instrumentedTauriInvoke(
+	cmd: string,
+	args?: unknown,
+): Promise<unknown> {
 	const invokeChannel = INVOKE_COMMAND_CHANNELS[cmd];
 	if (invokeChannel) {
 		invokes.push(invokeChannel);
@@ -84,7 +91,9 @@ function makeApi() {
 	invokes.length = 0;
 	// Re-arm the Tauri command boundary every test so the recorders above stay
 	// bound to THIS run's (just-cleared) arrays.
-	(window as unknown as Record<string, { invoke: TauriInvoke }>)[TAURI_INTERNALS_KEY] = {
+	(window as unknown as Record<string, { invoke: TauriInvoke }>)[
+		TAURI_INTERNALS_KEY
+	] = {
 		...originalTauriInternals,
 		invoke: instrumentedTauriInvoke,
 	};
@@ -107,7 +116,7 @@ function makeApi() {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -126,7 +135,8 @@ beforeEach(() => {
 
 afterEach(() => {
 	window.nativeBridge = originalApi;
-	(window as unknown as Record<string, unknown>)[TAURI_INTERNALS_KEY] = originalTauriInternals;
+	(window as unknown as Record<string, unknown>)[TAURI_INTERNALS_KEY] =
+		originalTauriInternals;
 	useSettingsStore.setState({ settings: initialSettings });
 	// Reset the hotkey-store singleton so sibling test files (notably
 	// hotkey-store.test.ts which snapshots `useHotkeyStore.getState()` at
@@ -154,7 +164,9 @@ describe("usePushToTalk", () => {
 		const { unmount } = renderHook(() => usePushToTalk());
 		expect(invokes).toContain(IPC.HOTKEY_REGISTER);
 		unmount();
-		expect(sentChannels.some((c) => c.channel === IPC.HOTKEY_UNREGISTER)).toBe(false);
+		expect(sentChannels.some((c) => c.channel === IPC.HOTKEY_UNREGISTER)).toBe(
+			false,
+		);
 	});
 
 	test("hotkey-pressed in PTT mode sets isPressed=true and disables the silence endpoint", () => {
@@ -190,8 +202,8 @@ describe("usePushToTalk", () => {
 					c.channel === IPC.STT_SET_PARAMETER &&
 					(c.args[0] as { parameter: string; value: unknown }).parameter ===
 						"silence_endpoint_enabled" &&
-					(c.args[0] as { parameter: string; value: unknown }).value === false
-			)
+					(c.args[0] as { parameter: string; value: unknown }).value === false,
+			),
 		).toBe(true);
 	});
 
@@ -276,7 +288,9 @@ describe("usePushToTalk", () => {
 		rerender();
 		expect(useHotkeyStore.getState().accelerator).toBe("LAlt+Space");
 		// Hotkey was re-registered with the new accelerator.
-		expect(invokes.filter((c) => c === IPC.HOTKEY_REGISTER).length).toBeGreaterThanOrEqual(2);
+		expect(
+			invokes.filter((c) => c === IPC.HOTKEY_REGISTER).length,
+		).toBeGreaterThanOrEqual(2);
 	});
 
 	test("disables silence endpoint in PTT mode even when smartEndpoint is on", () => {
@@ -297,7 +311,9 @@ describe("usePushToTalk", () => {
 		const setParamCalls = sentChannels
 			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
 			.map((c) => c.args[0] as { parameter: string; value: unknown });
-		const silenceCall = setParamCalls.find((p) => p.parameter === "silence_endpoint_enabled");
+		const silenceCall = setParamCalls.find(
+			(p) => p.parameter === "silence_endpoint_enabled",
+		);
 		expect(silenceCall).toBeDefined();
 		expect(silenceCall?.value).toBe(false);
 	});
@@ -346,8 +362,14 @@ describe("usePushToTalk", () => {
 		const params = sentChannels
 			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
 			.map((c) => c.args[0] as { parameter: string; value: unknown });
-		expect(params).toContainEqual({ parameter: "silence_endpoint_enabled", value: false });
-		expect(params).toContainEqual({ parameter: "silence_timing", value: false });
+		expect(params).toContainEqual({
+			parameter: "silence_endpoint_enabled",
+			value: false,
+		});
+		expect(params).toContainEqual({
+			parameter: "silence_timing",
+			value: false,
+		});
 
 		// The renderer no longer relays `set_microphone` (the backend's handler.rs
 		// starts the recorder on the hotkey thread). What it MUST still guarantee is
@@ -357,12 +379,13 @@ describe("usePushToTalk", () => {
 		const idxEndpoint = sentChannels.findIndex(
 			(c) =>
 				c.channel === IPC.STT_SET_PARAMETER &&
-				(c.args[0] as { parameter: string }).parameter === "silence_endpoint_enabled"
+				(c.args[0] as { parameter: string }).parameter ===
+					"silence_endpoint_enabled",
 		);
 		const idxTiming = sentChannels.findIndex(
 			(c) =>
 				c.channel === IPC.STT_SET_PARAMETER &&
-				(c.args[0] as { parameter: string }).parameter === "silence_timing"
+				(c.args[0] as { parameter: string }).parameter === "silence_timing",
 		);
 		expect(idxEndpoint).toBeGreaterThanOrEqual(0);
 		expect(idxTiming).toBeGreaterThan(idxEndpoint);
@@ -388,7 +411,9 @@ describe("usePushToTalk", () => {
 		const forcedOff = sentChannels
 			.filter((c) => c.channel === IPC.STT_SET_PARAMETER)
 			.map((c) => c.args[0] as { parameter: string; value: unknown })
-			.some((p) => p.parameter === "silence_endpoint_enabled" && p.value === false);
+			.some(
+				(p) => p.parameter === "silence_endpoint_enabled" && p.value === false,
+			);
 		expect(forcedOff).toBe(false);
 	});
 

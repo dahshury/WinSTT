@@ -13,7 +13,7 @@ function renderNotice() {
 	return render(
 		<IntlProvider>
 			<CloudKeyRevertNotice />
-		</IntlProvider>
+		</IntlProvider>,
 	);
 }
 

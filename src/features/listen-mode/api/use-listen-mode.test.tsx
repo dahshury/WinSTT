@@ -32,7 +32,7 @@ function makeApi() {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -60,8 +60,18 @@ function fire(channel: string, ...args: unknown[]) {
 describe("validateDevices", () => {
 	test("returns valid devices from a raw array", () => {
 		const raw = [
-			{ index: 0, name: "Speakers", defaultSampleRate: 48_000, maxOutputChannels: 2 },
-			{ index: 1, name: "Mic", defaultSampleRate: 44_100, maxOutputChannels: 0 },
+			{
+				index: 0,
+				name: "Speakers",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+			},
+			{
+				index: 1,
+				name: "Mic",
+				defaultSampleRate: 44_100,
+				maxOutputChannels: 0,
+			},
 		];
 		const result = validateDevices(raw);
 		expect(result).toHaveLength(2);
@@ -70,7 +80,12 @@ describe("validateDevices", () => {
 
 	test("drops entries that fail Zod validation", () => {
 		const raw = [
-			{ index: 0, name: "Valid", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+			{
+				index: 0,
+				name: "Valid",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+			},
 			{ index: "bad", name: 42 }, // invalid
 		];
 		const result = validateDevices(raw);
@@ -173,7 +188,11 @@ describe("useListenMode", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
-				general: { ...initialSettings.general, recordingMode: "listen", loopbackDeviceIndex: 3 },
+				general: {
+					...initialSettings.general,
+					recordingMode: "listen",
+					loopbackDeviceIndex: 3,
+				},
 			},
 		});
 		useConnectionStore.setState({ connectionStatus: "connected" });

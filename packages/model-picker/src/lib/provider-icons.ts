@@ -2,19 +2,19 @@ import { createProviderIconResolver } from "@/shared/lib/provider-icon-resolver"
 import { publicAsset } from "./public-asset";
 
 const PROVIDER_NAME_ALIASES: Record<string, string> = {
-  meta: "meta-llama",
-  mistral: "mistralai",
-  xai: "x-ai",
+	meta: "meta-llama",
+	mistral: "mistralai",
+	xai: "x-ai",
 };
 
 const resolveProviderIconPath = createProviderIconResolver(
-  PROVIDER_NAME_ALIASES,
+	PROVIDER_NAME_ALIASES,
 );
 
 export function getProviderIcon(
-  provider: string | null | undefined,
+	provider: string | null | undefined,
 ): string | null {
-  return resolveProviderIconPath(provider);
+	return resolveProviderIconPath(provider);
 }
 
 /**
@@ -23,10 +23,10 @@ export function getProviderIcon(
  * a neutral initials chip instead of the misleading OpenRouter "O" fallback.
  */
 export function resolveProviderIcon(
-  provider: string | null | undefined,
+	provider: string | null | undefined,
 ): string | null {
-  const path = getProviderIcon(provider);
-  return path ? publicAsset(path) : null;
+	const path = getProviderIcon(provider);
+	return path ? publicAsset(path) : null;
 }
 
 /**
@@ -35,13 +35,13 @@ export function resolveProviderIcon(
  * unknown maker slug is encountered. Callers can override via `fallback`.
  */
 export function getProviderIconWithFallback(
-  provider: string | null | undefined,
-  fallback?: string,
+	provider: string | null | undefined,
+	fallback?: string,
 ): string {
-  // Resolve to a renderer-root-relative URL so the icon loads under file://
-  // in packaged builds (the absolute "/provider-icons/x.png" form only works
-  // against the dev server root). See public-asset.ts.
-  return publicAsset(
-    getProviderIcon(provider) || fallback || "/provider-icons/openrouter.svg",
-  );
+	// Resolve to a renderer-root-relative URL so the icon loads under file://
+	// in packaged builds (the absolute "/provider-icons/x.png" form only works
+	// against the dev server root). See public-asset.ts.
+	return publicAsset(
+		getProviderIcon(provider) || fallback || "/provider-icons/openrouter.svg",
+	);
 }

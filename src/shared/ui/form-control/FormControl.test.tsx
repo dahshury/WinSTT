@@ -7,7 +7,7 @@ describe("FormControl", () => {
 		render(
 			<FormControl caption="Help text" label="Name">
 				<input data-testid="i" type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		expect(screen.getByText("Name")).toBeDefined();
 		expect(screen.getByText("Help text")).toBeDefined();
@@ -18,7 +18,7 @@ describe("FormControl", () => {
 		render(
 			<FormControl label="Name">
 				<input data-testid="i" type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		const label = screen.getByText("Name");
 		expect(label.tagName).toBe("LABEL");
@@ -31,7 +31,7 @@ describe("FormControl", () => {
 		render(
 			<FormControl error="Required" label="Name">
 				<input type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		const alert = screen.getByRole("alert");
 		expect(alert.textContent).toBe("Required");
@@ -42,13 +42,13 @@ describe("FormControl", () => {
 		const { rerender } = render(
 			<FormControl label="Name">
 				<input type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		expect(screen.queryByRole("alert")).toBeNull();
 		rerender(
 			<FormControl error="" label="Name">
 				<input type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
@@ -57,7 +57,7 @@ describe("FormControl", () => {
 		render(
 			<FormControl>
 				<input data-testid="i" type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		expect(screen.getByTestId("i")).toBeDefined();
 	});
@@ -66,7 +66,7 @@ describe("FormControl", () => {
 		render(
 			<FormControl disabled label="X">
 				<input data-testid="i" type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		// the input is wrapped in a div with pointer-events-none when disabled; check the inner wrapper
 		const input = screen.getByTestId("i");
@@ -79,9 +79,14 @@ describe("FormControl", () => {
 				caption="desc"
 				label="Enable X"
 				labelAddon={
-					<input aria-checked={false} aria-label="enable" role="switch" type="checkbox" />
+					<input
+						aria-checked={false}
+						aria-label="enable"
+						role="switch"
+						type="checkbox"
+					/>
 				}
-			/>
+			/>,
 		);
 		// The header row centers the toggle against the label+caption block …
 		expect(container.querySelector("div.flex.items-center")).not.toBeNull();
@@ -96,7 +101,7 @@ describe("FormControl", () => {
 		const { container } = render(
 			<FormControl label="Name">
 				<input data-testid="i" type="text" />
-			</FormControl>
+			</FormControl>,
 		);
 		const root = container.firstElementChild as HTMLElement;
 		expect(root.className).toContain("flex-col");

@@ -36,7 +36,9 @@ export function installScrollbarAutoHide(): void {
 		// `scroll` on the page itself targets `document` (not an Element); route
 		// that to the scrolling element so the page bar reveals too.
 		const el =
-			node instanceof Element ? node : (document.scrollingElement ?? document.documentElement);
+			node instanceof Element
+				? node
+				: (document.scrollingElement ?? document.documentElement);
 		if (!el) {
 			return;
 		}
@@ -50,11 +52,14 @@ export function installScrollbarAutoHide(): void {
 			window.setTimeout(() => {
 				el.removeAttribute(ACTIVE_ATTR);
 				timers.delete(el);
-			}, IDLE_MS)
+			}, IDLE_MS),
 		);
 	};
 
 	// Capture phase: `scroll` doesn't bubble, but a capturing listener on the
 	// document still receives scroll events from every nested scroller.
-	document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+	document.addEventListener("scroll", onScroll, {
+		capture: true,
+		passive: true,
+	});
 }

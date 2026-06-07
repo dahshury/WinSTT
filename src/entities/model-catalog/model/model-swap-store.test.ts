@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
-import type { ModelSwapKind, RuntimeInfoPayload } from "@/shared/api/ipc-client";
+import type {
+	ModelSwapKind,
+	RuntimeInfoPayload,
+} from "@/shared/api/ipc-client";
 
 interface SwapPayload {
 	kind: ModelSwapKind;
@@ -74,7 +77,9 @@ const {
 	_resetOptimisticSwapForTests,
 } = await import("./model-swap-store");
 
-function runtimeInfo(overrides: Partial<RuntimeInfoPayload>): RuntimeInfoPayload {
+function runtimeInfo(
+	overrides: Partial<RuntimeInfoPayload>,
+): RuntimeInfoPayload {
 	return {
 		device: "cpu",
 		is_gpu: false,
@@ -180,7 +185,9 @@ describe("useModelSwapStore.setActive / clear", () => {
 function emitStarted(payload: SwapPayload): void {
 	const cb = ipcOverrides.startedCb;
 	if (cb === null) {
-		throw new Error("startedCb not registered — call initModelSwapStore() first");
+		throw new Error(
+			"startedCb not registered — call initModelSwapStore() first",
+		);
 	}
 	cb(payload);
 }
@@ -188,7 +195,9 @@ function emitStarted(payload: SwapPayload): void {
 function emitCompleted(payload: SwapPayload): void {
 	const cb = ipcOverrides.completedCb;
 	if (cb === null) {
-		throw new Error("completedCb not registered — call initModelSwapStore() first");
+		throw new Error(
+			"completedCb not registered — call initModelSwapStore() first",
+		);
 	}
 	cb(payload);
 }
@@ -196,7 +205,9 @@ function emitCompleted(payload: SwapPayload): void {
 function emitFailed(payload: SwapFailedPayload): void {
 	const cb = ipcOverrides.failedCb;
 	if (cb === null) {
-		throw new Error("failedCb not registered — call initModelSwapStore() first");
+		throw new Error(
+			"failedCb not registered — call initModelSwapStore() first",
+		);
 	}
 	cb(payload);
 }
@@ -204,7 +215,9 @@ function emitFailed(payload: SwapFailedPayload): void {
 function emitRuntime(info: RuntimeInfoPayload | null): void {
 	const cb = ipcOverrides.runtimeCb;
 	if (cb === null) {
-		throw new Error("runtimeCb not registered — call initModelSwapStore() first");
+		throw new Error(
+			"runtimeCb not registered — call initModelSwapStore() first",
+		);
 	}
 	cb(info);
 }

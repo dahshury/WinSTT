@@ -12,7 +12,7 @@ describe("messages bundles", () => {
 	test("every advertised locale has a messages/<code>.json on disk", async () => {
 		for (const locale of LOCALES) {
 			const file = Bun.file(
-				new URL(`../../../messages/${locale}.json`, import.meta.url)
+				new URL(`../../../messages/${locale}.json`, import.meta.url),
 			);
 			expect(await file.exists()).toBe(true);
 		}
@@ -20,7 +20,7 @@ describe("messages bundles", () => {
 
 	test("English bundle parses with at least one top-level key", async () => {
 		const en = (await Bun.file(
-			new URL("../../../messages/en.json", import.meta.url)
+			new URL("../../../messages/en.json", import.meta.url),
 		).json()) as Record<string, unknown>;
 		expect(Object.keys(en).length).toBeGreaterThan(0);
 	});

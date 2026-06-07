@@ -8,7 +8,7 @@ describe("Elevated", () => {
 		render(
 			<Elevated data-testid="elevated" offset={2}>
 				<span>hello</span>
-			</Elevated>
+			</Elevated>,
 		);
 		const el = screen.getByTestId("elevated");
 		expect(el.tagName).toBe("DIV");
@@ -19,7 +19,7 @@ describe("Elevated", () => {
 		render(
 			<Elevated className="my-extra" data-testid="elevated" offset={2}>
 				<span>x</span>
-			</Elevated>
+			</Elevated>,
 		);
 		expect(screen.getByTestId("elevated").className).toContain("my-extra");
 	});
@@ -33,7 +33,7 @@ describe("Elevated", () => {
 				<Elevated data-testid="elevated" offset={10}>
 					<span>x</span>
 				</Elevated>
-			</SurfaceProvider>
+			</SurfaceProvider>,
 		);
 		expect(screen.getByTestId("elevated").textContent).toBe("x");
 	});
@@ -42,7 +42,7 @@ describe("Elevated", () => {
 		render(
 			<Elevated data-testid="elevated" offset={2} shadowLevel={1}>
 				<span>x</span>
-			</Elevated>
+			</Elevated>,
 		);
 		// We can't easily inspect the resolved tailwind class names, but
 		// rendering completes and the override is exercised by surfaceClasses.

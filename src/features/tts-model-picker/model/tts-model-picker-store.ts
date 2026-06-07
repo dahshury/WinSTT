@@ -32,27 +32,33 @@ interface TtsModelPickerState {
  * selected model commits `enabled: true`, so closing the picker empty leaves the
  * toggle off.
  */
-export const useTtsModelPickerStore = create<TtsModelPickerState>((set, get) => ({
-	enableOnInstall: false,
-	open: false,
-	openFor: (enableOnInstall) => set({ open: true, enableOnInstall }),
-	close: () => set({ open: false, enableOnInstall: false }),
-	commitInstalled: (modelId) => {
-		if (!get().open) {
-			return;
-		}
-		const settings = useSettingsStore.getState();
-		if (!get().enableOnInstall) {
-			settings.updateTtsSettings({ model: modelId });
-			return;
-		}
-		// Fold the default Speak-selection hotkey in alongside `enabled: true`
-		// when the user has no binding yet, so the combo is always armed once
-		// read-aloud turns on (parity with the old install-gate enable patch).
-		const currentHotkey = settings.settings.tts?.hotkey ?? "";
-		const patch = currentHotkey.trim()
-			? { model: modelId, enabled: true as const }
-			: { model: modelId, enabled: true as const, hotkey: DEFAULT_SETTINGS.tts.hotkey };
-		settings.updateTtsSettings(patch);
-	},
-}));
+export const useTtsModelPickerStore = create<TtsModelPickerState>(
+	(set, get) => ({
+		enableOnInstall: false,
+		open: false,
+		openFor: (enableOnInstall) => set({ open: true, enableOnInstall }),
+		close: () => set({ open: false, enableOnInstall: false }),
+		commitInstalled: (modelId) => {
+			if (!get().open) {
+				return;
+			}
+			const settings = useSettingsStore.getState();
+			if (!get().enableOnInstall) {
+				settings.updateTtsSettings({ model: modelId });
+				return;
+			}
+			// Fold the default Speak-selection hotkey in alongside `enabled: true`
+			// when the user has no binding yet, so the combo is always armed once
+			// read-aloud turns on (parity with the old install-gate enable patch).
+			const currentHotkey = settings.settings.tts?.hotkey ?? "";
+			const patch = currentHotkey.trim()
+				? { model: modelId, enabled: true as const }
+				: {
+						model: modelId,
+						enabled: true as const,
+						hotkey: DEFAULT_SETTINGS.tts.hotkey,
+					};
+			settings.updateTtsSettings(patch);
+		},
+	}),
+);

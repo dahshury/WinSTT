@@ -7,7 +7,8 @@ import { useSoundDrop } from "./use-sound-drop";
 // per-file `window.nativeBridge` stub for the native path lookup.
 
 const originalApi = window.nativeBridge;
-const OriginalAudioContext = (globalThis as { AudioContext?: unknown }).AudioContext;
+const OriginalAudioContext = (globalThis as { AudioContext?: unknown })
+	.AudioContext;
 
 let decodeDuration = 1;
 let decodeShouldThrow = false;
@@ -65,12 +66,15 @@ beforeEach(() => {
 
 afterEach(() => {
 	window.nativeBridge = originalApi;
-	(globalThis as { AudioContext?: unknown }).AudioContext = OriginalAudioContext;
+	(globalThis as { AudioContext?: unknown }).AudioContext =
+		OriginalAudioContext;
 });
 
 describe("useSoundDrop", () => {
 	test("dragOver/dragLeave toggle the drag state and onDragOver prevents default", () => {
-		const { result } = renderHook(() => useSoundDrop({ onAdd: async () => undefined, t }));
+		const { result } = renderHook(() =>
+			useSoundDrop({ onAdd: async () => undefined, t }),
+		);
 		const ev = dropEvent(null);
 		act(() => result.current.handlers.onDragOver(ev));
 		expect(result.current.dragOver).toBe(true);
@@ -87,7 +91,7 @@ describe("useSoundDrop", () => {
 					added = true;
 				},
 				t,
-			})
+			}),
 		);
 		await act(async () => {
 			await result.current.handlers.onDrop(dropEvent(null));
@@ -97,7 +101,9 @@ describe("useSoundDrop", () => {
 	});
 
 	test("rejects unsupported extension with soundFileDropError", async () => {
-		const { result } = renderHook(() => useSoundDrop({ onAdd: async () => undefined, t }));
+		const { result } = renderHook(() =>
+			useSoundDrop({ onAdd: async () => undefined, t }),
+		);
 		await act(async () => {
 			await result.current.handlers.onDrop(dropEvent(makeFile("voice.ogg")));
 		});
@@ -106,7 +112,9 @@ describe("useSoundDrop", () => {
 
 	test("rejects files longer than the max duration", async () => {
 		decodeDuration = 9;
-		const { result } = renderHook(() => useSoundDrop({ onAdd: async () => undefined, t }));
+		const { result } = renderHook(() =>
+			useSoundDrop({ onAdd: async () => undefined, t }),
+		);
 		await act(async () => {
 			await result.current.handlers.onDrop(dropEvent(makeFile("long.mp3")));
 		});
@@ -115,7 +123,9 @@ describe("useSoundDrop", () => {
 
 	test("reports unreadable audio when decoding throws", async () => {
 		decodeShouldThrow = true;
-		const { result } = renderHook(() => useSoundDrop({ onAdd: async () => undefined, t }));
+		const { result } = renderHook(() =>
+			useSoundDrop({ onAdd: async () => undefined, t }),
+		);
 		await act(async () => {
 			await result.current.handlers.onDrop(dropEvent(makeFile("broken.wav")));
 		});
@@ -124,7 +134,9 @@ describe("useSoundDrop", () => {
 
 	test("reports unreadable when the native path cannot be resolved", async () => {
 		nativePath = "";
-		const { result } = renderHook(() => useSoundDrop({ onAdd: async () => undefined, t }));
+		const { result } = renderHook(() =>
+			useSoundDrop({ onAdd: async () => undefined, t }),
+		);
 		await act(async () => {
 			await result.current.handlers.onDrop(dropEvent(makeFile("ok.wav")));
 		});
@@ -139,7 +151,7 @@ describe("useSoundDrop", () => {
 					calls.push([p, n]);
 				},
 				t,
-			})
+			}),
 		);
 		await act(async () => {
 			await result.current.handlers.onDrop(dropEvent(makeFile("My Clip.wav")));
@@ -149,7 +161,9 @@ describe("useSoundDrop", () => {
 	});
 
 	test("resetError clears a previous error", async () => {
-		const { result } = renderHook(() => useSoundDrop({ onAdd: async () => undefined, t }));
+		const { result } = renderHook(() =>
+			useSoundDrop({ onAdd: async () => undefined, t }),
+		);
 		await act(async () => {
 			await result.current.handlers.onDrop(dropEvent(makeFile("x.ogg")));
 		});

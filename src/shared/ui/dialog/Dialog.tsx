@@ -15,7 +15,12 @@ import {
 	useContext,
 } from "react";
 import { cn } from "@/shared/lib/cn";
-import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
+import {
+	SurfaceProvider,
+	surfaceClasses,
+	surfaceHoverBg,
+	useSurface,
+} from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
 import { ButtonGroup } from "@/shared/ui/button-group";
 import { dialogAnimation } from "@/shared/ui/dialog-animation";
@@ -67,7 +72,11 @@ export function Dialog({
 	if (alert) {
 		return (
 			<AlertModeContext.Provider value={true}>
-				<AlertDialog.Root defaultOpen={defaultOpen} onOpenChange={handleOpenChange} open={open}>
+				<AlertDialog.Root
+					defaultOpen={defaultOpen}
+					onOpenChange={handleOpenChange}
+					open={open}
+				>
 					{children}
 				</AlertDialog.Root>
 			</AlertModeContext.Provider>
@@ -98,17 +107,30 @@ export interface DialogCloseProps {
 
 /** Closes the dialog. Wrap a footer button in this (`render={<Button/>}`) to get
  *  Base UI's auto-close-on-press, or use it bare for an icon close. */
-export function DialogClose({ children, className, onClick, render }: DialogCloseProps) {
+export function DialogClose({
+	children,
+	className,
+	onClick,
+	render,
+}: DialogCloseProps) {
 	const alert = useAlertMode();
 	if (alert) {
 		return (
-			<AlertDialog.Close className={className} onClick={onClick} render={render}>
+			<AlertDialog.Close
+				className={className}
+				onClick={onClick}
+				render={render}
+			>
 				{children}
 			</AlertDialog.Close>
 		);
 	}
 	return (
-		<VanillaDialog.Close className={className} onClick={onClick} render={render}>
+		<VanillaDialog.Close
+			className={className}
+			onClick={onClick}
+			render={render}
+		>
 			{children}
 		</VanillaDialog.Close>
 	);
@@ -127,7 +149,7 @@ function DialogCloseButton() {
 					aria-label="Close"
 					className={cn(
 						"absolute top-3 right-3 h-7 w-7 rounded-md p-0 text-foreground-muted transition-colors duration-150",
-						surfaceHoverBg(hover)
+						surfaceHoverBg(hover),
 					)}
 				>
 					<HugeiconsIcon icon={Cancel01Icon} size={14} />
@@ -178,7 +200,7 @@ export function DialogContent({
 	const backdropClass = cn(
 		dialogAnimation.backdrop,
 		"fixed inset-0 bg-black/60 backdrop-blur-sm",
-		alert ? "z-confirm-backdrop" : "z-modal-backdrop"
+		alert ? "z-confirm-backdrop" : "z-modal-backdrop",
 	);
 	const usePreset = !(fluid || width !== undefined);
 	const popupClass = cn(
@@ -192,7 +214,7 @@ export function DialogContent({
 		!fluid && "max-w-[90vw]",
 		usePreset && size === "sm" && "w-[calc(100%-2rem)] max-w-[400px]",
 		usePreset && size === "lg" && "w-[calc(100%-2rem)] max-w-[540px]",
-		className
+		className,
 	);
 	const popupStyle: CSSProperties | undefined =
 		typeof width === "number" ? { width, ...style } : style;
@@ -270,14 +292,19 @@ export interface DialogTitleProps {
 
 export function DialogTitle({ children, className }: DialogTitleProps) {
 	const alert = useAlertMode();
-	const cls = cn("m-0 font-sans font-semibold text-[15px] text-foreground", className);
+	const cls = cn(
+		"m-0 font-sans font-semibold text-[15px] text-foreground",
+		className,
+	);
 	if (alert) {
 		return <AlertDialog.Title className={cls}>{children}</AlertDialog.Title>;
 	}
 	return <VanillaDialog.Title className={cls}>{children}</VanillaDialog.Title>;
 }
 
-type DescriptionRender = ComponentProps<typeof VanillaDialog.Description>["render"];
+type DescriptionRender = ComponentProps<
+	typeof VanillaDialog.Description
+>["render"];
 
 export interface DialogDescriptionProps {
 	children?: ReactNode;
@@ -287,11 +314,15 @@ export interface DialogDescriptionProps {
 	render?: DescriptionRender;
 }
 
-export function DialogDescription({ children, className, render }: DialogDescriptionProps) {
+export function DialogDescription({
+	children,
+	className,
+	render,
+}: DialogDescriptionProps) {
 	const alert = useAlertMode();
 	const cls = cn(
 		"m-0 whitespace-pre-line font-sans text-body text-foreground-muted leading-relaxed",
-		className
+		className,
 	);
 	if (alert) {
 		return (
@@ -309,7 +340,8 @@ export function DialogDescription({ children, className, render }: DialogDescrip
 
 type DialogActionVariant = "neutral" | "accent" | "danger";
 
-export interface DialogActionButtonProps extends ComponentPropsWithoutRef<"button"> {
+export interface DialogActionButtonProps
+	extends ComponentPropsWithoutRef<"button"> {
 	/** `neutral` = surface-lifted cancel/dismiss; `accent` = brand confirm;
 	 *  `danger` = destructive confirm. Default `neutral`. */
 	variant?: DialogActionVariant;
@@ -347,7 +379,7 @@ export function DialogActionButton({
 			className={cn(
 				"h-8 gap-1.5 rounded-md px-4 font-medium text-body transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.98]",
 				variantClass,
-				className
+				className,
 			)}
 			{...rest}
 		>

@@ -4,7 +4,12 @@ import { IconButton } from "./IconButton";
 
 describe("IconButton", () => {
 	test("renders with the supplied aria-label", () => {
-		render(<IconButton aria-label="Close" icon={<svg aria-hidden="true" data-testid="icon" />} />);
+		render(
+			<IconButton
+				aria-label="Close"
+				icon={<svg aria-hidden="true" data-testid="icon" />}
+			/>,
+		);
 		expect(screen.getByRole("button", { name: "Close" })).toBeDefined();
 		expect(screen.getByTestId("icon")).toBeDefined();
 	});
@@ -18,7 +23,14 @@ describe("IconButton", () => {
 
 	test("does not invoke onClick when disabled", () => {
 		const onClick = mock(() => undefined);
-		render(<IconButton aria-label="Close" disabled icon={<span />} onClick={onClick} />);
+		render(
+			<IconButton
+				aria-label="Close"
+				disabled
+				icon={<span />}
+				onClick={onClick}
+			/>,
+		);
 		fireEvent.click(screen.getByRole("button"));
 		expect(onClick).not.toHaveBeenCalled();
 	});

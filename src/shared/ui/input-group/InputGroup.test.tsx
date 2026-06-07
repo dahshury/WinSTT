@@ -14,7 +14,7 @@ describe("InputGroup", () => {
 		const { container } = render(
 			<InputGroup>
 				<input placeholder="search" />
-			</InputGroup>
+			</InputGroup>,
 		);
 		const root = container.firstChild as HTMLElement;
 		expect(root.className).toContain("inline-flex");
@@ -24,7 +24,7 @@ describe("InputGroup", () => {
 		const { container } = render(
 			<InputGroup size="sm" tone="active">
 				<input />
-			</InputGroup>
+			</InputGroup>,
 		);
 		const root = container.firstChild as HTMLElement;
 		expect(root.dataset.size).toBe("sm");
@@ -41,9 +41,11 @@ describe("InputGroup", () => {
 				<InputGroupAddon align="inline-end">
 					<span>end</span>
 				</InputGroupAddon>
-			</InputGroup>
+			</InputGroup>,
 		);
-		const start = screen.getByText("start").closest("[data-align]") as HTMLElement;
+		const start = screen
+			.getByText("start")
+			.closest("[data-align]") as HTMLElement;
 		const end = screen.getByText("end").closest("[data-align]") as HTMLElement;
 		expect(start.dataset.align).toBe("inline-start");
 		expect(end.dataset.align).toBe("inline-end");
@@ -61,7 +63,7 @@ describe("InputGroup", () => {
 					placeholder="Search…"
 					value=""
 				/>
-			</InputGroup>
+			</InputGroup>,
 		);
 		const input = screen.getByPlaceholderText("Search…") as HTMLInputElement;
 		expect(input.className).toContain("flex-1");
@@ -80,7 +82,7 @@ describe("InputGroup", () => {
 						<InputGroupText>Stop</InputGroupText>
 					</InputGroupButton>
 				</InputGroupAddon>
-			</InputGroup>
+			</InputGroup>,
 		);
 		const btn = screen.getByRole("button");
 		expect(btn.className).toContain("bg-error");
@@ -92,7 +94,7 @@ describe("InputGroup", () => {
 		const { container } = render(
 			<InputGroup>
 				<input />
-			</InputGroup>
+			</InputGroup>,
 		);
 		const root = container.firstChild as HTMLElement;
 		expect(root.dataset.appearance).toBe("elevated");
@@ -103,7 +105,7 @@ describe("InputGroup", () => {
 		const { container } = render(
 			<InputGroup appearance="minimal">
 				<input />
-			</InputGroup>
+			</InputGroup>,
 		);
 		const root = container.firstChild as HTMLElement;
 		expect(root.dataset.appearance).toBe("minimal");
@@ -119,7 +121,7 @@ describe("InputGroup", () => {
 						<span>+</span>
 					</InputGroupButton>
 				</InputGroupAddon>
-			</InputGroup>
+			</InputGroup>,
 		);
 		const btn = screen.getByRole("button");
 		expect(btn.className).toContain("bg-transparent");

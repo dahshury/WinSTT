@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "./Table";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableEmpty,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "./Table";
 
 function ExampleTable() {
 	return (
@@ -47,7 +55,7 @@ describe("Table", () => {
 				<TableBody>
 					<TableEmpty colSpan={3}>no entries</TableEmpty>
 				</TableBody>
-			</Table>
+			</Table>,
 		);
 		const cell = screen.getByRole("cell", { name: "no entries" });
 		expect(cell.getAttribute("colspan")).toBe("3");
@@ -115,9 +123,11 @@ describe("TableRow ref forwarding", () => {
 						<TableCell>x</TableCell>
 					</TableRow>
 				</TableBody>
-			</Table>
+			</Table>,
 		);
-		expect((captured as HTMLTableRowElement | null)?.tagName.toLowerCase()).toBe("tr");
+		expect(
+			(captured as HTMLTableRowElement | null)?.tagName.toLowerCase(),
+		).toBe("tr");
 	});
 
 	test("populates an object ref's `current` with the <tr> element", () => {
@@ -129,7 +139,7 @@ describe("TableRow ref forwarding", () => {
 						<TableCell>y</TableCell>
 					</TableRow>
 				</TableBody>
-			</Table>
+			</Table>,
 		);
 		expect(ref.current?.tagName.toLowerCase()).toBe("tr");
 	});

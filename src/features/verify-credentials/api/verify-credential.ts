@@ -27,10 +27,13 @@ export function errorMessage(err: unknown): string {
  */
 export async function invokeVerify(
 	provider: CloudSttProvider,
-	apiKey: string
+	apiKey: string,
 ): Promise<VerifyResponse> {
 	try {
-		return await ipcInvoke<VerifyResponse>(IPC.INTEGRATIONS_VERIFY, { provider, apiKey });
+		return await ipcInvoke<VerifyResponse>(IPC.INTEGRATIONS_VERIFY, {
+			provider,
+			apiKey,
+		});
 	} catch (err) {
 		const message = errorMessage(err);
 		return { ok: false, code: "network", message };
@@ -38,7 +41,10 @@ export async function invokeVerify(
 }
 
 /** Persist the verified/invalid flag and update settings for a provider. */
-function persistVerifiedSetting(provider: CloudSttProvider, verified: boolean): void {
+function persistVerifiedSetting(
+	provider: CloudSttProvider,
+	verified: boolean,
+): void {
 	useSettingsStore.getState().updateIntegrations({
 		[provider]: { verified, lastVerifiedAt: Date.now() },
 	});
@@ -46,19 +52,27 @@ function persistVerifiedSetting(provider: CloudSttProvider, verified: boolean): 
 
 /** Apply the per-status side effects when verify succeeds (CC 1). */
 function commitVerifiedResult(provider: CloudSttProvider): void {
-	useCredentialStatusStore.getState().setStatus(provider, { status: "verified" });
+	useCredentialStatusStore
+		.getState()
+		.setStatus(provider, { status: "verified" });
 	persistVerifiedSetting(provider, true);
 }
 
 /** Apply the per-status side effects for an offline (network) result (CC 1). */
-function commitOfflineResult(provider: CloudSttProvider, message: string | undefined): void {
+function commitOfflineResult(
+	provider: CloudSttProvider,
+	message: string | undefined,
+): void {
 	useCredentialStatusStore
 		.getState()
 		.setStatus(provider, { status: "offline", lastError: message });
 }
 
 /** Apply the per-status side effects when the key is invalid (CC 1). */
-function commitInvalidResult(provider: CloudSttProvider, message: string | undefined): void {
+function commitInvalidResult(
+	provider: CloudSttProvider,
+	message: string | undefined,
+): void {
 	useCredentialStatusStore
 		.getState()
 		.setStatus(provider, { status: "invalid", lastError: message });
@@ -72,7 +86,7 @@ function commitInvalidResult(provider: CloudSttProvider, message: string | undef
  */
 export function applyVerifyResponse(
 	provider: CloudSttProvider,
-	response: VerifyResponse
+	response: VerifyResponse,
 ): VerifyResponse {
 	if (response.ok) {
 		commitVerifiedResult(provider);
@@ -98,7 +112,7 @@ export function applyVerifyResponse(
  */
 export async function verifyCredential(
 	provider: CloudSttProvider,
-	apiKey: string
+	apiKey: string,
 ): Promise<VerifyResponse> {
 	const credStore = useCredentialStatusStore.getState();
 

@@ -31,7 +31,7 @@ describe("DropdownMenu wrappers", () => {
 						</DropdownMenuSubContent>
 					</DropdownMenuSub>
 				</DropdownMenuContent>
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		expect(screen.getByText("Open")).toBeDefined();
 	});

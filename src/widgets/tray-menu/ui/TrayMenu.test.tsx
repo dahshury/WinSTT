@@ -8,7 +8,7 @@ describe("TrayMenu", () => {
 		const { container } = render(
 			<IntlProvider>
 				<TrayMenu />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});

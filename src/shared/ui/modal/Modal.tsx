@@ -33,7 +33,11 @@ export function Modal({ children, isOpen, onClose }: ModalProps) {
 				}}
 				open={isOpen}
 			>
-				<DialogContent className="overflow-hidden overscroll-contain" fluid padded={false}>
+				<DialogContent
+					className="overflow-hidden overscroll-contain"
+					fluid
+					padded={false}
+				>
 					{children}
 				</DialogContent>
 			</Dialog>

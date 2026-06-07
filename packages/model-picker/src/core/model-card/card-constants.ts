@@ -20,7 +20,7 @@ export const CARD_BASE = cn(
 	"hover:-translate-y-px hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3",
 	"active:translate-y-0 active:scale-[0.99]",
 	"data-[highlighted]:border-border-hover data-[highlighted]:bg-surface-4 data-[highlighted]:shadow-surface-3",
-	"motion-reduce:transition-none motion-reduce:active:scale-100 motion-reduce:hover:translate-y-0"
+	"motion-reduce:transition-none motion-reduce:active:scale-100 motion-reduce:hover:translate-y-0",
 );
 
 /** Active selection: the fill warms to a Docker-blue tint and gains a ring.
@@ -29,7 +29,7 @@ export const CARD_BASE = cn(
 export const CARD_SELECTED = cn(
 	"border-accent/55 bg-accent/[0.09] shadow-surface-3 ring-1 ring-accent/25",
 	"hover:border-accent/70 hover:bg-accent/[0.12]",
-	"data-[highlighted]:border-accent/70 data-[highlighted]:bg-accent/[0.12]"
+	"data-[highlighted]:border-accent/70 data-[highlighted]:bg-accent/[0.12]",
 );
 
 /** Softer variant: a bundle primary owns the selected variant but isn't itself
@@ -38,7 +38,7 @@ export const CARD_SELECTED = cn(
 export const CARD_SELECTED_VARIANT = cn(
 	"border-accent/30 bg-accent/[0.05]",
 	"hover:border-accent/45 hover:bg-accent/[0.08]",
-	"data-[highlighted]:border-accent/45 data-[highlighted]:bg-accent/[0.08]"
+	"data-[highlighted]:border-accent/45 data-[highlighted]:bg-accent/[0.08]",
 );
 
 /** Nested siblings (revealed under a chevron) recess to surface-2 so they read
@@ -46,14 +46,14 @@ export const CARD_SELECTED_VARIANT = cn(
 export const CARD_NESTED = cn(
 	"bg-surface-2 shadow-surface-1",
 	"hover:bg-surface-3",
-	"data-[highlighted]:bg-surface-3"
+	"data-[highlighted]:bg-surface-3",
 );
 
 /** Desaturates a broken/unavailable card and parks the hover-lift (a
  *  non-selectable card shouldn't feel tactile) without changing dimensions. */
 export const CARD_UNAVAILABLE = cn(
 	"cursor-not-allowed opacity-55",
-	"hover:-translate-y-0 hover:border-border hover:bg-surface-3 hover:shadow-surface-2"
+	"hover:-translate-y-0 hover:border-border hover:bg-surface-3 hover:shadow-surface-2",
 );
 
 /** The recessed "how to get it" shelf: a subtly-darkened ledge that bleeds to

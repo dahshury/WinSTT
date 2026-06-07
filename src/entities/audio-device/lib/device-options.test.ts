@@ -10,10 +10,23 @@ import {
 	UsbConnected01Icon,
 } from "@hugeicons/core-free-icons";
 import type { AudioDevice } from "../model/audio-device";
-import { buildInputDeviceOptions, inputDeviceIconForName } from "./device-options";
+import {
+	buildInputDeviceOptions,
+	inputDeviceIconForName,
+} from "./device-options";
 
-function makeDevice(index: number, name: string, isDefault = false): AudioDevice {
-	return { index, name, isDefault, defaultSampleRate: 44_100, maxInputChannels: 2 };
+function makeDevice(
+	index: number,
+	name: string,
+	isDefault = false,
+): AudioDevice {
+	return {
+		index,
+		name,
+		isDefault,
+		defaultSampleRate: 44_100,
+		maxInputChannels: 2,
+	};
 }
 
 describe("buildInputDeviceOptions", () => {
@@ -27,7 +40,10 @@ describe("buildInputDeviceOptions", () => {
 	});
 
 	test("includes real devices in options", () => {
-		const devices = [makeDevice(0, "Built-in Mic"), makeDevice(1, "USB Headset")];
+		const devices = [
+			makeDevice(0, "Built-in Mic"),
+			makeDevice(1, "USB Headset"),
+		];
 		const result = buildInputDeviceOptions(devices, null, "System Default");
 		expect(result.deviceOptions).toHaveLength(3);
 		expect(result.deviceOptions[1]?.label).toBe("Built-in Mic");
@@ -37,18 +53,29 @@ describe("buildInputDeviceOptions", () => {
 	});
 
 	test("uses the actual default device name to pick the system-default row icon", () => {
-		const result = buildInputDeviceOptions([], null, "System Default (USB Mic)", "USB Mic");
+		const result = buildInputDeviceOptions(
+			[],
+			null,
+			"System Default (USB Mic)",
+			"USB Mic",
+		);
 		expect(result.deviceOptions[0]?.icon).toBe(UsbConnected01Icon);
 	});
 
 	test("maps common input device names to suitable icons", () => {
-		expect(inputDeviceIconForName("Bluetooth Headset")).toBe(BluetoothConnectedIcon);
-		expect(inputDeviceIconForName("USB Condenser Mic")).toBe(UsbConnected01Icon);
+		expect(inputDeviceIconForName("Bluetooth Headset")).toBe(
+			BluetoothConnectedIcon,
+		);
+		expect(inputDeviceIconForName("USB Condenser Mic")).toBe(
+			UsbConnected01Icon,
+		);
 		expect(inputDeviceIconForName("Integrated Camera Microphone")).toBe(
-			CameraMicrophone01Icon
+			CameraMicrophone01Icon,
 		);
 		expect(inputDeviceIconForName("Scarlett 2i2 USB")).toBe(MixerIcon);
-		expect(inputDeviceIconForName("Built-in Microphone Array")).toBe(LaptopIcon);
+		expect(inputDeviceIconForName("Built-in Microphone Array")).toBe(
+			LaptopIcon,
+		);
 		expect(inputDeviceIconForName("Studio Microphone")).toBe(Mic01Icon);
 	});
 
@@ -71,7 +98,9 @@ describe("buildInputDeviceOptions", () => {
 		// User selected index 1 (the WASAPI version of the same mic)
 		const result = buildInputDeviceOptions(devices, 1, "System Default");
 		// The first seen entry for "Built-in Mic" should get id="1" (the selected index)
-		const builtInOpt = result.deviceOptions.find((o) => o.label === "Built-in Mic");
+		const builtInOpt = result.deviceOptions.find(
+			(o) => o.label === "Built-in Mic",
+		);
 		expect(builtInOpt?.id).toBe("1");
 		expect(result.currentDeviceId).toBe("1");
 	});
@@ -106,7 +135,9 @@ describe("buildInputDeviceOptions", () => {
 		const result = buildInputDeviceOptions(devices, null, "System Default");
 		// default + Realtek (first occurrence only) + USB Mic = 3
 		expect(result.deviceOptions).toHaveLength(3);
-		expect(result.deviceOptions.filter((o) => o.label === "Realtek")).toHaveLength(1);
+		expect(
+			result.deviceOptions.filter((o) => o.label === "Realtek"),
+		).toHaveLength(1);
 	});
 
 	test("dedup is case-INSENSITIVE (mixed-case duplicates collapse)", () => {
@@ -114,7 +145,11 @@ describe("buildInputDeviceOptions", () => {
 		// because case is normalized either way. But mutating to OMIT the
 		// .toLowerCase() entirely (raw d.name) would treat "Mic" and "mic" as
 		// distinct keys.
-		const devices = [makeDevice(0, "Mic"), makeDevice(1, "mic"), makeDevice(2, "MIC")];
+		const devices = [
+			makeDevice(0, "Mic"),
+			makeDevice(1, "mic"),
+			makeDevice(2, "MIC"),
+		];
 		const result = buildInputDeviceOptions(devices, null, "System Default");
 		// default + 1 mic = 2 (all three "mic" variants collapse)
 		expect(result.deviceOptions).toHaveLength(2);
@@ -123,7 +158,11 @@ describe("buildInputDeviceOptions", () => {
 	test("dedup uses .trim() — leading/trailing whitespace duplicates collapse", () => {
 		// Mutating to remove .trim() (raw d.name without whitespace stripping)
 		// would treat "Mic" and " Mic " as distinct.
-		const devices = [makeDevice(0, "Mic"), makeDevice(1, "  Mic  "), makeDevice(2, " mic ")];
+		const devices = [
+			makeDevice(0, "Mic"),
+			makeDevice(1, "  Mic  "),
+			makeDevice(2, " mic "),
+		];
 		const result = buildInputDeviceOptions(devices, null, "System Default");
 		expect(result.deviceOptions).toHaveLength(2);
 	});

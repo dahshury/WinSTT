@@ -23,11 +23,16 @@ export function WaveformBars() {
 		// @crap-exclude rAF callback — Canvas2D draw path; pure helpers (computeRenderParams, drawFrame) are unit tested
 		const renderFrame = (metrics: CanvasMetrics) => {
 			const { ctx, w, h, dpr } = metrics;
-			const { isRecording, isSpeaking, audioLevel, sentencePulse } = useVisualizerStore.getState();
+			const { isRecording, isSpeaking, audioLevel, sentencePulse } =
+				useVisualizerStore.getState();
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 			ctx.clearRect(0, 0, w, h);
 
-			const activityTarget = computeActivityTarget(isRecording, isSpeaking, audioLevel);
+			const activityTarget = computeActivityTarget(
+				isRecording,
+				isSpeaking,
+				audioLevel,
+			);
 			const prevActivity = smoothedActivityRef.current;
 			// When the session ends (natural stop, user cancel, or server abort)
 			// `isRecording` flips to false and `audioLevel` is reset to 0 by
@@ -46,11 +51,13 @@ export function WaveformBars() {
 				isSpeaking,
 				audioLevel,
 				sentencePulse,
-				activity
+				activity,
 			);
 
 			const prevAmp = smoothedAmpRef.current;
-			const amp = isRecording ? prevAmp + (params.targetAmp - prevAmp) * AMP_SMOOTHING : 0;
+			const amp = isRecording
+				? prevAmp + (params.targetAmp - prevAmp) * AMP_SMOOTHING
+				: 0;
 			smoothedAmpRef.current = amp;
 
 			drawBaseline(ctx, w, h);
@@ -79,7 +86,11 @@ export function WaveformBars() {
 
 	return (
 		<div aria-hidden="true" className="absolute inset-0" ref={containerRef}>
-			<canvas className="h-full w-full" ref={canvasRef} style={{ imageRendering: "auto" }} />
+			<canvas
+				className="h-full w-full"
+				ref={canvasRef}
+				style={{ imageRendering: "auto" }}
+			/>
 		</div>
 	);
 }

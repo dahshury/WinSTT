@@ -3,18 +3,18 @@ import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 
 export interface ElevatedSurfaceProps {
-  children: ReactNode;
-  className?: string | undefined;
-  /**
-   * Use `inline` for narrow trigger controls (Select, NumberStepper,
-   * TextField) that already carry their own internal padding — the wrapper
-   * just provides the ring + shadow + lifted background without extra
-   * gutter. Default (full) adds `p-1.5` for option-group controls
-   * (Switcher, CheckboxGroup) where the frame visibly surrounds the pills.
-   */
-  inline?: boolean;
-  /** How many surface steps to lift above the current substrate. Default 1. */
-  offset?: number;
+	children: ReactNode;
+	className?: string | undefined;
+	/**
+	 * Use `inline` for narrow trigger controls (Select, NumberStepper,
+	 * TextField) that already carry their own internal padding — the wrapper
+	 * just provides the ring + shadow + lifted background without extra
+	 * gutter. Default (full) adds `p-1.5` for option-group controls
+	 * (Switcher, CheckboxGroup) where the frame visibly surrounds the pills.
+	 */
+	inline?: boolean;
+	/** How many surface steps to lift above the current substrate. Default 1. */
+	offset?: number;
 }
 
 /**
@@ -32,25 +32,25 @@ export interface ElevatedSurfaceProps {
  * fluidfunctionalism multi-layer shadow with the n8n accent bottom edge.
  */
 export function ElevatedSurface({
-  children,
-  className,
-  inline = false,
-  offset = 1,
+	children,
+	className,
+	inline = false,
+	offset = 1,
 }: ElevatedSurfaceProps) {
-  const substrate = useSurface();
-  const level = Math.min(substrate + offset, 8);
-  return (
-    <SurfaceProvider value={level}>
-      <div
-        className={cn(
-          surfaceBg(level),
-          "rounded-lg shadow-elevated ring-1 ring-divider transition-[transform,box-shadow] duration-200 ease-out",
-          inline ? "[&>*]:rounded-lg" : "p-1.5",
-          className,
-        )}
-      >
-        {children}
-      </div>
-    </SurfaceProvider>
-  );
+	const substrate = useSurface();
+	const level = Math.min(substrate + offset, 8);
+	return (
+		<SurfaceProvider value={level}>
+			<div
+				className={cn(
+					surfaceBg(level),
+					"rounded-lg shadow-elevated ring-1 ring-divider transition-[transform,box-shadow] duration-200 ease-out",
+					inline ? "[&>*]:rounded-lg" : "p-1.5",
+					className,
+				)}
+			>
+				{children}
+			</div>
+		</SurfaceProvider>
+	);
 }

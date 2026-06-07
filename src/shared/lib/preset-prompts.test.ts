@@ -14,7 +14,9 @@ import {
 	TONE_GROUP,
 } from "@/shared/lib/preset-prompts";
 
-function makeCustomModifier(overrides: Partial<CustomModifier> = {}): CustomModifier {
+function makeCustomModifier(
+	overrides: Partial<CustomModifier> = {},
+): CustomModifier {
 	return {
 		id: "id-1",
 		name: "My Style",
@@ -39,13 +41,15 @@ describe("preset-prompts", () => {
 				"summarize",
 				"technical",
 				"translate",
-			].sort()
+			].sort(),
 		);
 	});
 
 	test("TONE_GROUP and INDEPENDENT_PRESETS are disjoint and cover all keys", () => {
 		const tones = new Set<PresetKey>(TONE_GROUP as readonly PresetKey[]);
-		const indep = new Set<PresetKey>(INDEPENDENT_PRESETS as readonly PresetKey[]);
+		const indep = new Set<PresetKey>(
+			INDEPENDENT_PRESETS as readonly PresetKey[],
+		);
 		for (const key of ALL_PRESET_KEYS) {
 			expect(tones.has(key) !== indep.has(key)).toBe(true);
 		}
@@ -64,7 +68,9 @@ describe("preset-prompts", () => {
 	});
 
 	test("every preset returns a non-empty prompt", () => {
-		const leveled = new Set<PresetKey>(PRESETS_WITH_LEVELS as readonly PresetKey[]);
+		const leveled = new Set<PresetKey>(
+			PRESETS_WITH_LEVELS as readonly PresetKey[],
+		);
 		for (const key of ALL_PRESET_KEYS) {
 			if (leveled.has(key)) {
 				for (const level of PRESET_LEVELS) {
@@ -113,7 +119,11 @@ describe("preset-prompts", () => {
 			[{ key: "neutral" }] as const,
 			[{ key: "formal" }] as const,
 			[{ key: "summarize", level: "high" }] as const,
-			[{ key: "formal" }, { key: "concise", level: "medium" }, { key: "reorder" }] as const,
+			[
+				{ key: "formal" },
+				{ key: "concise", level: "medium" },
+				{ key: "reorder" },
+			] as const,
 			[{ key: "neutral" }, { key: "neutral" }] as const,
 		]) {
 			const out = buildSystemPrompt([...presets]);
@@ -125,7 +135,9 @@ describe("preset-prompts", () => {
 		const base = getPresetPrompt("neutral");
 		const expected = buildSystemPrompt([]);
 		expect(buildSystemPrompt([{ key: "neutral" }])).toBe(expected);
-		expect(buildSystemPrompt([{ key: "neutral" }, { key: "neutral" }])).toBe(expected);
+		expect(buildSystemPrompt([{ key: "neutral" }, { key: "neutral" }])).toBe(
+			expected,
+		);
 		expect(expected).toContain(base);
 		expect(expected).not.toContain("on top");
 	});
@@ -135,8 +147,12 @@ describe("preset-prompts", () => {
 		// statement+question ("…Whisper models… Is that correct?") as 1-/2-/3-.
 		const r = getPresetPrompt("restructure");
 		expect(r.toLowerCase()).toContain("actively identify content");
-		expect(r).toContain("Do NOT convert text to a list merely because it has several sentences");
-		expect(r.toLowerCase()).toContain("never turn a standalone question into a list item");
+		expect(r).toContain(
+			"Do NOT convert text to a list merely because it has several sentences",
+		);
+		expect(r.toLowerCase()).toContain(
+			"never turn a standalone question into a list item",
+		);
 		expect(r).toContain("numbered lines for real steps");
 		expect(r).toContain("bullet lines for parallel items");
 	});
@@ -162,13 +178,17 @@ describe("preset-prompts", () => {
 	});
 
 	test("translate is an independent preset with no levels", () => {
-		expect((INDEPENDENT_PRESETS as readonly string[]).includes("translate")).toBe(true);
+		expect(
+			(INDEPENDENT_PRESETS as readonly string[]).includes("translate"),
+		).toBe(true);
 		expect(isToneKey("translate")).toBe(false);
 		expect(hasLevels("translate")).toBe(false);
 	});
 
 	test("translate entry resolves the chosen target language into the prompt", () => {
-		const out = buildSystemPrompt([{ key: "translate", targetLang: "Spanish" }]);
+		const out = buildSystemPrompt([
+			{ key: "translate", targetLang: "Spanish" },
+		]);
 		// Polish base is still present exactly once (cleanup runs first).
 		expect(out).toContain(getPresetPrompt("neutral"));
 		// The target language is named in the composed instruction.
@@ -180,9 +200,14 @@ describe("preset-prompts", () => {
 	});
 
 	test("translate is folded LAST so cleanup/style run in the source language", () => {
-		const out = buildSystemPrompt([{ key: "formal" }, { key: "translate", targetLang: "French" }]);
+		const out = buildSystemPrompt([
+			{ key: "formal" },
+			{ key: "translate", targetLang: "French" },
+		]);
 		const formalIdx = out.indexOf(getPresetPrompt("formal"));
-		const translateIdx = out.indexOf("translate the cleaned, styled result into French");
+		const translateIdx = out.indexOf(
+			"translate the cleaned, styled result into French",
+		);
 		expect(formalIdx).toBeGreaterThan(-1);
 		expect(translateIdx).toBeGreaterThan(formalIdx);
 	});
@@ -215,12 +240,18 @@ describe("preset-prompts", () => {
 		const builtin = [{ key: "formal" }] as const;
 
 		test("returns presets unchanged when customModifiers is null/undefined", () => {
-			expect(mergePresetsWithCustomModifiers([...builtin], null)).toEqual([...builtin]);
-			expect(mergePresetsWithCustomModifiers([...builtin], undefined)).toEqual([...builtin]);
+			expect(mergePresetsWithCustomModifiers([...builtin], null)).toEqual([
+				...builtin,
+			]);
+			expect(mergePresetsWithCustomModifiers([...builtin], undefined)).toEqual([
+				...builtin,
+			]);
 		});
 
 		test("returns presets unchanged when customModifiers is empty", () => {
-			expect(mergePresetsWithCustomModifiers([...builtin], [])).toEqual([...builtin]);
+			expect(mergePresetsWithCustomModifiers([...builtin], [])).toEqual([
+				...builtin,
+			]);
 		});
 
 		test("appends enabled, non-blank modifiers as custom entries", () => {
@@ -244,13 +275,17 @@ describe("preset-prompts", () => {
 
 		test("drops disabled modifiers", () => {
 			const mod = makeCustomModifier({ enabled: false });
-			expect(mergePresetsWithCustomModifiers([...builtin], [mod])).toEqual([...builtin]);
+			expect(mergePresetsWithCustomModifiers([...builtin], [mod])).toEqual([
+				...builtin,
+			]);
 		});
 
 		test("drops modifiers with blank/whitespace-only prompts", () => {
 			const blank = makeCustomModifier({ id: "blank", prompt: "   " });
 			const empty = makeCustomModifier({ id: "empty", prompt: "" });
-			expect(mergePresetsWithCustomModifiers([...builtin], [blank, empty])).toEqual([...builtin]);
+			expect(
+				mergePresetsWithCustomModifiers([...builtin], [blank, empty]),
+			).toEqual([...builtin]);
 		});
 
 		test("carries level through when levelsEnabled is true (defaults to medium)", () => {
@@ -265,7 +300,10 @@ describe("preset-prompts", () => {
 				// level intentionally omitted — `customModifierToEntry` falls
 				// back to DEFAULT_LEVEL ("medium").
 			});
-			const result = mergePresetsWithCustomModifiers([], [explicit, defaultLevel]);
+			const result = mergePresetsWithCustomModifiers(
+				[],
+				[explicit, defaultLevel],
+			);
 			expect(result).toHaveLength(2);
 			const first = result[0];
 			const second = result[1];

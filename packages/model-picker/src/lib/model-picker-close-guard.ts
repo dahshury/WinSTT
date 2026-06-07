@@ -6,11 +6,11 @@ import { extractCloseReason } from "./combobox-reasons";
 import { useModelSelectorClickTracking } from "./use-model-selector-click-tracking";
 
 const POPUP_ROLES: ReadonlySet<string> = new Set([
-  "menu",
-  "menuitem",
-  "tooltip",
-  // AlertDialog popups portaled out of the combobox (e.g. delete confirmations).
-  "alertdialog",
+	"menu",
+	"menuitem",
+	"tooltip",
+	// AlertDialog popups portaled out of the combobox (e.g. delete confirmations).
+	"alertdialog",
 ]);
 
 /**
@@ -19,82 +19,82 @@ const POPUP_ROLES: ReadonlySet<string> = new Set([
  * the owning combobox on first click.
  */
 export type FilterMenuPopupSlot =
-  | "model-filters-menu-content"
-  | "ollama-sort-menu-content"
-  | "stt-filters-menu-content";
+	| "model-filters-menu-content"
+	| "ollama-sort-menu-content"
+	| "stt-filters-menu-content";
 
 const POPUP_SLOTS: ReadonlySet<FilterMenuPopupSlot> =
-  new Set<FilterMenuPopupSlot>([
-    "model-filters-menu-content",
-    "ollama-sort-menu-content",
-    "stt-filters-menu-content",
-  ]);
+	new Set<FilterMenuPopupSlot>([
+		"model-filters-menu-content",
+		"ollama-sort-menu-content",
+		"stt-filters-menu-content",
+	]);
 
 export function nodeRoleIsPopup(node: HTMLElement): boolean {
-  const role = node.getAttribute("role");
-  return role !== null && POPUP_ROLES.has(role);
+	const role = node.getAttribute("role");
+	return role !== null && POPUP_ROLES.has(role);
 }
 
 export function nodeSlotIsPopup(node: HTMLElement): boolean {
-  const slot = node.dataset?.slot;
-  return slot !== undefined && (POPUP_SLOTS as ReadonlySet<string>).has(slot);
+	const slot = node.dataset?.slot;
+	return slot !== undefined && (POPUP_SLOTS as ReadonlySet<string>).has(slot);
 }
 
 export function nodeMatchesPopupSelector(
-  node: HTMLElement,
-  ownPopup: HTMLElement | null,
+	node: HTMLElement,
+	ownPopup: HTMLElement | null,
 ): boolean {
-  return node === ownPopup || nodeRoleIsPopup(node) || nodeSlotIsPopup(node);
+	return node === ownPopup || nodeRoleIsPopup(node) || nodeSlotIsPopup(node);
 }
 
 export function walkAncestors(start: HTMLElement | null): HTMLElement[] {
-  const chain: HTMLElement[] = [];
-  for (let cursor = start; cursor; cursor = cursor.parentElement) {
-    chain.push(cursor);
-  }
-  return chain;
+	const chain: HTMLElement[] = [];
+	for (let cursor = start; cursor; cursor = cursor.parentElement) {
+		chain.push(cursor);
+	}
+	return chain;
 }
 
 export function isInsideMenuPopup(
-  target: HTMLElement | null,
-  ownPopup: HTMLElement | null,
+	target: HTMLElement | null,
+	ownPopup: HTMLElement | null,
 ): boolean {
-  return walkAncestors(target).some((node) =>
-    nodeMatchesPopupSelector(node, ownPopup),
-  );
+	return walkAncestors(target).some((node) =>
+		nodeMatchesPopupSelector(node, ownPopup),
+	);
 }
 
 export function shouldInterceptClose(
-  reason: string | undefined,
-  itemPressReason: string,
-  isInsidePopup: boolean,
+	reason: string | undefined,
+	itemPressReason: string,
+	isInsidePopup: boolean,
 ): boolean {
-  return reason !== itemPressReason && isInsidePopup;
+	return reason !== itemPressReason && isInsidePopup;
 }
 
 export function applyCloseWith(
-  reason: string | undefined,
-  itemPressReason: string,
-  isInsidePopup: boolean,
-  setOpen: (open: boolean) => void,
+	reason: string | undefined,
+	itemPressReason: string,
+	isInsidePopup: boolean,
+	setOpen: (open: boolean) => void,
 ): boolean {
-  if (shouldInterceptClose(reason, itemPressReason, isInsidePopup)) {
-    return false;
-  }
-  setOpen(false);
-  return true;
+	if (shouldInterceptClose(reason, itemPressReason, isInsidePopup)) {
+		return false;
+	}
+	setOpen(false);
+	return true;
 }
 
 export interface UseModelPickerCloseGuardOptions {
-  itemPressReason?: string;
-  onOpen?: (() => void) | undefined;
-  setOpen: (open: boolean) => void;
+	itemPressReason?: string;
+	onOpen?: (() => void) | undefined;
+	setOpen: (open: boolean) => void;
 }
 
 export interface ModelPickerCloseGuard {
-  handleOpenChange: (next: boolean, eventDetails?: unknown) => void;
-  popupRef: RefObject<HTMLElement | null>;
-  setPopupNode: (node: HTMLElement | null) => void;
+	handleOpenChange: (next: boolean, eventDetails?: unknown) => void;
+	popupRef: RefObject<HTMLElement | null>;
+	setPopupNode: (node: HTMLElement | null) => void;
 }
 
 /**
@@ -103,40 +103,40 @@ export interface ModelPickerCloseGuard {
  * friendly sibling popups while still allowing real item selections to close.
  */
 export function useModelPickerCloseGuard({
-  itemPressReason = "item-press",
-  onOpen,
-  setOpen,
+	itemPressReason = "item-press",
+	onOpen,
+	setOpen,
 }: UseModelPickerCloseGuardOptions): ModelPickerCloseGuard {
-  const popupRef = useRef<HTMLElement | null>(null);
-  const lastClickTargetRef = useModelSelectorClickTracking();
+	const popupRef = useRef<HTMLElement | null>(null);
+	const lastClickTargetRef = useModelSelectorClickTracking();
 
-  useEffect(() => {
-    const closeOnWindowBlur = () => {
-      setOpen(false);
-    };
-    window.addEventListener("blur", closeOnWindowBlur);
-    return () => window.removeEventListener("blur", closeOnWindowBlur);
-  }, [setOpen]);
+	useEffect(() => {
+		const closeOnWindowBlur = () => {
+			setOpen(false);
+		};
+		window.addEventListener("blur", closeOnWindowBlur);
+		return () => window.removeEventListener("blur", closeOnWindowBlur);
+	}, [setOpen]);
 
-  const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
-    if (next) {
-      setOpen(true);
-      onOpen?.();
-      return;
-    }
-    applyCloseWith(
-      extractCloseReason(eventDetails),
-      itemPressReason,
-      isInsideMenuPopup(lastClickTargetRef.current, popupRef.current),
-      setOpen,
-    );
-  };
+	const handleOpenChange = (next: boolean, eventDetails?: unknown) => {
+		if (next) {
+			setOpen(true);
+			onOpen?.();
+			return;
+		}
+		applyCloseWith(
+			extractCloseReason(eventDetails),
+			itemPressReason,
+			isInsideMenuPopup(lastClickTargetRef.current, popupRef.current),
+			setOpen,
+		);
+	};
 
-  return {
-    handleOpenChange,
-    popupRef,
-    setPopupNode: (node) => {
-      popupRef.current = node;
-    },
-  };
+	return {
+		handleOpenChange,
+		popupRef,
+		setPopupNode: (node) => {
+			popupRef.current = node;
+		},
+	};
 }

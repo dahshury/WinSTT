@@ -44,9 +44,11 @@ describe("computeIslandSize properties", () => {
 		fc.assert(
 			fc.property(argsArb, (args) => {
 				const a = { ...args, isThinking: true };
-				expect(computeIslandSize(a)).toBe(a.hasShownText ? "long" : "compactMedium");
+				expect(computeIslandSize(a)).toBe(
+					a.hasShownText ? "long" : "compactMedium",
+				);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -57,7 +59,7 @@ describe("computeIslandSize properties", () => {
 				const b = computeIslandSize({ ...args });
 				expect(a).toBe(b);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -68,7 +70,7 @@ describe("computeIslandSize properties", () => {
 				const on = computeIslandSize({ ...args, isThinking: true });
 				expect(rank(on)).toBeGreaterThanOrEqual(rank(off));
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -92,7 +94,7 @@ describe("computeIslandSize properties", () => {
 				expect(base).toBe("compact");
 				expect(rank(withFlags)).toBeGreaterThanOrEqual(rank(base));
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -102,7 +104,7 @@ describe("computeIslandSize properties", () => {
 				const result = computeIslandSize(args);
 				expect(["empty", "compact", "compactMedium", "long"]).toContain(result);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -115,10 +117,10 @@ describe("computeIslandSize properties", () => {
 						isSpeaking,
 						isThinking: false,
 						hasShownText,
-					})
+					}),
 				).toBe("empty");
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });

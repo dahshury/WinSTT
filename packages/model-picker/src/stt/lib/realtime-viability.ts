@@ -22,7 +22,9 @@ function scaleByUnit(num: number, unit: string | undefined): number {
 	return num * multiplier;
 }
 
-function parsedParts(label: string): { num: number; unit: string | undefined } | null {
+function parsedParts(
+	label: string,
+): { num: number; unit: string | undefined } | null {
 	const match = label.match(SIZE_LABEL_RE);
 	if (!match) {
 		return null;

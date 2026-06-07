@@ -81,7 +81,8 @@ export function SettingField({
 	const ts = useTranslations("settings");
 
 	const atDefault =
-		isDefault ?? (defaultValue !== undefined ? Object.is(value, defaultValue) : true);
+		isDefault ??
+		(defaultValue !== undefined ? Object.is(value, defaultValue) : true);
 	const showReset = onReset !== undefined && !hideReset;
 
 	const effectiveTooltip =
@@ -97,7 +98,9 @@ export function SettingField({
 			label={label}
 			labelAddon={labelAddon}
 			labelTrailing={
-				showReset ? <SettingResetButton isDefault={atDefault} onReset={onReset} /> : undefined
+				showReset ? (
+					<SettingResetButton isDefault={atDefault} onReset={onReset} />
+				) : undefined
 			}
 			layout={layout}
 			tooltip={effectiveTooltip}

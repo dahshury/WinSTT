@@ -66,9 +66,7 @@ describe("LanguageMultiCombobox", () => {
 		// The closed display collapses 3+ languages to a count, but the open
 		// popup shows a chip per selected language (independent of the search
 		// filter) so the user can see exactly what is selected.
-		expect(
-			screen.getByRole("button", { name: "Remove English" }),
-		).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Remove English" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Remove French" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Remove German" })).toBeTruthy();
 

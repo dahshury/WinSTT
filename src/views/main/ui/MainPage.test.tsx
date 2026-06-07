@@ -8,7 +8,7 @@ describe("MainPage", () => {
 		const { container } = render(
 			<IntlProvider>
 				<MainPage />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});

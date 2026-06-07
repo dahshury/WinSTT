@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import { fetchOllamaLibraryCatalog, fetchOllamaLibraryTags } from "@/shared/api/ipc-client";
+import {
+	fetchOllamaLibraryCatalog,
+	fetchOllamaLibraryTags,
+} from "@/shared/api/ipc-client";
 import type {
 	OllamaLibraryHit,
 	OllamaLibraryTag,
@@ -38,7 +41,10 @@ export function tagsCacheKey(model: string): string {
 /** True when an in-flight catalog request would overlap an existing one or
  *  a previously-resolved one — used to gate `loadCatalog` against the
  *  multi-mount thundering herd. */
-export function shouldSkipCatalogLoad(state: { isLoaded: boolean; isLoading: boolean }): boolean {
+export function shouldSkipCatalogLoad(state: {
+	isLoaded: boolean;
+	isLoading: boolean;
+}): boolean {
 	return state.isLoaded || state.isLoading;
 }
 
@@ -48,7 +54,9 @@ export function shouldSkipCatalogLoad(state: { isLoaded: boolean; isLoading: boo
  *  the same model fetched 5×) or when a non-error list is already cached. An
  *  errored entry is still allowed to retry. */
 export function shouldSkipTagsFetch(existing: TagsState | undefined): boolean {
-	return Boolean(existing?.isLoading || (existing?.tags.length && !existing.error));
+	return Boolean(
+		existing?.isLoading || (existing?.tags.length && !existing.error),
+	);
 }
 
 function buildCatalogReadyState(result: {
@@ -86,7 +94,7 @@ function buildSettledTagsEntry(result: OllamaLibraryTagsResult): TagsState {
 function upsertTagsByModel(
 	tagsByModel: Readonly<Record<string, TagsState>>,
 	key: string,
-	entry: TagsState
+	entry: TagsState,
 ): Readonly<Record<string, TagsState>> {
 	return { ...tagsByModel, [key]: entry };
 }
@@ -98,37 +106,48 @@ function upsertTagsByModel(
  * the lifetime of the window — and filtering happens client-side in the
  * picker. Mirrors how the OpenRouter store stages its catalog.
  */
-export const useOllamaLibraryStore = create<OllamaLibraryStoreState>((set, get) => ({
-	catalog: [],
-	error: null,
-	isLoaded: false,
-	isLoading: false,
-	tagsByModel: {},
+export const useOllamaLibraryStore = create<OllamaLibraryStoreState>(
+	(set, get) => ({
+		catalog: [],
+		error: null,
+		isLoaded: false,
+		isLoading: false,
+		tagsByModel: {},
 
-	loadCatalog: async () => {
-		if (shouldSkipCatalogLoad(get())) {
-			return;
-		}
-		set({ isLoading: true, error: null });
-		const result = await fetchOllamaLibraryCatalog();
-		set(buildCatalogReadyState(result));
-	},
+		loadCatalog: async () => {
+			if (shouldSkipCatalogLoad(get())) {
+				return;
+			}
+			set({ isLoading: true, error: null });
+			const result = await fetchOllamaLibraryCatalog();
+			set(buildCatalogReadyState(result));
+		},
 
-	fetchTags: async (model: string) => {
-		const key = tagsCacheKey(model);
-		if (!key) {
-			return;
-		}
-		const existing = get().tagsByModel[key];
-		if (shouldSkipTagsFetch(existing)) {
-			return;
-		}
-		set((s) => ({
-			tagsByModel: upsertTagsByModel(s.tagsByModel, key, buildPendingTagsEntry(existing)),
-		}));
-		const result: OllamaLibraryTagsResult = await fetchOllamaLibraryTags(model);
-		set((s) => ({
-			tagsByModel: upsertTagsByModel(s.tagsByModel, key, buildSettledTagsEntry(result)),
-		}));
-	},
-}));
+		fetchTags: async (model: string) => {
+			const key = tagsCacheKey(model);
+			if (!key) {
+				return;
+			}
+			const existing = get().tagsByModel[key];
+			if (shouldSkipTagsFetch(existing)) {
+				return;
+			}
+			set((s) => ({
+				tagsByModel: upsertTagsByModel(
+					s.tagsByModel,
+					key,
+					buildPendingTagsEntry(existing),
+				),
+			}));
+			const result: OllamaLibraryTagsResult =
+				await fetchOllamaLibraryTags(model);
+			set((s) => ({
+				tagsByModel: upsertTagsByModel(
+					s.tagsByModel,
+					key,
+					buildSettledTagsEntry(result),
+				),
+			}));
+		},
+	}),
+);

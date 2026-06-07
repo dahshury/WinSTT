@@ -36,7 +36,9 @@ describe("NumberStepper", () => {
 	});
 
 	test("renders without throwing when min and max bounds are provided", () => {
-		render(<NumberStepper max={10} min={0} onChange={() => undefined} value={5} />);
+		render(
+			<NumberStepper max={10} min={0} onChange={() => undefined} value={5} />,
+		);
 		const input = screen.getByRole("textbox") as HTMLInputElement;
 		expect(input.value).toBe("5");
 		// base-ui NumberField does not always wire min/max as aria-valuemin/max

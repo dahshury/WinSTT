@@ -1,7 +1,11 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { Z_INDEX } from "@/shared/config/z-index";
-import { SurfaceProvider, surfaceClasses, useSurface } from "@/shared/lib/surface";
+import {
+	SurfaceProvider,
+	surfaceClasses,
+	useSurface,
+} from "@/shared/lib/surface";
 
 export interface TooltipProps {
 	/** The trigger element — must accept forwarded props via cloneElement */
@@ -41,10 +45,9 @@ function TooltipBody({
 	return (
 		<TooltipPrimitive.Root>
 			<TooltipPrimitive.Trigger
-				render={cloneElement(children, { suppressHydrationWarning: true } as Record<
-					string,
-					unknown
-				>)}
+				render={cloneElement(children, {
+					suppressHydrationWarning: true,
+				} as Record<string, unknown>)}
 			/>
 			<TooltipPrimitive.Portal>
 				<SurfaceProvider value={popupLevel}>
@@ -70,9 +73,21 @@ function TooltipBody({
 	);
 }
 
-export function Tooltip({ content, children, footer, side, sideOffset = 6, delay }: TooltipProps) {
+export function Tooltip({
+	content,
+	children,
+	footer,
+	side,
+	sideOffset = 6,
+	delay,
+}: TooltipProps) {
 	const body: ReactNode = (
-		<TooltipBody content={content} footer={footer} side={side} sideOffset={sideOffset}>
+		<TooltipBody
+			content={content}
+			footer={footer}
+			side={side}
+			sideOffset={sideOffset}
+		>
 			{children}
 		</TooltipBody>
 	);

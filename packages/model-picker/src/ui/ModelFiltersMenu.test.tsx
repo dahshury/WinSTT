@@ -21,7 +21,7 @@ describe("ModelFiltersMenu", () => {
 					selectedParameters={[]}
 					selectedVariant={null}
 				/>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});
@@ -48,7 +48,7 @@ describe("ModelFiltersMenu helpers", () => {
 					selectedEndpointProvider: null,
 					selectedParameters: [],
 					selectedMakers: [],
-				})
+				}),
 			).toBe(0);
 		});
 
@@ -59,7 +59,7 @@ describe("ModelFiltersMenu helpers", () => {
 					selectedEndpointProvider: "openai",
 					selectedParameters: ["tools", "reasoning"],
 					selectedMakers: ["openai", "anthropic", "google"],
-				})
+				}),
 			).toBe(1 + 1 + 2 + 3);
 		});
 
@@ -70,7 +70,7 @@ describe("ModelFiltersMenu helpers", () => {
 					selectedEndpointProvider: null,
 					selectedParameters: [],
 					selectedMakers: [],
-				})
+				}),
 			).toBe(1);
 		});
 	});
@@ -96,15 +96,21 @@ describe("ModelFiltersMenu helpers", () => {
 
 	describe("shouldRenderAuthorSubmenu", () => {
 		test("returns true when providers non-empty and handler provided", () => {
-			expect(helpers.shouldRenderAuthorSubmenu(["openai"], () => undefined)).toBe(true);
+			expect(
+				helpers.shouldRenderAuthorSubmenu(["openai"], () => undefined),
+			).toBe(true);
 		});
 
 		test("returns false when providers empty", () => {
-			expect(helpers.shouldRenderAuthorSubmenu([], () => undefined)).toBe(false);
+			expect(helpers.shouldRenderAuthorSubmenu([], () => undefined)).toBe(
+				false,
+			);
 		});
 
 		test("returns false when onMakersChange is undefined", () => {
-			expect(helpers.shouldRenderAuthorSubmenu(["openai"], undefined)).toBe(false);
+			expect(helpers.shouldRenderAuthorSubmenu(["openai"], undefined)).toBe(
+				false,
+			);
 		});
 	});
 
@@ -133,7 +139,7 @@ describe("MaybeAuthorSubmenu", () => {
 					providerCounts={new Map()}
 					selectedMakers={[]}
 				/>
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		expect(container.firstChild).toBeNull();
 	});
@@ -149,7 +155,7 @@ describe("MaybeAuthorSubmenu", () => {
 					providerCounts={new Map()}
 					selectedMakers={[]}
 				/>
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		expect(container.firstChild).toBeNull();
 	});
@@ -183,7 +189,7 @@ describe("MaybeEndpointSubmenu", () => {
 					onEndpointProviderSelect={() => undefined}
 					selectedEndpointProvider={null}
 				/>
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		expect(container.firstChild).toBeNull();
 	});

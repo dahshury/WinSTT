@@ -12,7 +12,11 @@ import {
 	filterByQuery,
 	type ItemContext,
 } from "../lib/author-filter-submenu-utils";
-import { DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from "./DropdownMenu";
+import {
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
+} from "./DropdownMenu";
 
 const AUTHOR_RENDER_LIMIT = 100;
 
@@ -71,7 +75,7 @@ export function AuthorFilterSubmenu({
 							<Combobox.Input
 								className={cn(
 									"h-8 w-full rounded-sm border border-border px-2.5 font-inherit text-body text-foreground leading-normal outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface",
-									surfaceBg(level)
+									surfaceBg(level),
 								)}
 								placeholder="Search authors"
 							/>

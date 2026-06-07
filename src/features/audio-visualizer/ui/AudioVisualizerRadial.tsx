@@ -32,7 +32,7 @@ const radialVariants = cva(
 			},
 		},
 		defaultVariants: { size: "md" },
-	}
+	},
 );
 
 export interface AudioVisualizerRadialProps {
@@ -60,7 +60,10 @@ const RADIAL_CONTAINER_HALF: Record<VisualizerSize, number> = {
 	xl: 224,
 };
 
-export function resolveRadialBarCount(barCount: number | undefined, size: VisualizerSize): number {
+export function resolveRadialBarCount(
+	barCount: number | undefined,
+	size: VisualizerSize,
+): number {
 	if (barCount) {
 		return barCount;
 	}
@@ -85,7 +88,10 @@ const RADIAL_DISTANCE_BY_SIZE: Partial<Record<VisualizerSize, number>> = {
 	sm: 16,
 };
 
-export function resolveRadialDistance(radius: number | undefined, size: VisualizerSize): number {
+export function resolveRadialDistance(
+	radius: number | undefined,
+	size: VisualizerSize,
+): number {
 	if (radius) {
 		return radius;
 	}
@@ -99,7 +105,7 @@ export function resolveRadialDistance(radius: number | undefined, size: Visualiz
  */
 export function resolveRadialDistancePct(
 	radiusPct: number | undefined,
-	size: VisualizerSize
+	size: VisualizerSize,
 ): number | undefined {
 	if (radiusPct === undefined) {
 		return;
@@ -128,11 +134,16 @@ export function AudioVisualizerRadial({
 	// Priority: explicit absolute `radius` → size-relative `radiusPct` → size default.
 	const distanceFromCenter = resolveRadialDistance(
 		radius ?? resolveRadialDistancePct(radiusPct, size),
-		size
+		size,
 	);
 
-	const highlightedIndices = useRadialAnimator(state, _barCount, sequencerInterval);
-	const bands = state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
+	const highlightedIndices = useRadialAnimator(
+		state,
+		_barCount,
+		sequencerInterval,
+	);
+	const bands =
+		state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
 
 	const dotSize = (distanceFromCenter * Math.PI) / _barCount;
 

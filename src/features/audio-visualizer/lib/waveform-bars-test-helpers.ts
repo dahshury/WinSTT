@@ -51,10 +51,18 @@ const RESOLUTION = 120;
 
 /* ── Rendering helpers ────────────────────────────────────────────── */
 
-function computeWaveY(t: number, time: number, amplitude: number, midY: number): number {
+function computeWaveY(
+	t: number,
+	time: number,
+	amplitude: number,
+	midY: number,
+): number {
 	let sum = 0;
 	for (const layer of WAVE_LAYERS) {
-		sum += Math.sin(t * layer.freq * Math.PI * 2 + time * layer.speed + layer.phase) * layer.weight;
+		sum +=
+			Math.sin(
+				t * layer.freq * Math.PI * 2 + time * layer.speed + layer.phase,
+			) * layer.weight;
 	}
 	const normalized = sum / TOTAL_WEIGHT;
 	const edgeFade = Math.sin(t * Math.PI);
@@ -65,7 +73,7 @@ function buildWavePoints(
 	w: number,
 	h: number,
 	time: number,
-	amplitude: number
+	amplitude: number,
 ): [x: number, y: number][] {
 	const midY = h / 2;
 	const points: [number, number][] = [];
@@ -93,7 +101,7 @@ function drawWavePath(
 	h: number,
 	time: number,
 	amplitude: number,
-	mirror: boolean
+	mirror: boolean,
 ) {
 	const midY = h / 2;
 	const points = buildWavePoints(w, h, time, amplitude);
@@ -101,7 +109,7 @@ function drawWavePath(
 	if (mirror) {
 		tracePath(
 			ctx,
-			points.map(([x, y]) => [x, midY + (midY - y)])
+			points.map(([x, y]) => [x, midY + (midY - y)]),
 		);
 	} else {
 		tracePath(ctx, points);
@@ -115,7 +123,7 @@ function drawFilledRegion(
 	time: number,
 	amplitude: number,
 	alpha: number,
-	color: string
+	color: string,
 ) {
 	const midY = h / 2;
 	const points = buildWavePoints(w, h, time, amplitude);
@@ -129,7 +137,12 @@ function drawFilledRegion(
 	}
 	ctx.closePath();
 
-	const g = ctx.createLinearGradient(0, midY - h * amplitude * 0.5, 0, midY + h * amplitude * 0.5);
+	const g = ctx.createLinearGradient(
+		0,
+		midY - h * amplitude * 0.5,
+		0,
+		midY + h * amplitude * 0.5,
+	);
 	g.addColorStop(0, `rgba(${color}, 0)`);
 	g.addColorStop(0.4, `rgba(${color}, ${alpha})`);
 	g.addColorStop(0.5, `rgba(${color}, ${alpha * 1.2})`);
@@ -143,7 +156,7 @@ function makeStrokeGradient(
 	ctx: CanvasRenderingContext2D,
 	w: number,
 	alpha: number,
-	color: string
+	color: string,
 ) {
 	const g = ctx.createLinearGradient(0, 0, w, 0);
 	g.addColorStop(0, `rgba(${color}, 0)`);
@@ -179,9 +192,16 @@ function vadAmpBoost(isSpeaking: boolean): number {
 }
 
 /** Active wave amplitude when at least one input signal is present (CC 1). */
-function activeWaveAmp(audioLevel: number, isSpeaking: boolean, sentencePulse: number): number {
+function activeWaveAmp(
+	audioLevel: number,
+	isSpeaking: boolean,
+	sentencePulse: number,
+): number {
 	return (
-		IDLE_AMP + audioLevel * SPEECH_AMP + vadAmpBoost(isSpeaking) + sentencePulse * PULSE_EXTRA_AMP
+		IDLE_AMP +
+		audioLevel * SPEECH_AMP +
+		vadAmpBoost(isSpeaking) +
+		sentencePulse * PULSE_EXTRA_AMP
 	);
 }
 
@@ -189,7 +209,7 @@ function computeTargetAmp(
 	isRecording: boolean,
 	isSpeaking: boolean,
 	audioLevel: number,
-	sentencePulse: number
+	sentencePulse: number,
 ): number {
 	return hasAudioInput(isRecording, audioLevel)
 		? activeWaveAmp(audioLevel, isSpeaking, sentencePulse)
@@ -201,27 +221,47 @@ function computeRenderParams(
 	isSpeaking: boolean,
 	audioLevel: number,
 	sentencePulse: number,
-	smoothedActivity: number
+	smoothedActivity: number,
 ): RenderParams {
-	const targetAmp = computeTargetAmp(isRecording, isSpeaking, audioLevel, sentencePulse);
+	const targetAmp = computeTargetAmp(
+		isRecording,
+		isSpeaking,
+		audioLevel,
+		sentencePulse,
+	);
 	// Smooth color/opacity interpolation based on smoothedActivity
 	const color = lerpColor(IDLE_COLOR, ACCENT, smoothedActivity);
 	const strokeAlpha =
-		STROKE_ALPHA_IDLE + (STROKE_ALPHA_ACTIVE - STROKE_ALPHA_IDLE) * smoothedActivity;
+		STROKE_ALPHA_IDLE +
+		(STROKE_ALPHA_ACTIVE - STROKE_ALPHA_IDLE) * smoothedActivity;
 	const fillAlpha =
 		0.005 +
-		(FILL_ALPHA_ACTIVE - 0.005) * smoothedActivity * Math.min(1, audioLevel + sentencePulse * 0.5);
+		(FILL_ALPHA_ACTIVE - 0.005) *
+			smoothedActivity *
+			Math.min(1, audioLevel + sentencePulse * 0.5);
 	const lineWidthMain = 0.75 + 0.75 * smoothedActivity;
 	const lineWidthMirror = 0.5 + 0.5 * smoothedActivity;
 
-	return { targetAmp, color, strokeAlpha, fillAlpha, lineWidthMain, lineWidthMirror };
+	return {
+		targetAmp,
+		color,
+		strokeAlpha,
+		fillAlpha,
+		lineWidthMain,
+		lineWidthMirror,
+	};
 }
 
 function getDpr(): number {
 	return window.devicePixelRatio || 1;
 }
 
-function ensureCanvasSize(canvas: HTMLCanvasElement, w: number, h: number, dpr: number): void {
+function ensureCanvasSize(
+	canvas: HTMLCanvasElement,
+	w: number,
+	h: number,
+	dpr: number,
+): void {
 	const cw = Math.round(w * dpr);
 	const ch = Math.round(h * dpr);
 	if (canvas.width !== cw || canvas.height !== ch) {
@@ -239,7 +279,7 @@ interface CanvasMetrics {
 
 function getCanvasMetrics(
 	canvas: HTMLCanvasElement,
-	container: HTMLDivElement
+	container: HTMLDivElement,
 ): CanvasMetrics | null {
 	const rect = container.getBoundingClientRect();
 	const dpr = getDpr();
@@ -264,12 +304,19 @@ function isAudioActive(isSpeaking: boolean, audioLevel: number): boolean {
 function computeActivityTarget(
 	isRecording: boolean,
 	isSpeaking: boolean,
-	audioLevel: number
+	audioLevel: number,
 ): number {
-	return hasAudioInput(isRecording, audioLevel) && isAudioActive(isSpeaking, audioLevel) ? 1 : 0;
+	return hasAudioInput(isRecording, audioLevel) &&
+		isAudioActive(isSpeaking, audioLevel)
+		? 1
+		: 0;
 }
 
-function drawBaseline(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+function drawBaseline(
+	ctx: CanvasRenderingContext2D,
+	w: number,
+	h: number,
+): void {
 	const midY = h / 2;
 	ctx.beginPath();
 	ctx.moveTo(0, midY);
@@ -284,10 +331,11 @@ function drawFrame(
 	w: number,
 	h: number,
 	amp: number,
-	params: RenderParams
+	params: RenderParams,
 ) {
 	const time = performance.now() / 1000;
-	const { color, strokeAlpha, fillAlpha, lineWidthMain, lineWidthMirror } = params;
+	const { color, strokeAlpha, fillAlpha, lineWidthMain, lineWidthMirror } =
+		params;
 
 	drawFilledRegion(ctx, w, h, time, amp, fillAlpha, color);
 

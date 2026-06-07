@@ -32,7 +32,9 @@ describe("persisted selector state", () => {
 	test("round-trips validated JSON through localStorage", () => {
 		writePersistedSelectorState(KEY, { filter: "cached", sort: "size" });
 
-		expect(readPersistedSelectorState(KEY, isPersistedFixture, FALLBACK)).toEqual({
+		expect(
+			readPersistedSelectorState(KEY, isPersistedFixture, FALLBACK),
+		).toEqual({
 			filter: "cached",
 			sort: "size",
 		});
@@ -44,7 +46,10 @@ describe("persisted selector state", () => {
 			FALLBACK,
 		);
 
-		window.localStorage.setItem(KEY, JSON.stringify({ filter: 12, sort: "size" }));
+		window.localStorage.setItem(
+			KEY,
+			JSON.stringify({ filter: 12, sort: "size" }),
+		);
 		expect(readPersistedSelectorState(KEY, isPersistedFixture, FALLBACK)).toBe(
 			FALLBACK,
 		);

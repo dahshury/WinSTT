@@ -25,14 +25,19 @@ function warnDecodeFailure(): null {
  * plain `number[]` (no `.buffer`). Accept both (plus ArrayBuffer) so binary
  * commands like `sound:get-data` don't throw `undefined.slice` and crash the page.
  */
-export function toArrayBuffer(data: Uint8Array | number[] | ArrayBuffer): ArrayBuffer {
+export function toArrayBuffer(
+	data: Uint8Array | number[] | ArrayBuffer,
+): ArrayBuffer {
 	if (data instanceof ArrayBuffer) {
 		return data;
 	}
 	if (Array.isArray(data)) {
 		return Uint8Array.from(data).buffer;
 	}
-	return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+	return data.buffer.slice(
+		data.byteOffset,
+		data.byteOffset + data.byteLength,
+	) as ArrayBuffer;
 }
 
 /**
@@ -95,7 +100,10 @@ export function createOutputContext(deviceId: string): AudioContext {
  * `setSinkId` is declared as optional on `AudioContext` via
  * `src/dom-augment.d.ts`, so the older-Chromium guard stays type-safe.
  */
-export async function routeContextToSink(ctx: AudioContext, deviceId: string): Promise<void> {
+export async function routeContextToSink(
+	ctx: AudioContext,
+	deviceId: string,
+): Promise<void> {
 	if (!ctx.setSinkId) {
 		return;
 	}
@@ -105,6 +113,9 @@ export async function routeContextToSink(ctx: AudioContext, deviceId: string): P
 		// Device unavailable — the system default takes over (behaviour
 		// unchanged). Warn for observability so a failed device switch is
 		// diagnosable rather than silent, matching `decodeWav`'s idiom.
-		console.warn("[sound] setSinkId failed; falling back to the system default", err);
+		console.warn(
+			"[sound] setSinkId failed; falling back to the system default",
+			err,
+		);
 	}
 }

@@ -30,19 +30,31 @@ describe("ParametersFilterSubmenu helpers", () => {
 	describe("toggleParameterValue", () => {
 		test("removes a parameter that is already selected", () => {
 			const current: FilterableParameter[] = ["tools", "reasoning"];
-			const result = helpers.toggleParameterValue(current, "tools", new Set(current));
+			const result = helpers.toggleParameterValue(
+				current,
+				"tools",
+				new Set(current),
+			);
 			expect(result).toEqual(["reasoning"]);
 		});
 
 		test("adds a parameter that is not yet selected", () => {
 			const current: FilterableParameter[] = ["tools"];
-			const result = helpers.toggleParameterValue(current, "reasoning", new Set(current));
+			const result = helpers.toggleParameterValue(
+				current,
+				"reasoning",
+				new Set(current),
+			);
 			expect(result).toEqual(["tools", "reasoning"]);
 		});
 
 		test("does not mutate the input array", () => {
 			const current: FilterableParameter[] = ["tools"];
-			const result = helpers.toggleParameterValue(current, "reasoning", new Set(current));
+			const result = helpers.toggleParameterValue(
+				current,
+				"reasoning",
+				new Set(current),
+			);
 			expect(current).toEqual(["tools"]);
 			expect(result).not.toBe(current);
 		});
@@ -90,7 +102,7 @@ describe("ClearAllSection", () => {
 		const { container } = render(
 			<DropdownMenu>
 				<ClearAllSection onClear={() => undefined} visible={false} />
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		expect(container.firstChild).toBeNull();
 	});
@@ -99,7 +111,7 @@ describe("ClearAllSection", () => {
 		const { container } = render(
 			<DropdownMenu>
 				<ClearAllSection onClear={() => undefined} visible={true} />
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		expect(container.textContent).toContain("Clear all");
 	});
@@ -111,8 +123,13 @@ describe("ParameterMenuItem", () => {
 	test("renders parameter label and count", () => {
 		const { container } = render(
 			<DropdownMenu>
-				<ParameterMenuItem count={5} isSelected={false} onToggle={() => undefined} param="tools" />
-			</DropdownMenu>
+				<ParameterMenuItem
+					count={5}
+					isSelected={false}
+					onToggle={() => undefined}
+					param="tools"
+				/>
+			</DropdownMenu>,
 		);
 		expect(container.textContent).toContain("Tools");
 		expect(container.textContent).toContain("5");
@@ -127,7 +144,7 @@ describe("ParameterMenuItem", () => {
 					onToggle={() => undefined}
 					param="reasoning"
 				/>
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		// SelectedTick renders an icon when isSelected=true
 		expect(container.querySelectorAll("*").length).toBeGreaterThan(1);
@@ -142,7 +159,7 @@ describe("ParameterMenuItem", () => {
 					onToggle={() => undefined}
 					param="structured_outputs"
 				/>
-			</DropdownMenu>
+			</DropdownMenu>,
 		);
 		expect(container.textContent).toContain("1");
 	});

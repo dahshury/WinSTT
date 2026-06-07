@@ -1,10 +1,17 @@
-import type { FitAssessmentEntry, ModelStateEntry, SystemInfoEntry } from "@/shared/api/ipc-client";
+import type {
+	FitAssessmentEntry,
+	ModelStateEntry,
+	SystemInfoEntry,
+} from "@/shared/api/ipc-client";
 
 function systemHasGpu(sys: SystemInfoEntry | null): boolean {
 	return sys !== null && sys.gpus.length > 0;
 }
 
-function fitsSomewhere(entry: ModelStateEntry, sys: SystemInfoEntry | null): boolean {
+function fitsSomewhere(
+	entry: ModelStateEntry,
+	sys: SystemInfoEntry | null,
+): boolean {
 	const onGpu = systemHasGpu(sys) && entry.comfortable_on_gpu;
 	return onGpu || entry.comfortable_on_cpu;
 }
@@ -18,7 +25,7 @@ function fitsSomewhere(entry: ModelStateEntry, sys: SystemInfoEntry | null): boo
 export function isUncomfortable(
 	entry: ModelStateEntry | undefined,
 	sys: SystemInfoEntry | null,
-	live?: FitAssessmentEntry | null
+	live?: FitAssessmentEntry | null,
 ): boolean {
 	if (live) {
 		return live.severity === "critical";
@@ -34,7 +41,7 @@ export function isUncomfortable(
 export function severityFor(
 	entry: ModelStateEntry | undefined,
 	sys: SystemInfoEntry | null,
-	live?: FitAssessmentEntry | null
+	live?: FitAssessmentEntry | null,
 ): "ok" | "warning" | "critical" {
 	if (live) {
 		return live.severity;

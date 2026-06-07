@@ -1,6 +1,9 @@
 import type { OpenRouterModel } from "@/shared/api/models";
 import { MODEL_VARIANTS, type ModelVariant } from "./model-variant-utils";
-import { FILTERABLE_PARAMETERS, type FilterableParameter } from "./openrouter-provider-utils";
+import {
+	FILTERABLE_PARAMETERS,
+	type FilterableParameter,
+} from "./openrouter-provider-utils";
 
 export interface ModelFiltersMetadata {
 	availableVariants: Array<ModelVariant | "none">;
@@ -42,7 +45,10 @@ function modelHasImplicitVariant(model: OpenRouterModel): boolean {
 	return MODEL_VARIANTS.some((v) => model.id.endsWith(`:${v}`));
 }
 
-function accumulateVariant(acc: MetadataAccumulator, model: OpenRouterModel): void {
+function accumulateVariant(
+	acc: MetadataAccumulator,
+	model: OpenRouterModel,
+): void {
 	if (model.variant) {
 		acc.variants.add(model.variant);
 		bumpCount(acc.variantCounts, model.variant);
@@ -55,7 +61,10 @@ function accumulateVariant(acc: MetadataAccumulator, model: OpenRouterModel): vo
 	bumpCount(acc.variantCounts, "none");
 }
 
-function accumulateEndpoints(acc: MetadataAccumulator, model: OpenRouterModel): void {
+function accumulateEndpoints(
+	acc: MetadataAccumulator,
+	model: OpenRouterModel,
+): void {
 	if (!model.endpoints) {
 		return;
 	}
@@ -68,7 +77,7 @@ function accumulateEndpoints(acc: MetadataAccumulator, model: OpenRouterModel): 
 function registerEndpointProvider(
 	acc: MetadataAccumulator,
 	name: string | undefined,
-	seen: Set<string>
+	seen: Set<string>,
 ): void {
 	if (!name) {
 		return;
@@ -80,14 +89,20 @@ function registerEndpointProvider(
 	bumpCount(acc.endpointProvidersMap, name);
 }
 
-function accumulateMaker(acc: MetadataAccumulator, model: OpenRouterModel): void {
+function accumulateMaker(
+	acc: MetadataAccumulator,
+	model: OpenRouterModel,
+): void {
 	if (!model.maker) {
 		return;
 	}
 	bumpCount(acc.providerCounts, model.maker);
 }
 
-function accumulateParameters(acc: MetadataAccumulator, model: OpenRouterModel): void {
+function accumulateParameters(
+	acc: MetadataAccumulator,
+	model: OpenRouterModel,
+): void {
 	if (!Array.isArray(model.supported_parameters)) {
 		return;
 	}
@@ -96,44 +111,63 @@ function accumulateParameters(acc: MetadataAccumulator, model: OpenRouterModel):
 	}
 }
 
-function registerParameter(acc: MetadataAccumulator, param: FilterableParameter): void {
+function registerParameter(
+	acc: MetadataAccumulator,
+	param: FilterableParameter,
+): void {
 	if (!acc.parameterCounts.has(param)) {
 		return;
 	}
 	bumpCount(acc.parameterCounts, param);
 }
 
-const MODEL_ACCUMULATORS: Array<(acc: MetadataAccumulator, model: OpenRouterModel) => void> = [
+const MODEL_ACCUMULATORS: Array<
+	(acc: MetadataAccumulator, model: OpenRouterModel) => void
+> = [
 	accumulateVariant,
 	accumulateEndpoints,
 	accumulateMaker,
 	accumulateParameters,
 ];
 
-function accumulateModel(acc: MetadataAccumulator, model: OpenRouterModel): void {
+function accumulateModel(
+	acc: MetadataAccumulator,
+	model: OpenRouterModel,
+): void {
 	for (const fn of MODEL_ACCUMULATORS) {
 		fn(acc, model);
 	}
 }
 
-function buildAvailableVariants(acc: MetadataAccumulator): Array<ModelVariant | "none"> {
+function buildAvailableVariants(
+	acc: MetadataAccumulator,
+): Array<ModelVariant | "none"> {
 	const out: Array<ModelVariant | "none"> = acc.hasNoVariant ? ["none"] : [];
 	out.push(...Array.from(acc.variants).sort());
 	return out;
 }
 
-function compareEndpointEntries(a: [string, number], b: [string, number]): number {
+function compareEndpointEntries(
+	a: [string, number],
+	b: [string, number],
+): number {
 	return a[0].localeCompare(b[0]);
 }
 
-function buildSortedEndpointProviders(acc: MetadataAccumulator): [string, number][] {
-	return Array.from(acc.endpointProvidersMap.entries()).sort(compareEndpointEntries);
+function buildSortedEndpointProviders(
+	acc: MetadataAccumulator,
+): [string, number][] {
+	return Array.from(acc.endpointProvidersMap.entries()).sort(
+		compareEndpointEntries,
+	);
 }
 
 /**
  * Single-pass aggregation of every count the filters menu needs.
  */
-export function computeModelFiltersMetadata(models: OpenRouterModel[]): ModelFiltersMetadata {
+export function computeModelFiltersMetadata(
+	models: OpenRouterModel[],
+): ModelFiltersMetadata {
 	const acc = createAccumulator();
 	for (const model of models) {
 		accumulateModel(acc, model);

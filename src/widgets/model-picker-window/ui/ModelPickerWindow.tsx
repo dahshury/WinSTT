@@ -158,7 +158,9 @@ export function ModelPickerWindow() {
 	const currentModelIsCloud = providerOf(currentModel ?? "") !== null;
 	const currentModelInfo = currentModel ? getModel(currentModel) : undefined;
 	const currentModelStreamingKnown =
-		currentModel === undefined || currentModelIsCloud || currentModelInfo !== undefined;
+		currentModel === undefined ||
+		currentModelIsCloud ||
+		currentModelInfo !== undefined;
 	const currentModelCanNativeStream =
 		!currentModelIsCloud &&
 		currentModelInfo !== undefined &&
@@ -263,10 +265,7 @@ export function ModelPickerWindow() {
 						recovery.realtimeTarget.modelId === nextMainId &&
 						realtimeInfo !== undefined &&
 						isSelectableRealtimeModel(realtimeInfo);
-					if (
-						shouldReuseMain !==
-						(quality?.useMainModelForRealtime ?? false)
-					) {
+					if (shouldReuseMain !== (quality?.useMainModelForRealtime ?? false)) {
 						updateQuality({ useMainModelForRealtime: shouldReuseMain });
 					}
 				}

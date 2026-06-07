@@ -1,4 +1,8 @@
-import { AiBrain02Icon, Cancel01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import {
+	AiBrain02Icon,
+	Cancel01Icon,
+	Tick02Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button as BaseButton } from "@base-ui/react/button";
 import { Fragment } from "react";
@@ -13,14 +17,14 @@ import type { TranscriptDiffResult } from "@/shared/lib/transcript-diff";
  * diff view" in both places without coupling shared UI to one namespace.
  */
 export interface TranscriptDiffLabels {
-  aiEdits: string;
-  before: string;
-  after: string;
-  inserted: string;
-  removed: string;
-  largeRewrite: string;
-  changeCount: (count: number) => string;
-  moreChanges: (count: number) => string;
+	aiEdits: string;
+	before: string;
+	after: string;
+	inserted: string;
+	removed: string;
+	largeRewrite: string;
+	changeCount: (count: number) => string;
+	moreChanges: (count: number) => string;
 }
 
 /**
@@ -31,200 +35,201 @@ export interface TranscriptDiffLabels {
  * button (label supplied as `applyLabel`, e.g. "Accept all" / "Apply edits").
  */
 export interface TranscriptDiffReview {
-  rejected: ReadonlySet<number>;
-  onToggle: (changeIndex: number) => void;
-  /** Commit the CURRENT decisions (≡ accept-all when nothing is rejected). */
-  onCommit: () => void;
-  onDiscard: () => void;
-  /** Adapts in the parent: "Accept all" when nothing rejected, else "Apply edits". */
-  applyLabel: string;
-  discardLabel: string;
-  acceptLabel: string;
-  rejectLabel: string;
+	rejected: ReadonlySet<number>;
+	onToggle: (changeIndex: number) => void;
+	/** Commit the CURRENT decisions (≡ accept-all when nothing is rejected). */
+	onCommit: () => void;
+	onDiscard: () => void;
+	/** Adapts in the parent: "Accept all" when nothing rejected, else "Apply edits". */
+	applyLabel: string;
+	discardLabel: string;
+	acceptLabel: string;
+	rejectLabel: string;
 }
 
 interface TranscriptDiffViewProps {
-  diff: TranscriptDiffResult;
-  labels: TranscriptDiffLabels;
-  /** Provide to enable per-change accept/deny + commit footer. Omit = read-only. */
-  review?: TranscriptDiffReview;
+	diff: TranscriptDiffResult;
+	labels: TranscriptDiffLabels;
+	/** Provide to enable per-change accept/deny + commit footer. Omit = read-only. */
+	review?: TranscriptDiffReview;
 }
 
 const DIFF_SUMMARY_LIMIT = 6;
 
 function truncateDiffSnippet(text: string, max = 38): string {
-  if (text.length <= max) {
-    return text;
-  }
-  return `${text.slice(0, max - 1).trimEnd()}…`;
+	if (text.length <= max) {
+		return text;
+	}
+	return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
 /** Per-hunk change ordinal (−1 for equal hunks), aligned with `diff.changes`. */
 function hunkChangeOrdinals(diff: TranscriptDiffResult): number[] {
-  let ordinal = 0;
-  return diff.hunks.map((hunk) =>
-    hunk.kind === "change" ? ordinal++ : -1,
-  );
+	let ordinal = 0;
+	return diff.hunks.map((hunk) => (hunk.kind === "change" ? ordinal++ : -1));
 }
 
 function ReviewToggle({
-  active,
-  kind,
-  label,
-  onClick,
+	active,
+	kind,
+	label,
+	onClick,
 }: {
-  active: boolean;
-  kind: "accept" | "reject";
-  label: string;
-  onClick: () => void;
+	active: boolean;
+	kind: "accept" | "reject";
+	label: string;
+	onClick: () => void;
 }) {
-  const accent =
-    kind === "accept"
-      ? "text-success bg-success/15 ring-success/40"
-      : "text-error bg-error/15 ring-error/40";
-  return (
-    <BaseButton
-      aria-label={label}
-      aria-pressed={active}
-      className={cn(
-        "inline-flex size-5 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
-        active
-          ? accent
-          : "text-foreground-muted ring-transparent hover:bg-foreground/10 hover:text-foreground",
-      )}
-      onClick={onClick}
-      title={label}
-      type="button"
-    >
-      <HugeiconsIcon
-        icon={kind === "accept" ? Tick02Icon : Cancel01Icon}
-        size={12}
-      />
-    </BaseButton>
-  );
+	const accent =
+		kind === "accept"
+			? "text-success bg-success/15 ring-success/40"
+			: "text-error bg-error/15 ring-error/40";
+	return (
+		<BaseButton
+			aria-label={label}
+			aria-pressed={active}
+			className={cn(
+				"inline-flex size-5 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
+				active
+					? accent
+					: "text-foreground-muted ring-transparent hover:bg-foreground/10 hover:text-foreground",
+			)}
+			onClick={onClick}
+			title={label}
+			type="button"
+		>
+			<HugeiconsIcon
+				icon={kind === "accept" ? Tick02Icon : Cancel01Icon}
+				size={12}
+			/>
+		</BaseButton>
+	);
 }
 
 function DiffChangeChip({
-  change,
-  changeIndex,
-  labels,
-  review,
+	change,
+	changeIndex,
+	labels,
+	review,
 }: {
-  change: TranscriptDiffResult["changes"][number];
-  changeIndex: number;
-  labels: TranscriptDiffLabels;
-  review?: TranscriptDiffReview | undefined;
+	change: TranscriptDiffResult["changes"][number];
+	changeIndex: number;
+	labels: TranscriptDiffLabels;
+	review?: TranscriptDiffReview | undefined;
 }) {
-  const rejected = review?.rejected.has(changeIndex) ?? false;
-  const before = change.before
-    ? truncateDiffSnippet(change.before)
-    : labels.inserted;
-  const after = change.after ? truncateDiffSnippet(change.after) : labels.removed;
-  return (
-    <span
-      className={cn(
-        "inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border bg-foreground/5 px-1.5 py-1 text-[11px] leading-none",
-        rejected && "opacity-60",
-      )}
-      title={
-        change.kind === "insert"
-          ? change.after
-          : change.kind === "delete"
-            ? change.before
-            : `${change.before} → ${change.after}`
-      }
-    >
-      {change.before ? (
-        <span className="min-w-0 max-w-[9rem] truncate text-error line-through decoration-error/70">
-          {before}
-        </span>
-      ) : (
-        <span className="text-foreground-muted">{before}</span>
-      )}
-      <span className="shrink-0 text-foreground-muted">→</span>
-      {change.after ? (
-        <span
-          className={cn(
-            "min-w-0 max-w-[9rem] truncate text-success",
-            rejected && "text-foreground-muted line-through decoration-foreground-muted/60",
-          )}
-        >
-          {after}
-        </span>
-      ) : (
-        <span className="text-foreground-muted">{after}</span>
-      )}
-      {review ? (
-        <span className="ml-0.5 flex shrink-0 items-center gap-0.5">
-          <ReviewToggle
-            active={!rejected}
-            kind="accept"
-            label={review.acceptLabel}
-            onClick={() => {
-              if (rejected) {
-                review.onToggle(changeIndex);
-              }
-            }}
-          />
-          <ReviewToggle
-            active={rejected}
-            kind="reject"
-            label={review.rejectLabel}
-            onClick={() => {
-              if (!rejected) {
-                review.onToggle(changeIndex);
-              }
-            }}
-          />
-        </span>
-      ) : null}
-    </span>
-  );
+	const rejected = review?.rejected.has(changeIndex) ?? false;
+	const before = change.before
+		? truncateDiffSnippet(change.before)
+		: labels.inserted;
+	const after = change.after
+		? truncateDiffSnippet(change.after)
+		: labels.removed;
+	return (
+		<span
+			className={cn(
+				"inline-flex min-w-0 max-w-full items-center gap-1 rounded-md border border-border bg-foreground/5 px-1.5 py-1 text-[11px] leading-none",
+				rejected && "opacity-60",
+			)}
+			title={
+				change.kind === "insert"
+					? change.after
+					: change.kind === "delete"
+						? change.before
+						: `${change.before} → ${change.after}`
+			}
+		>
+			{change.before ? (
+				<span className="min-w-0 max-w-[9rem] truncate text-error line-through decoration-error/70">
+					{before}
+				</span>
+			) : (
+				<span className="text-foreground-muted">{before}</span>
+			)}
+			<span className="shrink-0 text-foreground-muted">→</span>
+			{change.after ? (
+				<span
+					className={cn(
+						"min-w-0 max-w-[9rem] truncate text-success",
+						rejected &&
+							"text-foreground-muted line-through decoration-foreground-muted/60",
+					)}
+				>
+					{after}
+				</span>
+			) : (
+				<span className="text-foreground-muted">{after}</span>
+			)}
+			{review ? (
+				<span className="ml-0.5 flex shrink-0 items-center gap-0.5">
+					<ReviewToggle
+						active={!rejected}
+						kind="accept"
+						label={review.acceptLabel}
+						onClick={() => {
+							if (rejected) {
+								review.onToggle(changeIndex);
+							}
+						}}
+					/>
+					<ReviewToggle
+						active={rejected}
+						kind="reject"
+						label={review.rejectLabel}
+						onClick={() => {
+							if (!rejected) {
+								review.onToggle(changeIndex);
+							}
+						}}
+					/>
+				</span>
+			) : null}
+		</span>
+	);
 }
 
 function DiffText({
-  diff,
-  ordinals,
-  rejected,
-  side,
+	diff,
+	ordinals,
+	rejected,
+	side,
 }: {
-  diff: TranscriptDiffResult;
-  ordinals: number[];
-  rejected?: ReadonlySet<number> | undefined;
-  side: "after" | "before";
+	diff: TranscriptDiffResult;
+	ordinals: number[];
+	rejected?: ReadonlySet<number> | undefined;
+	side: "after" | "before";
 }) {
-  return (
-    <p className="whitespace-pre-wrap break-words text-body-sm text-foreground leading-relaxed">
-      {diff.hunks.map((hunk, index) => {
-        const text = side === "before" ? hunk.before : hunk.after;
-        if (!text) {
-          return null;
-        }
-        const isRejected =
-          hunk.kind === "change" &&
-          side === "after" &&
-          (rejected?.has(ordinals[index] ?? -1) ?? false);
-        let className: string | undefined;
-        if (hunk.kind === "change") {
-          if (side === "before") {
-            className =
-              "rounded-[3px] bg-error-dim/45 px-0.5 text-error line-through decoration-error/70";
-          } else if (isRejected) {
-            className =
-              "rounded-[3px] bg-foreground/5 px-0.5 text-foreground-muted line-through decoration-foreground-muted/60";
-          } else {
-            className = "rounded-[3px] bg-success-dim/55 px-0.5 text-success";
-          }
-        }
-        return (
-          <Fragment key={`${side}-${index}`}>
-            {index > 0 ? " " : null}
-            <span className={className}>{text}</span>
-          </Fragment>
-        );
-      })}
-    </p>
-  );
+	return (
+		<p className="whitespace-pre-wrap break-words text-body-sm text-foreground leading-relaxed">
+			{diff.hunks.map((hunk, index) => {
+				const text = side === "before" ? hunk.before : hunk.after;
+				if (!text) {
+					return null;
+				}
+				const isRejected =
+					hunk.kind === "change" &&
+					side === "after" &&
+					(rejected?.has(ordinals[index] ?? -1) ?? false);
+				let className: string | undefined;
+				if (hunk.kind === "change") {
+					if (side === "before") {
+						className =
+							"rounded-[3px] bg-error-dim/45 px-0.5 text-error line-through decoration-error/70";
+					} else if (isRejected) {
+						className =
+							"rounded-[3px] bg-foreground/5 px-0.5 text-foreground-muted line-through decoration-foreground-muted/60";
+					} else {
+						className = "rounded-[3px] bg-success-dim/55 px-0.5 text-success";
+					}
+				}
+				return (
+					<Fragment key={`${side}-${index}`}>
+						{index > 0 ? " " : null}
+						<span className={className}>{text}</span>
+					</Fragment>
+				);
+			})}
+		</p>
+	);
 }
 
 /**
@@ -233,101 +238,107 @@ function DiffText({
  * cherry-pick reviewer (per-change ✓/✗ + Discard / commit footer).
  */
 export function TranscriptDiffView({
-  diff,
-  labels,
-  review,
+	diff,
+	labels,
+	review,
 }: TranscriptDiffViewProps) {
-  const panelLevel = Math.max(useSurface() - 1, 1);
-  const reviewing = review !== undefined;
-  const ordinals = hunkChangeOrdinals(diff);
-  // In review mode every change needs its own control, so show them all; the
-  // read-only summary caps at DIFF_SUMMARY_LIMIT with a "+N more" pill.
-  const shownChanges = reviewing
-    ? diff.changes
-    : diff.changes.slice(0, DIFF_SUMMARY_LIMIT);
-  const hiddenChanges = reviewing
-    ? 0
-    : Math.max(diff.changes.length - DIFF_SUMMARY_LIMIT, 0);
-  const changeCount = labels.changeCount(diff.changes.length);
+	const panelLevel = Math.max(useSurface() - 1, 1);
+	const reviewing = review !== undefined;
+	const ordinals = hunkChangeOrdinals(diff);
+	// In review mode every change needs its own control, so show them all; the
+	// read-only summary caps at DIFF_SUMMARY_LIMIT with a "+N more" pill.
+	const shownChanges = reviewing
+		? diff.changes
+		: diff.changes.slice(0, DIFF_SUMMARY_LIMIT);
+	const hiddenChanges = reviewing
+		? 0
+		: Math.max(diff.changes.length - DIFF_SUMMARY_LIMIT, 0);
+	const changeCount = labels.changeCount(diff.changes.length);
 
-  return (
-    <div className="flex flex-col gap-2.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center gap-1 rounded-md bg-accent-glow px-1.5 py-1 font-medium text-[11px] text-accent leading-none">
-          <HugeiconsIcon aria-hidden="true" className="size-3" icon={AiBrain02Icon} />
-          {labels.aiEdits}
-        </span>
-        <span className="text-[11px] text-foreground-muted leading-none">
-          {diff.coarse ? `${changeCount} · ${labels.largeRewrite}` : changeCount}
-        </span>
-      </div>
+	return (
+		<div className="flex flex-col gap-2.5">
+			<div className="flex flex-wrap items-center gap-2">
+				<span className="inline-flex items-center gap-1 rounded-md bg-accent-glow px-1.5 py-1 font-medium text-[11px] text-accent leading-none">
+					<HugeiconsIcon
+						aria-hidden="true"
+						className="size-3"
+						icon={AiBrain02Icon}
+					/>
+					{labels.aiEdits}
+				</span>
+				<span className="text-[11px] text-foreground-muted leading-none">
+					{diff.coarse
+						? `${changeCount} · ${labels.largeRewrite}`
+						: changeCount}
+				</span>
+			</div>
 
-      <div className="flex flex-wrap gap-1.5">
-        {shownChanges.map((change, index) => (
-          <DiffChangeChip
-            change={change}
-            changeIndex={index}
-            key={`${change.kind}-${index}`}
-            labels={labels}
-            review={review}
-          />
-        ))}
-        {hiddenChanges > 0 ? (
-          <span className="inline-flex items-center rounded-md border border-border bg-foreground/5 px-1.5 py-1 text-[11px] text-foreground-muted leading-none">
-            {labels.moreChanges(hiddenChanges)}
-          </span>
-        ) : null}
-      </div>
+			<div className="flex flex-wrap gap-1.5">
+				{shownChanges.map((change, index) => (
+					<DiffChangeChip
+						change={change}
+						changeIndex={index}
+						key={`${change.kind}-${index}`}
+						labels={labels}
+						review={review}
+					/>
+				))}
+				{hiddenChanges > 0 ? (
+					<span className="inline-flex items-center rounded-md border border-border bg-foreground/5 px-1.5 py-1 text-[11px] text-foreground-muted leading-none">
+						{labels.moreChanges(hiddenChanges)}
+					</span>
+				) : null}
+			</div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <section
-          className={cn(
-            "min-w-0 rounded-md border border-border p-2",
-            surfaceBg(panelLevel),
-          )}
-        >
-          <div className="mb-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
-            {labels.before}
-          </div>
-          <DiffText diff={diff} ordinals={ordinals} side="before" />
-        </section>
-        <section
-          className={cn(
-            "min-w-0 rounded-md border border-border p-2",
-            surfaceBg(panelLevel),
-          )}
-        >
-          <div className="mb-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
-            {labels.after}
-          </div>
-          <DiffText
-            diff={diff}
-            ordinals={ordinals}
-            rejected={review?.rejected}
-            side="after"
-          />
-        </section>
-      </div>
+			<div className="grid gap-2 sm:grid-cols-2">
+				<section
+					className={cn(
+						"min-w-0 rounded-md border border-border p-2",
+						surfaceBg(panelLevel),
+					)}
+				>
+					<div className="mb-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
+						{labels.before}
+					</div>
+					<DiffText diff={diff} ordinals={ordinals} side="before" />
+				</section>
+				<section
+					className={cn(
+						"min-w-0 rounded-md border border-border p-2",
+						surfaceBg(panelLevel),
+					)}
+				>
+					<div className="mb-1.5 font-medium text-[11px] text-foreground-muted uppercase leading-none tracking-[0.08em]">
+						{labels.after}
+					</div>
+					<DiffText
+						diff={diff}
+						ordinals={ordinals}
+						rejected={review?.rejected}
+						side="after"
+					/>
+				</section>
+			</div>
 
-      {review ? (
-        <div className="flex items-center justify-end gap-2">
-          <BaseButton
-            className="rounded-md border border-border px-3 py-1.5 text-foreground-muted text-sm transition-colors hover:text-foreground"
-            onClick={review.onDiscard}
-            type="button"
-          >
-            {review.discardLabel}
-          </BaseButton>
-          <BaseButton
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 font-medium text-sm text-white transition-colors hover:bg-accent-hover"
-            onClick={review.onCommit}
-            type="button"
-          >
-            <HugeiconsIcon icon={Tick02Icon} size={15} />
-            {review.applyLabel}
-          </BaseButton>
-        </div>
-      ) : null}
-    </div>
-  );
+			{review ? (
+				<div className="flex items-center justify-end gap-2">
+					<BaseButton
+						className="rounded-md border border-border px-3 py-1.5 text-foreground-muted text-sm transition-colors hover:text-foreground"
+						onClick={review.onDiscard}
+						type="button"
+					>
+						{review.discardLabel}
+					</BaseButton>
+					<BaseButton
+						className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 font-medium text-sm text-white transition-colors hover:bg-accent-hover"
+						onClick={review.onCommit}
+						type="button"
+					>
+						<HugeiconsIcon icon={Tick02Icon} size={15} />
+						{review.applyLabel}
+					</BaseButton>
+				</div>
+			) : null}
+		</div>
+	);
 }

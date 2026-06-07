@@ -28,5 +28,5 @@ renderReactRoot(
 				<MainPage />
 			</Suspense>
 		</RootLayout>
-	</StrictMode>
+	</StrictMode>,
 );

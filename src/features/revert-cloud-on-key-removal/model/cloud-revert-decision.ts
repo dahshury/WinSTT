@@ -56,7 +56,7 @@ function wasCleared(prev: string, next: string): boolean {
 /** Which providers' keys went non-empty → empty between two snapshots. */
 export function detectClearedKeys(
 	prev: KeySnapshot,
-	next: KeySnapshot
+	next: KeySnapshot,
 ): ReadonlySet<ClearableProvider> {
 	const cleared = new Set<ClearableProvider>();
 	if (wasCleared(prev.openai, next.openai)) {
@@ -79,7 +79,7 @@ export function detectClearedKeys(
  */
 export function planReverts(
 	cleared: ReadonlySet<ClearableProvider>,
-	surfaces: SurfaceSnapshot
+	surfaces: SurfaceSnapshot,
 ): RevertPlan {
 	const activeSttProvider = providerOf(surfaces.model);
 	const orCleared = cleared.has("openrouter");
@@ -101,7 +101,10 @@ export function planHasWork(plan: RevertPlan): boolean {
  * confirmation toast. Deduped, so an elevenlabs key that backed both STT and
  * cloud TTS yields a single notice.
  */
-export function affectedProviders(plan: RevertPlan, model: string): ReadonlySet<ClearableProvider> {
+export function affectedProviders(
+	plan: RevertPlan,
+	model: string,
+): ReadonlySet<ClearableProvider> {
 	const providers = new Set<ClearableProvider>();
 	if (plan.stt) {
 		const sttProvider = providerOf(model);
@@ -124,7 +127,10 @@ export function affectedProviders(plan: RevertPlan, model: string): ReadonlySet<
  * falling back to the schema default (`tiny` / `faster_whisper`, the vendored
  * offline base) when the catalog is empty or lacks a backend.
  */
-export function resolveLocalSttTarget(models: CatalogModels, statesById: StatesById): SttTarget {
+export function resolveLocalSttTarget(
+	models: CatalogModels,
+	statesById: StatesById,
+): SttTarget {
 	const fallback: SttTarget = {
 		model: DEFAULT_SETTINGS.model.model,
 		backend: DEFAULT_SETTINGS.model.backend,

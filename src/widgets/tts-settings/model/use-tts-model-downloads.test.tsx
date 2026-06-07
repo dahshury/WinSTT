@@ -10,7 +10,11 @@ type ProgressPayload = {
 	totalBytes: number;
 };
 
-type CompleteListener = (model: string, cancelled: boolean, quantization: string) => void;
+type CompleteListener = (
+	model: string,
+	cancelled: boolean,
+	quantization: string,
+) => void;
 
 let progressListeners: Array<(payload: ProgressPayload) => void> = [];
 let completeListeners: CompleteListener[] = [];
@@ -22,13 +26,16 @@ const resumeSpy = mock(() => Promise.resolve());
 const cancelSpy = mock(() => Promise.resolve());
 
 mock.module("@/entities/tts-catalog", () => ({
-	useTtsModelStateStore: <T,>(selector: (state: { refresh: () => Promise<void> }) => T): T =>
-		selector({ refresh: refreshSpy }),
+	useTtsModelStateStore: <T,>(
+		selector: (state: { refresh: () => Promise<void> }) => T,
+	): T => selector({ refresh: refreshSpy }),
 }));
 
 mock.module("@/shared/api/ipc-client", () => ({
 	...ipcClientMock(),
-	onTtsModelDownloadProgressCatalog: (cb: (payload: ProgressPayload) => void) => {
+	onTtsModelDownloadProgressCatalog: (
+		cb: (payload: ProgressPayload) => void,
+	) => {
 		progressListeners.push(cb);
 		return () => {
 			progressListeners = progressListeners.filter((x) => x !== cb);
@@ -135,6 +142,8 @@ describe("useTtsModelDownloads", () => {
 			totalBytes: 1_000,
 		});
 
-		expect(result.current.getSnapshot("kokoro", "fp16")?.totalBytes).toBe(1_200);
+		expect(result.current.getSnapshot("kokoro", "fp16")?.totalBytes).toBe(
+			1_200,
+		);
 	});
 });

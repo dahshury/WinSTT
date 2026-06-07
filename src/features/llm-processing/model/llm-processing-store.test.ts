@@ -34,7 +34,10 @@ describe("nextThinkingStart", () => {
 
 describe("thinkingStopPatch", () => {
 	test("clears both flags", () => {
-		expect(thinkingStopPatch()).toEqual({ isThinking: false, thinkingStartedAt: null });
+		expect(thinkingStopPatch()).toEqual({
+			isThinking: false,
+			thinkingStartedAt: null,
+		});
 	});
 });
 
@@ -105,7 +108,9 @@ describe("appendThinkingPatch", () => {
 	});
 
 	test("concatenates a chunk onto the current text", () => {
-		expect(appendThinkingPatch("hello ", "world")).toEqual({ thinkingText: "hello world" });
+		expect(appendThinkingPatch("hello ", "world")).toEqual({
+			thinkingText: "hello world",
+		});
 	});
 });
 
@@ -118,7 +123,10 @@ describe("useLlmProcessingStore", () => {
 	});
 
 	test("setThinking(false) clears both flags", () => {
-		useLlmProcessingStore.setState({ isThinking: true, thinkingStartedAt: 100 });
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			thinkingStartedAt: 100,
+		});
 		useLlmProcessingStore.getState().setThinking(false);
 		const s = useLlmProcessingStore.getState();
 		expect(s.isThinking).toBe(false);
@@ -126,7 +134,10 @@ describe("useLlmProcessingStore", () => {
 	});
 
 	test("setThinking(true) again does NOT bump the start (monotonic)", () => {
-		useLlmProcessingStore.setState({ isThinking: true, thinkingStartedAt: 100 });
+		useLlmProcessingStore.setState({
+			isThinking: true,
+			thinkingStartedAt: 100,
+		});
 		useLlmProcessingStore.getState().setThinking(true);
 		expect(useLlmProcessingStore.getState().thinkingStartedAt).toBe(100);
 	});

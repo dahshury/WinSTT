@@ -22,7 +22,7 @@ describe("IntlProvider", () => {
 		render(
 			<IntlProvider>
 				<ProbeWithTranslation />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		const probe = screen.getByTestId("probe");
 		expect(probe).toBeDefined();
@@ -34,7 +34,7 @@ describe("IntlProvider", () => {
 		const { rerender } = render(
 			<IntlProvider>
 				<ProbeWithTranslation />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		const enText = screen.getByTestId("probe").textContent;
 
@@ -42,7 +42,7 @@ describe("IntlProvider", () => {
 		rerender(
 			<IntlProvider>
 				<ProbeWithTranslation />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		// The localized string may or may not differ across locales for this key,
 		// but the provider should not throw and the probe should still render.

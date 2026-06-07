@@ -11,7 +11,7 @@ describe("formatTime property tests", () => {
 				const secondsField = parts.at(-1) ?? "";
 				return /^\d{2}$/.test(secondsField);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -26,7 +26,7 @@ describe("formatTime property tests", () => {
 				const minutesField = parts[1] ?? "";
 				return /^\d{2}$/.test(minutesField);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -35,9 +35,9 @@ describe("formatTime property tests", () => {
 			fc.property(
 				fc.integer({ min: 0, max: 60 * 60 * 24 }),
 				fc.integer({ min: 0, max: 999 }),
-				(n, r) => formatTime(n * 1000) === formatTime(n * 1000 + r)
+				(n, r) => formatTime(n * 1000) === formatTime(n * 1000 + r),
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -55,9 +55,9 @@ describe("formatTime property tests", () => {
 					fc.pre(secA !== secB);
 					const cmp = formatTime(a).localeCompare(formatTime(b));
 					return secA < secB ? cmp < 0 : cmp > 0;
-				}
+				},
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -67,7 +67,7 @@ describe("formatTime property tests", () => {
 				const out = formatTime(ms);
 				return /^\d+:\d{2}$/.test(out) || /^\d+:\d{2}:\d{2}$/.test(out);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 
 		// Spot-check the boundary explicitly.

@@ -25,7 +25,8 @@ const t = __testables;
 // `isCriticalAssessment` only reads `.severity`; this contains the single
 // boundary cast from the minimal `{ severity }` stub to the real entry type,
 // returning the same object it was given.
-const asAssessment = (a: { severity: string }) => a as unknown as FitAssessmentEntry;
+const asAssessment = (a: { severity: string }) =>
+	a as unknown as FitAssessmentEntry;
 
 const quantArb: fc.Arbitrary<OnnxQuantization> = fc.constantFrom(
 	"int8",
@@ -33,7 +34,7 @@ const quantArb: fc.Arbitrary<OnnxQuantization> = fc.constantFrom(
 	"uint8",
 	"q4",
 	"q4f16",
-	"bnb4"
+	"bnb4",
 );
 
 // isQuantizationChanging ----------------------------------------------------
@@ -41,25 +42,32 @@ const quantArb: fc.Arbitrary<OnnxQuantization> = fc.constantFrom(
 describe("isQuantizationChanging (property)", () => {
 	test("false when target quantization is undefined", () => {
 		fc.assert(
-			fc.property(quantArb, (current) => t.isQuantizationChanging(undefined, current) === false),
-			{ numRuns: 100 }
+			fc.property(
+				quantArb,
+				(current) => t.isQuantizationChanging(undefined, current) === false,
+			),
+			{ numRuns: 100 },
 		);
 	});
 
 	test("false when target equals current (reflexivity)", () => {
 		fc.assert(
 			fc.property(quantArb, (q) => t.isQuantizationChanging(q, q) === false),
-			{ numRuns: 100 }
+			{ numRuns: 100 },
 		);
 	});
 
 	test("matches the manual predicate `q !== undefined && q !== current`", () => {
 		fc.assert(
-			fc.property(fc.option(quantArb, { nil: undefined }), quantArb, (target, current) => {
-				const expected = target !== undefined && target !== current;
-				return t.isQuantizationChanging(target, current) === expected;
-			}),
-			{ numRuns: 200 }
+			fc.property(
+				fc.option(quantArb, { nil: undefined }),
+				quantArb,
+				(target, current) => {
+					const expected = target !== undefined && target !== current;
+					return t.isQuantizationChanging(target, current) === expected;
+				},
+			),
+			{ numRuns: 200 },
 		);
 	});
 
@@ -69,9 +77,11 @@ describe("isQuantizationChanging (property)", () => {
 				if (a === b) {
 					return true; // skip equal case
 				}
-				return t.isQuantizationChanging(a, b) === t.isQuantizationChanging(b, a);
+				return (
+					t.isQuantizationChanging(a, b) === t.isQuantizationChanging(b, a)
+				);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });
@@ -84,26 +94,33 @@ describe("resolveTargetQuant (property)", () => {
 			fc.property(
 				quantArb,
 				quantArb,
-				(target, current) => t.resolveTargetQuant(target, current) === target
+				(target, current) => t.resolveTargetQuant(target, current) === target,
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
 	test("returns current when target is undefined", () => {
 		fc.assert(
-			fc.property(quantArb, (current) => t.resolveTargetQuant(undefined, current) === current),
-			{ numRuns: 100 }
+			fc.property(
+				quantArb,
+				(current) => t.resolveTargetQuant(undefined, current) === current,
+			),
+			{ numRuns: 100 },
 		);
 	});
 
 	test("matches `target ?? current`", () => {
 		fc.assert(
-			fc.property(fc.option(quantArb, { nil: undefined }), quantArb, (target, current) => {
-				const expected = target ?? current;
-				return t.resolveTargetQuant(target, current) === expected;
-			}),
-			{ numRuns: 200 }
+			fc.property(
+				fc.option(quantArb, { nil: undefined }),
+				quantArb,
+				(target, current) => {
+					const expected = target ?? current;
+					return t.resolveTargetQuant(target, current) === expected;
+				},
+			),
+			{ numRuns: 200 },
 		);
 	});
 });
@@ -115,8 +132,11 @@ describe("isCriticalAssessment (property)", () => {
 
 	test("false for null or undefined input", () => {
 		fc.assert(
-			fc.property(fc.constantFrom(null, undefined), (v) => t.isCriticalAssessment(v) === false),
-			{ numRuns: 20 }
+			fc.property(
+				fc.constantFrom(null, undefined),
+				(v) => t.isCriticalAssessment(v) === false,
+			),
+			{ numRuns: 20 },
 		);
 	});
 
@@ -126,7 +146,7 @@ describe("isCriticalAssessment (property)", () => {
 				const assessment = asAssessment({ severity: sev });
 				return t.isCriticalAssessment(assessment) === (sev === "critical");
 			}),
-			{ numRuns: 100 }
+			{ numRuns: 100 },
 		);
 	});
 });
@@ -136,8 +156,11 @@ describe("isCriticalAssessment (property)", () => {
 describe("toPresentList (property)", () => {
 	test("returns [] when state is undefined", () => {
 		fc.assert(
-			fc.property(fc.constant(undefined), (v) => t.toPresentList(v).length === 0),
-			{ numRuns: 10 }
+			fc.property(
+				fc.constant(undefined),
+				(v) => t.toPresentList(v).length === 0,
+			),
+			{ numRuns: 10 },
 		);
 	});
 
@@ -148,7 +171,7 @@ describe("toPresentList (property)", () => {
 				const list = t.toPresentList(state);
 				return list.length === 1 && list[0] === state;
 			}),
-			{ numRuns: 100 }
+			{ numRuns: 100 },
 		);
 	});
 
@@ -158,7 +181,7 @@ describe("toPresentList (property)", () => {
 				const list = t.toPresentList(v as never);
 				return list.length === 0 || list.length === 1;
 			}),
-			{ numRuns: 100 }
+			{ numRuns: 100 },
 		);
 	});
 });
@@ -176,15 +199,19 @@ describe("resolveCandidateName (property)", () => {
 		fc.assert(
 			fc.property(
 				fc.string({ minLength: 1, maxLength: 30 }),
-				fc.option(fc.string({ minLength: 1, maxLength: 30 }), { nil: undefined }),
+				fc.option(fc.string({ minLength: 1, maxLength: 30 }), {
+					nil: undefined,
+				}),
 				(value, displayName) => {
 					const getModel = (v: string) =>
-						v === value ? ({ displayName } as { displayName?: string }) : undefined;
+						v === value
+							? ({ displayName } as { displayName?: string })
+							: undefined;
 					const out = t.resolveCandidateName(getModel as never, value);
 					return out === (displayName ?? value);
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -192,9 +219,9 @@ describe("resolveCandidateName (property)", () => {
 		fc.assert(
 			fc.property(
 				fc.string({ minLength: 1, maxLength: 30 }),
-				(value) => t.resolveCandidateName(() => undefined, value) === value
+				(value) => t.resolveCandidateName(() => undefined, value) === value,
 			),
-			{ numRuns: 100 }
+			{ numRuns: 100 },
 		);
 	});
 });
@@ -210,10 +237,13 @@ describe("applyQuantOverride (property)", () => {
 				(patch, q) => {
 					const before = { ...patch };
 					const after = t.applyQuantOverride(patch as never, q, false);
-					return JSON.stringify(after) === JSON.stringify(before) && !("onnxQuantization" in after);
-				}
+					return (
+						JSON.stringify(after) === JSON.stringify(before) &&
+						!("onnxQuantization" in after)
+					);
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -222,9 +252,12 @@ describe("applyQuantOverride (property)", () => {
 			fc.property(fc.record({ model: fc.string() }), (patch) => {
 				const before = { ...patch };
 				const after = t.applyQuantOverride(patch as never, undefined, true);
-				return JSON.stringify(after) === JSON.stringify(before) && !("onnxQuantization" in after);
+				return (
+					JSON.stringify(after) === JSON.stringify(before) &&
+					!("onnxQuantization" in after)
+				);
 			}),
-			{ numRuns: 100 }
+			{ numRuns: 100 },
 		);
 	});
 
@@ -232,9 +265,12 @@ describe("applyQuantOverride (property)", () => {
 		fc.assert(
 			fc.property(fc.record({ model: fc.string() }), quantArb, (patch, q) => {
 				const after = t.applyQuantOverride(patch as never, q, true);
-				return (after as { onnxQuantization?: OnnxQuantization }).onnxQuantization === q;
+				return (
+					(after as { onnxQuantization?: OnnxQuantization })
+						.onnxQuantization === q
+				);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });
@@ -248,8 +284,11 @@ describe("needsDownloadPrompt (property)", () => {
 	// the unit assertion in use-model-swap-controller.test.ts.
 	test("true for every quant when state is undefined (fail-safe to download)", () => {
 		fc.assert(
-			fc.property(quantArb, (q) => t.needsDownloadPrompt(undefined, q) === true),
-			{ numRuns: 50 }
+			fc.property(
+				quantArb,
+				(q) => t.needsDownloadPrompt(undefined, q) === true,
+			),
+			{ numRuns: 50 },
 		);
 	});
 });

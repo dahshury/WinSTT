@@ -71,7 +71,10 @@ export function useFavoriteProviders() {
 
 	const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
 
-	const isFavorite = useCallback((provider: string) => favoritesSet.has(provider), [favoritesSet]);
+	const isFavorite = useCallback(
+		(provider: string) => favoritesSet.has(provider),
+		[favoritesSet],
+	);
 
 	return {
 		favorites,

@@ -1,4 +1,7 @@
-export function filterByQuery(allProviders: string[], queryLower: string): string[] {
+export function filterByQuery(
+	allProviders: string[],
+	queryLower: string,
+): string[] {
 	if (!queryLower) {
 		return allProviders;
 	}
@@ -12,7 +15,7 @@ export function getFavoriteTooltipText(isFavorite: boolean): string {
 export function handleFavoriteButtonClick(
 	event: React.MouseEvent,
 	provider: string,
-	onToggleFavorite: (maker: string) => void
+	onToggleFavorite: (maker: string) => void,
 ): void {
 	event.stopPropagation();
 	onToggleFavorite(provider);

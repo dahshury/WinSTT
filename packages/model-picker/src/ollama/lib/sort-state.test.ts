@@ -2,16 +2,27 @@ import { describe, expect, it } from "bun:test";
 import type { OllamaModel } from "@/shared/api/models";
 import { sortOllamaModels } from "./sort-state";
 
-function model(overrides: Partial<OllamaModel> & { name: string }): OllamaModel {
+function model(
+	overrides: Partial<OllamaModel> & { name: string },
+): OllamaModel {
 	return { size: 0, modifiedAt: "", ...overrides };
 }
 
-const names = (models: readonly OllamaModel[]): string[] => models.map((m) => m.name);
+const names = (models: readonly OllamaModel[]): string[] =>
+	models.map((m) => m.name);
 
 describe("sortOllamaModels", () => {
 	it("sorts by name A→Z, case-insensitively", () => {
-		const models = [model({ name: "qwen3" }), model({ name: "Gemma3" }), model({ name: "llama3" })];
-		expect(names(sortOllamaModels(models, "name"))).toEqual(["Gemma3", "llama3", "qwen3"]);
+		const models = [
+			model({ name: "qwen3" }),
+			model({ name: "Gemma3" }),
+			model({ name: "llama3" }),
+		];
+		expect(names(sortOllamaModels(models, "name"))).toEqual([
+			"Gemma3",
+			"llama3",
+			"qwen3",
+		]);
 	});
 
 	it("sorts by on-disk size, smallest first", () => {
@@ -20,7 +31,11 @@ describe("sortOllamaModels", () => {
 			model({ name: "small", size: 100 }),
 			model({ name: "mid", size: 400 }),
 		];
-		expect(names(sortOllamaModels(models, "size"))).toEqual(["small", "mid", "big"]);
+		expect(names(sortOllamaModels(models, "size"))).toEqual([
+			"small",
+			"mid",
+			"big",
+		]);
 	});
 
 	it("sorts models with unknown/zero size to the end (size key)", () => {
@@ -40,7 +55,11 @@ describe("sortOllamaModels", () => {
 			model({ name: "tiny", details: { parameterSize: "270m" } }),
 			model({ name: "small", details: { parameterSize: "1.2B" } }),
 		];
-		expect(names(sortOllamaModels(models, "params"))).toEqual(["tiny", "small", "seven"]);
+		expect(names(sortOllamaModels(models, "params"))).toEqual([
+			"tiny",
+			"small",
+			"seven",
+		]);
 	});
 
 	it("sorts models with unknown params to the end (params key)", () => {
@@ -55,7 +74,10 @@ describe("sortOllamaModels", () => {
 	});
 
 	it("breaks size ties on an A→Z name compare", () => {
-		const models = [model({ name: "zeta", size: 500 }), model({ name: "alpha", size: 500 })];
+		const models = [
+			model({ name: "zeta", size: 500 }),
+			model({ name: "alpha", size: 500 }),
+		];
 		expect(names(sortOllamaModels(models, "size"))).toEqual(["alpha", "zeta"]);
 	});
 
@@ -64,16 +86,25 @@ describe("sortOllamaModels", () => {
 			model({ name: "zeta", details: { parameterSize: "7B" } }),
 			model({ name: "alpha", details: { parameterSize: "7B" } }),
 		];
-		expect(names(sortOllamaModels(models, "params"))).toEqual(["alpha", "zeta"]);
+		expect(names(sortOllamaModels(models, "params"))).toEqual([
+			"alpha",
+			"zeta",
+		]);
 	});
 
 	it("orders two unknown-size models by name without NaN scrambling", () => {
-		const models = [model({ name: "zeta", size: 0 }), { name: "alpha", modifiedAt: "" }];
+		const models = [
+			model({ name: "zeta", size: 0 }),
+			{ name: "alpha", modifiedAt: "" },
+		];
 		expect(names(sortOllamaModels(models, "size"))).toEqual(["alpha", "zeta"]);
 	});
 
 	it("never mutates the input array", () => {
-		const models = [model({ name: "b", size: 100 }), model({ name: "a", size: 900 })];
+		const models = [
+			model({ name: "b", size: 100 }),
+			model({ name: "a", size: 900 }),
+		];
 		const before = names(models);
 		sortOllamaModels(models, "size");
 		expect(names(models)).toEqual(before);

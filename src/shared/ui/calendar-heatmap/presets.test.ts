@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { CalendarPreset } from "./CalendarHeatmap";
-import { buildDefaultCalendarPresets, type DefaultCalendarPresetLabels } from "./presets";
+import {
+	buildDefaultCalendarPresets,
+	type DefaultCalendarPresetLabels,
+} from "./presets";
 
 const LABELS: DefaultCalendarPresetLabels = {
 	last7Days: "L7",
@@ -63,7 +66,7 @@ describe("buildDefaultCalendarPresets — structure", () => {
 	test("uses the provided labels verbatim (no hardcoded English)", () => {
 		const custom = buildDefaultCalendarPresets(
 			{ ...LABELS, today: "اليوم", yesterday: "أمس" },
-			ANCHOR
+			ANCHOR,
 		);
 		expect(custom[0]?.label).toBe("اليوم");
 		expect(custom[1]?.label).toBe("أمس");
@@ -217,7 +220,9 @@ describe("buildDefaultCalendarPresets — defaults & purity", () => {
 		expect(a).not.toBe(b);
 		expect(a[0]).not.toBe(b[0]);
 		// But the computed values are deterministic for the same anchor.
-		expect((a[0]?.range.from as Date).getTime()).toBe((b[0]?.range.from as Date).getTime());
+		expect((a[0]?.range.from as Date).getTime()).toBe(
+			(b[0]?.range.from as Date).getTime(),
+		);
 	});
 });
 
@@ -237,5 +242,13 @@ function startOfTodayMs(): number {
 
 function endOfTodayMs(): number {
 	const d = new Date();
-	return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+	return new Date(
+		d.getFullYear(),
+		d.getMonth(),
+		d.getDate(),
+		23,
+		59,
+		59,
+		999,
+	).getTime();
 }

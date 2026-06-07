@@ -2,7 +2,10 @@
 
 import { Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { FILTERABLE_PARAMETERS, type FilterableParameter } from "../lib/openrouter-provider-utils";
+import {
+	FILTERABLE_PARAMETERS,
+	type FilterableParameter,
+} from "../lib/openrouter-provider-utils";
 import {
 	ClearAllSection,
 	ParameterMenuItem,
@@ -35,7 +38,9 @@ export function ParametersFilterSubmenu({
 	const selectedSet = new Set(selectedParameters);
 
 	const toggleParameter = (param: FilterableParameter) => {
-		onParametersChange(toggleParameterValue(selectedParameters, param, selectedSet));
+		onParametersChange(
+			toggleParameterValue(selectedParameters, param, selectedSet),
+		);
 	};
 
 	const handleClearAll = () => onParametersChange([]);
@@ -62,8 +67,13 @@ export function ParametersFilterSubmenu({
 					<DropdownMenuLabel>Capabilities</DropdownMenuLabel>
 				</DropdownMenuGroup>
 				<DropdownMenuSeparator />
-				<ClearAllSection onClear={handleClearAll} visible={selectedParameters.length > 0} />
-				<DropdownMenuGroup>{FILTERABLE_PARAMETERS.map(renderParameter)}</DropdownMenuGroup>
+				<ClearAllSection
+					onClear={handleClearAll}
+					visible={selectedParameters.length > 0}
+				/>
+				<DropdownMenuGroup>
+					{FILTERABLE_PARAMETERS.map(renderParameter)}
+				</DropdownMenuGroup>
 			</DropdownMenuSubContent>
 		</DropdownMenuSub>
 	);

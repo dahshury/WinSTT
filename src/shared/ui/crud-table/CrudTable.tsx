@@ -174,7 +174,7 @@ export function CrudTable<TEntry, TAdd>({
 
 	const renderEditableCell = (
 		col: CrudColumn<TEntry>,
-		entry: TEntry
+		entry: TEntry,
 	): ReactNode => (
 		<CrudEditableCell
 			cancelEdit={cancelEdit}

@@ -111,7 +111,10 @@ function clamp(level: number): Level {
 	return Math.max(1, Math.min(8, Math.round(level))) as Level;
 }
 
-export function surfaceClasses(bgLevel: number, shadowLevel: number = bgLevel): string {
+export function surfaceClasses(
+	bgLevel: number,
+	shadowLevel: number = bgLevel,
+): string {
 	return `${SURFACE_BG[clamp(bgLevel)]} ${SURFACE_SHADOW[clamp(shadowLevel)]}`;
 }
 

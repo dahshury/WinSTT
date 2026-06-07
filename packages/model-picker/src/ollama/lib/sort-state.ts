@@ -82,14 +82,22 @@ function byName(a: OllamaModel, b: OllamaModel): number {
  * the ``Infinity - Infinity = NaN`` trap (two unknowns) by treating equal values
  * — including two unknowns — as a name tie-break rather than subtracting.
  */
-function ascendingOrName(av: number, bv: number, a: OllamaModel, b: OllamaModel): number {
+function ascendingOrName(
+	av: number,
+	bv: number,
+	a: OllamaModel,
+	b: OllamaModel,
+): number {
 	if (av === bv) {
 		return byName(a, b);
 	}
 	return av - bv;
 }
 
-const COMPARATORS: Record<OllamaSortKey, (a: OllamaModel, b: OllamaModel) => number> = {
+const COMPARATORS: Record<
+	OllamaSortKey,
+	(a: OllamaModel, b: OllamaModel) => number
+> = {
 	name: byName,
 	size: (a, b) => ascendingOrName(onDiskBytes(a), onDiskBytes(b), a, b),
 	params: (a, b) =>
@@ -97,7 +105,7 @@ const COMPARATORS: Record<OllamaSortKey, (a: OllamaModel, b: OllamaModel) => num
 			parseOllamaParamCount(a.details?.parameterSize),
 			parseOllamaParamCount(b.details?.parameterSize),
 			a,
-			b
+			b,
 		),
 };
 
@@ -109,7 +117,7 @@ const COMPARATORS: Record<OllamaSortKey, (a: OllamaModel, b: OllamaModel) => num
  */
 export function sortOllamaModels(
 	models: readonly OllamaModel[],
-	key: OllamaSortKey
+	key: OllamaSortKey,
 ): OllamaModel[] {
 	return [...models].sort(COMPARATORS[key]);
 }

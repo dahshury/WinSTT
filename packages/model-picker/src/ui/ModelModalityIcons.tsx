@@ -151,9 +151,9 @@ export function ModelModalityIcons({
 												"rounded-md border hover:scale-105 hover:shadow-sm",
 												config.bgClass,
 												config.textClass,
-												config.borderClass
+												config.borderClass,
 											),
-									sizeClass
+									sizeClass,
 								)}
 							>
 								{isSmall ? config.iconSm : config.icon}

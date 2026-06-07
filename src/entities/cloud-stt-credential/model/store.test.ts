@@ -33,26 +33,42 @@ describe("useCredentialStatusStore mutators", () => {
 	});
 
 	test("reset flips a provider back to idle", () => {
-		useCredentialStatusStore.getState().setStatus("elevenlabs", { status: "invalid" });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("elevenlabs", { status: "invalid" });
 		useCredentialStatusStore.getState().reset("elevenlabs");
-		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe("idle");
+		expect(
+			useCredentialStatusStore.getState().byProvider.elevenlabs.status,
+		).toBe("idle");
 	});
 });
 
 describe("syncOnSettingsChange (settings subscription)", () => {
 	test("flips a non-idle provider back to idle when its apiKey changes", () => {
 		// Prime the verifier state to a non-idle status.
-		useCredentialStatusStore.getState().setStatus("openai", { status: "verified" });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("openai", { status: "verified" });
 		// Mutate the openai key — the module-level subscription should call
 		// the sync function, which resets the openai status.
-		useSettingsStore.getState().updateIntegrations({ openai: { apiKey: "sk-rotated" } });
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe("idle");
+		useSettingsStore
+			.getState()
+			.updateIntegrations({ openai: { apiKey: "sk-rotated" } });
+		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+			"idle",
+		);
 	});
 
 	test("leaves the other provider's status untouched when only one key changes", () => {
-		useCredentialStatusStore.getState().setStatus("openai", { status: "verified" });
-		useCredentialStatusStore.getState().setStatus("elevenlabs", { status: "invalid" });
-		useSettingsStore.getState().updateIntegrations({ openai: { apiKey: "sk-only" } });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("openai", { status: "verified" });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("elevenlabs", { status: "invalid" });
+		useSettingsStore
+			.getState()
+			.updateIntegrations({ openai: { apiKey: "sk-only" } });
 		const state = useCredentialStatusStore.getState();
 		expect(state.byProvider.openai.status).toBe("idle");
 		// elevenlabs key didn't change → status remains "invalid".
@@ -62,26 +78,40 @@ describe("syncOnSettingsChange (settings subscription)", () => {
 	test("does NOT reset a provider whose status is already idle (avoids redundant re-renders)", () => {
 		// openai is idle by default; change the key.
 		const before = useCredentialStatusStore.getState().byProvider.openai;
-		useSettingsStore.getState().updateIntegrations({ openai: { apiKey: "sk-changed" } });
+		useSettingsStore
+			.getState()
+			.updateIntegrations({ openai: { apiKey: "sk-changed" } });
 		const after = useCredentialStatusStore.getState().byProvider.openai;
 		// Reference equality survives because reset() was never called.
 		expect(after).toBe(before);
 	});
 
 	test("a non-key settings change leaves both statuses untouched", () => {
-		useCredentialStatusStore.getState().setStatus("openai", { status: "verified" });
-		useCredentialStatusStore.getState().setStatus("elevenlabs", { status: "offline" });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("openai", { status: "verified" });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("elevenlabs", { status: "offline" });
 		// Touch an unrelated setting branch — should not reset either provider.
-		useSettingsStore.getState().updateGeneralSettings({ recordingMode: "toggle" });
+		useSettingsStore
+			.getState()
+			.updateGeneralSettings({ recordingMode: "toggle" });
 		const state = useCredentialStatusStore.getState();
 		expect(state.byProvider.openai.status).toBe("verified");
 		expect(state.byProvider.elevenlabs.status).toBe("offline");
 	});
 
 	test("an elevenlabs key change resets elevenlabs only", () => {
-		useCredentialStatusStore.getState().setStatus("elevenlabs", { status: "offline" });
-		useCredentialStatusStore.getState().setStatus("openai", { status: "verifying" });
-		useSettingsStore.getState().updateIntegrations({ elevenlabs: { apiKey: "el-new" } });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("elevenlabs", { status: "offline" });
+		useCredentialStatusStore
+			.getState()
+			.setStatus("openai", { status: "verifying" });
+		useSettingsStore
+			.getState()
+			.updateIntegrations({ elevenlabs: { apiKey: "el-new" } });
 		const state = useCredentialStatusStore.getState();
 		expect(state.byProvider.elevenlabs.status).toBe("idle");
 		// openai didn't have its key change → its in-flight verifying stays.

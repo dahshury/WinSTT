@@ -63,12 +63,19 @@ function classifyBsubsetOfA(sa: Set<string>, sb: Set<string>): HotkeyRelation {
 	return allIn(sb, sa) ? "superset" : "disjoint";
 }
 
-function classifyDifferentSize(sa: Set<string>, sb: Set<string>): HotkeyRelation {
-	return sa.size < sb.size ? classifyAsubsetOfB(sa, sb) : classifyBsubsetOfA(sa, sb);
+function classifyDifferentSize(
+	sa: Set<string>,
+	sb: Set<string>,
+): HotkeyRelation {
+	return sa.size < sb.size
+		? classifyAsubsetOfB(sa, sb)
+		: classifyBsubsetOfA(sa, sb);
 }
 
 function classifyBySize(sa: Set<string>, sb: Set<string>): HotkeyRelation {
-	return sa.size === sb.size ? classifyEqualSize(sa, sb) : classifyDifferentSize(sa, sb);
+	return sa.size === sb.size
+		? classifyEqualSize(sa, sb)
+		: classifyDifferentSize(sa, sb);
 }
 
 export function compareHotkeys(a: string, b: string): HotkeyRelation {
@@ -128,12 +135,14 @@ function ttsConflictsWithAny(values: HotkeyTriple): boolean {
 
 export function resolveHotkeyTriple(
 	candidate: HotkeyTriple,
-	defaults: HotkeyTriple
+	defaults: HotkeyTriple,
 ): HotkeyTripleResolution {
 	const rewrites: Array<keyof HotkeyTriple> = [];
 	const values: HotkeyTriple = { ...candidate };
 
-	if (isHotkeyConflict(compareHotkeys(values.pushToTalkKey, values.repasteHotkey))) {
+	if (
+		isHotkeyConflict(compareHotkeys(values.pushToTalkKey, values.repasteHotkey))
+	) {
 		values.repasteHotkey = defaults.repasteHotkey;
 		rewrites.push("repasteHotkey");
 	}

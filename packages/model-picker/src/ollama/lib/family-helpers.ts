@@ -105,7 +105,10 @@ const FAMILY_PUBLISHER: Record<string, OllamaPublisher> = {
 // `community` has no bundled logo on purpose — unmapped makers render a neutral
 // initials chip instead of the misleading OpenRouter "O" that `openrouter` would
 // pull in.
-const DEFAULT_PUBLISHER: OllamaPublisher = { slug: "community", label: "Community" };
+const DEFAULT_PUBLISHER: OllamaPublisher = {
+	slug: "community",
+	label: "Community",
+};
 
 /**
  * Pattern-based publisher inference for the ~230 models on `ollama.com/library`.
@@ -144,12 +147,27 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 	// Microsoft — phi family + WizardLM + Orca (Microsoft Research)
 	{
 		publisher: { slug: "microsoft", label: "Microsoft" },
-		tokens: ["phi", "wizardlm", "wizardmath", "wizardcoder", "wizardvicuna", "orca"],
+		tokens: [
+			"phi",
+			"wizardlm",
+			"wizardmath",
+			"wizardcoder",
+			"wizardvicuna",
+			"orca",
+		],
 	},
 	// Mistral AI
 	{
 		publisher: { slug: "mistralai", label: "Mistral AI" },
-		tokens: ["mistral", "mixtral", "codestral", "magistral", "devstral", "pixtral", "ministral"],
+		tokens: [
+			"mistral",
+			"mixtral",
+			"codestral",
+			"magistral",
+			"devstral",
+			"pixtral",
+			"ministral",
+		],
 	},
 	// DeepSeek
 	{
@@ -178,7 +196,10 @@ const PUBLISHER_RULES: readonly PublisherRule[] = [
 	},
 	// Cognitive Computations
 	{
-		publisher: { slug: "cognitivecomputations", label: "Cognitive Computations" },
+		publisher: {
+			slug: "cognitivecomputations",
+			label: "Cognitive Computations",
+		},
 		tokens: ["dolphin"],
 	},
 	// 01.AI
@@ -342,7 +363,7 @@ export function getOllamaPublisher(family: string): OllamaPublisher {
  * {@link getOllamaPublisher}.
  */
 export function groupOllamaModelsByPublisher(
-	models: readonly OllamaModel[]
+	models: readonly OllamaModel[],
 ): [string, OllamaModel[]][] {
 	const groups = new Map<string, OllamaModel[]>();
 	for (const model of models) {
@@ -393,7 +414,8 @@ const QUANT_TOKEN_RE = /^(?:q\d[a-z0-9_]*|fp\d+|int\d+|bf\d+)$/i;
 // Strips the whole quant marker plus any underscore-joined numeric tail
 // (`q8_0`, `q4_K_M`) from a variant string before we split on `-_`. Doing
 // this in one shot avoids producing leftover trailing `0` / `M` tokens.
-const QUANT_STRIP_RE = /(?:^|[-_])(?:q\d[a-z0-9]*(?:_[a-z0-9]+)*|fp\d+|int\d+|bf\d+)/gi;
+const QUANT_STRIP_RE =
+	/(?:^|[-_])(?:q\d[a-z0-9]*(?:_[a-z0-9]+)*|fp\d+|int\d+|bf\d+)/gi;
 const LEADING_DIGIT_RE = /^\d/;
 const VARIANT_SPLIT_RE = /[-_]/;
 
@@ -459,7 +481,9 @@ export function formatOllamaDisplayName(name: string): string {
 	const variantParts = variantWithoutQuant
 		.split(VARIANT_SPLIT_RE)
 		.map((t) => t.trim())
-		.filter((t) => t.length > 0 && !PARAM_TOKEN_RE.test(t) && !QUANT_TOKEN_RE.test(t))
+		.filter(
+			(t) => t.length > 0 && !PARAM_TOKEN_RE.test(t) && !QUANT_TOKEN_RE.test(t),
+		)
 		.map(formatToken);
 
 	return [...baseParts, ...variantParts].filter(Boolean).join(" ");

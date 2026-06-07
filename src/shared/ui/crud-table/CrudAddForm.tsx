@@ -48,14 +48,14 @@ export function CrudAddForm({
 		field: CrudField,
 		isLast: boolean,
 		error: string | undefined,
-		joined: boolean
+		joined: boolean,
 	): ReactNode => (
 		<InputGroup
 			appearance={joined ? "minimal" : "elevated"}
 			className={cn(
 				"h-9",
 				joined &&
-					"rounded-none bg-transparent shadow-none ring-0 hover:bg-transparent focus-within:bg-foreground/[0.04] focus-within:ring-0"
+					"rounded-none bg-transparent shadow-none ring-0 hover:bg-transparent focus-within:bg-foreground/[0.04] focus-within:ring-0",
 			)}
 			data-crud-add-input-group={joined ? "true" : undefined}
 			size="sm"
@@ -120,7 +120,7 @@ export function CrudAddForm({
 						className={cn(
 							"w-full",
 							hasAddErrors && "ring-error/45",
-							"[&_[data-crud-add-input-group='true']]:h-9"
+							"[&_[data-crud-add-input-group='true']]:h-9",
 						)}
 						connected
 					>

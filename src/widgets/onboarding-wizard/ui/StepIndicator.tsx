@@ -57,13 +57,20 @@ export function StepIndicator({ steps, current }: StepIndicatorProps) {
 							aria-hidden
 							className={cn(
 								"flex size-4 shrink-0 items-center justify-center rounded-sm transition-colors duration-150",
-								status === "complete" && "bg-teal text-white ring-1 ring-teal-hover",
+								status === "complete" &&
+									"bg-teal text-white ring-1 ring-teal-hover",
 								status === "current" &&
 									"bg-transparent shadow-[0_0_6px_var(--color-accent-glow-strong)] ring-2 ring-accent",
-								status === "upcoming" && cn(upcomingBox, "ring-1 ring-divider-strong")
+								status === "upcoming" &&
+									cn(upcomingBox, "ring-1 ring-divider-strong"),
 							)}
 							layout
-							transition={{ type: "spring", stiffness: 520, damping: 34, mass: 0.55 }}
+							transition={{
+								type: "spring",
+								stiffness: 520,
+								damping: 34,
+								mass: 0.55,
+							}}
 						>
 							<AnimatePresence initial={false} mode="wait">
 								{status === "complete" ? (
@@ -75,7 +82,11 @@ export function StepIndicator({ steps, current }: StepIndicatorProps) {
 										key="complete"
 										transition={{ type: "spring", stiffness: 620, damping: 28 }}
 									>
-										<HugeiconsIcon icon={Tick02Icon} size={10} strokeWidth={3} />
+										<HugeiconsIcon
+											icon={Tick02Icon}
+											size={10}
+											strokeWidth={3}
+										/>
 									</m.span>
 								) : null}
 							</AnimatePresence>

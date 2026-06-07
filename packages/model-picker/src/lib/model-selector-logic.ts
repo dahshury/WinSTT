@@ -49,7 +49,9 @@ const FUSE_OPTIONS: IFuseOptions<OpenRouterModel> = {
 let fuseInstance: Fuse<OpenRouterModel> | null = null;
 let cachedModelsRef: OpenRouterModel[] | null = null;
 
-async function getFuseInstanceAsync(models: OpenRouterModel[]): Promise<Fuse<OpenRouterModel>> {
+async function getFuseInstanceAsync(
+	models: OpenRouterModel[],
+): Promise<Fuse<OpenRouterModel>> {
 	// Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,BlockStatement: equivalent — single-suite execution rebuilds the module per stryker run and never warms the cache before the assertion; the cached-hit branch is unreachable without async fuse.js loading which the synchronous tests bypass
 	if (fuseInstance && cachedModelsRef === models) {
 		return fuseInstance;
@@ -61,7 +63,9 @@ async function getFuseInstanceAsync(models: OpenRouterModel[]): Promise<Fuse<Ope
 	return fuseInstance;
 }
 
-function getFuseInstanceSync(models: OpenRouterModel[]): Fuse<OpenRouterModel> | null {
+function getFuseInstanceSync(
+	models: OpenRouterModel[],
+): Fuse<OpenRouterModel> | null {
 	// Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,BlockStatement: equivalent — same reason as getFuseInstanceAsync; the synchronous read returns null until an async warm completes, but our tests don't await the warm cycle
 	if (fuseInstance && cachedModelsRef === models) {
 		return fuseInstance;
@@ -121,7 +125,10 @@ function scoreNameMatch(lc: LowerCasedModel, q: string): number {
 	return scoreIncludesMatch(lc, q);
 }
 
-function scoreModelMatch(model: OpenRouterModel, normalizedQuery: string): number {
+function scoreModelMatch(
+	model: OpenRouterModel,
+	normalizedQuery: string,
+): number {
 	const lc = toLowerCased(model);
 	const makerScore = scoreMakerMatch(lc, normalizedQuery);
 	return makerScore || scoreNameMatch(lc, normalizedQuery);
@@ -134,7 +141,7 @@ interface MatchWithScore {
 
 function collectExactMatches(
 	models: OpenRouterModel[],
-	normalizedQuery: string
+	normalizedQuery: string,
 ): OpenRouterModel[] {
 	const exactMatches: MatchWithScore[] = [];
 	for (const model of models) {
@@ -155,7 +162,7 @@ function warmFuseCache(models: OpenRouterModel[]): void {
 
 function appendUniqueFuzzy(
 	prioritized: OpenRouterModel[],
-	fuzzyResults: ReadonlyArray<{ item: OpenRouterModel }>
+	fuzzyResults: ReadonlyArray<{ item: OpenRouterModel }>,
 ): OpenRouterModel[] {
 	const includedIds = new Set(prioritized.map((m) => m.id));
 	const combined = [...prioritized];
@@ -171,7 +178,7 @@ function appendUniqueFuzzy(
 function combineWithFuzzy(
 	models: OpenRouterModel[],
 	prioritized: OpenRouterModel[],
-	query: string
+	query: string,
 ): OpenRouterModel[] {
 	const fuse = getFuseInstanceSync(models);
 	// Stryker disable next-line ConditionalExpression: equivalent — getFuseInstanceSync always returns null in our tests (cache is never warmed synchronously), so the `if (true)` mutant matches the only reachable input
@@ -182,7 +189,10 @@ function combineWithFuzzy(
 	return appendUniqueFuzzy(prioritized, fuse.search(query));
 }
 
-function searchModels(models: OpenRouterModel[], query: string): OpenRouterModel[] {
+function searchModels(
+	models: OpenRouterModel[],
+	query: string,
+): OpenRouterModel[] {
 	if (!query.trim()) {
 		return models;
 	}
@@ -191,7 +201,10 @@ function searchModels(models: OpenRouterModel[], query: string): OpenRouterModel
 	return combineWithFuzzy(models, prioritized, query);
 }
 
-function matchesVariantFilter(modelId: string, selectedVariant: ModelVariant | "none"): boolean {
+function matchesVariantFilter(
+	modelId: string,
+	selectedVariant: ModelVariant | "none",
+): boolean {
 	if (selectedVariant === "none") {
 		return !hasAnyVariant(modelId);
 	}
@@ -200,28 +213,37 @@ function matchesVariantFilter(modelId: string, selectedVariant: ModelVariant | "
 
 function endpointMatches(
 	endpoint: NonNullable<OpenRouterModel["endpoints"]>[number],
-	selectedEndpointProvider: string
+	selectedEndpointProvider: string,
 ): boolean {
 	return [
 		// Stryker disable next-line ConditionalExpression: equivalent — the lowercase comparison below subsumes the case-sensitive check; mutating to `false` still returns true when provider_name === selected because provider_name.toLowerCase() === selected.toLowerCase()
 		endpoint.provider_name === selectedEndpointProvider,
 		endpoint.tag === selectedEndpointProvider,
-		endpoint.provider_name?.toLowerCase() === selectedEndpointProvider.toLowerCase(),
+		endpoint.provider_name?.toLowerCase() ===
+			selectedEndpointProvider.toLowerCase(),
 	].some(Boolean);
 }
 
 function matchesEndpointFilter(
 	endpoints: OpenRouterModel["endpoints"],
-	selectedEndpointProvider: string
+	selectedEndpointProvider: string,
 ): boolean {
-	return endpoints?.some((e) => endpointMatches(e, selectedEndpointProvider)) ?? false;
+	return (
+		endpoints?.some((e) => endpointMatches(e, selectedEndpointProvider)) ??
+		false
+	);
 }
 
-function isValidParameterList(supportedParameters: string[] | undefined): boolean {
+function isValidParameterList(
+	supportedParameters: string[] | undefined,
+): boolean {
 	return Array.isArray(supportedParameters);
 }
 
-function setHasAll<T>(superset: ReadonlySet<T>, required: ReadonlySet<T>): boolean {
+function setHasAll<T>(
+	superset: ReadonlySet<T>,
+	required: ReadonlySet<T>,
+): boolean {
 	for (const item of required) {
 		if (!superset.has(item)) {
 			return false;
@@ -232,7 +254,7 @@ function setHasAll<T>(superset: ReadonlySet<T>, required: ReadonlySet<T>): boole
 
 function matchesParametersFilter(
 	supportedParameters: string[] | undefined,
-	selectedParametersSet: Set<FilterableParameter>
+	selectedParametersSet: Set<FilterableParameter>,
 ): boolean {
 	if (!isValidParameterList(supportedParameters)) {
 		return false;
@@ -248,21 +270,30 @@ interface ActiveFilters {
 	selectedVariant: ModelVariant | "none" | null;
 }
 
-function passesMakerFilter(m: OpenRouterModel, makers: Set<string> | null): boolean {
+function passesMakerFilter(
+	m: OpenRouterModel,
+	makers: Set<string> | null,
+): boolean {
 	if (makers === null) {
 		return true;
 	}
 	return m.maker !== undefined && makers.has(m.maker);
 }
 
-function passesVariantFilter(m: OpenRouterModel, variant: ModelVariant | "none" | null): boolean {
+function passesVariantFilter(
+	m: OpenRouterModel,
+	variant: ModelVariant | "none" | null,
+): boolean {
 	if (variant === null) {
 		return true;
 	}
 	return matchesVariantFilter(m.id, variant);
 }
 
-function passesEndpointFilter(m: OpenRouterModel, provider: string | null): boolean {
+function passesEndpointFilter(
+	m: OpenRouterModel,
+	provider: string | null,
+): boolean {
 	if (provider === null) {
 		return true;
 	}
@@ -271,7 +302,7 @@ function passesEndpointFilter(m: OpenRouterModel, provider: string | null): bool
 
 function passesParametersFilter(
 	m: OpenRouterModel,
-	params: Set<FilterableParameter> | null
+	params: Set<FilterableParameter> | null,
 ): boolean {
 	if (params === null) {
 		return true;
@@ -279,7 +310,10 @@ function passesParametersFilter(
 	return matchesParametersFilter(m.supported_parameters, params);
 }
 
-function modelPassesFilters(m: OpenRouterModel, filters: ActiveFilters): boolean {
+function modelPassesFilters(
+	m: OpenRouterModel,
+	filters: ActiveFilters,
+): boolean {
 	return [
 		passesMakerFilter(m, filters.selectedMakersSet),
 		passesVariantFilter(m, filters.selectedVariant),
@@ -313,14 +347,20 @@ function hasAnyActiveFilter(filters: ActiveFilters): boolean {
 	].some(Boolean);
 }
 
-function applyActiveFilters(models: OpenRouterModel[], filters: ActiveFilters): OpenRouterModel[] {
+function applyActiveFilters(
+	models: OpenRouterModel[],
+	filters: ActiveFilters,
+): OpenRouterModel[] {
 	if (!hasAnyActiveFilter(filters)) {
 		return models;
 	}
 	return models.filter((m) => modelPassesFilters(m, filters));
 }
 
-function applySearch(models: OpenRouterModel[], rawQuery: string | undefined): OpenRouterModel[] {
+function applySearch(
+	models: OpenRouterModel[],
+	rawQuery: string | undefined,
+): OpenRouterModel[] {
 	const trimmed = rawQuery?.trim();
 	if (!trimmed) {
 		return models;
@@ -330,7 +370,7 @@ function applySearch(models: OpenRouterModel[], rawQuery: string | undefined): O
 
 export function filterModels(
 	models: OpenRouterModel[],
-	options: FilterModelsOptions
+	options: FilterModelsOptions,
 ): OpenRouterModel[] {
 	const filters = buildActiveFilters(options);
 	const filtered = applyActiveFilters(models, filters);
@@ -347,7 +387,7 @@ function recordNewGroup(
 	makerOrder: string[],
 	preserveOrder: boolean,
 	maker: string,
-	model: OpenRouterModel
+	model: OpenRouterModel,
 ): void {
 	groups.set(maker, [model]);
 	if (preserveOrder) {
@@ -359,7 +399,7 @@ function pushIntoGroup(
 	groups: Map<string, OpenRouterModel[]>,
 	makerOrder: string[],
 	preserveOrder: boolean,
-	model: OpenRouterModel
+	model: OpenRouterModel,
 ): void {
 	const maker = getMakerKey(model);
 	const existing = groups.get(maker);
@@ -370,7 +410,12 @@ function pushIntoGroup(
 	recordNewGroup(groups, makerOrder, preserveOrder, maker, model);
 }
 
-function compareByMissingOrder(indexA: number, indexB: number, a: string, b: string): number {
+function compareByMissingOrder(
+	indexA: number,
+	indexB: number,
+	a: string,
+	b: string,
+): number {
 	if (indexA !== -1) {
 		return -1;
 	}
@@ -381,7 +426,7 @@ function compareByMissingOrder(indexA: number, indexB: number, a: string, b: str
 }
 
 function makeOrderComparator(
-	makerOrder: string[]
+	makerOrder: string[],
 ): (a: [string, OpenRouterModel[]], b: [string, OpenRouterModel[]]) => number {
 	return ([a], [b]) => {
 		const indexA = makerOrder.indexOf(a);
@@ -395,7 +440,7 @@ function makeOrderComparator(
 
 export function groupModelsByMaker(
 	models: OpenRouterModel[],
-	preserveOrder = false
+	preserveOrder = false,
 ): [string, OpenRouterModel[]][] {
 	const groups = new Map<string, OpenRouterModel[]>();
 	const makerOrder: string[] = [];

@@ -9,7 +9,12 @@ export interface BadgeProps extends ComponentPropsWithoutRef<"span"> {
 	variant?: BadgeVariant;
 }
 
-export function Badge({ children, variant = "default", className, ...rest }: BadgeProps) {
+export function Badge({
+	children,
+	variant = "default",
+	className,
+	...rest
+}: BadgeProps) {
 	// `secondary` is a neutral chip — lift it one step above whatever surface it
 	// sits on (surfaces system) instead of a flat token, so it stays distinct
 	// inside elevated panels/cards. `default`/`outline` carry their own intent.
@@ -24,7 +29,7 @@ export function Badge({ children, variant = "default", className, ...rest }: Bad
 			className={cn(
 				"inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium text-2xs leading-none",
 				variantClass[variant],
-				className
+				className,
 			)}
 			{...rest}
 		>

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { renderHook } from "@testing-library/react";
 import { useVisualizerStore } from "../model/visualizer-store";
-import { deriveActiveState, isActivelySpeaking, useAgentState } from "./use-agent-state";
+import {
+	deriveActiveState,
+	isActivelySpeaking,
+	useAgentState,
+} from "./use-agent-state";
 
 beforeEach(() => {
 	useVisualizerStore.setState({
@@ -34,13 +38,21 @@ describe("useAgentState", () => {
 	});
 
 	test("returns 'speaking' when recording AND VAD says speaking even at low audio level", () => {
-		useVisualizerStore.setState({ isRecording: true, isSpeaking: true, audioLevel: 0.001 });
+		useVisualizerStore.setState({
+			isRecording: true,
+			isSpeaking: true,
+			audioLevel: 0.001,
+		});
 		const { result } = renderHook(() => useAgentState());
 		expect(result.current).toBe("speaking");
 	});
 
 	test("returns 'listening' when recording but quiet (no VAD speaking)", () => {
-		useVisualizerStore.setState({ isRecording: true, isSpeaking: false, audioLevel: 0.005 });
+		useVisualizerStore.setState({
+			isRecording: true,
+			isSpeaking: false,
+			audioLevel: 0.005,
+		});
 		const { result } = renderHook(() => useAgentState());
 		expect(result.current).toBe("listening");
 	});

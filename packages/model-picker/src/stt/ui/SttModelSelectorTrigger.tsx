@@ -14,7 +14,11 @@ import {
 	SwitchingPill,
 } from "@/shared/ui/switching-trigger";
 import { publicAsset } from "../../lib/public-asset";
-import { getAuthorLabel, getFamilyConfig, variantDisplayName } from "../lib/family-helpers";
+import {
+	getAuthorLabel,
+	getFamilyConfig,
+	variantDisplayName,
+} from "../lib/family-helpers";
 import { findDisplayModelByBackingId } from "../lib/streaming-precision-merge";
 
 export interface SttModelSelectorTriggerProps {
@@ -58,7 +62,13 @@ export interface SttModelSelectorTriggerProps {
 
 /** Author/maker chip — logo + label (e.g. "NVIDIA", "OpenAI"). Mirrors the
  *  Ollama selector's PublisherChip so triggers across pickers feel uniform. */
-function AuthorChip({ family, muted = false }: { family: ModelInfo["family"]; muted?: boolean }) {
+function AuthorChip({
+	family,
+	muted = false,
+}: {
+	family: ModelInfo["family"];
+	muted?: boolean;
+}) {
 	const config = getFamilyConfig(family);
 	const author = getAuthorLabel(family);
 	const tone = muted
@@ -162,10 +172,13 @@ function DownloadingBody({
 	toModel: ModelInfo | undefined;
 }) {
 	const multi = count >= 2;
-	const singleTargetLabel = toModel ? variantDisplayName(toModel, peers) : "model";
+	const singleTargetLabel = toModel
+		? variantDisplayName(toModel, peers)
+		: "model";
 	const targetLabel = multi ? `${count} downloads` : singleTargetLabel;
 	const reportedPercent = multi ? averagePercent : percent;
-	const percentLabel = reportedPercent === null ? "Starting…" : `${reportedPercent}%`;
+	const percentLabel =
+		reportedPercent === null ? "Starting…" : `${reportedPercent}%`;
 	return (
 		<output
 			aria-label={ariaLabel}
@@ -183,7 +196,9 @@ function DownloadingBody({
 			<span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-surface-secondary/60 px-2 py-0.5 font-medium text-[10px] text-foreground-secondary leading-none">
 				<PulseDot className="size-1.5 text-accent" />
 				<span className="truncate">↓ {targetLabel}</span>
-				<span className="font-mono text-foreground tabular-nums">{percentLabel}</span>
+				<span className="font-mono text-foreground tabular-nums">
+					{percentLabel}
+				</span>
 			</span>
 		</output>
 	);
@@ -263,8 +278,16 @@ function TriggerBody({
 		return (
 			<SwitchingFromToRow
 				ariaLabel={ariaLabel}
-				from={fromModel ? <SttModelLabel model={fromModel} peers={peers} side="from" /> : undefined}
-				to={toModel ? <SttModelLabel model={toModel} peers={peers} side="to" /> : undefined}
+				from={
+					fromModel ? (
+						<SttModelLabel model={fromModel} peers={peers} side="from" />
+					) : undefined
+				}
+				to={
+					toModel ? (
+						<SttModelLabel model={toModel} peers={peers} side="to" />
+					) : undefined
+				}
 			/>
 		);
 	}
@@ -281,7 +304,7 @@ function TriggerBody({
 function resolveToModel(
 	targetName: string | null,
 	selectedModel: ModelInfo | undefined,
-	catalog: readonly ModelInfo[]
+	catalog: readonly ModelInfo[],
 ): ModelInfo | undefined {
 	if (!targetName) {
 		return;
@@ -312,7 +335,10 @@ interface AriaLabelInputs {
  *  background download, swap+download, or plain swap. */
 function buildAriaLabel(inputs: AriaLabelInputs): string | undefined {
 	const loadedName = inputs.selectedModel?.displayName ?? "none";
-	if (inputs.isMultiDownload && (inputs.isBackgroundDownload || inputs.isDownloadingTarget)) {
+	if (
+		inputs.isMultiDownload &&
+		(inputs.isBackgroundDownload || inputs.isDownloadingTarget)
+	) {
 		const pct =
 			inputs.downloadAveragePercent === null
 				? "starting"
@@ -320,17 +346,25 @@ function buildAriaLabel(inputs: AriaLabelInputs): string | undefined {
 		return `Downloading ${inputs.downloadCount} models (${pct}). Currently loaded: ${loadedName}.`;
 	}
 	if (inputs.isBackgroundDownload && inputs.downloadingModel) {
-		const pct = inputs.downloadPercent === null ? "starting" : `${inputs.downloadPercent} percent`;
+		const pct =
+			inputs.downloadPercent === null
+				? "starting"
+				: `${inputs.downloadPercent} percent`;
 		return `Downloading ${inputs.downloadingModel.displayName} (${pct}). Currently loaded: ${loadedName}.`;
 	}
 	if (!(inputs.isSwitching && inputs.toModel)) {
 		return;
 	}
 	if (inputs.isDownloadingTarget) {
-		const pct = inputs.downloadPercent === null ? "starting" : `${inputs.downloadPercent} percent`;
+		const pct =
+			inputs.downloadPercent === null
+				? "starting"
+				: `${inputs.downloadPercent} percent`;
 		return `Downloading ${inputs.toModel.displayName} (${pct}). Currently loaded: ${loadedName}.`;
 	}
-	const fromClause = inputs.fromModel ? ` from ${inputs.fromModel.displayName}` : "";
+	const fromClause = inputs.fromModel
+		? ` from ${inputs.fromModel.displayName}`
+		: "";
 	return `Switching${fromClause} to ${inputs.toModel.displayName}`;
 }
 
@@ -352,9 +386,11 @@ interface TriggerButtonProps extends SttModelSelectorTriggerProps {
 function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 	const { kind, catalog, selectedModel, downloadProgress } = rest;
 	const swapTargetName = useModelSwapStore((s) =>
-		kind === "main" ? s.activeMain : s.activeRealtime
+		kind === "main" ? s.activeMain : s.activeRealtime,
 	);
-	const swapFromName = useModelSwapStore((s) => (kind === "main" ? s.fromMain : s.fromRealtime));
+	const swapFromName = useModelSwapStore((s) =>
+		kind === "main" ? s.fromMain : s.fromRealtime,
+	);
 	const isSwitching = swapTargetName !== null;
 	const fromModel = swapFromName
 		? resolveToModel(swapFromName, undefined, catalog)
@@ -377,7 +413,9 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 		? resolveToModel(downloadProgress.modelId, undefined, catalog)
 		: undefined;
 	const downloadPercent =
-		isDownloadingTarget || isBackgroundDownload ? (downloadProgress?.percent ?? null) : null;
+		isDownloadingTarget || isBackgroundDownload
+			? (downloadProgress?.percent ?? null)
+			: null;
 	const downloadCount = downloadProgress?.count ?? (downloadProgress ? 1 : 0);
 	const downloadAveragePercent = downloadProgress?.averagePercent ?? null;
 	const isMultiDownload = downloadCount >= 2;
@@ -437,7 +475,11 @@ function TriggerButton({ buttonProps, ...rest }: TriggerButtonProps) {
 			/>
 			{isTriggerActive ? (
 				<SwitchingPill
-					label={isDownloadingTarget || isBackgroundDownload ? "Downloading" : "Switching"}
+					label={
+						isDownloadingTarget || isBackgroundDownload
+							? "Downloading"
+							: "Switching"
+					}
 				/>
 			) : (
 				<HugeiconsIcon
@@ -455,7 +497,10 @@ export function SttModelSelectorTrigger(props: SttModelSelectorTriggerProps) {
 		<Combobox.Trigger
 			nativeButton
 			render={(p) => (
-				<TriggerButton {...props} buttonProps={p as ComponentPropsWithoutRef<"button">} />
+				<TriggerButton
+					{...props}
+					buttonProps={p as ComponentPropsWithoutRef<"button">}
+				/>
 			)}
 		/>
 	);
@@ -472,5 +517,10 @@ export function SttModelSelectorTriggerButton({
 }: SttModelSelectorTriggerProps & {
 	onActivate: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
-	return <TriggerButton {...props} buttonProps={{ type: "button", onClick: onActivate }} />;
+	return (
+		<TriggerButton
+			{...props}
+			buttonProps={{ type: "button", onClick: onActivate }}
+		/>
+	);
 }

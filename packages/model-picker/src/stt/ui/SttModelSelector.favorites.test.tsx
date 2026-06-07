@@ -43,7 +43,7 @@ function renderInline(models: ModelInfo[]) {
 			statesById={{}}
 			systemInfo={null}
 			value="tiny"
-		/>
+		/>,
 	);
 	return { ...utils, onChange };
 }
@@ -74,7 +74,9 @@ describe("SttModelSelector favorites", () => {
 		// …and the model now appears twice: once in Favorites, once in its maker group.
 		expect(screen.getAllByText("Tiny")).toHaveLength(2);
 		// Both cards now expose the "remove" affordance (shared favorite state).
-		expect(screen.getAllByLabelText("Remove Whisper Tiny from favorites")).toHaveLength(2);
+		expect(
+			screen.getAllByLabelText("Remove Whisper Tiny from favorites"),
+		).toHaveLength(2);
 	});
 
 	test("unstarring from either card removes the Favorites group", () => {
@@ -82,12 +84,16 @@ describe("SttModelSelector favorites", () => {
 		fireEvent.click(screen.getByLabelText("Add Whisper Tiny to favorites"));
 		expect(screen.getByText("Favorites")).toBeDefined();
 
-		const removeButtons = screen.getAllByLabelText("Remove Whisper Tiny from favorites");
+		const removeButtons = screen.getAllByLabelText(
+			"Remove Whisper Tiny from favorites",
+		);
 		fireEvent.click(removeButtons[0] as HTMLElement);
 
 		expect(screen.queryByText("Favorites")).toBeNull();
 		expect(screen.getAllByText("Tiny")).toHaveLength(1);
-		expect(screen.getByLabelText("Add Whisper Tiny to favorites")).toBeDefined();
+		expect(
+			screen.getByLabelText("Add Whisper Tiny to favorites"),
+		).toBeDefined();
 	});
 
 	test("favorites persist across remounts via localStorage", () => {
@@ -98,8 +104,8 @@ describe("SttModelSelector favorites", () => {
 		// A fresh mount reads the persisted favorites and shows the group again.
 		renderInline([model()]);
 		expect(screen.getByText("Favorites")).toBeDefined();
-		expect(screen.getAllByLabelText("Remove Whisper Tiny from favorites").length).toBeGreaterThan(
-			0
-		);
+		expect(
+			screen.getAllByLabelText("Remove Whisper Tiny from favorites").length,
+		).toBeGreaterThan(0);
 	});
 });

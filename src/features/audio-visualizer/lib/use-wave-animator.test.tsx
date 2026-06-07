@@ -15,7 +15,13 @@ function createUniforms(): Uniforms {
 
 describe("useWaveAnimator", () => {
 	test("hook executes without throwing for each state", () => {
-		const states = ["disconnected", "listening", "thinking", "connecting", "speaking"] as const;
+		const states = [
+			"disconnected",
+			"listening",
+			"thinking",
+			"connecting",
+			"speaking",
+		] as const;
 		for (const state of states) {
 			const { unmount } = renderHook(() => {
 				const ref = useRef<Uniforms>(createUniforms());
@@ -33,9 +39,10 @@ describe("useWaveAnimator", () => {
 			return ref;
 		});
 		// disconnected uses DEFAULT_SPEED = 5
-		expect((result.current.current as unknown as { uSpeed: { value: number } }).uSpeed.value).toBe(
-			5
-		);
+		expect(
+			(result.current.current as unknown as { uSpeed: { value: number } })
+				.uSpeed.value,
+		).toBe(5);
 	});
 
 	test("writes a faster speed for connecting state", () => {
@@ -45,8 +52,9 @@ describe("useWaveAnimator", () => {
 			return ref;
 		});
 		// connecting uses DEFAULT_SPEED * 4 = 20
-		expect((result.current.current as unknown as { uSpeed: { value: number } }).uSpeed.value).toBe(
-			20
-		);
+		expect(
+			(result.current.current as unknown as { uSpeed: { value: number } })
+				.uSpeed.value,
+		).toBe(20);
 	});
 });

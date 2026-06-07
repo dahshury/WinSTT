@@ -3,7 +3,7 @@ import type { FilterableParameter } from "./openrouter-provider-utils";
 export function toggleParameterValue(
 	current: FilterableParameter[],
 	param: FilterableParameter,
-	selectedSet: Set<FilterableParameter>
+	selectedSet: Set<FilterableParameter>,
 ): FilterableParameter[] {
 	if (selectedSet.has(param)) {
 		return current.filter((p) => p !== param);
@@ -13,7 +13,7 @@ export function toggleParameterValue(
 
 export function getParamCount(
 	parameterCounts: Map<FilterableParameter, number>,
-	param: FilterableParameter
+	param: FilterableParameter,
 ): number {
 	return parameterCounts.get(param) ?? 0;
 }

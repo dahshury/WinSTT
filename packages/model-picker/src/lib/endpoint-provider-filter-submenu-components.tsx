@@ -11,5 +11,7 @@ export function SelectedTick({ visible }: SelectedTickProps) {
 	if (!visible) {
 		return null;
 	}
-	return <HugeiconsIcon className="ms-2 size-4 text-accent" icon={Tick01Icon} />;
+	return (
+		<HugeiconsIcon className="ms-2 size-4 text-accent" icon={Tick01Icon} />
+	);
 }

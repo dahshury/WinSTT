@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { FOOTER_TOOLTIP_DELAY, resolveTone, TONE_TEXT } from "./hotkey-display-helpers";
+import {
+	FOOTER_TOOLTIP_DELAY,
+	resolveTone,
+	TONE_TEXT,
+} from "./hotkey-display-helpers";
 
 describe("FOOTER_TOOLTIP_DELAY", () => {
 	test("is the documented 1500ms hover delay", () => {

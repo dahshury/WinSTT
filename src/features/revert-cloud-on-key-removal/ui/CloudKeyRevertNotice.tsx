@@ -47,7 +47,7 @@ export function CloudKeyRevertNotice() {
 					aria-live="polite"
 					className={cn(
 						"pointer-events-auto block rounded-md border border-success/40 p-3 shadow-lg",
-						surfaceBg(level)
+						surfaceBg(level),
 					)}
 					key={notice.id}
 				>
@@ -59,7 +59,9 @@ export function CloudKeyRevertNotice() {
 							size={16}
 						/>
 						<span className="flex-1 text-body text-foreground">
-							{t("revertedToLocal", { provider: clearableProviderLabel(notice.provider) })}
+							{t("revertedToLocal", {
+								provider: clearableProviderLabel(notice.provider),
+							})}
 						</span>
 					</div>
 				</output>

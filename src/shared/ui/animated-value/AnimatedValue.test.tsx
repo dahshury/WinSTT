@@ -32,12 +32,16 @@ describe("IconSwap", () => {
 				a={<span data-testid="play">play</span>}
 				b={<span data-testid="pause">pause</span>}
 				state="b"
-			/>
+			/>,
 		);
 		const swap = container.querySelector(".t-icon-swap");
 
 		expect(swap?.getAttribute("data-state")).toBe("b");
-		expect(container.querySelector('[data-icon="a"]')?.textContent).toBe("play");
-		expect(container.querySelector('[data-icon="b"]')?.textContent).toBe("pause");
+		expect(container.querySelector('[data-icon="a"]')?.textContent).toBe(
+			"play",
+		);
+		expect(container.querySelector('[data-icon="b"]')?.textContent).toBe(
+			"pause",
+		);
 	});
 });

@@ -1,7 +1,14 @@
 import { useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
-import { RECORDING_MODE_COLOR_HEX, type RecordingMode } from "@/shared/config/recording-mode-color";
-import type { VisualizerConfig, VisualizerSize, VisualizerType } from "../lib/audio-visualizer";
+import {
+	RECORDING_MODE_COLOR_HEX,
+	type RecordingMode,
+} from "@/shared/config/recording-mode-color";
+import type {
+	VisualizerConfig,
+	VisualizerSize,
+	VisualizerType,
+} from "../lib/audio-visualizer";
 import { resolveVisualizerConfig } from "../lib/audio-visualizer";
 import { useFitSize } from "../lib/use-fit-size";
 import { AudioVisualizerAura } from "./AudioVisualizerAura";
@@ -24,7 +31,10 @@ interface AudioVisualizerProps {
  * customization knobs (resolved by `resolveVisualizerConfig`) to the matching
  * component. Defaults to "bar" if no setting is configured.
  */
-export function AudioVisualizer({ size = "lg", className }: AudioVisualizerProps) {
+export function AudioVisualizer({
+	size = "lg",
+	className,
+}: AudioVisualizerProps) {
 	const general = useSettingsStore((s) => s.settings.general);
 	const visualizerType: VisualizerType = general?.visualizerType ?? "bar";
 	const recordingMode = (general?.recordingMode ?? "ptt") as RecordingMode;
@@ -60,12 +70,20 @@ interface AutoSizedVisualizerProps {
 	type: VisualizerType;
 }
 
-function AutoSizedVisualizer({ type, className, color, config }: AutoSizedVisualizerProps) {
+function AutoSizedVisualizer({
+	type,
+	className,
+	color,
+	config,
+}: AutoSizedVisualizerProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const fitSize = useFitSize(containerRef);
 
 	return (
-		<div className="flex h-full w-full items-center justify-center" ref={containerRef}>
+		<div
+			className="flex h-full w-full items-center justify-center"
+			ref={containerRef}
+		>
 			<VisualizerVariant
 				className={className}
 				color={color}
@@ -85,7 +103,13 @@ interface VisualizerVariantProps {
 	type: VisualizerType;
 }
 
-function VisualizerVariant({ type, config, className, color, size }: VisualizerVariantProps) {
+function VisualizerVariant({
+	type,
+	config,
+	className,
+	color,
+	size,
+}: VisualizerVariantProps) {
 	// Omit `className` entirely when undefined — the leaf components declare it as
 	// a non-`undefined` optional (exactOptionalPropertyTypes), so a literal
 	// `className={undefined}` would be a type error.
@@ -136,6 +160,13 @@ function VisualizerVariant({ type, config, className, color, size }: VisualizerV
 				/>
 			);
 		default:
-			return <AudioVisualizerBar {...cls} barCount={config.barCount} color={color} size={size} />;
+			return (
+				<AudioVisualizerBar
+					{...cls}
+					barCount={config.barCount}
+					color={color}
+					size={size}
+				/>
+			);
 	}
 }

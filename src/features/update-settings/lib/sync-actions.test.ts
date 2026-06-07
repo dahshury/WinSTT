@@ -22,10 +22,10 @@ function makeDeps() {
 	const calls: Array<{ kind: string; args: unknown[] }> = [];
 	const deps: SyncDeps = {
 		sttRequestDiarizationToggle: mock((enabled: boolean) =>
-			calls.push({ kind: "sttRequestDiarizationToggle", args: [enabled] })
+			calls.push({ kind: "sttRequestDiarizationToggle", args: [enabled] }),
 		),
 		sttSetParameter: mock(<V>(param: AllowedParameter, value: V) =>
-			calls.push({ kind: "sttSetParameter", args: [param, value] })
+			calls.push({ kind: "sttSetParameter", args: [param, value] }),
 		),
 	};
 	return { deps, calls };
@@ -61,7 +61,9 @@ describe("sendIfChanged", () => {
 	test("invokes sttSetParameter when the gate says yes", () => {
 		const { deps, calls } = makeDeps();
 		sendIfChanged(deps, false, true, "silence_timing", false);
-		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["silence_timing", false] }]);
+		expect(calls).toEqual([
+			{ kind: "sttSetParameter", args: ["silence_timing", false] },
+		]);
 	});
 
 	test("is a no-op when the value is unchanged (incremental)", () => {
@@ -89,7 +91,7 @@ describe("syncAudioEntries", () => {
 				inputDeviceIndex: 1,
 			} as never,
 			undefined,
-			true
+			true,
 		);
 		expect(calls).toEqual([]);
 	});
@@ -106,7 +108,7 @@ describe("syncAudioEntries", () => {
 				sileroSensitivity: 0.5,
 				postSpeechSilenceDuration: 0.5,
 			} as never,
-			false
+			false,
 		);
 		expect(calls).toEqual([]);
 	});
@@ -126,7 +128,7 @@ describe("syncAudioParams", () => {
 			settingsWith({
 				audio: { sileroSensitivity: 0.42 } as never,
 			}),
-			undefined
+			undefined,
 		);
 		expect(calls).toEqual([]);
 	});
@@ -138,7 +140,7 @@ describe("syncAudioParams", () => {
 			settingsWith({
 				audio: { microphoneRelease: "min1" } as never,
 			}),
-			undefined
+			undefined,
 		);
 		const params = calls.map((c) => c.args[0]);
 		expect(params).not.toContain("always_on_microphone");
@@ -150,8 +152,14 @@ describe("syncAudioParams", () => {
 describe("syncModelParams", () => {
 	test("pushes language on initial connect", () => {
 		const { deps, calls } = makeDeps();
-		syncModelParams(deps, settingsWith({ model: { language: "en" } as never }), undefined);
-		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["language", "en"] }]);
+		syncModelParams(
+			deps,
+			settingsWith({ model: { language: "en" } as never }),
+			undefined,
+		);
+		expect(calls).toEqual([
+			{ kind: "sttSetParameter", args: ["language", "en"] },
+		]);
 	});
 
 	test("does not push the `model` field (canonical swap path elsewhere)", () => {
@@ -159,7 +167,7 @@ describe("syncModelParams", () => {
 		syncModelParams(
 			deps,
 			settingsWith({ model: { model: "tiny", language: "en" } as never }),
-			settingsWith({ model: { model: "tiny", language: "en" } as never })
+			settingsWith({ model: { model: "tiny", language: "en" } as never }),
 		);
 		expect(calls).toEqual([]);
 	});
@@ -170,7 +178,7 @@ describe("global model unload timeout sync", () => {
 		const { deps, calls } = makeDeps();
 		syncToServer(
 			deps,
-			settingsWith({ global: { modelUnloadTimeout: "hour1" } } as never)
+			settingsWith({ global: { modelUnloadTimeout: "hour1" } } as never),
 		);
 		expect(calls).toContainEqual({
 			kind: "sttSetParameter",
@@ -183,7 +191,7 @@ describe("global model unload timeout sync", () => {
 		syncToServer(
 			deps,
 			settingsWith({ global: { modelUnloadTimeout: "never" } } as never),
-			settingsWith({ global: { modelUnloadTimeout: "min5" } } as never)
+			settingsWith({ global: { modelUnloadTimeout: "min5" } } as never),
 		);
 		expect(calls).toContainEqual({
 			kind: "sttSetParameter",
@@ -207,7 +215,7 @@ describe("syncQualityParams", () => {
 					unknownSentenceDetectionPause: 0.7,
 				} as never,
 			}),
-			undefined
+			undefined,
 		);
 		const params = calls.map((c) => c.args[0]);
 		expect(params).toContain("silence_timing");
@@ -238,7 +246,7 @@ describe("syncQualityParams", () => {
 		syncQualityParams(
 			deps,
 			settingsWith({ general: { recordingMode: "ptt" } as never }),
-			undefined
+			undefined,
 		);
 		expect(calls).toContainEqual({
 			kind: "sttSetParameter",
@@ -250,8 +258,10 @@ describe("syncQualityParams", () => {
 		const { deps, calls } = makeDeps();
 		syncQualityParams(
 			deps,
-			settingsWith({ general: { recordingMode: "toggle", manualToggleStop: false } as never }),
-			undefined
+			settingsWith({
+				general: { recordingMode: "toggle", manualToggleStop: false } as never,
+			}),
+			undefined,
 		);
 		expect(calls).toContainEqual({
 			kind: "sttSetParameter",
@@ -264,7 +274,7 @@ describe("syncQualityParams", () => {
 		syncQualityParams(
 			deps,
 			settingsWith({ general: { recordingMode: "ptt" } as never }),
-			settingsWith({ general: { recordingMode: "toggle" } as never })
+			settingsWith({ general: { recordingMode: "toggle" } as never }),
 		);
 		expect(calls).toContainEqual({
 			kind: "sttSetParameter",
@@ -279,17 +289,23 @@ describe("syncQualityParams", () => {
 			quality: { smartEndpoint: false } as never,
 		});
 		syncQualityParams(deps, same, same);
-		expect(calls.find((c) => c.args[0] === "silence_endpoint_enabled")).toBeUndefined();
+		expect(
+			calls.find((c) => c.args[0] === "silence_endpoint_enabled"),
+		).toBeUndefined();
 	});
 });
 
 describe("readDiarizationEnabled", () => {
 	test("returns the speakerDiarization flag when set", () => {
 		expect(
-			readDiarizationEnabled(settingsWith({ general: { speakerDiarization: true } as never }))
+			readDiarizationEnabled(
+				settingsWith({ general: { speakerDiarization: true } as never }),
+			),
 		).toBe(true);
 		expect(
-			readDiarizationEnabled(settingsWith({ general: { speakerDiarization: false } as never }))
+			readDiarizationEnabled(
+				settingsWith({ general: { speakerDiarization: false } as never }),
+			),
 		).toBe(false);
 	});
 
@@ -306,13 +322,19 @@ describe("diarizationNeedsPush", () => {
 
 	test("true on an actual flip", () => {
 		expect(
-			diarizationNeedsPush(true, settingsWith({ general: { speakerDiarization: false } as never }))
+			diarizationNeedsPush(
+				true,
+				settingsWith({ general: { speakerDiarization: false } as never }),
+			),
 		).toBe(true);
 	});
 
 	test("false when state matches", () => {
 		expect(
-			diarizationNeedsPush(true, settingsWith({ general: { speakerDiarization: true } as never }))
+			diarizationNeedsPush(
+				true,
+				settingsWith({ general: { speakerDiarization: true } as never }),
+			),
 		).toBe(false);
 	});
 });
@@ -323,9 +345,11 @@ describe("syncDiarizationParams", () => {
 		syncDiarizationParams(
 			deps,
 			settingsWith({ general: { speakerDiarization: true } as never }),
-			undefined
+			undefined,
 		);
-		expect(calls).toEqual([{ kind: "sttRequestDiarizationToggle", args: [true] }]);
+		expect(calls).toEqual([
+			{ kind: "sttRequestDiarizationToggle", args: [true] },
+		]);
 	});
 
 	test("does not push when the state is unchanged", () => {
@@ -340,9 +364,11 @@ describe("syncDiarizationParams", () => {
 		syncDiarizationParams(
 			deps,
 			settingsWith({ general: { speakerDiarization: false } as never }),
-			settingsWith({ general: { speakerDiarization: true } as never })
+			settingsWith({ general: { speakerDiarization: true } as never }),
 		);
-		expect(calls).toEqual([{ kind: "sttRequestDiarizationToggle", args: [false] }]);
+		expect(calls).toEqual([
+			{ kind: "sttRequestDiarizationToggle", args: [false] },
+		]);
 	});
 });
 
@@ -357,8 +383,8 @@ describe("syncToServer", () => {
 					model: {} as never,
 					quality: {} as never,
 					general: {} as never,
-				})
-			)
+				}),
+			),
 		).not.toThrow();
 	});
 
@@ -371,7 +397,7 @@ describe("syncToServer", () => {
 				model: { language: "en", model: "tiny" } as never,
 				quality: { smartEndpoint: true } as never,
 				general: { speakerDiarization: true, autoStart: true } as never,
-			})
+			}),
 		);
 		const kinds = calls.map((c) => c.kind);
 		expect(kinds).toContain("sttSetParameter");

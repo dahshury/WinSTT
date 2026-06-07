@@ -23,7 +23,7 @@ function makeQuantEntry(
 	modelId: string,
 	quantization: string,
 	progress: number | null,
-	paused = false
+	paused = false,
 ): QuantDownloadState {
 	return {
 		modelId,
@@ -126,7 +126,10 @@ describe("useDownloadAggregate", () => {
 		// mean(30, 70) = 50
 		expect(result.current?.averagePercent).toBe(50);
 		// highest percent wins primary
-		expect(result.current?.primary).toEqual({ modelId: "whisper-base", percent: 70 });
+		expect(result.current?.primary).toEqual({
+			modelId: "whisper-base",
+			percent: 70,
+		});
 	});
 
 	test("excludes paused per-quant entries from the outside aggregate", () => {
@@ -167,7 +170,10 @@ describe("useDownloadAggregate", () => {
 		expect(result.current?.count).toBe(2);
 		// mean(20, 80) = 50
 		expect(result.current?.averagePercent).toBe(50);
-		expect(result.current?.primary).toEqual({ modelId: "whisper-base", percent: 80 });
+		expect(result.current?.primary).toEqual({
+			modelId: "whisper-base",
+			percent: 80,
+		});
 	});
 
 	test("averagePercent skips indeterminate (null) entries and rounds the mean", () => {
@@ -223,7 +229,10 @@ describe("useDownloadAggregate", () => {
 			},
 		});
 		const { result } = renderHook(() => useDownloadAggregate());
-		expect(result.current?.primary).toEqual({ modelId: "first-singleton", percent: 50 });
+		expect(result.current?.primary).toEqual({
+			modelId: "first-singleton",
+			percent: 50,
+		});
 	});
 
 	test("primary is the only-null entry when all are indeterminate", () => {
@@ -236,7 +245,10 @@ describe("useDownloadAggregate", () => {
 			},
 		});
 		const { result } = renderHook(() => useDownloadAggregate());
-		expect(result.current?.primary).toEqual({ modelId: "first", percent: null });
+		expect(result.current?.primary).toEqual({
+			modelId: "first",
+			percent: null,
+		});
 	});
 
 	test("re-renders when the store updates", () => {
@@ -251,6 +263,9 @@ describe("useDownloadAggregate", () => {
 		});
 		rerender();
 		expect(result.current?.count).toBe(1);
-		expect(result.current?.primary).toEqual({ modelId: "late-arrival", percent: 12 });
+		expect(result.current?.primary).toEqual({
+			modelId: "late-arrival",
+			percent: 12,
+		});
 	});
 });

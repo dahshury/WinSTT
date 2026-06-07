@@ -84,7 +84,7 @@ describe("StatusBar", () => {
 		render(
 			<IntlProvider>
 				<StatusBar />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		expect(screen.getByRole("status")).toBeDefined();
 	});
@@ -96,11 +96,14 @@ describe("StatusBar", () => {
 				general: { ...initialSettings.general, recordingMode: "listen" },
 			},
 		});
-		useListenStore.setState({ isListening: true, deviceName: "LG TV (HDMI) [Loopback]" });
+		useListenStore.setState({
+			isListening: true,
+			deviceName: "LG TV (HDMI) [Loopback]",
+		});
 		render(
 			<IntlProvider>
 				<StatusBar />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		// shortDeviceName strips parens/brackets
 		expect(document.body.textContent).toContain("LG TV");
@@ -112,10 +115,14 @@ describe("StatusBar", () => {
 		const { container } = render(
 			<IntlProvider>
 				<StatusBar />
-			</IntlProvider>
+			</IntlProvider>,
 		);
-		expect((container.firstElementChild as HTMLElement).className).toContain("pointer-events-none");
-		expect((container.firstElementChild as HTMLElement).className).toContain("opacity-50");
+		expect((container.firstElementChild as HTMLElement).className).toContain(
+			"pointer-events-none",
+		);
+		expect((container.firstElementChild as HTMLElement).className).toContain(
+			"opacity-50",
+		);
 	});
 
 	test("renders the STT model picker trigger with the selected model", () => {
@@ -128,9 +135,11 @@ describe("StatusBar", () => {
 		const { container } = render(
 			<IntlProvider>
 				<StatusBar />
-			</IntlProvider>
+			</IntlProvider>,
 		);
-		expect(container.querySelector('[data-slot="stt-model-selector-trigger"]')).not.toBeNull();
+		expect(
+			container.querySelector('[data-slot="stt-model-selector-trigger"]'),
+		).not.toBeNull();
 		// The picker's trigger renders the currently-selected model's name.
 		expect(screen.getByText("tiny")).toBeDefined();
 	});
@@ -151,7 +160,7 @@ describe("StatusBar", () => {
 		render(
 			<IntlProvider>
 				<StatusBar />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		// A leaked `useSyncActiveModel` (see beforeEach note) may have flipped the
 		// swap store to `activeMain: "nemo-canary-180m-flash"` during this render,
@@ -187,7 +196,7 @@ describe("StatusBar", () => {
 		render(
 			<IntlProvider>
 				<StatusBar />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		// Trigger resolves the target id against the catalog and renders the
 		// `from → to` transition for the in-flight swap.

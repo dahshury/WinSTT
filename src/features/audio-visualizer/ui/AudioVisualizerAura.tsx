@@ -8,7 +8,10 @@ import { cva } from "class-variance-authority";
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { VisualizerSize } from "../lib/audio-visualizer";
-import { DEFAULT_VISUALIZER_COLOR as DEFAULT_COLOR, hexToRgb } from "../lib/hex-to-rgb";
+import {
+	DEFAULT_VISUALIZER_COLOR as DEFAULT_COLOR,
+	hexToRgb,
+} from "../lib/hex-to-rgb";
 import { useAgentState } from "../lib/use-agent-state";
 import { useAuraAnimator } from "../lib/use-aura-animator";
 import { ReactShaderToy, type Uniforms } from "./ReactShaderToy";
@@ -167,7 +170,9 @@ export interface AudioVisualizerAuraProps {
 }
 
 /** WinSTT is always dark-themed; resolves to "dark" unless overridden via prop. */
-export function resolveAuraTheme(themeMode: "dark" | "light" | undefined): "dark" | "light" {
+export function resolveAuraTheme(
+	themeMode: "dark" | "light" | undefined,
+): "dark" | "light" {
 	// themeMode prop takes priority; otherwise always dark.
 	return themeMode ?? "dark";
 }
@@ -177,7 +182,9 @@ export function themeModeToUniform(theme: "dark" | "light"): number {
 }
 
 /** Maps the base-shape choice to the shader's `uShape` selector. */
-export function auraShapeToUniform(shape: "circle" | "line" | undefined): number {
+export function auraShapeToUniform(
+	shape: "circle" | "line" | undefined,
+): number {
 	return shape === "line" ? 2.0 : 1.0;
 }
 
@@ -242,7 +249,11 @@ export function AudioVisualizerAura({
 	const [getUniforms] = useState(() => () => uniformsRef.current);
 
 	return (
-		<div className={cn(auraVariants({ size }), className)} data-lk-state={state} {...props}>
+		<div
+			className={cn(auraVariants({ size }), className)}
+			data-lk-state={state}
+			{...props}
+		>
 			<ReactShaderToy
 				devicePixelRatio={DEVICE_PIXEL_RATIO}
 				fs={auraShaderSource}

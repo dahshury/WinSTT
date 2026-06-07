@@ -165,7 +165,7 @@ describe("DataGrid", () => {
 		expect(screen.getByText("3-3 of 3")).toBeDefined();
 		expect(
 			(screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement)
-				.disabled
+				.disabled,
 		).toBe(true);
 	});
 

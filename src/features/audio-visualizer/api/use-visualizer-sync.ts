@@ -103,7 +103,7 @@ export function useVisualizerSync(): void {
 				// docstring for why this beats an rAF fade for hidden windows.
 				recordingStopped();
 			}),
-		[recordingStopped]
+		[recordingStopped],
 	);
 
 	// User-initiated cancel. The server's abort flow doesn't emit
@@ -124,7 +124,7 @@ export function useVisualizerSync(): void {
 				recordingStopped();
 				setSpeaking(false);
 			}),
-		[recordingStopped, setSpeaking]
+		[recordingStopped, setSpeaking],
 	);
 
 	useEffect(() => {
@@ -154,6 +154,6 @@ export function useVisualizerSync(): void {
 			activeRef.current = false;
 			cancelAnimationFrame(rafRef.current);
 		},
-		[]
+		[],
 	);
 }

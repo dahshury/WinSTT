@@ -19,62 +19,95 @@ function renderIt(endpoint: OpenRouterEndpoint) {
 	return render(
 		<TooltipProvider.Provider>
 			<EndpointFeatureIcons endpoint={endpoint} />
-		</TooltipProvider.Provider>
+		</TooltipProvider.Provider>,
 	);
 }
 
 // `getQuantizationLabel` only reads `endpoint.quantization`, so the tests pass a
 // minimal `{ quantization }` stub. This helper holds the single boundary cast to
 // the full endpoint type; the runtime object is returned unchanged.
-const asEndpoint = (stub: { quantization: string | null }) => stub as unknown as OpenRouterEndpoint;
+const asEndpoint = (stub: { quantization: string | null }) =>
+	stub as unknown as OpenRouterEndpoint;
 
 describe("getChipSizeClass", () => {
 	test("showLabel=true, small → px-1 py-0.5", () => {
-		expect(helpers.getChipSizeClass({ flat: false, isSmall: true, shouldShowLabel: true })).toBe(
-			"px-1 py-0.5"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: false,
+				isSmall: true,
+				shouldShowLabel: true,
+			}),
+		).toBe("px-1 py-0.5");
 	});
 
 	test("showLabel=true, not small → px-1.5 py-0.5", () => {
-		expect(helpers.getChipSizeClass({ flat: false, isSmall: false, shouldShowLabel: true })).toBe(
-			"px-1.5 py-0.5"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: false,
+				isSmall: false,
+				shouldShowLabel: true,
+			}),
+		).toBe("px-1.5 py-0.5");
 	});
 
 	test("flat=true, small, no label → h-4 w-4", () => {
-		expect(helpers.getChipSizeClass({ flat: true, isSmall: true, shouldShowLabel: false })).toBe(
-			"h-4 w-4"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: true,
+				isSmall: true,
+				shouldShowLabel: false,
+			}),
+		).toBe("h-4 w-4");
 	});
 
 	test("flat=true, not small, no label → h-5 w-5", () => {
-		expect(helpers.getChipSizeClass({ flat: true, isSmall: false, shouldShowLabel: false })).toBe(
-			"h-5 w-5"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: true,
+				isSmall: false,
+				shouldShowLabel: false,
+			}),
+		).toBe("h-5 w-5");
 	});
 
 	test("flat=false, small, no label → h-4 w-4 p-0.5", () => {
-		expect(helpers.getChipSizeClass({ flat: false, isSmall: true, shouldShowLabel: false })).toBe(
-			"h-4 w-4 p-0.5"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: false,
+				isSmall: true,
+				shouldShowLabel: false,
+			}),
+		).toBe("h-4 w-4 p-0.5");
 	});
 
 	test("flat=false, not small, no label → h-5 w-5 p-0.5", () => {
-		expect(helpers.getChipSizeClass({ flat: false, isSmall: false, shouldShowLabel: false })).toBe(
-			"h-5 w-5 p-0.5"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: false,
+				isSmall: false,
+				shouldShowLabel: false,
+			}),
+		).toBe("h-5 w-5 p-0.5");
 	});
 
 	test("showLabel=true, flat=true, small → px-1 py-0.5 (label wins)", () => {
-		expect(helpers.getChipSizeClass({ flat: true, isSmall: true, shouldShowLabel: true })).toBe(
-			"px-1 py-0.5"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: true,
+				isSmall: true,
+				shouldShowLabel: true,
+			}),
+		).toBe("px-1 py-0.5");
 	});
 
 	test("showLabel=true, flat=true, not small → px-1.5 py-0.5 (label wins)", () => {
-		expect(helpers.getChipSizeClass({ flat: true, isSmall: false, shouldShowLabel: true })).toBe(
-			"px-1.5 py-0.5"
-		);
+		expect(
+			helpers.getChipSizeClass({
+				flat: true,
+				isSmall: false,
+				shouldShowLabel: true,
+			}),
+		).toBe("px-1.5 py-0.5");
 	});
 });
 
@@ -115,19 +148,27 @@ describe("appendSupportedParams", () => {
 
 describe("getQuantizationLabel", () => {
 	test("returns undefined when quantization is null", () => {
-		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: null }))).toBeUndefined();
+		expect(
+			helpers.getQuantizationLabel(asEndpoint({ quantization: null })),
+		).toBeUndefined();
 	});
 
 	test("returns undefined for 'unknown' quantization", () => {
-		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: "unknown" }))).toBeUndefined();
+		expect(
+			helpers.getQuantizationLabel(asEndpoint({ quantization: "unknown" })),
+		).toBeUndefined();
 	});
 
 	test("returns label for known quantization", () => {
-		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: "fp16" }))).toBe("FP16");
+		expect(
+			helpers.getQuantizationLabel(asEndpoint({ quantization: "fp16" })),
+		).toBe("FP16");
 	});
 
 	test("returns label case-insensitively", () => {
-		expect(helpers.getQuantizationLabel(asEndpoint({ quantization: "INT4" }))).toBe("INT4");
+		expect(
+			helpers.getQuantizationLabel(asEndpoint({ quantization: "INT4" })),
+		).toBe("INT4");
 	});
 });
 
@@ -138,7 +179,10 @@ describe("resolveParamFeature", () => {
 
 	test("returns null when param is in set but has no FEATURE_ICONS entry", () => {
 		expect(
-			helpers.resolveParamFeature("unknown_param_xyz", new Set(["unknown_param_xyz"]))
+			helpers.resolveParamFeature(
+				"unknown_param_xyz",
+				new Set(["unknown_param_xyz"]),
+			),
 		).toBeNull();
 	});
 
@@ -156,20 +200,22 @@ describe("EndpointFeatureIcons", () => {
 	});
 
 	test("renders feature icons for supported_parameters in canonical priority", () => {
-		const { container } = renderIt(makeEndpoint({ supported_parameters: ["tools", "reasoning"] }));
+		const { container } = renderIt(
+			makeEndpoint({ supported_parameters: ["tools", "reasoning"] }),
+		);
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
 	test("renders quantization label when present", () => {
 		const { container } = renderIt(
-			makeEndpoint({ quantization: "fp16", supported_parameters: [] })
+			makeEndpoint({ quantization: "fp16", supported_parameters: [] }),
 		);
 		expect(container.textContent).toContain("FP16");
 	});
 
 	test("ignores 'unknown' quantization", () => {
 		const { container } = renderIt(
-			makeEndpoint({ quantization: "unknown", supported_parameters: [] })
+			makeEndpoint({ quantization: "unknown", supported_parameters: [] }),
 		);
 		expect(container.firstChild).toBeNull();
 	});
@@ -184,7 +230,7 @@ describe("EndpointFeatureIcons", () => {
 					"structured_outputs",
 					"web_search_options",
 				],
-			})
+			}),
 		);
 		// Quantization absent — only feature icons. Maxes 4 by default.
 		const innerChips = container.querySelectorAll("[role]");

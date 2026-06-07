@@ -20,7 +20,12 @@ import { Button } from "@/shared/ui/button";
 
 const AUTO_DISMISS_MS = 8000;
 
-type CloudToastKind = "auth" | "network" | "key_missing" | "rate_limit" | "provider_error";
+type CloudToastKind =
+	| "auth"
+	| "network"
+	| "key_missing"
+	| "rate_limit"
+	| "provider_error";
 
 interface CloudToast {
 	icon: IconSvgElement;
@@ -84,13 +89,13 @@ export function CloudSttErrorToasts() {
 			kind: CloudToastKind,
 			message: string,
 			payload: CloudErrorPayload,
-			withOpenIntegrations: boolean
+			withOpenIntegrations: boolean,
 		) => {
 			setToasts((prev) => {
 				// Replace any prior toast of the same kind+provider so a stuck
 				// loop doesn't spam the corner.
 				const filtered = prev.filter(
-					(t2) => !(t2.kind === kind && t2.provider === payload.provider)
+					(t2) => !(t2.kind === kind && t2.provider === payload.provider),
 				);
 				return [
 					...filtered,
@@ -109,7 +114,12 @@ export function CloudSttErrorToasts() {
 
 		const offAuth = ipcOn(IPC.STT_CLOUD_AUTH_FAILED, (data) => {
 			const p = data as CloudErrorPayload;
-			push("auth", t("toastAuthFailed", { provider: providerLabel(p.provider) }), p, true);
+			push(
+				"auth",
+				t("toastAuthFailed", { provider: providerLabel(p.provider) }),
+				p,
+				true,
+			);
 		});
 		const offNet = ipcOn(IPC.STT_CLOUD_NETWORK_ERROR, (data) => {
 			const p = data as CloudErrorPayload;
@@ -117,11 +127,18 @@ export function CloudSttErrorToasts() {
 		});
 		const offMissing = ipcOn(IPC.STT_CLOUD_KEY_MISSING, (data) => {
 			const p = data as CloudErrorPayload;
-			push("key_missing", t("toastKeyMissing", { provider: providerLabel(p.provider) }), p, true);
+			push(
+				"key_missing",
+				t("toastKeyMissing", { provider: providerLabel(p.provider) }),
+				p,
+				true,
+			);
 		});
 		const offRate = ipcOn(IPC.STT_CLOUD_RATE_LIMITED, (data) => {
 			const p = data as CloudErrorPayload;
-			const head = t("toastRateLimited", { provider: providerLabel(p.provider) });
+			const head = t("toastRateLimited", {
+				provider: providerLabel(p.provider),
+			});
 			const detail = p.retryAfter
 				? ` — ${t("toastRateLimitedRetry", { seconds: Math.round(p.retryAfter) })}`
 				: "";
@@ -136,7 +153,7 @@ export function CloudSttErrorToasts() {
 					message: p.message ?? "",
 				}),
 				p,
-				false
+				false,
 			);
 		});
 
@@ -167,7 +184,8 @@ export function CloudSttErrorToasts() {
 		return null;
 	}
 
-	const dismiss = (id: number) => setToasts((prev) => prev.filter((entry) => entry.id !== id));
+	const dismiss = (id: number) =>
+		setToasts((prev) => prev.filter((entry) => entry.id !== id));
 
 	return (
 		<div className="pointer-events-none fixed right-4 bottom-4 z-toast flex w-[420px] max-w-[90vw] flex-col gap-2">
@@ -176,7 +194,7 @@ export function CloudSttErrorToasts() {
 					aria-live="assertive"
 					className={cn(
 						"pointer-events-auto rounded-md border border-error/40 p-3 shadow-lg",
-						surfaceBg(level)
+						surfaceBg(level),
 					)}
 					key={toast.id}
 					role="alert"
@@ -195,7 +213,7 @@ export function CloudSttErrorToasts() {
 									<Button
 										className={cn(
 											"rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
-											surfaceBg(detailsLevel)
+											surfaceBg(detailsLevel),
 										)}
 										onClick={() => {
 											windowOpenSettings();

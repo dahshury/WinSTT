@@ -12,7 +12,7 @@ export function Spinner({ className, ...rest }: SpinnerProps) {
 			aria-live="polite"
 			className={cn(
 				"inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent",
-				className
+				className,
 			)}
 			{...rest}
 		/>

@@ -23,7 +23,12 @@ import {
 	WEEKDAY_LABELS_MON,
 	WEEKDAY_LABELS_SUN,
 } from "./calendar-grid";
-import type { CalendarMode, CalendarPreset, DateRange, DayState } from "./types";
+import type {
+	CalendarMode,
+	CalendarPreset,
+	DateRange,
+	DayState,
+} from "./types";
 
 interface MonthGridProps {
 	caption?: string | undefined;

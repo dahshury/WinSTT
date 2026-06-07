@@ -16,7 +16,7 @@ export function buildTabOptions(t: TranslateFn) {
  */
 export function createHandlePull(
 	pullModel: (name: string) => Promise<{ success: boolean }>,
-	onModelInstalled?: (name: string) => void
+	onModelInstalled?: (name: string) => void,
 ) {
 	return async (name: string) => {
 		const result = await pullModel(name);

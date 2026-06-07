@@ -8,7 +8,7 @@ describe("TrayMenuPage", () => {
 		const { container } = render(
 			<IntlProvider>
 				<TrayMenuPage />
-			</IntlProvider>
+			</IntlProvider>,
 		);
 		expect(container).not.toBeNull();
 	});

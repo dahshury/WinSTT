@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@/entities/model-catalog";
-import { isEnglishOnly, isMultilingual, summarizeFamily, variantMeta } from "./variant-helpers";
+import {
+	isEnglishOnly,
+	isMultilingual,
+	summarizeFamily,
+	variantMeta,
+} from "./variant-helpers";
 
 function model(over: Partial<ModelInfo> = {}): ModelInfo {
 	return {
@@ -24,7 +29,9 @@ function model(over: Partial<ModelInfo> = {}): ModelInfo {
 
 describe("isEnglishOnly", () => {
 	test("true for .en ids", () => {
-		expect(isEnglishOnly(model({ id: "small.en", languages: ["en"] }))).toBe(true);
+		expect(isEnglishOnly(model({ id: "small.en", languages: ["en"] }))).toBe(
+			true,
+		);
 	});
 	test("true for sole en language", () => {
 		expect(isEnglishOnly(model({ id: "x", languages: ["en"] }))).toBe(true);
@@ -43,13 +50,20 @@ describe("isMultilingual", () => {
 		// whitelist (~25-99 codes). The badge follows the detection flag so
 		// the picker shows "Multilingual" instead of dumping the whitelist.
 		expect(
-			isMultilingual(model({ languages: ["en", "de", "fr"], supportsLanguageDetection: true }))
+			isMultilingual(
+				model({
+					languages: ["en", "de", "fr"],
+					supportsLanguageDetection: true,
+				}),
+			),
 		).toBe(true);
 	});
 	test("false when supportsLanguageDetection is off (constrained-language model)", () => {
-		expect(isMultilingual(model({ languages: ["ru"], supportsLanguageDetection: false }))).toBe(
-			false
-		);
+		expect(
+			isMultilingual(
+				model({ languages: ["ru"], supportsLanguageDetection: false }),
+			),
+		).toBe(false);
 	});
 });
 
@@ -61,8 +75,8 @@ describe("variantMeta", () => {
 					sizeLabel: "39M",
 					languages: ["en", "de"],
 					supportsLanguageDetection: true,
-				})
-			)
+				}),
+			),
 		).toEqual({
 			englishOnly: false,
 			multilingual: true,

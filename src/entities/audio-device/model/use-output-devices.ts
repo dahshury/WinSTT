@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  type AudioOutputDevice,
-  audioGetOutputDevices,
-  audioRefreshOutputDevices,
-  onAudioDeviceChangeDetected,
-  onAudioOutputDevicesChanged,
+	type AudioOutputDevice,
+	audioGetOutputDevices,
+	audioRefreshOutputDevices,
+	onAudioDeviceChangeDetected,
+	onAudioOutputDevicesChanged,
 } from "@/shared/api/ipc-client";
 
 /**
@@ -13,25 +13,25 @@ import {
  * DOM type (which isn't available in unit tests without jsdom shims).
  */
 export interface OutputDevice {
-  deviceId: string;
-  isDefault: boolean;
-  label: string;
+	deviceId: string;
+	isDefault: boolean;
+	label: string;
 }
 
 interface UseOutputDevicesResult {
-  defaultDevice: OutputDevice | null;
-  devices: OutputDevice[];
-  refresh: () => Promise<void>;
-  /**
-   * The browser ``MediaDeviceInfo.deviceId`` of every output sink the browser
-   * currently knows about (real, routable ids — the synthetic name-ids used for
-   * not-yet-resolved backend devices are excluded). Consumers that need to
-   * reconcile a SAVED browser deviceId (e.g. ``useDeviceSwitchFeedback`` resetting
-   * a vanished sink) must check against THIS, not ``devices`` — a backend device
-   * shown before its browser join resolves carries a synthetic id, so checking
-   * ``devices`` would spuriously treat a still-connected sink as gone.
-   */
-  sinkIds: string[];
+	defaultDevice: OutputDevice | null;
+	devices: OutputDevice[];
+	refresh: () => Promise<void>;
+	/**
+	 * The browser ``MediaDeviceInfo.deviceId`` of every output sink the browser
+	 * currently knows about (real, routable ids — the synthetic name-ids used for
+	 * not-yet-resolved backend devices are excluded). Consumers that need to
+	 * reconcile a SAVED browser deviceId (e.g. ``useDeviceSwitchFeedback`` resetting
+	 * a vanished sink) must check against THIS, not ``devices`` — a backend device
+	 * shown before its browser join resolves carries a synthetic id, so checking
+	 * ``devices`` would spuriously treat a still-connected sink as gone.
+	 */
+	sinkIds: string[];
 }
 
 /**
@@ -41,21 +41,21 @@ interface UseOutputDevicesResult {
 const DEVICECHANGE_DEBOUNCE_MS = 200;
 
 function areOutputDeviceListsEqual(
-  a: readonly OutputDevice[],
-  b: readonly OutputDevice[],
+	a: readonly OutputDevice[],
+	b: readonly OutputDevice[],
 ): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  return a.every((device, index) => {
-    const other = b[index];
-    return (
-      other !== undefined &&
-      device.deviceId === other.deviceId &&
-      device.label === other.label &&
-      device.isDefault === other.isDefault
-    );
-  });
+	if (a.length !== b.length) {
+		return false;
+	}
+	return a.every((device, index) => {
+		const other = b[index];
+		return (
+			other !== undefined &&
+			device.deviceId === other.deviceId &&
+			device.label === other.label &&
+			device.isDefault === other.isDefault
+		);
+	});
 }
 
 // ── Module-level state ────────────────────────────────────────────────────────
@@ -94,31 +94,31 @@ let browserSinkIdsCache: string[] = [];
 const browserSinkIdsSubscribers = new Set<(ids: string[]) => void>();
 
 function publishOutputDevices(next: OutputDevice[]): void {
-  if (areOutputDeviceListsEqual(outputDeviceCache, next)) {
-    return;
-  }
-  outputDeviceCache = next;
-  for (const subscriber of outputDeviceSubscribers) {
-    subscriber(next);
-  }
+	if (areOutputDeviceListsEqual(outputDeviceCache, next)) {
+		return;
+	}
+	outputDeviceCache = next;
+	for (const subscriber of outputDeviceSubscribers) {
+		subscriber(next);
+	}
 }
 
 function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
+	return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function publishBrowserSinkIds(next: string[]): void {
-  if (arraysEqual(browserSinkIdsCache, next)) {
-    return;
-  }
-  browserSinkIdsCache = next;
-  for (const subscriber of browserSinkIdsSubscribers) {
-    subscriber(next);
-  }
+	if (arraysEqual(browserSinkIdsCache, next)) {
+		return;
+	}
+	browserSinkIdsCache = next;
+	for (const subscriber of browserSinkIdsSubscribers) {
+		subscriber(next);
+	}
 }
 
 function normalizeOutputName(name: string): string {
-  return name.trim().toLowerCase();
+	return name.trim().toLowerCase();
 }
 
 /**
@@ -134,100 +134,100 @@ function normalizeOutputName(name: string): string {
  * reaches it.
  */
 function resolveSinkId(name: string): string {
-  const normalized = normalizeOutputName(name);
-  const exact = browserSinkMap.get(normalized);
-  if (exact !== undefined) {
-    return exact;
-  }
-  for (const [label, deviceId] of browserSinkMap) {
-    if (label.includes(normalized) || normalized.includes(label)) {
-      return deviceId;
-    }
-  }
-  return name;
+	const normalized = normalizeOutputName(name);
+	const exact = browserSinkMap.get(normalized);
+	if (exact !== undefined) {
+		return exact;
+	}
+	for (const [label, deviceId] of browserSinkMap) {
+		if (label.includes(normalized) || normalized.includes(label)) {
+			return deviceId;
+		}
+	}
+	return name;
 }
 
 function mergeBackendOutputDevices(): OutputDevice[] {
-  return backendOutputDevices.map((device) => ({
-    deviceId: resolveSinkId(device.name),
-    label: device.name,
-    isDefault: device.isDefault,
-  }));
+	return backendOutputDevices.map((device) => ({
+		deviceId: resolveSinkId(device.name),
+		label: device.name,
+		isDefault: device.isDefault,
+	}));
 }
 
 function recomputeOutputDevices(): void {
-  const merged =
-    backendOutputDevices.length > 0
-      ? mergeBackendOutputDevices()
-      : browserOutputDevices;
-  publishOutputDevices(merged);
+	const merged =
+		backendOutputDevices.length > 0
+			? mergeBackendOutputDevices()
+			: browserOutputDevices;
+	publishOutputDevices(merged);
 }
 
 function refreshBrowserOutputDevices(): Promise<void> {
-  if (outputDeviceRefreshInFlight) {
-    return outputDeviceRefreshInFlight;
-  }
-  if (typeof navigator === "undefined" || !navigator.mediaDevices) {
-    return Promise.resolve();
-  }
-  outputDeviceRefreshInFlight = navigator.mediaDevices
-    .enumerateDevices()
-    .then((raw) => {
-      const outputs: OutputDevice[] = [];
-      const sinkMap = new Map<string, string>();
-      let fallbackCounter = 1;
-      for (const d of raw) {
-        if (d.kind !== "audiooutput") {
-          continue;
-        }
-        // Special ``default`` / ``communications`` deviceIds appear on
-        // Chromium; the first non-special entry is the system default.
-        // `isDefault` is set on the entry whose deviceId equals ``default``
-        // (Chromium emits it as a dedicated row before the actual default
-        // device) so the consumer can highlight it.
-        outputs.push({
-          deviceId: d.deviceId,
-          label: d.label || `Output ${fallbackCounter++}`,
-          isDefault: d.deviceId === "default",
-        });
-        // Index real, named device rows for the backend→browser name join.
-        // Skip the synthetic ``default``/``communications`` rows and unlabeled
-        // entries (no mic permission yet) — those can't be matched by name.
-        if (
-          d.label &&
-          d.deviceId !== "default" &&
-          d.deviceId !== "communications" &&
-          d.deviceId !== ""
-        ) {
-          sinkMap.set(normalizeOutputName(d.label), d.deviceId);
-        }
-      }
-      browserOutputDevices = outputs;
-      browserSinkMap = sinkMap;
-      publishBrowserSinkIds(Array.from(sinkMap.values()));
-      recomputeOutputDevices();
-    })
-    .finally(() => {
-      outputDeviceRefreshInFlight = null;
-    });
-  return outputDeviceRefreshInFlight;
+	if (outputDeviceRefreshInFlight) {
+		return outputDeviceRefreshInFlight;
+	}
+	if (typeof navigator === "undefined" || !navigator.mediaDevices) {
+		return Promise.resolve();
+	}
+	outputDeviceRefreshInFlight = navigator.mediaDevices
+		.enumerateDevices()
+		.then((raw) => {
+			const outputs: OutputDevice[] = [];
+			const sinkMap = new Map<string, string>();
+			let fallbackCounter = 1;
+			for (const d of raw) {
+				if (d.kind !== "audiooutput") {
+					continue;
+				}
+				// Special ``default`` / ``communications`` deviceIds appear on
+				// Chromium; the first non-special entry is the system default.
+				// `isDefault` is set on the entry whose deviceId equals ``default``
+				// (Chromium emits it as a dedicated row before the actual default
+				// device) so the consumer can highlight it.
+				outputs.push({
+					deviceId: d.deviceId,
+					label: d.label || `Output ${fallbackCounter++}`,
+					isDefault: d.deviceId === "default",
+				});
+				// Index real, named device rows for the backend→browser name join.
+				// Skip the synthetic ``default``/``communications`` rows and unlabeled
+				// entries (no mic permission yet) — those can't be matched by name.
+				if (
+					d.label &&
+					d.deviceId !== "default" &&
+					d.deviceId !== "communications" &&
+					d.deviceId !== ""
+				) {
+					sinkMap.set(normalizeOutputName(d.label), d.deviceId);
+				}
+			}
+			browserOutputDevices = outputs;
+			browserSinkMap = sinkMap;
+			publishBrowserSinkIds(Array.from(sinkMap.values()));
+			recomputeOutputDevices();
+		})
+		.finally(() => {
+			outputDeviceRefreshInFlight = null;
+		});
+	return outputDeviceRefreshInFlight;
 }
 
 function applyBackendOutputDevices(devices: AudioOutputDevice[]): void {
-  backendOutputDevices = devices;
-  recomputeOutputDevices();
+	backendOutputDevices = devices;
+	recomputeOutputDevices();
 }
 
 function loadBackendOutputDevices(): Promise<void> {
-  return audioGetOutputDevices()
-    .then(applyBackendOutputDevices)
-    .catch(() => undefined);
+	return audioGetOutputDevices()
+		.then(applyBackendOutputDevices)
+		.catch(() => undefined);
 }
 
 function refreshBackendOutputDevices(): Promise<void> {
-  return audioRefreshOutputDevices()
-    .then(applyBackendOutputDevices)
-    .catch(() => undefined);
+	return audioRefreshOutputDevices()
+		.then(applyBackendOutputDevices)
+		.catch(() => undefined);
 }
 
 /**
@@ -253,83 +253,83 @@ function refreshBackendOutputDevices(): Promise<void> {
  * routing to a non-default device falls back to the system default.
  */
 export function useOutputDevices(): UseOutputDevicesResult {
-  const [devices, setDevices] = useState<OutputDevice[]>(
-    () => outputDeviceCache,
-  );
-  const [sinkIds, setSinkIds] = useState<string[]>(() => browserSinkIdsCache);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [devices, setDevices] = useState<OutputDevice[]>(
+		() => outputDeviceCache,
+	);
+	const [sinkIds, setSinkIds] = useState<string[]>(() => browserSinkIdsCache);
+	const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refresh = useCallback(
-    () =>
-      Promise.all([
-        refreshBackendOutputDevices(),
-        refreshBrowserOutputDevices(),
-      ]).then(() => undefined),
-    [],
-  );
+	const refresh = useCallback(
+		() =>
+			Promise.all([
+				refreshBackendOutputDevices(),
+				refreshBrowserOutputDevices(),
+			]).then(() => undefined),
+		[],
+	);
 
-  useEffect(() => {
-    outputDeviceSubscribers.add(setDevices);
-    browserSinkIdsSubscribers.add(setSinkIds);
-    setDevices(outputDeviceCache);
-    setSinkIds(browserSinkIdsCache);
-    // Real-time backend push: a hot-plugged speaker shows up the instant the
-    // native endpoint watcher reports it, without waiting on the browser.
-    const offOutputDevicesChanged = onAudioOutputDevicesChanged(
-      applyBackendOutputDevices,
-    );
-    return () => {
-      offOutputDevicesChanged();
-      outputDeviceSubscribers.delete(setDevices);
-      browserSinkIdsSubscribers.delete(setSinkIds);
-    };
-  }, []);
+	useEffect(() => {
+		outputDeviceSubscribers.add(setDevices);
+		browserSinkIdsSubscribers.add(setSinkIds);
+		setDevices(outputDeviceCache);
+		setSinkIds(browserSinkIdsCache);
+		// Real-time backend push: a hot-plugged speaker shows up the instant the
+		// native endpoint watcher reports it, without waiting on the browser.
+		const offOutputDevicesChanged = onAudioOutputDevicesChanged(
+			applyBackendOutputDevices,
+		);
+		return () => {
+			offOutputDevicesChanged();
+			outputDeviceSubscribers.delete(setDevices);
+			browserSinkIdsSubscribers.delete(setSinkIds);
+		};
+	}, []);
 
-  useEffect(() => {
-    const refreshBrowserSafely = () => {
-      refreshBrowserOutputDevices().catch(() => undefined);
-    };
-    const scheduleBrowserRefresh = () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-      debounceRef.current = setTimeout(() => {
-        debounceRef.current = null;
-        refreshBrowserSafely();
-      }, DEVICECHANGE_DEBOUNCE_MS);
-    };
-    // Initial load: backend (authoritative membership) + browser (sink ids).
-    loadBackendOutputDevices().catch(() => undefined);
-    refreshBrowserSafely();
-    // The generic backend devicechange ping also re-reads the browser sink map
-    // so deviceIds resolve as soon as the browser catches up.
-    const offDeviceChangeDetected = onAudioDeviceChangeDetected(
-      scheduleBrowserRefresh,
-    );
-    const mediaDevices =
-      typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
-    mediaDevices?.addEventListener("devicechange", scheduleBrowserRefresh);
-    return () => {
-      offDeviceChangeDetected();
-      mediaDevices?.removeEventListener("devicechange", scheduleBrowserRefresh);
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-    };
-  }, []);
+	useEffect(() => {
+		const refreshBrowserSafely = () => {
+			refreshBrowserOutputDevices().catch(() => undefined);
+		};
+		const scheduleBrowserRefresh = () => {
+			if (debounceRef.current) {
+				clearTimeout(debounceRef.current);
+			}
+			debounceRef.current = setTimeout(() => {
+				debounceRef.current = null;
+				refreshBrowserSafely();
+			}, DEVICECHANGE_DEBOUNCE_MS);
+		};
+		// Initial load: backend (authoritative membership) + browser (sink ids).
+		loadBackendOutputDevices().catch(() => undefined);
+		refreshBrowserSafely();
+		// The generic backend devicechange ping also re-reads the browser sink map
+		// so deviceIds resolve as soon as the browser catches up.
+		const offDeviceChangeDetected = onAudioDeviceChangeDetected(
+			scheduleBrowserRefresh,
+		);
+		const mediaDevices =
+			typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
+		mediaDevices?.addEventListener("devicechange", scheduleBrowserRefresh);
+		return () => {
+			offDeviceChangeDetected();
+			mediaDevices?.removeEventListener("devicechange", scheduleBrowserRefresh);
+			if (debounceRef.current) {
+				clearTimeout(debounceRef.current);
+				debounceRef.current = null;
+			}
+		};
+	}, []);
 
-  const defaultDevice = devices.find((d) => d.isDefault) ?? devices[0] ?? null;
-  return { devices, defaultDevice, refresh, sinkIds };
+	const defaultDevice = devices.find((d) => d.isDefault) ?? devices[0] ?? null;
+	return { devices, defaultDevice, refresh, sinkIds };
 }
 
 export function _resetOutputDevicesCacheForTests(): void {
-  outputDeviceCache = [];
-  outputDeviceRefreshInFlight = null;
-  outputDeviceSubscribers.clear();
-  backendOutputDevices = [];
-  browserSinkMap = new Map();
-  browserOutputDevices = [];
-  browserSinkIdsCache = [];
-  browserSinkIdsSubscribers.clear();
+	outputDeviceCache = [];
+	outputDeviceRefreshInFlight = null;
+	outputDeviceSubscribers.clear();
+	backendOutputDevices = [];
+	browserSinkMap = new Map();
+	browserOutputDevices = [];
+	browserSinkIdsCache = [];
+	browserSinkIdsSubscribers.clear();
 }

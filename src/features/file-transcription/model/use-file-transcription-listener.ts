@@ -1,5 +1,9 @@
 import { useEffect } from "react";
-import { onFileQueueActive, onFileQueueProgress, onFileQueueUpdate } from "@/shared/api/ipc-client";
+import {
+	onFileQueueActive,
+	onFileQueueProgress,
+	onFileQueueUpdate,
+} from "@/shared/api/ipc-client";
 import { useFileTranscriptionStore } from "./file-transcription-store";
 
 /**
@@ -14,12 +18,21 @@ export function useFileTranscriptionListener(): void {
 	const patchProgress = useFileTranscriptionStore((s) => s.patchProgress);
 	const setQueueActive = useFileTranscriptionStore((s) => s.setQueueActive);
 
-	useEffect(() => onFileQueueUpdate((data) => setItems(data.items)), [setItems]);
-
 	useEffect(
-		() => onFileQueueProgress((data) => patchProgress(data.id, data.progress, data.stage)),
-		[patchProgress]
+		() => onFileQueueUpdate((data) => setItems(data.items)),
+		[setItems],
 	);
 
-	useEffect(() => onFileQueueActive((data) => setQueueActive(data.active)), [setQueueActive]);
+	useEffect(
+		() =>
+			onFileQueueProgress((data) =>
+				patchProgress(data.id, data.progress, data.stage),
+			),
+		[patchProgress],
+	);
+
+	useEffect(
+		() => onFileQueueActive((data) => setQueueActive(data.active)),
+		[setQueueActive],
+	);
 }

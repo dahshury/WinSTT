@@ -41,13 +41,21 @@ function ErrorContextDetails({ error }: { error: Error }): ReactNode {
 }
 
 /** Renders the default fallback UI when no custom fallback prop is provided. */
-function DefaultFallback({ error, onReset }: { error: Error; onReset: () => void }): ReactNode {
+function DefaultFallback({
+	error,
+	onReset,
+}: {
+	error: Error;
+	onReset: () => void;
+}): ReactNode {
 	return (
 		<div className="flex h-full flex-col items-center justify-center gap-4 p-8 font-sans">
 			<div className="flex size-12 items-center justify-center rounded-lg bg-error-dim font-semibold text-error text-xl">
 				!
 			</div>
-			<h2 className="m-0 font-semibold text-base text-foreground">Component Error</h2>
+			<h2 className="m-0 font-semibold text-base text-foreground">
+				Component Error
+			</h2>
 			<p className="m-0 max-w-[480px] text-center font-mono text-body text-foreground-muted">
 				{error.message || "An unexpected error occurred in this component"}
 			</p>
@@ -66,7 +74,10 @@ function DefaultFallback({ error, onReset }: { error: Error; onReset: () => void
  * Error boundary component that catches React errors in child components.
  * Provides fallback UI and error logging.
  */
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+export class ErrorBoundary extends Component<
+	ErrorBoundaryProps,
+	ErrorBoundaryState
+> {
 	constructor(props: ErrorBoundaryProps) {
 		super(props);
 		this.state = { hasError: false, error: null, errorInfo: null };
@@ -77,7 +88,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 	}
 
 	override componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
-		const componentStack = errorInfo.componentStack ?? "No component stack available";
+		const componentStack =
+			errorInfo.componentStack ?? "No component stack available";
 
 		// Log to console with full context. The main-process console-message
 		// hook in electron/main.ts forwards these to debug.log; when Sentry is

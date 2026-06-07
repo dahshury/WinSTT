@@ -22,16 +22,30 @@ describe("SettingField", () => {
 
 	test("reset button is disabled while value equals defaultValue", () => {
 		renderField(
-			<SettingField defaultValue="a" label="Speed" onReset={() => undefined} value="a" />
+			<SettingField
+				defaultValue="a"
+				label="Speed"
+				onReset={() => undefined}
+				value="a"
+			/>,
 		);
-		expect(screen.getByRole("button", { name: RESET }).hasAttribute("disabled")).toBe(true);
+		expect(
+			screen.getByRole("button", { name: RESET }).hasAttribute("disabled"),
+		).toBe(true);
 	});
 
 	test("reset button is enabled when value differs from defaultValue", () => {
 		renderField(
-			<SettingField defaultValue="a" label="Speed" onReset={() => undefined} value="b" />
+			<SettingField
+				defaultValue="a"
+				label="Speed"
+				onReset={() => undefined}
+				value="b"
+			/>,
 		);
-		expect(screen.getByRole("button", { name: RESET }).hasAttribute("disabled")).toBe(false);
+		expect(
+			screen.getByRole("button", { name: RESET }).hasAttribute("disabled"),
+		).toBe(false);
 	});
 
 	test("explicit isDefault overrides value/defaultValue comparison", () => {
@@ -42,19 +56,30 @@ describe("SettingField", () => {
 				label="Speed"
 				onReset={() => undefined}
 				value="b"
-			/>
+			/>,
 		);
-		expect(screen.getByRole("button", { name: RESET }).hasAttribute("disabled")).toBe(true);
+		expect(
+			screen.getByRole("button", { name: RESET }).hasAttribute("disabled"),
+		).toBe(true);
 	});
 
 	test("hideReset suppresses the reset button even with onReset", () => {
-		renderField(<SettingField hideReset label="Speed" onReset={() => undefined} />);
+		renderField(
+			<SettingField hideReset label="Speed" onReset={() => undefined} />,
+		);
 		expect(screen.queryByRole("button", { name: RESET })).toBeNull();
 	});
 
 	test("clicking reset opens the confirm dialog (does not fire onReset directly)", () => {
 		const onReset = mock(() => undefined);
-		renderField(<SettingField defaultValue="a" label="Speed" onReset={onReset} value="b" />);
+		renderField(
+			<SettingField
+				defaultValue="a"
+				label="Speed"
+				onReset={onReset}
+				value="b"
+			/>,
+		);
 		screen.getByRole("button", { name: RESET }).click();
 		// The reset is gated behind a ConfirmDialog — the click opens it, the
 		// actual onReset fires on confirm (covered by SettingResetButton).

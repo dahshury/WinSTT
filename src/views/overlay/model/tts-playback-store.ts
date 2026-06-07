@@ -34,15 +34,22 @@ export const useTtsPlaybackStore = create<TtsPlaybackStore>()((set) => ({
 	status: "idle",
 	requestId: null,
 	error: null,
-	markStarted: (requestId) => set({ status: "speaking", requestId, error: null }),
+	markStarted: (requestId) =>
+		set({ status: "speaking", requestId, error: null }),
 	// Audio actually scheduled — confirm `speaking` unless the user paused
 	// before the first buffer landed (don't stomp a `paused` intent).
-	markPlaying: () => set((s) => (s.status === "paused" ? s : { ...s, status: "speaking" })),
+	markPlaying: () =>
+		set((s) => (s.status === "paused" ? s : { ...s, status: "speaking" })),
 	// `error` survives the queue's id-less `onEnd` (which fires right after
 	// `markFailed` stops the queue) so the failure reason isn't clobbered.
 	markEnded: () =>
-		set((s) => (s.status === "error" ? s : { ...s, status: "idle", requestId: null, error: null })),
-	markFailed: (reason) => set({ status: "error", requestId: null, error: reason }),
+		set((s) =>
+			s.status === "error"
+				? s
+				: { ...s, status: "idle", requestId: null, error: null },
+		),
+	markFailed: (reason) =>
+		set({ status: "error", requestId: null, error: reason }),
 	setPausedStatus: (paused) =>
 		set((s) => {
 			if (paused) {

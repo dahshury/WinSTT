@@ -57,7 +57,10 @@ function extractRouteKeys(adapterSource: string): Set<string> {
 	if (start === -1 || end === -1 || end <= start) {
 		throw new Error("Could not isolate native bridge ROUTE table");
 	}
-	return collectCaptures(adapterSource.slice(start, end), /\[IPC\.([A-Z0-9_]+)\]\s*:/g);
+	return collectCaptures(
+		adapterSource.slice(start, end),
+		/\[IPC\.([A-Z0-9_]+)\]\s*:/g,
+	);
 }
 
 /** IPC keys that declare an active bridge direction in IPC_DIRECTIONS. */

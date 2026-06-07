@@ -52,32 +52,38 @@ function smallestDownloadBytes(m: ModelInfo): number {
 
 /** Stable A→Z name compare — also the universal tie-breaker for every key. */
 function byName(a: ModelInfo, b: ModelInfo): number {
-	return a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" });
+	return a.displayName.localeCompare(b.displayName, undefined, {
+		sensitivity: "base",
+	});
 }
 
-const COMPARATORS: Record<SttSortKey, (a: ModelInfo, b: ModelInfo) => number> = {
-	// speedScore / accuracyScore are 0..1, higher = better → descending puts the
-	// best first. The 0.5 "unknown" sentinel naturally lands mid-pack.
-	speed: (a, b) => b.speedScore - a.speedScore || byName(a, b),
-	accuracy: (a, b) => b.accuracyScore - a.accuracyScore || byName(a, b),
-	size: (a, b) => {
-		const av = smallestDownloadBytes(a);
-		const bv = smallestDownloadBytes(b);
-		const aUnknown = !Number.isFinite(av);
-		const bUnknown = !Number.isFinite(bv);
-		if (aUnknown !== bUnknown) {
-			return aUnknown ? 1 : -1; // unknown sizes always sort last
-		}
-		return av - bv || byName(a, b);
-	},
-	name: byName,
-};
+const COMPARATORS: Record<SttSortKey, (a: ModelInfo, b: ModelInfo) => number> =
+	{
+		// speedScore / accuracyScore are 0..1, higher = better → descending puts the
+		// best first. The 0.5 "unknown" sentinel naturally lands mid-pack.
+		speed: (a, b) => b.speedScore - a.speedScore || byName(a, b),
+		accuracy: (a, b) => b.accuracyScore - a.accuracyScore || byName(a, b),
+		size: (a, b) => {
+			const av = smallestDownloadBytes(a);
+			const bv = smallestDownloadBytes(b);
+			const aUnknown = !Number.isFinite(av);
+			const bUnknown = !Number.isFinite(bv);
+			if (aUnknown !== bUnknown) {
+				return aUnknown ? 1 : -1; // unknown sizes always sort last
+			}
+			return av - bv || byName(a, b);
+		},
+		name: byName,
+	};
 
 /**
  * Return a NEW array of ``models`` ordered by ``key`` in its fixed best
  * direction. Pure — never mutates the input. The selector uses this to flatten
  * the maker groups into a single globally-sorted column while a sort is active.
  */
-export function sortSttModels(models: readonly ModelInfo[], key: SttSortKey): ModelInfo[] {
+export function sortSttModels(
+	models: readonly ModelInfo[],
+	key: SttSortKey,
+): ModelInfo[] {
 	return [...models].sort(COMPARATORS[key]);
 }

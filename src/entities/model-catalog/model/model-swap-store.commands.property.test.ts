@@ -33,7 +33,10 @@ function resetStore(): void {
 afterEach(resetStore);
 
 function freshModel(): Model {
-	return { main: { active: null, from: null }, realtime: { active: null, from: null } };
+	return {
+		main: { active: null, from: null },
+		realtime: { active: null, from: null },
+	};
 }
 
 function slotOf(kind: ModelSwapKind, m: Model): SlotModel {
@@ -43,7 +46,9 @@ function slotOf(kind: ModelSwapKind, m: Model): SlotModel {
 function assertParity(m: Model, real: Real): void {
 	const s = real.getState();
 	if (s.activeMain !== m.main.active) {
-		throw new Error(`activeMain mismatch: real=${s.activeMain} model=${m.main.active}`);
+		throw new Error(
+			`activeMain mismatch: real=${s.activeMain} model=${m.main.active}`,
+		);
 	}
 	if (s.fromMain !== m.main.from) {
 		throw new Error("fromMain mismatch");
@@ -84,7 +89,10 @@ class BeginSwapCmd implements fc.Command<Model, Real> {
 		slot.from = this.from;
 		// orthogonality
 		const otherAfter = slotOf(otherKind, m);
-		if (otherAfter.active !== otherSlotBefore.active || otherAfter.from !== otherSlotBefore.from) {
+		if (
+			otherAfter.active !== otherSlotBefore.active ||
+			otherAfter.from !== otherSlotBefore.from
+		) {
 			throw new Error("beginSwap mutated the other slot");
 		}
 		assertParity(m, real);
@@ -111,7 +119,10 @@ class SetActiveCmd implements fc.Command<Model, Real> {
 		slotOf(this.kind, m).active = this.name;
 		// setActive does NOT touch `from` — verify
 		const otherAfter = slotOf(otherKind, m);
-		if (otherAfter.active !== otherSlotBefore.active || otherAfter.from !== otherSlotBefore.from) {
+		if (
+			otherAfter.active !== otherSlotBefore.active ||
+			otherAfter.from !== otherSlotBefore.from
+		) {
 			throw new Error("setActive mutated other slot");
 		}
 		assertParity(m, real);
@@ -137,7 +148,10 @@ class ClearCmd implements fc.Command<Model, Real> {
 		slot.active = null;
 		slot.from = null;
 		const otherAfter = slotOf(otherKind, m);
-		if (otherAfter.active !== otherSlotBefore.active || otherAfter.from !== otherSlotBefore.from) {
+		if (
+			otherAfter.active !== otherSlotBefore.active ||
+			otherAfter.from !== otherSlotBefore.from
+		) {
 			throw new Error("clear mutated other slot");
 		}
 		assertParity(m, real);
@@ -155,20 +169,25 @@ const nameArb = fc.string({ minLength: 1, maxLength: 16 });
 
 const commandsArb = fc.commands(
 	[
-		fc.tuple(kindArb, nameArb, nameArb).map(([k, a, b]) => new BeginSwapCmd(k, a, b)),
+		fc
+			.tuple(kindArb, nameArb, nameArb)
+			.map(([k, a, b]) => new BeginSwapCmd(k, a, b)),
 		fc.tuple(kindArb, nameArb).map(([k, n]) => new SetActiveCmd(k, n)),
 		kindArb.map((k) => new ClearCmd(k)),
 	],
-	{ maxCommands: 40 }
+	{ maxCommands: 40 },
 );
 
 test("model-swap-store: arbitrary commands keep model-real parity and slot orthogonality", () => {
 	fc.assert(
 		fc.property(commandsArb, (cmds) => {
 			resetStore();
-			fc.modelRun(() => ({ model: freshModel(), real: useModelSwapStore }), cmds);
+			fc.modelRun(
+				() => ({ model: freshModel(), real: useModelSwapStore }),
+				cmds,
+			);
 		}),
-		{ numRuns: 80 }
+		{ numRuns: 80 },
 	);
 });
 
@@ -190,7 +209,7 @@ test("model-swap-store: clear is idempotent per kind", () => {
 				!useModelSwapStore.getState().isSwapping(kind)
 			);
 		}),
-		{ numRuns: 50 }
+		{ numRuns: 50 },
 	);
 });
 
@@ -207,6 +226,6 @@ test("model-swap-store: beginSwap + clear returns slot to initial state", () => 
 			}
 			return s.activeRealtime === null && s.fromRealtime === null;
 		}),
-		{ numRuns: 50 }
+		{ numRuns: 50 },
 	);
 });

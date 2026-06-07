@@ -13,9 +13,18 @@ import { GROUP_HEADER_CLASSES } from "./card-constants";
  * `data-rail-section="favorites"` so the rail tile's click-to-jump and the
  * scroll-spy both target it like any other group.
  */
-export function FavoritesGroupLabel({ count, noun = "model" }: { count: number; noun?: string }) {
+export function FavoritesGroupLabel({
+	count,
+	noun = "model",
+}: {
+	count: number;
+	noun?: string;
+}) {
 	return (
-		<Combobox.GroupLabel className={GROUP_HEADER_CLASSES} data-rail-section={FAVORITES_GROUP_VALUE}>
+		<Combobox.GroupLabel
+			className={GROUP_HEADER_CLASSES}
+			data-rail-section={FAVORITES_GROUP_VALUE}
+		>
 			<span className="flex size-4 items-center justify-center rounded bg-amber-400/[0.12] text-amber-400">
 				<HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
 			</span>

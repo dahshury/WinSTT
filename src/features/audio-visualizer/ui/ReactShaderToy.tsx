@@ -32,9 +32,17 @@ import {
 	UNIFORM_TIMEDELTA,
 	uniformTypeToGLSLType,
 } from "../lib/glsl-uniforms";
-import type { ReactShaderToyProps, Uniforms, UniformsProp } from "../lib/shader-toy-types";
+import type {
+	ReactShaderToyProps,
+	Uniforms,
+	UniformsProp,
+} from "../lib/shader-toy-types";
 
-export type { ReactShaderToyProps, Uniforms, UniformsProp } from "../lib/shader-toy-types";
+export type {
+	ReactShaderToyProps,
+	Uniforms,
+	UniformsProp,
+} from "../lib/shader-toy-types";
 
 const EMPTY_CONTEXT_ATTRIBUTES: Record<string, unknown> = {};
 
@@ -66,7 +74,7 @@ function useShaderToyEngine(
 		>
 	> & {
 		uniforms: UniformsProp | undefined;
-	}
+	},
 ): void {
 	const glRef = useRef<WebGLRenderingContext | null>(null);
 	const squareVerticesBufferRef = useRef<WebGLBuffer | null>(null);
@@ -80,7 +88,10 @@ function useShaderToyEngine(
 	const lastTimeRef = useRef(0);
 	const resizeObserverRef = useRef<ResizeObserver | undefined>(undefined);
 	const uniformsRef = useRef<
-		Record<string, { type: string; isNeeded: boolean; value?: number[] | number }>
+		Record<
+			string,
+			{ type: string; isNeeded: boolean; value?: number[] | number }
+		>
 	>({
 		[UNIFORM_TIME]: { type: "float", isNeeded: false, value: 0 },
 		[UNIFORM_TIMEDELTA]: { type: "float", isNeeded: false, value: 0 },
@@ -88,19 +99,25 @@ function useShaderToyEngine(
 		[UNIFORM_MOUSE]: { type: "vec4", isNeeded: false, value: [0, 0, 0, 0] },
 		[UNIFORM_RESOLUTION]: { type: "vec2", isNeeded: false, value: [0, 0] },
 		[UNIFORM_FRAME]: { type: "int", isNeeded: false, value: 0 },
-		[UNIFORM_DEVICEORIENTATION]: { type: "vec4", isNeeded: false, value: [0, 0, 0, 0] },
+		[UNIFORM_DEVICEORIENTATION]: {
+			type: "vec4",
+			isNeeded: false,
+			value: [0, 0, 0, 0],
+		},
 	});
 	// Normalize the union prop: keep a snapshot OR a thunk. Either way, the
 	// engine reads through `readPropUniforms()` which never reads `.current`
 	// during render.
 	const propsUniformsRef = useRef<Uniforms | undefined>(
-		typeof propUniforms === "function" ? undefined : propUniforms
+		typeof propUniforms === "function" ? undefined : propUniforms,
 	);
 	const getUniformsFnRef = useRef<(() => Uniforms | undefined) | null>(
-		typeof propUniforms === "function" ? propUniforms : null
+		typeof propUniforms === "function" ? propUniforms : null,
 	);
 	function readPropUniforms(): Uniforms | undefined {
-		return getUniformsFnRef.current ? getUniformsFnRef.current() : propsUniformsRef.current;
+		return getUniformsFnRef.current
+			? getUniformsFnRef.current()
+			: propsUniformsRef.current;
 	}
 
 	const initWebGL = () => {
@@ -110,7 +127,7 @@ function useShaderToyEngine(
 		glRef.current = (canvasRef.current.getContext("webgl", contextAttributes) ||
 			canvasRef.current.getContext(
 				"experimental-webgl",
-				contextAttributes
+				contextAttributes,
 			)) as WebGLRenderingContext | null;
 		glRef.current?.getExtension("OES_standard_derivatives");
 		glRef.current?.getExtension("EXT_shader_texture_lod");
@@ -120,7 +137,9 @@ function useShaderToyEngine(
 		const gl = glRef.current;
 		squareVerticesBufferRef.current = gl?.createBuffer() ?? null;
 		gl?.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBufferRef.current);
-		const vertices = [1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, -1.0, 0.0, -1.0, -1.0, 0.0];
+		const vertices = [
+			1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, -1.0, 0.0, -1.0, -1.0, 0.0,
+		];
 		gl?.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
 	};
 
@@ -136,7 +155,10 @@ function useShaderToyEngine(
 		gl.canvas.width = displayWidth;
 		gl.canvas.height = displayHeight;
 		if (uniformsRef.current.iResolution?.isNeeded && shaderProgramRef.current) {
-			const rUniform = gl.getUniformLocation(shaderProgramRef.current, UNIFORM_RESOLUTION);
+			const rUniform = gl.getUniformLocation(
+				shaderProgramRef.current,
+				UNIFORM_RESOLUTION,
+			);
 			gl.uniform2fv(rUniform, [gl.canvas.width, gl.canvas.height]);
 		}
 	};
@@ -178,15 +200,15 @@ function useShaderToyEngine(
 		if (!gl.getProgramParameter(shaderProgramRef.current, gl.LINK_STATUS)) {
 			onError?.(
 				log(
-					`Unable to initialize the shader program: ${gl.getProgramInfoLog(shaderProgramRef.current)}`
-				)
+					`Unable to initialize the shader program: ${gl.getProgramInfoLog(shaderProgramRef.current)}`,
+				),
 			);
 			return;
 		}
 		gl.useProgram(shaderProgramRef.current);
 		vertexPositionAttributeRef.current = gl.getAttribLocation(
 			shaderProgramRef.current,
-			"aVertexPosition"
+			"aVertexPosition",
 		);
 		gl.enableVertexAttribArray(vertexPositionAttributeRef.current);
 	};
@@ -229,7 +251,7 @@ function useShaderToyEngine(
 				fragmentShader = insertStringAtIndex(
 					fragmentShader,
 					`uniform ${u.type} ${uniform}; \n`,
-					fragmentShader.lastIndexOf(precisionString) + precisionString.length
+					fragmentShader.lastIndexOf(precisionString) + precisionString.length,
 				);
 				u.isNeeded = true;
 			}
@@ -245,7 +267,9 @@ function useShaderToyEngine(
 		if (!(gl && shaderProgramRef.current)) {
 			return;
 		}
-		const delta = lastTimeRef.current ? (timestamp - lastTimeRef.current) / 1000 : 0;
+		const delta = lastTimeRef.current
+			? (timestamp - lastTimeRef.current) / 1000
+			: 0;
 		lastTimeRef.current = timestamp;
 		const pu = readPropUniforms();
 		if (pu) {
@@ -264,22 +288,39 @@ function useShaderToyEngine(
 			}
 		}
 		if (uniformsRef.current.iTime?.isNeeded) {
-			const timeUniform = gl.getUniformLocation(shaderProgramRef.current, UNIFORM_TIME);
+			const timeUniform = gl.getUniformLocation(
+				shaderProgramRef.current,
+				UNIFORM_TIME,
+			);
 			gl.uniform1f(timeUniform, (timerRef.current += delta));
 		}
 		if (uniformsRef.current.iTimeDelta?.isNeeded) {
-			const loc = gl.getUniformLocation(shaderProgramRef.current, UNIFORM_TIMEDELTA);
+			const loc = gl.getUniformLocation(
+				shaderProgramRef.current,
+				UNIFORM_TIMEDELTA,
+			);
 			gl.uniform1f(loc, delta);
 		}
 		if (uniformsRef.current.iDate?.isNeeded) {
 			const d = new Date();
 			const time =
-				d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() * 0.001;
+				d.getHours() * 3600 +
+				d.getMinutes() * 60 +
+				d.getSeconds() +
+				d.getMilliseconds() * 0.001;
 			const loc = gl.getUniformLocation(shaderProgramRef.current, UNIFORM_DATE);
-			gl.uniform4fv(loc, [d.getFullYear(), d.getMonth() + 1, d.getDate(), time]);
+			gl.uniform4fv(loc, [
+				d.getFullYear(),
+				d.getMonth() + 1,
+				d.getDate(),
+				time,
+			]);
 		}
 		if (uniformsRef.current.iFrame?.isNeeded) {
-			const loc = gl.getUniformLocation(shaderProgramRef.current, UNIFORM_FRAME);
+			const loc = gl.getUniformLocation(
+				shaderProgramRef.current,
+				UNIFORM_FRAME,
+			);
 			const frameVal = uniformsRef.current.iFrame.value;
 			const frame = typeof frameVal === "number" ? frameVal : 0;
 			uniformsRef.current.iFrame.value = frame + 1;
@@ -295,7 +336,14 @@ function useShaderToyEngine(
 		gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
 		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 		gl.bindBuffer(gl.ARRAY_BUFFER, squareVerticesBufferRef.current);
-		gl.vertexAttribPointer(vertexPositionAttributeRef.current ?? 0, 3, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribPointer(
+			vertexPositionAttributeRef.current ?? 0,
+			3,
+			gl.FLOAT,
+			false,
+			0,
+			0,
+		);
 		setUniforms(timestamp);
 		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 		if (animateWhenNotVisibleRef.current || isVisibleRef.current) {
@@ -356,7 +404,7 @@ function useShaderToyEngine(
 					}
 				}
 			},
-			{ threshold: 0 }
+			{ threshold: 0 },
 		);
 		observer.observe(canvas);
 		return () => observer.disconnect();
@@ -390,7 +438,7 @@ function useShaderToyEngine(
 			pinnedHandlers.processCustomUniforms();
 			pinnedHandlers.initShaders(
 				pinnedHandlers.preProcessFragment(pinnedInitOpts.fs || BASIC_FS),
-				pinnedInitOpts.vs || BASIC_VS
+				pinnedInitOpts.vs || BASIC_VS,
 			);
 			pinnedHandlers.initBuffers();
 			cancelAnimationFrame(initFrameIdRef.current ?? 0);
@@ -438,7 +486,10 @@ function useShaderToyEngine(
 
 		return () => {
 			canvasNode.removeEventListener("webglcontextlost", handleContextLost);
-			canvasNode.removeEventListener("webglcontextrestored", handleContextRestored);
+			canvasNode.removeEventListener(
+				"webglcontextrestored",
+				handleContextRestored,
+			);
 			cancelAnimationFrame(initFrameIdRef.current ?? 0);
 			cancelAnimationFrame(animFrameIdRef.current ?? 0);
 			if (observer) {
@@ -488,6 +539,10 @@ export function ReactShaderToy({
 	});
 
 	return (
-		<canvas ref={canvasRef} style={{ height: "100%", width: "100%", ...style }} {...canvasProps} />
+		<canvas
+			ref={canvasRef}
+			style={{ height: "100%", width: "100%", ...style }}
+			{...canvasProps}
+		/>
 	);
 }

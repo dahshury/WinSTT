@@ -33,7 +33,8 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		family: "smollm",
 		paramSize: "135M",
 		sizeBytes: Math.round(0.27 * GB),
-		description: "Hugging Face SmolLM 2, 135M parameters. The smallest viable choice.",
+		description:
+			"Hugging Face SmolLM 2, 135M parameters. The smallest viable choice.",
 		tags: ["fast", "tiny"],
 	},
 	{
@@ -42,7 +43,8 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 		family: "smollm",
 		paramSize: "360M",
 		sizeBytes: Math.round(0.73 * GB),
-		description: "Hugging Face SmolLM 2 360M. Tiny footprint with passable instruction following.",
+		description:
+			"Hugging Face SmolLM 2 360M. Tiny footprint with passable instruction following.",
 		tags: ["fast", "tiny"],
 	},
 	{
@@ -187,6 +189,8 @@ export const RECOMMENDED_OLLAMA_MODELS: readonly RecommendedOllamaModel[] = [
 	},
 ];
 
-export function findRecommendedModel(name: string): RecommendedOllamaModel | undefined {
+export function findRecommendedModel(
+	name: string,
+): RecommendedOllamaModel | undefined {
 	return RECOMMENDED_OLLAMA_MODELS.find((m) => m.name === name);
 }

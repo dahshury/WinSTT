@@ -16,7 +16,11 @@ const LEADING_SLASH_RE = /^\/+/;
  *   `<root>` regardless of which window asks, so `/foo.png` lands at
  *   `<root>/foo.png` instead of the filesystem drive root.
  */
-export function resolvePublicAsset(path: string, protocol: string, href: string): string {
+export function resolvePublicAsset(
+	path: string,
+	protocol: string,
+	href: string,
+): string {
 	const rel = path.replace(LEADING_SLASH_RE, "");
 	if (protocol !== "file:") {
 		return `/${rel}`;
@@ -44,5 +48,9 @@ export function publicAsset(path: string): string {
 	if (typeof window === "undefined") {
 		return `/${path.replace(LEADING_SLASH_RE, "")}`;
 	}
-	return resolvePublicAsset(path, window.location.protocol, window.location.href);
+	return resolvePublicAsset(
+		path,
+		window.location.protocol,
+		window.location.href,
+	);
 }

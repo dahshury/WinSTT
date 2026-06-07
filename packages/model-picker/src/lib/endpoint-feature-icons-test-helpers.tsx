@@ -104,7 +104,9 @@ const QUANTIZATION_LABELS: Record<string, string> = {
 	gguf: "GGUF",
 };
 
-export function getQuantizationLabel(endpoint: OpenRouterEndpoint): string | undefined {
+export function getQuantizationLabel(
+	endpoint: OpenRouterEndpoint,
+): string | undefined {
 	const quant = endpoint.quantization;
 	if (!quant) {
 		return;
@@ -122,7 +124,11 @@ export interface ChipChromeOptions {
 	shouldShowLabel: boolean;
 }
 
-export function getChipSizeClass({ flat, isSmall, shouldShowLabel }: ChipChromeOptions): string {
+export function getChipSizeClass({
+	flat,
+	isSmall,
+	shouldShowLabel,
+}: ChipChromeOptions): string {
 	if (shouldShowLabel) {
 		return isSmall ? "px-1 py-0.5" : "px-1.5 py-0.5";
 	}
@@ -132,14 +138,17 @@ export function getChipSizeClass({ flat, isSmall, shouldShowLabel }: ChipChromeO
 	return isSmall ? "h-4 w-4 p-0.5" : "h-5 w-5 p-0.5";
 }
 
-export function getChipIcon(config: FeatureIconConfig, isSmall: boolean): React.ReactNode {
+export function getChipIcon(
+	config: FeatureIconConfig,
+	isSmall: boolean,
+): React.ReactNode {
 	return isSmall ? config.iconSm : config.icon;
 }
 
 export function getChipLabelClass(isSmall: boolean): string {
 	return cn(
 		"font-semibold uppercase tracking-wider",
-		isSmall ? "text-[10px] sm:text-[8px]" : "text-[10px] sm:text-[9px]"
+		isSmall ? "text-[10px] sm:text-[8px]" : "text-[10px] sm:text-[9px]",
 	);
 }
 
@@ -162,7 +171,7 @@ export function buildQuantizationFeature(quantLabel: string): {
 
 export function resolveParamFeature(
 	param: string,
-	supportedParamsSet: Set<string>
+	supportedParamsSet: Set<string>,
 ): FeatureIconConfig | null {
 	if (!supportedParamsSet.has(param)) {
 		return null;
@@ -173,7 +182,7 @@ export function resolveParamFeature(
 export function appendSupportedParams(
 	features: Array<{ key: string; config: FeatureIconConfig }>,
 	supportedParamsSet: Set<string>,
-	maxIcons: number
+	maxIcons: number,
 ): void {
 	for (const param of FEATURE_PRIORITY) {
 		if (features.length >= maxIcons) {
@@ -188,7 +197,7 @@ export function appendSupportedParams(
 
 export function buildFeatures(
 	endpoint: OpenRouterEndpoint,
-	maxIcons: number
+	maxIcons: number,
 ): Array<{ key: string; config: FeatureIconConfig }> {
 	const supportedParamsSet = new Set(endpoint.supported_parameters ?? []);
 	const quantLabel = getQuantizationLabel(endpoint);

@@ -20,19 +20,20 @@ let observers: FakeResizeObserver[] = [];
 
 function installResizeObserver() {
 	observers = [];
-	(globalThis as { ResizeObserver?: unknown }).ResizeObserver = function MockResizeObserver(
-		this: FakeResizeObserver,
-		cb: ResizeObserverCallback
-	) {
-		const inst: FakeResizeObserver = {
-			callback: cb,
-			observe: () => undefined,
-			unobserve: () => undefined,
-			disconnect: () => undefined,
-		};
-		observers.push(inst);
-		Object.assign(this, inst);
-	} as unknown as typeof ResizeObserver;
+	(globalThis as { ResizeObserver?: unknown }).ResizeObserver =
+		function MockResizeObserver(
+			this: FakeResizeObserver,
+			cb: ResizeObserverCallback,
+		) {
+			const inst: FakeResizeObserver = {
+				callback: cb,
+				observe: () => undefined,
+				unobserve: () => undefined,
+				disconnect: () => undefined,
+			};
+			observers.push(inst);
+			Object.assign(this, inst);
+		} as unknown as typeof ResizeObserver;
 }
 
 /**
@@ -47,7 +48,9 @@ function elWithRect(box: {
 	height: number;
 }): HTMLElement {
 	const el = document.createElement("div");
-	(el as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () =>
+	(
+		el as unknown as { getBoundingClientRect: () => DOMRect }
+	).getBoundingClientRect = () =>
 		({
 			top: box.top,
 			left: box.left,
@@ -72,7 +75,9 @@ function elWithRect(box: {
  * render (which `react-hooks-js/refs` flags).
  */
 function useHarness(container: HTMLElement | null) {
-	const [ref] = useState<RefObject<HTMLElement | null>>(() => ({ current: container }));
+	const [ref] = useState<RefObject<HTMLElement | null>>(() => ({
+		current: container,
+	}));
 	useLayoutEffect(() => {
 		ref.current = container;
 	}, [container, ref]);
@@ -98,7 +103,12 @@ describe("useProximityHover", () => {
 	});
 
 	test("registerItem + measureItems compute container-relative rects", () => {
-		const container = elWithRect({ top: 100, left: 50, width: 200, height: 300 });
+		const container = elWithRect({
+			top: 100,
+			left: 50,
+			width: 200,
+			height: 300,
+		});
 		const { result } = renderHook(() => useHarness(container));
 
 		const item0 = elWithRect({ top: 110, left: 60, width: 180, height: 20 });
@@ -141,7 +151,12 @@ describe("useProximityHover", () => {
 	});
 
 	test("onMouseMove resolves the active index via findActiveIndex (hit + buffer)", () => {
-		const container = elWithRect({ top: 100, left: 0, width: 200, height: 300 });
+		const container = elWithRect({
+			top: 100,
+			left: 0,
+			width: 200,
+			height: 300,
+		});
 		const { result } = renderHook(() => useHarness(container));
 		const item0 = elWithRect({ top: 110, left: 0, width: 200, height: 20 });
 		const item1 = elWithRect({ top: 140, left: 0, width: 200, height: 20 });

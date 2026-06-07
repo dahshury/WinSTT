@@ -167,7 +167,8 @@ function buildMetaEntries(
 	});
 	if (model.nativeStreaming) {
 		const latencyMs = nativeStreamingLatencyMs(model);
-		const latency = latencyMs === null ? null : formatNativeStreamingLatency(latencyMs);
+		const latency =
+			latencyMs === null ? null : formatNativeStreamingLatency(latencyMs);
 		entries.push({
 			key: "streaming",
 			icon: LiveStreaming02Icon,

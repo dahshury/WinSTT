@@ -58,7 +58,12 @@ const SYSTEM_INFO: SystemInfoEntry = {
 function makeEntry(id: string): ModelStateEntry {
 	return {
 		id,
-		cache: { downloaded_bytes: 0, progress: 0, state: "not_cached", total_bytes: 100 },
+		cache: {
+			downloaded_bytes: 0,
+			progress: 0,
+			state: "not_cached",
+			total_bytes: 100,
+		},
 		cache_by_quantization: {},
 		available_quantizations: [""],
 		comfortable_on_cpu: true,
@@ -68,7 +73,11 @@ function makeEntry(id: string): ModelStateEntry {
 }
 
 function resetStore(): void {
-	useModelStateStore.setState({ statesById: {}, systemInfo: null, isLoaded: false });
+	useModelStateStore.setState({
+		statesById: {},
+		systemInfo: null,
+		isLoaded: false,
+	});
 }
 
 afterEach(() => {
@@ -84,7 +93,11 @@ describe("useModelStateStore.setAll (covers toMap)", () => {
 		const entries = [makeEntry("tiny"), makeEntry("base"), makeEntry("small")];
 		useModelStateStore.getState().setAll(entries, SYSTEM_INFO);
 		const state = useModelStateStore.getState();
-		expect(Object.keys(state.statesById).sort()).toEqual(["base", "small", "tiny"]);
+		expect(Object.keys(state.statesById).sort()).toEqual([
+			"base",
+			"small",
+			"tiny",
+		]);
 		expect(state.statesById.tiny?.id).toBe("tiny");
 		expect(state.statesById.base?.id).toBe("base");
 		expect(state.systemInfo).toEqual(SYSTEM_INFO);
@@ -103,9 +116,14 @@ describe("useModelStateStore.setAll (covers toMap)", () => {
 	test("toMap overwrites duplicates with the last entry for a given id", () => {
 		resetStore();
 		const first = makeEntry("dup");
-		const second: ModelStateEntry = { ...makeEntry("dup"), estimated_bytes: 999 };
+		const second: ModelStateEntry = {
+			...makeEntry("dup"),
+			estimated_bytes: 999,
+		};
 		useModelStateStore.getState().setAll([first, second], SYSTEM_INFO);
-		expect(useModelStateStore.getState().statesById.dup?.estimated_bytes).toBe(999);
+		expect(useModelStateStore.getState().statesById.dup?.estimated_bytes).toBe(
+			999,
+		);
 	});
 });
 
@@ -179,7 +197,10 @@ describe("useModelStateStore.refresh", () => {
 		expect(useModelStateStore.getState().isLoaded).toBe(false);
 
 		// Server becomes responsive; a scheduled retry must pick it up.
-		ipcOverrides.payload = { states: [makeEntry("vosk")], system_info: SYSTEM_INFO };
+		ipcOverrides.payload = {
+			states: [makeEntry("vosk")],
+			system_info: SYSTEM_INFO,
+		};
 		await new Promise((r) => setTimeout(r, 60));
 
 		const state = useModelStateStore.getState();
@@ -191,7 +212,10 @@ describe("useModelStateStore.refresh", () => {
 		resetStore();
 		_setModelStateRetryDelaysForTests([5, 5, 5, 5]);
 		fetchSpy.mockClear();
-		ipcOverrides.payload = { states: [makeEntry("tiny")], system_info: SYSTEM_INFO };
+		ipcOverrides.payload = {
+			states: [makeEntry("tiny")],
+			system_info: SYSTEM_INFO,
+		};
 		await useModelStateStore.getState().refresh();
 		expect(useModelStateStore.getState().isLoaded).toBe(true);
 		const callsAfterSuccess = fetchSpy.mock.calls.length;
@@ -211,15 +235,23 @@ describe("initModelStateStore", () => {
 		expect(ipcOverrides.swapCb).not.toBeNull();
 
 		// Cache-changed push should trigger a fresh refresh().
-		ipcOverrides.payload = { states: [makeEntry("from-cache")], system_info: SYSTEM_INFO };
+		ipcOverrides.payload = {
+			states: [makeEntry("from-cache")],
+			system_info: SYSTEM_INFO,
+		};
 		const cacheCb = ipcOverrides.cacheCb as ((id: string) => void) | null;
 		cacheCb?.("from-cache");
 		// Wait a microtask so the in-flight refresh() promise resolves.
 		await new Promise((r) => setTimeout(r, 0));
-		expect(useModelStateStore.getState().statesById["from-cache"]).toBeDefined();
+		expect(
+			useModelStateStore.getState().statesById["from-cache"],
+		).toBeDefined();
 
 		// Swap-completed push should also trigger a refresh().
-		ipcOverrides.payload = { states: [makeEntry("from-swap")], system_info: SYSTEM_INFO };
+		ipcOverrides.payload = {
+			states: [makeEntry("from-swap")],
+			system_info: SYSTEM_INFO,
+		};
 		const swapCb = ipcOverrides.swapCb as (() => void) | null;
 		swapCb?.();
 		await new Promise((r) => setTimeout(r, 0));

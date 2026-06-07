@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { findRecommendedModel, RECOMMENDED_OLLAMA_MODELS } from "./recommended-models";
+import {
+	findRecommendedModel,
+	RECOMMENDED_OLLAMA_MODELS,
+} from "./recommended-models";
 
 // Tags the OpenAPI `RecommendedOllamaModel` schema describes as free-form, but
 // the curated catalog only ever uses this closed vocabulary. A typo (e.g.
@@ -79,7 +82,9 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 	});
 
 	test("at least one model is tagged 'recommended' (default-pick surface)", () => {
-		const recommended = RECOMMENDED_OLLAMA_MODELS.filter((m) => m.tags?.includes("recommended"));
+		const recommended = RECOMMENDED_OLLAMA_MODELS.filter((m) =>
+			m.tags?.includes("recommended"),
+		);
 		expect(recommended.length).toBeGreaterThan(0);
 	});
 
@@ -90,7 +95,9 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 		// So the only invariant we can assert is that every "tiny" model is
 		// small by parameter label. Anyone reading the tag as "small download"
 		// would be misled — flagged as a UX wart, not asserted as a size bound.
-		const tiny = RECOMMENDED_OLLAMA_MODELS.filter((m) => m.tags?.includes("tiny"));
+		const tiny = RECOMMENDED_OLLAMA_MODELS.filter((m) =>
+			m.tags?.includes("tiny"),
+		);
 		expect(tiny.length).toBeGreaterThan(0);
 		// llama3.2:1b is the proof that tiny != small-on-disk.
 		const llama1b = tiny.find((m) => m.name === "llama3.2:1b");
@@ -99,16 +106,16 @@ describe("RECOMMENDED_OLLAMA_MODELS contract", () => {
 	});
 
 	test("offers the requested Gemma 4 local variants", () => {
-		const gemmaNames = RECOMMENDED_OLLAMA_MODELS.filter((m) => m.family === "gemma").map(
-			(m) => m.name
-		);
+		const gemmaNames = RECOMMENDED_OLLAMA_MODELS.filter(
+			(m) => m.family === "gemma",
+		).map((m) => m.name);
 		expect(gemmaNames).toEqual(["gemma4:e2b", "gemma4:e4b", "gemma4:12b"]);
 	});
 
 	test("omits the plain non-instruct SmolLM 2 1.7B tag", () => {
-		const smollmNames = RECOMMENDED_OLLAMA_MODELS.filter((m) => m.family === "smollm").map(
-			(m) => m.name
-		);
+		const smollmNames = RECOMMENDED_OLLAMA_MODELS.filter(
+			(m) => m.family === "smollm",
+		).map((m) => m.name);
 		expect(smollmNames).toEqual(["smollm2:135m", "smollm2:360m"]);
 		expect(findRecommendedModel("smollm2:1.7b")).toBeUndefined();
 	});
@@ -129,7 +136,9 @@ describe("findRecommendedModel", () => {
 	});
 
 	test("returns the SAME object reference as the catalog entry (no clone)", () => {
-		const fromCatalog = RECOMMENDED_OLLAMA_MODELS.find((m) => m.name === "phi4-mini:3.8b");
+		const fromCatalog = RECOMMENDED_OLLAMA_MODELS.find(
+			(m) => m.name === "phi4-mini:3.8b",
+		);
 		expect(findRecommendedModel("phi4-mini:3.8b")).toBe(fromCatalog);
 	});
 

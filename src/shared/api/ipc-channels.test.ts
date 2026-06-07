@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { channelsByDirection, IPC, IPC_DIRECTIONS, type IpcChannel } from "./ipc-channels";
+import {
+	channelsByDirection,
+	IPC,
+	IPC_DIRECTIONS,
+	type IpcChannel,
+} from "./ipc-channels";
 
 describe("IPC channel constants", () => {
 	test("contains a 'stt:realtime-text' channel", () => {

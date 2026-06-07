@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import { fetchOpenRouterModels, type OpenRouterModel } from "@/shared/api/ipc-client";
+import {
+	fetchOpenRouterModels,
+	type OpenRouterModel,
+} from "@/shared/api/ipc-client";
 
 interface OpenRouterCatalogState {
 	error: string | null;
@@ -33,25 +36,27 @@ function makeScanSuccessState(result: {
 	};
 }
 
-export const useOpenRouterCatalogStore = create<OpenRouterCatalogState>()((set, get) => ({
-	models: [],
-	isLoaded: false,
-	isScanning: false,
-	isReachable: false,
-	error: null,
-	scanModels: async (force = false) => {
-		// Opening the combobox calls this with no args — once the catalog is loaded,
-		// reuse the cache instead of refetching (which spins + resets the list from
-		// outside). `force` (e.g. right after the API key is saved) retries anyway.
-		if (get().isScanning || (!force && get().isLoaded)) {
-			return;
-		}
-		set({ isScanning: true, error: null });
-		try {
-			const result = await fetchOpenRouterModels();
-			set(makeScanSuccessState(result));
-		} catch (err) {
-			set(makeScanErrorState(err));
-		}
-	},
-}));
+export const useOpenRouterCatalogStore = create<OpenRouterCatalogState>()(
+	(set, get) => ({
+		models: [],
+		isLoaded: false,
+		isScanning: false,
+		isReachable: false,
+		error: null,
+		scanModels: async (force = false) => {
+			// Opening the combobox calls this with no args — once the catalog is loaded,
+			// reuse the cache instead of refetching (which spins + resets the list from
+			// outside). `force` (e.g. right after the API key is saved) retries anyway.
+			if (get().isScanning || (!force && get().isLoaded)) {
+				return;
+			}
+			set({ isScanning: true, error: null });
+			try {
+				const result = await fetchOpenRouterModels();
+				set(makeScanSuccessState(result));
+			} catch (err) {
+				set(makeScanErrorState(err));
+			}
+		},
+	}),
+);

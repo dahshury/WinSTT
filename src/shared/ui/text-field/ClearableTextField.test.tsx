@@ -11,7 +11,7 @@ describe("ClearableTextField", () => {
 				onValueChange={onValueChange}
 				placeholder="Search"
 				value=""
-			/>
+			/>,
 		);
 
 		expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
@@ -22,7 +22,7 @@ describe("ClearableTextField", () => {
 				onValueChange={onValueChange}
 				placeholder="Search"
 				value="whisper"
-			/>
+			/>,
 		);
 
 		expect(screen.getByRole("button", { name: "Clear search" })).toBeDefined();
@@ -36,7 +36,7 @@ describe("ClearableTextField", () => {
 				onValueChange={onValueChange}
 				placeholder="Search"
 				value="whisper"
-			/>
+			/>,
 		);
 
 		expect(container.querySelector(".t-clear-mirror")).toBeNull();

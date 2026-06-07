@@ -15,7 +15,7 @@ describe("cn property tests", () => {
 				const withoutFalsy = cn(a, b);
 				return withFalsy === withoutFalsy;
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -25,20 +25,23 @@ describe("cn property tests", () => {
 				classToken,
 				classToken,
 				classToken,
-				(a, b, c) => cn(cn(a, b), c) === cn(a, cn(b, c))
+				(a, b, c) => cn(cn(a, b), c) === cn(a, cn(b, c)),
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
 	test("idempotence: cn(cn(x)) === cn(x)", () => {
 		fc.assert(
-			fc.property(fc.array(classToken, { minLength: 0, maxLength: 8 }), (tokens) => {
-				const once = cn(...tokens);
-				const twice = cn(once);
-				return once === twice;
-			}),
-			{ numRuns: 200 }
+			fc.property(
+				fc.array(classToken, { minLength: 0, maxLength: 8 }),
+				(tokens) => {
+					const once = cn(...tokens);
+					const twice = cn(once);
+					return once === twice;
+				},
+			),
+			{ numRuns: 200 },
 		);
 	});
 
@@ -51,18 +54,22 @@ describe("cn property tests", () => {
 				}
 				return out === out.trim() && !out.includes("  ");
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
 	test("conflicting tailwind class — last wins (right-biased merge)", () => {
 		fc.assert(
-			fc.property(fc.integer({ min: 0, max: 12 }), fc.integer({ min: 0, max: 12 }), (a, b) => {
-				fc.pre(a !== b);
-				const result = cn(`p-${a}`, `p-${b}`);
-				return result === `p-${b}`;
-			}),
-			{ numRuns: 200 }
+			fc.property(
+				fc.integer({ min: 0, max: 12 }),
+				fc.integer({ min: 0, max: 12 }),
+				(a, b) => {
+					fc.pre(a !== b);
+					const result = cn(`p-${a}`, `p-${b}`);
+					return result === `p-${b}`;
+				},
+			),
+			{ numRuns: 200 },
 		);
 	});
 });

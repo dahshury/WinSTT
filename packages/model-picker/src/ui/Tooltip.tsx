@@ -32,5 +32,9 @@ export interface TooltipProps {
 }
 
 export function Tooltip({ children, disabled }: TooltipProps) {
-	return <TooltipPrimitive.Root disabled={disabled}>{children}</TooltipPrimitive.Root>;
+	return (
+		<TooltipPrimitive.Root disabled={disabled}>
+			{children}
+		</TooltipPrimitive.Root>
+	);
 }

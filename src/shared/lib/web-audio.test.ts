@@ -13,8 +13,10 @@ import {
 // unavoidable cast between each mock literal and the real type. Generic over
 // the actual literal so the mock's true shape is still type-checked at the call
 // site. Each helper returns the exact same object it was given.
-const asAudioContext = <T extends object>(ctx: T): AudioContext => ctx as unknown as AudioContext;
-const asAudioBuffer = <T extends object>(buf: T): AudioBuffer => buf as unknown as AudioBuffer;
+const asAudioContext = <T extends object>(ctx: T): AudioContext =>
+	ctx as unknown as AudioContext;
+const asAudioBuffer = <T extends object>(buf: T): AudioBuffer =>
+	buf as unknown as AudioBuffer;
 
 describe("toArrayBuffer", () => {
 	test("returns a clean ArrayBuffer of just the view's window", () => {
@@ -97,11 +99,13 @@ describe("createOutputContext", () => {
 	// AudioContext is not implemented by happy-dom; stub the global constructor
 	// to record the options it was invoked with so we can assert the routing
 	// decision (default vs sinkId) without a real Web Audio backend.
-	const originalAudioContext = (globalThis as { AudioContext?: unknown }).AudioContext;
+	const originalAudioContext = (globalThis as { AudioContext?: unknown })
+		.AudioContext;
 	const calls: Array<AudioContextOptions | undefined> = [];
 
 	afterEach(() => {
-		(globalThis as { AudioContext?: unknown }).AudioContext = originalAudioContext;
+		(globalThis as { AudioContext?: unknown }).AudioContext =
+			originalAudioContext;
 		calls.length = 0;
 	});
 
@@ -121,7 +125,9 @@ describe("createOutputContext", () => {
 
 	test("constructs a default context when deviceId is empty", () => {
 		installFakeAudioContext();
-		const ctx = createOutputContext("") as unknown as { options?: AudioContextOptions };
+		const ctx = createOutputContext("") as unknown as {
+			options?: AudioContextOptions;
+		};
 		expect(calls).toHaveLength(1);
 		// Empty deviceId → bare constructor, no sinkId option passed.
 		expect(calls[0]).toBeUndefined();
@@ -186,7 +192,9 @@ describe("routeContextToSink", () => {
 				throw new Error("device unavailable");
 			});
 			const ctx = asAudioContext({ setSinkId });
-			await expect(routeContextToSink(ctx, "ghost-device")).resolves.toBeUndefined();
+			await expect(
+				routeContextToSink(ctx, "ghost-device"),
+			).resolves.toBeUndefined();
 			expect(setSinkId).toHaveBeenCalledTimes(1);
 			expect(warnings.some((w) => String(w[0]).includes("[sound]"))).toBe(true);
 		} finally {

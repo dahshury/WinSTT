@@ -2,7 +2,10 @@ import { cva } from "class-variance-authority";
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { cn } from "@/shared/lib/cn";
 import type { VisualizerSize } from "../lib/audio-visualizer";
-import { DEFAULT_VISUALIZER_COLOR as DEFAULT_COLOR, hexToRgb } from "../lib/hex-to-rgb";
+import {
+	DEFAULT_VISUALIZER_COLOR as DEFAULT_COLOR,
+	hexToRgb,
+} from "../lib/hex-to-rgb";
 import { useAgentState } from "../lib/use-agent-state";
 import { useWaveAnimator } from "../lib/use-wave-animator";
 import { ReactShaderToy, type Uniforms } from "./ReactShaderToy";
@@ -164,7 +167,7 @@ export function AudioVisualizerWave({
 			className={cn(
 				waveVariants({ size }),
 				"mask-[linear-gradient(90deg,transparent_0%,black_20%,black_80%,transparent_100%)]",
-				className
+				className,
 			)}
 			data-lk-state={state}
 			{...props}

@@ -51,13 +51,19 @@ interface ModelSwapStore {
 // We auto-clear phantoms so the chip can never strand.
 const DEFAULT_OPTIMISTIC_SWAP_STALE_MS = 6000;
 let optimisticSwapStaleMs = DEFAULT_OPTIMISTIC_SWAP_STALE_MS;
-const selfHealTimers: Record<ModelSwapKind, ReturnType<typeof setTimeout> | null> = {
+const selfHealTimers: Record<
+	ModelSwapKind,
+	ReturnType<typeof setTimeout> | null
+> = {
 	main: null,
 	realtime: null,
 };
 // `true` once a real `model_swap_started` (`setActive`) confirms the kind's
 // in-flight swap. Reset when a fresh optimistic `beginSwap` opens a new one.
-const swapConfirmed: Record<ModelSwapKind, boolean> = { main: false, realtime: false };
+const swapConfirmed: Record<ModelSwapKind, boolean> = {
+	main: false,
+	realtime: false,
+};
 
 function cancelSelfHeal(kind: ModelSwapKind): void {
 	const timer = selfHealTimers[kind];
@@ -96,11 +102,12 @@ export const useModelSwapStore = create<ModelSwapStore>()((set, get) => ({
 		// optimistic open — the cross-window ordering), update the `from` leg
 		// for the arrow but do NOT re-arm the self-heal, which would wrongly
 		// clear an in-flight (possibly long-downloading) confirmed swap.
-		const alreadyConfirmedSameTarget = swapConfirmed[kind] && activeFor(kind) === to;
+		const alreadyConfirmedSameTarget =
+			swapConfirmed[kind] && activeFor(kind) === to;
 		set(
 			kind === "main"
 				? { activeMain: to, fromMain: from }
-				: { activeRealtime: to, fromRealtime: from }
+				: { activeRealtime: to, fromRealtime: from },
 		);
 		if (!alreadyConfirmedSameTarget) {
 			swapConfirmed[kind] = false;
@@ -120,7 +127,7 @@ export const useModelSwapStore = create<ModelSwapStore>()((set, get) => ({
 		set(
 			kind === "main"
 				? { activeMain: null, fromMain: null }
-				: { activeRealtime: null, fromRealtime: null }
+				: { activeRealtime: null, fromRealtime: null },
 		);
 	},
 	isSwapping: (kind) =>
@@ -181,7 +188,10 @@ export function initModelSwapStore(): () => void {
 		if (state.activeMain !== null && info.model === state.activeMain) {
 			state.clear("main");
 		}
-		if (state.activeRealtime !== null && info.realtime_model === state.activeRealtime) {
+		if (
+			state.activeRealtime !== null &&
+			info.realtime_model === state.activeRealtime
+		) {
 			state.clear("realtime");
 		}
 	});

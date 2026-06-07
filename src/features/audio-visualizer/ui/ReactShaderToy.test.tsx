@@ -71,8 +71,12 @@ function installFakeWebGl() {
 	// recursing during the synchronous test while still exercising the
 	// schedule/cancel bookkeeping.
 	let rafId = 0;
-	globalThis.requestAnimationFrame = mock(() => ++rafId) as typeof requestAnimationFrame;
-	globalThis.cancelAnimationFrame = mock(() => undefined) as typeof cancelAnimationFrame;
+	globalThis.requestAnimationFrame = mock(
+		() => ++rafId,
+	) as typeof requestAnimationFrame;
+	globalThis.cancelAnimationFrame = mock(
+		() => undefined,
+	) as typeof cancelAnimationFrame;
 
 	return {
 		loseContext,
@@ -104,7 +108,7 @@ describe("ReactShaderToy WebGL lifecycle", () => {
 		const { unmount } = render(
 			<StrictMode>
 				<Probe />
-			</StrictMode>
+			</StrictMode>,
 		);
 		expect(gl.loseContext).not.toHaveBeenCalled();
 		unmount();

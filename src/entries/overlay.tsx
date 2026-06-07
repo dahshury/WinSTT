@@ -26,5 +26,5 @@ renderReactRoot(
 				</MotionConfig>
 			</IntlProvider>
 		</Suspense>
-	</StrictMode>
+	</StrictMode>,
 );

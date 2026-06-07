@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 
 function isStringArray(value: unknown): value is string[] {
-	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+	return (
+		Array.isArray(value) && value.every((entry) => typeof entry === "string")
+	);
 }
 
 /** Read the persisted favorites for `storageKey`, tolerating SSR (no `window`),
@@ -45,7 +47,9 @@ export interface FavoriteSet {
  * Model-specific hooks wrap this shared implementation with their storage key.
  */
 export function useFavoriteSet(storageKey: string): FavoriteSet {
-	const [favorites, setFavorites] = useState<string[]>(() => readStored(storageKey));
+	const [favorites, setFavorites] = useState<string[]>(() =>
+		readStored(storageKey),
+	);
 
 	useEffect(() => {
 		if (typeof window === "undefined") {
@@ -66,7 +70,9 @@ export function useFavoriteSet(storageKey: string): FavoriteSet {
 		isFavorite: (id: string) => favoritesSet.has(id),
 		toggleFavorite: (id: string) =>
 			setFavorites((prev) =>
-				prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id]
+				prev.includes(id)
+					? prev.filter((entry) => entry !== id)
+					: [...prev, id],
 			),
 	};
 }

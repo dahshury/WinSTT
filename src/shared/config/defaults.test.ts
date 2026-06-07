@@ -21,7 +21,9 @@ describe("WHISPER_MODELS", () => {
 	test("includes both English-only and multilingual variants for tiny/base/small/medium", () => {
 		for (const base of ["tiny", "base", "small", "medium"] as const) {
 			expect(WHISPER_MODELS).toContain(base);
-			expect(WHISPER_MODELS).toContain(`${base}.en` as (typeof WHISPER_MODELS)[number]);
+			expect(WHISPER_MODELS).toContain(
+				`${base}.en` as (typeof WHISPER_MODELS)[number],
+			);
 		}
 	});
 });
@@ -32,7 +34,9 @@ describe("LANGUAGES", () => {
 	});
 
 	test("contains English with code 'en'", () => {
-		expect(LANGUAGES.some((l) => l.code === "en" && l.name === "English")).toBe(true);
+		expect(LANGUAGES.some((l) => l.code === "en" && l.name === "English")).toBe(
+			true,
+		);
 	});
 
 	test("language codes are unique", () => {

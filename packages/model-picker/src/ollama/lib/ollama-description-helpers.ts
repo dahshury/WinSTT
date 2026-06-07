@@ -9,10 +9,7 @@ import type {
 	OllamaModel,
 	OllamaPullProgress,
 } from "@/shared/api/models";
-import {
-	libraryBaseSlug,
-	paramSizeFromName,
-} from "../lib/quant-shelf-helpers";
+import { libraryBaseSlug, paramSizeFromName } from "../lib/quant-shelf-helpers";
 
 const VALID_MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]+$/;
 const LEADING_LETTERS_RE = /^[a-zA-Z]+/;
@@ -32,9 +29,7 @@ export interface TypedModelQueryInfo {
 	paramSize: string | undefined;
 }
 
-export function typedModelQueryInfo(
-	query: string,
-): TypedModelQueryInfo | null {
+export function typedModelQueryInfo(query: string): TypedModelQueryInfo | null {
 	const modelName = query.trim();
 	if (!(modelName && VALID_MODEL_NAME_RE.test(modelName))) {
 		return null;

@@ -50,7 +50,10 @@ export function DownloadProgressBar({
 	return (
 		<Progress.Root className="flex flex-col gap-1.5" value={percent}>
 			<Progress.Track
-				className={cn("h-2 overflow-hidden rounded-full", trackClassName ?? surfaceBg(trackLevel))}
+				className={cn(
+					"h-2 overflow-hidden rounded-full",
+					trackClassName ?? surfaceBg(trackLevel),
+				)}
 			>
 				<Progress.Indicator className={FILL_CLASS[variant]} />
 			</Progress.Track>

@@ -41,7 +41,9 @@ const NO_EXCLUSION: ModelExclusionConfig = {
 	excludedProviderSlug: undefined,
 };
 
-function buildExclusionFromParsed(parsed: ParsedModelSelection): ModelExclusionConfig {
+function buildExclusionFromParsed(
+	parsed: ParsedModelSelection,
+): ModelExclusionConfig {
 	return parsed.modelId
 		? {
 				excludedModelId: parsed.modelId,
@@ -55,10 +57,12 @@ function buildExclusionFromParsed(parsed: ParsedModelSelection): ModelExclusionC
 // isEndpointExcluded. Assumes the modelId match has already been confirmed.
 function isProviderExcluded(
 	providerSlug: string | undefined,
-	config: ModelExclusionConfig
+	config: ModelExclusionConfig,
 ): boolean {
 	return (
-		config.excludeAllProviders || !providerSlug || providerSlug === config.excludedProviderSlug
+		config.excludeAllProviders ||
+		!providerSlug ||
+		providerSlug === config.excludedProviderSlug
 	);
 }
 
@@ -67,7 +71,7 @@ function isProviderExcluded(
  * @param primaryValue Encoded as `"modelId"` or `"modelId@providerSlug"`.
  */
 export function computeModelExclusionConfig(
-	primaryValue: string | undefined | null
+	primaryValue: string | undefined | null,
 ): ModelExclusionConfig {
 	// Combine the null/undefined check with isAutoModel so TS narrows
 	// `primaryValue` to a definite string after the guard. This removes the
@@ -82,7 +86,7 @@ export function computeModelExclusionConfig(
 /** True when the fallback selection conflicts with the primary. */
 export function isFallbackExcluded(
 	fallbackValue: string | undefined | null,
-	exclusionConfig: ModelExclusionConfig
+	exclusionConfig: ModelExclusionConfig,
 ): boolean {
 	// Empty/null/undefined fallback → not excluded. Handling this explicitly
 	// (instead of routing through `parseModelSelection(fallbackValue ?? "")`)
@@ -93,7 +97,8 @@ export function isFallbackExcluded(
 	}
 	const { modelId, providerSlug } = parseModelSelection(fallbackValue);
 	return (
-		modelId === exclusionConfig.excludedModelId && isProviderExcluded(providerSlug, exclusionConfig)
+		modelId === exclusionConfig.excludedModelId &&
+		isProviderExcluded(providerSlug, exclusionConfig)
 	);
 }
 
@@ -103,7 +108,7 @@ export function isFallbackExcluded(
  */
 export function filterModelsForFallback(
 	models: OpenRouterModel[],
-	exclusionConfig: ModelExclusionConfig
+	exclusionConfig: ModelExclusionConfig,
 ): OpenRouterModel[] {
 	// The `if (!excludedModelId)` early-return is redundant — the only
 	// excludeAllProviders=true paths come from computeModelExclusionConfig,
@@ -122,12 +127,13 @@ export function filterModelsForFallback(
 export function isEndpointExcluded(
 	modelId: string,
 	providerSlug: string | undefined,
-	exclusionConfig: ModelExclusionConfig
+	exclusionConfig: ModelExclusionConfig,
 ): boolean {
 	// Same simplification as isFallbackExcluded — the `!excludedModelId`
 	// early-return is redundant because `string !== undefined` is the
 	// same answer as the early-return path produces.
 	return (
-		modelId === exclusionConfig.excludedModelId && isProviderExcluded(providerSlug, exclusionConfig)
+		modelId === exclusionConfig.excludedModelId &&
+		isProviderExcluded(providerSlug, exclusionConfig)
 	);
 }

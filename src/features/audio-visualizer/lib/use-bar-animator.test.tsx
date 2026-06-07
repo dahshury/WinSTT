@@ -31,8 +31,12 @@ describe("useBarAnimator", () => {
 	});
 
 	test("'initializing' returns the same as 'connecting' on first frame", () => {
-		const { result: a } = renderHook(() => useBarAnimator("connecting", 5, 1000));
-		const { result: b } = renderHook(() => useBarAnimator("initializing", 5, 1000));
+		const { result: a } = renderHook(() =>
+			useBarAnimator("connecting", 5, 1000),
+		);
+		const { result: b } = renderHook(() =>
+			useBarAnimator("initializing", 5, 1000),
+		);
 		expect(a.current).toEqual(b.current);
 	});
 
@@ -40,7 +44,7 @@ describe("useBarAnimator", () => {
 		const { result, rerender } = renderHook(
 			({ state, columns }: { state: AgentState; columns: number }) =>
 				useBarAnimator(state, columns, 1000),
-			{ initialProps: { state: "listening" as AgentState, columns: 5 } }
+			{ initialProps: { state: "listening" as AgentState, columns: 5 } },
 		);
 		expect(result.current).toEqual([2]);
 		rerender({ state: "connecting", columns: 5 });
@@ -52,7 +56,7 @@ describe("useBarAnimator", () => {
 		const { result, rerender } = renderHook(
 			({ state, columns }: { state: AgentState; columns: number }) =>
 				useBarAnimator(state, columns, 1000),
-			{ initialProps: { state: "listening" as AgentState, columns: 5 } }
+			{ initialProps: { state: "listening" as AgentState, columns: 5 } },
 		);
 		expect(result.current).toEqual([2]);
 		rerender({ state: "listening", columns: 9 });
@@ -60,7 +64,9 @@ describe("useBarAnimator", () => {
 	});
 
 	test("non-finite interval skips the rAF loop (idempotent first frame)", () => {
-		const { result } = renderHook(() => useBarAnimator("connecting", 5, Number.POSITIVE_INFINITY));
+		const { result } = renderHook(() =>
+			useBarAnimator("connecting", 5, Number.POSITIVE_INFINITY),
+		);
 		expect(result.current.length).toBeGreaterThan(0);
 	});
 
@@ -72,7 +78,7 @@ describe("useBarAnimator", () => {
 
 	test("unknown state falls through to the empty sequence", () => {
 		const { result } = renderHook(() =>
-			useBarAnimator(asInvalid<AgentState>("not-a-real-state"), 5, 1000)
+			useBarAnimator(asInvalid<AgentState>("not-a-real-state"), 5, 1000),
 		);
 		expect(result.current).toEqual([]);
 	});

@@ -1,8 +1,8 @@
 export { colorForSpeaker } from "./lib/speaker-color";
 export {
-  dominantSpeaker,
-  speakerCount,
-  splitTextBySpeaker,
+	dominantSpeaker,
+	speakerCount,
+	splitTextBySpeaker,
 } from "./lib/speaker-text";
 export { SpeakerTextChunks } from "./ui/SpeakerTextChunks";
 export type { SpeakerSegment, TranscriptionItem } from "./model/transcription";

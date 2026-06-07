@@ -46,7 +46,12 @@ function MetaItem({
 }) {
 	return (
 		<Tooltip content={tooltip} side="top">
-			<span className={cn("inline-flex shrink-0 items-center gap-1 tabular-nums", className)}>
+			<span
+				className={cn(
+					"inline-flex shrink-0 items-center gap-1 tabular-nums",
+					className,
+				)}
+			>
 				<HugeiconsIcon className="size-3 opacity-70" icon={icon} />
 				{value}
 			</span>
@@ -72,7 +77,7 @@ export function CardMetaRow({ entries }: { entries: MetaEntry[] }) {
 				key={entry.key}
 				tooltip={entry.tooltip}
 				value={entry.value}
-			/>
+			/>,
 		);
 	}
 	return <div className={META_ROW_CLASSES}>{nodes}</div>;

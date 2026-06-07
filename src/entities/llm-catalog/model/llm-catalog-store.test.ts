@@ -124,7 +124,9 @@ describe("useLlmCatalogStore.scanModels — concurrent-call gating", () => {
 describe("useLlmCatalogStore mutators", () => {
 	test("setModels marks isLoaded true and clears error", () => {
 		useLlmCatalogStore.setState({ isLoaded: false, error: "old" });
-		useLlmCatalogStore.getState().setModels([{ name: "m", size: 1, modifiedAt: "" }]);
+		useLlmCatalogStore
+			.getState()
+			.setModels([{ name: "m", size: 1, modifiedAt: "" }]);
 		const state = useLlmCatalogStore.getState();
 		expect(state.isLoaded).toBe(true);
 		expect(state.error).toBeNull();
@@ -278,7 +280,11 @@ describe("useLlmCatalogStore.pullModel", () => {
 		// Fresh state.
 		useLlmCatalogStore.setState({ pulls: {}, isScanning: false });
 		// Capture the FIRST setState call that adds the model to `pulls`.
-		let capturedProgress: { model: string; status: string; statusText?: string } | null = null;
+		let capturedProgress: {
+			model: string;
+			status: string;
+			statusText?: string;
+		} | null = null;
 		const unsub = useLlmCatalogStore.subscribe((state) => {
 			const entry = state.pulls.gemma;
 			if (entry && capturedProgress === null) {
@@ -345,7 +351,9 @@ describe("useLlmCatalogStore.pullModel", () => {
 		useLlmCatalogStore.setState({ isScanning: false });
 		try {
 			fetchSpy.mockClear();
-			const result = await useLlmCatalogStore.getState().deleteModel("anything");
+			const result = await useLlmCatalogStore
+				.getState()
+				.deleteModel("anything");
 			expect(result.success).toBe(false);
 			expect(result.error).toBe("delete failed");
 			// scanModels MUST NOT be called when delete failed — kills the
@@ -362,7 +370,9 @@ describe("useLlmCatalogStore.pullModel", () => {
 		try {
 			fetchSpy.mockClear();
 			useLlmCatalogStore.setState({ pulls: {}, isScanning: false });
-			const result = await useLlmCatalogStore.getState().pullModel("does-not-exist");
+			const result = await useLlmCatalogStore
+				.getState()
+				.pullModel("does-not-exist");
 			expect(result.success).toBe(false);
 			expect(result.error).toBe("pull failed");
 			// scanModels MUST NOT be called — kills the `if (result.success)`
@@ -409,7 +419,9 @@ describe("useLlmCatalogStore.pullModel", () => {
 
 describe("useLlmCatalogStore.cancelPull", () => {
 	test("calls cancelOllamaModelPull without throwing", async () => {
-		await expect(useLlmCatalogStore.getState().cancelPull("llama3")).resolves.toBeUndefined();
+		await expect(
+			useLlmCatalogStore.getState().cancelPull("llama3"),
+		).resolves.toBeUndefined();
 	});
 });
 
@@ -429,7 +441,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 			},
 			pausedPulls: {},
 		});
-		useLlmCatalogStore.getState().setPullProgress({ model: "phi", status: "cancelled" });
+		useLlmCatalogStore
+			.getState()
+			.setPullProgress({ model: "phi", status: "cancelled" });
 		const state = useLlmCatalogStore.getState();
 		expect(state.pulls.phi).toBeUndefined();
 		expect(state.pausedPulls.phi).toBeDefined();
@@ -441,7 +455,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 
 	test("a 'cancelled' status with no active pull does not synthesize a paused entry", () => {
 		useLlmCatalogStore.setState({ pulls: {}, pausedPulls: {} });
-		useLlmCatalogStore.getState().setPullProgress({ model: "ghost", status: "cancelled" });
+		useLlmCatalogStore
+			.getState()
+			.setPullProgress({ model: "ghost", status: "cancelled" });
 		const state = useLlmCatalogStore.getState();
 		expect(state.pausedPulls.ghost).toBeUndefined();
 	});
@@ -456,7 +472,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 				},
 			},
 		});
-		useLlmCatalogStore.getState().setPullProgress({ model: "phi", status: "success" });
+		useLlmCatalogStore
+			.getState()
+			.setPullProgress({ model: "phi", status: "success" });
 		expect(useLlmCatalogStore.getState().pausedPulls.phi).toBeUndefined();
 	});
 
@@ -470,7 +488,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 				},
 			},
 		});
-		useLlmCatalogStore.getState().setPullProgress({ model: "phi", status: "error", error: "bad" });
+		useLlmCatalogStore
+			.getState()
+			.setPullProgress({ model: "phi", status: "error", error: "bad" });
 		expect(useLlmCatalogStore.getState().pausedPulls.phi).toBeUndefined();
 	});
 
@@ -557,7 +577,9 @@ describe("useLlmCatalogStore pause/resume flow", () => {
 
 	test("discardPausedPull is a no-op when the model has no paused entry", () => {
 		useLlmCatalogStore.setState({ pulls: {}, pausedPulls: {} });
-		expect(() => useLlmCatalogStore.getState().discardPausedPull("nope")).not.toThrow();
+		expect(() =>
+			useLlmCatalogStore.getState().discardPausedPull("nope"),
+		).not.toThrow();
 	});
 
 	test("resumePull just delegates to pullModel (Ollama resumes from partial blobs on disk)", async () => {
@@ -597,7 +619,9 @@ describe("useLlmCatalogStore.deleteModel", () => {
 		// post-failure state. We test the branching by relying on the mock returning success=true.
 		// For the failure branch we verify that fetchSpy is NOT called if result.success=false.
 		// Since we cannot re-mock at this point, verify the happy path count is correct.
-		const result = await useLlmCatalogStore.getState().deleteModel("some-model");
+		const result = await useLlmCatalogStore
+			.getState()
+			.deleteModel("some-model");
 		expect(result.success).toBe(true);
 	});
 });

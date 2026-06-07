@@ -37,7 +37,7 @@ function renderInline(models: TtsModelInfo[]) {
 			onChange={onChange}
 			statesById={{}}
 			value="kokoro-82m"
-		/>
+		/>,
 	);
 	return { ...utils, onChange };
 }
@@ -64,7 +64,9 @@ describe("TtsModelSelector favorites (DRY with STT)", () => {
 		// Now shown twice: once in Favorites, once in its engine group.
 		expect(screen.getAllByText("Kokoro 82M")).toHaveLength(2);
 		// Both cards expose the remove affordance (shared favorite state).
-		expect(screen.getAllByLabelText("Remove Kokoro 82M from favorites")).toHaveLength(2);
+		expect(
+			screen.getAllByLabelText("Remove Kokoro 82M from favorites"),
+		).toHaveLength(2);
 	});
 
 	test("unstarring from either card removes the Favorites group", () => {
@@ -72,7 +74,9 @@ describe("TtsModelSelector favorites (DRY with STT)", () => {
 		fireEvent.click(screen.getByLabelText("Add Kokoro 82M to favorites"));
 		expect(screen.getByText("Favorites")).toBeDefined();
 
-		const removeButtons = screen.getAllByLabelText("Remove Kokoro 82M from favorites");
+		const removeButtons = screen.getAllByLabelText(
+			"Remove Kokoro 82M from favorites",
+		);
 		fireEvent.click(removeButtons[0] as HTMLElement);
 
 		expect(screen.queryByText("Favorites")).toBeNull();

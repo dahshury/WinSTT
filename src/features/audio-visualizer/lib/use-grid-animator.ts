@@ -6,31 +6,51 @@ export interface Coordinate {
 	y: number;
 }
 
-function appendTopEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+function appendTopEdge(
+	seq: Coordinate[],
+	topLeft: Coordinate,
+	bottomRight: Coordinate,
+): void {
 	for (let x = topLeft.x; x <= bottomRight.x; x++) {
 		seq.push({ x, y: topLeft.y });
 	}
 }
 
-function appendRightEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+function appendRightEdge(
+	seq: Coordinate[],
+	topLeft: Coordinate,
+	bottomRight: Coordinate,
+): void {
 	for (let y = topLeft.y + 1; y <= bottomRight.y; y++) {
 		seq.push({ x: bottomRight.x, y });
 	}
 }
 
-function appendBottomEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+function appendBottomEdge(
+	seq: Coordinate[],
+	topLeft: Coordinate,
+	bottomRight: Coordinate,
+): void {
 	for (let x = bottomRight.x - 1; x >= topLeft.x; x--) {
 		seq.push({ x, y: bottomRight.y });
 	}
 }
 
-function appendLeftEdge(seq: Coordinate[], topLeft: Coordinate, bottomRight: Coordinate): void {
+function appendLeftEdge(
+	seq: Coordinate[],
+	topLeft: Coordinate,
+	bottomRight: Coordinate,
+): void {
 	for (let y = bottomRight.y - 1; y > topLeft.y; y--) {
 		seq.push({ x: topLeft.x, y });
 	}
 }
 
-function generateConnectingSequence(rows: number, columns: number, radius: number): Coordinate[] {
+function generateConnectingSequence(
+	rows: number,
+	columns: number,
+	radius: number,
+): Coordinate[] {
 	const seq: Coordinate[] = [];
 	const centerY = Math.floor(rows / 2);
 	const topLeft = {
@@ -48,10 +68,23 @@ function generateConnectingSequence(rows: number, columns: number, radius: numbe
 	return seq;
 }
 
-function generateListeningSequence(rows: number, columns: number): Coordinate[] {
+function generateListeningSequence(
+	rows: number,
+	columns: number,
+): Coordinate[] {
 	const center = { x: Math.floor(columns / 2), y: Math.floor(rows / 2) };
 	const noIndex = { x: -1, y: -1 };
-	return [center, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex, noIndex];
+	return [
+		center,
+		noIndex,
+		noIndex,
+		noIndex,
+		noIndex,
+		noIndex,
+		noIndex,
+		noIndex,
+		noIndex,
+	];
 }
 
 function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
@@ -66,7 +99,11 @@ function generateThinkingSequence(rows: number, columns: number): Coordinate[] {
 	return seq;
 }
 
-export function clampRadius(radius: number | undefined, rows: number, columns: number): number {
+export function clampRadius(
+	radius: number | undefined,
+	rows: number,
+	columns: number,
+): number {
 	const maxR = Math.floor(Math.max(rows, columns) / 2);
 	return radius ? Math.min(radius, maxR) : maxR;
 }
@@ -74,7 +111,7 @@ export function clampRadius(radius: number | undefined, rows: number, columns: n
 type GridSequenceFactory = (
 	rows: number,
 	columns: number,
-	radius: number | undefined
+	radius: number | undefined,
 ) => Coordinate[];
 
 function generateCenterSequence(rows: number, columns: number): Coordinate[] {
@@ -84,9 +121,15 @@ function generateCenterSequence(rows: number, columns: number): Coordinate[] {
 function generateConnectingSequenceForState(
 	rows: number,
 	columns: number,
-	radius: number | undefined
+	radius: number | undefined,
 ): Coordinate[] {
-	return [...generateConnectingSequence(rows, columns, clampRadius(radius, rows, columns))];
+	return [
+		...generateConnectingSequence(
+			rows,
+			columns,
+			clampRadius(radius, rows, columns),
+		),
+	];
 }
 
 const GRID_SEQUENCE_FACTORIES: Record<AgentState, GridSequenceFactory> = {
@@ -102,7 +145,7 @@ function buildGridSequence(
 	state: AgentState,
 	rows: number,
 	columns: number,
-	radius: number | undefined
+	radius: number | undefined,
 ): Coordinate[] {
 	const factory = GRID_SEQUENCE_FACTORIES[state] ?? generateCenterSequence;
 	return factory(rows, columns, radius);
@@ -122,7 +165,10 @@ const GRID_INPUT_KEYS: ReadonlyArray<keyof GridAnimatorInputs> = [
 	"radius",
 ];
 
-export function gridInputsChanged(prev: GridAnimatorInputs, next: GridAnimatorInputs): boolean {
+export function gridInputsChanged(
+	prev: GridAnimatorInputs,
+	next: GridAnimatorInputs,
+): boolean {
 	return GRID_INPUT_KEYS.some((key) => prev[key] !== next[key]);
 }
 
@@ -131,7 +177,7 @@ export function useGridAnimator(
 	rows: number,
 	columns: number,
 	interval: number,
-	radius?: number
+	radius?: number,
 ): Coordinate {
 	// buildGridSequence returns a fresh array each call; compare on primitive
 	// inputs instead of the reference so we don't loop in environments without
@@ -162,6 +208,9 @@ export function useGridAnimator(
 	}, [interval, state]);
 
 	return (
-		sequence[index % sequence.length] ?? { x: Math.floor(columns / 2), y: Math.floor(rows / 2) }
+		sequence[index % sequence.length] ?? {
+			x: Math.floor(columns / 2),
+			y: Math.floor(rows / 2),
+		}
 	);
 }

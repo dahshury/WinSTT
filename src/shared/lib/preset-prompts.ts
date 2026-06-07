@@ -112,18 +112,19 @@ const LEVELED_PROMPTS = {
 			"Lightly tighten wording. Remove obvious filler, redundancy, and hedging. Preserve every idea, order, structure, and tone.",
 		medium:
 			"Make the text concise. Remove filler, repetition, hedging, and low-value qualifiers. Preserve every important idea and the speaker's tone.",
-		high:
-			"Minimize word count aggressively. Keep only words needed to preserve each distinct idea. Prefer one sentence unless the original structure requires lines.",
+		high: "Minimize word count aggressively. Keep only words needed to preserve each distinct idea. Prefer one sentence unless the original structure requires lines.",
 	},
 	summarize: {
 		light:
 			"Shorten lightly. When the input has more than one clause, the output must be shorter than the input. Remove low-priority detail while keeping the key points, structure, tone, and point of view.",
 		medium:
 			"Summarize substantially. Keep the main point and essential details; drop examples, asides, repetition, and low-priority support. Preserve tone and point of view.",
-		high:
-			"Compress to the core message and critical outcome or ask. Use one short sentence when possible. Preserve the speaker's point of view; never make it clinical or impersonal.",
+		high: "Compress to the core message and critical outcome or ask. Use one short sentence when possible. Preserve the speaker's point of view; never make it clinical or impersonal.",
 	},
-} as const satisfies Record<"concise" | "summarize", Record<PresetLevel, string>>;
+} as const satisfies Record<
+	"concise" | "summarize",
+	Record<PresetLevel, string>
+>;
 
 const DEFAULT_LEVEL: PresetLevel = "medium";
 
@@ -163,7 +164,7 @@ function customModifierToEntry(m: CustomModifier): CustomModifierEntry {
  *  inject an empty bullet into the system prompt. */
 export function mergePresetsWithCustomModifiers(
 	presets: readonly PresetEntry[],
-	customModifiers: readonly CustomModifier[] | null | undefined
+	customModifiers: readonly CustomModifier[] | null | undefined,
 ): PresetEntry[] {
 	// Tolerate a missing/legacy value: older persisted stores (and the test
 	// store shim) have no `customModifiers` key, so the caller may hand us
@@ -214,35 +215,38 @@ function resolveTranslatePrompt(entry: BuiltinPresetEntry): string {
 	return `${translatePromptFor(entry.targetLang ?? DEFAULT_TARGET_LANG)}${SCHEMA_CLAMP}`;
 }
 
-const RAW_PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> = {
-	neutral: () => POLISH_PROMPT,
-	formal: () =>
-		"Rewrite in a polished, formal, professional tone. Use complete sentences and precise business wording. Remove contractions, slang, and casual phrasing. Preserve meaning, facts, order, and structure unless another modifier changes them.",
-	friendly: () =>
-		'Rewrite in a warm, friendly, conversational tone. Use natural contractions, approachable phrasing, and polite wording such as "please" when natural. Preserve meaning, facts, and structure unless another modifier changes them.',
-	technical: () =>
-		"Rewrite with precise technical terminology and rigorous structure. Replace vague wording with exact wording only when the intended meaning is clear. Preserve facts, meaning, and scope.",
-	concise: (level) => LEVELED_PROMPTS.concise[level ?? DEFAULT_LEVEL],
-	summarize: (level) => LEVELED_PROMPTS.summarize[level ?? DEFAULT_LEVEL],
-	reorder: () =>
-		'Reorder for logical flow only when it improves the sequence. Move any direct request, action item, blocker, deadline, decision, or conclusion to the first sentence. Then place context, causes/problems, details, chronological steps/events, and related groups in a natural order. Keep all content and wording; do not summarize or invent. Example: "The rollback is ready. Users are locked out. Please approve it." -> "Please approve it. The rollback is ready. Users are locked out." If the order is already logical, keep it.',
-	restructure: () =>
-		'Actively identify content that becomes clearer as structure. Use numbered lines for real steps, instructions, ordered actions, or ranked priorities; use bullet lines for parallel items, options, examples, or points; use short labeled sections for distinct topics; use `Label: value` lines for attribute-style facts. Keep connected narratives, reasoning, and single questions as prose. Do NOT convert text to a list merely because it has several sentences, and never turn a standalone question into a list item. Order structured parts logically by importance, dependency, or chronology. Preserve every detail and meaning; reorganize and re-line without summarizing or inventing content.',
-	rewordForClarity: () =>
-		'Rewrite unclear, awkward, or overly complex phrasing into clear, natural language. Simplify concepts, split long sentences, and replace every vague word like "thing" or "stuff" with a neutral clearer word such as "issue", "item", "step", "action", "process", or "result" when a specific referent is unclear. Do not leave "thing" or "stuff" in the output unless quoted. Make implied relationships explicit only when they are already present. Preserve meaning, facts, tone, and point of view; do not add new information.',
-	// Default-language fallback for direct `getPresetPrompt("translate")`
-	// callers (tests, logging). The real per-entry resolution that honors the
-	// chosen `targetLang` runs through `resolveTranslatePrompt` in
-	// `resolveEntryPrompt`. PROMPT_RESOLVERS appends SCHEMA_CLAMP here.
-	translate: () => translatePromptFor(DEFAULT_TARGET_LANG),
-};
+const RAW_PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> =
+	{
+		neutral: () => POLISH_PROMPT,
+		formal: () =>
+			"Rewrite in a polished, formal, professional tone. Use complete sentences and precise business wording. Remove contractions, slang, and casual phrasing. Preserve meaning, facts, order, and structure unless another modifier changes them.",
+		friendly: () =>
+			'Rewrite in a warm, friendly, conversational tone. Use natural contractions, approachable phrasing, and polite wording such as "please" when natural. Preserve meaning, facts, and structure unless another modifier changes them.',
+		technical: () =>
+			"Rewrite with precise technical terminology and rigorous structure. Replace vague wording with exact wording only when the intended meaning is clear. Preserve facts, meaning, and scope.",
+		concise: (level) => LEVELED_PROMPTS.concise[level ?? DEFAULT_LEVEL],
+		summarize: (level) => LEVELED_PROMPTS.summarize[level ?? DEFAULT_LEVEL],
+		reorder: () =>
+			'Reorder for logical flow only when it improves the sequence. Move any direct request, action item, blocker, deadline, decision, or conclusion to the first sentence. Then place context, causes/problems, details, chronological steps/events, and related groups in a natural order. Keep all content and wording; do not summarize or invent. Example: "The rollback is ready. Users are locked out. Please approve it." -> "Please approve it. The rollback is ready. Users are locked out." If the order is already logical, keep it.',
+		restructure: () =>
+			"Actively identify content that becomes clearer as structure. Use numbered lines for real steps, instructions, ordered actions, or ranked priorities; use bullet lines for parallel items, options, examples, or points; use short labeled sections for distinct topics; use `Label: value` lines for attribute-style facts. Keep connected narratives, reasoning, and single questions as prose. Do NOT convert text to a list merely because it has several sentences, and never turn a standalone question into a list item. Order structured parts logically by importance, dependency, or chronology. Preserve every detail and meaning; reorganize and re-line without summarizing or inventing content.",
+		rewordForClarity: () =>
+			'Rewrite unclear, awkward, or overly complex phrasing into clear, natural language. Simplify concepts, split long sentences, and replace every vague word like "thing" or "stuff" with a neutral clearer word such as "issue", "item", "step", "action", "process", or "result" when a specific referent is unclear. Do not leave "thing" or "stuff" in the output unless quoted. Make implied relationships explicit only when they are already present. Preserve meaning, facts, tone, and point of view; do not add new information.',
+		// Default-language fallback for direct `getPresetPrompt("translate")`
+		// callers (tests, logging). The real per-entry resolution that honors the
+		// chosen `targetLang` runs through `resolveTranslatePrompt` in
+		// `resolveEntryPrompt`. PROMPT_RESOLVERS appends SCHEMA_CLAMP here.
+		translate: () => translatePromptFor(DEFAULT_TARGET_LANG),
+	};
 
-const PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> = Object.fromEntries(
-	(Object.keys(RAW_PROMPT_RESOLVERS) as PresetKey[]).map((key) => [
-		key,
-		(level?: PresetLevel) => `${RAW_PROMPT_RESOLVERS[key](level)}${SCHEMA_CLAMP}`,
-	])
-) as Record<PresetKey, (level?: PresetLevel) => string>;
+const PROMPT_RESOLVERS: Record<PresetKey, (level?: PresetLevel) => string> =
+	Object.fromEntries(
+		(Object.keys(RAW_PROMPT_RESOLVERS) as PresetKey[]).map((key) => [
+			key,
+			(level?: PresetLevel) =>
+				`${RAW_PROMPT_RESOLVERS[key](level)}${SCHEMA_CLAMP}`,
+		]),
+	) as Record<PresetKey, (level?: PresetLevel) => string>;
 
 export const TONE_GROUP = [
 	"neutral",
@@ -260,14 +264,21 @@ export const INDEPENDENT_PRESETS = [
 	"translate",
 ] as const satisfies readonly PresetKey[];
 
-export const PRESETS_WITH_LEVELS = ["summarize", "concise"] as const satisfies readonly PresetKey[];
+export const PRESETS_WITH_LEVELS = [
+	"summarize",
+	"concise",
+] as const satisfies readonly PresetKey[];
 
 export const ALL_PRESET_KEYS = [
 	...TONE_GROUP,
 	...INDEPENDENT_PRESETS,
 ] as const satisfies readonly PresetKey[];
 
-export const PRESET_LEVELS = ["light", "medium", "high"] as const satisfies readonly PresetLevel[];
+export const PRESET_LEVELS = [
+	"light",
+	"medium",
+	"high",
+] as const satisfies readonly PresetLevel[];
 
 export function isToneKey(key: PresetKey): boolean {
 	return (TONE_GROUP as readonly PresetKey[]).includes(key);
@@ -319,7 +330,9 @@ function resolveEntryPrompt(entry: PresetEntry): string {
  *  all non-translate entries is untouched. */
 function sortTranslateLast(presets: readonly PresetEntry[]): PresetEntry[] {
 	const rest = presets.filter((p) => isCustomEntry(p) || p.key !== "translate");
-	const translate = presets.filter((p) => !isCustomEntry(p) && p.key === "translate");
+	const translate = presets.filter(
+		(p) => !isCustomEntry(p) && p.key === "translate",
+	);
 	return [...rest, ...translate];
 }
 

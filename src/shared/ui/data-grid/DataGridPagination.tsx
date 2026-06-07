@@ -36,7 +36,7 @@ export function DataGridPagination({
 		<div
 			className={cn(
 				"flex items-center gap-3 pt-1",
-				showPageSize ? "justify-between" : "justify-end"
+				showPageSize ? "justify-between" : "justify-end",
 			)}
 		>
 			{showPageSize ? (

@@ -4,7 +4,10 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ServerStack01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { SelectedTick } from "./endpoint-provider-filter-submenu-components";
-import { ALL_PROVIDERS_VALUE, type ItemContext } from "./endpoint-provider-filter-submenu-utils";
+import {
+	ALL_PROVIDERS_VALUE,
+	type ItemContext,
+} from "./endpoint-provider-filter-submenu-utils";
 import { formatProviderName } from "./openrouter-provider-utils";
 
 const ITEM_CLASS =
@@ -12,7 +15,11 @@ const ITEM_CLASS =
 
 function renderAllProviders(isSelected: boolean) {
 	return (
-		<Combobox.Item className={ITEM_CLASS} key={ALL_PROVIDERS_VALUE} value={ALL_PROVIDERS_VALUE}>
+		<Combobox.Item
+			className={ITEM_CLASS}
+			key={ALL_PROVIDERS_VALUE}
+			value={ALL_PROVIDERS_VALUE}
+		>
 			<HugeiconsIcon className="me-2 size-4" icon={ServerStack01Icon} />
 			<span className="flex-1">All Providers</span>
 			<SelectedTick visible={isSelected} />
@@ -20,7 +27,11 @@ function renderAllProviders(isSelected: boolean) {
 	);
 }
 
-function renderProviderItem(provider: string, count: number, isSelected: boolean) {
+function renderProviderItem(
+	provider: string,
+	count: number,
+	isSelected: boolean,
+) {
 	return (
 		<Combobox.Item className={ITEM_CLASS} key={provider} value={provider}>
 			<HugeiconsIcon className="me-2 size-4" icon={ServerStack01Icon} />
@@ -36,5 +47,9 @@ export function renderProviderRow(provider: string, ctx: ItemContext) {
 		return renderAllProviders(ctx.selectedEndpointProvider === null);
 	}
 	const count = ctx.counts.get(provider) ?? 0;
-	return renderProviderItem(provider, count, ctx.selectedEndpointProvider === provider);
+	return renderProviderItem(
+		provider,
+		count,
+		ctx.selectedEndpointProvider === provider,
+	);
 }

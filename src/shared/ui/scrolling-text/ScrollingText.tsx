@@ -56,7 +56,9 @@ export function ScrollingText({
 	const topFade = `${lineHeight * 0.75}em`;
 	const bottomFade = `${lineHeight * 0.6}em`;
 	const baseHeight = `${maxLines * lineHeight}em`;
-	const maxHeight = isOverflowing ? `calc(${baseHeight} + ${bottomFade})` : baseHeight;
+	const maxHeight = isOverflowing
+		? `calc(${baseHeight} + ${bottomFade})`
+		: baseHeight;
 
 	return (
 		<div className={cn("relative", className)}>

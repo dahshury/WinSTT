@@ -25,7 +25,7 @@ function renderIt(isConnected: boolean) {
 	return render(
 		<IntlProvider>
 			<HotkeyDisplay isConnected={isConnected} />
-		</IntlProvider>
+		</IntlProvider>,
 	);
 }
 

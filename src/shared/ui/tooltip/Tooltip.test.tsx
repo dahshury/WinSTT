@@ -9,7 +9,7 @@ describe("Tooltip", () => {
 				<button data-testid="trigger" type="button">
 					Hover me
 				</button>
-			</Tooltip>
+			</Tooltip>,
 		);
 		expect(screen.getByTestId("trigger")).toBeDefined();
 	});
@@ -18,7 +18,7 @@ describe("Tooltip", () => {
 		render(
 			<Tooltip content="Hidden help">
 				<button type="button">trigger</button>
-			</Tooltip>
+			</Tooltip>,
 		);
 		expect(document.body.textContent).not.toContain("Hidden help");
 	});
@@ -29,7 +29,7 @@ describe("Tooltip", () => {
 				<button data-testid="trigger" type="button">
 					trigger
 				</button>
-			</Tooltip>
+			</Tooltip>,
 		);
 		// The trigger still renders inside the provider wrapper
 		expect(screen.getByTestId("trigger")).toBeDefined();
@@ -41,7 +41,7 @@ describe("Tooltip", () => {
 				<button data-testid="trigger" type="button">
 					trigger
 				</button>
-			</Tooltip>
+			</Tooltip>,
 		);
 		expect(screen.getByTestId("trigger")).toBeDefined();
 	});

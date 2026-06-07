@@ -9,7 +9,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { useTranslations } from "use-intl";
 import type { useSettingsStore } from "@/entities/setting";
-import { isVisualizerType, type VisualizerType } from "@/features/audio-visualizer";
+import {
+	isVisualizerType,
+	type VisualizerType,
+} from "@/features/audio-visualizer";
 import { isLocale, type Locale } from "@/shared/i18n";
 import type { SwitcherOption } from "@/shared/ui/switcher";
 
@@ -46,23 +49,57 @@ function visualizerSizeFromIndex(index: number): VisualizerSizePreset {
 	return VISUALIZER_SIZE_PRESETS[index] ?? "xs";
 }
 
-export function buildVisualizerTypeSwitcherOptions(t: GeneralT): SwitcherOption[] {
+export function buildVisualizerTypeSwitcherOptions(
+	t: GeneralT,
+): SwitcherOption[] {
 	return [
-		{ value: "bar", label: t("visualizerBar"), icon: BarChartIcon, preview: "viz-bar" },
-		{ value: "grid", label: t("visualizerGrid"), icon: GridIcon, preview: "viz-grid" },
-		{ value: "radial", label: t("visualizerRadial"), icon: RadialIcon, preview: "viz-radial" },
-		{ value: "wave", label: t("visualizerWave"), icon: AudioWave02Icon, preview: "viz-wave" },
-		{ value: "aura", label: t("visualizerAura"), icon: AiBeautifyIcon, preview: "viz-aura" },
+		{
+			value: "bar",
+			label: t("visualizerBar"),
+			icon: BarChartIcon,
+			preview: "viz-bar",
+		},
+		{
+			value: "grid",
+			label: t("visualizerGrid"),
+			icon: GridIcon,
+			preview: "viz-grid",
+		},
+		{
+			value: "radial",
+			label: t("visualizerRadial"),
+			icon: RadialIcon,
+			preview: "viz-radial",
+		},
+		{
+			value: "wave",
+			label: t("visualizerWave"),
+			icon: AudioWave02Icon,
+			preview: "viz-wave",
+		},
+		{
+			value: "aura",
+			label: t("visualizerAura"),
+			icon: AiBeautifyIcon,
+			preview: "viz-aura",
+		},
 	];
 }
 
-export function pickLocale(value: string, setLocale: (locale: Locale) => void): void {
+export function pickLocale(
+	value: string,
+	setLocale: (locale: Locale) => void,
+): void {
 	if (isLocale(value)) {
 		setLocale(value);
 	}
 }
 
-export type LiveTranscriptionDisplayValue = "none" | "in-app" | "in-pill" | "both";
+export type LiveTranscriptionDisplayValue =
+	| "none"
+	| "in-app"
+	| "in-pill"
+	| "both";
 
 export interface DisplayFlags {
 	overlayEnabled: boolean;
@@ -71,7 +108,7 @@ export interface DisplayFlags {
 
 export function computeDisplayFlags(
 	isListenMode: boolean,
-	general: GeneralSettings | undefined
+	general: GeneralSettings | undefined,
 ): DisplayFlags {
 	const showOverlay = general?.showRecordingOverlay ?? true;
 	const overlayEnabled = !isListenMode && showOverlay;
@@ -79,7 +116,9 @@ export function computeDisplayFlags(
 	return { overlayEnabled, subDisabled };
 }
 
-export function liveOverlayDisabled(general: GeneralSettings | undefined): boolean {
+export function liveOverlayDisabled(
+	general: GeneralSettings | undefined,
+): boolean {
 	return !(general?.showRecordingOverlay ?? true);
 }
 
@@ -89,7 +128,7 @@ function needsOverlay(value: LiveTranscriptionDisplayValue): boolean {
 
 export function effectiveLiveDisplay(
 	value: LiveTranscriptionDisplayValue,
-	overlayDisabled: boolean
+	overlayDisabled: boolean,
 ): LiveTranscriptionDisplayValue {
 	return overlayDisabled && needsOverlay(value) ? "in-app" : value;
 }
@@ -99,28 +138,34 @@ function overlayEnablePatch(): Partial<GeneralSettings> {
 }
 
 function overlayDisablePatchForLive(
-	current: LiveTranscriptionDisplayValue
+	current: LiveTranscriptionDisplayValue,
 ): Partial<GeneralSettings> {
 	return needsOverlay(current)
 		? { showRecordingOverlay: false, liveTranscriptionDisplay: "in-app" }
 		: { showRecordingOverlay: false };
 }
 
-function currentLiveDisplay(general: GeneralSettings | undefined): LiveTranscriptionDisplayValue {
+function currentLiveDisplay(
+	general: GeneralSettings | undefined,
+): LiveTranscriptionDisplayValue {
 	return general?.liveTranscriptionDisplay ?? "both";
 }
 
 function overlayTogglePatch(
 	enabled: boolean,
-	general: GeneralSettings | undefined
+	general: GeneralSettings | undefined,
 ): Partial<GeneralSettings> {
-	return enabled ? overlayEnablePatch() : overlayDisablePatchForLive(currentLiveDisplay(general));
+	return enabled
+		? overlayEnablePatch()
+		: overlayDisablePatchForLive(currentLiveDisplay(general));
 }
 
 // Combined "Off + sizes" overlay slider. Index 0 is Off (turns the overlay
 // off and reverts overlay-only live transcription choices to in-app via the
 // shared overlayTogglePatch). Indices 1..N map to VISUALIZER_SIZE_PRESETS.
-export function overlaySliderToIndex(general: GeneralSettings | undefined): number {
+export function overlaySliderToIndex(
+	general: GeneralSettings | undefined,
+): number {
 	const showOverlay = general?.showRecordingOverlay ?? true;
 	if (!showOverlay) {
 		return 0;
@@ -135,7 +180,7 @@ export function overlaySliderMax(): number {
 
 export function overlaySliderPatch(
 	index: number,
-	general: GeneralSettings | undefined
+	general: GeneralSettings | undefined,
 ): Partial<GeneralSettings> {
 	if (index <= 0) {
 		return overlayTogglePatch(false, general);
@@ -193,7 +238,7 @@ function flagsKey(inApp: boolean, inOverlay: boolean): FlagsKey {
 
 export function flagsToLiveDisplay(
 	inApp: boolean,
-	inOverlay: boolean
+	inOverlay: boolean,
 ): LiveTranscriptionDisplayValue {
 	return FLAGS_TO_LIVE_DISPLAY[flagsKey(inApp, inOverlay)];
 }
@@ -205,7 +250,9 @@ export function pickVisualizerType(value: string, update: UpdateFn): void {
 }
 
 /** Resolves the active visualizer type, defaulting to "bar" when unset. */
-export function getVisualizerType(general: GeneralSettings | undefined): VisualizerType {
+export function getVisualizerType(
+	general: GeneralSettings | undefined,
+): VisualizerType {
 	return general?.visualizerType ?? "bar";
 }
 

@@ -12,7 +12,11 @@ function setKeys(openai: string, elevenlabs: string): void {
 			...initialSettings,
 			integrations: {
 				openai: { apiKey: openai, verified: null, lastVerifiedAt: null },
-				elevenlabs: { apiKey: elevenlabs, verified: null, lastVerifiedAt: null },
+				elevenlabs: {
+					apiKey: elevenlabs,
+					verified: null,
+					lastVerifiedAt: null,
+				},
 			},
 		},
 	});
@@ -26,7 +30,7 @@ function renderIt(selectedId = "") {
 	return render(
 		<IntlProvider>
 			<CloudModelSelect onSelect={() => undefined} selectedId={selectedId} />
-		</IntlProvider>
+		</IntlProvider>,
 	);
 }
 
@@ -34,7 +38,9 @@ describe("CloudModelSelect", () => {
 	test("shows the Configure-key affordance when no provider has a key", () => {
 		setKeys("", "");
 		renderIt();
-		expect(screen.getByRole("button").textContent ?? "").toContain("Configure key");
+		expect(screen.getByRole("button").textContent ?? "").toContain(
+			"Configure key",
+		);
 	});
 
 	test("renders the static cloud catalog when a provider key is present", () => {
@@ -55,8 +61,10 @@ describe("CloudModelSelect", () => {
 					onSelect={onSelect}
 					selectedId="openai:gpt-4o-mini-transcribe-2025-12-15"
 				/>
-			</IntlProvider>
+			</IntlProvider>,
 		);
-		await waitFor(() => expect(onSelect).toHaveBeenCalledWith("openai:gpt-4o-mini-transcribe"));
+		await waitFor(() =>
+			expect(onSelect).toHaveBeenCalledWith("openai:gpt-4o-mini-transcribe"),
+		);
 	});
 });

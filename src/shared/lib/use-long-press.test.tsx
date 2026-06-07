@@ -8,7 +8,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function pointerEvent(
-	props: Partial<React.PointerEvent<HTMLElement>> = {}
+	props: Partial<React.PointerEvent<HTMLElement>> = {},
 ): React.PointerEvent<HTMLElement> {
 	return {
 		button: 0,
@@ -27,7 +27,9 @@ afterEach(() => {
 describe("useLongPress", () => {
 	test("fires for a held touch pointer", async () => {
 		const onLongPress = mock(() => undefined);
-		const { result } = renderHook(() => useLongPress(onLongPress, { delay: 20 }));
+		const { result } = renderHook(() =>
+			useLongPress(onLongPress, { delay: 20 }),
+		);
 
 		act(() => {
 			result.current.handlers.onPointerDown(pointerEvent());
@@ -45,7 +47,7 @@ describe("useLongPress", () => {
 	test("cancels when the touch moves past the scroll tolerance", async () => {
 		const onLongPress = mock(() => undefined);
 		const { result } = renderHook(() =>
-			useLongPress(onLongPress, { delay: 20, moveTolerance: 8 })
+			useLongPress(onLongPress, { delay: 20, moveTolerance: 8 }),
 		);
 
 		act(() => {
@@ -63,10 +65,14 @@ describe("useLongPress", () => {
 
 	test("ignores mouse holds", async () => {
 		const onLongPress = mock(() => undefined);
-		const { result } = renderHook(() => useLongPress(onLongPress, { delay: 20 }));
+		const { result } = renderHook(() =>
+			useLongPress(onLongPress, { delay: 20 }),
+		);
 
 		act(() => {
-			result.current.handlers.onPointerDown(pointerEvent({ pointerType: "mouse" }));
+			result.current.handlers.onPointerDown(
+				pointerEvent({ pointerType: "mouse" }),
+			);
 		});
 
 		await act(async () => {
@@ -79,7 +85,9 @@ describe("useLongPress", () => {
 
 	test("suppresses the native context menu after a completed hold", async () => {
 		const onLongPress = mock(() => undefined);
-		const { result } = renderHook(() => useLongPress(onLongPress, { delay: 20 }));
+		const { result } = renderHook(() =>
+			useLongPress(onLongPress, { delay: 20 }),
+		);
 		let defaultPrevented = false;
 
 		act(() => {

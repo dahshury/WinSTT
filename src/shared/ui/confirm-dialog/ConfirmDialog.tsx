@@ -24,12 +24,21 @@ export function ConfirmDialog({
 	title,
 }: ConfirmDialogProps) {
 	return (
-		<DialogShell description={description} onOpenChange={onOpenChange} open={open} title={title}>
+		<DialogShell
+			description={description}
+			onOpenChange={onOpenChange}
+			open={open}
+			title={title}
+		>
 			{/* Both footer buttons wrap in DialogClose so Base UI auto-closes via its
 			    `close-press` reason — no manual `onOpenChange(false)`. The confirm
 			    button additionally runs `onConfirm` before the close. */}
 			<DialogClose
-				render={<DialogActionButton variant="neutral">{cancelLabel}</DialogActionButton>}
+				render={
+					<DialogActionButton variant="neutral">
+						{cancelLabel}
+					</DialogActionButton>
+				}
 			/>
 			<DialogClose
 				render={

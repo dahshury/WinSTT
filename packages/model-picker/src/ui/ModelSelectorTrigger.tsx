@@ -12,7 +12,10 @@ import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import { formatMaker, formatModelName } from "../lib/model-selector-utils";
 import { getProviderIconWithFallback } from "../lib/provider-icons";
-import { getTriggerDataState, isMissingModelId } from "./model-selector-trigger-helpers";
+import {
+	getTriggerDataState,
+	isMissingModelId,
+} from "./model-selector-trigger-helpers";
 import { TruncatedText } from "./TruncatedText";
 
 // Glass-card trigger — shares the exact material vocabulary with the
@@ -44,7 +47,7 @@ function MakerBadge({ maker }: { maker: string | undefined }) {
 				<span
 					className={cn(
 						"flex size-3 shrink-0 items-center justify-center overflow-hidden rounded border border-border/50 p-0.5",
-						surfaceBg(level)
+						surfaceBg(level),
 					)}
 				>
 					<img
@@ -62,13 +65,20 @@ function MakerBadge({ maker }: { maker: string | undefined }) {
 	);
 }
 
-function SelectedModelContent({ selectedModel }: { selectedModel: OpenRouterModel }) {
+function SelectedModelContent({
+	selectedModel,
+}: {
+	selectedModel: OpenRouterModel;
+}) {
 	return (
 		<div className="flex min-w-0 flex-1 items-center gap-2">
 			<MakerBadge maker={selectedModel.maker} />
 			<TruncatedText
 				className="font-medium text-body text-foreground leading-tight tracking-tight"
-				text={formatModelName(selectedModel.model_name ?? selectedModel.name, selectedModel.maker)}
+				text={formatModelName(
+					selectedModel.model_name ?? selectedModel.name,
+					selectedModel.maker,
+				)}
 			/>
 		</div>
 	);
@@ -93,7 +103,9 @@ function renderSelectedContent({
 				<Badge className="shrink-0 text-2xs" variant="secondary">
 					OpenRouter
 				</Badge>
-				<span className="truncate font-medium text-body text-foreground tracking-tight">Auto</span>
+				<span className="truncate font-medium text-body text-foreground tracking-tight">
+					Auto
+				</span>
 			</div>
 		);
 	}

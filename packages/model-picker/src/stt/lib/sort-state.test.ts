@@ -38,7 +38,11 @@ describe("sortSttModels", () => {
 			model({ id: "fast", speedScore: 0.9 }),
 			model({ id: "mid", speedScore: 0.5 }),
 		];
-		expect(ids(sortSttModels(models, "speed"))).toEqual(["fast", "mid", "slow"]);
+		expect(ids(sortSttModels(models, "speed"))).toEqual([
+			"fast",
+			"mid",
+			"slow",
+		]);
 	});
 
 	it("sorts by accuracy, most accurate (highest accuracyScore) first", () => {
@@ -47,7 +51,11 @@ describe("sortSttModels", () => {
 			model({ id: "high", accuracyScore: 0.95 }),
 			model({ id: "mid", accuracyScore: 0.6 }),
 		];
-		expect(ids(sortSttModels(models, "accuracy"))).toEqual(["high", "mid", "low"]);
+		expect(ids(sortSttModels(models, "accuracy"))).toEqual([
+			"high",
+			"mid",
+			"low",
+		]);
 	});
 
 	it("sorts by download size using the smallest published quant, smallest first", () => {
@@ -89,7 +97,10 @@ describe("sortSttModels", () => {
 	});
 
 	it("never mutates the input array", () => {
-		const models = [model({ id: "b", speedScore: 0.2 }), model({ id: "a", speedScore: 0.9 })];
+		const models = [
+			model({ id: "b", speedScore: 0.2 }),
+			model({ id: "a", speedScore: 0.9 }),
+		];
 		const before = ids(models);
 		sortSttModels(models, "speed");
 		expect(ids(models)).toEqual(before);

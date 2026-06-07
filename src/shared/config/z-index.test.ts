@@ -36,7 +36,7 @@ describe("Z_INDEX scale", () => {
 			Z_INDEX.raised,
 			Z_INDEX.overlay,
 			Z_INDEX.titlebar,
-			Z_INDEX.titlebarFloat
+			Z_INDEX.titlebarFloat,
 		);
 		const portalMin = Math.min(
 			Z_INDEX.modalBackdrop,
@@ -46,7 +46,7 @@ describe("Z_INDEX scale", () => {
 			Z_INDEX.tooltip,
 			Z_INDEX.confirmBackdrop,
 			Z_INDEX.confirm,
-			Z_INDEX.toast
+			Z_INDEX.toast,
 		);
 		expect(localMax).toBeLessThan(100);
 		expect(portalMin).toBeGreaterThanOrEqual(1000);

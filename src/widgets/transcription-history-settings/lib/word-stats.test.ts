@@ -17,14 +17,18 @@ import {
 	wordsPerMinute,
 } from "./word-stats";
 
-function makeEntry(partial: Partial<TranscriptionHistoryEntry>): TranscriptionHistoryEntry {
+function makeEntry(
+	partial: Partial<TranscriptionHistoryEntry>,
+): TranscriptionHistoryEntry {
 	return {
 		id: partial.id ?? "id",
 		timestamp: partial.timestamp ?? 0,
 		text: partial.text ?? "",
 		wordCount: partial.wordCount ?? 0,
 		durationMs: partial.durationMs ?? 0,
-		...(partial.originalText === undefined ? {} : { originalText: partial.originalText }),
+		...(partial.originalText === undefined
+			? {}
+			: { originalText: partial.originalText }),
 		...(partial.dictionaryFixes === undefined
 			? {}
 			: { dictionaryFixes: partial.dictionaryFixes }),
@@ -114,13 +118,15 @@ describe("filterEntriesByDateRange", () => {
 		const out = filterEntriesByDateRange(
 			entries,
 			new Date(2026, 4, 10, 12, 0, 0),
-			new Date(2026, 4, 12, 12, 0, 0)
+			new Date(2026, 4, 12, 12, 0, 0),
 		);
 		expect(out.map((e) => e.id)).toEqual(["atStart", "inside", "atEnd"]);
 	});
 
 	test("empty input stays empty under any range", () => {
-		expect(filterEntriesByDateRange([], new Date(2026, 0, 1), new Date(2026, 0, 2))).toEqual([]);
+		expect(
+			filterEntriesByDateRange([], new Date(2026, 0, 1), new Date(2026, 0, 2)),
+		).toEqual([]);
 	});
 });
 
@@ -162,7 +168,11 @@ describe("aggregate", () => {
 			// No originalText (AI never ran) → ignored entirely.
 			makeEntry({ text: "raw only", wordCount: 2 }),
 			// originalText present but identical → no diff, not counted.
-			makeEntry({ originalText: "same words", text: "same words", wordCount: 2 }),
+			makeEntry({
+				originalText: "same words",
+				text: "same words",
+				wordCount: 2,
+			}),
 		];
 		const stats = aggregate(entries);
 		expect(stats.aiFixes).toBe(1);
@@ -187,7 +197,9 @@ describe("wordsCorrectedBetween", () => {
 
 	test("counts each changed word, using the larger side of a rewrite", () => {
 		// "two words" → "one" is a 2-word→1-word change ⇒ 2.
-		expect(wordsCorrectedBetween("keep two words here", "keep one here")).toBe(2);
+		expect(wordsCorrectedBetween("keep two words here", "keep one here")).toBe(
+			2,
+		);
 	});
 });
 

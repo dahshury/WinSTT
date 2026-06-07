@@ -31,81 +31,81 @@ import { OnboardingWizard } from "@/widgets/onboarding-wizard";
  * only in this window's zustand store and disappear when the wizard closes.
  */
 export function OnboardingPage() {
-  const t = useTranslations("onboarding");
-  useSyncSettings();
-  useDownloadListener();
-  // The Ollama model-picker dialog lives here at the view level rather than
-  // inside the wizard widget because it's a sibling widget — widgets can't
-  // import other widgets. The LLM step drives the shared `llm-model-picker`
-  // store (same one Settings uses); we render the dialog from that store so
-  // installs persist into `llm.dictation.model` — and, when the open was a
-  // toggle-driven turn-on, commit `enabled: true` once a model lands.
-  const pickerOpen = useLlmModelPickerStore((s) => s.open);
-  const closePicker = useLlmModelPickerStore((s) => s.close);
-  const commitInstalled = useLlmModelPickerStore((s) => s.commitInstalled);
-  const llmDictation = useSettingsStore((s) => s.settings.llm.dictation);
-  const closeActivation = useTouchActivation(windowCloseSelf);
+	const t = useTranslations("onboarding");
+	useSyncSettings();
+	useDownloadListener();
+	// The Ollama model-picker dialog lives here at the view level rather than
+	// inside the wizard widget because it's a sibling widget — widgets can't
+	// import other widgets. The LLM step drives the shared `llm-model-picker`
+	// store (same one Settings uses); we render the dialog from that store so
+	// installs persist into `llm.dictation.model` — and, when the open was a
+	// toggle-driven turn-on, commit `enabled: true` once a model lands.
+	const pickerOpen = useLlmModelPickerStore((s) => s.open);
+	const closePicker = useLlmModelPickerStore((s) => s.close);
+	const commitInstalled = useLlmModelPickerStore((s) => s.commitInstalled);
+	const llmDictation = useSettingsStore((s) => s.settings.llm.dictation);
+	const closeActivation = useTouchActivation(windowCloseSelf);
 
-  return (
-    <SurfaceProvider value={1}>
-      <div className="noise-overlay flex h-dvh min-h-dvh flex-col bg-surface-1">
-        {/* Title bar — surface-2 substrate with a top-light gradient
+	return (
+		<SurfaceProvider value={1}>
+			<div className="noise-overlay flex h-dvh min-h-dvh flex-col bg-surface-1">
+				{/* Title bar — surface-2 substrate with a top-light gradient
 				    overlay, a Docker-blue accent hairline at the top edge
 				    (single brand moment, matching Settings), and a small accent
 				    dot anchoring the title text. */}
-        <Elevated
-          className="titlebar-drag relative flex h-8 shrink-0 items-stretch border-border border-b bg-gradient-to-b from-[var(--color-surface-3)]/45 to-transparent"
-          offset={1}
-          shadowLevel={1}
-        >
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
-          />
-          <div className="flex items-center gap-2 pl-3">
-            <span
-              aria-hidden="true"
-              className="size-1.5 rounded-full bg-accent shadow-[0_0_6px_var(--color-accent-glow-strong)]"
-            />
-            <span className="font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]">
-              {t("windowTitle")}
-            </span>
-          </div>
-          <div className="flex-1" />
-          <div className="titlebar-no-drag flex items-center">
-            <Tooltip content="Close">
-              <Button
-                aria-label="Close"
-                className="group flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error/85 hover:text-white"
-                {...closeActivation}
-              >
-                <HugeiconsIcon
-                  className="transition-transform duration-150 ease-out group-hover:scale-110"
-                  icon={Cancel01Icon}
-                  size={12}
-                />
-              </Button>
-            </Tooltip>
-          </div>
-        </Elevated>
+				<Elevated
+					className="titlebar-drag relative flex h-8 shrink-0 items-stretch border-border border-b bg-gradient-to-b from-[var(--color-surface-3)]/45 to-transparent"
+					offset={1}
+					shadowLevel={1}
+				>
+					<span
+						aria-hidden="true"
+						className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent"
+					/>
+					<div className="flex items-center gap-2 pl-3">
+						<span
+							aria-hidden="true"
+							className="size-1.5 rounded-full bg-accent shadow-[0_0_6px_var(--color-accent-glow-strong)]"
+						/>
+						<span className="font-mono text-foreground-secondary text-xs-tight uppercase tracking-[0.18em]">
+							{t("windowTitle")}
+						</span>
+					</div>
+					<div className="flex-1" />
+					<div className="titlebar-no-drag flex items-center">
+						<Tooltip content="Close">
+							<Button
+								aria-label="Close"
+								className="group flex h-full w-10 rounded-none bg-transparent p-0 text-foreground-muted transition-[background-color,color] duration-150 hover:bg-error/85 hover:text-white"
+								{...closeActivation}
+							>
+								<HugeiconsIcon
+									className="transition-transform duration-150 ease-out group-hover:scale-110"
+									icon={Cancel01Icon}
+									size={12}
+								/>
+							</Button>
+						</Tooltip>
+					</div>
+				</Elevated>
 
-        {/* Content viewport — lifts to surface-2 so wizard's section
+				{/* Content viewport — lifts to surface-2 so wizard's section
 				    cards (TextureCard offset=1) read at surface-3, matching the
 				    settings panel substrate exactly. */}
-        <Elevated
-          className="flex flex-1 flex-col overflow-hidden"
-          offset={1}
-          shadowLevel={1}
-        >
-          <OnboardingWizard />
-        </Elevated>
-        <OllamaModelManagerDialog
-          currentModel={llmDictation.model}
-          isOpen={pickerOpen}
-          onClose={closePicker}
-          onModelInstalled={commitInstalled}
-        />
-      </div>
-    </SurfaceProvider>
-  );
+				<Elevated
+					className="flex flex-1 flex-col overflow-hidden"
+					offset={1}
+					shadowLevel={1}
+				>
+					<OnboardingWizard />
+				</Elevated>
+				<OllamaModelManagerDialog
+					currentModel={llmDictation.model}
+					isOpen={pickerOpen}
+					onClose={closePicker}
+					onModelInstalled={commitInstalled}
+				/>
+			</div>
+		</SurfaceProvider>
+	);
 }

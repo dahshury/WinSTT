@@ -50,7 +50,8 @@ describe("resolveQuantCache", () => {
 	test("falls back to the flat cache when cache_by_quantization is undefined", () => {
 		const flat = cacheInfo({ state: "partial" });
 		const e = entry({ cache: flat });
-		(e as { cache_by_quantization?: unknown }).cache_by_quantization = undefined;
+		(e as { cache_by_quantization?: unknown }).cache_by_quantization =
+			undefined;
 		expect(resolveQuantCache(e, "int8")).toBe(flat);
 	});
 });
@@ -102,7 +103,9 @@ describe("getCachePillConfig", () => {
 	});
 
 	test("labels a partial model with a rounded percentage", () => {
-		const config = getCachePillConfig(cacheInfo({ state: "partial", progress: 0.426 }));
+		const config = getCachePillConfig(
+			cacheInfo({ state: "partial", progress: 0.426 }),
+		);
 		expect(config?.label).toBe("43%");
 		expect(config?.className).toContain("amber");
 	});

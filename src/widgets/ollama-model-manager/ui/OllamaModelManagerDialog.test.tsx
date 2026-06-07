@@ -37,7 +37,9 @@ const helpers = helpersModule;
 // Sibling suites populate it and bun:test never isolates module state, so a
 // leaked non-empty list makes the "no models installed" empty-state test fail
 // purely on file order. Reset to empty before every test in this file.
-const { useLlmCatalogStore } = await import("@/entities/llm-catalog/model/llm-catalog-store");
+const { useLlmCatalogStore } = await import(
+	"@/entities/llm-catalog/model/llm-catalog-store"
+);
 beforeEach(() => {
 	useLlmCatalogStore.setState({ models: [] });
 });
@@ -53,7 +55,9 @@ const tStub = ((key: string, vars?: Record<string, unknown>) =>
 // ---------------------------------------------------------------------------
 // Helper: render the dialog open with no models pre-installed.
 // ---------------------------------------------------------------------------
-function renderDialog(props: Partial<Parameters<typeof OllamaModelManagerDialog>[0]> = {}) {
+function renderDialog(
+	props: Partial<Parameters<typeof OllamaModelManagerDialog>[0]> = {},
+) {
 	const onClose = mock(() => undefined);
 	const onModelInstalled = mock((_name: string) => undefined);
 	const result = render(
@@ -65,7 +69,7 @@ function renderDialog(props: Partial<Parameters<typeof OllamaModelManagerDialog>
 				onModelInstalled={onModelInstalled}
 				{...props}
 			/>
-		</IntlProvider>
+		</IntlProvider>,
 	);
 	return { ...result, onClose, onModelInstalled };
 }
@@ -83,8 +87,12 @@ describe("OllamaModelManagerDialog", () => {
 	test("renders without crashing when closed", () => {
 		const { container } = render(
 			<IntlProvider>
-				<OllamaModelManagerDialog currentModel="" isOpen={false} onClose={() => undefined} />
-			</IntlProvider>
+				<OllamaModelManagerDialog
+					currentModel=""
+					isOpen={false}
+					onClose={() => undefined}
+				/>
+			</IntlProvider>,
 		);
 		expect(container).toBeDefined();
 	});
@@ -98,7 +106,9 @@ describe("OllamaModelManagerDialog", () => {
 
 	test("handleSelect calls onModelInstalled and onClose when model is clicked", async () => {
 		// Seed the zustand store with one model so InstalledRow renders
-		const { useLlmCatalogStore } = await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -108,7 +118,9 @@ describe("OllamaModelManagerDialog", () => {
 		});
 
 		// Click the row button (not the delete button) to select the model
-		const rowBtn = document.querySelector("button[data-current]") as HTMLButtonElement;
+		const rowBtn = document.querySelector(
+			"button[data-current]",
+		) as HTMLButtonElement;
 		expect(rowBtn).not.toBeNull();
 		fireEvent.click(rowBtn);
 
@@ -120,7 +132,9 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("handleSelect with no onModelInstalled still calls onClose", async () => {
-		const { useLlmCatalogStore } = await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -134,10 +148,12 @@ describe("OllamaModelManagerDialog", () => {
 					onClose={onClose}
 					// no onModelInstalled prop
 				/>
-			</IntlProvider>
+			</IntlProvider>,
 		);
 
-		const rowBtn = document.querySelector("button[data-current]") as HTMLButtonElement;
+		const rowBtn = document.querySelector(
+			"button[data-current]",
+		) as HTMLButtonElement;
 		expect(rowBtn).not.toBeNull();
 		fireEvent.click(rowBtn);
 
@@ -147,7 +163,9 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("ask-delete flow sets pending-delete (shows ConfirmDialog title)", async () => {
-		const { useLlmCatalogStore } = await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -155,7 +173,9 @@ describe("OllamaModelManagerDialog", () => {
 		renderDialog();
 
 		// Find the delete button inside the InstalledRow and click it
-		const deleteBtn = document.querySelector("button.text-error") as HTMLButtonElement;
+		const deleteBtn = document.querySelector(
+			"button.text-error",
+		) as HTMLButtonElement;
 		expect(deleteBtn).not.toBeNull();
 
 		await act(async () => {
@@ -170,7 +190,9 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("handleConfirmDelete calls deleteModel and clears state", async () => {
-		const { useLlmCatalogStore } = await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
@@ -179,14 +201,18 @@ describe("OllamaModelManagerDialog", () => {
 		renderDialog();
 
 		// Open the delete confirm dialog
-		const deleteBtn = document.querySelector("button.text-error") as HTMLButtonElement;
+		const deleteBtn = document.querySelector(
+			"button.text-error",
+		) as HTMLButtonElement;
 		await act(async () => {
 			fireEvent.click(deleteBtn);
 		});
 
 		// ConfirmDialog is now open — find the confirm button.
 		// It has class bg-error (from ConfirmDialog.tsx styling).
-		const confirmBtn = document.querySelector("button.bg-error") as HTMLButtonElement;
+		const confirmBtn = document.querySelector(
+			"button.bg-error",
+		) as HTMLButtonElement;
 		expect(confirmBtn).not.toBeNull();
 
 		await act(async () => {
@@ -199,14 +225,18 @@ describe("OllamaModelManagerDialog", () => {
 	});
 
 	test("cancelling delete dialog clears pendingDelete", async () => {
-		const { useLlmCatalogStore } = await import("@/entities/llm-catalog/model/llm-catalog-store");
+		const { useLlmCatalogStore } = await import(
+			"@/entities/llm-catalog/model/llm-catalog-store"
+		);
 		useLlmCatalogStore.setState({
 			models: [{ name: "gemma3:4b", size: 1_000_000_000 }],
 		});
 
 		renderDialog();
 
-		const deleteBtn = document.querySelector("button.text-error") as HTMLButtonElement;
+		const deleteBtn = document.querySelector(
+			"button.text-error",
+		) as HTMLButtonElement;
 		await act(async () => {
 			fireEvent.click(deleteBtn);
 		});
@@ -216,7 +246,7 @@ describe("OllamaModelManagerDialog", () => {
 
 		// Click the AlertDialog.Close button (renders as "Cancel")
 		const cancelBtn = Array.from(document.querySelectorAll("button")).find(
-			(b) => (b.textContent ?? "").trim() === "Cancel"
+			(b) => (b.textContent ?? "").trim() === "Cancel",
 		);
 		expect(cancelBtn).toBeDefined();
 		await act(async () => {
@@ -300,7 +330,9 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 		const { onModelInstalled } = renderDialog();
 		// Find the "Recommended" tab button in the switcher and click it
 		const allButtons = Array.from(document.querySelectorAll("button"));
-		const recommendedBtn = allButtons.find((b) => (b.textContent ?? "").trim() === "Recommended");
+		const recommendedBtn = allButtons.find(
+			(b) => (b.textContent ?? "").trim() === "Recommended",
+		);
 		if (recommendedBtn) {
 			await act(async () => {
 				fireEvent.click(recommendedBtn);
@@ -326,12 +358,16 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 
 	test("handlePull success: calls onModelInstalled after successful pull", async () => {
 		pullModelMock.mockClear();
-		pullModelMock.mockImplementation(async (_name: string) => ({ success: true }));
+		pullModelMock.mockImplementation(async (_name: string) => ({
+			success: true,
+		}));
 		renderDialog();
 
 		// Switch to recommended tab
 		const allButtons = Array.from(document.querySelectorAll("button"));
-		const recommendedBtn = allButtons.find((b) => (b.textContent ?? "").trim() === "Recommended");
+		const recommendedBtn = allButtons.find(
+			(b) => (b.textContent ?? "").trim() === "Recommended",
+		);
 		if (recommendedBtn) {
 			await act(async () => {
 				fireEvent.click(recommendedBtn);
@@ -341,7 +377,9 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 		// Find a Pull button for a recommended model
 		const updatedButtons = Array.from(document.querySelectorAll("button"));
 		const pullBtn = updatedButtons.find(
-			(b) => (b.textContent ?? "").trim() === "Pull" || (b.textContent ?? "").includes("Pull")
+			(b) =>
+				(b.textContent ?? "").trim() === "Pull" ||
+				(b.textContent ?? "").includes("Pull"),
 		);
 		if (pullBtn) {
 			await act(async () => {
@@ -358,13 +396,17 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 
 	test("handlePull no-op path: does not call onModelInstalled when pull fails", async () => {
 		pullModelMock.mockClear();
-		pullModelMock.mockImplementation(async (_name: string) => ({ success: false }));
+		pullModelMock.mockImplementation(async (_name: string) => ({
+			success: false,
+		}));
 		const { onModelInstalled } = renderDialog({
 			onModelInstalled: mock((_name: string) => undefined),
 		});
 
 		const allButtons = Array.from(document.querySelectorAll("button"));
-		const recommendedBtn = allButtons.find((b) => (b.textContent ?? "").trim() === "Recommended");
+		const recommendedBtn = allButtons.find(
+			(b) => (b.textContent ?? "").trim() === "Recommended",
+		);
 		if (recommendedBtn) {
 			await act(async () => {
 				fireEvent.click(recommendedBtn);
@@ -373,7 +415,9 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 
 		const updatedButtons = Array.from(document.querySelectorAll("button"));
 		const pullBtn = updatedButtons.find(
-			(b) => (b.textContent ?? "").trim() === "Pull" || (b.textContent ?? "").includes("Pull")
+			(b) =>
+				(b.textContent ?? "").trim() === "Pull" ||
+				(b.textContent ?? "").includes("Pull"),
 		);
 		if (pullBtn) {
 			await act(async () => {
@@ -385,7 +429,9 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 		// When pull fails, onModelInstalled should NOT be called
 		expect(onModelInstalled).not.toHaveBeenCalled();
 		// Reset mock
-		pullModelMock.mockImplementation(async (_name: string) => ({ success: true }));
+		pullModelMock.mockImplementation(async (_name: string) => ({
+			success: true,
+		}));
 	});
 
 	test("CustomPullRow: shows pull row for a custom model:tag query", async () => {
@@ -395,7 +441,9 @@ describe("OllamaModelManagerDialog — Recommended tab", () => {
 		// plus the visible span), so `textContent` is "RecommendedRecommended"
 		// — match via `includes("Recommended")` instead of strict equality.
 		const allBtns = Array.from(document.querySelectorAll("button"));
-		const recBtn = allBtns.find((b) => (b.textContent ?? "").includes("Recommended"));
+		const recBtn = allBtns.find((b) =>
+			(b.textContent ?? "").includes("Recommended"),
+		);
 		if (recBtn) {
 			await act(async () => {
 				fireEvent.click(recBtn);

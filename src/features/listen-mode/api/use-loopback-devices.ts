@@ -41,11 +41,17 @@ function buildLoopbackOptions(typed: LoopbackDevice[]): {
 	defaultIndex: number | null;
 } {
 	const defaultDev = typed.find((d) => d.isDefault);
-	const defaultLabel = defaultDev ? `System Default (${defaultDev.name})` : "System Default";
+	const defaultLabel = defaultDev
+		? `System Default (${defaultDev.name})`
+		: "System Default";
 	const defaultIndex = defaultDev?.index ?? null;
 	const options: SelectOption[] = [
 		{ id: "default", label: defaultLabel, icon: ComputerIcon },
-		...typed.map((d) => ({ id: String(d.index), label: d.name, icon: VolumeHighIcon })),
+		...typed.map((d) => ({
+			id: String(d.index),
+			label: d.name,
+			icon: VolumeHighIcon,
+		})),
 	];
 	return { options, defaultIndex };
 }
@@ -58,7 +64,10 @@ interface ApplyDevicesParams {
 	update: (patch: { loopbackDeviceIndex: number | null }) => void;
 }
 
-function maybeAutoSelect(params: ApplyDevicesParams, defIdx: number | null): void {
+function maybeAutoSelect(
+	params: ApplyDevicesParams,
+	defIdx: number | null,
+): void {
 	if (params.currentDeviceIndex == null && defIdx != null) {
 		params.update({ loopbackDeviceIndex: defIdx });
 	}
@@ -94,7 +103,10 @@ export function handleFetchError(getIsCancelled: () => boolean) {
 		if (getIsCancelled()) {
 			return;
 		}
-		console.error("[useLoopbackDevices] Failed to fetch loopback devices:", err);
+		console.error(
+			"[useLoopbackDevices] Failed to fetch loopback devices:",
+			err,
+		);
 	};
 }
 
@@ -104,7 +116,7 @@ export function handleFetchError(getIsCancelled: () => boolean) {
  */
 export function resolveCurrentId(
 	loopbackDeviceIndex: number | null | undefined,
-	defaultIndex: number | null
+	defaultIndex: number | null,
 ): string {
 	if (loopbackDeviceIndex == null || loopbackDeviceIndex === defaultIndex) {
 		return "default";
@@ -144,7 +156,10 @@ export function useLoopbackDevices(): UseLoopbackDevicesReturn {
 		};
 	}, [recordingMode, general?.loopbackDeviceIndex, update]);
 
-	const currentId = resolveCurrentId(general?.loopbackDeviceIndex, defaultIndex);
+	const currentId = resolveCurrentId(
+		general?.loopbackDeviceIndex,
+		defaultIndex,
+	);
 
 	const handleChange = (v: string) => {
 		update({

@@ -41,7 +41,13 @@ const DEVICE_ICON_RULES: readonly IconRule[] = [
 	},
 	{
 		icon: CameraMicrophone01Icon,
-		patterns: [/\bcameras?\b/i, /\bwebcams?\b/i, /\bcam\b/i, /\bc920\b/i, /\bbrio\b/i],
+		patterns: [
+			/\bcameras?\b/i,
+			/\bwebcams?\b/i,
+			/\bcam\b/i,
+			/\bc920\b/i,
+			/\bbrio\b/i,
+		],
 	},
 	{
 		icon: MixerIcon,
@@ -86,8 +92,12 @@ export function inputDeviceIconForName(name: string): IconSvgElement {
 	return Mic01Icon;
 }
 
-function inputDefaultIcon(defaultDeviceName: string | null | undefined): IconSvgElement {
-	return defaultDeviceName ? inputDeviceIconForName(defaultDeviceName) : ComputerIcon;
+function inputDefaultIcon(
+	defaultDeviceName: string | null | undefined,
+): IconSvgElement {
+	return defaultDeviceName
+		? inputDeviceIconForName(defaultDeviceName)
+		: ComputerIcon;
 }
 
 /**
@@ -99,7 +109,7 @@ function inputDefaultIcon(defaultDeviceName: string | null | undefined): IconSvg
 function resolveDeviceId(
 	device: AudioDevice,
 	inputDeviceIndex: number | null,
-	selectedName: string | null
+	selectedName: string | null,
 ): string {
 	const isSelected = selectedName === device.name;
 	return String(isSelected ? inputDeviceIndex : device.index);
@@ -109,7 +119,7 @@ function resolveDeviceId(
 function dedupeDevicesByName(
 	devices: readonly AudioDevice[],
 	inputDeviceIndex: number | null,
-	selectedName: string | null
+	selectedName: string | null,
 ): InputDeviceOption[] {
 	const seen = new Set<string>();
 	const opts: InputDeviceOption[] = [];
@@ -138,7 +148,7 @@ export interface InputDeviceResult {
 /** Resolves the selected device's name from the device list. */
 function resolveSelectedName(
 	devices: readonly AudioDevice[],
-	inputDeviceIndex: number | null
+	inputDeviceIndex: number | null,
 ): string | null {
 	if (inputDeviceIndex == null) {
 		return null;
@@ -155,15 +165,20 @@ export function buildInputDeviceOptions(
 	devices: readonly AudioDevice[],
 	inputDeviceIndex: number | null,
 	defaultLabel: string,
-	defaultDeviceName?: string | null
+	defaultDeviceName?: string | null,
 ): InputDeviceResult {
 	const opts: InputDeviceOption[] = [
-		{ icon: inputDefaultIcon(defaultDeviceName), id: "default", label: defaultLabel },
+		{
+			icon: inputDefaultIcon(defaultDeviceName),
+			id: "default",
+			label: defaultLabel,
+		},
 	];
 	const selectedName = resolveSelectedName(devices, inputDeviceIndex);
 	opts.push(...dedupeDevicesByName(devices, inputDeviceIndex, selectedName));
 
-	const currentDeviceId = inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
+	const currentDeviceId =
+		inputDeviceIndex == null ? "default" : String(inputDeviceIndex);
 	const found = opts.find((o) => o.id === currentDeviceId);
 	return {
 		deviceOptions: opts,

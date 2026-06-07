@@ -54,5 +54,5 @@ renderReactRoot(
 				<ModelPickerBootstrap />
 			</IntlProvider>
 		</Suspense>
-	</StrictMode>
+	</StrictMode>,
 );

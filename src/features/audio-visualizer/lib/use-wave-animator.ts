@@ -17,22 +17,33 @@ const MAX_SPEAKING_AMPLITUDE = 0.4;
 const SPEAKING_AMPLITUDE_BASE = 0.06;
 const SPEAKING_AMPLITUDE_GAIN = 0.9;
 const DEFAULT_FREQUENCY = 10;
-const DEFAULT_TRANSITION: ValueAnimationTransition = { duration: 0.2, ease: "easeOut" };
+const DEFAULT_TRANSITION: ValueAnimationTransition = {
+	duration: 0.2,
+	ease: "easeOut",
+};
 
-export function useWaveAnimator(state: AgentState, uniformsRef: React.RefObject<Uniforms>): void {
+export function useWaveAnimator(
+	state: AgentState,
+	uniformsRef: React.RefObject<Uniforms>,
+): void {
 	const { animate: animateAmplitude } = useRefAnimatedValue(
 		DEFAULT_AMPLITUDE,
 		uniformsRef,
 		"uAmplitude",
-		"1f"
+		"1f",
 	);
 	const { animate: animateFrequency } = useRefAnimatedValue(
 		DEFAULT_FREQUENCY,
 		uniformsRef,
 		"uFrequency",
-		"1f"
+		"1f",
 	);
-	const { animate: animateOpacity } = useRefAnimatedValue(1.0, uniformsRef, "uMix", "1f");
+	const { animate: animateOpacity } = useRefAnimatedValue(
+		1.0,
+		uniformsRef,
+		"uMix",
+		"1f",
+	);
 
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
 
@@ -89,7 +100,7 @@ export function useWaveAnimator(state: AgentState, uniformsRef: React.RefObject<
 			const perceptual = Math.sqrt(Math.max(0, audioLevel));
 			const amplitude = Math.min(
 				MAX_SPEAKING_AMPLITUDE,
-				SPEAKING_AMPLITUDE_BASE + SPEAKING_AMPLITUDE_GAIN * perceptual
+				SPEAKING_AMPLITUDE_BASE + SPEAKING_AMPLITUDE_GAIN * perceptual,
 			);
 			animateAmplitude(amplitude, { duration: 0 });
 			animateFrequency(20 + 60 * audioLevel, { duration: 0 });

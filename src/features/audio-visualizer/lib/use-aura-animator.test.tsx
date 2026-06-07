@@ -5,7 +5,10 @@ import { useRef } from "react";
 import { useVisualizerStore } from "../model/visualizer-store";
 import type { Uniforms } from "../ui/ReactShaderToy";
 import type { AgentState } from "./audio-visualizer";
-import { shouldApplyAudioLevelScale, useAuraAnimator } from "./use-aura-animator";
+import {
+	shouldApplyAudioLevelScale,
+	useAuraAnimator,
+} from "./use-aura-animator";
 
 function createUniforms(): Uniforms {
 	return {
@@ -94,7 +97,7 @@ describe("useAuraAnimator", () => {
 				useAuraAnimator(state, ref);
 				return ref;
 			},
-			{ initialProps: { state: "disconnected" as AgentState } }
+			{ initialProps: { state: "disconnected" as AgentState } },
 		);
 		expect(getUniformValue(result.current, "uSpeed")).toBe(10);
 		rerender({ state: "speaking" as AgentState });

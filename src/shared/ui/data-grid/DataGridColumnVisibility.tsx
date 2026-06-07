@@ -30,7 +30,9 @@ export function DataGridColumnVisibility({
 	const triggerLevel = Math.min(substrate + 1, 8);
 	const popupLevel = Math.min(substrate + 2, 8);
 	const popupShadow = Math.max(popupLevel, 6);
-	const columns = table.getAllLeafColumns().filter((column) => column.getCanHide());
+	const columns = table
+		.getAllLeafColumns()
+		.filter((column) => column.getCanHide());
 
 	const triggerClassName = embedded
 		? "flex h-7 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-2 text-2xs text-foreground-secondary outline-none ring-1 ring-divider transition-[background-color,color] duration-150 hover:bg-foreground/[0.04] hover:text-foreground hover:ring-border focus-visible:ring-2 focus-visible:ring-accent"
@@ -58,7 +60,9 @@ export function DataGridColumnVisibility({
 									className="relative mx-1 flex cursor-default select-none items-center gap-2 rounded-xs py-1.5 pr-2 pl-7 text-body text-foreground outline-none transition-colors duration-100 data-[highlighted]:bg-surface-hover"
 									closeOnClick={false}
 									key={column.id}
-									onCheckedChange={(checked) => column.toggleVisibility(checked)}
+									onCheckedChange={(checked) =>
+										column.toggleVisibility(checked)
+									}
 								>
 									<Menu.CheckboxItemIndicator className="absolute left-2 flex items-center">
 										<HugeiconsIcon

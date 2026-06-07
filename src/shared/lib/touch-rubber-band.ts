@@ -30,7 +30,9 @@ function hasScrollableYOverflow(element: HTMLElement) {
 		return false;
 	}
 	const overflowY = window.getComputedStyle(element).overflowY;
-	return overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay";
+	return (
+		overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay"
+	);
 }
 
 function findScrollableAncestor(target: EventTarget | null) {
@@ -43,7 +45,10 @@ function findScrollableAncestor(target: EventTarget | null) {
 	}
 
 	const scrollingElement = document.scrollingElement;
-	if (scrollingElement instanceof HTMLElement && hasScrollableYOverflow(scrollingElement)) {
+	if (
+		scrollingElement instanceof HTMLElement &&
+		hasScrollableYOverflow(scrollingElement)
+	) {
 		return scrollingElement;
 	}
 	return null;
@@ -170,7 +175,8 @@ export function installTouchRubberBand(): void {
 		}
 
 		const signedDistance = y - boundaryStartY;
-		const outwardDistance = boundary === "top" ? signedDistance : -signedDistance;
+		const outwardDistance =
+			boundary === "top" ? signedDistance : -signedDistance;
 		if (outwardDistance <= 0) {
 			stopRubberBanding();
 			return;
@@ -197,8 +203,20 @@ export function installTouchRubberBand(): void {
 		viewport = null;
 	};
 
-	document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
-	document.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
-	document.addEventListener("touchend", onTouchEnd, { capture: true, passive: true });
-	document.addEventListener("touchcancel", onTouchEnd, { capture: true, passive: true });
+	document.addEventListener("touchstart", onTouchStart, {
+		capture: true,
+		passive: true,
+	});
+	document.addEventListener("touchmove", onTouchMove, {
+		capture: true,
+		passive: false,
+	});
+	document.addEventListener("touchend", onTouchEnd, {
+		capture: true,
+		passive: true,
+	});
+	document.addEventListener("touchcancel", onTouchEnd, {
+		capture: true,
+		passive: true,
+	});
 }

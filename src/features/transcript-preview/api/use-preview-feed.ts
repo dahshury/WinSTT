@@ -14,7 +14,10 @@ import { useTranscriptPreviewStore } from "../model/preview-store";
  *  half opens pre-populated with the user's configured presets/modifiers (same
  *  defaults the magic button applies). Read lazily at open time — the settings
  *  store is hydrated by the time a preview can fire. */
-function dictationEnhanceSeed(): { presetKeys: PresetKey[]; modifierIds: string[] } {
+function dictationEnhanceSeed(): {
+	presetKeys: PresetKey[];
+	modifierIds: string[];
+} {
 	const dictation = useSettingsStore.getState().settings.llm?.dictation;
 	const presetKeys = (dictation?.presets ?? [])
 		.map((p) => p.key)

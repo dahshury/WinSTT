@@ -4,22 +4,22 @@ import { useState } from "react";
 import { useModelPickerCloseGuard } from "./model-picker-close-guard";
 
 function CloseGuardHarness() {
-  const [open, setOpen] = useState(true);
-  useModelPickerCloseGuard({ setOpen });
-  return <div data-testid="state">{open ? "open" : "closed"}</div>;
+	const [open, setOpen] = useState(true);
+	useModelPickerCloseGuard({ setOpen });
+	return <div data-testid="state">{open ? "open" : "closed"}</div>;
 }
 
 describe("useModelPickerCloseGuard", () => {
-  test("closes the selector when the window blurs", () => {
-    const { unmount } = render(<CloseGuardHarness />);
+	test("closes the selector when the window blurs", () => {
+		const { unmount } = render(<CloseGuardHarness />);
 
-    expect(screen.getByTestId("state").textContent).toBe("open");
+		expect(screen.getByTestId("state").textContent).toBe("open");
 
-    act(() => {
-      window.dispatchEvent(new Event("blur"));
-    });
+		act(() => {
+			window.dispatchEvent(new Event("blur"));
+		});
 
-    expect(screen.getByTestId("state").textContent).toBe("closed");
-    unmount();
-  });
+		expect(screen.getByTestId("state").textContent).toBe("closed");
+		unmount();
+	});
 });

@@ -24,7 +24,7 @@ function makeApi(invokeImpl?: (channel: string) => unknown) {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},

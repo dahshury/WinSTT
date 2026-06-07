@@ -28,7 +28,7 @@ function makeApi() {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -114,7 +114,9 @@ describe("useKeyRecorder", () => {
 
 	test("clicking Stop then receiving the done reply still commits the recorded combo", async () => {
 		const recorded: string[] = [];
-		const { result } = renderHook(() => useKeyRecorder({ onKeyRecorded: (k) => recorded.push(k) }));
+		const { result } = renderHook(() =>
+			useKeyRecorder({ onKeyRecorded: (k) => recorded.push(k) }),
+		);
 
 		act(() => result.current.startRecording());
 		// Simulate live keypresses captured in main, then user clicks Stop.

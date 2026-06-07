@@ -22,14 +22,26 @@ const ACCESSORS: ReadonlyArray<{
 	cls: (n: number) => string;
 }> = [
 	{ name: "surfaceBg", fn: surfaceBg, cls: (n) => `bg-surface-${n}` },
-	{ name: "surfaceShadow", fn: surfaceShadow, cls: (n) => `shadow-surface-${n}` },
-	{ name: "surfaceHoverBg", fn: surfaceHoverBg, cls: (n) => `hover:bg-surface-${n}` },
+	{
+		name: "surfaceShadow",
+		fn: surfaceShadow,
+		cls: (n) => `shadow-surface-${n}`,
+	},
+	{
+		name: "surfaceHoverBg",
+		fn: surfaceHoverBg,
+		cls: (n) => `hover:bg-surface-${n}`,
+	},
 	{
 		name: "surfaceHighlightedBg",
 		fn: surfaceHighlightedBg,
 		cls: (n) => `data-[highlighted]:bg-surface-${n}`,
 	},
-	{ name: "surfaceCheckedBg", fn: surfaceCheckedBg, cls: (n) => `data-[checked]:bg-surface-${n}` },
+	{
+		name: "surfaceCheckedBg",
+		fn: surfaceCheckedBg,
+		cls: (n) => `data-[checked]:bg-surface-${n}`,
+	},
 	{
 		name: "surfaceSelectedBg",
 		fn: surfaceSelectedBg,
@@ -123,23 +135,29 @@ describe("property: every accessor output is a valid surface class for any real 
 				(level, accessor) => {
 					const out = accessor.fn(level);
 					// The clamped level embedded in the class is always 1..8.
-					return /surface-[1-8](\/90)?\b/.test(out) && !out.includes("undefined");
-				}
+					return (
+						/surface-[1-8](\/90)?\b/.test(out) && !out.includes("undefined")
+					);
+				},
 			),
-			{ numRuns: 400 }
+			{ numRuns: 400 },
 		);
 	});
 
 	test("monotone clamp: a larger input never yields a lower surface level", () => {
 		fc.assert(
-			fc.property(fc.integer({ min: -50, max: 50 }), fc.integer({ min: -50, max: 50 }), (a, b) => {
-				const lo = Math.min(a, b);
-				const hi = Math.max(a, b);
-				const levelLo = Number(surfaceBg(lo).replace("bg-surface-", ""));
-				const levelHi = Number(surfaceBg(hi).replace("bg-surface-", ""));
-				return levelHi >= levelLo;
-			}),
-			{ numRuns: 400 }
+			fc.property(
+				fc.integer({ min: -50, max: 50 }),
+				fc.integer({ min: -50, max: 50 }),
+				(a, b) => {
+					const lo = Math.min(a, b);
+					const hi = Math.max(a, b);
+					const levelLo = Number(surfaceBg(lo).replace("bg-surface-", ""));
+					const levelHi = Number(surfaceBg(hi).replace("bg-surface-", ""));
+					return levelHi >= levelLo;
+				},
+			),
+			{ numRuns: 400 },
 		);
 	});
 });

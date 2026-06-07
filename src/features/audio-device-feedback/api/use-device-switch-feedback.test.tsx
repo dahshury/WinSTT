@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
-import { act, type RenderHookResult, renderHook, waitFor } from "@testing-library/react";
+import {
+	act,
+	type RenderHookResult,
+	renderHook,
+	waitFor,
+} from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { DEFAULT_SETTINGS, useSettingsStore } from "@/entities/setting";
 import { IPC } from "@/shared/api/ipc-channels";
@@ -33,7 +38,7 @@ const { _resetOutputDevicesCacheForTests } = await import(
 const originalNativeBridge = window.nativeBridge;
 const originalMediaDevicesDescriptor = Object.getOwnPropertyDescriptor(
 	navigator,
-	"mediaDevices"
+	"mediaDevices",
 );
 
 // Capture mock-call records so each test can assert.
@@ -48,18 +53,26 @@ let onDeviceSwitchFailedCb:
 			requestedIndex: number;
 	  }) => void)
 	| null = null;
-let audioGetDevicesImpl: () => Promise<Array<{ index: number; name: string; isDefault: boolean }>> =
-	async () => [];
-let outputEnumerateResult: Array<{ deviceId: string; kind: MediaDeviceKind; label: string }> = [];
+let audioGetDevicesImpl: () => Promise<
+	Array<{ index: number; name: string; isDefault: boolean }>
+> = async () => [];
+let outputEnumerateResult: Array<{
+	deviceId: string;
+	kind: MediaDeviceKind;
+	label: string;
+}> = [];
 
 function installNativeBridgeStub(): void {
 	window.nativeBridge = {
 		getPathForFile: () => "",
 		send: (channel: string, payload?: unknown) => {
 			if (channel === IPC.SETTINGS_SAVE) {
-				const settings = (payload as { settings?: unknown } | undefined)?.settings;
+				const settings = (payload as { settings?: unknown } | undefined)
+					?.settings;
 				settingsSaveCalls.push(
-					settings as { audio: { inputDeviceIndex: number | null } | undefined }
+					settings as {
+						audio: { inputDeviceIndex: number | null } | undefined;
+					},
 				);
 			}
 		},
@@ -85,7 +98,8 @@ function installNativeBridgeStub(): void {
 function installMediaDevicesStub(): void {
 	const mediaDevices = {
 		addEventListener: () => undefined,
-		enumerateDevices: async () => outputEnumerateResult as unknown as MediaDeviceInfo[],
+		enumerateDevices: async () =>
+			outputEnumerateResult as unknown as MediaDeviceInfo[],
 		removeEventListener: () => undefined,
 	};
 	Object.defineProperty(navigator, "mediaDevices", {
@@ -127,7 +141,11 @@ afterEach(() => {
 	window.nativeBridge = originalNativeBridge;
 	_resetOutputDevicesCacheForTests();
 	if (originalMediaDevicesDescriptor) {
-		Object.defineProperty(navigator, "mediaDevices", originalMediaDevicesDescriptor);
+		Object.defineProperty(
+			navigator,
+			"mediaDevices",
+			originalMediaDevicesDescriptor,
+		);
 	} else {
 		Reflect.deleteProperty(navigator, "mediaDevices");
 	}
@@ -143,7 +161,9 @@ afterEach(() => {
 const mountedHooks: RenderHookResult<unknown, unknown>[] = [];
 
 function renderHookWithProviders() {
-	const handle = renderHook(() => useDeviceSwitchFeedback(), { wrapper: IntlProvider });
+	const handle = renderHook(() => useDeviceSwitchFeedback(), {
+		wrapper: IntlProvider,
+	});
 	mountedHooks.push(handle as unknown as RenderHookResult<unknown, unknown>);
 	return handle;
 }
@@ -164,7 +184,9 @@ describe("useDeviceSwitchFeedback", () => {
 		expect(settingsSaveCalls.length).toBe(1);
 		expect(settingsSaveCalls[0]?.audio?.inputDeviceIndex).toBe(null);
 		// And the Zustand store reflects the fallback.
-		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(null);
+		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+			null,
+		);
 	});
 
 	test("forwards the server-reported fallback index when non-null", () => {
@@ -177,7 +199,9 @@ describe("useDeviceSwitchFeedback", () => {
 			});
 		});
 		expect(settingsSaveCalls[0]?.audio?.inputDeviceIndex).toBe(2);
-		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(2);
+		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+			2,
+		);
 	});
 
 	test("auto-resets to system default when saved index is missing from the live list", async () => {
@@ -189,7 +213,9 @@ describe("useDeviceSwitchFeedback", () => {
 		];
 		renderHookWithProviders();
 		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(null);
+			expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+				null,
+			);
 		});
 		// And the reset must be persisted immediately so it survives an early close.
 		expect(settingsSaveCalls.length).toBeGreaterThanOrEqual(1);
@@ -212,7 +238,9 @@ describe("useDeviceSwitchFeedback", () => {
 		renderHookWithProviders();
 
 		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.general?.outputDeviceId).toBe("");
+			expect(useSettingsStore.getState().settings.general?.outputDeviceId).toBe(
+				"",
+			);
 		});
 		expect(settingsSaveCalls.at(-1)?.general?.outputDeviceId).toBe("");
 	});
@@ -220,7 +248,11 @@ describe("useDeviceSwitchFeedback", () => {
 	test("does not touch the saved output device when it is still in the live list", async () => {
 		outputEnumerateResult = [
 			{ deviceId: "default", kind: "audiooutput", label: "Default Speakers" },
-			{ deviceId: "bt-headset", kind: "audiooutput", label: "Bluetooth Headset" },
+			{
+				deviceId: "bt-headset",
+				kind: "audiooutput",
+				label: "Bluetooth Headset",
+			},
 		];
 		useSettingsStore.setState({
 			settings: {
@@ -233,7 +265,9 @@ describe("useDeviceSwitchFeedback", () => {
 		renderHookWithProviders();
 		await new Promise((r) => setTimeout(r, 20));
 
-		expect(useSettingsStore.getState().settings.general?.outputDeviceId).toBe("bt-headset");
+		expect(useSettingsStore.getState().settings.general?.outputDeviceId).toBe(
+			"bt-headset",
+		);
 		expect(settingsSaveCalls.some((call) => call.general != null)).toBe(false);
 	});
 
@@ -246,7 +280,9 @@ describe("useDeviceSwitchFeedback", () => {
 		// Give the enumeration promise a chance to resolve and the reconcile
 		// effect a chance to fire — it should NOT fire because 6 is in the list.
 		await new Promise((r) => setTimeout(r, 20));
-		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(6);
+		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+			6,
+		);
 		expect(settingsSaveCalls.length).toBe(0);
 	});
 
@@ -278,7 +314,9 @@ describe("useDeviceSwitchFeedback", () => {
 		test("false when no output device was saved", () => {
 			expect(__test_shouldResetSavedOutputDevice("", sinkIds)).toBe(false);
 			expect(__test_shouldResetSavedOutputDevice(null, sinkIds)).toBe(false);
-			expect(__test_shouldResetSavedOutputDevice(undefined, sinkIds)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice(undefined, sinkIds)).toBe(
+				false,
+			);
 		});
 
 		test("false while the sink-id list is still empty", () => {
@@ -286,11 +324,15 @@ describe("useDeviceSwitchFeedback", () => {
 		});
 
 		test("false when the saved output device is present", () => {
-			expect(__test_shouldResetSavedOutputDevice("speaker-1", sinkIds)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice("speaker-1", sinkIds)).toBe(
+				false,
+			);
 		});
 
 		test("true when the saved output device is absent from a non-empty list", () => {
-			expect(__test_shouldResetSavedOutputDevice("bt-headset", sinkIds)).toBe(true);
+			expect(__test_shouldResetSavedOutputDevice("bt-headset", sinkIds)).toBe(
+				true,
+			);
 		});
 	});
 
@@ -302,7 +344,9 @@ describe("useDeviceSwitchFeedback", () => {
 		// empty list would clobber the user's selection during boot.
 		renderHookWithProviders();
 		await new Promise((r) => setTimeout(r, 20));
-		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(6);
+		expect(useSettingsStore.getState().settings.audio?.inputDeviceIndex).toBe(
+			6,
+		);
 		expect(settingsSaveCalls.length).toBe(0);
 	});
 });

@@ -46,7 +46,9 @@ function isWithinBufferedRange(localY: number, rect: ProximityRect): boolean {
 	return localY >= lower && localY < upper;
 }
 
-export function useProximityHover(containerRef: RefObject<HTMLElement | null>): UseProximityHover {
+export function useProximityHover(
+	containerRef: RefObject<HTMLElement | null>,
+): UseProximityHover {
 	const [activeIndex, setActiveIndex] = useState<number | null>(null);
 	const [itemRects, setItemRects] = useState<Record<number, ProximityRect>>({});
 	const itemsRef = useRef<Map<number, HTMLElement>>(new Map());

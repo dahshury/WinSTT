@@ -13,7 +13,7 @@ function defaultDeviceName(defaultDevice: AudioDevice | null): string | null {
 /** Name of the device whose index matches, or null when not found (CC 1). */
 function deviceNameByIndex(
 	devices: readonly AudioDevice[],
-	inputDeviceIndex: number
+	inputDeviceIndex: number,
 ): string | null {
 	return devices.find((d) => d.index === inputDeviceIndex)?.name ?? null;
 }
@@ -30,7 +30,7 @@ function deviceNameByIndex(
 export function resolveCurrentDeviceName(
 	inputDeviceIndex: number | null | undefined,
 	devices: readonly AudioDevice[],
-	defaultDevice: AudioDevice | null
+	defaultDevice: AudioDevice | null,
 ): string | null {
 	if (devicesEmpty(devices)) {
 		return null;
@@ -43,7 +43,7 @@ export function resolveCurrentDeviceName(
 /** Read the persisted sensitivity for a device, or null when absent (CC 1). */
 function persistedSensitivityFor(
 	deviceName: string,
-	map: Readonly<Record<string, number>> | undefined
+	map: Readonly<Record<string, number>> | undefined,
 ): number | null {
 	return map?.[deviceName] ?? null;
 }
@@ -51,7 +51,7 @@ function persistedSensitivityFor(
 /** True when the persisted value should be applied as a change (CC 1). */
 function persistedDiffers(
 	persisted: number | null,
-	currentSensitivity: number | undefined
+	currentSensitivity: number | undefined,
 ): persisted is number {
 	return persisted != null && persisted !== currentSensitivity;
 }
@@ -65,7 +65,7 @@ function persistedDiffers(
 export function nextSensitivityForDevice(
 	deviceName: string | null,
 	currentSensitivity: number | undefined,
-	map: Readonly<Record<string, number>> | undefined
+	map: Readonly<Record<string, number>> | undefined,
 ): number | null {
 	if (deviceName == null) {
 		return null;

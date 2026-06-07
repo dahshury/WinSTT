@@ -22,7 +22,7 @@ const barElementVariants = cva(
 			},
 		},
 		defaultVariants: { size: "md" },
-	}
+	},
 );
 
 const barContainerVariants = cva("relative flex items-center justify-center", {
@@ -45,7 +45,10 @@ export interface AudioVisualizerBarProps {
 	size?: VisualizerSize | undefined;
 }
 
-export function resolveBarCount(barCount: number | undefined, size: VisualizerSize): number {
+export function resolveBarCount(
+	barCount: number | undefined,
+	size: VisualizerSize,
+): number {
 	if (barCount) {
 		return barCount;
 	}
@@ -58,15 +61,19 @@ export function resolveBarCount(barCount: number | undefined, size: VisualizerSi
 	return 9;
 }
 
-const BAR_SEQUENCER_INTERVAL: Partial<Record<AgentState, number | ((barCount: number) => number)>> =
-	{
-		connecting: (barCount: number) => 2000 / barCount,
-		initializing: 2000,
-		listening: 500,
-		thinking: 150,
-	};
+const BAR_SEQUENCER_INTERVAL: Partial<
+	Record<AgentState, number | ((barCount: number) => number)>
+> = {
+	connecting: (barCount: number) => 2000 / barCount,
+	initializing: 2000,
+	listening: 500,
+	thinking: 150,
+};
 
-export function resolveBarSequencerInterval(state: AgentState, barCount: number): number {
+export function resolveBarSequencerInterval(
+	state: AgentState,
+	barCount: number,
+): number {
 	const entry = BAR_SEQUENCER_INTERVAL[state];
 	if (entry === undefined) {
 		return 1000;
@@ -90,9 +97,17 @@ export function AudioVisualizerBar({
 
 	const sequencerInterval = resolveBarSequencerInterval(state, _barCount);
 
-	const highlightedIndices = useBarAnimator(state, _barCount, sequencerInterval);
-	const bands = state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
-	const barIds = Array.from({ length: _barCount }, (_, i) => `bar-${_barCount}-${i}`);
+	const highlightedIndices = useBarAnimator(
+		state,
+		_barCount,
+		sequencerInterval,
+	);
+	const bands =
+		state === "speaking" ? volumeBands : new Array(_barCount).fill(0);
+	const barIds = Array.from(
+		{ length: _barCount },
+		(_, i) => `bar-${_barCount}-${i}`,
+	);
 
 	return (
 		<div

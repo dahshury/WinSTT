@@ -7,13 +7,13 @@ import { cn } from "@/shared/lib/cn";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 export interface FavoriteToggleProps {
-  /** Drives the filled/amber state + the aria-pressed value. */
-  isFavorited: boolean;
-  /** Used for the accessible label ("Add {label} to favorites"). */
-  label: string;
-  /** Star / unstar. `preventDefault` + `stopPropagation` are handled here so
-   *  the click never bubbles to an enclosing `Combobox.Item`. */
-  onToggle: () => void;
+	/** Drives the filled/amber state + the aria-pressed value. */
+	isFavorited: boolean;
+	/** Used for the accessible label ("Add {label} to favorites"). */
+	label: string;
+	/** Star / unstar. `preventDefault` + `stopPropagation` are handled here so
+	 *  the click never bubbles to an enclosing `Combobox.Item`. */
+	onToggle: () => void;
 }
 
 /**
@@ -22,41 +22,41 @@ export interface FavoriteToggleProps {
  * Active = muted amber-400 fill; idle = neutral foreground-muted at opacity-55.
  */
 export function FavoriteToggle({
-  isFavorited,
-  label,
-  onToggle,
+	isFavorited,
+	label,
+	onToggle,
 }: FavoriteToggleProps) {
-  return (
-    <Tooltip
-      content={isFavorited ? "Remove from Favorites" : "Add to Favorites"}
-      side="top"
-    >
-      <BaseButton
-        aria-label={
-          isFavorited
-            ? `Remove ${label} from favorites`
-            : `Add ${label} to favorites`
-        }
-        aria-pressed={isFavorited}
-        className={cn(
-          "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors",
-          "motion-reduce:transition-none",
-          isFavorited
-            ? "text-amber-400 hover:bg-amber-400/15"
-            : "text-foreground-muted opacity-55 hover:bg-foreground/[0.08] hover:text-foreground hover:opacity-100",
-        )}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onToggle();
-        }}
-        type="button"
-      >
-        <HugeiconsIcon
-          className={cn("size-3.5", isFavorited && "fill-amber-400")}
-          icon={StarIcon}
-        />
-      </BaseButton>
-    </Tooltip>
-  );
+	return (
+		<Tooltip
+			content={isFavorited ? "Remove from Favorites" : "Add to Favorites"}
+			side="top"
+		>
+			<BaseButton
+				aria-label={
+					isFavorited
+						? `Remove ${label} from favorites`
+						: `Add ${label} to favorites`
+				}
+				aria-pressed={isFavorited}
+				className={cn(
+					"inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors",
+					"motion-reduce:transition-none",
+					isFavorited
+						? "text-amber-400 hover:bg-amber-400/15"
+						: "text-foreground-muted opacity-55 hover:bg-foreground/[0.08] hover:text-foreground hover:opacity-100",
+				)}
+				onClick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onToggle();
+				}}
+				type="button"
+			>
+				<HugeiconsIcon
+					className={cn("size-3.5", isFavorited && "fill-amber-400")}
+					icon={StarIcon}
+				/>
+			</BaseButton>
+		</Tooltip>
+	);
 }

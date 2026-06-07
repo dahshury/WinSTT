@@ -8,14 +8,14 @@ import { parseParameterSize } from "./family-grouping";
  * rows. Singletons stay as a 1-item bundle for uniform rendering.
  */
 export interface VariantBundle {
-  /** Stable id for the bundle as a whole — used as the expansion key. */
-  baseId: string;
-  /**
-   * 1 or 2 entries. When 2: ``[multilingual, englishOnly]``. The
-   * multilingual variant is the "primary" — clicking the bundle card
-   * selects it; the chevron reveals the .en sibling.
-   */
-  variants: ModelInfo[];
+	/** Stable id for the bundle as a whole — used as the expansion key. */
+	baseId: string;
+	/**
+	 * 1 or 2 entries. When 2: ``[multilingual, englishOnly]``. The
+	 * multilingual variant is the "primary" — clicking the bundle card
+	 * selects it; the chevron reveals the .en sibling.
+	 */
+	variants: ModelInfo[];
 }
 
 /** Top-level regex for the lite-whisper compression suffix — hoisted out of
@@ -45,9 +45,9 @@ const TURBO_SUFFIX_RE = /-turbo$/;
  *   - ``moonshine-base`` likewise.
  */
 const ARCH_BUNDLE_PREFIXES: readonly string[] = [
-  "nemo-canary",
-  "moonshine-tiny",
-  "moonshine-base",
+	"nemo-canary",
+	"moonshine-tiny",
+	"moonshine-base",
 ];
 
 /**
@@ -58,12 +58,12 @@ const ARCH_BUNDLE_PREFIXES: readonly string[] = [
  * collapses down to the same bundle).
  */
 function findArchPrefix(id: string): string | null {
-  for (const prefix of ARCH_BUNDLE_PREFIXES) {
-    if (id === prefix || id.startsWith(`${prefix}-`)) {
-      return prefix;
-    }
-  }
-  return null;
+	for (const prefix of ARCH_BUNDLE_PREFIXES) {
+		if (id === prefix || id.startsWith(`${prefix}-`)) {
+			return prefix;
+		}
+	}
+	return null;
 }
 
 /** Strip wrapper prefixes/suffixes to find the model's architectural base id.
@@ -82,29 +82,29 @@ function findArchPrefix(id: string): string | null {
  * Idempotent - anything that's already a base id passes through unchanged.
  */
 export function getBaseId(id: string): string {
-  // Architecture prefixes (NeMo Canary, Parakeet, FastConformer; Moonshine
-  // tiny/base; GigaAM v2/v3/v3-e2e) bundle by family name with size /
-  // decoder / language suffixes as siblings. Checked first because their
-  // ids never carry the Whisper-style ``-turbo`` / ``.en`` / ``lite-``
-  // affordances handled below — short-circuiting here keeps the Whisper
-  // rules from accidentally trimming a NeMo id.
-  const archPrefix = findArchPrefix(id);
-  if (archPrefix !== null) {
-    return archPrefix;
-  }
-  let base = id;
-  if (base.startsWith("lite-whisper-")) {
-    base = base
-      .slice("lite-whisper-".length)
-      .replace(LITE_WHISPER_FLAVOR_SUFFIX_RE, "");
-  }
-  // Strip .en before -turbo so any hypothetical ``X-turbo.en`` (none ships
-  // today; multilingual-only) collapses cleanly down to ``X``.
-  if (base.endsWith(".en")) {
-    base = base.slice(0, -3);
-  }
-  base = base.replace(TURBO_SUFFIX_RE, "");
-  return base;
+	// Architecture prefixes (NeMo Canary, Parakeet, FastConformer; Moonshine
+	// tiny/base; GigaAM v2/v3/v3-e2e) bundle by family name with size /
+	// decoder / language suffixes as siblings. Checked first because their
+	// ids never carry the Whisper-style ``-turbo`` / ``.en`` / ``lite-``
+	// affordances handled below — short-circuiting here keeps the Whisper
+	// rules from accidentally trimming a NeMo id.
+	const archPrefix = findArchPrefix(id);
+	if (archPrefix !== null) {
+		return archPrefix;
+	}
+	let base = id;
+	if (base.startsWith("lite-whisper-")) {
+		base = base
+			.slice("lite-whisper-".length)
+			.replace(LITE_WHISPER_FLAVOR_SUFFIX_RE, "");
+	}
+	// Strip .en before -turbo so any hypothetical ``X-turbo.en`` (none ships
+	// today; multilingual-only) collapses cleanly down to ``X``.
+	if (base.endsWith(".en")) {
+		base = base.slice(0, -3);
+	}
+	base = base.replace(TURBO_SUFFIX_RE, "");
+	return base;
 }
 
 /**
@@ -121,28 +121,28 @@ const ARCH_SORT_OFFSET = 1e12;
  * catch-all that orders the LARGER variant first, so Canary 1B-v2 lands
  * on top with 180M-flash tucked underneath the chevron. */
 function variantSortKey(model: ModelInfo, baseId: string): number {
-  if (model.id === baseId) {
-    return 0;
-  }
-  if (model.id === `${baseId}.en`) {
-    return 1;
-  }
-  if (model.id === `${baseId}-turbo`) {
-    return 2;
-  }
-  if (model.id === `${baseId}-turbo.en`) {
-    return 3;
-  }
-  if (model.id.startsWith("lite-whisper-")) {
-    // Lite siblings sorted by param count (smallest first), offset to land
-    // after the primary + .en + turbo siblings.
-    return 10 + parseParameterSize(model.sizeLabel);
-  }
-  // Architecture-bundle catch-all (NeMo Canary 1B-v2 vs 180M-flash; Moonshine
-  // tiny vs tiny-zh; GigaAM v3-ctc vs v3-rnnt). Largest-param-first so the
-  // flagship lands on the primary card; the offset guarantees these all sort
-  // AFTER any explicit Whisper-shaped sibling that might share the bundle.
-  return ARCH_SORT_OFFSET - parseParameterSize(model.sizeLabel);
+	if (model.id === baseId) {
+		return 0;
+	}
+	if (model.id === `${baseId}.en`) {
+		return 1;
+	}
+	if (model.id === `${baseId}-turbo`) {
+		return 2;
+	}
+	if (model.id === `${baseId}-turbo.en`) {
+		return 3;
+	}
+	if (model.id.startsWith("lite-whisper-")) {
+		// Lite siblings sorted by param count (smallest first), offset to land
+		// after the primary + .en + turbo siblings.
+		return 10 + parseParameterSize(model.sizeLabel);
+	}
+	// Architecture-bundle catch-all (NeMo Canary 1B-v2 vs 180M-flash; Moonshine
+	// tiny vs tiny-zh; GigaAM v3-ctc vs v3-rnnt). Largest-param-first so the
+	// flagship lands on the primary card; the offset guarantees these all sort
+	// AFTER any explicit Whisper-shaped sibling that might share the bundle.
+	return ARCH_SORT_OFFSET - parseParameterSize(model.sizeLabel);
 }
 
 /**
@@ -160,28 +160,28 @@ function variantSortKey(model: ModelInfo, baseId: string): number {
  * preserving the caller's "cheapest first" sort.
  */
 export function bundleVariants(items: readonly ModelInfo[]): VariantBundle[] {
-  const buckets = new Map<string, ModelInfo[]>();
-  const order: string[] = [];
-  for (const m of items) {
-    const baseId = getBaseId(m.id);
-    const bucket = buckets.get(baseId);
-    if (bucket === undefined) {
-      buckets.set(baseId, [m]);
-      order.push(baseId);
-    } else {
-      bucket.push(m);
-    }
-  }
-  const bundles: VariantBundle[] = [];
-  for (const baseId of order) {
-    const variants = buckets.get(baseId);
-    if (variants === undefined || variants.length === 0) {
-      continue;
-    }
-    const sorted = [...variants].sort(
-      (a, b) => variantSortKey(a, baseId) - variantSortKey(b, baseId),
-    );
-    bundles.push({ baseId, variants: sorted });
-  }
-  return bundles;
+	const buckets = new Map<string, ModelInfo[]>();
+	const order: string[] = [];
+	for (const m of items) {
+		const baseId = getBaseId(m.id);
+		const bucket = buckets.get(baseId);
+		if (bucket === undefined) {
+			buckets.set(baseId, [m]);
+			order.push(baseId);
+		} else {
+			bucket.push(m);
+		}
+	}
+	const bundles: VariantBundle[] = [];
+	for (const baseId of order) {
+		const variants = buckets.get(baseId);
+		if (variants === undefined || variants.length === 0) {
+			continue;
+		}
+		const sorted = [...variants].sort(
+			(a, b) => variantSortKey(a, baseId) - variantSortKey(b, baseId),
+		);
+		bundles.push({ baseId, variants: sorted });
+	}
+	return bundles;
 }

@@ -20,15 +20,23 @@ class MockResizeObserver {
 // Contained boundary cast — MockResizeObserver implements only the surface the
 // hook touches; this hands the mock back to the real ResizeObserverCallback as
 // the `observer` arg. The runtime object is unchanged.
-const asResizeObserver = (o: MockResizeObserver) => o as unknown as ResizeObserver;
+const asResizeObserver = (o: MockResizeObserver) =>
+	o as unknown as ResizeObserver;
 
 const originalRO = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver = MockResizeObserver;
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver =
+	MockResizeObserver;
 
 function createSizedDiv(width: number, height: number): HTMLDivElement {
 	const div = document.createElement("div");
-	Object.defineProperty(div, "clientWidth", { value: width, configurable: true });
-	Object.defineProperty(div, "clientHeight", { value: height, configurable: true });
+	Object.defineProperty(div, "clientWidth", {
+		value: width,
+		configurable: true,
+	});
+	Object.defineProperty(div, "clientHeight", {
+		value: height,
+		configurable: true,
+	});
 	return div;
 }
 

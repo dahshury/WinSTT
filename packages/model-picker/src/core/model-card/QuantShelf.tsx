@@ -211,10 +211,12 @@ function resolveProgressFillPct(
  *  `mono` renders the label in the mono font (Ollama tags like `q4_K_M`). */
 function formatQuantDownloadSize(entry: QuantShelfEntry): string {
 	if (entry.download !== undefined && entry.download.totalBytes > 0) {
-		return formatBytes(
-			Math.max(entry.download.totalBytes, entry.download.downloadedBytes),
-			{ minUnit: "B" },
-		) ?? "Unknown";
+		return (
+			formatBytes(
+				Math.max(entry.download.totalBytes, entry.download.downloadedBytes),
+				{ minUnit: "B" },
+			) ?? "Unknown"
+		);
 	}
 	const label = entry.downloadSizeLabel?.trim();
 	if (label) {
@@ -376,7 +378,12 @@ function QuantActionButtons({
 					ariaLabel={`Delete ${label} weights for ${modelDisplayName}`}
 					icon={Delete02Icon}
 					onClick={() =>
-						onRequestDeleteQuant(actionModelId, actionQuant, modelDisplayName, label)
+						onRequestDeleteQuant(
+							actionModelId,
+							actionQuant,
+							modelDisplayName,
+							label,
+						)
 					}
 					tone="danger"
 					tooltip={deleteTooltip}

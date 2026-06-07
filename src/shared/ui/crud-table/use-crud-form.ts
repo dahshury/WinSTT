@@ -45,7 +45,7 @@ export function useCrudForm<TAdd>({
 	};
 
 	const buildDraft = (
-		source: Record<string, string>
+		source: Record<string, string>,
 	): Record<string, string> => {
 		const draft: Record<string, string> = {};
 		for (const f of fields) {
@@ -76,7 +76,7 @@ export function useCrudForm<TAdd>({
 	};
 
 	const isAddDisabled = !fields.every(
-		(f) => (values[f.name] ?? "").trim().length > 0
+		(f) => (values[f.name] ?? "").trim().length > 0,
 	);
 	const addFieldErrorId = (fieldName: string): string =>
 		`${addErrorIdPrefix}-${fieldName}-error`;

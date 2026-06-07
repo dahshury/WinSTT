@@ -60,17 +60,15 @@ export function CrudEditableCell<TEntry>({
 					tone={error ? "danger" : "default"}
 				>
 					<InputGroupAddon align="inline-start">
-						<HugeiconsIcon
-							aria-hidden="true"
-							icon={editField.icon}
-							size={14}
-						/>
+						<HugeiconsIcon aria-hidden="true" icon={editField.icon} size={14} />
 					</InputGroupAddon>
 					<InputGroupInput
 						aria-invalid={!!error}
 						aria-label={editField.label}
 						name={editField.name}
-						onChange={(event) => setEditField(editField.name, event.target.value)}
+						onChange={(event) =>
+							setEditField(editField.name, event.target.value)
+						}
 						onKeyDown={(event) => {
 							if (event.key === "Enter") {
 								event.preventDefault();

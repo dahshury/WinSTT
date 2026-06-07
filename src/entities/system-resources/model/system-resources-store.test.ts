@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { errorMessage, errorPatch, snapshotPatch } from "./system-resources-store";
+import {
+	errorMessage,
+	errorPatch,
+	snapshotPatch,
+} from "./system-resources-store";
 
 describe("errorMessage", () => {
 	test("returns the message of an Error instance", () => {

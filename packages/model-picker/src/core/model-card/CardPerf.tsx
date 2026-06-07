@@ -18,7 +18,8 @@ interface PerfBarsProps {
  */
 function scoreColor(score: number): string {
 	const t = Math.max(0, Math.min(1, score));
-	const mix = (a: number, b: number, k: number): number => Math.round(a + (b - a) * k);
+	const mix = (a: number, b: number, k: number): number =>
+		Math.round(a + (b - a) * k);
 	if (t < 0.5) {
 		// rose (188,108,108) → amber (190,162,104)
 		const k = t * 2;
@@ -45,7 +46,11 @@ function PerfBar({ icon, label, score }: PerfBarProps) {
 	const color = scoreColor(score);
 	return (
 		<Tooltip content={`${label} ${pct}%`} side="top">
-			<div aria-label={`${label} ${pct}%`} className="flex items-center gap-1.5" role="img">
+			<div
+				aria-label={`${label} ${pct}%`}
+				className="flex items-center gap-1.5"
+				role="img"
+			>
 				<HugeiconsIcon
 					aria-hidden="true"
 					className="size-3 shrink-0 text-foreground-dim"

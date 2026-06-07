@@ -51,7 +51,10 @@ describe("getOllamaPrimaryLabelKey", () => {
 
 describe("buildOllamaStartError", () => {
 	test("uses the provided error message when present", () => {
-		const result = buildOllamaStartError("connection refused", "ollamaStartFailed");
+		const result = buildOllamaStartError(
+			"connection refused",
+			"ollamaStartFailed",
+		);
 		expect(result.errorMessage).toBe("connection refused");
 		expect(result.started).toBe(false);
 	});
@@ -69,21 +72,39 @@ describe("applyOllamaModelReplacementIfNeeded", () => {
 	test("calls update with replacement when shouldSync returns a model name", () => {
 		const shouldSync = mock(() => "phi");
 		const update = mock(() => undefined);
-		applyOllamaModelReplacementIfNeeded("ollama", models, "missing", shouldSync, update);
+		applyOllamaModelReplacementIfNeeded(
+			"ollama",
+			models,
+			"missing",
+			shouldSync,
+			update,
+		);
 		expect(update).toHaveBeenCalledWith({ model: "phi" });
 	});
 
 	test("does not call update when shouldSync returns null", () => {
 		const shouldSync = mock(() => null);
 		const update = mock(() => undefined);
-		applyOllamaModelReplacementIfNeeded("ollama", models, "phi", shouldSync, update);
+		applyOllamaModelReplacementIfNeeded(
+			"ollama",
+			models,
+			"phi",
+			shouldSync,
+			update,
+		);
 		expect(update).not.toHaveBeenCalled();
 	});
 
 	test("passes provider, models, and current to shouldSync", () => {
 		const shouldSync = mock(() => null);
 		const update = mock(() => undefined);
-		applyOllamaModelReplacementIfNeeded("ollama", models, "current-model", shouldSync, update);
+		applyOllamaModelReplacementIfNeeded(
+			"ollama",
+			models,
+			"current-model",
+			shouldSync,
+			update,
+		);
 		expect(shouldSync).toHaveBeenCalledWith("ollama", models, "current-model");
 	});
 });

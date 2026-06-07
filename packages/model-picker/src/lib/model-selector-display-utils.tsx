@@ -9,7 +9,10 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type * as React from "react";
-import type { OpenRouterEndpoint, OpenRouterPricing } from "@/shared/api/models";
+import type {
+	OpenRouterEndpoint,
+	OpenRouterPricing,
+} from "@/shared/api/models";
 import { MODEL_VARIANT_INFO, type ModelVariant } from "./model-variant-utils";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("en-US", {
@@ -33,7 +36,10 @@ const VARIANT_ICON_MAP: Partial<Record<ModelVariant, typeof Tag01Icon>> = {
 	floor: Coins01Icon,
 };
 
-export function getVariantIcon(variant: ModelVariant, className = "h-3 w-3"): React.ReactNode {
+export function getVariantIcon(
+	variant: ModelVariant,
+	className = "h-3 w-3",
+): React.ReactNode {
 	const icon = VARIANT_ICON_MAP[variant];
 	if (!icon) {
 		return null;
@@ -102,7 +108,9 @@ function classifyAvgCost(avgCost: number): Omit<PricingTierResult, "label"> {
 	return { tier: "high", className: "text-foreground-muted" };
 }
 
-export function getPricingTier(pricing: OpenRouterPricing | undefined): PricingTierResult {
+export function getPricingTier(
+	pricing: OpenRouterPricing | undefined,
+): PricingTierResult {
 	const prompt = parsePricingValue(pricing?.prompt);
 	const completion = parsePricingValue(pricing?.completion);
 
@@ -118,7 +126,9 @@ export function getPricingTier(pricing: OpenRouterPricing | undefined): PricingT
 	return { label: priceLabel, ...classifyAvgCost(avgCost) };
 }
 
-export function getUniqueEndpoints(endpoints: OpenRouterEndpoint[]): OpenRouterEndpoint[] {
+export function getUniqueEndpoints(
+	endpoints: OpenRouterEndpoint[],
+): OpenRouterEndpoint[] {
 	const seen = new Map<string, OpenRouterEndpoint>();
 	for (const endpoint of endpoints) {
 		if (!seen.has(endpoint.provider_name)) {
@@ -128,7 +138,10 @@ export function getUniqueEndpoints(endpoints: OpenRouterEndpoint[]): OpenRouterE
 	return Array.from(seen.values());
 }
 
-const REASONING_PARAM_KEYS: ReadonlySet<string> = new Set(["reasoning", "include_reasoning"]);
+const REASONING_PARAM_KEYS: ReadonlySet<string> = new Set([
+	"reasoning",
+	"include_reasoning",
+]);
 
 const REASONING_ID_PATTERNS: readonly RegExp[] = [
 	/(?:^|\/)o[134](?:-|$)/i, // openai/o1*, o3*, o4*
@@ -163,8 +176,12 @@ function hasReasoningSupport(model: {
  */
 export function isReasoningModel(
 	model:
-		| { id?: string; supported_parameters?: string[]; variant?: string | null | undefined }
-		| undefined
+		| {
+				id?: string;
+				supported_parameters?: string[];
+				variant?: string | null | undefined;
+		  }
+		| undefined,
 ): boolean {
 	if (!model) {
 		return false;

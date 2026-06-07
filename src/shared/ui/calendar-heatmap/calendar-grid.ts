@@ -9,8 +9,24 @@ import type {
 
 const YEAR_SPAN = 12;
 
-export const WEEKDAY_LABELS_SUN = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
-export const WEEKDAY_LABELS_MON = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] as const;
+export const WEEKDAY_LABELS_SUN = [
+	"Su",
+	"Mo",
+	"Tu",
+	"We",
+	"Th",
+	"Fr",
+	"Sa",
+] as const;
+export const WEEKDAY_LABELS_MON = [
+	"Mo",
+	"Tu",
+	"We",
+	"Th",
+	"Fr",
+	"Sa",
+	"Su",
+] as const;
 
 export const startOfDay = (d: Date): Date =>
 	new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -96,7 +112,11 @@ function normalizeRange(a: Date, b: Date): DateRange {
 	return a.getTime() <= b.getTime() ? { from: a, to: b } : { from: b, to: a };
 }
 
-export function setTimePartOf(date: Date, hours: number, minutes: number): Date {
+export function setTimePartOf(
+	date: Date,
+	hours: number,
+	minutes: number,
+): Date {
 	return new Date(
 		date.getFullYear(),
 		date.getMonth(),
@@ -221,7 +241,10 @@ export function headerSegmentsFor(
 	return [{ label: system.yearRangeLabel(anchor, YEAR_SPAN) }];
 }
 
-export function applyRangeClick(prev: Date | DateRange | null, date: Date): DateRange {
+export function applyRangeClick(
+	prev: Date | DateRange | null,
+	date: Date,
+): DateRange {
 	if (!(isRangeValue(prev) && prev.from) || prev.to) {
 		return { from: date, to: null };
 	}

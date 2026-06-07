@@ -8,7 +8,7 @@ describe("ButtonGroup", () => {
 			<ButtonGroup aria-label="Actions">
 				<button type="button">A</button>
 				<button type="button">B</button>
-			</ButtonGroup>
+			</ButtonGroup>,
 		);
 		const toolbar = screen.getByRole("toolbar", { name: "Actions" });
 		expect(toolbar).toBeDefined();
@@ -18,7 +18,7 @@ describe("ButtonGroup", () => {
 		render(
 			<ButtonGroup className="extra-x">
 				<span>x</span>
-			</ButtonGroup>
+			</ButtonGroup>,
 		);
 		const toolbar = screen.getByRole("toolbar");
 		expect(toolbar.className).toContain("extra-x");
@@ -30,7 +30,7 @@ describe("ButtonGroup", () => {
 			<ButtonGroup>
 				<button type="button">first</button>
 				<button type="button">second</button>
-			</ButtonGroup>
+			</ButtonGroup>,
 		);
 		expect(screen.getByText("first")).toBeDefined();
 		expect(screen.getByText("second")).toBeDefined();

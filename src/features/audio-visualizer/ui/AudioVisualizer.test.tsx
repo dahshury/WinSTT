@@ -23,27 +23,24 @@ afterEach(() => {
 });
 
 describe("AudioVisualizer", () => {
-	test.each([
-		"bar",
-		"grid",
-		"radial",
-		"wave",
-		"aura",
-	] as const)("renders without throwing when settings.visualizerType=%s", (type) => {
-		useSettingsStore.setState({
-			settings: {
-				...initialSettings,
-				general: {
-					...initialSettings.general,
-					visualizerType: type,
-					visualizerBarCount: 9,
+	test.each(["bar", "grid", "radial", "wave", "aura"] as const)(
+		"renders without throwing when settings.visualizerType=%s",
+		(type) => {
+			useSettingsStore.setState({
+				settings: {
+					...initialSettings,
+					general: {
+						...initialSettings.general,
+						visualizerType: type,
+						visualizerBarCount: 9,
+					},
 				},
-			},
-		});
-		const { container, unmount } = render(<AudioVisualizer />);
-		expect(container.firstElementChild).not.toBeNull();
-		unmount();
-	});
+			});
+			const { container, unmount } = render(<AudioVisualizer />);
+			expect(container.firstElementChild).not.toBeNull();
+			unmount();
+		},
+	);
 
 	test("size='auto' wraps in a flex container", () => {
 		const { container } = render(<AudioVisualizer size="auto" />);

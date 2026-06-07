@@ -1,21 +1,21 @@
 import { useEffect, useRef } from "react";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import {
-  useCatalogStore,
-  useModelStateStore,
-  useModelSwapStore,
+	useCatalogStore,
+	useModelStateStore,
+	useModelSwapStore,
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { sttReloadModel } from "@/shared/api/ipc-client";
 import {
-  affectedProviders,
-  type ClearableProvider,
-  detectClearedKeys,
-  type KeySnapshot,
-  planHasWork,
-  planReverts,
-  type RevertPlan,
-  resolveLocalSttTarget,
+	affectedProviders,
+	type ClearableProvider,
+	detectClearedKeys,
+	type KeySnapshot,
+	planHasWork,
+	planReverts,
+	type RevertPlan,
+	resolveLocalSttTarget,
 } from "./cloud-revert-decision";
 import { useRevertNoticeStore } from "./revert-notice-store";
 
@@ -35,41 +35,41 @@ const REVERT_DEBOUNCE_MS = 600;
  * `model.model`, leaving the reload to `sttReloadModel`.
  */
 function revertSttToLocal(currentCloudModel: string): void {
-  const { models } = useCatalogStore.getState();
-  const { statesById } = useModelStateStore.getState();
-  const target = resolveLocalSttTarget(models, statesById);
-  useModelSwapStore
-    .getState()
-    .beginSwap("main", currentCloudModel, target.model);
-  useSettingsStore
-    .getState()
-    .updateModelSettings({ model: target.model, backend: target.backend });
-  sttReloadModel("main", target.model);
+	const { models } = useCatalogStore.getState();
+	const { statesById } = useModelStateStore.getState();
+	const target = resolveLocalSttTarget(models, statesById);
+	useModelSwapStore
+		.getState()
+		.beginSwap("main", currentCloudModel, target.model);
+	useSettingsStore
+		.getState()
+		.updateModelSettings({ model: target.model, backend: target.backend });
+	sttReloadModel("main", target.model);
 }
 
 /** Apply every surface revert the plan calls for. */
 function applyPlan(plan: RevertPlan, currentModel: string): void {
-  const store = useSettingsStore.getState();
-  if (plan.stt) {
-    revertSttToLocal(currentModel);
-  }
-  if (plan.llmDictation) {
-    store.updateLlmDictation({ provider: "ollama", enabled: false });
-  }
-  if (plan.llmTransforms) {
-    store.updateLlmTransforms({ provider: "ollama", enabled: false });
-  }
-  if (plan.ttsCloud) {
-    store.updateTtsSettings({ source: "local" });
-  }
+	const store = useSettingsStore.getState();
+	if (plan.stt) {
+		revertSttToLocal(currentModel);
+	}
+	if (plan.llmDictation) {
+		store.updateLlmDictation({ provider: "ollama", enabled: false });
+	}
+	if (plan.llmTransforms) {
+		store.updateLlmTransforms({ provider: "ollama", enabled: false });
+	}
+	if (plan.ttsCloud) {
+		store.updateTtsSettings({ source: "local" });
+	}
 }
 
 /** Surface one toast per provider that actually had a surface reverted. */
 function notify(providers: ReadonlySet<ClearableProvider>): void {
-  const push = useRevertNoticeStore.getState().push;
-  for (const provider of providers) {
-    push(provider);
-  }
+	const push = useRevertNoticeStore.getState().push;
+	for (const provider of providers) {
+		push(provider);
+	}
 }
 
 /**
@@ -85,25 +85,25 @@ function notify(providers: ReadonlySet<ClearableProvider>): void {
  *      silently (no toast) so the app never boots into a dead cloud model.
  */
 function evaluateRevert(
-  prevKeys: KeySnapshot,
-  next: KeySnapshot,
-  surfaces: {
-    dictationProvider: string;
-    model: string;
-    transformsProvider: string;
-    ttsSource: string;
-  },
+	prevKeys: KeySnapshot,
+	next: KeySnapshot,
+	surfaces: {
+		dictationProvider: string;
+		model: string;
+		transformsProvider: string;
+		ttsSource: string;
+	},
 ): void {
-  const plan = planReverts(detectClearedKeys(prevKeys, next), surfaces);
-  if (planHasWork(plan)) {
-    applyPlan(plan, surfaces.model);
-    notify(affectedProviders(plan, surfaces.model));
-    return;
-  }
-  const activeProvider = providerOf(surfaces.model);
-  if (activeProvider !== null && next[activeProvider].trim() === "") {
-    revertSttToLocal(surfaces.model);
-  }
+	const plan = planReverts(detectClearedKeys(prevKeys, next), surfaces);
+	if (planHasWork(plan)) {
+		applyPlan(plan, surfaces.model);
+		notify(affectedProviders(plan, surfaces.model));
+		return;
+	}
+	const activeProvider = providerOf(surfaces.model);
+	if (activeProvider !== null && next[activeProvider].trim() === "") {
+		revertSttToLocal(surfaces.model);
+	}
 }
 
 /**
@@ -125,85 +125,85 @@ function evaluateRevert(
  * `debounceMs` is injectable for tests; production uses the default.
  */
 export function useCloudKeyAutoRevert(
-  debounceMs: number = REVERT_DEBOUNCE_MS,
-  enabled = true,
+	debounceMs: number = REVERT_DEBOUNCE_MS,
+	enabled = true,
 ): void {
-  const openaiKey = useSettingsStore(
-    (s) => s.settings.integrations.openai.apiKey,
-  );
-  const elevenlabsKey = useSettingsStore(
-    (s) => s.settings.integrations.elevenlabs.apiKey,
-  );
-  const openrouterKey = useSettingsStore(
-    (s) => s.settings.llm.openrouterApiKey,
-  );
-  const model = useSettingsStore((s) => s.settings.model?.model ?? "");
-  const dictationProvider = useSettingsStore(
-    (s) => s.settings.llm.dictation.provider,
-  );
-  const transformsProvider = useSettingsStore(
-    (s) => s.settings.llm.transforms.provider,
-  );
-  const ttsSource = useSettingsStore((s) => s.settings.tts.source);
+	const openaiKey = useSettingsStore(
+		(s) => s.settings.integrations.openai.apiKey,
+	);
+	const elevenlabsKey = useSettingsStore(
+		(s) => s.settings.integrations.elevenlabs.apiKey,
+	);
+	const openrouterKey = useSettingsStore(
+		(s) => s.settings.llm.openrouterApiKey,
+	);
+	const model = useSettingsStore((s) => s.settings.model?.model ?? "");
+	const dictationProvider = useSettingsStore(
+		(s) => s.settings.llm.dictation.provider,
+	);
+	const transformsProvider = useSettingsStore(
+		(s) => s.settings.llm.transforms.provider,
+	);
+	const ttsSource = useSettingsStore((s) => s.settings.tts.source);
 
-  // Seeded with the boot values so the first settle sees no transition.
-  const prevKeysRef = useRef<KeySnapshot>({
-    openai: openaiKey,
-    elevenlabs: elevenlabsKey,
-    openrouter: openrouterKey,
-  });
-  const timerRef = useRef<number | null>(null);
+	// Seeded with the boot values so the first settle sees no transition.
+	const prevKeysRef = useRef<KeySnapshot>({
+		openai: openaiKey,
+		elevenlabs: elevenlabsKey,
+		openrouter: openrouterKey,
+	});
+	const timerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    if (!enabled) {
-      prevKeysRef.current = {
-        openai: openaiKey,
-        elevenlabs: elevenlabsKey,
-        openrouter: openrouterKey,
-      };
-      if (timerRef.current !== null) {
-        window.clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-      return;
-    }
-    // Restart the debounce on every change so only the SETTLED value is acted
-    // on (a clear-then-retype never reaches the timer body while empty).
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current);
-    }
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      // Closed-over values are the latest: any change reset this timer with a
-      // fresh closure, so when it fires nothing newer is pending.
-      const next: KeySnapshot = {
-        openai: openaiKey,
-        elevenlabs: elevenlabsKey,
-        openrouter: openrouterKey,
-      };
-      const prev = prevKeysRef.current;
-      prevKeysRef.current = next;
-      evaluateRevert(prev, next, {
-        model,
-        dictationProvider,
-        transformsProvider,
-        ttsSource,
-      });
-    }, debounceMs);
-    return () => {
-      if (timerRef.current !== null) {
-        window.clearTimeout(timerRef.current);
-      }
-    };
-  }, [
-    openaiKey,
-    elevenlabsKey,
-    openrouterKey,
-    model,
-    dictationProvider,
-    transformsProvider,
-    ttsSource,
-    debounceMs,
-    enabled,
-  ]);
+	useEffect(() => {
+		if (!enabled) {
+			prevKeysRef.current = {
+				openai: openaiKey,
+				elevenlabs: elevenlabsKey,
+				openrouter: openrouterKey,
+			};
+			if (timerRef.current !== null) {
+				window.clearTimeout(timerRef.current);
+				timerRef.current = null;
+			}
+			return;
+		}
+		// Restart the debounce on every change so only the SETTLED value is acted
+		// on (a clear-then-retype never reaches the timer body while empty).
+		if (timerRef.current !== null) {
+			window.clearTimeout(timerRef.current);
+		}
+		timerRef.current = window.setTimeout(() => {
+			timerRef.current = null;
+			// Closed-over values are the latest: any change reset this timer with a
+			// fresh closure, so when it fires nothing newer is pending.
+			const next: KeySnapshot = {
+				openai: openaiKey,
+				elevenlabs: elevenlabsKey,
+				openrouter: openrouterKey,
+			};
+			const prev = prevKeysRef.current;
+			prevKeysRef.current = next;
+			evaluateRevert(prev, next, {
+				model,
+				dictationProvider,
+				transformsProvider,
+				ttsSource,
+			});
+		}, debounceMs);
+		return () => {
+			if (timerRef.current !== null) {
+				window.clearTimeout(timerRef.current);
+			}
+		};
+	}, [
+		openaiKey,
+		elevenlabsKey,
+		openrouterKey,
+		model,
+		dictationProvider,
+		transformsProvider,
+		ttsSource,
+		debounceMs,
+		enabled,
+	]);
 }

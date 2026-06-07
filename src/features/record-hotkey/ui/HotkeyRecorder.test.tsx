@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
@@ -17,10 +23,14 @@ let savedApi: typeof window.nativeBridge;
 
 type TauriInternals = {
 	invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
-	transformCallback: (cb?: (payload: unknown) => void, once?: boolean) => number;
+	transformCallback: (
+		cb?: (payload: unknown) => void,
+		once?: boolean,
+	) => number;
 };
 function tauriInternals(): TauriInternals {
-	return (window as unknown as { __TAURI_INTERNALS__: TauriInternals }).__TAURI_INTERNALS__;
+	return (window as unknown as { __TAURI_INTERNALS__: TauriInternals })
+		.__TAURI_INTERNALS__;
 }
 let savedTauriInvoke: TauriInternals["invoke"];
 
@@ -46,7 +56,7 @@ beforeEach(() => {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -88,7 +98,10 @@ afterEach(() => {
 	tauriInternals().invoke = savedTauriInvoke;
 });
 
-function renderIt(currentKey = "LCtrl+LMeta", forbiddenCombos?: readonly ForbiddenCombo[]) {
+function renderIt(
+	currentKey = "LCtrl+LMeta",
+	forbiddenCombos?: readonly ForbiddenCombo[],
+) {
 	const onKeyRecorded = mock((_key: string) => undefined);
 	// `exactOptionalPropertyTypes: true` distinguishes "absent" from "undefined".
 	// Only pass `forbiddenCombos` when actually present so the absent-case test
@@ -119,15 +132,24 @@ describe("formatCombo", () => {
 
 describe("resolveDisplayText", () => {
 	test("when not recording returns formatted currentKey", () => {
-		expect(resolveDisplayText(false, [], "LCtrl+A", "Press keys")).toBe("L Ctrl + A");
+		expect(resolveDisplayText(false, [], "LCtrl+A", "Press keys")).toBe(
+			"L Ctrl + A",
+		);
 	});
 	test("when recording with liveKeys returns them joined with ' + '", () => {
-		const result = resolveDisplayText(true, ["LCtrl", "A"], "LCtrl+A", "Press keys");
+		const result = resolveDisplayText(
+			true,
+			["LCtrl", "A"],
+			"LCtrl+A",
+			"Press keys",
+		);
 		expect(result).toContain("L Ctrl");
 		expect(result).toContain("A");
 	});
 	test("when recording with no liveKeys returns pressKeysLabel", () => {
-		expect(resolveDisplayText(true, [], "LCtrl+A", "Press keys...")).toBe("Press keys...");
+		expect(resolveDisplayText(true, [], "LCtrl+A", "Press keys...")).toBe(
+			"Press keys...",
+		);
 	});
 });
 
@@ -171,7 +193,9 @@ describe("findConflict", () => {
 	test("returns the first matching forbidden combo on superset (candidate ⊃ other)", () => {
 		// Candidate has every key the other does plus an extra → other would
 		// accidentally fire when candidate is pressed.
-		expect(findConflict("LCtrl+LShift+V+LAlt", [repaste, tts])).toEqual(repaste);
+		expect(findConflict("LCtrl+LShift+V+LAlt", [repaste, tts])).toEqual(
+			repaste,
+		);
 	});
 
 	test("returns the first matching forbidden combo on subset (candidate ⊂ other)", () => {
@@ -182,7 +206,10 @@ describe("findConflict", () => {
 });
 
 describe("HotkeyRecorder conflict gating", () => {
-	const repaste: ForbiddenCombo = { combo: "LCtrl+LShift+V", label: "Re-paste" };
+	const repaste: ForbiddenCombo = {
+		combo: "LCtrl+LShift+V",
+		label: "Re-paste",
+	};
 	const tts: ForbiddenCombo = { combo: "LCtrl+Space", label: "Text-to-speech" };
 
 	function startThenRecord(combo: string | null): void {

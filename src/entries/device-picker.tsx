@@ -20,5 +20,5 @@ renderReactRoot(
 				<DevicePickerPage />
 			</IntlProvider>
 		</Suspense>
-	</StrictMode>
+	</StrictMode>,
 );

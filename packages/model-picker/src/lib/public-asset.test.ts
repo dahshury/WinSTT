@@ -4,7 +4,11 @@ import { resolvePublicAsset } from "./public-asset";
 describe("resolvePublicAsset (model-picker copy)", () => {
 	test("non-file origin (dev server) returns the absolute path unchanged", () => {
 		expect(
-			resolvePublicAsset("/provider-icons/openai.png", "http:", "http://localhost:3000/")
+			resolvePublicAsset(
+				"/provider-icons/openai.png",
+				"http:",
+				"http://localhost:3000/",
+			),
 		).toBe("/provider-icons/openai.png");
 	});
 
@@ -13,8 +17,8 @@ describe("resolvePublicAsset (model-picker copy)", () => {
 			resolvePublicAsset(
 				"/provider-icons/openai.png",
 				"file:",
-				"file:///C:/app/renderer/index.html"
-			)
+				"file:///C:/app/renderer/index.html",
+			),
 		).toBe("file:///C:/app/renderer/provider-icons/openai.png");
 	});
 
@@ -23,8 +27,8 @@ describe("resolvePublicAsset (model-picker copy)", () => {
 			resolvePublicAsset(
 				"/provider-icons/cohere.png",
 				"file:",
-				"file:///C:/app/renderer/windows/model-picker.html"
-			)
+				"file:///C:/app/renderer/windows/model-picker.html",
+			),
 		).toBe("file:///C:/app/renderer/provider-icons/cohere.png");
 	});
 });

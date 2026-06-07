@@ -58,13 +58,25 @@ export function wordsCorrectedBetween(before: string, after: string): number {
  */
 export function dayRangeBounds(
 	from: Date | null,
-	to: Date | null
+	to: Date | null,
 ): { fromTs: number; toTs: number } | null {
 	if (from === null || to === null) {
 		return null;
 	}
-	const fromTs = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
-	const toTs = new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59, 999).getTime();
+	const fromTs = new Date(
+		from.getFullYear(),
+		from.getMonth(),
+		from.getDate(),
+	).getTime();
+	const toTs = new Date(
+		to.getFullYear(),
+		to.getMonth(),
+		to.getDate(),
+		23,
+		59,
+		59,
+		999,
+	).getTime();
 	return { fromTs, toTs };
 }
 
@@ -78,7 +90,7 @@ export function dayRangeBounds(
 export function filterEntriesByDateRange(
 	entries: TranscriptionHistoryEntry[],
 	from: Date | null,
-	to: Date | null
+	to: Date | null,
 ): TranscriptionHistoryEntry[] {
 	const bounds = dayRangeBounds(from, to);
 	if (bounds === null) {
@@ -88,7 +100,9 @@ export function filterEntriesByDateRange(
 	return entries.filter((e) => e.timestamp >= fromTs && e.timestamp <= toTs);
 }
 
-export function aggregate(entries: TranscriptionHistoryEntry[]): AggregateStats {
+export function aggregate(
+	entries: TranscriptionHistoryEntry[],
+): AggregateStats {
 	let totalWords = 0;
 	let totalDurationMs = 0;
 	let aiFixes = 0;
@@ -101,7 +115,10 @@ export function aggregate(entries: TranscriptionHistoryEntry[]): AggregateStats 
 		// `originalText` is present only when a cleanup pass produced different
 		// text, so the diff runs on the handful of AI-touched entries — not the
 		// whole list.
-		if (typeof entry.originalText === "string" && entry.originalText.length > 0) {
+		if (
+			typeof entry.originalText === "string" &&
+			entry.originalText.length > 0
+		) {
 			const corrected = wordsCorrectedBetween(entry.originalText, entry.text);
 			if (corrected > 0) {
 				aiFixes += 1;
@@ -150,7 +167,9 @@ const HEATMAP_DAYS = 365;
 /**
  * Sums word counts per local day key so the heatmap can read totals in O(1).
  */
-export function sumWordsByDay(entries: TranscriptionHistoryEntry[]): Map<string, number> {
+export function sumWordsByDay(
+	entries: TranscriptionHistoryEntry[],
+): Map<string, number> {
 	const totals = new Map<string, number>();
 	for (const entry of entries) {
 		const key = toDayKey(entry.timestamp);
@@ -169,7 +188,11 @@ export function startOfLocalDay(now: number): Date {
 	return today;
 }
 
-function makeBucket(today: Date, daysAgo: number, totals: Map<string, number>): DayBucket {
+function makeBucket(
+	today: Date,
+	daysAgo: number,
+	totals: Map<string, number>,
+): DayBucket {
 	// Walk calendar days via setDate, not by subtracting 86_400_000 ms — fixed-ms
 	// stepping double-counts a date around fall-back (25h day) and skips one
 	// around spring-forward (23h day), producing duplicate React keys.
@@ -185,12 +208,12 @@ function makeBucket(today: Date, daysAgo: number, totals: Map<string, number>): 
  */
 export function buildHeatmap(
 	entries: TranscriptionHistoryEntry[],
-	now: number = Date.now()
+	now: number = Date.now(),
 ): DayBucket[] {
 	const totals = sumWordsByDay(entries);
 	const today = startOfLocalDay(now);
 	return Array.from({ length: HEATMAP_DAYS }, (_, i) =>
-		makeBucket(today, HEATMAP_DAYS - 1 - i, totals)
+		makeBucket(today, HEATMAP_DAYS - 1 - i, totals),
 	);
 }
 

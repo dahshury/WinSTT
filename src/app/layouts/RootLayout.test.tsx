@@ -8,7 +8,7 @@ describe("RootLayout", () => {
 		const { container } = render(
 			<RootLayout>
 				<div data-testid="content">app content</div>
-			</RootLayout>
+			</RootLayout>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});

@@ -4,10 +4,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import type {
-	OllamaModel,
-	OllamaPullProgress,
-} from "@/shared/api/models";
+import type { OllamaModel, OllamaPullProgress } from "@/shared/api/models";
 import { Button } from "@/shared/ui/button";
 import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
@@ -21,10 +18,7 @@ import {
 	formatOllamaDisplayName,
 	getOllamaFamily,
 } from "../lib/family-helpers";
-import {
-	OllamaToolCapabilityBadge,
-	PublisherChip,
-} from "./OllamaModelChips";
+import { OllamaToolCapabilityBadge, PublisherChip } from "./OllamaModelChips";
 import type { TriggerPullSummary } from "./ollama-selector-types";
 
 // ── Trigger ───────────────────────────────────────────────────────────

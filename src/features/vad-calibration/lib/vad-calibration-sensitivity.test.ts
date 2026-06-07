@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { AudioDevice } from "@/entities/audio-device";
-import { nextSensitivityForDevice, resolveCurrentDeviceName } from "./vad-calibration-sensitivity";
+import {
+	nextSensitivityForDevice,
+	resolveCurrentDeviceName,
+} from "./vad-calibration-sensitivity";
 
 function dev(index: number, name: string, isDefault = false): AudioDevice {
 	return { index, name, isDefault } as AudioDevice;
@@ -54,6 +57,8 @@ describe("nextSensitivityForDevice", () => {
 	});
 
 	test("treats undefined current as 'not equal' to a persisted value", () => {
-		expect(nextSensitivityForDevice("Mic A", undefined, { "Mic A": 0.6 })).toBe(0.6);
+		expect(nextSensitivityForDevice("Mic A", undefined, { "Mic A": 0.6 })).toBe(
+			0.6,
+		);
 	});
 });

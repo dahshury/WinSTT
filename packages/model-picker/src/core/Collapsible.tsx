@@ -58,14 +58,16 @@ export function Collapsible({
 		<div
 			className={cn(
 				"grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-				className
+				className,
 			)}
 			data-slot={dataSlot}
 			data-state={isOpen ? "open" : "closed"}
 			inert={!isOpen}
 			style={{ gridTemplateRows: isOpen ? "1fr" : "0fr" }}
 		>
-			<div className="min-h-0 overflow-hidden">{hasOpened ? children : null}</div>
+			<div className="min-h-0 overflow-hidden">
+				{hasOpened ? children : null}
+			</div>
 		</div>
 	);
 }

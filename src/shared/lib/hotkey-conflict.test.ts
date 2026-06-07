@@ -85,8 +85,12 @@ describe("resolveHotkeyTriple", () => {
 
 	test("resets repaste when it equals PTT", () => {
 		const r = resolveHotkeyTriple(
-			{ pushToTalkKey: "LCtrl+A", repasteHotkey: "LCtrl+A", ttsHotkey: "LMeta+T" },
-			DEFAULTS
+			{
+				pushToTalkKey: "LCtrl+A",
+				repasteHotkey: "LCtrl+A",
+				ttsHotkey: "LMeta+T",
+			},
+			DEFAULTS,
 		);
 		expect(r.values.repasteHotkey).toBe(DEFAULTS.repasteHotkey);
 		expect(r.rewrites).toContain("repasteHotkey");
@@ -95,8 +99,12 @@ describe("resolveHotkeyTriple", () => {
 	test("resets repaste when PTT is a subset of it", () => {
 		// PTT ⊂ repaste — pressing repaste would also fire PTT, so repaste must change.
 		const r = resolveHotkeyTriple(
-			{ pushToTalkKey: "LCtrl+LShift", repasteHotkey: "LCtrl+LShift+V", ttsHotkey: "LMeta+T" },
-			DEFAULTS
+			{
+				pushToTalkKey: "LCtrl+LShift",
+				repasteHotkey: "LCtrl+LShift+V",
+				ttsHotkey: "LMeta+T",
+			},
+			DEFAULTS,
 		);
 		expect(r.values.repasteHotkey).toBe(DEFAULTS.repasteHotkey);
 		expect(r.rewrites).toContain("repasteHotkey");
@@ -109,7 +117,7 @@ describe("resolveHotkeyTriple", () => {
 				repasteHotkey: "LCtrl+LShift+V",
 				ttsHotkey: "LCtrl+A+B", // superset of PTT
 			},
-			DEFAULTS
+			DEFAULTS,
 		);
 		expect(r.values.ttsHotkey).toBe(DEFAULTS.ttsHotkey);
 		expect(r.values.repasteHotkey).toBe("LCtrl+LShift+V");
@@ -124,7 +132,7 @@ describe("resolveHotkeyTriple", () => {
 				repasteHotkey: "LCtrl+LShift+V",
 				ttsHotkey: "LCtrl+LShift", // subset of repaste
 			},
-			DEFAULTS
+			DEFAULTS,
 		);
 		expect(r.values.ttsHotkey).toBe(DEFAULTS.ttsHotkey);
 		expect(r.rewrites).toEqual(["ttsHotkey"]);
@@ -137,7 +145,7 @@ describe("resolveHotkeyTriple", () => {
 				repasteHotkey: "LCtrl+LShift+V", // equal
 				ttsHotkey: "LCtrl+LShift", // subset
 			},
-			DEFAULTS
+			DEFAULTS,
 		);
 		expect(r.values.repasteHotkey).toBe(DEFAULTS.repasteHotkey);
 		expect(r.values.ttsHotkey).toBe(DEFAULTS.ttsHotkey);

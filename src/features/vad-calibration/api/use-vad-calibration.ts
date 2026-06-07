@@ -14,7 +14,7 @@ type AudioPatch = Partial<AppSettingsOutput["audio"]>;
 function buildAdaptPatch(
 	deviceName: string | null,
 	currentMap: Record<string, number> | undefined,
-	newSensitivity: number
+	newSensitivity: number,
 ): AudioPatch {
 	if (deviceName == null) {
 		// Unknown device — bump live value only, don't poison the map.
@@ -53,13 +53,19 @@ export function useVadCalibration(): void {
 	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
 	const { devices, defaultDevice } = useInputDevices();
 
-	const deviceName = resolveCurrentDeviceName(audio?.inputDeviceIndex, devices, defaultDevice);
+	const deviceName = resolveCurrentDeviceName(
+		audio?.inputDeviceIndex,
+		devices,
+		defaultDevice,
+	);
 
 	// Refs let the persistence effect run without re-subscribing every time
 	// the map or the selected device changes — re-subscribing would race
 	// against an in-flight adapt event mid-recording.
 	const deviceNameRef = useRef<string | null>(deviceName);
-	const mapRef = useRef<Record<string, number> | undefined>(audio?.sileroSensitivityByDeviceName);
+	const mapRef = useRef<Record<string, number> | undefined>(
+		audio?.sileroSensitivityByDeviceName,
+	);
 	deviceNameRef.current = deviceName;
 	mapRef.current = audio?.sileroSensitivityByDeviceName;
 
@@ -75,7 +81,11 @@ export function useVadCalibration(): void {
 	// pending save before it fires. Audio is the only section this hook owns.
 	useEffect(() => {
 		const unsub = onVadSensitivityAdapted(({ newSensitivity }) => {
-			const patch = buildAdaptPatch(deviceNameRef.current, mapRef.current, newSensitivity);
+			const patch = buildAdaptPatch(
+				deviceNameRef.current,
+				mapRef.current,
+				newSensitivity,
+			);
 			updateAudio(patch);
 			settingsSave({ audio: useSettingsStore.getState().settings.audio });
 		});
@@ -94,12 +104,17 @@ export function useVadCalibration(): void {
 		const next = nextSensitivityForDevice(
 			deviceName,
 			audio?.sileroSensitivity,
-			audio?.sileroSensitivityByDeviceName
+			audio?.sileroSensitivityByDeviceName,
 		);
 		if (next != null) {
 			updateAudio({ sileroSensitivity: next });
 		}
-	}, [deviceName, audio?.sileroSensitivity, audio?.sileroSensitivityByDeviceName, updateAudio]);
+	}, [
+		deviceName,
+		audio?.sileroSensitivity,
+		audio?.sileroSensitivityByDeviceName,
+		updateAudio,
+	]);
 }
 
 /**
@@ -108,7 +123,7 @@ export function useVadCalibration(): void {
  */
 function shouldRunDeviceSwitch(
 	deviceName: string | null,
-	lastAppliedName: string | null
+	lastAppliedName: string | null,
 ): deviceName is string {
 	return deviceName != null && deviceName !== lastAppliedName;
 }

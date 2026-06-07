@@ -18,7 +18,9 @@ function makeInstalled(name: string, size = 0): OllamaModel {
 	return { name, size };
 }
 
-function makeRecommended(overrides: Partial<RecommendedOllamaModel> = {}): RecommendedOllamaModel {
+function makeRecommended(
+	overrides: Partial<RecommendedOllamaModel> = {},
+): RecommendedOllamaModel {
 	return {
 		name: "llama3.2:1b",
 		displayName: "Llama 3.2 1B",
@@ -146,7 +148,9 @@ describe("matchesRecommended", () => {
 	});
 
 	test("matches on description", () => {
-		const m = makeRecommended({ description: "A fast model for code generation." });
+		const m = makeRecommended({
+			description: "A fast model for code generation.",
+		});
 		expect(matchesRecommended(m, new Set(), "code")).toBe(true);
 	});
 
@@ -195,9 +199,21 @@ describe("matchesRecommended", () => {
 
 describe("filterRecommendedModels", () => {
 	const models: RecommendedOllamaModel[] = [
-		makeRecommended({ name: "llama3.2:1b", displayName: "Llama 3.2 1B", tags: ["tiny"] }),
-		makeRecommended({ name: "gemma3:4b", displayName: "Gemma 3 4B", tags: ["fast"] }),
-		makeRecommended({ name: "qwen3:1.7b", displayName: "Qwen 3 1.7B", tags: ["multilingual"] }),
+		makeRecommended({
+			name: "llama3.2:1b",
+			displayName: "Llama 3.2 1B",
+			tags: ["tiny"],
+		}),
+		makeRecommended({
+			name: "gemma3:4b",
+			displayName: "Gemma 3 4B",
+			tags: ["fast"],
+		}),
+		makeRecommended({
+			name: "qwen3:1.7b",
+			displayName: "Qwen 3 1.7B",
+			tags: ["multilingual"],
+		}),
 	];
 
 	test("returns all uninstalled models when query is empty", () => {
@@ -206,7 +222,11 @@ describe("filterRecommendedModels", () => {
 	});
 
 	test("excludes models that are already installed", () => {
-		const result = filterRecommendedModels(models, new Set(["llama3.2:1b"]), "");
+		const result = filterRecommendedModels(
+			models,
+			new Set(["llama3.2:1b"]),
+			"",
+		);
 		expect(result).toHaveLength(2);
 		expect(result.some((m) => m.name === "llama3.2:1b")).toBe(false);
 	});

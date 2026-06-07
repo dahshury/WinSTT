@@ -8,11 +8,17 @@ const mockInvoke = mock(async (_channel: string, _payload?: unknown) => ({
 
 mock.module("@/shared/api/ipc-client", () => ({
 	...ipcClientMock(),
-	ipcInvoke: (channel: string, payload?: unknown) => mockInvoke(channel, payload),
+	ipcInvoke: (channel: string, payload?: unknown) =>
+		mockInvoke(channel, payload),
 }));
 
-const { applyVerifyResponse, errorMessage, invokeVerify, missingKeyResponse, verifyCredential } =
-	await import("./verify-credential");
+const {
+	applyVerifyResponse,
+	errorMessage,
+	invokeVerify,
+	missingKeyResponse,
+	verifyCredential,
+} = await import("./verify-credential");
 
 beforeEach(() => {
 	mockInvoke.mockReset();
@@ -75,11 +81,17 @@ describe("invokeVerify", () => {
 describe("applyVerifyResponse", () => {
 	test("ok=true sets status to verified", () => {
 		applyVerifyResponse("openai", { ok: true });
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe("verified");
+		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+			"verified",
+		);
 	});
 
 	test("ok=false + code=network sets status to offline with the message", () => {
-		applyVerifyResponse("openai", { ok: false, code: "network", message: "down" });
+		applyVerifyResponse("openai", {
+			ok: false,
+			code: "network",
+			message: "down",
+		});
 		const entry = useCredentialStatusStore.getState().byProvider.openai;
 		expect(entry.status).toBe("offline");
 		expect(entry.lastError).toBe("down");
@@ -103,14 +115,18 @@ describe("verifyCredential", () => {
 		const result = await verifyCredential("openai", "   ");
 		expect(result.code).toBe("key_missing");
 		expect(mockInvoke).not.toHaveBeenCalled();
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe("idle");
+		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+			"idle",
+		);
 	});
 
 	test("ok response flips status to verified", async () => {
 		mockInvoke.mockImplementationOnce(async () => ({ ok: true }));
 		const result = await verifyCredential("openai", "sk-abc");
 		expect(result.ok).toBe(true);
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe("verified");
+		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+			"verified",
+		);
 	});
 
 	test("network failure (thrown) maps to offline", async () => {
@@ -119,7 +135,9 @@ describe("verifyCredential", () => {
 		});
 		const result = await verifyCredential("elevenlabs", "key");
 		expect(result.code).toBe("network");
-		expect(useCredentialStatusStore.getState().byProvider.elevenlabs.status).toBe("offline");
+		expect(
+			useCredentialStatusStore.getState().byProvider.elevenlabs.status,
+		).toBe("offline");
 	});
 
 	test("auth failure (response.code !== network) maps to invalid", async () => {
@@ -130,13 +148,16 @@ describe("verifyCredential", () => {
 		}));
 		const result = await verifyCredential("openai", "sk-bad");
 		expect(result.ok).toBe(false);
-		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe("invalid");
+		expect(useCredentialStatusStore.getState().byProvider.openai.status).toBe(
+			"invalid",
+		);
 	});
 
 	test("flips to verifying before the IPC resolves", async () => {
 		let observedDuringInvoke: string | undefined;
 		mockInvoke.mockImplementationOnce(async () => {
-			observedDuringInvoke = useCredentialStatusStore.getState().byProvider.openai.status;
+			observedDuringInvoke =
+				useCredentialStatusStore.getState().byProvider.openai.status;
 			return { ok: true };
 		});
 		await verifyCredential("openai", "sk-abc");

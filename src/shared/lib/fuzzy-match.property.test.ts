@@ -11,8 +11,12 @@ const nonEmptyAsciiString = fc.string({ minLength: 1, maxLength: 12 });
 describe("jaroWinkler property tests", () => {
 	test("symmetry: jw(a, b) === jw(b, a)", () => {
 		fc.assert(
-			fc.property(asciiString, asciiString, (a, b) => jaroWinkler(a, b) === jaroWinkler(b, a)),
-			{ numRuns: 300 }
+			fc.property(
+				asciiString,
+				asciiString,
+				(a, b) => jaroWinkler(a, b) === jaroWinkler(b, a),
+			),
+			{ numRuns: 300 },
 		);
 	});
 
@@ -22,14 +26,14 @@ describe("jaroWinkler property tests", () => {
 				const score = jaroWinkler(a, b);
 				return score >= 0 && score <= 1;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
 	test("self-similarity: jw(a, a) === 1 for any string (including empty)", () => {
 		fc.assert(
 			fc.property(asciiString, (a) => jaroWinkler(a, a) === 1),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -39,16 +43,19 @@ describe("jaroWinkler property tests", () => {
 			fc.property(
 				fc.stringMatching(/^[a-m]{1,6}$/),
 				fc.stringMatching(/^[n-z]{1,6}$/),
-				(a, b) => jaroWinkler(a, b) === 0
+				(a, b) => jaroWinkler(a, b) === 0,
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
 	test("empty paired with non-empty: jw = 0 (one-sided emptiness)", () => {
 		fc.assert(
-			fc.property(nonEmptyAsciiString, (a) => jaroWinkler("", a) === 0 && jaroWinkler(a, "") === 0),
-			{ numRuns: 200 }
+			fc.property(
+				nonEmptyAsciiString,
+				(a) => jaroWinkler("", a) === 0 && jaroWinkler(a, "") === 0,
+			),
+			{ numRuns: 200 },
 		);
 	});
 });

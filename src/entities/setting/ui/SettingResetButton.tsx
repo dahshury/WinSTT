@@ -22,7 +22,10 @@ export interface SettingResetButtonProps {
  * the header row, just right of the info tooltip. Clicking it opens a
  * confirmation dialog before the reset is applied.
  */
-export function SettingResetButton({ isDefault, onReset }: SettingResetButtonProps) {
+export function SettingResetButton({
+	isDefault,
+	onReset,
+}: SettingResetButtonProps) {
 	const tc = useTranslations("common");
 	const ts = useTranslations("settings");
 	const [confirmOpen, setConfirmOpen] = useState(false);
@@ -31,7 +34,9 @@ export function SettingResetButton({ isDefault, onReset }: SettingResetButtonPro
 			<IconButton
 				aria-label={tc("resetToDefault")}
 				className={
-					isDefault ? "size-6 text-foreground-muted/50 disabled:opacity-100" : "size-6 text-accent"
+					isDefault
+						? "size-6 text-foreground-muted/50 disabled:opacity-100"
+						: "size-6 text-accent"
 				}
 				disabled={isDefault}
 				icon={<HugeiconsIcon icon={ArrowTurnBackwardIcon} size={14} />}

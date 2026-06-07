@@ -1,5 +1,8 @@
 import type { ModelInfo } from "@/entities/model-catalog";
-import { ONNX_QUANTIZATIONS, type OnnxQuantization } from "@/shared/config/defaults";
+import {
+	ONNX_QUANTIZATIONS,
+	type OnnxQuantization,
+} from "@/shared/config/defaults";
 
 export interface QuantizationOption {
 	label: string;
@@ -7,7 +10,10 @@ export interface QuantizationOption {
 	value: OnnxQuantization;
 }
 
-const QUANTIZATION_LABELS: Record<OnnxQuantization, { label: string; tooltip: string }> = {
+const QUANTIZATION_LABELS: Record<
+	OnnxQuantization,
+	{ label: string; tooltip: string }
+> = {
 	"": {
 		label: "fp32",
 		tooltip:
@@ -15,7 +21,8 @@ const QUANTIZATION_LABELS: Record<OnnxQuantization, { label: string; tooltip: st
 	},
 	int8: {
 		label: "int8",
-		tooltip: "8-bit integer quantization. Faster and ~4× smaller than fp32, mild quality loss.",
+		tooltip:
+			"8-bit integer quantization. Faster and ~4× smaller than fp32, mild quality loss.",
 	},
 	fp16: {
 		label: "fp16",
@@ -23,7 +30,8 @@ const QUANTIZATION_LABELS: Record<OnnxQuantization, { label: string; tooltip: st
 	},
 	fp16w: {
 		label: "fp16w",
-		tooltip: "16-bit stored weights with fp32 compute. Near-fp32 quality at about half the disk size.",
+		tooltip:
+			"16-bit stored weights with fp32 compute. Near-fp32 quality at about half the disk size.",
 	},
 	uint8: {
 		label: "uint8",
@@ -40,7 +48,8 @@ const QUANTIZATION_LABELS: Record<OnnxQuantization, { label: string; tooltip: st
 	},
 	bnb4: {
 		label: "bnb4",
-		tooltip: "bitsandbytes 4-bit quantization. Compact and fast where supported.",
+		tooltip:
+			"bitsandbytes 4-bit quantization. Compact and fast where supported.",
 	},
 };
 
@@ -85,7 +94,9 @@ export function getQuantizationOptions(model: ModelInfo): QuantizationOption[] {
 			label: QUANTIZATION_LABELS[value].label,
 			tooltip: QUANTIZATION_LABELS[value].tooltip,
 		}))
-		.sort((a, b) => QUANTIZATION_WEIGHT[b.value] - QUANTIZATION_WEIGHT[a.value]);
+		.sort(
+			(a, b) => QUANTIZATION_WEIGHT[b.value] - QUANTIZATION_WEIGHT[a.value],
+		);
 }
 
 /**

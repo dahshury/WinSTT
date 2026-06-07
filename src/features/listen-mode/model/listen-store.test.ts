@@ -48,7 +48,12 @@ describe("useListenStore", () => {
 
 	test("setDevices replaces device list", () => {
 		const devices = [
-			{ index: 0, name: "Speakers", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+			{
+				index: 0,
+				name: "Speakers",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+			},
 		];
 		useListenStore.getState().setDevices(devices);
 		expect(useListenStore.getState().devices).toEqual(devices);

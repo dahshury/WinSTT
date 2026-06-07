@@ -1,19 +1,28 @@
-import type { OllamaPullProgress, OllamaPullProgressStatus } from "@/shared/api/models";
+import type {
+	OllamaPullProgress,
+	OllamaPullProgressStatus,
+} from "@/shared/api/models";
 
-const PULL_STATUS_I18N_MAP: Partial<Record<OllamaPullProgressStatus, string>> = {
-	downloading: "pullStatusDownloading",
-	verifying: "pullStatusVerifying",
-	writing: "pullStatusWriting",
-	success: "pullStatusSuccess",
-};
+const PULL_STATUS_I18N_MAP: Partial<Record<OllamaPullProgressStatus, string>> =
+	{
+		downloading: "pullStatusDownloading",
+		verifying: "pullStatusVerifying",
+		writing: "pullStatusWriting",
+		success: "pullStatusSuccess",
+	};
 
 /**
  * Maps a pull status value to its i18n key so callers can translate it.
  * Kept pure (no i18n dependency) so it is testable without mocking hooks.
  */
-export function pullStatusToI18nKey(status: OllamaPullProgressStatus | undefined): string {
+export function pullStatusToI18nKey(
+	status: OllamaPullProgressStatus | undefined,
+): string {
 	// Stryker disable next-line ConditionalExpression: equivalent mutant — when forced true, PULL_STATUS_I18N_MAP[undefined] is undefined → falls through to the same "pullStatusPulling" default.
-	return (status !== undefined && PULL_STATUS_I18N_MAP[status]) || "pullStatusPulling";
+	return (
+		(status !== undefined && PULL_STATUS_I18N_MAP[status]) ||
+		"pullStatusPulling"
+	);
 }
 
 /**
@@ -30,7 +39,7 @@ export function computePullPercent(progress: OllamaPullProgress): number {
  * simpler shape consumed by the UI: `{ [modelName]: OllamaPullProgress }`.
  */
 export function buildPullsMap(
-	pulls: Record<string, { progress: OllamaPullProgress; startedAt: number }>
+	pulls: Record<string, { progress: OllamaPullProgress; startedAt: number }>,
 ): Record<string, OllamaPullProgress> {
 	const out: Record<string, OllamaPullProgress> = {};
 	for (const [k, v] of Object.entries(pulls)) {

@@ -14,7 +14,7 @@ export interface TruncatedTextProps {
 
 function mergeRefs<T>(
 	triggerRef: Ref<T> | undefined,
-	external: React.RefObject<T | null>
+	external: React.RefObject<T | null>,
 ): React.RefCallback<T> {
 	return (el) => {
 		if (typeof triggerRef === "function") {
@@ -32,7 +32,11 @@ function mergeRefs<T>(
  * ResizeObserver measurement of `scrollWidth > clientWidth`, so the popup
  * stays out of the way when nothing is hidden.
  */
-export function TruncatedText({ className, text, tooltipDelay = 1500 }: TruncatedTextProps) {
+export function TruncatedText({
+	className,
+	text,
+	tooltipDelay = 1500,
+}: TruncatedTextProps) {
 	const ref = useRef<HTMLSpanElement | null>(null);
 	const [truncated, setTruncated] = useState(false);
 

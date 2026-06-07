@@ -81,7 +81,10 @@ describe("useLlmProcessingFeed", () => {
 
 	test("processing-start clears stale thinking text and flips isThinking on", () => {
 		// Seed a stale thinking buffer from a prior utterance.
-		useLlmProcessingStore.setState({ thinkingText: "stale reasoning", isThinking: false });
+		useLlmProcessingStore.setState({
+			thinkingText: "stale reasoning",
+			isThinking: false,
+		});
 		renderHook(() => useLlmProcessingFeed());
 		fire(IPC.LLM_PROCESSING_START);
 		const state = useLlmProcessingStore.getState();
@@ -189,7 +192,7 @@ describe("useLlmProcessingFeed", () => {
 				IPC.LLM_REASONING_DELTA,
 				IPC.TRANSFORMS_PROCESSING_START,
 				IPC.TRANSFORMS_PROCESSING_END,
-			])
+			]),
 		);
 		// ...and the channel→callback map is now empty (no dangling refs).
 		expect(listeners.size).toBe(0);

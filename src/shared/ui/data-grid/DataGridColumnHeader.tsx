@@ -26,11 +26,7 @@ export function DataGridColumnHeader({
 	const sorted = column.getIsSorted();
 	const title = column.columnDef.meta?.title ?? "";
 	const ariaSort =
-		sorted === "asc"
-			? "ascending"
-			: sorted === "desc"
-				? "descending"
-				: "none";
+		sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none";
 	const content = header.isPlaceholder
 		? null
 		: flexRender(column.columnDef.header, header.getContext());
@@ -38,7 +34,10 @@ export function DataGridColumnHeader({
 	return (
 		<TableHead
 			aria-sort={canSort ? ariaSort : undefined}
-			className={cn(resizable && "relative", column.columnDef.meta?.headClassName)}
+			className={cn(
+				resizable && "relative",
+				column.columnDef.meta?.headClassName,
+			)}
 			style={resizable ? { width: header.getSize() } : undefined}
 		>
 			{canSort && !header.isPlaceholder ? (
@@ -55,7 +54,7 @@ export function DataGridColumnHeader({
 							"shrink-0 transition-opacity duration-100",
 							sorted
 								? "text-foreground opacity-100"
-								: "text-foreground-muted opacity-0 group-hover/sort:opacity-60"
+								: "text-foreground-muted opacity-0 group-hover/sort:opacity-60",
 						)}
 						icon={
 							sorted === "desc"
@@ -74,7 +73,9 @@ export function DataGridColumnHeader({
 				<span
 					className={cn(
 						"absolute top-0 right-0 z-raised h-full w-1 cursor-col-resize touch-none select-none transition-colors duration-100",
-						column.getIsResizing() ? "bg-accent" : "bg-transparent hover:bg-border"
+						column.getIsResizing()
+							? "bg-accent"
+							: "bg-transparent hover:bg-border",
 					)}
 					onDoubleClick={() => column.resetSize()}
 					onMouseDown={header.getResizeHandler()}

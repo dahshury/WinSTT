@@ -2,7 +2,10 @@ import { describe, expect, mock, test } from "bun:test";
 import { Tooltip as TooltipProvider } from "@base-ui/react/tooltip";
 import { render, screen } from "@testing-library/react";
 import { ActiveFiltersBar } from "./ActiveFiltersBar";
-import { getVariantLabel, hasActiveFilters } from "./active-filters-bar-helpers";
+import {
+	getVariantLabel,
+	hasActiveFilters,
+} from "./active-filters-bar-helpers";
 
 function renderBar(props: Partial<Parameters<typeof ActiveFiltersBar>[0]>) {
 	const onMakerToggle = mock(() => undefined);
@@ -22,7 +25,7 @@ function renderBar(props: Partial<Parameters<typeof ActiveFiltersBar>[0]>) {
 				selectedVariant={null}
 				{...props}
 			/>
-		</TooltipProvider.Provider>
+		</TooltipProvider.Provider>,
 	);
 }
 

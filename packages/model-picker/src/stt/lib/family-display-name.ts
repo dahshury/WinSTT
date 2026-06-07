@@ -10,31 +10,31 @@ import { getFamilyConfig } from "./family-metadata";
 const PARAM_COUNT_TOKEN_RE = /\s*\b\d+(?:\.\d+)?[MB]\b/gi;
 
 const LANGUAGE_QUALIFIER_RE =
-  /\s*\((?:english|en|russian|ru|arabic|ar|chinese|zh|japanese|ja|korean|ko|french|fr|german|de|spanish|es|italian|it|portuguese|pt|hindi|hi|ukrainian|uk|vietnamese|vi)\)\s*$/i;
+	/\s*\((?:english|en|russian|ru|arabic|ar|chinese|zh|japanese|ja|korean|ko|french|fr|german|de|spanish|es|italian|it|portuguese|pt|hindi|hi|ukrainian|uk|vietnamese|vi)\)\s*$/i;
 
 /** Collapse the whitespace run a mid-name token strip can leave behind. */
 const COLLAPSE_WHITESPACE_RE = /\s{2,}/g;
 
 /** Strip the leading family label only (e.g. "NeMo Canary 1B Flash" → "Canary 1B Flash"). */
 function stripFamilyLabel(model: ModelInfo): string {
-  const familyLabel = getFamilyConfig(model.family).label;
-  const stripped = model.displayName
-    .replace(new RegExp(`^${familyLabel}\\s+`), "")
-    .trim();
-  return stripped.length > 0 ? stripped : model.displayName;
+	const familyLabel = getFamilyConfig(model.family).label;
+	const stripped = model.displayName
+		.replace(new RegExp(`^${familyLabel}\\s+`), "")
+		.trim();
+	return stripped.length > 0 ? stripped : model.displayName;
 }
 
 /** Drop parameter-count tokens and collapse the whitespace they leave behind. */
 function stripSizeToken(name: string): string {
-  return name
-    .replace(PARAM_COUNT_TOKEN_RE, "")
-    .replace(COLLAPSE_WHITESPACE_RE, " ")
-    .trim();
+	return name
+		.replace(PARAM_COUNT_TOKEN_RE, "")
+		.replace(COLLAPSE_WHITESPACE_RE, " ")
+		.trim();
 }
 
 /** Drop language-only suffixes such as "(English)" or "(EN)"; the language badge owns that fact. */
 function stripLanguageQualifier(name: string): string {
-  return name.replace(LANGUAGE_QUALIFIER_RE, "").trim();
+	return name.replace(LANGUAGE_QUALIFIER_RE, "").trim();
 }
 
 /**
@@ -52,24 +52,24 @@ function stripLanguageQualifier(name: string): string {
  * Falls back to the raw display name if stripping would empty it.
  */
 export function variantDisplayName(
-  model: ModelInfo,
-  peers?: readonly ModelInfo[],
+	model: ModelInfo,
+	peers?: readonly ModelInfo[],
 ): string {
-  const withFamily = stripLanguageQualifier(stripFamilyLabel(model));
-  const withoutSize = stripSizeToken(withFamily);
-  if (withoutSize.length === 0) {
-    return model.displayName;
-  }
-  if (
-    withoutSize !== withFamily &&
-    peers?.some(
-      (p) =>
-        p.id !== model.id &&
-        stripSizeToken(stripLanguageQualifier(stripFamilyLabel(p))) ===
-          withoutSize,
-    )
-  ) {
-    return withFamily;
-  }
-  return withoutSize;
+	const withFamily = stripLanguageQualifier(stripFamilyLabel(model));
+	const withoutSize = stripSizeToken(withFamily);
+	if (withoutSize.length === 0) {
+		return model.displayName;
+	}
+	if (
+		withoutSize !== withFamily &&
+		peers?.some(
+			(p) =>
+				p.id !== model.id &&
+				stripSizeToken(stripLanguageQualifier(stripFamilyLabel(p))) ===
+					withoutSize,
+		)
+	) {
+		return withFamily;
+	}
+	return withoutSize;
 }

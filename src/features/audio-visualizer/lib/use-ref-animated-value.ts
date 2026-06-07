@@ -20,7 +20,7 @@ export function useRefAnimatedValue(
 	initialValue: number,
 	uniformsRef: React.RefObject<Uniforms>,
 	uniformName: string,
-	uniformType: string
+	uniformType: string,
 ) {
 	const motionValue = useMotionValue(initialValue);
 	const controlsRef = useRef<AnimationPlaybackControlsWithThen | null>(null);
@@ -40,7 +40,7 @@ export function useRefAnimatedValue(
 		(targetValue: number | number[], transition: ValueAnimationTransition) => {
 			controlsRef.current = animate(motionValue, targetValue, transition);
 		},
-		[motionValue]
+		[motionValue],
 	);
 
 	return { motionValue, controls: controlsRef, animate: animateFn };

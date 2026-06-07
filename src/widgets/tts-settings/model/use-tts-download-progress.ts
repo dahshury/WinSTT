@@ -47,16 +47,20 @@ type PhaseLookupKey = TtsInstallPhase | "null";
 // Phase → builder lookup. Every member of `TtsInstallPhase | null` is a key
 // (via `String(null) === "null"`) so the indexed access in `buildPhaseLabel`
 // is total — no `??`/`||` needed to coalesce a missing entry.
-const PHASE_LABEL_BUILDERS: Record<PhaseLookupKey, (t: Translator) => string> = {
-	engine: (t) => t("installPhaseEngine"),
-	model: (t) => t("installPhaseModel"),
-	ready: () => "",
-	unknown: () => "",
-	null: () => "",
-};
+const PHASE_LABEL_BUILDERS: Record<PhaseLookupKey, (t: Translator) => string> =
+	{
+		engine: (t) => t("installPhaseEngine"),
+		model: (t) => t("installPhaseModel"),
+		ready: () => "",
+		unknown: () => "",
+		null: () => "",
+	};
 
 /** Phase prefix (or "" when there's no active phase). Branch-free lookup. */
-export function buildPhaseLabel(t: Translator, installPhase: TtsInstallPhase | null): string {
+export function buildPhaseLabel(
+	t: Translator,
+	installPhase: TtsInstallPhase | null,
+): string {
 	const key = String(installPhase) as PhaseLookupKey;
 	return PHASE_LABEL_BUILDERS[key](t);
 }
@@ -68,7 +72,9 @@ export function buildPhaseLabel(t: Translator, installPhase: TtsInstallPhase | n
  * — the old `as string` was a lie that hid the no-match case at the type level.
  * Stays at CC 1 (the only branching is the CC-1 predicate in the nested arrow).
  */
-export function firstString(...candidates: Array<string | null | undefined>): string {
+export function firstString(
+	...candidates: Array<string | null | undefined>
+): string {
 	return candidates.find((c): c is string => typeof c === "string") ?? "";
 }
 
@@ -79,7 +85,9 @@ export function firstString(...candidates: Array<string | null | undefined>): st
  *
  * Indexing instead of a ternary keeps `buildProgressLabel` at CC 1.
  */
-const PROGRESS_LABEL_BUILDERS: ReadonlyArray<(t: Translator, state: DownloadState) => string> = [
+const PROGRESS_LABEL_BUILDERS: ReadonlyArray<
+	(t: Translator, state: DownloadState) => string
+> = [
 	(t) => t("downloading"),
 	(t, state) =>
 		t("downloadingProgress", {
@@ -87,16 +95,25 @@ const PROGRESS_LABEL_BUILDERS: ReadonlyArray<(t: Translator, state: DownloadStat
 			// `minUnit: "B"` enables the full B→KB→MB→GB ladder. Without it the
 			// default `minUnit: "MB"` floors any sub-1 MB chunk to "0 MB", so the
 			// early bytes of a download read as "0 MB" until it crosses 1 MB.
-			downloaded: firstString(formatBytes(state.downloadedBytes, { minUnit: "B" }), "0 B"),
-			total: firstString(formatBytes(state.totalBytes, { minUnit: "B" }), "0 B"),
+			downloaded: firstString(
+				formatBytes(state.downloadedBytes, { minUnit: "B" }),
+				"0 B",
+			),
+			total: firstString(
+				formatBytes(state.totalBytes, { minUnit: "B" }),
+				"0 B",
+			),
 		}),
 ];
 
 /** "Downloading…" line. Indexed lookup (no ternary). */
-export function buildProgressLabel(t: Translator, state: DownloadState): string {
+export function buildProgressLabel(
+	t: Translator,
+	state: DownloadState,
+): string {
 	const builder = PROGRESS_LABEL_BUILDERS[Number(state.totalBytes > 0)] as (
 		t: Translator,
-		state: DownloadState
+		state: DownloadState,
 	) => string;
 	return builder(t, state);
 }
@@ -105,13 +122,16 @@ export function buildProgressLabel(t: Translator, state: DownloadState): string 
  * Compose the final bar label. An empty phase prefix is filtered out via
  * `.filter` instead of a ternary so the function stays at CC 1.
  */
-export function composeBarLabel(phaseLabel: string, progressLabel: string): string {
+export function composeBarLabel(
+	phaseLabel: string,
+	progressLabel: string,
+): string {
 	return [phaseLabel, progressLabel].filter((p) => p.length > 0).join(" · ");
 }
 
 function applyProgressEvent(
 	setDownload: (next: (prev: DownloadState) => DownloadState) => void,
-	payload: { downloadedBytes: number; progress: number; totalBytes: number }
+	payload: { downloadedBytes: number; progress: number; totalBytes: number },
 ): void {
 	// INTENTIONAL: forcing `paused: false` on every progress chunk is the
 	// resume-detection mechanism, not a bug. A progress event can only arrive
@@ -135,27 +155,47 @@ function applyProgressEvent(
  * Also tracks paused-state so the bar can flip variants and the UI can
  * swap Pause for Resume.
  */
-export function useTtsDownloadProgress(installPhase: TtsInstallPhase | null): TtsDownloadProgress {
+export function useTtsDownloadProgress(
+	installPhase: TtsInstallPhase | null,
+): TtsDownloadProgress {
 	const t = useTranslations("tts");
 	const [download, setDownload] = useState<DownloadState>(INITIAL);
 
-	useEffect(() => onTtsModelDownloadStart(() => setDownload({ ...INITIAL, active: true })), []);
 	useEffect(
-		() => onTtsModelDownloadProgress((payload) => applyProgressEvent(setDownload, payload)),
-		[]
+		() =>
+			onTtsModelDownloadStart(() => setDownload({ ...INITIAL, active: true })),
+		[],
+	);
+	useEffect(
+		() =>
+			onTtsModelDownloadProgress((payload) =>
+				applyProgressEvent(setDownload, payload),
+			),
+		[],
 	);
 	useEffect(() => onTtsModelDownloadComplete(() => setDownload(INITIAL)), []);
 	// Server confirms the downloader actually entered the paused state —
 	// only THEN do we flip the bar; sending the pause command alone
 	// doesn't guarantee the worker has yielded yet.
-	useEffect(() => onTtsInstallPaused(() => setDownload((prev) => ({ ...prev, paused: true }))), []);
 	useEffect(
-		() => onTtsInstallResumed(() => setDownload((prev) => ({ ...prev, paused: false }))),
-		[]
+		() =>
+			onTtsInstallPaused(() =>
+				setDownload((prev) => ({ ...prev, paused: true })),
+			),
+		[],
+	);
+	useEffect(
+		() =>
+			onTtsInstallResumed(() =>
+				setDownload((prev) => ({ ...prev, paused: false })),
+			),
+		[],
 	);
 
 	const phaseLabel = buildPhaseLabel(t, installPhase);
-	const progressLabel = download.paused ? t("paused") : buildProgressLabel(t, download);
+	const progressLabel = download.paused
+		? t("paused")
+		: buildProgressLabel(t, download);
 
 	return {
 		active: download.active,

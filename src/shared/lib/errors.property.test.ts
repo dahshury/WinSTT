@@ -19,7 +19,7 @@ import {
 // non-finite numbers — they don't survive JSON.stringify cleanly).
 const contextArb = fc.dictionary(
 	fc.string(),
-	fc.oneof(fc.string(), fc.integer(), fc.boolean(), fc.constant(null))
+	fc.oneof(fc.string(), fc.integer(), fc.boolean(), fc.constant(null)),
 );
 
 describe("ApplicationError property tests", () => {
@@ -36,7 +36,7 @@ describe("ApplicationError property tests", () => {
 					JSON.stringify(json.context) === JSON.stringify(ctx)
 				);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -60,7 +60,7 @@ describe("ApplicationError property tests", () => {
 				}
 				return isApplicationError(target) === true;
 			}),
-			{ numRuns: 250 }
+			{ numRuns: 250 },
 		);
 	});
 
@@ -74,11 +74,11 @@ describe("ApplicationError property tests", () => {
 					fc.constant(null),
 					fc.constant(undefined),
 					fc.object(),
-					fc.array(fc.string())
+					fc.array(fc.string()),
 				),
-				(value) => isApplicationError(value) === false
+				(value) => isApplicationError(value) === false,
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });
@@ -94,22 +94,22 @@ describe("getErrorMessage property tests", () => {
 					fc.constant(null),
 					fc.constant(undefined),
 					fc.string().map((s) => new Error(s)),
-					fc.string().map((s) => ({ message: s }))
+					fc.string().map((s) => ({ message: s })),
 				),
 				(value) => {
 					const once = getErrorMessage(value);
 					const twice = getErrorMessage(once);
 					return typeof once === "string" && once === twice;
-				}
+				},
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
 	test("string input is returned as-is verbatim", () => {
 		fc.assert(
 			fc.property(fc.string(), (s) => getErrorMessage(s) === s),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -117,9 +117,9 @@ describe("getErrorMessage property tests", () => {
 		fc.assert(
 			fc.property(
 				fc.oneof(fc.string(), fc.integer(), fc.boolean()),
-				(msg) => getErrorMessage({ message: msg }) === String(msg)
+				(msg) => getErrorMessage({ message: msg }) === String(msg),
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -129,7 +129,7 @@ describe("getErrorMessage property tests", () => {
 				const out = getErrorMessage(value);
 				return typeof out === "string";
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 });
@@ -143,7 +143,7 @@ describe("getErrorStack property tests", () => {
 					fc.string(),
 					fc.integer(),
 					fc.constant(null),
-					fc.object()
+					fc.object(),
 				),
 				(value) => {
 					const out = getErrorStack(value);
@@ -151,9 +151,9 @@ describe("getErrorStack property tests", () => {
 						return typeof out === "string" || out === undefined;
 					}
 					return out === undefined;
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });
@@ -165,7 +165,7 @@ describe("formatErrorForLog property tests", () => {
 				const out = formatErrorForLog(new Error(msg), prefix);
 				return out.includes(msg);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -177,9 +177,9 @@ describe("formatErrorForLog property tests", () => {
 				(prefix, msg) => {
 					const out = formatErrorForLog(msg, prefix);
 					return out.startsWith(`${prefix}: ${msg}`);
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -191,10 +191,13 @@ describe("formatErrorForLog property tests", () => {
 				(msg, ctx) => {
 					const err = new ApplicationError(msg, ctx);
 					const out = formatErrorForLog(err);
-					return out.includes("Context:") && out.includes(JSON.stringify(ctx, null, 2));
-				}
+					return (
+						out.includes("Context:") &&
+						out.includes(JSON.stringify(ctx, null, 2))
+					);
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });

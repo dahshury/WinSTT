@@ -11,7 +11,7 @@ const invalidPayloadArb = fc.oneof(
 	fc.boolean(),
 	fc.constant(null),
 	fc.constant(undefined),
-	fc.array(fc.string())
+	fc.array(fc.string()),
 );
 
 describe("decodeSettingsPayload property tests", () => {
@@ -31,7 +31,7 @@ describe("decodeSettingsPayload property tests", () => {
 					"llm" in result
 				);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -55,7 +55,7 @@ describe("decodeSettingsPayload property tests", () => {
 				const second = decodeSettingsPayload(first);
 				return JSON.stringify(first) === JSON.stringify(second);
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -65,31 +65,36 @@ describe("decodeSettingsPayload property tests", () => {
 			fc.property(
 				fc.oneof(
 					fc.constantFrom(...validModes),
-					fc.string().filter((s) => !validModes.includes(s as never))
+					fc.string().filter((s) => !validModes.includes(s as never)),
 				),
 				(mode) => {
-					const result = decodeSettingsPayload({ general: { recordingMode: mode } });
+					const result = decodeSettingsPayload({
+						general: { recordingMode: mode },
+					});
 					if (validModes.includes(mode as never)) {
 						return result.general.recordingMode === mode;
 					}
 					// Invalid → falls back to schema defaults
 					return result.general.recordingMode === "ptt";
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
 	test("defaults are stable: empty payload always yields identical result", () => {
 		fc.assert(
-			fc.property(fc.constantFrom({}, undefined, null, "", 0, false), (empty) => {
-				const a = decodeSettingsPayload(empty);
-				const b = decodeSettingsPayload({});
-				// All "empty-ish" inputs should produce schema defaults.
-				// Non-object payloads fall to the safeParse-failure branch.
-				return JSON.stringify(a) === JSON.stringify(b);
-			}),
-			{ numRuns: 200 }
+			fc.property(
+				fc.constantFrom({}, undefined, null, "", 0, false),
+				(empty) => {
+					const a = decodeSettingsPayload(empty);
+					const b = decodeSettingsPayload({});
+					// All "empty-ish" inputs should produce schema defaults.
+					// Non-object payloads fall to the safeParse-failure branch.
+					return JSON.stringify(a) === JSON.stringify(b);
+				},
+			),
+			{ numRuns: 200 },
 		);
 	});
 
@@ -103,7 +108,7 @@ describe("decodeSettingsPayload property tests", () => {
 					return false;
 				}
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 });

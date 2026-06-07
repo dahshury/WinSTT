@@ -20,33 +20,33 @@ import { EnhanceView } from "./EnhanceView";
  * system elevates panels correctly against the island's near-black shell.
  */
 export function TranscriptPreview() {
-  const tp = useTranslations("preview");
-  const view = useTranscriptPreviewStore((s) => s.view);
-  const reset = useTranscriptPreviewStore((s) => s.reset);
+	const tp = useTranslations("preview");
+	const view = useTranscriptPreviewStore((s) => s.view);
+	const reset = useTranscriptPreviewStore((s) => s.reset);
 
-  const dismiss = useCallback(() => {
-    void cancelPreview();
-    reset();
-  }, [reset]);
-  useEscapeToClose(dismiss);
+	const dismiss = useCallback(() => {
+		void cancelPreview();
+		reset();
+	}, [reset]);
+	useEscapeToClose(dismiss);
 
-  return (
-    <SurfaceProvider value={2}>
-      <div className="pointer-events-auto relative w-[600px] max-w-full px-3 pt-2 pb-3 text-left">
-        <div className="absolute top-1.5 right-2 z-raised">
-          <IconButton
-            aria-label={tp("dismiss")}
-            icon={<HugeiconsIcon icon={Cancel01Icon} size={14} />}
-            onClick={dismiss}
-          />
-        </div>
-        {/* `key={view}` remounts on view change → the StaggerReveal replays and
+	return (
+		<SurfaceProvider value={2}>
+			<div className="pointer-events-auto relative w-[600px] max-w-full px-3 pt-2 pb-3 text-left">
+				<div className="absolute top-1.5 right-2 z-raised">
+					<IconButton
+						aria-label={tp("dismiss")}
+						icon={<HugeiconsIcon icon={Cancel01Icon} size={14} />}
+						onClick={dismiss}
+					/>
+				</div>
+				{/* `key={view}` remounts on view change → the StaggerReveal replays and
             the shell's fitContent height tweens to the new content. */}
-        <div key={view}>
-          {view === "edit" ? <EditView /> : null}
-          {view === "enhance" ? <EnhanceView /> : null}
-        </div>
-      </div>
-    </SurfaceProvider>
-  );
+				<div key={view}>
+					{view === "edit" ? <EditView /> : null}
+					{view === "enhance" ? <EnhanceView /> : null}
+				</div>
+			</div>
+		</SurfaceProvider>
+	);
 }

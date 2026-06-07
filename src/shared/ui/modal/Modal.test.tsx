@@ -7,7 +7,7 @@ describe("Modal", () => {
 		render(
 			<Modal isOpen={false} onClose={() => undefined}>
 				<div data-testid="content">child</div>
-			</Modal>
+			</Modal>,
 		);
 		expect(document.querySelector("[data-testid='content']")).toBeNull();
 	});
@@ -16,7 +16,7 @@ describe("Modal", () => {
 		render(
 			<Modal isOpen={true} onClose={() => undefined}>
 				<div data-testid="content">child</div>
-			</Modal>
+			</Modal>,
 		);
 		expect(document.querySelector("[data-testid='content']")).not.toBeNull();
 	});
@@ -26,14 +26,14 @@ describe("Modal", () => {
 		const { rerender } = render(
 			<Modal isOpen={true} onClose={onClose}>
 				<div>x</div>
-			</Modal>
+			</Modal>,
 		);
 		// Closing is normally driven by user interaction. Re-render closed and confirm
 		// the prop transition does not trigger onClose (only Base UI's onOpenChange does).
 		rerender(
 			<Modal isOpen={false} onClose={onClose}>
 				<div>x</div>
-			</Modal>
+			</Modal>,
 		);
 		expect(onClose).not.toHaveBeenCalled();
 	});

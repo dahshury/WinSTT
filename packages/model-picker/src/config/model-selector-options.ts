@@ -25,7 +25,10 @@ export const REASONING_EFFORT_OPTIONS: ReadonlyArray<{
 
 export type Verbosity = "low" | "medium" | "high";
 
-export const VERBOSITY_OPTIONS: ReadonlyArray<{ label: string; value: Verbosity }> = [
+export const VERBOSITY_OPTIONS: ReadonlyArray<{
+	label: string;
+	value: Verbosity;
+}> = [
 	{ value: "low", label: "Concise" },
 	{ value: "medium", label: "Balanced" },
 	{ value: "high", label: "Verbose" },

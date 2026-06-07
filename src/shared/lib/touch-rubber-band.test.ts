@@ -45,7 +45,11 @@ describe("installTouchRubberBand", () => {
 		const content = document.createElement("div");
 		scroller.append(content);
 		document.body.append(scroller);
-		setScrollMetrics(scroller, { clientHeight: 100, scrollHeight: 400, scrollTop: 0 });
+		setScrollMetrics(scroller, {
+			clientHeight: 100,
+			scrollHeight: 400,
+			scrollTop: 0,
+		});
 
 		content.dispatchEvent(touchEvent("touchstart", 100));
 		content.dispatchEvent(touchEvent("touchmove", 150));
@@ -62,7 +66,11 @@ describe("installTouchRubberBand", () => {
 		const content = document.createElement("div");
 		scroller.append(content);
 		document.body.append(scroller);
-		setScrollMetrics(scroller, { clientHeight: 100, scrollHeight: 400, scrollTop: 0 });
+		setScrollMetrics(scroller, {
+			clientHeight: 100,
+			scrollHeight: 400,
+			scrollTop: 0,
+		});
 
 		content.dispatchEvent(touchEvent("touchstart", 100));
 		content.dispatchEvent(touchEvent("touchmove", 150));

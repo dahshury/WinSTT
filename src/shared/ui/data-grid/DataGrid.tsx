@@ -56,7 +56,7 @@ export function DataGridContainer({
 			className={cn(
 				"overflow-auto overscroll-contain rounded",
 				border && "border border-border",
-				className
+				className,
 			)}
 			style={{ maxHeight }}
 		>

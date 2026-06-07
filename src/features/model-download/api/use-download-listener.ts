@@ -44,8 +44,12 @@ export function useDownloadListener(): void {
 	const setDownloadStart = useDownloadStore((s) => s.setDownloadStart);
 	const setDownloadProgress = useDownloadStore((s) => s.setDownloadProgress);
 	const setDownloadComplete = useDownloadStore((s) => s.setDownloadComplete);
-	const setQuantDownloadProgress = useDownloadStore((s) => s.setQuantDownloadProgress);
-	const setQuantDownloadComplete = useDownloadStore((s) => s.setQuantDownloadComplete);
+	const setQuantDownloadProgress = useDownloadStore(
+		(s) => s.setQuantDownloadProgress,
+	);
+	const setQuantDownloadComplete = useDownloadStore(
+		(s) => s.setQuantDownloadComplete,
+	);
 
 	// Latest buffered per-quant payload keyed by ``model@quant``, flushed on a
 	// trailing timer. Refs (not state) so buffering never schedules a render.
@@ -59,7 +63,11 @@ export function useDownloadListener(): void {
 			for (const payload of pending.values()) {
 				// ``quantization`` is always a string for buffered entries (only the
 				// per-quant branch buffers), but narrow for the type checker.
-				setQuantDownloadProgress(payload.model, payload.quantization ?? "", payload);
+				setQuantDownloadProgress(
+					payload.model,
+					payload.quantization ?? "",
+					payload,
+				);
 			}
 			pending.clear();
 		};
@@ -77,7 +85,10 @@ export function useDownloadListener(): void {
 		const offProgress = onModelDownloadProgress((payload) => {
 			if (typeof payload.quantization === "string") {
 				// Buffer the LATEST frame for this key; the trailing flush applies it.
-				pending.set(quantBufferKey(payload.model, payload.quantization), payload);
+				pending.set(
+					quantBufferKey(payload.model, payload.quantization),
+					payload,
+				);
 				if (flushTimerRef.current === null) {
 					flushTimerRef.current = setTimeout(flush, QUANT_PROGRESS_FLUSH_MS);
 				}
@@ -86,17 +97,19 @@ export function useDownloadListener(): void {
 			setDownloadProgress(payload);
 		});
 
-		const offComplete = onModelDownloadComplete((model, cancelled, quantization) => {
-			if (typeof quantization === "string") {
-				// Drop any buffered progress for this key FIRST so a pending flush
-				// can't re-insert the entry we're about to clear (which would leave
-				// a zombie "downloading" badge that never resolves).
-				pending.delete(quantBufferKey(model, quantization));
-				setQuantDownloadComplete(model, quantization, cancelled);
-				return;
-			}
-			setDownloadComplete(cancelled);
-		});
+		const offComplete = onModelDownloadComplete(
+			(model, cancelled, quantization) => {
+				if (typeof quantization === "string") {
+					// Drop any buffered progress for this key FIRST so a pending flush
+					// can't re-insert the entry we're about to clear (which would leave
+					// a zombie "downloading" badge that never resolves).
+					pending.delete(quantBufferKey(model, quantization));
+					setQuantDownloadComplete(model, quantization, cancelled);
+					return;
+				}
+				setDownloadComplete(cancelled);
+			},
+		);
 
 		return () => {
 			offStart();

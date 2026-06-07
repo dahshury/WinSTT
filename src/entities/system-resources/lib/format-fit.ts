@@ -5,7 +5,11 @@
  * fuller details live in the warning modal.
  */
 
-import type { FitAssessmentEntry, FitSeverity, FitTarget } from "@/shared/api/ipc-client";
+import type {
+	FitAssessmentEntry,
+	FitSeverity,
+	FitTarget,
+} from "@/shared/api/ipc-client";
 import { formatBytes } from "@/shared/lib/format-bytes";
 
 export interface FitBadge {
@@ -20,7 +24,9 @@ const SEVERITY_TO_BADGE: Record<FitSeverity, FitBadge> = {
 	critical: { glyph: "⛔", severity: "critical", tone: "error" },
 };
 
-export function badgeFor(assessment: FitAssessmentEntry | null): FitBadge | null {
+export function badgeFor(
+	assessment: FitAssessmentEntry | null,
+): FitBadge | null {
 	return assessment ? SEVERITY_TO_BADGE[assessment.severity] : null;
 }
 
@@ -36,10 +42,13 @@ const HINT_KEY_BY_SEVERITY: Record<FitSeverity, string> = {
 	critical: "rowHintCritical",
 };
 
-type Translator = (key: string, vars?: Record<string, string | number>) => string;
+type Translator = (
+	key: string,
+	vars?: Record<string, string | number>,
+) => string;
 
 export function hasUsableFootprint(
-	assessment: FitAssessmentEntry | null
+	assessment: FitAssessmentEntry | null,
 ): assessment is FitAssessmentEntry {
 	return assessment !== null && assessment.required_bytes > 0;
 }
@@ -55,7 +64,10 @@ export function targetLabel(target: FitTarget, t: Translator): string {
 /** Compact per-row hint: "~600 MB · fits on GPU", "~12 GB · ⚠ tight on CPU",
  * "~30 GB · ⛔ exceeds VRAM (24 GB free)". Empty string when there's no
  * useful info (unknown footprint with no resource probe). */
-export function rowHint(assessment: FitAssessmentEntry | null, t: Translator): string {
+export function rowHint(
+	assessment: FitAssessmentEntry | null,
+	t: Translator,
+): string {
 	if (!hasUsableFootprint(assessment)) {
 		return "";
 	}

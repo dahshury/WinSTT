@@ -36,8 +36,12 @@ mock.module("@/shared/api/ipc-client", () => ({
 	},
 }));
 
-const { useOllamaLibraryStore, tagsCacheKey, shouldSkipCatalogLoad, shouldSkipTagsFetch } =
-	await import("./ollama-library-store");
+const {
+	useOllamaLibraryStore,
+	tagsCacheKey,
+	shouldSkipCatalogLoad,
+	shouldSkipTagsFetch,
+} = await import("./ollama-library-store");
 
 const INITIAL_STATE = useOllamaLibraryStore.getInitialState();
 
@@ -64,15 +68,21 @@ describe("tagsCacheKey", () => {
 
 describe("shouldSkipCatalogLoad", () => {
 	test("true when already loaded", () => {
-		expect(shouldSkipCatalogLoad({ isLoaded: true, isLoading: false })).toBe(true);
+		expect(shouldSkipCatalogLoad({ isLoaded: true, isLoading: false })).toBe(
+			true,
+		);
 	});
 
 	test("true when currently loading", () => {
-		expect(shouldSkipCatalogLoad({ isLoaded: false, isLoading: true })).toBe(true);
+		expect(shouldSkipCatalogLoad({ isLoaded: false, isLoading: true })).toBe(
+			true,
+		);
 	});
 
 	test("false on initial state", () => {
-		expect(shouldSkipCatalogLoad({ isLoaded: false, isLoading: false })).toBe(false);
+		expect(shouldSkipCatalogLoad({ isLoaded: false, isLoading: false })).toBe(
+			false,
+		);
 	});
 });
 
@@ -82,7 +92,9 @@ describe("shouldSkipTagsFetch", () => {
 	});
 
 	test("false when the cached entry holds no tags", () => {
-		expect(shouldSkipTagsFetch({ isLoading: false, error: null, tags: [] })).toBe(false);
+		expect(
+			shouldSkipTagsFetch({ isLoading: false, error: null, tags: [] }),
+		).toBe(false);
 	});
 
 	test("false when the cached entry has tags but ended in error", () => {
@@ -91,7 +103,7 @@ describe("shouldSkipTagsFetch", () => {
 				isLoading: false,
 				error: "boom",
 				tags: [{ name: "latest" }],
-			})
+			}),
 		).toBe(false);
 	});
 
@@ -101,14 +113,16 @@ describe("shouldSkipTagsFetch", () => {
 				isLoading: false,
 				error: null,
 				tags: [{ name: "latest" }],
-			})
+			}),
 		).toBe(true);
 	});
 });
 
 describe("useOllamaLibraryStore.loadCatalog", () => {
 	test("loads catalog, marks isLoaded true, clears error", async () => {
-		catalogState.value = { hits: [{ name: "llama3", description: "d", pulls: "1" }] };
+		catalogState.value = {
+			hits: [{ name: "llama3", description: "d", pulls: "1" }],
+		};
 		await useOllamaLibraryStore.getState().loadCatalog();
 		const state = useOllamaLibraryStore.getState();
 		expect(state.isLoaded).toBe(true);
@@ -149,7 +163,14 @@ describe("useOllamaLibraryStore.fetchTags", () => {
 	test("stores fetched tags under the lowercase trimmed key", async () => {
 		tagsState.value = {
 			model: "",
-			tags: [{ name: "latest", sizeBytes: 100, parameterSize: "8B", quantization: "q4" }],
+			tags: [
+				{
+					name: "latest",
+					sizeBytes: 100,
+					parameterSize: "8B",
+					quantization: "q4",
+				},
+			],
 		};
 		await useOllamaLibraryStore.getState().fetchTags(" Llama3 ");
 		const entry = useOllamaLibraryStore.getState().tagsByModel.llama3;
@@ -182,7 +203,9 @@ describe("useOllamaLibraryStore.fetchTags", () => {
 		};
 		await useOllamaLibraryStore.getState().fetchTags("gemma");
 		expect(callCounts.tags).toBe(2);
-		expect(useOllamaLibraryStore.getState().tagsByModel.gemma?.error).toBeNull();
+		expect(
+			useOllamaLibraryStore.getState().tagsByModel.gemma?.error,
+		).toBeNull();
 	});
 
 	test("marks the entry isLoading=true and preserves prior tags while in-flight", async () => {

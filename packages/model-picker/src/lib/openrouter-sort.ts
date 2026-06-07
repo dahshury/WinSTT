@@ -63,7 +63,10 @@ function promptPrice(m: OpenRouterModel): number {
 	return Number.parseFloat(m.pricing?.prompt ?? "");
 }
 
-const COMPARATORS: Record<OpenRouterSortKey, (a: OpenRouterModel, b: OpenRouterModel) => number> = {
+const COMPARATORS: Record<
+	OpenRouterSortKey,
+	(a: OpenRouterModel, b: OpenRouterModel) => number
+> = {
 	name: byName,
 	// Larger context window first; 0/missing windows always sort last.
 	context: (a, b) => {
@@ -99,7 +102,7 @@ const COMPARATORS: Record<OpenRouterSortKey, (a: OpenRouterModel, b: OpenRouterM
  */
 export function sortOpenRouterModels(
 	models: readonly OpenRouterModel[],
-	key: OpenRouterSortKey
+	key: OpenRouterSortKey,
 ): OpenRouterModel[] {
 	return [...models].sort(COMPARATORS[key]);
 }

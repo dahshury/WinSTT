@@ -21,7 +21,7 @@ installWebviewDiag("settings");
 
 const container = document.getElementById("root");
 if (!container) {
-  throw new Error("[settings] #root element missing");
+	throw new Error("[settings] #root element missing");
 }
 
 /**
@@ -39,40 +39,40 @@ if (!container) {
 let settingsBeaconSent = false;
 
 function SettingsBootstrap() {
-  const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
-  useSyncSettings(); // settingsLoad() -> backend hydration gate + write-back on change
-  useSyncActiveModel(); // active-model reconcile for the model tab
-  useRealtimePreviewFallback(); // cached realtime model or main-model preview fallback
-  useDownloadListener(); // per-quant download progress for the model tab
-  useConnectionListener(); // server/runtime status for the badges
-  useEffect(() => {
-    let cancelled = false;
-    gpuGetInfo().then((info) => {
-      if (!cancelled) {
-        setGpuInfo(info);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [setGpuInfo]);
-  if (!settingsBeaconSent) {
-    settingsBeaconSent = true;
-    diagBeacon("settings", "SettingsBootstrap render reached");
-  }
-  return <SettingsPage />;
+	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
+	useSyncSettings(); // settingsLoad() -> backend hydration gate + write-back on change
+	useSyncActiveModel(); // active-model reconcile for the model tab
+	useRealtimePreviewFallback(); // cached realtime model or main-model preview fallback
+	useDownloadListener(); // per-quant download progress for the model tab
+	useConnectionListener(); // server/runtime status for the badges
+	useEffect(() => {
+		let cancelled = false;
+		gpuGetInfo().then((info) => {
+			if (!cancelled) {
+				setGpuInfo(info);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [setGpuInfo]);
+	if (!settingsBeaconSent) {
+		settingsBeaconSent = true;
+		diagBeacon("settings", "SettingsBootstrap render reached");
+	}
+	return <SettingsPage />;
 }
 
 renderReactRoot(
-  container,
-  <StrictMode>
-    <HtmlLang />
-    <Suspense fallback={null}>
-      <IntlProvider>
-        <Tooltip.Provider closeDelay={0} delay={400}>
-          <SettingsBootstrap />
-        </Tooltip.Provider>
-      </IntlProvider>
-    </Suspense>
-  </StrictMode>,
+	container,
+	<StrictMode>
+		<HtmlLang />
+		<Suspense fallback={null}>
+			<IntlProvider>
+				<Tooltip.Provider closeDelay={0} delay={400}>
+					<SettingsBootstrap />
+				</Tooltip.Provider>
+			</IntlProvider>
+		</Suspense>
+	</StrictMode>,
 );

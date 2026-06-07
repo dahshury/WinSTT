@@ -11,7 +11,7 @@ const AUDIBLE_LEVEL_THRESHOLD = 0.01;
 export function isActivelySpeaking(
 	isRecording: boolean,
 	isSpeaking: boolean,
-	audioLevel: number
+	audioLevel: number,
 ): boolean {
 	return isRecording && (isSpeaking || audioLevel > SPEAKING_LEVEL_THRESHOLD);
 }
@@ -40,7 +40,7 @@ function quietState(isRecording: boolean, audioLevel: number): AgentState {
 export function deriveActiveState(
 	isRecording: boolean,
 	isSpeaking: boolean,
-	audioLevel: number
+	audioLevel: number,
 ): AgentState {
 	if (isActivelySpeaking(isRecording, isSpeaking, audioLevel)) {
 		return "speaking";

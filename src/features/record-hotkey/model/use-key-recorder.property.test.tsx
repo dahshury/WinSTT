@@ -40,7 +40,7 @@ function makeApi() {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -78,12 +78,14 @@ const KEY_TOKEN = fc.constantFrom(
 	"Enter",
 	"Tab",
 	"F1",
-	"Space"
+	"Space",
 );
 
 const COMBO_ARB = fc.oneof(
 	fc.constant<string | null>(null),
-	fc.array(KEY_TOKEN, { minLength: 1, maxLength: 4 }).map((ks) => Array.from(new Set(ks)).join("+"))
+	fc
+		.array(KEY_TOKEN, { minLength: 1, maxLength: 4 })
+		.map((ks) => Array.from(new Set(ks)).join("+")),
 );
 
 type Action =
@@ -95,11 +97,16 @@ type Action =
 const ACTION_ARB: fc.Arbitrary<Action> = fc.oneof(
 	fc.constant<Action>({ tag: "start" }),
 	fc.constant<Action>({ tag: "stop" }),
-	fc.array(KEY_TOKEN, { maxLength: 4 }).map<Action>((keys) => ({ tag: "update", keys })),
-	COMBO_ARB.map<Action>((combo) => ({ tag: "done", combo }))
+	fc
+		.array(KEY_TOKEN, { maxLength: 4 })
+		.map<Action>((keys) => ({ tag: "update", keys })),
+	COMBO_ARB.map<Action>((combo) => ({ tag: "done", combo })),
 );
 
-function applyAction(result: { current: ReturnType<typeof useKeyRecorder> }, action: Action) {
+function applyAction(
+	result: { current: ReturnType<typeof useKeyRecorder> },
+	action: Action,
+) {
 	switch (action.tag) {
 		case "start":
 			act(() => result.current.startRecording());
@@ -147,30 +154,34 @@ test("property: state fields are always well-typed (no undefined leaks)", () => 
 				unmount();
 			}
 		}),
-		{ numRuns: 75 }
+		{ numRuns: 75 },
 	);
 });
 
 test("property: a final stop+done sequence terminates recording (no stuck-in-recording state)", () => {
 	fc.assert(
-		fc.property(fc.array(ACTION_ARB, { maxLength: 15 }), COMBO_ARB, (actions, finalCombo) => {
-			const { result, unmount } = renderHook(() => useKeyRecorder());
-			try {
-				for (const action of actions) {
-					applyAction(result, action);
+		fc.property(
+			fc.array(ACTION_ARB, { maxLength: 15 }),
+			COMBO_ARB,
+			(actions, finalCombo) => {
+				const { result, unmount } = renderHook(() => useKeyRecorder());
+				try {
+					for (const action of actions) {
+						applyAction(result, action);
+					}
+					// Force a clean termination: stop, then deliver the done reply
+					// the main process would normally emit.
+					applyAction(result, { tag: "stop" });
+					applyAction(result, { tag: "done", combo: finalCombo });
+					// Invariant: recording is false, liveKeys cleared.
+					expect(result.current.recording).toBe(false);
+					expect(result.current.liveKeys).toEqual([]);
+				} finally {
+					unmount();
 				}
-				// Force a clean termination: stop, then deliver the done reply
-				// the main process would normally emit.
-				applyAction(result, { tag: "stop" });
-				applyAction(result, { tag: "done", combo: finalCombo });
-				// Invariant: recording is false, liveKeys cleared.
-				expect(result.current.recording).toBe(false);
-				expect(result.current.liveKeys).toEqual([]);
-			} finally {
-				unmount();
-			}
-		}),
-		{ numRuns: 75 }
+			},
+		),
+		{ numRuns: 75 },
 	);
 });
 
@@ -199,9 +210,9 @@ test("property: liveKeys are ignored while not recording", () => {
 				} finally {
 					unmount();
 				}
-			}
+			},
 		),
-		{ numRuns: 60 }
+		{ numRuns: 60 },
 	);
 });
 
@@ -218,7 +229,7 @@ test("property: done event before start is ignored (no orphan key commit)", () =
 				unmount();
 			}
 		}),
-		{ numRuns: 50 }
+		{ numRuns: 50 },
 	);
 });
 
@@ -230,7 +241,7 @@ test("property: at most one done event ever commits per start (subsequent dones 
 			(firstCombo, secondCombo) => {
 				const calls: string[] = [];
 				const { result, unmount } = renderHook(() =>
-					useKeyRecorder({ onKeyRecorded: (k) => calls.push(k) })
+					useKeyRecorder({ onKeyRecorded: (k) => calls.push(k) }),
 				);
 				try {
 					applyAction(result, { tag: "start" });
@@ -242,9 +253,9 @@ test("property: at most one done event ever commits per start (subsequent dones 
 				} finally {
 					unmount();
 				}
-			}
+			},
 		),
-		{ numRuns: 60 }
+		{ numRuns: 60 },
 	);
 });
 
@@ -254,11 +265,15 @@ test("property: idempotent stop — repeated stops do not flip state or re-send 
 			const { result, unmount } = renderHook(() => useKeyRecorder());
 			try {
 				applyAction(result, { tag: "start" });
-				const sentBefore = sentChannels.filter((c) => c === IPC.HOTKEY_STOP_RECORDING).length;
+				const sentBefore = sentChannels.filter(
+					(c) => c === IPC.HOTKEY_STOP_RECORDING,
+				).length;
 				for (let i = 0; i < n; i++) {
 					applyAction(result, { tag: "stop" });
 				}
-				const sentAfter = sentChannels.filter((c) => c === IPC.HOTKEY_STOP_RECORDING).length;
+				const sentAfter = sentChannels.filter(
+					(c) => c === IPC.HOTKEY_STOP_RECORDING,
+				).length;
 				// Only the first stop should send the IPC (guarded by recordingRef).
 				expect(sentAfter - sentBefore).toBe(1);
 				expect(result.current.recording).toBe(false);
@@ -266,7 +281,7 @@ test("property: idempotent stop — repeated stops do not flip state or re-send 
 				unmount();
 			}
 		}),
-		{ numRuns: 50 }
+		{ numRuns: 50 },
 	);
 });
 
@@ -292,9 +307,9 @@ test("property: start resets prior key + liveKeys cleanly (no leaked state)", ()
 				} finally {
 					unmount();
 				}
-			}
+			},
 		),
-		{ numRuns: 60 }
+		{ numRuns: 60 },
 	);
 });
 
@@ -303,8 +318,12 @@ test("property: only the owning instance commits on a shared done event", () => 
 		fc.property(fc.string({ minLength: 1, maxLength: 8 }), (combo) => {
 			const ownerCalls: string[] = [];
 			const otherCalls: string[] = [];
-			const owner = renderHook(() => useKeyRecorder({ onKeyRecorded: (k) => ownerCalls.push(k) }));
-			const other = renderHook(() => useKeyRecorder({ onKeyRecorded: (k) => otherCalls.push(k) }));
+			const owner = renderHook(() =>
+				useKeyRecorder({ onKeyRecorded: (k) => ownerCalls.push(k) }),
+			);
+			const other = renderHook(() =>
+				useKeyRecorder({ onKeyRecorded: (k) => otherCalls.push(k) }),
+			);
 			try {
 				// Only `owner` starts; the broadcast done must only commit on owner.
 				applyAction(owner.result, { tag: "start" });
@@ -318,7 +337,7 @@ test("property: only the owning instance commits on a shared done event", () => 
 				other.unmount();
 			}
 		}),
-		{ numRuns: 50 }
+		{ numRuns: 50 },
 	);
 });
 
@@ -337,6 +356,6 @@ test("property: invariant — recording=true implies a start IPC was invoked at 
 				unmount();
 			}
 		}),
-		{ numRuns: 60 }
+		{ numRuns: 60 },
 	);
 });

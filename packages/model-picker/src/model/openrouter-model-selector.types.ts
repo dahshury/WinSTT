@@ -1,5 +1,8 @@
 import type { OpenRouterModel } from "@/shared/api/models";
-import type { ReasoningEffort, Verbosity } from "../config/model-selector-options";
+import type {
+	ReasoningEffort,
+	Verbosity,
+} from "../config/model-selector-options";
 import type { ModelExclusionConfig } from "../lib/model-exclusion";
 
 export interface OpenRouterModelSelectorProps {

@@ -14,17 +14,16 @@ describe("AudioVisualizerRadial", () => {
 		expect(container.firstElementChild).not.toBeNull();
 	});
 
-	test.each([
-		"icon",
-		"sm",
-		"md",
-		"lg",
-		"xl",
-	] as const)("renders without throwing at size=%s", (size) => {
-		const { container, unmount } = render(<AudioVisualizerRadial size={size} />);
-		expect(container.firstElementChild).not.toBeNull();
-		unmount();
-	});
+	test.each(["icon", "sm", "md", "lg", "xl"] as const)(
+		"renders without throwing at size=%s",
+		(size) => {
+			const { container, unmount } = render(
+				<AudioVisualizerRadial size={size} />,
+			);
+			expect(container.firstElementChild).not.toBeNull();
+			unmount();
+		},
+	);
 });
 
 describe("resolveRadialBarCount", () => {
@@ -61,7 +60,9 @@ describe("resolveRadialSequencerInterval", () => {
 	});
 
 	test("thinking → Infinity", () => {
-		expect(resolveRadialSequencerInterval("thinking")).toBe(Number.POSITIVE_INFINITY);
+		expect(resolveRadialSequencerInterval("thinking")).toBe(
+			Number.POSITIVE_INFINITY,
+		);
 	});
 
 	test("speaking/disconnected → 1000 (default)", () => {
@@ -112,7 +113,9 @@ describe("resolveRadialDistancePct", () => {
 	});
 
 	test("renders without throwing when given a radiusPct prop", () => {
-		const { container } = render(<AudioVisualizerRadial radiusPct={40} size="lg" />);
+		const { container } = render(
+			<AudioVisualizerRadial radiusPct={40} size="lg" />,
+		);
 		expect(container.firstElementChild).not.toBeNull();
 	});
 });

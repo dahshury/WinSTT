@@ -74,7 +74,11 @@ export const LANGUAGES: readonly Language[] = [
 	{ code: "si", englishName: "Sinhala", nativeName: "සිංහල" },
 	{ code: "ne", englishName: "Nepali", nativeName: "नेपाली" },
 	{ code: "zh", englishName: "Chinese (Simplified)", nativeName: "简体中文" },
-	{ code: "zh-Hant", englishName: "Chinese (Traditional)", nativeName: "繁體中文" },
+	{
+		code: "zh-Hant",
+		englishName: "Chinese (Traditional)",
+		nativeName: "繁體中文",
+	},
 	{ code: "yue", englishName: "Cantonese", nativeName: "粵語" },
 	{ code: "ja", englishName: "Japanese", nativeName: "日本語" },
 	{ code: "ko", englishName: "Korean", nativeName: "한국어" },
@@ -113,11 +117,15 @@ export const LANGUAGES: readonly Language[] = [
  *  choice. English is the safe, universally-supported default. */
 export const DEFAULT_TARGET_LANG = "English";
 
-const LANGUAGE_BY_NAME = new Map<string, Language>(LANGUAGES.map((l) => [l.englishName, l]));
+const LANGUAGE_BY_NAME = new Map<string, Language>(
+	LANGUAGES.map((l) => [l.englishName, l]),
+);
 
 /** Resolve a persisted `targetLang` to its catalog entry, tolerating an
  *  unknown/legacy value by returning `undefined` (callers fall back to the
  *  raw string so a future-added language still translates correctly). */
-export function findLanguage(englishName: string | undefined): Language | undefined {
+export function findLanguage(
+	englishName: string | undefined,
+): Language | undefined {
 	return englishName ? LANGUAGE_BY_NAME.get(englishName) : undefined;
 }

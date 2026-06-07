@@ -85,7 +85,7 @@ jobs:
       # `format:check` script because it also runs `cargo fmt` (covered by
       # rust-ci.yml) which isn't set up on this Bun-only runner.
       - name: Format check
-        run: bunx prettier --check src
+        run: bunx prettier --check src packages/model-picker/src
 
       # i18n key parity across all 20 locale baselines vs messages/en.json.
       # Default mode (no --strict) only fails on missing keys, not on

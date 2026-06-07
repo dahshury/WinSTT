@@ -66,9 +66,11 @@ describe("swap-failure-timing", () => {
 	test("the two timing modules keep independent module-level state", async () => {
 		// Regression guard: swap-failure and ipc-load timestamps must not share
 		// the same `let`, or one's mark would clobber the other's guard.
-		const { markIpcLoadResolved, recentIpcLoadAt, _resetIpcLoadTimingForTests } = await import(
-			"./ipc-load-timing"
-		);
+		const {
+			markIpcLoadResolved,
+			recentIpcLoadAt,
+			_resetIpcLoadTimingForTests,
+		} = await import("./ipc-load-timing");
 		_resetIpcLoadTimingForTests();
 		Date.now = () => 1000;
 		markSwapFailed();

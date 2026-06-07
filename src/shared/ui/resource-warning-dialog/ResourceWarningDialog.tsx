@@ -26,7 +26,7 @@ function reasonLine(
 	reason: FitAssessmentEntry["reasons"][number],
 	available: string,
 	required: string,
-	t: ResourceWarningDialogProps["t"]
+	t: ResourceWarningDialogProps["t"],
 ): string | null {
 	switch (reason) {
 		case "exceeds_vram":
@@ -75,8 +75,10 @@ export function ResourceWarningDialog(props: ResourceWarningDialogProps) {
 			/>
 		);
 	}
-	const required = formatBytes(assessment.required_bytes, { minUnit: "MB" }) ?? "?";
-	const available = formatBytes(assessment.available_bytes, { minUnit: "MB" }) ?? "?";
+	const required =
+		formatBytes(assessment.required_bytes, { minUnit: "MB" }) ?? "?";
+	const available =
+		formatBytes(assessment.available_bytes, { minUnit: "MB" }) ?? "?";
 	const lines = assessment.reasons.reduce<string[]>((acc, r) => {
 		const line = reasonLine(r, available, required, t);
 		if (line !== null) {
@@ -84,7 +86,8 @@ export function ResourceWarningDialog(props: ResourceWarningDialogProps) {
 		}
 		return acc;
 	}, []);
-	const title = kind === "ollama" ? t("warningTitleOllama") : t("warningTitleDictation");
+	const title =
+		kind === "ollama" ? t("warningTitleOllama") : t("warningTitleDictation");
 	const intro =
 		assessment.severity === "critical"
 			? t("warningIntroCritical", { model: candidateName })

@@ -29,9 +29,12 @@ export function useTtsVoiceCatalog(
 	enabled: boolean,
 	modelId: string,
 	voice: string,
-	update: ApplyVoiceFallback
+	update: ApplyVoiceFallback,
 ): TtsVoiceCatalog {
-	const [catalog, setCatalog] = useState<TtsVoiceCatalog>({ voices: [], languages: [] });
+	const [catalog, setCatalog] = useState<TtsVoiceCatalog>({
+		voices: [],
+		languages: [],
+	});
 
 	// Latest-value refs for the on-enable catalog fetch. We only want to run the
 	// fetch when `enabled` flips, but the .then() callback needs the freshest
@@ -80,7 +83,10 @@ export function useTtsVoiceCatalog(
 					return;
 				}
 				if (attemptsLeft > 0) {
-					retryTimer = setTimeout(() => fetchVoices(attemptsLeft - 1), VOICE_CATALOG_RETRY_MS);
+					retryTimer = setTimeout(
+						() => fetchVoices(attemptsLeft - 1),
+						VOICE_CATALOG_RETRY_MS,
+					);
 				}
 			});
 		};

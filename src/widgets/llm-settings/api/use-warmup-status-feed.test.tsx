@@ -15,8 +15,11 @@ let snapshotImpl: () => Promise<LlmWarmupStatus | null> = async () => null;
 let warmupCb: ((status: LlmWarmupStatus | null) => void) | null = null;
 let unsubscribeCalls = 0;
 
-const getLlmWarmupStatusSpy = (): Promise<LlmWarmupStatus | null> => snapshotImpl();
-const onLlmWarmupStatusSpy = (cb: (status: LlmWarmupStatus | null) => void): (() => void) => {
+const getLlmWarmupStatusSpy = (): Promise<LlmWarmupStatus | null> =>
+	snapshotImpl();
+const onLlmWarmupStatusSpy = (
+	cb: (status: LlmWarmupStatus | null) => void,
+): (() => void) => {
 	warmupCb = cb;
 	return () => {
 		unsubscribeCalls += 1;
@@ -70,7 +73,9 @@ describe("useWarmupStatusFeed", () => {
 		snapshotImpl = async () => snap;
 		renderHook(() => useWarmupStatusFeed());
 		await waitFor(() => {
-			expect(useWarmupStatusStore.getState().status?.endpoint).toBe("http://mounted-snapshot");
+			expect(useWarmupStatusStore.getState().status?.endpoint).toBe(
+				"http://mounted-snapshot",
+			);
 		});
 	});
 
@@ -140,6 +145,8 @@ describe("useWarmupStatusFeed", () => {
 			resolveSnap(makeStatus({ endpoint: "snapshot-late" }));
 			await Promise.resolve();
 		});
-		expect(useWarmupStatusStore.getState().status?.endpoint).toBe("snapshot-late");
+		expect(useWarmupStatusStore.getState().status?.endpoint).toBe(
+			"snapshot-late",
+		);
 	});
 });

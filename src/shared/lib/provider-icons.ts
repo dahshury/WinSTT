@@ -3,15 +3,15 @@ import { parseModelSelection } from "./openrouter-model-selection";
 import { publicAsset } from "./public-asset";
 
 const PROVIDER_NAME_ALIASES: Record<string, string> = {
-  gemini: "google",
-  gemma: "google",
-  gpt: "openai",
-  llama: "meta-llama",
-  meta: "meta-llama",
-  mistral: "mistralai",
-  phi: "microsoft",
-  qwq: "qwen",
-  xai: "x-ai",
+	gemini: "google",
+	gemma: "google",
+	gpt: "openai",
+	llama: "meta-llama",
+	meta: "meta-llama",
+	mistral: "mistralai",
+	phi: "microsoft",
+	qwq: "qwen",
+	xai: "x-ai",
 };
 
 const getProviderIcon = createProviderIconResolver(PROVIDER_NAME_ALIASES);
@@ -25,12 +25,12 @@ const getProviderIcon = createProviderIconResolver(PROVIDER_NAME_ALIASES);
  * Fuzzy matching in {@link getProviderIcon} then maps e.g. `qwen2.5` → `qwen`.
  */
 export function makerFromModelId(model: string): string {
-  const modelId = parseModelSelection(model).modelId;
-  const withoutPin = modelId.split("::")[0] ?? modelId;
-  const vendor = withoutPin.includes("/")
-    ? withoutPin.split("/")[0]
-    : withoutPin;
-  return (vendor ?? withoutPin).split(":")[0]?.trim() ?? "";
+	const modelId = parseModelSelection(model).modelId;
+	const withoutPin = modelId.split("::")[0] ?? modelId;
+	const vendor = withoutPin.includes("/")
+		? withoutPin.split("/")[0]
+		: withoutPin;
+	return (vendor ?? withoutPin).split(":")[0]?.trim() ?? "";
 }
 
 /**
@@ -39,8 +39,8 @@ export function makerFromModelId(model: string): string {
  * maker — callers render a neutral fallback glyph instead.
  */
 export function resolveProviderIcon(
-  provider: string | null | undefined,
+	provider: string | null | undefined,
 ): string | null {
-  const path = getProviderIcon(provider);
-  return path ? publicAsset(path) : null;
+	const path = getProviderIcon(provider);
+	return path ? publicAsset(path) : null;
 }

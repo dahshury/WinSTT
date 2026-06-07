@@ -57,7 +57,7 @@ function endOfYear(d: Date): Date {
  */
 export function buildDefaultCalendarPresets(
 	labels: DefaultCalendarPresetLabels,
-	now: Date = new Date()
+	now: Date = new Date(),
 ): CalendarPreset[] {
 	const todayStart = startOfDay(now);
 	const todayEnd = endOfDay(now);
@@ -83,14 +83,50 @@ export function buildDefaultCalendarPresets(
 	const lastYearEnd = endOfYear(lastYearAnchor);
 
 	return [
-		{ group: "day", label: labels.today, range: { from: todayStart, to: todayEnd } },
-		{ group: "day", label: labels.yesterday, range: { from: yesterdayStart, to: yesterdayEnd } },
-		{ group: "day", label: labels.last7Days, range: { from: last7Start, to: todayEnd } },
-		{ group: "day", label: labels.last30Days, range: { from: last30Start, to: todayEnd } },
-		{ group: "month", label: labels.monthToDate, range: { from: monthToDateStart, to: todayEnd } },
-		{ group: "month", label: labels.thisMonth, range: { from: thisMonthStart, to: thisMonthEnd } },
-		{ group: "month", label: labels.lastMonth, range: { from: lastMonthStart, to: lastMonthEnd } },
-		{ group: "year", label: labels.yearToDate, range: { from: yearToDateStart, to: todayEnd } },
-		{ group: "year", label: labels.lastYear, range: { from: lastYearStart, to: lastYearEnd } },
+		{
+			group: "day",
+			label: labels.today,
+			range: { from: todayStart, to: todayEnd },
+		},
+		{
+			group: "day",
+			label: labels.yesterday,
+			range: { from: yesterdayStart, to: yesterdayEnd },
+		},
+		{
+			group: "day",
+			label: labels.last7Days,
+			range: { from: last7Start, to: todayEnd },
+		},
+		{
+			group: "day",
+			label: labels.last30Days,
+			range: { from: last30Start, to: todayEnd },
+		},
+		{
+			group: "month",
+			label: labels.monthToDate,
+			range: { from: monthToDateStart, to: todayEnd },
+		},
+		{
+			group: "month",
+			label: labels.thisMonth,
+			range: { from: thisMonthStart, to: thisMonthEnd },
+		},
+		{
+			group: "month",
+			label: labels.lastMonth,
+			range: { from: lastMonthStart, to: lastMonthEnd },
+		},
+		{
+			group: "year",
+			label: labels.yearToDate,
+			range: { from: yearToDateStart, to: todayEnd },
+		},
+		{
+			group: "year",
+			label: labels.lastYear,
+			range: { from: lastYearStart, to: lastYearEnd },
+		},
 	];
 }

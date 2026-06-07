@@ -38,7 +38,13 @@ const voiceGroups: SelectOptionGroup[] = [
 
 describe("SearchableSelect", () => {
 	test("renders a textbox input and a trigger to open the popup", () => {
-		render(<SearchableSelect onChange={() => undefined} options={options} value="tiny" />);
+		render(
+			<SearchableSelect
+				onChange={() => undefined}
+				options={options}
+				value="tiny"
+			/>,
+		);
 		expect(screen.getByRole("combobox")).toBeDefined();
 		expect(screen.getByRole("button", { name: "Open popup" })).toBeDefined();
 	});
@@ -50,15 +56,24 @@ describe("SearchableSelect", () => {
 				options={options}
 				placeholder="Pick a model"
 				value=""
-			/>
+			/>,
 		);
 		expect(screen.getByPlaceholderText("Pick a model")).toBeDefined();
 	});
 
 	test("disables both the input and trigger when disabled is true", () => {
-		render(<SearchableSelect disabled onChange={() => undefined} options={options} value="tiny" />);
+		render(
+			<SearchableSelect
+				disabled
+				onChange={() => undefined}
+				options={options}
+				value="tiny"
+			/>,
+		);
 		const input = screen.getByRole("combobox") as HTMLInputElement;
-		const trigger = screen.getByRole("button", { name: "Open popup" }) as HTMLButtonElement;
+		const trigger = screen.getByRole("button", {
+			name: "Open popup",
+		}) as HTMLButtonElement;
 		expect(input.disabled).toBe(true);
 		expect(trigger.disabled).toBe(true);
 	});
@@ -70,10 +85,12 @@ describe("SearchableSelect", () => {
 				onChange={() => undefined}
 				options={options}
 				value="tiny"
-			/>
+			/>,
 		);
 		// Popup is closed (no item buttons), yet the trailing control is present.
-		expect(screen.getByRole("button", { name: "Preview selected" })).toBeDefined();
+		expect(
+			screen.getByRole("button", { name: "Preview selected" }),
+		).toBeDefined();
 		expect(screen.queryByRole("button", { name: "Preview Base" })).toBeNull();
 	});
 
@@ -90,11 +107,13 @@ describe("SearchableSelect", () => {
 					</button>
 				)}
 				value="tiny"
-			/>
+			/>,
 		);
 		// Open the popup so the rows (and their trailing buttons) mount.
 		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
-		const rowPreview = await screen.findByRole("button", { name: "Preview Base" });
+		const rowPreview = await screen.findByRole("button", {
+			name: "Preview Base",
+		});
 		fireEvent.click(rowPreview);
 		expect(onPreview).toHaveBeenCalledWith("base");
 		// The row's preview must not select the option (StopBubble swallows it).
@@ -102,7 +121,13 @@ describe("SearchableSelect", () => {
 	});
 
 	test("renders a sticky header per group with its options nested under it", () => {
-		render(<SearchableSelect groups={voiceGroups} onChange={() => undefined} value="af_heart" />);
+		render(
+			<SearchableSelect
+				groups={voiceGroups}
+				onChange={() => undefined}
+				value="af_heart"
+			/>,
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
 		// Both country headers and every voice row mount.
 		expect(screen.getByText("English (US)")).toBeDefined();
@@ -114,29 +139,55 @@ describe("SearchableSelect", () => {
 
 	test("selecting a grouped row commits that option's id", () => {
 		const onChange = mock((_id: string) => undefined);
-		render(<SearchableSelect groups={voiceGroups} onChange={onChange} value="af_heart" />);
+		render(
+			<SearchableSelect
+				groups={voiceGroups}
+				onChange={onChange}
+				value="af_heart"
+			/>,
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
 		fireEvent.click(screen.getByText("Adam"));
 		expect(onChange).toHaveBeenCalledWith("am_adam");
 	});
 
 	test("stamps each open row with data-menu-option=<id> (the highlight-layer contract)", () => {
-		render(<SearchableSelect onChange={() => undefined} options={options} value="tiny" />);
+		render(
+			<SearchableSelect
+				onChange={() => undefined}
+				options={options}
+				value="tiny"
+			/>,
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
 		// MenuHighlightLayer finds the selected/highlighted rows via this attr —
 		// if Base UI ever stops forwarding it the animated pills go dark, so pin it.
-		expect(screen.getByText("Base").closest("[data-menu-option]")?.getAttribute("data-menu-option")).toBe(
-			"base"
-		);
-		expect(screen.getByText("Tiny").closest("[data-menu-option]")?.getAttribute("data-menu-option")).toBe(
-			"tiny"
-		);
+		expect(
+			screen
+				.getByText("Base")
+				.closest("[data-menu-option]")
+				?.getAttribute("data-menu-option"),
+		).toBe("base");
+		expect(
+			screen
+				.getByText("Tiny")
+				.closest("[data-menu-option]")
+				?.getAttribute("data-menu-option"),
+		).toBe("tiny");
 	});
 
 	test("search filters within groups and drops emptied group headers", () => {
-		render(<SearchableSelect groups={voiceGroups} onChange={() => undefined} value="af_heart" />);
+		render(
+			<SearchableSelect
+				groups={voiceGroups}
+				onChange={() => undefined}
+				value="af_heart"
+			/>,
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Open popup" }));
-		fireEvent.change(screen.getByRole("combobox"), { target: { value: "emma" } });
+		fireEvent.change(screen.getByRole("combobox"), {
+			target: { value: "emma" },
+		});
 		expect(screen.getByText("Emma")).toBeDefined();
 		// The US group has no match left, so neither its rows nor its header show.
 		expect(screen.queryByText("Heart")).toBeNull();

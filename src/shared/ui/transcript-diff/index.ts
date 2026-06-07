@@ -1,5 +1,5 @@
 export {
-  TranscriptDiffView,
-  type TranscriptDiffLabels,
-  type TranscriptDiffReview,
+	TranscriptDiffView,
+	type TranscriptDiffLabels,
+	type TranscriptDiffReview,
 } from "./TranscriptDiffView";

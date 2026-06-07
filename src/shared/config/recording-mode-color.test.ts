@@ -9,7 +9,9 @@ const MODES: readonly RecordingMode[] = ["ptt", "toggle", "listen", "wakeword"];
 
 describe("RECORDING_MODE_COLOR_HEX", () => {
 	test("has exactly one entry per recording mode (no extras, none missing)", () => {
-		expect(Object.keys(RECORDING_MODE_COLOR_HEX).sort()).toEqual([...MODES].sort());
+		expect(Object.keys(RECORDING_MODE_COLOR_HEX).sort()).toEqual(
+			[...MODES].sort(),
+		);
 	});
 
 	test("every value is a 6-digit lowercase hex color usable as a CSS color", () => {
@@ -33,7 +35,9 @@ describe("RECORDING_MODE_COLOR_HEX", () => {
 
 describe("RECORDING_MODE_COLOR_RGB", () => {
 	test("has exactly one entry per recording mode", () => {
-		expect(Object.keys(RECORDING_MODE_COLOR_RGB).sort()).toEqual([...MODES].sort());
+		expect(Object.keys(RECORDING_MODE_COLOR_RGB).sort()).toEqual(
+			[...MODES].sort(),
+		);
 	});
 
 	test("each entry is a 3-tuple of integers in the valid 0..255 byte range", () => {

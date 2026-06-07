@@ -1,30 +1,30 @@
 import { getFilePath } from "@/shared/api/ipc-client";
 
 const SUPPORTED_EXTENSIONS = new Set([
-  ".mp3",
-  ".wav",
-  ".flac",
-  ".m4a",
-  ".aac",
-  ".ogg",
-  ".wma",
-  ".mp4",
-  ".mkv",
-  ".avi",
-  ".mov",
-  ".wmv",
-  ".flv",
-  ".webm",
+	".mp3",
+	".wav",
+	".flac",
+	".m4a",
+	".aac",
+	".ogg",
+	".wma",
+	".mp4",
+	".mkv",
+	".avi",
+	".mov",
+	".wmv",
+	".flv",
+	".webm",
 ]);
 
 export function getExtension(name: string): string {
-  const i = name.lastIndexOf(".");
-  return i >= 0 ? name.slice(i).toLowerCase() : "";
+	const i = name.lastIndexOf(".");
+	return i >= 0 ? name.slice(i).toLowerCase() : "";
 }
 
 export interface DroppedFile {
-  fileName: string;
-  filePath: string;
+	fileName: string;
+	filePath: string;
 }
 
 /**
@@ -35,18 +35,18 @@ export interface DroppedFile {
  * drop order.
  */
 export function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
-  const out: DroppedFile[] = [];
-  for (const file of files) {
-    if (!SUPPORTED_EXTENSIONS.has(getExtension(file.name))) {
-      continue;
-    }
-    const filePath = getFilePath(file);
-    if (!filePath) {
-      continue;
-    }
-    out.push({ filePath, fileName: file.name });
-  }
-  return out;
+	const out: DroppedFile[] = [];
+	for (const file of files) {
+		if (!SUPPORTED_EXTENSIONS.has(getExtension(file.name))) {
+			continue;
+		}
+		const filePath = getFilePath(file);
+		if (!filePath) {
+			continue;
+		}
+		out.push({ filePath, fileName: file.name });
+	}
+	return out;
 }
 
 /**
@@ -55,17 +55,17 @@ export function collectDroppedFiles(files: readonly File[]): DroppedFile[] {
  * do not enqueue from dropped paths.
  */
 export async function enqueueDroppedFiles(
-  files: readonly File[],
+	files: readonly File[],
 ): Promise<number> {
-  const _collected = collectDroppedFiles(files);
-  return 0;
+	const _collected = collectDroppedFiles(files);
+	return 0;
 }
 
 export function getContainerClassName(isListenMode: boolean): string {
-  const base =
-    "relative flex flex-1 flex-col items-center justify-center overflow-hidden";
-  const border = isListenMode ? "" : "rounded-lg";
-  return `${base} ${border}`;
+	const base =
+		"relative flex flex-1 flex-col items-center justify-center overflow-hidden";
+	const border = isListenMode ? "" : "rounded-lg";
+	return `${base} ${border}`;
 }
 
 export { SUPPORTED_EXTENSIONS };

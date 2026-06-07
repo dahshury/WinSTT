@@ -11,7 +11,12 @@ import type { CloudSttProvider } from "@/shared/api/models";
  *   - `invalid`    — last probe returned `{ ok: false, code: "auth"|"key_missing" }`
  *   - `offline`    — last probe failed due to network/transport (key may be fine)
  */
-export type CredentialStatus = "idle" | "verifying" | "verified" | "invalid" | "offline";
+export type CredentialStatus =
+	| "idle"
+	| "verifying"
+	| "verified"
+	| "invalid"
+	| "offline";
 
 export interface ProviderStatusEntry {
 	lastError?: string | undefined;
@@ -29,17 +34,19 @@ const INITIAL: Record<CloudSttProvider, ProviderStatusEntry> = {
 	elevenlabs: { status: "idle" },
 };
 
-export const useCredentialStatusStore = create<CredentialStatusState>()((set) => ({
-	byProvider: INITIAL,
-	setStatus: (provider, entry) =>
-		set((state) => ({
-			byProvider: { ...state.byProvider, [provider]: entry },
-		})),
-	reset: (provider) =>
-		set((state) => ({
-			byProvider: { ...state.byProvider, [provider]: { status: "idle" } },
-		})),
-}));
+export const useCredentialStatusStore = create<CredentialStatusState>()(
+	(set) => ({
+		byProvider: INITIAL,
+		setStatus: (provider, entry) =>
+			set((state) => ({
+				byProvider: { ...state.byProvider, [provider]: entry },
+			})),
+		reset: (provider) =>
+			set((state) => ({
+				byProvider: { ...state.byProvider, [provider]: { status: "idle" } },
+			})),
+	}),
+);
 
 /**
  * Subscribe to settings so that any change to a provider's `apiKey` (other
@@ -81,9 +88,12 @@ function providerNeedsReset(
 	provider: CloudSttProvider,
 	next: Record<CloudSttProvider, string>,
 	prev: Record<CloudSttProvider, string>,
-	store: CredentialStatusState
+	store: CredentialStatusState,
 ): boolean {
-	return next[provider] !== prev[provider] && store.byProvider[provider].status !== "idle";
+	return (
+		next[provider] !== prev[provider] &&
+		store.byProvider[provider].status !== "idle"
+	);
 }
 
 /**
@@ -94,7 +104,7 @@ function providerNeedsReset(
 function resetProvidersWithChangedKeys(
 	next: Record<CloudSttProvider, string>,
 	prev: Record<CloudSttProvider, string>,
-	store: CredentialStatusState
+	store: CredentialStatusState,
 ): void {
 	for (const provider of CLOUD_PROVIDERS) {
 		if (providerNeedsReset(provider, next, prev, store)) {
@@ -105,7 +115,11 @@ function resetProvidersWithChangedKeys(
 
 function syncOnSettingsChange(): void {
 	const next = readApiKeySnapshot(useSettingsStore.getState().settings);
-	resetProvidersWithChangedKeys(next, lastKeys, useCredentialStatusStore.getState());
+	resetProvidersWithChangedKeys(
+		next,
+		lastKeys,
+		useCredentialStatusStore.getState(),
+	);
 	lastKeys = next;
 }
 
@@ -121,6 +135,8 @@ if (typeof window !== "undefined") {
 }
 
 /** Hook returning the live status entry for a single provider. */
-export function useCredentialStatus(provider: CloudSttProvider): ProviderStatusEntry {
+export function useCredentialStatus(
+	provider: CloudSttProvider,
+): ProviderStatusEntry {
 	return useCredentialStatusStore((s) => s.byProvider[provider]);
 }

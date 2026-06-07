@@ -4,10 +4,18 @@ import { cn } from "@/shared/lib/cn";
 const TEXT_SWAP_DUR_MS = 150;
 
 function prefersReducedMotion(): boolean {
-	return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+	return (
+		window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
+	);
 }
 
-export function AnimatedText({ text, className }: { className?: string; text: string }) {
+export function AnimatedText({
+	text,
+	className,
+}: {
+	className?: string;
+	text: string;
+}) {
 	const [displayed, setDisplayed] = useState(text);
 	const [phase, setPhase] = useState<"" | "exit" | "enter">("");
 	const prev = useRef(text);
@@ -46,7 +54,7 @@ export function AnimatedText({ text, className }: { className?: string; text: st
 				"t-text-swap",
 				phase === "exit" && "is-exit",
 				phase === "enter" && "is-enter-start",
-				className
+				className,
 			)}
 		>
 			{reduced ? text : displayed}
@@ -118,7 +126,9 @@ export function AnimatedValueText({
 	className?: string;
 	text: string;
 }) {
-	const parts = text.split(NUMERIC_SEGMENT_RE).filter((part) => part.length > 0);
+	const parts = text
+		.split(NUMERIC_SEGMENT_RE)
+		.filter((part) => part.length > 0);
 	const hasNumber = parts.some((part) => NUMERIC_SEGMENT_ONLY_RE.test(part));
 	if (!hasNumber) {
 		const cls = className === undefined ? {} : { className };

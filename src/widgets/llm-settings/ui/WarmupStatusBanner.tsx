@@ -43,13 +43,15 @@ const STATUS_SEVERITY_CLASSES: Record<
 		container: "col-span-2 rounded bg-warning/10 p-3 text-sm text-warning",
 		button:
 			"rounded border border-warning/40 bg-warning/10 px-3 py-1 text-warning text-xs transition-colors hover:bg-warning/20",
-		detail: "mt-2 max-h-20 overflow-auto rounded bg-warning/5 p-2 font-mono text-xs",
+		detail:
+			"mt-2 max-h-20 overflow-auto rounded bg-warning/5 p-2 font-mono text-xs",
 	},
 	error: {
 		container: "col-span-2 rounded bg-error/10 p-3 text-error text-sm",
 		button:
 			"rounded border border-error/40 bg-error/10 px-3 py-1 text-error text-xs transition-colors hover:bg-error/20",
-		detail: "mt-2 max-h-20 overflow-auto rounded bg-error/5 p-2 font-mono text-xs",
+		detail:
+			"mt-2 max-h-20 overflow-auto rounded bg-error/5 p-2 font-mono text-xs",
 	},
 };
 
@@ -67,7 +69,13 @@ interface StatusBannerProps {
  *  severity + supplies strings/action; per-variant token lookups happen
  *  in {@link STATUS_SEVERITY_CLASSES} so the JSX shape stays single-
  *  source. Restyling the banner later only touches this one function. */
-function StatusBanner({ action, detail, description, severity, title }: StatusBannerProps) {
+function StatusBanner({
+	action,
+	detail,
+	description,
+	severity,
+	title,
+}: StatusBannerProps) {
 	const classes = STATUS_SEVERITY_CLASSES[severity];
 	return (
 		<output aria-live="polite" className={classes.container}>
@@ -89,10 +97,12 @@ function buildUnreachableProps(
 	feature: "dictation" | "transforms",
 	installed: boolean,
 	t: TranslateFn,
-	onRetry?: () => void
+	onRetry?: () => void,
 ): StatusBannerProps {
 	const featureLabel = t(
-		feature === "dictation" ? "warmupFeatureDictation" : "warmupFeatureTransforms"
+		feature === "dictation"
+			? "warmupFeatureDictation"
+			: "warmupFeatureTransforms",
 	);
 	return {
 		severity: "warning",
@@ -100,20 +110,24 @@ function buildUnreachableProps(
 		description: installed
 			? t("warmupOllamaUnreachableInstalled")
 			: t("warmupOllamaUnreachableMissing", { feature: featureLabel }),
-		action: onRetry ? { label: t("warmupRetryNow"), onClick: onRetry } : undefined,
+		action: onRetry
+			? { label: t("warmupRetryNow"), onClick: onRetry }
+			: undefined,
 	};
 }
 
 function buildModelMissingProps(
 	model: string,
 	t: TranslateFn,
-	onOpenManager?: () => void
+	onOpenManager?: () => void,
 ): StatusBannerProps {
 	return {
 		severity: "warning",
 		title: t("warmupModelMissingTitle", { model }),
 		description: t("warmupModelMissingDescription"),
-		action: onOpenManager ? { label: t("warmupOpenManager"), onClick: onOpenManager } : undefined,
+		action: onOpenManager
+			? { label: t("warmupOpenManager"), onClick: onOpenManager }
+			: undefined,
 	};
 }
 
@@ -121,14 +135,16 @@ function buildLoadFailedProps(
 	model: string,
 	errorBody: string | undefined,
 	t: TranslateFn,
-	onOpenManager?: () => void
+	onOpenManager?: () => void,
 ): StatusBannerProps {
 	return {
 		severity: "error",
 		title: t("warmupModelLoadFailedTitle", { model }),
 		description: t("warmupModelLoadFailedDescription"),
 		detail: errorBody,
-		action: onOpenManager ? { label: t("warmupOpenManager"), onClick: onOpenManager } : undefined,
+		action: onOpenManager
+			? { label: t("warmupOpenManager"), onClick: onOpenManager }
+			: undefined,
 	};
 }
 
@@ -153,7 +169,11 @@ export function WarmupStatusBanner({
 	// banner has nothing to say. `false` reachability is the genuine
 	// "Ollama is down" case and applies to all enabled models.
 	if (status?.reachable === false) {
-		return <StatusBanner {...buildUnreachableProps(feature, status.ollamaInstalled, t, onRetry)} />;
+		return (
+			<StatusBanner
+				{...buildUnreachableProps(feature, status.ollamaInstalled, t, onRetry)}
+			/>
+		);
 	}
 
 	const modelStatus = findModelStatus(status, model);
@@ -161,11 +181,20 @@ export function WarmupStatusBanner({
 		return null;
 	}
 	if (modelStatus.outcome === "model-not-found") {
-		return <StatusBanner {...buildModelMissingProps(model, t, onOpenManager)} />;
+		return (
+			<StatusBanner {...buildModelMissingProps(model, t, onOpenManager)} />
+		);
 	}
 	if (modelStatus.outcome === "load-failed") {
 		return (
-			<StatusBanner {...buildLoadFailedProps(model, modelStatus.errorBody, t, onOpenManager)} />
+			<StatusBanner
+				{...buildLoadFailedProps(
+					model,
+					modelStatus.errorBody,
+					t,
+					onOpenManager,
+				)}
+			/>
 		);
 	}
 	return null;

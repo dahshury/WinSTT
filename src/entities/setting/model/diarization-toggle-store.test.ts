@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { IPC } from "@/shared/api/ipc-channels";
-import { initDiarizationToggleStore, useDiarizationToggleStore } from "./diarization-toggle-store";
+import {
+	initDiarizationToggleStore,
+	useDiarizationToggleStore,
+} from "./diarization-toggle-store";
 import { useSettingsStore } from "./settings-store";
 
 const originalApi = window.nativeBridge;
@@ -18,7 +21,7 @@ function installListeningApi() {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -45,7 +48,12 @@ describe("useDiarizationToggleStore actions", () => {
 	test("begin sets pending=true and clears lastError", () => {
 		useDiarizationToggleStore.setState({
 			pending: false,
-			lastError: { category: "unknown", detail: "old", enabled: true, reason: "old" },
+			lastError: {
+				category: "unknown",
+				detail: "old",
+				enabled: true,
+				reason: "old",
+			},
 		});
 		useDiarizationToggleStore.getState().begin();
 		expect(useDiarizationToggleStore.getState()).toMatchObject({
@@ -108,7 +116,9 @@ describe("initDiarizationToggleStore", () => {
 		const after = useSettingsStore.getState();
 		// The optimistic toggle (true) is reverted to false because info.enabled === true
 		expect(after.settings.general?.speakerDiarization).toBe(false);
-		expect(useDiarizationToggleStore.getState().lastError?.reason).toBe("no model");
+		expect(useDiarizationToggleStore.getState().lastError?.reason).toBe(
+			"no model",
+		);
 	});
 
 	test("failed event does NOT touch settings when current state already differs", () => {
@@ -128,7 +138,9 @@ describe("initDiarizationToggleStore", () => {
 			enabled: true,
 			reason: "no model",
 		});
-		expect(useSettingsStore.getState().settings.general?.speakerDiarization).toBe(false);
+		expect(
+			useSettingsStore.getState().settings.general?.speakerDiarization,
+		).toBe(false);
 	});
 
 	test("unsub returned by initDiarizationToggleStore unwires every listener", () => {

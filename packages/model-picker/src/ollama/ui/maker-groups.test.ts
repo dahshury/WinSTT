@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import type { OllamaLibraryHit, OllamaModel, RecommendedOllamaModel } from "@/shared/api/models";
+import type {
+	OllamaLibraryHit,
+	OllamaModel,
+	RecommendedOllamaModel,
+} from "@/shared/api/models";
 import {
 	activePullNameForRow,
 	buildMakerGroups,
@@ -18,7 +22,13 @@ import {
 } from "../lib/maker-groups";
 
 function installed(name: string): OllamaModel {
-	return { name, model: name, size: 0, digest: "", modified_at: "" } as OllamaModel;
+	return {
+		name,
+		model: name,
+		size: 0,
+		digest: "",
+		modified_at: "",
+	} as OllamaModel;
 }
 function recommended(name: string, family: string): RecommendedOllamaModel {
 	return {
@@ -63,7 +73,11 @@ describe("buildMakerGroups", () => {
 			library: [],
 		});
 		// Sorted by maker LABEL: Alibaba (qwen), IBM (ibm-granite), Meta (meta-llama).
-		expect(groups.map((g) => g.slug)).toEqual(["qwen", "ibm-granite", "meta-llama"]);
+		expect(groups.map((g) => g.slug)).toEqual([
+			"qwen",
+			"ibm-granite",
+			"meta-llama",
+		]);
 	});
 
 	it("merges library hits into maker groups only when provided (search), deduped vs installed/recommended base slugs", () => {
@@ -85,7 +99,9 @@ describe("buildMakerGroups", () => {
 		});
 		// gemma3 is the only Google entry and isn't deduped here (nothing covers
 		// it), so Google exists with one library hit.
-		expect(group(groups, "google")?.library.map((h) => h.name)).toEqual(["gemma3"]);
+		expect(group(groups, "google")?.library.map((h) => h.name)).toEqual([
+			"gemma3",
+		]);
 	});
 });
 
@@ -113,9 +129,9 @@ describe("computeRecommendedVisible", () => {
 	});
 
 	it("still applies the search query after the install filter", () => {
-		expect(
-			computeRecommendedVisible([gemmaE2b], new Set(), "qwen"),
-		).toEqual([]);
+		expect(computeRecommendedVisible([gemmaE2b], new Set(), "qwen")).toEqual(
+			[],
+		);
 		expect(
 			computeRecommendedVisible([gemmaE2b], new Set(), "gemma").map(
 				(m) => m.name,
@@ -157,7 +173,7 @@ describe("buildOllamaDescriptionIndex", () => {
 		]);
 
 		expect(ollamaDescriptionForName("gemma4:e2b", descriptions)).toBe(
-			"Gemma 4 from Ollama."
+			"Gemma 4 from Ollama.",
 		);
 	});
 
@@ -167,8 +183,12 @@ describe("buildOllamaDescriptionIndex", () => {
 			{ name: "missing" },
 		]);
 
-		expect(ollamaDescriptionForName("blank:latest", descriptions)).toBeUndefined();
-		expect(ollamaDescriptionForName("missing:latest", descriptions)).toBeUndefined();
+		expect(
+			ollamaDescriptionForName("blank:latest", descriptions),
+		).toBeUndefined();
+		expect(
+			ollamaDescriptionForName("missing:latest", descriptions),
+		).toBeUndefined();
 	});
 
 	it("falls back to local Ollama metadata for models missing from the library catalog", () => {
@@ -188,7 +208,7 @@ describe("buildOllamaDescriptionIndex", () => {
 		} as OllamaModel;
 
 		expect(installedDescriptionForModel(model, new Map())).toBe(
-			"Local Ollama model: GGUF / llama family / Q5_K_M / 8K context / Vision, Tools"
+			"Local Ollama model: GGUF / llama family / Q5_K_M / 8K context / Vision, Tools",
 		);
 	});
 
@@ -203,7 +223,7 @@ describe("buildOllamaDescriptionIndex", () => {
 		} as OllamaModel;
 
 		expect(installedDescriptionForModel(model, descriptions)).toBe(
-			"Official Gemma description."
+			"Official Gemma description.",
 		);
 	});
 });
@@ -239,24 +259,24 @@ describe("typedModelQueryInfo", () => {
 describe("active Ollama pull focus helpers", () => {
 	it("returns the active pull only when exactly one model is downloading", () => {
 		expect(singleActivePullName({ "gemma3:4b-q4_K_M": { percent: 12 } })).toBe(
-			"gemma3:4b-q4_K_M"
+			"gemma3:4b-q4_K_M",
 		);
 		expect(
 			singleActivePullName({
 				"gemma3:4b-q4_K_M": { percent: 12 },
 				"qwen3:4b-q4_K_M": { percent: 30 },
-			})
+			}),
 		).toBeNull();
 		expect(singleActivePullName({})).toBeNull();
 	});
 
 	it("matches an active quant pull to the row with the same parameter size", () => {
 		expect(ollamaPullMatchesRow("gemma3:4b-q4_K_M", "gemma3:4b", "4B")).toBe(
-			true
+			true,
 		);
-		expect(
-			ollamaPullMatchesRow("gemma3:27b-q4_K_M", "gemma3:4b", "4B")
-		).toBe(false);
+		expect(ollamaPullMatchesRow("gemma3:27b-q4_K_M", "gemma3:4b", "4B")).toBe(
+			false,
+		);
 		expect(ollamaPullMatchesRow("gemma3:27b-q4_K_M", "gemma3")).toBe(true);
 	});
 
@@ -267,7 +287,7 @@ describe("active Ollama pull focus helpers", () => {
 		};
 
 		expect(activePullNameForRow(pulls, "gemma3:4b", "4B")).toBe(
-			"gemma3:4b-q8_0"
+			"gemma3:4b-q8_0",
 		);
 	});
 });

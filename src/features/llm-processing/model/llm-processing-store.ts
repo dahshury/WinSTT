@@ -33,7 +33,7 @@ interface LlmProcessingState {
  * monotonic across duplicate START events (CC 1). */
 export function nextThinkingStart(
 	currentStart: number | null,
-	now: number = Date.now()
+	now: number = Date.now(),
 ): { isThinking: true; thinkingStartedAt: number } {
 	return {
 		isThinking: true,
@@ -42,14 +42,17 @@ export function nextThinkingStart(
 }
 
 /** Patch for `setThinking(false)`: clear both flags (CC 1). */
-export function thinkingStopPatch(): { isThinking: false; thinkingStartedAt: null } {
+export function thinkingStopPatch(): {
+	isThinking: false;
+	thinkingStartedAt: null;
+} {
 	return { isThinking: false, thinkingStartedAt: null };
 }
 
 /** Pick the right patch for a `setThinking(value)` call (CC 1). */
 export function thinkingPatch(
 	value: boolean,
-	currentStart: number | null
+	currentStart: number | null,
 ): { isThinking: boolean; thinkingStartedAt: number | null } {
 	return value ? nextThinkingStart(currentStart) : thinkingStopPatch();
 }
@@ -57,7 +60,7 @@ export function thinkingPatch(
 /** Patch for `setTransforming(true)`: duplicate START events keep one timer. */
 export function nextTransformStart(
 	currentStart: number | null,
-	now: number = Date.now()
+	now: number = Date.now(),
 ): { isTransforming: true; transformStartedAt: number } {
 	return {
 		isTransforming: true,
@@ -76,7 +79,7 @@ export function transformStopPatch(): {
 /** Pick the right patch for a `setTransforming(value)` call. */
 export function transformPatch(
 	value: boolean,
-	currentStart: number | null
+	currentStart: number | null,
 ): { isTransforming: boolean; transformStartedAt: number | null } {
 	return value ? nextTransformStart(currentStart) : transformStopPatch();
 }
@@ -84,7 +87,7 @@ export function transformPatch(
 /** Patch for `appendThinking(chunk)`: empty chunks are no-ops (CC 1). */
 export function appendThinkingPatch(
 	currentText: string,
-	chunk: string
+	chunk: string,
 ): { thinkingText: string } | null {
 	return chunk ? { thinkingText: currentText + chunk } : null;
 }
@@ -95,7 +98,8 @@ export const useLlmProcessingStore = create<LlmProcessingState>()((set) => ({
 	thinkingStartedAt: null,
 	thinkingText: "",
 	transformStartedAt: null,
-	setThinking: (value) => set((state) => thinkingPatch(value, state.thinkingStartedAt)),
+	setThinking: (value) =>
+		set((state) => thinkingPatch(value, state.thinkingStartedAt)),
 	setTransforming: (value) =>
 		set((state) => transformPatch(value, state.transformStartedAt)),
 	appendThinking: (chunk) =>

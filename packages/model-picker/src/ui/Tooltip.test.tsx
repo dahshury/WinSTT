@@ -15,7 +15,7 @@ describe("widget Tooltip wrappers", () => {
 					</TooltipTrigger>
 					<TooltipContent>tip text</TooltipContent>
 				</Tooltip>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(screen.getByTestId("trigger")).toBeDefined();
 	});
@@ -31,7 +31,7 @@ describe("widget Tooltip wrappers", () => {
 					</TooltipTrigger>
 					<TooltipContent className="custom-class" />
 				</Tooltip>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(screen.getByTestId("trigger")).toBeDefined();
 	});

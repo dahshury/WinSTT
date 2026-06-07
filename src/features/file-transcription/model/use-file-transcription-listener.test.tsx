@@ -19,7 +19,7 @@ beforeEach(() => {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -49,10 +49,19 @@ describe("useFileTranscriptionListener", () => {
 		renderHook(() => useFileTranscriptionListener());
 		fire(IPC.FILE_QUEUE_UPDATE, {
 			items: [
-				{ id: "a", fileName: "a.wav", status: "queued", progress: 0, stage: "queued", message: "" },
+				{
+					id: "a",
+					fileName: "a.wav",
+					status: "queued",
+					progress: 0,
+					stage: "queued",
+					message: "",
+				},
 			],
 		});
-		expect(useFileTranscriptionStore.getState().items.map((i) => i.id)).toEqual(["a"]);
+		expect(useFileTranscriptionStore.getState().items.map((i) => i.id)).toEqual(
+			["a"],
+		);
 	});
 
 	test("queue-progress patches the matching row's progress", () => {
@@ -69,7 +78,11 @@ describe("useFileTranscriptionListener", () => {
 				},
 			],
 		});
-		fire(IPC.FILE_QUEUE_PROGRESS, { id: "a", progress: 0.5, stage: "transcribing" });
+		fire(IPC.FILE_QUEUE_PROGRESS, {
+			id: "a",
+			progress: 0.5,
+			stage: "transcribing",
+		});
 		expect(useFileTranscriptionStore.getState().items[0]?.progress).toBe(0.5);
 	});
 

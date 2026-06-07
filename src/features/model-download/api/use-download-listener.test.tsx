@@ -62,7 +62,7 @@ beforeEach(() => {
 			return () => {
 				listeners.set(
 					channel,
-					(listeners.get(channel) ?? []).filter((x) => x !== cb)
+					(listeners.get(channel) ?? []).filter((x) => x !== cb),
 				);
 			};
 		},
@@ -122,12 +122,22 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("useDownloadListener per-quant coalescing", () => {
 	test("buffers per-quant progress (not applied synchronously) then flushes the latest", async () => {
 		renderHook(() => useDownloadListener());
-		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, { model: "cohere", quantization: "int8", progress: 0.3 });
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, {
+			model: "cohere",
+			quantization: "int8",
+			progress: 0.3,
+		});
 		// Buffered on a trailing timer — NOT applied to the store synchronously,
 		// so a burst of chunk events doesn't re-render the picker per chunk.
-		expect(useDownloadStore.getState().quantDownloads["cohere@int8"]).toBeUndefined();
+		expect(
+			useDownloadStore.getState().quantDownloads["cohere@int8"],
+		).toBeUndefined();
 		// A later frame supersedes the earlier one in the buffer.
-		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, { model: "cohere", quantization: "int8", progress: 0.6 });
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, {
+			model: "cohere",
+			quantization: "int8",
+			progress: 0.6,
+		});
 		await delay(150);
 		const entry = useDownloadStore.getState().quantDownloads["cohere@int8"];
 		expect(entry?.progress).toBe(60);
@@ -141,7 +151,11 @@ describe("useDownloadListener per-quant coalescing", () => {
 		// real transport. Probe BEFORE mounting the hook under test.
 		const forwardsQuant = completeForwardsQuantization();
 		renderHook(() => useDownloadListener());
-		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, { model: "cohere", quantization: "int8", progress: 0.9 });
+		fire(IPC.STT_MODEL_DOWNLOAD_PROGRESS, {
+			model: "cohere",
+			quantization: "int8",
+			progress: 0.9,
+		});
 		// Completion arrives before the buffered frame flushes — it must clear the
 		// entry AND evict the buffer, otherwise the flush re-inserts a zombie.
 		fire(IPC.STT_MODEL_DOWNLOAD_COMPLETE, {
@@ -153,7 +167,9 @@ describe("useDownloadListener per-quant coalescing", () => {
 		if (forwardsQuant) {
 			// Real module: the complete handler took the per-quant branch, deleted
 			// the buffer, and the trailing flush found nothing to resurrect.
-			expect(useDownloadStore.getState().quantDownloads["cohere@int8"]).toBeUndefined();
+			expect(
+				useDownloadStore.getState().quantDownloads["cohere@int8"],
+			).toBeUndefined();
 		} else {
 			// Leaked fake's lossy 2-arg complete can't reach the per-quant branch
 			// (the hook never sees `quantization`), so the documented drop is

@@ -752,7 +752,9 @@ export function matchingTypedModelTag(
 	if (!info) {
 		return undefined;
 	}
-	return tagsState?.tags.find((tag) => isSameOllamaTag(info.modelName, tag.name));
+	return tagsState?.tags.find((tag) =>
+		isSameOllamaTag(info.modelName, tag.name),
+	);
 }
 
 interface TypedModelRowProps {
@@ -808,11 +810,7 @@ function buildTypedModelMetaEntries(
 	return entries;
 }
 
-function TypedModelFetchStatus({
-	tagsState,
-}: {
-	tagsState: OllamaTagsState;
-}) {
+function TypedModelFetchStatus({ tagsState }: { tagsState: OllamaTagsState }) {
 	if (tagsState?.isLoading && tagsState.tags.length === 0) {
 		return (
 			<div className="flex items-center gap-2 text-foreground-muted text-xs">

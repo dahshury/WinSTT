@@ -31,7 +31,7 @@ export function IconButton({
 			className={cn(
 				"size-7 rounded-full bg-transparent p-0 text-foreground-muted hover:text-foreground-secondary",
 				surfaceHoverBg(hoverLevel),
-				className
+				className,
 			)}
 			disabled={disabled}
 			onClick={onClick}

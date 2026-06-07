@@ -12,7 +12,12 @@ const CONNECTION_STATUSES: ConnectionStatus[] = [
 	"connected",
 	"error",
 ];
-const SERVER_STATUSES: ServerStatus[] = ["idle", "starting", "running", "error"];
+const SERVER_STATUSES: ServerStatus[] = [
+	"idle",
+	"starting",
+	"running",
+	"error",
+];
 
 interface Model {
 	connectionStatus: ConnectionStatus;
@@ -173,7 +178,9 @@ const gpuInfoEntryArb: fc.Arbitrary<GpuInfo> = fc.record({
 	total_vram_bytes: fc.integer({ min: 0, max: 2 ** 32 }),
 });
 
-const gpuInfoArb: fc.Arbitrary<GpuInfo[]> = fc.array(gpuInfoEntryArb, { maxLength: 4 });
+const gpuInfoArb: fc.Arbitrary<GpuInfo[]> = fc.array(gpuInfoEntryArb, {
+	maxLength: 4,
+});
 
 const runtimeInfoArb: fc.Arbitrary<RuntimeInfo> = fc.record({
 	device: fc.constantFrom("cpu", "cuda", "directml"),
@@ -185,21 +192,28 @@ const runtimeInfoArb: fc.Arbitrary<RuntimeInfo> = fc.record({
 
 const commandsArb = fc.commands(
 	[
-		fc.constantFrom(...CONNECTION_STATUSES).map((s) => new SetConnectionStatusCmd(s)),
+		fc
+			.constantFrom(...CONNECTION_STATUSES)
+			.map((s) => new SetConnectionStatusCmd(s)),
 		fc.constantFrom(...SERVER_STATUSES).map((s) => new SetServerStatusCmd(s)),
 		gpuInfoArb.map((info) => new SetGpuInfoCmd(info)),
-		fc.option(runtimeInfoArb, { nil: null }).map((info) => new SetRuntimeInfoCmd(info)),
+		fc
+			.option(runtimeInfoArb, { nil: null })
+			.map((info) => new SetRuntimeInfoCmd(info)),
 	],
-	{ maxCommands: 35 }
+	{ maxCommands: 35 },
 );
 
 test("connection-store: arbitrary command sequence preserves field orthogonality and enums", () => {
 	fc.assert(
 		fc.property(commandsArb, (cmds) => {
 			resetStore();
-			fc.modelRun(() => ({ model: freshModel(), real: useConnectionStore }), cmds);
+			fc.modelRun(
+				() => ({ model: freshModel(), real: useConnectionStore }),
+				cmds,
+			);
 		}),
-		{ numRuns: 100 }
+		{ numRuns: 100 },
 	);
 });
 
@@ -223,8 +237,8 @@ test("connection-store: setters are idempotent (same value twice == once)", () =
 					snap1.gpuInfo === snap2.gpuInfo &&
 					snap1.runtimeInfo === snap2.runtimeInfo
 				);
-			}
+			},
 		),
-		{ numRuns: 60 }
+		{ numRuns: 60 },
 	);
 });

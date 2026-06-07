@@ -5,8 +5,13 @@ import {
 	getVariantClasses,
 } from "../model-selector-display-utils";
 
-const uniqueEndpointsCache = new WeakMap<OpenRouterModel, OpenRouterEndpoint[]>();
-export function getCachedUniqueEndpoints(model: OpenRouterModel): OpenRouterEndpoint[] {
+const uniqueEndpointsCache = new WeakMap<
+	OpenRouterModel,
+	OpenRouterEndpoint[]
+>();
+export function getCachedUniqueEndpoints(
+	model: OpenRouterModel,
+): OpenRouterEndpoint[] {
 	const cached = uniqueEndpointsCache.get(model);
 	if (cached) {
 		return cached;
@@ -26,14 +31,16 @@ export function getEndpointProviderSlug(endpoint: OpenRouterEndpoint): string {
 
 export function findSelectedProvider(
 	endpoints: OpenRouterEndpoint[],
-	parsedProviderSlug: string | undefined
+	parsedProviderSlug: string | undefined,
 ): OpenRouterEndpoint | null {
 	if (!parsedProviderSlug) {
 		return null;
 	}
 	return (
-		endpoints.find((e) => e.provider_name === parsedProviderSlug || e.tag === parsedProviderSlug) ??
-		null
+		endpoints.find(
+			(e) =>
+				e.provider_name === parsedProviderSlug || e.tag === parsedProviderSlug,
+		) ?? null
 	);
 }
 
@@ -55,7 +62,7 @@ export interface SelectionFlags {
 export function computeSelectionFlags(
 	modelId: string,
 	parsedModelId: string | undefined,
-	parsedProviderSlug: string | undefined
+	parsedProviderSlug: string | undefined,
 ): SelectionFlags {
 	const isModelMatch = parsedModelId === modelId;
 	return {
@@ -74,14 +81,14 @@ export function computeModelEndpoints(model: OpenRouterModel): {
 }
 
 export function computeVariantClasses(
-	model: OpenRouterModel
+	model: OpenRouterModel,
 ): ReturnType<typeof getVariantClasses> | null {
 	return model.variant ? getVariantClasses(model.variant) : null;
 }
 
 export function computeHeaderPricing(
 	uniqueEndpoints: OpenRouterEndpoint[],
-	hasProviders: boolean
+	hasProviders: boolean,
 ): ReturnType<typeof getPricingTier> | null {
 	if (hasProviders) {
 		return null;
@@ -93,7 +100,7 @@ export function computeHeaderPricing(
 export function computeSelectedProvider(
 	uniqueEndpoints: OpenRouterEndpoint[],
 	flags: SelectionFlags,
-	parsedProviderSlug: string | undefined
+	parsedProviderSlug: string | undefined,
 ): OpenRouterEndpoint | null {
 	return flags.isProviderSelected
 		? findSelectedProvider(uniqueEndpoints, parsedProviderSlug)
@@ -104,11 +111,19 @@ export function computeModelHeaderState(
 	model: OpenRouterModel,
 	parsedModelId: string | undefined,
 	parsedProviderSlug: string | undefined,
-	hasProviders: boolean
+	hasProviders: boolean,
 ): ModelHeaderState {
 	const { hasEndpoints, uniqueEndpoints } = computeModelEndpoints(model);
-	const flags = computeSelectionFlags(model.id, parsedModelId, parsedProviderSlug);
-	const selectedProvider = computeSelectedProvider(uniqueEndpoints, flags, parsedProviderSlug);
+	const flags = computeSelectionFlags(
+		model.id,
+		parsedModelId,
+		parsedProviderSlug,
+	);
+	const selectedProvider = computeSelectedProvider(
+		uniqueEndpoints,
+		flags,
+		parsedProviderSlug,
+	);
 	return {
 		hasEndpoints,
 		uniqueEndpoints,
@@ -124,7 +139,7 @@ export function isProviderSelected(
 	model: OpenRouterModel,
 	providerSlug: string,
 	parsedModelId: string | undefined,
-	parsedProviderSlug: string | undefined
+	parsedProviderSlug: string | undefined,
 ): boolean {
 	return parsedModelId === model.id && parsedProviderSlug === providerSlug;
 }
@@ -132,7 +147,7 @@ export function isProviderSelected(
 export function isFeaturedEndpointEligible(
 	uniqueEndpoints: OpenRouterEndpoint[],
 	hasEndpoints: boolean,
-	hasProviders: boolean
+	hasProviders: boolean,
 ): boolean {
 	if (hasProviders) {
 		return false;
@@ -143,9 +158,11 @@ export function isFeaturedEndpointEligible(
 export function getFeaturedEndpoint(
 	uniqueEndpoints: OpenRouterEndpoint[],
 	hasEndpoints: boolean,
-	hasProviders: boolean
+	hasProviders: boolean,
 ): OpenRouterEndpoint | null {
-	if (!isFeaturedEndpointEligible(uniqueEndpoints, hasEndpoints, hasProviders)) {
+	if (
+		!isFeaturedEndpointEligible(uniqueEndpoints, hasEndpoints, hasProviders)
+	) {
 		return null;
 	}
 	return uniqueEndpoints[0] ?? null;

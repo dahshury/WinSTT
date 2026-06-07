@@ -20,7 +20,10 @@ interface HistoryViewState {
 	insertRow: (entry: HistoryEntry) => void;
 	loading: boolean;
 	removeRow: (id: number) => void;
-	replaceFirstPage: (page: { entries: HistoryEntry[]; hasMore: boolean }) => void;
+	replaceFirstPage: (page: {
+		entries: HistoryEntry[];
+		hasMore: boolean;
+	}) => void;
 	setError: (error: string | null) => void;
 	setLoading: (loading: boolean) => void;
 	toggleRow: (id: number, saved: boolean) => void;
@@ -61,7 +64,8 @@ export const useHistoryViewStore = create<HistoryViewState>()((set) => ({
 	// Reset to a fully clean slate. Previously left `loading`/`error` stale,
 	// so a clear() during an in-flight load (or after an error) kept a phantom
 	// spinner / error banner. Mirrors replaceFirstPage's reset semantics.
-	clear: () => set({ entries: [], hasMore: false, loading: false, error: null }),
+	clear: () =>
+		set({ entries: [], hasMore: false, loading: false, error: null }),
 	setLoading: (loading) => set({ loading }),
 	setError: (error) => set({ error }),
 }));

@@ -1,6 +1,9 @@
 import { describe, test } from "bun:test";
 import fc from "fast-check";
-import { createModelSelection, parseModelSelection } from "./openrouter-model-selection";
+import {
+	createModelSelection,
+	parseModelSelection,
+} from "./openrouter-model-selection";
 
 // Model IDs in the wild are slugs like "openai/gpt-4o". For round-trip
 // guarantees, the model id must NOT contain '@' (which is the delimiter the
@@ -22,9 +25,11 @@ describe("createModelSelection ↔ parseModelSelection round-trip", () => {
 			fc.property(modelIdArb, providerSlugArb, (modelId, providerSlug) => {
 				const encoded = createModelSelection(modelId, providerSlug);
 				const decoded = parseModelSelection(encoded);
-				return decoded.modelId === modelId && decoded.providerSlug === providerSlug;
+				return (
+					decoded.modelId === modelId && decoded.providerSlug === providerSlug
+				);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -33,9 +38,11 @@ describe("createModelSelection ↔ parseModelSelection round-trip", () => {
 			fc.property(modelIdArb, (modelId) => {
 				const encoded = createModelSelection(modelId);
 				const decoded = parseModelSelection(encoded);
-				return decoded.modelId === modelId && decoded.providerSlug === undefined;
+				return (
+					decoded.modelId === modelId && decoded.providerSlug === undefined
+				);
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -43,9 +50,9 @@ describe("createModelSelection ↔ parseModelSelection round-trip", () => {
 		fc.assert(
 			fc.property(
 				fc.option(providerSlugArb, { nil: undefined }),
-				(slug) => createModelSelection("", slug) === ""
+				(slug) => createModelSelection("", slug) === "",
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -56,7 +63,7 @@ describe("createModelSelection ↔ parseModelSelection round-trip", () => {
 				const b = parseModelSelection(input);
 				return a.modelId === b.modelId && a.providerSlug === b.providerSlug;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -70,7 +77,7 @@ describe("createModelSelection ↔ parseModelSelection round-trip", () => {
 					return false;
 				}
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 });

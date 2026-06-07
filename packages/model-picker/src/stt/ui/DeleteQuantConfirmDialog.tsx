@@ -37,10 +37,15 @@ export function DeleteQuantConfirmDialog({
 			description={
 				<>
 					This removes the on-disk{" "}
-					<span className="font-medium text-foreground">{pending?.quantLabel}</span> weights for{" "}
-					<span className="font-medium text-foreground">{pending?.displayName}</span>. Other
-					quantizations of the same model stay cached. You can re-download this variant anytime from
-					the picker.
+					<span className="font-medium text-foreground">
+						{pending?.quantLabel}
+					</span>{" "}
+					weights for{" "}
+					<span className="font-medium text-foreground">
+						{pending?.displayName}
+					</span>
+					. Other quantizations of the same model stay cached. You can
+					re-download this variant anytime from the picker.
 				</>
 			}
 			onConfirm={onConfirm}

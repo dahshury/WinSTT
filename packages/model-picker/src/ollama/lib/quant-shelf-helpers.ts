@@ -102,7 +102,10 @@ export function findInstalledOllamaTag(
 	return undefined;
 }
 
-export function isTagInstalled(installedNames: ReadonlySet<string>, tagName: string): boolean {
+export function isTagInstalled(
+	installedNames: ReadonlySet<string>,
+	tagName: string,
+): boolean {
 	return findInstalledOllamaTag(installedNames, tagName) !== undefined;
 }
 
@@ -125,7 +128,7 @@ export function isTagInstalled(installedNames: ReadonlySet<string>, tagName: str
  */
 export function isModelSizeInstalled(
 	installedNames: ReadonlySet<string>,
-	tagName: string
+	tagName: string,
 ): boolean {
 	const base = libraryBaseSlug(tagName);
 	const param = normalizeParamSize(paramSizeFromName(tagName));
@@ -185,7 +188,9 @@ function isCloudTag(tag: OllamaLibraryTag): boolean {
 function tagWeight(tag: OllamaLibraryTag): number {
 	return tag.sizeBytes ?? -1;
 }
-function sortByCapabilityDesc(tags: readonly OllamaLibraryTag[]): readonly OllamaLibraryTag[] {
+function sortByCapabilityDesc(
+	tags: readonly OllamaLibraryTag[],
+): readonly OllamaLibraryTag[] {
 	return [...tags].sort((a, b) => tagWeight(b) - tagWeight(a));
 }
 
@@ -218,7 +223,7 @@ function isShownQuantTag(name: string): boolean {
  */
 export function pruneToShownQuants(
 	tags: readonly OllamaLibraryTag[],
-	forceKeep: (name: string) => boolean
+	forceKeep: (name: string) => boolean,
 ): readonly OllamaLibraryTag[] {
 	return tags.filter((tag) => isShownQuantTag(tag.name) || forceKeep(tag.name));
 }
@@ -234,14 +239,16 @@ export function pruneToShownQuants(
  */
 export function tagsForParamSize(
 	tags: readonly OllamaLibraryTag[],
-	paramSize: string | null | undefined
+	paramSize: string | null | undefined,
 ): readonly OllamaLibraryTag[] {
 	const pullable = tags.filter((tag) => !isCloudTag(tag));
 	const target = normalizeParamSize(paramSize);
 	if (!target) {
 		return sortByCapabilityDesc(pullable);
 	}
-	const matched = pullable.filter((tag) => normalizeParamSize(tag.parameterSize) === target);
+	const matched = pullable.filter(
+		(tag) => normalizeParamSize(tag.parameterSize) === target,
+	);
 	// If nothing matched the requested size (the tag list might omit
 	// `parameterSize`, or use a slightly different label), fall back to the full
 	// pullable list so the shelf is never empty when tags exist.

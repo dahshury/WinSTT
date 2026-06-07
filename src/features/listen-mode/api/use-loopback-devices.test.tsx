@@ -30,7 +30,11 @@ beforeEach(() => {
 	useSettingsStore.setState({
 		settings: {
 			...initialSettings,
-			general: { ...initialSettings.general, recordingMode: "listen", loopbackDeviceIndex: null },
+			general: {
+				...initialSettings.general,
+				recordingMode: "listen",
+				loopbackDeviceIndex: null,
+			},
 		},
 	});
 });
@@ -52,7 +56,9 @@ describe("applyDevicesResult", () => {
 			setOptions: setOptions as never,
 			update: () => undefined,
 		});
-		handler([{ index: 0, name: "X", defaultSampleRate: 48_000, maxOutputChannels: 2 }]);
+		handler([
+			{ index: 0, name: "X", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+		]);
 		// no throw = test passes
 	});
 
@@ -156,11 +162,21 @@ describe("applyDevicesResult", () => {
 			update: () => undefined,
 		});
 		handler([
-			{ index: 0, name: "Good", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+			{
+				index: 0,
+				name: "Good",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+			},
 			{ totally: "wrong shape" },
 			null,
 			"string-is-not-a-device",
-			{ index: "not-a-number", name: "Bad", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+			{
+				index: "not-a-number",
+				name: "Bad",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+			},
 		]);
 		// 1 valid device + the "default" entry = 2 options
 		expect(optsLen).toBe(2);
@@ -241,7 +257,12 @@ describe("useLoopbackDevices", () => {
 				maxOutputChannels: 2,
 				isDefault: true,
 			},
-			{ index: 1, name: "Headphones", defaultSampleRate: 48_000, maxOutputChannels: 2 },
+			{
+				index: 1,
+				name: "Headphones",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+			},
 		]);
 		const { result } = renderHook(() => useLoopbackDevices());
 		await waitFor(() => {
@@ -265,25 +286,41 @@ describe("useLoopbackDevices", () => {
 		]);
 		renderHook(() => useLoopbackDevices());
 		await waitFor(() => {
-			expect(useSettingsStore.getState().settings.general.loopbackDeviceIndex).toBe(5);
+			expect(
+				useSettingsStore.getState().settings.general.loopbackDeviceIndex,
+			).toBe(5);
 		});
 	});
 
 	test("handleChange('default') stores the underlying default index", async () => {
 		window.nativeBridge = makeApi([
-			{ index: 5, name: "Out", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
+			{
+				index: 5,
+				name: "Out",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+				isDefault: true,
+			},
 		]);
 		const { result } = renderHook(() => useLoopbackDevices());
 		await waitFor(() => {
 			expect(result.current.options.length).toBeGreaterThan(0);
 		});
 		act(() => result.current.handleChange("default"));
-		expect(useSettingsStore.getState().settings.general.loopbackDeviceIndex).toBe(5);
+		expect(
+			useSettingsStore.getState().settings.general.loopbackDeviceIndex,
+		).toBe(5);
 	});
 
 	test("handleChange(numeric string) stores the numeric index", async () => {
 		window.nativeBridge = makeApi([
-			{ index: 0, name: "A", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
+			{
+				index: 0,
+				name: "A",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+				isDefault: true,
+			},
 			{ index: 7, name: "B", defaultSampleRate: 48_000, maxOutputChannels: 2 },
 		]);
 		const { result } = renderHook(() => useLoopbackDevices());
@@ -291,12 +328,20 @@ describe("useLoopbackDevices", () => {
 			expect(result.current.options.length).toBeGreaterThan(0);
 		});
 		act(() => result.current.handleChange("7"));
-		expect(useSettingsStore.getState().settings.general.loopbackDeviceIndex).toBe(7);
+		expect(
+			useSettingsStore.getState().settings.general.loopbackDeviceIndex,
+		).toBe(7);
 	});
 
 	test("currentId is 'default' when the stored index matches the detected default", async () => {
 		window.nativeBridge = makeApi([
-			{ index: 9, name: "Spk", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
+			{
+				index: 9,
+				name: "Spk",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+				isDefault: true,
+			},
 		]);
 		const { result } = renderHook(() => useLoopbackDevices());
 		await waitFor(() => {
@@ -319,7 +364,13 @@ describe("useLoopbackDevices", () => {
 			},
 		});
 		window.nativeBridge = makeApi([
-			{ index: 1, name: "A", defaultSampleRate: 48_000, maxOutputChannels: 2, isDefault: true },
+			{
+				index: 1,
+				name: "A",
+				defaultSampleRate: 48_000,
+				maxOutputChannels: 2,
+				isDefault: true,
+			},
 			{ index: 4, name: "B", defaultSampleRate: 48_000, maxOutputChannels: 2 },
 		]);
 		const { result } = renderHook(() => useLoopbackDevices());
@@ -334,13 +385,19 @@ describe("useLoopbackDevices", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
-				general: { ...initialSettings.general, recordingMode: "ptt", loopbackDeviceIndex: 2 },
+				general: {
+					...initialSettings.general,
+					recordingMode: "ptt",
+					loopbackDeviceIndex: 2,
+				},
 			},
 		});
 		window.nativeBridge = makeApi([]);
 		const { result } = renderHook(() => useLoopbackDevices());
 		act(() => result.current.handleChange("default"));
-		expect(useSettingsStore.getState().settings.general.loopbackDeviceIndex).toBe(null);
+		expect(
+			useSettingsStore.getState().settings.general.loopbackDeviceIndex,
+		).toBe(null);
 	});
 
 	test("warns and skips state updates when the IPC response is not an array", async () => {

@@ -1,6 +1,11 @@
 import { PlayIcon, StopCircleIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { AnimatePresence, domAnimation, LazyMotion, m as motion } from "motion/react";
+import {
+	AnimatePresence,
+	domAnimation,
+	LazyMotion,
+	m as motion,
+} from "motion/react";
 import { useState } from "react";
 import { useTranslations } from "use-intl";
 import { cn } from "@/shared/lib/cn";
@@ -37,7 +42,8 @@ export interface HotkeyRecorderProps {
 const CHIP_BASE =
 	"inline-flex h-6 items-center rounded-[6px] px-1.5 py-px text-[11px] leading-none font-medium";
 const CHIP_RECORDING = "bg-error/15 text-error ring-1 ring-error/35";
-const CHIP_HINT = "bg-transparent text-foreground-muted ring-0 italic font-normal";
+const CHIP_HINT =
+	"bg-transparent text-foreground-muted ring-0 italic font-normal";
 // Decorative, aria-hidden separator glyph between key chips — a visual symbol,
 // not translatable copy. Held in a constant so it isn't flagged as user-facing.
 const PLUS_GLYPH = "＋";
@@ -58,7 +64,7 @@ function ComboParts({
 	// Called before the `isHint` early return to keep the hook unconditional.
 	const chipIdle = cn(
 		surfaceBg(Math.min(useSurface() + 1, 8)),
-		"text-foreground ring-1 ring-divider"
+		"text-foreground ring-1 ring-divider",
 	);
 	if (isHint) {
 		return (
@@ -76,7 +82,11 @@ function ComboParts({
 	const parts = text.split(" + ");
 	const chipClass = recording ? CHIP_RECORDING : chipIdle;
 	return (
-		<motion.span className="flex items-center gap-1.5" layout transition={springs.moderate}>
+		<motion.span
+			className="flex items-center gap-1.5"
+			layout
+			transition={springs.moderate}
+		>
 			<AnimatePresence initial={false} mode="popLayout">
 				{parts.map((part, i) => (
 					<motion.span
@@ -89,7 +99,10 @@ function ComboParts({
 						transition={springs.fast}
 					>
 						{i > 0 && (
-							<span aria-hidden className="select-none text-[10px] text-foreground-dim">
+							<span
+								aria-hidden
+								className="select-none text-[10px] text-foreground-dim"
+							>
 								{PLUS_GLYPH}
 							</span>
 						)}
@@ -114,7 +127,11 @@ function RecordingBadge({ label }: { label: string }) {
 			<motion.span
 				animate={{ opacity: [0.55, 1, 0.55], scale: [0.9, 1.1, 0.9] }}
 				className="inline-block size-1.5 rounded-full bg-error"
-				transition={{ duration: 1.1, repeat: Number.POSITIVE_INFINITY, ease: "easeInOut" }}
+				transition={{
+					duration: 1.1,
+					repeat: Number.POSITIVE_INFINITY,
+					ease: "easeInOut",
+				}}
 			/>
 			<InputGroupText className="text-error">{label}</InputGroupText>
 		</motion.div>
@@ -177,7 +194,10 @@ export function HotkeyRecorder({
 		const conflict = findConflict(combo, forbiddenCombos);
 		if (conflict) {
 			setConflictMessage(
-				t("conflictError", { other: conflict.label, combo: formatCombo(conflict.combo) })
+				t("conflictError", {
+					other: conflict.label,
+					combo: formatCombo(conflict.combo),
+				}),
 			);
 			return;
 		}
@@ -185,11 +205,18 @@ export function HotkeyRecorder({
 		onKeyRecorded(combo);
 	};
 
-	const { recording, liveKeys, startRecording, stopRecording } = useKeyRecorder({
-		onKeyRecorded: handleRecorded,
-	});
+	const { recording, liveKeys, startRecording, stopRecording } = useKeyRecorder(
+		{
+			onKeyRecorded: handleRecorded,
+		},
+	);
 
-	const displayText = resolveDisplayText(recording, liveKeys, currentKey, t("pressKeys"));
+	const displayText = resolveDisplayText(
+		recording,
+		liveKeys,
+		currentKey,
+		t("pressKeys"),
+	);
 	const isHint = recording && liveKeys.length === 0;
 	const onToggle = recording
 		? stopRecording
@@ -208,12 +235,18 @@ export function HotkeyRecorder({
 			<div className="w-full min-w-[260px] max-w-[420px]">
 				<InputGroup tone={tone}>
 					<InputGroupContent>
-						<ComboParts isHint={isHint} recording={recording} text={displayText} />
+						<ComboParts
+							isHint={isHint}
+							recording={recording}
+							text={displayText}
+						/>
 					</InputGroupContent>
 
 					<InputGroupAddon align="inline-end">
 						<AnimatePresence initial={false}>
-							{recording && <RecordingBadge key="badge" label={t("recording")} />}
+							{recording && (
+								<RecordingBadge key="badge" label={t("recording")} />
+							)}
 						</AnimatePresence>
 						<motion.span
 							className="inline-flex"

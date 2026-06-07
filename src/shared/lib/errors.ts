@@ -34,7 +34,11 @@ export class ApplicationError extends Error {
 export class ValidationError extends ApplicationError {
 	readonly field?: string | undefined;
 
-	constructor(message: string, field?: string, context?: Record<string, unknown>) {
+	constructor(
+		message: string,
+		field?: string,
+		context?: Record<string, unknown>,
+	) {
 		super(message, context);
 		this.field = field;
 	}
@@ -54,7 +58,11 @@ export class NotFoundError extends ApplicationError {
 	readonly resource: string;
 	readonly identifier?: string | number | undefined;
 
-	constructor(resource: string, identifier?: string | number, context?: Record<string, unknown>) {
+	constructor(
+		resource: string,
+		identifier?: string | number,
+		context?: Record<string, unknown>,
+	) {
 		const msg = identifier
 			? `${resource} with identifier "${identifier}" not found`
 			: `${resource} not found`;
@@ -83,7 +91,7 @@ export class ConnectionError extends ApplicationError {
 		message: string,
 		endpoint?: string,
 		retryable = true,
-		context?: Record<string, unknown>
+		context?: Record<string, unknown>,
 	) {
 		super(message, context);
 		this.endpoint = endpoint;
@@ -106,7 +114,11 @@ export class TimeoutError extends ApplicationError {
 	readonly timeoutMs: number;
 	readonly operation?: string | undefined;
 
-	constructor(timeoutMs: number, operation?: string, context?: Record<string, unknown>) {
+	constructor(
+		timeoutMs: number,
+		operation?: string,
+		context?: Record<string, unknown>,
+	) {
 		const msg = operation
 			? `Operation "${operation}" timed out after ${timeoutMs}ms`
 			: `Operation timed out after ${timeoutMs}ms`;
@@ -135,7 +147,7 @@ export class IpcError extends ApplicationError {
 		message: string,
 		channel: string,
 		operation: "invoke" | "send" | "on",
-		context?: Record<string, unknown>
+		context?: Record<string, unknown>,
 	) {
 		super(message, context);
 		this.channel = channel;
@@ -162,7 +174,7 @@ export class FileSystemError extends ApplicationError {
 		message: string,
 		filePath: string,
 		operation: "read" | "write" | "delete" | "exists" | "stat",
-		context?: Record<string, unknown>
+		context?: Record<string, unknown>,
 	) {
 		super(message, context);
 		this.filePath = filePath;
@@ -189,7 +201,7 @@ export class ProcessSpawnError extends ApplicationError {
 		message: string,
 		command: string,
 		exitCode?: number,
-		context?: Record<string, unknown>
+		context?: Record<string, unknown>,
 	) {
 		super(message, context);
 		this.command = command;
@@ -269,17 +281,29 @@ interface RetryConfig {
 	shouldRetry: (error: unknown, attempt: number) => boolean;
 }
 
-function shouldKeepRetrying(attempt: number, error: unknown, cfg: RetryConfig): boolean {
+function shouldKeepRetrying(
+	attempt: number,
+	error: unknown,
+	cfg: RetryConfig,
+): boolean {
 	return attempt < cfg.maxAttempts && cfg.shouldRetry(error, attempt);
 }
 
-async function waitBeforeRetry(error: unknown, attempt: number, cfg: RetryConfig): Promise<void> {
+async function waitBeforeRetry(
+	error: unknown,
+	attempt: number,
+	cfg: RetryConfig,
+): Promise<void> {
 	cfg.onRetry?.(error, attempt);
 	const delay = cfg.delayMs * cfg.backoffMultiplier ** (attempt - 1);
 	await new Promise((resolve) => setTimeout(resolve, delay));
 }
 
-async function tryAttempt<T>(fn: () => Promise<T>, attempt: number, cfg: RetryConfig): Promise<T> {
+async function tryAttempt<T>(
+	fn: () => Promise<T>,
+	attempt: number,
+	cfg: RetryConfig,
+): Promise<T> {
 	try {
 		return await fn();
 	} catch (error) {
@@ -313,7 +337,10 @@ function buildRetryConfig(options: RetryOptions): RetryConfig {
 /**
  * Retry wrapper for async operations with exponential backoff.
  */
-export function retryAsync<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
+export function retryAsync<T>(
+	fn: () => Promise<T>,
+	options: RetryOptions = {},
+): Promise<T> {
 	return tryAttempt(fn, 1, buildRetryConfig(options));
 }
 
@@ -322,14 +349,16 @@ export function retryAsync<T>(fn: () => Promise<T>, options: RetryOptions = {}):
  */
 export function wrapAsync<TArgs extends unknown[], TReturn>(
 	fn: (...args: TArgs) => Promise<TReturn>,
-	errorHandler?: (error: unknown, args: TArgs) => void
+	errorHandler?: (error: unknown, args: TArgs) => void,
 ): (...args: TArgs) => Promise<TReturn | undefined> {
 	return async (...args: TArgs): Promise<TReturn | undefined> => {
 		try {
 			return await fn(...args);
 		} catch (error) {
 			errorHandler?.(error, args);
-			console.error(formatErrorForLog(error, `Error in ${fn.name || "async function"}`));
+			console.error(
+				formatErrorForLog(error, `Error in ${fn.name || "async function"}`),
+			);
 			return;
 		}
 	};

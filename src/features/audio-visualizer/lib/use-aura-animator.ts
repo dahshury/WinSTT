@@ -9,7 +9,10 @@ const DEFAULT_AMPLITUDE = 2;
 const DEFAULT_FREQUENCY = 0.5;
 const DEFAULT_SCALE = 0.2;
 const DEFAULT_BRIGHTNESS = 1.5;
-const DEFAULT_TRANSITION: ValueAnimationTransition = { duration: 0.5, ease: "easeOut" };
+const DEFAULT_TRANSITION: ValueAnimationTransition = {
+	duration: 0.5,
+	ease: "easeOut",
+};
 const DEFAULT_PULSE_TRANSITION: ValueAnimationTransition = {
 	duration: 0.35,
 	ease: "easeOut",
@@ -17,30 +20,29 @@ const DEFAULT_PULSE_TRANSITION: ValueAnimationTransition = {
 	repeatType: "mirror",
 };
 
-export function useAuraAnimator(state: AgentState, uniformsRef: React.RefObject<Uniforms>): void {
-	const { animate: animateScale, motionValue: scaleMotionValue } = useRefAnimatedValue(
-		DEFAULT_SCALE,
-		uniformsRef,
-		"uScale",
-		"1f"
-	);
+export function useAuraAnimator(
+	state: AgentState,
+	uniformsRef: React.RefObject<Uniforms>,
+): void {
+	const { animate: animateScale, motionValue: scaleMotionValue } =
+		useRefAnimatedValue(DEFAULT_SCALE, uniformsRef, "uScale", "1f");
 	const { animate: animateAmplitude } = useRefAnimatedValue(
 		DEFAULT_AMPLITUDE,
 		uniformsRef,
 		"uAmplitude",
-		"1f"
+		"1f",
 	);
 	const { animate: animateFrequency } = useRefAnimatedValue(
 		DEFAULT_FREQUENCY,
 		uniformsRef,
 		"uFrequency",
-		"1f"
+		"1f",
 	);
 	const { animate: animateBrightness } = useRefAnimatedValue(
 		DEFAULT_BRIGHTNESS,
 		uniformsRef,
 		"uMix",
-		"1f"
+		"1f",
 	);
 
 	const audioLevel = useVisualizerStore((s) => s.audioLevel);
@@ -90,13 +92,20 @@ export function useAuraAnimator(state: AgentState, uniformsRef: React.RefObject<
 			default:
 				return;
 		}
-	}, [state, uniformsRef, animateScale, animateAmplitude, animateFrequency, animateBrightness]);
+	}, [
+		state,
+		uniformsRef,
+		animateScale,
+		animateAmplitude,
+		animateFrequency,
+		animateBrightness,
+	]);
 
 	useEffect(() => {
 		const shouldApply = shouldApplyAudioLevelScale(
 			state,
 			audioLevel,
-			scaleMotionValue.isAnimating()
+			scaleMotionValue.isAnimating(),
 		);
 		if (shouldApply) {
 			animateScale(0.2 + 0.2 * audioLevel, { duration: 0 });
@@ -113,7 +122,7 @@ export function useAuraAnimator(state: AgentState, uniformsRef: React.RefObject<
 export function shouldApplyAudioLevelScale(
 	state: AgentState,
 	audioLevel: number,
-	isAnimating: boolean
+	isAnimating: boolean,
 ): boolean {
 	return state === "speaking" && audioLevel > 0 && !isAnimating;
 }

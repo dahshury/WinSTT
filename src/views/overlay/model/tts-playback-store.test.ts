@@ -26,15 +26,20 @@ interface TauriInvokeCall {
 }
 
 interface TauriInternals {
-	invoke: (cmd: string, args?: Record<string, unknown>, options?: unknown) => Promise<unknown>;
+	invoke: (
+		cmd: string,
+		args?: Record<string, unknown>,
+		options?: unknown,
+	) => Promise<unknown>;
 }
 
 function installTauriInvokeRecorder(): {
 	calls: TauriInvokeCall[];
 	restore: () => void;
 } {
-	const internals = (window as unknown as { __TAURI_INTERNALS__?: TauriInternals })
-		.__TAURI_INTERNALS__;
+	const internals = (
+		window as unknown as { __TAURI_INTERNALS__?: TauriInternals }
+	).__TAURI_INTERNALS__;
 	if (!internals) {
 		throw new Error("expected test Tauri internals to be installed");
 	}
@@ -53,7 +58,11 @@ function installTauriInvokeRecorder(): {
 }
 
 function resetStore(): void {
-	useTtsPlaybackStore.setState({ status: "idle", requestId: null, error: null });
+	useTtsPlaybackStore.setState({
+		status: "idle",
+		requestId: null,
+		error: null,
+	});
 }
 
 describe("useTtsPlaybackStore transitions", () => {
@@ -159,7 +168,9 @@ describe("tts-playback queue controls", () => {
 			useTtsPlaybackStore.getState().markStarted("req-9");
 			discardTts();
 			expect(calls.stop).toBe(1);
-			expect(tauriCalls).toEqual([{ cmd: "tts_cancel", args: { requestId: "req-9" } }]);
+			expect(tauriCalls).toEqual([
+				{ cmd: "tts_cancel", args: { requestId: "req-9" } },
+			]);
 		} finally {
 			restore();
 		}

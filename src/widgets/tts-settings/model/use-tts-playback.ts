@@ -39,7 +39,10 @@ export interface TtsPlayback {
  * `requestId === null` reflex effect is needed.
  */
 export function useTtsPlayback(): TtsPlayback {
-	const [playback, setPlayback] = useState<PlaybackState>({ requestId: null, playing: false });
+	const [playback, setPlayback] = useState<PlaybackState>({
+		requestId: null,
+		playing: false,
+	});
 	const [errorReason, setErrorReason] = useState<string | null>(null);
 	const [previewVoiceId, setPreviewVoiceId] = useState<string | null>(null);
 
@@ -49,7 +52,7 @@ export function useTtsPlayback(): TtsPlayback {
 				setPlayback({ requestId, playing: false });
 				setErrorReason(null);
 			}),
-		[]
+		[],
 	);
 	useEffect(
 		() =>
@@ -57,9 +60,11 @@ export function useTtsPlayback(): TtsPlayback {
 				// Synthesis gap is over, audio is now playing. Exact-match so
 				// a stale start from a superseded preview can't promote the
 				// wrong request.
-				setPlayback((p) => (p.requestId === requestId ? { requestId, playing: true } : p));
+				setPlayback((p) =>
+					p.requestId === requestId ? { requestId, playing: true } : p,
+				);
 			}),
-		[]
+		[],
 	);
 	useEffect(
 		() =>
@@ -79,7 +84,7 @@ export function useTtsPlayback(): TtsPlayback {
 					return { requestId: null, playing: false };
 				});
 			}),
-		[]
+		[],
 	);
 	useEffect(
 		() =>
@@ -93,11 +98,18 @@ export function useTtsPlayback(): TtsPlayback {
 				});
 				setErrorReason(reason);
 			}),
-		[]
+		[],
 	);
 
 	const isLoading = playback.requestId !== null && !playback.playing;
 	const isSpeaking = playback.requestId !== null && playback.playing;
 
-	return { playback, isLoading, isSpeaking, previewVoiceId, setPreviewVoiceId, errorReason };
+	return {
+		playback,
+		isLoading,
+		isSpeaking,
+		previewVoiceId,
+		setPreviewVoiceId,
+		errorReason,
+	};
 }

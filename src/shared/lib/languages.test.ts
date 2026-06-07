@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_TARGET_LANG, findLanguage, LANGUAGES, type Language } from "./languages";
+import {
+	DEFAULT_TARGET_LANG,
+	findLanguage,
+	LANGUAGES,
+	type Language,
+} from "./languages";
 
 describe("LANGUAGES catalog", () => {
 	test("is non-empty", () => {
@@ -28,7 +33,9 @@ describe("LANGUAGES catalog", () => {
 	});
 
 	test("the documented default target language is present in the catalog", () => {
-		expect(LANGUAGES.some((l) => l.englishName === DEFAULT_TARGET_LANG)).toBe(true);
+		expect(LANGUAGES.some((l) => l.englishName === DEFAULT_TARGET_LANG)).toBe(
+			true,
+		);
 	});
 
 	test("includes the app's first-class UI locales (ar, en, es, fr, hi, zh)", () => {

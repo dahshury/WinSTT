@@ -17,5 +17,5 @@ renderReactRoot(
 	<StrictMode>
 		<HtmlLang />
 		<ContextPlaygroundPage />
-	</StrictMode>
+	</StrictMode>,
 );

@@ -1,15 +1,15 @@
 import {
-  AudioWave02Icon,
-  CatIcon,
-  FlashIcon,
-  VoiceIcon,
-  WaterfallUp01Icon,
+	AudioWave02Icon,
+	CatIcon,
+	FlashIcon,
+	VoiceIcon,
+	WaterfallUp01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import type { TtsModelInfo } from "@/entities/tts-catalog";
 import {
-  FAVORITES_GROUP_VALUE,
-  withFavoritesGroup as withCoreFavoritesGroup,
+	FAVORITES_GROUP_VALUE,
+	withFavoritesGroup as withCoreFavoritesGroup,
 } from "../../core/favorites";
 
 /**
@@ -22,21 +22,21 @@ import {
 export type TtsEngineKey = TtsModelInfo["engine"];
 
 interface TtsEngineConfig {
-  /** Tailwind classes for the engine chip (background + foreground). Kept for
-   *  parity with the STT family config even though the muted FF palette uses
-   *  it sparingly. */
-  chip: string;
-  /** HugeIcons glyph shown when no brand `logoSrc` is bundled. */
-  icon: IconSvgElement;
-  /** Display label for the engine (group header + trigger chip). */
-  label: string;
-  /** The org / maker behind the engine — drives the group header subtitle. */
-  maker: string;
-  /** Public path to a brand-logo image (the maker's official mark, bundled in
-   *  `public/provider-icons/`). Rendered via {@link getEngineLogoSrc} on every
-   *  card, the group header, and the trigger; falls back to the HugeIcon glyph
-   *  when absent (an unknown future engine). */
-  logoSrc?: string;
+	/** Tailwind classes for the engine chip (background + foreground). Kept for
+	 *  parity with the STT family config even though the muted FF palette uses
+	 *  it sparingly. */
+	chip: string;
+	/** HugeIcons glyph shown when no brand `logoSrc` is bundled. */
+	icon: IconSvgElement;
+	/** Display label for the engine (group header + trigger chip). */
+	label: string;
+	/** The org / maker behind the engine — drives the group header subtitle. */
+	maker: string;
+	/** Public path to a brand-logo image (the maker's official mark, bundled in
+	 *  `public/provider-icons/`). Rendered via {@link getEngineLogoSrc} on every
+	 *  card, the group header, and the trigger; falls back to the HugeIcon glyph
+	 *  when absent (an unknown future engine). */
+	logoSrc?: string;
 }
 
 /**
@@ -46,70 +46,70 @@ interface TtsEngineConfig {
  * crashing the picker.
  */
 const ENGINE_CONFIG: Record<string, TtsEngineConfig> = {
-  kokoro: {
-    icon: AudioWave02Icon,
-    label: "Kokoro",
-    maker: "hexgrad",
-    logoSrc: "/provider-icons/hexgrad.webp",
-    chip: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
-  },
-  kitten: {
-    icon: CatIcon,
-    label: "Kitten",
-    maker: "KittenML",
-    logoSrc: "/provider-icons/kittenml.webp",
-    chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
-  },
-  piper: {
-    icon: WaterfallUp01Icon,
-    label: "Piper",
-    maker: "Rhasspy",
-    logoSrc: "/provider-icons/rhasspy.svg",
-    chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  },
-  supertonic: {
-    icon: FlashIcon,
-    label: "Supertonic",
-    maker: "Supertone",
-    logoSrc: "/provider-icons/supertone.svg",
-    chip: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
-  },
-  chatterbox: {
-    icon: VoiceIcon,
-    label: "Chatterbox",
-    maker: "Resemble AI",
-    logoSrc: "/provider-icons/resemble.svg",
-    chip: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
-  },
+	kokoro: {
+		icon: AudioWave02Icon,
+		label: "Kokoro",
+		maker: "hexgrad",
+		logoSrc: "/provider-icons/hexgrad.webp",
+		chip: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
+	},
+	kitten: {
+		icon: CatIcon,
+		label: "Kitten",
+		maker: "KittenML",
+		logoSrc: "/provider-icons/kittenml.webp",
+		chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+	},
+	piper: {
+		icon: WaterfallUp01Icon,
+		label: "Piper",
+		maker: "Rhasspy",
+		logoSrc: "/provider-icons/rhasspy.svg",
+		chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+	},
+	supertonic: {
+		icon: FlashIcon,
+		label: "Supertonic",
+		maker: "Supertone",
+		logoSrc: "/provider-icons/supertone.svg",
+		chip: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
+	},
+	chatterbox: {
+		icon: VoiceIcon,
+		label: "Chatterbox",
+		maker: "Resemble AI",
+		logoSrc: "/provider-icons/resemble.svg",
+		chip: "bg-teal-500/15 text-teal-600 dark:text-teal-400",
+	},
 };
 
 const DEFAULT_ENGINE_CONFIG: TtsEngineConfig = {
-  icon: VoiceIcon,
-  label: "Speech",
-  maker: "Unknown",
-  chip: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
+	icon: VoiceIcon,
+	label: "Speech",
+	maker: "Unknown",
+	chip: "bg-slate-500/15 text-slate-600 dark:text-slate-400",
 };
 
 export function getEngineConfig(
-  engine: TtsEngineKey | string,
+	engine: TtsEngineKey | string,
 ): TtsEngineConfig {
-  return ENGINE_CONFIG[engine] ?? DEFAULT_ENGINE_CONFIG;
+	return ENGINE_CONFIG[engine] ?? DEFAULT_ENGINE_CONFIG;
 }
 
 /** Engine label (e.g. "Kokoro") for group headers and trigger chips. */
 export function getEngineLabel(engine: TtsEngineKey | string): string {
-  return getEngineConfig(engine).label;
+	return getEngineConfig(engine).label;
 }
 
 /** Org / maker behind the engine (e.g. "hexgrad") for the group-header subtitle. */
 export function getEngineMaker(engine: TtsEngineKey | string): string {
-  return getEngineConfig(engine).maker;
+	return getEngineConfig(engine).maker;
 }
 
 /** Public path to the engine maker's brand logo, or `null` when none is bundled
  *  (an unknown future engine — call sites fall back to the HugeIcon glyph). */
 export function getEngineLogoSrc(engine: TtsEngineKey | string): string | null {
-  return getEngineConfig(engine).logoSrc ?? null;
+	return getEngineConfig(engine).logoSrc ?? null;
 }
 
 /**
@@ -118,11 +118,11 @@ export function getEngineLogoSrc(engine: TtsEngineKey | string): string | null {
  * "rhasspy"/"vits" for Piper).
  */
 const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
-  kokoro: ["hexgrad", "kokoro-82m", "82m"],
-  kitten: ["kittenml", "kitten ml", "nano"],
-  piper: ["rhasspy", "vits", "lessac", "en-us"],
-  supertonic: ["supertone", "supertonic-3", "multilingual", "webgpu"],
-  chatterbox: ["resemble", "resemble ai", "voice cloning", "multilingual"],
+	kokoro: ["hexgrad", "kokoro-82m", "82m"],
+	kitten: ["kittenml", "kitten ml", "nano"],
+	piper: ["rhasspy", "vits", "lessac", "en-us"],
+	supertonic: ["supertone", "supertonic-3", "multilingual", "webgpu"],
+	chatterbox: ["resemble", "resemble ai", "voice cloning", "multilingual"],
 };
 
 /**
@@ -131,20 +131,20 @@ const ENGINE_SEARCH_ALIASES: Record<string, string[]> = {
  * future global search share one definition (mirrors `buildModelSearchCorpus`).
  */
 export function buildTtsSearchCorpus(model: TtsModelInfo): string {
-  const cfg = getEngineConfig(model.engine);
-  const aliases = (ENGINE_SEARCH_ALIASES[model.engine] ?? []).join(" ");
-  return [
-    model.displayName,
-    model.id,
-    model.engine,
-    model.maker,
-    cfg.label,
-    cfg.maker,
-    aliases,
-    model.languages.join(" "),
-  ]
-    .join(" ")
-    .toLowerCase();
+	const cfg = getEngineConfig(model.engine);
+	const aliases = (ENGINE_SEARCH_ALIASES[model.engine] ?? []).join(" ");
+	return [
+		model.displayName,
+		model.id,
+		model.engine,
+		model.maker,
+		cfg.label,
+		cfg.maker,
+		aliases,
+		model.languages.join(" "),
+	]
+		.join(" ")
+		.toLowerCase();
 }
 
 /**
@@ -153,8 +153,8 @@ export function buildTtsSearchCorpus(model: TtsModelInfo): string {
  * derived via {@link getEngineLabel} / {@link getEngineMaker}.
  */
 export interface TtsEngineGroup {
-  items: TtsModelInfo[];
-  value: TtsEngineKey;
+	items: TtsModelInfo[];
+	value: TtsEngineKey;
 }
 
 /**
@@ -165,39 +165,39 @@ export interface TtsEngineGroup {
  * way Whisper `.en` siblings are — each engine ships distinct models.)
  */
 export function groupModelsByEngine(
-  models: readonly TtsModelInfo[],
+	models: readonly TtsModelInfo[],
 ): TtsEngineGroup[] {
-  const buckets = new Map<TtsEngineKey, TtsModelInfo[]>();
-  const order: TtsEngineKey[] = [];
-  for (const model of models) {
-    const bucket = buckets.get(model.engine);
-    if (bucket === undefined) {
-      buckets.set(model.engine, [model]);
-      order.push(model.engine);
-    } else {
-      bucket.push(model);
-    }
-  }
-  const groups: TtsEngineGroup[] = [];
-  for (const engine of order) {
-    const items = buckets.get(engine);
-    if (items === undefined || items.length === 0) {
-      continue;
-    }
-    const sorted = [...items].sort((a, b) => a.paramCountM - b.paramCountM);
-    groups.push({ value: engine, items: sorted });
-  }
-  groups.sort(
-    (a, b) => (a.items[0]?.paramCountM ?? 0) - (b.items[0]?.paramCountM ?? 0),
-  );
-  return groups;
+	const buckets = new Map<TtsEngineKey, TtsModelInfo[]>();
+	const order: TtsEngineKey[] = [];
+	for (const model of models) {
+		const bucket = buckets.get(model.engine);
+		if (bucket === undefined) {
+			buckets.set(model.engine, [model]);
+			order.push(model.engine);
+		} else {
+			bucket.push(model);
+		}
+	}
+	const groups: TtsEngineGroup[] = [];
+	for (const engine of order) {
+		const items = buckets.get(engine);
+		if (items === undefined || items.length === 0) {
+			continue;
+		}
+		const sorted = [...items].sort((a, b) => a.paramCountM - b.paramCountM);
+		groups.push({ value: engine, items: sorted });
+	}
+	groups.sort(
+		(a, b) => (a.items[0]?.paramCountM ?? 0) - (b.items[0]?.paramCountM ?? 0),
+	);
+	return groups;
 }
 
 /** A picker list group is a real engine group or the synthetic "favorites"
  *  aggregate pinned to the top. Widens {@link TtsEngineGroup} to admit it. */
 export interface TtsListGroup {
-  items: TtsModelInfo[];
-  value: TtsEngineKey | typeof FAVORITES_GROUP_VALUE;
+	items: TtsModelInfo[];
+	value: TtsEngineKey | typeof FAVORITES_GROUP_VALUE;
 }
 
 /**
@@ -209,10 +209,10 @@ export interface TtsListGroup {
  * appear once the user has favorited at least one model.
  */
 export function withTtsFavoritesGroup(
-  groups: readonly TtsEngineGroup[],
-  isFavorite: (modelId: string) => boolean,
+	groups: readonly TtsEngineGroup[],
+	isFavorite: (modelId: string) => boolean,
 ): TtsListGroup[] {
-  return withCoreFavoritesGroup(groups, isFavorite, (model) => model.id);
+	return withCoreFavoritesGroup(groups, isFavorite, (model) => model.id);
 }
 
 /**
@@ -221,23 +221,23 @@ export function withTtsFavoritesGroup(
  * provide so the affordance is legible at a glance.
  */
 export function cloningLabel(cloning: TtsModelInfo["cloning"]): {
-  label: string;
-  tooltip: string;
+	label: string;
+	tooltip: string;
 } | null {
-  if (cloning === "zero_shot_audio") {
-    return {
-      label: "Voice cloning",
-      tooltip: "Zero-shot voice cloning from a short reference audio clip",
-    };
-  }
-  if (cloning === "zero_shot_audio_transcript") {
-    return {
-      label: "Voice cloning",
-      tooltip:
-        "Zero-shot voice cloning from a short reference audio clip and its transcript",
-    };
-  }
-  return null;
+	if (cloning === "zero_shot_audio") {
+		return {
+			label: "Voice cloning",
+			tooltip: "Zero-shot voice cloning from a short reference audio clip",
+		};
+	}
+	if (cloning === "zero_shot_audio_transcript") {
+		return {
+			label: "Voice cloning",
+			tooltip:
+				"Zero-shot voice cloning from a short reference audio clip and its transcript",
+		};
+	}
+	return null;
 }
 
 /**
@@ -247,21 +247,21 @@ export function cloningLabel(cloning: TtsModelInfo["cloning"]): {
  * en-only case — mirroring the STT card's `languageMeta`.
  */
 export function ttsLanguageMeta(languages: readonly string[]): {
-  label: string;
-  tooltip: string;
+	label: string;
+	tooltip: string;
 } {
-  if (languages.length === 0) {
-    return { label: "—", tooltip: "Language support not reported" };
-  }
-  if (languages.length === 1 && languages[0]?.toLowerCase() === "en") {
-    return { label: "English", tooltip: "English only" };
-  }
-  const codes = languages.map((l) => l.toUpperCase());
-  if (languages.length > 4) {
-    return {
-      label: `Multilingual (${languages.length})`,
-      tooltip: `Supports ${languages.length} languages: ${codes.join(", ")}`,
-    };
-  }
-  return { label: codes.join("/"), tooltip: `Supports: ${codes.join(", ")}` };
+	if (languages.length === 0) {
+		return { label: "—", tooltip: "Language support not reported" };
+	}
+	if (languages.length === 1 && languages[0]?.toLowerCase() === "en") {
+		return { label: "English", tooltip: "English only" };
+	}
+	const codes = languages.map((l) => l.toUpperCase());
+	if (languages.length > 4) {
+		return {
+			label: `Multilingual (${languages.length})`,
+			tooltip: `Supports ${languages.length} languages: ${codes.join(", ")}`,
+		};
+	}
+	return { label: codes.join("/"), tooltip: `Supports: ${codes.join(", ")}` };
 }

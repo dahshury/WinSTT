@@ -118,7 +118,10 @@ describe("bestDictionaryMatch", () => {
 	test("scoring keeps only the strictly-higher candidate", () => {
 		// Two terms with the same prefix; the closer one (exact match minus
 		// trailing char) must win over the more distant one.
-		const items = [buildPhoneticTerm("ApplePie"), buildPhoneticTerm("AppleSauce")];
+		const items = [
+			buildPhoneticTerm("ApplePie"),
+			buildPhoneticTerm("AppleSauce"),
+		];
 		expect(bestDictionaryMatch("ApplePi", items)).toBe("ApplePie");
 	});
 
@@ -179,7 +182,11 @@ describe("findSnippetMatches", () => {
 	});
 
 	test("finds a multi-word trigger with surrounding text preserved", () => {
-		const matches = findSnippetMatches("please email me back", "email me", "ping me");
+		const matches = findSnippetMatches(
+			"please email me back",
+			"email me",
+			"ping me",
+		);
 		expect(matches.length).toBe(1);
 		const [m] = matches;
 		expect(m).toBeDefined();
@@ -221,18 +228,24 @@ describe("replaceWithSnippets", () => {
 	});
 
 	test("returns the text unchanged when no snippet matches", () => {
-		expect(replaceWithSnippets("hi there", [{ trigger: "xyz", expansion: "REPLACED" }])).toBe(
-			"hi there"
-		);
+		expect(
+			replaceWithSnippets("hi there", [
+				{ trigger: "xyz", expansion: "REPLACED" },
+			]),
+		).toBe("hi there");
 	});
 
 	test("splices in a single expansion in place of the matched span", () => {
-		const out = replaceWithSnippets("say hello world", [{ trigger: "hello", expansion: "HI" }]);
+		const out = replaceWithSnippets("say hello world", [
+			{ trigger: "hello", expansion: "HI" },
+		]);
 		expect(out).toBe("say HI world");
 	});
 
 	test("splices multiple matches right-to-left, preserving punctuation", () => {
-		const out = replaceWithSnippets("hello world hello.", [{ trigger: "hello", expansion: "HI" }]);
+		const out = replaceWithSnippets("hello world hello.", [
+			{ trigger: "hello", expansion: "HI" },
+		]);
 		expect(out).toBe("HI world HI.");
 	});
 

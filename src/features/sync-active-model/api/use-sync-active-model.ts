@@ -78,7 +78,7 @@ const SWAP_FAILURE_GUARD_WINDOW_MS = 500;
 function serverIsAuthoritative(
 	isLoaded: boolean,
 	serverStatus: string,
-	runtimeModel: string | null
+	runtimeModel: string | null,
 ): runtimeModel is string {
 	return isLoaded && serverStatus === "running" && runtimeModel !== null;
 }
@@ -87,7 +87,7 @@ function serverIsAuthoritative(
 function reconciliationWouldChangeSettings(
 	runtimeModel: string,
 	settingsModel: string | null,
-	activeMain: string | null
+	activeMain: string | null,
 ): boolean {
 	return activeMain === null && runtimeModel !== settingsModel;
 }
@@ -106,12 +106,16 @@ function shouldAdoptRuntimeModel(
 	serverStatus: string,
 	runtimeModel: string | null,
 	settingsModel: string | null,
-	activeMain: string | null
+	activeMain: string | null,
 ): runtimeModel is string {
 	if (!serverIsAuthoritative(isLoaded, serverStatus, runtimeModel)) {
 		return false;
 	}
-	return reconciliationWouldChangeSettings(runtimeModel, settingsModel, activeMain);
+	return reconciliationWouldChangeSettings(
+		runtimeModel,
+		settingsModel,
+		activeMain,
+	);
 }
 
 export interface ImplicitSwapInputs {
@@ -147,7 +151,11 @@ export interface ImplicitSwapInputs {
  */
 export function shouldOpenImplicitSwap(inputs: ImplicitSwapInputs): boolean {
 	const { previousModel, settingsModel, runtimeModel, now } = inputs;
-	if (previousModel === undefined || previousModel === settingsModel || !settingsModel) {
+	if (
+		previousModel === undefined ||
+		previousModel === settingsModel ||
+		!settingsModel
+	) {
 		return false;
 	}
 	if (now - inputs.lastIpcLoadAt < IPC_LOAD_GUARD_WINDOW_MS) {
@@ -163,7 +171,9 @@ export function useSyncActiveModel(): void {
 	const serverStatus = useConnectionStore((s) => s.serverStatus);
 	const runtimeModel = useConnectionStore((s) => s.runtimeInfo?.model ?? null);
 	const isLoaded = useSettingsStore((s) => s.isLoaded);
-	const settingsModel = useSettingsStore((s) => s.settings.model?.model ?? null);
+	const settingsModel = useSettingsStore(
+		(s) => s.settings.model?.model ?? null,
+	);
 	const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
 
 	// Tracks the previously-observed settings.model so we can distinguish
@@ -207,11 +217,21 @@ export function useSyncActiveModel(): void {
 				lastSwapFailedAt: recentSwapFailedAt(),
 			})
 		) {
-			useModelSwapStore.getState().beginSwap("main", previousModel ?? "", settingsModel ?? "");
+			useModelSwapStore
+				.getState()
+				.beginSwap("main", previousModel ?? "", settingsModel ?? "");
 		}
 		prevSettingsModelRef.current = settingsModel;
 
-		if (shouldAdoptRuntimeModel(isLoaded, serverStatus, runtimeModel, settingsModel, activeMain)) {
+		if (
+			shouldAdoptRuntimeModel(
+				isLoaded,
+				serverStatus,
+				runtimeModel,
+				settingsModel,
+				activeMain,
+			)
+		) {
 			// Look up the runtime model in the catalog so we can also patch
 			// `model.backend` to match. Without this, adoptRuntime only fixes
 			// `model.model` and leaves `model.backend` at whatever stale
@@ -224,7 +244,9 @@ export function useSyncActiveModel(): void {
 			// confusing inconsistencies and any backend-conditional code
 			// downstream (quantization eligibility, fp16 promotion, …)
 			// reads the wrong answer.
-			const catalogEntry = useCatalogStore.getState().models.find((m) => m.id === runtimeModel);
+			const catalogEntry = useCatalogStore
+				.getState()
+				.models.find((m) => m.id === runtimeModel);
 			if (catalogEntry?.backend) {
 				updateModelSettings({
 					model: runtimeModel,
@@ -236,5 +258,11 @@ export function useSyncActiveModel(): void {
 			// the exact drift the typed ``ModelPatch`` now forbids. The picker's
 			// fallback effect will pick a valid model once the catalog refreshes.
 		}
-	}, [isLoaded, serverStatus, runtimeModel, settingsModel, updateModelSettings]);
+	}, [
+		isLoaded,
+		serverStatus,
+		runtimeModel,
+		settingsModel,
+		updateModelSettings,
+	]);
 }

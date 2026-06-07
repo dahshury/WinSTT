@@ -26,7 +26,9 @@ export function useFitSize(ref: RefObject<HTMLElement | null>): VisualizerSize {
 
 		const update = () => {
 			const min = Math.min(el.clientWidth, el.clientHeight);
-			const next = SIZE_THRESHOLDS.find(([, threshold]) => min >= threshold)?.[0] ?? "icon";
+			const next =
+				SIZE_THRESHOLDS.find(([, threshold]) => min >= threshold)?.[0] ??
+				"icon";
 			setSize((prev) => (prev === next ? prev : next));
 		};
 

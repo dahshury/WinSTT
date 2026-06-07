@@ -1,58 +1,55 @@
 import { useCallback } from "react";
 import {
-  isSelectableRealtimeModel,
-  readLastLocalSttModelHistory,
-  type useCatalogStore,
+	isSelectableRealtimeModel,
+	readLastLocalSttModelHistory,
+	type useCatalogStore,
 } from "@/entities/model-catalog";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
 import {
-  canDeleteSttQuant,
-  resolveSttDeleteRecovery,
-  useQuantActions,
+	canDeleteSttQuant,
+	resolveSttDeleteRecovery,
+	useQuantActions,
 } from "@/features/model-download";
 import type { useModelSwapController } from "@/features/swap-model";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import type {
-  CatalogModels,
-  ModelSettings,
-  StatesById,
-  UpdateQualityFn,
+	CatalogModels,
+	ModelSettings,
+	StatesById,
+	UpdateQualityFn,
 } from "../lib/types";
 
 type CatalogModelInfo = ReturnType<
-  ReturnType<typeof useCatalogStore.getState>["getModel"]
+	ReturnType<typeof useCatalogStore.getState>["getModel"]
 >;
 type GetModelFn = ReturnType<typeof useCatalogStore.getState>["getModel"];
 type SwapController = ReturnType<typeof useModelSwapController>;
 
 interface UseQuantDeletionArgs {
-  catalogModels: CatalogModels;
-  controller: SwapController;
-  currentQuantization: OnnxQuantization;
-  getModel: GetModelFn;
-  selectedInfo: CatalogModelInfo;
-  selectedModel: string;
-  settings: ModelSettings;
-  statesById: StatesById;
-  updateQuality: UpdateQualityFn;
-  useMainModelFlag: boolean;
+	catalogModels: CatalogModels;
+	controller: SwapController;
+	currentQuantization: OnnxQuantization;
+	getModel: GetModelFn;
+	selectedInfo: CatalogModelInfo;
+	selectedModel: string;
+	settings: ModelSettings;
+	statesById: StatesById;
+	updateQuality: UpdateQualityFn;
+	useMainModelFlag: boolean;
 }
 
 interface QuantDeletion {
-  canDeleteQuant: (
-    modelId: string,
-    quantization: OnnxQuantization,
-  ) => boolean;
-  handleDownloadSnapshot: ReturnType<
-    typeof useQuantActions
-  >["handleDownloadSnapshot"];
-  handleDownloadAction: ReturnType<
-    typeof useQuantActions
-  >["handleDownloadAction"];
-  handleGuardedDeleteQuant: (
-    modelId: string,
-    quantization: OnnxQuantization,
-  ) => void;
+	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
+	handleDownloadSnapshot: ReturnType<
+		typeof useQuantActions
+	>["handleDownloadSnapshot"];
+	handleDownloadAction: ReturnType<
+		typeof useQuantActions
+	>["handleDownloadAction"];
+	handleGuardedDeleteQuant: (
+		modelId: string,
+		quantization: OnnxQuantization,
+	) => void;
 }
 
 /**
@@ -64,100 +61,100 @@ interface QuantDeletion {
  * whose files just vanished. Extracted verbatim from the panel.
  */
 export function useQuantDeletion({
-  catalogModels,
-  controller,
-  currentQuantization,
-  getModel,
-  selectedInfo,
-  selectedModel,
-  settings,
-  statesById,
-  updateQuality,
-  useMainModelFlag,
+	catalogModels,
+	controller,
+	currentQuantization,
+	getModel,
+	selectedInfo,
+	selectedModel,
+	settings,
+	statesById,
+	updateQuality,
+	useMainModelFlag,
 }: UseQuantDeletionArgs): QuantDeletion {
-  // Per-quant badge handlers (delete + byte-level pause/resume/cancel) live
-  // in one shared feature-layer hook so the settings panel and the detached
-  // footer picker wire the exact same controls into SttModelSelector.
-  const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
-    useQuantActions();
-  const canDeleteQuant = useCallback(
-    (modelId: string, quantization: OnnxQuantization) =>
-      canDeleteSttQuant(catalogModels, statesById, modelId, quantization),
-    [catalogModels, statesById],
-  );
-  const handleGuardedDeleteQuant = useCallback(
-    (modelId: string, quantization: OnnxQuantization) => {
-      const recovery = resolveSttDeleteRecovery({
-        currentMainModel: selectedModel,
-        currentQuantization,
-        currentRealtimeModel: settings?.realtimeModel,
-        mainModelInfo: selectedInfo,
-        modelId,
-        models: catalogModels,
-        previousModelIds: readLastLocalSttModelHistory(),
-        quantization,
-        statesById,
-      });
-      if (!recovery.canDelete) {
-        return;
-      }
-      const requiresRecovery =
-        recovery.mainTarget !== undefined ||
-        recovery.realtimeTarget !== undefined;
-      if (
-        requiresRecovery &&
-        useFileTranscriptionStore.getState().queueActive
-      ) {
-        return;
-      }
-      if (recovery.mainTarget) {
-        controller.handleModelChange(
-          recovery.mainTarget.modelId,
-          recovery.mainTarget.quantization,
-        );
-      }
-      if (recovery.realtimeTarget !== undefined) {
-        if (recovery.realtimeTarget === null) {
-          controller.handleRealtimeModelChange("");
-          if (useMainModelFlag) {
-            updateQuality({ useMainModelForRealtime: false });
-          }
-        } else {
-          controller.handleRealtimeModelChange(
-            recovery.realtimeTarget.modelId,
-            recovery.realtimeTarget.quantization,
-          );
-          const nextMainId = recovery.mainTarget?.modelId ?? selectedModel;
-          const realtimeInfo = getModel(recovery.realtimeTarget.modelId);
-          const shouldReuseMain =
-            recovery.realtimeTarget.modelId === nextMainId &&
-            realtimeInfo !== undefined &&
-            isSelectableRealtimeModel(realtimeInfo);
-          if (shouldReuseMain !== useMainModelFlag) {
-            updateQuality({ useMainModelForRealtime: shouldReuseMain });
-          }
-        }
-      }
-      handleDeleteQuant(modelId, quantization);
-    },
-    [
-      catalogModels,
-      controller,
-      currentQuantization,
-      getModel,
-      handleDeleteQuant,
-      selectedInfo,
-      selectedModel,
-      settings?.realtimeModel,
-      statesById,
-      updateQuality,
-      useMainModelFlag,
-    ],
-  );
-  return {
-    canDeleteQuant,
-    handleDownloadSnapshot,
-    handleDownloadAction,
-    handleGuardedDeleteQuant,
-  };
+	// Per-quant badge handlers (delete + byte-level pause/resume/cancel) live
+	// in one shared feature-layer hook so the settings panel and the detached
+	// footer picker wire the exact same controls into SttModelSelector.
+	const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
+		useQuantActions();
+	const canDeleteQuant = useCallback(
+		(modelId: string, quantization: OnnxQuantization) =>
+			canDeleteSttQuant(catalogModels, statesById, modelId, quantization),
+		[catalogModels, statesById],
+	);
+	const handleGuardedDeleteQuant = useCallback(
+		(modelId: string, quantization: OnnxQuantization) => {
+			const recovery = resolveSttDeleteRecovery({
+				currentMainModel: selectedModel,
+				currentQuantization,
+				currentRealtimeModel: settings?.realtimeModel,
+				mainModelInfo: selectedInfo,
+				modelId,
+				models: catalogModels,
+				previousModelIds: readLastLocalSttModelHistory(),
+				quantization,
+				statesById,
+			});
+			if (!recovery.canDelete) {
+				return;
+			}
+			const requiresRecovery =
+				recovery.mainTarget !== undefined ||
+				recovery.realtimeTarget !== undefined;
+			if (
+				requiresRecovery &&
+				useFileTranscriptionStore.getState().queueActive
+			) {
+				return;
+			}
+			if (recovery.mainTarget) {
+				controller.handleModelChange(
+					recovery.mainTarget.modelId,
+					recovery.mainTarget.quantization,
+				);
+			}
+			if (recovery.realtimeTarget !== undefined) {
+				if (recovery.realtimeTarget === null) {
+					controller.handleRealtimeModelChange("");
+					if (useMainModelFlag) {
+						updateQuality({ useMainModelForRealtime: false });
+					}
+				} else {
+					controller.handleRealtimeModelChange(
+						recovery.realtimeTarget.modelId,
+						recovery.realtimeTarget.quantization,
+					);
+					const nextMainId = recovery.mainTarget?.modelId ?? selectedModel;
+					const realtimeInfo = getModel(recovery.realtimeTarget.modelId);
+					const shouldReuseMain =
+						recovery.realtimeTarget.modelId === nextMainId &&
+						realtimeInfo !== undefined &&
+						isSelectableRealtimeModel(realtimeInfo);
+					if (shouldReuseMain !== useMainModelFlag) {
+						updateQuality({ useMainModelForRealtime: shouldReuseMain });
+					}
+				}
+			}
+			handleDeleteQuant(modelId, quantization);
+		},
+		[
+			catalogModels,
+			controller,
+			currentQuantization,
+			getModel,
+			handleDeleteQuant,
+			selectedInfo,
+			selectedModel,
+			settings?.realtimeModel,
+			statesById,
+			updateQuality,
+			useMainModelFlag,
+		],
+	);
+	return {
+		canDeleteQuant,
+		handleDownloadSnapshot,
+		handleDownloadAction,
+		handleGuardedDeleteQuant,
+	};
 }

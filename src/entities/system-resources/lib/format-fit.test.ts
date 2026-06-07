@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import type { FitAssessmentEntry, FitSeverity, FitTarget } from "@/shared/api/ipc-client";
-import { badgeFor, hasUsableFootprint, labelBytes, rowHint, targetLabel } from "./format-fit";
+import type {
+	FitAssessmentEntry,
+	FitSeverity,
+	FitTarget,
+} from "@/shared/api/ipc-client";
+import {
+	badgeFor,
+	hasUsableFootprint,
+	labelBytes,
+	rowHint,
+	targetLabel,
+} from "./format-fit";
 
 function entry(opts: Partial<FitAssessmentEntry> = {}): FitAssessmentEntry {
 	return {
@@ -13,7 +23,10 @@ function entry(opts: Partial<FitAssessmentEntry> = {}): FitAssessmentEntry {
 }
 
 /** Simple translator that echoes the key + serialized vars for assertion. */
-function translator(key: string, vars?: Record<string, string | number>): string {
+function translator(
+	key: string,
+	vars?: Record<string, string | number>,
+): string {
 	if (!vars) {
 		return key;
 	}
@@ -37,7 +50,9 @@ describe("hasUsableFootprint", () => {
 	});
 
 	test("returns true when required_bytes is positive", () => {
-		expect(hasUsableFootprint(entry({ required_bytes: 1024 * 1024 }))).toBe(true);
+		expect(hasUsableFootprint(entry({ required_bytes: 1024 * 1024 }))).toBe(
+			true,
+		);
 	});
 });
 
@@ -91,25 +106,24 @@ describe("rowHint", () => {
 		critical: "rowHintCritical",
 	};
 
-	test.each<FitSeverity>([
-		"ok",
-		"warning",
-		"critical",
-	])("renders severity-specific hint key for %s", (severity) => {
-		const out = rowHint(
-			entry({
-				severity,
-				target: "gpu",
-				required_bytes: 600 * 1024 * 1024,
-				available_bytes: 24 * 1024 ** 3,
-			}),
-			translator
-		);
-		expect(out).toContain(HINT_KEY_FOR[severity]);
-		expect(out).toContain("req=");
-		expect(out).toContain("avail=");
-		expect(out).toContain("target=targetGpu");
-	});
+	test.each<FitSeverity>(["ok", "warning", "critical"])(
+		"renders severity-specific hint key for %s",
+		(severity) => {
+			const out = rowHint(
+				entry({
+					severity,
+					target: "gpu",
+					required_bytes: 600 * 1024 * 1024,
+					available_bytes: 24 * 1024 ** 3,
+				}),
+				translator,
+			);
+			expect(out).toContain(HINT_KEY_FOR[severity]);
+			expect(out).toContain("req=");
+			expect(out).toContain("avail=");
+			expect(out).toContain("target=targetGpu");
+		},
+	);
 
 	test("includes target label for cpu", () => {
 		const out = rowHint(
@@ -119,7 +133,7 @@ describe("rowHint", () => {
 				required_bytes: 12 * 1024 ** 3,
 				available_bytes: 16 * 1024 ** 3,
 			}),
-			translator
+			translator,
 		);
 		expect(out).toContain("target=targetCpu");
 	});

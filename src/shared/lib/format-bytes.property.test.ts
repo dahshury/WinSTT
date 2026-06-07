@@ -17,11 +17,11 @@ describe("formatBytes property tests", () => {
 					fc.constant(Number.POSITIVE_INFINITY),
 					fc.constant(Number.NEGATIVE_INFINITY),
 					fc.integer({ max: 0 }),
-					fc.double({ max: 0, noNaN: false })
+					fc.double({ max: 0, noNaN: false }),
 				),
-				(value) => formatBytes(value as number | null | undefined) === null
+				(value) => formatBytes(value as number | null | undefined) === null,
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -32,7 +32,7 @@ describe("formatBytes property tests", () => {
 				const b = formatBytes(bytes);
 				return a === b;
 			}),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -47,9 +47,9 @@ describe("formatBytes property tests", () => {
 						return false;
 					}
 					return /(B|KB|MB|GB)$/.test(out);
-				}
+				},
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -68,9 +68,9 @@ describe("formatBytes property tests", () => {
 					const valA = Number.parseFloat(outA);
 					const valB = Number.parseFloat(outB);
 					return valA <= valB;
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 
@@ -87,9 +87,9 @@ describe("formatBytes property tests", () => {
 						return false;
 					}
 					return Number.parseFloat(outA) <= Number.parseFloat(outB);
-				}
+				},
 			),
-			{ numRuns: 200 }
+			{ numRuns: 200 },
 		);
 	});
 });

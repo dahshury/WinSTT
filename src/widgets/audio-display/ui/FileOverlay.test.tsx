@@ -21,7 +21,7 @@ function renderOverlay() {
 	return render(
 		<IntlProvider>
 			<FileOverlay />
-		</IntlProvider>
+		</IntlProvider>,
 	);
 }
 
@@ -55,7 +55,9 @@ describe("FileOverlay", () => {
 	test("shows the active percentage for a transcribing row", () => {
 		useFileTranscriptionStore
 			.getState()
-			.setItems([makeItem({ id: "a", status: "transcribing", progress: 0.42 })]);
+			.setItems([
+				makeItem({ id: "a", status: "transcribing", progress: 0.42 }),
+			]);
 		const { container } = renderOverlay();
 		expect(container.textContent).toContain("42");
 	});
@@ -71,7 +73,10 @@ describe("FileOverlay", () => {
 	test("exposes the queue region with a count", () => {
 		useFileTranscriptionStore
 			.getState()
-			.setItems([makeItem({ id: "a", status: "complete", progress: 1 }), makeItem({ id: "b" })]);
+			.setItems([
+				makeItem({ id: "a", status: "complete", progress: 1 }),
+				makeItem({ id: "b" }),
+			]);
 		const { container } = renderOverlay();
 		// 1 of 2 done
 		expect(container.querySelector("[aria-label]")).not.toBeNull();

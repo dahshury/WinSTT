@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, mock, test } from "bun:test";
 import { ipcClientMock } from "@test/mocks/ipc-client";
 import fc from "fast-check";
-import { ModelFamilySchema, TranscriberBackendSchema } from "@/shared/api/schema.zod";
+import {
+	ModelFamilySchema,
+	TranscriberBackendSchema,
+} from "@/shared/api/schema.zod";
 
 // Stub ipc-client so module-load init doesn't blow up — catalog-store.test.ts
 // uses the same pattern.
@@ -70,7 +73,9 @@ function assertInvariants(real: Real, m: Model): void {
 	//    dedupe; multiple valid items with same id all show up. We only assert
 	//    that the count equals what we expected.
 	if (s.models.length !== m.expectedValidIds.length) {
-		throw new Error(`length mismatch real=${s.models.length} model=${m.expectedValidIds.length}`);
+		throw new Error(
+			`length mismatch real=${s.models.length} model=${m.expectedValidIds.length}`,
+		);
 	}
 	// 3. Each model has all required fields populated (mapper guarantees this).
 	for (const mdl of s.models) {
@@ -192,7 +197,9 @@ const rawValidArb: fc.Arbitrary<RawValid> = fc.record({
 	final_reuse_safe: fc.boolean(),
 	onnx_model_name: fc.option(fc.string({ maxLength: 16 }), { nil: null }),
 	description: fc.string({ maxLength: 32 }),
-	available_quantizations: fc.array(fc.string({ maxLength: 6 }), { maxLength: 3 }),
+	available_quantizations: fc.array(fc.string({ maxLength: 6 }), {
+		maxLength: 3,
+	}),
 });
 
 const invalidRawArb = fc.oneof(
@@ -203,17 +210,20 @@ const invalidRawArb = fc.oneof(
 	fc.array(fc.string()),
 	fc.record({ id: fc.string(), backend: fc.constant("unknown_backend") }),
 	fc.record({ id: fc.string(), family: fc.constant("unknown_family") }),
-	fc.record({ displayName: fc.string() }) // camelCase = wrong shape (schema is snake_case)
+	fc.record({ displayName: fc.string() }), // camelCase = wrong shape (schema is snake_case)
 );
 
 const commandsArb = fc.commands(
 	[
 		fc
-			.tuple(fc.array(rawValidArb, { maxLength: 8 }), fc.array(invalidRawArb, { maxLength: 6 }))
+			.tuple(
+				fc.array(rawValidArb, { maxLength: 8 }),
+				fc.array(invalidRawArb, { maxLength: 6 }),
+			)
 			.map(([valid, invalid]) => new SetModelsCmd(valid, invalid)),
 		fc.string({ maxLength: 12 }).map((id) => new GetModelMissCmd(id)),
 	],
-	{ maxCommands: 25 }
+	{ maxCommands: 25 },
 );
 
 test("catalog-store: arbitrary command sequence keeps shape, enum, and selector invariants", () => {
@@ -222,7 +232,7 @@ test("catalog-store: arbitrary command sequence keeps shape, enum, and selector 
 			resetStore();
 			fc.modelRun(() => ({ model: freshModel(), real: useCatalogStore }), cmds);
 		}),
-		{ numRuns: 60 }
+		{ numRuns: 60 },
 	);
 });
 
@@ -241,19 +251,22 @@ test("catalog-store: setModels(valid) twice yields identical models length and f
 			const fams2 = s2.getFamilies().sort().join(",");
 			return len1 === len2 && fams1 === fams2 && s2.isLoaded;
 		}),
-		{ numRuns: 40 }
+		{ numRuns: 40 },
 	);
 });
 
 // Invariant: ALL invalid items together → models stays empty AND isLoaded flips true.
 test("catalog-store: setModels with only invalid items leaves models empty but flags loaded", () => {
 	fc.assert(
-		fc.property(fc.array(invalidRawArb, { minLength: 1, maxLength: 8 }), (invalidList) => {
-			resetStore();
-			useCatalogStore.getState().setModels(invalidList);
-			const s = useCatalogStore.getState();
-			return s.models.length === 0 && s.isLoaded === true;
-		}),
-		{ numRuns: 40 }
+		fc.property(
+			fc.array(invalidRawArb, { minLength: 1, maxLength: 8 }),
+			(invalidList) => {
+				resetStore();
+				useCatalogStore.getState().setModels(invalidList);
+				const s = useCatalogStore.getState();
+				return s.models.length === 0 && s.isLoaded === true;
+			},
+		),
+		{ numRuns: 40 },
 	);
 });

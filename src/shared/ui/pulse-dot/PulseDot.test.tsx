@@ -28,7 +28,13 @@ describe("PulseDot", () => {
 	});
 
 	test("merges custom className and forwards props", () => {
-		render(<PulseDot className="size-2 text-accent" data-testid="dot" id="model-loading" />);
+		render(
+			<PulseDot
+				className="size-2 text-accent"
+				data-testid="dot"
+				id="model-loading"
+			/>,
+		);
 
 		const dot = screen.getByTestId("dot");
 		expect(dot.id).toBe("model-loading");

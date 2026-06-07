@@ -52,7 +52,8 @@ function addDays(d: Date, n: number): Date {
 // ── Gregorian ──────────────────────────────────────────────────────────────
 
 const gregorian: CalendarSystem = {
-	monthLabel: (date) => date.toLocaleString(undefined, { month: "long", year: "numeric" }),
+	monthLabel: (date) =>
+		date.toLocaleString(undefined, { month: "long", year: "numeric" }),
 	monthOnlyLabel: (date) => date.toLocaleString(undefined, { month: "long" }),
 	yearLabel: (date) => String(date.getFullYear()),
 	yearRangeLabel: (date, count) => {
@@ -62,13 +63,17 @@ const gregorian: CalendarSystem = {
 	dayNumber: (date) => date.getDate(),
 	isSameDisplayMonth: (a, b) =>
 		a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth(),
-	startOfDisplayMonth: (date) => new Date(date.getFullYear(), date.getMonth(), 1),
+	startOfDisplayMonth: (date) =>
+		new Date(date.getFullYear(), date.getMonth(), 1),
 	addMonths: (date, n) => new Date(date.getFullYear(), date.getMonth() + n, 1),
 	addYears: (date, n) => new Date(date.getFullYear() + n, date.getMonth(), 1),
 	monthsOfYear: (date) =>
 		Array.from({ length: 12 }, (_, m) => {
 			const d = new Date(date.getFullYear(), m, 1);
-			return { date: d, label: d.toLocaleString(undefined, { month: "short" }) };
+			return {
+				date: d,
+				label: d.toLocaleString(undefined, { month: "short" }),
+			};
 		}),
 	yearsAround: (date, count) => {
 		const half = Math.floor(count / 2);
@@ -88,7 +93,9 @@ const hijriNumeric = new Intl.DateTimeFormat(HIJRI_LOCALE, {
 	month: "numeric",
 	year: "numeric",
 });
-const hijriMonthShort = new Intl.DateTimeFormat(HIJRI_LOCALE, { month: "short" });
+const hijriMonthShort = new Intl.DateTimeFormat(HIJRI_LOCALE, {
+	month: "short",
+});
 const hijriMonthOnly = new Intl.DateTimeFormat(HIJRI_LOCALE, { month: "long" });
 const hijriMonthYear = new Intl.DateTimeFormat(HIJRI_LOCALE, {
 	month: "long",
@@ -193,7 +200,10 @@ const hijri: CalendarSystem = {
 	monthsOfYear: (date) => {
 		let cursor = startOfHijriYear(date);
 		return Array.from({ length: 12 }, () => {
-			const entry: LabeledDate = { date: cursor, label: hijriMonthShort.format(cursor) };
+			const entry: LabeledDate = {
+				date: cursor,
+				label: hijriMonthShort.format(cursor),
+			};
 			cursor = nextHijriMonthStart(cursor);
 			return entry;
 		});
@@ -214,12 +224,15 @@ const hijri: CalendarSystem = {
 		// Move the cursor to roughly mid-year (~day 177) of the anchor's Hijri year
 		// using Gregorian day-arithmetic only. (m-1)*~29.5 + d days into the year,
 		// then shift to day 177.
-		const dayInHijriYear = Math.round((anchorParts.m - 1) * 29.5) + anchorParts.d;
+		const dayInHijriYear =
+			Math.round((anchorParts.m - 1) * 29.5) + anchorParts.d;
 		const midYearBase = addDays(startOfDay(date), 177 - dayInHijriYear);
 		return Array.from({ length: count }, (_, i) => {
 			const yearOffset = i - half;
 			const cellDate =
-				yearOffset === 0 ? midYearBase : addDays(midYearBase, yearOffset * HIJRI_YEAR_AVG_DAYS);
+				yearOffset === 0
+					? midYearBase
+					: addDays(midYearBase, yearOffset * HIJRI_YEAR_AVG_DAYS);
 			return { date: cellDate, label: String(anchorYear + yearOffset) };
 		});
 	},

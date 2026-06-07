@@ -9,7 +9,13 @@ import {
 
 describe("VISUALIZER_TYPES", () => {
 	test("contains the canonical five visualizer types", () => {
-		const expected: VisualizerType[] = ["aura", "bar", "grid", "radial", "wave"];
+		const expected: VisualizerType[] = [
+			"aura",
+			"bar",
+			"grid",
+			"radial",
+			"wave",
+		];
 		expect(VISUALIZER_TYPES.toSorted()).toEqual(expected.toSorted());
 	});
 });

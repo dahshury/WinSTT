@@ -1,8 +1,8 @@
 import { cn } from "@/shared/lib/cn";
 
 interface SliderHashMarksProps {
-  count: number;
-  pctFor: (i: number) => number;
+	count: number;
+	pctFor: (i: number) => number;
 }
 
 /**
@@ -11,25 +11,25 @@ interface SliderHashMarksProps {
  * one mark per step while continuous sliders show fixed deciles.
  */
 export function SliderHashMarks({ count, pctFor }: SliderHashMarksProps) {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0"
-      data-slot="elastic-slider-hash-marks"
-    >
-      {Array.from({ length: count }, (_, i) => {
-        const pct = pctFor(i);
-        return (
-          <div
-            className={cn(
-              "absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-200",
-              "bg-transparent group-hover/elastic-slider:bg-foreground/40 group-data-[dragging]/elastic-slider:bg-foreground/40",
-            )}
-            key={`hash-${pct}`}
-            style={{ left: `${pct}%` }}
-          />
-        );
-      })}
-    </div>
-  );
+	return (
+		<div
+			aria-hidden="true"
+			className="pointer-events-none absolute inset-0"
+			data-slot="elastic-slider-hash-marks"
+		>
+			{Array.from({ length: count }, (_, i) => {
+				const pct = pctFor(i);
+				return (
+					<div
+						className={cn(
+							"absolute top-1/2 h-2 w-px -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-200",
+							"bg-transparent group-hover/elastic-slider:bg-foreground/40 group-data-[dragging]/elastic-slider:bg-foreground/40",
+						)}
+						key={`hash-${pct}`}
+						style={{ left: `${pct}%` }}
+					/>
+				);
+			})}
+		</div>
+	);
 }

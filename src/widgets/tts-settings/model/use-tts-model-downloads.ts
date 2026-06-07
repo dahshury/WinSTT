@@ -28,7 +28,10 @@ function percentFromFraction(progress: number): number {
 	return Math.max(0, Math.min(100, Math.round(progress * 100)));
 }
 
-function monotonicPercent(previous: number | null | undefined, next: number): number {
+function monotonicPercent(
+	previous: number | null | undefined,
+	next: number,
+): number {
 	return previous == null ? next : Math.max(previous, next);
 }
 
@@ -38,8 +41,15 @@ function monotonicPercent(previous: number | null | undefined, next: number): nu
  * to the backend, and re-fetches model state on completion so badges flip.
  */
 export function useTtsModelDownloads(): {
-	getSnapshot: (modelId: string, quant: string) => TtsDownloadSnapshot | undefined;
-	onDownloadAction: (action: DownloadAction, modelId: string, quant: string) => void;
+	getSnapshot: (
+		modelId: string,
+		quant: string,
+	) => TtsDownloadSnapshot | undefined;
+	onDownloadAction: (
+		action: DownloadAction,
+		modelId: string,
+		quant: string,
+	) => void;
 } {
 	const [snaps, setSnaps] = useState<Record<string, TtsDownloadSnapshot>>({});
 	const snapsRef = useRef(snaps);
@@ -67,22 +77,27 @@ export function useTtsModelDownloads(): {
 						// Backend sends a 0.0–1.0 fraction; the shared QuantShelf (and the STT
 						// path's download-store) work in 0–100, so scale here — without this a
 						// finished download (fraction 1.0) rendered as a stuck "1%".
-						progress: monotonicPercent(previous?.progress, percentFromFraction(p.progress)),
+						progress: monotonicPercent(
+							previous?.progress,
+							percentFromFraction(p.progress),
+						),
 						paused: previous?.paused ?? false,
 					},
 				};
 			});
 		});
-		const offComplete = onTtsModelDownloadCompleteCatalog((model, _cancelled, quantization) => {
-			const key = keyOf(model, quantization);
-			setSnaps((prev) => {
-				const next = { ...prev };
-				delete next[key];
-				return next;
-			});
-			// Re-fetch cache state so the "Downloaded" badge flips.
-			refresh();
-		});
+		const offComplete = onTtsModelDownloadCompleteCatalog(
+			(model, _cancelled, quantization) => {
+				const key = keyOf(model, quantization);
+				setSnaps((prev) => {
+					const next = { ...prev };
+					delete next[key];
+					return next;
+				});
+				// Re-fetch cache state so the "Downloaded" badge flips.
+				refresh();
+			},
+		);
 		return () => {
 			offProgress();
 			offComplete();

@@ -36,7 +36,7 @@ function renderPicker(open: boolean, inline = false) {
 			searchPlaceholder="Search models"
 			trigger={<button type="button">Open</button>}
 			value="tiny"
-		/>
+		/>,
 	);
 }
 
@@ -85,7 +85,7 @@ describe("ModelPicker popup animation", () => {
 				searchPlaceholder="Search models"
 				trigger={<button type="button">Open</button>}
 				value="tiny"
-			/>
+			/>,
 		);
 
 		expect(screen.getByPlaceholderText("Search models")).toBeDefined();
@@ -122,7 +122,7 @@ describe("ModelPicker popup animation", () => {
 				searchPlaceholder="Search models"
 				trigger={<button type="button">Open</button>}
 				value="tiny"
-			/>
+			/>,
 		);
 
 		expect(screen.getByTestId("heavy-list")).toBeDefined();
@@ -135,7 +135,7 @@ describe("ModelPicker popup animation", () => {
 				searchPlaceholder="Search models"
 				trigger={<button type="button">Open</button>}
 				value="tiny"
-			/>
+			/>,
 		);
 
 		expect(screen.getByTestId("heavy-list")).toBeDefined();
@@ -152,7 +152,7 @@ describe("ModelPicker popup animation", () => {
 				searchPlaceholder="Search models"
 				trigger={<button type="button">Open</button>}
 				value="tiny"
-			/>
+			/>,
 		);
 
 		const popup = document.querySelector('[data-slot="model-picker-popup"]');
@@ -176,11 +176,17 @@ describe("ModelPicker popup animation", () => {
 					<div data-model-id="tiny">Tiny</div>
 					<div data-model-id="target">Target</div>
 				</div>
-			</div>
+			</div>,
 		);
-		const root = container.querySelector<HTMLElement>('[data-slot="model-picker-popup"]');
-		const list = container.querySelector<HTMLElement>('[data-slot="stt-model-list"]');
-		const target = container.querySelector<HTMLElement>('[data-model-id="target"]');
+		const root = container.querySelector<HTMLElement>(
+			'[data-slot="model-picker-popup"]',
+		);
+		const list = container.querySelector<HTMLElement>(
+			'[data-slot="stt-model-list"]',
+		);
+		const target = container.querySelector<HTMLElement>(
+			'[data-model-id="target"]',
+		);
 		if (!root || !list || !target) {
 			throw new Error("test DOM did not render");
 		}

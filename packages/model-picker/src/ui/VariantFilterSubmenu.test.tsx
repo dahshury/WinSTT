@@ -17,14 +17,18 @@ describe("VariantFilterSubmenu", () => {
 describe("VariantFilterSubmenu helpers", () => {
 	describe("getVariantCount", () => {
 		test("returns the count from the map", () => {
-			const map = new Map<import("../lib/model-variant-utils").ModelVariant | "none", number>([
-				["free", 7],
-			]);
+			const map = new Map<
+				import("../lib/model-variant-utils").ModelVariant | "none",
+				number
+			>([["free", 7]]);
 			expect(helpers.getVariantCount(map, "free")).toBe(7);
 		});
 
 		test("returns 0 for missing variant", () => {
-			const map = new Map<import("../lib/model-variant-utils").ModelVariant | "none", number>();
+			const map = new Map<
+				import("../lib/model-variant-utils").ModelVariant | "none",
+				number
+			>();
 			expect(helpers.getVariantCount(map, "none")).toBe(0);
 		});
 	});
@@ -91,8 +95,13 @@ describe("VariantMenuItem", () => {
 	test("renders variant label and count", () => {
 		const { container } = render(
 			<DropdownMenu>
-				<VariantMenuItem count={5} isSelected={false} onSelect={() => undefined} variant="free" />
-			</DropdownMenu>
+				<VariantMenuItem
+					count={5}
+					isSelected={false}
+					onSelect={() => undefined}
+					variant="free"
+				/>
+			</DropdownMenu>,
 		);
 		expect(container.textContent).toContain("Free");
 		expect(container.textContent).toContain("5");
@@ -101,8 +110,13 @@ describe("VariantMenuItem", () => {
 	test("renders none variant as Standard", () => {
 		const { container } = render(
 			<DropdownMenu>
-				<VariantMenuItem count={2} isSelected={false} onSelect={() => undefined} variant="none" />
-			</DropdownMenu>
+				<VariantMenuItem
+					count={2}
+					isSelected={false}
+					onSelect={() => undefined}
+					variant="none"
+				/>
+			</DropdownMenu>,
 		);
 		expect(container.textContent).toContain("Standard");
 	});
@@ -110,8 +124,13 @@ describe("VariantMenuItem", () => {
 	test("renders tick when isSelected=true", () => {
 		const { container } = render(
 			<DropdownMenu>
-				<VariantMenuItem count={3} isSelected={true} onSelect={() => undefined} variant="nitro" />
-			</DropdownMenu>
+				<VariantMenuItem
+					count={3}
+					isSelected={true}
+					onSelect={() => undefined}
+					variant="nitro"
+				/>
+			</DropdownMenu>,
 		);
 		expect(container.querySelectorAll("*").length).toBeGreaterThan(1);
 	});

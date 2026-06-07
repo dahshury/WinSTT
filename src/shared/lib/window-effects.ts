@@ -32,7 +32,7 @@ function isVisibleLayer(element: HTMLElement): boolean {
 
 function hasVisibleBlockingLayer(
 	selector: string,
-	ignoreLayer?: (element: HTMLElement) => boolean
+	ignoreLayer?: (element: HTMLElement) => boolean,
 ): boolean {
 	for (const layer of document.querySelectorAll<HTMLElement>(selector)) {
 		if (!ignoreLayer?.(layer) && isVisibleLayer(layer)) {
@@ -50,15 +50,19 @@ export interface EscapeToCloseOptions {
 	blockingLayerSelector?: string;
 }
 
-export function useEscapeToClose(close: () => void, options: EscapeToCloseOptions = {}) {
+export function useEscapeToClose(
+	close: () => void,
+	options: EscapeToCloseOptions = {},
+) {
 	useEffect(() => {
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (
 				e.key === "Escape" &&
 				!e.defaultPrevented &&
 				!hasVisibleBlockingLayer(
-					options.blockingLayerSelector ?? DEFAULT_ESCAPE_BLOCKING_LAYER_SELECTOR,
-					options.ignoreLayer
+					options.blockingLayerSelector ??
+						DEFAULT_ESCAPE_BLOCKING_LAYER_SELECTOR,
+					options.ignoreLayer,
 				)
 			) {
 				close();

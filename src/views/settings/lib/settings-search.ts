@@ -19,44 +19,44 @@ const MIN_FUZZY_LEN = 4;
 const TOKEN_RE = /[\p{L}\p{N}]+/gu;
 
 const SETTINGS_SEARCH_FUSE_OPTIONS: IFuseOptions<string> = {
-  threshold: SETTINGS_SEARCH_FUSE_THRESHOLD,
-  ignoreLocation: true,
-  minMatchCharLength: MIN_FUZZY_LEN,
-  shouldSort: false,
+	threshold: SETTINGS_SEARCH_FUSE_THRESHOLD,
+	ignoreLocation: true,
+	minMatchCharLength: MIN_FUZZY_LEN,
+	shouldSort: false,
 };
 
 function tokenize(text: string): string[] {
-  return text.toLowerCase().match(TOKEN_RE) ?? [];
+	return text.toLowerCase().match(TOKEN_RE) ?? [];
 }
 
 // True iff query token `qt` is satisfied by some haystack token: an exact
 // prefix (covers "lang" -> "language", "disp" -> "display") or, for long
 // enough tokens, a Fuse.js near-match (covers typos like "dispaly" -> "display").
 function tokenHasPrefixMatch(
-  qt: string,
-  hayTokens: readonly string[],
+	qt: string,
+	hayTokens: readonly string[],
 ): boolean {
-  return hayTokens.some((ht) => ht.startsWith(qt));
+	return hayTokens.some((ht) => ht.startsWith(qt));
 }
 
 function fuzzyTokenMatches(
-  qt: string,
-  getTokenFuse: () => Fuse<string>,
+	qt: string,
+	getTokenFuse: () => Fuse<string>,
 ): boolean {
-  if (qt.length < MIN_FUZZY_LEN) {
-    return false;
-  }
-  return getTokenFuse().search(qt, { limit: 1 }).length > 0;
+	if (qt.length < MIN_FUZZY_LEN) {
+		return false;
+	}
+	return getTokenFuse().search(qt, { limit: 1 }).length > 0;
 }
 
 function someTokenMatches(
-  qt: string,
-  hayTokens: readonly string[],
-  getTokenFuse: () => Fuse<string>,
+	qt: string,
+	hayTokens: readonly string[],
+	getTokenFuse: () => Fuse<string>,
 ): boolean {
-  return (
-    tokenHasPrefixMatch(qt, hayTokens) || fuzzyTokenMatches(qt, getTokenFuse)
-  );
+	return (
+		tokenHasPrefixMatch(qt, hayTokens) || fuzzyTokenMatches(qt, getTokenFuse)
+	);
 }
 
 /**
@@ -66,27 +66,27 @@ function someTokenMatches(
  * it matches by prefix or Fuse.js. Empty query matches everything.
  */
 export function matchesSearchQuery(haystack: string, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (q.length === 0) {
-    return true;
-  }
-  const hay = haystack.toLowerCase();
-  if (hay.includes(q)) {
-    return true;
-  }
-  const queryTokens = tokenize(q);
-  if (queryTokens.length === 0) {
-    return false;
-  }
-  const hayTokens = tokenize(hay);
-  let tokenFuse: Fuse<string> | null = null;
-  const getTokenFuse = (): Fuse<string> => {
-    tokenFuse ??= new Fuse(hayTokens, SETTINGS_SEARCH_FUSE_OPTIONS);
-    return tokenFuse;
-  };
-  return queryTokens.every((qt) =>
-    someTokenMatches(qt, hayTokens, getTokenFuse),
-  );
+	const q = query.trim().toLowerCase();
+	if (q.length === 0) {
+		return true;
+	}
+	const hay = haystack.toLowerCase();
+	if (hay.includes(q)) {
+		return true;
+	}
+	const queryTokens = tokenize(q);
+	if (queryTokens.length === 0) {
+		return false;
+	}
+	const hayTokens = tokenize(hay);
+	let tokenFuse: Fuse<string> | null = null;
+	const getTokenFuse = (): Fuse<string> => {
+		tokenFuse ??= new Fuse(hayTokens, SETTINGS_SEARCH_FUSE_OPTIONS);
+		return tokenFuse;
+	};
+	return queryTokens.every((qt) =>
+		someTokenMatches(qt, hayTokens, getTokenFuse),
+	);
 }
 
 /**
@@ -105,127 +105,127 @@ export function matchesSearchQuery(haystack: string, query: string): boolean {
  * tab's controls actually use.
  */
 export function useSettingsSearchKeywords(): Record<string, string> {
-  const tg = useTranslations("general");
-  const tm = useTranslations("model");
-  const ta = useTranslations("audio");
-  const th = useTranslations("hotkey");
-  const tq = useTranslations("quality");
-  const ti = useTranslations("integrations");
-  const tHist = useTranslations("history");
-  const tAbout = useTranslations("about");
-  const tDict = useTranslations("dictionary");
-  const tSnip = useTranslations("snippets");
-  const tLlm = useTranslations("llm");
-  const tTts = useTranslations("tts");
+	const tg = useTranslations("general");
+	const tm = useTranslations("model");
+	const ta = useTranslations("audio");
+	const th = useTranslations("hotkey");
+	const tq = useTranslations("quality");
+	const ti = useTranslations("integrations");
+	const tHist = useTranslations("history");
+	const tAbout = useTranslations("about");
+	const tDict = useTranslations("dictionary");
+	const tSnip = useTranslations("snippets");
+	const tLlm = useTranslations("llm");
+	const tTts = useTranslations("tts");
 
-  return {
-    recording: [
-      tg("recording"),
-      tg("recordingMode"),
-      tg("wakeWord"),
-      tg("loopbackDevice"),
-      tg("recordingSound"),
-      ta("inputDevice"),
-      ta("device"),
-      ta("advancedTitle"),
-      ta("vad"),
-      tq("smartEndpoint"),
-      tq("sentencePauses"),
-      "vad ptt push to talk toggle listen wake word microphone endpoint silence recording sound chime",
-    ].join(" "),
-    model: [
-      tm("mainModel"),
-      tm("realtimeModelSection"),
-      tm("device"),
-      tm("language"),
-      tm("translateToEnglish"),
-      tm("modelUnloadTimeout"),
-      tm("quantization"),
-      tg("speakerDiarization"),
-      "stt model whisper transcription diarization compute",
-    ].join(" "),
-    processing: [
-      tLlm("title"),
-      tLlm("provider"),
-      tLlm("providerOllama"),
-      tLlm("providerOpenRouter"),
-      tLlm("subDictationTitle"),
-      tLlm("modelAssistanceTitle"),
-      tLlm("modelAssistanceCleanup"),
-      tLlm("subTransformTitle"),
-      tg("contextAwarenessSection"),
-      "llm cleanup grammar tone transform modifiers context assistance model selected apps allow list deny list",
-    ].join(" "),
-    vocabulary: [
-      tDict("title"),
-      tDict("term"),
-      tDict("replacement"),
-      tDict("autoAddTitle"),
-      tDict("thresholdLabel"),
-      tSnip("title"),
-      tSnip("trigger"),
-      tSnip("expansion"),
-      "dictionary snippets vocabulary replacement expansion",
-    ].join(" "),
-    output: [
-      tg("pasteBehaviorTitle"),
-      tg("fileTranscription"),
-      ta("outputDevice"),
-      tg("muteSystemAudio"),
-      "auto submit paste delivery clipboard file export output srt txt playback device speaker audio ducking system audio",
-    ].join(" "),
-    readAloud: [
-      tTts("title"),
-      tTts("model"),
-      tTts("voice"),
-      tTts("speed"),
-      tTts("hotkeyLabel"),
-      "read aloud text to speech tts voice speed",
-    ].join(" "),
-    shortcuts: [
-      th("configuration"),
-      th("pushToTalkKey"),
-      th("repasteKey"),
-      th("shortcutsLegendLabel"),
-      tTts("hotkeyLabel"),
-      tLlm("subTransformTitle"),
-      "hotkey shortcut keybinding combo",
-    ].join(" "),
-    appearance: [
-      tg("display"),
-      tg("language"),
-      tg("visualizerType"),
-      tg("overlayMode"),
-      tg("showRecordingOverlay"),
-      tg("liveTranscriptionDisplay"),
-      "theme visualizer overlay appearance display language live transcription",
-    ].join(" "),
-    history: [
-      tHist("summaryTitle"),
-      tHist("heatmapTitle"),
-      tHist("tableTitle"),
-      tHist("summaryTotalWords"),
-      tHist("summarySpeakingTime"),
-    ].join(" "),
-    integrations: [
-      ti("title"),
-      ti("llmSectionTitle"),
-      ti("sttSectionTitle"),
-      ti("openai"),
-      ti("elevenlabs"),
-      ti("cloudModels"),
-      ti("sourceLabel"),
-      ti("getApiKey"),
-      "api key cloud llm openrouter ollama speech to text transcription",
-    ].join(" "),
-    about: [
-      tAbout("appInfoTitle"),
-      tAbout("appVersion"),
-      tAbout("updatesTitle"),
-      tAbout("receivePrereleaseUpdates"),
-      tg("startOnLogin"),
-      tg("sendCrashReports"),
-      "startup login crash reports reset defaults updates version",
-    ].join(" "),
-  };
+	return {
+		recording: [
+			tg("recording"),
+			tg("recordingMode"),
+			tg("wakeWord"),
+			tg("loopbackDevice"),
+			tg("recordingSound"),
+			ta("inputDevice"),
+			ta("device"),
+			ta("advancedTitle"),
+			ta("vad"),
+			tq("smartEndpoint"),
+			tq("sentencePauses"),
+			"vad ptt push to talk toggle listen wake word microphone endpoint silence recording sound chime",
+		].join(" "),
+		model: [
+			tm("mainModel"),
+			tm("realtimeModelSection"),
+			tm("device"),
+			tm("language"),
+			tm("translateToEnglish"),
+			tm("modelUnloadTimeout"),
+			tm("quantization"),
+			tg("speakerDiarization"),
+			"stt model whisper transcription diarization compute",
+		].join(" "),
+		processing: [
+			tLlm("title"),
+			tLlm("provider"),
+			tLlm("providerOllama"),
+			tLlm("providerOpenRouter"),
+			tLlm("subDictationTitle"),
+			tLlm("modelAssistanceTitle"),
+			tLlm("modelAssistanceCleanup"),
+			tLlm("subTransformTitle"),
+			tg("contextAwarenessSection"),
+			"llm cleanup grammar tone transform modifiers context assistance model selected apps allow list deny list",
+		].join(" "),
+		vocabulary: [
+			tDict("title"),
+			tDict("term"),
+			tDict("replacement"),
+			tDict("autoAddTitle"),
+			tDict("thresholdLabel"),
+			tSnip("title"),
+			tSnip("trigger"),
+			tSnip("expansion"),
+			"dictionary snippets vocabulary replacement expansion",
+		].join(" "),
+		output: [
+			tg("pasteBehaviorTitle"),
+			tg("fileTranscription"),
+			ta("outputDevice"),
+			tg("muteSystemAudio"),
+			"auto submit paste delivery clipboard file export output srt txt playback device speaker audio ducking system audio",
+		].join(" "),
+		readAloud: [
+			tTts("title"),
+			tTts("model"),
+			tTts("voice"),
+			tTts("speed"),
+			tTts("hotkeyLabel"),
+			"read aloud text to speech tts voice speed",
+		].join(" "),
+		shortcuts: [
+			th("configuration"),
+			th("pushToTalkKey"),
+			th("repasteKey"),
+			th("shortcutsLegendLabel"),
+			tTts("hotkeyLabel"),
+			tLlm("subTransformTitle"),
+			"hotkey shortcut keybinding combo",
+		].join(" "),
+		appearance: [
+			tg("display"),
+			tg("language"),
+			tg("visualizerType"),
+			tg("overlayMode"),
+			tg("showRecordingOverlay"),
+			tg("liveTranscriptionDisplay"),
+			"theme visualizer overlay appearance display language live transcription",
+		].join(" "),
+		history: [
+			tHist("summaryTitle"),
+			tHist("heatmapTitle"),
+			tHist("tableTitle"),
+			tHist("summaryTotalWords"),
+			tHist("summarySpeakingTime"),
+		].join(" "),
+		integrations: [
+			ti("title"),
+			ti("llmSectionTitle"),
+			ti("sttSectionTitle"),
+			ti("openai"),
+			ti("elevenlabs"),
+			ti("cloudModels"),
+			ti("sourceLabel"),
+			ti("getApiKey"),
+			"api key cloud llm openrouter ollama speech to text transcription",
+		].join(" "),
+		about: [
+			tAbout("appInfoTitle"),
+			tAbout("appVersion"),
+			tAbout("updatesTitle"),
+			tAbout("receivePrereleaseUpdates"),
+			tg("startOnLogin"),
+			tg("sendCrashReports"),
+			"startup login crash reports reset defaults updates version",
+		].join(" "),
+	};
 }

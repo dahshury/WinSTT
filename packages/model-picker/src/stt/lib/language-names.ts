@@ -1,7 +1,7 @@
 import { LANGUAGES } from "@/shared/config/defaults";
 
 const LANGUAGE_NAMES: Record<string, string> = Object.fromEntries(
-	LANGUAGES.map((l) => [l.code, l.name])
+	LANGUAGES.map((l) => [l.code, l.name]),
 );
 
 /** Human-readable language name for a catalog code, falling back to the

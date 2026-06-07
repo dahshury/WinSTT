@@ -28,13 +28,15 @@ interface DiarizationToggleStore {
 	pending: boolean;
 }
 
-export const useDiarizationToggleStore = create<DiarizationToggleStore>()((set) => ({
-	pending: false,
-	lastError: null,
-	begin: () => set({ pending: true, lastError: null }),
-	finish: () => set({ pending: false }),
-	fail: (info) => set({ pending: false, lastError: info }),
-}));
+export const useDiarizationToggleStore = create<DiarizationToggleStore>()(
+	(set) => ({
+		pending: false,
+		lastError: null,
+		begin: () => set({ pending: true, lastError: null }),
+		finish: () => set({ pending: false }),
+		fail: (info) => set({ pending: false, lastError: info }),
+	}),
+);
 
 /**
  * Subscribe to diarization-toggle lifecycle pushes. Called once on module

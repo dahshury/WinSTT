@@ -1,10 +1,5 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import {
-	domMax,
-	LazyMotion,
-	m,
-	type Variants,
-} from "motion/react";
+import { domMax, LazyMotion, m, type Variants } from "motion/react";
 import { useEffect, useRef } from "react";
 import { useSettingsStore } from "@/entities/setting";
 import {

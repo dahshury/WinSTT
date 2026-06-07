@@ -39,7 +39,12 @@ const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	bnb4: 0.75,
 };
 
-const GPU_COMPATIBLE_QUANTIZATIONS: ReadonlySet<string> = new Set(["", "fp32", "fp16", "fp16w"]);
+const GPU_COMPATIBLE_QUANTIZATIONS: ReadonlySet<string> = new Set([
+	"",
+	"fp32",
+	"fp16",
+	"fp16w",
+]);
 
 interface LoadedSlots {
 	mainId: string | null;
@@ -62,19 +67,21 @@ function slotsOf(loaded: LoadedSlots): readonly SlotEntry[] {
 
 function isSlotCounted(
 	slot: SlotEntry,
-	excludeId: string | null
+	excludeId: string | null,
 ): slot is SlotEntry & { id: string } {
 	return slot.id !== null && slot.id !== excludeId;
 }
 
-function hasUsableEstimate(entry: ModelStateEntry | undefined): entry is ModelStateEntry {
+function hasUsableEstimate(
+	entry: ModelStateEntry | undefined,
+): entry is ModelStateEntry {
 	return entry !== undefined && entry.estimated_bytes > 0;
 }
 
 function slotBytes(
 	slot: SlotEntry,
 	statesById: Record<string, ModelStateEntry>,
-	excludeId: string | null
+	excludeId: string | null,
 ): number {
 	if (!isSlotCounted(slot, excludeId)) {
 		return 0;
@@ -91,9 +98,12 @@ function slotBytes(
 export function loadedDictationFootprint(
 	statesById: Record<string, ModelStateEntry>,
 	loaded: LoadedSlots,
-	excludeId: string | null
+	excludeId: string | null,
 ): number {
-	return slotsOf(loaded).reduce((total, slot) => total + slotBytes(slot, statesById, excludeId), 0);
+	return slotsOf(loaded).reduce(
+		(total, slot) => total + slotBytes(slot, statesById, excludeId),
+		0,
+	);
 }
 
 // fp32 is the reference baseline; "" maps to it. Captured as a constant so
@@ -119,14 +129,17 @@ function canUseGpu(quantization: string, live: LiveResourcesEntry): boolean {
 	return live.gpus.length > 0 && GPU_COMPATIBLE_QUANTIZATIONS.has(quantization);
 }
 
-function gpuOrCpuTarget(quantization: string, live: LiveResourcesEntry): FitTarget {
+function gpuOrCpuTarget(
+	quantization: string,
+	live: LiveResourcesEntry,
+): FitTarget {
 	return canUseGpu(quantization, live) ? "gpu" : "cpu";
 }
 
 function predictedTarget(
 	quantization: string,
 	live: LiveResourcesEntry,
-	requestedDevice: string | null
+	requestedDevice: string | null,
 ): FitTarget {
 	if (hasNoHardware(live)) {
 		return "neither";
@@ -139,7 +152,7 @@ function predictedTarget(
 
 function pickBiggerGpu(
 	a: LiveResourcesEntry["gpus"][number],
-	b: LiveResourcesEntry["gpus"][number]
+	b: LiveResourcesEntry["gpus"][number],
 ): LiveResourcesEntry["gpus"][number] {
 	return b.total_vram_bytes > a.total_vram_bytes ? b : a;
 }
@@ -199,7 +212,11 @@ function gpuAvailableBytes(total: number, free: number): number {
 	return total;
 }
 
-function pushIfPositive(reasons: FitReason[], value: number, reason: FitReason): void {
+function pushIfPositive(
+	reasons: FitReason[],
+	value: number,
+	reason: FitReason,
+): void {
 	if (value > 0) {
 		reasons.push(reason);
 	}
@@ -209,14 +226,20 @@ function assessGpuFit(
 	required: number,
 	loadedOther: number,
 	live: LiveResourcesEntry,
-	reasons: FitReason[]
+	reasons: FitReason[],
 ): FitAssessmentEntry {
 	const { total, free } = largestGpu(live);
 	const available = gpuAvailableBytes(total, free);
 	pushIfPositive(reasons, loadedOther, "stt_already_uses_gpu");
 	const severity = severityFor(required, available);
 	reasons.push(vramReasonFor(severity));
-	return { severity, target: "gpu", required_bytes: required, available_bytes: available, reasons };
+	return {
+		severity,
+		target: "gpu",
+		required_bytes: required,
+		available_bytes: available,
+		reasons,
+	};
 }
 
 function cpuBudgetBytes(live: LiveResourcesEntry, loadedOther: number): number {
@@ -230,13 +253,19 @@ function assessCpuFit(
 	required: number,
 	loadedOther: number,
 	live: LiveResourcesEntry,
-	reasons: FitReason[]
+	reasons: FitReason[],
 ): FitAssessmentEntry {
 	const available = cpuBudgetBytes(live, loadedOther);
 	pushIfPositive(reasons, loadedOther, "stt_already_uses_ram");
 	const severity = severityFor(required, available);
 	reasons.push(ramReasonFor(severity));
-	return { severity, target: "cpu", required_bytes: required, available_bytes: available, reasons };
+	return {
+		severity,
+		target: "cpu",
+		required_bytes: required,
+		available_bytes: available,
+		reasons,
+	};
 }
 
 function neitherFit(required: number): FitAssessmentEntry {
@@ -259,7 +288,10 @@ function unknownFootprintFit(target: FitTarget): FitAssessmentEntry {
 	};
 }
 
-function gpuMismatchReason(quant: string, live: LiveResourcesEntry): FitReason | null {
+function gpuMismatchReason(
+	quant: string,
+	live: LiveResourcesEntry,
+): FitReason | null {
 	if (live.gpus.length > 0 && !GPU_COMPATIBLE_QUANTIZATIONS.has(quant)) {
 		return "requires_cpu_quant";
 	}
@@ -268,7 +300,7 @@ function gpuMismatchReason(quant: string, live: LiveResourcesEntry): FitReason |
 
 function missingGpuReason(
 	live: LiveResourcesEntry,
-	requestedDevice: string | null
+	requestedDevice: string | null,
 ): FitReason | null {
 	if (live.gpus.length === 0 && requestedDevice !== "cpu") {
 		return "no_gpu_available";
@@ -294,7 +326,7 @@ function dispatchFit(
 	required: number,
 	loadedOther: number,
 	live: LiveResourcesEntry,
-	reasons: FitReason[]
+	reasons: FitReason[],
 ): FitAssessmentEntry {
 	if (target === "gpu") {
 		return assessGpuFit(required, loadedOther, live, reasons);
@@ -310,23 +342,35 @@ function dispatchFit(
  * renderer treats both sources identically. */
 export function assessDictationFitClient(
 	candidateId: string,
-	ctx: AssessContext
+	ctx: AssessContext,
 ): FitAssessmentEntry {
 	const entry = ctx.statesById[candidateId];
 	if (!entry || entry.estimated_bytes <= 0) {
-		return unknownFootprintFit(predictedTarget(ctx.candidateQuant, ctx.live, ctx.requestedDevice));
+		return unknownFootprintFit(
+			predictedTarget(ctx.candidateQuant, ctx.live, ctx.requestedDevice),
+		);
 	}
 	const required = estimateForQuant(entry.estimated_bytes, ctx.candidateQuant);
-	const target = predictedTarget(ctx.candidateQuant, ctx.live, ctx.requestedDevice);
+	const target = predictedTarget(
+		ctx.candidateQuant,
+		ctx.live,
+		ctx.requestedDevice,
+	);
 	const reasons = collectDictationReasons(ctx);
-	const loadedOther = loadedDictationFootprint(ctx.statesById, ctx.loaded, candidateId);
+	const loadedOther = loadedDictationFootprint(
+		ctx.statesById,
+		ctx.loaded,
+		candidateId,
+	);
 	return dispatchFit(target, required, loadedOther, ctx.live, reasons);
 }
 
 type OllamaCtx = Omit<AssessContext, "candidateQuant" | "requestedDevice">;
 
 function ollamaRequiredBytes(sizeBytes: number): number {
-	return Math.round(sizeBytes * OLLAMA_SIZE_HEADROOM_FACTOR) + OLLAMA_OVERHEAD_BYTES;
+	return (
+		Math.round(sizeBytes * OLLAMA_SIZE_HEADROOM_FACTOR) + OLLAMA_OVERHEAD_BYTES
+	);
 }
 
 function ollamaUnknownFootprint(): FitAssessmentEntry {
@@ -361,7 +405,7 @@ const OLLAMA_GPU_TARGET_BY_SEVERITY: Record<FitSeverity, FitTarget> = {
 function assessOllamaGpu(
 	required: number,
 	loadedOther: number,
-	live: LiveResourcesEntry
+	live: LiveResourcesEntry,
 ): FitAssessmentEntry {
 	const { total, free } = largestGpu(live);
 	const available = gpuAvailableBytes(total, free);
@@ -387,7 +431,7 @@ const OLLAMA_CPU_TARGET_BY_SEVERITY: Record<FitSeverity, FitTarget> = {
 function assessOllamaCpu(
 	required: number,
 	loadedOther: number,
-	live: LiveResourcesEntry
+	live: LiveResourcesEntry,
 ): FitAssessmentEntry {
 	const available = cpuBudgetBytes(live, loadedOther);
 	const reasons: FitReason[] = [];
@@ -404,12 +448,19 @@ function assessOllamaCpu(
 }
 
 /** Client-side mirror of ``assess_ollama_fit``. */
-export function assessOllamaFitClient(sizeBytes: number, ctx: OllamaCtx): FitAssessmentEntry {
+export function assessOllamaFitClient(
+	sizeBytes: number,
+	ctx: OllamaCtx,
+): FitAssessmentEntry {
 	if (sizeBytes <= 0) {
 		return ollamaUnknownFootprint();
 	}
 	const required = ollamaRequiredBytes(sizeBytes);
-	const loadedOther = loadedDictationFootprint(ctx.statesById, ctx.loaded, null);
+	const loadedOther = loadedDictationFootprint(
+		ctx.statesById,
+		ctx.loaded,
+		null,
+	);
 	if (ctx.live.gpus.length > 0) {
 		return assessOllamaGpu(required, loadedOther, ctx.live);
 	}

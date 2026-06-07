@@ -23,14 +23,18 @@ interface FileTranscriptionStore {
 	setQueueActive: (active: boolean) => void;
 }
 
-export const useFileTranscriptionStore = create<FileTranscriptionStore>()((set) => ({
-	items: [],
-	queueActive: false,
-	setItems: (items) => set({ items }),
-	patchProgress: (id, progress, stage) =>
-		set((state) => ({
-			items: state.items.map((item) => (item.id === id ? { ...item, progress, stage } : item)),
-		})),
-	setQueueActive: (active) => set({ queueActive: active }),
-	reset: () => set({ items: [], queueActive: false }),
-}));
+export const useFileTranscriptionStore = create<FileTranscriptionStore>()(
+	(set) => ({
+		items: [],
+		queueActive: false,
+		setItems: (items) => set({ items }),
+		patchProgress: (id, progress, stage) =>
+			set((state) => ({
+				items: state.items.map((item) =>
+					item.id === id ? { ...item, progress, stage } : item,
+				),
+			})),
+		setQueueActive: (active) => set({ queueActive: active }),
+		reset: () => set({ items: [], queueActive: false }),
+	}),
+);

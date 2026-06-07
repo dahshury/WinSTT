@@ -25,7 +25,12 @@ describe("AudioVisualizerAura", () => {
 
 	test("renders without throwing with the full set of customization props", () => {
 		const { container } = render(
-			<AudioVisualizerAura bloom={0.4} blur={0.6} colorShift={0.2} shape="line" />
+			<AudioVisualizerAura
+				bloom={0.4}
+				blur={0.6}
+				colorShift={0.2}
+				shape="line"
+			/>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});

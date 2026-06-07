@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import type { ModelSwapFailedCategory, ModelSwapKind } from "@/shared/api/ipc-client";
+import type {
+	ModelSwapFailedCategory,
+	ModelSwapKind,
+} from "@/shared/api/ipc-client";
 
 /**
  * Transient in-memory notification for a model-swap failure (and only
@@ -25,7 +28,9 @@ interface SwapFailureNotification {
 interface SwapNotificationState {
 	clear: () => void;
 	current: SwapFailureNotification | null;
-	show: (notification: Omit<SwapFailureNotification, "createdAt" | "id">) => void;
+	show: (
+		notification: Omit<SwapFailureNotification, "createdAt" | "id">,
+	) => void;
 }
 
 let nextId = 0;

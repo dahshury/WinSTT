@@ -12,21 +12,21 @@ const BUILTIN_SOUND_PREFIX = "builtin:";
 export const MAX_CUSTOM_SOUNDS = 50;
 
 const ADDITIONAL_BUILTIN_SOUNDS = [
-  {
-    id: "__winstt_builtin_handy_marimba_start__",
-    name: "Marimba",
-    path: `${BUILTIN_SOUND_PREFIX}marimba_start.wav`,
-  },
-  {
-    id: "__winstt_builtin_ui_earcon_1__",
-    name: "UI Earcon 1",
-    path: `${BUILTIN_SOUND_PREFIX}recording_sound_ui_earcon_1.wav`,
-  },
-  {
-    id: "__winstt_builtin_ui_earcon_4__",
-    name: "UI Earcon 4",
-    path: `${BUILTIN_SOUND_PREFIX}recording_sound_ui_earcon_4.wav`,
-  },
+	{
+		id: "__winstt_builtin_handy_marimba_start__",
+		name: "Marimba",
+		path: `${BUILTIN_SOUND_PREFIX}marimba_start.wav`,
+	},
+	{
+		id: "__winstt_builtin_ui_earcon_1__",
+		name: "UI Earcon 1",
+		path: `${BUILTIN_SOUND_PREFIX}recording_sound_ui_earcon_1.wav`,
+	},
+	{
+		id: "__winstt_builtin_ui_earcon_4__",
+		name: "UI Earcon 4",
+		path: `${BUILTIN_SOUND_PREFIX}recording_sound_ui_earcon_4.wav`,
+	},
 ] as const;
 
 /**
@@ -34,56 +34,56 @@ const ADDITIONAL_BUILTIN_SOUNDS = [
  * files in userData/sounds/ persisted under `recordingSoundLibrary`.
  */
 export interface SoundLibraryItem {
-  id: string;
-  /** True for bundled rows. These are not persisted, renamed, or deleted. */
-  isDefault: boolean;
-  name: string;
-  /** Empty for original default, builtin:<file> for bundled alternates, absolute path for customs. */
-  path: string;
+	id: string;
+	/** True for bundled rows. These are not persisted, renamed, or deleted. */
+	isDefault: boolean;
+	name: string;
+	/** Empty for original default, builtin:<file> for bundled alternates, absolute path for customs. */
+	path: string;
 }
 
 export function defaultItem(name: string): SoundLibraryItem {
-  return {
-    id: DEFAULT_SOUND_ID,
-    isDefault: true,
-    name,
-    path: "",
-  };
+	return {
+		id: DEFAULT_SOUND_ID,
+		isDefault: true,
+		name,
+		path: "",
+	};
 }
 
 function builtInItem(
-  sound: (typeof ADDITIONAL_BUILTIN_SOUNDS)[number],
+	sound: (typeof ADDITIONAL_BUILTIN_SOUNDS)[number],
 ): SoundLibraryItem {
-  return {
-    id: sound.id,
-    isDefault: true,
-    name: sound.name,
-    path: sound.path,
-  };
+	return {
+		id: sound.id,
+		isDefault: true,
+		name: sound.name,
+		path: sound.path,
+	};
 }
 
 export function builtInItems(
-  defaultName: string,
+	defaultName: string,
 ): [SoundLibraryItem, ...SoundLibraryItem[]] {
-  return [
-    defaultItem(defaultName),
-    ...ADDITIONAL_BUILTIN_SOUNDS.map(builtInItem),
-  ];
+	return [
+		defaultItem(defaultName),
+		...ADDITIONAL_BUILTIN_SOUNDS.map(builtInItem),
+	];
 }
 
 export function entryToItem(entry: SoundLibraryEntry): SoundLibraryItem {
-  return {
-    id: entry.id,
-    isDefault: false,
-    name: entry.name,
-    path: entry.path,
-  };
+	return {
+		id: entry.id,
+		isDefault: false,
+		name: entry.name,
+		path: entry.path,
+	};
 }
 
 /** True if a given item is the currently active recording sound. */
 export function isActive(item: SoundLibraryItem, activePath: string): boolean {
-  if (item.path === "") {
-    return activePath === "";
-  }
-  return item.path === activePath;
+	if (item.path === "") {
+		return activePath === "";
+	}
+	return item.path === activePath;
 }

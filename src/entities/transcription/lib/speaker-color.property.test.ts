@@ -10,9 +10,9 @@ describe("colorForSpeaker (property-based)", () => {
 		fc.assert(
 			fc.property(
 				fc.integer({ min: -1_000_000, max: -1 }),
-				(id) => colorForSpeaker(id) === MUTED_SENTINEL
+				(id) => colorForSpeaker(id) === MUTED_SENTINEL,
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -20,9 +20,9 @@ describe("colorForSpeaker (property-based)", () => {
 		fc.assert(
 			fc.property(
 				fc.integer({ min: 0, max: 1_000_000 }),
-				(n) => colorForSpeaker(n) === colorForSpeaker(n + PALETTE_SIZE)
+				(n) => colorForSpeaker(n) === colorForSpeaker(n + PALETTE_SIZE),
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -31,9 +31,9 @@ describe("colorForSpeaker (property-based)", () => {
 			fc.property(
 				fc.integer({ min: 0, max: 100_000 }),
 				fc.integer({ min: 1, max: 50 }),
-				(n, k) => colorForSpeaker(n) === colorForSpeaker(n + k * PALETTE_SIZE)
+				(n, k) => colorForSpeaker(n) === colorForSpeaker(n + k * PALETTE_SIZE),
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -44,7 +44,7 @@ describe("colorForSpeaker (property-based)", () => {
 				const b = colorForSpeaker(id);
 				return a === b;
 			}),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 
@@ -52,9 +52,9 @@ describe("colorForSpeaker (property-based)", () => {
 		fc.assert(
 			fc.property(
 				fc.integer({ min: 0, max: 1_000_000 }),
-				(id) => colorForSpeaker(id) !== MUTED_SENTINEL
+				(id) => colorForSpeaker(id) !== MUTED_SENTINEL,
 			),
-			{ numRuns: 300 }
+			{ numRuns: 300 },
 		);
 	});
 });

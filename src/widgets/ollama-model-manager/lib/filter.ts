@@ -16,7 +16,7 @@ export function matchesQuery(haystack: string, needle: string): boolean {
 
 export function filterInstalledModels(
 	models: readonly OllamaModel[],
-	rawQuery: string
+	rawQuery: string,
 ): OllamaModel[] {
 	const q = normalizeQuery(rawQuery);
 	// Stryker disable next-line ConditionalExpression,BlockStatement: equivalent mutant — without the early-return, the code falls through to `models.filter((m) => matchesQuery(m.name, ""))`; matchesQuery("", "") is true for every row, so the filter still yields every model in a fresh array.
@@ -27,13 +27,18 @@ export function filterInstalledModels(
 }
 
 function getSearchableFields(model: RecommendedOllamaModel): string[] {
-	return [model.name, model.displayName, model.description, ...(model.tags ?? [])];
+	return [
+		model.name,
+		model.displayName,
+		model.description,
+		...(model.tags ?? []),
+	];
 }
 
 export function matchesRecommended(
 	model: RecommendedOllamaModel,
 	installedNames: ReadonlySet<string>,
-	q: string
+	q: string,
 ): boolean {
 	if (installedNames.has(model.name)) {
 		return false;
@@ -48,7 +53,7 @@ export function matchesRecommended(
 export function filterRecommendedModels(
 	models: readonly RecommendedOllamaModel[],
 	installedNames: ReadonlySet<string>,
-	rawQuery: string
+	rawQuery: string,
 ): RecommendedOllamaModel[] {
 	const q = normalizeQuery(rawQuery);
 	return models.filter((m) => matchesRecommended(m, installedNames, q));

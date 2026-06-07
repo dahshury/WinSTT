@@ -17,7 +17,7 @@ export function shouldSendInitial(value: unknown): boolean {
 /** True when a parameter must be sent on an incremental update. */
 export function shouldSendOnChange<V>(
 	value: V | undefined | null,
-	prevValue: V | undefined | null
+	prevValue: V | undefined | null,
 ): boolean {
 	return value !== prevValue;
 }
@@ -27,7 +27,10 @@ export function shouldSendOnChange<V>(
  * detection (PTT: key release defines the boundary; toggle+manualToggleStop:
  * second press defines the boundary). CC 3 — one ternary, one short-circuit.
  */
-function silenceEndpointBypassed(mode: string, manualToggleStop = false): boolean {
+function silenceEndpointBypassed(
+	mode: string,
+	manualToggleStop = false,
+): boolean {
 	return mode === "ptt" || (mode === "toggle" && manualToggleStop);
 }
 
@@ -49,7 +52,7 @@ function modeImpliesContinuousListening(mode: string): boolean {
 export function computeSilenceTiming(
 	smartEndpoint: boolean,
 	mode: string,
-	manualToggleStop = false
+	manualToggleStop = false,
 ): boolean {
 	if (silenceEndpointBypassed(mode, manualToggleStop)) {
 		return false;
@@ -64,7 +67,10 @@ export function computeSilenceTiming(
  *   - Toggle with manualToggleStop: off (the second press defines the boundary).
  *   - Otherwise: on (VAD silence ends the utterance).
  */
-export function computeSilenceEndpointEnabled(mode: string, manualToggleStop = false): boolean {
+export function computeSilenceEndpointEnabled(
+	mode: string,
+	manualToggleStop = false,
+): boolean {
 	return !silenceEndpointBypassed(mode, manualToggleStop);
 }
 
@@ -72,7 +78,7 @@ export function computeSilenceEndpointEnabled(mode: string, manualToggleStop = f
 function modeChanged(
 	isInitial: boolean,
 	recordingMode: string | undefined,
-	prevRecordingMode: string | undefined
+	prevRecordingMode: string | undefined,
 ): boolean {
 	return isInitial || recordingMode !== prevRecordingMode;
 }
@@ -90,12 +96,15 @@ export function silenceTimingNeedsUpdate(
 	prevRecordingMode: string | undefined,
 	isInitial: boolean,
 	manualToggleStop = false,
-	prevManualToggleStop = false
+	prevManualToggleStop = false,
 ): boolean {
 	if (modeChanged(isInitial, recordingMode, prevRecordingMode)) {
 		return true;
 	}
-	return smartEndpoint !== prevSmartEndpoint || manualToggleStop !== prevManualToggleStop;
+	return (
+		smartEndpoint !== prevSmartEndpoint ||
+		manualToggleStop !== prevManualToggleStop
+	);
 }
 
 /**
@@ -108,12 +117,15 @@ export function silenceEndpointNeedsUpdate(
 	prevRecordingMode: string | undefined,
 	isInitial: boolean,
 	manualToggleStop = false,
-	prevManualToggleStop = false
+	prevManualToggleStop = false,
 ): boolean {
 	if (isInitial) {
 		return true;
 	}
-	return recordingMode !== prevRecordingMode || manualToggleStop !== prevManualToggleStop;
+	return (
+		recordingMode !== prevRecordingMode ||
+		manualToggleStop !== prevManualToggleStop
+	);
 }
 
 /** Extract the manualToggleStop flag, defaulting to false. */
@@ -122,7 +134,9 @@ export function getManualToggleStop(settings: AppSettings): boolean {
 }
 
 /** Extract the previous manualToggleStop flag, defaulting to false when prev is absent. */
-export function getPrevManualToggleStop(prev: AppSettings | undefined): boolean {
+export function getPrevManualToggleStop(
+	prev: AppSettings | undefined,
+): boolean {
 	return prev?.general?.manualToggleStop ?? false;
 }
 
@@ -130,9 +144,13 @@ export function getPrevManualToggleStop(prev: AppSettings | undefined): boolean 
  * Returns true when the autoStart system setting has changed and the new
  * value is not null/undefined.
  */
-export function autoStartChanged(settings: AppSettings, prev: AppSettings): boolean {
+export function autoStartChanged(
+	settings: AppSettings,
+	prev: AppSettings,
+): boolean {
 	return (
-		settings.general?.autoStart !== prev.general?.autoStart && settings.general?.autoStart != null
+		settings.general?.autoStart !== prev.general?.autoStart &&
+		settings.general?.autoStart != null
 	);
 }
 
@@ -171,7 +189,10 @@ export function advanceSkipRefs(refs: {
  * Whether a recording mode change occurred (triggers an immediate save rather
  * than a debounced one).
  */
-export function isModeChanged(settings: AppSettings, prev: AppSettings): boolean {
+export function isModeChanged(
+	settings: AppSettings,
+	prev: AppSettings,
+): boolean {
 	return settings.general?.recordingMode !== prev.general?.recordingMode;
 }
 
@@ -231,9 +252,13 @@ export function shouldSyncOnConnect(
 	serverStatus: string,
 	isLoaded: boolean,
 	alreadySynced: boolean,
-	hasIpcLoadResolved: boolean
+	hasIpcLoadResolved: boolean,
 ): boolean {
-	return isLiveServerReady(serverStatus, isLoaded) && hasIpcLoadResolved && !alreadySynced;
+	return (
+		isLiveServerReady(serverStatus, isLoaded) &&
+		hasIpcLoadResolved &&
+		!alreadySynced
+	);
 }
 
 /**
@@ -249,7 +274,7 @@ export function scheduleSave(
 	immediate: boolean,
 	debounceRef: { current: ReturnType<typeof setTimeout> | null },
 	saveFn: (s: AppSettings) => void,
-	delayMs: number
+	delayMs: number,
 ): void {
 	if (debounceRef.current) {
 		clearTimeout(debounceRef.current);
@@ -312,7 +337,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function mergeDirtyValue(
 	decodedValue: unknown,
 	currentValue: unknown,
-	lastSavedValue: unknown
+	lastSavedValue: unknown,
 ): MergePick {
 	return settingsSectionsEqual(currentValue, lastSavedValue)
 		? { value: decodedValue, preserved: false }
@@ -322,7 +347,7 @@ function mergeDirtyValue(
 function mergeChangedValue(
 	decodedValue: unknown,
 	currentValue: unknown,
-	lastSavedValue: unknown
+	lastSavedValue: unknown,
 ): MergePick {
 	if (
 		!isPlainRecord(decodedValue) ||
@@ -337,10 +362,14 @@ function mergeChangedValue(
 	const keys = new Set([
 		...Object.keys(decodedValue),
 		...Object.keys(currentValue),
-		...Object.keys(lastSavedValue)
+		...Object.keys(lastSavedValue),
 	]);
 	for (const key of keys) {
-		const picked = mergeDirtyValue(decodedValue[key], currentValue[key], lastSavedValue[key]);
+		const picked = mergeDirtyValue(
+			decodedValue[key],
+			currentValue[key],
+			lastSavedValue[key],
+		);
 		result[key] = picked.value;
 		preserved = preserved || picked.preserved;
 	}
@@ -350,13 +379,17 @@ function mergeChangedValue(
 function mergeSections(
 	decoded: AppSettings,
 	current: AppSettings,
-	lastSaved: AppSettings
+	lastSaved: AppSettings,
 ): { merged: AppSettings; preserved: boolean } {
 	let preserved = false;
 	const result: Record<string, unknown> = {};
 	for (const [key, decodedValue] of Object.entries(decoded)) {
 		const typedKey = key as keyof AppSettings;
-		const picked = mergeDirtyValue(decodedValue, current[typedKey], lastSaved[typedKey]);
+		const picked = mergeDirtyValue(
+			decodedValue,
+			current[typedKey],
+			lastSaved[typedKey],
+		);
 		result[key] = picked.value;
 		preserved = preserved || picked.preserved;
 	}
@@ -368,7 +401,7 @@ const LOCAL_CACHE_COLLECTION_KEYS = ["dictionary", "snippets"] as const;
 function shouldMigrateLocalCollection(
 	loadedValue: unknown,
 	currentValue: unknown,
-	loadBaselineValue: unknown
+	loadBaselineValue: unknown,
 ): boolean {
 	return (
 		Array.isArray(loadedValue) &&
@@ -383,12 +416,14 @@ function applyLocalCollectionMigrations(
 	merged: AppSettings,
 	loaded: AppSettings,
 	current: AppSettings,
-	loadBaseline: AppSettings
+	loadBaseline: AppSettings,
 ): { merged: AppSettings; migrated: boolean } {
 	let migrated = false;
 	const next: Record<string, unknown> = { ...merged };
 	for (const key of LOCAL_CACHE_COLLECTION_KEYS) {
-		if (shouldMigrateLocalCollection(loaded[key], current[key], loadBaseline[key])) {
+		if (
+			shouldMigrateLocalCollection(loaded[key], current[key], loadBaseline[key])
+		) {
 			next[key] = current[key];
 			migrated = true;
 		}
@@ -399,7 +434,7 @@ function applyLocalCollectionMigrations(
 export function mergeBroadcastPreservingUserDirty(
 	decoded: AppSettings,
 	current: AppSettings,
-	lastSaved: AppSettings | undefined
+	lastSaved: AppSettings | undefined,
 ): { merged: AppSettings; preserved: boolean } {
 	return lastSaved
 		? mergeSections(decoded, current, lastSaved)
@@ -418,10 +453,14 @@ export function deriveBroadcastUpdate(
 	incoming: AppSettings,
 	current: AppSettings,
 	lastSaved: AppSettings | undefined,
-	fromBroadcastNow: boolean
+	fromBroadcastNow: boolean,
 ): { merged: AppSettings; nextFromBroadcast: boolean } {
 	const decoded = decodeSettingsPayload(incoming);
-	const { merged, preserved } = mergeBroadcastPreservingUserDirty(decoded, current, lastSaved);
+	const { merged, preserved } = mergeBroadcastPreservingUserDirty(
+		decoded,
+		current,
+		lastSaved,
+	);
 	return { merged, nextFromBroadcast: !preserved || fromBroadcastNow };
 }
 
@@ -434,12 +473,17 @@ export function deriveBroadcastUpdate(
 export function deriveIpcLoadUpdate(
 	loaded: AppSettings,
 	current: AppSettings,
-	loadBaseline: AppSettings
+	loadBaseline: AppSettings,
 ): { merged: AppSettings; nextFromIpcLoad: boolean } {
 	const { merged, preserved } = mergeSections(loaded, current, loadBaseline);
-	const migrated = applyLocalCollectionMigrations(merged, loaded, current, loadBaseline);
+	const migrated = applyLocalCollectionMigrations(
+		merged,
+		loaded,
+		current,
+		loadBaseline,
+	);
 	return {
 		merged: migrated.merged,
-		nextFromIpcLoad: !preserved && !migrated.migrated
+		nextFromIpcLoad: !preserved && !migrated.migrated,
 	};
 }

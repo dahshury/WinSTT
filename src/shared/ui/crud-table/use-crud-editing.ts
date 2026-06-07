@@ -52,7 +52,7 @@ export function useCrudEditing<TEntry, TAdd>({
 	};
 
 	const buildDraft = (
-		source: Record<string, string>
+		source: Record<string, string>,
 	): Record<string, string> => {
 		const draft: Record<string, string> = {};
 		for (const f of fields) {
@@ -110,7 +110,7 @@ export function useCrudEditing<TEntry, TAdd>({
 	};
 
 	const isEditSaveDisabled = !fields.every(
-		(f) => (editValues[f.name] ?? "").trim().length > 0
+		(f) => (editValues[f.name] ?? "").trim().length > 0,
 	);
 
 	return {

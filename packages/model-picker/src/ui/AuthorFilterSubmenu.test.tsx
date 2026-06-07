@@ -12,7 +12,8 @@ const helpers = { ...components, ...renderHelpers, ...utils };
 // Contained boundary cast — the mock only implements `stopPropagation`, the one
 // MouseEvent member handleFavoriteButtonClick touches. The runtime object is
 // returned unchanged; only the type is widened to the real React.MouseEvent.
-const asMouseEvent = (e: { stopPropagation: () => void }) => e as unknown as React.MouseEvent;
+const asMouseEvent = (e: { stopPropagation: () => void }) =>
+	e as unknown as React.MouseEvent;
 
 describe("AuthorFilterSubmenu", () => {
 	test("module exports the component (full render requires a parent Menu popup)", () => {
@@ -45,7 +46,7 @@ describe("renderAuthorItem rendering", () => {
 						</Combobox.Collection>
 					</Combobox.List>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("openai");
 	});
@@ -67,7 +68,7 @@ describe("renderAuthorItem rendering", () => {
 						</Combobox.Collection>
 					</Combobox.List>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.textContent).toContain("openai");
 	});
@@ -90,7 +91,7 @@ describe("renderAuthorItem rendering", () => {
 						</Combobox.Collection>
 					</Combobox.List>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		// FavoriteToggleButton renders a button
 		expect(container.querySelector("button")).not.toBeNull();
@@ -125,7 +126,9 @@ describe("AuthorFilterSubmenu helpers", () => {
 		});
 
 		test("filters case-insensitively by substring", () => {
-			expect(helpers.filterByQuery(["OpenAI", "Anthropic", "Google"], "ai")).toEqual(["OpenAI"]);
+			expect(
+				helpers.filterByQuery(["OpenAI", "Anthropic", "Google"], "ai"),
+			).toEqual(["OpenAI"]);
 		});
 
 		test("returns empty array when nothing matches", () => {

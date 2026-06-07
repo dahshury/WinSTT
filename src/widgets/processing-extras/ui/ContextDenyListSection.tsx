@@ -1,5 +1,9 @@
 import { useTranslations } from "use-intl";
-import { DEFAULT_SETTINGS, SettingField, useSettingsStore } from "@/entities/setting";
+import {
+	DEFAULT_SETTINGS,
+	SettingField,
+	useSettingsStore,
+} from "@/entities/setting";
 import { EditableListCombobox } from "@/shared/ui/editable-list-combobox";
 
 /**
@@ -33,7 +37,8 @@ export function ContextDenyListSection() {
 	const defaultDenyList = DEFAULT_SETTINGS.general.contextDenyList;
 	// The deny-list is a set, so compare order-insensitively — re-adding a
 	// removed entry can shuffle insertion order without changing membership.
-	const isDefaultDenyList = [...denyList].sort().join(" ") === [...defaultDenyList].sort().join(" ");
+	const isDefaultDenyList =
+		[...denyList].sort().join(" ") === [...defaultDenyList].sort().join(" ");
 
 	return (
 		<SettingField

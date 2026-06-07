@@ -35,7 +35,7 @@ export function useTouchActivation(
 		disabled = false,
 		moveTolerance = DEFAULT_MOVE_TOLERANCE_PX,
 		pointerTypes = DEFAULT_POINTER_TYPES,
-	}: UseTouchActivationOptions = {}
+	}: UseTouchActivationOptions = {},
 ): UseTouchActivationResult {
 	const activePointerRef = useRef<ActivePointer | null>(null);
 	const onActivateRef = useRef(onActivate);
@@ -73,7 +73,7 @@ export function useTouchActivation(
 		() => () => {
 			clearSuppressionTimer();
 		},
-		[clearSuppressionTimer]
+		[clearSuppressionTimer],
 	);
 
 	const pointerAllowed = useCallback(
@@ -83,7 +83,7 @@ export function useTouchActivation(
 			}
 			return pointerTypes.includes(event.pointerType);
 		},
-		[disabled, pointerTypes]
+		[disabled, pointerTypes],
 	);
 
 	const onPointerDown = useCallback(
@@ -97,7 +97,7 @@ export function useTouchActivation(
 				y: event.clientY,
 			};
 		},
-		[pointerAllowed]
+		[pointerAllowed],
 	);
 
 	const onPointerMove = useCallback(
@@ -112,7 +112,7 @@ export function useTouchActivation(
 				cancelTouchPointer();
 			}
 		},
-		[cancelTouchPointer, moveTolerance]
+		[cancelTouchPointer, moveTolerance],
 	);
 
 	const onPointerUp = useCallback(
@@ -127,7 +127,7 @@ export function useTouchActivation(
 			event.stopPropagation();
 			onActivateRef.current();
 		},
-		[suppressNextClick]
+		[suppressNextClick],
 	);
 
 	const onClick = useCallback(
@@ -145,7 +145,7 @@ export function useTouchActivation(
 			}
 			onActivateRef.current();
 		},
-		[clearSuppressionTimer, disabled]
+		[clearSuppressionTimer, disabled],
 	);
 
 	return useMemo(
@@ -157,6 +157,6 @@ export function useTouchActivation(
 			onPointerMove,
 			onPointerUp,
 		}),
-		[cancelTouchPointer, onClick, onPointerDown, onPointerMove, onPointerUp]
+		[cancelTouchPointer, onClick, onPointerDown, onPointerMove, onPointerUp],
 	);
 }

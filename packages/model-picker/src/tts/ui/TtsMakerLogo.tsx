@@ -1,7 +1,11 @@
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
 import { publicAsset } from "../../lib/public-asset";
-import { getEngineConfig, getEngineLogoSrc, type TtsEngineKey } from "../lib/tts-helpers";
+import {
+	getEngineConfig,
+	getEngineLogoSrc,
+	type TtsEngineKey,
+} from "../lib/tts-helpers";
 
 /**
  * The maker's brand logo for a TTS engine — a square `<img>` of the official
@@ -32,7 +36,7 @@ export function TtsMakerLogo({
 		<span
 			className={cn(
 				"flex size-4 shrink-0 items-center justify-center rounded bg-foreground/[0.06] text-foreground-muted",
-				className
+				className,
 			)}
 		>
 			<HugeiconsIcon className="size-3" icon={getEngineConfig(engine).icon} />

@@ -1,10 +1,5 @@
 import { AnimatePresence, domAnimation, LazyMotion, m } from "motion/react";
-import {
-	type RefObject,
-	useLayoutEffect,
-	useRef,
-	useState,
-} from "react";
+import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { AudioVisualizer } from "@/features/audio-visualizer";
 import { TranscriptPreview } from "@/features/transcript-preview";
 import { ScrollingText } from "@/shared/ui/scrolling-text";

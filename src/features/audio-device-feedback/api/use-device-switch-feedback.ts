@@ -4,9 +4,9 @@ import { useInputDevices, useOutputDevices } from "@/entities/audio-device";
 import { useSettingsStore } from "@/entities/setting";
 import { useTranscriptionStore } from "@/entities/transcription";
 import {
-  audioSetSelectedMicrophone,
-  onDeviceSwitchFailed,
-  settingsSave,
+	audioSetSelectedMicrophone,
+	onDeviceSwitchFailed,
+	settingsSave,
 } from "@/shared/api/ipc-client";
 
 /**
@@ -17,13 +17,13 @@ import {
  * absent from the freshly enumerated device list.
  */
 function shouldResetSavedIndex(
-  savedIndex: number | null | undefined,
-  devices: ReadonlyArray<{ index: number }>,
+	savedIndex: number | null | undefined,
+	devices: ReadonlyArray<{ index: number }>,
 ): boolean {
-  if (savedIndex == null || devices.length === 0) {
-    return false;
-  }
-  return !devices.some((d) => d.index === savedIndex);
+	if (savedIndex == null || devices.length === 0) {
+		return false;
+	}
+	return !devices.some((d) => d.index === savedIndex);
 }
 
 /** Internal — exported solely for colocated unit tests (not in the slice
@@ -31,17 +31,16 @@ function shouldResetSavedIndex(
 export const __test_shouldResetSavedIndex = shouldResetSavedIndex;
 
 function shouldResetSavedOutputDevice(
-  savedDeviceId: string | null | undefined,
-  sinkIds: readonly string[],
+	savedDeviceId: string | null | undefined,
+	sinkIds: readonly string[],
 ): boolean {
-  if (!savedDeviceId || sinkIds.length === 0) {
-    return false;
-  }
-  return !sinkIds.includes(savedDeviceId);
+	if (!savedDeviceId || sinkIds.length === 0) {
+		return false;
+	}
+	return !sinkIds.includes(savedDeviceId);
 }
 
-export const __test_shouldResetSavedOutputDevice =
-  shouldResetSavedOutputDevice;
+export const __test_shouldResetSavedOutputDevice = shouldResetSavedOutputDevice;
 
 /**
  * Listens for `device_switch_failed` events emitted by the STT server when a
@@ -76,86 +75,86 @@ export const __test_shouldResetSavedOutputDevice =
  * next launch.
  */
 export function useDeviceSwitchFeedback(): void {
-  const t = useTranslations("audio");
-  const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
-  const savedIndex = useSettingsStore(
-    (s) => s.settings.audio?.inputDeviceIndex,
-  );
-  const savedOutputDeviceId = useSettingsStore(
-    (s) => s.settings.general?.outputDeviceId ?? "",
-  );
-  const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
-  const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
-  const { devices, refresh } = useInputDevices();
-  const { sinkIds: outputSinkIds } = useOutputDevices();
-  const lastSyncedMicRef = useRef<string | null>(null);
+	const t = useTranslations("audio");
+	const updateAudio = useSettingsStore((s) => s.updateAudioSettings);
+	const savedIndex = useSettingsStore(
+		(s) => s.settings.audio?.inputDeviceIndex,
+	);
+	const savedOutputDeviceId = useSettingsStore(
+		(s) => s.settings.general?.outputDeviceId ?? "",
+	);
+	const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
+	const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
+	const { devices, refresh } = useInputDevices();
+	const { sinkIds: outputSinkIds } = useOutputDevices();
+	const lastSyncedMicRef = useRef<string | null>(null);
 
-  // Bridge the renderer's `audio.inputDeviceIndex` selection to the BACKEND recorder's
-  // `selected_microphone`. These are SEPARATE settings stores: the device pickers write
-  // `inputDeviceIndex` (winstt-settings) but `get_effective_microphone_device` reads
-  // `selected_microphone` (the cpal device NAME, in the handy store). Without this bridge,
-  // picking a mic in the UI never reaches the recorder — the symptom that left a silent
-  // Bluetooth headset selected. The device list comes from `audioGetDevices()` (cpal), so
-  // `device.name` matches what the backend expects. `set_selected_microphone` also restarts
-  // the input stream, so guard on the RESOLVED name to avoid a restart on every device
-  // refresh. Also syncs on startup → the persisted selection takes effect immediately.
-  useEffect(() => {
-    if (devices.length === 0) {
-      return;
-    }
-    // `AudioDevice.index` is a NUMBER (i32 from the backend AudioDevicePayload) and
-    // `savedIndex` is a number too — compare via String() on BOTH so a number/string
-    // mismatch can't make this silently never match (the earlier `=== String(savedIndex)`
-    // bug compared number-vs-string → always false → the mic selection never reached the
-    // recorder).
-    const name =
-      savedIndex == null
-        ? "default"
-        : devices.find((d) => String(d.index) === String(savedIndex))?.name;
-    if (!name || name === lastSyncedMicRef.current) {
-      return;
-    }
-    lastSyncedMicRef.current = name;
-    audioSetSelectedMicrophone(name).catch((e) =>
-      console.error("set_selected_microphone failed:", e),
-    );
-  }, [devices, savedIndex]);
+	// Bridge the renderer's `audio.inputDeviceIndex` selection to the BACKEND recorder's
+	// `selected_microphone`. These are SEPARATE settings stores: the device pickers write
+	// `inputDeviceIndex` (winstt-settings) but `get_effective_microphone_device` reads
+	// `selected_microphone` (the cpal device NAME, in the handy store). Without this bridge,
+	// picking a mic in the UI never reaches the recorder — the symptom that left a silent
+	// Bluetooth headset selected. The device list comes from `audioGetDevices()` (cpal), so
+	// `device.name` matches what the backend expects. `set_selected_microphone` also restarts
+	// the input stream, so guard on the RESOLVED name to avoid a restart on every device
+	// refresh. Also syncs on startup → the persisted selection takes effect immediately.
+	useEffect(() => {
+		if (devices.length === 0) {
+			return;
+		}
+		// `AudioDevice.index` is a NUMBER (i32 from the backend AudioDevicePayload) and
+		// `savedIndex` is a number too — compare via String() on BOTH so a number/string
+		// mismatch can't make this silently never match (the earlier `=== String(savedIndex)`
+		// bug compared number-vs-string → always false → the mic selection never reached the
+		// recorder).
+		const name =
+			savedIndex == null
+				? "default"
+				: devices.find((d) => String(d.index) === String(savedIndex))?.name;
+		if (!name || name === lastSyncedMicRef.current) {
+			return;
+		}
+		lastSyncedMicRef.current = name;
+		audioSetSelectedMicrophone(name).catch((e) =>
+			console.error("set_selected_microphone failed:", e),
+		);
+	}, [devices, savedIndex]);
 
-  useEffect(() => {
-    const unsub = onDeviceSwitchFailed(({ errorMessage, fallbackIndex }) => {
-      updateAudio({ inputDeviceIndex: fallbackIndex });
-      // Read AFTER updateAudio so the fresh inputDeviceIndex is in the
-      // snapshot.  Zustand updates are synchronous, so getState()
-      // reflects the mutation immediately.
-      //
-      // Send ONLY the `audio` section, not the full settings. A full save
-      // would broadcast this renderer's stale `general`/`model`/etc. to
-      // other windows, clobbering anything (e.g. `general.overlayMode`)
-      // the user just changed in the settings panel that's still inside
-      // its 300ms debounce — both on disk and via a `settings:changed`
-      // broadcast that cancels the panel's pending save.
-      settingsSave({ audio: useSettingsStore.getState().settings.audio });
-      refresh().catch(() => undefined);
-      showEphemeral(t("deviceSwitchFailed", { reason: errorMessage }));
-    });
-    return unsub;
-  }, [updateAudio, refresh, showEphemeral, t]);
+	useEffect(() => {
+		const unsub = onDeviceSwitchFailed(({ errorMessage, fallbackIndex }) => {
+			updateAudio({ inputDeviceIndex: fallbackIndex });
+			// Read AFTER updateAudio so the fresh inputDeviceIndex is in the
+			// snapshot.  Zustand updates are synchronous, so getState()
+			// reflects the mutation immediately.
+			//
+			// Send ONLY the `audio` section, not the full settings. A full save
+			// would broadcast this renderer's stale `general`/`model`/etc. to
+			// other windows, clobbering anything (e.g. `general.overlayMode`)
+			// the user just changed in the settings panel that's still inside
+			// its 300ms debounce — both on disk and via a `settings:changed`
+			// broadcast that cancels the panel's pending save.
+			settingsSave({ audio: useSettingsStore.getState().settings.audio });
+			refresh().catch(() => undefined);
+			showEphemeral(t("deviceSwitchFailed", { reason: errorMessage }));
+		});
+		return unsub;
+	}, [updateAudio, refresh, showEphemeral, t]);
 
-  useEffect(() => {
-    if (!shouldResetSavedIndex(savedIndex, devices)) {
-      return;
-    }
-    updateAudio({ inputDeviceIndex: null });
-    // Same partial-save rationale as the device-switch-failed handler above —
-    // only the `audio` section is this hook's concern.
-    settingsSave({ audio: useSettingsStore.getState().settings.audio });
-  }, [devices, savedIndex, updateAudio]);
+	useEffect(() => {
+		if (!shouldResetSavedIndex(savedIndex, devices)) {
+			return;
+		}
+		updateAudio({ inputDeviceIndex: null });
+		// Same partial-save rationale as the device-switch-failed handler above —
+		// only the `audio` section is this hook's concern.
+		settingsSave({ audio: useSettingsStore.getState().settings.audio });
+	}, [devices, savedIndex, updateAudio]);
 
-  useEffect(() => {
-    if (!shouldResetSavedOutputDevice(savedOutputDeviceId, outputSinkIds)) {
-      return;
-    }
-    updateGeneral({ outputDeviceId: "" });
-    settingsSave({ general: useSettingsStore.getState().settings.general });
-  }, [outputSinkIds, savedOutputDeviceId, updateGeneral]);
+	useEffect(() => {
+		if (!shouldResetSavedOutputDevice(savedOutputDeviceId, outputSinkIds)) {
+			return;
+		}
+		updateGeneral({ outputDeviceId: "" });
+		settingsSave({ general: useSettingsStore.getState().settings.general });
+	}, [outputSinkIds, savedOutputDeviceId, updateGeneral]);
 }

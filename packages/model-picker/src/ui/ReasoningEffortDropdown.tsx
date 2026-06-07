@@ -10,7 +10,10 @@ import type { IconSvgElement } from "@hugeicons/react";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
-import { REASONING_EFFORT_OPTIONS, type ReasoningEffort } from "../config/model-selector-options";
+import {
+	REASONING_EFFORT_OPTIONS,
+	type ReasoningEffort,
+} from "../config/model-selector-options";
 
 const REASONING_EFFORT_ICONS: Record<ReasoningEffort, IconSvgElement> = {
 	off: SignalNo02Icon,
@@ -62,7 +65,7 @@ export function ReasoningEffortDropdown({
 			className={cn(
 				"m-0 w-full min-w-0 border-0 p-0",
 				disabled && "pointer-events-none opacity-60",
-				className
+				className,
 			)}
 			data-slot="reasoning-effort-dropdown"
 		>

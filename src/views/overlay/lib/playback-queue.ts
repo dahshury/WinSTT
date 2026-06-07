@@ -60,9 +60,11 @@ function extractChannelPlane(
 	samples: Float32Array,
 	channels: number,
 	frames: number,
-	ch: number
+	ch: number,
 ): AudioSamples {
-	const out = new Float32Array(new ArrayBuffer(frames * Float32Array.BYTES_PER_ELEMENT));
+	const out = new Float32Array(
+		new ArrayBuffer(frames * Float32Array.BYTES_PER_ELEMENT),
+	);
 	const stride = channels;
 	for (let i = 0; i < frames; i++) {
 		const v = samples[i * stride + ch];
@@ -80,7 +82,7 @@ function extractChannelPlane(
 export function deinterleaveSamples(
 	samples: Float32Array,
 	channels: number,
-	frames: number
+	frames: number,
 ): AudioSamples[] {
 	const planes: AudioSamples[] = [];
 	for (let ch = 0; ch < channels; ch++) {
@@ -94,7 +96,10 @@ export function deinterleaveSamples(
  * plane that is ``undefined`` (defensive — ``deinterleaveSamples``
  * always returns ``channels`` planes, so this is just a TS narrow).
  */
-export function copyPlanesToBuffer(buffer: AudioBuffer, planes: AudioSamples[]): void {
+export function copyPlanesToBuffer(
+	buffer: AudioBuffer,
+	planes: AudioSamples[],
+): void {
 	for (let ch = 0; ch < planes.length; ch++) {
 		const plane = planes[ch];
 		if (plane) {
@@ -112,7 +117,7 @@ export function fillAudioBuffer(
 	buffer: AudioBuffer,
 	samples: AudioSamples,
 	channels: number,
-	frames: number
+	frames: number,
 ): void {
 	if (channels === 1) {
 		buffer.copyToChannel(samples, 0);
@@ -126,7 +131,10 @@ export function fillAudioBuffer(
  * ``null`` if the chunk's format is unsupported, its PCM payload is
  * empty, or it contains fewer than one full frame.
  */
-function decodeFloat32(ctx: AudioContext, chunk: ChunkInput): AudioBuffer | null {
+function decodeFloat32(
+	ctx: AudioContext,
+	chunk: ChunkInput,
+): AudioBuffer | null {
 	const samples = parseFloat32Samples(chunk);
 	if (samples == null) {
 		return null;
@@ -209,7 +217,10 @@ export class TtsPlaybackQueue {
 			// previously swallowed with no trace. Warn so a "device switch did
 			// nothing" report is diagnosable instead of silent.
 			ctx.setSinkId(deviceId || { type: "none" }).catch((err) => {
-				console.warn("[tts] setSinkId re-route failed; staying on the previous sink", err);
+				console.warn(
+					"[tts] setSinkId re-route failed; staying on the previous sink",
+					err,
+				);
 			});
 		}
 	}
@@ -335,7 +346,10 @@ export class TtsPlaybackQueue {
 	 * Wire ``buffer`` into a new gap-free source, schedule it at the
 	 * running playhead, and advance the playhead by its duration.
 	 */
-	private scheduleSource(ctx: AudioContext, buffer: AudioBuffer): AudioBufferSourceNode {
+	private scheduleSource(
+		ctx: AudioContext,
+		buffer: AudioBuffer,
+	): AudioBufferSourceNode {
 		const source = ctx.createBufferSource();
 		source.buffer = buffer;
 		source.connect(this.ensureAnalyser(ctx));

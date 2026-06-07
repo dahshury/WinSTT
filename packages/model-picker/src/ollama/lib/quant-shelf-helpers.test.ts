@@ -15,7 +15,9 @@ import {
 	tagsForParamSize,
 } from "./quant-shelf-helpers";
 
-function tag(partial: Partial<OllamaLibraryTag> & { name: string }): OllamaLibraryTag {
+function tag(
+	partial: Partial<OllamaLibraryTag> & { name: string },
+): OllamaLibraryTag {
 	return { ...partial };
 }
 
@@ -75,7 +77,10 @@ describe("pruneToShownQuants", () => {
 	});
 
 	it("still keeps a bare default the user already has on disk / is pulling (forceKeep)", () => {
-		const tags = [tag({ name: "qwen3.5:4b" }), tag({ name: "qwen3.5:4b-q8_0", quantization: "Q8_0" })];
+		const tags = [
+			tag({ name: "qwen3.5:4b" }),
+			tag({ name: "qwen3.5:4b-q8_0", quantization: "Q8_0" }),
+		];
 		const keep = (n: string) => n === "qwen3.5:4b";
 		expect(pruneToShownQuants(tags, keep).map((t) => t.name)).toEqual([
 			"qwen3.5:4b",
@@ -86,7 +91,9 @@ describe("pruneToShownQuants", () => {
 	it("always keeps a tag the user has on disk / is downloading, even if dominated", () => {
 		const tags = [tag({ name: "m:4b-q4_0" }), tag({ name: "m:4b-mlx" })];
 		const keep = (n: string) => n === "m:4b-q4_0";
-		expect(pruneToShownQuants(tags, keep).map((t) => t.name)).toEqual(["m:4b-q4_0"]);
+		expect(pruneToShownQuants(tags, keep).map((t) => t.name)).toEqual([
+			"m:4b-q4_0",
+		]);
 	});
 });
 
@@ -113,7 +120,11 @@ describe("tagsForParamSize", () => {
 
 	it("sorts heaviest → lightest by download size", () => {
 		const sized = [
-			tag({ name: "m:4b-q4_K_M", parameterSize: "4b", sizeBytes: 3_300_000_000 }),
+			tag({
+				name: "m:4b-q4_K_M",
+				parameterSize: "4b",
+				sizeBytes: 3_300_000_000,
+			}),
 			tag({ name: "m:4b-fp16", parameterSize: "4b", sizeBytes: 8_600_000_000 }),
 			tag({ name: "m:4b-q8_0", parameterSize: "4b", sizeBytes: 5_000_000_000 }),
 		];
@@ -128,7 +139,11 @@ describe("tagsForParamSize", () => {
 		const withCloud = [
 			tag({ name: "gemma3:4b", parameterSize: "4b", quantization: "Q4_K_M" }),
 			tag({ name: "gemma3:4b-cloud", parameterSize: "4b" }),
-			tag({ name: "gemma3:4b-it-q8_0", parameterSize: "4b", quantization: "Q8_0" }),
+			tag({
+				name: "gemma3:4b-it-q8_0",
+				parameterSize: "4b",
+				quantization: "Q8_0",
+			}),
 		];
 		expect(tagsForParamSize(withCloud, "4b").map((t) => t.name)).toEqual([
 			"gemma3:4b",
@@ -144,13 +159,17 @@ describe("tagsForParamSize", () => {
 
 describe("quantBadgeLabel", () => {
 	it("prefers the parsed quantization", () => {
-		expect(quantBadgeLabel(tag({ name: "x:4b-q8_0", quantization: "Q8_0" }))).toBe("Q8_0");
+		expect(
+			quantBadgeLabel(tag({ name: "x:4b-q8_0", quantization: "Q8_0" })),
+		).toBe("Q8_0");
 	});
 
 	it("labels qat tags QAT instead of collapsing them to default", () => {
 		expect(quantBadgeLabel(tag({ name: "gemma3:4b-it-qat" }))).toBe("QAT");
 		// A parsed quantization still wins over the qat heuristic.
-		expect(quantBadgeLabel(tag({ name: "x:4b-it-qat", quantization: "Q8_0" }))).toBe("Q8_0");
+		expect(
+			quantBadgeLabel(tag({ name: "x:4b-it-qat", quantization: "Q8_0" })),
+		).toBe("Q8_0");
 	});
 
 	it("falls back to latest then default", () => {
@@ -249,23 +268,36 @@ describe("isModelSizeInstalled", () => {
 		// `command-r7b` carries `7b` in its BASE slug; only the post-colon variant
 		// is the param size, so this must not false-match on the base's digits.
 		expect(
-			isModelSizeInstalled(new Set(["command-r7b:7b-q4_K_M"]), "command-r7b:7b"),
+			isModelSizeInstalled(
+				new Set(["command-r7b:7b-q4_K_M"]),
+				"command-r7b:7b",
+			),
 		).toBe(true);
 	});
 
 	it("covers a bare-base tag with any installed sibling of that family", () => {
-		expect(isModelSizeInstalled(new Set(["tinyllama:latest"]), "tinyllama")).toBe(
-			true,
+		expect(
+			isModelSizeInstalled(new Set(["tinyllama:latest"]), "tinyllama"),
+		).toBe(true);
+		expect(isModelSizeInstalled(new Set(["qwen3.5:4b"]), "tinyllama")).toBe(
+			false,
 		);
-		expect(isModelSizeInstalled(new Set(["qwen3.5:4b"]), "tinyllama")).toBe(false);
 	});
 });
 
 describe("quantBadgeCacheState", () => {
 	it("installed wins, then paused, then not-cached", () => {
-		expect(quantBadgeCacheState({ installed: true, paused: false })).toBe("cached");
-		expect(quantBadgeCacheState({ installed: true, paused: true })).toBe("cached");
-		expect(quantBadgeCacheState({ installed: false, paused: true })).toBe("partial");
-		expect(quantBadgeCacheState({ installed: false, paused: false })).toBe("not_cached");
+		expect(quantBadgeCacheState({ installed: true, paused: false })).toBe(
+			"cached",
+		);
+		expect(quantBadgeCacheState({ installed: true, paused: true })).toBe(
+			"cached",
+		);
+		expect(quantBadgeCacheState({ installed: false, paused: true })).toBe(
+			"partial",
+		);
+		expect(quantBadgeCacheState({ installed: false, paused: false })).toBe(
+			"not_cached",
+		);
 	});
 });

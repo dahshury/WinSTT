@@ -1,4 +1,9 @@
-import { AnimatePresence, m as motion, useReducedMotion, type MotionProps } from "motion/react";
+import {
+	AnimatePresence,
+	m as motion,
+	useReducedMotion,
+	type MotionProps,
+} from "motion/react";
 import {
 	type ComponentPropsWithoutRef,
 	Children,
@@ -20,11 +25,16 @@ import { SurfaceProvider, surfaceBg, useSurface } from "@/shared/lib/surface";
 import { useProximityHover } from "@/shared/lib/use-proximity-hover";
 
 type MotionTableRowProps = ComponentPropsWithoutRef<"tr"> &
-	Pick<MotionProps, "animate" | "exit" | "initial" | "layout" | "transition"> & {
+	Pick<
+		MotionProps,
+		"animate" | "exit" | "initial" | "layout" | "transition"
+	> & {
 		ref?: Ref<HTMLTableRowElement>;
 	};
 
-const MotionTableRow = motion.tr as unknown as (props: MotionTableRowProps) => ReactNode;
+const MotionTableRow = motion.tr as unknown as (
+	props: MotionTableRowProps,
+) => ReactNode;
 
 interface TableContextValue {
 	activeIndex: number | null;
@@ -38,15 +48,20 @@ export interface TableProps extends ComponentPropsWithoutRef<"table"> {
 	ref?: Ref<HTMLTableElement>;
 }
 
-export function Table({ children, className, containerClassName, ref, ...props }: TableProps) {
+export function Table({
+	children,
+	className,
+	containerClassName,
+	ref,
+	...props
+}: TableProps) {
 	// Lift the table one step above its substrate so it reads as its own
 	// surface against the section it sits in, and re-provide the level so any
 	// nested control elevates from here (surfaces system — no flat tokens).
 	const level = Math.min(useSurface() + 1, 8);
 	const containerRef = useRef<HTMLDivElement>(null);
-	const { activeIndex, handlers, itemRects, registerItem, measureItems } = useProximityHover(
-		containerRef as RefObject<HTMLElement | null>
-	);
+	const { activeIndex, handlers, itemRects, registerItem, measureItems } =
+		useProximityHover(containerRef as RefObject<HTMLElement | null>);
 
 	// Re-measure on children identity change (rows added/removed). `measureItems`
 	// is exposed as a stable function reference by `useProximityHover` (pinned
@@ -108,12 +123,18 @@ export function Table({ children, className, containerClassName, ref, ...props }
 								}
 								key={session}
 								transition={
-									reduceMotion ? { duration: 0 } : { ...springs.fast, opacity: { duration: 0.08 } }
+									reduceMotion
+										? { duration: 0 }
+										: { ...springs.fast, opacity: { duration: 0.08 } }
 								}
 							/>
 						) : null}
 					</AnimatePresence>
-					<table className={cn("w-full border-collapse text-body", className)} ref={ref} {...props}>
+					<table
+						className={cn("w-full border-collapse text-body", className)}
+						ref={ref}
+						{...props}
+					>
 						{children}
 					</table>
 				</div>
@@ -134,7 +155,12 @@ export type TableBodyProps = ComponentPropsWithoutRef<"tbody"> & {
 	ref?: Ref<HTMLTableSectionElement>;
 };
 
-export function TableBody({ children, className, ref, ...props }: TableBodyProps) {
+export function TableBody({
+	children,
+	className,
+	ref,
+	...props
+}: TableBodyProps) {
 	const keyedChildren = Children.map(children, (child, index) => {
 		if (!isValidElement(child) || child.key !== null) {
 			return child;
@@ -153,7 +179,13 @@ export interface TableRowProps extends ComponentPropsWithoutRef<"tr"> {
 	ref?: Ref<HTMLTableRowElement>;
 }
 
-export function TableRow({ className, index, ref, style, ...props }: TableRowProps) {
+export function TableRow({
+	className,
+	index,
+	ref,
+	style,
+	...props
+}: TableRowProps) {
 	const internalRef = useRef<HTMLTableRowElement | null>(null);
 	const ctx = use(TableContext);
 	const reduceMotion = useReducedMotion();
@@ -186,10 +218,12 @@ export function TableRow({ className, index, ref, style, ...props }: TableRowPro
 		"group/row relative z-raised border-b transition-[border-color] duration-100",
 		hideBorder ? "border-transparent" : "border-border",
 		isBodyRow && activeIdx === index && "is-active",
-		className
+		className,
 	);
 	const rowStyle = {
-		fontVariationSettings: isBodyRow ? fontWeights.normal : fontWeights.semibold,
+		fontVariationSettings: isBodyRow
+			? fontWeights.normal
+			: fontWeights.semibold,
 		...style,
 	};
 
@@ -203,14 +237,23 @@ export function TableRow({ className, index, ref, style, ...props }: TableRowPro
 				exit={
 					reduceMotion
 						? { opacity: 1, transition: { duration: 0 } }
-						: { opacity: 0, y: -4, filter: "blur(2px)", transition: { duration: 0.12 } }
+						: {
+								opacity: 0,
+								y: -4,
+								filter: "blur(2px)",
+								transition: { duration: 0.12 },
+							}
 				}
 				initial={false}
 				ref={setRef}
 				{...props}
 				{...(reduceMotion ? {} : { layout: "position" as const })}
 				style={rowStyle}
-				transition={reduceMotion ? { duration: 0 } : { ...springs.fast, opacity: { duration: 0.1 } }}
+				transition={
+					reduceMotion
+						? { duration: 0 }
+						: { ...springs.fast, opacity: { duration: 0.1 } }
+				}
 			/>
 		);
 	}
@@ -233,7 +276,10 @@ export type TableHeadProps = ComponentPropsWithoutRef<"th"> & {
 export function TableHead({ className, ref, ...props }: TableHeadProps) {
 	return (
 		<th
-			className={cn("px-3 py-2 text-left font-medium text-foreground", className)}
+			className={cn(
+				"px-3 py-2 text-left font-medium text-foreground",
+				className,
+			)}
 			ref={ref}
 			{...props}
 		/>
@@ -250,7 +296,7 @@ export function TableCell({ className, ref, ...props }: TableCellProps) {
 			className={cn(
 				"px-3 py-2 text-foreground-muted transition-colors duration-100",
 				"group-[.is-active]/row:text-foreground",
-				className
+				className,
 			)}
 			ref={ref}
 			{...props}
@@ -266,7 +312,10 @@ export interface TableEmptyProps {
 export function TableEmpty({ children, colSpan }: TableEmptyProps) {
 	return (
 		<tr>
-			<td className="px-3 py-6 text-center text-body-sm text-foreground-muted" colSpan={colSpan}>
+			<td
+				className="px-3 py-6 text-center text-body-sm text-foreground-muted"
+				colSpan={colSpan}
+			>
 				{children}
 			</td>
 		</tr>

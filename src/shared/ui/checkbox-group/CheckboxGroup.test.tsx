@@ -28,7 +28,7 @@ describe("CheckboxItem trailing-control propagation", () => {
 						</button>
 					}
 				/>
-			</CheckboxGroup>
+			</CheckboxGroup>,
 		);
 
 		fireEvent.click(getByText("high"));
@@ -42,8 +42,13 @@ describe("CheckboxItem trailing-control propagation", () => {
 
 		const { getByRole } = render(
 			<CheckboxGroup checkedIndices={new Set()}>
-				<CheckboxItem checked={false} index={0} label="Concise" onToggle={onToggle} />
-			</CheckboxGroup>
+				<CheckboxItem
+					checked={false}
+					index={0}
+					label="Concise"
+					onToggle={onToggle}
+				/>
+			</CheckboxGroup>,
 		);
 
 		fireEvent.click(getByRole("checkbox", { name: "Concise" }));
@@ -61,13 +66,19 @@ describe("CheckboxItem trailing-control propagation", () => {
 				scroller.scrollTop = 0;
 			}
 		});
-		HTMLElement.prototype.focus = focus as unknown as typeof HTMLElement.prototype.focus;
+		HTMLElement.prototype.focus =
+			focus as unknown as typeof HTMLElement.prototype.focus;
 
 		try {
 			const { container } = render(
 				<CheckboxGroup checkedIndices={new Set()}>
-					<CheckboxItem checked={false} index={0} label="Concise" onToggle={onToggle} />
-				</CheckboxGroup>
+					<CheckboxItem
+						checked={false}
+						index={0}
+						label="Concise"
+						onToggle={onToggle}
+					/>
+				</CheckboxGroup>,
 			);
 			const row = container.querySelector("[data-proximity-index='0']");
 

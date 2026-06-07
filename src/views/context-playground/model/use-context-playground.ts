@@ -32,7 +32,9 @@ export interface ContextPlaygroundController {
 
 export function useContextPlayground(): ContextPlaygroundController {
 	const [report, setReport] = useState<ContextDebugReport | null>(null);
-	const [waiting, setWaiting] = useState<ContextPlaygroundWaitReason | null>(null);
+	const [waiting, setWaiting] = useState<ContextPlaygroundWaitReason | null>(
+		null,
+	);
 	const [live, setLive] = useState(true);
 	const [deepArmed, setDeepArmed] = useState(false);
 	const close = useCallback(() => ipcSend(IPC.CONTEXT_PLAYGROUND_CLOSE), []);

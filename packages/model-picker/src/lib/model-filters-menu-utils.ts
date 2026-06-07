@@ -12,7 +12,9 @@ export function countNonNull(value: unknown): number {
 	return value === null ? 0 : 1;
 }
 
-export function computeActiveFilterCount(input: ActiveFilterCountInput): number {
+export function computeActiveFilterCount(
+	input: ActiveFilterCountInput,
+): number {
 	return (
 		countNonNull(input.selectedVariant) +
 		countNonNull(input.selectedEndpointProvider) +
@@ -31,11 +33,13 @@ export function getOpenStateAttr(isOpen: boolean): "open" | "closed" {
 
 export function shouldRenderAuthorSubmenu(
 	allProviders: string[],
-	onMakersChange: ((makers: string[]) => void) | undefined
+	onMakersChange: ((makers: string[]) => void) | undefined,
 ): boolean {
 	return allProviders.length > 0 && !!onMakersChange;
 }
 
-export function shouldRenderEndpointSubmenu(endpointProviders: [string, number][]): boolean {
+export function shouldRenderEndpointSubmenu(
+	endpointProviders: [string, number][],
+): boolean {
 	return endpointProviders.length > 0;
 }

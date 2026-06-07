@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createModelSelection, parseModelSelection } from "./openrouter-model-selection";
+import {
+	createModelSelection,
+	parseModelSelection,
+} from "./openrouter-model-selection";
 
 describe("parseModelSelection", () => {
 	test("returns empty modelId for empty input AND no providerSlug key (early return)", () => {
@@ -24,7 +27,10 @@ describe("parseModelSelection", () => {
 			modelId: "openai/gpt-4o",
 			providerSlug: "deepinfra",
 		});
-		expect(parseModelSelection("a@b@c")).toEqual({ modelId: "a@b", providerSlug: "c" });
+		expect(parseModelSelection("a@b@c")).toEqual({
+			modelId: "a@b",
+			providerSlug: "c",
+		});
 	});
 
 	test("treats trailing @ as no provider slug", () => {
@@ -53,7 +59,9 @@ describe("createModelSelection", () => {
 	});
 
 	test("joins modelId@providerSlug when both supplied", () => {
-		expect(createModelSelection("openai/gpt-4o", "deepinfra")).toBe("openai/gpt-4o@deepinfra");
+		expect(createModelSelection("openai/gpt-4o", "deepinfra")).toBe(
+			"openai/gpt-4o@deepinfra",
+		);
 	});
 
 	test("treats empty providerSlug as no provider", () => {

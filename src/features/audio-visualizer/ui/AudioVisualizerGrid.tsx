@@ -11,7 +11,7 @@ export function isSpeakingCellHighlighted(
 	index: number,
 	columnCount: number,
 	rowCount: number,
-	volumeBands: number[]
+	volumeBands: number[],
 ): boolean {
 	const y = Math.floor(index / columnCount);
 	const rowMidPoint = Math.floor(rowCount / 2);
@@ -24,7 +24,7 @@ export function isSpeakingCellHighlighted(
 export function isCoordinateHighlighted(
 	index: number,
 	columnCount: number,
-	highlightedCoordinate: Coordinate
+	highlightedCoordinate: Coordinate,
 ): boolean {
 	return (
 		highlightedCoordinate.x === index % columnCount &&
@@ -32,7 +32,10 @@ export function isCoordinateHighlighted(
 	);
 }
 
-export function resolveTransitionDuration(interval: number, isHighlighted: boolean): number {
+export function resolveTransitionDuration(
+	interval: number,
+	isHighlighted: boolean,
+): number {
 	return interval / (isHighlighted ? 1000 : 100);
 }
 
@@ -52,7 +55,7 @@ const gridCellVariants = cva(
 			},
 		},
 		defaultVariants: { size: "md" },
-	}
+	},
 );
 
 const gridContainerVariants = cva("grid", {
@@ -90,7 +93,12 @@ function GridCell({
 	size,
 }: GridCellProps) {
 	if (state === "speaking") {
-		const isHighlighted = isSpeakingCellHighlighted(index, columnCount, rowCount, volumeBands);
+		const isHighlighted = isSpeakingCellHighlighted(
+			index,
+			columnCount,
+			rowCount,
+			volumeBands,
+		);
 		return (
 			<div
 				className={gridCellVariants({ size })}
@@ -100,8 +108,15 @@ function GridCell({
 		);
 	}
 
-	const isHighlighted = isCoordinateHighlighted(index, columnCount, highlightedCoordinate);
-	const transitionDurationInSeconds = resolveTransitionDuration(interval, isHighlighted);
+	const isHighlighted = isCoordinateHighlighted(
+		index,
+		columnCount,
+		highlightedCoordinate,
+	);
+	const transitionDurationInSeconds = resolveTransitionDuration(
+		interval,
+		isHighlighted,
+	);
 
 	return (
 		<div
@@ -137,12 +152,21 @@ export function AudioVisualizerGrid({
 	const state = useAgentState();
 	const columnCount = _columnCount;
 	const rowCount = _rowCount;
-	const cells = Array.from({ length: columnCount * rowCount }, (_, position) => ({
-		id: `grid-${columnCount}x${rowCount}-${position}`,
-		position,
-	}));
+	const cells = Array.from(
+		{ length: columnCount * rowCount },
+		(_, position) => ({
+			id: `grid-${columnCount}x${rowCount}-${position}`,
+			position,
+		}),
+	);
 
-	const highlightedCoordinate = useGridAnimator(state, rowCount, columnCount, interval, radius);
+	const highlightedCoordinate = useGridAnimator(
+		state,
+		rowCount,
+		columnCount,
+		interval,
+		radius,
+	);
 	const volumeBands = useMultibandVolume(columnCount);
 
 	return (
@@ -150,7 +174,11 @@ export function AudioVisualizerGrid({
 			className={cn(gridContainerVariants({ size }), className)}
 			data-lk-state={state}
 			style={
-				{ ...style, gridTemplateColumns: `repeat(${columnCount}, 1fr)`, color } as CSSProperties
+				{
+					...style,
+					gridTemplateColumns: `repeat(${columnCount}, 1fr)`,
+					color,
+				} as CSSProperties
 			}
 			{...props}
 		>

@@ -51,10 +51,14 @@ export type ComboboxCloseReason =
  * is missing or doesn't carry a reason — callers should treat that as
  * "no information, behave as a generic close".
  */
-export function extractCloseReason(eventDetails: unknown): ComboboxCloseReason | undefined {
+export function extractCloseReason(
+	eventDetails: unknown,
+): ComboboxCloseReason | undefined {
 	if (eventDetails === null || typeof eventDetails !== "object") {
 		return;
 	}
 	const reason = (eventDetails as { reason?: unknown }).reason;
-	return typeof reason === "string" ? (reason as ComboboxCloseReason) : undefined;
+	return typeof reason === "string"
+		? (reason as ComboboxCloseReason)
+		: undefined;
 }

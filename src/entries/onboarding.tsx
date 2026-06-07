@@ -23,5 +23,5 @@ renderReactRoot(
 				</Tooltip.Provider>
 			</IntlProvider>
 		</Suspense>
-	</StrictMode>
+	</StrictMode>,
 );

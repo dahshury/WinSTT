@@ -9,7 +9,7 @@ describe("getProcessingStartedAt", () => {
 				isTranscribing: true,
 				thinkingStartedAt: 5_000,
 				transcribingStartedAt: 1_000,
-			})
+			}),
 		).toBe(1_000);
 	});
 
@@ -20,7 +20,7 @@ describe("getProcessingStartedAt", () => {
 				isTranscribing: false,
 				thinkingStartedAt: 5_000,
 				transcribingStartedAt: null,
-			})
+			}),
 		).toBe(5_000);
 	});
 
@@ -31,7 +31,7 @@ describe("getProcessingStartedAt", () => {
 				isTranscribing: false,
 				thinkingStartedAt: 5_000,
 				transcribingStartedAt: 1_000,
-			})
+			}),
 		).toBeNull();
 	});
 });

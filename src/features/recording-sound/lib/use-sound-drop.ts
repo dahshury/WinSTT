@@ -24,7 +24,10 @@ function hasValidExtension(name: string): boolean {
 	return ACCEPTED_EXTENSIONS.includes(ext);
 }
 
-async function checkDuration(file: File, t: TranslatorFn): Promise<string | null> {
+async function checkDuration(
+	file: File,
+	t: TranslatorFn,
+): Promise<string | null> {
 	try {
 		const duration = await getAudioDuration(file);
 		if (duration > MAX_DURATION_SECONDS) {
@@ -44,7 +47,10 @@ type DropValidation =
 	| { error: string; ok: false };
 
 /** Extension + duration acceptance checks. Returns an error string or null. */
-async function fileContentError(file: File, t: TranslatorFn): Promise<string | null> {
+async function fileContentError(
+	file: File,
+	t: TranslatorFn,
+): Promise<string | null> {
 	if (!hasValidExtension(file.name)) {
 		return t("soundFileDropError");
 	}
@@ -56,7 +62,10 @@ async function fileContentError(file: File, t: TranslatorFn): Promise<string | n
  * Extracted from the hook's `onDrop` handler so the handler stays a thin
  * "validate then commit" body instead of a deep branch ladder.
  */
-async function validateDroppedFile(file: File, t: TranslatorFn): Promise<DropValidation> {
+async function validateDroppedFile(
+	file: File,
+	t: TranslatorFn,
+): Promise<DropValidation> {
 	const contentError = await fileContentError(file, t);
 	if (contentError) {
 		return { ok: false, error: contentError };
@@ -88,7 +97,10 @@ interface UseSoundDropReturn {
 	resetError: () => void;
 }
 
-export function useSoundDrop({ onAdd, t }: UseSoundDropOptions): UseSoundDropReturn {
+export function useSoundDrop({
+	onAdd,
+	t,
+}: UseSoundDropOptions): UseSoundDropReturn {
 	const [dragOver, setDragOver] = useState(false);
 	const [dropError, setDropError] = useState("");
 
@@ -108,7 +120,7 @@ export function useSoundDrop({ onAdd, t }: UseSoundDropOptions): UseSoundDropRet
 			}
 			await onAdd(result.sourcePath, result.displayName);
 		},
-		[onAdd, t]
+		[onAdd, t],
 	);
 
 	const handleDragOver = useCallback((e: DragEvent<HTMLElement>) => {
@@ -127,7 +139,11 @@ export function useSoundDrop({ onAdd, t }: UseSoundDropOptions): UseSoundDropRet
 	return {
 		dragOver,
 		dropError,
-		handlers: { onDrop: handleDrop, onDragOver: handleDragOver, onDragLeave: handleDragLeave },
+		handlers: {
+			onDrop: handleDrop,
+			onDragOver: handleDragOver,
+			onDragLeave: handleDragLeave,
+		},
 		resetError,
 	};
 }

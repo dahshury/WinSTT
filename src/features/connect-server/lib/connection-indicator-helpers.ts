@@ -41,7 +41,7 @@ const CONNECTION_CHIP_MAP: Record<string, ConnectionChip> = {
 export function resolveConnectionChip(
 	connectionStatus: string,
 	serverStatus: string,
-	runtimeIsGpu: boolean | null
+	runtimeIsGpu: boolean | null,
 ): ConnectionChip {
 	const mapped = CONNECTION_CHIP_MAP[connectionStatus];
 	if (mapped) {

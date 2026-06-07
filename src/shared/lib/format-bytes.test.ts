@@ -36,7 +36,12 @@ describe("formatBytes", () => {
 	});
 
 	test("download-overlay ladder: minUnit B with KB/MB/GB decimals", () => {
-		const opts = { minUnit: "B", mbDecimals: 1, gbDecimals: 2, kbDecimals: 1 } as const;
+		const opts = {
+			minUnit: "B",
+			mbDecimals: 1,
+			gbDecimals: 2,
+			kbDecimals: 1,
+		} as const;
 		expect(formatBytes(512, opts)).toBe("512 B");
 		expect(formatBytes(1023, opts)).toBe("1023 B");
 		expect(formatBytes(KIB, opts)).toBe("1.0 KB");

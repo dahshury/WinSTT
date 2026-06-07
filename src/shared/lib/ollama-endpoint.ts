@@ -43,7 +43,10 @@ export function normalizeOllamaEndpoint(endpoint: string): string {
 	}
 }
 
-export function buildOllamaApiUrl(endpoint: string, apiPath: `/api/${string}`): string {
+export function buildOllamaApiUrl(
+	endpoint: string,
+	apiPath: `/api/${string}`,
+): string {
 	const normalized = normalizeOllamaEndpoint(endpoint);
 	const normalizedApiPath = apiPath.startsWith("/") ? apiPath : `/${apiPath}`;
 

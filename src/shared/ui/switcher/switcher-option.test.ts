@@ -12,7 +12,9 @@ import type { SwitcherOption } from "./switcher-option";
 
 // Mirrors the predicate `SwitcherBadge`/`Switcher` use to decide whether the
 // corner badge should be interactive (a button) vs. presentational (a span).
-const isInteractiveBadge = <T extends string>(option: SwitcherOption<T>): boolean =>
+const isInteractiveBadge = <T extends string>(
+	option: SwitcherOption<T>,
+): boolean =>
 	option.badgeTooltip !== undefined || option.onBadgeClick !== undefined;
 
 describe("SwitcherOption type contract", () => {
@@ -30,7 +32,10 @@ describe("SwitcherOption type contract", () => {
 	});
 
 	test("value is narrowed by the generic parameter", () => {
-		const local = { label: "Local", value: "local" } satisfies SwitcherOption<"local">;
+		const local = {
+			label: "Local",
+			value: "local",
+		} satisfies SwitcherOption<"local">;
 		// The literal type is preserved, not widened to string.
 		const value: "local" = local.value;
 		expect(value).toBe("local");
@@ -134,7 +139,7 @@ describe("SwitcherOption type contract", () => {
 				"label",
 				"onBadgeClick",
 				"value",
-			].sort()
+			].sort(),
 		);
 	});
 });

@@ -8,7 +8,13 @@ export type AgentState =
 	| "speaking";
 
 /** Available visualizer types. */
-export const VISUALIZER_TYPES = ["bar", "grid", "radial", "wave", "aura"] as const;
+export const VISUALIZER_TYPES = [
+	"bar",
+	"grid",
+	"radial",
+	"wave",
+	"aura",
+] as const;
 export type VisualizerType = (typeof VISUALIZER_TYPES)[number];
 
 export function isVisualizerType(value: string): value is VisualizerType {
@@ -67,7 +73,7 @@ const PERCENT = 100;
  * a partial or missing input still yields the shipped look.
  */
 export function resolveVisualizerConfig(
-	input: VisualizerSettingsInput | undefined
+	input: VisualizerSettingsInput | undefined,
 ): VisualizerConfig {
 	const s = input ?? {};
 	return {

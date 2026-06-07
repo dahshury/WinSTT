@@ -18,7 +18,7 @@ import { useFavoriteProviders } from "./use-favorite-providers";
 function pushEndpointItems(
 	items: string[],
 	modelId: string,
-	endpoints: OpenRouterEndpoint[]
+	endpoints: OpenRouterEndpoint[],
 ): void {
 	for (const endpoint of endpoints) {
 		items.push(`${modelId}@${endpoint.provider_name}`);
@@ -26,7 +26,10 @@ function pushEndpointItems(
 }
 
 /** Pure: appends provider-specific item strings for a model with multiple endpoints. */
-function appendModelEndpointItems(items: string[], model: OpenRouterModel): void {
+function appendModelEndpointItems(
+	items: string[],
+	model: OpenRouterModel,
+): void {
 	if (!(model.endpoints && model.endpoints.length > 1)) {
 		return;
 	}
@@ -34,7 +37,9 @@ function appendModelEndpointItems(items: string[], model: OpenRouterModel): void
 }
 
 /** Pure: builds Combobox item value strings from grouped models. */
-function buildComboboxItems(groupedModels: [string, OpenRouterModel[]][]): string[] {
+function buildComboboxItems(
+	groupedModels: [string, OpenRouterModel[]][],
+): string[] {
 	const items: string[] = [];
 	for (const [, makerModels] of groupedModels) {
 		for (const model of makerModels) {
@@ -56,7 +61,9 @@ interface UseModelSelectorFiltersProps {
 	setSearchQuery: (query: string) => void;
 	setSelectedEndpointProvider: (provider: string | null) => void;
 	setSelectedMakers: React.Dispatch<React.SetStateAction<string[]>>;
-	setSelectedParameters: React.Dispatch<React.SetStateAction<FilterableParameter[]>>;
+	setSelectedParameters: React.Dispatch<
+		React.SetStateAction<FilterableParameter[]>
+	>;
 	setSelectedVariant: (variant: ModelVariant | "none" | null) => void;
 	sortKey?: OpenRouterSortValue;
 }
@@ -69,7 +76,7 @@ interface UseModelSelectorFiltersProps {
 function buildGroupedModels(
 	filteredModels: OpenRouterModel[],
 	hasSearch: boolean,
-	sortKey: OpenRouterSortValue
+	sortKey: OpenRouterSortValue,
 ): [string, OpenRouterModel[]][] {
 	if (sortKey === null) {
 		return groupModelsByMaker(filteredModels, hasSearch);
@@ -81,7 +88,7 @@ function buildGroupedModels(
 /** Pure: returns true when any list-typed filter has a selection. */
 function hasListSelection(
 	selectedMakers: string[],
-	selectedParameters: FilterableParameter[]
+	selectedParameters: FilterableParameter[],
 ): boolean {
 	return selectedMakers.length > 0 || selectedParameters.length > 0;
 }
@@ -89,7 +96,7 @@ function hasListSelection(
 /** Pure: returns true when any single-valued filter is set. */
 function hasSingleValueSelection(
 	selectedVariant: ModelVariant | "none" | null,
-	selectedEndpointProvider: string | null
+	selectedEndpointProvider: string | null,
 ): boolean {
 	return selectedVariant !== null || selectedEndpointProvider !== null;
 }
@@ -99,7 +106,7 @@ function hasSelectionFilter(
 	selectedMakers: string[],
 	selectedVariant: ModelVariant | "none" | null,
 	selectedEndpointProvider: string | null,
-	selectedParameters: FilterableParameter[]
+	selectedParameters: FilterableParameter[],
 ): boolean {
 	return (
 		hasListSelection(selectedMakers, selectedParameters) ||
@@ -113,7 +120,7 @@ function computeHasActiveFilters(
 	searchQuery: string,
 	selectedVariant: ModelVariant | "none" | null,
 	selectedEndpointProvider: string | null,
-	selectedParameters: FilterableParameter[]
+	selectedParameters: FilterableParameter[],
 ): boolean {
 	return (
 		searchQuery.trim() !== "" ||
@@ -121,7 +128,7 @@ function computeHasActiveFilters(
 			selectedMakers,
 			selectedVariant,
 			selectedEndpointProvider,
-			selectedParameters
+			selectedParameters,
 		)
 	);
 }
@@ -163,7 +170,9 @@ export function useModelSelectorFilters({
 				favs.push(provider);
 			}
 		}
-		const sortedFavs = favs.toSorted((a, b) => favorites.indexOf(a) - favorites.indexOf(b));
+		const sortedFavs = favs.toSorted(
+			(a, b) => favorites.indexOf(a) - favorites.indexOf(b),
+		);
 		return { favoriteProviders: sortedFavs };
 	}, [allProviders, favorites]);
 
@@ -207,7 +216,7 @@ export function useModelSelectorFilters({
 		searchQuery,
 		selectedVariant,
 		selectedEndpointProvider,
-		selectedParameters
+		selectedParameters,
 	);
 
 	const handleSearchChange = (query: string) => {
@@ -216,7 +225,7 @@ export function useModelSelectorFilters({
 
 	const handleMakerToggle = (maker: string) => {
 		setSelectedMakers((prev) =>
-			prev.includes(maker) ? prev.filter((m) => m !== maker) : [...prev, maker]
+			prev.includes(maker) ? prev.filter((m) => m !== maker) : [...prev, maker],
 		);
 	};
 
@@ -238,7 +247,7 @@ export function useModelSelectorFilters({
 
 	const handleRemoveParameter = (param: FilterableParameter) => {
 		setSelectedParameters((prev: FilterableParameter[]) =>
-			prev.filter((p: FilterableParameter) => p !== param)
+			prev.filter((p: FilterableParameter) => p !== param),
 		);
 	};
 

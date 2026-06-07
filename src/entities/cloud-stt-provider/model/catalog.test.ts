@@ -27,7 +27,9 @@ describe("CLOUD_CATALOG", () => {
 
 	test("openai catalog flags gpt-4o-mini-transcribe as the default", () => {
 		const openai = CLOUD_CATALOG.openai;
-		expect(openai.find((m) => m.id === "gpt-4o-mini-transcribe")?.isDefault).toBe(true);
+		expect(
+			openai.find((m) => m.id === "gpt-4o-mini-transcribe")?.isDefault,
+		).toBe(true);
 	});
 
 	test("elevenlabs catalog flags scribe_v1 as the default", () => {
@@ -101,7 +103,9 @@ describe("getApiKeyUrl", () => {
 	});
 
 	test("elevenlabs routes to the elevenlabs.io API keys page", () => {
-		expect(getApiKeyUrl("elevenlabs")).toBe("https://elevenlabs.io/app/settings/api-keys");
+		expect(getApiKeyUrl("elevenlabs")).toBe(
+			"https://elevenlabs.io/app/settings/api-keys",
+		);
 	});
 });
 
@@ -118,15 +122,21 @@ describe("providerDisplayName", () => {
 describe("prettifyModelId", () => {
 	test("normalizes separators and uppercases the gpt token", () => {
 		expect(prettifyModelId("gpt-4o-mini-transcribe-2025-12-15")).toBe(
-			"GPT 4o Mini Transcribe 2025 12 15"
+			"GPT 4o Mini Transcribe 2025 12 15",
 		);
-		expect(prettifyModelId("scribe_v1_experimental")).toBe("Scribe V1 Experimental");
+		expect(prettifyModelId("scribe_v1_experimental")).toBe(
+			"Scribe V1 Experimental",
+		);
 	});
 });
 
 describe("mergeCloudModels", () => {
 	const curated: CloudModel[] = [
-		{ id: "gpt-4o-mini-transcribe", displayName: "GPT-4o mini transcribe", isDefault: true },
+		{
+			id: "gpt-4o-mini-transcribe",
+			displayName: "GPT-4o mini transcribe",
+			isDefault: true,
+		},
 		{ id: "whisper-1", displayName: "Whisper v1" },
 	];
 
@@ -137,7 +147,10 @@ describe("mergeCloudModels", () => {
 
 	test("appends unknown dynamic ids with provider or prettified labels", () => {
 		const merged = mergeCloudModels(curated, [
-			{ id: "gpt-4o-transcribe-diarize", displayName: "GPT-4o transcribe (diarize)" },
+			{
+				id: "gpt-4o-transcribe-diarize",
+				displayName: "GPT-4o transcribe (diarize)",
+			},
 			{ id: "gpt-4o-transcribe-2099-01-01" },
 		]);
 		expect(merged.map((m) => m.id)).toEqual([

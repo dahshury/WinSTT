@@ -105,10 +105,14 @@ describe("vadAmpBoost", () => {
 
 describe("activeWaveAmp", () => {
 	test("is monotonic in audioLevel", () => {
-		expect(activeWaveAmp(0.5, false, 0)).toBeGreaterThan(activeWaveAmp(0.1, false, 0));
+		expect(activeWaveAmp(0.5, false, 0)).toBeGreaterThan(
+			activeWaveAmp(0.1, false, 0),
+		);
 	});
 	test("is monotonic in sentencePulse", () => {
-		expect(activeWaveAmp(0.1, false, 0.5)).toBeGreaterThan(activeWaveAmp(0.1, false, 0));
+		expect(activeWaveAmp(0.1, false, 0.5)).toBeGreaterThan(
+			activeWaveAmp(0.1, false, 0),
+		);
 	});
 	test("speaking shifts the amp by the VAD boost", () => {
 		const diff = activeWaveAmp(0.1, true, 0) - activeWaveAmp(0.1, false, 0);
@@ -195,7 +199,10 @@ describe("drawBaseline", () => {
 });
 
 describe("tracePath", () => {
-	function makeCtx(): { ctx: CanvasRenderingContext2D; calls: [string, number, number][] } {
+	function makeCtx(): {
+		ctx: CanvasRenderingContext2D;
+		calls: [string, number, number][];
+	} {
 		const calls: [string, number, number][] = [];
 		const ctx = {
 			moveTo: (x: number, y: number) => calls.push(["moveTo", x, y]),
@@ -332,7 +339,9 @@ describe("drawFilledRegion", () => {
 
 	test("does not throw with zero amplitude", () => {
 		const { ctx } = makeCanvasCtx();
-		expect(() => drawFilledRegion(ctx, 100, 60, 0, 0, 0, "0, 0, 0")).not.toThrow();
+		expect(() =>
+			drawFilledRegion(ctx, 100, 60, 0, 0, 0, "0, 0, 0"),
+		).not.toThrow();
 	});
 });
 

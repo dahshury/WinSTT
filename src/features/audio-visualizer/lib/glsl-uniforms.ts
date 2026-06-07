@@ -35,16 +35,20 @@ export const UNIFORM_DEVICEORIENTATION = "iDeviceOrientation";
 
 function isVectorType(
 	t: string,
-	v: number[] | number
+	v: number[] | number,
 ): v is [number, number, number, number] {
-	return !t.includes("v") && Array.isArray(v) && v.length > Number.parseInt(t.charAt(0));
+	return (
+		!t.includes("v") &&
+		Array.isArray(v) &&
+		v.length > Number.parseInt(t.charAt(0))
+	);
 }
 
 export const processUniform = (
 	gl: WebGLRenderingContext,
 	location: WebGLUniformLocation,
 	t: string,
-	value: number | number[]
+	value: number | number[],
 ) => {
 	if (isVectorType(t, value)) {
 		switch (t) {
@@ -122,7 +126,13 @@ export const uniformTypeToGLSLType = (t: string) => {
 };
 
 export const log = (text: string) => `react-shaders: ${text}`;
-export const insertStringAtIndex = (currentString: string, string: string, index: number) =>
+export const insertStringAtIndex = (
+	currentString: string,
+	string: string,
+	index: number,
+) =>
 	index > 0
-		? currentString.substring(0, index) + string + currentString.substring(index)
+		? currentString.substring(0, index) +
+			string +
+			currentString.substring(index)
 		: string + currentString;

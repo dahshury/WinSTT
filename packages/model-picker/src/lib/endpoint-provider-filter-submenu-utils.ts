@@ -2,7 +2,7 @@ export const ALL_PROVIDERS_VALUE = "__all__";
 
 export function filterEndpointProviders(
 	providers: [string, number][],
-	queryLower: string
+	queryLower: string,
 ): [string, number][] {
 	if (!queryLower) {
 		return providers;
@@ -20,17 +20,22 @@ export function resolveSelection(value: string | null): string | null | "noop" {
 	return "noop";
 }
 
-export function isTickVisible(selectedProvider: string | null, matchValue: string | null): boolean {
+export function isTickVisible(
+	selectedProvider: string | null,
+	matchValue: string | null,
+): boolean {
 	return selectedProvider === matchValue;
 }
 
-export function resolveComboboxValue(selectedEndpointProvider: string | null): string {
+export function resolveComboboxValue(
+	selectedEndpointProvider: string | null,
+): string {
 	return selectedEndpointProvider || ALL_PROVIDERS_VALUE;
 }
 
 export function applyProviderChange(
 	value: string | null,
-	onEndpointProviderSelect: (provider: string | null) => void
+	onEndpointProviderSelect: (provider: string | null) => void,
 ): void {
 	const resolved = resolveSelection(value);
 	if (resolved !== "noop") {

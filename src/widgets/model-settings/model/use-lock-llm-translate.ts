@@ -21,18 +21,18 @@ import { useSettingsStore } from "@/entities/setting";
  * `llmTranslateEnabled` is false, so it no-ops (no update loop).
  */
 export function useLockLlmTranslate(
-  sttTranslateActive: boolean,
-  llmTranslateEnabled: boolean,
+	sttTranslateActive: boolean,
+	llmTranslateEnabled: boolean,
 ): void {
-  useEffect(() => {
-    if (!(sttTranslateActive && llmTranslateEnabled)) {
-      return;
-    }
-    const { settings, updateLlmDictation } = useSettingsStore.getState();
-    updateLlmDictation({
-      presets: settings.llm.dictation.presets.filter(
-        (p) => p.key !== "translate",
-      ),
-    });
-  }, [sttTranslateActive, llmTranslateEnabled]);
+	useEffect(() => {
+		if (!(sttTranslateActive && llmTranslateEnabled)) {
+			return;
+		}
+		const { settings, updateLlmDictation } = useSettingsStore.getState();
+		updateLlmDictation({
+			presets: settings.llm.dictation.presets.filter(
+				(p) => p.key !== "translate",
+			),
+		});
+	}, [sttTranslateActive, llmTranslateEnabled]);
 }

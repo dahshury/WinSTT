@@ -74,7 +74,10 @@ export interface PreviewState {
 	seedEnhance: (presetKeys: PresetKey[], modifierIds: string[]) => void;
 	/** Start a run: `base` is the input (the "previous transcript" to diff
 	 *  against); `range` is the splice target for selection scope (else null). */
-	beginProcessing: (base: string, range: { start: number; end: number } | null) => void;
+	beginProcessing: (
+		base: string,
+		range: { start: number; end: number } | null,
+	) => void;
 	appendReasoning: (chunk: string) => void;
 	finishProcessing: (candidate: string | null) => void;
 	/** Toggle one change between accepted and reverted. */
@@ -189,7 +192,8 @@ export const useTranscriptPreviewStore = create<PreviewState>((set, get) => ({
 		})),
 
 	applyEnhancement: () => {
-		const { candidate, diffBase, candidateRange, rejectedChanges, text } = get();
+		const { candidate, diffBase, candidateRange, rejectedChanges, text } =
+			get();
 		if (candidate === null) {
 			return;
 		}

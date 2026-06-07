@@ -29,7 +29,9 @@ describe("resolveGpuChipConfig", () => {
 	});
 
 	test("GPU and CPU configs use different icons (no copy-paste swap)", () => {
-		expect(resolveGpuChipConfig(true).icon).not.toBe(resolveGpuChipConfig(false).icon);
+		expect(resolveGpuChipConfig(true).icon).not.toBe(
+			resolveGpuChipConfig(false).icon,
+		);
 	});
 });
 
@@ -37,8 +39,12 @@ describe("resolveConnectionChip", () => {
 	test("maps connectionStatus 'connecting' straight to 'connecting'", () => {
 		// The explicit map short-circuits BEFORE the connected/running checks,
 		// so serverStatus/runtimeIsGpu are irrelevant here.
-		expect(resolveConnectionChip("connecting", "running", true)).toBe("connecting");
-		expect(resolveConnectionChip("connecting", "idle", null)).toBe("connecting");
+		expect(resolveConnectionChip("connecting", "running", true)).toBe(
+			"connecting",
+		);
+		expect(resolveConnectionChip("connecting", "idle", null)).toBe(
+			"connecting",
+		);
 	});
 
 	test("maps connectionStatus 'error' straight to 'error'", () => {
@@ -47,8 +53,12 @@ describe("resolveConnectionChip", () => {
 	});
 
 	test("any non-connected, non-mapped status is 'offline'", () => {
-		expect(resolveConnectionChip("disconnected", "running", true)).toBe("offline");
-		expect(resolveConnectionChip("reconnecting", "running", true)).toBe("offline");
+		expect(resolveConnectionChip("disconnected", "running", true)).toBe(
+			"offline",
+		);
+		expect(resolveConnectionChip("reconnecting", "running", true)).toBe(
+			"offline",
+		);
 		expect(resolveConnectionChip("", "running", true)).toBe("offline");
 	});
 
@@ -56,13 +66,17 @@ describe("resolveConnectionChip", () => {
 		// WS connected != recorder ready. The green chip must wait for
 		// server_ready (serverStatus === "running").
 		expect(resolveConnectionChip("connected", "idle", true)).toBe("connecting");
-		expect(resolveConnectionChip("connected", "starting", true)).toBe("connecting");
+		expect(resolveConnectionChip("connected", "starting", true)).toBe(
+			"connecting",
+		);
 	});
 
 	test("connected + running but runtimeIsGpu null still reads 'connecting'", () => {
 		// runtimeInfo.is_gpu is the authoritative GPU/CPU truth; until it
 		// arrives we cannot pick the chip variant, so we hold at connecting.
-		expect(resolveConnectionChip("connected", "running", null)).toBe("connecting");
+		expect(resolveConnectionChip("connected", "running", null)).toBe(
+			"connecting",
+		);
 	});
 
 	test("connected + running + runtimeIsGpu true → 'gpu'", () => {
@@ -82,12 +96,21 @@ describe("resolveConnectionChip", () => {
 		// Guards the ordering: the map lookup precedes the !== "connected"
 		// offline fallback. If the offline check ran first, "connecting" would
 		// wrongly become "offline".
-		expect(resolveConnectionChip("connecting", "running", false)).toBe("connecting");
+		expect(resolveConnectionChip("connecting", "running", false)).toBe(
+			"connecting",
+		);
 	});
 
 	test("returns one of the four ConnectionChip variants for arbitrary inputs", () => {
 		const valid = new Set(["connecting", "error", "offline", "gpu"]);
-		const statuses = ["connecting", "error", "connected", "disconnected", "weird", ""];
+		const statuses = [
+			"connecting",
+			"error",
+			"connected",
+			"disconnected",
+			"weird",
+			"",
+		];
 		const servers = ["running", "idle", ""];
 		const gpus: (boolean | null)[] = [true, false, null];
 		for (const c of statuses) {

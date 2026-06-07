@@ -32,7 +32,10 @@ export function parseModelSelection(value: string): ParsedModelSelection {
 	return { modelId, providerSlug };
 }
 
-export function createModelSelection(modelId: string, providerSlug?: string): string {
+export function createModelSelection(
+	modelId: string,
+	providerSlug?: string,
+): string {
 	if (!modelId) {
 		return "";
 	}

@@ -2,7 +2,10 @@
 
 import { AuthorFilterSubmenu } from "../ui/AuthorFilterSubmenu";
 import { EndpointProviderFilterSubmenu } from "../ui/EndpointProviderFilterSubmenu";
-import { shouldRenderAuthorSubmenu, shouldRenderEndpointSubmenu } from "./model-filters-menu-utils";
+import {
+	shouldRenderAuthorSubmenu,
+	shouldRenderEndpointSubmenu,
+} from "./model-filters-menu-utils";
 
 interface MaybeAuthorSubmenuProps {
 	allProviders: string[];

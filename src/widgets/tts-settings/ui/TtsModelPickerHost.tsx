@@ -1,9 +1,15 @@
 import { TtsModelSelector } from "@picker/tts";
 import { useEffect } from "react";
 import { useSettingsStore } from "@/entities/setting";
-import { useTtsCatalogStore, useTtsModelStateStore } from "@/entities/tts-catalog";
+import {
+	useTtsCatalogStore,
+	useTtsModelStateStore,
+} from "@/entities/tts-catalog";
 import { useTtsModelPickerStore } from "@/features/tts-model-picker";
-import { onTtsModelDownloadCompleteCatalog, ttsDeleteModel } from "@/shared/api/ipc-client";
+import {
+	onTtsModelDownloadCompleteCatalog,
+	ttsDeleteModel,
+} from "@/shared/api/ipc-client";
 import { Modal } from "@/shared/ui/modal";
 import { isTtsModelCached } from "../model/use-tts-install-gate";
 import { useTtsModelDownloads } from "../model/use-tts-model-downloads";

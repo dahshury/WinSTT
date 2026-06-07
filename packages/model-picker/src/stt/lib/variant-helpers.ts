@@ -97,7 +97,7 @@ function explicitLanguages(models: readonly ModelInfo[]): string[] {
 function buildLanguageNote(
 	hasMultilingual: boolean,
 	hasEnglishOnly: boolean,
-	otherLangs: string[]
+	otherLangs: string[],
 ): string {
 	const parts: string[] = [];
 	if (hasMultilingual) {
@@ -120,6 +120,10 @@ export function summarizeFamily(models: readonly ModelInfo[]): FamilySummary {
 		hasMultilingual,
 		hasEnglishOnly,
 		realtimeCount: models.filter(isRealtimeViable).length,
-		languageNote: buildLanguageNote(hasMultilingual, hasEnglishOnly, explicitLanguages(models)),
+		languageNote: buildLanguageNote(
+			hasMultilingual,
+			hasEnglishOnly,
+			explicitLanguages(models),
+		),
 	};
 }

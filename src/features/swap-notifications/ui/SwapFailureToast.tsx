@@ -88,7 +88,10 @@ export function SwapFailureToast() {
 			// User-initiated cancellation / supersession isn't an error.
 			// The picker revert path already covers the "what changed"
 			// communication, so swallow these silently here.
-			if (payload.category === "cancelled" || payload.category === "superseded") {
+			if (
+				payload.category === "cancelled" ||
+				payload.category === "superseded"
+			) {
 				return;
 			}
 			show({
@@ -124,7 +127,7 @@ export function SwapFailureToast() {
 			aria-live="assertive"
 			className={cn(
 				"fixed right-4 bottom-4 z-toast w-[420px] max-w-[90vw] rounded-md border border-error/40 p-3 shadow-lg",
-				surfaceBg(level)
+				surfaceBg(level),
 			)}
 			role="alert"
 		>
@@ -139,7 +142,9 @@ export function SwapFailureToast() {
 					<span className="font-medium text-body text-foreground">
 						{t("headline", { model: current.modelName })}
 					</span>
-					<span className="text-foreground-muted text-sm">{current.reason}</span>
+					<span className="text-foreground-muted text-sm">
+						{current.reason}
+					</span>
 				</div>
 				<Button
 					aria-label={t("dismiss")}
@@ -163,7 +168,7 @@ export function SwapFailureToast() {
 				<Button
 					className={cn(
 						"flex items-center gap-1 rounded border border-border px-3 py-1 text-foreground-secondary text-xs transition-colors hover:bg-surface-elevated",
-						surfaceBg(detailsLevel)
+						surfaceBg(detailsLevel),
 					)}
 					onClick={handleRetry}
 				>

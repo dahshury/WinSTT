@@ -2,10 +2,20 @@ import { beforeEach, test } from "bun:test";
 import fc from "fast-check";
 import { useSettingsStore } from "@/entities/setting/@x/cloud-stt-credential";
 import type { CloudSttProvider } from "@/shared/api/models";
-import { type CredentialStatus, type ProviderStatusEntry, useCredentialStatusStore } from "./store";
+import {
+	type CredentialStatus,
+	type ProviderStatusEntry,
+	useCredentialStatusStore,
+} from "./store";
 
 const PROVIDERS: CloudSttProvider[] = ["openai", "elevenlabs"];
-const STATUSES: CredentialStatus[] = ["idle", "verifying", "verified", "invalid", "offline"];
+const STATUSES: CredentialStatus[] = [
+	"idle",
+	"verifying",
+	"verified",
+	"invalid",
+	"offline",
+];
 
 interface Model {
 	byProvider: Record<CloudSttProvider, CredentialStatus>;
@@ -59,7 +69,8 @@ class SetStatusCmd implements fc.Command<Model, Real> {
 		return true;
 	}
 	run(m: Model, real: Real): void {
-		const otherProvider: CloudSttProvider = this.provider === "openai" ? "elevenlabs" : "openai";
+		const otherProvider: CloudSttProvider =
+			this.provider === "openai" ? "elevenlabs" : "openai";
 		const otherBefore = real.getState().byProvider[otherProvider];
 		real.getState().setStatus(this.provider, this.entry);
 		m.byProvider[this.provider] = this.entry.status;
@@ -87,7 +98,8 @@ class ResetCmd implements fc.Command<Model, Real> {
 		return true;
 	}
 	run(m: Model, real: Real): void {
-		const otherProvider: CloudSttProvider = this.provider === "openai" ? "elevenlabs" : "openai";
+		const otherProvider: CloudSttProvider =
+			this.provider === "openai" ? "elevenlabs" : "openai";
 		const otherBefore = real.getState().byProvider[otherProvider];
 		real.getState().reset(this.provider);
 		m.byProvider[this.provider] = "idle";
@@ -122,10 +134,13 @@ class UpdateApiKeyCmd implements fc.Command<Model, Real> {
 		const keyChanged = prevKey !== this.key;
 		const wasNonIdle = m.byProvider[this.provider] !== "idle";
 
-		const otherProvider: CloudSttProvider = this.provider === "openai" ? "elevenlabs" : "openai";
+		const otherProvider: CloudSttProvider =
+			this.provider === "openai" ? "elevenlabs" : "openai";
 		const otherStatusBefore = m.byProvider[otherProvider];
 
-		useSettingsStore.getState().updateIntegrations({ [this.provider]: { apiKey: this.key } });
+		useSettingsStore
+			.getState()
+			.updateIntegrations({ [this.provider]: { apiKey: this.key } });
 
 		if (keyChanged && wasNonIdle) {
 			m.byProvider[this.provider] = "idle";
@@ -133,13 +148,17 @@ class UpdateApiKeyCmd implements fc.Command<Model, Real> {
 		// other provider's status is unchanged (its key didn't change)
 
 		const after = real.getState();
-		if (after.byProvider[this.provider].status !== m.byProvider[this.provider]) {
+		if (
+			after.byProvider[this.provider].status !== m.byProvider[this.provider]
+		) {
 			throw new Error(
-				`status mismatch after updateKey: model=${m.byProvider[this.provider]} real=${after.byProvider[this.provider].status}`
+				`status mismatch after updateKey: model=${m.byProvider[this.provider]} real=${after.byProvider[this.provider].status}`,
 			);
 		}
 		if (after.byProvider[otherProvider].status !== otherStatusBefore) {
-			throw new Error("other provider's status changed on single-provider key update");
+			throw new Error(
+				"other provider's status changed on single-provider key update",
+			);
 		}
 		assertInvariants(real);
 	}
@@ -159,18 +178,23 @@ const commandsArb = fc.commands(
 	[
 		fc.tuple(providerArb, entryArb).map(([p, e]) => new SetStatusCmd(p, e)),
 		providerArb.map((p) => new ResetCmd(p)),
-		fc.tuple(providerArb, fc.string({ maxLength: 12 })).map(([p, k]) => new UpdateApiKeyCmd(p, k)),
+		fc
+			.tuple(providerArb, fc.string({ maxLength: 12 }))
+			.map(([p, k]) => new UpdateApiKeyCmd(p, k)),
 	],
-	{ maxCommands: 30 }
+	{ maxCommands: 30 },
 );
 
 test("credential-status-store: arbitrary commands keep invariants and model-real parity", () => {
 	fc.assert(
 		fc.property(commandsArb, (cmds) => {
 			resetAll();
-			fc.modelRun(() => ({ model: freshModel(), real: useCredentialStatusStore }), cmds);
+			fc.modelRun(
+				() => ({ model: freshModel(), real: useCredentialStatusStore }),
+				cmds,
+			);
 		}),
-		{ numRuns: 60 }
+		{ numRuns: 60 },
 	);
 });
 
@@ -186,7 +210,7 @@ test("credential-status-store: reset(provider) is idempotent", () => {
 			const s2 = useCredentialStatusStore.getState().byProvider[provider];
 			return s1.status === "idle" && s2.status === "idle";
 		}),
-		{ numRuns: 40 }
+		{ numRuns: 40 },
 	);
 });
 
@@ -200,10 +224,15 @@ test("credential-status-store: after a non-idle key change, that provider become
 			(provider, status, key) => {
 				resetAll();
 				useCredentialStatusStore.getState().setStatus(provider, { status });
-				useSettingsStore.getState().updateIntegrations({ [provider]: { apiKey: key } });
-				return useCredentialStatusStore.getState().byProvider[provider].status === "idle";
-			}
+				useSettingsStore
+					.getState()
+					.updateIntegrations({ [provider]: { apiKey: key } });
+				return (
+					useCredentialStatusStore.getState().byProvider[provider].status ===
+					"idle"
+				);
+			},
 		),
-		{ numRuns: 50 }
+		{ numRuns: 50 },
 	);
 });

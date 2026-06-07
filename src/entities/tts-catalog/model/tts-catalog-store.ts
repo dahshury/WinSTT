@@ -13,7 +13,10 @@ import {
  *   - ``zero_shot_audio``               clone from a reference clip alone
  *   - ``zero_shot_audio_transcript``    clone from a reference clip + its transcript
  */
-export type TtsCloning = "none" | "zero_shot_audio" | "zero_shot_audio_transcript";
+export type TtsCloning =
+	| "none"
+	| "zero_shot_audio"
+	| "zero_shot_audio_transcript";
 
 export interface TtsModelInfo {
 	/**
@@ -56,7 +59,11 @@ export interface TtsModelInfo {
 }
 
 /** Zod schema for server-sent TTS model catalog items (snake_case). */
-const TtsCloningSchema = z.enum(["none", "zero_shot_audio", "zero_shot_audio_transcript"]);
+const TtsCloningSchema = z.enum([
+	"none",
+	"zero_shot_audio",
+	"zero_shot_audio_transcript",
+]);
 
 const rawTtsModelSchema = z.object({
 	id: z.string(),
@@ -116,7 +123,10 @@ interface TtsCatalogState {
 	setModels: (raw: unknown[]) => void;
 }
 
-function applyRaw(raw: unknown[]): { models: TtsModelInfo[]; isLoaded: boolean } {
+function applyRaw(raw: unknown[]): {
+	models: TtsModelInfo[];
+	isLoaded: boolean;
+} {
 	const models: TtsModelInfo[] = [];
 	for (const item of raw) {
 		const parsed = rawTtsModelSchema.safeParse(item);
@@ -152,7 +162,9 @@ interface TtsModelStateStore {
 	statesById: Record<string, TtsModelStateEntry>;
 }
 
-function toMap(entries: TtsModelStateEntry[]): Record<string, TtsModelStateEntry> {
+function toMap(
+	entries: TtsModelStateEntry[],
+): Record<string, TtsModelStateEntry> {
 	const out: Record<string, TtsModelStateEntry> = {};
 	for (const e of entries) {
 		out[e.id] = e;
@@ -165,30 +177,36 @@ function toMap(entries: TtsModelStateEntry[]): Record<string, TtsModelStateEntry
 // still awaits a fresh result). Mirrors the STT model-state store.
 let pendingRefresh: Promise<void> | null = null;
 
-export const useTtsModelStateStore = create<TtsModelStateStore>()((set, get) => ({
-	statesById: {},
-	isLoaded: false,
-	setAll: (entries) => set({ statesById: toMap(entries), isLoaded: true }),
-	refresh: () => {
-		if (pendingRefresh) {
+export const useTtsModelStateStore = create<TtsModelStateStore>()(
+	(set, get) => ({
+		statesById: {},
+		isLoaded: false,
+		setAll: (entries) => set({ statesById: toMap(entries), isLoaded: true }),
+		refresh: () => {
+			if (pendingRefresh) {
+				return pendingRefresh;
+			}
+			const run = async () => {
+				const payload = await fetchTtsModelsWithState();
+				if (
+					payload &&
+					Array.isArray(payload.models) &&
+					payload.models.length > 0
+				) {
+					useTtsCatalogStore.getState().setModels(payload.models);
+				}
+				if (payload && Array.isArray(payload.states)) {
+					set({ statesById: toMap(payload.states), isLoaded: true });
+				}
+			};
+			pendingRefresh = run().finally(() => {
+				pendingRefresh = null;
+			});
 			return pendingRefresh;
-		}
-		const run = async () => {
-			const payload = await fetchTtsModelsWithState();
-			if (payload && Array.isArray(payload.models) && payload.models.length > 0) {
-				useTtsCatalogStore.getState().setModels(payload.models);
-			}
-			if (payload && Array.isArray(payload.states)) {
-				set({ statesById: toMap(payload.states), isLoaded: true });
-			}
-		};
-		pendingRefresh = run().finally(() => {
-			pendingRefresh = null;
-		});
-		return pendingRefresh;
-	},
-	getState: (id) => get().statesById[id],
-}));
+		},
+		getState: (id) => get().statesById[id],
+	}),
+);
 
 /** Fetches the TTS catalog state and subscribes to live cache invalidations. */
 function initTtsCatalogStore(): () => void {

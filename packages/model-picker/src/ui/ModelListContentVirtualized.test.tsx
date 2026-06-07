@@ -10,7 +10,11 @@ import * as utils from "../lib/model-list-content-virtualized-utils";
 import type { VirtualizedItem } from "../lib/model-list-content-virtualized-utils";
 import { ModelListContentVirtualized } from "./ModelListContentVirtualized";
 
-const helpers = { ...components, ...utils, useProvidersOpenedFlag: useOpenedFlag };
+const helpers = {
+	...components,
+	...utils,
+	useProvidersOpenedFlag: useOpenedFlag,
+};
 
 describe("ModelListContentVirtualized", () => {
 	test("renders empty state for empty grouped list", () => {
@@ -27,7 +31,7 @@ describe("ModelListContentVirtualized", () => {
 						parsedProviderSlug={undefined}
 					/>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.firstElementChild).not.toBeNull();
 	});
@@ -35,7 +39,9 @@ describe("ModelListContentVirtualized", () => {
 
 /* ── Pure helper unit tests ─────────────────────────────────────────── */
 
-const makeEndpoint = (overrides: Partial<OpenRouterEndpoint> = {}): OpenRouterEndpoint =>
+const makeEndpoint = (
+	overrides: Partial<OpenRouterEndpoint> = {},
+): OpenRouterEndpoint =>
 	({
 		name: "default",
 		model_name: "gpt-4o",
@@ -81,22 +87,28 @@ describe("hasModelEndpoints", () => {
 	});
 
 	test("false when endpoints missing", () => {
-		expect(helpers.hasModelEndpoints(makeModel({ endpoints: asInvalid<never>(undefined) }))).toBe(
-			false
-		);
+		expect(
+			helpers.hasModelEndpoints(
+				makeModel({ endpoints: asInvalid<never>(undefined) }),
+			),
+		).toBe(false);
 	});
 });
 
 describe("getEndpointProviderSlug", () => {
 	test("returns tag when present", () => {
-		expect(helpers.getEndpointProviderSlug(makeEndpoint({ tag: "ti", provider_name: "Pn" }))).toBe(
-			"ti"
-		);
+		expect(
+			helpers.getEndpointProviderSlug(
+				makeEndpoint({ tag: "ti", provider_name: "Pn" }),
+			),
+		).toBe("ti");
 	});
 
 	test("falls back to provider_name when tag empty", () => {
 		expect(
-			helpers.getEndpointProviderSlug(makeEndpoint({ tag: "", provider_name: "Together" }))
+			helpers.getEndpointProviderSlug(
+				makeEndpoint({ tag: "", provider_name: "Together" }),
+			),
 		).toBe("Together");
 	});
 });
@@ -112,11 +124,15 @@ describe("findSelectedProvider", () => {
 	});
 
 	test("matches by tag", () => {
-		expect(helpers.findSelectedProvider(eps, "together")?.provider_name).toBe("Together");
+		expect(helpers.findSelectedProvider(eps, "together")?.provider_name).toBe(
+			"Together",
+		);
 	});
 
 	test("matches by provider_name", () => {
-		expect(helpers.findSelectedProvider(eps, "DeepInfra")?.tag).toBe("deepinfra");
+		expect(helpers.findSelectedProvider(eps, "DeepInfra")?.tag).toBe(
+			"deepinfra",
+		);
 	});
 
 	test("returns null when no match", () => {
@@ -188,7 +204,9 @@ describe("computeVariantClasses", () => {
 	});
 
 	test("returns class object when variant set", () => {
-		const result = helpers.computeVariantClasses(makeModel({ variant: "free" }));
+		const result = helpers.computeVariantClasses(
+			makeModel({ variant: "free" }),
+		);
 		expect(result).not.toBeNull();
 		expect(typeof result?.bg).toBe("string");
 	});
@@ -206,7 +224,7 @@ describe("computeHeaderPricing", () => {
 	test("returns pricing tier from first endpoint", () => {
 		const result = helpers.computeHeaderPricing(
 			[makeEndpoint({ pricing: { prompt: "0", completion: "0" } as never })],
-			false
+			false,
 		);
 		expect(result?.tier).toBe("free");
 	});
@@ -218,8 +236,8 @@ describe("computeSelectedProvider", () => {
 			helpers.computeSelectedProvider(
 				[makeEndpoint()],
 				{ isSelected: true, isProviderSelected: false },
-				"deepinfra"
-			)
+				"deepinfra",
+			),
 		).toBeNull();
 	});
 
@@ -229,8 +247,8 @@ describe("computeSelectedProvider", () => {
 			helpers.computeSelectedProvider(
 				[ep],
 				{ isSelected: false, isProviderSelected: true },
-				"together"
-			)
+				"together",
+			),
 		).toBe(ep);
 	});
 });
@@ -239,7 +257,9 @@ describe("computeModelHeaderState", () => {
 	test("aggregates flags, endpoints and pricing", () => {
 		const m = makeModel({
 			variant: "free",
-			endpoints: [makeEndpoint({ pricing: { prompt: "0", completion: "0" } as never })],
+			endpoints: [
+				makeEndpoint({ pricing: { prompt: "0", completion: "0" } as never }),
+			],
 		});
 		const state = helpers.computeModelHeaderState(m, m.id, undefined, false);
 		expect(state.hasEndpoints).toBe(true);
@@ -272,12 +292,18 @@ describe("isAnyModelSelected", () => {
 
 describe("getModelCardClassName", () => {
 	test("includes selected classes when any flag set", () => {
-		const cls = helpers.getModelCardClassName({ isSelected: true, isProviderSelected: false });
+		const cls = helpers.getModelCardClassName({
+			isSelected: true,
+			isProviderSelected: false,
+		});
 		expect(cls).toContain("border-accent/55");
 	});
 
 	test("omits selected ring when neither flag set", () => {
-		const cls = helpers.getModelCardClassName({ isSelected: false, isProviderSelected: false });
+		const cls = helpers.getModelCardClassName({
+			isSelected: false,
+			isProviderSelected: false,
+		});
 		expect(cls).not.toContain("ring-accent/30");
 	});
 });
@@ -288,7 +314,9 @@ describe("getProviderCardClassName", () => {
 	});
 
 	test("idle has base only", () => {
-		expect(helpers.getProviderCardClassName(false)).not.toContain("ring-accent/30");
+		expect(helpers.getProviderCardClassName(false)).not.toContain(
+			"ring-accent/30",
+		);
 	});
 });
 
@@ -308,41 +336,60 @@ describe("getNonFreeBaseTextColor", () => {
 	});
 
 	test("returns muted foreground regardless of the fallback flag (false)", () => {
-		expect(helpers.getNonFreeBaseTextColor(false)).toBe("text-foreground-muted");
+		expect(helpers.getNonFreeBaseTextColor(false)).toBe(
+			"text-foreground-muted",
+		);
 	});
 });
 
 describe("getPricingBaseTextColor", () => {
 	test("free returns emerald colors", () => {
 		expect(
-			helpers.getPricingBaseTextColor({ tier: "free", label: "Free", className: "x" }, true)
+			helpers.getPricingBaseTextColor(
+				{ tier: "free", label: "Free", className: "x" },
+				true,
+			),
 		).toContain("emerald");
 	});
 
 	test("non-free delegates to non-free helper", () => {
 		expect(
-			helpers.getPricingBaseTextColor({ tier: "low", label: "$0.1", className: "x" }, false)
+			helpers.getPricingBaseTextColor(
+				{ tier: "low", label: "$0.1", className: "x" },
+				false,
+			),
 		).toBe("text-foreground-muted");
 	});
 });
 
 describe("getPricingExtraClass", () => {
 	test("returns false for free tier", () => {
-		expect(helpers.getPricingExtraClass({ tier: "free", label: "Free", className: "x" })).toBe(
-			false
-		);
+		expect(
+			helpers.getPricingExtraClass({
+				tier: "free",
+				label: "Free",
+				className: "x",
+			}),
+		).toBe(false);
 	});
 
 	test("returns className for non-free", () => {
 		expect(
-			helpers.getPricingExtraClass({ tier: "high", label: "$10", className: "rose-thing" })
+			helpers.getPricingExtraClass({
+				tier: "high",
+				label: "$10",
+				className: "rose-thing",
+			}),
 		).toBe("rose-thing");
 	});
 });
 
 describe("getPricingClassName", () => {
 	test("merges base + tier color", () => {
-		const cls = helpers.getPricingClassName({ tier: "free", label: "Free", className: "x" }, true);
+		const cls = helpers.getPricingClassName(
+			{ tier: "free", label: "Free", className: "x" },
+			true,
+		);
 		expect(cls).toContain("font-semibold");
 		expect(cls).toContain("emerald");
 	});
@@ -350,7 +397,7 @@ describe("getPricingClassName", () => {
 	test("non-free includes tier className", () => {
 		const cls = helpers.getPricingClassName(
 			{ tier: "medium", label: "$1", className: "amber-class" },
-			false
+			false,
 		);
 		expect(cls).toContain("amber-class");
 	});
@@ -358,13 +405,19 @@ describe("getPricingClassName", () => {
 
 describe("getPricingLabel", () => {
 	test("returns 'Free' for free tier", () => {
-		expect(helpers.getPricingLabel({ tier: "free", label: "ignored", className: "x" })).toBe(
-			"Free"
-		);
+		expect(
+			helpers.getPricingLabel({
+				tier: "free",
+				label: "ignored",
+				className: "x",
+			}),
+		).toBe("Free");
 	});
 
 	test("returns label for non-free", () => {
-		expect(helpers.getPricingLabel({ tier: "low", label: "$0.1", className: "x" })).toBe("$0.1");
+		expect(
+			helpers.getPricingLabel({ tier: "low", label: "$0.1", className: "x" }),
+		).toBe("$0.1");
 	});
 });
 
@@ -382,11 +435,15 @@ describe("getProvidersRowState / getProvidersGridTemplateRows", () => {
 
 describe("getExpandAriaLabel", () => {
 	test("expanded uses 'Hide'", () => {
-		expect(helpers.getExpandAriaLabel(true, 3)).toBe("Hide 3 hosting providers");
+		expect(helpers.getExpandAriaLabel(true, 3)).toBe(
+			"Hide 3 hosting providers",
+		);
 	});
 
 	test("collapsed uses 'Show'", () => {
-		expect(helpers.getExpandAriaLabel(false, 1)).toBe("Show 1 hosting providers");
+		expect(helpers.getExpandAriaLabel(false, 1)).toBe(
+			"Show 1 hosting providers",
+		);
 	});
 });
 
@@ -433,11 +490,15 @@ describe("getSelectionState", () => {
 
 describe("getSelectionProviderTooltip", () => {
 	test("with name returns 'Provider: name'", () => {
-		expect(helpers.getSelectionProviderTooltip("Together")).toBe("Provider: Together");
+		expect(helpers.getSelectionProviderTooltip("Together")).toBe(
+			"Provider: Together",
+		);
 	});
 
 	test("without name returns generic", () => {
-		expect(helpers.getSelectionProviderTooltip(undefined)).toBe("Provider selected");
+		expect(helpers.getSelectionProviderTooltip(undefined)).toBe(
+			"Provider selected",
+		);
 	});
 });
 
@@ -454,7 +515,12 @@ describe("buildVirtualItems / appendModelEntries", () => {
 	test("omits maker headers when addSectionHeaders is false (sorted view)", () => {
 		const m1 = makeModel({ id: "openai/m1" });
 		const m2 = makeModel({ id: "openai/m2" });
-		const items = helpers.buildVirtualItems([["openai", [m1, m2]]], new Set(), undefined, false);
+		const items = helpers.buildVirtualItems(
+			[["openai", [m1, m2]]],
+			new Set(),
+			undefined,
+			false,
+		);
 		expect(items).toHaveLength(2);
 		expect(items.every((i) => i.type === "model")).toBe(true);
 	});
@@ -462,9 +528,15 @@ describe("buildVirtualItems / appendModelEntries", () => {
 	test("models with multiple providers add a providers row", () => {
 		const m = makeModel({
 			id: "openai/multi",
-			endpoints: [makeEndpoint({ provider_name: "A" }), makeEndpoint({ provider_name: "B" })],
+			endpoints: [
+				makeEndpoint({ provider_name: "A" }),
+				makeEndpoint({ provider_name: "B" }),
+			],
 		});
-		const items = helpers.buildVirtualItems([["openai", [m]]], new Set(["openai/multi"]));
+		const items = helpers.buildVirtualItems(
+			[["openai", [m]]],
+			new Set(["openai/multi"]),
+		);
 		expect(items).toHaveLength(3);
 		expect(items[0]?.type).toBe("header");
 		expect(items[1]?.type).toBe("model");
@@ -480,7 +552,10 @@ describe("buildVirtualItems / appendModelEntries", () => {
 		const items: VirtualizedItem[] = [];
 		const m = makeModel({
 			id: "openai/multi2",
-			endpoints: [makeEndpoint({ provider_name: "A" }), makeEndpoint({ provider_name: "B" })],
+			endpoints: [
+				makeEndpoint({ provider_name: "A" }),
+				makeEndpoint({ provider_name: "B" }),
+			],
 		});
 		const next = helpers.appendModelEntries(items, 0, m, 0, new Set());
 		expect(next).toBe(2);
@@ -555,21 +630,33 @@ describe("findIndexByModelId / findIndexByMaker / findScrollTargetIndex", () => 
 	});
 
 	test("findScrollTargetIndex prefers model id", () => {
-		expect(helpers.findScrollTargetIndex(items, { maker: "a", modelId: "b/2", nonce: 1 })).toBe(1);
+		expect(
+			helpers.findScrollTargetIndex(items, {
+				maker: "a",
+				modelId: "b/2",
+				nonce: 1,
+			}),
+		).toBe(1);
 	});
 
 	test("findScrollTargetIndex falls back to maker", () => {
-		expect(helpers.findScrollTargetIndex(items, { maker: "a", nonce: 1 })).toBe(0);
+		expect(helpers.findScrollTargetIndex(items, { maker: "a", nonce: 1 })).toBe(
+			0,
+		);
 	});
 
 	test("findScrollTargetIndex returns -1 when nothing matches", () => {
-		expect(helpers.findScrollTargetIndex(items, { maker: "nope", nonce: 1 })).toBe(-1);
+		expect(
+			helpers.findScrollTargetIndex(items, { maker: "nope", nonce: 1 }),
+		).toBe(-1);
 	});
 });
 
 describe("isFeaturedEndpointEligible / getFeaturedEndpoint", () => {
 	test("ineligible when hasProviders", () => {
-		expect(helpers.isFeaturedEndpointEligible([makeEndpoint()], true, true)).toBe(false);
+		expect(
+			helpers.isFeaturedEndpointEligible([makeEndpoint()], true, true),
+		).toBe(false);
 	});
 
 	test("ineligible when no endpoints", () => {
@@ -577,7 +664,9 @@ describe("isFeaturedEndpointEligible / getFeaturedEndpoint", () => {
 	});
 
 	test("eligible when single endpoint without providers", () => {
-		expect(helpers.isFeaturedEndpointEligible([makeEndpoint()], true, false)).toBe(true);
+		expect(
+			helpers.isFeaturedEndpointEligible([makeEndpoint()], true, false),
+		).toBe(true);
 	});
 
 	test("getFeaturedEndpoint returns first endpoint when eligible", () => {
@@ -586,7 +675,9 @@ describe("isFeaturedEndpointEligible / getFeaturedEndpoint", () => {
 	});
 
 	test("getFeaturedEndpoint returns null when ineligible", () => {
-		expect(helpers.getFeaturedEndpoint([makeEndpoint()], true, true)).toBeNull();
+		expect(
+			helpers.getFeaturedEndpoint([makeEndpoint()], true, true),
+		).toBeNull();
 	});
 
 	test("getFeaturedEndpoint returns null when array empty", () => {
@@ -596,7 +687,9 @@ describe("isFeaturedEndpointEligible / getFeaturedEndpoint", () => {
 
 describe("shouldRenderInlineMeta / shouldShowStatsRow", () => {
 	test("inline meta true when context length present", () => {
-		expect(helpers.shouldRenderInlineMeta(1024, null, null, undefined)).toBe(true);
+		expect(helpers.shouldRenderInlineMeta(1024, null, null, undefined)).toBe(
+			true,
+		);
 	});
 
 	test("inline meta true when pricing present", () => {
@@ -605,21 +698,27 @@ describe("shouldRenderInlineMeta / shouldShowStatsRow", () => {
 				null,
 				{ tier: "free", label: "Free", className: "x" },
 				null,
-				undefined
-			)
+				undefined,
+			),
 		).toBe(true);
 	});
 
 	test("inline meta true when featured endpoint present", () => {
-		expect(helpers.shouldRenderInlineMeta(null, null, makeEndpoint(), undefined)).toBe(true);
+		expect(
+			helpers.shouldRenderInlineMeta(null, null, makeEndpoint(), undefined),
+		).toBe(true);
 	});
 
 	test("inline meta true when modalities non-empty", () => {
-		expect(helpers.shouldRenderInlineMeta(null, null, null, ["text", "image"])).toBe(true);
+		expect(
+			helpers.shouldRenderInlineMeta(null, null, null, ["text", "image"]),
+		).toBe(true);
 	});
 
 	test("inline meta false when nothing present", () => {
-		expect(helpers.shouldRenderInlineMeta(null, null, null, undefined)).toBe(false);
+		expect(helpers.shouldRenderInlineMeta(null, null, null, undefined)).toBe(
+			false,
+		);
 	});
 
 	test("stats row true when context length positive", () => {
@@ -639,15 +738,21 @@ describe("isProviderSelected", () => {
 	const m = makeModel({ id: "openai/x" });
 
 	test("true when ids and slug match", () => {
-		expect(helpers.isProviderSelected(m, "deepinfra", "openai/x", "deepinfra")).toBe(true);
+		expect(
+			helpers.isProviderSelected(m, "deepinfra", "openai/x", "deepinfra"),
+		).toBe(true);
 	});
 
 	test("false when slug differs", () => {
-		expect(helpers.isProviderSelected(m, "deepinfra", "openai/x", "together")).toBe(false);
+		expect(
+			helpers.isProviderSelected(m, "deepinfra", "openai/x", "together"),
+		).toBe(false);
 	});
 
 	test("false when id differs", () => {
-		expect(helpers.isProviderSelected(m, "deepinfra", "other/x", "deepinfra")).toBe(false);
+		expect(
+			helpers.isProviderSelected(m, "deepinfra", "other/x", "deepinfra"),
+		).toBe(false);
 	});
 });
 
@@ -661,7 +766,9 @@ describe("resolveMakerIconSrc", () => {
 	});
 
 	test("unknown maker still falls back to a string", () => {
-		expect(typeof helpers.resolveMakerIconSrc("zzz-no-such-maker")).toBe("string");
+		expect(typeof helpers.resolveMakerIconSrc("zzz-no-such-maker")).toBe(
+			"string",
+		);
 	});
 });
 
@@ -696,7 +803,9 @@ describe("useProvidersOpenedFlag", () => {
 
 	test("latches true once opened (stays true when closed again)", () => {
 		let isOpen = true;
-		const { result, rerender } = renderHook(() => helpers.useProvidersOpenedFlag(isOpen));
+		const { result, rerender } = renderHook(() =>
+			helpers.useProvidersOpenedFlag(isOpen),
+		);
 		expect(result.current).toBe(true);
 		isOpen = false;
 		rerender();
@@ -706,7 +815,9 @@ describe("useProvidersOpenedFlag", () => {
 
 	test("transitions from false to true when isOpen becomes true", () => {
 		let isOpen = false;
-		const { result, rerender } = renderHook(() => helpers.useProvidersOpenedFlag(isOpen));
+		const { result, rerender } = renderHook(() =>
+			helpers.useProvidersOpenedFlag(isOpen),
+		);
 		expect(result.current).toBe(false);
 		isOpen = true;
 		rerender();
@@ -825,23 +936,44 @@ describe("applyVirtualScrollMakerUpdate", () => {
 
 	test("returns lastNotifiedMaker unchanged when handle is null", () => {
 		const items = [makeVirtualItem("openai", 0)];
-		const result = helpers.applyVirtualScrollMakerUpdate(null, items, 0, "openai", undefined);
+		const result = helpers.applyVirtualScrollMakerUpdate(
+			null,
+			items,
+			0,
+			"openai",
+			undefined,
+		);
 		expect(result).toBe("openai");
 	});
 
 	test("returns lastNotifiedMaker unchanged when virtualItems is empty", () => {
 		const handle = makeHandle([], []);
-		const result = helpers.applyVirtualScrollMakerUpdate(handle, [], 0, null, undefined);
+		const result = helpers.applyVirtualScrollMakerUpdate(
+			handle,
+			[],
+			0,
+			null,
+			undefined,
+		);
 		expect(result).toBeNull();
 	});
 
 	test("calls onActiveMakerChange and returns new maker when it changes", () => {
-		const items = [makeVirtualItem("anthropic", 0), makeVirtualItem("openai", 1)];
+		const items = [
+			makeVirtualItem("anthropic", 0),
+			makeVirtualItem("openai", 1),
+		];
 		const handle = makeHandle([0, 100], [100, 100]);
 		let notified: string | null = "not-called";
-		const result = helpers.applyVirtualScrollMakerUpdate(handle, items, 0, "openai", (m) => {
-			notified = m;
-		});
+		const result = helpers.applyVirtualScrollMakerUpdate(
+			handle,
+			items,
+			0,
+			"openai",
+			(m) => {
+				notified = m;
+			},
+		);
 		expect(result).toBe("anthropic");
 		expect(notified).toBe("anthropic");
 	});
@@ -850,16 +982,26 @@ describe("applyVirtualScrollMakerUpdate", () => {
 		const items = [makeVirtualItem("openai", 0)];
 		const handle = makeHandle([0], [100]);
 		let called = false;
-		const result = helpers.applyVirtualScrollMakerUpdate(handle, items, 0, "openai", () => {
-			called = true;
-		});
+		const result = helpers.applyVirtualScrollMakerUpdate(
+			handle,
+			items,
+			0,
+			"openai",
+			() => {
+				called = true;
+			},
+		);
 		expect(result).toBe("openai");
 		expect(called).toBe(false);
 	});
 });
 
 describe("applyScrollToMakerRequest", () => {
-	const makeVirtualItem = (maker: string, id: string, idx: number): VirtualizedItem => ({
+	const makeVirtualItem = (
+		maker: string,
+		id: string,
+		idx: number,
+	): VirtualizedItem => ({
 		type: "model",
 		model: makeModel({ maker, id }),
 		groupIndex: idx,
@@ -874,16 +1016,23 @@ describe("applyScrollToMakerRequest", () => {
 
 	test("returns lastNonce unchanged when nonce is already processed", () => {
 		const request = { maker: "openai", nonce: 3 };
-		expect(helpers.applyScrollToMakerRequest(request, 3, [], undefined)).toBe(3);
+		expect(helpers.applyScrollToMakerRequest(request, 3, [], undefined)).toBe(
+			3,
+		);
 	});
 
 	test("calls scrollToIndex with correct index and returns new nonce", () => {
 		const items = [makeVirtualItem("openai", "openai/gpt-4o", 0)];
 		const request = { maker: "openai", modelId: "openai/gpt-4o", nonce: 2 };
 		const scrolledIndices: number[] = [];
-		const result = helpers.applyScrollToMakerRequest(request, null, items, (idx, _opts) => {
-			scrolledIndices.push(idx);
-		});
+		const result = helpers.applyScrollToMakerRequest(
+			request,
+			null,
+			items,
+			(idx, _opts) => {
+				scrolledIndices.push(idx);
+			},
+		);
 		expect(result).toBe(2);
 		expect(scrolledIndices[0]).toBe(0);
 	});
@@ -891,7 +1040,12 @@ describe("applyScrollToMakerRequest", () => {
 	test("does not consume a request before scrollToIndex is ready", () => {
 		const items = [makeVirtualItem("openai", "openai/gpt-4o", 0)];
 		const request = { maker: "openai", modelId: "openai/gpt-4o", nonce: 2 };
-		const result = helpers.applyScrollToMakerRequest(request, null, items, undefined);
+		const result = helpers.applyScrollToMakerRequest(
+			request,
+			null,
+			items,
+			undefined,
+		);
 		expect(result).toBeNull();
 	});
 
@@ -899,9 +1053,14 @@ describe("applyScrollToMakerRequest", () => {
 		const items = [makeVirtualItem("anthropic", "anthropic/c", 0)];
 		const request = { maker: "nobody", nonce: 1 };
 		let scrollCalled = false;
-		const result = helpers.applyScrollToMakerRequest(request, null, items, () => {
-			scrollCalled = true;
-		});
+		const result = helpers.applyScrollToMakerRequest(
+			request,
+			null,
+			items,
+			() => {
+				scrollCalled = true;
+			},
+		);
 		expect(result).toBeNull();
 		expect(scrollCalled).toBe(false);
 	});
@@ -933,7 +1092,7 @@ describe("VirtualizedRow", () => {
 						parsedProviderSlug={undefined}
 					/>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.firstChild).not.toBeNull();
 	});
@@ -958,7 +1117,7 @@ describe("VirtualizedRow", () => {
 						parsedProviderSlug={undefined}
 					/>
 				</Combobox.Root>
-			</TooltipProvider.Provider>
+			</TooltipProvider.Provider>,
 		);
 		expect(container.firstChild).not.toBeNull();
 	});

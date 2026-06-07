@@ -1,4 +1,7 @@
-import { type AppSettingsOutput, appSettingsSchema } from "@/shared/config/settings-schema";
+import {
+	type AppSettingsOutput,
+	appSettingsSchema,
+} from "@/shared/config/settings-schema";
 
 /**
  * Default settings derived from the Zod schema. Single source of truth

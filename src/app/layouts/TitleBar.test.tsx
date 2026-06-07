@@ -25,7 +25,7 @@ function renderWithIntl() {
 	return render(
 		<IntlProvider>
 			<TitleBar />
-		</IntlProvider>
+		</IntlProvider>,
 	);
 }
 
@@ -63,7 +63,9 @@ describe("TitleBar", () => {
 		renderWithIntl();
 		const buttons = screen.getAllByRole("button");
 		fireEvent.click(buttons[0]!);
-		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_OPEN_SETTINGS)).toBe(true);
+		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_OPEN_SETTINGS)).toBe(
+			true,
+		);
 	});
 
 	test("clicking minimize and close sends their channels", () => {
@@ -84,7 +86,11 @@ describe("TitleBar", () => {
 		fireEvent.click(buttons[2]!);
 		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_MINIMIZE)).toBe(true);
 		expect(sendCalls.some((c) => c.channel === IPC.WINDOW_CLOSE)).toBe(true);
-		expect(sendCalls.filter((c) => c.channel === IPC.WINDOW_MINIMIZE)).toHaveLength(1);
-		expect(sendCalls.filter((c) => c.channel === IPC.WINDOW_CLOSE)).toHaveLength(1);
+		expect(
+			sendCalls.filter((c) => c.channel === IPC.WINDOW_MINIMIZE),
+		).toHaveLength(1);
+		expect(
+			sendCalls.filter((c) => c.channel === IPC.WINDOW_CLOSE),
+		).toHaveLength(1);
 	});
 });

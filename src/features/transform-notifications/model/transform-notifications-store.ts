@@ -23,15 +23,17 @@ interface TransformNotificationState {
 
 let nextId = 0;
 
-export const useTransformNotifications = create<TransformNotificationState>((set) => ({
-	current: null,
-	show: (n) =>
-		set({
-			current: {
-				...n,
-				id: `${Date.now()}-${++nextId}`,
-				createdAt: Date.now(),
-			},
-		}),
-	clear: () => set({ current: null }),
-}));
+export const useTransformNotifications = create<TransformNotificationState>(
+	(set) => ({
+		current: null,
+		show: (n) =>
+			set({
+				current: {
+					...n,
+					id: `${Date.now()}-${++nextId}`,
+					createdAt: Date.now(),
+				},
+			}),
+		clear: () => set({ current: null }),
+	}),
+);

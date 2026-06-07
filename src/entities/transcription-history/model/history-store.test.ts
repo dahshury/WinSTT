@@ -6,7 +6,10 @@ import type { HistoryEntry } from "./transcription-history";
 
 const INITIAL_STATE = useHistoryViewStore.getInitialState();
 
-function entry(id: number, overrides: Partial<HistoryEntry> = {}): HistoryEntry {
+function entry(
+	id: number,
+	overrides: Partial<HistoryEntry> = {},
+): HistoryEntry {
 	return {
 		fileName: `rec-${id}.wav`,
 		id,
@@ -49,7 +52,9 @@ describe("useHistoryViewStore", () => {
 	describe("appendPage", () => {
 		test("appends fresh entries to the end and sets hasMore", () => {
 			useHistoryViewStore.setState({ entries: [entry(1)] });
-			useHistoryViewStore.getState().appendPage({ entries: [entry(2), entry(3)], hasMore: true });
+			useHistoryViewStore
+				.getState()
+				.appendPage({ entries: [entry(2), entry(3)], hasMore: true });
 			const s = useHistoryViewStore.getState();
 			expect(s.entries.map((e) => e.id)).toEqual([1, 2, 3]);
 			expect(s.hasMore).toBe(true);
@@ -57,7 +62,9 @@ describe("useHistoryViewStore", () => {
 
 		test("dedups by id against existing entries (no duplicate ids)", () => {
 			useHistoryViewStore.setState({ entries: [entry(1), entry(2)] });
-			useHistoryViewStore.getState().appendPage({ entries: [entry(2), entry(3)], hasMore: false });
+			useHistoryViewStore
+				.getState()
+				.appendPage({ entries: [entry(2), entry(3)], hasMore: false });
 			const s = useHistoryViewStore.getState();
 			// id 2 was already present and must NOT be appended again.
 			expect(s.entries.map((e) => e.id)).toEqual([1, 2, 3]);
@@ -66,7 +73,9 @@ describe("useHistoryViewStore", () => {
 
 		test("appending an all-duplicate page still updates hasMore", () => {
 			useHistoryViewStore.setState({ entries: [entry(1)], hasMore: true });
-			useHistoryViewStore.getState().appendPage({ entries: [entry(1)], hasMore: false });
+			useHistoryViewStore
+				.getState()
+				.appendPage({ entries: [entry(1)], hasMore: false });
 			const s = useHistoryViewStore.getState();
 			expect(s.entries.map((e) => e.id)).toEqual([1]);
 			expect(s.hasMore).toBe(false);
@@ -75,7 +84,9 @@ describe("useHistoryViewStore", () => {
 		test("appending an empty page leaves entries untouched", () => {
 			useHistoryViewStore.setState({ entries: [entry(1)] });
 			useHistoryViewStore.getState().appendPage({ entries: [], hasMore: true });
-			expect(useHistoryViewStore.getState().entries.map((e) => e.id)).toEqual([1]);
+			expect(useHistoryViewStore.getState().entries.map((e) => e.id)).toEqual([
+				1,
+			]);
 		});
 	});
 
@@ -102,13 +113,17 @@ describe("useHistoryViewStore", () => {
 		test("prepends a new row newest-first", () => {
 			useHistoryViewStore.setState({ entries: [entry(1)] });
 			useHistoryViewStore.getState().insertRow(entry(2));
-			expect(useHistoryViewStore.getState().entries.map((e) => e.id)).toEqual([2, 1]);
+			expect(useHistoryViewStore.getState().entries.map((e) => e.id)).toEqual([
+				2, 1,
+			]);
 		});
 
 		test("is a no-op (returns same state) when the id already exists", () => {
 			useHistoryViewStore.setState({ entries: [entry(1), entry(2)] });
 			const before = useHistoryViewStore.getState().entries;
-			useHistoryViewStore.getState().insertRow(entry(2, { title: "should be ignored" }));
+			useHistoryViewStore
+				.getState()
+				.insertRow(entry(2, { title: "should be ignored" }));
 			const after = useHistoryViewStore.getState().entries;
 			// Same reference back → React bails out of a re-render.
 			expect(after).toBe(before);
@@ -120,7 +135,9 @@ describe("useHistoryViewStore", () => {
 		test("removes the matching id", () => {
 			useHistoryViewStore.setState({ entries: [entry(1), entry(2), entry(3)] });
 			useHistoryViewStore.getState().removeRow(2);
-			expect(useHistoryViewStore.getState().entries.map((e) => e.id)).toEqual([1, 3]);
+			expect(useHistoryViewStore.getState().entries.map((e) => e.id)).toEqual([
+				1, 3,
+			]);
 		});
 
 		test("is a no-op (returns same state) when the id is absent", () => {
@@ -133,7 +150,9 @@ describe("useHistoryViewStore", () => {
 
 	describe("toggleRow", () => {
 		test("flips saved on the matching id only", () => {
-			useHistoryViewStore.setState({ entries: [entry(1), entry(2, { saved: false })] });
+			useHistoryViewStore.setState({
+				entries: [entry(1), entry(2, { saved: false })],
+			});
 			useHistoryViewStore.getState().toggleRow(2, true);
 			const s = useHistoryViewStore.getState();
 			expect(s.entries.find((e) => e.id === 2)?.saved).toBe(true);
@@ -143,7 +162,9 @@ describe("useHistoryViewStore", () => {
 		test("toggling an absent id maps over entries without changing any saved flag", () => {
 			useHistoryViewStore.setState({ entries: [entry(1, { saved: true })] });
 			useHistoryViewStore.getState().toggleRow(999, false);
-			expect(useHistoryViewStore.getState().entries.find((e) => e.id === 1)?.saved).toBe(true);
+			expect(
+				useHistoryViewStore.getState().entries.find((e) => e.id === 1)?.saved,
+			).toBe(true);
 		});
 	});
 

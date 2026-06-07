@@ -33,7 +33,9 @@ function ChipBody({
 	return (
 		<>
 			{getChipIcon(config, isSmall)}
-			{shouldShowLabel && <span className={getChipLabelClass(isSmall)}>{config.shortLabel}</span>}
+			{shouldShowLabel && (
+				<span className={getChipLabelClass(isSmall)}>{config.shortLabel}</span>
+			)}
 		</>
 	);
 }
@@ -74,12 +76,16 @@ export function EndpointFeatureIcons({
 													"rounded-md border hover:scale-105 hover:shadow-sm",
 													config.bgClass,
 													config.textClass,
-													config.borderClass
+													config.borderClass,
 												),
-										getChipSizeClass({ flat, isSmall, shouldShowLabel })
+										getChipSizeClass({ flat, isSmall, shouldShowLabel }),
 									)}
 								>
-									<ChipBody config={config} isSmall={isSmall} shouldShowLabel={shouldShowLabel} />
+									<ChipBody
+										config={config}
+										isSmall={isSmall}
+										shouldShowLabel={shouldShowLabel}
+									/>
 								</div>
 							)}
 						/>

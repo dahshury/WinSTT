@@ -23,14 +23,14 @@ export const VARIANT_GRADIENT_MAP: Record<ModelVariantKey, string> = {
 const MODEL_CARD_BASE_CLASSES = cn(
 	"group/card relative flex items-stretch rounded-md border p-0 transition-[color,background-color,border-color,box-shadow] duration-200",
 	"border-border bg-surface-secondary/60",
-	"hover:border-border-hover hover:bg-surface-hover/60 hover:shadow-md"
+	"hover:border-border-hover hover:bg-surface-hover/60 hover:shadow-md",
 );
 // Restrained selection accent — matches the canonical FF card-selected string
 // (also used by the STT picker) so a selected OpenRouter model reads with the
 // same warm Docker-blue wash + ring across both pickers.
 const MODEL_CARD_SELECTED_CLASSES = cn(
 	"border-accent/55 bg-accent/[0.09] shadow-surface-3 ring-1 ring-accent/25",
-	"hover:border-accent/70 hover:bg-accent/[0.12]"
+	"hover:border-accent/70 hover:bg-accent/[0.12]",
 );
 
 export function isAnyModelSelected(flags: SelectionFlags): boolean {
@@ -38,32 +38,48 @@ export function isAnyModelSelected(flags: SelectionFlags): boolean {
 }
 
 export function getModelCardClassName(flags: SelectionFlags): string {
-	return cn(MODEL_CARD_BASE_CLASSES, isAnyModelSelected(flags) && MODEL_CARD_SELECTED_CLASSES);
+	return cn(
+		MODEL_CARD_BASE_CLASSES,
+		isAnyModelSelected(flags) && MODEL_CARD_SELECTED_CLASSES,
+	);
 }
 
 const PROVIDER_CARD_BASE_CLASSES = cn(
 	"group/provider relative flex h-full cursor-pointer flex-col gap-1 rounded-md p-2 ring-1 ring-divider transition-[color,background-color,box-shadow] duration-200",
-	"hover:shadow-sm hover:ring-border"
+	"hover:shadow-sm hover:ring-border",
 );
 const PROVIDER_CARD_SELECTED_CLASSES = "bg-accent/10 ring-1 ring-accent/40";
 
 // `idleSurface` carries the substrate-relative surfaceBg/hover the caller computes
 // from `useSurface()` (this helper can't call hooks) so each provider card reads
 // as its OWN lifted surface instead of a flat token that blends into the popup bg.
-export function getProviderCardClassName(isSelected: boolean, idleSurface = ""): string {
-	return cn(PROVIDER_CARD_BASE_CLASSES, isSelected ? PROVIDER_CARD_SELECTED_CLASSES : idleSurface);
+export function getProviderCardClassName(
+	isSelected: boolean,
+	idleSurface = "",
+): string {
+	return cn(
+		PROVIDER_CARD_BASE_CLASSES,
+		isSelected ? PROVIDER_CARD_SELECTED_CLASSES : idleSurface,
+	);
 }
 
 const SELECTION_DOT_BASE =
 	"absolute end-1.5 top-1.5 size-2 rounded-full transition-[background-color,box-shadow] duration-200";
-const SELECTION_DOT_SELECTED = "bg-accent shadow-[0_0_4px_var(--color-accent-glow-strong)]";
-const SELECTION_DOT_IDLE = "bg-transparent ring-1 ring-border/50 group-hover/provider:ring-border";
+const SELECTION_DOT_SELECTED =
+	"bg-accent shadow-[0_0_4px_var(--color-accent-glow-strong)]";
+const SELECTION_DOT_IDLE =
+	"bg-transparent ring-1 ring-border/50 group-hover/provider:ring-border";
 
 export function getSelectionDotClassName(isSelected: boolean): string {
-	return cn(SELECTION_DOT_BASE, isSelected ? SELECTION_DOT_SELECTED : SELECTION_DOT_IDLE);
+	return cn(
+		SELECTION_DOT_BASE,
+		isSelected ? SELECTION_DOT_SELECTED : SELECTION_DOT_IDLE,
+	);
 }
 
-export function getNonFreeBaseTextColor(_withForegroundFallback: boolean): string {
+export function getNonFreeBaseTextColor(
+	_withForegroundFallback: boolean,
+): string {
 	// fluidfunctionalism: paid pricing is a single muted scale — the $/M numbers
 	// carry the magnitude, so the text stays calmly muted regardless of context.
 	return "text-foreground-muted";
@@ -71,7 +87,7 @@ export function getNonFreeBaseTextColor(_withForegroundFallback: boolean): strin
 
 export function getPricingBaseTextColor(
 	pricingInfo: ReturnType<typeof getPricingTier>,
-	withForegroundFallback: boolean
+	withForegroundFallback: boolean,
 ): string {
 	if (pricingInfo.tier === "free") {
 		// Muted emerald — a gentle "cheap" signal, not a glowing badge.
@@ -81,23 +97,25 @@ export function getPricingBaseTextColor(
 }
 
 export function getPricingExtraClass(
-	pricingInfo: ReturnType<typeof getPricingTier>
+	pricingInfo: ReturnType<typeof getPricingTier>,
 ): string | false {
 	return pricingInfo.tier === "free" ? false : pricingInfo.className;
 }
 
 export function getPricingClassName(
 	pricingInfo: ReturnType<typeof getPricingTier>,
-	withForegroundFallback: boolean
+	withForegroundFallback: boolean,
 ): string {
 	return cn(
 		"flex cursor-default items-center font-semibold text-[11px] tabular-nums",
 		getPricingBaseTextColor(pricingInfo, withForegroundFallback),
-		getPricingExtraClass(pricingInfo)
+		getPricingExtraClass(pricingInfo),
 	);
 }
 
-export function getPricingLabel(pricingInfo: ReturnType<typeof getPricingTier>): string {
+export function getPricingLabel(
+	pricingInfo: ReturnType<typeof getPricingTier>,
+): string {
 	return pricingInfo.tier === "free" ? "Free" : pricingInfo.label;
 }
 
@@ -109,7 +127,10 @@ export function getProvidersGridTemplateRows(isOpen: boolean): string {
 	return isOpen ? "1fr" : "0fr";
 }
 
-export function getExpandAriaLabel(isExpanded: boolean, providerCount: number): string {
+export function getExpandAriaLabel(
+	isExpanded: boolean,
+	providerCount: number,
+): string {
 	const verb = isExpanded ? "Hide" : "Show";
 	return `${verb} ${providerCount} hosting providers`;
 }
@@ -118,7 +139,7 @@ const EXPAND_BUTTON_BASE = cn(
 	"flex w-11 shrink-0 flex-col items-center justify-center gap-0.5 self-stretch border-border border-s font-medium text-[10px] transition-colors duration-150",
 	// Idle hover is neutral (FF: accent is reserved for the active/expanded state
 	// + selection + focus). The expanded state below carries the lone accent.
-	"text-foreground-muted hover:bg-foreground/[0.08] hover:text-foreground active:bg-foreground/[0.10]"
+	"text-foreground-muted hover:bg-foreground/[0.08] hover:text-foreground active:bg-foreground/[0.10]",
 );
 
 export function getExpandButtonClassName(isExpanded: boolean): string {
@@ -126,7 +147,10 @@ export function getExpandButtonClassName(isExpanded: boolean): string {
 }
 
 export function getChevronClassName(isExpanded: boolean): string {
-	return cn("size-3 transition-transform duration-200", isExpanded && "rotate-90");
+	return cn(
+		"size-3 transition-transform duration-200",
+		isExpanded && "rotate-90",
+	);
 }
 
 export function getProviderCountTooltip(providerCount: number): string {
@@ -140,7 +164,7 @@ export interface SelectionState {
 
 export function getSelectionState(
 	isSelected: boolean,
-	isProviderSelected: boolean
+	isProviderSelected: boolean,
 ): SelectionState {
 	if (isSelected) {
 		return { kind: "selected" };
@@ -151,8 +175,12 @@ export function getSelectionState(
 	return { kind: "none" };
 }
 
-export function getSelectionProviderTooltip(selectedProviderName: string | undefined): string {
-	return selectedProviderName ? `Provider: ${selectedProviderName}` : "Provider selected";
+export function getSelectionProviderTooltip(
+	selectedProviderName: string | undefined,
+): string {
+	return selectedProviderName
+		? `Provider: ${selectedProviderName}`
+		: "Provider selected";
 }
 
 export type { ModelVariantKey };

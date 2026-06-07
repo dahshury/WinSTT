@@ -43,9 +43,13 @@ describe("useTransformNotifications", () => {
 
 	test("show generates a monotonically increasing, unique id per call", () => {
 		spyOn(Date, "now").mockReturnValue(42);
-		useTransformNotifications.getState().show({ kind: "failed", reason: "boom" });
+		useTransformNotifications
+			.getState()
+			.show({ kind: "failed", reason: "boom" });
 		const first = useTransformNotifications.getState().current?.id;
-		useTransformNotifications.getState().show({ kind: "failed", reason: "boom2" });
+		useTransformNotifications
+			.getState()
+			.show({ kind: "failed", reason: "boom2" });
 		const second = useTransformNotifications.getState().current?.id;
 		expect(first).toBeDefined();
 		expect(second).toBeDefined();
@@ -68,7 +72,9 @@ describe("useTransformNotifications", () => {
 
 	test("newer show overwrites the older notification (single-slot)", () => {
 		useTransformNotifications.getState().show({ kind: "applied", before: "a" });
-		useTransformNotifications.getState().show({ kind: "failed", reason: "later" });
+		useTransformNotifications
+			.getState()
+			.show({ kind: "failed", reason: "later" });
 		const current = useTransformNotifications.getState().current;
 		expect(current?.kind).toBe("failed");
 		expect(current?.reason).toBe("later");
