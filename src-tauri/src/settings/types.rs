@@ -352,11 +352,12 @@ impl std::ops::DerefMut for SecretMap {
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
-    // VESTIGIAL: the recording mode (ptt / toggle / listen / wakeword) is owned by
-    // `WinsttSettings.general.recording_mode`, which the BACKEND reads in shortcut/handler.rs
-    // to decide dispatch. This Handy-era `push_to_talk` bool is no longer consulted on the
-    // dictation path. Kept (not removed) to avoid serde/schema churn on the AppSettings store.
-    pub push_to_talk: bool,
+    // NOTE: the Handy-era `push_to_talk` bool was removed — the recording mode
+    // (ptt / toggle / listen / wakeword) is owned by `WinsttSettings.general.recording_mode`,
+    // which the BACKEND reads in shortcut/handler.rs to decide dispatch. The field had no
+    // live reader. `#[serde(default)]` on the remaining fields means an older
+    // settings_store.json that still carries `"push_to_talk"` deserializes fine (the unknown
+    // key is ignored).
     pub audio_feedback: bool,
     #[serde(default = "default_audio_feedback_volume")]
     pub audio_feedback_volume: f32,

@@ -67,8 +67,6 @@ pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         commands::cancel_operation,
         commands::is_portable,
         commands::get_app_dir_path,
-        commands::get_app_settings,
-        commands::get_default_settings,
         commands::get_log_dir_path,
         commands::set_log_level,
         commands::open_recordings_folder,

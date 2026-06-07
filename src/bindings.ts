@@ -206,22 +206,6 @@ async getAppDirPath() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getAppSettings() : Promise<Result<AppSettings, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_app_settings") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async getDefaultSettings() : Promise<Result<AppSettings, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_default_settings") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getLogDirPath() : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_log_dir_path") };
@@ -2039,7 +2023,6 @@ frameworkVersion: string;
  * Embedded-WebView version (WebView2 on Windows).
  */
 webview2Version: string; copyright: string }
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; update_checks_enabled?: boolean; selected_model?: string; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPositionLegacy; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeoutLegacy; word_correction_threshold?: number; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKeyLegacy; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 /**
  * One audio input device in the WinSTT spec `AudioDevice` shape (camelCase).
@@ -2135,7 +2118,6 @@ extraRecordingBufferMs?: number }
  * `general.autoSubmitKey`.
  */
 export type AutoSubmitKey = "enter" | "ctrl_enter"
-export type AutoSubmitKeyLegacy = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type CancelPullResult = { cancelled: boolean }
@@ -2188,7 +2170,6 @@ accuracy_score: number }
  */
 export type ClearResult = { cleared: boolean }
 export type ClearUpdaterHistoryResult = { cleared: boolean }
-export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
  * Verify-credential outcome surfaced to the renderer.
  */
@@ -2532,7 +2513,6 @@ export type HotkeySettings = {
 pushToTalkKey?: string }
 export type IntegrationsSettings = { openai?: ProviderIntegrationStatus; elevenlabs?: ProviderIntegrationStatus }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
-export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * One language `{ code, label }`.
@@ -2791,7 +2771,6 @@ export type OpenRouterModelPayload = { id: string; name: string; description?: s
  * `OpenRouterScanResult` — `{ models, reachable, error? }`.
  */
 export type OpenRouterScanResultPayload = { models: OpenRouterModelPayload[]; reachable: boolean; error?: string | null }
-export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 /**
  * Renderer-measured rectangle, in overlay-window CSS/logical pixels, that
  * should remain native-hit-testable. Windows applies this as the overlay HWND's
@@ -2807,7 +2786,6 @@ export type OverlayMode = "floating-bottom" | "dynamic-island"
  * `general.overlayPosition` — coarse screen-edge gate (distinct from layout style).
  */
 export type OverlayPosition = "auto" | "none" | "top" | "bottom"
-export type OverlayPositionLegacy = "none" | "top" | "bottom"
 /**
  * `PaginatedHistory` (camelCase `hasMore`) returned by `history_list`.
  */
@@ -2827,9 +2805,7 @@ export type PaginatedHistoryLegacy = { entries: HistoryEntry[]; has_more: boolea
  * value), so an `Option<Section>` round-trips losslessly.
  */
 export type PartialWinsttSettings = { global?: GlobalSettings | null; model?: ModelSettings | null; quality?: QualitySettings | null; audio?: AudioSettings | null; general?: GeneralSettings | null; hotkey?: HotkeySettings | null; dictionary?: DictionaryEntry[] | null; snippets?: SnippetEntry[] | null; llm?: LlmSettings | null; tts?: TtsSettings | null; integrations?: IntegrationsSettings | null }
-export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
-export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
 /**
  * `presetEntrySchema`. `level` valid only for summarize/concise; `targetLang`
  * valid only for translate (cross-field constraints enforced at the app layer).
@@ -2947,7 +2923,6 @@ providers: string[];
  * The currently-loaded REALTIME model id (`None` when realtime isn't loaded).
  */
 realtime_model: string | null }
-export type SecretMap = Partial<{ [key in string]: string }>
 /**
  * Result of `winstt_set_settings`: whether the change requires an engine
  * restart, and which dot-paths drove that decision. Kept for renderer wire
@@ -2979,7 +2954,6 @@ export type SoundLibraryEntryResult = { id: string; name: string; path: string }
  * Result of `sound_library_remove` (matches `SoundLibraryRemoveResult`).
  */
 export type SoundLibraryRemoveResult = { ok: boolean; error?: string | null }
-export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Result of a speak/preview start — the request id the renderer correlates the
  * `tts://chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
@@ -3144,7 +3118,6 @@ source?: TtsSource; cloud?: TtsCloud }
  * `tts.source` — local Kokoro vs cloud ElevenLabs.
  */
 export type TtsSource = "local" | "cloud"
-export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 export type UpdaterCommandResult = { triggered: boolean; reason?: string | null }
 export type UpdaterStatusEntry = { bytesPerSecond?: number | null; message?: string | null; percent?: number | null; status: string; total?: number | null; transferred?: number | null; timestamp: number; version?: string | null }
 /**
@@ -3191,7 +3164,6 @@ export type WakeWordModelStatusPayload = { available: boolean; artifactLabel: st
  * One wake-word preset for the renderer dropdown.
  */
 export type WakeWordPresetPayload = { name: string; phrase: string }
-export type WhisperAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * The complete WinSTT settings tree, nested by the settings sections, ported
