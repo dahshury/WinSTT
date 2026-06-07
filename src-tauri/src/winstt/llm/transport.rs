@@ -9,7 +9,7 @@ use std::net::IpAddr;
 
 /// Sink for live reasoning/answer deltas (the recording pill). The Ollama
 /// transport calls this per chunk. Implemented in the manager as a thin
-/// `app.emit("llm-reasoning-delta", …)` wrapper.
+/// `app.emit("llm:reasoning-delta", …)` wrapper.
 pub trait ReasoningSink: Send {
     fn on_delta(&self, delta: &str);
 }

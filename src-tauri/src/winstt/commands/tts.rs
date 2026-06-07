@@ -21,7 +21,7 @@ use crate::winstt::managers::tts_manager::{
 use crate::winstt::managers::TtsManager;
 
 /// Result of a speak/preview start — the request id the renderer correlates the
-/// `tts://chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
+/// `tts:chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
 /// `ipc-client.ts` (`{ requestId }`).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, specta::Type, Default)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +38,7 @@ pub fn reserve_tts_playback_layer(app: &AppHandle) {
 }
 
 /// `tts_speak` — read `text` aloud (the renderer "Speak" button / dictation).
-/// Returns the request id so the renderer can correlate the `tts://chunk` stream
+/// Returns the request id so the renderer can correlate the `tts:chunk` stream
 /// + cancel it. Enabled-gate, source selection (local/cloud), and settings
 /// fallbacks for voice/lang/speed all live in `TtsManager::read_aloud` (mirrors
 /// the reference `handleSpeak`). Empty `voice`/`lang` → the manager resolves them
@@ -349,7 +349,7 @@ pub fn tts_install_cancel(app: AppHandle) {
 /// `tts_preview_cloud` — play a cloud voice's FREE pre-generated sample clip
 /// (`previewUrl`) instead of synthesizing (browsing voices costs no credits). The
 /// renderer can't fetch the clip itself (CSP blocks external hosts), so the backend
-/// downloads it and streams it back as a `tts://chunk`. Mirrors `tts.ts`
+/// downloads it and streams it back as a `tts:chunk`. Mirrors `tts.ts`
 /// `handleCloudPreview` (payload `{ previewUrl }`). Returns the request id.
 #[tauri::command]
 #[specta::specta]

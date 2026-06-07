@@ -68,7 +68,7 @@ impl CloudSttManager {
     /// `aborted` is suppressed (user-initiated cancel).
     ///
     /// The renderer's `CloudSttErrorToasts` fan-out (native-bridge-adapter
-    /// `shouldDeliver`) routes ONE `stt-cloud-error` event to one of the five
+    /// `shouldDeliver`) routes ONE `stt:cloud-error` event to one of the five
     /// WinSTT channels by matching the payload `code` against the fan-out tokens
     /// `auth_failed | network_error | key_missing | rate_limited | provider_error`.
     /// So we emit the FAN-OUT token (not the raw taxonomy `auth`/`network`/…) and
@@ -88,12 +88,12 @@ impl CloudSttManager {
         }
         let _ = self
             .app
-            .emit("stt-cloud-error", serde_json::Value::Object(payload));
+            .emit("stt:cloud-error", serde_json::Value::Object(payload));
     }
 
     /// Transcribe one utterance via the cloud provider. Honors the pre-flight
     /// guards (key + size), the per-request cancel token, the 90s ceiling, and
-    /// the typed error taxonomy. On error, emits `stt-cloud-error` and returns it.
+    /// the typed error taxonomy. On error, emits `stt:cloud-error` and returns it.
     pub async fn transcribe(
         &self,
         request_id: &str,
@@ -129,7 +129,7 @@ impl CloudSttManager {
     /// key off the settings store (decrypted by `read_settings`), encodes the
     /// 16 kHz mono f32 capture into an in-memory WAV, and runs the upload. Returns
     /// the transcript text (the contract `TranscriptionManager::transcribe`
-    /// expects); on any failure it emits `stt-cloud-error` (via `transcribe`) and
+    /// expects); on any failure it emits `stt:cloud-error` (via `transcribe`) and
     /// returns the typed error.
     ///
     /// `language`: the validated decode language (`None` = auto-detect). Mirrors

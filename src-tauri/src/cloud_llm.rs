@@ -100,7 +100,7 @@ pub async fn run_chat(
 
 /// Streamed chat. Accumulates assistant text chunks into the returned `String`,
 /// forwards each reasoning/thinking delta to `on_reasoning` (drives the
-/// `llm-reasoning-delta` pill), and reports captured output tokens from the
+/// `llm:reasoning-delta` pill), and reports captured output tokens from the
 /// stream-end usage. Requires `options.with_capture_usage(true)` for the token
 /// count to be populated.
 ///

@@ -47,7 +47,7 @@ const OLLAMA_RECENT_WARM_SKIP: Duration = Duration::from_secs(30);
 const LLM_WARMUP_PASS_KEY: &str = "llm:warmup-pass";
 
 /// Thin emit sink that forwards live reasoning deltas to the renderer pill.
-/// Mirrors the `llm-reasoning-delta` plain-string event (07_* §4b).
+/// Mirrors the `llm:reasoning-delta` plain-string event (07_* §4b).
 struct EmitReasoningSink {
     app: AppHandle,
     request_id: String,
@@ -56,7 +56,7 @@ struct EmitReasoningSink {
 impl llm::ReasoningSink for EmitReasoningSink {
     fn on_delta(&self, delta: &str) {
         let _ = self.app.emit(
-            "llm-reasoning-delta",
+            "llm:reasoning-delta",
             serde_json::json!({ "requestId": self.request_id, "delta": delta }),
         );
     }

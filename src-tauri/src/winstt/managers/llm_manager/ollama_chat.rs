@@ -210,7 +210,7 @@ impl LlmManager {
         if let Some(r) = reasoning {
             if !r.is_empty() {
                 let _ = self.app.emit(
-                    "llm-reasoning-delta",
+                    "llm:reasoning-delta",
                     serde_json::json!({ "requestId": request_id, "delta": r }),
                 );
             }

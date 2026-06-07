@@ -498,7 +498,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 		cmd: "tts_report_playback_ended",
 	},
 	[IPC.TTS_STARTED]: { kind: "event", event: "tts:started" },
-	[IPC.TTS_CHUNK]: { kind: "event", event: "tts://chunk" },
+	[IPC.TTS_CHUNK]: { kind: "event", event: "tts:chunk" },
 	[IPC.TTS_COMPLETED]: { kind: "event", event: "tts:completed" },
 	[IPC.TTS_FAILED]: { kind: "event", event: "tts:failed" },
 	[IPC.TTS_PLAYBACK_STARTED]: { kind: "event", event: "tts:playback-started" },
@@ -579,7 +579,7 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.LLM_PULL_PROGRESS]: { kind: "event", event: "llm:pull-progress" },
 	[IPC.LLM_PROCESSING_START]: { kind: "event", event: "llm:processing-start" },
 	[IPC.LLM_PROCESSING_END]: { kind: "event", event: "llm:processing-end" },
-	[IPC.LLM_REASONING_DELTA]: { kind: "event", event: "llm-reasoning-delta" },
+	[IPC.LLM_REASONING_DELTA]: { kind: "event", event: "llm:reasoning-delta" },
 	[IPC.LLM_LEARNED_PROPER_NOUNS]: {
 		kind: "event",
 		event: "llm-learned-proper-nouns",
@@ -631,11 +631,11 @@ const ROUTE: Partial<Record<string, Route>> = {
 	[IPC.PREVIEW_CANCEL]: { kind: "command", cmd: "cancel_preview" },
 
 	// ── Cloud STT (slice 07) — the 5 error channels fan out from one event ──
-	[IPC.STT_CLOUD_AUTH_FAILED]: { kind: "event", event: "stt-cloud-error" },
-	[IPC.STT_CLOUD_NETWORK_ERROR]: { kind: "event", event: "stt-cloud-error" },
-	[IPC.STT_CLOUD_KEY_MISSING]: { kind: "event", event: "stt-cloud-error" },
-	[IPC.STT_CLOUD_RATE_LIMITED]: { kind: "event", event: "stt-cloud-error" },
-	[IPC.STT_CLOUD_PROVIDER_ERROR]: { kind: "event", event: "stt-cloud-error" },
+	[IPC.STT_CLOUD_AUTH_FAILED]: { kind: "event", event: "stt:cloud-error" },
+	[IPC.STT_CLOUD_NETWORK_ERROR]: { kind: "event", event: "stt:cloud-error" },
+	[IPC.STT_CLOUD_KEY_MISSING]: { kind: "event", event: "stt:cloud-error" },
+	[IPC.STT_CLOUD_RATE_LIMITED]: { kind: "event", event: "stt:cloud-error" },
+	[IPC.STT_CLOUD_PROVIDER_ERROR]: { kind: "event", event: "stt:cloud-error" },
 
 	// ── File transcription (slice 07/08) ──
 	[IPC.FILE_TRANSCRIBE]: { kind: "command", cmd: "file_transcribe_enqueue" },

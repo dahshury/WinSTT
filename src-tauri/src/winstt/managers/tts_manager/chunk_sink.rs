@@ -1,6 +1,6 @@
 // The renderer chunk-emit unit: `EmitChunkSink` (a delay-one-chunk buffer that
 // stamps `is_final` on the true last chunk + polls the shared cancel flag) with
-// its `ChunkSink` impl, the `chunk_payload` `tts://chunk` wire builder, and the
+// its `ChunkSink` impl, the `chunk_payload` `tts:chunk` wire builder, and the
 // `kitten_model_filename` catalog helper. Self-contained — referenced only where
 // `read_aloud` constructs the sink.
 
@@ -21,7 +21,7 @@ pub(super) fn kitten_model_filename(model_id: &str) -> &'static str {
     }
 }
 
-/// Build the `tts://chunk` event payload. `pcm` carries RAW BYTES the renderer
+/// Build the `tts:chunk` event payload. `pcm` carries RAW BYTES the renderer
 /// interprets PER FORMAT:
 ///   - "f32le": `new Float32Array(pcm)` reads it as little-endian f32 PCM.
 ///   - "mp3":   `decodeAudioData(pcm)` decodes the mp3 container.
@@ -51,7 +51,7 @@ pub(super) fn chunk_payload(request_id: &str, chunk: &SynthesisChunk) -> serde_j
 }
 
 /// A `ChunkSink` that emits each synthesized chunk to the renderer over the
-/// `tts://chunk` event, with a DELAY-ONE-CHUNK buffer so the LAST chunk of the
+/// `tts:chunk` event, with a DELAY-ONE-CHUNK buffer so the LAST chunk of the
 /// whole read can carry `is_final = true` (the renderer's queue `markComplete()`s
 /// exactly once on that flag). Polls a shared cancel flag between sentences.
 pub(super) struct EmitChunkSink {
@@ -69,7 +69,7 @@ impl EmitChunkSink {
     fn emit(&self, chunk: &SynthesisChunk) {
         let _ = self
             .app
-            .emit("tts://chunk", chunk_payload(&self.request_id, chunk));
+            .emit("tts:chunk", chunk_payload(&self.request_id, chunk));
     }
 
     /// Emit the held-back chunk (if any) with `is_final = true`. Called once at the

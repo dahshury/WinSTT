@@ -13,7 +13,7 @@
 //
 // Wire contract to the renderer (identical for local + cloud so the Web-Audio playback queue is
 // source-agnostic — features/tts-playback):
-//   tts://chunk { request_id, sample_rate, seq, is_final, format, channels, pcm }
+//   tts:chunk { request_id, sample_rate, seq, is_final, format, channels, pcm }
 // where format == "f32le" (raw mono f32, local Kokoro) | "mp3" (cloud, renderer decodeAudioData's).
 
 pub mod catalog;

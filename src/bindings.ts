@@ -609,7 +609,7 @@ async setCustomModel(path: string) : Promise<Result<CatalogModelInfo, string>> {
 },
 /**
  * `tts_speak` — read `text` aloud (the renderer "Speak" button / dictation).
- * Returns the request id so the renderer can correlate the `tts://chunk` stream
+ * Returns the request id so the renderer can correlate the `tts:chunk` stream
  * + cancel it. Enabled-gate, source selection (local/cloud), and settings
  * fallbacks for voice/lang/speed all live in `TtsManager::read_aloud` (mirrors
  * the reference `handleSpeak`). Empty `voice`/`lang` → the manager resolves them
@@ -750,7 +750,7 @@ async ttsInstallCancel() : Promise<void> {
  * `tts_preview_cloud` — play a cloud voice's FREE pre-generated sample clip
  * (`previewUrl`) instead of synthesizing (browsing voices costs no credits). The
  * renderer can't fetch the clip itself (CSP blocks external hosts), so the backend
- * downloads it and streams it back as a `tts://chunk`. Mirrors `tts.ts`
+ * downloads it and streams it back as a `tts:chunk`. Mirrors `tts.ts`
  * `handleCloudPreview` (payload `{ previewUrl }`). Returns the request id.
  */
 async ttsPreviewCloud(previewUrl: string) : Promise<Result<SpeakResult, string>> {
@@ -1056,7 +1056,7 @@ async fileTranscribeCancel(id: string) : Promise<void> {
  * return the result (reading the live settings first so a fresh edit is
  * reflected immediately). A no-op when there are no snippets. Mirrors the snippet
  * half of `applyPostProcessing`; the recorder's paste path applies the same
- * transform via `snippets::expand_cached` on the finalized transcription.
+ * transform via `SnippetsManager::expand_cached` on the finalized transcription.
  */
 async winsttExpandSnippets(text: string) : Promise<string> {
     return await TAURI_INVOKE("winstt_expand_snippets", { text });
@@ -2956,7 +2956,7 @@ export type SoundLibraryEntryResult = { id: string; name: string; path: string }
 export type SoundLibraryRemoveResult = { ok: boolean; error?: string | null }
 /**
  * Result of a speak/preview start — the request id the renderer correlates the
- * `tts://chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
+ * `tts:chunk` stream + cancel against. Mirrors `TtsSpeakResult` in
  * `ipc-client.ts` (`{ requestId }`).
  */
 export type SpeakResult = { requestId: string }

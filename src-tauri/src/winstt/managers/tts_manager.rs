@@ -6,7 +6,7 @@
 // HTTP helpers (voices / subscription / preview). This wrapper is the *Tauri-state*
 // object: constructed with `new(&AppHandle)`, it re-picks the active engine from
 // `tts.source` (+ voice/lang/key/tuning), bridges synthesis chunks to the
-// `tts://chunk` event, fires the `tts:started`/`tts:completed`/`tts:failed`
+// `tts:chunk` event, fires the `tts:started`/`tts:completed`/`tts:failed`
 // lifecycle, and owns the per-request cancel set.
 //
 // 1:1 with the reference `tts.ts` orchestrator:
@@ -898,7 +898,7 @@ impl TtsManager {
     // ── reads ───────────────────────────────────────────────────────────────
 
     /// Read `text` aloud sentence-by-sentence under ONE `request_id` so the
-    /// renderer plays it gap-free. Each chunk forwards to `tts://chunk`. `get_speed`
+    /// renderer plays it gap-free. Each chunk forwards to `tts:chunk`. `get_speed`
     /// is sampled per sentence (mid-read speed change → NEXT sentence). Blocking —
     /// the command runs it on a worker.
     ///
@@ -1068,7 +1068,7 @@ impl TtsManager {
 
     /// Play a cloud voice's FREE pre-generated sample (`preview_url`) instead of
     /// synthesizing — browsing voices costs no ElevenLabs credits. Fetches the mp3
-    /// (key-free, https-only) and forwards it as ONE `tts://chunk` (mp3) under the
+    /// (key-free, https-only) and forwards it as ONE `tts:chunk` (mp3) under the
     /// same `tts:started`/`tts:completed`/`tts:failed` lifecycle a real read uses.
     /// Mirrors `tts.ts` `handleCloudPreview` + `previewCloudClip`. Blocking — the
     /// command runs it on a worker.
@@ -1094,7 +1094,7 @@ impl TtsManager {
         match result {
             Ok(bytes) if !was_cancelled && !bytes.is_empty() => {
                 let payload = chunk_payload(request_id, &SynthesisChunk::mp3(bytes, 0, true));
-                let _ = self.app.emit("tts://chunk", payload);
+                let _ = self.app.emit("tts:chunk", payload);
                 self.emit_event(
                     "tts:completed",
                     serde_json::json!({ "requestId": request_id, "cancelled": false, "elapsedMs": elapsed_ms }),

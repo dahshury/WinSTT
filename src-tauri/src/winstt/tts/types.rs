@@ -210,7 +210,7 @@ pub type TtsResult<T> = Result<T, TtsError>;
 // ---------------------------------------------------------------------------
 
 /// A consumer-cancellable sink the engine pushes chunks into. The host bridges
-/// `push` to a Tauri `tts://chunk` event and polls `is_cancelled` between
+/// `push` to a Tauri `tts:chunk` event and polls `is_cancelled` between
 /// sentences (the cooperative cancel point, like the Python `should_cancel`).
 pub trait ChunkSink: Send {
     /// Forward one chunk. Returns `false` if the consumer is gone → stop producing.

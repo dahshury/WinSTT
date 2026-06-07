@@ -8,8 +8,8 @@
 // engine/wakeword modules free of specta deps. The orchestrator collects them as
 // `winstt::commands::events::*` (note in modDecls/libWiring).
 //
-// NOTE: high-frequency streaming channels (llm-reasoning-delta, tts://chunk,
-// stt-cloud-error, file-transcribe-progress, wake_word_detected, realtime-*) are
+// NOTE: high-frequency streaming channels (llm:reasoning-delta, tts:chunk,
+// stt:cloud-error, file-transcribe-progress, wake_word_detected, realtime-*) are
 // emitted as PLAIN string events from the managers (matching WinSTT's IPC shape
 // so the reused renderer's listeners work unchanged — lib_wiring §4b). The typed
 // events below are the structured payloads the renderer consumes type-safely.

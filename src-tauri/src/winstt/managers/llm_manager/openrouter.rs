@@ -188,7 +188,7 @@ impl LlmManager {
         );
 
         // Stream the answer; forward reasoning/thinking deltas to the pill via the
-        // `llm-reasoning-delta` event when a request id is supplied (dictation +
+        // `llm:reasoning-delta` event when a request id is supplied (dictation +
         // preview). The structured `{text}` envelope is accumulated across content
         // chunks and parsed at the end exactly as before.
         let sink = request_id.map(|rid| EmitReasoningSink {

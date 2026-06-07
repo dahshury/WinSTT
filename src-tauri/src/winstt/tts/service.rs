@@ -46,7 +46,7 @@ impl TtsManager {
     }
 
     /// A fresh, process-unique request id (`tts-<n>`). The renderer uses it to
-    /// correlate the `tts://chunk` stream and to cancel the read.
+    /// correlate the `tts:chunk` stream and to cancel the read.
     pub fn next_request_id(&self) -> String {
         let n = self.next_id.fetch_add(1, Ordering::Relaxed);
         format!("tts-{n}")
@@ -195,12 +195,12 @@ impl TtsManager {
 // Tauri-event bridge — the sink-less entry point the command layer calls.
 //
 // The renderer's Web-Audio playback queue is byte-identical to WinSTT's the reference
-// contract; only the transport swaps (`IPC.TTS_CHUNK` → the `tts://chunk` Tauri
+// contract; only the transport swaps (`IPC.TTS_CHUNK` → the `tts:chunk` Tauri
 // event). `read_aloud_emit` drives `read_aloud` with a sink that forwards each
-// chunk as a `tts://chunk` event and fires the lifecycle events around it.
+// chunk as a `tts:chunk` event and fires the lifecycle events around it.
 // ---------------------------------------------------------------------------
 
-/// The `tts://chunk` event payload — the exact JSON field shape the renderer
+/// The `tts:chunk` event payload — the exact JSON field shape the renderer
 /// playback queue already consumes. `pcm` carries the f32le
 /// samples re-interpreted as bytes (local) or the encoded mp3 bytes (cloud).
 #[derive(Clone, Debug, serde::Serialize)]
@@ -245,14 +245,14 @@ impl TtsChunkPayload {
 /// free of a hard `tauri` event-API dependency at this boundary (the command
 /// layer wires a real `AppHandle`-backed impl) and makes the bridge unit-testable.
 pub trait TtsEventEmitter: Send + Sync {
-    /// Emit one `tts://chunk` event.
+    /// Emit one `tts:chunk` event.
     fn emit_chunk(&self, payload: &TtsChunkPayload);
     /// Emit a lifecycle event (`tts://started` / `tts://completed` /
     /// `tts://failed`) by name with a JSON payload.
     fn emit_lifecycle(&self, event: &str, payload: serde_json::Value);
 }
 
-/// A `ChunkSink` that forwards chunks to a `TtsEventEmitter` as `tts://chunk`
+/// A `ChunkSink` that forwards chunks to a `TtsEventEmitter` as `tts:chunk`
 /// events and polls a shared cancel flag (set by `TtsManager::cancel*`). The
 /// manager's own per-request cancel map is the authority; this flag mirrors a
 /// renderer-side "discard" that arrived after the sink was created.
@@ -279,7 +279,7 @@ impl ChunkSink for EmitSink<'_> {
 
 impl TtsManager {
     /// Sink-less read: drive `read_aloud`, forwarding chunks to `emitter` as
-    /// `tts://chunk` events and firing `tts://started` / `tts://completed` /
+    /// `tts:chunk` events and firing `tts://started` / `tts://completed` /
     /// `tts://failed` around the run. This is the entry point the Tauri command
     /// layer calls (it already runs on a `spawn_blocking` worker). `get_speed`
     /// is sampled per sentence (mid-read speed change → next sentence).

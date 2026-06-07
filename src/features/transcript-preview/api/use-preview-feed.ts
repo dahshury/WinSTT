@@ -38,7 +38,7 @@ function dictationEnhanceSeed(): {
  * - `stt:recording-start` → a new dictation supersedes a pending preview: drop
  *   it WITHOUT pasting (tell the backend so it restores the passive overlay).
  * - `stt:session-aborted` → user cancelled; reset local state.
- * - `llm-reasoning-delta` → while the magic button is re-processing, stream the
+ * - `llm:reasoning-delta` → while the magic button is re-processing, stream the
  *   model's reasoning into the thinking indicator (the auto-post-process has
  *   already finished by the time the preview is open, so any delta now is ours).
  */
