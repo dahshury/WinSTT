@@ -35,7 +35,7 @@ pub async fn download_model(
 
     if let Err(ref error) = result {
         let _ = app_handle.emit(
-            "model-download-failed",
+            "model:download-failed",
             serde_json::json!({ "model_id": &model_id, "error": error }),
         );
     }

@@ -1045,7 +1045,7 @@ impl ModelManager {
                     total: total_size,
                     percentage,
                 };
-                let _ = self.app_handle.emit("model-download-progress", &payload);
+                let _ = self.app_handle.emit("model:download-progress", &payload);
             },
         )
         .await
@@ -1079,7 +1079,7 @@ impl ModelManager {
         };
         let _ = self
             .app_handle
-            .emit("model-download-progress", &final_progress);
+            .emit("model:download-progress", &final_progress);
 
         // Verify downloaded file size matches expected size
         if total_size > 0 {
@@ -1098,7 +1098,7 @@ impl ModelManager {
         // Verify SHA256 checksum. Runs in a blocking thread so the async executor is not
         // stalled while hashing large model files (up to 1.6 GB). On failure the partial
         // is deleted inside verify_sha256 so the next attempt always starts fresh.
-        let _ = self.app_handle.emit("model-verification-started", model_id);
+        let _ = self.app_handle.emit("model:verification-started", model_id);
         info!("Verifying SHA256 for model {}...", model_id);
         let verify_path = partial_path.clone();
         let verify_expected = model_info.sha256.clone();
@@ -1111,7 +1111,7 @@ impl ModelManager {
         verify_result?;
         let _ = self
             .app_handle
-            .emit("model-verification-completed", model_id);
+            .emit("model:verification-completed", model_id);
 
         // Handle directory-based models (extract tar.gz) vs file-based models
         if model_info.is_directory {
@@ -1122,7 +1122,7 @@ impl ModelManager {
             }
 
             // Emit extraction started event
-            let _ = self.app_handle.emit("model-extraction-started", model_id);
+            let _ = self.app_handle.emit("model:extraction-started", model_id);
             info!("Extracting archive for directory-based model: {}", model_id);
 
             // Use a temporary extraction directory to ensure atomic operations
@@ -1158,7 +1158,7 @@ impl ModelManager {
                     extracting.remove(model_id);
                 }
                 let _ = self.app_handle.emit(
-                    "model-extraction-failed",
+                    "model:extraction-failed",
                     &serde_json::json!({
                         "model_id": model_id,
                         "error": error_msg
@@ -1197,7 +1197,7 @@ impl ModelManager {
                 extracting.remove(model_id);
             }
             // Emit extraction completed event
-            let _ = self.app_handle.emit("model-extraction-completed", model_id);
+            let _ = self.app_handle.emit("model:extraction-completed", model_id);
 
             // Remove the downloaded tar.gz file
             let _ = fs::remove_file(&partial_path);
@@ -1220,7 +1220,7 @@ impl ModelManager {
         self.cancel_flags.lock_recover().remove(model_id);
 
         // Emit completion event
-        let _ = self.app_handle.emit("model-download-complete", model_id);
+        let _ = self.app_handle.emit("model:download-complete", model_id);
 
         info!(
             "Successfully downloaded model {} to {:?}",
@@ -1295,7 +1295,7 @@ impl ModelManager {
         }
 
         // Emit event to notify UI
-        let _ = self.app_handle.emit("model-deleted", model_id);
+        let _ = self.app_handle.emit("model:deleted", model_id);
 
         Ok(())
     }
@@ -1371,7 +1371,7 @@ impl ModelManager {
         self.update_download_status()?;
 
         // Emit cancellation event so all UI components can clear their state
-        let _ = self.app_handle.emit("model-download-cancelled", model_id);
+        let _ = self.app_handle.emit("model:download-cancelled", model_id);
 
         info!("Download cancellation initiated for: {}", model_id);
         Ok(())
