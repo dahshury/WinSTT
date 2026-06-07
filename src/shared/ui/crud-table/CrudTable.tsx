@@ -1,11 +1,4 @@
-import { Form } from "@base-ui/react/form";
-import {
-	Cancel01Icon,
-	CheckIcon,
-	Delete02Icon,
-	Edit02Icon,
-	PlusSignIcon,
-} from "@hugeicons/core-free-icons";
+import { Delete02Icon } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -20,12 +13,11 @@ import {
 	useReactTable,
 	type VisibilityState,
 } from "@tanstack/react-table";
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import type { ZodType } from "zod";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
-import { ButtonGroup } from "@/shared/ui/button-group";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import {
 	DataGrid,
@@ -35,14 +27,10 @@ import {
 	DataGridTable,
 	DataGridToolbar,
 } from "@/shared/ui/data-grid";
-import { FormControl } from "@/shared/ui/form-control";
-import {
-	InputGroup,
-	InputGroupAddon,
-	InputGroupButton,
-	InputGroupInput,
-} from "@/shared/ui/input-group";
-import { Tooltip } from "@/shared/ui/tooltip";
+import { CrudAddForm } from "./CrudAddForm";
+import { CrudEditableCell, CrudRowActions } from "./CrudRow";
+import { useCrudEditing } from "./use-crud-editing";
+import { useCrudForm } from "./use-crud-form";
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -162,13 +150,7 @@ export function CrudTable<TEntry, TAdd>({
 	updateSchema,
 }: CrudTableProps<TEntry, TAdd>) {
 	const tGrid = useTranslations("common");
-	const addErrorIdPrefix = useId();
 	const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-	const [values, setValues] = useState<Record<string, string>>({});
-	const [errors, setErrors] = useState<Record<string, string>>({});
-	const [editingId, setEditingId] = useState<string | null>(null);
-	const [editValues, setEditValues] = useState<Record<string, string>>({});
-	const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 	const [sorting, setSorting] = useState<SortingState>([]);
 	const [globalFilter, setGlobalFilter] = useState("");
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -177,231 +159,52 @@ export function CrudTable<TEntry, TAdd>({
 		pageSize,
 	});
 
-	const setField = (name: string, value: string): void => {
-		setValues((prev) => ({ ...prev, [name]: value }));
-		if (errors[name]) {
-			setErrors((prev) => {
-				const { [name]: _omit, ...rest } = prev;
-				return rest;
-			});
-		}
-	};
+	const form = useCrudForm({ fields, schema, onAdd });
+	const editing = useCrudEditing({
+		fields,
+		schema,
+		getId,
+		getEditValues,
+		onUpdate,
+		updateSchema,
+	});
+	const { editingId, startEdit, cancelEdit, handleUpdate } = editing;
 
-	const setEditField = (name: string, value: string): void => {
-		setEditValues((prev) => ({ ...prev, [name]: value }));
-		if (editErrors[name]) {
-			setEditErrors((prev) => {
-				const { [name]: _omit, ...rest } = prev;
-				return rest;
-			});
-		}
-	};
-
-	const buildDraft = (
-		source: Record<string, string>
-	): Record<string, string> => {
-		const draft: Record<string, string> = {};
-		for (const f of fields) {
-			draft[f.name] = source[f.name] ?? "";
-		}
-		return draft;
-	};
-
-	const buildDefaultEditValues = (entry: TEntry): Record<string, string> => {
-		const entryRecord = entry as Record<string, unknown>;
-		const draft: Record<string, string> = {};
-		for (const f of fields) {
-			const raw = entryRecord[f.name];
-			draft[f.name] = typeof raw === "string" ? raw : "";
-		}
-		return draft;
-	};
-
-	const startEdit = (entry: TEntry): void => {
-		const seed = getEditValues?.(entry) ?? buildDefaultEditValues(entry);
-		const next: Record<string, string> = {};
-		for (const f of fields) {
-			next[f.name] = seed[f.name] ?? "";
-		}
-		setEditingId(getId(entry));
-		setEditValues(next);
-		setEditErrors({});
-	};
-
-	const cancelEdit = (): void => {
-		setEditingId(null);
-		setEditValues({});
-		setEditErrors({});
-	};
-
-	const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
-		event.preventDefault();
-		const draft = buildDraft(values);
-		const result = schema.safeParse(draft);
-		if (!result.success) {
-			const next: Record<string, string> = {};
-			for (const issue of result.error.issues) {
-				const key = issue.path[0];
-				if (typeof key === "string" && !next[key]) {
-					next[key] = issue.message;
-				}
-			}
-			setErrors(next);
-			return;
-		}
-		// The Zod schema applies .trim() during validation — no manual trimming.
-		onAdd(result.data);
-		setValues({});
-		setErrors({});
-	};
-
-	const handleUpdate = (entry: TEntry): void => {
-		if (!onUpdate) {
-			return;
-		}
-		const draft = buildDraft(editValues);
-		const result = (updateSchema?.(entry) ?? schema).safeParse(draft);
-		if (!result.success) {
-			const next: Record<string, string> = {};
-			for (const issue of result.error.issues) {
-				const key = issue.path[0];
-				if (typeof key === "string" && !next[key]) {
-					next[key] = issue.message;
-				}
-			}
-			setEditErrors(next);
-			return;
-		}
-		onUpdate(getId(entry), result.data);
-		cancelEdit();
-	};
-
-	const fieldForName = (name: string): CrudField | undefined =>
-		fields.find((field) => field.name === name);
-
-	const isAddDisabled = !fields.every(
-		(f) => (values[f.name] ?? "").trim().length > 0
-	);
-	const isEditSaveDisabled = !fields.every(
-		(f) => (editValues[f.name] ?? "").trim().length > 0
-	);
 	const actionColumnClassName = onUpdate ? "w-20" : "w-10";
-	const addFieldErrorId = (fieldName: string): string =>
-		`${addErrorIdPrefix}-${fieldName}-error`;
-	const hasAddErrors = fields.some((field) => !!errors[field.name]);
 
-	// Inline-edit cell: when this row is being edited and the column maps to a
-	// field, swap the value for an editable input (+ inline error); otherwise
-	// render the column's normal content. Sorting reads the committed value (the
-	// column accessor), so a row never jumps while it's being typed in.
-	const renderEditableCell = (col: CrudColumn<TEntry>, entry: TEntry): ReactNode => {
-		const editField = col.editFieldName ? fieldForName(col.editFieldName) : undefined;
-		if (editingId === getId(entry) && editField) {
-			const error = editErrors[editField.name];
-			return (
-				<div className="flex flex-col gap-1">
-					<InputGroup
-						appearance="minimal"
-						className="h-8"
-						size="sm"
-						tone={error ? "danger" : "default"}
-					>
-						<InputGroupAddon align="inline-start">
-							<HugeiconsIcon
-								aria-hidden="true"
-								icon={editField.icon}
-								size={14}
-							/>
-						</InputGroupAddon>
-						<InputGroupInput
-							aria-invalid={!!error}
-							aria-label={editField.label}
-							name={editField.name}
-							onChange={(event) => setEditField(editField.name, event.target.value)}
-							onKeyDown={(event) => {
-								if (event.key === "Enter") {
-									event.preventDefault();
-									handleUpdate(entry);
-								}
-								if (event.key === "Escape") {
-									event.preventDefault();
-									cancelEdit();
-								}
-							}}
-							placeholder={editField.placeholder}
-							value={editValues[editField.name] ?? ""}
-						/>
-					</InputGroup>
-					{error ? (
-						<div
-							aria-live="assertive"
-							className="text-error text-xs-tight leading-[14px]"
-							role="alert"
-						>
-							{error}
-						</div>
-					) : null}
-				</div>
-			);
-		}
-		return col.render(entry);
-	};
+	const renderEditableCell = (
+		col: CrudColumn<TEntry>,
+		entry: TEntry
+	): ReactNode => (
+		<CrudEditableCell
+			cancelEdit={cancelEdit}
+			col={col}
+			editErrors={editing.editErrors}
+			editValues={editing.editValues}
+			editingId={editingId}
+			entry={entry}
+			fields={fields}
+			getId={getId}
+			handleUpdate={handleUpdate}
+			setEditField={editing.setEditField}
+		/>
+	);
 
-	// Trailing per-row controls: edit/delete normally, save/cancel while editing.
-	const renderRowActions = (entry: TEntry): ReactNode => {
-		const id = getId(entry);
-		const isEditing = editingId === id;
-		return (
-			<div className="flex justify-end gap-1">
-				{isEditing ? (
-					<>
-						<Tooltip content={labels.save}>
-							<Button
-								aria-label={`${labels.save} "${deleteLabelFor(entry)}"`}
-								className="rounded bg-transparent p-1 text-success transition-colors duration-150 hover:bg-success-dim"
-								disabled={isEditSaveDisabled}
-								onClick={() => handleUpdate(entry)}
-							>
-								<HugeiconsIcon icon={CheckIcon} size={14} />
-							</Button>
-						</Tooltip>
-						<Tooltip content={labels.cancel}>
-							<Button
-								aria-label={`${labels.cancel} "${deleteLabelFor(entry)}"`}
-								className="rounded bg-transparent p-1 text-foreground-muted transition-colors duration-150 hover:bg-surface-hover hover:text-foreground"
-								onClick={cancelEdit}
-							>
-								<HugeiconsIcon icon={Cancel01Icon} size={14} />
-							</Button>
-						</Tooltip>
-					</>
-				) : (
-					<>
-						{onUpdate ? (
-							<Tooltip content={labels.edit}>
-								<Button
-									aria-label={`${labels.edit} "${deleteLabelFor(entry)}"`}
-									className="rounded bg-transparent p-1 text-foreground-muted transition-colors duration-150 hover:bg-surface-hover hover:text-foreground"
-									onClick={() => startEdit(entry)}
-								>
-									<HugeiconsIcon icon={Edit02Icon} size={14} />
-								</Button>
-							</Tooltip>
-						) : null}
-						<Tooltip content={labels.delete}>
-							<Button
-								aria-label={`${labels.delete} "${deleteLabelFor(entry)}"`}
-								className="rounded bg-transparent p-1 text-error transition-colors duration-150 hover:bg-error-dim"
-								onClick={() => onRemove(id)}
-							>
-								<HugeiconsIcon icon={Delete02Icon} size={14} />
-							</Button>
-						</Tooltip>
-					</>
-				)}
-			</div>
-		);
-	};
+	const renderRowActions = (entry: TEntry): ReactNode => (
+		<CrudRowActions
+			cancelEdit={cancelEdit}
+			deleteLabelFor={deleteLabelFor}
+			editingId={editingId}
+			entry={entry}
+			getId={getId}
+			handleUpdate={handleUpdate}
+			isEditSaveDisabled={editing.isEditSaveDisabled}
+			labels={labels}
+			onRemove={onRemove}
+			onUpdate={onUpdate}
+			startEdit={startEdit}
+		/>
+	);
 
 	// While a row is being edited, always let it pass the global filter so typing
 	// a value that no longer matches the query can't unmount the edit input.
@@ -498,51 +301,6 @@ export function CrudTable<TEntry, TAdd>({
 	// keeping it off when empty also keeps the empty-state DOM minimal.
 	const showChrome = entries.length > 0;
 
-	const addInputGroup = (
-		field: CrudField,
-		isLast: boolean,
-		error: string | undefined,
-		joined: boolean
-	): ReactNode => (
-		<InputGroup
-			appearance={joined ? "minimal" : "elevated"}
-			className={cn(
-				"h-9",
-				joined &&
-					"rounded-none bg-transparent shadow-none ring-0 hover:bg-transparent focus-within:bg-foreground/[0.04] focus-within:ring-0"
-			)}
-			data-crud-add-input-group={joined ? "true" : undefined}
-			size="sm"
-			tone={error ? "danger" : "default"}
-		>
-			<InputGroupAddon align="inline-start">
-				<HugeiconsIcon aria-hidden="true" icon={field.icon} size={14} />
-			</InputGroupAddon>
-			<InputGroupInput
-				aria-describedby={error ? addFieldErrorId(field.name) : undefined}
-				aria-invalid={!!error}
-				aria-label={field.label}
-				name={field.name}
-				onChange={(event) => setField(field.name, event.target.value)}
-				placeholder={field.placeholder}
-				value={values[field.name] ?? ""}
-			/>
-			{isLast ? (
-				<InputGroupAddon align="inline-end">
-					<InputGroupButton
-						aria-label={labels.add}
-						className={cn(joined && "rounded-none shadow-none ring-0")}
-						disabled={isAddDisabled}
-						tone={joined ? "ghost" : "surface"}
-						type="submit"
-					>
-						<HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2.25} />
-					</InputGroupButton>
-				</InputGroupAddon>
-			) : null}
-		</InputGroup>
-	);
-
 	return (
 		<div className="flex flex-col gap-3">
 			{/* Search + column-visibility chrome rides ABOVE the add row so the add
@@ -560,101 +318,18 @@ export function CrudTable<TEntry, TAdd>({
 					/>
 				</DataGrid>
 			) : null}
-			{/* Add-an-entry row: each field sits in its own input-group; the Add
-			    button lives in the trailing slot of the LAST field so the
-			    field(s) + their action read as one control (the fluidfunctionalism
-			    input-group recipe). */}
-			<Form
-				className={
-					addFormLayout === "joined"
-						? "flex flex-col gap-1.5"
-						: fields.length > 1
-							? "flex items-end gap-2"
-							: undefined
-				}
-				onSubmit={handleSubmit}
-			>
-				{addFormLayout === "joined" ? (
-					<>
-						<div
-							aria-hidden="true"
-							className="flex text-2xs text-foreground-secondary"
-						>
-							{fields.map((field) => (
-								<div
-									className={cn("min-w-0 px-2", field.width ?? "flex-1")}
-									key={field.name}
-								>
-									{field.label}
-								</div>
-							))}
-						</div>
-						<ButtonGroup
-							aria-label={labels.add}
-							className={cn(
-								"w-full",
-								hasAddErrors && "ring-error/45",
-								"[&_[data-crud-add-input-group='true']]:h-9"
-							)}
-							connected
-						>
-							{fields.map((field, i) => {
-								const isLast = i === fields.length - 1;
-								const error = errors[field.name];
-								return (
-									<div
-										className={cn("min-w-0", field.width ?? "flex-1")}
-										key={field.name}
-									>
-										{addInputGroup(field, isLast, error, true)}
-									</div>
-								);
-							})}
-						</ButtonGroup>
-						{hasAddErrors ? (
-							<div className="flex gap-0">
-								{fields.map((field) => {
-									const error = errors[field.name];
-									return (
-										<div
-											className={cn("min-w-0 px-2", field.width ?? "flex-1")}
-											key={field.name}
-										>
-											{error ? (
-												<div
-													aria-live="assertive"
-													className="text-error text-xs-tight leading-[14px]"
-													id={addFieldErrorId(field.name)}
-													role="alert"
-												>
-													{error}
-												</div>
-											) : null}
-										</div>
-									);
-								})}
-							</div>
-						) : null}
-					</>
-				) : (
-					fields.map((field, i) => {
-						const isLast = i === fields.length - 1;
-						const error = errors[field.name];
-						const inputGroup = (
-							<FormControl error={error} label={field.label}>
-								{addInputGroup(field, isLast, error, false)}
-							</FormControl>
-						);
-						return fields.length > 1 ? (
-							<div className={field.width} key={field.name}>
-								{inputGroup}
-							</div>
-						) : (
-							<div key={field.name}>{inputGroup}</div>
-						);
-					})
-				)}
-			</Form>
+			<CrudAddForm
+				addFieldErrorId={form.addFieldErrorId}
+				addFormLayout={addFormLayout}
+				errors={form.errors}
+				fields={fields}
+				handleSubmit={form.handleSubmit}
+				hasAddErrors={form.hasAddErrors}
+				isAddDisabled={form.isAddDisabled}
+				labels={labels}
+				setField={form.setField}
+				values={form.values}
+			/>
 			<DataGrid labels={dataGridLabels} resizable={resizable} table={table}>
 				<DataGridContainer>
 					<DataGridTable />

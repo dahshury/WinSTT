@@ -1,10 +1,9 @@
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import {
   isSelectableRealtimeModel,
-  readLastLocalSttModelHistory,
   recordLastLocalSttModel,
   supportsTranslateToEnglish,
   useCatalogStore,
@@ -12,14 +11,8 @@ import {
 } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { useSystemResourcesStore } from "@/entities/system-resources";
-import { assessDictationFitClient } from "@/entities/system-resources/lib/fit-assessor";
 import { useFileTranscriptionStore } from "@/features/file-transcription";
-import {
-  canDeleteSttQuant,
-  isQuantDownloading,
-  resolveSttDeleteRecovery,
-  useQuantActions,
-} from "@/features/model-download";
+import { isQuantDownloading } from "@/features/model-download";
 import { useModelSwapController } from "@/features/swap-model";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
@@ -34,13 +27,13 @@ import {
 import {
   buildDeviceOpts,
   isLocalTtsActive,
-  localModelIdOrNull,
-  quantForFit,
-  requestedDeviceForFit,
   resolveModelControlVisibility,
 } from "../lib/model-controls";
-import type { DeviceValue, GetFitAssessment } from "../lib/types";
+import type { DeviceValue } from "../lib/types";
+import { useDownloadGating } from "../model/use-download-gating";
 import { useLockLlmTranslate } from "../model/use-lock-llm-translate";
+import { useModelFitAssessment } from "../model/use-model-fit-assessment";
+import { useQuantDeletion } from "../model/use-quant-deletion";
 import { useStaleModelFallback } from "../model/use-stale-model-fallback";
 import { useSwapProgress } from "../model/use-swap-progress";
 import { MainModelSection } from "./MainModelSection";
@@ -128,8 +121,8 @@ export function ModelSettingsPanel() {
   } = useSwapProgress();
 
   // Live host resource snapshot (RAM available, free VRAM, CPU%) for the
-  // resource-aware warning modal. Refreshed when the panel mounts.
-  const liveResources = useSystemResourcesStore((s) => s.liveResources);
+  // resource-aware warning modal. Refreshed when the panel mounts; the snapshot
+  // itself is read inside `useModelFitAssessment`.
   const refreshLive = useSystemResourcesStore((s) => s.refresh);
 
   useEffect(() => {
@@ -206,44 +199,17 @@ export function ModelSettingsPanel() {
   );
   const currentQuantization = (settings?.onnxQuantization ??
     "") as OnnxQuantization;
-  const getFitAssessment = useCallback<GetFitAssessment>(
-    (modelId) => {
-      if (liveResources === null) {
-        return null;
-      }
-      const mainId = localModelIdOrNull(selectedModel, !selectedIsCloud);
-      const realtimeId = localModelIdOrNull(
-        settings?.realtimeModel,
-        realtimeEnabled && !selectedIsCloud,
-      );
-      return assessDictationFitClient(modelId, {
-        candidateQuant: quantForFit(statesById, modelId, currentQuantization),
-        live: liveResources,
-        loaded: {
-          mainId,
-          mainQuant: quantForFit(statesById, mainId, currentQuantization),
-          realtimeId,
-          realtimeQuant: quantForFit(
-            statesById,
-            realtimeId,
-            currentQuantization,
-          ),
-        },
-        requestedDevice: requestedDeviceForFit(deviceValue),
-        statesById,
-      });
-    },
-    [
-      currentQuantization,
-      deviceValue,
-      liveResources,
-      realtimeEnabled,
-      selectedIsCloud,
-      selectedModel,
-      settings?.realtimeModel,
-      statesById,
-    ],
-  );
+  // Resource-aware fit assessor for both model sections — owns the live host
+  // snapshot subscription so the panel stays a thin composition root.
+  const getFitAssessment = useModelFitAssessment({
+    currentQuantization,
+    deviceValue,
+    realtimeEnabled,
+    selectedIsCloud,
+    selectedModel,
+    settings,
+    statesById,
+  });
 
   // Which Model-tab controls stay visible. A cloud main hides the local-only
   // knobs (language, idle-unload-timeout, device) — except Device, which
@@ -355,101 +321,32 @@ export function ModelSettingsPanel() {
     useMainModelFlag,
   ]);
 
-  // Per-quant badge handlers (delete + byte-level pause/resume/cancel) live
-  // in one shared feature-layer hook so the settings panel and the detached
-  // footer picker wire the exact same controls into SttModelSelector.
-  const { handleDeleteQuant, handleDownloadAction, handleDownloadSnapshot } =
-    useQuantActions();
-  const canDeleteQuant = useCallback(
-    (modelId: string, quantization: OnnxQuantization) =>
-      canDeleteSttQuant(catalogModels, statesById, modelId, quantization),
-    [catalogModels, statesById],
-  );
-  const handleGuardedDeleteQuant = useCallback(
-    (modelId: string, quantization: OnnxQuantization) => {
-      const recovery = resolveSttDeleteRecovery({
-        currentMainModel: selectedModel,
-        currentQuantization,
-        currentRealtimeModel: settings?.realtimeModel,
-        mainModelInfo: selectedInfo,
-        modelId,
-        models: catalogModels,
-        previousModelIds: readLastLocalSttModelHistory(),
-        quantization,
-        statesById,
-      });
-      if (!recovery.canDelete) {
-        return;
-      }
-      const requiresRecovery =
-        recovery.mainTarget !== undefined ||
-        recovery.realtimeTarget !== undefined;
-      if (
-        requiresRecovery &&
-        useFileTranscriptionStore.getState().queueActive
-      ) {
-        return;
-      }
-      if (recovery.mainTarget) {
-        controller.handleModelChange(
-          recovery.mainTarget.modelId,
-          recovery.mainTarget.quantization,
-        );
-      }
-      if (recovery.realtimeTarget !== undefined) {
-        if (recovery.realtimeTarget === null) {
-          controller.handleRealtimeModelChange("");
-          if (useMainModelFlag) {
-            updateQuality({ useMainModelForRealtime: false });
-          }
-        } else {
-          controller.handleRealtimeModelChange(
-            recovery.realtimeTarget.modelId,
-            recovery.realtimeTarget.quantization,
-          );
-          const nextMainId = recovery.mainTarget?.modelId ?? selectedModel;
-          const realtimeInfo = getModel(recovery.realtimeTarget.modelId);
-          const shouldReuseMain =
-            recovery.realtimeTarget.modelId === nextMainId &&
-            realtimeInfo !== undefined &&
-            isSelectableRealtimeModel(realtimeInfo);
-          if (shouldReuseMain !== useMainModelFlag) {
-            updateQuality({ useMainModelForRealtime: shouldReuseMain });
-          }
-        }
-      }
-      handleDeleteQuant(modelId, quantization);
-    },
-    [
-      catalogModels,
-      controller,
-      currentQuantization,
-      getModel,
-      handleDeleteQuant,
-      selectedInfo,
-      selectedModel,
-      settings?.realtimeModel,
-      statesById,
-      updateQuality,
-      useMainModelFlag,
-    ],
-  );
+  // Per-quant badge handlers (delete + the shared download snapshot/action
+  // handlers). The guarded delete reconciles the main/realtime selection to a
+  // safe fallback before dropping the bytes — extracted into its own hook.
+  const {
+    canDeleteQuant,
+    handleDownloadAction,
+    handleDownloadSnapshot,
+    handleGuardedDeleteQuant,
+  } = useQuantDeletion({
+    catalogModels,
+    controller,
+    currentQuantization,
+    getModel,
+    selectedInfo,
+    selectedModel,
+    settings,
+    statesById,
+    updateQuality,
+    useMainModelFlag,
+  });
 
-  // A precision-badge "download this variant" click opens the confirmation
-  // dialog (size + hardware-fit + Download/Cancel) for the right slot instead of
-  // silently starting a background fetch — Electron parity. Pause / resume /
-  // cancel of an in-flight download still dispatch straight to the server.
-  const gateDownloadAction =
-    (kind: "main" | "realtime"): typeof handleDownloadAction =>
-    (action, modelId, quantization) => {
-      if (action === "start") {
-        controller.promptDownload(kind, modelId, quantization);
-        return;
-      }
-      handleDownloadAction(action, modelId, quantization, kind);
-    };
-  const handleMainDownloadAction = gateDownloadAction("main");
-  const handleRealtimeDownloadAction = gateDownloadAction("realtime");
+  // Gate a precision-badge "download this variant" click into the confirmation
+  // dialog for the right slot (Electron parity); pause/resume/cancel still
+  // dispatch straight to the server.
+  const { handleMainDownloadAction, handleRealtimeDownloadAction } =
+    useDownloadGating({ controller, handleDownloadAction });
 
   return (
     <div className="flex flex-col gap-2">
