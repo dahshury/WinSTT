@@ -1,78 +1,35 @@
+//! Multi-provider cloud LLM post-processing transport.
+//!
+//! The chat calls (`send_chat_completion` / `send_chat_completion_with_schema`)
+//! now run on the shared genai-backed transport in [`crate::cloud_llm`]; this
+//! module keeps the exact public signatures the `actions.rs` post-processing
+//! path depends on, so its call sites are unchanged. Model listing
+//! (`fetch_models`) stays a direct reqwest GET — genai only exposes an ids-only
+//! listing on a separate path and we want the same `{data:[{id}]}` / bare-array
+//! parsing as before.
+//!
+//! Reasoning is honored per provider exactly as before: `reasoning_effort` is
+//! the OpenAI-style top-level keyword (used for `custom`); [`ReasoningConfig`]
+//! is the OpenRouter-style nested `reasoning { effort, exclude }` object.
+
 use crate::settings::PostProcessProvider;
 use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonSchema {
-    name: String,
-    strict: bool,
-    schema: Value,
-}
-
-#[derive(Debug, Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    format_type: String,
-    json_schema: JsonSchema,
-}
-
-#[derive(Debug, Serialize, Clone, Default)]
+/// OpenRouter-style nested reasoning config (`reasoning: { effort, exclude }`).
+/// Built by the caller (`actions.rs`) and forwarded into the request's
+/// provider-specific extra body. `exclude: true` also keeps reasoning text out
+/// of the response so it can't pollute structured-output JSON parsing.
+#[derive(Debug, Clone, Default)]
 pub struct ReasoningConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
-struct ChatCompletionRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning_effort: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning: Option<ReasoningConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<ChatChoice>,
-    /// Token accounting. OpenAI / OpenRouter / Ollama's OpenAI-compatible
-    /// `/chat/completions` all return this on non-streaming responses; absent
-    /// on servers that omit it (we then report no tokens/s downstream).
-    #[serde(default)]
-    usage: Option<Usage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatChoice {
-    message: ChatMessageResponse,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatMessageResponse {
-    content: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Usage {
-    /// Generated (output) tokens — the numerator for tokens/s. Ollama maps its
-    /// native `eval_count` onto this field on the OpenAI-compat endpoint.
-    #[serde(default)]
-    completion_tokens: Option<i64>,
-}
-
-/// Build headers for API requests based on provider type
+/// Build headers for the model-listing GET. Chat auth/headers are handled by the
+/// genai adapter (incl. Anthropic's `x-api-key` + `anthropic-version`); this is
+/// used only by [`fetch_models`].
 fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
 
@@ -109,7 +66,7 @@ fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<Header
     Ok(headers)
 }
 
-/// Create an HTTP client with provider-specific headers
+/// Create an HTTP client with provider-specific headers (for [`fetch_models`]).
 fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwest::Client, String> {
     let headers = build_headers(provider, api_key)?;
     reqwest::Client::builder()
@@ -118,11 +75,11 @@ fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwes
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
 
-/// Send a chat completion request to an OpenAI-compatible API.
+/// Send a chat completion request to the configured provider.
 /// Returns `Ok((content, completion_tokens))` — `content` is `Some` on success
 /// / `None` when the response has no content; `completion_tokens` is the output
-/// token count when the provider reported `usage` (else `None`). `Err` on
-/// actual errors (HTTP, parsing, etc.).
+/// token count when the provider reported usage (else `None`). `Err` on actual
+/// errors (transport, HTTP, parsing, etc.).
 pub async fn send_chat_completion(
     provider: &PostProcessProvider,
     api_key: String,
@@ -144,11 +101,15 @@ pub async fn send_chat_completion(
     .await
 }
 
-/// Send a chat completion request with structured output support
-/// When json_schema is provided, uses structured outputs mode
-/// system_prompt is used as the system message when provided
-/// reasoning_effort sets the OpenAI-style top-level field (e.g., "none", "low", "medium", "high")
-/// reasoning sets the OpenRouter-style nested object (effort + exclude)
+/// Send a chat completion request with optional structured-output support.
+/// When `json_schema` is provided, the request asks for a strict json_schema
+/// structured output (`name: "transcription_output"`); `system_prompt` becomes
+/// the system message when provided. `reasoning_effort` sets the OpenAI-style
+/// top-level field (e.g. "none"); `reasoning` sets the OpenRouter-style nested
+/// object (effort + exclude).
+///
+/// Anthropic runs over genai's native Messages API; every other provider over
+/// the OpenAI-compatible adapter pointed at its own `base_url`.
 #[expect(
     clippy::too_many_arguments,
     reason = "LLM request builder mirrors the provider API surface"
@@ -163,82 +124,61 @@ pub async fn send_chat_completion_with_schema(
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<(Option<String>, Option<i64>), String> {
-    let base_url = provider.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
+    use genai::chat::{ChatMessage, ChatOptions, ChatRequest, JsonSpec, ReasoningEffort};
 
-    debug!("Sending chat completion request to: {}", url);
+    debug!(
+        "Sending chat completion via genai to provider '{}' (model '{}')",
+        provider.id, model
+    );
 
-    let client = create_client(provider, &api_key)?;
+    let adapter = crate::cloud_llm::adapter_kind_for(&provider.id);
+    let target = crate::cloud_llm::service_target(adapter, &provider.base_url, &api_key, model);
 
-    // Build messages vector
-    let mut messages = Vec::new();
-
-    // Add system prompt if provided
+    let mut request = ChatRequest::new(vec![ChatMessage::user(user_content)]);
     if let Some(system) = system_prompt {
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: system,
-        });
+        request = request.with_system(system);
     }
 
-    // Add user message
-    messages.push(ChatMessage {
-        role: "user".to_string(),
-        content: user_content,
-    });
-
-    // Build response_format if schema is provided
-    let response_format = json_schema.map(|schema| ResponseFormat {
-        format_type: "json_schema".to_string(),
-        json_schema: JsonSchema {
-            name: "transcription_output".to_string(),
-            strict: true,
-            schema,
-        },
-    });
-
-    let request_body = ChatCompletionRequest {
-        model: model.to_string(),
-        messages,
-        response_format,
-        reasoning_effort,
-        reasoning,
-    };
-
-    let response = client
-        .post(&url)
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Failed to read error response".to_string());
-        return Err(format!(
-            "API request failed with status {}: {}",
-            status, error_text
-        ));
+    let mut options = ChatOptions::default();
+    if let Some(schema) = json_schema {
+        options = options.with_response_format(JsonSpec::new("transcription_output", schema));
+    }
+    // OpenAI-style top-level reasoning_effort (e.g. "none" for custom servers).
+    if let Some(effort) = reasoning_effort.as_deref() {
+        if let Some(parsed) = ReasoningEffort::from_keyword(effort) {
+            options = options.with_reasoning_effort(parsed);
+        }
+    }
+    // OpenRouter-style nested reasoning object, merged into the request body.
+    if let Some(rc) = reasoning {
+        if let Some(extra) = openrouter_reasoning_extra_body(&rc) {
+            options = options.with_extra_body(extra);
+        }
     }
 
-    let completion: ChatCompletionResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse API response: {}", e))?;
-
-    let content = completion
-        .choices
-        .first()
-        .and_then(|choice| choice.message.content.clone());
-    let completion_tokens = completion.usage.and_then(|u| u.completion_tokens);
-    Ok((content, completion_tokens))
+    crate::cloud_llm::run_chat(target, request, options).await
 }
 
-/// Fetch available models from an OpenAI-compatible API
-/// Returns a list of model IDs
+/// Build the `{ "reasoning": { effort?, exclude? } }` extra-body object for the
+/// OpenRouter-style nested reasoning control. Returns `None` when neither field
+/// is set (so no `reasoning` key is sent).
+fn openrouter_reasoning_extra_body(rc: &ReasoningConfig) -> Option<Value> {
+    let mut obj = serde_json::Map::new();
+    if let Some(effort) = &rc.effort {
+        obj.insert("effort".to_string(), Value::String(effort.clone()));
+    }
+    if let Some(exclude) = rc.exclude {
+        obj.insert("exclude".to_string(), Value::Bool(exclude));
+    }
+    if obj.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!({ "reasoning": Value::Object(obj) }))
+    }
+}
+
+/// Fetch available models from an OpenAI-compatible API.
+/// Returns a list of model IDs.
 pub async fn fetch_models(
     provider: &PostProcessProvider,
     api_key: String,

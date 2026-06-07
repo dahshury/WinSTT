@@ -586,6 +586,7 @@ fn draw_rounded_bar(data: &mut [u8], x0: f64, cy: f64, width: f64, height: f64, 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_bar_scanline(
     data: &mut [u8],
     x0: f64,

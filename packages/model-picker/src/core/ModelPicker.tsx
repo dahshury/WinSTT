@@ -272,7 +272,6 @@ export function ModelPicker<TItem, TValue = TItem | null>({
     !inline && !effectiveOpen && wasEffectivelyOpenRef.current;
   const isClosingPopup =
     !inline && !effectiveOpen && (popupClosing || closingFromOpen);
-  const visualOpen = inline || effectiveOpen || popupClosing || closingFromOpen;
   const popupStateClass = isClosingPopup
     ? "is-closing"
     : effectiveOpen
@@ -540,7 +539,9 @@ export function ModelPicker<TItem, TValue = TItem | null>({
         onInputValueChange={handleInputValueChange}
         onOpenChange={handleOpenChange}
         onValueChange={handleValueChange as never}
-        open={visualOpen}
+        // Let Base UI see the real closed state. It keeps the popup mounted
+        // during `data-ending-style`; `is-closing` is only our fallback class.
+        open={effectiveOpen}
         value={value as never}
       >
         {inline ? (

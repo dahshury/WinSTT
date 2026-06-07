@@ -12,15 +12,16 @@ import {
  *
  * ``liveResources`` is refreshed:
  *   - when the settings panel / detached picker opens
- *   - while the settings sidebar is mounted (light polling for the footer meters)
+ *   - while the main status bar's runtime chip is ready (light polling for the
+ *     GPU/CPU fill meter)
  *   - on demand via ``refresh()`` after model-cache or swap events
  *
  * It is *not* polled — per the design decision the picker rows render
  * against the most recent snapshot and the server-authoritative call
  * fires only on the actual selection click.
  *
- * The settings sidebar footer is now the exception: it polls lightly while
- * visible so its RAM/VRAM meters stay current.
+ * The main-window runtime chip is now the exception: it polls lightly while
+ * visible so its RAM/VRAM fill stays current.
  */
 export interface SystemResourcesStore {
 	assessDictationFitOnServer: (

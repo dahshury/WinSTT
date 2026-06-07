@@ -84,4 +84,38 @@ describe("DictionarySettingsPanel", () => {
 			expect(useSettingsStore.getState().settings.dictionary).toHaveLength(1);
 		});
 	});
+
+	test("edits an existing dictionary entry", async () => {
+		useSettingsStore.setState({
+			settings: {
+				...initial,
+				dictionary: [{ id: "1", term: "Kubernetes" }],
+			},
+		});
+
+		render(
+			<IntlProvider>
+				<DictionarySettingsPanel />
+			</IntlProvider>,
+		);
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /edit\s+"Kubernetes"/i }),
+		);
+		fireEvent.change(screen.getByDisplayValue("Kubernetes"), {
+			target: { value: " DirectML " },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: /save\s+"Kubernetes"/i }),
+		);
+
+		await waitFor(() => {
+			expect(
+				useSettingsStore
+					.getState()
+					.settings.dictionary.map((entry) => entry.term),
+			).toEqual(["DirectML"]);
+		});
+		expect(screen.getByText("DirectML")).toBeDefined();
+	});
 });

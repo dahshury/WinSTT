@@ -427,39 +427,10 @@ pub fn patch_fp16_decoder(path: &Path) -> SttResult<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// Detecting the fp16-decoder load error (port of _FP16_DECODER_LOAD_ERROR + the path guard)
+// Detecting the missing-external-data load error (port of _is_external_data_missing_error)
 // ---------------------------------------------------------------------------
-
-/// True iff an ORT session-create error string is the fp16 Whisper merged-decoder subgraph defect
-/// (port of `_FP16_DECODER_LOAD_ERROR` + the `decoder_model_merged*` name guard). The loader uses
-/// this to decide whether to run `patch_fp16_decoder` + retry ONCE. Returns the `.onnx` path lifted
-/// out of the message when it matches, else `None`.
-pub fn fp16_decoder_path_from_error(msg: &str) -> Option<PathBuf> {
-    // Python regex: r"Load model from (.+?\.onnx) failed:.*Subgraph output.*outer scope value"
-    // We do it without the regex crate's heavy DOTALL by simple substring + slicing.
-    let lower = msg;
-    if !lower.contains("Subgraph output") || !lower.contains("outer scope value") {
-        return None;
-    }
-    // Extract the path between "Load model from " and ".onnx".
-    let start = lower.find("Load model from ")? + "Load model from ".len();
-    let rest = &lower[start..];
-    let onnx_end = rest.find(".onnx")? + ".onnx".len();
-    let path_str = rest[..onnx_end].trim();
-    let path = PathBuf::from(path_str);
-    // Only patch a Whisper merged-decoder file (guard against an unrelated future "Subgraph output").
-    let file_name = path_str
-        .rsplit(['/', '\\'])
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or(path_str);
-    let is_merged_decoder = file_name.starts_with("decoder_model_merged");
-    if is_merged_decoder {
-        Some(path)
-    } else {
-        None
-    }
-}
+// NOTE: the fp16-decoder load-error classifier lives in `whisper::loader::is_fp16_decoder_error`
+// (the loader already knows the decoder path, so it needs only a bool, not path extraction).
 
 /// True iff an ORT error string is the missing-external-data-sidecar case (port of
 /// `_is_external_data_missing_error`): ORT's own "External data path does not exist" OR a
@@ -685,26 +656,6 @@ mod tests {
         // Second call short-circuits on the marker → 0 edits, no re-parse.
         let again = patch_whisper_decoder(&path).unwrap();
         assert_eq!(again, 0);
-    }
-
-    #[test]
-    fn fp16_error_detection_lifts_path_and_guards_name() {
-        let msg = "Load model from C:\\cache\\decoder_model_merged_fp16.onnx failed:Node ... \
-                   Subgraph output 'logits' is an outer scope value being returned directly.";
-        let p = fp16_decoder_path_from_error(msg).expect("should match");
-        assert!(p
-            .to_string_lossy()
-            .ends_with("decoder_model_merged_fp16.onnx"));
-
-        // A "Subgraph output" error on a NON-merged-decoder file must NOT match (don't patch it).
-        let other = "Load model from C:\\cache\\encoder_model_fp16.onnx failed: \
-                     Subgraph output 'y' is an outer scope value";
-        assert!(fp16_decoder_path_from_error(other).is_none());
-
-        // Missing the second marker phrase → no match.
-        let partial =
-            "Load model from x/decoder_model_merged_fp16.onnx failed: Subgraph output 'logits'";
-        assert!(fp16_decoder_path_from_error(partial).is_none());
     }
 
     #[test]

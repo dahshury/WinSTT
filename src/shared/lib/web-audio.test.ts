@@ -165,11 +165,11 @@ describe("routeContextToSink", () => {
 		expect(setSinkId).toHaveBeenCalledWith("device-7");
 	});
 
-	test("requests the system-default sink ({type:'none'}) when deviceId is empty", async () => {
+	test("requests the system-default sink when deviceId is empty", async () => {
 		const setSinkId = mock(async () => undefined);
 		const ctx = asAudioContext({ setSinkId });
 		await routeContextToSink(ctx, "");
-		expect(setSinkId).toHaveBeenCalledWith({ type: "none" });
+		expect(setSinkId).toHaveBeenCalledWith("");
 	});
 
 	test("swallows setSinkId rejection (device unreachable) and warns (observability)", async () => {

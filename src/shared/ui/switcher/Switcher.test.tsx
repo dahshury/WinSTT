@@ -44,4 +44,36 @@ describe("Switcher", () => {
 		const firstCall = recordedCalls(onChange)[0];
 		expect(firstCall?.[0]).toBe("b");
 	});
+
+	test("columns lays options out in a grid with cell-filling toggles", () => {
+		render(
+			<Switcher
+				columns={2}
+				fullWidth
+				onChange={() => undefined}
+				options={options}
+				value="a"
+			/>,
+		);
+		const alpha = buttonFor("Alpha");
+		// The group container carries the N-column grid layout...
+		expect(alpha?.closest('[class*="grid-cols-2"]')).not.toBeNull();
+		// ...and each toggle fills its cell instead of flexing.
+		expect(alpha?.className).toContain("w-full");
+		expect(alpha?.className).not.toContain("flex-1");
+	});
+
+	test("without columns the group stays a single flex row", () => {
+		render(
+			<Switcher
+				fullWidth
+				onChange={() => undefined}
+				options={options}
+				value="a"
+			/>,
+		);
+		const alpha = buttonFor("Alpha");
+		expect(alpha?.closest('[class*="grid-cols"]')).toBeNull();
+		expect(alpha?.className).toContain("flex-1");
+	});
 });

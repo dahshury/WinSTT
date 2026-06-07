@@ -1,35 +1,94 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { IntlProvider } from "@/app/providers/IntlProvider";
 import { useConnectionStore } from "@/entities/connection";
-import { resolveConnectionChip, resolveGpuChipConfig } from "../lib/connection-indicator-helpers";
+import { useSystemResourcesStore } from "@/entities/system-resources";
+import type { LiveResourcesEntry } from "@/shared/api/ipc-client";
+import {
+	resolveConnectionChip,
+	resolveGpuChipConfig,
+} from "../lib/connection-indicator-helpers";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 
 const initial = useConnectionStore.getState();
+const originalResourceRefresh = useSystemResourcesStore.getState().refresh;
+const GB = 1024 ** 3;
+
+function liveResources({
+	freeVramGb = 18,
+	ramAvailableGb = 48,
+	usedVramGb = 6,
+}: {
+	freeVramGb?: number;
+	ramAvailableGb?: number;
+	usedVramGb?: number;
+} = {}): LiveResourcesEntry {
+	return {
+		cpu_count_logical: 16,
+		cpu_count_physical: 8,
+		cpu_percent: 12,
+		gpus: [
+			{
+				name: "RTX 4090",
+				total_vram_bytes: 24 * GB,
+				free_vram_bytes: freeVramGb * GB,
+				used_vram_bytes: usedVramGb * GB,
+				utilization_percent: 18,
+			},
+		],
+		ram_available_bytes: ramAvailableGb * GB,
+		ram_total_bytes: 64 * GB,
+	};
+}
+
+function runtimeResourceFill(): HTMLElement {
+	const fill = document.querySelector('[data-slot="runtime-resource-fill"]');
+	expect(fill).not.toBeNull();
+	return fill as HTMLElement;
+}
 
 beforeEach(() => {
 	useConnectionStore.setState({
 		connectionStatus: "disconnected",
-		gpuInfo: null,
+		gpuInfo: [],
 		serverStatus: "idle",
+	});
+	useSystemResourcesStore.setState({
+		liveResources: null,
+		isLoading: false,
+		error: null,
+		lastFetchedAt: null,
+		refresh: async () => {
+			/* keep synthetic snapshots stable in chip tests */
+		},
 	});
 });
 
 afterEach(() => {
+	cleanup();
 	useConnectionStore.setState(initial);
+	useSystemResourcesStore.setState({
+		liveResources: null,
+		isLoading: false,
+		error: null,
+		lastFetchedAt: null,
+		refresh: originalResourceRefresh,
+	});
 });
 
 function renderIt() {
 	return render(
 		<IntlProvider>
 			<ConnectionIndicator />
-		</IntlProvider>
+		</IntlProvider>,
 	);
 }
 
 describe("resolveConnectionChip", () => {
 	test("returns 'connecting' when connection status is connecting", () => {
-		expect(resolveConnectionChip("connecting", "idle", null)).toBe("connecting");
+		expect(resolveConnectionChip("connecting", "idle", null)).toBe(
+			"connecting",
+		);
 	});
 	test("returns 'error' when connection status is error", () => {
 		expect(resolveConnectionChip("error", "idle", null)).toBe("error");
@@ -39,7 +98,9 @@ describe("resolveConnectionChip", () => {
 	});
 	test("returns 'connecting' when connected but runtimeIsGpu unknown yet", () => {
 		// runtime_info hasn't arrived from the server yet — chip waits.
-		expect(resolveConnectionChip("connected", "running", null)).toBe("connecting");
+		expect(resolveConnectionChip("connected", "running", null)).toBe(
+			"connecting",
+		);
 	});
 	test("returns 'connecting' when WS connected but server is still warming up", () => {
 		// Recorder still loading models — chip must NOT show green yet.
@@ -70,7 +131,10 @@ describe("resolveGpuChipConfig", () => {
 
 describe("ConnectionIndicator", () => {
 	test("shows the offline state when disconnected", () => {
-		useConnectionStore.setState({ connectionStatus: "disconnected", gpuInfo: null });
+		useConnectionStore.setState({
+			connectionStatus: "disconnected",
+			gpuInfo: [],
+		});
 		renderIt();
 		const out = screen.getByRole("status");
 		expect(out.textContent?.toLowerCase()).toContain("offline");
@@ -94,7 +158,7 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "running",
-			gpuInfo: { name: "NVIDIA GeForce RTX 4090", available: true },
+			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
 			runtimeInfo: {
 				device: "cuda",
 				providers: ["CUDAExecutionProvider", "CPUExecutionProvider"],
@@ -115,7 +179,7 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "running",
-			gpuInfo: { name: "NVIDIA GeForce RTX 4090", available: true },
+			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
 			runtimeInfo: {
 				device: "cuda",
 				providers: ["CPUExecutionProvider"],
@@ -138,10 +202,56 @@ describe("ConnectionIndicator", () => {
 		useConnectionStore.setState({
 			connectionStatus: "connected",
 			serverStatus: "idle",
-			gpuInfo: { name: "NVIDIA GeForce RTX 4090", available: true },
+			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
 		});
 		renderIt();
 		const out = screen.getByRole("status");
 		expect(out.textContent?.toLowerCase()).toContain("connect");
+	});
+
+	test("fills the GPU chip from current VRAM usage", () => {
+		useSystemResourcesStore.setState({ liveResources: liveResources() });
+		useConnectionStore.setState({
+			connectionStatus: "connected",
+			serverStatus: "running",
+			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
+			runtimeInfo: {
+				device: "cuda",
+				providers: ["CUDAExecutionProvider", "CPUExecutionProvider"],
+				is_gpu: true,
+				model: "onnx-community/whisper-base",
+				realtime_model: null,
+			},
+		});
+
+		renderIt();
+
+		expect(runtimeResourceFill().style.width).toBe("25%");
+		expect(screen.getByRole("status").getAttribute("aria-label")).toContain(
+			"VRAM 25%",
+		);
+	});
+
+	test("fills the CPU chip from current RAM usage", () => {
+		useSystemResourcesStore.setState({ liveResources: liveResources() });
+		useConnectionStore.setState({
+			connectionStatus: "connected",
+			serverStatus: "running",
+			gpuInfo: [{ name: "NVIDIA GeForce RTX 4090", available: true }],
+			runtimeInfo: {
+				device: "cpu",
+				providers: ["CPUExecutionProvider"],
+				is_gpu: false,
+				model: "onnx-community/whisper-base",
+				realtime_model: null,
+			},
+		});
+
+		renderIt();
+
+		expect(runtimeResourceFill().style.width).toBe("25%");
+		expect(screen.getByRole("status").getAttribute("aria-label")).toContain(
+			"RAM 25%",
+		);
 	});
 });

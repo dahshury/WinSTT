@@ -43,6 +43,29 @@ export function DictionarySettingsPanel() {
 		]);
 	};
 
+	const handleUpdate = (
+		id: string,
+		entry: Omit<DictionaryEntry, "id">,
+	): void => {
+		const term = entry.term.trim();
+		const currentDictionary =
+			useSettingsStore.getState().settings.dictionary ?? [];
+		if (
+			!term ||
+			dictionaryContainsTerm(
+				currentDictionary.filter((e) => e.id !== id),
+				term,
+			)
+		) {
+			return;
+		}
+		updateDictionary(
+			currentDictionary.map((existing) =>
+				existing.id === id ? { ...existing, ...entry, term } : existing,
+			),
+		);
+	};
+
 	return (
 		<SettingSection
 			description={t("description")}
@@ -52,7 +75,7 @@ export function DictionarySettingsPanel() {
 			<div className="flex flex-col gap-3 py-2">
 				<AutoAddSuggestions
 					existingTerms={existingTerms}
-					onAccept={(term) => handleAdd({ term })}
+					onAccept={(term) => handleAdd({ term, autoAdded: true })}
 				/>
 				<DictionaryTable
 					entries={dictionary}
@@ -63,6 +86,7 @@ export function DictionarySettingsPanel() {
 					onRemove={(id) => {
 						updateDictionary(dictionary.filter((e) => e.id !== id));
 					}}
+					onUpdate={handleUpdate}
 				/>
 				{/* Threshold for the server-side deterministic fuzzy corrector. The
 				    matcher runs BEFORE the LLM modifier pipeline, so the LLM still

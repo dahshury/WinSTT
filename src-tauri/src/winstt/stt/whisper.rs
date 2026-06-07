@@ -42,111 +42,44 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+mod degenerate;
+mod loader;
+mod ort_shapes;
+mod token_select;
+
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 
 use ort::memory::{AllocationDevice, Allocator, AllocatorType, MemoryInfo, MemoryType};
-use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
-use ort::value::{DynValue, Tensor, ValueType};
+use ort::value::{DynValue, Tensor};
+
+use degenerate::{
+    mark_directml_degenerate_model, DML_DEGENERATE_BLOCK_THRESHOLD, DML_PROVIDER_LABEL,
+};
+use loader::{build_session, load_decoder_with_fp16_repair};
+use ort_shapes::{
+    device_for_providers, first_dim, kv_head_dim, read_config_usize, read_whisper_head_dims,
+};
+use token_select::{
+    build_suppress_token_mask, no_repeat_ngram_banned, select_whisper_token,
+    select_whisper_token_from_allowed, NO_REPEAT_NGRAM_SIZE,
+};
 
 use super::mel::{MelExtractor, HOP_LENGTH};
 use super::whisper_tokenizer::WhisperTokenizer;
 use super::{
-    execution_providers, kv_sort_key, num_cpus_best_effort as num_cpus, provider_label,
-    Accelerator, EngineConfig, EngineKind, Segment, SttError, SttResult, TranscribeOptions,
-    Transcriber, Transcription, WordResult,
+    kv_sort_key, num_cpus_best_effort as num_cpus, provider_label, Accelerator, EngineConfig,
+    EngineKind, Segment, SttError, SttResult, TranscribeOptions, Transcriber, Transcription,
+    WordResult,
 };
 use crate::winstt::word_timestamps::{self, lookup_alignment_heads, AlignArgs, CrossAttentions};
+
+/// Re-export so `stt::whisper::directml_degenerate_model_blocked` (backend.rs) keeps resolving.
+pub(crate) use degenerate::directml_degenerate_model_blocked;
 
 /// Maximum decoder length (Whisper's hard cap). The loop also stops on all-EOS.
 const MAX_LENGTH: usize = 448;
 const WARMUP_DECODE_STEPS: usize = 8;
-const WHISPER_NO_SPEECH_THRESHOLD: f32 = 0.2;
-const DML_PROVIDER_LABEL: &str = "DmlExecutionProvider";
-const DML_DEGENERATE_BLOCK_THRESHOLD: usize = 2;
-const WHISPER_SUPPRESS_TOKENS: &[usize] = &[
-    1, 2, 7, 8, 9, 10, 14, 25, 26, 27, 28, 29, 31, 58, 59, 60, 61, 62, 63, 90, 91, 92, 93, 359,
-    503, 522, 542, 873, 893, 902, 918, 922, 931, 1350, 1853, 1982, 2460, 2627, 3246, 3253, 3268,
-    3536, 3846, 3961, 4183, 4667, 6585, 6647, 7273, 9061, 9383, 10428, 10929, 11938, 12033, 12331,
-    12562, 13793, 14157, 14635, 15265, 15618, 16553, 16604, 18362, 18956, 20075, 21675, 22520,
-    26130, 26161, 26435, 28279, 29464, 31650, 32302, 32470, 36865, 42863, 47425, 49870, 50254,
-    50258, 50360, 50361, 50362,
-];
-
-static DML_DEGENERATE_MODELS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct DegenerateDecodeStats {
-    generated_len: usize,
-    dominant_token: i64,
-    dominant_count: usize,
-    dominant_fraction: f32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct SelectedToken {
-    token: i64,
-    top_logit: f32,
-    runner_up_logit: f32,
-}
-
-pub(crate) fn directml_degenerate_model_blocked(model_id: &str) -> bool {
-    DML_DEGENERATE_MODELS
-        .get()
-        .and_then(|models| {
-            models
-                .lock()
-                .ok()
-                .map(|models| models.get(model_id).copied().unwrap_or(0))
-        })
-        .map(|count| count >= DML_DEGENERATE_BLOCK_THRESHOLD)
-        .unwrap_or(false)
-}
-
-fn mark_directml_degenerate_model(model_id: &str) -> usize {
-    let models = DML_DEGENERATE_MODELS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut models) = models.lock() {
-        let count = models.entry(model_id.to_string()).or_default();
-        *count += 1;
-        *count
-    } else {
-        DML_DEGENERATE_BLOCK_THRESHOLD
-    }
-}
-
-fn detect_degenerate_decode(
-    tokens: &[i64],
-    prompt_len: usize,
-    eos: i64,
-) -> Option<DegenerateDecodeStats> {
-    let generated = &tokens[prompt_len.min(tokens.len())..];
-    if tokens.last() == Some(&eos) || generated.len() < 32 {
-        return None;
-    }
-
-    let mut counts: HashMap<i64, usize> = HashMap::new();
-    for &token in generated {
-        *counts.entry(token).or_default() += 1;
-    }
-    let (dominant_token, dominant_count) = counts
-        .iter()
-        .max_by_key(|(_, count)| **count)
-        .map(|(token, count)| (*token, *count))
-        .unwrap_or((-1, 0));
-    let dominant_fraction = dominant_count as f32 / generated.len().max(1) as f32;
-    if dominant_fraction >= 0.5 {
-        Some(DegenerateDecodeStats {
-            generated_len: generated.len(),
-            dominant_token,
-            dominant_count,
-            dominant_fraction,
-        })
-    } else {
-        None
-    }
-}
 
 /// A loaded Whisper-family engine (covers `EngineKind::WhisperHf`). Holds the two ORT
 /// sessions, the parsed tokenizer, the mel front-end, and the per-load capability flags.
@@ -384,10 +317,27 @@ impl WhisperEngine {
         prompt
     }
 
+    fn candidate_language_tokens(&self, candidates: &[String]) -> Vec<i64> {
+        let mut out = Vec::new();
+        for candidate in candidates {
+            if let Some(token) = self.tokenizer.language_token(candidate) {
+                if !out.contains(&token) {
+                    out.push(token);
+                }
+            }
+        }
+        out
+    }
+
     /// Short 3-token decode from `[sot]`; position-1 argmax = detected language token.
-    fn detect_language(&mut self, encoder_out: &DynValue) -> SttResult<i64> {
+    fn detect_language(&mut self, encoder_out: &DynValue, candidates: &[String]) -> SttResult<i64> {
         let prompt = vec![self.tokenizer.bos_token_id];
-        let tokens = self.decode_greedy(encoder_out, prompt, 3)?;
+        let candidate_tokens = self.candidate_language_tokens(candidates);
+        let tokens = if candidate_tokens.is_empty() {
+            self.decode_greedy(encoder_out, prompt, 3)?
+        } else {
+            self.decode_greedy_with_first_step_allowed(encoder_out, prompt, 3, &candidate_tokens)?
+        };
         Ok(*tokens.get(1).unwrap_or(&self.tokenizer.eos_token_id))
     }
 
@@ -399,7 +349,24 @@ impl WhisperEngine {
         prompt: Vec<i64>,
         max_length: usize,
     ) -> SttResult<Vec<i64>> {
-        let (tokens, _) = self.decode_inner(encoder_out, prompt, max_length, false)?;
+        let (tokens, _) = self.decode_inner(encoder_out, prompt, max_length, false, None)?;
+        Ok(tokens)
+    }
+
+    fn decode_greedy_with_first_step_allowed(
+        &mut self,
+        encoder_out: &DynValue,
+        prompt: Vec<i64>,
+        max_length: usize,
+        first_step_allowed: &[i64],
+    ) -> SttResult<Vec<i64>> {
+        let (tokens, _) = self.decode_inner(
+            encoder_out,
+            prompt,
+            max_length,
+            false,
+            Some(first_step_allowed),
+        )?;
         Ok(tokens)
     }
 
@@ -415,7 +382,7 @@ impl WhisperEngine {
         prompt: Vec<i64>,
         max_length: usize,
     ) -> SttResult<(Vec<i64>, CrossAttentions)> {
-        let (tokens, attn) = self.decode_inner(encoder_out, prompt, max_length, true)?;
+        let (tokens, attn) = self.decode_inner(encoder_out, prompt, max_length, true, None)?;
         let attn = attn.ok_or_else(|| {
             SttError::Inference("cross-attention requested but decoder produced none".into())
         })?;
@@ -431,6 +398,7 @@ impl WhisperEngine {
         prompt: Vec<i64>,
         max_length: usize,
         collect_cross_attn: bool,
+        first_step_allowed: Option<&[i64]>,
     ) -> SttResult<(Vec<i64>, Option<CrossAttentions>)> {
         let eos = self.tokenizer.eos_token_id;
         let mut tokens = prompt;
@@ -482,7 +450,7 @@ impl WhisperEngine {
         // EOS early and never reach the detector; the only standing cost is a one-time step-0 peek.
         let mut step0: Option<(i64, f32, f32)> = None; // (argmax token, top logit, runner-up logit)
 
-        for _ in 0..total_steps {
+        for step_index in 0..total_steps {
             let use_cache = past.iter().any(|p| p.is_some());
 
             // input_ids: full prompt on step 0, else only the last token.
@@ -617,13 +585,47 @@ impl WhisperEngine {
                         "decoder logits buffer shorter than declared shape".into(),
                     ));
                 }
-                let selected = select_whisper_token(
-                    &ldata[last_off..end],
-                    &self.suppress_token_mask,
-                    self.tokenizer.eos_token_id,
-                    self.tokenizer.nospeech_token_id,
-                    step0.is_none(),
-                );
+                let logits = &ldata[last_off..end];
+                let selected = if step_index == 0 {
+                    first_step_allowed
+                        .filter(|allowed| !allowed.is_empty())
+                        .map(|allowed| {
+                            select_whisper_token_from_allowed(
+                                logits,
+                                allowed,
+                                self.tokenizer.eos_token_id,
+                                self.tokenizer.nospeech_token_id,
+                                true,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            select_whisper_token(
+                                logits,
+                                &self.suppress_token_mask,
+                                self.tokenizer.eos_token_id,
+                                self.tokenizer.nospeech_token_id,
+                                true,
+                                &[],
+                            )
+                        })
+                } else {
+                    // no_repeat_ngram over the GENERATED region only (prompt excluded): bans the
+                    // continuations that would close a verbatim repetition loop, which is what the
+                    // greedy decoder falls into on lite-whisper's low-rank encoders. No-op on any
+                    // decode that isn't actually repeating an n-gram, and EOS is never in the set.
+                    let banned = no_repeat_ngram_banned(
+                        &tokens[prompt_len.min(tokens.len())..],
+                        NO_REPEAT_NGRAM_SIZE,
+                    );
+                    select_whisper_token(
+                        logits,
+                        &self.suppress_token_mask,
+                        self.tokenizer.eos_token_id,
+                        self.tokenizer.nospeech_token_id,
+                        false,
+                        &banned,
+                    )
+                };
                 if step0.is_none() {
                     step0 = Some((selected.token, selected.top_logit, selected.runner_up_logit));
                 }
@@ -886,7 +888,7 @@ impl Transcriber for WhisperEngine {
                 .map(|l| l.is_empty())
                 .unwrap_or(true);
             if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
-                let lang_tok = self.detect_language(&encoder_out)?;
+                let lang_tok = self.detect_language(&encoder_out, &opts.language_candidates)?;
                 prompt[1] = lang_tok;
             }
         }
@@ -988,7 +990,7 @@ impl Transcriber for WhisperEngine {
                 .map(|l| l.is_empty())
                 .unwrap_or(true);
             if no_lang && prompt.get(1).copied() == Some(self.tokenizer.eos_token_id) {
-                let lang_tok = self.detect_language(&encoder_out)?;
+                let lang_tok = self.detect_language(&encoder_out, &opts.language_candidates)?;
                 prompt[1] = lang_tok;
             }
         }
@@ -1012,360 +1014,5 @@ impl WhisperEngine {
             .into_iter()
             .map(|(start, end, text)| Segment { start, end, text })
             .collect()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Session construction + fp16 repair
-// ---------------------------------------------------------------------------
-
-/// Build one ORT session with the resolved providers + thread count. `is_whisper_fp16`
-/// lowers the optimization level to EXTENDED (Level2) to dodge `SimplifiedLayerNormFusion`
-/// mis-fusing the fp16 encoder (§6.2).
-fn build_session(
-    path: &Path,
-    cfg: &EngineConfig,
-    intra: usize,
-    is_whisper_fp16: bool,
-) -> SttResult<Session> {
-    let level = if is_whisper_fp16 {
-        GraphOptimizationLevel::Level2 // = ORT_ENABLE_EXTENDED (dodges SimplifiedLayerNormFusion)
-    } else {
-        GraphOptimizationLevel::All // = ORT_ENABLE_ALL (Level3 is layout-only, NOT "all")
-    };
-    let mut builder = Session::builder()
-        .map_err(|e| SttError::SessionCreate(format!("session builder: {e}")))?
-        .with_execution_providers(execution_providers(&cfg.providers))
-        .map_err(|e| SttError::SessionCreate(format!("set providers: {e}")))?
-        .with_optimization_level(level)
-        .map_err(|e| SttError::SessionCreate(format!("opt level: {e}")))?
-        .with_intra_threads(intra)
-        .map_err(|e| SttError::SessionCreate(format!("intra threads: {e}")))?;
-    // DirectML session config (L1): disable the memory-pattern planner on the GPU path. ORT's DML
-    // EP manages its own device memory (DisableMemPattern + ORT_SEQUENTIAL are required), and our
-    // Whisper KV-cache decode binds device-resident tensors via IoBinding — the mem-pattern planner
-    // assumes host-side static reuse and fights that. Parallel exec is already Sequential by default.
-    let is_gpu = cfg
-        .providers
-        .first()
-        .is_some_and(|p| !matches!(p, Accelerator::Cpu));
-    if is_gpu {
-        builder = builder
-            .with_memory_pattern(false)
-            .map_err(|e| SttError::SessionCreate(format!("disable mem pattern (DML): {e}")))?;
-    }
-    builder
-        .commit_from_file(path)
-        .map_err(|e| SttError::SessionCreate(format!("commit {}: {e}", path.display())))
-}
-
-/// Load the merged decoder, recovering from the fp16-export defect (§6.1): on the fp16
-/// subgraph-dtype error, surgically patch the `.onnx` in place and retry ONCE.
-fn load_decoder_with_fp16_repair(
-    path: &Path,
-    cfg: &EngineConfig,
-    intra: usize,
-) -> SttResult<Session> {
-    match build_session(path, cfg, intra, cfg.whisper_fp16_workaround) {
-        Ok(s) => Ok(s),
-        Err(e) if cfg.whisper_fp16_workaround && is_fp16_decoder_error(&e) => {
-            patch_whisper_decoder_fp16(path).map_err(|pe| {
-                SttError::SessionCreate(format!("fp16 decoder patch failed: {pe}"))
-            })?;
-            build_session(path, cfg, intra, true)
-        }
-        Err(e) => Err(e),
-    }
-}
-
-/// True if a session-create error matches the fp16 merged-decoder subgraph defect
-/// (`onnxasr_transcriber._FP16_DECODER_LOAD_ERROR`): the "outer scope value ... float vs
-/// float16" type mismatch ORT raises at create.
-fn is_fp16_decoder_error(e: &SttError) -> bool {
-    let msg = e.to_string().to_lowercase();
-    (msg.contains("float16") || msg.contains("fp16"))
-        && (msg.contains("type") || msg.contains("subgraph") || msg.contains("outer scope"))
-}
-
-/// Bridge to the resolver agent's in-file fp16 decoder patch (`winstt::stt::fp16_patch`).
-///
-/// SPIKE: the resolver/fp16-patch agent owns that module. Contract (03_stt_engine.md §6.1):
-///   `pub fn patch_whisper_decoder_fp16(path: &Path) -> Result<(), String>` — parses the
-///   ONNX protobuf, rewrites the named subgraph output ValueInfoProto elem_type fp32→fp16,
-///   writes the file back, idempotently. When that module lands, replace this body with a
-///   direct call to it.
-fn patch_whisper_decoder_fp16(path: &Path) -> Result<(), String> {
-    #[allow(unused)]
-    let _ = path;
-    // Until the module is wired, surface a clear error so the loader falls back to fp32
-    // (the documented escape hatch in 03_stt_engine.md §11).
-    Err("fp16_patch module not yet wired (resolver agent owns winstt::stt::fp16_patch)".into())
-}
-
-fn build_suppress_token_mask(vocab_size: usize) -> Vec<bool> {
-    let mut mask = vec![false; vocab_size];
-    for &token in WHISPER_SUPPRESS_TOKENS {
-        if let Some(slot) = mask.get_mut(token) {
-            *slot = true;
-        }
-    }
-    mask
-}
-
-fn select_whisper_token(
-    logits: &[f32],
-    suppress_token_mask: &[bool],
-    eos_token_id: i64,
-    nospeech_token_id: Option<i64>,
-    is_first_step: bool,
-) -> SelectedToken {
-    if is_first_step
-        && nospeech_token_id
-            .and_then(|token| softmax_probability(logits, token as usize))
-            .is_some_and(|p| p > WHISPER_NO_SPEECH_THRESHOLD)
-    {
-        let eos = eos_token_id.max(0) as usize;
-        return SelectedToken {
-            token: eos_token_id,
-            top_logit: logits.get(eos).copied().unwrap_or(f32::NAN),
-            runner_up_logit: f32::NEG_INFINITY,
-        };
-    }
-
-    let eos = eos_token_id.max(0) as usize;
-    let mut best: Option<(usize, f32)> = None;
-    let mut runner_up = f32::NEG_INFINITY;
-    for (idx, &value) in logits.iter().enumerate() {
-        let suppressed = suppress_token_mask.get(idx).copied().unwrap_or(false);
-        if suppressed || (is_first_step && idx == eos) {
-            continue;
-        }
-
-        match best {
-            Some((_, best_value)) if value > best_value => {
-                runner_up = runner_up.max(best_value);
-                best = Some((idx, value));
-            }
-            Some(_) => {
-                runner_up = runner_up.max(value);
-            }
-            None => best = Some((idx, value)),
-        }
-    }
-
-    if let Some((token, top_logit)) = best {
-        SelectedToken {
-            token: token as i64,
-            top_logit,
-            runner_up_logit: runner_up,
-        }
-    } else {
-        let token = argmax(logits);
-        SelectedToken {
-            token: token as i64,
-            top_logit: logits.get(token).copied().unwrap_or(f32::NAN),
-            runner_up_logit: f32::NEG_INFINITY,
-        }
-    }
-}
-
-fn softmax_probability(logits: &[f32], token_id: usize) -> Option<f32> {
-    let target = *logits.get(token_id)?;
-    let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    if !max.is_finite() {
-        return None;
-    }
-    let denom: f32 = logits.iter().map(|v| (*v - max).exp()).sum();
-    if denom <= 0.0 || !denom.is_finite() {
-        return None;
-    }
-    Some((target - max).exp() / denom)
-}
-
-// ---------------------------------------------------------------------------
-// ORT helpers
-// ---------------------------------------------------------------------------
-
-/// The `AllocationDevice` (+ id) the sessions run on, for IoBinding the encoder output + KV-cache
-/// resident on it (mirrors onnx-asr `_hf.py` `get_onnx_device`). Derived from the FIRST requested
-/// accelerator: DirectML/CUDA → that device; everything else (incl. Rocm/CoreML/OpenVINO, which
-/// `execution_providers` routes to a CPU fallback) → CPU, where IoBinding just binds host memory.
-fn device_for_providers(providers: &[Accelerator]) -> (AllocationDevice, i32) {
-    match providers.first() {
-        Some(Accelerator::DirectMl) => (AllocationDevice::DIRECTML, 0),
-        Some(Accelerator::Cuda) => (AllocationDevice::CUDA, 0),
-        _ => (AllocationDevice::CPU, 0),
-    }
-}
-
-/// First (batch) dimension of a tensor value's runtime shape, read from metadata (no host copy).
-/// Used to detect the empty `present.*` outputs (shape[0]==0) that mean "reuse the prior KV".
-fn first_dim(v: &DynValue) -> i64 {
-    match v.dtype() {
-        ValueType::Tensor { shape, .. } => shape.first().copied().unwrap_or(0),
-        _ => 0,
-    }
-}
-
-/// Read (num_heads, head_dim) for a past_key_values input from the declared graph dims.
-/// Whisper exports declare `(batch, num_heads, past_len, head_dim)`; dims 1 & 3 are static.
-/// Unknown/dynamic dims → 0, yielding a (0,0,0,0) empty cache ORT accepts as "no past".
-fn kv_head_dim(decoder: &Session, name: &str) -> (i64, i64) {
-    if let Some(outlet) = decoder.inputs().iter().find(|o| o.name() == name) {
-        if let ValueType::Tensor { shape, .. } = outlet.dtype() {
-            let dims: &[i64] = shape; // Shape derefs to [i64]
-            let h = dims.get(1).copied().filter(|&d| d > 0).unwrap_or(0);
-            let d = dims.get(3).copied().filter(|&d| d > 0).unwrap_or(0);
-            return (h, d);
-        }
-    }
-    (0, 0)
-}
-
-/// argmax over an f32 slice (greedy next-token). Empty → 0.
-fn argmax(xs: &[f32]) -> usize {
-    let mut best = 0usize;
-    let mut best_v = f32::NEG_INFINITY;
-    for (i, &v) in xs.iter().enumerate() {
-        if v > best_v {
-            best_v = v;
-            best = i;
-        }
-    }
-    best
-}
-
-/// Read an integer field (e.g. `num_mel_bins`) from a Whisper `config.json`. Tolerant: missing
-/// file / key / non-integer → None (caller falls back to a default).
-fn read_config_usize(config_path: &Path, key: &str) -> Option<usize> {
-    let raw = std::fs::read_to_string(config_path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    v.get(key).and_then(|x| x.as_u64()).map(|n| n as usize)
-}
-
-/// Read (num_heads, head_dim) from the Whisper `config.json` that sits beside `vocab.json`
-/// in the HF snapshot. `head_dim = d_model / decoder_attention_heads`. Used to shape the
-/// step-0 empty KV cache when the decoder graph declares those dims symbolically (ort → 0).
-fn read_whisper_head_dims(vocab_path: &Path) -> Option<(i64, i64)> {
-    let cfg_path = vocab_path.parent()?.join("config.json");
-    let raw = std::fs::read_to_string(cfg_path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let heads = v.get("decoder_attention_heads").and_then(|x| x.as_i64())?;
-    let d_model = v.get("d_model").and_then(|x| x.as_i64())?;
-    if heads > 0 && d_model > 0 {
-        Some((heads, d_model / heads))
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn argmax_picks_largest() {
-        assert_eq!(argmax(&[0.1, 0.9, 0.3]), 1);
-        assert_eq!(argmax(&[-5.0, -1.0, -9.0]), 1);
-        assert_eq!(argmax(&[]), 0);
-    }
-
-    #[test]
-    fn kv_sort_orders_by_layer_then_sub() {
-        let mut names = [
-            "past_key_values.10.encoder.value".to_string(),
-            "past_key_values.2.decoder.key".to_string(),
-            "past_key_values.2.decoder.value".to_string(),
-            "past_key_values.2.encoder.key".to_string(),
-        ];
-        names.sort_by_key(|n| kv_sort_key(n));
-        assert_eq!(names[0], "past_key_values.2.decoder.key");
-        assert_eq!(names[1], "past_key_values.2.decoder.value");
-        assert_eq!(names[2], "past_key_values.2.encoder.key");
-        assert_eq!(names[3], "past_key_values.10.encoder.value");
-    }
-
-    #[test]
-    fn fp16_error_classifier() {
-        let yes = SttError::SessionCreate(
-            "Type Error: outer scope value 'present.0' float vs float16 in subgraph".into(),
-        );
-        assert!(is_fp16_decoder_error(&yes));
-        let no = SttError::SessionCreate("file not found".into());
-        assert!(!is_fp16_decoder_error(&no));
-    }
-
-    #[test]
-    fn provider_labels_stable() {
-        assert_eq!(
-            provider_label(&Accelerator::DirectMl),
-            "DmlExecutionProvider"
-        );
-        assert_eq!(provider_label(&Accelerator::Cpu), "CPUExecutionProvider");
-    }
-
-    #[test]
-    fn degenerate_decode_detector_flags_repeated_token_cap_without_eos() {
-        let mut tokens = vec![1, 2, 3, 4];
-        tokens.extend(std::iter::repeat(1097).take(40));
-
-        let stats = detect_degenerate_decode(&tokens, 4, 99).unwrap();
-
-        assert_eq!(stats.generated_len, 40);
-        assert_eq!(stats.dominant_token, 1097);
-        assert_eq!(stats.dominant_count, 40);
-        assert_eq!(stats.dominant_fraction, 1.0);
-    }
-
-    #[test]
-    fn degenerate_decode_detector_ignores_eos_terminated_repetition() {
-        let mut tokens = vec![1, 2, 3, 4];
-        tokens.extend(std::iter::repeat(1097).take(40));
-        tokens.push(99);
-
-        assert_eq!(detect_degenerate_decode(&tokens, 4, 99), None);
-    }
-
-    #[test]
-    fn degenerate_decode_detector_ignores_varied_token_cap() {
-        let mut tokens = vec![1, 2, 3, 4];
-        tokens.extend(100..164);
-
-        assert_eq!(detect_degenerate_decode(&tokens, 4, 99), None);
-    }
-
-    #[test]
-    fn token_selector_forces_eos_when_no_speech_probability_is_high() {
-        let mut logits = vec![0.0; 8];
-        logits[4] = 10.0;
-
-        let selected = select_whisper_token(&logits, &[], 2, Some(4), true);
-
-        assert_eq!(selected.token, 2);
-    }
-
-    #[test]
-    fn token_selector_suppresses_non_speech_and_first_step_eos() {
-        let mut logits = vec![0.0; 8];
-        logits[1] = 12.0;
-        logits[2] = 11.0;
-        logits[5] = 1.0;
-        let mut suppress = vec![false; 8];
-        suppress[1] = true;
-
-        let selected = select_whisper_token(&logits, &suppress, 2, None, true);
-
-        assert_eq!(selected.token, 5);
-    }
-
-    #[test]
-    fn token_selector_allows_eos_after_first_step() {
-        let mut logits = vec![0.0; 8];
-        logits[2] = 11.0;
-        logits[5] = 1.0;
-
-        let selected = select_whisper_token(&logits, &[], 2, None, false);
-
-        assert_eq!(selected.token, 2);
     }
 }

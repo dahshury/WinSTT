@@ -2,6 +2,7 @@ import { z } from "zod";
 import { create } from "zustand";
 import type { BuiltinPresetEntry, CustomModifier } from "@/entities/llm-catalog";
 import type { AppSettingsOutput } from "@/shared/config/settings-schema";
+import { generateId } from "@/shared/lib/generate-id";
 import type { PresetCarrier } from "../lib/llm-settings-panel-test-helpers";
 
 type LlmProvider = AppSettingsOutput["llm"]["dictation"]["provider"];
@@ -28,7 +29,9 @@ export interface LlmConfiguration {
 	openrouterModel: string;
 	presets: BuiltinPresetEntry[];
 	provider: LlmProvider;
-	reasoningEffort: EffortLevel;
+	// Shares the off/low/medium/high scale with `thinkingEffort` (`off` →
+	// reasoning disabled). Verbosity stays low/medium/high.
+	reasoningEffort: ThinkingEffort;
 	thinkingEffort: ThinkingEffort;
 	verbosity: EffortLevel;
 }
@@ -66,10 +69,6 @@ export function cloneLlmConfiguration(config: LlmConfiguration): LlmConfiguratio
 		presets: config.presets.map((p) => ({ ...p })),
 		customModifiers: config.customModifiers.map((m) => ({ ...m })),
 	};
-}
-
-function makeConfigurationId(): string {
-	return `cfg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // ── Tone + modifiers matching ─────────────────────────────────────────
@@ -177,7 +176,7 @@ interface ConfigurationsState {
 export const useLlmConfigurationsStore = create<ConfigurationsState>()((set, get) => ({
 	configurations: loadConfigurations(),
 	saveConfiguration: (name, config) => {
-		const id = makeConfigurationId();
+		const id = generateId();
 		const entry: SavedConfiguration = { id, name, config: cloneLlmConfiguration(config) };
 		const next = [...get().configurations, entry];
 		set({ configurations: next });

@@ -75,6 +75,7 @@ pub async fn remove_application_data(
 
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn remove_downloaded_models(
     app: AppHandle,
     transcription: State<'_, Arc<TranscriptionManager>>,

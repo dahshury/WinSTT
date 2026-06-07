@@ -127,12 +127,15 @@ pub mod diag;
 /// Transforms apply/preview pipeline (`apply_transform` / `apply_transform_preview`)
 /// + the `transforms:applied` / `transforms:failed` renderer feedback events.
 pub mod transforms;
+pub mod updater;
 
 /// DEBUG-ONLY context-awareness playground backend: live poll loop +
 /// `context-playground:report` push (`context_playground_set_live` /
-/// `context_playground_arm_deep` / `context_playground_capture`). These commands
-/// stay registered so the renderer debug flag can be flipped without a backend
-/// feature rebuild; the older `debug_read_context` probe remains feature-gated.
+/// `context_playground_arm_deep` / `context_playground_capture`). The module
+/// always compiles, but the commands (and the `debug_read_context` probe) are
+/// only REGISTERED under `#[cfg(any(debug_assertions, feature =
+/// "context-playground"))]` — i.e. in dev builds or with the explicit feature,
+/// matching `CONTEXT_PLAYGROUND_ENABLED` on the renderer side.
 pub mod context_playground;
 
 // ── slice: window management (docs/archive/port/10_frontend_port_plan.md §4b — WU-0) ──

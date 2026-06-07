@@ -8,9 +8,14 @@ import {
 	ollamaPullMatchesRow,
 	ollamaDescriptionForName,
 	singleActivePullName,
+	supportsOllamaToolCalling,
 	typedModelQueryInfo,
 	type MakerGroup,
 } from "./OllamaModelSelector";
+import {
+	computeRecommendedVisible,
+	isCatalogBackedModel,
+} from "../lib/maker-groups";
 
 function installed(name: string): OllamaModel {
 	return { name, model: name, size: 0, digest: "", modified_at: "" } as OllamaModel;
@@ -84,6 +89,67 @@ describe("buildMakerGroups", () => {
 	});
 });
 
+describe("computeRecommendedVisible", () => {
+	const gemmaE2b = recommended("gemma4:e2b", "gemma");
+
+	it("hides a recommended card once any quant of its size is installed", () => {
+		// The reported duplicate: installed `gemma4:e2b-it-q8_0` (an IT card with a
+		// trash icon) showing next to the recommended `gemma4:e2b` card.
+		const visible = computeRecommendedVisible(
+			[gemmaE2b],
+			new Set(["gemma4:e2b-it-q8_0"]),
+			"",
+		);
+		expect(visible).toEqual([]);
+	});
+
+	it("keeps a recommended card when only a different size is installed", () => {
+		const visible = computeRecommendedVisible(
+			[gemmaE2b],
+			new Set(["gemma4:e4b-it-q4_K_M"]),
+			"",
+		);
+		expect(visible.map((m) => m.name)).toEqual(["gemma4:e2b"]);
+	});
+
+	it("still applies the search query after the install filter", () => {
+		expect(
+			computeRecommendedVisible([gemmaE2b], new Set(), "qwen"),
+		).toEqual([]);
+		expect(
+			computeRecommendedVisible([gemmaE2b], new Set(), "gemma").map(
+				(m) => m.name,
+			),
+		).toEqual(["gemma4:e2b"]);
+	});
+});
+
+describe("isCatalogBackedModel", () => {
+	// The curated set ships a `gemma4:e2b` entry; `qwen3.5:4b` stands in for any
+	// other catalog model.
+	const catalog = new Set(["gemma4:e2b", "qwen3.5:4b"]);
+
+	it("treats any quant/IT variant of a curated size as catalog-backed", () => {
+		// Catalog models must keep their card forever → no whole-card delete.
+		expect(isCatalogBackedModel(catalog, "gemma4:e2b")).toBe(true);
+		expect(isCatalogBackedModel(catalog, "gemma4:e2b-it-q8_0")).toBe(true);
+		expect(isCatalogBackedModel(catalog, "qwen3.5:4b-instruct-q4_K_M")).toBe(
+			true,
+		);
+	});
+
+	it("treats an ad-hoc pulled model as NOT catalog-backed (keeps card delete)", () => {
+		// A different size of a curated family, and an entirely uncurated model.
+		expect(isCatalogBackedModel(catalog, "gemma4:e4b-it-q4_K_M")).toBe(false);
+		expect(isCatalogBackedModel(catalog, "mistral-nemo:12b")).toBe(false);
+		expect(isCatalogBackedModel(catalog, "deepseek-r1:7b")).toBe(false);
+	});
+
+	it("is false when no catalog is supplied (installed-only mode)", () => {
+		expect(isCatalogBackedModel(new Set(), "gemma4:e2b")).toBe(false);
+	});
+});
+
 describe("buildOllamaDescriptionIndex", () => {
 	it("maps installed tags back to their base Ollama library descriptions", () => {
 		const descriptions = buildOllamaDescriptionIndex([
@@ -139,6 +205,14 @@ describe("buildOllamaDescriptionIndex", () => {
 		expect(installedDescriptionForModel(model, descriptions)).toBe(
 			"Official Gemma description."
 		);
+	});
+});
+
+describe("supportsOllamaToolCalling", () => {
+	it("detects Ollama's tools capability case-insensitively", () => {
+		expect(supportsOllamaToolCalling(["completion", "TOOLS"])).toBe(true);
+		expect(supportsOllamaToolCalling(["completion", "vision"])).toBe(false);
+		expect(supportsOllamaToolCalling(null)).toBe(false);
 	});
 });
 

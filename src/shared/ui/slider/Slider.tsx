@@ -1,6 +1,6 @@
 import { Slider as BaseSlider } from "@base-ui/react/slider";
 import { cn } from "@/shared/lib/cn";
-import { surfaceBg, useSurface } from "@/shared/lib/surface";
+import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
 import { SliderHashMarks } from "./SliderHashMarks";
 
 type SliderVariant = "pips" | "scrubber";
@@ -49,8 +49,11 @@ export function Slider({
 }: SliderProps) {
   const value = clamp(rawValue, min, max);
   const substrate = useSurface();
-  const trackLevel = Math.min(substrate + 2, 8);
+  const trackLevel = Math.min(substrate + 1, 8);
+  const valueLevel = Math.min(substrate + 2, 8);
   const trackBgClass = surfaceBg(trackLevel);
+  const valueBgClass = surfaceBg(valueLevel);
+  const valueShadowClass = surfaceShadow(valueLevel);
   const displayValue = formatValue
     ? formatValue(value)
     : value.toFixed(decimalsForStep(step));
@@ -85,16 +88,24 @@ export function Slider({
       >
         <BaseSlider.Track
           className={cn(
-            "relative h-full overflow-hidden rounded-lg",
+            "relative h-full overflow-hidden rounded-lg ring-1 ring-divider",
             trackBgClass,
           )}
           data-slot="elastic-slider-track"
         >
-          <SliderHashMarks count={hashMarkCount} pctFor={hashMarkPct} />
           <BaseSlider.Indicator
-            className="h-full bg-foreground/15 transition-colors duration-100 group-data-[dragging]/elastic-slider:bg-foreground/25 group-hover/elastic-slider:bg-foreground/25"
+            className={cn(
+              // Round only the LEFT corners (to sit flush in the track's rounded
+              // left edge); the right edge — the live progress cap — stays square
+              // so the fill doesn't read as a rounded pill mid-track.
+              "h-full rounded-l-lg ring-1 ring-divider-strong ring-inset transition-[background-color,box-shadow,opacity] duration-100",
+              "opacity-90 group-hover/elastic-slider:opacity-100 group-data-[dragging]/elastic-slider:opacity-100",
+              valueBgClass,
+              valueShadowClass,
+            )}
             data-slot="elastic-slider-fill"
           />
+          <SliderHashMarks count={hashMarkCount} pctFor={hashMarkPct} />
           <BaseSlider.Thumb
             aria-label={ariaLabel ?? label}
             getAriaValueText={() => displayValue}

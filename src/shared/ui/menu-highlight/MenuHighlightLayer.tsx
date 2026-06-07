@@ -5,7 +5,9 @@ import {
   m as motion,
 } from "motion/react";
 import { type RefObject, useEffect, useState } from "react";
+import { cn } from "@/shared/lib/cn";
 import { springs } from "@/shared/lib/springs";
+import { surfaceBg, surfaceShadow, useSurface } from "@/shared/lib/surface";
 import {
   type HighlightRect,
   findDataAttributeElement,
@@ -17,7 +19,7 @@ import {
  * A reusable animated highlight layer for Base-UI menu/combobox popups.
  *
  * Renders two spring-animated pills behind the option rows:
- *  - the **selected** pill (accent-tinted) marking the current `value`, and
+ *  - the **selected** pill (surface-lifted) marking the current `value`, and
  *  - the **hover** pill (neutral) that glides to whichever row Base UI marks
  *    `data-highlighted` (covers both pointer hover AND keyboard arrow nav,
  *    since Base UI sets that attribute for both).
@@ -82,6 +84,12 @@ export function MenuHighlightLayer({
   containerRef,
   value,
 }: MenuHighlightLayerProps) {
+  const substrate = useSurface();
+  const hoverLevel = Math.min(substrate + 1, 8);
+  const selectedLevel = Math.min(substrate + 2, 8);
+  const hoverBgClass = surfaceBg(hoverLevel);
+  const selectedBgClass = surfaceBg(selectedLevel);
+  const selectedShadowClass = surfaceShadow(selectedLevel);
   const [state, setState] = useState<MeasureState>(EMPTY_STATE);
 
   // This component only mounts while the popup is open (Base UI unmounts the
@@ -160,7 +168,11 @@ export function MenuHighlightLayer({
               opacity: isHoveringOther ? 0.8 : 1,
             }}
             aria-hidden="true"
-            className="pointer-events-none absolute rounded-xs bg-accent/15 ring-1 ring-accent/40 ring-inset"
+            className={cn(
+              "pointer-events-none absolute rounded-xs ring-1 ring-divider-strong ring-inset",
+              selectedBgClass,
+              selectedShadowClass,
+            )}
             exit={{ opacity: 0, transition: { duration: 0.12 } }}
             initial={false}
             key="menu-selected"
@@ -180,7 +192,10 @@ export function MenuHighlightLayer({
               opacity: 1,
             }}
             aria-hidden="true"
-            className="pointer-events-none absolute rounded-xs bg-foreground/[0.06] ring-1 ring-divider ring-inset"
+            className={cn(
+              "pointer-events-none absolute rounded-xs ring-1 ring-divider ring-inset",
+              hoverBgClass,
+            )}
             exit={{ opacity: 0, transition: { duration: 0.06 } }}
             initial={{
               top: (hoverOrigin ?? highlightedRect).top,

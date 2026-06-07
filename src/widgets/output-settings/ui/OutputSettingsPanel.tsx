@@ -1,22 +1,25 @@
 import {
   ArrowTurnDownIcon,
-  BellRingIcon,
   ClipboardPasteIcon,
   ComputerIcon,
   FileScriptIcon,
   HeadphonesIcon,
   KeyboardIcon,
+  PauseIcon,
+  PlayIcon,
   Speaker01Icon,
   SubtitleIcon,
   Txt01Icon,
   VolumeMinusIcon,
 } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { type ReactNode, useState } from "react";
 import { useTranslations } from "use-intl";
 import { useOutputDevices } from "@/entities/audio-device";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import {
   isSelectableRealtimeModel,
+  modelSupportsSelectedSourceLanguages,
   useCatalogStore,
 } from "@/entities/model-catalog";
 import {
@@ -25,13 +28,15 @@ import {
   SettingSection,
   useSettingsStore,
 } from "@/entities/setting";
-import { SoundLibrary } from "@/features/recording-sound";
+import { useSoundPreview } from "@/features/recording-sound";
 import { cn } from "@/shared/lib/cn";
+import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { Slider } from "@/shared/ui/slider";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
+import { Tooltip } from "@/shared/ui/tooltip";
 import { Toggle } from "@/shared/ui/toggle";
 
 const REDUCTION_STEPS = [0, 20, 40, 60, 80, 100] as const;
@@ -221,12 +226,54 @@ function MuteSystemAudioControl({
   );
 }
 
+interface OutputDevicePreviewButtonProps {
+  active: boolean;
+  deviceLabel: string;
+  isPlaying: boolean;
+  onToggle: () => void;
+  playLabel: string;
+  stopLabel: string;
+}
+
+function OutputDevicePreviewButton({
+  active,
+  deviceLabel,
+  isPlaying,
+  onToggle,
+  playLabel,
+  stopLabel,
+}: OutputDevicePreviewButtonProps): ReactNode {
+  const label = `${isPlaying ? stopLabel : playLabel}: ${deviceLabel}`;
+  return (
+    <Tooltip content={isPlaying ? stopLabel : playLabel}>
+      <Button
+        aria-label={label}
+        className={cn(
+          "flex size-6 shrink-0 items-center justify-center rounded-full transition-colors duration-150 active:scale-95",
+          isPlaying
+            ? "bg-foreground/15 text-foreground hover:bg-foreground/25"
+            : "bg-transparent text-foreground-muted hover:bg-foreground/10 hover:text-foreground",
+          active && !isPlaying && "text-foreground-secondary",
+        )}
+        onClick={() => onToggle()}
+      >
+        <HugeiconsIcon icon={isPlaying ? PauseIcon : PlayIcon} size={13} />
+      </Button>
+    </Tooltip>
+  );
+}
+
+function outputPreviewId(deviceId: string): string {
+  return `output:${deviceId || "default"}`;
+}
+
 export function OutputSettingsPanel(): ReactNode {
   const general = useSettingsStore((s) => s.settings.general);
   const model = useSettingsStore((s) => s.settings.model);
   const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
   const updateLlmDictation = useSettingsStore((s) => s.updateLlmDictation);
   const tg = useTranslations("general");
+  const tm = useTranslations("model");
   const tc = useTranslations("common");
   const getModel = useCatalogStore((s) => s.getModel);
   const [confirmWordByWordOpen, setConfirmWordByWordOpen] = useState(false);
@@ -248,15 +295,23 @@ export function OutputSettingsPanel(): ReactNode {
     providerOf(selectedModel) === null ? getModel(selectedModel) : undefined;
   const mainModelCanNativeStream =
     selectedInfo !== undefined && isSelectableRealtimeModel(selectedInfo);
+  const realtimeSourceLanguageIncompatible =
+    selectedInfo !== undefined &&
+    mainModelCanNativeStream &&
+    !modelSupportsSelectedSourceLanguages(selectedInfo, model, selectedInfo);
   const previewBeforePastingDisabled = pillOff || wordByWordPasting;
   const previewBeforePastingDisabledReason = wordByWordPasting
     ? tg("wordByWordPasting")
     : tg("showRecordingOverlay");
   const wordByWordPastingDisabled =
-    !mainModelCanNativeStream || previewBeforePasting;
+    !mainModelCanNativeStream ||
+    realtimeSourceLanguageIncompatible ||
+    previewBeforePasting;
   const wordByWordPastingDisabledReason = previewBeforePasting
     ? tg("previewBeforePasting")
-    : tg("wordByWordPastingRequirement");
+    : realtimeSourceLanguageIncompatible
+      ? tm("language")
+      : tg("wordByWordPastingRequirement");
   const autoSubmitKeyOptions: SwitcherOption<"enter" | "ctrl_enter">[] = [
     {
       value: "enter",
@@ -368,8 +423,6 @@ export function PlaybackSettingsPanel(): ReactNode {
   const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
   const tg = useTranslations("general");
   const ta = useTranslations("audio");
-  const tc = useTranslations("common");
-  const ts = useTranslations("settings");
   const tt = useTranslations("tts");
 
   const recordingMode = general?.recordingMode ?? "ptt";
@@ -377,25 +430,71 @@ export function PlaybackSettingsPanel(): ReactNode {
   const outputDeviceId = useSettingsStore(
     (s) => s.settings.general?.outputDeviceId ?? "",
   );
+  const recordingSoundPath = useSettingsStore(
+    (s) => s.settings.general?.recordingSoundPath ?? "",
+  );
   const recordingSoundEnabled = useSettingsStore(
     (s) => s.settings.general?.recordingSound ?? true,
   );
   const ttsEnabled = useSettingsStore((s) => s.settings.tts?.enabled ?? false);
   const { devices: outputDevices, defaultDevice: defaultOutputDevice } =
     useOutputDevices();
+  const soundPreview = useSoundPreview();
   const showOutputDevice = recordingSoundEnabled || ttsEnabled;
+  const outputPreviewPlayLabel = tg("soundLibraryPlay");
+  const outputPreviewStopLabel = tg("soundLibraryStop");
   const outputDeviceOptions: SelectOption[] = (() => {
     const defaultLabel = defaultOutputDevice
       ? `${ta("systemDefault")} (${defaultOutputDevice.label})`
       : ta("systemDefault");
     const opts: SelectOption[] = [
-      { id: "", label: defaultLabel, icon: ComputerIcon },
+      {
+        id: "",
+        label: defaultLabel,
+        icon: ComputerIcon,
+        trailing: (
+          <OutputDevicePreviewButton
+            active={outputDeviceId === ""}
+            deviceLabel={defaultLabel}
+            isPlaying={soundPreview.playingId === outputPreviewId("")}
+            onToggle={() =>
+              void soundPreview.toggle(
+                outputPreviewId(""),
+                recordingSoundPath,
+                "",
+              )
+            }
+            playLabel={outputPreviewPlayLabel}
+            stopLabel={outputPreviewStopLabel}
+          />
+        ),
+      },
     ];
     for (const d of outputDevices) {
       if (d.deviceId === "default" || d.deviceId === "") {
         continue;
       }
-      opts.push({ id: d.deviceId, label: d.label, icon: Speaker01Icon });
+      opts.push({
+        id: d.deviceId,
+        label: d.label,
+        icon: Speaker01Icon,
+        trailing: (
+          <OutputDevicePreviewButton
+            active={outputDeviceId === d.deviceId}
+            deviceLabel={d.label}
+            isPlaying={soundPreview.playingId === outputPreviewId(d.deviceId)}
+            onToggle={() =>
+              void soundPreview.toggle(
+                outputPreviewId(d.deviceId),
+                recordingSoundPath,
+                d.deviceId,
+              )
+            }
+            playLabel={outputPreviewPlayLabel}
+            stopLabel={outputPreviewStopLabel}
+          />
+        ),
+      });
     }
     return opts;
   })();
@@ -426,46 +525,6 @@ export function PlaybackSettingsPanel(): ReactNode {
           </ElevatedSurface>
         </SettingField>
       </SettingSection>
-
-      {isListenMode ? null : (
-        <SettingSection
-          divided
-          icon={BellRingIcon}
-          title={tg("recordingSound")}
-        >
-          <SettingField
-            defaultValue={DEFAULT_SETTINGS.general.recordingSoundPath}
-            hideReset={!recordingSoundEnabled}
-            label={tg("recordingSound")}
-            labelAddon={
-              <Toggle
-                checked={recordingSoundEnabled}
-                onCheckedChange={(v) => updateGeneral({ recordingSound: v })}
-              />
-            }
-            onReset={() =>
-              updateGeneral({
-                recordingSoundPath: DEFAULT_SETTINGS.general.recordingSoundPath,
-              })
-            }
-            tooltip={
-              recordingSoundEnabled
-                ? tg("soundLibraryTooltip")
-                : `${tg("soundLibraryTooltip")} ${ts("disabledReason", { name: tg("recordingSound") })}`
-            }
-            value={general?.recordingSoundPath ?? ""}
-          >
-            <div
-              className={cn(
-                "transition-opacity duration-200 ease-out",
-                !recordingSoundEnabled && "pointer-events-none opacity-40",
-              )}
-            >
-              <SoundLibrary t={tg} tCommon={tc} />
-            </div>
-          </SettingField>
-        </SettingSection>
-      )}
 
       {isListenMode ? null : (
         <SettingSection

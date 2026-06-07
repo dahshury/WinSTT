@@ -27,6 +27,15 @@ export function SnippetsSettingsPanel() {
 					onRemove={(id) => {
 						updateSnippets(snippets.filter((e) => e.id !== id));
 					}}
+					onUpdate={(id, entry) => {
+						const currentSnippets =
+							useSettingsStore.getState().settings.snippets ?? [];
+						updateSnippets(
+							currentSnippets.map((existing) =>
+								existing.id === id ? { ...existing, ...entry } : existing,
+							),
+						);
+					}}
 				/>
 			</div>
 		</SettingSection>

@@ -9,9 +9,9 @@ export const SETTINGS_CONTRACT = {
     "general.autoSubmit",
     "general.autoSubmitKey",
     "general.contextAwareness",
+    "general.contextAllowList",
+    "general.contextAppMode",
     "general.contextDenyList",
-    "general.customFillerWords",
-    "general.filterFillers",
     "general.historyMaxEntries",
     "general.loopbackDeviceIndex",
     "general.manualToggleStop",
@@ -37,6 +37,7 @@ export const SETTINGS_CONTRACT = {
     "integrations.elevenlabs.apiKey",
     "integrations.openai.apiKey",
     "llm.dictation.customModifiers",
+    "llm.dictation.dictionaryAutoAddEnabled",
     "llm.dictation.enabled",
     "llm.dictation.maxOutputTokens",
     "llm.dictation.model",
@@ -64,9 +65,11 @@ export const SETTINGS_CONTRACT = {
     "llm.transforms.thinkingEffort",
     "llm.transforms.verbosity",
     "model.backend",
+    "model.autoDetectLanguage",
     "model.device",
     "model.initialPrompt",
     "model.language",
+    "model.languageCandidates",
     "model.model",
     "model.onnxQuantization",
     "model.translateToEnglish",
@@ -142,13 +145,9 @@ export const SETTINGS_CONTRACT = {
     "model.initialPromptRealtime",
     "model.realtimeModel",
     "quality.earlyTranscriptionOnSilence",
-    "quality.ensureSentenceEndsWithPeriod",
-    "quality.ensureSentenceStartingUppercase",
     "quality.useMainModelForRealtime",
   ],
 } as const;
-
-export type SettingsContractBucket = keyof typeof SETTINGS_CONTRACT;
 
 export function settingsContractPaths(): string[] {
   return Object.values(SETTINGS_CONTRACT).flat();

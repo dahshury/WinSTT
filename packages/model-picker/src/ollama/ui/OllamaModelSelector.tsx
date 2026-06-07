@@ -1,2673 +1,157 @@
 "use client";
 
-import { Combobox } from "@base-ui/react/combobox";
-import {
-  AlertCircleIcon,
-  ArrowDown01Icon,
-  ArrowUpDownIcon,
-  Atom01Icon,
-  BinaryCodeIcon,
-  Brain01Icon,
-  Delete02Icon,
-  HardDriveIcon,
-  StarIcon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
-import {
-  type ComponentPropsWithoutRef,
-  type ReactNode,
-  useEffect,
-  useState,
-} from "react";
-import type { SystemInfoEntry } from "@/shared/api/ipc-client";
+import { type ReactNode, useEffect, useState } from "react";
 import type {
-  OllamaLibraryHit,
-  OllamaLibraryTag,
-  OllamaModel,
-  OllamaPullProgress,
-  RecommendedOllamaModel,
+	OllamaModel,
+	OllamaPullProgress,
 } from "@/shared/api/models";
-import { cn } from "@/shared/lib/cn";
-import { Button } from "@/shared/ui/button";
-import { DownloadProgressBar } from "@/shared/ui/download";
-import { PulseDot } from "@/shared/ui/pulse-dot";
 import {
-  buildSwitchingClassName,
-  SwapSweepBar,
-  SwitchingFromToRow,
-  SwitchingPill,
-} from "@/shared/ui/switching-trigger";
-import { Tooltip as ContentTooltip } from "@/shared/ui/tooltip";
-import {
-  ALL_AUTHORS_RAIL_ID,
-  buildAllAuthorsRailItem,
-  GroupRail,
-  type GroupRailItem,
-  RailIconChip,
+	ALL_AUTHORS_RAIL_ID,
+	buildAllAuthorsRailItem,
+	GroupRail,
+	type GroupRailItem,
+	RailIconChip,
 } from "../../core/GroupRail";
-import { FAVORITES_GROUP_VALUE } from "../../core/favorites";
 import { ModelPicker } from "../../core/ModelPicker";
-import {
-  GroupHeader,
-  type MetaEntry,
-  ModelCard,
-  NeutralHeaderIcon,
-  type QuantDownloadAction,
-  QuantShelf,
-  type QuantShelfEntry,
-} from "../../core/model-card";
 import { useFavoriteSet } from "../../core/use-favorite-set";
 import { useModelPickerCloseGuard } from "../../lib/model-picker-close-guard";
+import { resolveProviderIcon } from "../../lib/provider-icons";
 import {
-  getProviderIconWithFallback,
-  resolveProviderIcon,
-} from "../../lib/provider-icons";
-import {
-  readPersistedSelectorState,
-  writePersistedSelectorState,
+	readPersistedSelectorState,
+	writePersistedSelectorState,
 } from "../../lib/persisted-selector-state";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
-import { TruncatedText } from "../../ui/TruncatedText";
-import {
-  formatOllamaDisplayName,
-  formatOllamaSize,
-  getOllamaFamily,
-  getOllamaPublisher,
-  getOllamaPublisherBySlug,
-} from "../lib/family-helpers";
-import {
-  isSameOllamaTag,
-  isTagInstalled,
-  libraryBaseSlug,
-  paramSizeFromName,
-  pruneToShownQuants,
-  type QuantBadgeCacheState,
-  quantBadgeCacheState,
-  quantBadgeLabel,
-  tagsForParamSize,
-} from "../lib/quant-shelf-helpers";
-import {
-  OLLAMA_SORT_KEYS,
-  OLLAMA_SORT_HEADER_LABEL,
-  type OllamaSortKey,
-  type OllamaSortValue,
-  sortOllamaModels,
-} from "../lib/sort-state";
+import { getOllamaPublisherBySlug } from "../lib/family-helpers";
+import { OLLAMA_SORT_KEYS, type OllamaSortValue, sortOllamaModels } from "../lib/sort-state";
 import { useFavoriteOllamaModels } from "../lib/use-favorite-ollama-models";
+import {
+	buildOllamaDescriptionIndex,
+	singleActivePullName,
+	typedModelQueryInfo,
+} from "../lib/ollama-description-helpers";
+import {
+	buildMakerView,
+	computeRecommendedVisible,
+	isCatalogBackedModel,
+	type MakerGroup,
+	makerGroupCount,
+	matchesInstalledQuery,
+} from "../lib/maker-groups";
 import { OllamaSortMenu } from "./OllamaSortMenu";
+import { ListBody, matchingTypedModelTag } from "./OllamaModelRows";
+import { buildQuantShelfDeps } from "./OllamaQuantShelf";
+import { OllamaTrigger, pickPrimaryPull } from "./OllamaTrigger";
+import type {
+	MakerGroupDeps,
+	OllamaModelSelectorProps,
+	PausedPullState,
+} from "./ollama-selector-types";
 
-interface PausedPullState {
-  pausedAt: number;
-  progress: OllamaPullProgress;
-}
-
-/** Shape of a single recommended-model fit assessment used to render the
- *  "won't fit" warning chip next to oversized recommendations. Mirrors
- *  {@link import("@/entities/llm-catalog").OllamaFitAssessment} but without
- *  pulling the entities package into the picker. */
-interface OllamaFitInfo {
-  availableBytes: number;
-  fits: boolean;
-  requiredBytes: number;
-  shortfall: "vram" | "ram" | "unknown" | undefined;
-}
-
-/** State surfaced by the library scraper — passed in so the picker stays
- *  presentational while the renderer-side store drives fetching. */
-interface OllamaLibrarySearchProps {
-  /** Optional full library catalog. The selector no longer loads or fuzzy-lists
-   *  this catalog; when a caller has it cached, descriptions can enrich local
-   *  installed rows. */
-  catalog: readonly OllamaLibraryHit[];
-  /** Scraper failure reason — surfaces inline in the Library area. */
-  error?: string | null;
-  /** Trigger a per-model tag scrape. Idempotent once cached. */
-  fetchTags: (model: string) => void;
-  isLoaded: boolean;
-  isLoading: boolean;
-  /** Legacy catalog loader; this selector intentionally does not call it. */
-  loadCatalog: () => void;
-  /** Per-model tag-fetch state keyed by lower-cased model slug. */
-  tagsByModel: Readonly<
-    Record<
-      string,
-      {
-        error?: string | null;
-        isLoading: boolean;
-        tags: readonly OllamaLibraryTag[];
-      }
-    >
-  >;
-}
-
-export interface OllamaModelSelectorProps {
-  disabled?: boolean | undefined;
-  /** Render the list as an always-open inline panel (no popup) — used to host
-   *  the picker in a dedicated surface and by render tests. */
-  inline?: boolean | undefined;
-  isLoading?: boolean | undefined;
-  /** When provided, the popup grows a third "Library" section that lists
-   *  scraped ollama.com search results with paginated pull actions. */
-  librarySearch?: OllamaLibrarySearchProps | undefined;
-  models: readonly OllamaModel[];
-  onChange: (modelName: string) => void;
-  /** Delete an installed model. Omit to hide the delete button. */
-  onDelete?: ((modelName: string) => void) | undefined;
-  /** Forget a paused pull (doesn't touch disk). Omit to hide the recommended UI. */
-  onDiscardPull?: ((modelName: string) => void) | undefined;
-  /** Called when the dropdown opens — used to refresh the catalog. */
-  onOpen?: (() => void) | undefined;
-  /** Start (or restart) a pull. Omit to hide the recommended UI. */
-  onPull?: ((modelName: string) => void) | undefined;
-  /** Resume a previously-paused pull. Omit to hide the recommended UI. */
-  onResumePull?: ((modelName: string) => void) | undefined;
-  /** Stop an active pull (becomes a paused pull). Omit to hide the recommended UI. */
-  onStopPull?: ((modelName: string) => void) | undefined;
-  pausedPulls?: Readonly<Record<string, PausedPullState>> | undefined;
-  placeholder?: string | undefined;
-  /** Active pulls keyed by model name. Omit to hide the recommended UI. */
-  pulls?: Readonly<Record<string, OllamaPullProgress>> | undefined;
-  /** Curated list of suggested models. When supplied alongside pull
-   *  callbacks, the popup grows a "Recommended" section with inline
-   *  install actions; omitting it falls back to installed-only mode. */
-  recommendedModels?: readonly RecommendedOllamaModel[] | undefined;
-  /** In-flight model swap (caller-driven; the picker has no IPC subscription
-   *  for Ollama swaps the way the STT picker does). When set, the trigger
-   *  renders the same `from → ◌ → to` view + accent sweep used by the STT
-   *  selector. `fromName` is the previously-loaded model id; `toName` the
-   *  one the user just picked. Both are resolved against `models` to render
-   *  publisher chips. Omit (or pass `null`) when no swap is in flight. */
-  swap?:
-    | { fromName?: string | null | undefined; toName: string }
-    | null
-    | undefined;
-  /** Optional fit-assessment lookup. Called per recommended model to
-   *  render a "Won't fit" badge when the host system can't run it. */
-  systemFit?: ((sizeBytes: number) => OllamaFitInfo) | undefined;
-  /** Optional system info — currently only used to decide whether to call
-   *  `systemFit`; if the caller supplies neither, the badge is suppressed. */
-  systemInfo?: SystemInfoEntry | null | undefined;
-  value: string;
-}
+// Re-export the moved pure helpers + types so the `maker-groups.test.ts` suite
+// (which imports them via `./OllamaModelSelector`) keeps working unchanged, and
+// so the package barrel's `OllamaModelSelectorProps` re-export stays valid.
+export {
+	activePullNameForRow,
+	buildOllamaDescriptionIndex,
+	installedDescriptionForModel,
+	ollamaDescriptionForName,
+	ollamaPullMatchesRow,
+	singleActivePullName,
+	supportsOllamaToolCalling,
+	typedModelQueryInfo,
+} from "../lib/ollama-description-helpers";
+export { buildMakerGroups, type MakerGroup } from "../lib/maker-groups";
+export type { OllamaModelSelectorProps } from "./ollama-selector-types";
 
 const DEFAULT_PLACEHOLDER = "Select a model";
-const VALID_MODEL_NAME_RE = /^[a-zA-Z0-9._:/-]+$/;
-// Shared synthetic-group value so the Favorites rail tile, the group header's
-// `data-rail-section`, and the click-to-jump all use the same id across pickers.
-const FAVORITES_RAIL_ID = FAVORITES_GROUP_VALUE;
-const SORTED_RAIL_ID = "__sorted__";
-const LEADING_LETTERS_RE = /^[a-zA-Z]+/;
 const OLLAMA_SELECTOR_UI_STORAGE_KEY = "winstt:model-picker:ollama-ui";
 const OLLAMA_SORT_KEY_SET = new Set<string>(OLLAMA_SORT_KEYS);
 
 interface PersistedOllamaSelectorUiState {
-  activeRailId: string;
-  query: string;
-  sortKey: OllamaSortValue;
+	activeRailId: string;
+	query: string;
+	sortKey: OllamaSortValue;
 }
 
 const DEFAULT_PERSISTED_OLLAMA_SELECTOR_UI_STATE: PersistedOllamaSelectorUiState =
-  {
-    activeRailId: ALL_AUTHORS_RAIL_ID,
-    query: "",
-    sortKey: null,
-  };
+	{
+		activeRailId: ALL_AUTHORS_RAIL_ID,
+		query: "",
+		sortKey: null,
+	};
 
 function isOllamaSortValue(value: unknown): value is OllamaSortValue {
-  return value === null || (typeof value === "string" && OLLAMA_SORT_KEY_SET.has(value));
+	return value === null || (typeof value === "string" && OLLAMA_SORT_KEY_SET.has(value));
 }
 
 function isPersistedOllamaSelectorUiState(
-  value: unknown,
+	value: unknown,
 ): value is PersistedOllamaSelectorUiState {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const candidate = value as Partial<PersistedOllamaSelectorUiState>;
-  return (
-    typeof candidate.activeRailId === "string" &&
-    typeof candidate.query === "string" &&
-    isOllamaSortValue(candidate.sortKey)
-  );
-}
-
-const OLLAMA_DOWNLOADING_CARD_CLASSES = cn(
-  "border-accent/45 bg-[linear-gradient(135deg,var(--color-surface-4)_0%,oklch(62%_0.19_260/0.15)_46%,var(--color-surface-2)_100%)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08),0_10px_28px_-18px_var(--color-accent-glow-strong)] ring-1 ring-accent/20",
-  "hover:border-accent/60 hover:bg-[linear-gradient(135deg,var(--color-surface-5)_0%,oklch(62%_0.19_260/0.18)_46%,var(--color-surface-3)_100%)]",
-  "data-[highlighted]:border-accent/60 data-[highlighted]:bg-[linear-gradient(135deg,var(--color-surface-5)_0%,oklch(62%_0.19_260/0.18)_46%,var(--color-surface-3)_100%)]",
-  "before:pointer-events-none before:absolute before:inset-x-3 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-accent/70 before:to-transparent before:content-[''] before:animate-[hairline-pulse_1.8s_ease-in-out_infinite]",
-);
-
-/** Pull the leading alphabetic chunk off an Ollama slug — `gemma3n` → `gemma`. */
-function familySlugFromName(name: string): string {
-  return (LEADING_LETTERS_RE.exec(name)?.[0] ?? "").toLowerCase();
-}
-
-function normalizeOllamaParamSize(value: string | null | undefined): string {
-  return (value ?? "").trim().toLowerCase();
-}
-
-export interface TypedModelQueryInfo {
-  baseSlug: string;
-  modelName: string;
-  paramSize: string | undefined;
-}
-
-export function typedModelQueryInfo(
-  query: string,
-): TypedModelQueryInfo | null {
-  const modelName = query.trim();
-  if (!(modelName && VALID_MODEL_NAME_RE.test(modelName))) {
-    return null;
-  }
-  const colonIdx = modelName.indexOf(":");
-  if (colonIdx <= 0 || colonIdx === modelName.length - 1) {
-    return null;
-  }
-  const baseSlug = libraryBaseSlug(modelName);
-  if (!baseSlug) {
-    return null;
-  }
-  return {
-    baseSlug,
-    modelName,
-    paramSize: paramSizeFromName(modelName) || undefined,
-  };
-}
-
-export function singleActivePullName(
-  pulls: Readonly<Record<string, OllamaPullProgress>>,
-): string | null {
-  const names = Object.keys(pulls);
-  return names.length === 1 ? (names[0] ?? null) : null;
-}
-
-export function ollamaPullMatchesRow(
-  pullName: string,
-  rowName: string,
-  rowParamSize?: string | null | undefined,
-): boolean {
-  if (libraryBaseSlug(pullName) !== libraryBaseSlug(rowName)) {
-    return false;
-  }
-  const rowParam =
-    normalizeOllamaParamSize(rowParamSize) ||
-    normalizeOllamaParamSize(paramSizeFromName(rowName));
-  const pullParam = normalizeOllamaParamSize(paramSizeFromName(pullName));
-  return !rowParam || !pullParam || rowParam === pullParam;
-}
-
-export function activePullNameForRow(
-  pulls: Readonly<Record<string, OllamaPullProgress>>,
-  rowName: string,
-  rowParamSize?: string | null | undefined,
-): string | null {
-  for (const name of Object.keys(pulls)) {
-    if (ollamaPullMatchesRow(name, rowName, rowParamSize)) {
-      return name;
-    }
-  }
-  return null;
-}
-
-const EMPTY_DESCRIPTION_BY_BASE: ReadonlyMap<string, string> = new Map();
-let cachedDescriptionIndex: {
-  catalog: readonly OllamaLibraryHit[];
-  descriptions: ReadonlyMap<string, string>;
-} | null = null;
-
-function cleanOllamaDescription(
-  value: string | null | undefined,
-): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-export function buildOllamaDescriptionIndex(
-  catalog: readonly OllamaLibraryHit[] | undefined,
-): ReadonlyMap<string, string> {
-  if (!catalog || catalog.length === 0) {
-    return EMPTY_DESCRIPTION_BY_BASE;
-  }
-  if (cachedDescriptionIndex?.catalog === catalog) {
-    return cachedDescriptionIndex.descriptions;
-  }
-  const descriptions = new Map<string, string>();
-  for (const hit of catalog) {
-    const description = cleanOllamaDescription(hit.description);
-    if (description) {
-      descriptions.set(libraryBaseSlug(hit.name), description);
-    }
-  }
-  cachedDescriptionIndex = { catalog, descriptions };
-  return descriptions;
-}
-
-export function ollamaDescriptionForName(
-  name: string,
-  descriptionsByBase: ReadonlyMap<string, string>,
-): string | undefined {
-  return descriptionsByBase.get(libraryBaseSlug(name));
-}
-
-function formatOllamaContextWindow(
-  tokens: number | null | undefined,
-): string | undefined {
-  if (!tokens || tokens <= 0) {
-    return undefined;
-  }
-  if (tokens >= 1_000_000) {
-    const millions = tokens / 1_000_000;
-    return `${millions.toFixed(millions >= 10 ? 0 : 1).replace(/\.0$/, "")}M context`;
-  }
-  if (tokens >= 1_000) {
-    return `${Math.round(tokens / 1_000)}K context`;
-  }
-  return `${tokens} context`;
-}
-
-function capabilityLabel(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  switch (normalized) {
-    case "insert":
-      return "Fill-in-middle";
-    case "tools":
-      return "Tools";
-    case "vision":
-      return "Vision";
-    default:
-      return normalized
-        .split(/[-_\s]+/)
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(" ");
-  }
-}
-
-function visibleCapabilities(
-  capabilities: readonly string[] | null | undefined,
-): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of capabilities ?? []) {
-    const key = raw.trim().toLowerCase();
-    if (!key || key === "completion" || key === "thinking" || seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    out.push(capabilityLabel(key));
-  }
-  return out;
-}
-
-function localOllamaDescription(model: OllamaModel): string | undefined {
-  const details = model.details;
-  const facts: string[] = [];
-  if (details?.format) {
-    facts.push(details.format.toUpperCase());
-  }
-  if (details?.family) {
-    facts.push(`${details.family} family`);
-  }
-  if (details?.quantizationLevel) {
-    facts.push(details.quantizationLevel);
-  }
-  const contextWindow = formatOllamaContextWindow(model.contextLength);
-  if (contextWindow) {
-    facts.push(contextWindow);
-  }
-  const caps = visibleCapabilities(model.capabilities);
-  if (caps.length > 0) {
-    facts.push(caps.join(", "));
-  }
-  return facts.length > 0
-    ? `Local Ollama model: ${facts.join(" / ")}`
-    : "Local Ollama model discovered from Ollama";
-}
-
-export function installedDescriptionForModel(
-  model: OllamaModel,
-  descriptionsByBase: ReadonlyMap<string, string>,
-): string | undefined {
-  return (
-    ollamaDescriptionForName(model.name, descriptionsByBase) ??
-    localOllamaDescription(model)
-  );
-}
-
-// ── Shared chips (used by trigger + row) ──────────────────────────────
-
-/** The small publisher logo rendered before a model name inside the shared
- *  {@link ModelCard} (installed / recommended / library rows) so every Ollama
- *  card carries its maker mark, mirroring the OpenRouter picker. Falls back to a
- *  gray initials chip when the publisher has no logo. */
-function OllamaMakerIcon({ slug }: { slug: string }) {
-  const icon = resolveProviderIcon(slug);
-  if (icon) {
-    return (
-      <img
-        alt=""
-        className="size-4 shrink-0 rounded-[3px] object-cover"
-        height={16}
-        src={icon}
-        width={16}
-      />
-    );
-  }
-  // No bundled logo → neutral initials chip (never the misleading OpenRouter "O").
-  return (
-    <span className="flex size-4 shrink-0 items-center justify-center rounded-[3px] bg-foreground/[0.08] font-semibold text-[9px] text-foreground-muted uppercase">
-      {getOllamaPublisherBySlug(slug).label.charAt(0) || "?"}
-    </span>
-  );
-}
-
-function PublisherChip({ family }: { family: string }) {
-  const publisher = getOllamaPublisher(family);
-  const iconSrc = getProviderIconWithFallback(publisher.slug);
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-secondary/60 px-1.5 py-0.5 font-medium text-[10px] text-foreground-secondary leading-none">
-      <img
-        alt=""
-        className="size-3 rounded-[2px] object-cover"
-        height={12}
-        src={iconSrc}
-        width={12}
-      />
-      {publisher.label}
-    </span>
-  );
-}
-
-/**
- * Reasoning-capability marker. Renders when the model's `capabilities`
- * array (fetched from Ollama's `/api/show`) advertises `thinking`. Rendered
- * as a quiet neutral capability pill (matching the Library capability chips)
- * — in the fluidfunctionalism palette the icon shape carries the meaning, so
- * the chip stays fully grayscale rather than glowing purple.
- */
-function ThinkingChip({
-  capabilities,
-}: {
-  capabilities: readonly string[] | undefined;
-}) {
-  if (!capabilities?.includes("thinking")) {
-    return null;
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={(props) => (
-          <span
-            {...(props as ComponentPropsWithoutRef<"span">)}
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 px-1.5 py-px font-medium text-[9.5px] text-foreground-muted leading-none"
-          >
-            <HugeiconsIcon className="size-2.5" icon={Brain01Icon} />
-            Reasoning
-          </span>
-        )}
-      />
-      <TooltipContent>
-        Supports thinking output. The model can show its step-by-step reasoning
-        before producing the final answer.
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function CapabilityChips({
-  capabilities,
-}: {
-  capabilities: readonly string[] | undefined;
-}) {
-  const labels = visibleCapabilities(capabilities);
-  if (labels.length === 0) {
-    return null;
-  }
-  return (
-    <>
-      {labels.map((label) => (
-        <Tooltip key={label}>
-          <TooltipTrigger
-            render={(props) => (
-              <span
-                {...(props as ComponentPropsWithoutRef<"span">)}
-                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 px-1.5 py-px font-medium text-[9.5px] text-foreground-muted leading-none"
-              >
-                <HugeiconsIcon className="size-2.5" icon={BinaryCodeIcon} />
-                {label}
-              </span>
-            )}
-          />
-          <TooltipContent>Reported by Ollama for this local model.</TooltipContent>
-        </Tooltip>
-      ))}
-    </>
-  );
-}
-
-function installedCapabilityBadges(
-  capabilities: readonly string[] | undefined,
-): ReactNode {
-  const hasThinking = capabilities?.includes("thinking") ?? false;
-  const labels = visibleCapabilities(capabilities);
-  if (!hasThinking && labels.length === 0) {
-    return null;
-  }
-  return (
-    <>
-      <ThinkingChip capabilities={capabilities} />
-      <CapabilityChips capabilities={capabilities} />
-    </>
-  );
-}
-
-function WontFitChip({ fit }: { fit: OllamaFitInfo | undefined }) {
-  if (!fit || fit.fits) {
-    return null;
-  }
-  const tooltip =
-    fit.shortfall === "vram"
-      ? `Needs ~${formatOllamaSize(fit.requiredBytes)} of VRAM — only ${formatOllamaSize(fit.availableBytes)} available`
-      : `Needs ~${formatOllamaSize(fit.requiredBytes)} of RAM — only ${formatOllamaSize(fit.availableBytes)} available`;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={(props) => (
-          <span
-            {...(props as ComponentPropsWithoutRef<"span">)}
-            className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-error/10 px-1.5 font-medium text-[10px] text-error leading-none ring-1 ring-error/30 ring-inset"
-          >
-            <HugeiconsIcon className="size-2.5" icon={AlertCircleIcon} />
-            Won't fit
-          </span>
-        )}
-      />
-      <TooltipContent side="top">{tooltip}</TooltipContent>
-    </Tooltip>
-  );
-}
-
-/** The amber "Recommended" star badge shown on a curated model's card now that
- *  recommended models live inside their maker group rather than a separate
- *  maker-less "Recommended" section. */
-function RecommendedStar() {
-  return (
-    <ContentTooltip
-      content="Recommended for dictation post-processing"
-      side="top"
-    >
-      <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-amber-400/[0.12] px-1.5 font-medium text-[10px] text-amber-400 leading-none">
-        <HugeiconsIcon className="size-2.5 fill-amber-400" icon={StarIcon} />
-        Recommended
-      </span>
-    </ContentTooltip>
-  );
-}
-
-// ── Quantization precision shelf ──────────────────────────────────────
-//
-// The Ollama analogue of the STT picker's precision shelf
-// (`stt/ui/SttModelCard.tsx` → PrecisionGroup): a recessed strip of quant
-// BADGES with click-to-download folded into each badge. ONE badge per library
-// tag matching the card's parameter size. Each badge's on-disk state drives its
-// behaviour, mirroring the STT `QuantOptionButton`:
-//   - installed  → muted-emerald, click selects the model, trailing trash deletes
-//   - active pull → progress fill + pause/resume + cancel; body inert
-//   - paused      → muted-amber, resume
-//   - not on disk → neutral; the badge IS the download button (hover → glyph)
-// Ollama tags normalize into shared QuantShelf entries, so STT, TTS, and
-// Ollama share the same badge chrome and download controls.
-
-interface QuantBadgeState {
-  cacheState: QuantBadgeCacheState;
-  /** A pull is flowing for this tag right now. */
-  isDownloading: boolean;
-  /** Pull percent [0..100] for the progress fill (active OR paused), or null. */
-  progressPercent: number | null;
-}
-
-function deriveQuantBadgeState(
-  pull: OllamaPullProgress | undefined,
-  paused: PausedPullState | undefined,
-  installed: boolean,
-): QuantBadgeState {
-  const isDownloading = pull !== undefined;
-  const cacheState = quantBadgeCacheState({
-    installed,
-    paused: paused !== undefined,
-  });
-  let progressPercent: number | null = null;
-  if (pull) {
-    progressPercent = Math.max(0, Math.min(100, Math.round(pull.percent ?? 0)));
-  } else if (paused) {
-    progressPercent = Math.max(
-      0,
-      Math.min(100, Math.round(paused.progress.percent ?? 0)),
-    );
-  }
-  return { cacheState, isDownloading, progressPercent };
-}
-
-function isForceKeptOllamaTag(
-  forceKeepNames: ReadonlySet<string> | undefined,
-  name: string,
-): boolean {
-  if (!forceKeepNames) {
-    return false;
-  }
-  for (const forceKeepName of forceKeepNames) {
-    if (isSameOllamaTag(forceKeepName, name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Human status line for one Ollama tag inside the shared quant badge tooltip. */
-function ollamaQuantCacheStatus(state: QuantBadgeState): string {
-  let status = "Not downloaded";
-  if (state.cacheState === "cached") {
-    status = "Installed";
-  } else if (state.isDownloading) {
-    status = `Downloading ${state.progressPercent ?? 0}%`;
-  } else if (state.cacheState === "partial") {
-    status = `Paused at ${state.progressPercent ?? 0}%`;
-  }
-  return status;
-}
-
-function activePullSnapshot(
-  progressPercent: number | null,
-): import("../../core/model-card").QuantDownloadSnapshot {
-  return {
-    downloadedBytes: 0,
-    totalBytes: 0,
-    progress: progressPercent,
-    paused: false,
-  };
-}
-
-function buildOllamaQuantEntries({
-  getFit,
-  installedNames,
-  pausedPulls,
-  pulls,
-  selectedName,
-  tags,
-}: Pick<
-  OllamaQuantShelfProps,
-  | "getFit"
-  | "installedNames"
-  | "pausedPulls"
-  | "pulls"
-  | "selectedName"
-  | "tags"
->): QuantShelfEntry[] {
-  return tags.map((tag) => {
-    const installed = isTagInstalled(installedNames, tag.name);
-    const pull = pulls[tag.name];
-    const paused = pausedPulls[tag.name];
-    const state = deriveQuantBadgeState(pull, paused, installed);
-    const isPaused = state.cacheState === "partial" && !state.isDownloading;
-    const canStartDownload = !(
-      state.isDownloading ||
-      installed ||
-      state.cacheState === "partial"
-    );
-    const fit = tag.sizeBytes ? getFit?.(tag.sizeBytes) : undefined;
-    return {
-      actionQuant: tag.name,
-      cacheProgress:
-        !state.isDownloading && state.progressPercent !== null
-          ? state.progressPercent / 100
-          : null,
-      cacheState: state.cacheState,
-      cacheStatusLabel: ollamaQuantCacheStatus(state),
-      canDelete: installed && !state.isDownloading,
-      canResumeDownload: isPaused,
-      canStartDownload,
-      download: state.isDownloading
-        ? activePullSnapshot(state.progressPercent)
-        : undefined,
-      downloadSizeBytes: tag.sizeBytes ?? null,
-      ...(tag.sizeLabel ? { downloadSizeLabel: tag.sizeLabel } : {}),
-      isActive: isSameOllamaTag(selectedName, tag.name) && installed,
-      isRecommended: false,
-      label: quantBadgeLabel(tag),
-      mono: true,
-      tooltip: fit && !fit.fits ? "May not fit on your hardware." : "",
-      value: tag.name,
-    };
-  });
-}
-
-function handleOllamaQuantAction({
-  action,
-  name,
-  onDiscard,
-  onPull,
-  onResume,
-  onStop,
-}: {
-  action: QuantDownloadAction;
-  name: string;
-  onDiscard: (name: string) => void;
-  onPull: (name: string) => void;
-  onResume: (name: string) => void;
-  onStop: (name: string) => void;
-}): void {
-  if (action === "start") {
-    onPull(name);
-  } else if (action === "pause") {
-    onStop(name);
-  } else if (action === "resume") {
-    onResume(name);
-  } else {
-    onDiscard(name);
-  }
-}
-
-interface OllamaQuantShelfProps {
-  getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
-  /** Explicit tags this row must keep visible even if they are not part of the
-   *  canonical quant ladder. Used for arbitrary user-typed tags. */
-  forceKeepNames?: ReadonlySet<string> | undefined;
-  installedNames: ReadonlySet<string>;
-  onDiscard: (name: string) => void;
-  onPull: (name: string) => void;
-  onResume: (name: string) => void;
-  onSelect: (name: string) => void;
-  onStop: (name: string) => void;
-  /** The model's parameter size (`4b`, `27b`) — the shelf shows only the quant
-   *  badges for THIS size. Empty/undefined shows every quant the tag list has. */
-  paramSize: string | null | undefined;
-  pausedPulls: Readonly<Record<string, PausedPullState>>;
-  pulls: Readonly<Record<string, OllamaPullProgress>>;
-  /** Currently-selected (active) model name — drives the accent badge. */
-  selectedName: string | undefined;
-  /** All library tags for the model's base slug. Sliced to `paramSize` here. */
-  tags: readonly OllamaLibraryTag[];
-}
-
-/** The recessed quant shelf: a leading binary glyph + a wrap of quant badges,
- *  one per tag matching `paramSize`. Mirrors the STT picker's `PrecisionGroup`.
- *  Returns null when there are no tags to show (the caller renders nothing). */
-function OllamaQuantShelf({
-  tags,
-  paramSize,
-  installedNames,
-  selectedName,
-  pulls,
-  pausedPulls,
-  getFit,
-  forceKeepNames,
-  onSelect,
-  onPull,
-  onStop,
-  onResume,
-  onDiscard,
-}: OllamaQuantShelfProps) {
-  // Slice to the card's param size, then prune the dominated/irrelevant quants
-  // down to the canonical ladder — keeping anything the user has on disk, is
-  // pulling/paused, or has selected so it never disappears mid-flight.
-  const visibleTags = pruneToShownQuants(
-    tagsForParamSize(tags, paramSize),
-    (name) =>
-      isForceKeptOllamaTag(forceKeepNames, name) ||
-      isTagInstalled(installedNames, name) ||
-      pulls[name] !== undefined ||
-      pausedPulls[name] !== undefined ||
-      isSameOllamaTag(selectedName, name),
-  );
-  if (visibleTags.length === 0) {
-    return null;
-  }
-  const shelfModelDisplayName = formatOllamaDisplayName(
-    libraryBaseSlug(visibleTags[0]?.name ?? selectedName ?? "ollama"),
-  );
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <ContentTooltip
-        content="Quantization — the numeric precision of the model's weights. Lower precision (q4 / q5) loads faster and uses less RAM/VRAM at a small quality cost; higher precision (q8 / fp16) is the most faithful but heaviest. Click a badge to download it, or select an installed one."
-        side="top"
-      >
-        <span className="inline-flex shrink-0 items-center font-medium text-[10px] text-foreground-muted uppercase tracking-wide">
-          <HugeiconsIcon className="size-3" icon={BinaryCodeIcon} />
-        </span>
-      </ContentTooltip>
-      <QuantShelf
-        entries={buildOllamaQuantEntries({
-          getFit,
-          installedNames,
-          pausedPulls,
-          pulls,
-          selectedName,
-          tags: visibleTags,
-        })}
-        modelDisplayName={shelfModelDisplayName}
-        modelId={selectedName ?? "ollama"}
-        onDownloadAction={(action, _modelId, name) =>
-          handleOllamaQuantAction({
-            action,
-            name,
-            onDiscard,
-            onPull,
-            onResume,
-            onStop,
-          })
-        }
-        onRequestDeleteQuant={(_modelId, name) => onDiscard(name)}
-        onSelect={(_modelId, name) => onSelect(name)}
-        showIcon={false}
-      />
-    </div>
-  );
-}
-
-/** Everything the quant shelf needs from the picker, threaded down to each row
- *  as one bundle so the row signatures stay small. The pull/select/fit handlers
- *  are the SAME ones the old Pull-button cluster used — the shelf just folds
- *  them into the badges. `getTags`/`fetchTags` source the per-model tag list
- *  from the library store (keyed by lower-cased base slug). */
-interface QuantShelfDeps {
-  fetchTags: ((baseSlug: string) => void) | undefined;
-  getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
-  getTags: ((baseSlug: string) => readonly OllamaLibraryTag[]) | undefined;
-  installedNames: ReadonlySet<string>;
-  onDiscard: (name: string) => void;
-  onPull: (name: string) => void;
-  onResume: (name: string) => void;
-  onSelect: (name: string) => void;
-  onStop: (name: string) => void;
-  pausedPulls: Readonly<Record<string, PausedPullState>>;
-  pulls: Readonly<Record<string, OllamaPullProgress>>;
-  selectedName: string | undefined;
-}
-
-/**
- * Card-BODY click handler for a non-installed (`as="div"`) recommended/library
- * card: it selects/pulls the model's AUTO / recommended (default) tag — the bare
- * `<name>` / `<name>:<size>` with no precision suffix. Mirrors the STT picker,
- * where the "Auto" badge was removed and a card-body click selects the
- * recommended precision; the explicit per-quant badges keep their own clicks
- * (they `stopPropagation`, so they never reach here).
- *
- * The action matches a quant badge's own routing for the default tag: select it
- * when it's already installed, resume a paused pull, otherwise start the pull.
- * Returns `undefined` when the tag is actively downloading (no body action while
- * the default is in flight — the user uses the shelf controls to pause/cancel).
- */
-function defaultTagBodyClick(
-  deps: QuantShelfDeps,
-  defaultTag: string,
-): (() => void) | undefined {
-  if (deps.pulls[defaultTag] !== undefined) {
-    return undefined;
-  }
-  if (isTagInstalled(deps.installedNames, defaultTag)) {
-    return () => deps.onSelect(defaultTag);
-  }
-  if (deps.pausedPulls[defaultTag] !== undefined) {
-    return () => deps.onResume(defaultTag);
-  }
-  return () => deps.onPull(defaultTag);
-}
-
-function appendMissingOllamaTags(
-  tags: readonly OllamaLibraryTag[],
-  extraTags: readonly OllamaLibraryTag[],
-): readonly OllamaLibraryTag[] {
-  if (extraTags.length === 0) {
-    return tags;
-  }
-  const missing = extraTags.filter(
-    (extraTag) => !tags.some((tag) => isSameOllamaTag(tag.name, extraTag.name)),
-  );
-  return missing.length > 0 ? [...tags, ...missing] : tags;
-}
-
-interface LazyQuantShelfProps {
-  /** Library slug whose sibling tags to fetch + render (`gemma3`). */
-  baseSlug: string;
-  deps: QuantShelfDeps;
-  /** Tags to merge with fetched library tags. */
-  extraTags?: readonly OllamaLibraryTag[] | undefined;
-  forceKeepNames?: ReadonlySet<string> | undefined;
-  /** Param size the card represents (`4b`). Filters the tag list. */
-  paramSize: string | null | undefined;
-  /** Rendered until tags load — keeps a single badge visible so the shelf
-   *  doesn't flicker empty for an installed model whose siblings are en route. */
-  placeholder?: ReactNode;
-}
-
-/** Lazily fetches the base-slug tags (idempotent in the store) and renders the
- *  quant shelf once they're available. Used by every card type so installed,
- *  recommended, and library rows all show the same precision strip. */
-function LazyQuantShelf({
-  baseSlug,
-  paramSize,
-  deps,
-  extraTags,
-  forceKeepNames,
-  placeholder,
-}: LazyQuantShelfProps) {
-  const { fetchTags, getTags } = deps;
-  // Fetch is store-deduped, so firing it on every mount is a no-op after the
-  // first resolve. Re-runs only when the slug changes.
-  useEffect(() => {
-    if (baseSlug) {
-      fetchTags?.(baseSlug);
-    }
-  }, [baseSlug, fetchTags]);
-  const fetchedTags = baseSlug ? (getTags?.(baseSlug) ?? []) : [];
-  const tags = appendMissingOllamaTags(fetchedTags, extraTags ?? []);
-  if (tags.length === 0) {
-    return placeholder ?? null;
-  }
-  return (
-    <OllamaQuantShelf
-      forceKeepNames={forceKeepNames}
-      getFit={deps.getFit}
-      installedNames={deps.installedNames}
-      onDiscard={deps.onDiscard}
-      onPull={deps.onPull}
-      onResume={deps.onResume}
-      onSelect={deps.onSelect}
-      onStop={deps.onStop}
-      paramSize={paramSize}
-      pausedPulls={deps.pausedPulls}
-      pulls={deps.pulls}
-      selectedName={deps.selectedName}
-      tags={tags}
-    />
-  );
-}
-
-// ── Trigger ───────────────────────────────────────────────────────────
-
-function SelectedTriggerContent({ model }: { model: OllamaModel }) {
-  const family = getOllamaFamily(model);
-  return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      <PublisherChip family={family} />
-      <TruncatedText
-        className="font-medium text-foreground"
-        text={formatOllamaDisplayName(model.name)}
-      />
-    </div>
-  );
-}
-
-// Flat muted surface — calmed off the old "glass" (white inset highlight +
-// white ring + bright hover ring). The trigger now reads as a flat surface step
-// (surface-3 over the popup) with a neutral hairline border + soft depth shadow,
-// matching the fluidfunctionalism grayscale base. The single accent moments are
-// restrained and state-only: the open-state accent ring + the accent hairline
-// (rendered in the JSX) + the accent pull-progress strip.
-const OLLAMA_TRIGGER_GLASS_CLASSES =
-  "group relative flex h-auto min-h-[3.25rem] w-full items-center justify-between gap-2 overflow-hidden rounded-lg border border-border bg-surface-3 px-3 py-2 text-left shadow-surface-2 transition-[transform,border-color,background-color,box-shadow] duration-150 ease-out hover:border-border-hover hover:bg-surface-4 hover:shadow-surface-3 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:border-accent/55 data-[state=open]:bg-accent/[0.06] data-[state=open]:ring-1 data-[state=open]:ring-accent/25";
-
-interface TriggerPullSummary {
-  model: string;
-  percent: number;
-  status: OllamaPullProgress["status"];
-}
-
-/** Pick the most-progressed active pull as the one to surface on the trigger.
- *  When multiple pulls run concurrently this keeps the visible bar moving
- *  monotonically toward done rather than flickering between models. */
-function pickPrimaryPull(
-  pulls: Readonly<Record<string, OllamaPullProgress>>,
-): TriggerPullSummary | null {
-  let best: TriggerPullSummary | null = null;
-  for (const [name, progress] of Object.entries(pulls)) {
-    const percent = Math.round(progress.percent ?? 0);
-    if (!best || percent > best.percent) {
-      best = { model: name, percent, status: progress.status };
-    }
-  }
-  return best;
-}
-
-/** Ollama-flavored chip+name pair used as a slot inside `SwitchingFromToRow`.
- *  Mirrors the STT picker's `SttModelLabel` so both switching views read the
- *  same way: family chip + name, dim/struck-through on the "from" leg and
- *  accent-emphasized on the "to" leg. */
-function OllamaModelLabel({
-  model,
-  side,
-}: {
-  model: OllamaModel;
-  side: "from" | "to";
-}) {
-  const family = getOllamaFamily(model);
-  const displayName = formatOllamaDisplayName(model.name);
-  if (side === "from") {
-    return (
-      <>
-        <PublisherChip family={family} />
-        <span className="min-w-0 max-w-[8rem] truncate font-medium text-body text-foreground-dim leading-tight tracking-tight line-through decoration-foreground-dim/40">
-          {displayName}
-        </span>
-      </>
-    );
-  }
-  return (
-    <>
-      <PublisherChip family={family} />
-      <span className="min-w-0 truncate font-semibold text-accent text-body leading-tight tracking-tight">
-        {displayName}
-      </span>
-    </>
-  );
-}
-
-/** Fallback label when the user picked a model that isn't (yet) in the
- *  installed catalog — happens when the swap is "to" an Ollama-library hit
- *  that's still pulling. We can't render a publisher chip without the model
- *  metadata, so just render the bare display name with the same emphasis. */
-function OllamaTextLabel({
-  name,
-  side,
-}: {
-  name: string;
-  side: "from" | "to";
-}) {
-  const displayName = formatOllamaDisplayName(name);
-  const tone =
-    side === "from"
-      ? "text-foreground-dim line-through decoration-foreground-dim/40"
-      : "font-semibold text-accent";
-  return (
-    <span
-      className={`min-w-0 max-w-[8rem] truncate font-medium text-body leading-tight tracking-tight ${tone}`}
-    >
-      {displayName}
-    </span>
-  );
-}
-
-interface OllamaTriggerProps {
-  activePull: TriggerPullSummary | null;
-  disabled: boolean;
-  fromModel: OllamaModel | undefined;
-  fromName: string | undefined;
-  isLoading: boolean;
-  isSwitching: boolean;
-  placeholder: string;
-  selected: OllamaModel | undefined;
-  toModel: OllamaModel | undefined;
-  toName: string | undefined;
-}
-
-/** Pick the right label component for one side of the switching row. Prefers
- *  the resolved `OllamaModel` (publisher chip + name); falls back to the bare
- *  text label when the picked model isn't installed yet (typed pull target). */
-function SwitchingSlot({
-  model,
-  name,
-  side,
-}: {
-  model: OllamaModel | undefined;
-  name: string | undefined;
-  side: "from" | "to";
-}): ReactNode {
-  if (model) {
-    return <OllamaModelLabel model={model} side={side} />;
-  }
-  if (name) {
-    return <OllamaTextLabel name={name} side={side} />;
-  }
-  return null;
-}
-
-function OllamaBody({
-  props,
-  ariaLabel,
-}: {
-  props: OllamaTriggerProps;
-  ariaLabel: string | undefined;
-}): ReactNode {
-  if (props.isSwitching) {
-    return (
-      <SwitchingFromToRow
-        ariaLabel={ariaLabel}
-        from={
-          <SwitchingSlot
-            model={props.fromModel}
-            name={props.fromName}
-            side="from"
-          />
-        }
-        to={
-          <SwitchingSlot model={props.toModel} name={props.toName} side="to" />
-        }
-      />
-    );
-  }
-  if (props.isLoading) {
-    return (
-      <div className="flex flex-1 items-center gap-2">
-        <PulseDot className="size-2.5 text-foreground-muted" />
-        <span className="font-medium text-body text-foreground-muted italic tracking-tight">
-          {props.placeholder}
-        </span>
-      </div>
-    );
-  }
-  if (props.selected) {
-    return <SelectedTriggerContent model={props.selected} />;
-  }
-  return (
-    <span className="font-medium text-body text-foreground-muted italic tracking-tight">
-      {props.placeholder}
-    </span>
-  );
-}
-
-function buildSwitchingAriaLabel(
-  props: OllamaTriggerProps,
-): string | undefined {
-  if (!props.isSwitching) {
-    return;
-  }
-  const toName = props.toModel?.name ?? props.toName;
-  if (!toName) {
-    return;
-  }
-  const fromName = props.fromModel?.name ?? props.fromName;
-  const fromClause = fromName
-    ? ` from ${formatOllamaDisplayName(fromName)}`
-    : "";
-  return `Switching${fromClause} to ${formatOllamaDisplayName(toName)}`;
-}
-
-function OllamaTrigger(props: OllamaTriggerProps) {
-  const { disabled, isLoading, isSwitching, activePull } = props;
-  const ariaLabel = buildSwitchingAriaLabel(props);
-  return (
-    <Combobox.Trigger
-      nativeButton
-      render={(triggerProps) => (
-        <Button
-          {...(triggerProps as ComponentPropsWithoutRef<"button">)}
-          aria-label={ariaLabel}
-          className={`${OLLAMA_TRIGGER_GLASS_CLASSES} ${buildSwitchingClassName(isSwitching)}`}
-          data-loading={isLoading || undefined}
-          data-slot="ollama-model-selector-trigger"
-          data-switching={isSwitching}
-          disabled={disabled || isLoading || isSwitching}
-          type="button"
-        >
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent opacity-0 transition-opacity duration-200 group-data-[state=open]:opacity-100 group-data-[switching=true]:opacity-100"
-          />
-          <OllamaBody ariaLabel={ariaLabel} props={props} />
-          {isSwitching ? (
-            <SwitchingPill />
-          ) : (
-            <HugeiconsIcon
-              className="ms-2 size-4 shrink-0 text-foreground-muted transition-[transform,color] duration-200 ease-out group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground"
-              icon={ArrowDown01Icon}
-            />
-          )}
-          {isSwitching ? <SwapSweepBar /> : null}
-          {activePull && !isSwitching ? (
-            <TriggerPullProgressOverlay summary={activePull} />
-          ) : null}
-        </Button>
-      )}
-    />
-  );
-}
-
-/** Thin status overlay rendered along the trigger's bottom edge whenever an
- *  Ollama pull is in flight. Conveys two things at a glance while the popup
- *  is closed:
- *
- *    1. A 2px progress strip that fills left → right as bytes land.
- *    2. A label `Downloading <model> · NN%` so the user knows *which* model
- *       is in flight (multiple feature toggles can share the same picker).
- */
-function TriggerPullProgressOverlay({
-  summary,
-}: {
-  summary: TriggerPullSummary;
-}) {
-  const beautified = formatOllamaDisplayName(summary.model);
-  return (
-    <span
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 px-3 pb-1 text-[9px] text-accent leading-none"
-    >
-      <span className="truncate font-medium uppercase tracking-wide">
-        ↓ {beautified} · {summary.percent}%
-      </span>
-      <span className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-accent/20">
-        <span
-          className="block h-full bg-accent transition-[width] duration-300 ease-out"
-          style={{ width: `${summary.percent}%` }}
-        />
-      </span>
-    </span>
-  );
-}
-
-// ── Installed rows ────────────────────────────────────────────────────
-
-/** The installed model's spec facts as a homogeneous middot meta-line: parameter
- *  count and disk size. The quantization level is NO LONGER shown here — it now
- *  lives as a badge in the precision shelf below the card (so it reads at a
- *  glance alongside the model's other available quants). Empty facts are dropped
- *  so a model missing one doesn't render a stray separator. */
-function buildInstalledMetaEntries(model: OllamaModel): MetaEntry[] {
-  const entries: MetaEntry[] = [];
-  const paramSize = model.details?.parameterSize;
-  if (paramSize) {
-    entries.push({
-      key: "params",
-      icon: Atom01Icon,
-      value: paramSize,
-      tooltip: "Parameter count",
-    });
-  }
-  if (model.details?.format) {
-    entries.push({
-      key: "format",
-      icon: BinaryCodeIcon,
-      value: model.details.format.toUpperCase(),
-      tooltip: "Model format",
-    });
-  }
-  const contextWindow = formatOllamaContextWindow(model.contextLength);
-  if (contextWindow) {
-    entries.push({
-      key: "context",
-      icon: Brain01Icon,
-      value: contextWindow,
-      tooltip: "Context window reported by Ollama",
-    });
-  }
-  entries.push({
-    key: "size",
-    icon: HardDriveIcon,
-    value: formatOllamaSize(model.size),
-    tooltip: "Disk size",
-  });
-  return entries;
-}
-
-/** Synthesize a one-tag list standing in for an installed model whose sibling
- *  library tags haven't loaded yet — the model's OWN tag, so the shelf shows at
- *  least the installed quant (muted-emerald, selectable) without flickering empty
- *  while {@link LazyQuantShelf} fetches the rest. Optional fields are omitted
- *  (not set to `undefined`) so the tag satisfies `exactOptionalPropertyTypes`. */
-function installedSelfTag(model: OllamaModel): OllamaLibraryTag {
-  const tag: OllamaLibraryTag = { name: model.name };
-  if (model.size) {
-    tag.sizeBytes = model.size;
-    tag.sizeLabel = formatOllamaSize(model.size);
-  }
-  if (model.details?.quantizationLevel) {
-    tag.quantization = model.details.quantizationLevel;
-  }
-  if (model.details?.parameterSize) {
-    tag.parameterSize = model.details.parameterSize;
-  }
-  return tag;
-}
-
-/** The installed model's param size, as the token the library TAGS carry
- *  (`gemma3:4b` → `4b`). Ollama reports `details.parameterSize` as `4.3B`/`4.0B`
- *  — the rounded real param count, which never equals the tag token `4b` — so we
- *  parse the token out of the name and only fall back to the structured field
- *  when the name has no token (a bare `gemma3`). */
-function installedParamSize(model: OllamaModel): string {
-  return paramSizeFromName(model.name) || (model.details?.parameterSize ?? "");
-}
-
-/** The shelf rendered for an installed card. Lazily scrapes the family's sibling
- *  tags (gated to a few concurrent requests in the main process, so a picker-open
- *  burst can't overwhelm ollama.com) and renders every quant for the model's
- *  param size — the installed one tinted as cached/selectable, the rest as
- *  click-to-pull. Until the tags load (or if the scrape fails) the model's own
- *  quant shows as a placeholder so the shelf never flickers empty. */
-function InstalledQuantShelf({
-  model,
-  deps,
-}: {
-  deps: QuantShelfDeps;
-  model: OllamaModel;
-}) {
-  const paramSize = installedParamSize(model);
-  const selfPlaceholder = (
-    <OllamaQuantShelf
-      getFit={deps.getFit}
-      installedNames={deps.installedNames}
-      onDiscard={deps.onDiscard}
-      onPull={deps.onPull}
-      onResume={deps.onResume}
-      onSelect={deps.onSelect}
-      onStop={deps.onStop}
-      paramSize={paramSize}
-      pausedPulls={deps.pausedPulls}
-      pulls={deps.pulls}
-      selectedName={deps.selectedName}
-      tags={[installedSelfTag(model)]}
-    />
-  );
-  return (
-    <LazyQuantShelf
-      baseSlug={libraryBaseSlug(model.name)}
-      deps={deps}
-      paramSize={paramSize}
-      placeholder={selfPlaceholder}
-    />
-  );
-}
-
-/** The trailing delete affordance for an installed card — slotted into
- *  {@link ModelCard}'s `trailing` so it sits after the favourite star, matching
- *  the STT card's delete placement. */
-function OllamaDeleteButton({
-  model,
-  onDelete,
-}: {
-  model: OllamaModel;
-  onDelete: (name: string) => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={(props) => (
-          <Button
-            {...(props as ComponentPropsWithoutRef<"button">)}
-            aria-label={`Delete ${model.name}`}
-            className="flex size-6 items-center justify-center rounded text-foreground-muted opacity-0 transition-opacity hover:bg-error/10 hover:text-error focus-visible:opacity-100 group-hover:opacity-100"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onDelete(model.name);
-            }}
-            type="button"
-          >
-            <HugeiconsIcon className="size-3.5" icon={Delete02Icon} />
-          </Button>
-        )}
-      />
-      <TooltipContent side="top">Delete</TooltipContent>
-    </Tooltip>
-  );
-}
-
-function OllamaModelRow({
-  model,
-  description,
-  isSelected,
-  isFavorited,
-  onDelete,
-  onToggleFavorite,
-  shelfDeps,
-}: {
-  description: string | undefined;
-  isFavorited: boolean;
-  isSelected: boolean;
-  model: OllamaModel;
-  onDelete: ((name: string) => void) | undefined;
-  onToggleFavorite: (name: string) => void;
-  /** Quant-shelf deps. Omitted (no `librarySearch` prop) → no shelf, and the
-   *  card keeps its prior installed-only chrome. */
-  shelfDeps: QuantShelfDeps | undefined;
-}) {
-  const displayName = formatOllamaDisplayName(model.name);
-  const publisher = getOllamaPublisher(getOllamaFamily(model));
-  const activePullName = shelfDeps
-    ? activePullNameForRow(
-        shelfDeps.pulls,
-        model.name,
-        model.details?.parameterSize ?? paramSizeFromName(model.name),
-      )
-    : null;
-  return (
-    <ModelCard
-      as="combobox-item"
-      badges={installedCapabilityBadges(model.capabilities ?? undefined)}
-      className={activePullName ? OLLAMA_DOWNLOADING_CARD_CLASSES : undefined}
-      data-model-id={activePullName ?? model.name}
-      description={description}
-      favorite={{
-        isFavorited,
-        label: displayName,
-        onToggle: () => onToggleFavorite(model.name),
-      }}
-      makerIcon={<OllamaMakerIcon slug={publisher.slug} />}
-      meta={buildInstalledMetaEntries(model)}
-      name={displayName}
-      selected={isSelected}
-      shelf={
-        shelfDeps ? (
-          <InstalledQuantShelf deps={shelfDeps} model={model} />
-        ) : undefined
-      }
-      trailing={
-        onDelete ? (
-          <OllamaDeleteButton model={model} onDelete={onDelete} />
-        ) : undefined
-      }
-      value={model.name}
-    />
-  );
-}
-
-/** The dim middot count suffix shown after a section label — `· 3 models`. */
-function countSubtitle(count: number): string {
-  return `· ${count === 1 ? "1 model" : `${count} models`}`;
-}
-
-function PublisherGroupHeader({
-  publisherSlug,
-  count,
-}: {
-  count: number;
-  publisherSlug: string;
-}) {
-  const publisher = getOllamaPublisherBySlug(publisherSlug);
-  return (
-    <GroupHeader
-      data-rail-section={publisherSlug}
-      icon={<OllamaMakerIcon slug={publisher.slug} />}
-      label={publisher.label}
-      subtitle={countSubtitle(count)}
-    />
-  );
-}
-
-function FavoritesGroupHeader({ count }: { count: number }) {
-  return (
-    <GroupHeader
-      data-rail-section={FAVORITES_RAIL_ID}
-      icon={<NeutralHeaderIcon icon={StarIcon} tone="favorites" />}
-      label="Favorites"
-      subtitle={countSubtitle(count)}
-    />
-  );
-}
-
-/**
- * Header for the synthetic flat "Sorted" group shown while a sort is active.
- * Same shared {@link GroupHeader} chrome as the other sections but maker-agnostic,
- * and it spells out the active dimension + direction, e.g. "Sorted · Size ·
- * smallest first". Mirrors the STT picker's `SortedLabel`.
- */
-function SortedGroupHeader({
-  count,
-  sortKey,
-}: {
-  count: number;
-  sortKey: OllamaSortKey;
-}) {
-  return (
-    <GroupHeader
-      data-rail-section={SORTED_RAIL_ID}
-      icon={<NeutralHeaderIcon icon={ArrowUpDownIcon} />}
-      label="Sorted"
-      subtitle={`· ${OLLAMA_SORT_HEADER_LABEL[sortKey]} · ${count === 1 ? "1 model" : `${count} models`}`}
-    />
-  );
-}
-
-// ── Library section ───────────────────────────────────────────────────
-
-interface LibraryRowProps {
-  hit: OllamaLibraryHit;
-  installedNames: ReadonlySet<string>;
-  isFavorited: boolean;
-  onToggleFavorite: (name: string) => void;
-  pausedPulls: Readonly<Record<string, PausedPullState>>;
-  pulls: Readonly<Record<string, OllamaPullProgress>>;
-  /** Quant-shelf deps — the badges replace the old expand-to-see-tags +
-   *  per-tag Pull cluster. The shelf self-fetches the hit's tags on render. */
-  shelfDeps: QuantShelfDeps;
-  tagsState:
-    | {
-        error?: string | null;
-        isLoading: boolean;
-        tags: readonly OllamaLibraryTag[];
-      }
-    | undefined;
-}
-
-/** Snapshot of how a library hit is represented locally: how many variants
- *  the user has on disk, plus any pull/paused-pull frame keyed under one of
- *  the hit's tags. Lets the row surface progress without forcing the user to
- *  expand it. */
-interface LibraryRowStatus {
-  activePull: { name: string; progress: OllamaPullProgress } | null;
-  installedCount: number;
-  pausedPull: { name: string; state: PausedPullState } | null;
-}
-
-function deriveLibraryRowStatus(
-  hit: OllamaLibraryHit,
-  installedNames: ReadonlySet<string>,
-  pulls: Readonly<Record<string, OllamaPullProgress>>,
-  pausedPulls: Readonly<Record<string, PausedPullState>>,
-): LibraryRowStatus {
-  const prefix = `${hit.name}:`;
-  const matches = (name: string) =>
-    name === hit.name || name.startsWith(prefix);
-
-  let installedCount = 0;
-  for (const name of installedNames) {
-    if (matches(name)) {
-      installedCount++;
-    }
-  }
-
-  let activePull: LibraryRowStatus["activePull"] = null;
-  for (const [name, progress] of Object.entries(pulls)) {
-    if (matches(name)) {
-      activePull = { name, progress };
-      break;
-    }
-  }
-
-  let pausedPull: LibraryRowStatus["pausedPull"] = null;
-  for (const [name, state] of Object.entries(pausedPulls)) {
-    if (matches(name)) {
-      pausedPull = { name, state };
-      break;
-    }
-  }
-
-  return { activePull, installedCount, pausedPull };
-}
-
-function libraryRowProgressPercent(status: LibraryRowStatus): number | null {
-  if (status.activePull) {
-    return Math.round(status.activePull.progress.percent ?? 0);
-  }
-  if (status.pausedPull) {
-    return Math.round(status.pausedPull.state.progress.percent ?? 0);
-  }
-  return null;
-}
-
-function LibraryRowBadges({
-  status,
-  progressPercent,
-}: {
-  status: LibraryRowStatus;
-  progressPercent: number | null;
-}) {
-  return (
-    <>
-      {status.installedCount > 0 ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/[0.08] px-1.5 py-px font-medium text-[10px] text-emerald-300/80">
-          ✓ {status.installedCount}{" "}
-          {status.installedCount === 1 ? "installed" : "installed variants"}
-        </span>
-      ) : null}
-      {status.activePull ? (
-        <span className="inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px font-medium text-[10px] text-accent">
-          <PulseDot className="size-1.5" />
-          Downloading {progressPercent ?? 0}%
-        </span>
-      ) : null}
-      {!status.activePull && status.pausedPull ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/[0.08] px-1.5 py-px font-medium text-[10px] text-amber-300/80">
-          Paused at {progressPercent ?? 0}%
-        </span>
-      ) : null}
-    </>
-  );
-}
-
-function LibraryRowProgress({
-  hit,
-  status,
-  progressPercent,
-}: {
-  hit: OllamaLibraryHit;
-  status: LibraryRowStatus;
-  progressPercent: number | null;
-}) {
-  if (progressPercent === null) {
-    return null;
-  }
-  const label = status.activePull
-    ? `${status.activePull.name} · ${progressPercent}%`
-    : `${status.pausedPull?.name ?? hit.name} · paused at ${progressPercent}%`;
-  return (
-    <div className="mt-2">
-      <DownloadProgressBar
-        label={label}
-        percent={progressPercent}
-        variant={status.activePull ? "active" : "paused"}
-      />
-    </div>
-  );
-}
-
-function LibraryRowHeader({
-  hit,
-  isFavorited,
-  onToggleFavorite,
-  status,
-  progressPercent,
-  shelf,
-  onBodyClick,
-}: {
-  hit: OllamaLibraryHit;
-  isFavorited: boolean;
-  /** Card-body click — selects/pulls the hit's recommended (default `:latest`)
-   *  tag. Omitted (no body action) when the default is actively downloading. */
-  onBodyClick: (() => void) | undefined;
-  onToggleFavorite: (name: string) => void;
-  progressPercent: number | null;
-  /** The quant shelf — replaces the old expand-to-see-tags chevron. The
-   *  badges ARE the tag list now. */
-  shelf: ReactNode;
-  status: LibraryRowStatus;
-}) {
-  const hitDisplayName = formatOllamaDisplayName(hit.name);
-  const hitPublisher = getOllamaPublisher(familySlugFromName(hit.name));
-  const caps = hit.capabilities ?? [];
-  // Demote status badges + capability pills off the name row to the card's
-  // subordinate `badges` wrap-row (mirrors RecommendedRow), so the name owns
-  // the top line.
-  const hasBadges =
-    status.installedCount > 0 ||
-    Boolean(status.activePull) ||
-    Boolean(status.pausedPull);
-  const badges =
-    hasBadges || caps.length > 0 ? (
-      <>
-        <LibraryRowBadges progressPercent={progressPercent} status={status} />
-        {caps.map((cap) => (
-          <span
-            className="rounded-full border border-border/60 px-1.5 py-px text-[9px] text-foreground-muted"
-            key={cap}
-          >
-            {cap}
-          </span>
-        ))}
-      </>
-    ) : undefined;
-  return (
-    <ModelCard
-      as="div"
-      badges={badges}
-      className={
-        status.activePull ? OLLAMA_DOWNLOADING_CARD_CLASSES : undefined
-      }
-      data-model-id={status.activePull?.name ?? hit.name}
-      description={hit.description || undefined}
-      favorite={{
-        isFavorited,
-        label: hitDisplayName,
-        onToggle: () => onToggleFavorite(hit.name),
-      }}
-      makerIcon={<OllamaMakerIcon slug={hitPublisher.slug} />}
-      name={hitDisplayName}
-      // Card-body click = pull/select the hit's recommended default tag (its
-      // bare slug → `:latest`). The per-quant badges keep their explicit clicks.
-      onBodyClick={onBodyClick}
-      shelf={shelf}
-    />
-  );
-}
-
-/** The subordinate "pulls · updated" provenance line + download progress,
- *  rendered as PEERS below the library card (the card itself owns name / maker /
- *  badges / description). Indented to align under the card body. */
-function LibraryRowFooter({
-  hit,
-  status,
-  progressPercent,
-}: {
-  hit: OllamaLibraryHit;
-  status: LibraryRowStatus;
-  progressPercent: number | null;
-}) {
-  const hitPublisher = getOllamaPublisher(familySlugFromName(hit.name));
-  return (
-    <div className="mt-1 px-2">
-      <div className="flex items-center gap-2 text-[10px] text-foreground-muted">
-        <span>by {hitPublisher.label}</span>
-        {hit.pulls ? <span>· {hit.pulls} pulls</span> : null}
-        {hit.updated ? <span>· Updated {hit.updated}</span> : null}
-      </div>
-      <LibraryRowProgress
-        hit={hit}
-        progressPercent={progressPercent}
-        status={status}
-      />
-    </div>
-  );
-}
-
-/** The library row's shelf: the quant-badge strip (the tag list, as badges), or
- *  the inline loading / error hint while the hit's sibling tags resolve. The
- *  shelf shows EVERY quant the hit has (a library hit spans all param sizes), so
- *  no param-size filter is applied. */
-function LibraryRowShelf({
-  hit,
-  tagsState,
-  shelfDeps,
-}: {
-  hit: OllamaLibraryHit;
-  shelfDeps: QuantShelfDeps;
-  tagsState: LibraryRowProps["tagsState"];
-}) {
-  if (tagsState?.isLoading && (tagsState?.tags.length ?? 0) === 0) {
-    return (
-      <div className="flex items-center gap-2 text-foreground-muted text-xs">
-        <PulseDot className="size-2" />
-        Loading quantizations…
-      </div>
-    );
-  }
-  if (tagsState?.error) {
-    return (
-      <div className="rounded bg-error/10 p-2 text-error text-xs">
-        {tagsState.error}
-      </div>
-    );
-  }
-  return (
-    <LazyQuantShelf
-      baseSlug={hit.name}
-      deps={shelfDeps}
-      paramSize={undefined}
-    />
-  );
-}
-
-function LibraryRow({
-  hit,
-  isFavorited,
-  onToggleFavorite,
-  tagsState,
-  installedNames,
-  pulls,
-  pausedPulls,
-  shelfDeps,
-}: LibraryRowProps) {
-  const status = deriveLibraryRowStatus(
-    hit,
-    installedNames,
-    pulls,
-    pausedPulls,
-  );
-  const progressPercent = libraryRowProgressPercent(status);
-  return (
-    <div>
-      <LibraryRowHeader
-        hit={hit}
-        isFavorited={isFavorited}
-        onBodyClick={defaultTagBodyClick(shelfDeps, hit.name)}
-        onToggleFavorite={onToggleFavorite}
-        progressPercent={progressPercent}
-        shelf={
-          <LibraryRowShelf
-            hit={hit}
-            shelfDeps={shelfDeps}
-            tagsState={tagsState}
-          />
-        }
-        status={status}
-      />
-      <LibraryRowFooter
-        hit={hit}
-        progressPercent={progressPercent}
-        status={status}
-      />
-    </div>
-  );
-}
-
-function EmptyState({ filtered }: { filtered: boolean }) {
-  return (
-    <div className="flex flex-col items-center gap-1 p-6 text-center">
-      <p className="font-medium text-body-sm text-foreground">
-        {filtered
-          ? "No models match your search"
-          : "No Ollama models installed"}
-      </p>
-      <p className="text-foreground-muted text-xs">
-        {filtered
-          ? "Try a different search term or enter a full Ollama model tag."
-          : "Pull one from the Recommended list below or enter a full Ollama model tag."}
-      </p>
-    </div>
-  );
-}
-
-// ── Recommended rows ──────────────────────────────────────────────────
-
-interface RecommendedRowProps {
-  description: string | undefined;
-  fit: OllamaFitInfo | undefined;
-  isFavorited: boolean;
-  model: RecommendedOllamaModel;
-  onToggleFavorite: (name: string) => void;
-  /** Quant-shelf deps — the badges replace the recommended row's old
-   *  Pull/Stop/Resume/Discard cluster. Pull/paused state is read from
-   *  `shelfDeps.pulls`/`pausedPulls` per tag. */
-  shelfDeps: QuantShelfDeps;
-}
-
-/** The recommended model's param-count + disk-size facts as a middot meta-line. */
-function buildRecommendedMetaEntries(
-  model: RecommendedOllamaModel,
-): MetaEntry[] {
-  return [
-    {
-      key: "params",
-      icon: Atom01Icon,
-      value: model.paramSize,
-      tooltip: "Parameter count",
-    },
-    {
-      key: "size",
-      icon: HardDriveIcon,
-      value: formatOllamaSize(model.sizeBytes),
-      tooltip: "Disk size",
-    },
-  ];
-}
-
-/** Synthesize the recommended model's own tag so its shelf shows a download
- *  badge immediately, before the family's sibling tags resolve. Optional fields
- *  are omitted (not `undefined`) for `exactOptionalPropertyTypes`. */
-function recommendedSelfTag(model: RecommendedOllamaModel): OllamaLibraryTag {
-  const tag: OllamaLibraryTag = { name: model.name };
-  if (model.sizeBytes) {
-    tag.sizeBytes = model.sizeBytes;
-    tag.sizeLabel = formatOllamaSize(model.sizeBytes);
-  }
-  const paramSize = paramSizeFromName(model.name);
-  if (paramSize) {
-    tag.parameterSize = paramSize;
-  }
-  return tag;
-}
-
-function RecommendedRow({
-  model,
-  description,
-  fit,
-  isFavorited,
-  onToggleFavorite,
-  shelfDeps,
-}: RecommendedRowProps) {
-  const recPublisher = getOllamaPublisher((model.family ?? "").toLowerCase());
-  // The shelf replaces the old Pull cluster: badges for each quant of this
-  // recommended model's param size, with click-to-pull / pause / resume / cancel
-  // folded in. Filter by the tag's param token (matching `model.paramSize`'s
-  // size), falling back to all when unparseable.
-  const paramSize = paramSizeFromName(model.name);
-  const activePullName = activePullNameForRow(
-    shelfDeps.pulls,
-    model.name,
-    paramSize || model.paramSize,
-  );
-  const placeholder = (
-    <OllamaQuantShelf
-      getFit={shelfDeps.getFit}
-      installedNames={shelfDeps.installedNames}
-      onDiscard={shelfDeps.onDiscard}
-      onPull={shelfDeps.onPull}
-      onResume={shelfDeps.onResume}
-      onSelect={shelfDeps.onSelect}
-      onStop={shelfDeps.onStop}
-      paramSize={paramSize}
-      pausedPulls={shelfDeps.pausedPulls}
-      pulls={shelfDeps.pulls}
-      selectedName={shelfDeps.selectedName}
-      tags={[recommendedSelfTag(model)]}
-    />
-  );
-  return (
-    <ModelCard
-      as="div"
-      badges={
-        <>
-          <RecommendedStar />
-          <WontFitChip fit={fit} />
-        </>
-      }
-      description={description ?? model.description}
-      className={activePullName ? OLLAMA_DOWNLOADING_CARD_CLASSES : undefined}
-      data-model-id={activePullName ?? model.name}
-      favorite={{
-        isFavorited,
-        label: model.displayName,
-        onToggle: () => onToggleFavorite(model.name),
-      }}
-      makerIcon={<OllamaMakerIcon slug={recPublisher.slug} />}
-      meta={buildRecommendedMetaEntries(model)}
-      name={model.displayName}
-      // Card-body click = use the recommended (default) tag: `model.name` is the
-      // bare recommended pull tag (e.g. `gemma3:4b`). Select it if installed,
-      // else pull it. The per-quant badges keep their own explicit clicks.
-      onBodyClick={defaultTagBodyClick(shelfDeps, model.name)}
-      // Lazily scrape the family's sibling tags (gated in the main process) so
-      // the card shows every quant for its param size; the default pull badge
-      // stands in as the placeholder until they resolve.
-      shelf={
-        <LazyQuantShelf
-          baseSlug={libraryBaseSlug(model.name)}
-          deps={shelfDeps}
-          paramSize={paramSize}
-          placeholder={placeholder}
-        />
-      }
-    />
-  );
-}
-
-type OllamaTagsState =
-  | OllamaLibrarySearchProps["tagsByModel"][string]
-  | undefined;
-
-function matchingTypedModelTag(
-  info: TypedModelQueryInfo | null,
-  tagsState: OllamaTagsState,
-): OllamaLibraryTag | undefined {
-  if (!info) {
-    return undefined;
-  }
-  return tagsState?.tags.find((tag) => isSameOllamaTag(info.modelName, tag.name));
-}
-
-interface TypedModelRowProps {
-  info: TypedModelQueryInfo;
-  matchingTag: OllamaLibraryTag;
-  shelfDeps: QuantShelfDeps;
-  tagsState: OllamaTagsState;
-}
-
-function typedModelSelfTag(
-  info: TypedModelQueryInfo,
-  matchingTag: OllamaLibraryTag,
-): OllamaLibraryTag {
-  const tag: OllamaLibraryTag = { ...matchingTag, name: info.modelName };
-  if (info.paramSize) {
-    tag.parameterSize = info.paramSize;
-  }
-  return tag;
-}
-
-function buildTypedModelMetaEntries(
-  info: TypedModelQueryInfo,
-  matchingTag: OllamaLibraryTag,
-): MetaEntry[] | undefined {
-  const entries: MetaEntry[] = [];
-  if (info.paramSize) {
-    entries.push({
-      key: "params",
-      icon: Atom01Icon,
-      value: info.paramSize.toUpperCase(),
-      tooltip: "Parameter count parsed from the tag",
-    });
-  }
-  if (matchingTag.quantization) {
-    entries.push({
-      key: "quant",
-      icon: BinaryCodeIcon,
-      value: matchingTag.quantization,
-      tooltip: "Quantization",
-    });
-  }
-  if (matchingTag.sizeBytes) {
-    entries.push({
-      key: "size",
-      icon: HardDriveIcon,
-      value: matchingTag.sizeLabel ?? formatOllamaSize(matchingTag.sizeBytes),
-      tooltip: "Download size",
-    });
-  }
-  if (entries.length === 0) {
-    return undefined;
-  }
-  return entries;
-}
-
-function TypedModelFetchStatus({
-  tagsState,
-}: {
-  tagsState: OllamaTagsState;
-}) {
-  if (tagsState?.isLoading && tagsState.tags.length === 0) {
-    return (
-      <div className="flex items-center gap-2 text-foreground-muted text-xs">
-        <PulseDot className="size-2" />
-        Fetching quantizations…
-      </div>
-    );
-  }
-  if (tagsState?.error) {
-    return (
-      <div className="rounded bg-error/10 p-2 text-error text-xs">
-        Could not fetch quantizations. The typed tag is still available.
-      </div>
-    );
-  }
-  return null;
-}
-
-function TypedModelShelf({
-  info,
-  matchingTag,
-  shelfDeps,
-  tagsState,
-}: TypedModelRowProps) {
-  const forceKeepNames = new Set([info.modelName]);
-  return (
-    <div className="flex flex-col gap-2">
-      <LazyQuantShelf
-        baseSlug={info.baseSlug}
-        deps={shelfDeps}
-        extraTags={[typedModelSelfTag(info, matchingTag)]}
-        forceKeepNames={forceKeepNames}
-        paramSize={info.paramSize}
-      />
-      <TypedModelFetchStatus tagsState={tagsState} />
-    </div>
-  );
-}
-
-function TypedModelRow({
-  info,
-  matchingTag,
-  shelfDeps,
-  tagsState,
-}: TypedModelRowProps) {
-  const activePullName = activePullNameForRow(
-    shelfDeps.pulls,
-    info.modelName,
-    info.paramSize,
-  );
-  const publisher = getOllamaPublisher(familySlugFromName(info.baseSlug));
-  return (
-    <ModelCard
-      as="div"
-      className={activePullName ? OLLAMA_DOWNLOADING_CARD_CLASSES : undefined}
-      data-model-id={activePullName ?? info.modelName}
-      description={
-        <span className="truncate font-mono text-foreground-secondary">
-          {info.modelName}
-        </span>
-      }
-      makerIcon={<OllamaMakerIcon slug={publisher.slug} />}
-      meta={buildTypedModelMetaEntries(info, matchingTag)}
-      name={formatOllamaDisplayName(info.modelName)}
-      onBodyClick={defaultTagBodyClick(shelfDeps, info.modelName)}
-      shelf={
-        <TypedModelShelf
-          info={info}
-          matchingTag={matchingTag}
-          shelfDeps={shelfDeps}
-          tagsState={tagsState}
-        />
-      }
-    />
-  );
-}
-
-// ── Filtering ─────────────────────────────────────────────────────────
-
-/** Substring match against the model's full search corpus. We index the
- *  beautified display name, the publisher label, and the publisher slug too
- *  so users typing "google" surface their installed Gemma models, "meta"
- *  surfaces Llama, "alibaba" or "qwen" surface Qwen, and so on — the same
- *  search affordance the OpenRouter picker offers. */
-function matchesInstalledQuery(
-  m: OllamaModel,
-  query: string,
-  descriptionsByBase: ReadonlyMap<string, string> = EMPTY_DESCRIPTION_BY_BASE,
-): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) {
-    return true;
-  }
-  const family = getOllamaFamily(m);
-  const publisher = getOllamaPublisher(family);
-  const corpus = [
-    m.name,
-    formatOllamaDisplayName(m.name),
-    family,
-    publisher.label,
-    publisher.slug,
-    installedDescriptionForModel(m, descriptionsByBase) ?? "",
-    m.details?.parameterSize ?? "",
-    m.details?.quantizationLevel ?? "",
-    m.details?.format ?? "",
-    m.details?.family ?? "",
-    ...(m.details?.families ?? []),
-    ...(m.capabilities ?? []),
-    String(m.contextLength ?? ""),
-  ]
-    .join(" ")
-    .toLowerCase();
-  return corpus.includes(q);
-}
-
-function matchesRecommendedQuery(
-  m: RecommendedOllamaModel,
-  query: string,
-): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) {
-    return true;
-  }
-  const family = (m.family ?? familySlugFromName(m.name)).toLowerCase();
-  const publisher = getOllamaPublisher(family);
-  const fields = [
-    m.name,
-    m.displayName,
-    m.description,
-    family,
-    publisher.label,
-    publisher.slug,
-    formatOllamaDisplayName(m.name),
-    ...(m.tags ?? []),
-  ];
-  return fields.some((field) => field.toLowerCase().includes(q));
-}
-
-// ── Maker-first grouping ──────────────────────────────────────────────
-// Every model — installed, recommended, and (on search) library — collapses into
-// ONE group per maker, so gemma4 shows under "Google" next to gemma3 instead of in
-// a separate maker-less "Recommended"/"Library" pile.
-
-export interface MakerGroup {
-  installed: OllamaModel[];
-  library: OllamaLibraryHit[];
-  recommended: RecommendedOllamaModel[];
-  slug: string;
-}
-
-function recommendedPublisherSlug(m: RecommendedOllamaModel): string {
-  return getOllamaPublisher(
-    (m.family ?? familySlugFromName(m.name)).toLowerCase(),
-  ).slug;
-}
-
-function ensureMakerGroup(
-  map: Map<string, MakerGroup>,
-  slug: string,
-): MakerGroup {
-  const found = map.get(slug);
-  if (found) {
-    return found;
-  }
-  const created: MakerGroup = {
-    slug,
-    installed: [],
-    recommended: [],
-    library: [],
-  };
-  map.set(slug, created);
-  return created;
-}
-
-function makerGroupCount(g: MakerGroup): number {
-  return g.installed.length + g.recommended.length + g.library.length;
-}
-
-/**
- * Merge installed + recommended + (query-only) library models into one group per
- * maker, sorted by maker label. Library hits whose base slug is already shown as
- * an installed/recommended card in the same maker are dropped (no `gemma4` library
- * card next to the `gemma4:e2b` recommended card).
- */
-export function buildMakerGroups(opts: {
-  installed: readonly OllamaModel[];
-  library: readonly OllamaLibraryHit[];
-  recommended: readonly RecommendedOllamaModel[];
-}): MakerGroup[] {
-  const map = new Map<string, MakerGroup>();
-  for (const m of opts.installed) {
-    ensureMakerGroup(
-      map,
-      getOllamaPublisher(getOllamaFamily(m)).slug,
-    ).installed.push(m);
-  }
-  for (const m of opts.recommended) {
-    ensureMakerGroup(map, recommendedPublisherSlug(m)).recommended.push(m);
-  }
-  for (const hit of opts.library) {
-    const group = ensureMakerGroup(
-      map,
-      getOllamaPublisher(familySlugFromName(hit.name)).slug,
-    );
-    const covered = new Set(
-      [...group.installed, ...group.recommended].map((m) =>
-        libraryBaseSlug(m.name),
-      ),
-    );
-    if (!covered.has(libraryBaseSlug(hit.name))) {
-      group.library.push(hit);
-    }
-  }
-  return [...map.values()]
-    .filter((g) => makerGroupCount(g) > 0)
-    .toSorted((a, b) =>
-      getOllamaPublisherBySlug(a.slug).label.localeCompare(
-        getOllamaPublisherBySlug(b.slug).label,
-      ),
-    );
-}
-
-/** Build the maker-grouped view. Search filters installed/recommended rows only;
- *  remote Ollama tags resolve through the exact-tag card instead of broad
- *  catalog search results. */
-function buildMakerView(opts: {
-  installed: readonly OllamaModel[];
-  recommended: readonly RecommendedOllamaModel[];
-}): MakerGroup[] {
-  const makerGroups = buildMakerGroups({
-    installed: opts.installed,
-    recommended: opts.recommended,
-    library: [],
-  });
-  return makerGroups;
-}
-
-/** Recommended models not already installed, filtered by the active query. */
-function computeRecommendedVisible(
-  recommendedModels: readonly RecommendedOllamaModel[] | undefined,
-  installedNameSet: ReadonlySet<string>,
-  query: string,
-): RecommendedOllamaModel[] {
-  if (!recommendedModels) {
-    return [];
-  }
-  return recommendedModels.filter(
-    (m) => !installedNameSet.has(m.name) && matchesRecommendedQuery(m, query),
-  );
-}
-
-// ── List body ─────────────────────────────────────────────────────────
-
-interface ListBodyProps {
-  /** Recommended (not-installed) models the user has starred — pinned into the
-   *  Favorites group alongside installed favorites, matching the STT picker. */
-  favoriteRecommended: readonly RecommendedOllamaModel[];
-  /** Installed models the user has starred — pinned as a synthetic "Favorites"
-   *  group at the very top (repeated: each also keeps its maker-group row). */
-  favoritesVisible: readonly OllamaModel[];
-  hasQuery: boolean;
-  /** Shared row deps for every maker group (installed + recommended + library). */
-  makerDeps: MakerGroupDeps;
-  /** Installed + recommended (+ library on search) merged into one group per
-   *  maker, sorted by maker label. */
-  makerGroups: readonly MakerGroup[];
-  onDelete: ((name: string) => void) | undefined;
-  onToggleFavorite: (name: string) => void;
-  shelfDeps: QuantShelfDeps;
-  /** Whether pull handlers are wired — gates the typed model search-result row. */
-  showTypedModelCard: boolean;
-  /** Installed models flattened into one globally-sorted column, rendered in
-   *  place of the maker groups while a sort is active. */
-  sortedInstalled: readonly OllamaModel[];
-  /** Active global sort key, or ``null`` for the default maker-grouped view. */
-  sortKey: OllamaSortValue;
-  typedModelInfo: TypedModelQueryInfo | null;
-  typedModelMatch: OllamaLibraryTag | undefined;
-  typedModelTagsState: OllamaTagsState;
-  value: string;
-}
-
-interface InstalledModelsSectionProps {
-  descriptionsByBase: ReadonlyMap<string, string>;
-  isFavorite: (name: string) => boolean;
-  onDelete: ((name: string) => void) | undefined;
-  onToggleFavorite: (name: string) => void;
-  shelfDeps: QuantShelfDeps;
-  sortedInstalled: readonly OllamaModel[];
-  sortKey: OllamaSortKey;
-  value: string;
-}
-
-/**
- * The installed-models section of the sorted list. Favorites / Recommended /
- * Library are rendered by `ListBody` around it and are unaffected — the sort
- * applies only to installed models.
- */
-function InstalledModelsSection({
-  descriptionsByBase,
-  isFavorite,
-  onDelete,
-  onToggleFavorite,
-  shelfDeps,
-  sortedInstalled,
-  sortKey,
-  value,
-}: InstalledModelsSectionProps) {
-  return (
-    <div>
-      <SortedGroupHeader count={sortedInstalled.length} sortKey={sortKey} />
-      <div className="flex flex-col gap-0.5 p-1">
-        {sortedInstalled.map((m) => (
-          <OllamaModelRow
-            description={installedDescriptionForModel(m, descriptionsByBase)}
-            isFavorited={isFavorite(m.name)}
-            isSelected={m.name === value}
-            key={m.name}
-            model={m}
-            onDelete={onDelete}
-            onToggleFavorite={onToggleFavorite}
-            shelfDeps={shelfDeps}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Everything one maker group's rows need, bundled so the section signature
- *  stays small. */
-interface MakerGroupDeps {
-  descriptionsByBase: ReadonlyMap<string, string>;
-  getFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
-  installedNames: ReadonlySet<string>;
-  isFavorite: (name: string) => boolean;
-  onDelete: ((name: string) => void) | undefined;
-  onSelect: (name: string) => void;
-  onToggleFavorite: (name: string) => void;
-  pausedPulls: Readonly<Record<string, PausedPullState>>;
-  pulls: Readonly<Record<string, OllamaPullProgress>>;
-  shelfDeps: QuantShelfDeps;
-  tagsByModel: OllamaLibrarySearchProps["tagsByModel"];
-  value: string;
-}
-
-/** One maker's section: installed rows first (selectable), then recommended
- *  rows (curated, star-badged), then library hits (only present on search). */
-function MakerGroupSection({
-  group,
-  deps,
-}: {
-  deps: MakerGroupDeps;
-  group: MakerGroup;
-}) {
-  return (
-    <div>
-      <PublisherGroupHeader
-        count={makerGroupCount(group)}
-        publisherSlug={group.slug}
-      />
-      <div className="flex flex-col gap-1.5 p-1.5">
-        {group.installed.map((m) => (
-          <OllamaModelRow
-            description={installedDescriptionForModel(
-              m,
-              deps.descriptionsByBase,
-            )}
-            isFavorited={deps.isFavorite(m.name)}
-            isSelected={m.name === deps.value}
-            key={m.name}
-            model={m}
-            onDelete={deps.onDelete}
-            onToggleFavorite={deps.onToggleFavorite}
-            shelfDeps={deps.shelfDeps}
-          />
-        ))}
-        {group.recommended.map((m) => (
-          <RecommendedRow
-            description={ollamaDescriptionForName(
-              m.name,
-              deps.descriptionsByBase,
-            )}
-            fit={deps.getFit?.(m.sizeBytes)}
-            isFavorited={deps.isFavorite(m.name)}
-            key={m.name}
-            model={m}
-            onToggleFavorite={deps.onToggleFavorite}
-            shelfDeps={deps.shelfDeps}
-          />
-        ))}
-        {group.library.map((hit) => (
-          <LibraryRow
-            hit={hit}
-            installedNames={deps.installedNames}
-            isFavorited={deps.isFavorite(hit.name)}
-            key={hit.name}
-            onToggleFavorite={deps.onToggleFavorite}
-            pausedPulls={deps.pausedPulls}
-            pulls={deps.pulls}
-            shelfDeps={deps.shelfDeps}
-            tagsState={deps.tagsByModel[hit.name.toLowerCase()]}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ListBody(props: ListBodyProps) {
-  const {
-    favoriteRecommended,
-    favoritesVisible,
-    hasQuery,
-    makerDeps,
-    makerGroups,
-    onDelete,
-    onToggleFavorite,
-    shelfDeps,
-    showTypedModelCard,
-    sortedInstalled,
-    sortKey,
-    typedModelInfo,
-    typedModelMatch,
-    typedModelTagsState,
-    value,
-  } = props;
-
-  const showTypedModel =
-    showTypedModelCard &&
-    typedModelInfo !== null &&
-    typedModelMatch !== undefined;
-
-  if (
-    makerGroups.length === 0 &&
-    favoritesVisible.length === 0 &&
-    favoriteRecommended.length === 0 &&
-    !showTypedModel
-  ) {
-    return <EmptyState filtered={hasQuery} />;
-  }
-
-  return (
-    <Combobox.List
-      className="min-h-0 flex-1 overflow-y-auto p-0"
-      data-slot="ollama-model-list"
-    >
-      {/* A global sort flattens EVERY model into one sorted column (matching the
-			    STT picker), so the Favorites group — which is intrinsically unsorted /
-			    starred-order — is suppressed while sorting; the favorited models still
-			    appear in the flat sorted column. */}
-      {sortKey === null &&
-      favoritesVisible.length + favoriteRecommended.length > 0 ? (
-        <div>
-          <FavoritesGroupHeader
-            count={favoritesVisible.length + favoriteRecommended.length}
-          />
-          <div className="flex flex-col gap-1.5 p-1.5">
-            {favoritesVisible.map((m) => (
-              <OllamaModelRow
-                description={installedDescriptionForModel(
-                  m,
-                  makerDeps.descriptionsByBase,
-                )}
-                isFavorited
-                isSelected={m.name === value}
-                key={`fav-${m.name}`}
-                model={m}
-                onDelete={onDelete}
-                onToggleFavorite={onToggleFavorite}
-                shelfDeps={shelfDeps}
-              />
-            ))}
-            {favoriteRecommended.map((m) => (
-              <RecommendedRow
-                description={ollamaDescriptionForName(
-                  m.name,
-                  makerDeps.descriptionsByBase,
-                )}
-                fit={makerDeps.getFit?.(m.sizeBytes)}
-                isFavorited
-                key={`fav-${m.name}`}
-                model={m}
-                onToggleFavorite={onToggleFavorite}
-                shelfDeps={shelfDeps}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-      {showTypedModel && typedModelInfo && typedModelMatch ? (
-        <div className="p-1.5">
-          <TypedModelRow
-            info={typedModelInfo}
-            matchingTag={typedModelMatch}
-            shelfDeps={shelfDeps}
-            tagsState={typedModelTagsState}
-          />
-        </div>
-      ) : null}
-      {/* Default view: one section per maker, merging that maker's installed +
-			    recommended models so every model sits under its real maker. An active
-			    sort instead flattens all installed models into
-			    one globally-sorted column. */}
-      {sortKey === null ? (
-        makerGroups.map((group) => (
-          <MakerGroupSection deps={makerDeps} group={group} key={group.slug} />
-        ))
-      ) : (
-        <InstalledModelsSection
-          descriptionsByBase={makerDeps.descriptionsByBase}
-          isFavorite={makerDeps.isFavorite}
-          onDelete={onDelete}
-          onToggleFavorite={onToggleFavorite}
-          shelfDeps={shelfDeps}
-          sortedInstalled={sortedInstalled}
-          sortKey={sortKey}
-          value={value}
-        />
-      )}
-    </Combobox.List>
-  );
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const candidate = value as Partial<PersistedOllamaSelectorUiState>;
+	return (
+		typeof candidate.activeRailId === "string" &&
+		typeof candidate.query === "string" &&
+		isOllamaSortValue(candidate.sortKey)
+	);
 }
 
 // ── Wrapper: composes ModelPicker shell ───────────────────────────────
 
 const EMPTY_PULLS: Readonly<Record<string, OllamaPullProgress>> = Object.freeze(
-  {},
+	{},
 );
 const EMPTY_PAUSED: Readonly<Record<string, PausedPullState>> = Object.freeze(
-  {},
+	{},
 );
 
 /** Wraps the body so the popup keeps the expected flex layout. */
 function selectorListSlot(body: ReactNode): ReactNode {
-  return <div className="flex min-h-0 flex-1 flex-col">{body}</div>;
+	return <div className="flex min-h-0 flex-1 flex-col">{body}</div>;
 }
 
 /** Build the GroupRail tile list: All authors plus one tile per maker. */
 /** The rail tile icon for one maker — brand logo when bundled, else a neutral
  *  initials chip (never the misleading OpenRouter "O"). */
 function makerRailIcon(slug: string): ReactNode {
-  const icon = resolveProviderIcon(slug);
-  if (icon) {
-    return (
-      <img
-        alt=""
-        className="size-5 rounded-[3px] object-cover"
-        height={20}
-        src={icon}
-        width={20}
-      />
-    );
-  }
-  return (
-    <RailIconChip>
-      {getOllamaPublisherBySlug(slug).label.charAt(0).toUpperCase() || "?"}
-    </RailIconChip>
-  );
+	const icon = resolveProviderIcon(slug);
+	if (icon) {
+		return (
+			<img
+				alt=""
+				className="size-5 rounded-[3px] object-cover"
+				height={20}
+				src={icon}
+				width={20}
+			/>
+		);
+	}
+	return (
+		<RailIconChip>
+			{getOllamaPublisherBySlug(slug).label.charAt(0).toUpperCase() || "?"}
+		</RailIconChip>
+	);
 }
 
 function buildOllamaRailItems(opts: {
-  allModelCount: number;
-  makerGroups: readonly MakerGroup[];
+	allModelCount: number;
+	makerGroups: readonly MakerGroup[];
 }): GroupRailItem[] {
-  const railItems: GroupRailItem[] = [
-    buildAllAuthorsRailItem(opts.allModelCount),
-  ];
-  // One tile per maker — installed + recommended (+ library on search) collapse
-  // into the same group, so there is no separate Recommended / Library tile.
-  for (const group of opts.makerGroups) {
-    railItems.push({
-      id: group.slug,
-      label: getOllamaPublisherBySlug(group.slug).label,
-      badge: makerGroupCount(group),
-      icon: makerRailIcon(group.slug),
-    });
-  }
-  return railItems;
-}
-
-/** Bundle the quant-shelf data source + handlers into a single {@link
- *  QuantShelfDeps} threaded to every row. Extracted from `OllamaModelSelector`
- *  to keep its cognitive complexity under the rule cap. */
-function buildQuantShelfDeps(opts: {
-  installedNames: ReadonlySet<string>;
-  librarySearch: OllamaLibrarySearchProps | undefined;
-  onDelete: ((name: string) => void) | undefined;
-  onDiscardPull: ((name: string) => void) | undefined;
-  onPull: ((name: string) => void) | undefined;
-  onResumePull: ((name: string) => void) | undefined;
-  onSelect: (name: string) => void;
-  onStopPull: ((name: string) => void) | undefined;
-  pausedPulls: Readonly<Record<string, PausedPullState>>;
-  pulls: Readonly<Record<string, OllamaPullProgress>>;
-  systemFit: ((sizeBytes: number) => OllamaFitInfo) | undefined;
-  value: string;
-}): QuantShelfDeps {
-  const tagsByModel = opts.librarySearch?.tagsByModel;
-  const fetchTags = opts.librarySearch?.fetchTags;
-  return {
-    getFit: opts.systemFit,
-    getTags: tagsByModel
-      ? (baseSlug: string) => tagsByModel[baseSlug.toLowerCase()]?.tags ?? []
-      : undefined,
-    fetchTags: fetchTags
-      ? (baseSlug: string) => fetchTags(baseSlug)
-      : undefined,
-    installedNames: opts.installedNames,
-    selectedName: opts.value,
-    pulls: opts.pulls,
-    pausedPulls: opts.pausedPulls,
-    onSelect: opts.onSelect,
-    onPull: opts.onPull ?? noop,
-    onStop: opts.onStopPull ?? noop,
-    onResume: opts.onResumePull ?? noop,
-    // The shelf's single `onDiscard` serves two roles: cancel/forget an
-    // in-flight or paused pull (not yet installed) AND delete an installed
-    // quant's weights. Route by installed-ness so deleting an installed quant
-    // actually removes it from disk (onDelete) instead of no-oping on the
-    // forget-paused-pull handler — mirrors STT, whose delete hits a real delete.
-    onDiscard: (name: string) =>
-      opts.installedNames.has(name)
-        ? (opts.onDelete ?? noop)(name)
-        : (opts.onDiscardPull ?? noop)(name),
-  };
+	const railItems: GroupRailItem[] = [
+		buildAllAuthorsRailItem(opts.allModelCount),
+	];
+	// One tile per maker — installed + recommended (+ library on search) collapse
+	// into the same group, so there is no separate Recommended / Library tile.
+	for (const group of opts.makerGroups) {
+		railItems.push({
+			id: group.slug,
+			label: getOllamaPublisherBySlug(group.slug).label,
+			badge: makerGroupCount(group),
+			icon: makerRailIcon(group.slug),
+		});
+	}
+	return railItems;
 }
 
 /**
@@ -2687,305 +171,309 @@ function buildQuantShelfDeps(opts: {
  * a `recommendedModels` list. The typed-tag card only needs the pull callbacks.
  */
 export function OllamaModelSelector({
-  disabled = false,
-  inline = false,
-  isLoading = false,
-  librarySearch,
-  models,
-  onChange,
-  onDelete,
-  onDiscardPull,
-  onOpen,
-  onPull,
-  onResumePull,
-  onStopPull,
-  pausedPulls = EMPTY_PAUSED,
-  placeholder = DEFAULT_PLACEHOLDER,
-  pulls = EMPTY_PULLS,
-  recommendedModels,
-  swap,
-  systemFit,
-  value,
+	disabled = false,
+	inline = false,
+	isLoading = false,
+	librarySearch,
+	models,
+	onChange,
+	onDelete,
+	onDiscardPull,
+	onOpen,
+	onPull,
+	onResumePull,
+	onStopPull,
+	pausedPulls = EMPTY_PAUSED,
+	placeholder = DEFAULT_PLACEHOLDER,
+	pulls = EMPTY_PULLS,
+	recommendedModels,
+	swap,
+	systemFit,
+	value,
 }: OllamaModelSelectorProps) {
-  const selected = models.find((m) => m.name === value);
-  const [persistedUiState] = useState(() =>
-    readPersistedSelectorState(
-      OLLAMA_SELECTOR_UI_STORAGE_KEY,
-      isPersistedOllamaSelectorUiState,
-      DEFAULT_PERSISTED_OLLAMA_SELECTOR_UI_STATE,
-    ),
-  );
-  const [query, setQuery] = useState(persistedUiState.query);
-  // Active global sort key, or ``null`` for the default per-publisher grouping.
-  const [sortKey, setSortKey] = useState<OllamaSortValue>(
-    persistedUiState.sortKey,
-  );
-  const [activeRailId, setActiveRailId] = useState<string>(
-    persistedUiState.activeRailId,
-  );
-  // Controlled-open + click-tracking, mirroring the STT/OpenRouter pickers.
-  // The sort menu's Popover content is portaled OUTSIDE the combobox popup, so
-  // without this, clicking a sort chip trips Base UI's outside-press dismissal
-  // and collapses the whole picker. ``handleOpenChange`` vetoes that close when
-  // the click landed inside our own sort popup.
-  const [open, setOpen] = useState(false);
+	const selected = models.find((m) => m.name === value);
+	const [persistedUiState] = useState(() =>
+		readPersistedSelectorState(
+			OLLAMA_SELECTOR_UI_STORAGE_KEY,
+			isPersistedOllamaSelectorUiState,
+			DEFAULT_PERSISTED_OLLAMA_SELECTOR_UI_STATE,
+		),
+	);
+	const [query, setQuery] = useState(persistedUiState.query);
+	// Active global sort key, or ``null`` for the default per-publisher grouping.
+	const [sortKey, setSortKey] = useState<OllamaSortValue>(
+		persistedUiState.sortKey,
+	);
+	const [activeRailId, setActiveRailId] = useState<string>(
+		persistedUiState.activeRailId,
+	);
+	// Controlled-open + click-tracking, mirroring the STT/OpenRouter pickers.
+	// The sort menu's Popover content is portaled OUTSIDE the combobox popup, so
+	// without this, clicking a sort chip trips Base UI's outside-press dismissal
+	// and collapses the whole picker. ``handleOpenChange`` vetoes that close when
+	// the click landed inside our own sort popup.
+	const [open, setOpen] = useState(false);
 
-  // localStorage-backed per-model favorites — same affordance as the STT
-  // picker. The star toggle on each installed row flips membership; favorited
-  // models surface as a "Favorites" group pinned to the top of the list.
-  useEffect(() => {
-    writePersistedSelectorState(OLLAMA_SELECTOR_UI_STORAGE_KEY, {
-      activeRailId,
-      query,
-      sortKey,
-    });
-  }, [activeRailId, query, sortKey]);
+	// localStorage-backed per-model favorites — same affordance as the STT
+	// picker. The star toggle on each installed row flips membership; favorited
+	// models surface as a "Favorites" group pinned to the top of the list.
+	useEffect(() => {
+		writePersistedSelectorState(OLLAMA_SELECTOR_UI_STORAGE_KEY, {
+			activeRailId,
+			query,
+			sortKey,
+		});
+	}, [activeRailId, query, sortKey]);
 
-  const { isFavorite, toggleFavorite } = useFavoriteOllamaModels();
-  // Per-window starred-AUTHOR set (the publisher rail tiles) — the maker-
-  // favoriting affordance every picker shares. Separate localStorage key from
-  // the per-model favorites above.
-  const { favorites: favoriteAuthors, toggleFavorite: toggleAuthorFavorite } =
-    useFavoriteSet("winstt:ollama-favorite-authors");
-  const descriptionsByBase = buildOllamaDescriptionIndex(
-    librarySearch?.catalog,
-  );
+	const { isFavorite, toggleFavorite } = useFavoriteOllamaModels();
+	// Per-window starred-AUTHOR set (the publisher rail tiles) — the maker-
+	// favoriting affordance every picker shares. Separate localStorage key from
+	// the per-model favorites above.
+	const { favorites: favoriteAuthors, toggleFavorite: toggleAuthorFavorite } =
+		useFavoriteSet("winstt:ollama-favorite-authors");
+	const descriptionsByBase = buildOllamaDescriptionIndex(
+		librarySearch?.catalog,
+	);
 
-  const canPullModels = !!(
-    onPull &&
-    onStopPull &&
-    onResumePull &&
-    onDiscardPull
-  );
-  const showRecommendedSection = !!(recommendedModels && canPullModels);
+	const canPullModels = !!(
+		onPull &&
+		onStopPull &&
+		onResumePull &&
+		onDiscardPull
+	);
 
-  const installedFiltered = query.trim()
-    ? models.filter((m) => matchesInstalledQuery(m, query, descriptionsByBase))
-    : models;
+	const installedFiltered = query.trim()
+		? models.filter((m) => matchesInstalledQuery(m, query, descriptionsByBase))
+		: models;
 
-  // When a sort is active, the maker groups collapse into one globally-sorted
-  // flat column. Computed once here and threaded to both the rail (count) and
-  // the list body.
-  const sortedInstalled =
-    sortKey === null ? [] : sortOllamaModels(installedFiltered, sortKey);
+	// When a sort is active, the maker groups collapse into one globally-sorted
+	// flat column. Computed once here and threaded to both the rail (count) and
+	// the list body.
+	const sortedInstalled =
+		sortKey === null ? [] : sortOllamaModels(installedFiltered, sortKey);
 
-  const handleSelect = (name: string) => {
-    onChange(name);
-  };
+	const handleSelect = (name: string) => {
+		onChange(name);
+	};
 
-  // Starred installed models, query-filtered — pinned to the top of the list
-  // as a synthetic "Favorites" group. The model is repeated (it also keeps its
-  // publisher-group row), matching the STT picker's behavior.
-  const favoritesVisible = installedFiltered.filter((m) => isFavorite(m.name));
+	// Starred installed models, query-filtered — pinned to the top of the list
+	// as a synthetic "Favorites" group. The model is repeated (it also keeps its
+	// publisher-group row), matching the STT picker's behavior.
+	const favoritesVisible = installedFiltered.filter((m) => isFavorite(m.name));
 
-  const installedNameSet = new Set(models.map((m) => m.name));
+	const installedNameSet = new Set(models.map((m) => m.name));
 
-  const recommendedVisible = computeRecommendedVisible(
-    recommendedModels,
-    installedNameSet,
-    query,
-  );
-  // Recommended models the user starred — pinned into the Favorites group (and
-  // kept in their maker group too), matching the STT picker.
-  const favoriteRecommended = recommendedVisible.filter((m) =>
-    isFavorite(m.name),
-  );
+	// Curated catalog model names. An installed model backed by one of these (same
+	// base + size) is part of the shipped set: its card persists for the app's
+	// lifetime, so it gets only per-quant shelf deletes — never a whole-card
+	// delete. Ad-hoc models pulled by searching the picker keep the card delete.
+	const catalogNameSet = new Set((recommendedModels ?? []).map((m) => m.name));
+	const isCatalogModel = (name: string) =>
+		isCatalogBackedModel(catalogNameSet, name);
 
-  const hasQuery = query.trim().length > 0;
+	const recommendedVisible = computeRecommendedVisible(
+		recommendedModels,
+		installedNameSet,
+		query,
+	);
+	// Recommended models the user starred — pinned into the Favorites group (and
+	// kept in their maker group too), matching the STT picker.
+	const favoriteRecommended = recommendedVisible.filter((m) =>
+		isFavorite(m.name),
+	);
 
-  // Maker-first: installed + recommended merge into one group per maker, sorted
-  // by maker label. Remote Ollama results are not fuzzy-listed here; an exact
-  // typed tag resolves as a single card below.
-  const makerGroups = buildMakerView({
-    installed: installedFiltered,
-    recommended: recommendedVisible,
-  });
+	const hasQuery = query.trim().length > 0;
 
-  // Build the shared rail tile list — one tile per maker (no Recommended /
-  // Library tiles). Matches the OpenRouter + STT pickers (same `GroupRail`).
-  const railItems = buildOllamaRailItems({
-    allModelCount: makerGroups.reduce(
-      (sum, group) => sum + makerGroupCount(group),
-      0,
-    ),
-    makerGroups,
-  });
+	// Maker-first: installed + recommended merge into one group per maker, sorted
+	// by maker label. Remote Ollama results are not fuzzy-listed here; an exact
+	// typed tag resolves as a single card below.
+	const makerGroups = buildMakerView({
+		installed: installedFiltered,
+		recommended: recommendedVisible,
+	});
 
-  const soleActivePullName = singleActivePullName(pulls);
+	// Build the shared rail tile list — one tile per maker (no Recommended /
+	// Library tiles). Matches the OpenRouter + STT pickers (same `GroupRail`).
+	const railItems = buildOllamaRailItems({
+		allModelCount: makerGroups.reduce(
+			(sum, group) => sum + makerGroupCount(group),
+			0,
+		),
+		makerGroups,
+	});
 
-  // The popup node is captured into ``popupRef`` via Base UI's callback ref so
-  // the close guard can distinguish internal filter-menu clicks from outside
-  // presses. No `useState` for the node lives at this layer.
-  const openGuard = useModelPickerCloseGuard({
-    setOpen,
-    onOpen: () => {
-      onOpen?.();
-    },
-  });
-  // Combobox.Root's built-in filter is used so keyboard typeahead +
-  // item-focus stay in sync with our visible installed rows. We mirror
-  // the filtered list for our own grouping/recommended rendering.
-  const filter = (m: OllamaModel, q: string) =>
-    matchesInstalledQuery(m, q, descriptionsByBase);
+	const soleActivePullName = singleActivePullName(pulls);
 
-  const typedModelInfo = typedModelQueryInfo(query);
-  const typedModelTagsState = typedModelInfo
-    ? librarySearch?.tagsByModel[typedModelInfo.baseSlug]
-    : undefined;
-  const shouldResolveTypedModel = canPullModels && Boolean(open || inline);
-  const typedModelBaseSlug = shouldResolveTypedModel
-    ? typedModelInfo?.baseSlug
-    : undefined;
-  const fetchTypedModelTags = librarySearch?.fetchTags;
-  useEffect(() => {
-    if (typedModelBaseSlug) {
-      fetchTypedModelTags?.(typedModelBaseSlug);
-    }
-  }, [fetchTypedModelTags, typedModelBaseSlug]);
-  const typedModelMatch = matchingTypedModelTag(
-    typedModelInfo,
-    typedModelTagsState,
-  );
+	// The popup node is captured into ``popupRef`` via Base UI's callback ref so
+	// the close guard can distinguish internal filter-menu clicks from outside
+	// presses. No `useState` for the node lives at this layer.
+	const openGuard = useModelPickerCloseGuard({
+		setOpen,
+		onOpen: () => {
+			onOpen?.();
+		},
+	});
+	// Combobox.Root's built-in filter is used so keyboard typeahead +
+	// item-focus stay in sync with our visible installed rows. We mirror
+	// the filtered list for our own grouping/recommended rendering.
+	const filter = (m: OllamaModel, q: string) =>
+		matchesInstalledQuery(m, q, descriptionsByBase);
 
-  // The quant shelf's data source + handlers, bundled once and threaded to every
-  // row. The pull/select/fit handlers are the SAME ones the old Pull-button
-  // cluster used; `getTags`/`fetchTags` lazily source per-base-slug sibling tags
-  // from the library store (undefined when no `librarySearch` → shelf shows just
-  // the self-badge).
-  const shelfDeps = buildQuantShelfDeps({
-    installedNames: installedNameSet,
-    librarySearch,
-    onDelete,
-    onDiscardPull,
-    onPull,
-    onResumePull,
-    onSelect: handleSelect,
-    onStopPull,
-    pausedPulls,
-    pulls,
-    systemFit,
-    value,
-  });
+	const typedModelInfo = typedModelQueryInfo(query);
+	const typedModelTagsState = typedModelInfo
+		? librarySearch?.tagsByModel[typedModelInfo.baseSlug]
+		: undefined;
+	const shouldResolveTypedModel = canPullModels && Boolean(open || inline);
+	const typedModelBaseSlug = shouldResolveTypedModel
+		? typedModelInfo?.baseSlug
+		: undefined;
+	const fetchTypedModelTags = librarySearch?.fetchTags;
+	useEffect(() => {
+		if (typedModelBaseSlug) {
+			fetchTypedModelTags?.(typedModelBaseSlug);
+		}
+	}, [fetchTypedModelTags, typedModelBaseSlug]);
+	const typedModelMatch = matchingTypedModelTag(
+		typedModelInfo,
+		typedModelTagsState,
+	);
 
-  // Shared row deps for every maker group — installed + recommended + library
-  // rows all draw from this one bundle.
-  const makerDeps: MakerGroupDeps = {
-    descriptionsByBase,
-    getFit: systemFit,
-    installedNames: installedNameSet,
-    isFavorite,
-    onDelete,
-    onSelect: handleSelect,
-    onToggleFavorite: toggleFavorite,
-    pausedPulls,
-    pulls,
-    shelfDeps,
-    tagsByModel: librarySearch?.tagsByModel ?? {},
-    value,
-  };
-  const allAuthorsSelected = activeRailId === ALL_AUTHORS_RAIL_ID;
-  const visibleMakerGroups = allAuthorsSelected
-    ? makerGroups
-    : makerGroups.filter((group) => group.slug === activeRailId);
+	// The quant shelf's data source + handlers, bundled once and threaded to every
+	// row. The pull/select/fit handlers are the SAME ones the old Pull-button
+	// cluster used; `getTags`/`fetchTags` lazily source per-base-slug sibling tags
+	// from the library store (undefined when no `librarySearch` → shelf shows just
+	// the self-badge).
+	const shelfDeps = buildQuantShelfDeps({
+		installedNames: installedNameSet,
+		librarySearch,
+		onDelete,
+		onDiscardPull,
+		onPull,
+		onResumePull,
+		onSelect: handleSelect,
+		onStopPull,
+		pausedPulls,
+		pulls,
+		systemFit,
+		value,
+	});
 
-  const body = (
-    <ListBody
-      favoriteRecommended={allAuthorsSelected ? favoriteRecommended : []}
-      favoritesVisible={allAuthorsSelected ? favoritesVisible : []}
-      hasQuery={hasQuery}
-      makerDeps={makerDeps}
-      makerGroups={visibleMakerGroups}
-      onDelete={onDelete}
-      onToggleFavorite={toggleFavorite}
-      shelfDeps={shelfDeps}
-      showTypedModelCard={allAuthorsSelected && canPullModels}
-      sortedInstalled={sortedInstalled}
-      sortKey={sortKey}
-      typedModelInfo={typedModelInfo}
-      typedModelMatch={typedModelMatch}
-      typedModelTagsState={typedModelTagsState}
-      value={value}
-    />
-  );
+	// Shared row deps for every maker group — installed + recommended + library
+	// rows all draw from this one bundle.
+	const makerDeps: MakerGroupDeps = {
+		descriptionsByBase,
+		getFit: systemFit,
+		installedNames: installedNameSet,
+		isCatalogModel,
+		isFavorite,
+		onDelete,
+		onSelect: handleSelect,
+		onToggleFavorite: toggleFavorite,
+		pausedPulls,
+		pulls,
+		shelfDeps,
+		tagsByModel: librarySearch?.tagsByModel ?? {},
+		value,
+	};
+	const allAuthorsSelected = activeRailId === ALL_AUTHORS_RAIL_ID;
+	const visibleMakerGroups = allAuthorsSelected
+		? makerGroups
+		: makerGroups.filter((group) => group.slug === activeRailId);
 
-  const swapFromName = swap?.fromName ?? undefined;
-  const swapToName = swap?.toName ?? undefined;
-  const swapFromModel = swapFromName
-    ? models.find((m) => m.name === swapFromName)
-    : undefined;
-  const swapToModel = swapToName
-    ? models.find((m) => m.name === swapToName)
-    : undefined;
-  const handleRailClick = (id: string) => {
-    if (id !== ALL_AUTHORS_RAIL_ID) {
-      setSortKey(null);
-    }
-    setActiveRailId(id);
-  };
-  const handleSortChange = (next: OllamaSortValue) => {
-    if (next !== null) {
-      setActiveRailId(ALL_AUTHORS_RAIL_ID);
-    }
-    setSortKey(next);
-  };
-  const sidebarSlot =
-    railItems.length > 1 ? (
-      <GroupRail
-        activeId={activeRailId}
-        favorites={favoriteAuthors}
-        items={railItems}
-        onClick={handleRailClick}
-        onToggleFavorite={toggleAuthorFavorite}
-      />
-    ) : undefined;
+	const body = (
+		<ListBody
+			favoriteRecommended={allAuthorsSelected ? favoriteRecommended : []}
+			favoritesVisible={allAuthorsSelected ? favoritesVisible : []}
+			hasQuery={hasQuery}
+			makerDeps={makerDeps}
+			makerGroups={visibleMakerGroups}
+			onDelete={onDelete}
+			onToggleFavorite={toggleFavorite}
+			shelfDeps={shelfDeps}
+			showTypedModelCard={allAuthorsSelected && canPullModels}
+			sortedInstalled={sortedInstalled}
+			sortKey={sortKey}
+			typedModelInfo={typedModelInfo}
+			typedModelMatch={typedModelMatch}
+			typedModelTagsState={typedModelTagsState}
+			value={value}
+		/>
+	);
 
-  return (
-    <ModelPicker<OllamaModel, OllamaModel | null>
-      disabled={disabled}
-      filter={filter}
-      filtersMenuSlot={
-        <OllamaSortMenu onSortChange={handleSortChange} sort={sortKey} />
-      }
-      inline={inline}
-      inputValue={query}
-      isItemEqualToValue={(a, b) => a?.name === b?.name}
-      isLoading={isLoading}
-      items={models}
-      itemToStringLabel={(m) => m?.name ?? ""}
-      list={selectorListSlot(body)}
-      onInputValueChange={setQuery}
-      onOpenChange={openGuard.handleOpenChange}
-      onValueChange={(next) => forwardOllamaSelection(next, handleSelect)}
-      open={open}
-      popupHeightClass="h-[min(620px,var(--available-height))]"
-      popupRef={(node) => {
-        openGuard.setPopupNode(node);
-      }}
-      popupWidthClass="w-[max(620px,var(--anchor-width))]"
-      searchPlaceholder="Search models or enter an Ollama tag"
-      selectedItemKey={soleActivePullName ?? (value || undefined)}
-      sidebarSlot={sidebarSlot}
-      trigger={
-        <OllamaTrigger
-          activePull={pickPrimaryPull(pulls)}
-          disabled={disabled}
-          fromModel={swapFromModel}
-          fromName={swapFromName}
-          isLoading={isLoading}
-          isSwitching={!!swapToName}
-          placeholder={placeholder}
-          selected={selected}
-          toModel={swapToModel}
-          toName={swapToName}
-        />
-      }
-      value={selected ?? null}
-    />
-  );
-}
+	const swapFromName = swap?.fromName ?? undefined;
+	const swapToName = swap?.toName ?? undefined;
+	const swapFromModel = swapFromName
+		? models.find((m) => m.name === swapFromName)
+		: undefined;
+	const swapToModel = swapToName
+		? models.find((m) => m.name === swapToName)
+		: undefined;
+	const handleRailClick = (id: string) => {
+		if (id !== ALL_AUTHORS_RAIL_ID) {
+			setSortKey(null);
+		}
+		setActiveRailId(id);
+	};
+	const handleSortChange = (next: OllamaSortValue) => {
+		if (next !== null) {
+			setActiveRailId(ALL_AUTHORS_RAIL_ID);
+		}
+		setSortKey(next);
+	};
+	const sidebarSlot =
+		railItems.length > 1 ? (
+			<GroupRail
+				activeId={activeRailId}
+				favorites={favoriteAuthors}
+				items={railItems}
+				onClick={handleRailClick}
+				onToggleFavorite={toggleAuthorFavorite}
+			/>
+		) : undefined;
 
-function noop() {
-  /* no-op fallback when caller doesn't supply pull callbacks */
+	return (
+		<ModelPicker<OllamaModel, OllamaModel | null>
+			disabled={disabled}
+			filter={filter}
+			filtersMenuSlot={
+				<OllamaSortMenu onSortChange={handleSortChange} sort={sortKey} />
+			}
+			inline={inline}
+			inputValue={query}
+			isItemEqualToValue={(a, b) => a?.name === b?.name}
+			isLoading={isLoading}
+			items={models}
+			itemToStringLabel={(m) => m?.name ?? ""}
+			list={selectorListSlot(body)}
+			onInputValueChange={setQuery}
+			onOpenChange={openGuard.handleOpenChange}
+			onValueChange={(next) => forwardOllamaSelection(next, handleSelect)}
+			open={open}
+			popupHeightClass="h-[min(620px,var(--available-height))]"
+			popupRef={(node) => {
+				openGuard.setPopupNode(node);
+			}}
+			popupWidthClass="w-[max(620px,var(--anchor-width))]"
+			searchPlaceholder="Search models or enter an Ollama tag"
+			selectedItemKey={soleActivePullName ?? (value || undefined)}
+			sidebarSlot={sidebarSlot}
+			trigger={
+				<OllamaTrigger
+					activePull={pickPrimaryPull(pulls)}
+					disabled={disabled}
+					fromModel={swapFromModel}
+					fromName={swapFromName}
+					isLoading={isLoading}
+					isSwitching={!!swapToName}
+					placeholder={placeholder}
+					selected={selected}
+					toModel={swapToModel}
+					toName={swapToName}
+				/>
+			}
+			value={selected ?? null}
+		/>
+	);
 }
 
 /** Forward a real selection (non-empty string name) to `onChange`. Base UI's
@@ -2995,10 +483,10 @@ function noop() {
  *  Extracted out of `OllamaModelSelector` to keep its cognitive complexity
  *  under the rule cap. */
 function forwardOllamaSelection(
-  next: OllamaModel | null,
-  onChange: (modelName: string) => void,
+	next: OllamaModel | null,
+	onChange: (modelName: string) => void,
 ): void {
-  if (next && typeof next.name === "string" && next.name.length > 0) {
-    onChange(next.name);
-  }
+	if (next && typeof next.name === "string" && next.name.length > 0) {
+		onChange(next.name);
+	}
 }

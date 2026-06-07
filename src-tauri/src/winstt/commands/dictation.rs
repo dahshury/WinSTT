@@ -54,12 +54,12 @@ const DICTATION_BINDING: &str = "transcribe";
 /// the renderer's fire-and-forget `send()` never errors.
 ///
 /// The `language` / `translate_to_english` / `initial_prompt` / `custom_words` /
-/// `word_correction_threshold` / `filter_fillers` knobs route into the persisted
-/// settings so the next `TranscriptionManager::transcribe` (which re-reads
-/// `get_settings`) picks them up live — that mirrors the reference's `set_parameter`,
-/// which forwarded these to the running recorder. `onnx_quantization` / `model`
-/// trigger a reload through the model slice and are accepted here as no-ops (the
-/// model-swap command owns the real reload).
+/// `word_correction_threshold` knobs route into the persisted settings so the
+/// next `TranscriptionManager::transcribe` (which re-reads `get_settings`) picks
+/// them up live — that mirrors the reference's `set_parameter`, which forwarded
+/// these to the running recorder. `onnx_quantization` / `model` trigger a reload
+/// through the model slice and are accepted here as no-ops (the model-swap
+/// command owns the real reload).
 #[tauri::command]
 #[specta::specta]
 pub fn winstt_set_parameter(app: AppHandle, parameter: String, value: serde_json::Value) {
@@ -135,7 +135,7 @@ fn core_timeout_from_seconds(seconds: i64) -> crate::settings::ModelUnloadTimeou
         600 => crate::settings::ModelUnloadTimeout::Min10,
         900 => crate::settings::ModelUnloadTimeout::Min15,
         3600 => crate::settings::ModelUnloadTimeout::Hour1,
-        _ => crate::settings::ModelUnloadTimeout::Min5,
+        _ => crate::settings::ModelUnloadTimeout::Min15,
     }
 }
 
@@ -474,5 +474,6 @@ mod tests {
         assert_eq!(core_timeout_from_seconds(600), ModelUnloadTimeout::Min10);
         assert_eq!(core_timeout_from_seconds(900), ModelUnloadTimeout::Min15);
         assert_eq!(core_timeout_from_seconds(3600), ModelUnloadTimeout::Hour1);
+        assert_eq!(core_timeout_from_seconds(123), ModelUnloadTimeout::Min15);
     }
 }

@@ -1,0 +1,445 @@
+- generic [ref=e4]:
+  - complementary [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e8]:
+        - button "Search settings…" [ref=e9] [cursor=pointer]:
+          - img [ref=e10]
+        - generic [ref=e14]: Settings
+        - generic:
+          - generic:
+            - generic:
+              - img
+            - textbox [ref=e15]:
+              - /placeholder: Search…
+      - button "Collapse sidebar" [ref=e16] [cursor=pointer]:
+        - img [ref=e17]
+    - tablist [ref=e20]:
+      - tab "Recording" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+        - generic [ref=e27]: Recording
+      - tab "Transcription" [ref=e29] [cursor=pointer]:
+        - img [ref=e30]
+        - generic [ref=e33]: Transcription
+      - tab "Processing" [active] [selected] [ref=e35] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e39]: Processing
+      - tab "Vocabulary" [ref=e41] [cursor=pointer]:
+        - img [ref=e42]
+        - generic [ref=e47]: Vocabulary
+      - tab "Output" [ref=e49] [cursor=pointer]:
+        - img [ref=e50]
+        - generic [ref=e53]: Output
+      - tab "Read Aloud" [ref=e55] [cursor=pointer]:
+        - img [ref=e56]
+        - generic [ref=e59]: Read Aloud
+      - tab "Shortcuts" [ref=e62] [cursor=pointer]:
+        - img [ref=e63]
+        - generic [ref=e66]: Shortcuts
+      - tab "Appearance" [ref=e68] [cursor=pointer]:
+        - img [ref=e69]
+        - generic [ref=e72]: Appearance
+      - tab "History" [ref=e75] [cursor=pointer]:
+        - img [ref=e76]
+        - generic [ref=e79]: History
+      - tab "Integrations" [ref=e82] [cursor=pointer]:
+        - img [ref=e83]
+        - generic [ref=e89]: Integrations
+      - tab "About" [ref=e91] [cursor=pointer]:
+        - img [ref=e92]
+        - generic [ref=e95]: About
+  - generic [ref=e98]:
+    - button "Close" [ref=e99] [cursor=pointer]:
+      - img [ref=e100]
+    - tabpanel "Processing" [ref=e329]:
+      - generic [ref=e330]:
+        - generic [ref=e331]:
+          - img [ref=e332]
+          - heading "LLM Post-Processing" [level=3] [ref=e341]
+          - button "Playground" [ref=e343] [cursor=pointer]:
+            - img [ref=e344]
+            - text: Playground
+        - generic [ref=e347]:
+          - generic [ref=e348]:
+            - generic [ref=e349]:
+              - img [ref=e351]
+              - heading "Dictation post-processing" [level=4] [ref=e354]
+              - button "More info" [ref=e355] [cursor=pointer]:
+                - img [ref=e356]
+              - generic [ref=e359]:
+                - switch "Toggle Dictation post-processing" [ref=e360] [cursor=pointer]
+                - checkbox [ref=e362]
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Provider
+                          - button "More info":
+                            - img
+                    - generic:
+                      - generic:
+                        - generic:
+                          - group:
+                            - button "Ollama (local)" [pressed]:
+                              - img
+                              - generic:
+                                - generic: Ollama (local)
+                            - button "OpenRouter (Cloud)" [disabled]:
+                              - img
+                              - generic:
+                                - generic: OpenRouter (Cloud)
+                            - button "Where to run text transformation":
+                              - img
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic: Model
+                        - button "More info":
+                          - img
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - combobox "Model":
+                            - generic: Select a model
+                            - img
+                        - textbox
+                - generic: IPC unavailable
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Auto-add dictionary words
+                          - button "More info":
+                            - img
+                        - paragraph: Choose an Ollama model to enable this.
+                      - generic:
+                        - switch "Auto-add dictionary words" [disabled]
+                        - checkbox [disabled]
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Tone
+                          - button "More info":
+                            - img
+                          - generic:
+                            - generic:
+                              - generic:
+                                - combobox "Tone"
+                                - button "Tone":
+                                  - img
+                              - textbox
+                    - generic:
+                      - generic:
+                        - generic:
+                          - group:
+                            - button "Polish" [pressed]:
+                              - img
+                              - generic:
+                                - generic: Polish
+                            - button "Formal":
+                              - img
+                              - generic:
+                                - generic: Formal
+                            - button "Friendly":
+                              - img
+                              - generic:
+                                - generic: Friendly
+                            - button "Technical":
+                              - img
+                              - generic:
+                                - generic: Technical
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Modifiers
+                          - button "More info":
+                            - img
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - group:
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Summarize
+                                - generic:
+                                  - generic:
+                                    - group:
+                                      - button "Low" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: Low
+                                      - button "Medium" [disabled] [pressed]:
+                                        - img
+                                        - generic:
+                                          - generic: Medium
+                                      - button "High" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: High
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Concise
+                                - generic:
+                                  - generic:
+                                    - group:
+                                      - button "Low" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: Low
+                                      - button "Medium" [disabled] [pressed]:
+                                        - img
+                                        - generic:
+                                          - generic: Medium
+                                      - button "High" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: High
+                              - generic:
+                                - checkbox "Modifiers" [checked]:
+                                  - generic:
+                                    - img
+                                - checkbox [checked]
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Reorder
+                              - generic:
+                                - checkbox "Modifiers" [checked]:
+                                  - generic:
+                                    - img
+                                - checkbox [checked]
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Restructure
+                              - generic:
+                                - checkbox "Modifiers" [checked]:
+                                  - generic:
+                                    - img
+                                - checkbox [checked]
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Reword for clarity
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Translate
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - generic:
+                                          - generic: EN
+                                        - combobox "Modifiers" [disabled]: English
+                                        - button "Modifiers" [disabled]:
+                                          - img
+                                      - textbox [disabled]: "{\"id\":\"English\",\"label\":\"English\",\"badge\":\"EN\"}"
+                            - button "Add modifier":
+                              - img
+                              - text: Add modifier
+          - generic [ref=e363]:
+            - generic [ref=e364]:
+              - img [ref=e366]
+              - heading "Text transformation" [level=4] [ref=e370]
+              - button "More info" [ref=e371] [cursor=pointer]:
+                - img [ref=e372]
+              - generic [ref=e375]:
+                - switch "Toggle Text transformation" [ref=e376] [cursor=pointer]
+                - checkbox [ref=e378]
+            - generic:
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Provider
+                          - button "More info":
+                            - img
+                    - generic:
+                      - generic:
+                        - generic:
+                          - group:
+                            - button "Ollama (local)" [pressed]:
+                              - img
+                              - generic:
+                                - generic: Ollama (local)
+                            - button "OpenRouter (Cloud)" [disabled]:
+                              - img
+                              - generic:
+                                - generic: OpenRouter (Cloud)
+                            - button "Where to run text transformation":
+                              - img
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic: Model
+                        - button "More info":
+                          - img
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - combobox "Model":
+                            - generic: Select a model
+                            - img
+                        - textbox
+                - generic: IPC unavailable
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Tone
+                          - button "More info":
+                            - img
+                          - generic:
+                            - generic:
+                              - generic:
+                                - combobox "Tone"
+                                - button "Tone":
+                                  - img
+                              - textbox
+                    - generic:
+                      - generic:
+                        - generic:
+                          - group:
+                            - button "Polish" [pressed]:
+                              - img
+                              - generic:
+                                - generic: Polish
+                            - button "Formal":
+                              - img
+                              - generic:
+                                - generic: Formal
+                            - button "Friendly":
+                              - img
+                              - generic:
+                                - generic: Friendly
+                            - button "Technical":
+                              - img
+                              - generic:
+                                - generic: Technical
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Modifiers
+                          - button "More info":
+                            - img
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - group:
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Summarize
+                                - generic:
+                                  - generic:
+                                    - group:
+                                      - button "Low" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: Low
+                                      - button "Medium" [disabled] [pressed]:
+                                        - img
+                                        - generic:
+                                          - generic: Medium
+                                      - button "High" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: High
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Concise
+                                - generic:
+                                  - generic:
+                                    - group:
+                                      - button "Low" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: Low
+                                      - button "Medium" [disabled] [pressed]:
+                                        - img
+                                        - generic:
+                                          - generic: Medium
+                                      - button "High" [disabled]:
+                                        - img
+                                        - generic:
+                                          - generic: High
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Reorder
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Restructure
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Reword for clarity
+                              - generic:
+                                - checkbox "Modifiers"
+                                - checkbox
+                                - generic:
+                                  - img
+                                - generic:
+                                  - generic: Translate
+                                - generic:
+                                  - generic:
+                                    - generic:
+                                      - generic:
+                                        - generic:
+                                          - generic: EN
+                                        - combobox "Modifiers" [disabled]: English
+                                        - button "Modifiers" [disabled]:
+                                          - img
+                                      - textbox [disabled]: "{\"id\":\"English\",\"label\":\"English\",\"badge\":\"EN\"}"
+                            - button "Add modifier":
+                              - img
+                              - text: Add modifier

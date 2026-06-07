@@ -18,7 +18,7 @@ function body(overrides: Partial<LlmConfiguration> = {}): LlmConfiguration {
 		presets: [{ key: "neutral" }],
 		provider: "ollama",
 		reasoningEffort: "medium",
-		thinkingEffort: "medium",
+		thinkingEffort: "off",
 		verbosity: "medium",
 		customModifiers: [],
 		...overrides,

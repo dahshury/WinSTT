@@ -31,6 +31,13 @@ describe("DictionaryTable", () => {
 	test("renders existing entries as single-column term rows", () => {
 		renderWith({ entries: [sampleEntry] });
 		expect(screen.getByText("Kubernetes")).toBeDefined();
+		expect(screen.getByText("Manual")).toBeDefined();
+	});
+
+	test("marks auto-added entries", () => {
+		renderWith({ entries: [{ ...sampleEntry, autoAdded: true }] });
+		expect(screen.getByText("Kubernetes")).toBeDefined();
+		expect(screen.getByText("Auto")).toBeDefined();
 	});
 
 	test("clicking the per-row delete button calls onRemove with the entry id", () => {
@@ -40,6 +47,44 @@ describe("DictionaryTable", () => {
 		});
 		fireEvent.click(deleteBtn);
 		expect(onRemove).toHaveBeenCalledWith("1");
+	});
+
+	test("editing a row calls onUpdate with the trimmed term", () => {
+		const onUpdate = mock(() => undefined);
+		renderWith({ entries: [sampleEntry], onUpdate });
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /edit\s+"Kubernetes"/i }),
+		);
+		fireEvent.change(screen.getByDisplayValue("Kubernetes"), {
+			target: { value: " DirectML " },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: /save\s+"Kubernetes"/i }),
+		);
+
+		expect(onUpdate).toHaveBeenCalledWith("1", { term: "DirectML" });
+	});
+
+	test("editing a row rejects duplicate terms case-insensitively", () => {
+		const onUpdate = mock(() => undefined);
+		renderWith({
+			entries: [sampleEntry, { id: "2", term: "DirectML" }],
+			onUpdate,
+		});
+
+		fireEvent.click(
+			screen.getByRole("button", { name: /edit\s+"Kubernetes"/i }),
+		);
+		fireEvent.change(screen.getByDisplayValue("Kubernetes"), {
+			target: { value: " directml " },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: /save\s+"Kubernetes"/i }),
+		);
+
+		expect(onUpdate).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert").textContent).toContain("Already added");
 	});
 
 	test("the Add button is disabled when term is empty", () => {

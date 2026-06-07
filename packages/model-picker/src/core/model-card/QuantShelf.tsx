@@ -134,7 +134,7 @@ function toneClassName(tone: BadgeIconButtonTone): string {
  *  Resume / Cancel / Delete) — same height + border-l treatment so the controls
  *  compose into a single ButtonGroup chip. Exported so the Ollama picker's
  *  tag/pull shelf composes the IDENTICAL control chip. */
-export function BadgeIconButton({
+function BadgeIconButton({
 	ariaLabel,
 	icon,
 	onClick,
@@ -178,7 +178,7 @@ export function BadgeIconButton({
 /** Idle (non-selected) precision-badge tint, by on-disk state. Muted-semantic
  *  tints (emerald = on disk, amber = partial, neutral = not cached). Exported so
  *  every picker's quant shelf reads with the same palette. */
-export function badgeToneForCache(state: QuantCacheState | undefined): string {
+function badgeToneForCache(state: QuantCacheState | undefined): string {
 	if (state === "cached") {
 		return "bg-emerald-500/[0.08] text-emerald-300/80 hover:bg-emerald-500/[0.14]";
 	}
@@ -243,7 +243,7 @@ export function buildQuantTooltipContent(
 	return lines.join("\n");
 }
 
-export function QuantBadgeLabel({
+function QuantBadgeLabel({
 	canStartDownload,
 	isDownloading,
 	label,

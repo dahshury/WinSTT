@@ -480,10 +480,11 @@ class ModelCatalog:
         True only when the whitelist is empty — that's the catalog's
         "unknown / accepts all" sentinel for entries the refresh script
         couldn't populate from HuggingFace metadata.
-        ``supports_language_detection`` is orthogonal: Canary 1B v2
-        auto-detects language *within* its 25 European whitelist, but
-        cannot transcribe e.g. Arabic. Conflating the two used to make
-        the language dropdown advertise unsupported languages.
+        ``supports_language_detection`` is orthogonal: Canary 1B v2 has
+        a 25-language transcription whitelist, but this app's local Canary
+        runtime still needs an explicit source language and cannot
+        transcribe e.g. Arabic. Conflating the two used to make the
+        language dropdown advertise unsupported languages.
         """
         return not info.languages
 

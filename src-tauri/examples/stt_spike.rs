@@ -15,9 +15,10 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use handy_app_lib::winstt::stt::{
-    Accelerator, EngineConfig, EngineKind, Quantization, ResolvedModel, TranscribeOptions,
-    Transcriber, WhisperEngine,
+use winstt_app_lib::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
+use winstt_app_lib::winstt::stt::{
+    Accelerator, EngineConfig, EngineKind, Quantization, ResolvedModel, SttError,
+    TranscribeOptions, Transcriber, WhisperEngine,
 };
 
 /// Default snapshot: the whisper-tiny.en hf-hub cache dir on this machine.
@@ -67,6 +68,14 @@ fn providers_from_env() -> Vec<Accelerator> {
     }
 }
 
+fn spike_passes(default: usize) -> usize {
+    std::env::var("SPIKE_PASSES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
+}
+
 /// Locate the pre-decoded test audio. Prefers an explicit `SPIKE_AUDIO`, then
 /// the repo benchmark fixture so the spike works regardless of where it's
 /// launched from — no machine-specific absolute path.
@@ -106,12 +115,13 @@ fn load_audio() -> Vec<f32> {
 }
 
 /// Catalog `Family` → the policy slug the engine helpers key on.
-fn family_slug_of(family: handy_app_lib::winstt::catalog::Family) -> &'static str {
-    use handy_app_lib::winstt::catalog::Family;
+fn family_slug_of(family: winstt_app_lib::winstt::catalog::Family) -> &'static str {
+    use winstt_app_lib::winstt::catalog::Family;
     match family {
         Family::Whisper => "whisper",
         Family::Moonshine => "moonshine",
         Family::Cohere => "cohere",
+        Family::Granite => "granite",
         Family::Nemo => "nemo",
         Family::SenseVoice => "sense_voice",
         Family::GigaAm => "gigaam",
@@ -126,13 +136,13 @@ fn family_slug_of(family: handy_app_lib::winstt::catalog::Family) -> &'static st
 /// `catalog::find(id)` → `resolver::resolve` (cache-only) → `build_engine` → `transcribe`.
 /// Proves the resolver wires the right files (incl. config-derived n_mels) for a real catalog id.
 fn run_catalog_mode(cat_id: &str) {
-    use handy_app_lib::winstt::catalog;
-    use handy_app_lib::winstt::stt::build_engine;
-    use handy_app_lib::winstt::stt::resolver::{self, ResolveRequest};
+    use winstt_app_lib::winstt::catalog;
+    use winstt_app_lib::winstt::stt::build_engine;
+    use winstt_app_lib::winstt::stt::resolver::{self, ResolveRequest};
 
     let entry = catalog::find(cat_id).unwrap_or_else(|| panic!("catalog id '{cat_id}' not found"));
     let family_slug = family_slug_of(entry.family);
-    let kind = handy_app_lib::winstt::stt::cache_probe::engine_kind_for(
+    let kind = winstt_app_lib::winstt::stt::cache_probe::engine_kind_for(
         entry.id,
         family_slug,
         entry.onnx_model_name,
@@ -155,6 +165,7 @@ fn run_catalog_mode(cat_id: &str) {
     {
         "int8" => Quantization::Int8,
         "fp16" => Quantization::Fp16,
+        "fp16w" => Quantization::Fp16w,
         "q4" => Quantization::Q4,
         "q4f16" => Quantization::Q4f16,
         "bnb4" => Quantization::Bnb4,
@@ -181,13 +192,18 @@ fn run_catalog_mode(cat_id: &str) {
     keys.sort();
     eprintln!("resolved   : {} files {:?}", resolved.files.len(), keys);
 
+    // Mirror prod (backend.rs): the fp16 ORT_ENABLE_EXTENDED downgrade is gated on the whisper
+    // family AND fp16. Without it, fp16 whisper encoders fail to commit (graph-fusion error), so
+    // catalog-mode fp16 A/B runs couldn't load at all.
+    let whisper_fp16_workaround =
+        family_slug == "whisper" && effective_quant == Quantization::Fp16;
     let cfg = EngineConfig {
         model_name: cat_id.to_string(),
         family: family_slug.to_string(),
         kind,
         resolved,
         providers: providers_from_env(),
-        whisper_fp16_workaround: false,
+        whisper_fp16_workaround,
     };
     let mut engine = match build_engine(cfg) {
         Ok(e) => e,
@@ -197,14 +213,67 @@ fn run_catalog_mode(cat_id: &str) {
         }
     };
     let audio = load_audio();
-    // cold pass (DML compiles kernels on first inference) then warm pass (steady-state).
-    for (label, _) in [("cold", ()), ("warm", ())] {
+    eprintln!(
+        "audio      : {} samples ({:.2}s)",
+        audio.len(),
+        audio.len() as f32 / 16_000.0
+    );
+    let segment = std::env::var("SPIKE_SEGMENT").is_ok();
+    let segment_max_s = std::env::var("SPIKE_SEGMENT_MAX")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .filter(|&s| s > 0.0)
+        .unwrap_or(28.0);
+    if segment {
+        eprintln!("segment   : vad max_chunk_s={segment_max_s:.1}");
+    }
+    let segment_prior = std::env::var("SPIKE_SEGMENT_PRIOR")
+        .map(|s| {
+            !matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off"
+            )
+        })
+        .unwrap_or_else(|_| kind.needs_past_context());
+    if segment {
+        eprintln!("prior     : {segment_prior}");
+    }
+    // cold pass (DML compiles kernels on first inference), then warm passes (steady-state).
+    for pass in 0..spike_passes(2) {
+        let label = match pass {
+            0 => "cold".to_string(),
+            1 => "warm".to_string(),
+            n => format!("warm{n}"),
+        };
         let t = Instant::now();
-        match engine.transcribe(&audio, &TranscribeOptions::default()) {
-            Ok(out) => println!(
+        let opts = TranscribeOptions::default();
+        let text = if segment {
+            let vad_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("resources")
+                .join("models")
+                .join("silero_vad_v4.onnx");
+            match SileroVad::new(&vad_path, VAD_SPEECH_THRESHOLD) {
+                Ok(mut vad) => winstt_app_lib::winstt::stt::vad_segment::vad_segment_decode(
+                    engine.as_mut(),
+                    &audio,
+                    segment_max_s,
+                    segment_prior,
+                    &mut vad,
+                    &opts,
+                ),
+                Err(e) => Err(SttError::Inference(format!(
+                    "segmentation VAD load {}: {e}",
+                    vad_path.display()
+                ))),
+            }
+        } else {
+            engine.transcribe(&audio, &opts).map(|out| out.text)
+        };
+        match text {
+            Ok(text) => println!(
                 "\n=== CATALOG TRANSCRIPT ({cat_id}, {label} {:?}) ===\n{}\n==================",
                 t.elapsed(),
-                out.text
+                text
             ),
             Err(e) => {
                 eprintln!("TRANSCRIBE FAILED: {e}");

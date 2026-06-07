@@ -22,6 +22,7 @@ import {
   gpuGetInfo,
   notifyRendererReady,
   settingsLoad,
+  webviewDiagLog,
 } from "@/shared/api/ipc-client";
 
 // Install the `window.nativeBridge` → Tauri polyfill at module-load time — BEFORE
@@ -30,18 +31,38 @@ import {
 // this single seam; see shared/api/native-bridge-adapter.ts.
 installNativeBridge();
 
+const STARTUP_READY_PROBE_TIMEOUT_MS = 2500;
 let startupReadyPromise: Promise<void> | null = null;
+
+function wait(ms: number): Promise<"timeout"> {
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve("timeout"), ms);
+  });
+}
+
+async function waitForStartupProbes(): Promise<void> {
+  const probes = Promise.allSettled([
+    settingsLoad(),
+    audioGetDevices(),
+    fetchRuntimeInfo(),
+  ]);
+  const result = await Promise.race([
+    probes,
+    wait(STARTUP_READY_PROBE_TIMEOUT_MS),
+  ]);
+  if (result === "timeout") {
+    const message = `[IpcProvider] startup probes exceeded ${STARTUP_READY_PROBE_TIMEOUT_MS}ms; releasing renderer readiness gate`;
+    console.warn(message);
+    webviewDiagLog("main", "warn", message);
+  }
+}
 
 function signalRendererStartupReady(): Promise<void> {
   if (startupReadyPromise) {
     return startupReadyPromise;
   }
   startupReadyPromise = (async () => {
-    await Promise.allSettled([
-      settingsLoad(),
-      audioGetDevices(),
-      fetchRuntimeInfo(),
-    ]);
+    await waitForStartupProbes();
     await notifyRendererReady();
   })().catch((error: unknown) => {
     startupReadyPromise = null;

@@ -1,0 +1,11 @@
+# Generated / vendored — do not format
+src/bindings.ts
+spec/generated/
+**/*.generated.ts
+src-tauri/target/
+src-tauri/gen/
+dist/
+node_modules/
+bun.lock
+docs/
+examples/

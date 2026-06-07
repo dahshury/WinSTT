@@ -337,7 +337,7 @@ function mergeChangedValue(
 	const keys = new Set([
 		...Object.keys(decodedValue),
 		...Object.keys(currentValue),
-		...Object.keys(lastSavedValue),
+		...Object.keys(lastSavedValue)
 	]);
 	for (const key of keys) {
 		const picked = mergeDirtyValue(decodedValue[key], currentValue[key], lastSavedValue[key]);
@@ -361,6 +361,39 @@ function mergeSections(
 		preserved = preserved || picked.preserved;
 	}
 	return { merged: result as AppSettings, preserved };
+}
+
+const LOCAL_CACHE_COLLECTION_KEYS = ["dictionary", "snippets"] as const;
+
+function shouldMigrateLocalCollection(
+	loadedValue: unknown,
+	currentValue: unknown,
+	loadBaselineValue: unknown
+): boolean {
+	return (
+		Array.isArray(loadedValue) &&
+		loadedValue.length === 0 &&
+		Array.isArray(currentValue) &&
+		currentValue.length > 0 &&
+		settingsSectionsEqual(currentValue, loadBaselineValue)
+	);
+}
+
+function applyLocalCollectionMigrations(
+	merged: AppSettings,
+	loaded: AppSettings,
+	current: AppSettings,
+	loadBaseline: AppSettings
+): { merged: AppSettings; migrated: boolean } {
+	let migrated = false;
+	const next: Record<string, unknown> = { ...merged };
+	for (const key of LOCAL_CACHE_COLLECTION_KEYS) {
+		if (shouldMigrateLocalCollection(loaded[key], current[key], loadBaseline[key])) {
+			next[key] = current[key];
+			migrated = true;
+		}
+	}
+	return { merged: next as AppSettings, migrated };
 }
 
 export function mergeBroadcastPreservingUserDirty(
@@ -404,5 +437,9 @@ export function deriveIpcLoadUpdate(
 	loadBaseline: AppSettings
 ): { merged: AppSettings; nextFromIpcLoad: boolean } {
 	const { merged, preserved } = mergeSections(loaded, current, loadBaseline);
-	return { merged, nextFromIpcLoad: !preserved };
+	const migrated = applyLocalCollectionMigrations(merged, loaded, current, loadBaseline);
+	return {
+		merged: migrated.merged,
+		nextFromIpcLoad: !preserved && !migrated.migrated
+	};
 }

@@ -1800,7 +1800,7 @@
         "sv",
         "uk"
       ],
-      "supports_language_detection": true,
+      "supports_language_detection": false,
       "supports_realtime": true,
       "onnx_model_name": "nemo-parakeet-tdt-0.6b-v3",
       "description": "Fast Parakeet for 25 European languages.",
@@ -1847,7 +1847,7 @@
         "sv",
         "uk"
       ],
-      "supports_language_detection": true,
+      "supports_language_detection": false,
       "supports_realtime": true,
       "onnx_model_name": "nemo-canary-1b-v2",
       "description": "Best NVIDIA pick for accurate 25-language transcription.",
@@ -1873,7 +1873,7 @@
         "es",
         "fr"
       ],
-      "supports_language_detection": true,
+      "supports_language_detection": false,
       "supports_realtime": true,
       "onnx_model_name": "istupakov/canary-180m-flash-onnx",
       "description": "Compact Canary for fast English, German, Spanish, and French notes.",
@@ -1899,7 +1899,7 @@
         "es",
         "fr"
       ],
-      "supports_language_detection": true,
+      "supports_language_detection": false,
       "supports_realtime": true,
       "onnx_model_name": "istupakov/canary-1b-flash-onnx",
       "description": "Larger Flash model for cleaner four-language notes at high speed.",
@@ -2092,7 +2092,7 @@
         "ne",
         "my"
       ],
-      "supports_language_detection": true,
+      "supports_language_detection": false,
       "supports_realtime": true,
       "onnx_model_name": "dolphin-base-ctc",
       "description": "Best for Eastern languages and Chinese dialect coverage.",

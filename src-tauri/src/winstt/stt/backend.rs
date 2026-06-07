@@ -2,8 +2,8 @@
 //!
 //! The inherited Handy pipeline core (`crate::managers::transcription`) used to reach SIDEWAYS
 //! into `crate::winstt::*` for every WinSTT-specific decision: catalog resolution, the unified
-//! ort-ONNX engine build, the cloud-STT round-trip, the picker's language/dictionary/filler
-//! settings, and the winstt-arm decode + post-processing. That broke the one-way dependency edge
+//! ort-ONNX engine build, the cloud-STT round-trip, the picker's language/dictionary settings,
+//! and the winstt-arm decode + post-processing. That broke the one-way dependency edge
 //! the dual-manager boundary promises (`winstt/managers/mod.rs`: "these feature managers reuse the
 //! core, never the reverse") and made upstream Handy merges of `transcription.rs` intractable.
 //!
@@ -29,17 +29,16 @@
 //! 2. **Panic safety**: `decode` / `decode_realtime` / `warmup` take `&mut dyn Transcriber` on an
 //!    engine the CORE already took out of the mutex inside `catch_unwind`. The backend MUST NOT
 //!    lock the engine mutex, take/store the engine, or add a `Sync` bound.
-//! 3. **No double post-processing**: `decode` does the winstt-arm post-processing (custom words +
-//!    filler from `WinsttSettings`); the core therefore skips its generic transcribe-rs
-//!    post-processing on the winstt arm. The transcribe-rs arms keep core post-processing.
+//! 3. **No double post-processing**: `decode` does the winstt-arm dictionary post-processing from
+//!    `WinsttSettings`; the core therefore skips its generic transcribe-rs post-processing on the
+//!    winstt arm. The transcribe-rs arms keep core post-processing.
 //! 4. **Cloud nested-runtime branch** lives verbatim in `cloud_transcribe`.
 //! 5/6. The `warming` flag / `try_lock` preemption and realtime poison recovery stay in core;
 //!    only the decode/warmup BODIES move here. `peak_normalize` is applied ONLY to the winstt
 //!    arm input (here), never to the transcribe-rs arms (those stay in core, unconditioned).
 
+use crate::audio_toolkit::apply_custom_words;
 use crate::audio_toolkit::vad::{SileroVad, VAD_SPEECH_THRESHOLD};
-use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
-use crate::settings::get_settings;
 use crate::winstt::audio_conditioning::peak_normalize;
 use crate::winstt::stt::{EngineConfig, TranscribeOptions, Transcriber};
 use anyhow::Result;
@@ -55,7 +54,7 @@ pub enum BackendRoute {
     /// `build_resolved`).
     Catalog,
     /// Neither — a transcribe-rs (Handy `ModelManager`) id, handled entirely by the core.
-    None,
+    Unsupported,
 }
 
 /// A fully-prepared catalog load, produced by [`SttBackend::resolve_catalog`] and consumed by
@@ -83,26 +82,15 @@ pub struct ResolvedSpec {
 /// never store it). See the module docs for the risk invariants every method preserves.
 pub trait SttBackend: Send + Sync {
     /// Route a model id by namespace: cloud prefix → [`BackendRoute::Cloud`]; in the WinSTT
-    /// catalog → [`BackendRoute::Catalog`]; neither → [`BackendRoute::None`] (a transcribe-rs id).
+    /// catalog -> [`BackendRoute::Catalog`]; neither -> [`BackendRoute::Unsupported`].
     fn route_of(&self, model_id: &str) -> BackendRoute;
 
     /// Best-effort display name for a model id: the catalog display name, else the raw id.
     fn display_name_for(&self, model_id: &str) -> String;
 
     /// The model id the user actually selected: the WinSTT picker
-    /// (`WinsttSettings.model.model`) is the source of truth; `""` when unset (the core then
-    /// falls back to Handy's `selected_model`).
+    /// (`WinsttSettings.model.model`) is the source of truth; `""` when unset.
     fn selected_model_id(&self, app: &AppHandle) -> String;
-
-    /// The RAW picker language string (`WinsttSettings.model.language`; `""`/`"auto"` = auto).
-    /// Language is owned by ONE store — this is its single source. The core validates it against
-    /// the selected model's supported languages (a core / `model_manager` concern) for the
-    /// transcribe-rs arms WITHOUT having to read `WinsttSettings` itself (audit #14).
-    ///
-    /// (Deliberately NOT named `selected_language` — the core's `transcription.rs` source-level
-    /// guard test forbids that exact substring, which used to flag a dual AppSettings language
-    /// read; this is the picker store, the single source of truth.)
-    fn picker_language(&self, app: &AppHandle) -> String;
 
     /// PHASE 1 of a catalog load: resolve the on-disk file set OFFLINE-FIRST and assemble the
     /// [`EngineConfig`] — WITHOUT building any ORT session and WITHOUT touching the resident
@@ -121,9 +109,9 @@ pub trait SttBackend: Send + Sync {
     fn build_resolved(&self, spec: ResolvedSpec) -> Result<(Box<dyn Transcriber>, String)>;
 
     /// Decode ONE utterance on the winstt-arm engine + apply the WinSTT-arm post-processing
-    /// (peak-normalize the input, then custom-words correction + filler filtering from
-    /// `WinsttSettings`). Returns the FINAL text — the core must NOT run its generic transcribe-rs
-    /// post-processing on this output. `engine` is borrowed `&mut` from inside the core's
+    /// (peak-normalize the input, then custom-words correction from `WinsttSettings`). Returns
+    /// the FINAL text — the core must NOT run its generic transcribe-rs post-processing on this
+    /// output. `engine` is borrowed `&mut` from inside the core's
     /// `catch_unwind`; this method must NOT lock the engine mutex.
     fn decode(
         &self,
@@ -152,19 +140,6 @@ pub trait SttBackend: Send + Sync {
     /// post-processing (cloud is never Whisper). Owns the nested-runtime `block_in_place` /
     /// `block_on` branch.
     fn cloud_transcribe(&self, app: &AppHandle, model_id: &str, audio: &[f32]) -> Result<String>;
-
-    /// Apply the WinSTT-picker post-processing (dictionary custom-words correction + filler /
-    /// hallucination filtering, sourced from `WinsttSettings`) to a transcribe-rs (GGML) arm's RAW
-    /// output. The WinSTT decode arm does this inside [`Self::decode`]; this is the transcribe-rs
-    /// equivalent so the inherited core never has to read `WinsttSettings` itself (audit #14).
-    /// `skip_custom_words` is the core's `is_whisper` gate (transcribe-rs Whisper already seeds
-    /// custom words as its initial prompt, so re-correcting would double-apply them).
-    fn postprocess_transcribe_rs(
-        &self,
-        app: &AppHandle,
-        text: &str,
-        skip_custom_words: bool,
-    ) -> String;
 }
 
 /// Zero-sized impl of [`SttBackend`]. Reaches all WinSTT state via the `&AppHandle` params
@@ -193,7 +168,7 @@ impl SttBackend for WinsttSttBackend {
         } else if crate::winstt::catalog::find(model_id).is_some() {
             BackendRoute::Catalog
         } else {
-            BackendRoute::None
+            BackendRoute::Unsupported
         }
     }
 
@@ -206,12 +181,6 @@ impl SttBackend for WinsttSttBackend {
             .model
             .model;
         crate::winstt::catalog::canonical_model_id(&model).to_string()
-    }
-
-    fn picker_language(&self, app: &AppHandle) -> String {
-        crate::winstt::commands::settings::read_settings(app)
-            .model
-            .language
     }
 
     fn resolve_catalog(
@@ -371,8 +340,10 @@ impl SttBackend for WinsttSttBackend {
                 Some(p.to_string())
             }
         };
+        let (language, language_candidates) = model_language_options(&ws.model);
         let opts = TranscribeOptions {
-            language: normalize_winstt_language(&ws.model.language),
+            language,
+            language_candidates,
             translate: ws.model.translate_to_english,
             initial_prompt_text,
             ..Default::default()
@@ -381,12 +352,12 @@ impl SttBackend for WinsttSttBackend {
         // Peak-normalize is the WinSTT-arm-ONLY audio-conditioning chokepoint (the transcribe-rs
         // arms in the core get RAW audio).
         let conditioned = peak_normalize(audio);
-        // Long non-streaming recordings would hit fixed per-decode windows (Whisper truncates at
-        // 30 s in mel.rs; AED decoders cap at ~1024 tokens) and silently drop everything past the
-        // cap. Segment only those engines. Native-streaming engines already drive unlimited
-        // whole-buffer decode internally, and context-sensitive engines keep prior chunk text when
-        // their prompt slot supports it.
+        // Pause-heavy recordings waste decoder time on thinking silence. For local offline engines,
+        // run a VAD compaction pass that keeps at most a short natural pause between speech runs.
+        // If the compacted result still exceeds an engine window (Whisper's 30 s mel wall, AED
+        // token caps), the same path chunks it on speech boundaries.
         const MAX_CHUNK_S: f32 = 28.0; // headroom under Whisper's 30 s mel wall
+        const VAD_COMPACT_MIN_S: f32 = 5.0;
         let transcribe_once = |engine: &mut dyn Transcriber| -> Result<String> {
             engine
                 .transcribe(&conditioned, &opts)
@@ -394,9 +365,12 @@ impl SttBackend for WinsttSttBackend {
                 .map_err(|e| anyhow::anyhow!("WinSTT transcription failed: {}", e))
         };
         let kind = engine.kind();
-        let needs_long_form_segmenting = conditioned.len() > (MAX_CHUNK_S * 16_000.0) as usize
-            && !kind.supports_native_streaming();
-        let text = if needs_long_form_segmenting {
+        let non_native_offline = !kind.supports_native_streaming();
+        let needs_long_form_segmenting =
+            conditioned.len() > (MAX_CHUNK_S * 16_000.0) as usize && non_native_offline;
+        let should_vad_compact =
+            conditioned.len() > (VAD_COMPACT_MIN_S * 16_000.0) as usize && non_native_offline;
+        let text = if should_vad_compact {
             match build_segmentation_vad(app) {
                 Ok(mut vad) => crate::winstt::stt::vad_segment::vad_segment_decode(
                     engine,
@@ -408,9 +382,13 @@ impl SttBackend for WinsttSttBackend {
                 )
                 .map_err(|e| anyhow::anyhow!("WinSTT VAD-segment transcription failed: {}", e))?,
                 Err(e) => {
-                    log::warn!(
-                        "VAD-segment unavailable ({e}); single-pass decode (may truncate >30 s)"
-                    );
+                    if needs_long_form_segmenting {
+                        log::warn!(
+                            "VAD compaction/segmenting unavailable ({e}); single-pass decode may truncate >30 s"
+                        );
+                    } else {
+                        log::warn!("VAD silence compaction unavailable ({e}); single-pass decode");
+                    }
                     transcribe_once(engine)?
                 }
             }
@@ -418,12 +396,11 @@ impl SttBackend for WinsttSttBackend {
             transcribe_once(engine)?
         };
 
-        // WinSTT-arm post-processing: custom-words correction + filler/hallucination filtering,
-        // sourced from the SAME `ws` snapshot. The core does NOT re-run its generic transcribe-rs
-        // post-processing on this output (avoids double-processing). Shared with the realtime-reuse
-        // fast path (see `winstt_postprocess`) so a reused live decode gets byte-identical cleanup.
-        let app_language = get_settings(app).app_language;
-        Ok(winstt_postprocess(&text, &ws, &app_language))
+        // WinSTT-arm post-processing: custom-words correction, sourced from the SAME `ws`
+        // snapshot. The core does NOT re-run its generic transcribe-rs post-processing on this
+        // output (avoids double-processing). Shared with the realtime-reuse fast path (see
+        // `winstt_postprocess`) so a reused live decode gets byte-identical cleanup.
+        Ok(winstt_postprocess(&text, &ws))
     }
 
     fn decode_realtime(
@@ -459,9 +436,12 @@ impl SttBackend for WinsttSttBackend {
             .state::<std::sync::Arc<crate::winstt::managers::CloudSttManager>>()
             .inner()
             .clone();
-        let language = normalize_winstt_language(&ws.model.language);
-        let app_language = get_settings(app).app_language;
-
+        let (language, language_candidates) = model_language_options(&ws.model);
+        let language = match (language, language_candidates.as_slice()) {
+            (Some(language), _) => Some(language),
+            (None, [language]) => Some(language.clone()),
+            _ => None,
+        };
         // `transcribe()` is SYNC. When it's called from a tokio worker (actions.rs `spawn(async)`
         // → a multi-thread runtime worker), a bare `block_on` panics "Cannot start a runtime from
         // within a runtime"; we must `block_in_place` to hand the worker thread back to the pool
@@ -479,7 +459,7 @@ impl SttBackend for WinsttSttBackend {
             anyhow::anyhow!("Cloud STT failed ({}): {}", e.code.as_str(), e.message)
         })?;
 
-        // Cloud is never Whisper → apply the WinSTT dictionary correction + filler filter.
+        // Cloud is never Whisper → apply the WinSTT dictionary correction.
         let dict: Vec<String> = ws
             .dictionary
             .iter()
@@ -491,57 +471,7 @@ impl SttBackend for WinsttSttBackend {
         } else {
             apply_custom_words(&text, &dict, ws.general.word_correction_threshold)
         };
-        let filler = if ws.general.filter_fillers && !ws.general.custom_filler_words.is_empty() {
-            Some(ws.general.custom_filler_words.clone())
-        } else if ws.general.filter_fillers {
-            None
-        } else {
-            Some(Vec::new())
-        };
-        Ok(filter_transcription_output(
-            &corrected,
-            &app_language,
-            &filler,
-        ))
-    }
-
-    fn postprocess_transcribe_rs(
-        &self,
-        app: &AppHandle,
-        text: &str,
-        skip_custom_words: bool,
-    ) -> String {
-        // WinSTT dictionary bridge: the picker's dictionary (custom words) + fuzzy threshold +
-        // filler list live in the WinSTT settings store, NOT Handy's `settings.custom_words`
-        // (mirrors the reference set_parameter forwarding custom_words/threshold/filler to the recorder).
-        let ws = crate::winstt::commands::settings::read_settings(app);
-        let custom_words: Vec<String> = ws
-            .dictionary
-            .iter()
-            .map(|d| d.term.clone())
-            .filter(|t| !t.trim().is_empty())
-            .collect();
-
-        // Apply word correction if custom words are configured. Skip for (transcribe-rs) Whisper
-        // since those custom words are already passed as the initial_prompt by the core.
-        let corrected = if !custom_words.is_empty() && !skip_custom_words {
-            apply_custom_words(text, &custom_words, ws.general.word_correction_threshold)
-        } else {
-            text.to_string()
-        };
-
-        // filter_fillers off → Some([]) (no patterns); on+empty → None (language default table).
-        let filler: Option<Vec<String>> = if ws.general.filter_fillers {
-            if ws.general.custom_filler_words.is_empty() {
-                None
-            } else {
-                Some(ws.general.custom_filler_words.clone())
-            }
-        } else {
-            Some(Vec::new())
-        };
-        let app_language = get_settings(app).app_language;
-        filter_transcription_output(&corrected, &app_language, &filler)
+        Ok(corrected)
     }
 }
 
@@ -576,6 +506,8 @@ fn engine_kind_for(
             | EngineKind::NemoTdt
             | EngineKind::NemoRnnt
             | EngineKind::CohereAsr
+            | EngineKind::GraniteSpeechAr
+            | EngineKind::GraniteSpeechNar
             | EngineKind::KaldiTransducer
             | EngineKind::DolphinCtc
             | EngineKind::GigaamCtc
@@ -606,6 +538,47 @@ fn normalize_winstt_language(raw: &str) -> Option<String> {
     }
 }
 
+fn normalize_winstt_language_candidates(raw: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for candidate in raw {
+        let Some(normalized) = normalize_winstt_language(candidate) else {
+            continue;
+        };
+        if !out.contains(&normalized) {
+            out.push(normalized);
+        }
+    }
+    out
+}
+
+fn model_language_options(
+    model: &crate::winstt::settings_schema::ModelSettings,
+) -> (Option<String>, Vec<String>) {
+    let normalized_candidates = normalize_winstt_language_candidates(&model.language_candidates);
+    if model.auto_detect_language {
+        return (None, normalized_candidates);
+    }
+    if normalized_candidates.len() > 1 {
+        return (None, normalized_candidates);
+    }
+    if let Some(language) = normalized_candidates.first() {
+        return (Some(language.clone()), Vec::new());
+    }
+    if let Some(language) = normalize_winstt_language(&model.language) {
+        return (Some(language), Vec::new());
+    }
+    (None, Vec::new())
+}
+
+pub(crate) fn fixed_realtime_language_from_model(
+    model: &crate::winstt::settings_schema::ModelSettings,
+) -> Option<String> {
+    if model.auto_detect_language {
+        return None;
+    }
+    model_language_options(model).0
+}
+
 /// Build a one-shot Silero VAD for offline FINAL-decode segmentation (long recordings only). This
 /// is a SEPARATE instance from the recorder's live VAD — segmentation runs over the already-
 /// captured buffer, not the realtime stream — and resolves the same bundled model the recorder
@@ -621,15 +594,14 @@ fn build_segmentation_vad(app: &AppHandle) -> Result<SileroVad> {
     SileroVad::new(&path, VAD_SPEECH_THRESHOLD)
 }
 
-/// Apply the WinSTT-arm text post-processing — custom-words fuzzy correction + filler/
-/// hallucination filtering — to an ALREADY-decoded transcript. Factored out of `decode` so the
+/// Apply the WinSTT-arm text post-processing — custom-words fuzzy correction — to an
+/// ALREADY-decoded transcript. Factored out of `decode` so the
 /// realtime-reuse fast path (the final paste reusing the realtime worker's last full-buffer
-/// decode) applies byte-identical cleanup. `ws` + `app_language` are passed in so callers that
-/// already hold a settings snapshot don't pay a second `read_settings` (secret-decrypt) hit.
+/// decode) applies byte-identical cleanup. `ws` is passed in so callers that already hold a
+/// settings snapshot don't pay a second `read_settings` (secret-decrypt) hit.
 pub(crate) fn winstt_postprocess(
     text: &str,
     ws: &crate::winstt::settings_schema::WinsttSettings,
-    app_language: &str,
 ) -> String {
     let custom_words: Vec<String> = ws
         .dictionary
@@ -637,22 +609,11 @@ pub(crate) fn winstt_postprocess(
         .map(|d| d.term.clone())
         .filter(|t| !t.trim().is_empty())
         .collect();
-    let corrected = if custom_words.is_empty() {
+    if custom_words.is_empty() {
         text.to_string()
     } else {
         apply_custom_words(text, &custom_words, ws.general.word_correction_threshold)
-    };
-    // filter_fillers off → Some([]) (no patterns); on+empty → None (language default table).
-    let filler: Option<Vec<String>> = if ws.general.filter_fillers {
-        if ws.general.custom_filler_words.is_empty() {
-            None
-        } else {
-            Some(ws.general.custom_filler_words.clone())
-        }
-    } else {
-        Some(Vec::new())
-    };
-    filter_transcription_output(&corrected, app_language, &filler)
+    }
 }
 
 #[cfg(test)]
@@ -671,5 +632,67 @@ mod tests {
         // Everything else passes through (trimmed).
         assert_eq!(normalize_winstt_language("en"), Some("en".to_string()));
         assert_eq!(normalize_winstt_language(" fr "), Some("fr".to_string()));
+    }
+
+    #[test]
+    fn language_candidates_normalize_and_dedupe() {
+        let raw = vec![
+            " en ".to_string(),
+            "auto".to_string(),
+            "zh-Hans".to_string(),
+            "zh-Hant".to_string(),
+            "fr".to_string(),
+        ];
+        assert_eq!(
+            normalize_winstt_language_candidates(&raw),
+            vec!["en".to_string(), "zh".to_string(), "fr".to_string()]
+        );
+    }
+
+    #[test]
+    fn model_language_options_respect_auto_and_candidates() {
+        let mut model = crate::winstt::settings_schema::ModelSettings {
+            auto_detect_language: true,
+            ..Default::default()
+        };
+        model.language.clear();
+        model.language_candidates = vec!["en".to_string(), "fr".to_string()];
+        assert_eq!(
+            model_language_options(&model),
+            (None, vec!["en".to_string(), "fr".to_string()])
+        );
+        assert_eq!(fixed_realtime_language_from_model(&model), None);
+
+        model.auto_detect_language = false;
+        model.language = "de".to_string();
+        assert_eq!(
+            model_language_options(&model),
+            (None, vec!["en".to_string(), "fr".to_string()])
+        );
+        assert_eq!(fixed_realtime_language_from_model(&model), None);
+
+        model.language_candidates = vec!["fr".to_string()];
+        assert_eq!(
+            model_language_options(&model),
+            (Some("fr".to_string()), Vec::new())
+        );
+        assert_eq!(
+            fixed_realtime_language_from_model(&model),
+            Some("fr".to_string())
+        );
+
+        model.language_candidates.clear();
+        assert_eq!(
+            model_language_options(&model),
+            (Some("de".to_string()), Vec::new())
+        );
+        assert_eq!(
+            fixed_realtime_language_from_model(&model),
+            Some("de".to_string())
+        );
+
+        model.language.clear();
+        assert_eq!(model_language_options(&model), (None, Vec::new()));
+        assert_eq!(fixed_realtime_language_from_model(&model), None);
     }
 }

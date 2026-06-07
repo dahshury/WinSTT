@@ -478,6 +478,7 @@ function DownloadConfirmationContent({
 				{dismissLabel(phase, t)}
 			</DialogActionButton>
 			<DownloadActions
+				appearance="dialog"
 				labels={dialogActionLabels}
 				onDiscard={handleDiscard}
 				onDownload={startDownload}

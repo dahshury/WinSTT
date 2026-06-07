@@ -59,7 +59,6 @@ spanned three tabs becomes local.
 - **Dictation post-processing** (LLM): provider / model / tone / modifiers  ← from LLM tab
 - **Text transformation** (LLM): provider / model / tone / modifiers  ← from LLM tab
 - **Context awareness** + deny-list  ← from Processing(quality)
-- **Formatting**: Uppercase first letter / End with period / Remove filler words  ← from Processing(quality)
 - **LLM Playground** (header action)  ← from LLM tab
 - Tab title: rename `llm.title` usage → "Processing" (settings tab label)
 
@@ -101,7 +100,7 @@ spanned three tabs becomes local.
 
 - **General** → fully redistributed (Recording / Appearance / Output / About). Gone.
 - **Audio** → Recording (devices+release) + Shortcuts (hotkeys) + Output (output device). Gone.
-- **Processing(quality)** → Recording (VAD/endpoint/pauses) + Processing (context+formatting) + Output (paste+file). Gone as a separate "quality" panel; the name "Processing" is reused for the LLM-centric tab.
+- **Processing(quality)** → Recording (VAD/endpoint/pauses) + Processing (context) + Output (paste+file). Gone as a separate "quality" panel; the name "Processing" is reused for the LLM-centric tab.
 - **Dictionary** + **Snippets** → Vocabulary. Gone as separate tabs.
 - **LLM** (slot) → becomes the standalone **Processing** tab.
 - **TTS** (slot) → moves into **Output**.
@@ -120,7 +119,7 @@ Each composes existing exported control components where they exist and copies i
 control JSX (+ its imports/helpers) where they don't.
 
 **Phase 2 (sequential, done by the orchestrator):**
-- Extend `ProcessingSettingsPanel` (= current LLM panel) with Formatting + Context sections.
+- Extend `ProcessingSettingsPanel` (= current LLM panel) with Context sections.
 - Extend `ModelSettingsPanel` with Speaker diarization; stop rendering LLM + TTS slots.
 - Extend `AboutSettingsPanel` with start-on-login / crash / reset-all.
 - Rewire `SettingsPage.tsx` tab list + `SettingsSidebar` links/groups.

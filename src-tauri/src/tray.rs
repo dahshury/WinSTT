@@ -245,6 +245,10 @@ mod tests {
             post_process_prompt: None,
             post_process_requested: false,
             llm_meta: None,
+            dictionary_fixes: None,
+            history_tag: None,
+            privacy_markers_json: None,
+            stt_model: None,
         }
     }
 

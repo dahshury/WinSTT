@@ -88,9 +88,14 @@ export const IPC = {
   AUTOSTART_GET: "autostart:get",
   AUDIO_GET_DEVICES: "audio:get-devices",
   AUDIO_REFRESH_DEVICES: "audio:refresh-devices",
+  AUDIO_GET_OUTPUT_DEVICES: "audio:get-output-devices",
+  AUDIO_REFRESH_OUTPUT_DEVICES: "audio:refresh-output-devices",
   AUDIO_SET_SELECTED_MICROPHONE: "audio:set-selected-microphone",
+  AUDIO_START_MICROPHONE_LEVEL_MONITOR: "audio:start-microphone-level-monitor",
+  AUDIO_STOP_MICROPHONE_LEVEL_MONITOR: "audio:stop-microphone-level-monitor",
   GPU_GET_INFO: "gpu:get-info",
   APP_GET_SYSTEM_LOCALE: "app:get-system-locale",
+  CONTEXT_LIST_APPS: "context:list-apps",
 
   // Settings (renderer → main)
   SETTINGS_SAVE: "settings:save",
@@ -112,6 +117,7 @@ export const IPC = {
   WINDOW_MAXIMIZE: "window:maximize",
   WINDOW_CLOSE: "window:close",
   WINDOW_OPEN_SETTINGS: "window:open-settings",
+  SETTINGS_WINDOW_READY: "settings:window-ready",
   WINDOW_CLOSE_SELF: "window:close-self",
   WINDOW_SHOW: "window:show",
   WINDOW_QUIT: "window:quit",
@@ -205,6 +211,8 @@ export const IPC = {
   // Audio device events (main → renderer)
   AUDIO_DEVICES_CHANGED: "audio:devices-changed",
   AUDIO_DEVICECHANGE_DETECTED: "audio:devicechange-detected",
+  AUDIO_OUTPUT_DEVICES_CHANGED: "audio:output-devices-changed",
+  AUDIO_MICROPHONE_LEVELS: "audio:microphone-levels",
   STT_DEVICE_SWITCH_FAILED: "stt:device-switch-failed",
 
   // Clamshell lid events (main → renderer) — informational. The actual
@@ -458,11 +466,7 @@ export const IPC = {
   // Custom-models management (renderer → main)
   CUSTOM_MODELS_OPEN_FOLDER: "custom-models:open-folder",
 
-  // About panel (renderer → main) — reads the bundled LICENSE and
-  // THIRD_PARTY_NOTICES.md so the Settings → About tab can render them
-  // without having to ship the text inside the renderer bundle.
-  ABOUT_GET_LICENSE: "about:get-license",
-  ABOUT_GET_NOTICES: "about:get-notices",
+  // About panel metadata (renderer → main).
   ABOUT_GET_APP_INFO: "about:get-app-info",
 } as const;
 
@@ -561,9 +565,14 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
   [IPC.AUTOSTART_GET]: ["invoke"],
   [IPC.AUDIO_GET_DEVICES]: ["invoke"],
   [IPC.AUDIO_REFRESH_DEVICES]: ["invoke"],
+  [IPC.AUDIO_GET_OUTPUT_DEVICES]: ["invoke"],
+  [IPC.AUDIO_REFRESH_OUTPUT_DEVICES]: ["invoke"],
   [IPC.AUDIO_SET_SELECTED_MICROPHONE]: ["invoke"],
+  [IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR]: ["invoke"],
+  [IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR]: ["invoke"],
   [IPC.GPU_GET_INFO]: ["invoke"],
   [IPC.APP_GET_SYSTEM_LOCALE]: ["invoke"],
+  [IPC.CONTEXT_LIST_APPS]: ["invoke"],
 
   // Settings
   [IPC.SETTINGS_SAVE]: ["send"],
@@ -581,6 +590,7 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
   [IPC.WINDOW_MAXIMIZE]: ["send"],
   [IPC.WINDOW_CLOSE]: ["send"],
   [IPC.WINDOW_OPEN_SETTINGS]: ["send"],
+  [IPC.SETTINGS_WINDOW_READY]: ["send"],
   [IPC.WINDOW_CLOSE_SELF]: ["send"],
   [IPC.WINDOW_SHOW]: ["send"],
   [IPC.WINDOW_QUIT]: ["send"],
@@ -647,6 +657,8 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
   [IPC.STT_LOOPBACK_STOPPED]: ["on"],
   [IPC.AUDIO_DEVICES_CHANGED]: ["on"],
   [IPC.AUDIO_DEVICECHANGE_DETECTED]: ["on"],
+  [IPC.AUDIO_OUTPUT_DEVICES_CHANGED]: ["on"],
+  [IPC.AUDIO_MICROPHONE_LEVELS]: ["on"],
   [IPC.STT_DEVICE_SWITCH_FAILED]: ["on"],
 
   // Clamshell lid events (informational broadcasts)
@@ -814,8 +826,6 @@ export const IPC_DIRECTIONS: Record<IpcChannel, readonly IpcDirection[]> = {
   [IPC.CUSTOM_MODELS_OPEN_FOLDER]: ["invoke"],
 
   // About panel
-  [IPC.ABOUT_GET_LICENSE]: ["invoke"],
-  [IPC.ABOUT_GET_NOTICES]: ["invoke"],
   [IPC.ABOUT_GET_APP_INFO]: ["invoke"],
   [IPC.SETTINGS_REMOVE_APPLICATION_DATA]: ["invoke"],
   [IPC.SETTINGS_REMOVE_DOWNLOADED_MODELS]: ["invoke"],

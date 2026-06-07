@@ -18,11 +18,11 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use handy_app_lib::winstt::tts::kokoro::{
+use winstt_app_lib::winstt::tts::kokoro::{
     KokoroConfig, KokoroDevice, KokoroEngine, KOKORO_SAMPLE_RATE,
 };
-use handy_app_lib::winstt::tts::phonemize::{default_phonemizer, resolve_espeak_lib};
-use handy_app_lib::winstt::tts::{voice_by_id, KOKORO_VOICE_CATALOG};
+use winstt_app_lib::winstt::tts::phonemize::{default_phonemizer, resolve_espeak_lib};
+use winstt_app_lib::winstt::tts::{voice_by_id, KOKORO_VOICE_CATALOG};
 
 const DEFAULT_SENTENCE: &str = "The quick brown fox jumps over the lazy dog.";
 

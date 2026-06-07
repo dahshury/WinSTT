@@ -1,11 +1,11 @@
 ---
 title: Processing
-description: Control the live preview timing, smart endpoint detection, sentence-pause heuristics, and the formatting passes that run before your text is pasted.
+description: Control the live preview timing, smart endpoint detection, sentence-pause heuristics, context awareness, and paste behavior.
 ---
 
-The **Processing** tab governs everything that happens between speech and paste — how fast the live preview updates, when WinSTT decides you've finished a sentence, and the casing/punctuation cleanup applied to the final text.
+The **Processing** tab governs everything that happens between speech and paste — how fast the live preview updates, when WinSTT decides you've finished a sentence, and whether context is included for cleanup.
 
-<Video src="quality-pipeline" chrome="card" alt="The Processing settings pipeline: realtime preview timing, Smart Endpoint, formatting, and optional auto-submit lighting up in sequence." caption="Processing controls tune the live preview, endpoint timing, formatting, and paste behavior." />
+<Video src="quality-pipeline" chrome="card" alt="The Processing settings pipeline: realtime preview timing, Smart Endpoint, context awareness, and optional auto-submit lighting up in sequence." caption="Processing controls tune the live preview, endpoint timing, context, and paste behavior." />
 
 ## Realtime preview
 
@@ -92,26 +92,6 @@ When Smart Endpoint is **off**, WinSTT falls back to a punctuation-based heurist
   Fallback when speech ends with no recognizable terminator. Raised from 0.7s to **1.3s**
   so ordinary mid-thought pauses don't get clipped.
 </SettingRow>
-
-## Formatting
-
-Two independent passes clean up the text **before** it's pasted. Both default on.
-
-<Screenshot src="sec-quality-formatting" alt="The Formatting section: Uppercase First Letter and End with Period toggles, both switched on." chrome="card" caption="Two per-character cleanup passes that run on the final text before paste." />
-
-<SettingRow label="Uppercase First Letter" settingKey="quality.ensureSentenceStartingUppercase" default="true">
-  Capitalizes the first letter of each sentence in the output.
-</SettingRow>
-
-<SettingRow label="End with Period" settingKey="quality.ensureSentenceEndsWithPeriod" default="true">
-  Appends a period to sentences that lack terminal punctuation.
-</SettingRow>
-
-<Callout type="info" title="Disabled when LLM cleanup is on">
-  Both formatting toggles gray out when [LLM dictation cleanup](/docs/settings/llm) is
-  enabled. The LLM rewrites the whole transcript — including casing and punctuation — so
-  the per-character fixups would be redundant.
-</Callout>
 
 ## Context awareness
 

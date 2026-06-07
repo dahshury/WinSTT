@@ -15,7 +15,12 @@ import {
 export function useTranscriptionFeed(): void {
 	const t = useTranslations("transcription");
 	const addFinalSentence = useTranscriptionStore((s) => s.addFinalSentence);
-	const attachSpeakerSegments = useTranscriptionStore((s) => s.attachSpeakerSegments);
+	const attachSpeakerSegments = useTranscriptionStore(
+		(s) => s.attachSpeakerSegments,
+	);
+	const beginRecordingSession = useTranscriptionStore(
+		(s) => s.beginRecordingSession,
+	);
 	const setRealtimeText = useTranscriptionStore((s) => s.setRealtimeText);
 	const setRecordingActive = useTranscriptionStore((s) => s.setRecordingActive);
 	const setTranscribing = useTranscriptionStore((s) => s.setTranscribing);
@@ -28,10 +33,7 @@ export function useTranscriptionFeed(): void {
 		// freshly shown overlay window paints empty for one frame (before this
 		// event lands) rather than flashing the previous session's text.
 		const unsubStart = onRecordingStart(() => {
-			setRealtimeText("");
-			clearEphemeral();
-			setTranscribing(false);
-			setRecordingActive(true);
+			beginRecordingSession();
 		});
 
 		// `recording_stop` only snaps the visualizer level to zero. Keep the
@@ -100,6 +102,7 @@ export function useTranscriptionFeed(): void {
 	}, [
 		addFinalSentence,
 		attachSpeakerSegments,
+		beginRecordingSession,
 		setRealtimeText,
 		setRecordingActive,
 		setTranscribing,

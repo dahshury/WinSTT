@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@/entities/model-catalog";
 import {
+  buildModelSearchCorpus,
   bundleVariants,
   FAVORITES_GROUP_VALUE,
   type FamilyKey,
+  getAuthorLabel,
   getFamilyConfig,
   groupByFamily,
   groupModelsByAuthor,
@@ -39,6 +41,7 @@ describe("getFamilyConfig", () => {
   test("returns the canonical label/chip for each family", () => {
     expect(getFamilyConfig("whisper").label).toBe("Whisper");
     expect(getFamilyConfig("nemo").label).toBe("NeMo");
+    expect(getFamilyConfig("granite").label).toBe("Granite");
     expect(getFamilyConfig("gigaam").label).toBe("GigaAM");
     expect(getFamilyConfig("kaldi").label).toBe("Kaldi");
     expect(getFamilyConfig("t-one").label).toBe("T-One");
@@ -67,6 +70,18 @@ describe("getFamilyConfig", () => {
     expect(cfg.label).toBe("Dolphin");
     expect(cfg.icon).toBeDefined();
     expect(cfg.logoSrc).toBe("/provider-icons/dataoceanai.png");
+  });
+
+  test("includes Granite with IBM metadata and search aliases", () => {
+    const granite = model("granite-speech-4.1-2b", "granite", "2B");
+    const cfg = getFamilyConfig("granite");
+    const corpus = buildModelSearchCorpus(granite);
+
+    expect(cfg.label).toBe("Granite");
+    expect(cfg.logoSrc).toBe("/provider-icons/ibm-granite.webp");
+    expect(getAuthorLabel("granite")).toBe("IBM");
+    expect(corpus).toContain("ibm");
+    expect(corpus).toContain("granite speech");
   });
 
   test("uses transparent brand logos for every STT family", () => {

@@ -21,7 +21,7 @@ installWebviewDiag("settings");
 
 const container = document.getElementById("root");
 if (!container) {
-	throw new Error("[settings] #root element missing");
+  throw new Error("[settings] #root element missing");
 }
 
 /**
@@ -29,9 +29,9 @@ if (!container) {
  * mount the main window's `IpcProvider` (which also runs action hooks — push-to-talk, the
  * transcription feed, recording-sound — that must stay single-instance in the main pill).
  * But it still needs the data-loading hooks, above all `useSyncSettings` which calls
- * `settingsLoad()` to hydrate the settings store (set `isLoaded`). Without it the store
- * never hydrates (Tauri webviews don't share localStorage), `SettingsPage` reads
- * `isLoaded === false`, and the whole window renders blank. Run ONLY the safe data hooks.
+ * `settingsLoad()` to reconcile the local settings cache with the backend store and
+ * release the settings panels once the canonical snapshot is known. Run ONLY the
+ * safe data hooks.
  */
 // Fire the lifecycle beacon ONCE per window process — not on every re-render. The bootstrap
 // re-renders many times while the store hydrates (each data hook's state update), and emitting
@@ -39,40 +39,40 @@ if (!container) {
 let settingsBeaconSent = false;
 
 function SettingsBootstrap() {
-	const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
-	useSyncSettings(); // settingsLoad() -> hydrate store + write-back on change (THE blank fix)
-	useSyncActiveModel(); // active-model reconcile for the model tab
-	useRealtimePreviewFallback(); // cached realtime model or main-model preview fallback
-	useDownloadListener(); // per-quant download progress for the model tab
-	useConnectionListener(); // server/runtime status for the badges
-	useEffect(() => {
-		let cancelled = false;
-		gpuGetInfo().then((info) => {
-			if (!cancelled) {
-				setGpuInfo(info);
-			}
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [setGpuInfo]);
-	if (!settingsBeaconSent) {
-		settingsBeaconSent = true;
-		diagBeacon("settings", "SettingsBootstrap render reached");
-	}
-	return <SettingsPage />;
+  const setGpuInfo = useConnectionStore((s) => s.setGpuInfo);
+  useSyncSettings(); // settingsLoad() -> backend hydration gate + write-back on change
+  useSyncActiveModel(); // active-model reconcile for the model tab
+  useRealtimePreviewFallback(); // cached realtime model or main-model preview fallback
+  useDownloadListener(); // per-quant download progress for the model tab
+  useConnectionListener(); // server/runtime status for the badges
+  useEffect(() => {
+    let cancelled = false;
+    gpuGetInfo().then((info) => {
+      if (!cancelled) {
+        setGpuInfo(info);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [setGpuInfo]);
+  if (!settingsBeaconSent) {
+    settingsBeaconSent = true;
+    diagBeacon("settings", "SettingsBootstrap render reached");
+  }
+  return <SettingsPage />;
 }
 
 renderReactRoot(
-	container,
-	<StrictMode>
-		<HtmlLang />
-		<Suspense fallback={null}>
-			<IntlProvider>
-				<Tooltip.Provider closeDelay={0} delay={400}>
-					<SettingsBootstrap />
-				</Tooltip.Provider>
-			</IntlProvider>
-		</Suspense>
-	</StrictMode>
+  container,
+  <StrictMode>
+    <HtmlLang />
+    <Suspense fallback={null}>
+      <IntlProvider>
+        <Tooltip.Provider closeDelay={0} delay={400}>
+          <SettingsBootstrap />
+        </Tooltip.Provider>
+      </IntlProvider>
+    </Suspense>
+  </StrictMode>,
 );

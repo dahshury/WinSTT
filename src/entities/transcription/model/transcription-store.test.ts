@@ -26,12 +26,20 @@ describe("useTranscriptionStore initial state (factory defaults)", () => {
 	test("starts with isRecordingActive set to false", () => {
 		// Locks the default so the overlay pill stays hidden on a fresh
 		// renderer mount until a real recording_start event flips this true.
-		expect(useTranscriptionStore.getInitialState().isRecordingActive).toBe(false);
+		expect(useTranscriptionStore.getInitialState().isRecordingActive).toBe(
+			false,
+		);
+	});
+
+	test("starts with recordingSessionId set to 0", () => {
+		expect(useTranscriptionStore.getInitialState().recordingSessionId).toBe(0);
 	});
 
 	test("starts with transcribing state cleared", () => {
 		expect(useTranscriptionStore.getInitialState().isTranscribing).toBe(false);
-		expect(useTranscriptionStore.getInitialState().transcribingStartedAt).toBeNull();
+		expect(
+			useTranscriptionStore.getInitialState().transcribingStartedAt,
+		).toBeNull();
 	});
 });
 
@@ -42,6 +50,7 @@ beforeEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 		isTranscribing: false,
+		recordingSessionId: 0,
 		transcribingStartedAt: null,
 	});
 });
@@ -126,13 +135,34 @@ describe("useTranscriptionStore", () => {
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
 	});
 
+	test("beginRecordingSession clears stale live state and increments session id", () => {
+		useTranscriptionStore.setState({
+			currentRealtime: "old text",
+			ephemeral: { text: "old message", timestamp: 1 },
+			isRecordingActive: false,
+			isTranscribing: true,
+			recordingSessionId: 7,
+			transcribingStartedAt: 123,
+		});
+		useTranscriptionStore.getState().beginRecordingSession();
+		const state = useTranscriptionStore.getState();
+		expect(state.currentRealtime).toBe("");
+		expect(state.ephemeral).toBeNull();
+		expect(state.isRecordingActive).toBe(true);
+		expect(state.isTranscribing).toBe(false);
+		expect(state.recordingSessionId).toBe(8);
+		expect(state.transcribingStartedAt).toBeNull();
+	});
+
 	test("setTranscribing toggles the transcribing flag and timestamp", () => {
 		useTranscriptionStore.getState().setTranscribing(true);
 		const started = useTranscriptionStore.getState().transcribingStartedAt;
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(true);
 		expect(typeof started).toBe("number");
 		useTranscriptionStore.getState().setTranscribing(true);
-		expect(useTranscriptionStore.getState().transcribingStartedAt).toBe(started);
+		expect(useTranscriptionStore.getState().transcribingStartedAt).toBe(
+			started,
+		);
 		useTranscriptionStore.getState().setTranscribing(false);
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
 		expect(useTranscriptionStore.getState().transcribingStartedAt).toBeNull();
@@ -144,6 +174,7 @@ describe("useTranscriptionStore", () => {
 		useTranscriptionStore.getState().clearAll();
 		expect(useTranscriptionStore.getState().isRecordingActive).toBe(false);
 		expect(useTranscriptionStore.getState().isTranscribing).toBe(false);
+		expect(useTranscriptionStore.getState().recordingSessionId).toBe(0);
 	});
 
 	test("attachSpeakerSegments is a no-op when the live feed is empty", () => {
@@ -151,7 +182,9 @@ describe("useTranscriptionStore", () => {
 		// Snapshot the state and assert it didn't mutate (kills the "still calls
 		// set with new items" mutation that would dirty an empty feed).
 		const before = useTranscriptionStore.getState().items;
-		useTranscriptionStore.getState().attachSpeakerSegments([{ start: 0, end: 1, speaker: 0 }]);
+		useTranscriptionStore
+			.getState()
+			.attachSpeakerSegments([{ start: 0, end: 1, speaker: 0 }]);
 		const after = useTranscriptionStore.getState().items;
 		expect(after).toBe(before);
 		expect(after).toHaveLength(0);
@@ -179,9 +212,15 @@ describe("useTranscriptionStore", () => {
 		// The server can emit speaker_segments more than once per utterance as
 		// the diarizer settles; the latest emit should win.
 		useTranscriptionStore.getState().addFinalSentence("only");
-		useTranscriptionStore.getState().attachSpeakerSegments([{ start: 0, end: 1, speaker: 0 }]);
-		useTranscriptionStore.getState().attachSpeakerSegments([{ start: 0, end: 1, speaker: 5 }]);
+		useTranscriptionStore
+			.getState()
+			.attachSpeakerSegments([{ start: 0, end: 1, speaker: 0 }]);
+		useTranscriptionStore
+			.getState()
+			.attachSpeakerSegments([{ start: 0, end: 1, speaker: 5 }]);
 		const items = useTranscriptionStore.getState().items;
-		expect(items[0]?.speakerSegments).toEqual([{ start: 0, end: 1, speaker: 5 }]);
+		expect(items[0]?.speakerSegments).toEqual([
+			{ start: 0, end: 1, speaker: 5 },
+		]);
 	});
 });

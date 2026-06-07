@@ -1,15 +1,9 @@
-import {
-	resolveEffectiveQuant,
-	STT_PICKER_WIDTH_PX,
-	SttModelSelector,
-} from "@picker";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import { providerOf } from "@/entities/cloud-stt-provider";
 import { useConnectionStore } from "@/entities/connection";
 import {
 	isSelectableRealtimeModel,
-	isVisibleSttModel,
 	readLastLocalSttModelHistory,
 	useCatalogStore,
 	useModelStateStore,
@@ -27,183 +21,27 @@ import {
 	useDownloadListener,
 	useQuantActions,
 } from "@/features/model-download";
-import { CloudModelSelect } from "@/features/select-cloud-stt-model";
 import { useModelSwapController } from "@/features/swap-model";
 import { useSyncSettings } from "@/features/update-settings";
-import { IPC } from "@/shared/api/ipc-channels";
 import {
 	fileQueueGetActive,
-	type FitAssessmentEntry,
 	gpuGetInfo,
-	ipcOn,
-	ipcSend,
 	onFileQueueActive,
 } from "@/shared/api/ipc-client";
 import type { OnnxQuantization } from "@/shared/config/defaults";
 import { useEscapeToClose } from "@/shared/lib/window-effects";
 import { ResourceWarningDialog } from "@/shared/ui/resource-warning-dialog";
-
-// Desired footprint reported once to the main process. Main caps the height
-// to whatever fits above the chip (never spilling over the screen top) and
-// sends back the exact panel rect; the panel fills that absolutely-positioned
-// box (h-full) and scrolls internally if it ends up shorter.
-//
-// Width comes from the shared `STT_PICKER_WIDTH_PX` constant so this window
-// is sized to exactly the same pixel width the settings popup renders at —
-// both surfaces always look identical.
-const DESIRED_WIDTH = STT_PICKER_WIDTH_PX;
-const DESIRED_HEIGHT = 560;
-const PANEL_HEIGHT = "h-full";
-// Keep in sync with `MODEL_PICKER_CLOSE_MS` in `src-tauri/.../windows.rs`.
-const MODEL_PICKER_CLOSE_MS = 150;
-
-function isPrimaryInlineModelList(element: HTMLElement): boolean {
-	return (
-		element.getAttribute("role") === "listbox" &&
-		element.closest('[data-slot="model-picker-inline"]') !== null
-	);
-}
-
-// Window-local rect (CSS px) for the visible panel inside the full-screen
-// backdrop window. Null until the main process reports it.
-interface PanelRect {
-	height: number;
-	width: number;
-	x: number;
-	y: number;
-}
-
-type PanelPhase = "hidden" | "open" | "closing";
-
-function close(): void {
-	ipcSend(IPC.MODEL_PICKER_CLOSE);
-}
-
-type CatalogModels = ReturnType<typeof useCatalogStore.getState>["models"];
-type StatesById = ReturnType<typeof useModelStateStore.getState>["statesById"];
-type SystemInfo = ReturnType<typeof useModelStateStore.getState>["systemInfo"];
-type QuantActions = ReturnType<typeof useQuantActions>;
-type GetFitAssessment = (modelId: string) => FitAssessmentEntry | null;
-
-function localModelIdOrNull(modelId: string | undefined): string | null {
-	if (!modelId || providerOf(modelId) !== null) {
-		return null;
-	}
-	return modelId;
-}
-
-function quantForFit(
-	statesById: StatesById,
-	modelId: string | null,
-	currentQuantization: OnnxQuantization,
-): string {
-	return modelId
-		? resolveEffectiveQuant(statesById[modelId], currentQuantization)
-		: "";
-}
-
-function requestedDeviceForFit(deviceValue: "auto" | "cpu"): string | null {
-	return deviceValue === "cpu" ? "cpu" : null;
-}
-
-interface PickerBodyProps {
-	catalogLoaded: boolean;
-	catalogModels: CatalogModels;
-	currentModel: string;
-	currentQuantization: OnnxQuantization;
-	fileQueueBusy: boolean;
-	getFitAssessment: GetFitAssessment;
-	hasAnyCloudKey: boolean;
-	onDeleteQuant: QuantActions["handleDeleteQuant"];
-	canDeleteQuant: (modelId: string, quantization: OnnxQuantization) => boolean;
-	onDownloadAction: QuantActions["handleDownloadAction"];
-	onDownloadSnapshot: QuantActions["handleDownloadSnapshot"];
-	onSelect: (modelId: string, quantization?: OnnxQuantization) => void;
-	statesById: StatesById;
-	systemInfo: SystemInfo;
-}
-
-/**
- * The picker surface: the local STT grid, or the cloud picker when the active
- * model is a cloud provider's. There is NO Local/Cloud switch here — choosing
- * the source is a Settings-only control (`SourceArea` in ModelSettingsPanel);
- * this window just browses the models for whatever source the persisted model
- * already uses. The host mounts it with `key={effectiveSourceIsCloud}` so a
- * persisted-source flip cleanly re-mounts the right sub-picker.
- */
-function PickerBody({
-	catalogLoaded,
-	catalogModels,
-	currentModel,
-	currentQuantization,
-	fileQueueBusy,
-	getFitAssessment,
-	hasAnyCloudKey,
-	onDeleteQuant,
-	canDeleteQuant,
-	onDownloadAction,
-	onDownloadSnapshot,
-	onSelect,
-	statesById,
-	systemInfo,
-}: PickerBodyProps) {
-	// Which sub-picker shows is derived purely from the active model — there is
-	// NO Local/Cloud switch in this window. The source toggle is a Settings-only
-	// control (see `SourceArea` in ModelSettingsPanel); this detached picker just
-	// browses the models for whatever source the persisted model already uses.
-	// A persisted cloud model whose key was removed falls back to the local list
-	// (the key-removal banner explains why), matching the Settings behaviour.
-	const isCloud = providerOf(currentModel) !== null;
-	const showCloud = isCloud && hasAnyCloudKey;
-
-	return (
-		// Bottom-aligned so the short Cloud panel hugs the chip instead of
-		// floating at the top of the (chip-height-capped) window. In Cloud mode
-		// the empty area above the control is the flex container itself — a
-		// pointer-down on it (not a child) closes the picker, same as the
-		// backdrop. In Local mode the grid fills via `flex-1`, leaving no gap.
-		<div
-			className="flex h-full flex-col justify-end gap-2"
-			onPointerDown={(e) => {
-				if (e.target === e.currentTarget) {
-					close();
-				}
-			}}
-		>
-			{showCloud ? (
-				// Auto-open: the detached window exists only to show the picker, so a
-				// closed combobox would force a pointless second click.
-				<CloudModelSelect
-					defaultOpen
-					onSelect={onSelect}
-					selectedId={currentModel}
-				/>
-			) : (
-				<div className="min-h-0 flex-1 [&>*]:size-full">
-					<SttModelSelector
-						currentQuantization={currentQuantization}
-						disabled={fileQueueBusy}
-						getFitAssessment={getFitAssessment}
-						inline
-						isLoading={!catalogLoaded}
-						kind="main"
-						models={catalogModels}
-						onChange={onSelect}
-						canDeleteQuant={canDeleteQuant}
-						onDeleteQuant={onDeleteQuant}
-						onDownloadAction={onDownloadAction}
-						onDownloadSnapshot={onDownloadSnapshot}
-						popupHeightClass={PANEL_HEIGHT}
-						prefilter={isVisibleSttModel}
-						statesById={statesById}
-						systemInfo={systemInfo}
-						value={isCloud ? "" : currentModel}
-					/>
-				</div>
-			)}
-		</div>
-	);
-}
+import {
+	close,
+	type GetFitAssessment,
+	isPrimaryInlineModelList,
+	localModelIdOrNull,
+	type QuantActions,
+	quantForFit,
+	requestedDeviceForFit,
+} from "../lib/picker-helpers";
+import { usePanelRect } from "../model/usePanelRect";
+import { PickerBody } from "./PickerBody";
 
 /**
  * Renderer half of the detached model-picker window. Hosts the full STT
@@ -476,115 +314,22 @@ export function ModelPickerWindow() {
 		}
 	};
 
-	// Main reports where to draw the panel inside the full-screen window
-	// (recomputed on every open and on resize, so it always reflects the
-	// current chip position / clamped height).
-	const [panel, setPanelState] = useState<PanelRect | null>(null);
-	const [panelPhase, setPanelPhaseState] = useState<PanelPhase>("hidden");
-	const panelRef = useRef<PanelRect | null>(null);
-	const panelPhaseRef = useRef<PanelPhase>("hidden");
-	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const openGenerationRef = useRef(0);
-	const setPanel = useCallback((next: PanelRect | null) => {
-		panelRef.current = next;
-		setPanelState(next);
-	}, []);
-	const setPanelPhase = useCallback((next: PanelPhase) => {
-		panelPhaseRef.current = next;
-		setPanelPhaseState(next);
-	}, []);
-	const clearCloseTimer = useCallback(() => {
-		if (closeTimerRef.current !== null) {
-			clearTimeout(closeTimerRef.current);
-			closeTimerRef.current = null;
-		}
-	}, []);
-	useEffect(() => clearCloseTimer, [clearCloseTimer]);
-	// A real rect positions + reveals. Legacy/null anchors can still arrive from
-	// an older hidden-window close path; ignore them once a fresh open is active
-	// so a stale close cannot blank the panel while the backdrop is visible.
-	useEffect(
-		() =>
-			ipcOn(IPC.MODEL_PICKER_ANCHOR, (rect) => {
-				if (rect) {
-					openGenerationRef.current += 1;
-					clearCloseTimer();
-					setPanel(rect as PanelRect);
-					setPanelPhase("open");
-					return;
-				}
-				if (panelPhaseRef.current === "open") {
-					return;
-				}
-				clearCloseTimer();
-				setPanel(null);
-				setPanelPhase("hidden");
-			}),
-		[clearCloseTimer, setPanel, setPanelPhase],
-	);
-	useEffect(
-		() =>
-			ipcOn(IPC.MODEL_PICKER_CLOSING, () => {
-				if (panelRef.current !== null) {
-					const closeGeneration = openGenerationRef.current;
-					clearCloseTimer();
-					setPanelPhase("closing");
-					closeTimerRef.current = setTimeout(() => {
-						closeTimerRef.current = null;
-						if (
-							openGenerationRef.current !== closeGeneration ||
-							panelPhaseRef.current !== "closing"
-						) {
-							return;
-						}
-						setPanel(null);
-						setPanelPhase("hidden");
-					}, MODEL_PICKER_CLOSE_MS);
-				}
-			}),
-		[clearCloseTimer, setPanel, setPanelPhase],
-	);
-
-	// Report the desired footprint once. Main clamps it to the room above
-	// the chip and sends back the final panel rect via MODEL_PICKER_ANCHOR.
-	useEffect(() => {
-		ipcSend(IPC.MODEL_PICKER_RESIZE, {
-			width: DESIRED_WIDTH,
-			height: DESIRED_HEIGHT,
-		});
-	}, []);
-
 	// Esc dismisses the window. The picker is force-open in inline mode, so
 	// Base UI's own open/close events are NOT a reliable dismiss signal
 	// (clicking the author rail or a filter also fires them) — only an
 	// explicit Escape or an outside-the-window click (window blur) closes.
 	useEscapeToClose(close, { ignoreLayer: isPrimaryInlineModelList });
 
-	// Pre-warm the (heavy) picker body during the window's idle pre-create
-	// rather than on first open. The detached picker window is created hidden +
-	// parked off-screen at app startup, but `PickerBody` — a force-open inline
-	// combobox that mounts EVERY model card — used to be gated entirely behind
-	// `panel`, which the main process only sends on the first open. So the
-	// expensive first mount (Base UI's collection build + the full grouped-list
-	// layout) landed during the 150ms open fade and the user saw it lag.
-	//
-	// Mount it as soon as the catalog has hydrated (which happens in the
-	// background a beat after launch), laid out at the default footprint and held
-	// invisible (`opacity: 0`, `pointer-events: none`) until the real anchor
-	// lands. The window stays parked off-screen the whole time, so this warm
-	// render is never visible; the first real open then just repositions an
-	// already-warm tree (a cheap re-render) instead of mounting the whole picker.
-	const panelRevealed = panel !== null;
-	const panelInteractive = panelRevealed && panelPhase === "open";
-	const warmPanel = panel ?? {
-		x: 0,
-		y: 0,
-		width: DESIRED_WIDTH,
-		height: DESIRED_HEIGHT,
-	};
-	const shouldMountBody = panelRevealed || catalogLoaded;
-	const dropdownStateClass =
-		panelPhase === "closing" ? "is-closing" : panelRevealed ? "is-open" : "";
+	// Detached-window panel positioning state machine (anchor/closing IPC,
+	// generation-guarded close timer, one-shot resize report) plus the derived
+	// reveal / warmPanel / dropdownStateClass values the backdrop renders.
+	const {
+		panelInteractive,
+		panelRevealed,
+		warmPanel,
+		shouldMountBody,
+		dropdownStateClass,
+	} = usePanelRect(catalogLoaded);
 
 	return (
 		// Full-screen transparent backdrop. A pointer-down that lands on the
@@ -614,7 +359,7 @@ export function ModelPickerWindow() {
 					className={["absolute flex flex-col t-dropdown", dropdownStateClass]
 						.filter(Boolean)
 						.join(" ")}
-					data-origin="bottom-right"
+					data-origin={warmPanel.origin ?? "bottom-right"}
 					style={{
 						left: warmPanel.x,
 						top: warmPanel.y,

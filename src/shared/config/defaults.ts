@@ -25,6 +25,7 @@ export const ONNX_QUANTIZATIONS = [
 	"", // default / fp32 — always present
 	"int8",
 	"fp16",
+	"fp16w",
 	"uint8",
 	"q4",
 	"q4f16",

@@ -33,6 +33,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::winstt::settings_schema::ContextAppMode;
+
 /// The parsed UIA snapshot. Mirrors `WindowContextSnapshot`. Required triple
 /// (window_title / element_name / focused_text) is always present; the
 /// Wispr-tier enrichments are attached only when the sidecar emitted them.
@@ -174,7 +176,7 @@ pub trait ContextReader {
     fn read(&self, mode: ContextMode) -> WindowContextSnapshot;
 }
 
-// ─────────────────────────── deny-list ────────────────────────────────
+// ─────────────────────── app policy lists ─────────────────────────────
 //
 // Ported 1:1 from context-snapshot.ts. A pattern is either an exe name
 // ("chrome.exe", "1password.exe") matched case-insensitively against
@@ -182,21 +184,21 @@ pub trait ContextReader {
 // snapshot URL's host (every pattern covers any subdomain). A leading
 // "*." is stripped so users can author either form.
 
-struct DenyProbe {
+struct AppPolicyProbe {
     app_exe: String,
     host: String,
 }
 
-fn build_deny_probe(snapshot: &WindowContextSnapshot) -> DenyProbe {
+fn build_app_policy_probe(snapshot: &WindowContextSnapshot) -> AppPolicyProbe {
     let app_exe = snapshot.app_exe.clone().unwrap_or_default().to_lowercase();
     let url = snapshot.url.clone().unwrap_or_default().to_lowercase();
-    DenyProbe {
+    AppPolicyProbe {
         app_exe,
         host: extract_host(&url),
     }
 }
 
-fn normalise_deny_pattern(raw: &str) -> String {
+fn normalise_app_pattern(raw: &str) -> String {
     let lower = raw.trim().to_lowercase();
     lower.strip_prefix("*.").unwrap_or(&lower).to_string()
 }
@@ -212,8 +214,8 @@ fn matches_host_pattern(pattern: &str, host: &str) -> bool {
     host == pattern || host.ends_with(&format!(".{pattern}"))
 }
 
-fn deny_pattern_matches_probe(raw: &str, probe: &DenyProbe) -> bool {
-    let pattern = normalise_deny_pattern(raw);
+fn app_pattern_matches_probe(raw: &str, probe: &AppPolicyProbe) -> bool {
+    let pattern = normalise_app_pattern(raw);
     if pattern.is_empty() {
         return false;
     }
@@ -226,10 +228,22 @@ pub fn is_denied_by_list(snapshot: &WindowContextSnapshot, deny_list: &[String])
     if deny_list.is_empty() {
         return false;
     }
-    let probe = build_deny_probe(snapshot);
+    let probe = build_app_policy_probe(snapshot);
     deny_list
         .iter()
-        .any(|raw| deny_pattern_matches_probe(raw, &probe))
+        .any(|raw| app_pattern_matches_probe(raw, &probe))
+}
+
+/// True when the snapshot's app/url matches any selected-only allow-list entry.
+/// Uses the same executable/host pattern semantics as the deny-list.
+pub fn is_allowed_by_list(snapshot: &WindowContextSnapshot, allow_list: &[String]) -> bool {
+    if allow_list.is_empty() {
+        return false;
+    }
+    let probe = build_app_policy_probe(snapshot);
+    allow_list
+        .iter()
+        .any(|raw| app_pattern_matches_probe(raw, &probe))
 }
 
 /// Strip the Wispr-tier fields from a denied snapshot, keeping only the
@@ -273,39 +287,105 @@ fn extract_host(url: &str) -> String {
 
 // ──────────────── IDE / terminal / canvas detection ───────────────────
 
-/// True when the foreground app is a recognized IDE / code editor. Drives
-/// the "treat visible content as code" prompt hint. Mirrors isIdeContext.
-pub fn is_ide_context(snapshot: &WindowContextSnapshot) -> bool {
-    let exe = snapshot.app_exe.clone().unwrap_or_default().to_lowercase();
+/// Which editor/IDE the foreground app is. Drives per-IDE feature gating
+/// (variable recognition + file tagging), mirroring Wispr Flow's IDE matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdeKind {
+    Cursor,
+    Windsurf,
+    VsCode,
+    VsCodeInsiders,
+    Vscodium,
+    SublimeText,
+    VisualStudio,
+    JetBrains,
+}
+
+/// Per-IDE capability profile.
+///
+/// - `variable_recognition` = backtick-wrap spoken code symbols. WinSTT does this
+///   in the LLM prompt with no screen-reader-mode dependency, so we keep it ON for
+///   every recognized editor (incl. VS Code Insiders — unlike Flow, which gates it
+///   on a screen-reader integration it lacks there).
+/// - `file_tagging` = the "@file" chat affordance, intentionally limited to Cursor
+///   + Windsurf (the editors with a tag-aware chat input), matching Flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdeProfile {
+    pub kind: IdeKind,
+    pub variable_recognition: bool,
+    pub file_tagging: bool,
+}
+
+/// Classify the foreground app's executable into an `IdeKind`, or `None` when it
+/// is not a recognized editor. Exact basenames first, then JetBrains launchers by
+/// prefix (idea64.exe / pycharm64.exe / …).
+pub fn ide_kind_from_exe(app_exe: Option<&str>) -> Option<IdeKind> {
+    let exe = app_exe.unwrap_or("").to_lowercase();
     if exe.is_empty() {
-        return false;
+        return None;
     }
-    const EXACT: &[&str] = &[
-        "code.exe",
-        "cursor.exe",
-        "windsurf.exe",
-        "code - insiders.exe",
-        "vscodium.exe",
-        "sublime_text.exe",
-        "devenv.exe",
-    ];
-    const PREFIXES: &[&str] = &[
-        "idea",
-        "pycharm",
-        "webstorm",
-        "rubymine",
-        "clion",
-        "goland",
-        "rustrover",
-        "rider",
+    let exact = match exe.as_str() {
+        "cursor.exe" => Some(IdeKind::Cursor),
+        "windsurf.exe" => Some(IdeKind::Windsurf),
+        "code.exe" => Some(IdeKind::VsCode),
+        "code - insiders.exe" => Some(IdeKind::VsCodeInsiders),
+        "vscodium.exe" => Some(IdeKind::Vscodium),
+        "sublime_text.exe" => Some(IdeKind::SublimeText),
+        "devenv.exe" => Some(IdeKind::VisualStudio),
+        _ => None,
+    };
+    if exact.is_some() {
+        return exact;
+    }
+    const JETBRAINS: &[&str] = &[
+        "idea", "pycharm", "webstorm", "rubymine", "clion", "goland", "rustrover", "rider",
         "phpstorm",
     ];
-    if EXACT.contains(&exe.as_str()) {
-        return true;
+    if exe.ends_with(".exe") && JETBRAINS.iter().any(|p| exe.starts_with(p)) {
+        return Some(IdeKind::JetBrains);
     }
-    PREFIXES
-        .iter()
-        .any(|p| exe.starts_with(p) && exe.ends_with(".exe"))
+    None
+}
+
+/// Resolve the per-IDE capability profile for the foreground app, or `None` when
+/// it is not a recognized editor.
+pub fn ide_profile(snapshot: &WindowContextSnapshot) -> Option<IdeProfile> {
+    let kind = ide_kind_from_exe(snapshot.app_exe.as_deref())?;
+    let file_tagging = matches!(kind, IdeKind::Cursor | IdeKind::Windsurf);
+    Some(IdeProfile {
+        kind,
+        variable_recognition: true,
+        file_tagging,
+    })
+}
+
+/// True when the foreground app is a recognized IDE / code editor. Drives the
+/// "treat visible content as code" prompt hint. Mirrors isIdeContext.
+pub fn is_ide_context(snapshot: &WindowContextSnapshot) -> bool {
+    ide_kind_from_exe(snapshot.app_exe.as_deref()).is_some()
+}
+
+/// True when the focused control is an IDE's integrated terminal (a recognized
+/// editor AND a terminal-shaped focused element). On Windows these terminals take
+/// Shift+Insert rather than Ctrl+V for paste, so the paste path keys off this.
+pub fn is_ide_terminal(snapshot: &WindowContextSnapshot) -> bool {
+    is_ide_context(snapshot) && looks_like_terminal(snapshot)
+}
+
+/// True when the focused surface looks like an AI coding CLI (Claude Code / Codex)
+/// running in a terminal. These collapse long single pastes, so the paste path
+/// chunks into smaller writes. Conservative: requires a terminal-shaped focus and
+/// a CLI name in the window title or element name.
+pub fn is_ai_coding_cli(snapshot: &WindowContextSnapshot) -> bool {
+    if !looks_like_terminal(snapshot) {
+        return false;
+    }
+    let haystack = format!(
+        "{} {}",
+        snapshot.window_title.to_lowercase(),
+        snapshot.element_name.to_lowercase()
+    );
+    contains_word(&haystack, "claude") || contains_word(&haystack, "codex")
 }
 
 /// True when the focused control looks like a terminal/console (its caret
@@ -541,16 +621,39 @@ pub fn apply_deny_list(
     }
 }
 
+/// Resolve a snapshot through the configured app-scope policy. The existing
+/// default remains `all-except-denied`; selected-only mode captures rich text
+/// only when the foreground app/url matches the user's allow-list.
+pub fn apply_context_app_policy(
+    snapshot: &WindowContextSnapshot,
+    app_mode: ContextAppMode,
+    deny_list: &[String],
+    allow_list: &[String],
+) -> WindowContextSnapshot {
+    match app_mode {
+        ContextAppMode::AllExceptDenied => apply_deny_list(snapshot, deny_list),
+        ContextAppMode::SelectedOnly => {
+            if is_allowed_by_list(snapshot, allow_list) {
+                snapshot.clone()
+            } else {
+                redact_sensitive_fields(snapshot)
+            }
+        }
+    }
+}
+
 /// Convenience: read → deny-list → format, the full capture-to-prompt path
 /// the dictation pipeline calls. Mirrors relay-context-capture's
 /// recording_start capture → fullSentence serve.
 pub fn capture_prompt_fragment(
     reader: &dyn ContextReader,
     mode: ContextMode,
+    app_mode: ContextAppMode,
     deny_list: &[String],
+    allow_list: &[String],
 ) -> String {
     let raw = reader.read(mode);
-    let resolved = apply_deny_list(&raw, deny_list);
+    let resolved = apply_context_app_policy(&raw, app_mode, deny_list, allow_list);
     format_context_for_prompt(&resolved)
 }
 
@@ -631,6 +734,20 @@ mod tests {
     }
 
     #[test]
+    fn allow_list_reuses_exe_and_host_patterns() {
+        let browser = WindowContextSnapshot {
+            app_exe: Some("Chrome.exe".into()),
+            url: Some("https://docs.google.com/document/d/123".into()),
+            ..snap()
+        };
+        assert!(is_allowed_by_list(&browser, &["chrome.exe".into()]));
+        assert!(is_allowed_by_list(&browser, &["google.com".into()]));
+        assert!(is_allowed_by_list(&browser, &["*.docs.google.com".into()]));
+        assert!(!is_allowed_by_list(&browser, &["notepad.exe".into()]));
+        assert!(!is_allowed_by_list(&browser, &[]));
+    }
+
+    #[test]
     fn redact_keeps_only_metadata_triple() {
         let s = WindowContextSnapshot {
             window_title: "Bank".into(),
@@ -661,6 +778,32 @@ mod tests {
         // not denied → unchanged
         let out2 = apply_deny_list(&s, &["chrome.exe".into()]);
         assert_eq!(out2.focused_text, "secret");
+    }
+
+    #[test]
+    fn selected_only_policy_redacts_unlisted_app() {
+        let s = WindowContextSnapshot {
+            window_title: "Notes".into(),
+            focused_text: "private draft".into(),
+            app_exe: Some("notepad.exe".into()),
+            ..snap()
+        };
+        let out = apply_context_app_policy(
+            &s,
+            ContextAppMode::SelectedOnly,
+            &["notepad.exe".into()],
+            &["chrome.exe".into()],
+        );
+        assert_eq!(out.window_title, "Notes");
+        assert_eq!(out.focused_text, "");
+
+        let allowed = apply_context_app_policy(
+            &s,
+            ContextAppMode::SelectedOnly,
+            &[],
+            &["notepad.exe".into()],
+        );
+        assert_eq!(allowed.focused_text, "private draft");
     }
 
     // ── host extraction ──
@@ -719,6 +862,107 @@ mod tests {
             Some("notepad.exe"),
             Some("https://example.com")
         ));
+    }
+
+    // ── IDE profile (per-IDE feature matrix) ──
+
+    #[test]
+    fn ide_kind_classification() {
+        assert_eq!(ide_kind_from_exe(Some("Cursor.exe")), Some(IdeKind::Cursor));
+        assert_eq!(
+            ide_kind_from_exe(Some("windsurf.exe")),
+            Some(IdeKind::Windsurf)
+        );
+        assert_eq!(ide_kind_from_exe(Some("Code.exe")), Some(IdeKind::VsCode));
+        assert_eq!(
+            ide_kind_from_exe(Some("Code - Insiders.exe")),
+            Some(IdeKind::VsCodeInsiders)
+        );
+        assert_eq!(
+            ide_kind_from_exe(Some("idea64.exe")),
+            Some(IdeKind::JetBrains)
+        );
+        assert_eq!(ide_kind_from_exe(Some("chrome.exe")), None);
+        assert_eq!(ide_kind_from_exe(None), None);
+    }
+
+    #[test]
+    fn ide_profile_file_tagging_is_cursor_windsurf_only() {
+        let cursor = WindowContextSnapshot {
+            app_exe: Some("cursor.exe".into()),
+            ..snap()
+        };
+        let p = ide_profile(&cursor).expect("cursor is an ide");
+        assert!(p.variable_recognition);
+        assert!(p.file_tagging);
+
+        let vscode = WindowContextSnapshot {
+            app_exe: Some("code.exe".into()),
+            ..snap()
+        };
+        let p = ide_profile(&vscode).expect("vscode is an ide");
+        assert!(p.variable_recognition);
+        assert!(!p.file_tagging, "file tagging is Cursor/Windsurf only");
+
+        let chrome = WindowContextSnapshot {
+            app_exe: Some("chrome.exe".into()),
+            ..snap()
+        };
+        assert!(ide_profile(&chrome).is_none());
+    }
+
+    #[test]
+    fn ide_terminal_requires_ide_and_terminal_element() {
+        let cursor_term = WindowContextSnapshot {
+            app_exe: Some("cursor.exe".into()),
+            element_name: "Terminal 1, pwsh".into(),
+            ..snap()
+        };
+        assert!(is_ide_terminal(&cursor_term));
+        // IDE editor (not terminal) → not an IDE terminal.
+        let cursor_editor = WindowContextSnapshot {
+            app_exe: Some("cursor.exe".into()),
+            element_name: "Editor, main.rs".into(),
+            ..snap()
+        };
+        assert!(!is_ide_terminal(&cursor_editor));
+        // Terminal in a non-IDE app → not an IDE terminal.
+        let wt = WindowContextSnapshot {
+            app_exe: Some("windowsterminal.exe".into()),
+            element_name: "Terminal".into(),
+            ..snap()
+        };
+        assert!(!is_ide_terminal(&wt));
+    }
+
+    #[test]
+    fn ai_cli_detection_needs_terminal_and_cli_name() {
+        let claude = WindowContextSnapshot {
+            window_title: "Claude Code — myproject".into(),
+            element_name: "Terminal 2, bash".into(),
+            ..snap()
+        };
+        assert!(is_ai_coding_cli(&claude));
+        let codex = WindowContextSnapshot {
+            window_title: "codex".into(),
+            element_name: "console".into(),
+            ..snap()
+        };
+        assert!(is_ai_coding_cli(&codex));
+        // A terminal with no CLI name → not an AI CLI.
+        let plain = WindowContextSnapshot {
+            window_title: "pwsh".into(),
+            element_name: "Terminal 1".into(),
+            ..snap()
+        };
+        assert!(!is_ai_coding_cli(&plain));
+        // The CLI name outside a terminal (e.g. a browser tab) → not an AI CLI.
+        let browser = WindowContextSnapshot {
+            window_title: "Claude — Anthropic".into(),
+            element_name: "Document".into(),
+            ..snap()
+        };
+        assert!(!is_ai_coding_cli(&browser));
     }
 
     // ── prompt formatter ──
@@ -828,7 +1072,13 @@ mod tests {
             app_exe: Some("1password.exe".into()),
             ..snap()
         });
-        let out = capture_prompt_fragment(&reader, ContextMode::Tree, &["1password.exe".into()]);
+        let out = capture_prompt_fragment(
+            &reader,
+            ContextMode::Tree,
+            ContextAppMode::AllExceptDenied,
+            &["1password.exe".into()],
+            &[],
+        );
         assert!(!out.contains("master password"));
         assert!(out.contains("Window: Vault"));
     }

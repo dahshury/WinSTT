@@ -6,11 +6,14 @@ const FAMILY_LABELS: Record<string, string> = {
   whisper: "Whisper",
   "lite-whisper": "Lite-Whisper",
   nemo: "NeMo",
+  granite: "Granite",
   gigaam: "GigaAM",
   kaldi: "Kaldi",
   "t-one": "T-One",
   moonshine: "Moonshine",
   cohere: "Cohere",
+  sense_voice: "SenseVoice",
+  dolphin: "Dolphin",
 };
 
 function getFamilyLabel(family: string): string {
@@ -137,7 +140,7 @@ export function buildModelOpts(
 export function supportsTranslateToEnglish(model: ModelInfo): boolean {
   return (
     (model.family === "whisper" && model.supportsLanguageDetection) ||
-    model.family === "nemo"
+    model.id.startsWith("nemo-canary-")
   );
 }
 

@@ -192,66 +192,6 @@ fn normalize_sherpa_text(text: &str, lowercase: bool) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        final_silence_pad, normalize_sherpa_text, parse_sherpa_token_symbols,
-        sherpa_tokens_text_is_uppercase, FINAL_SILENCE_PAD_MS, SHERPA_RULE1_MIN_TRAILING_SILENCE,
-        SHERPA_RULE2_MIN_TRAILING_SILENCE, SHERPA_RULE3_MIN_UTTERANCE_LENGTH, STREAM_SAMPLE_RATE,
-    };
-
-    #[test]
-    fn sherpa_endpoint_defaults_are_not_aggressive() {
-        assert_eq!(SHERPA_RULE1_MIN_TRAILING_SILENCE, 2.4);
-        assert_eq!(SHERPA_RULE2_MIN_TRAILING_SILENCE, 1.2);
-        assert_eq!(SHERPA_RULE3_MIN_UTTERANCE_LENGTH, 20.0);
-    }
-
-    #[test]
-    fn final_silence_pad_is_two_seconds_of_zero_audio() {
-        let pad = final_silence_pad();
-
-        assert_eq!(pad.len(), STREAM_SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000);
-        assert!(pad.iter().all(|sample| *sample == 0.0));
-    }
-
-    #[test]
-    fn sherpa_tokens_detect_zipformer_uppercase_vocab() {
-        let raw = "<blk> 0\n<unk> 1\n\u{2581}THE 2\nQUICK 3\nBROWN 4\nFOX 5\n";
-
-        assert!(sherpa_tokens_text_is_uppercase(raw));
-    }
-
-    #[test]
-    fn sherpa_tokens_keep_mixed_case_vocab() {
-        let raw = "<blk> 0\n<unk> 1\n\u{2581}the 2\nQuick 3\nbrown 4\n";
-
-        assert!(!sherpa_tokens_text_is_uppercase(raw));
-    }
-
-    #[test]
-    fn sherpa_token_parser_ignores_malformed_lines() {
-        let raw = "<blk> 0\nbad line\n\u{2581}HELLO 12\n";
-
-        assert_eq!(
-            parse_sherpa_token_symbols(raw),
-            vec!["<blk>".to_string(), "\u{2581}HELLO".to_string()]
-        );
-    }
-
-    #[test]
-    fn normalize_sherpa_text_lowercases_uppercase_vocab_output() {
-        assert_eq!(
-            normalize_sherpa_text("This Is Zipformer Text", true),
-            "this is zipformer text"
-        );
-        assert_eq!(
-            normalize_sherpa_text("This Is Zipformer Text", false),
-            "This Is Zipformer Text"
-        );
-    }
-}
-
 impl Transcriber for SherpaStreamingEngine {
     fn kind(&self) -> EngineKind {
         self.kind
@@ -328,5 +268,65 @@ impl Transcriber for SherpaStreamingEngine {
     fn stream_reset(&mut self) {
         self.stream = Some(self.recognizer.create_stream());
         self.finalized_text.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        final_silence_pad, normalize_sherpa_text, parse_sherpa_token_symbols,
+        sherpa_tokens_text_is_uppercase, FINAL_SILENCE_PAD_MS, SHERPA_RULE1_MIN_TRAILING_SILENCE,
+        SHERPA_RULE2_MIN_TRAILING_SILENCE, SHERPA_RULE3_MIN_UTTERANCE_LENGTH, STREAM_SAMPLE_RATE,
+    };
+
+    #[test]
+    fn sherpa_endpoint_defaults_are_not_aggressive() {
+        assert_eq!(SHERPA_RULE1_MIN_TRAILING_SILENCE, 2.4);
+        assert_eq!(SHERPA_RULE2_MIN_TRAILING_SILENCE, 1.2);
+        assert_eq!(SHERPA_RULE3_MIN_UTTERANCE_LENGTH, 20.0);
+    }
+
+    #[test]
+    fn final_silence_pad_is_two_seconds_of_zero_audio() {
+        let pad = final_silence_pad();
+
+        assert_eq!(pad.len(), STREAM_SAMPLE_RATE * FINAL_SILENCE_PAD_MS / 1000);
+        assert!(pad.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn sherpa_tokens_detect_zipformer_uppercase_vocab() {
+        let raw = "<blk> 0\n<unk> 1\n\u{2581}THE 2\nQUICK 3\nBROWN 4\nFOX 5\n";
+
+        assert!(sherpa_tokens_text_is_uppercase(raw));
+    }
+
+    #[test]
+    fn sherpa_tokens_keep_mixed_case_vocab() {
+        let raw = "<blk> 0\n<unk> 1\n\u{2581}the 2\nQuick 3\nbrown 4\n";
+
+        assert!(!sherpa_tokens_text_is_uppercase(raw));
+    }
+
+    #[test]
+    fn sherpa_token_parser_ignores_malformed_lines() {
+        let raw = "<blk> 0\nbad line\n\u{2581}HELLO 12\n";
+
+        assert_eq!(
+            parse_sherpa_token_symbols(raw),
+            vec!["<blk>".to_string(), "\u{2581}HELLO".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalize_sherpa_text_lowercases_uppercase_vocab_output() {
+        assert_eq!(
+            normalize_sherpa_text("This Is Zipformer Text", true),
+            "this is zipformer text"
+        );
+        assert_eq!(
+            normalize_sherpa_text("This Is Zipformer Text", false),
+            "This Is Zipformer Text"
+        );
     }
 }

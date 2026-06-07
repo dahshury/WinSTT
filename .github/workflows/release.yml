@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: true
+      prerelease:
+        description: "Mark the GitHub release as a prerelease (also inferred for x.y.z-alpha/beta versions)"
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -80,7 +85,10 @@ jobs:
 
       - name: Build Tauri release binary
         shell: pwsh
-        run: tools\windows\tauri-build.ps1 -Bundles nsis -Config tools\tauri-ci-artifacts.conf.json
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: tools\windows\tauri-build.ps1 -Bundles nsis
 
       - name: Collect portable Windows artifacts
         shell: pwsh
@@ -94,6 +102,7 @@ jobs:
           path: |
             dist/WinSTT.exe
             dist/WinSTT-portable.zip
+            src-tauri/target/release/bundle/nsis/*.sig
 
   linux:
     name: Build Linux bundle artifacts
@@ -145,6 +154,10 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build Linux artifacts
+        env:
+          TAURI_BUNDLE_CONFIG: none
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: bash tools/linux/tauri-bundles.sh
 
       - name: Upload Linux artifacts to workflow run
@@ -175,11 +188,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_DRAFT: ${{ inputs.draft }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
           VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           $draft = [System.Convert]::ToBoolean($env:RELEASE_DRAFT)
+          $prerelease = [System.Convert]::ToBoolean($env:RELEASE_PRERELEASE) -or ($env:VERSION -match "-")
           tools/release/upload-github-assets.ps1 `
             -AssetsRoot release-assets `
             -Version $env:VERSION `
             -Target $env:GITHUB_SHA `
+            -Prerelease:$prerelease `
             -Draft:$draft

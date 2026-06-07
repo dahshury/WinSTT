@@ -2,7 +2,6 @@ import { Separator } from "@base-ui/react/separator";
 import {
   ArrowRight01Icon,
   Bug01Icon,
-  Folder01Icon,
   Mic01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -41,18 +40,19 @@ import { Switcher } from "@/shared/ui/switcher";
 interface TrayMenuState {
   inputDeviceIndex: number | null;
   isConnected: boolean;
+  receivePrereleaseUpdates: boolean;
   recordingMode: RecordingMode;
 }
 
 type TrayMenuAction =
   | {
       type: "load-settings";
+      receivePrereleaseUpdates: boolean;
       recordingMode: RecordingMode;
       inputDeviceIndex: number | null;
     }
   | { type: "set-connected"; value: boolean }
-  | { type: "set-recording-mode"; value: RecordingMode }
-  | { type: "set-input-device"; value: number | null };
+  | { type: "set-recording-mode"; value: RecordingMode };
 
 function trayMenuReducer(
   state: TrayMenuState,
@@ -62,6 +62,7 @@ function trayMenuReducer(
     case "load-settings":
       return {
         ...state,
+        receivePrereleaseUpdates: action.receivePrereleaseUpdates,
         recordingMode: action.recordingMode,
         inputDeviceIndex: action.inputDeviceIndex,
       };
@@ -69,8 +70,6 @@ function trayMenuReducer(
       return { ...state, isConnected: action.value };
     case "set-recording-mode":
       return { ...state, recordingMode: action.value };
-    case "set-input-device":
-      return { ...state, inputDeviceIndex: action.value };
     default:
       return state;
   }
@@ -80,6 +79,7 @@ const INITIAL_TRAY_MENU_STATE: TrayMenuState = {
   recordingMode: "ptt",
   inputDeviceIndex: null,
   isConnected: false,
+  receivePrereleaseUpdates: false,
 };
 
 export function TrayMenu() {
@@ -87,7 +87,12 @@ export function TrayMenu() {
     trayMenuReducer,
     INITIAL_TRAY_MENU_STATE,
   );
-  const { recordingMode, inputDeviceIndex, isConnected } = state;
+  const {
+    recordingMode,
+    inputDeviceIndex,
+    isConnected,
+    receivePrereleaseUpdates,
+  } = state;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const t = useTranslations("tray");
   const tAudio = useTranslations("audio");
@@ -97,6 +102,8 @@ export function TrayMenu() {
     settingsLoad().then((settings) => {
       dispatch({
         type: "load-settings",
+        receivePrereleaseUpdates:
+          settings.general.receivePrereleaseUpdates ?? false,
         recordingMode: settings.general.recordingMode,
         inputDeviceIndex: settings.audio?.inputDeviceIndex ?? null,
       });
@@ -108,12 +115,14 @@ export function TrayMenu() {
     const unsubscribeConn = onConnectionChange((connected) => {
       dispatch({ type: "set-connected", value: connected });
     });
-    // The device popup writes the new index to settings; mirror it back so
-    // the row label stays correct while the (persistent) tray window is up.
+    // The device popup and About panel write settings from other windows; mirror
+    // the relevant fields while the persistent tray window is up.
     const unsubscribeSettings = onSettingsChanged((s) => {
       dispatch({
-        type: "set-input-device",
-        value: s.audio?.inputDeviceIndex ?? null,
+        type: "load-settings",
+        receivePrereleaseUpdates: s.general.receivePrereleaseUpdates ?? false,
+        recordingMode: s.general.recordingMode,
+        inputDeviceIndex: s.audio?.inputDeviceIndex ?? null,
       });
     });
 
@@ -187,7 +196,9 @@ export function TrayMenu() {
 
   const handleCheckForUpdates = async () => {
     closeTrayMenu();
-    await updaterCheckNow();
+    await updaterCheckNow({
+      includePrereleaseUpdates: receivePrereleaseUpdates,
+    });
   };
 
   const handleQuit = () => {
@@ -243,18 +254,21 @@ export function TrayMenu() {
   return (
     <SurfaceProvider value={menuLevel}>
       <div
-        // `w-max` (max-content), NOT `w-fit`: `fit-content` is capped by the
-        // containing block's available width, and the window's `body` has no
-        // explicit width (so available width == the window's CURRENT width).
-        // A menu that starts in a 280px window therefore caps itself at 280px,
-        // clips wider content (the mode switcher / shortcut column) off the
-        // right, and reports the capped 280px back via the ResizeObserver — so
-        // the resize-to-fit loop can never grow it. In dev the timing happens
-        // to dodge the cap; a packaged build (React in production mode) gets
-        // stuck on it. `max-content` is the true content width, unbounded by
-        // the window, so the menu always measures — and resizes — to fit.
+        // FIXED compact width — ~31% narrower than the old ~280px menu. The big
+        // win is the recording-mode switcher: a 4-wide text row (~270px) is now
+        // a 2×2 grid (~half the width), so the menu no longer has to be wide to
+        // hold it.
+        //
+        // Why fixed, not the old `w-max`: with `w-max` the menu shrinks to its
+        // widest *non-shrinking* row (now the switcher), and the text labels —
+        // which sit in `truncate` spans inside `min-w-0` flex rows — collapse and
+        // ellipsize to fit that narrower box. Pinning the width to fit the real
+        // labels keeps every action fully readable; only the genuinely variable
+        // device name (its own `max-w`) still truncates. The width matches the
+        // window's initial size (windows.rs), so the ResizeObserver settles it
+        // with no first-frame jump.
         className={cn(
-          "w-max rounded-xl p-1 ring-1 ring-divider-strong",
+          "w-[192px] rounded-xl p-1 ring-1 ring-divider-strong",
           surfaceClasses(menuLevel, Math.max(menuLevel, 7)),
           "font-sans text-body-sm text-foreground",
         )}
@@ -288,6 +302,7 @@ export function TrayMenu() {
 
         <div className="p-1">
           <Switcher
+            columns={2}
             fullWidth
             onChange={handleModeChange}
             options={recordingModeOptions}
@@ -299,7 +314,7 @@ export function TrayMenu() {
 
         <Button
           className={cn(
-            "w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
+            "w-full justify-between gap-2 rounded px-2.5 py-1.5 text-left transition-colors",
             hoverBg,
             "hover:text-foreground",
             activeBg,
@@ -315,8 +330,8 @@ export function TrayMenu() {
             />
             {/* Cap the device name so a long label (e.g. "System Default
 						    (Microphone (Realtek(R) Audio))") truncates here instead of
-						    driving the now-`max-content` menu absurdly wide. */}
-            <span className="max-w-[15rem] truncate">{currentDeviceLabel}</span>
+						    eating the whole fixed-width row (keeps the chevron visible). */}
+            <span className="max-w-[9rem] truncate">{currentDeviceLabel}</span>
           </span>
           <HugeiconsIcon
             aria-hidden="true"
@@ -350,7 +365,6 @@ export function TrayMenu() {
         <MenuItem
           activeBg={activeBg}
           hoverBg={hoverBg}
-          icon={Folder01Icon}
           onClick={handleOpenLogsFolder}
         >
           {t("openLogsFolder")}
@@ -358,7 +372,6 @@ export function TrayMenu() {
         <MenuItem
           activeBg={activeBg}
           hoverBg={hoverBg}
-          icon={Bug01Icon}
           onClick={handleSaveDiagBundle}
         >
           {t("saveDiagnosticBundle")}
@@ -417,7 +430,7 @@ function MenuItem({
   return (
     <Button
       className={cn(
-        "w-full justify-between gap-3 rounded px-3 py-1.5 text-left transition-colors",
+        "w-full justify-between gap-2 rounded px-2.5 py-1.5 text-left transition-colors",
         disabled
           ? "text-foreground-dim"
           : `${hoverBg} ${activeBg} hover:text-foreground`,
@@ -437,7 +450,12 @@ function MenuItem({
         <span className="truncate">{children}</span>
       </span>
       {shortcut && (
-        <span className="text-[10px] text-foreground-muted">{shortcut}</span>
+        // Way-smaller, non-shrinking hint column so the label (which truncates)
+        // yields width first — keeps the accelerator visible without widening
+        // the now-compact menu.
+        <span className="shrink-0 text-[8px] tracking-tight text-foreground-muted">
+          {shortcut}
+        </span>
       )}
     </Button>
   );

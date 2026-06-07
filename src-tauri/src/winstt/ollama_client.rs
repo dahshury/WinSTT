@@ -436,6 +436,7 @@ pub enum PullOutcome {
 pub struct OllamaCapabilities {
     pub capabilities: Vec<String>,
     pub supports_thinking: bool,
+    pub supports_tools: bool,
     pub context_length: Option<u64>,
 }
 
@@ -526,6 +527,7 @@ fn parse_ollama_show(json: &serde_json::Value) -> OllamaCapabilities {
         })
         .unwrap_or_default();
     let supports_thinking = capabilities.iter().any(|v| v == "thinking");
+    let supports_tools = capabilities.iter().any(|v| v == "tools");
     let context_length = json
         .get("model_info")
         .and_then(|mi| mi.as_object())
@@ -537,6 +539,7 @@ fn parse_ollama_show(json: &serde_json::Value) -> OllamaCapabilities {
     OllamaCapabilities {
         capabilities,
         supports_thinking,
+        supports_tools,
         context_length,
     }
 }
@@ -663,14 +666,19 @@ mod tests {
     #[test]
     fn parse_show_detects_thinking_and_ctx() {
         let json = serde_json::json!({
-            "capabilities": ["completion", "thinking"],
+            "capabilities": ["completion", "thinking", "tools"],
             "model_info": { "qwen3.context_length": 32768u64 }
         });
         let caps = parse_ollama_show(&json);
         assert!(caps.supports_thinking);
+        assert!(caps.supports_tools);
         assert_eq!(
             caps.capabilities,
-            vec!["completion".to_string(), "thinking".to_string()]
+            vec![
+                "completion".to_string(),
+                "thinking".to_string(),
+                "tools".to_string()
+            ]
         );
         assert_eq!(caps.context_length, Some(32768));
     }
@@ -680,6 +688,7 @@ mod tests {
         let json = serde_json::json!({ "capabilities": ["completion"] });
         let caps = parse_ollama_show(&json);
         assert!(!caps.supports_thinking);
+        assert!(!caps.supports_tools);
         assert_eq!(caps.capabilities, vec!["completion".to_string()]);
         assert_eq!(caps.context_length, None);
     }

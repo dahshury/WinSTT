@@ -44,6 +44,7 @@ beforeEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 		isTranscribing: false,
+		recordingSessionId: 0,
 		transcribingStartedAt: null,
 	});
 	useLlmProcessingStore.setState({
@@ -76,6 +77,7 @@ afterEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 		isTranscribing: false,
+		recordingSessionId: 0,
 		transcribingStartedAt: null,
 	});
 	useLlmProcessingStore.setState({
@@ -102,9 +104,20 @@ describe("OverlayPage", () => {
 	});
 
 	test("shows the editable preview pill in floating-bottom mode", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				general: {
+					...initialSettings.general,
+					overlayMode: "floating-bottom",
+				},
+			},
+		});
+		// original === text → the entry "edit" view with the editable transcript
+		// (an auto-enhanced transcript would open straight into the diff instead).
 		useTranscriptPreviewStore
 			.getState()
-			.open({ original: "raw transcript", text: "preview draft" });
+			.open({ original: "preview draft", text: "preview draft" });
 		const { container } = renderOverlay();
 		const textarea = container.querySelector(
 			"textarea",
@@ -114,7 +127,7 @@ describe("OverlayPage", () => {
 		expect(textarea?.closest(".t-resize")).not.toBeNull();
 	});
 
-	test("enables preview AI enhance when a dictation model is configured", () => {
+	test("disables AI enhance while post-processing is off", () => {
 		useSettingsStore.setState({
 			settings: {
 				...initialSettings,
@@ -131,7 +144,32 @@ describe("OverlayPage", () => {
 		});
 		useTranscriptPreviewStore
 			.getState()
-			.open({ original: "raw transcript", text: "preview draft" });
+			.open({ original: "preview draft", text: "preview draft" });
+		const { getByRole } = renderOverlay();
+		const enhanceButton = getByRole("button", {
+			name: /enhance with ai/i,
+		}) as HTMLButtonElement;
+		expect(enhanceButton.disabled).toBe(true);
+	});
+
+	test("enables AI enhance when post-processing is on and a model is configured", () => {
+		useSettingsStore.setState({
+			settings: {
+				...initialSettings,
+				llm: {
+					...initialSettings.llm,
+					dictation: {
+						...initialSettings.llm.dictation,
+						enabled: true,
+						model: "llama3.2",
+						provider: "ollama",
+					},
+				},
+			},
+		});
+		useTranscriptPreviewStore
+			.getState()
+			.open({ original: "preview draft", text: "preview draft" });
 		const { getByRole } = renderOverlay();
 		const enhanceButton = getByRole("button", {
 			name: /enhance with ai/i,
@@ -151,7 +189,7 @@ describe("OverlayPage", () => {
 		});
 		useTranscriptPreviewStore
 			.getState()
-			.open({ original: "raw transcript", text: "preview draft" });
+			.open({ original: "preview draft", text: "preview draft" });
 		const { container } = renderOverlay();
 		const textarea = container.querySelector(
 			"textarea",
@@ -160,10 +198,22 @@ describe("OverlayPage", () => {
 		expect(container.querySelector("#winstt-overlay-island")).not.toBeNull();
 	});
 
+	test("opens straight into the AI-edit diff when auto-enhanced", () => {
+		// original !== text → the transcript was auto-enhanced before the preview
+		// opened, so it lands in the enhance view with the diff shown immediately.
+		// The ORIGINAL must stay visible (the user must not lose what they said).
+		useTranscriptPreviewStore
+			.getState()
+			.open({ original: "raw transcript", text: "polished transcript" });
+		const { container } = renderOverlay();
+		expect(useTranscriptPreviewStore.getState().view).toBe("enhance");
+		expect(container.textContent).toContain("raw");
+	});
+
 	test("edits the preview draft before confirm", () => {
 		useTranscriptPreviewStore
 			.getState()
-			.open({ original: "raw transcript", text: "preview draft" });
+			.open({ original: "preview draft", text: "preview draft" });
 		const { container } = renderOverlay();
 		const textarea = container.querySelector(
 			"textarea",
@@ -195,6 +245,7 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
 				},
 			},
 		});
@@ -220,6 +271,7 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
 				},
 			},
 		});
@@ -265,6 +317,7 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
 				},
 			},
 		});
@@ -291,6 +344,7 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
 				},
 				llm: {
 					...initialSettings.llm,
@@ -438,9 +492,7 @@ describe("OverlayPage", () => {
 		expect(output?.getAttribute("data-thinking-word")).toBe(
 			"Transforming text",
 		);
-		expect(
-			queryByRole("button", { name: /cancel transcription/i }),
-		).toBeNull();
+		expect(queryByRole("button", { name: /cancel transcription/i })).toBeNull();
 	});
 
 	test("shows selected-text transform processing in the dynamic island without the STT cancel button", () => {
@@ -468,9 +520,7 @@ describe("OverlayPage", () => {
 		expect(output?.getAttribute("data-thinking-word")).toBe(
 			"Transforming text",
 		);
-		expect(
-			queryByRole("button", { name: /cancel transcription/i }),
-		).toBeNull();
+		expect(queryByRole("button", { name: /cancel transcription/i })).toBeNull();
 	});
 
 	test("keeps the transform floating surface mounted while reasoning streams", () => {
@@ -782,6 +832,7 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "in-pill",
+					overlayMode: "floating-bottom",
 				},
 			},
 		});
@@ -813,6 +864,7 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "in-pill",
+					overlayMode: "floating-bottom",
 					wordByWordPasting: true,
 				},
 				model: {
@@ -947,6 +999,7 @@ describe("OverlayPage", () => {
 				general: {
 					...initialSettings.general,
 					liveTranscriptionDisplay: "both",
+					overlayMode: "floating-bottom",
 				},
 			},
 		});

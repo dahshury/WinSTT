@@ -1,1 +1,1 @@
-export { AnimatedNumber, AnimatedText, AnimatedValueText, IconSwap } from "./AnimatedValue";
+export { AnimatedText, AnimatedValueText, IconSwap } from "./AnimatedValue";

@@ -26,8 +26,6 @@ IDENTICAL_BY_DESIGN = {
     "titleBar.appName",
     "about.appInfoTitle",
     "about.appVersion",
-    "about.frameworkVersion",
-    "about.webview2Version",
     "settings.tabLlm",
     "integrations.openai",
     "integrations.groupOpenai",

@@ -273,24 +273,24 @@ describe("useDeviceSwitchFeedback", () => {
 	});
 
 	describe("shouldResetSavedOutputDevice (pure)", () => {
-		const list = [{ deviceId: "default" }, { deviceId: "speaker-1" }];
+		const sinkIds = ["default", "speaker-1"];
 
 		test("false when no output device was saved", () => {
-			expect(__test_shouldResetSavedOutputDevice("", list)).toBe(false);
-			expect(__test_shouldResetSavedOutputDevice(null, list)).toBe(false);
-			expect(__test_shouldResetSavedOutputDevice(undefined, list)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice("", sinkIds)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice(null, sinkIds)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice(undefined, sinkIds)).toBe(false);
 		});
 
-		test("false while the output-device list is still empty", () => {
+		test("false while the sink-id list is still empty", () => {
 			expect(__test_shouldResetSavedOutputDevice("speaker-1", [])).toBe(false);
 		});
 
 		test("false when the saved output device is present", () => {
-			expect(__test_shouldResetSavedOutputDevice("speaker-1", list)).toBe(false);
+			expect(__test_shouldResetSavedOutputDevice("speaker-1", sinkIds)).toBe(false);
 		});
 
 		test("true when the saved output device is absent from a non-empty list", () => {
-			expect(__test_shouldResetSavedOutputDevice("bt-headset", list)).toBe(true);
+			expect(__test_shouldResetSavedOutputDevice("bt-headset", sinkIds)).toBe(true);
 		});
 	});
 

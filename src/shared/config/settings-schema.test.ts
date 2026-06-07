@@ -20,6 +20,8 @@ describe("modelSettingsSchema defaults", () => {
     expect(out.model).toBe("tiny");
     expect(out.realtimeModel).toBe("tiny");
     expect(out.language).toBe("en");
+    expect(out.autoDetectLanguage).toBe(false);
+    expect(out.languageCandidates).toEqual([]);
     expect(out.device).toBe("auto");
     expect(out.backend).toBe("faster_whisper");
   });
@@ -77,12 +79,12 @@ describe("modelSettingsSchema defaults", () => {
 });
 
 describe("global model lifetime settings", () => {
-  test("defaults the shared unload timeout to 5 minutes", () => {
+  test("defaults the shared unload timeout to 15 minutes", () => {
     const out = appSettingsSchema.parse({});
     expect(
       (out as { global?: { modelUnloadTimeout?: string } }).global
         ?.modelUnloadTimeout,
-    ).toBe("min5");
+    ).toBe("min15");
   });
 
   test("migrates legacy model.modelUnloadTimeout into the global section", () => {
@@ -220,6 +222,20 @@ describe("generalSettingsSchema", () => {
       generalSettingsSchema.parse({ fileTranscriptionFormat: "pdf" }),
     ).toThrow();
   });
+
+  test("context app mode defaults to the legacy deny-list behavior", () => {
+    expect(generalSettingsSchema.parse({}).contextAppMode).toBe(
+      "all-except-denied",
+    );
+    expect(
+      generalSettingsSchema.parse({ contextAppMode: "selected-only" })
+        .contextAppMode,
+    ).toBe("selected-only");
+    expect(
+      generalSettingsSchema.parse({ contextAppMode: "everything" })
+        .contextAppMode,
+    ).toBe("all-except-denied");
+  });
 });
 
 describe("hotkeySettingsSchema", () => {
@@ -244,6 +260,12 @@ describe("dictionary & snippet schemas", () => {
   test("dictionaryEntrySchema requires id and term", () => {
     const ok = dictionaryEntrySchema.parse({ id: "1", term: "Kubernetes" });
     expect(ok).toEqual({ id: "1", term: "Kubernetes" });
+    const auto = dictionaryEntrySchema.parse({
+      id: "2",
+      term: "WinSTT",
+      autoAdded: true,
+    });
+    expect(auto.autoAdded).toBe(true);
     expect(() =>
       dictionaryEntrySchema.parse({ id: "", term: "Kubernetes" }),
     ).toThrow();
@@ -303,18 +325,6 @@ describe("llmSettingsSchema", () => {
 });
 
 describe("qualitySettingsSchema defaults (lock-down)", () => {
-  test("ensureSentenceStartingUppercase defaults to true", () => {
-    expect(
-      qualitySettingsSchema.parse({}).ensureSentenceStartingUppercase,
-    ).toBe(true);
-  });
-
-  test("ensureSentenceEndsWithPeriod defaults to true", () => {
-    expect(qualitySettingsSchema.parse({}).ensureSentenceEndsWithPeriod).toBe(
-      true,
-    );
-  });
-
   test("smartEndpoint defaults to true", () => {
     expect(qualitySettingsSchema.parse({}).smartEndpoint).toBe(true);
   });
@@ -493,6 +503,25 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
     expect(generalSettingsSchema.parse({}).showRecordingOverlay).toBe(true);
   });
 
+  test("overlayMode defaults to dynamic-island", () => {
+    expect(generalSettingsSchema.parse({}).overlayMode).toBe("dynamic-island");
+  });
+
+  test("overlayMode accepts both layout options", () => {
+    for (const mode of ["floating-bottom", "dynamic-island"] as const) {
+      expect(
+        generalSettingsSchema.parse({ overlayMode: mode }).overlayMode,
+      ).toBe(mode);
+    }
+  });
+
+  test("overlayMode falls back to dynamic-island for unknown values (catch)", () => {
+    expect(
+      generalSettingsSchema.parse({ overlayMode: "floating-parapet" })
+        .overlayMode,
+    ).toBe("dynamic-island");
+  });
+
   test("liveTranscriptionDisplay defaults to 'both'", () => {
     expect(generalSettingsSchema.parse({}).liveTranscriptionDisplay).toBe(
       "both",
@@ -529,6 +558,18 @@ describe("generalSettingsSchema defaults (lock-down)", () => {
     ).toBe(false);
   });
 
+  test("context allow-list defaults to empty and rescues corrupt values", () => {
+    expect(generalSettingsSchema.parse({}).contextAllowList).toEqual([]);
+    expect(
+      generalSettingsSchema.parse({ contextAllowList: ["chrome.exe"] })
+        .contextAllowList,
+    ).toEqual(["chrome.exe"]);
+    expect(
+      generalSettingsSchema.parse({ contextAllowList: "chrome.exe" })
+        .contextAllowList,
+    ).toEqual([]);
+  });
+
   test("visualizerType enum accepts each canonical type", () => {
     for (const t of ["bar", "grid", "radial", "wave", "aura"] as const) {
       expect(
@@ -549,14 +590,12 @@ describe("hotkeySettingsSchema (lock-down)", () => {
 });
 
 describe("ttsSettingsSchema hotkey", () => {
-  test("defaults to LMeta+LShift+E (must always be non-empty)", () => {
-    expect(ttsSettingsSchema.parse({}).hotkey).toBe("LMeta+LShift+E");
+  test("defaults to LCtrl+Space (must always be non-empty)", () => {
+    expect(ttsSettingsSchema.parse({}).hotkey).toBe("LCtrl+Space");
   });
 
   test("rescues empty hotkey via .catch() to default", () => {
-    expect(ttsSettingsSchema.parse({ hotkey: "" }).hotkey).toBe(
-      "LMeta+LShift+E",
-    );
+    expect(ttsSettingsSchema.parse({ hotkey: "" }).hotkey).toBe("LCtrl+Space");
   });
 
   test("accepts a valid combo verbatim", () => {
@@ -584,7 +623,7 @@ describe("appSettingsSchema — no hotkey field is ever empty", () => {
     });
     expect(out.hotkey.pushToTalkKey).toBe("LCtrl+LMeta");
     expect(out.general.repasteHotkey).toBe("LCtrl+LShift+V");
-    expect(out.tts.hotkey).toBe("LMeta+LShift+E");
+    expect(out.tts.hotkey).toBe("LCtrl+Space");
     expect(out.llm.transforms.hotkey).toBe("LCtrl+LShift+T");
   });
 });
@@ -878,9 +917,25 @@ describe("explicit parse-time validation (kills `.default()` mutations that bypa
     expect(generalSettingsSchema.parse({}).visualizerSize).toBe("xs");
   });
 
-  test("llm.dictation.presets default is [{key:'neutral'}]", () => {
+  test("llm.dictation.presets defaults to neutral plus clarity modifiers", () => {
     const out = llmSettingsSchema.parse({});
-    expect(out.dictation.presets).toEqual([{ key: "neutral" }]);
+    expect(out.dictation.presets).toEqual([
+      { key: "neutral" },
+      { key: "reorder" },
+      { key: "restructure" },
+      { key: "rewordForClarity" },
+    ]);
+  });
+
+  test("llm thinking effort defaults to off for both feature configs", () => {
+    const out = llmSettingsSchema.parse({});
+    expect(out.dictation.thinkingEffort).toBe("off");
+    expect(out.transforms.thinkingEffort).toBe("off");
+  });
+
+  test("llm dictionary auto-add defaults to disabled", () => {
+    const out = llmSettingsSchema.parse({});
+    expect(out.dictation.dictionaryAutoAddEnabled).toBe(false);
   });
 });
 

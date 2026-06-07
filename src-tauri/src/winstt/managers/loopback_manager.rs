@@ -42,6 +42,7 @@ use crate::winstt::commands::listen_events::{emit_speaker_segments, EmitSpeakerS
 use crate::winstt::commands::settings::read_settings_raw;
 use crate::winstt::loopback::LoopbackCapture;
 use crate::winstt::managers::DiarizationManager;
+use crate::winstt::stt::backend::fixed_realtime_language_from_model;
 
 /// Silence (seconds) after speech that closes the current loopback tail. Rolling
 /// commits are the primary finalization path for continuous listen-mode audio.
@@ -281,19 +282,19 @@ fn consumer_loop(
                 // clean tail) until the endpoint fires.
                 speech.extend_from_slice(&frame);
                 silence_frames += 1;
-                if silence_frames >= silence_frames_to_end {
-                    if queue_commit(&commit_tx, &mut speech, None) {
-                        clear_realtime_preview(&app);
-                        in_speech = false;
-                        silence_frames = 0;
-                    }
+                if silence_frames >= silence_frames_to_end
+                    && queue_commit(&commit_tx, &mut speech, None)
+                {
+                    clear_realtime_preview(&app);
+                    in_speech = false;
+                    silence_frames = 0;
                 }
             }
-            if speech.len() >= commit_samples {
-                if queue_commit(&commit_tx, &mut speech, Some(commit_samples)) {
-                    clear_realtime_preview(&app);
-                    last_preview = Instant::now();
-                }
+            if speech.len() >= commit_samples
+                && queue_commit(&commit_tx, &mut speech, Some(commit_samples))
+            {
+                clear_realtime_preview(&app);
+                last_preview = Instant::now();
             }
             enforce_buffer_cap(&mut speech, max_buffer_samples);
             // else: not in speech and no voice → drop (idle system audio).
@@ -385,12 +386,7 @@ fn listen_realtime_interval_seconds(configured: f64) -> f64 {
 
 fn loopback_language(app: &AppHandle) -> Option<String> {
     let settings = read_settings_raw(app);
-    let language = settings.model.language.trim();
-    if language.is_empty() || language == "auto" {
-        None
-    } else {
-        Some(language.to_string())
-    }
+    fixed_realtime_language_from_model(&settings.model)
 }
 
 fn publish_realtime_preview_if_due(app: &AppHandle, speech: &[f32], last_preview: &mut Instant) {

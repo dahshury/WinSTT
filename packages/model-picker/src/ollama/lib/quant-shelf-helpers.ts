@@ -39,9 +39,45 @@ export function canonicalOllamaTag(name: string): string {
 	return trimmed.includes(":") ? trimmed : `${trimmed}:latest`;
 }
 
+const OLLAMA_TAG_ALIAS_GROUPS: readonly (readonly string[])[] = [
+	// Same Ollama digest aliases only. Do not map to a smaller/better quant here:
+	// those are different downloads and must stay separate choices.
+	["smollm2:135m-instruct-fp16", "smollm2:135m"],
+	["smollm2:360m-instruct-fp16", "smollm2:360m"],
+	["llama3.2:1b-instruct-q8_0", "llama3.2:1b"],
+	["llama3.2:3b-instruct-q4_k_m", "llama3.2:3b"],
+	["ministral-3:3b-instruct-2512-q4_k_m", "ministral-3:3b"],
+	["gemma4:e2b-it-q4_k_m", "gemma4:e2b"],
+	["gemma4:e4b-it-q4_k_m", "gemma4:e4b"],
+	["gemma4:12b-it-q4_k_m", "gemma4:12b"],
+];
+
+function buildAliasLookup(
+	groups: readonly (readonly string[])[],
+): ReadonlyMap<string, string> {
+	const lookup = new Map<string, string>();
+	for (const group of groups) {
+		const identity = group[0];
+		if (!identity) {
+			continue;
+		}
+		for (const alias of group) {
+			lookup.set(canonicalOllamaTag(alias).toLowerCase(), identity);
+		}
+	}
+	return lookup;
+}
+
+const OLLAMA_TAG_ALIAS_LOOKUP = buildAliasLookup(OLLAMA_TAG_ALIAS_GROUPS);
+
+export function ollamaTagIdentityKey(name: string): string {
+	const canonical = canonicalOllamaTag(name).toLowerCase();
+	return OLLAMA_TAG_ALIAS_LOOKUP.get(canonical) ?? canonical;
+}
+
 /** True when `a` and `b` name the same Ollama artifact (treating bare ≡ `:latest`). */
 export function isSameOllamaTag(a: string | undefined, b: string): boolean {
-	return a !== undefined && canonicalOllamaTag(a) === canonicalOllamaTag(b);
+	return a !== undefined && ollamaTagIdentityKey(a) === ollamaTagIdentityKey(b);
 }
 
 /**
@@ -50,13 +86,54 @@ export function isSameOllamaTag(a: string | undefined, b: string): boolean {
  * on-disk name becomes `<name>:latest`) leaves its "default" badge reading as
  * not-installed even though it's downloaded.
  */
-export function isTagInstalled(installedNames: ReadonlySet<string>, tagName: string): boolean {
+export function findInstalledOllamaTag(
+	installedNames: ReadonlySet<string>,
+	tagName: string,
+): string | undefined {
 	if (installedNames.has(tagName)) {
-		return true;
+		return tagName;
 	}
-	const canonical = canonicalOllamaTag(tagName);
+	const target = ollamaTagIdentityKey(tagName);
 	for (const name of installedNames) {
-		if (canonicalOllamaTag(name) === canonical) {
+		if (ollamaTagIdentityKey(name) === target) {
+			return name;
+		}
+	}
+	return undefined;
+}
+
+export function isTagInstalled(installedNames: ReadonlySet<string>, tagName: string): boolean {
+	return findInstalledOllamaTag(installedNames, tagName) !== undefined;
+}
+
+/**
+ * True when an installed model covers the same (base slug, parameter size) as
+ * `tagName`, regardless of quantization OR the `-it` instruction-tuned suffix.
+ *
+ * {@link isTagInstalled} is deliberately quant-SPECIFIC — the quant shelf marks
+ * one badge per precision — but a recommended/library CARD represents a whole
+ * parameter size, so it must disappear once the user has ANY variant of that
+ * size on disk. Without this, the recommended `gemma4:e2b` card sits right next
+ * to the installed `gemma4:e2b-it-q8_0` card (whose quant the brittle alias
+ * table in {@link ollamaTagIdentityKey} doesn't map), reading as a duplicate
+ * "Gemma 4 E2B" / "Gemma 4 E2B IT" pair. The installed card's own quant shelf
+ * already lists every precision for the size, so collapsing into it loses
+ * nothing.
+ *
+ * A `tagName` with no parseable param token (a bare base) is covered by any
+ * installed sibling sharing the base slug.
+ */
+export function isModelSizeInstalled(
+	installedNames: ReadonlySet<string>,
+	tagName: string
+): boolean {
+	const base = libraryBaseSlug(tagName);
+	const param = normalizeParamSize(paramSizeFromName(tagName));
+	for (const name of installedNames) {
+		if (libraryBaseSlug(name) !== base) {
+			continue;
+		}
+		if (!param || normalizeParamSize(paramSizeFromName(name)) === param) {
 			return true;
 		}
 	}

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::winstt::cancel_registry::CancelRegistry;
 use crate::winstt::cloud_stt::{
@@ -98,7 +99,7 @@ impl CloudSttManager {
         request_id: &str,
         req: CloudTranscribeRequest,
     ) -> Result<CloudTranscription, CloudSttError> {
-        self.cancelled.track(request_id);
+        let cancel = self.cancelled.cancel_token(request_id);
         let provider = req.provider;
         if let Err(e) = preflight(&req) {
             self.clear(request_id);
@@ -110,7 +111,7 @@ impl CloudSttManager {
             return Err(CloudSttError::new(CloudSttErrorCode::Aborted, "cancelled"));
         }
 
-        let result = self.do_upload(req).await;
+        let result = self.do_upload(req, &cancel).await;
         if self.is_cancelled(request_id) {
             self.clear(request_id);
             return Err(CloudSttError::new(CloudSttErrorCode::Aborted, "cancelled"));
@@ -190,6 +191,7 @@ impl CloudSttManager {
     async fn do_upload(
         &self,
         req: CloudTranscribeRequest,
+        cancel: &CancellationToken,
     ) -> Result<CloudTranscription, CloudSttError> {
         let part = reqwest::multipart::Part::bytes(req.audio_wav.clone())
             .file_name("audio.wav")
@@ -228,25 +230,41 @@ impl CloudSttManager {
             CloudSttProvider::ElevenLabs => rb.header("xi-api-key", &req.api_key),
         };
 
-        let resp = rb
-            .send()
-            .await
-            .map_err(|e| classify_transport_error(&e.to_string()))?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let retry = resp
-                .headers()
-                .get("retry-after")
-                .and_then(|h| h.to_str().ok())
-                .map(str::to_owned);
-            let body = resp.text().await.unwrap_or_default();
-            return Err(classify_http_failure(status, &body, retry.as_deref()));
+        // Race the whole upload against the per-request cancel token. On cancel
+        // the upload future is dropped, which makes reqwest abort the in-flight
+        // connection (the only way to cancel a reqwest request); return `Aborted`
+        // so the toast is suppressed. cancel_all() (overlay X / model swap) and
+        // cancel(id) both fire this token.
+        let provider = req.provider;
+        let upload = async move {
+            let resp = rb
+                .send()
+                .await
+                .map_err(|e| classify_transport_error(&e.to_string()))?;
+            if !resp.status().is_success() {
+                let status = resp.status().as_u16();
+                let retry = resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|h| h.to_str().ok())
+                    .map(str::to_owned);
+                let body = resp.text().await.unwrap_or_default();
+                return Err(classify_http_failure(status, &body, retry.as_deref()));
+            }
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| CloudSttError::new(CloudSttErrorCode::ProviderError, e.to_string()))?;
+            Ok(parse_transcription_json(provider, &json))
+        };
+
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => {
+                Err(CloudSttError::new(CloudSttErrorCode::Aborted, "cancelled"))
+            }
+            res = upload => res,
         }
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| CloudSttError::new(CloudSttErrorCode::ProviderError, e.to_string()))?;
-        Ok(parse_transcription_json(req.provider, &json))
     }
 
     /// Verify a credential against the cheap GET probe endpoint. Honors the

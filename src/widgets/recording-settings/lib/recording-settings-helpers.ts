@@ -1,5 +1,4 @@
 import {
-  AudioWave02Icon,
   EarIcon,
   ToggleOnIcon,
   TouchInteraction01Icon,
@@ -9,7 +8,6 @@ import type { IconSvgElement } from "@hugeicons/react";
 import type { useTranslations } from "use-intl";
 import type { useSettingsStore } from "@/entities/setting";
 import type { CreatableComboboxItem } from "@/shared/ui/creatable-combobox";
-import type { SelectOption, SelectOptionGroup } from "@/shared/ui/select";
 
 // ── Local copies of the recording-mode + wake-word helpers ──
 // These mirror src/widgets/general-settings/lib/general-settings-panel-test-helpers.ts.
@@ -118,65 +116,10 @@ function buildUnifiedWakeWordList(): readonly string[] {
 }
 
 const ALL_WAKE_WORDS = buildUnifiedWakeWordList();
-export const CUSTOM_WAKE_WORD_ID = "__custom_wake_word__";
 const CUSTOM_WAKE_WORD_PREFIX = "custom:";
 const DEFAULT_WAKE_WORD = "alexa";
 
-// Section order for the grouped wake-word picker. Porcupine-supported built-ins
-// route to the runtime-downloaded legacy Porcupine bundle; everything else is
-// routed through sherpa's flexible but lower-accuracy open-vocabulary KWS.
-const WAKE_WORD_ENGINE_ORDER: readonly WakeWordEngine[] = [
-  "porcupine",
-  "sherpa",
-];
-
-const WAKE_WORD_ENGINE_LABEL: Record<WakeWordEngine, string> = {
-  porcupine: "High accuracy built-ins",
-  sherpa: "Flexible phrases",
-};
-
-export function buildWakeWordGroups(
-  customPhrase?: string,
-): SelectOptionGroup[] {
-  const byEngine = new Map<WakeWordEngine, SelectOption[]>();
-  for (const word of ALL_WAKE_WORDS) {
-    const engine = engineForKeyword(word);
-    const list = byEngine.get(engine) ?? [];
-    list.push({
-      id: word,
-      label: formatWakeWordLabel(word),
-      icon: AudioWave02Icon,
-    });
-    byEngine.set(engine, list);
-  }
-  const groups: SelectOptionGroup[] = WAKE_WORD_ENGINE_ORDER.flatMap(
-    (engine): SelectOptionGroup[] => {
-      const options = byEngine.get(engine);
-      return options && options.length > 0
-        ? [
-            {
-              value: engine,
-              label: WAKE_WORD_ENGINE_LABEL[engine],
-              options,
-            },
-          ]
-        : [];
-    },
-  );
-  const trimmed = customPhrase?.trim();
-  if (trimmed) {
-    groups.push({
-      value: "custom",
-      label: "Custom phrase",
-      options: [
-        { id: CUSTOM_WAKE_WORD_ID, label: trimmed, icon: AudioWave02Icon },
-      ],
-    });
-  }
-  return groups;
-}
-
-export function isKnownWakeWord(word: string | undefined): word is string {
+function isKnownWakeWord(word: string | undefined): word is string {
   return word !== undefined && ALL_WAKE_WORDS.includes(word);
 }
 

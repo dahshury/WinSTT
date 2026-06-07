@@ -7,21 +7,24 @@ import {
 } from "@/shared/api/ipc-client";
 import type { SoundLibraryEntry } from "@/shared/config/settings-schema";
 import {
-  defaultItem,
+  builtInItems,
   entryToItem,
   isActive,
+  MAX_CUSTOM_SOUNDS,
   type SoundLibraryItem,
 } from "../model/recording-sound";
 
 interface UseSoundLibraryOptions {
   defaultName: string;
+  /** Localized message surfaced via onError when an add hits the cap. */
+  limitMessage?: string;
   onError?: (message: string) => void;
 }
 
 interface UseSoundLibraryReturn {
   /** Whichever item is currently the recording sound. */
   activeItem: SoundLibraryItem;
-  /** Active path: empty string means default. */
+  /** Empty means original default; builtin:<file> means bundled alternate. */
   activePath: string;
   /** Add a file from disk (browse + dialog). Returns the new entry on success. */
   addFromBrowse: () => Promise<SoundLibraryItem | null>;
@@ -32,11 +35,13 @@ interface UseSoundLibraryReturn {
   ) => Promise<SoundLibraryItem | null>;
   /** Default (built-in) item — index 0 in `items`. */
   defaultEntry: SoundLibraryItem;
-  /** Default + every uploaded entry in stable order. */
+  /** True once the custom-sound count has hit MAX_CUSTOM_SOUNDS. */
+  isFull: boolean;
+  /** Built-ins + every uploaded entry in stable order. */
   items: SoundLibraryItem[];
-  /** Delete a custom entry. Default cannot be deleted. */
+  /** Delete a custom entry. Built-ins cannot be deleted. */
   remove: (item: SoundLibraryItem) => Promise<void>;
-  /** Rename a custom entry. No-op for the default. */
+  /** Rename a custom entry. No-op for built-ins. */
   rename: (id: string, newName: string) => void;
   /** Make the given item the active recording sound. */
   select: (item: SoundLibraryItem) => void;
@@ -75,8 +80,9 @@ function deriveLibrary(
   defaultName: string,
 ): DerivedLibrary {
   const { activePath, library } = readGeneral(general);
-  const defaultEntry = defaultItem(defaultName);
-  const items = [defaultEntry, ...library.map(entryToItem)];
+  const builtIns = builtInItems(defaultName);
+  const defaultEntry = builtIns[0];
+  const items = [...builtIns, ...library.map(entryToItem)];
   const activeItem =
     items.find((it) => isActive(it, activePath)) ?? defaultEntry;
   return { activePath, library, defaultEntry, items, activeItem };
@@ -144,8 +150,12 @@ function renamePatch(
   return library.map((e) => (e.id === id ? { ...e, name: trimmed } : e));
 }
 
+/** Default cap message when the caller doesn't supply a localized one. */
+const DEFAULT_LIMIT_MESSAGE = "Sound library is full";
+
 export function useSoundLibrary({
   defaultName,
+  limitMessage,
   onError,
 }: UseSoundLibraryOptions): UseSoundLibraryReturn {
   const general = useSettingsStore((s) => s.settings.general);
@@ -153,6 +163,7 @@ export function useSoundLibrary({
 
   const { activePath, library, defaultEntry, items, activeItem } =
     deriveLibrary(general, defaultName);
+  const isFull = library.length >= MAX_CUSTOM_SOUNDS;
 
   const handleError = useCallback(
     (message: string) => {
@@ -165,7 +176,7 @@ export function useSoundLibrary({
 
   const select = useCallback(
     (item: SoundLibraryItem) => {
-      update({ recordingSoundPath: item.isDefault ? "" : item.path });
+      update({ recordingSoundPath: item.path });
     },
     [update],
   );
@@ -175,6 +186,10 @@ export function useSoundLibrary({
       sourcePath: string,
       displayName?: string,
     ): Promise<SoundLibraryItem | null> => {
+      if (library.length >= MAX_CUSTOM_SOUNDS) {
+        handleError(limitMessage ?? DEFAULT_LIMIT_MESSAGE);
+        return null;
+      }
       const outcome = readAddResult(
         await soundLibraryAdd(sourcePath, displayName),
       );
@@ -189,11 +204,15 @@ export function useSoundLibrary({
       });
       return entryToItem(entry);
     },
-    [handleError, library, update],
+    [handleError, library, limitMessage, update],
   );
 
   const addFromBrowse =
     useCallback(async (): Promise<SoundLibraryItem | null> => {
+      if (library.length >= MAX_CUSTOM_SOUNDS) {
+        handleError(limitMessage ?? DEFAULT_LIMIT_MESSAGE);
+        return null;
+      }
       const result = await soundLibraryPickAndAdd();
       if (result.cancelled) {
         return null;
@@ -209,7 +228,7 @@ export function useSoundLibrary({
         recordingSoundPath: entry.path,
       });
       return entryToItem(entry);
-    }, [handleError, library, update]);
+    }, [handleError, library, limitMessage, update]);
 
   const remove = useCallback(
     async (item: SoundLibraryItem): Promise<void> => {
@@ -242,6 +261,7 @@ export function useSoundLibrary({
 
   return {
     items,
+    isFull,
     defaultEntry,
     activeItem,
     activePath,

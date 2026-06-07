@@ -16,36 +16,51 @@
 // ollama_delete → DELETE /api/delete.
 // verify_credential → the INTEGRATIONS_VERIFY seam: probe OpenAI/OpenRouter/
 //   ElevenLabs and return { ok, code?, message? } (WinSTT error taxonomy code).
+//
+// The file is split into sibling submodules for navigability (behavior-preserving):
+//   `payloads`     — renderer DTOs + `From` conversions (re-exported `pub`).
+//   `conversions`  — settings → prompt-shape helpers (`pub(super)`).
+//   `verify`       — the `verify_credential` provider-key probe internals
+//                    (`VerifyProbe` / `resolve_verify_api_key` / `probe_verify`);
+//                    the `#[tauri::command]` entry stays in this root.
+//   `ollama_proc`  — Ollama exe detect/spawn + pull-name validation/emit.
+
+mod conversions;
+mod ollama_proc;
+mod payloads;
+mod verify;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use log::warn;
-use serde::{Deserialize, Serialize};
-use specta::Type;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::winstt::cloud_stt::{
-    classify_http_failure, classify_transport_error, is_elevenlabs_scoped_key_valid,
-    CloudSttErrorCode,
-};
+use crate::winstt::cloud_stt::CloudSttErrorCode;
 use crate::winstt::llm::{
-    self, build_dictation_system_prompt, build_system_prompt, merge_presets_with_custom_modifiers,
-    PresetEntry as LlmPresetEntry, PresetKey as LlmPresetKey, PresetLevel as LlmPresetLevel,
-    ThinkingEffort as LlmEffort, Vocab,
+    self, build_dictation_system_prompt, build_system_prompt, DictationSideEffects, Vocab,
 };
-use crate::winstt::managers::llm_manager::{
-    OllamaModelDetails as MgrDetails, OllamaModelInfo as MgrModel, OpenRouterModelInfo, PullOutcome,
-};
+use crate::winstt::managers::llm_manager::PullOutcome;
 use crate::winstt::managers::LlmManager;
-use crate::winstt::settings_schema::{
-    EffortLevel as SettingsOpenRouterEffort, LlmFeatureBase, LlmProvider,
-    PresetEntry as SettingsPreset, PresetKey as SettingsPresetKey, PresetLevel as SettingsLevel,
-    ThinkingEffort as SettingsEffort, WinsttSettings,
-};
+use crate::winstt::settings_schema::{LlmProvider, WinsttSettings};
 
 use super::ollama_pull::{clear_pull_cancel, is_pull_cancelled};
-use super::settings::{read_settings, SECRET_PRESENT_SENTINEL};
+use super::settings::read_settings;
+
+use conversions::{dictation_presets, openrouter_options, to_llm_effort, transforms_presets};
+use ollama_proc::{emit_pull_progress, validate_model_name};
+use verify::{probe_verify, resolve_verify_api_key, VerifyProbe};
+
+// Re-exports preserving the public `winstt::commands::llm::*` paths.
+pub use payloads::{
+    OllamaDeleteResultPayload, OllamaDetectResultPayload, OllamaModelDetailsPayload,
+    OllamaModelPayload, OllamaPullResultPayload, OllamaScanResultPayload, OllamaStartResultPayload,
+    OpenRouterModelPayload, OpenRouterScanResultPayload, VerifyCredentialPayload,
+};
+// `detect_ollama_executable` / `spawn_ollama_serve` are crate-internal and called
+// by `managers::llm_manager` through `winstt::commands::llm::*`; the `pub(crate) use`
+// both re-exports that path AND brings them into scope for the commands below.
+pub(crate) use ollama_proc::{detect_ollama_executable, spawn_ollama_serve};
 
 struct LlmCommandProcessingGuard {
     app: AppHandle,
@@ -66,289 +81,6 @@ impl Drop for LlmCommandProcessingGuard {
     }
 }
 
-// ── Renderer payload shapes (mirror spec/openapi.yaml exactly) ─────────────────
-
-/// `OllamaModelDetails` (camelCase per spec).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaModelDetailsPayload {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub format: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub family: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub families: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameter_size: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quantization_level: Option<String>,
-}
-
-impl From<MgrDetails> for OllamaModelDetailsPayload {
-    fn from(d: MgrDetails) -> Self {
-        Self {
-            format: d.format,
-            family: d.family,
-            families: d.families,
-            parameter_size: d.parameter_size,
-            quantization_level: d.quantization_level,
-        }
-    }
-}
-
-/// `OllamaModel` (camelCase per spec). Consumed by `OllamaScanResult.models[]`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaModelPayload {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub modified_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<OllamaModelDetailsPayload>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub capabilities: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_length: Option<u64>,
-}
-
-impl From<MgrModel> for OllamaModelPayload {
-    fn from(m: MgrModel) -> Self {
-        Self {
-            name: m.name,
-            size: m.size,
-            modified_at: m.modified_at,
-            details: m.details.map(Into::into),
-            capabilities: m.capabilities,
-            context_length: m.context_length,
-        }
-    }
-}
-
-/// `OllamaScanResult` — the shape `useLlmCatalogStore.scanModels()` consumes.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaScanResultPayload {
-    pub models: Vec<OllamaModelPayload>,
-    pub reachable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// `OllamaDetectResult` — `{ installed, path? }`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaDetectResultPayload {
-    pub installed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-}
-
-/// `{ started, error? }` — the `startOllama()` IPC result.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaStartResultPayload {
-    pub started: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// `OllamaPullResult` — `{ success, model, cancelled?, error? }`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaPullResultPayload {
-    pub success: bool,
-    pub model: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cancelled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// `OllamaDeleteResult` — `{ success, model, error? }`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OllamaDeleteResultPayload {
-    pub success: bool,
-    pub model: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// `OpenRouterModel` (snake_case keys per spec — NOT renamed).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-pub struct OpenRouterModelPayload {
-    pub id: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_length: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pricing: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub maker: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub architecture: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub supported_parameters: Option<Vec<String>>,
-}
-
-impl From<OpenRouterModelInfo> for OpenRouterModelPayload {
-    fn from(m: OpenRouterModelInfo) -> Self {
-        Self {
-            id: m.id,
-            name: m.name,
-            description: m.description,
-            context_length: m.context_length,
-            pricing: m.pricing,
-            provider: m.provider,
-            maker: m.maker,
-            model_name: m.model_name,
-            variant: m.variant,
-            architecture: m.architecture,
-            supported_parameters: m.supported_parameters,
-        }
-    }
-}
-
-/// `OpenRouterScanResult` — `{ models, reachable, error? }`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenRouterScanResultPayload {
-    pub models: Vec<OpenRouterModelPayload>,
-    pub reachable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// Verify-credential outcome — `{ ok, code?, message? }`. The renderer's
-/// verify-credentials feature reads `code === "network"` to split offline from
-/// invalid, so `code` MUST be the WinSTT taxonomy string.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct VerifyCredentialPayload {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-// ── settings → prompt-shape conversions (the thin `From` the spec calls for) ──
-
-fn to_llm_level(level: SettingsLevel) -> LlmPresetLevel {
-    match level {
-        SettingsLevel::Light => LlmPresetLevel::Light,
-        SettingsLevel::Medium => LlmPresetLevel::Medium,
-        SettingsLevel::High => LlmPresetLevel::High,
-    }
-}
-
-fn to_llm_key(key: SettingsPresetKey) -> LlmPresetKey {
-    match key {
-        SettingsPresetKey::Neutral => LlmPresetKey::Neutral,
-        SettingsPresetKey::Formal => LlmPresetKey::Formal,
-        SettingsPresetKey::Friendly => LlmPresetKey::Friendly,
-        SettingsPresetKey::Technical => LlmPresetKey::Technical,
-        SettingsPresetKey::Concise => LlmPresetKey::Concise,
-        SettingsPresetKey::Summarize => LlmPresetKey::Summarize,
-        SettingsPresetKey::Reorder => LlmPresetKey::Reorder,
-        SettingsPresetKey::Restructure => LlmPresetKey::Restructure,
-        SettingsPresetKey::RewordForClarity => LlmPresetKey::RewordForClarity,
-        SettingsPresetKey::Translate => LlmPresetKey::Translate,
-    }
-}
-
-fn to_llm_preset(p: &SettingsPreset) -> LlmPresetEntry {
-    LlmPresetEntry::Builtin {
-        key: to_llm_key(p.key),
-        level: p.level.map(to_llm_level),
-        target_lang: p.target_lang.clone(),
-    }
-}
-
-fn to_llm_custom(m: &crate::winstt::settings_schema::CustomModifier) -> llm::CustomModifier {
-    llm::CustomModifier {
-        id: m.id.clone(),
-        name: m.name.clone(),
-        prompt: m.prompt.clone(),
-        enabled: m.enabled,
-        levels_enabled: m.levels_enabled,
-        level: m.level.map(to_llm_level),
-    }
-}
-
-fn to_llm_effort(e: SettingsEffort) -> LlmEffort {
-    match e {
-        SettingsEffort::Off => LlmEffort::Off,
-        SettingsEffort::Low => LlmEffort::Low,
-        SettingsEffort::Medium => LlmEffort::Medium,
-        SettingsEffort::High => LlmEffort::High,
-    }
-}
-
-fn openrouter_effort_value(e: SettingsOpenRouterEffort) -> &'static str {
-    match e {
-        SettingsOpenRouterEffort::Low => "low",
-        SettingsOpenRouterEffort::Medium => "medium",
-        SettingsOpenRouterEffort::High => "high",
-    }
-}
-
-fn openrouter_options(base: &LlmFeatureBase) -> llm::OpenRouterRequestOptions {
-    llm::OpenRouterRequestOptions {
-        reasoning_effort: Some(openrouter_effort_value(base.reasoning_effort).to_string()),
-        verbosity: Some(openrouter_effort_value(base.verbosity).to_string()),
-        max_output_tokens: base.max_output_tokens.filter(|v| *v > 0),
-    }
-}
-
-/// Build the prompt-shape preset list (builtins + enabled custom modifiers) from
-/// the persisted dictation settings.
-fn dictation_presets(settings: &WinsttSettings) -> Vec<LlmPresetEntry> {
-    let builtins: Vec<LlmPresetEntry> = settings
-        .llm
-        .dictation
-        .presets
-        .iter()
-        .map(to_llm_preset)
-        .collect();
-    let customs: Vec<llm::CustomModifier> = settings
-        .llm
-        .dictation
-        .custom_modifiers
-        .iter()
-        .map(to_llm_custom)
-        .collect();
-    merge_presets_with_custom_modifiers(&builtins, &customs)
-}
-
-fn transforms_presets(settings: &WinsttSettings) -> Vec<LlmPresetEntry> {
-    let builtins: Vec<LlmPresetEntry> = settings
-        .llm
-        .transforms
-        .presets
-        .iter()
-        .map(to_llm_preset)
-        .collect();
-    let customs: Vec<llm::CustomModifier> = settings
-        .llm
-        .transforms
-        .custom_modifiers
-        .iter()
-        .map(to_llm_custom)
-        .collect();
-    merge_presets_with_custom_modifiers(&builtins, &customs)
-}
-
 /// `process_text` — dictation cleanup/compose. Composes the full system prompt
 /// (presets + context + vocab) and runs it over the configured provider.
 /// `context` is the formatted UIA fragment (may be empty).
@@ -360,7 +92,19 @@ pub async fn process_text(
     text: String,
     context: String,
 ) -> Result<String, String> {
-    process_dictation_text(&app, llm_manager.inner().clone(), text, context).await
+    process_dictation_text(&app, llm_manager.inner().clone(), text, context)
+        .await
+        .map(|result| result.text)
+}
+
+/// Run the dictation cleanup pass and return the cleaned text together with the
+/// number of deterministic dictionary replacement-pair substitutions applied
+/// (the History "AI Impact" → dictionary-fixes stat). Callers that don't record
+/// the stat (the `process_text` command) discard the count.
+pub(crate) struct DictationProcessResult {
+    pub text: String,
+    pub dictionary_fixes: usize,
+    pub side_effects: DictationSideEffects,
 }
 
 pub(crate) async fn process_dictation_text(
@@ -368,7 +112,7 @@ pub(crate) async fn process_dictation_text(
     llm_manager: Arc<LlmManager>,
     text: String,
     context: String,
-) -> Result<String, String> {
+) -> Result<DictationProcessResult, String> {
     let settings = read_settings(app);
     let presets = dictation_presets(&settings);
     let vocab = build_vocab(&settings);
@@ -386,6 +130,7 @@ pub(crate) async fn process_dictation_text(
     // compatible chat endpoint, otherwise the all-Rust Ollama streaming path.
     // Apple Intelligence soft-fails to the original text — its CLI is macOS-only
     // and this is a Windows app (mirrors runAppleIntelligencePath's fail-soft).
+    let mut side_effects = DictationSideEffects::default();
     let answer = match settings.llm.dictation.base.provider {
         LlmProvider::Openrouter => {
             let api_key = settings.llm.openrouter_api_key.clone();
@@ -413,7 +158,7 @@ pub(crate) async fn process_dictation_text(
             .await
         }
         LlmProvider::AppleIntelligence => text.clone(),
-        LlmProvider::Ollama => mgr
+        LlmProvider::Ollama => match mgr
             .ollama_dictation(
                 &endpoint,
                 &model,
@@ -421,21 +166,34 @@ pub(crate) async fn process_dictation_text(
                 &user_prompt,
                 &text,
                 effort,
+                settings.llm.dictation.dictionary_auto_add_enabled,
                 &request_id,
             )
             .await
-            .unwrap_or_else(|err| {
+        {
+            Ok(output) => {
+                side_effects = output.side_effects;
+                output.text
+            }
+            Err(err) => {
                 warn!(
                     "[llm][{request_id}] dictation Ollama model '{model}' failed; returning original text: {}",
                     llm::compact_error_for_log(&err)
                 );
                 text.clone()
-            }),
+            }
+        },
     };
 
-    // Deterministic replacement-pair safety net (guaranteed fire).
+    // Deterministic replacement-pair safety net (guaranteed fire). The
+    // substitution count feeds the History "AI Impact" dictionary-fixes stat.
     let pairs = replacement_pairs(&settings);
-    Ok(llm::apply_replacement_pairs(&answer, &pairs))
+    let (text, dictionary_fixes) = llm::apply_replacement_pairs_counted(&answer, &pairs);
+    Ok(DictationProcessResult {
+        text,
+        dictionary_fixes,
+        side_effects,
+    })
 }
 
 /// `process_transform` — apply a transform's preset body to the selection.
@@ -549,17 +307,29 @@ async fn run_openrouter_with_fallback(
             user_prompt,
             text,
             options.clone(),
+            Some(request_id),
         )
         .await
     {
         Ok(answer) => answer,
+        // User aborted (overlay X / model swap): paste the original and do NOT
+        // run the fallback model — the dictation/transform is being torn down.
+        Err(err) if err == llm::OPENROUTER_CANCELLED => text.to_string(),
         Err(primary_err) if !fallback.is_empty() => {
             warn!(
                 "[llm][{request_id}] {feature} OpenRouter primary model '{primary}' failed; trying fallback '{fallback}': {}",
                 llm::compact_error_for_log(&primary_err)
             );
             match mgr
-                .openrouter_chat(api_key, fallback, system_prompt, user_prompt, text, options)
+                .openrouter_chat(
+                    api_key,
+                    fallback,
+                    system_prompt,
+                    user_prompt,
+                    text,
+                    options,
+                    Some(request_id),
+                )
                 .await
             {
                 Ok(answer) => answer,
@@ -620,13 +390,11 @@ pub async fn scan_ollama_models(
     }
 }
 
-/// `scan_openrouter_models` — `GET /api/v1/models` with the stored key. Returns
-/// the `OpenRouterScanResult` (`{ models, reachable, error? }`) the picker store
-/// consumes. Per-model `/endpoints` enrichment (provider rail / per-provider
-/// pricing / quant chips) is not fanned out in v1 — the renderer renders the base
-/// rows fine without it.
-// TODO(openrouter-enrich): fan out per-model `/api/v1/models/{author}/{slug}/endpoints`
-//   (concurrency-capped) to fill `endpoints[]` like `enrichOpenRouterModel` does.
+/// `scan_openrouter_models` — `GET /api/v1/models` with the stored key, then a
+/// concurrency-capped per-model `/endpoints` fan-out (provider rail / per-provider
+/// pricing / quant / feature chips). Returns the `OpenRouterScanResult`
+/// (`{ models, reachable, error? }`) the picker store consumes. Each `/endpoints`
+/// fetch fails soft, so enrichment never blanks the catalog.
 #[tauri::command]
 #[specta::specta]
 pub async fn scan_openrouter_models(
@@ -636,7 +404,7 @@ pub async fn scan_openrouter_models(
     let settings = read_settings(&app);
     let api_key = settings.llm.openrouter_api_key.clone();
     let mgr = llm_manager.inner().clone();
-    let scan = mgr.scan_openrouter(&api_key).await;
+    let scan = mgr.scan_openrouter_enriched(&api_key).await;
     Ok(OpenRouterScanResultPayload {
         models: scan.models.into_iter().map(Into::into).collect(),
         reachable: scan.reachable,
@@ -823,184 +591,6 @@ pub async fn verify_credential(
         });
     }
     Ok(probe_verify(probe, key).await)
-}
-
-// ── verify probe (shared OpenAI/OpenRouter/ElevenLabs classification) ──────────
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum VerifyProbe {
-    OpenAi,
-    OpenRouter,
-    ElevenLabs,
-}
-
-fn resolve_verify_api_key(app: &AppHandle, probe: VerifyProbe, api_key: &str) -> String {
-    let trimmed = api_key.trim();
-    if trimmed != SECRET_PRESENT_SENTINEL {
-        return trimmed.to_string();
-    }
-    let settings = read_settings(app);
-    match probe {
-        VerifyProbe::OpenAi => settings.integrations.openai.api_key,
-        VerifyProbe::OpenRouter => settings.llm.openrouter_api_key,
-        VerifyProbe::ElevenLabs => settings.integrations.elevenlabs.api_key,
-    }
-}
-
-impl VerifyProbe {
-    fn url(self) -> &'static str {
-        match self {
-            VerifyProbe::OpenAi => "https://api.openai.com/v1/models",
-            VerifyProbe::OpenRouter => "https://openrouter.ai/api/v1/auth/key",
-            VerifyProbe::ElevenLabs => "https://api.elevenlabs.io/v1/user",
-        }
-    }
-}
-
-async fn probe_verify(probe: VerifyProbe, api_key: &str) -> VerifyCredentialPayload {
-    let client = reqwest::Client::new();
-    let mut rb = client.get(probe.url()).timeout(Duration::from_secs(10));
-    rb = match probe {
-        VerifyProbe::ElevenLabs => rb.header("xi-api-key", api_key),
-        VerifyProbe::OpenAi | VerifyProbe::OpenRouter => rb.bearer_auth(api_key),
-    };
-    match rb.send().await {
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            if (200..300).contains(&status) {
-                return VerifyCredentialPayload {
-                    ok: true,
-                    code: None,
-                    message: None,
-                };
-            }
-            // A scoped ElevenLabs key 401s on /v1/user yet is valid for TTS.
-            if probe == VerifyProbe::ElevenLabs && is_elevenlabs_scoped_key_valid(status, &body) {
-                return VerifyCredentialPayload {
-                    ok: true,
-                    code: None,
-                    message: None,
-                };
-            }
-            let err = classify_http_failure(status, &body, None);
-            VerifyCredentialPayload {
-                ok: false,
-                code: Some(err.code.as_str().to_string()),
-                message: Some(err.message),
-            }
-        }
-        Err(e) => {
-            let err = classify_transport_error(&e.to_string());
-            VerifyCredentialPayload {
-                ok: false,
-                code: Some(err.code.as_str().to_string()),
-                message: Some(err.message),
-            }
-        }
-    }
-}
-
-// ── Ollama executable detection + spawn (mirrors detectOllama / startOllama) ──
-
-pub(crate) async fn detect_ollama_executable() -> OllamaDetectResultPayload {
-    // Detection shells out + touches the filesystem; do it on the blocking pool
-    // so the async runtime isn't stalled (and we avoid relying on tokio's
-    // optional `process`/`fs` features — `std` is always available).
-    tokio::task::spawn_blocking(detect_ollama_executable_blocking)
-        .await
-        .unwrap_or(OllamaDetectResultPayload {
-            installed: false,
-            path: None,
-        })
-}
-
-fn detect_ollama_executable_blocking() -> OllamaDetectResultPayload {
-    // 1. PATH lookup (`where` on Windows, `which` elsewhere).
-    let lookup = if cfg!(windows) { "where" } else { "which" };
-    let mut cmd = std::process::Command::new(lookup);
-    cmd.arg("ollama");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    if let Ok(out) = cmd.output() {
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            if let Some(line) = stdout.lines().map(str::trim).find(|l| !l.is_empty()) {
-                return OllamaDetectResultPayload {
-                    installed: true,
-                    path: Some(line.to_string()),
-                };
-            }
-        }
-    }
-    // 2. Default install locations (Windows).
-    for candidate in ollama_default_paths() {
-        if std::fs::metadata(&candidate).is_ok() {
-            return OllamaDetectResultPayload {
-                installed: true,
-                path: Some(candidate),
-            };
-        }
-    }
-    OllamaDetectResultPayload {
-        installed: false,
-        path: None,
-    }
-}
-
-fn ollama_default_paths() -> Vec<String> {
-    let mut out = Vec::new();
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        out.push(format!("{local}\\Programs\\Ollama\\ollama.exe"));
-    }
-    if let Ok(pf) = std::env::var("ProgramFiles") {
-        out.push(format!("{pf}\\Ollama\\ollama.exe"));
-    }
-    out
-}
-
-pub(crate) fn spawn_ollama_serve(exec_path: &str) -> Result<(), String> {
-    let mut cmd = std::process::Command::new(exec_path);
-    cmd.arg("serve");
-    cmd.stdin(std::process::Stdio::null());
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW | DETACHED_PROCESS so the serve survives + stays hidden.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
-    }
-    cmd.spawn()
-        .map(|_child| ())
-        .map_err(|e| format!("Failed to start Ollama: {e}"))
-}
-
-/// Mirror of `VALID_PULL_NAME_RE` in llm.ts.
-fn validate_model_name(model: &str) -> Result<(), String> {
-    if model.is_empty() {
-        return Err("Model name is required".to_string());
-    }
-    let valid = model
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '-'));
-    if valid {
-        Ok(())
-    } else {
-        Err("Model name contains invalid characters".to_string())
-    }
-}
-
-/// Broadcast an `llm:pull-progress` event to all renderers (the plain channel the
-/// reused `onOllamaPullProgress` listener parses).
-fn emit_pull_progress(app: &AppHandle, payload: serde_json::Value) {
-    let _ = app.emit("llm:pull-progress", payload);
 }
 
 // ── settings → vocab / replacement-pairs ──────────────────────────────────

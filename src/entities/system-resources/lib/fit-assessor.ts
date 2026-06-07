@@ -31,6 +31,7 @@ const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	"": 4,
 	fp32: 4,
 	fp16: 2,
+	fp16w: 2,
 	int8: 1.2,
 	uint8: 1.2,
 	q4: 0.75,
@@ -38,7 +39,7 @@ const BYTES_PER_PARAM_BY_QUANT: Record<string, number> = {
 	bnb4: 0.75,
 };
 
-const GPU_COMPATIBLE_QUANTIZATIONS: ReadonlySet<string> = new Set(["", "fp32", "fp16"]);
+const GPU_COMPATIBLE_QUANTIZATIONS: ReadonlySet<string> = new Set(["", "fp32", "fp16", "fp16w"]);
 
 interface LoadedSlots {
 	mainId: string | null;

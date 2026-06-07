@@ -29,7 +29,7 @@ export function PasswordField({
     setFlashKey((v) => v + 1);
   };
   return (
-    <div className="relative w-full overflow-hidden rounded-sm">
+    <div className="relative w-full overflow-hidden rounded-lg">
       <TextField
         className={cn("pr-9", className)}
         error={error ?? false}
@@ -43,7 +43,7 @@ export function PasswordField({
       <BaseButton
         aria-label={revealed ? hideLabel : revealLabel}
         aria-pressed={revealed}
-        className="absolute inset-y-0 right-0 z-raised flex w-8 items-center justify-center rounded-sm text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className="absolute inset-y-0 right-0 z-raised flex w-8 items-center justify-center rounded-r-lg text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         onClick={handleToggle}
         type="button"
       >

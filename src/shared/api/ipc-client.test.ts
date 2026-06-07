@@ -178,6 +178,93 @@ describe("send wrappers (migrated to typed commands)", () => {
     });
   });
 
+  test("settingsSave uses the Vite dev bridge outside Tauri on the dev server", async () => {
+    const originalFetch = globalThis.fetch;
+    const previousLocation = Object.getOwnPropertyDescriptor(window, "location");
+    const maybeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
+    const previousInternals = maybeWindow.__TAURI_INTERNALS__;
+    const bridgeFetch = mock(async () => {
+      return new Response(JSON.stringify({ settings: {} }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      });
+    });
+
+    try {
+      globalThis.fetch = bridgeFetch as unknown as typeof fetch;
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: { ...window.location, href: "http://127.0.0.1:1420/", port: "1420" },
+      });
+      maybeWindow.__TAURI_INTERNALS__ = undefined;
+      installMockApi();
+
+      ipc.settingsSave({
+        dictionary: [{ id: "term-1", term: "WinSTT" }],
+      } as Parameters<typeof ipc.settingsSave>[0]);
+      await Promise.resolve();
+
+      expect(bridgeFetch).toHaveBeenCalledTimes(1);
+      const [, init] = bridgeFetch.mock.calls[0] ?? [];
+      expect(init?.method).toBe("PATCH");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        settings: { dictionary: [{ id: "term-1", term: "WinSTT" }] },
+      });
+      expect(tauriCalls).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousLocation) {
+        Object.defineProperty(window, "location", previousLocation);
+      }
+      maybeWindow.__TAURI_INTERNALS__ = previousInternals;
+    }
+  });
+
+  test("settingsLoad uses the Vite dev bridge outside Tauri on the dev server", async () => {
+    const originalFetch = globalThis.fetch;
+    const previousLocation = Object.getOwnPropertyDescriptor(window, "location");
+    const maybeWindow = window as Window & { __TAURI_INTERNALS__?: unknown };
+    const previousInternals = maybeWindow.__TAURI_INTERNALS__;
+    const bridgeFetch = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          settings: {
+            dictionary: [{ id: "term-1", term: "central" }],
+          },
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+          status: 200,
+        },
+      );
+    });
+
+    try {
+      globalThis.fetch = bridgeFetch as unknown as typeof fetch;
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: { ...window.location, href: "http://127.0.0.1:1420/", port: "1420" },
+      });
+      maybeWindow.__TAURI_INTERNALS__ = undefined;
+      installMockApi();
+
+      const settings = await ipc.settingsLoad();
+
+      expect(settings.dictionary).toEqual([{ id: "term-1", term: "central" }]);
+      expect(bridgeFetch).toHaveBeenCalledWith(
+        "/__winstt/settings",
+        expect.objectContaining({ headers: { Accept: "application/json" } }),
+      );
+      expect(tauriCalls).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousLocation) {
+        Object.defineProperty(window, "location", previousLocation);
+      }
+      maybeWindow.__TAURI_INTERNALS__ = previousInternals;
+    }
+  });
+
   test("loopbackStart and loopbackStop route to start_listen / stop_listen", () => {
     installMockApi();
     ipc.loopbackStart(3);
@@ -268,6 +355,7 @@ describe("send wrappers (still on the adapter)", () => {
     ipc.windowMaximize();
     ipc.windowClose();
     ipc.windowOpenSettings();
+    ipc.settingsWindowReady();
     ipc.windowCloseSelf();
     const channels = (
       api.send as unknown as { mock: { calls: unknown[][] } }
@@ -277,6 +365,7 @@ describe("send wrappers (still on the adapter)", () => {
       IPC.WINDOW_MAXIMIZE,
       IPC.WINDOW_CLOSE,
       IPC.WINDOW_OPEN_SETTINGS,
+      IPC.SETTINGS_WINDOW_READY,
       IPC.WINDOW_CLOSE_SELF,
     ]);
     expect(tauriCalls).toHaveLength(0);
@@ -1090,10 +1179,12 @@ describe("invokeOrDefault wrappers (mutation guard against `() => undefined` arr
     ipc.windowMaximize();
     ipc.windowClose();
     ipc.windowOpenSettings();
+    ipc.settingsWindowReady();
     expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MINIMIZE);
     expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_MAXIMIZE);
     expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_CLOSE);
     expect(api.send).toHaveBeenCalledWith(IPC.WINDOW_OPEN_SETTINGS);
+    expect(api.send).toHaveBeenCalledWith(IPC.SETTINGS_WINDOW_READY);
   });
 
   test("loopbackStart forwards device index to start_listen", () => {

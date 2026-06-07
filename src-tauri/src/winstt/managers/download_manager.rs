@@ -22,6 +22,19 @@
 // SAME cache `winstt::stt::resolver` reads → badge↔load agreement). Pause/cancel are honored at
 // FILE boundaries (hf-hub owns the mid-file fetch + its `.incomplete` resume markers); the per-quant
 // plan is computed via `resolver::plan_quant_download`. Everything compiles and runs end-to-end.
+//
+// This module is split into focused submodules that hold the file-private helper clusters which
+// never touch `DownloadManager`'s private state — this root keeps the cohesive control + streaming
+// state machine (the struct + its full impl), the registry handle, the worker job, the consts, and
+// the tests:
+//   - `progress`     — per-file progress aggregate + the hf-hub fallback `ProgressHandler` reporter.
+//   - `http_meta`    — HF resolve/CDN header parsing + repo file-size fetch (`StreamOutcome` lives
+//                      here too as it gates the stream path).
+//   - `cache_delete` — per-quant + whole-model HF cache deletion + the `key()` composite-key helper.
+
+mod cache_delete;
+mod http_meta;
+mod progress;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +52,13 @@ use crate::winstt::downloads::{
 use crate::winstt::stt::cache_probe::{self, CacheState, ProbeModel};
 use crate::winstt::stt::resolver;
 use crate::winstt::stt::Quantization;
+
+// Re-import the submodule helpers so the impl's call sites resolve unchanged, and so the
+// `#[cfg(test)] mod tests` block's `use super::*` keeps reaching `key` / `file_belongs_to_quant` /
+// `ProgressAgg` / `header_etag` / `header_size` / `parse_sibling_sizes` / `ensure_cache_ref`.
+use cache_delete::*;
+use http_meta::*;
+use progress::*;
 
 /// Per-(model, quant) control + progress state, shared between the registry and whichever pool
 /// worker currently owns the job.
@@ -82,11 +102,6 @@ impl TransferControl for DownloadHandle {
     fn should_pause(&self) -> bool {
         self.paused.load(Ordering::Acquire)
     }
-}
-
-/// Composite key for the in-flight registry: `model@quant` (matches the renderer's `quantKey`).
-fn key(model: &str, quant: &str) -> String {
-    format!("{model}@{quant}")
 }
 
 /// How long a cached HF-scan result stays fresh before the next `cache_snapshot_async` re-scans.
@@ -940,372 +955,6 @@ impl DownloadManager {
             .map(|m| m.contains_key(&key(model, quantization)))
             .unwrap_or(false)
     }
-}
-
-/// Outcome of our own per-file streaming download. `Failed` is NOT an error — it means "fall back
-/// to hf-hub for this file" (private repo, missing HEAD metadata, IO error); the bytes still land.
-enum StreamOutcome {
-    Completed,
-    Cancelled,
-    Paused,
-    Failed,
-}
-
-/// The file's content ETag, from HF's `x-linked-etag` (LFS/xet) else the plain `etag`, normalized
-/// the way hf-hub does (drop the weak `W/` prefix + surrounding quotes) — this is the `blobs/<etag>`
-/// filename, so it MUST match hf-hub byte-for-byte or the cache pointer won't resolve.
-fn header_etag(h: &reqwest::header::HeaderMap) -> Option<String> {
-    h.get("x-linked-etag")
-        .or_else(|| h.get(reqwest::header::ETAG))
-        .and_then(|v| v.to_str().ok())
-        // Exact parity with hf-hub's `extract_etag`: drop ONE leading `W/`, then strip quotes.
-        .map(|raw| {
-            raw.strip_prefix("W/")
-                .unwrap_or(raw)
-                .trim_matches('"')
-                .to_string()
-        })
-        .filter(|s| !s.is_empty())
-}
-
-/// The commit hash the revision resolved to (`x-repo-commit`) — the `snapshots/<commit>/` dir name.
-fn header_commit(h: &reqwest::header::HeaderMap) -> Option<String> {
-    h.get("x-repo-commit")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
-}
-
-/// File size in bytes: `x-linked-size` (LFS/xet logical size) else `content-length`.
-fn header_size(h: &reqwest::header::HeaderMap) -> Option<u64> {
-    h.get("x-linked-size")
-        .or_else(|| h.get(reqwest::header::CONTENT_LENGTH))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-}
-
-/// Authoritative byte size of every file in `model`'s repo, fetched in ONE request
-/// (`/api/models/{owner}/{name}?blobs=true` → `siblings[].size`). This is the only single-call
-/// source that sizes BOTH LFS and plain files: a per-file HEAD exposes `x-linked-size` only for LFS
-/// blobs (plain files return no size header), and `?expand=siblings` omits sizes entirely. Used to
-/// seed the download progress denominator with the full plan total up front (so the bar is one
-/// smooth 0→100% instead of resetting as each planned file begins). Best-effort: any error
-/// (offline, private/gated repo, an off-catalog/local model with no `owner/name`) yields an empty
-/// map and the caller falls back to the per-file growing total.
-fn fetch_repo_file_sizes(http: &reqwest::Client, model: &str) -> BTreeMap<String, u64> {
-    let Some((owner, name)) = resolver::resolve_repo(model) else {
-        return BTreeMap::new();
-    };
-    // The model-info endpoint (`/api/models/…`), NOT the resolve host path the file streamer uses.
-    let url = format!("https://huggingface.co/api/models/{owner}/{name}?blobs=true");
-    let resp = match tauri::async_runtime::block_on(http.get(&url).send()) {
-        Ok(r) if r.status().is_success() => r,
-        _ => return BTreeMap::new(),
-    };
-    match tauri::async_runtime::block_on(resp.json::<serde_json::Value>()) {
-        Ok(body) => parse_sibling_sizes(&body),
-        Err(_) => BTreeMap::new(),
-    }
-}
-
-/// Parse `siblings[].{rfilename,size}` out of a `?blobs=true` model-info JSON body into a
-/// `repo_path → size` map (paths normalized to forward slashes to match the download plan's keys).
-/// Siblings without a numeric `size` (e.g. a response that wasn't `?blobs=true`) are skipped, so a
-/// caller seeds only the files whose totals are actually known.
-fn parse_sibling_sizes(body: &serde_json::Value) -> BTreeMap<String, u64> {
-    let mut out = BTreeMap::new();
-    if let Some(siblings) = body.get("siblings").and_then(|s| s.as_array()) {
-        for s in siblings {
-            if let (Some(path), Some(size)) = (
-                s.get("rfilename").and_then(|v| v.as_str()),
-                s.get("size").and_then(|v| v.as_u64()),
-            ) {
-                out.insert(path.replace('\\', "/"), size);
-            }
-        }
-    }
-    out
-}
-
-/// Write `refs/main` = commit so a revision-keyed (`main`) cache-only resolve maps to the snapshot
-/// dir we wrote the file into. Idempotent: only writes when missing or pointing at a different
-/// commit. (The snapshot file itself is the final content — there's no blob pointer to create.)
-fn ensure_cache_ref(ref_file: &std::path::Path, commit: &str) -> std::io::Result<()> {
-    if let Some(parent) = ref_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let needs_write = std::fs::read_to_string(ref_file)
-        .map(|s| s.trim() != commit)
-        .unwrap_or(true);
-    if needs_write {
-        std::fs::write(ref_file, commit)?;
-    }
-    Ok(())
-}
-
-// ── Aggregate progress across the planned files of one quant download ──────────────────────────
-
-/// Folds per-file `(bytes_completed, total_bytes)` deltas into a model-level running total. Each
-/// file is tracked by name so a progress delta updates the right slot. The denominator is normally
-/// SEEDED with every planned file's size up front (see `fetch_repo_file_sizes` in
-/// `run_quant_download`) so the bar is one monotonic 0→100%; `update_file` keeps the running max
-/// total, so the only time the denominator grows mid-download is the best-effort fallback when that
-/// seed couldn't be fetched (then a file's total appears as its first HEAD/progress event lands).
-struct ProgressAgg {
-    /// `filename → (completed, total)`.
-    files: Mutex<BTreeMap<String, (u64, u64)>>,
-}
-
-impl ProgressAgg {
-    fn new() -> Self {
-        Self {
-            files: Mutex::new(BTreeMap::new()),
-        }
-    }
-
-    /// Update one file's live byte counts from an hf-hub progress event.
-    fn update_file(&self, name: &str, completed: u64, total: u64) {
-        let mut m = self.files.lock().expect("progress agg poisoned");
-        let slot = m.entry(name.to_string()).or_insert((0, 0));
-        slot.0 = completed.max(slot.0);
-        if total > slot.1 {
-            slot.1 = total;
-        }
-    }
-
-    /// Mark a planned file already-cached (counts toward both completed + total once its size is
-    /// learned via the cache-hit fast-path; for our purposes we treat cached files as size 0 here
-    /// and let live downloads dominate the bar — the final `complete` event is authoritative).
-    fn mark_file_cached(&self, name: &str) {
-        let mut m = self.files.lock().expect("progress agg poisoned");
-        m.entry(name.to_string()).or_insert((0, 0));
-    }
-
-    /// Mark a file complete: clamp completed == total.
-    fn mark_file_complete(&self, name: &str) {
-        let mut m = self.files.lock().expect("progress agg poisoned");
-        if let Some(slot) = m.get_mut(name) {
-            if slot.1 > 0 {
-                slot.0 = slot.1;
-            }
-        }
-    }
-
-    /// Aggregate `(downloaded, total)` across all tracked files.
-    fn totals(&self) -> (u64, u64) {
-        let m = self.files.lock().expect("progress agg poisoned");
-        let mut down = 0u64;
-        let mut total = 0u64;
-        for (c, t) in m.values() {
-            down += *c;
-            total += *t;
-        }
-        (down, total)
-    }
-}
-
-/// hf-hub `ProgressHandler` for ONE file fetch — routes byte deltas into the shared aggregate AND
-/// emits a live coalesced `stt:model-download-progress` so the picker's bar fills in real time.
-struct FileReporter {
-    agg: Arc<ProgressAgg>,
-    app: AppHandle,
-    model: String,
-    quantization: String,
-    /// Repo path of the file this reporter tracks — the single aggregate key all of
-    /// this fetch's events fold under (so the HEAD-reported total seeded on `Start`
-    /// survives xet events that report `total_bytes=0`).
-    filename: String,
-    start: Instant,
-}
-
-impl FileReporter {
-    /// Emit the aggregate model-level progress (downloaded/total across every planned file).
-    fn emit(&self) {
-        let (downloaded, total) = self.agg.totals();
-        let progress = if total > 0 {
-            (downloaded as f64 / total as f64).min(1.0)
-        } else {
-            0.0
-        };
-        let elapsed = self.start.elapsed().as_secs_f64().max(0.001);
-        let speed = (downloaded as f64 / elapsed) as u64;
-        let eta = if speed > 0 && total > downloaded {
-            (total - downloaded) / speed
-        } else {
-            0
-        };
-        // Diagnostic: log only the cases that matter (a 0 denominator — the xet
-        // "stuck at 0%" symptom this seeds Start.total_bytes to prevent — or a
-        // finished file), so a live download doesn't spam ~10 lines/sec.
-        if total == 0 || downloaded >= total {
-            log::debug!(
-                "[stt-download] progress {}@{} {downloaded}/{total} ({:.0}%)",
-                self.model,
-                self.quantization,
-                progress * 100.0,
-            );
-        }
-        let _ = self.app.emit(
-            "stt:model-download-progress",
-            json!({
-                "model": self.model,
-                "quantization": self.quantization,
-                "progress": progress,
-                "downloadedBytes": downloaded,
-                "totalBytes": total,
-                "speedBps": speed,
-                "etaSeconds": eta,
-            }),
-        );
-    }
-}
-
-impl hf_hub::progress::ProgressHandler for FileReporter {
-    fn on_progress(&self, event: &hf_hub::progress::ProgressEvent) {
-        use hf_hub::progress::{DownloadEvent, ProgressEvent};
-        if let ProgressEvent::Download(dl) = event {
-            match dl {
-                DownloadEvent::Start { total_bytes, .. } => {
-                    // The AUTHORITATIVE size, from the HEAD round-trip. xet transfers
-                    // routinely report `total_bytes=0` in their per-file/aggregate
-                    // progress events (the size is known up-front, not from the chunked
-                    // reconstruction stream), which left the model-level bar dividing by
-                    // 0 → stuck at 0% for the entire download. Seed the denominator here,
-                    // keyed by this file's repo path; `update_file` keeps the max total,
-                    // so later 0-total events can't lower it. A multi-file plan sums each
-                    // file's own Start total.
-                    self.agg.update_file(&self.filename, 0, *total_bytes);
-                    // Do not emit denominator-only progress. On a resumed partial download, the
-                    // first visible frame must be the existing byte offset, not a transient 0%.
-                }
-                DownloadEvent::Progress { files } => {
-                    for f in files {
-                        self.agg
-                            .update_file(&f.filename, f.bytes_completed, f.total_bytes);
-                    }
-                    self.emit();
-                }
-                DownloadEvent::AggregateProgress {
-                    bytes_completed,
-                    total_bytes,
-                    ..
-                } => {
-                    // Fold the xet batch under THIS file's key (not a synthetic
-                    // "__xet_batch__"): xet's per-file Progress events use the same
-                    // repo-path filename, so a shared key lets `update_file`'s max()
-                    // merge the two streams instead of double-counting them, and it
-                    // preserves the Start-seeded total as the denominator floor.
-                    self.agg
-                        .update_file(&self.filename, *bytes_completed, *total_bytes);
-                    self.emit();
-                }
-                DownloadEvent::Complete => {}
-            }
-        }
-    }
-}
-
-// ── Cache deletion (per-quant + whole-model) over hf-hub's scan_cache ────────────────────────────
-
-/// Resolve the HF cache repo subdir for `model_id` (`<cache>/models--owner--name/`) by scanning the
-/// cache. Returns `None` when the repo isn't cached.
-async fn cached_repo_path(model_id: &str) -> Option<std::path::PathBuf> {
-    let client = hf_hub::HFClient::new().ok()?;
-    let scan = client.scan_cache().send().await.ok()?;
-    let key =
-        resolver::resolve_repo(model_id).map(|(o, n)| format!("{o}/{n}").to_ascii_lowercase())?;
-    scan.repos
-        .iter()
-        .find(|r| r.repo_id.to_ascii_lowercase() == key)
-        .map(|r| r.repo_path.clone())
-}
-
-/// Delete just the files matching `quant` from the model's HF cache snapshot(s). Removes the
-/// snapshot pointer files (`.onnx` graphs + their `.onnx_data*` sidecars) whose stem carries the
-/// quant tag; the dedup blob GC is left to hf-hub (orphan blobs are harmless). Returns the number of
-/// removed files. Mirrors the server's per-quant cache wipe.
-async fn delete_quant_files(model_id: &str, quant: Quantization) -> std::io::Result<usize> {
-    let client = match hf_hub::HFClient::new() {
-        Ok(c) => c,
-        Err(e) => return Err(std::io::Error::other(e.to_string())),
-    };
-    let scan = match client.scan_cache().send().await {
-        Ok(s) => s,
-        Err(e) => return Err(std::io::Error::other(e.to_string())),
-    };
-    let key = match resolver::resolve_repo(model_id)
-        .map(|(o, n)| format!("{o}/{n}").to_ascii_lowercase())
-    {
-        Some(k) => k,
-        None => return Ok(0),
-    };
-    let repo = match scan
-        .repos
-        .iter()
-        .find(|r| r.repo_id.to_ascii_lowercase() == key)
-    {
-        Some(r) => r,
-        None => return Ok(0),
-    };
-
-    let mut removed = 0usize;
-    for rev in &repo.revisions {
-        for f in &rev.files {
-            let name = f.file_name.replace('\\', "/");
-            if !file_belongs_to_quant(&name, quant) {
-                continue;
-            }
-            // Remove the snapshot pointer file (Windows = a copy; deleting it frees the snapshot
-            // slot — the orphaned blob is GC'd by hf-hub or harmless until then).
-            if f.file_path.exists() {
-                std::fs::remove_file(&f.file_path)?;
-                removed += 1;
-            }
-        }
-    }
-    Ok(removed)
-}
-
-/// Whether a cached file name belongs to `quant`: an `.onnx` graph whose stem carries the quant tag,
-/// OR an external-data sidecar of such a graph. Default-quant deletion targets unsuffixed graphs.
-fn file_belongs_to_quant(name: &str, quant: Quantization) -> bool {
-    let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    // Graph file: `.onnx` whose own quant tag equals the target.
-    if file.ends_with(".onnx") {
-        return resolver::file_quantization(file) == quant;
-    }
-    // Sidecar: `<graph_stem>.weights` — quant is on the graph stem.
-    if let Some(graph_stem) = file.strip_suffix(".weights") {
-        let last = graph_stem.rsplit(['_', '.']).next().unwrap_or("");
-        let tag = Quantization::parse(last)
-            .filter(|q| *q != Quantization::Default)
-            .unwrap_or(Quantization::Default);
-        return tag == quant;
-    }
-    // Sidecar: `<graph_stem>.onnx_data*` / `.onnx.data*` — quant is on the graph stem.
-    if let Some(idx) = file.find(".onnx") {
-        let graph_stem = &file[..idx]; // up to but excluding ".onnx"
-                                       // The sidecar's graph stem is `graph_stem`; its quant tag is the last `_`/`.` component.
-        let last = graph_stem.rsplit(['_', '.']).next().unwrap_or("");
-        let tag = Quantization::parse(last)
-            .filter(|q| *q != Quantization::Default)
-            .unwrap_or(Quantization::Default);
-        // Only treat as a sidecar when the name actually carries `.onnx_data` / `.onnx.data`.
-        let is_sidecar = file.contains(".onnx_data") || file.contains(".onnx.data");
-        return is_sidecar && tag == quant;
-    }
-    false
-}
-
-/// Delete the entire cache subdir for `model_id`'s repo (every quant + every revision). Mirrors the
-/// server's whole-model cache wipe.
-async fn delete_repo_cache(model_id: &str) -> std::io::Result<()> {
-    if let Some(path) = cached_repo_path(model_id).await {
-        if path.exists() {
-            std::fs::remove_dir_all(&path)?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

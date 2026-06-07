@@ -100,7 +100,7 @@ export async function routeContextToSink(ctx: AudioContext, deviceId: string): P
 		return;
 	}
 	try {
-		await ctx.setSinkId(deviceId || { type: "none" });
+		await ctx.setSinkId(deviceId);
 	} catch (err) {
 		// Device unavailable — the system default takes over (behaviour
 		// unchanged). Warn for observability so a failed device switch is

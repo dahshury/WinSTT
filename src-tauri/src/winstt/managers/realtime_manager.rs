@@ -35,6 +35,7 @@ use crate::managers::transcription::{RealtimeStreamOutcome, TranscriptionManager
 use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::commands::settings::{effective_realtime, read_settings_raw};
 use crate::winstt::realtime_stabilizer::RealtimeAccumulator;
+use crate::winstt::stt::backend::fixed_realtime_language_from_model;
 
 /// 16 kHz mono — the rate every WinSTT engine + the recorder's FrameResampler target. The
 /// realtime snapshot is in this domain, so frames == samples and fps == 16000.
@@ -81,11 +82,7 @@ impl WordByWordPasteState {
         }
         self.previous_interim_text.clear();
         let final_text = normalize_realtime_paste_text(text);
-        let Some(edit) =
-            append_only_edit_from_committed_to_latest(&self.committed_text, final_text)
-        else {
-            return None;
-        };
+        let edit = append_only_edit_from_committed_to_latest(&self.committed_text, final_text)?;
         if edit.is_empty() {
             return None;
         }
@@ -104,11 +101,7 @@ impl WordByWordPasteState {
             stable_word_boundary_prefix(&self.previous_interim_text, latest).to_string();
         self.previous_interim_text = latest.to_string();
 
-        let Some(edit) =
-            append_only_edit_from_committed_to_latest(&self.committed_text, &stable_prefix)
-        else {
-            return None;
-        };
+        let edit = append_only_edit_from_committed_to_latest(&self.committed_text, &stable_prefix)?;
         if edit.is_empty() {
             return None;
         }
@@ -492,14 +485,7 @@ impl RealtimeManager {
             // can briefly exceed a torn/shrunk snapshot during the next-recording transition).
             // The configured language is threaded through so each realtime tick reuses it instead
             // of re-running Whisper's language-detect (we already have `settings` in hand).
-            let lang_owned = {
-                let l = settings.model.language.trim();
-                if l.is_empty() || l == "auto" {
-                    None
-                } else {
-                    Some(l.to_string())
-                }
-            };
+            let lang_owned = fixed_realtime_language_from_model(&settings.model);
             let lang = lang_owned.as_deref();
             let tm = &self.transcription;
             let snap = &tail;

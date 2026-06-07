@@ -533,7 +533,7 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
         }
         // Skip the WinSTT-tree hotkeys (transforms / read_aloud / repaste) — they are
         // armed via `shortcut::reconcile_winstt_hotkeys` from the WinSTT settings tree
-        // (their raw key names, e.g. `LMeta+LShift+E`, aren't parseable here without the
+        // (their raw key names, e.g. `LCtrl+LMeta`, aren't parseable here without the
         // `winstt_accel_to_handy` translation that `change_binding` applies).
         if crate::shortcut::is_winstt_tree_binding(&id) {
             continue;
@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn detects_win_combos() {
         // The default PTT combo (`LCtrl+LMeta` → handy `ctrl_left+super_left`) and
-        // the TTS read-aloud combo (`LMeta+LShift+E`) both ride the Win key.
+        // legacy Win-key read-aloud combos both require the disguise keystroke.
         assert!(hotkey_uses_win_key("ctrl_left+super_left"));
         assert!(hotkey_uses_win_key("super_left+shift_left+e"));
         assert!(hotkey_uses_win_key("super")); // modifier-only
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn ignores_non_win_combos() {
-        // The working `ctrl+space` workaround and other non-Win hotkeys must NOT
+        // The default TTS `ctrl+space` combo and other non-Win hotkeys must NOT
         // inject the disguise keystroke.
         assert!(!hotkey_uses_win_key("ctrl_left+space"));
         assert!(!hotkey_uses_win_key("ctrl_left+shift_left+v"));

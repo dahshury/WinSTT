@@ -13,6 +13,7 @@ import {
 	startOfLocalDay,
 	sumWordsByDay,
 	toDayKey,
+	wordsCorrectedBetween,
 	wordsPerMinute,
 } from "./word-stats";
 
@@ -23,6 +24,10 @@ function makeEntry(partial: Partial<TranscriptionHistoryEntry>): TranscriptionHi
 		text: partial.text ?? "",
 		wordCount: partial.wordCount ?? 0,
 		durationMs: partial.durationMs ?? 0,
+		...(partial.originalText === undefined ? {} : { originalText: partial.originalText }),
+		...(partial.dictionaryFixes === undefined
+			? {}
+			: { dictionaryFixes: partial.dictionaryFixes }),
 	};
 }
 
@@ -135,7 +140,54 @@ describe("aggregate", () => {
 
 	test("empty input gives all zeros", () => {
 		const stats = aggregate([]);
-		expect(stats).toEqual({ count: 0, totalWords: 0, totalDurationMs: 0, wpm: 0 });
+		expect(stats).toEqual({
+			aiFixes: 0,
+			count: 0,
+			dictionaryFixes: 0,
+			totalDurationMs: 0,
+			totalWords: 0,
+			wordsCorrected: 0,
+			wpm: 0,
+		});
+	});
+
+	test("counts AI fixes and sums corrected words from the raw→final diff", () => {
+		const entries: TranscriptionHistoryEntry[] = [
+			// Two words rewritten ("teh quik" → "the quick") → 1 fix, 2 words.
+			makeEntry({
+				originalText: "teh quik brown fox",
+				text: "the quick brown fox",
+				wordCount: 4,
+			}),
+			// No originalText (AI never ran) → ignored entirely.
+			makeEntry({ text: "raw only", wordCount: 2 }),
+			// originalText present but identical → no diff, not counted.
+			makeEntry({ originalText: "same words", text: "same words", wordCount: 2 }),
+		];
+		const stats = aggregate(entries);
+		expect(stats.aiFixes).toBe(1);
+		expect(stats.wordsCorrected).toBe(2);
+	});
+
+	test("sums dictionary fixes across entries, treating missing as zero", () => {
+		const stats = aggregate([
+			makeEntry({ dictionaryFixes: 3 }),
+			makeEntry({ dictionaryFixes: 0 }),
+			makeEntry({}), // legacy row, no count → contributes 0
+			makeEntry({ dictionaryFixes: 5 }),
+		]);
+		expect(stats.dictionaryFixes).toBe(8);
+	});
+});
+
+describe("wordsCorrectedBetween", () => {
+	test("returns 0 when the text is unchanged", () => {
+		expect(wordsCorrectedBetween("hello world", "hello world")).toBe(0);
+	});
+
+	test("counts each changed word, using the larger side of a rewrite", () => {
+		// "two words" → "one" is a 2-word→1-word change ⇒ 2.
+		expect(wordsCorrectedBetween("keep two words here", "keep one here")).toBe(2);
 	});
 });
 

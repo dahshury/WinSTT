@@ -86,6 +86,13 @@ pub fn engine_kind_for(id: &str, family: &str, onnx_name: &str) -> EngineKind {
         "whisper" => EngineKind::WhisperHf,
         "moonshine" => EngineKind::Moonshine,
         "cohere" => EngineKind::CohereAsr,
+        "granite" => {
+            if has("nar") {
+                EngineKind::GraniteSpeechNar
+            } else {
+                EngineKind::GraniteSpeechAr
+            }
+        }
         "sense_voice" => EngineKind::SenseVoiceCtc,
         "dolphin" => EngineKind::DolphinCtc,
         "t-one" => EngineKind::ToneCtc,
@@ -193,8 +200,28 @@ fn matches_quant_glob(glob: &str, name: &str, quant: Quantization) -> bool {
     // enforces the suffix for non-default quants; for the default export we require NO recognised
     // quant tag on the stem (so a stray `encoder_model_int8.onnx` doesn't satisfy the default
     // `**/encoder_model.onnx` — which it can't anyway, but this makes the intent explicit).
-    let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    resolver::file_quantization(file_name) == quant
+    path_quantization(name) == quant
+}
+
+fn path_quantization(name: &str) -> Quantization {
+    let posix = name.replace('\\', "/");
+    if let Some((first, _)) = posix.split_once('/') {
+        return match first {
+            "fp32" => Quantization::Default,
+            "fp16" => Quantization::Fp16,
+            "fp16w" => Quantization::Fp16w,
+            "int8" => Quantization::Int8,
+            "uint8" => Quantization::Uint8,
+            "q4" => Quantization::Q4,
+            "q4f16" => Quantization::Q4f16,
+            "bnb4" => Quantization::Bnb4,
+            _ => {
+                let file_name = posix.rsplit('/').next().unwrap_or(&posix);
+                resolver::file_quantization(file_name)
+            }
+        };
+    }
+    resolver::file_quantization(&posix)
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +323,22 @@ mod tests {
             EngineKind::CohereAsr
         );
         assert_eq!(
+            engine_kind_for(
+                "granite-speech-4.1-2b",
+                "granite",
+                "smcleod/ibm-granite-speech-4.1-2b-onnx"
+            ),
+            EngineKind::GraniteSpeechAr
+        );
+        assert_eq!(
+            engine_kind_for(
+                "granite-speech-4.1-2b-nar",
+                "granite",
+                "smcleod/ibm-granite-speech-4.1-2b-nar-onnx"
+            ),
+            EngineKind::GraniteSpeechNar
+        );
+        assert_eq!(
             engine_kind_for("sense-voice-small", "sense_voice", "x"),
             EngineKind::SenseVoiceCtc
         );
@@ -377,6 +420,32 @@ mod tests {
         );
         assert_eq!(state, CacheState::Cached);
         assert_eq!(bytes, 300);
+    }
+
+    #[test]
+    fn quant_state_uses_granite_precision_directory() {
+        let files = vec![
+            ("int8/encoder.onnx".to_string(), 100, true),
+            ("int8/prompt_encode.onnx".to_string(), 200, true),
+            ("int8/decode_step.onnx".to_string(), 300, true),
+            ("int8/embed_tokens.onnx".to_string(), 400, true),
+        ];
+        let (state, bytes) = quant_state(
+            "granite-speech-4.1-2b",
+            EngineKind::GraniteSpeechAr,
+            Quantization::Int8,
+            &files,
+        );
+        assert_eq!(state, CacheState::Cached);
+        assert_eq!(bytes, 1000);
+
+        let (default_state, _) = quant_state(
+            "granite-speech-4.1-2b",
+            EngineKind::GraniteSpeechAr,
+            Quantization::Default,
+            &files,
+        );
+        assert_eq!(default_state, CacheState::NotCached);
     }
 
     #[test]

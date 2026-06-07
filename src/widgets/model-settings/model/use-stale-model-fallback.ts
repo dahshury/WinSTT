@@ -3,10 +3,12 @@ import { providerOf } from "@/entities/cloud-stt-provider";
 import {
   isSelectableRealtimeModel,
   isVisibleSttModel,
+  modelSupportsSelectedSourceLanguages,
   modelsHaveLanguageOverlap,
   needsModelFallback,
   pickCachedSttModel,
   pickDefaultSttModel,
+  type SourceLanguageSelection,
   type useCatalogStore,
   type useModelStateStore,
 } from "@/entities/model-catalog";
@@ -93,6 +95,7 @@ function resolveRealtimePatch(
   catalogModels: CatalogModels,
   statesById: StatesById,
   statesLoaded: boolean,
+  sourceLanguageSelection?: SourceLanguageSelection,
 ): ModelPatch | null {
   if (catalogModels.length === 0 || !statesLoaded) {
     return null;
@@ -105,11 +108,27 @@ function resolveRealtimePatch(
   const compatibleRealtime = catalogModels.filter(
     (m) =>
       isSelectableRealtimeModel(m) &&
-      (effectiveMain === null || modelsHaveLanguageOverlap(effectiveMain, m)),
+      (effectiveMain === null
+        ? modelSupportsSelectedSourceLanguages(
+            m,
+            sourceLanguageSelection,
+            effectiveMain,
+          )
+        : modelsHaveLanguageOverlap(effectiveMain, m) &&
+          modelSupportsSelectedSourceLanguages(
+            m,
+            sourceLanguageSelection,
+            effectiveMain,
+          )),
   );
   if (
     effectiveMain !== null &&
     isSelectableRealtimeModel(effectiveMain) &&
+    modelSupportsSelectedSourceLanguages(
+      effectiveMain,
+      sourceLanguageSelection,
+      effectiveMain,
+    ) &&
     statesById[effectiveMain.id]?.cache.state === "cached"
   ) {
     return currentRealtimeModel === effectiveMain.id
@@ -175,6 +194,7 @@ export function useStaleModelFallback(
   currentMainModel: string | undefined,
   currentRealtimeModel: string | undefined,
   update: UpdateModelFn,
+  sourceLanguageSelection?: SourceLanguageSelection,
 ): void {
   useEffect(() => {
     if (!catalogLoaded) {
@@ -220,6 +240,7 @@ export function useStaleModelFallback(
     statesLoaded,
     currentMainModel,
     currentRealtimeModel,
+    sourceLanguageSelection,
     update,
   ]);
 }

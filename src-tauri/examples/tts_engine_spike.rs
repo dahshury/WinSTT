@@ -13,14 +13,14 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use handy_app_lib::winstt::tts::chatterbox::{
+use winstt_app_lib::winstt::tts::chatterbox::{
     ChatterboxConfig, ChatterboxEngine, CHATTERBOX_SAMPLE_RATE,
 };
-use handy_app_lib::winstt::tts::kitten::{
+use winstt_app_lib::winstt::tts::kitten::{
     KittenConfig, KittenDevice, KittenEngine, KITTEN_SAMPLE_RATE,
 };
-use handy_app_lib::winstt::tts::piper::{PiperConfig, PiperEngine};
-use handy_app_lib::winstt::tts::supertonic::{
+use winstt_app_lib::winstt::tts::piper::{PiperConfig, PiperEngine};
+use winstt_app_lib::winstt::tts::supertonic::{
     SupertonicConfig, SupertonicEngine, SUPERTONIC_SAMPLE_RATE,
 };
 

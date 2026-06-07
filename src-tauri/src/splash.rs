@@ -39,12 +39,10 @@ pub const SPLASH_LABEL: &str = "splash";
 const SPLASH_MAX_LIFETIME_MS: u64 = 60_000;
 
 /// How long the ready-watcher waits for full renderer/backend readiness before
-/// giving up and showing the window anyway. MUST stay below
-/// (the `did-finish-load` → `server-ready` gate's 15 s fallback). MUST stay below
-/// `SPLASH_MAX_LIFETIME_MS` so the real window is handed off *before* the hard
-/// backstop tears the splash down — otherwise the backstop would close the splash
-/// while leaving no window on screen.
-const READY_TIMEOUT_MS: u64 = 45_000;
+/// giving up and showing the window anyway. Mirrors the reference app's startup
+/// fallback and stays well below `SPLASH_MAX_LIFETIME_MS` so the hard backstop
+/// never wins the handoff race.
+const READY_TIMEOUT_MS: u64 = 15_000;
 const SPLASH_CLOSE_ANIMATION_MS: u64 = 180;
 
 /// Set once the MAIN window's renderer reports `on_page_load(Finished)` — i.e. the
@@ -68,6 +66,38 @@ static STT_BOOT_DONE: AtomicBool = AtomicBool::new(false);
 /// Guards the tiny CSS fade-out delay so repeated handoff/backstop calls don't
 /// spawn duplicate destroy timers against the same transient window.
 static SPLASH_CLOSING: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, Debug)]
+struct ReadySnapshot {
+    renderer_painted: bool,
+    renderer_boot_done: bool,
+    stt_boot_done: bool,
+}
+
+impl ReadySnapshot {
+    fn renderer_ready(self) -> bool {
+        self.renderer_painted && self.renderer_boot_done
+    }
+}
+
+fn ready_snapshot() -> ReadySnapshot {
+    ReadySnapshot {
+        renderer_painted: RENDERER_PAINTED.load(Ordering::SeqCst),
+        renderer_boot_done: RENDERER_BOOT_DONE.load(Ordering::SeqCst),
+        stt_boot_done: STT_BOOT_DONE.load(Ordering::SeqCst),
+    }
+}
+
+fn reload_main_renderer(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Err(e) = window.eval("window.location.reload();") {
+        log::warn!("[splash] main renderer recovery reload failed: {e}");
+    } else {
+        log::warn!("[splash] main renderer recovery reload requested");
+    }
+}
 
 /// Record that the main renderer has painted. Called from the main window's
 /// `on_page_load(Finished)` handler. Idempotent.
@@ -117,18 +147,33 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
     std::thread::spawn(move || {
         let start = std::time::Instant::now();
         let deadline = std::time::Duration::from_millis(READY_TIMEOUT_MS);
+        let mut snapshot;
+        let timed_out;
         loop {
-            let renderer_ready = RENDERER_PAINTED.load(Ordering::SeqCst)
-                && RENDERER_BOOT_DONE.load(Ordering::SeqCst);
+            snapshot = ready_snapshot();
             // STT boot only matters when a window will actually appear (so the user's
             // first dictation is warm behind the still-covered splash). With no
             // window, renderer readiness alone is enough to drop the splash.
-            let stt_ready = !show_window || STT_BOOT_DONE.load(Ordering::SeqCst);
-            if (renderer_ready && stt_ready) || start.elapsed() >= deadline {
+            let stt_ready = !show_window || snapshot.stt_boot_done;
+            if snapshot.renderer_ready() && stt_ready {
+                timed_out = false;
+                break;
+            }
+            if start.elapsed() >= deadline {
+                timed_out = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        if timed_out {
+            log::warn!(
+                "[splash] ready-watcher timed out after {READY_TIMEOUT_MS}ms; renderer_painted={}, renderer_boot_done={}, stt_boot_done={}",
+                snapshot.renderer_painted,
+                snapshot.renderer_boot_done,
+                snapshot.stt_boot_done
+            );
+        }
+        let recover_renderer = show_window && timed_out && !snapshot.renderer_ready();
         // Window ops must run on the main thread on Windows; the event loop is live
         // by now (paint/timeout can only happen after `setup` returns).
         let app_for_main = app.clone();
@@ -136,6 +181,9 @@ pub fn spawn_ready_watcher(app: &AppHandle, show_window: bool) {
             if show_window {
                 // Shows the main pill AND closes the splash (the handoff).
                 crate::show_main_window(&app_for_main);
+                if recover_renderer {
+                    reload_main_renderer(&app_for_main);
+                }
             } else {
                 close_splash_window(&app_for_main);
             }

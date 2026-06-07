@@ -2,9 +2,12 @@ import { describe, expect, it } from "bun:test";
 import type { OllamaLibraryTag } from "@/shared/api/models";
 import {
 	canonicalOllamaTag,
+	findInstalledOllamaTag,
+	isModelSizeInstalled,
 	isSameOllamaTag,
 	isTagInstalled,
 	libraryBaseSlug,
+	ollamaTagIdentityKey,
 	paramSizeFromName,
 	pruneToShownQuants,
 	quantBadgeCacheState,
@@ -179,6 +182,82 @@ describe("canonicalOllamaTag / isSameOllamaTag / isTagInstalled", () => {
 		expect(isTagInstalled(installed, "tinyllama:latest")).toBe(true);
 		expect(isTagInstalled(installed, "gemma3:4b")).toBe(true);
 		expect(isTagInstalled(installed, "gemma3:1b")).toBe(false);
+	});
+
+	it("treats same-artifact generic defaults as their explicit instruction-tuned tags", () => {
+		expect(ollamaTagIdentityKey("smollm2:135m")).toBe(
+			"smollm2:135m-instruct-fp16",
+		);
+		expect(isSameOllamaTag("smollm2:360m", "smollm2:360m-instruct-fp16")).toBe(
+			true,
+		);
+		expect(isSameOllamaTag("llama3.2:1b", "llama3.2:1b-instruct-q8_0")).toBe(
+			true,
+		);
+		expect(
+			isSameOllamaTag("ministral-3:3b", "ministral-3:3b-instruct-2512-q4_K_M"),
+		).toBe(true);
+		expect(ollamaTagIdentityKey("gemma4:e2b")).toBe("gemma4:e2b-it-q4_k_m");
+		expect(isSameOllamaTag("gemma4:e2b", "gemma4:e2b-it-q4_K_M")).toBe(true);
+		expect(isSameOllamaTag("gemma4:e4b", "gemma4:e4b-it-q4_K_M")).toBe(true);
+		expect(isSameOllamaTag("gemma4:12b", "gemma4:12b-it-q4_K_M")).toBe(true);
+		expect(isSameOllamaTag("gemma4:e4b", "gemma4:12b-it-q4_K_M")).toBe(false);
+		expect(isSameOllamaTag("llama3.2:1b", "llama3.2:1b-instruct-q4_K_M")).toBe(
+			false,
+		);
+
+		const installed = new Set(["gemma4:e4b"]);
+		expect(isTagInstalled(installed, "gemma4:e4b-it-q4_K_M")).toBe(true);
+		expect(findInstalledOllamaTag(installed, "gemma4:e4b-it-q4_K_M")).toBe(
+			"gemma4:e4b",
+		);
+	});
+});
+
+describe("isModelSizeInstalled", () => {
+	it("matches any quant or instruction-tuned variant of the same size", () => {
+		// The duplicate bug: recommended `gemma4:e2b` showed next to an installed
+		// `gemma4:e2b-it-q8_0` because the alias table only maps the q4_K_M default.
+		// Size-level coverage hides the recommended card for ANY e2b variant.
+		expect(
+			isModelSizeInstalled(new Set(["gemma4:e2b-it-q8_0"]), "gemma4:e2b"),
+		).toBe(true);
+		expect(
+			isModelSizeInstalled(new Set(["gemma4:e2b-it-q4_K_M"]), "gemma4:e2b"),
+		).toBe(true);
+		expect(isModelSizeInstalled(new Set(["gemma4:e2b"]), "gemma4:e2b")).toBe(
+			true,
+		);
+	});
+
+	it("does not collapse a different size of the same family", () => {
+		expect(
+			isModelSizeInstalled(new Set(["gemma4:e4b-it-q4_K_M"]), "gemma4:e2b"),
+		).toBe(false);
+		expect(isModelSizeInstalled(new Set(["gemma4:12b"]), "gemma4:e2b")).toBe(
+			false,
+		);
+	});
+
+	it("does not collapse a same-size tag from a different family", () => {
+		expect(isModelSizeInstalled(new Set(["qwen3.5:4b"]), "granite4.1:4b")).toBe(
+			false,
+		);
+	});
+
+	it("ignores a param token in the base name, not the variant", () => {
+		// `command-r7b` carries `7b` in its BASE slug; only the post-colon variant
+		// is the param size, so this must not false-match on the base's digits.
+		expect(
+			isModelSizeInstalled(new Set(["command-r7b:7b-q4_K_M"]), "command-r7b:7b"),
+		).toBe(true);
+	});
+
+	it("covers a bare-base tag with any installed sibling of that family", () => {
+		expect(isModelSizeInstalled(new Set(["tinyllama:latest"]), "tinyllama")).toBe(
+			true,
+		);
+		expect(isModelSizeInstalled(new Set(["qwen3.5:4b"]), "tinyllama")).toBe(false);
 	});
 });
 

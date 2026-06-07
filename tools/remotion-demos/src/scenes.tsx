@@ -1020,7 +1020,7 @@ export function QualityPipeline() {
   return (
     <Stage label="Processing">
       <Card style={{ width: 1010, padding: 32, background: C.surface1 }} glow>
-        <PanelTitle eyebrow="Processing controls" title="Live preview, endpointing, cleanup, paste" />
+        <PanelTitle eyebrow="Processing controls" title="Live preview, endpointing, context, paste" />
         <div style={{ marginTop: 38, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
           <SettingsPanel title="Realtime preview" width={450}>
             <SettingRowMini label="Update interval" value="0.02 s" active progress={0.72} />
@@ -1029,7 +1029,7 @@ export function QualityPipeline() {
           </SettingsPanel>
           <SettingsPanel title="Paste pipeline" width={450}>
             <SettingRowMini label="Smart Endpoint" value="sentence classifier" active={frame > 38} />
-            <SettingRowMini label="Formatting" value="uppercase + period" active={frame > 76} />
+            <SettingRowMini label="Context awareness" value="focused-window text" active={frame > 76} />
             <SettingRowMini label="Auto-submit" value="optional Enter after paste" active={frame > 116} />
           </SettingsPanel>
         </div>

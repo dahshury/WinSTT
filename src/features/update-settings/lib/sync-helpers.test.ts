@@ -19,7 +19,7 @@ import {
 	shouldSendOnChange,
 	shouldSyncOnConnect,
 	silenceEndpointNeedsUpdate,
-	silenceTimingNeedsUpdate,
+	silenceTimingNeedsUpdate
 } from "./sync-helpers";
 
 describe("shouldSendInitial", () => {
@@ -248,7 +248,7 @@ describe("advanceSkipRefs", () => {
 		return {
 			loadedOnce: { current: loaded },
 			fromBroadcast: { current: broadcast },
-			fromIpcLoad: { current: ipcLoad },
+			fromIpcLoad: { current: ipcLoad }
 		};
 	}
 
@@ -363,15 +363,15 @@ describe("deriveIpcLoadUpdate", () => {
 	test("preserves a locally changed recording mode when settingsLoad resolves late", () => {
 		const loadBaseline = {
 			general: { recordingMode: "ptt" },
-			audio: { sileroSensitivity: 0.4 },
+			audio: { sileroSensitivity: 0.4 }
 		} as never;
 		const loaded = {
 			general: { recordingMode: "ptt" },
-			audio: { sileroSensitivity: 0.4 },
+			audio: { sileroSensitivity: 0.4 }
 		} as never;
 		const current = {
 			general: { recordingMode: "wakeword" },
-			audio: { sileroSensitivity: 0.4 },
+			audio: { sileroSensitivity: 0.4 }
 		} as never;
 
 		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
@@ -383,11 +383,11 @@ describe("deriveIpcLoadUpdate", () => {
 	test("marks pure IPC loads so the next settings effect is skipped", () => {
 		const loadBaseline = {
 			general: { recordingMode: "ptt" },
-			audio: { sileroSensitivity: 0.4 },
+			audio: { sileroSensitivity: 0.4 }
 		} as never;
 		const loaded = {
 			general: { recordingMode: "toggle" },
-			audio: { sileroSensitivity: 0.4 },
+			audio: { sileroSensitivity: 0.4 }
 		} as never;
 		const current = loadBaseline;
 
@@ -395,6 +395,60 @@ describe("deriveIpcLoadUpdate", () => {
 
 		expect(result.merged.general?.recordingMode).toBe("toggle");
 		expect(result.nextFromIpcLoad).toBe(true);
+	});
+
+	test("migrates a local-only dictionary into the central settings snapshot", () => {
+		const localDictionary = [{ id: "local-1", term: "Kubernetes" }];
+		const loadBaseline = {
+			dictionary: localDictionary,
+			snippets: []
+		} as never;
+		const loaded = {
+			dictionary: [],
+			snippets: []
+		} as never;
+		const current = loadBaseline;
+
+		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+
+		expect(result.merged.dictionary).toEqual(localDictionary);
+		expect(result.nextFromIpcLoad).toBe(false);
+	});
+
+	test("does not let a stale local dictionary overwrite central settings", () => {
+		const centralDictionary = [{ id: "central-1", term: "DirectML" }];
+		const loadBaseline = {
+			dictionary: [{ id: "local-1", term: "Kubernetes" }],
+			snippets: []
+		} as never;
+		const loaded = {
+			dictionary: centralDictionary,
+			snippets: []
+		} as never;
+		const current = loadBaseline;
+
+		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+
+		expect(result.merged.dictionary).toEqual(centralDictionary);
+		expect(result.nextFromIpcLoad).toBe(true);
+	});
+
+	test("migrates local-only snippets into the central settings snapshot", () => {
+		const localSnippets = [{ id: "snippet-1", trigger: "/sig", expansion: "kind regards" }];
+		const loadBaseline = {
+			dictionary: [],
+			snippets: localSnippets
+		} as never;
+		const loaded = {
+			dictionary: [],
+			snippets: []
+		} as never;
+		const current = loadBaseline;
+
+		const result = deriveIpcLoadUpdate(loaded, current, loadBaseline);
+
+		expect(result.merged.snippets).toEqual(localSnippets);
+		expect(result.nextFromIpcLoad).toBe(false);
 	});
 });
 
@@ -437,7 +491,9 @@ describe("scheduleSave", () => {
 
 	test("schedules a debounced call when immediate=false", async () => {
 		const saveFn = mock(() => undefined);
-		const debounceRef: { current: ReturnType<typeof setTimeout> | null } = { current: null };
+		const debounceRef: { current: ReturnType<typeof setTimeout> | null } = {
+			current: null
+		};
 		scheduleSave(settings, false, debounceRef, saveFn, 10);
 		expect(saveFn).not.toHaveBeenCalled();
 		expect(debounceRef.current).not.toBeNull();
@@ -449,7 +505,9 @@ describe("scheduleSave", () => {
 	test("cancels a pending debounce before scheduling a new one", () => {
 		const saveFn = mock(() => undefined);
 		const prevTimer = setTimeout(() => undefined, 10_000);
-		const debounceRef: { current: ReturnType<typeof setTimeout> | null } = { current: prevTimer };
+		const debounceRef: { current: ReturnType<typeof setTimeout> | null } = {
+			current: prevTimer
+		};
 		scheduleSave(settings, true, debounceRef, saveFn, 300);
 		// prevTimer was cleared; immediate save ran
 		expect(saveFn).toHaveBeenCalledTimes(1);
@@ -471,8 +529,14 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	const asMini = (v: unknown) => v as unknown as Mini;
 
 	test("returns identity (use decoded) when there is no lastSaved baseline", () => {
-		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
-		const current: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.4 } };
+		const decoded: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.4 }
+		};
+		const current: Mini = {
+			general: { overlayMode: "dynamic-island" },
+			audio: { silero: 0.4 }
+		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
@@ -483,8 +547,14 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	});
 
 	test("uses decoded when current matches lastSaved for every section (pure broadcast)", () => {
-		const decoded: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.5 } };
-		const current: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const decoded: Mini = {
+			general: { overlayMode: "dynamic-island" },
+			audio: { silero: 0.5 }
+		};
+		const current: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.4 }
+		};
 		const lastSaved: Mini = { ...current };
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
@@ -501,9 +571,18 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 		// (with `audio` updated, but general still showing the on-disk
 		// pre-click value). The merge must keep current.general while
 		// accepting decoded.audio.
-		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.5 } };
-		const current: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.4 } };
-		const lastSaved: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const decoded: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.5 }
+		};
+		const current: Mini = {
+			general: { overlayMode: "dynamic-island" },
+			audio: { silero: 0.4 }
+		};
+		const lastSaved: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.4 }
+		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
@@ -517,15 +596,15 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	test("accepts clean fields inside a dirty section", () => {
 		const decoded: Mini = {
 			general: { overlayMode: "floating-bottom", wakeWord: "americano" },
-			audio: { silero: 0.5 },
+			audio: { silero: 0.5 }
 		};
 		const current: Mini = {
 			general: { overlayMode: "dynamic-island", wakeWord: "alexa" },
-			audio: { silero: 0.4 },
+			audio: { silero: 0.4 }
 		};
 		const lastSaved: Mini = {
 			general: { overlayMode: "floating-bottom", wakeWord: "alexa" },
-			audio: { silero: 0.4 },
+			audio: { silero: 0.4 }
 		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
@@ -539,11 +618,20 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	});
 
 	test("treats deep-equal sections as not dirty (reference inequality alone is not enough)", () => {
-		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.5 } };
+		const decoded: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.5 }
+		};
 		// Same structural content as lastSaved but a fresh object reference —
 		// must not be flagged as user-dirty.
-		const current: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
-		const lastSaved: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const current: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.4 }
+		};
+		const lastSaved: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.4 }
+		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),
@@ -555,9 +643,18 @@ describe("mergeBroadcastPreservingUserDirty", () => {
 	});
 
 	test("preserves multiple dirty sections simultaneously", () => {
-		const decoded: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
-		const current: Mini = { general: { overlayMode: "dynamic-island" }, audio: { silero: 0.7 } };
-		const lastSaved: Mini = { general: { overlayMode: "floating-bottom" }, audio: { silero: 0.4 } };
+		const decoded: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.4 }
+		};
+		const current: Mini = {
+			general: { overlayMode: "dynamic-island" },
+			audio: { silero: 0.7 }
+		};
+		const lastSaved: Mini = {
+			general: { overlayMode: "floating-bottom" },
+			audio: { silero: 0.4 }
+		};
 		const { merged, preserved } = mergeBroadcastPreservingUserDirty(
 			cast(decoded),
 			cast(current),

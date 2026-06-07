@@ -1,6 +1,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use super::types::{clamp_cloud_speed, SentenceAudio, TtsEngine, TtsError, TtsResult, VoiceInfo};
+use super::types::{
+    clamp_cloud_speed, ChunkSink, SentenceAudio, SynthesisChunk, TtsEngine, TtsError, TtsResult,
+    VoiceInfo,
+};
 
 const MAX_PREVIEW_BYTES: usize = 10 * 1024 * 1024;
 
@@ -324,14 +328,15 @@ fn is_public_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-impl TtsEngine for ElevenLabsEngine {
-    fn synthesize_sentence(
+impl ElevenLabsEngine {
+    /// Build the per-call synthesis request, or `Ok(None)` for empty text (which
+    /// renders as an empty mp3 chunk). `Err` on a missing key / voice.
+    fn build_synthesis_request(
         &self,
         text: &str,
         voice: &str,
-        _lang: &str,
         speed: f32,
-    ) -> TtsResult<SentenceAudio> {
+    ) -> TtsResult<Option<CloudSynthesisRequest>> {
         if self.api_key.is_empty() {
             return Err(TtsError::Cloud("ElevenLabs API key not configured".into()));
         }
@@ -340,10 +345,9 @@ impl TtsEngine for ElevenLabsEngine {
         }
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            return Ok(SentenceAudio::Mp3 { bytes: Vec::new() });
+            return Ok(None);
         }
-        use tauri::async_runtime::block_on;
-        let req = CloudSynthesisRequest {
+        Ok(Some(CloudSynthesisRequest {
             api_key: self.api_key.clone(),
             voice_id: voice.to_string(),
             model_id: self.model_id.clone(),
@@ -352,28 +356,86 @@ impl TtsEngine for ElevenLabsEngine {
                 speed: clamp_cloud_speed(speed),
                 ..self.settings.clone()
             },
-        };
-        let resp = block_on(
-            self.client
-                .post(build_cloud_url(voice))
-                .header("xi-api-key", &self.api_key)
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .json(&build_cloud_body(&req))
-                .send(),
-        )
-        .map_err(|e| TtsError::Cloud(format!("ElevenLabs request failed: {e}")))?;
+        }))
+    }
+
+    /// One-shot ElevenLabs convert → mp3 bytes. Async so it can be raced against a
+    /// cancel signal: dropping this future aborts the in-flight reqwest POST.
+    async fn fetch_mp3(&self, req: &CloudSynthesisRequest, voice: &str) -> TtsResult<Vec<u8>> {
+        let resp = self
+            .client
+            .post(build_cloud_url(voice))
+            .header("xi-api-key", &self.api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(&build_cloud_body(req))
+            .send()
+            .await
+            .map_err(|e| TtsError::Cloud(format!("ElevenLabs request failed: {e}")))?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
-            let body = block_on(resp.text()).unwrap_or_default();
+            let body = resp.text().await.unwrap_or_default();
             return Err(TtsError::Cloud(classify_cloud_status(
                 status,
                 parse_detail_status(&body).as_deref(),
             )));
         }
-        let bytes = block_on(resp.bytes())
+        let bytes = resp
+            .bytes()
+            .await
             .map_err(|e| TtsError::Cloud(format!("ElevenLabs read failed: {e}")))?
             .to_vec();
-        Ok(SentenceAudio::Mp3 { bytes })
+        Ok(bytes)
+    }
+}
+
+impl TtsEngine for ElevenLabsEngine {
+    fn synthesize_sentence(
+        &self,
+        text: &str,
+        voice: &str,
+        _lang: &str,
+        speed: f32,
+    ) -> TtsResult<SentenceAudio> {
+        use tauri::async_runtime::block_on;
+        match self.build_synthesis_request(text, voice, speed)? {
+            None => Ok(SentenceAudio::Mp3 { bytes: Vec::new() }),
+            Some(req) => {
+                let bytes = block_on(self.fetch_mp3(&req, voice))?;
+                Ok(SentenceAudio::Mp3 { bytes })
+            }
+        }
+    }
+
+    /// Cloud override of the default wrapper: race the in-flight POST against the
+    /// sink's cancel flag (flipped by `tts_cancel` / `cancel_all` — the TTS island
+    /// X or the dictation overlay X). On cancel the request future is dropped,
+    /// which aborts the ElevenLabs HTTP call mid-flight instead of only stopping
+    /// the next sentence.
+    fn synthesize_stream(
+        &self,
+        text: &str,
+        voice: &str,
+        _lang: &str,
+        speed: f32,
+        sink: &dyn ChunkSink,
+    ) -> TtsResult<()> {
+        use tauri::async_runtime::block_on;
+        let bytes = match self.build_synthesis_request(text, voice, speed)? {
+            None => Vec::new(),
+            Some(req) => block_on(async {
+                tokio::select! {
+                    biased;
+                    () = async {
+                        while !sink.is_cancelled() {
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                        }
+                    } => Err(TtsError::Cancelled),
+                    res = self.fetch_mp3(&req, voice) => res,
+                }
+            })?,
+        };
+        sink.push(SynthesisChunk::mp3(bytes, 0, false));
+        Ok(())
     }
 
     fn list_voices(&self) -> Vec<VoiceInfo> {

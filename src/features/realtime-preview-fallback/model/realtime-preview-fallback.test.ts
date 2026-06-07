@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@/entities/model-catalog";
 import type { ModelStateEntry } from "@/shared/api/ipc-client";
-import { resolveRealtimePreviewFallbackPatch } from "./realtime-preview-fallback";
+import {
+  resolveRealtimeLanguageGuardPatch,
+  resolveRealtimePreviewFallbackPatch,
+} from "./realtime-preview-fallback";
 
 function model(
   overrides: Partial<ModelInfo> & Pick<ModelInfo, "id">,
@@ -146,6 +149,64 @@ describe("resolveRealtimePreviewFallbackPatch", () => {
     ).toBeNull();
   });
 
+  test("clears a cached realtime model when it supports none of the selected source languages", () => {
+    const models = [
+      model({ id: "main-multi", languages: ["en", "de", "ru"] }),
+      model({ id: "rt-en-small", languages: ["en"], nativeStreaming: true }),
+      model({ id: "rt-en-large", languages: ["en"], nativeStreaming: true }),
+      model({ id: "rt-ru", languages: ["ru"], nativeStreaming: true }),
+    ];
+    expect(
+      resolveRealtimePreviewFallbackPatch({
+        catalogLoaded: true,
+        catalogModels: models,
+        currentMainModel: "main-multi",
+        currentRealtimeModel: "rt-en-small",
+        realtimeEnabled: true,
+        sourceLanguageSelection: {
+          autoDetectLanguage: false,
+          languageCandidates: ["de"],
+        },
+        statesById: {
+          "main-multi": stateEntry(300, true),
+          "rt-en-small": stateEntry(50, true),
+          "rt-en-large": stateEntry(100, true),
+          "rt-ru": stateEntry(40, false),
+        },
+        statesLoaded: true,
+      }),
+    ).toEqual({ realtimeModel: "" });
+  });
+
+  test("selects a cached realtime model that supports at least one selected source language", () => {
+    const models = [
+      model({ id: "main-multi", languages: ["en", "de", "ru"] }),
+      model({ id: "rt-en-small", languages: ["en"], nativeStreaming: true }),
+      model({ id: "rt-en-large", languages: ["en"], nativeStreaming: true }),
+      model({ id: "rt-ru", languages: ["ru"], nativeStreaming: true }),
+    ];
+    expect(
+      resolveRealtimePreviewFallbackPatch({
+        catalogLoaded: true,
+        catalogModels: models,
+        currentMainModel: "main-multi",
+        currentRealtimeModel: "rt-en-small",
+        realtimeEnabled: true,
+        sourceLanguageSelection: {
+          autoDetectLanguage: false,
+          languageCandidates: ["ru", "de"],
+        },
+        statesById: {
+          "main-multi": stateEntry(300, true),
+          "rt-en-small": stateEntry(50, true),
+          "rt-en-large": stateEntry(100, true),
+          "rt-ru": stateEntry(40, true),
+        },
+        statesLoaded: true,
+      }),
+    ).toEqual({ realtimeModel: "rt-ru" });
+  });
+
   test("uses the cached native-streaming main model instead of a separate realtime model", () => {
     const models = [
       model({
@@ -231,5 +292,58 @@ describe("resolveRealtimePreviewFallbackPatch", () => {
         statesLoaded: true,
       }),
     ).toBeNull();
+  });
+
+  test("does not disable realtime when a cached model supports one selected source language", () => {
+    expect(
+      resolveRealtimeLanguageGuardPatch({
+        catalogLoaded: true,
+        catalogModels: catalog,
+        currentMainModel: "main-en",
+        currentRealtimeModel: "rt-en-small",
+        liveTranscriptionDisplay: "both",
+        realtimeEnabled: true,
+        sourceLanguageSelection: {
+          autoDetectLanguage: false,
+          languageCandidates: ["en", "ru"],
+        },
+        statesById: {
+          "main-en": stateEntry(300, true),
+          "rt-en-small": stateEntry(50, true),
+          "rt-en-large": stateEntry(100, true),
+          "rt-ru": stateEntry(40, true),
+        },
+        statesLoaded: true,
+        wordByWordPasting: false,
+      }),
+    ).toBeNull();
+  });
+
+  test("disables realtime display and word-by-word paste when no cached realtime model supports the selected source languages", () => {
+    expect(
+      resolveRealtimeLanguageGuardPatch({
+        catalogLoaded: true,
+        catalogModels: catalog,
+        currentMainModel: "main-en",
+        currentRealtimeModel: "rt-en-small",
+        liveTranscriptionDisplay: "both",
+        realtimeEnabled: true,
+        sourceLanguageSelection: {
+          autoDetectLanguage: false,
+          languageCandidates: ["de"],
+        },
+        statesById: {
+          "main-en": stateEntry(300, true),
+          "rt-en-small": stateEntry(50, true),
+          "rt-en-large": stateEntry(100, true),
+          "rt-ru": stateEntry(40, true),
+        },
+        statesLoaded: true,
+        wordByWordPasting: true,
+      }),
+    ).toEqual({
+      liveTranscriptionDisplay: "none",
+      wordByWordPasting: false,
+    });
   });
 });

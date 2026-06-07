@@ -190,6 +190,7 @@ pub fn cancel_tts_playback_layer(app: &AppHandle) -> bool {
 #[tauri::command]
 #[specta::specta]
 pub fn tts_report_playback_started(app: AppHandle, request_id: String) {
+    crate::winstt::ducking::duck_read_aloud_from_settings(&app);
     // Reveal the forced read-aloud island. The overlay window is otherwise only
     // shown for dictation; the renderer already paints the TTS island from its
     // `ttsStatus` store, so we just have to put the window on screen (top-anchored).
@@ -207,6 +208,7 @@ pub fn tts_report_playback_started(app: AppHandle, request_id: String) {
 #[tauri::command]
 #[specta::specta]
 pub fn tts_report_playback_ended(app: AppHandle, request_id: String) {
+    crate::winstt::ducking::request_read_aloud_restore();
     // Read finished / cancelled / failed → hide the island. The shared hide's
     // show-generation guard means a dictation session that just took over (which
     // re-shows + repositions the overlay) is NOT hidden by this call.

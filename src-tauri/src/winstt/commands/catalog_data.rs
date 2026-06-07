@@ -19,10 +19,18 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
-use serde::{Deserialize, Serialize};
-use specta::Type;
+use serde::Deserialize;
 
 use crate::winstt::catalog::{self, Accelerator};
+
+mod cloud;
+mod dto;
+
+pub use cloud::{all_cloud_catalog_rows, cloud_catalog_rows, CloudCatalogModel};
+pub use dto::{
+    CatalogModelInfo, ModelCacheInfo, ModelStateEntry, ModelsWithState, SystemInfoEntry,
+    SystemInfoGpu,
+};
 
 /// Raw catalog.json row (editorial source of truth). `wer`/`rtfx` are present on every shipped row
 /// (asserted upstream); the rest map 1:1 to the renderer's `rawModelInfoSchema`.
@@ -53,7 +61,7 @@ struct RawCatalogFile {
 }
 
 /// The embedded editorial catalog (refreshed from server/src/recorder/domain/catalog.json).
-const CATALOG_JSON: &str = include_str!("catalog_data.json");
+const CATALOG_JSON: &str = include_str!("catalog_data/catalog_data.json");
 
 fn raw_catalog() -> &'static [RawCatalogEntry] {
     static PARSED: OnceLock<Vec<RawCatalogEntry>> = OnceLock::new();
@@ -64,103 +72,6 @@ fn raw_catalog() -> &'static [RawCatalogEntry] {
                 .unwrap_or_default()
         })
         .as_slice()
-}
-
-/// One rich catalog row as the picker consumes it. snake_case on the wire to match
-/// `rawModelInfoSchema` (catalog-store.ts) exactly — the renderer does no remapping of the keys.
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct CatalogModelInfo {
-    pub id: String,
-    pub display_name: String,
-    /// Always `"onnx_asr"` post-torch-drop (server `_backend_from_str` defaults to it).
-    pub backend: String,
-    pub family: String,
-    pub languages: Vec<String>,
-    pub supports_language_detection: bool,
-    pub size_label: String,
-    /// Legacy alias for `preview_capable`. Kept for older renderer builds.
-    pub supports_realtime: bool,
-    /// Whether this model can drive the live preview UI at all. This may be a
-    /// simulated rolling/window re-decode path rather than native streaming.
-    pub preview_capable: bool,
-    /// Whether the loaded engine consumes only new audio through a stateful/native
-    /// streaming decoder (`Transcriber::stream_accept`).
-    pub native_streaming: bool,
-    /// Whether realtime text can be promoted to final paste without a fresh
-    /// full-context final decode.
-    pub final_reuse_safe: bool,
-    pub onnx_model_name: Option<String>,
-    pub description: String,
-    /// Quant suffixes (filtered to the CUDA-compatible set on CUDA EPs; full set otherwise).
-    pub available_quantizations: Vec<String>,
-    pub size_bytes_by_quantization: BTreeMap<String, u64>,
-    /// Shipped catalog rows are always available; custom-scan failures would set false.
-    pub available: bool,
-    pub error_message: String,
-    pub local_path: Option<String>,
-    /// 0..1 normalized speed score (log-scaled RTFx). 0.5 = unknown → renderer hides the bar.
-    pub speed_score: f64,
-    /// 0..1 normalized accuracy score (linear-ramped WER). 0.5 = unknown.
-    pub accuracy_score: f64,
-}
-
-/// Per-precision cache snapshot, mirroring the renderer's `ModelCacheInfo`.
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct ModelCacheInfo {
-    /// "cached" | "partial" | "not_cached".
-    pub state: String,
-    pub downloaded_bytes: u64,
-    pub total_bytes: u64,
-    /// 0.0..1.0 (1.0 when cached).
-    pub progress: f64,
-}
-
-impl ModelCacheInfo {
-    fn not_cached() -> Self {
-        Self {
-            state: "not_cached".into(),
-            downloaded_bytes: 0,
-            total_bytes: 0,
-            progress: 0.0,
-        }
-    }
-}
-
-/// Per-model cache + fitness state — mirrors the renderer's `ModelStateEntry` (model-state-store.ts).
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct ModelStateEntry {
-    pub id: String,
-    pub cache: ModelCacheInfo,
-    pub cache_by_quantization: BTreeMap<String, ModelCacheInfo>,
-    pub available_quantizations: Vec<String>,
-    /// The precision the loader will ACTUALLY load under the current device — the badge bridge
-    /// (memory project_effective_quantization_bridge). The picker keys "downloaded?" off this.
-    pub effective_quantization: String,
-    pub estimated_bytes: u64,
-    pub comfortable_on_gpu: bool,
-    pub comfortable_on_cpu: bool,
-}
-
-/// One GPU as the renderer's `SystemInfoEntry.gpus` expects it.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
-pub struct SystemInfoGpu {
-    pub name: String,
-    pub total_vram_bytes: u64,
-}
-
-/// System snapshot for fitness heuristics — mirrors the renderer's `SystemInfoEntry`.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, Default)]
-pub struct SystemInfoEntry {
-    pub total_ram_bytes: u64,
-    pub gpus: Vec<SystemInfoGpu>,
-}
-
-/// The full `fetchModelsWithState` payload: `{ models, states, system_info }`.
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct ModelsWithState {
-    pub models: Vec<CatalogModelInfo>,
-    pub states: Vec<ModelStateEntry>,
-    pub system_info: SystemInfoEntry,
 }
 
 // ── Editorial-field derivations (ports of model_registry.py) ───────────────────────────────────
@@ -539,7 +450,7 @@ fn is_visible_local_catalog_entry(entry: &RawCatalogEntry) -> bool {
     // non-int8 rows were imported with fp32 size labels, but their repos currently contain
     // tiny/incomplete graphs, so keep them out of the picker while catalog::find() still maps
     // old persisted ids to the real 1120ms int8 row.
-    !(entry.id.starts_with("streaming-nemotron-en-") && !entry.id.ends_with("-int8"))
+    !entry.id.starts_with("streaming-nemotron-en-") || entry.id.ends_with("-int8")
 }
 
 /// The full rich catalog (CUDA-aware quant filtering). Drives `fetchModelCatalog`.
@@ -644,13 +555,13 @@ pub fn models_with_state(
         .collect();
     let models = visible_entries
         .iter()
-        .map(|e| to_catalog_row(*e, accel))
+        .map(|e| to_catalog_row(e, accel))
         .collect();
     let states = visible_entries
         .iter()
         .map(|e| {
             let states = cache_by_model.get(&e.id).unwrap_or(&empty);
-            to_state_entry(*e, accel, &sys, states, available_ram_bytes, vram_bytes)
+            to_state_entry(e, accel, &sys, states, available_ram_bytes, vram_bytes)
         })
         .collect();
     ModelsWithState {
@@ -669,74 +580,16 @@ pub fn estimated_bytes_for(model_id: &str) -> u64 {
         .unwrap_or(0)
 }
 
-// ── Cloud STT catalog (openai / elevenlabs) ─────────────────────────────────────────────────────
-//
-// IMPORTANT: cloud STT models are DELIBERATELY NOT folded into `catalog_rows()` /
-// `models_with_state()`. The reused React renderer routes its picker between the LOCAL grid
-// (`list_models` → `catalog_rows`, schema `rawModelInfoSchema`) and the CLOUD picker
-// (`features/select-cloud-stt-model`, which reads its own hardcoded `CLOUD_CATALOG` — never the
-// backend) purely off the `openai:` / `elevenlabs:` prefix (`providerOf`). Cloud rows have none of
-// the local-engine editorial fields the local grid requires (per-quant byte sizes, WER/RTFx,
-// quant set), so injecting them into `catalog_rows()` would surface malformed local cards.
-//
-// This block is the BACKEND-SIDE MIRROR of the renderer's `CLOUD_CATALOG` (byte-identical ids /
-// defaults), exposed as a specta-typed payload so a future "enumerate cloud STT models" command
-// (or settings-validation) has a single source of truth. The authoritative pure table lives in
-// `winstt::cloud_stt` (`OPENAI_CLOUD_MODELS` / `ELEVENLABS_CLOUD_MODELS`); this only reshapes it.
-
-/// One cloud STT model as the picker would consume it. snake_case on the wire to match the
-/// renderer's `CloudModel` shape. `model` is the prefixed `<provider>:<id>` the picker persists
-/// into `settings.model.model`; `id` is the bare provider model id.
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct CloudCatalogModel {
-    /// Bare provider model id (e.g. `whisper-1`).
-    pub id: String,
-    /// Prefixed `<provider>:<id>` selectable id (e.g. `openai:whisper-1`).
-    pub model: String,
-    pub provider: String,
-    pub display_name: String,
-    pub description: String,
-    pub is_default: bool,
-}
-
-/// The cloud STT catalog for one provider id (`"openai"` / `"elevenlabs"`); empty for unknown.
-pub fn cloud_catalog_rows(provider_id: &str) -> Vec<CloudCatalogModel> {
-    use crate::winstt::cloud_stt::{cloud_models_for, CloudSttProvider};
-
-    let Some(provider) = CloudSttProvider::from_id(provider_id) else {
-        return Vec::new();
-    };
-    cloud_models_for(provider)
-        .iter()
-        .map(|m| CloudCatalogModel {
-            id: m.id.to_string(),
-            model: format!("{}:{}", provider.id(), m.id),
-            provider: provider.id().to_string(),
-            display_name: m.display_name.to_string(),
-            description: m.description.to_string(),
-            is_default: m.is_default,
-        })
-        .collect()
-}
-
-/// The full cloud STT catalog across every provider, flattened. Drives any backend
-/// enumerate-cloud-models surface.
-pub fn all_cloud_catalog_rows() -> Vec<CloudCatalogModel> {
-    let mut rows = cloud_catalog_rows("openai");
-    rows.extend(cloud_catalog_rows("elevenlabs"));
-    rows
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn catalog_parses_69_rows() {
+    fn catalog_parses_71_rows() {
         assert_eq!(
             raw_catalog().len(),
-            69,
-            "embedded catalog must carry all 69 shipped models"
+            71,
+            "embedded catalog must carry all 71 shipped models"
         );
     }
 
@@ -768,6 +621,48 @@ mod tests {
         assert!(!tiny.description.is_empty());
         assert_eq!(tiny.size_label, "38M");
         assert_eq!(tiny.supports_realtime, tiny.preview_capable);
+    }
+
+    #[test]
+    fn canary_rows_keep_languages_but_do_not_advertise_auto_detection() {
+        let rows = catalog_rows(Accelerator::Cpu);
+        for id in [
+            "nemo-canary-1b-v2",
+            "nemo-canary-180m-flash",
+            "nemo-canary-1b-flash",
+        ] {
+            let row = rows
+                .iter()
+                .find(|r| r.id == id)
+                .unwrap_or_else(|| panic!("{id} present"));
+            assert!(
+                row.languages.iter().any(|language| language == "de"),
+                "{id} should remain selectable for German transcription"
+            );
+            assert!(
+                !row.supports_language_detection,
+                "{id} must not expose auto-detect until the local runtime supports it"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_language_ignored_rows_do_not_advertise_auto_detection() {
+        let rows = catalog_rows(Accelerator::Cpu);
+        for id in ["nemo-parakeet-tdt-0.6b-v3", "dolphin-base-ctc"] {
+            let row = rows
+                .iter()
+                .find(|r| r.id == id)
+                .unwrap_or_else(|| panic!("{id} present"));
+            assert!(
+                row.languages.len() > 1,
+                "{id} should still document its supported source languages"
+            );
+            assert!(
+                !row.supports_language_detection,
+                "{id} must not expose auto-detect because the local runtime ignores language options"
+            );
+        }
     }
 
     #[test]
@@ -862,7 +757,7 @@ mod tests {
 
         assert!(
             rows.iter()
-                .all(|r| !(r.id.starts_with("streaming-nemotron-en-") && !r.id.ends_with("-int8"))),
+                .all(|r| !r.id.starts_with("streaming-nemotron-en-") || r.id.ends_with("-int8")),
             "non-int8 Nemotron rows should stay hidden until a complete fp32 export is available"
         );
 
@@ -898,7 +793,7 @@ mod tests {
         for r in &rows {
             for q in &r.available_quantizations {
                 assert!(
-                    r.native_streaming || q.is_empty() || q == "fp16",
+                    r.native_streaming || q.is_empty() || q == "fp16" || q == "fp16w",
                     "CUDA must drop sub-fp16 for non-streaming rows: {q}"
                 );
             }

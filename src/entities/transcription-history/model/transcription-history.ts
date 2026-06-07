@@ -6,25 +6,27 @@
  */
 
 export type RecordingRetention =
-	| "never"
-	| "cap"
-	| "days3"
-	| "weeks2"
-	| "months3";
+  | "never"
+  | "cap"
+  | "days3"
+  | "weeks2"
+  | "months3";
 
 export interface HistoryEntry {
-	fileName: string;
-	id: number;
-	postProcessedText: string | null;
-	postProcessPrompt: string | null;
-	postProcessRequested: boolean;
-	saved: boolean;
-	timestamp: number;
-	title: string;
-	transcriptionText: string;
+  fileName: string;
+  historyTag?: string | null;
+  id: number;
+  postProcessedText: string | null;
+  postProcessPrompt: string | null;
+  postProcessRequested: boolean;
+  privacyMarkers?: string[];
+  saved: boolean;
+  timestamp: number;
+  title: string;
+  transcriptionText: string;
 }
 
 export interface PaginatedHistory {
-	entries: HistoryEntry[];
-	hasMore: boolean;
+  entries: HistoryEntry[];
+  hasMore: boolean;
 }

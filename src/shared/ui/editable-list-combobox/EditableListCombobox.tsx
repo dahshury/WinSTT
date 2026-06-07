@@ -193,7 +193,7 @@ export function EditableListCombobox({
         <div className="relative flex w-full items-center">
           <Combobox.Input
             aria-label={inputAriaLabel}
-            className={`h-8 w-full rounded-sm ${surfaceClasses(inputLevel)} ps-2.5 pe-7 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+            className={`h-8 w-full rounded-lg ${surfaceClasses(inputLevel)} ps-2.5 pe-7 font-inherit text-body text-foreground leading-normal outline-none placeholder:text-foreground-muted focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-surface-1 ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
             placeholder={placeholder}
           />
           <Combobox.Trigger
@@ -212,7 +212,7 @@ export function EditableListCombobox({
               sideOffset={4}
             >
               <Combobox.Popup
-                className={`editable-list-combobox-popup w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-sm ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(16rem,var(--available-height))]`}
+                className={`editable-list-combobox-popup w-[var(--anchor-width)] max-w-[var(--available-width)] origin-[var(--transform-origin)] overflow-y-auto rounded-lg ${surfaceClasses(popupLevel, popupShadow)} py-1 [max-height:min(16rem,var(--available-height))]`}
               >
                 {visibleEntries.length === 0 && !canCreate ? (
                   <div className="px-2.5 py-2 text-body-sm text-foreground-muted">

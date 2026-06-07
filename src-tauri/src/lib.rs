@@ -5,7 +5,9 @@ mod audio_feedback;
 pub mod audio_toolkit;
 pub mod cli;
 mod clipboard;
+mod cloud_llm;
 mod commands;
+mod commands_registry;
 mod helpers;
 mod input;
 mod llm_client;
@@ -15,10 +17,12 @@ mod settings;
 mod shortcut;
 mod signal_handle;
 mod splash;
+mod startup;
 mod transcription_coordinator;
 mod tray;
 mod tray_indicator;
 mod utils;
+mod window_state;
 #[cfg(windows)]
 mod windows_com;
 pub mod winstt;
@@ -26,9 +30,7 @@ pub mod winstt;
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
 use specta_typescript::{BigIntExportBehavior, Typescript};
-use tauri_specta::{collect_commands, collect_events, Builder};
 
-use env_filter::Builder as EnvFilterBuilder;
 use managers::audio::AudioRecordingManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
@@ -37,188 +39,35 @@ use managers::transcription::TranscriptionManager;
 use signal_hook::consts::{SIGUSR1, SIGUSR2};
 #[cfg(unix)]
 use signal_hook::iterator::Signals;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::image::Image;
 pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Listener, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
 use crate::settings::get_settings;
 
-// Global atomic to store the file log level filter
-// We use u8 to store the log::LevelFilter as a number
-pub static FILE_LOG_LEVEL: AtomicU8 = AtomicU8::new(log::LevelFilter::Debug as u8);
+// Re-export the boot-time + window-geometry + registry symbols at the crate root
+// so external call sites keep their existing `crate::X` paths after the split.
+pub use commands_registry::make_specta_builder;
+pub use startup::FILE_LOG_LEVEL;
+pub(crate) use startup::{log_startup_duration, startup_profile_enabled};
+pub(crate) use window_state::show_main_window;
 
-fn level_filter_from_u8(value: u8) -> log::LevelFilter {
-    match value {
-        0 => log::LevelFilter::Off,
-        1 => log::LevelFilter::Error,
-        2 => log::LevelFilter::Warn,
-        3 => log::LevelFilter::Info,
-        4 => log::LevelFilter::Debug,
-        5 => log::LevelFilter::Trace,
-        _ => log::LevelFilter::Trace,
-    }
-}
-
-fn build_console_filter() -> env_filter::Filter {
-    let mut builder = EnvFilterBuilder::new();
-
-    match std::env::var("RUST_LOG") {
-        Ok(spec) if !spec.trim().is_empty() => {
-            if let Err(err) = builder.try_parse(&spec) {
-                log::warn!(
-                    "Ignoring invalid RUST_LOG value '{}': {}. Falling back to info-level console logging",
-                    spec,
-                    err
-                );
-                builder.filter_level(log::LevelFilter::Info);
-            }
-        }
-        _ => {
-            builder.filter_level(log::LevelFilter::Info);
-        }
-    }
-
-    builder.build()
-}
-
-pub(crate) fn startup_profile_enabled() -> bool {
-    std::env::var("WINSTT_PROFILE_STARTUP")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
-pub(crate) fn log_startup_duration(label: &str, started: Instant) {
-    if startup_profile_enabled() {
-        log::info!("[startup] {label}: {} ms", started.elapsed().as_millis());
-    }
-}
-
-struct StartupProfiler {
-    enabled: bool,
-    start: Instant,
-    last: Instant,
-}
-
-impl StartupProfiler {
-    fn new() -> Self {
-        let now = Instant::now();
-        Self {
-            enabled: startup_profile_enabled(),
-            start: now,
-            last: now,
-        }
-    }
-
-    fn mark(&mut self, label: &str) {
-        if !self.enabled {
-            return;
-        }
-        let now = Instant::now();
-        log::info!(
-            "[startup] {label}: +{} ms ({} ms total)",
-            now.duration_since(self.last).as_millis(),
-            now.duration_since(self.start).as_millis()
-        );
-        self.last = now;
-    }
-}
-
-#[cfg(all(windows, debug_assertions))]
-fn hard_exit_main_window_in_dev() -> bool {
-    log::info!("Main window closed - Windows dev hard exit.");
-    signal_handle::terminate_process_success();
-}
-
-#[cfg(not(all(windows, debug_assertions)))]
-fn hard_exit_main_window_in_dev() -> bool {
-    false
-}
-
-fn show_main_window(app: &AppHandle) {
-    // Hand off from the splash: the real window is about to be visible. Idempotent
-    // and a no-op if the page-load handler already closed it (mirrors the reference's
-    // showOnce → closeSplashWindow).
-    if let Some(main_window) = app.get_webview_window("main") {
-        if let Err(e) = main_window.unminimize() {
-            log::error!("Failed to unminimize webview window: {}", e);
-        }
-        if let Err(e) = main_window.show() {
-            log::error!("Failed to show webview window: {}", e);
-        }
-        // Hand off from the splash after the real window is visible, so the
-        // splash fade-out runs over a painted renderer instead of blank desktop.
-        splash::close_splash_window(app);
-        // Force the pill ABOVE every other app's window. On Windows `set_focus()`
-        // alone is unreliable when another process owns the foreground
-        // (SetForegroundWindow is restricted to the foreground-owning process), so
-        // the window comes up *behind* whatever the user was typing into — the
-        // reported "doesn't get above the others" bug. Briefly toggling
-        // always-on-top reliably raises it; the pill isn't an always-on-top window,
-        // so we drop the flag again immediately after.
-        #[cfg(target_os = "windows")]
-        {
-            let _ = main_window.set_always_on_top(true);
-            let _ = main_window.set_always_on_top(false);
-        }
-        if let Err(e) = main_window.set_focus() {
-            log::error!("Failed to focus webview window: {}", e);
-        }
-        #[cfg(target_os = "macos")]
-        {
-            if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
-                log::error!("Failed to set activation policy to Regular: {}", e);
-            }
-        }
-        winstt::commands::windows::schedule_post_startup_prewarm(app);
-        return;
-    }
-
-    splash::close_splash_window(app);
-
-    let webview_labels = app.webview_windows().keys().cloned().collect::<Vec<_>>();
-    log::error!(
-        "Main window not found. Webview labels: {:?}",
-        webview_labels
-    );
-}
-
-#[allow(unused_variables)]
-fn should_force_show_permissions_window(app: &AppHandle) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let model_manager = app.state::<Arc<ModelManager>>();
-        let has_downloaded_models = model_manager
-            .get_available_models()
-            .iter()
-            .any(|model| model.is_downloaded);
-
-        if !has_downloaded_models {
-            return false;
-        }
-
-        let status = commands::audio::get_windows_microphone_permission_status();
-        if status.supported && status.overall_access == commands::audio::PermissionAccess::Denied {
-            log::info!(
-                "Windows microphone permissions are denied; forcing main window visible for onboarding"
-            );
-            return true;
-        }
-    }
-
-    false
-}
+// Boot-time helpers used only inside this crate root (run / initialize_core_logic
+// / the window-event handlers).
+use startup::{
+    build_console_filter, ensure_hf_cache_env, level_filter_from_u8, request_app_exit,
+    wait_for_renderer_dev_server, StartupProfiler,
+};
+use window_state::{
+    restore_main_window_position, save_main_window_position, should_force_show_permissions_window,
+};
 
 fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) {
     // Note: Enigo (keyboard/mouse simulation) is NOT initialized here.
@@ -525,342 +374,6 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
     startup.mark("STT boot/warmup scheduled");
 }
 
-#[tauri::command]
-#[specta::specta]
-fn trigger_update_check(app: AppHandle) -> Result<(), String> {
-    let settings = settings::get_settings(&app);
-    if !settings.update_checks_enabled {
-        return Ok(());
-    }
-    app.emit("check-for-updates", ())
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-fn show_main_window_command(app: AppHandle) -> Result<(), String> {
-    show_main_window(&app);
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-fn quit_app(_app: AppHandle) {
-    #[cfg(all(windows, debug_assertions))]
-    {
-        log::info!("Quit requested - Windows dev hard exit.");
-        signal_handle::terminate_process_success();
-    }
-
-    #[cfg(not(all(windows, debug_assertions)))]
-    _app.exit(0);
-}
-
-/// Build the tauri-specta `Builder` with the full command + event registry.
-/// Single source of truth for both `run()` (which mounts it on the live app) and
-/// the `export_bindings` test (which calls `.export(...)` without starting the app).
-pub fn make_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
-    let builder = Builder::<tauri::Wry>::new().commands(collect_commands![
-        shortcut::change_binding,
-        shortcut::reset_binding,
-        shortcut::change_ptt_setting,
-        shortcut::change_audio_feedback_setting,
-        shortcut::change_audio_feedback_volume_setting,
-        shortcut::change_sound_theme_setting,
-        shortcut::change_translate_to_english_setting,
-        shortcut::change_selected_language_setting,
-        shortcut::change_overlay_position_setting,
-        shortcut::change_debug_mode_setting,
-        shortcut::change_word_correction_threshold_setting,
-        shortcut::change_paste_delay_ms_setting,
-        shortcut::change_paste_method_setting,
-        shortcut::get_available_typing_tools,
-        shortcut::change_typing_tool_setting,
-        shortcut::change_external_script_path_setting,
-        shortcut::change_clipboard_handling_setting,
-        shortcut::change_auto_submit_setting,
-        shortcut::change_auto_submit_key_setting,
-        shortcut::change_post_process_enabled_setting,
-        shortcut::change_experimental_enabled_setting,
-        shortcut::change_post_process_base_url_setting,
-        shortcut::change_post_process_api_key_setting,
-        shortcut::change_post_process_model_setting,
-        shortcut::set_post_process_provider,
-        shortcut::fetch_post_process_models,
-        shortcut::add_post_process_prompt,
-        shortcut::update_post_process_prompt,
-        shortcut::delete_post_process_prompt,
-        shortcut::set_post_process_selected_prompt,
-        shortcut::update_custom_words,
-        shortcut::suspend_binding,
-        shortcut::resume_binding,
-        shortcut::change_mute_while_recording_setting,
-        shortcut::change_append_trailing_space_setting,
-        shortcut::change_app_language_setting,
-        shortcut::change_update_checks_setting,
-        shortcut::change_keyboard_implementation_setting,
-        shortcut::get_keyboard_implementation,
-        shortcut::change_show_tray_icon_setting,
-        shortcut::change_whisper_accelerator_setting,
-        shortcut::change_ort_accelerator_setting,
-        shortcut::change_whisper_gpu_device,
-        shortcut::get_available_accelerators,
-        shortcut::handy_keys::start_handy_keys_recording,
-        shortcut::handy_keys::stop_handy_keys_recording,
-        trigger_update_check,
-        show_main_window_command,
-        quit_app,
-        tray::copy_last_transcript,
-        commands::cancel_operation,
-        commands::is_portable,
-        commands::get_app_dir_path,
-        commands::get_app_settings,
-        commands::get_default_settings,
-        commands::get_log_dir_path,
-        commands::set_log_level,
-        commands::open_recordings_folder,
-        commands::open_log_dir,
-        commands::open_app_data_dir,
-        commands::cleanup::remove_application_data,
-        commands::cleanup::remove_downloaded_models,
-        commands::check_apple_intelligence_available,
-        commands::initialize_enigo,
-        commands::initialize_shortcuts,
-        commands::models::get_available_models,
-        commands::models::get_model_info,
-        commands::models::download_model,
-        commands::models::delete_model,
-        commands::models::cancel_download,
-        commands::models::set_active_model,
-        commands::models::get_current_model,
-        commands::models::get_transcription_model_status,
-        commands::models::is_model_loading,
-        commands::models::has_any_models_available,
-        commands::models::has_any_models_or_downloads,
-        commands::audio::get_windows_microphone_permission_status,
-        commands::audio::open_microphone_privacy_settings,
-        commands::audio::get_available_microphones,
-        commands::audio::set_selected_microphone,
-        commands::audio::get_selected_microphone,
-        commands::audio::get_available_output_devices,
-        commands::audio::set_selected_output_device,
-        commands::audio::get_selected_output_device,
-        commands::audio::play_test_sound,
-        commands::audio::check_custom_sounds,
-        commands::audio::set_clamshell_microphone,
-        commands::audio::get_clamshell_microphone,
-        commands::audio::is_recording,
-        commands::transcription::set_model_unload_timeout,
-        commands::transcription::get_model_load_status,
-        commands::transcription::unload_model_manually,
-        commands::history::get_history_entries,
-        commands::history::toggle_history_entry_saved,
-        commands::history::get_audio_file_path,
-        commands::history::delete_history_entry,
-        commands::history::retry_history_entry_transcription,
-        helpers::clamshell::is_laptop,
-        // ── WinSTT commands (lib_wiring.md §3) ──
-        winstt::commands::settings::winstt_get_settings,
-        winstt::commands::settings::winstt_set_settings,
-        winstt::commands::stt::list_models,
-        winstt::commands::stt::picker_quantizations_for,
-        winstt::commands::stt::get_live_resources,
-        winstt::commands::stt::set_custom_model,
-        winstt::commands::tts::tts_speak,
-        winstt::commands::tts::tts_speak_selection,
-        winstt::commands::tts::tts_cancel,
-        winstt::commands::tts::tts_cancel_all,
-        winstt::commands::tts::tts_init,
-        winstt::commands::tts::tts_list_voices,
-        winstt::commands::tts::tts_list_cloud_voices,
-        winstt::commands::tts::tts_cloud_subscription,
-        winstt::commands::tts::tts_download_estimate,
-        winstt::commands::tts::tts_install_pause,
-        winstt::commands::tts::tts_install_resume,
-        winstt::commands::tts::tts_install_cancel,
-        winstt::commands::tts::tts_preview_cloud,
-        winstt::commands::tts::tts_list_models,
-        winstt::commands::tts::tts_list_models_with_state,
-        winstt::commands::tts::tts_predownload_model,
-        winstt::commands::tts::tts_download_pause,
-        winstt::commands::tts::tts_download_resume,
-        winstt::commands::tts::tts_download_cancel,
-        winstt::commands::tts::tts_delete_model,
-        winstt::commands::llm::process_text,
-        winstt::commands::llm::process_transform,
-        winstt::commands::llm::scan_ollama_models,
-        winstt::commands::llm::scan_openrouter_models,
-        winstt::commands::llm::ollama_detect,
-        winstt::commands::llm::ollama_start,
-        winstt::commands::llm::ollama_pull,
-        winstt::commands::llm::ollama_delete,
-        winstt::commands::llm::verify_credential,
-        winstt::commands::cloud_stt::verify_cloud_stt_credential,
-        winstt::commands::cloud_stt::cloud_stt_cancel,
-        winstt::commands::wakeword::set_wake_word,
-        winstt::commands::wakeword::list_wake_word_presets,
-        winstt::commands::wakeword::wakeword_model_status,
-        winstt::commands::wakeword::wakeword_start_model_download,
-        winstt::commands::wakeword::wakeword_pause_model_download,
-        winstt::commands::wakeword::wakeword_resume_model_download,
-        winstt::commands::wakeword::wakeword_cancel_model_download,
-        winstt::commands::listen::start_listen,
-        winstt::commands::listen::stop_listen,
-        winstt::commands::wordts::align_words,
-        winstt::commands::file_transcribe::file_transcribe_enqueue,
-        winstt::commands::file_transcribe::file_transcribe_pick_and_enqueue,
-        winstt::commands::file_transcribe::file_transcribe_pause,
-        winstt::commands::file_transcribe::file_transcribe_resume,
-        winstt::commands::file_transcribe::file_transcribe_cancel,
-        // ── frontend-port slice commands (10_frontend_port_plan.md WU-3..13) ──
-        winstt::commands::snippets::winstt_expand_snippets,
-        winstt::commands::dictation::set_winstt_model,
-        winstt::commands::dictation::winstt_call_method,
-        winstt::commands::dictation::winstt_emit_ready,
-        winstt::commands::dictation::winstt_get_parameter,
-        winstt::commands::dictation::winstt_set_parameter,
-        winstt::commands::download::predownload_quant,
-        winstt::commands::download::download_pause_quant,
-        winstt::commands::download::download_resume_quant,
-        winstt::commands::download::download_cancel_quant,
-        winstt::commands::download::delete_model_quantization,
-        winstt::commands::download::delete_model_cache,
-        winstt::commands::runtime::get_runtime_info,
-        winstt::commands::runtime::list_models_with_state,
-        winstt::commands::runtime::assess_dictation_fit,
-        winstt::commands::runtime::assess_ollama_fit,
-        winstt::commands::runtime::gpu_get_info,
-        winstt::commands::hotkey::hotkey_register,
-        winstt::commands::hotkey::hotkey_unregister,
-        winstt::commands::hotkey::hotkey_start_recording,
-        winstt::commands::hotkey::hotkey_stop_recording,
-        winstt::commands::audio_devices::get_audio_devices,
-        winstt::commands::audio_devices::refresh_audio_devices,
-        winstt::commands::loopback::loopback_list_devices,
-        winstt::commands::tts::tts_set_speed,
-        winstt::commands::tts::tts_report_playback_started,
-        winstt::commands::tts::tts_report_playback_ended,
-        winstt::commands::ollama_library::ollama_fetch_library,
-        winstt::commands::ollama_library::ollama_fetch_tags,
-        winstt::commands::ollama_library::ollama_search_library,
-        winstt::commands::ollama_pull::ollama_cancel_pull,
-        winstt::commands::ollama_pull::llm_get_warmup_status,
-        winstt::commands::verify::verify_integration_credential,
-        winstt::commands::file_transcribe::file_transcribe_clear,
-        winstt::commands::file_transcribe::file_transcribe_copy,
-        winstt::commands::file_transcribe::file_transcribe_discard_all,
-        winstt::commands::file_transcribe::file_transcribe_get_active,
-        winstt::commands::file_transcribe::file_transcribe_retry,
-        winstt::commands::history::history_list,
-        winstt::commands::history::history_recent,
-        winstt::commands::history::history_add,
-        winstt::commands::history::history_toggle,
-        winstt::commands::history::history_delete_row,
-        winstt::commands::history::history_load_audio_by_row,
-        winstt::commands::history::history_get_all,
-        winstt::commands::history::history_clear,
-        winstt::commands::history::history_delete,
-        winstt::commands::history::history_load_audio,
-        winstt::commands::history::transform_history_get_all,
-        winstt::commands::history::transform_history_clear,
-        winstt::commands::history::transform_history_delete,
-        winstt::commands::about::about_get_app_info,
-        winstt::commands::about::about_get_license,
-        winstt::commands::about::about_get_notices,
-        winstt::commands::diag::diag_open_logs_folder,
-        winstt::commands::diag::diag_save_bundle,
-        winstt::commands::sound::sound_library_add,
-        winstt::commands::sound::sound_library_pick_and_add,
-        winstt::commands::sound::sound_library_read_file,
-        winstt::commands::sound::sound_library_remove,
-        winstt::commands::transforms::apply_transform,
-        winstt::commands::transforms::apply_transform_preview,
-        winstt::commands::preview::confirm_paste,
-        winstt::commands::preview::cancel_preview,
-        winstt::commands::overlay::set_overlay_hit_regions,
-        winstt::commands::windows::winstt_diag,
-        winstt::commands::windows::open_window,
-        winstt::commands::windows::close_window,
-        winstt::commands::windows::close_self_window,
-        winstt::commands::windows::resize_window,
-        winstt::commands::windows::anchor_window,
-        winstt::commands::onboarding::onboarding_finish,
-        winstt::commands::tray_menu::show_tray_menu,
-        winstt::commands::tray_menu::reanchor_tray_menu,
-        winstt::commands::tray_menu::hide_tray_menu,
-        // ── de-brand/completion slice ──
-        winstt::commands::sound::sound_get_data,
-        winstt::commands::cancel::cancel_current_operation,
-        winstt::commands::custom_models::open_custom_models_folder,
-        winstt::commands::download::winstt_cancel_download,
-    ]);
-
-    #[cfg(feature = "context-playground")]
-    let builder = builder.commands(collect_commands![
-        winstt::commands::context::debug_read_context,
-        winstt::commands::context_playground::context_playground_set_live,
-        winstt::commands::context_playground::context_playground_arm_deep,
-        winstt::commands::context_playground::context_playground_capture,
-    ]);
-
-    builder.events(collect_events![
-        managers::history::HistoryUpdatePayload,
-        winstt::commands::events::RealtimeStabilizedPayload,
-        winstt::commands::events::RealtimeUpdatePayload,
-        winstt::commands::events::WakeWordDetectedPayload,
-        winstt::commands::events::SpeakerSegmentsPayload,
-        winstt::commands::events::WordAlignmentPayload,
-        winstt::commands::events::VadSensitivityAdaptedPayload,
-        winstt::commands::events::TtsLifecyclePayload,
-        winstt::commands::events::FileTranscribeProgressPayload,
-    ])
-}
-
-/// Point hf-hub at the standard Hugging Face cache when the user hasn't set one.
-///
-/// hf-hub 1.0.0-rc.1 resolves its cache dir from `$HOME` only (see
-/// `hf_hub::constants::dirs_or_home`): it ignores Windows' `%USERPROFILE%` and
-/// falls back to `/tmp` when `HOME` is unset. A packaged `WinSTT.exe` launched
-/// from Explorer inherits no `HOME`, so every `HFClient::new()` resolves the
-/// model cache to `<cwd-drive>:\tmp\.cache\huggingface\hub` — an empty dir — and
-/// the app "can't see" models already downloaded under
-/// `%USERPROFILE%\.cache\huggingface\hub`. `tauri dev`, launched from a shell
-/// that exports `HOME`, never hits this, which is why dev finds the models and a
-/// double-clicked build doesn't.
-///
-/// Set `HF_HOME` to the same location Python's `huggingface_hub` uses on Windows
-/// (`%USERPROFILE%/.cache/huggingface`) whenever the user hasn't configured the
-/// cache themselves — leaving any explicit `HF_HOME` / `HF_HUB_CACHE` /
-/// `HUGGINGFACE_HUB_CACHE`, or a shell-provided `HOME`, untouched.
-#[cfg(windows)]
-fn ensure_hf_cache_env() {
-    let configured = std::env::var_os("HF_HOME").is_some()
-        || std::env::var_os("HF_HUB_CACHE").is_some()
-        || std::env::var_os("HUGGINGFACE_HUB_CACHE").is_some()
-        // A shell-provided HOME already yields the correct cache (this is how
-        // `tauri dev` finds the models), so don't override it.
-        || std::env::var_os("HOME").is_some();
-    if configured {
-        return;
-    }
-    if let Some(profile) = std::env::var_os("USERPROFILE") {
-        let hf_home = std::path::Path::new(&profile)
-            .join(".cache")
-            .join("huggingface");
-        eprintln!(
-            "[hf-cache] HOME unset; pointing HF_HOME at {}",
-            hf_home.display()
-        );
-        std::env::set_var("HF_HOME", hf_home);
-    }
-}
-
-/// No-op on non-Windows: `$HOME` is always set there, so hf-hub resolves the
-/// cache correctly without help.
-#[cfg(not(windows))]
-fn ensure_hf_cache_env() {}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
     // Detect portable mode before anything else
@@ -951,6 +464,7 @@ pub fn run(cli_args: CliArgs) {
             MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        .manage(winstt::commands::updater::UpdaterRuntimeState::default())
         .manage(cli_args.clone())
         .setup(move |app| {
             let mut startup = StartupProfiler::new();
@@ -984,6 +498,7 @@ pub fn run(cli_args: CliArgs) {
                 }));
             }
             startup.mark("panic hook installed");
+            wait_for_renderer_dev_server(&mut startup);
 
             // Show the startup splash the instant setup begins — BEFORE the slow
             // path (initialize_core_logic + prewarm_windows building all 8
@@ -1010,6 +525,13 @@ pub fn run(cli_args: CliArgs) {
                     .resizable(false)
                     .decorations(false)
                     .maximizable(false)
+                    // Center on the primary display as the first-run / no-saved-state
+                    // default. Without an explicit position the OS places a frameless
+                    // window at the top-left corner (the reported "always opens
+                    // top-left" bug). On later runs `restore_main_window_position`
+                    // (below) overrides this with the remembered spot. Mirrors the
+                    // splash's `.center()`.
+                    .center()
                     // Record that the renderer has PAINTED — one of the two signals
                     // the splash ready-watcher treats as the shallow WebView-load
                     // signal. Do NOT close the splash here: the watcher also waits
@@ -1026,7 +548,11 @@ pub fn run(cli_args: CliArgs) {
                 win_builder = win_builder.data_directory(data_dir.join("webview"));
             }
 
-            win_builder.build()?;
+            let main_window = win_builder.build()?;
+            // Restore the remembered position (overrides the `.center()` above) when one
+            // was saved and is still on-screen. Done before the window is shown, so there
+            // is no visible jump from center to the saved spot.
+            restore_main_window_position(app.handle(), &main_window);
             startup.mark("main webview built");
 
             let mut settings = get_settings(app.handle());
@@ -1168,8 +694,8 @@ pub fn run(cli_args: CliArgs) {
                 // app.exit(0)+watchdog pattern. (No blocking joins are added to any Drop.)
                 if window.label() == "main" {
                     let settings =
-                        winstt::commands::settings::read_settings_raw(&window.app_handle());
-                    let core_settings = get_settings(&window.app_handle());
+                        winstt::commands::settings::read_settings_raw(window.app_handle());
+                    let core_settings = get_settings(window.app_handle());
                     let tray_available = core_settings.show_tray_icon
                         && !window.app_handle().state::<CliArgs>().no_tray;
                     if settings.general.minimize_to_tray && tray_available {
@@ -1178,18 +704,7 @@ pub fn run(cli_args: CliArgs) {
                         let _ = window.hide();
                         return;
                     }
-                    if hard_exit_main_window_in_dev() {
-                        return;
-                    }
-                    log::info!("Main window closed — exiting.");
-                    // Watchdog: if graceful shutdown stalls, force-terminate. 3 s is far
-                    // longer than a healthy store/DB flush but short enough not to feel hung.
-                    std::thread::spawn(|| {
-                        std::thread::sleep(std::time::Duration::from_millis(3000));
-                        log::warn!("Graceful exit stalled past 3s — forcing process exit.");
-                        std::process::exit(0);
-                    });
-                    window.app_handle().exit(0);
+                    request_app_exit(window.app_handle(), "Main window closed");
                     return;
                 }
                 // Secondary windows (settings / pickers / overlay) just hide so the app keeps
@@ -1222,6 +737,15 @@ pub fn run(cli_args: CliArgs) {
                         }
                     }
                     // No tray: keep the dock icon visible so the user can reopen
+                }
+            }
+            tauri::WindowEvent::Moved(position) => {
+                // Remember where the user drags the main pill so it reopens there next
+                // run. Only the main window is tracked; secondary windows are positioned
+                // dynamically. Skip the (-32000, -32000) sentinel Windows reports for a
+                // minimized window, which would otherwise persist a bogus off-screen spot.
+                if window.label() == "main" && position.x > -30000 && position.y > -30000 {
+                    save_main_window_position(window.app_handle(), position.x, position.y);
                 }
             }
             tauri::WindowEvent::ThemeChanged(theme) => {

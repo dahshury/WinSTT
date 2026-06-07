@@ -310,7 +310,7 @@ fn handy_key_to_winstt_name(key: &str) -> String {
 }
 
 /// Translate a WinSTT accelerator string (the reference/keycodes.ts display names, e.g.
-/// `LCtrl+LMeta`, `LMeta+LShift+E`, `LCtrl+LShift+V`) into the token vocabulary that
+/// `LCtrl+LMeta`, `LCtrl+Space`, `LCtrl+LShift+V`) into the token vocabulary that
 /// handy-keys' parser accepts. This is the INVERSE of `handy_string_to_winstt_names`,
 /// and is applied at the single chokepoint `shortcut::change_binding`.
 ///
@@ -319,7 +319,7 @@ fn handy_key_to_winstt_name(key: &str) -> String {
 /// `lmeta`/`rmeta` token (it wants `super_left` / `meta_left` / `lcmd`), so an
 /// un-translated `LMeta` falls through to `Key::from_str` → `Unknown key: LMeta` and
 /// the WHOLE binding fails to register — silently killing the PTT/dictation hotkey
-/// (`LCtrl+LMeta`) and the TTS read-aloud hotkey (`LMeta+LShift+E`). A few named keys
+/// (`LCtrl+LMeta`) and any existing Win-key read-aloud binding. A few named keys
 /// also differ (`ArrowLeft` vs handy `left`; WinSTT `Delete` is handy `forwarddelete`,
 /// WinSTT `Backspace` is handy `backspace`/`delete`), so map those too. Every other
 /// token (letters, digits, Space, Tab, Enter, Escape, F-keys, punctuation, and the
@@ -543,11 +543,7 @@ mod tests {
         // The actual bug: `LCtrl+LMeta` (default PTT) must become a combo handy-keys
         // parses (modifiers-only super_left), NOT leave `LMeta` as an unknown key.
         assert_eq!(winstt_accel_to_handy("LCtrl+LMeta"), "ctrl_left+super_left");
-        // TTS read-aloud default `LMeta+LShift+E`.
-        assert_eq!(
-            winstt_accel_to_handy("LMeta+LShift+E"),
-            "super_left+shift_left+e"
-        );
+        assert_eq!(winstt_accel_to_handy("LCtrl+Space"), "ctrl_left+space");
     }
 
     #[test]
@@ -576,7 +572,7 @@ mod tests {
     #[test]
     fn winstt_accel_maps_to_tauri_global_hotkey_names() {
         assert_eq!(winstt_accel_to_tauri("LCtrl+LShift+V"), "Ctrl+Shift+V");
-        assert_eq!(winstt_accel_to_tauri("LMeta+LShift+E"), "Super+Shift+E");
+        assert_eq!(winstt_accel_to_tauri("LCtrl+Space"), "Ctrl+Space");
         assert_eq!(winstt_accel_to_tauri("ctrl_left+space"), "Ctrl+Space");
         assert_eq!(winstt_accel_to_tauri("forwarddelete"), "Delete");
     }

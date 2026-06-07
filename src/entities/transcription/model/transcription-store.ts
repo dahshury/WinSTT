@@ -18,6 +18,7 @@ const MAX_LIVE_ITEMS = 500;
 interface TranscriptionState {
 	addFinalSentence: (text: string) => void;
 	attachSpeakerSegments: (segments: SpeakerSegment[]) => void;
+	beginRecordingSession: () => void;
 	clearAll: () => void;
 	clearEphemeral: () => void;
 	currentRealtime: string;
@@ -25,6 +26,7 @@ interface TranscriptionState {
 	isRecordingActive: boolean;
 	isTranscribing: boolean;
 	items: TranscriptionItem[];
+	recordingSessionId: number;
 	setRealtimeText: (text: string) => void;
 	setRecordingActive: (active: boolean) => void;
 	setTranscribing: (active: boolean) => void;
@@ -61,13 +63,29 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 	// the main process and the renderer processing STT_RECORDING_START.
 	isRecordingActive: false,
 	isTranscribing: false,
+	recordingSessionId: 0,
 	transcribingStartedAt: null,
+	beginRecordingSession: () =>
+		set((state) => ({
+			currentRealtime: "",
+			ephemeral: null,
+			isRecordingActive: true,
+			isTranscribing: false,
+			recordingSessionId: state.recordingSessionId + 1,
+			transcribingStartedAt: null,
+		})),
 	addFinalSentence: (text) => {
 		const id = crypto.randomUUID();
 		const timestamp = Date.now();
 		set((state) => {
-			const appended = [...state.items, { id, type: "final" as const, text, timestamp }];
-			const trimmed = appended.length > MAX_LIVE_ITEMS ? appended.slice(-MAX_LIVE_ITEMS) : appended;
+			const appended = [
+				...state.items,
+				{ id, type: "final" as const, text, timestamp },
+			];
+			const trimmed =
+				appended.length > MAX_LIVE_ITEMS
+					? appended.slice(-MAX_LIVE_ITEMS)
+					: appended;
 			return {
 				items: trimmed,
 				currentRealtime: "",
@@ -107,6 +125,7 @@ export const useTranscriptionStore = create<TranscriptionState>()((set) => ({
 			ephemeral: null,
 			isRecordingActive: false,
 			isTranscribing: false,
+			recordingSessionId: 0,
 			transcribingStartedAt: null,
 		}),
 }));

@@ -358,7 +358,7 @@ pub fn paste_text_direct(enigo: &mut Enigo, text: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let _ = enigo;
-        return paste_text_unicode(text);
+        paste_text_unicode(text)
     }
 
     #[cfg(not(target_os = "windows"))]

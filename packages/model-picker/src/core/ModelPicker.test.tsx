@@ -159,6 +159,8 @@ describe("ModelPicker popup animation", () => {
 
 		expect(popup).not.toBeNull();
 		expect(popup?.className).toContain("is-closing");
+		expect(popup?.hasAttribute("data-open")).toBe(false);
+		expect(popup?.hasAttribute("data-closed")).toBe(true);
 	});
 
 	test("renders inline content immediately for pre-warmed detached windows", () => {

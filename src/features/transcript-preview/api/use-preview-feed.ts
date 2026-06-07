@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useSettingsStore } from "@/entities/setting";
 import {
 	cancelPreview,
 	onLlmReasoningDelta,
@@ -6,7 +7,25 @@ import {
 	onRecordingStart,
 	onSttSessionAborted,
 } from "@/shared/api/ipc-client";
+import { ALL_PRESET_KEYS, type PresetKey } from "@/shared/lib/preset-prompts";
 import { useTranscriptPreviewStore } from "../model/preview-store";
+
+/** Seed the enhance config from the dictation settings so the bottom AI-controls
+ *  half opens pre-populated with the user's configured presets/modifiers (same
+ *  defaults the magic button applies). Read lazily at open time — the settings
+ *  store is hydrated by the time a preview can fire. */
+function dictationEnhanceSeed(): { presetKeys: PresetKey[]; modifierIds: string[] } {
+	const dictation = useSettingsStore.getState().settings.llm?.dictation;
+	const presetKeys = (dictation?.presets ?? [])
+		.map((p) => p.key)
+		.filter((key): key is PresetKey =>
+			(ALL_PRESET_KEYS as readonly string[]).includes(key),
+		);
+	const modifierIds = (dictation?.customModifiers ?? [])
+		.filter((m) => m.enabled)
+		.map((m) => m.id);
+	return { presetKeys, modifierIds };
+}
 
 /**
  * Bridges the preview-before-pasting IPC into the preview store. Mounted once by
@@ -23,7 +42,10 @@ import { useTranscriptPreviewStore } from "../model/preview-store";
 export function useTranscriptPreviewFeed(): void {
 	useEffect(() => {
 		const offReady = onPreviewReady(({ original, text }) => {
-			useTranscriptPreviewStore.getState().open({ original, text });
+			const { presetKeys, modifierIds } = dictationEnhanceSeed();
+			useTranscriptPreviewStore
+				.getState()
+				.open({ original, text, presetKeys, modifierIds });
 		});
 		const offRecordingStart = onRecordingStart(() => {
 			if (useTranscriptPreviewStore.getState().isActive) {

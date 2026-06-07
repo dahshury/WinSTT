@@ -16,6 +16,7 @@ beforeEach(() => {
 		ephemeral: null,
 		isRecordingActive: false,
 		isTranscribing: false,
+		recordingSessionId: 0,
 		transcribingStartedAt: null,
 	});
 	window.nativeBridge = {
@@ -117,6 +118,7 @@ describe("useTranscriptionFeed", () => {
 			ephemeral: { text: "no audio detected", timestamp: 0 },
 			isRecordingActive: false,
 			isTranscribing: true,
+			recordingSessionId: 41,
 			transcribingStartedAt: 100,
 		});
 		renderHook(() => useTranscriptionFeed(), {
@@ -128,6 +130,7 @@ describe("useTranscriptionFeed", () => {
 		expect(state.ephemeral).toBeNull();
 		expect(state.isRecordingActive).toBe(true);
 		expect(state.isTranscribing).toBe(false);
+		expect(state.recordingSessionId).toBe(42);
 		expect(state.transcribingStartedAt).toBeNull();
 	});
 

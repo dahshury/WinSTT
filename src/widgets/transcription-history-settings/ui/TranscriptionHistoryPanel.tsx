@@ -9,9 +9,11 @@ import {
   Delete02Icon,
   InfinityIcon,
   ListViewIcon,
+  SparklesIcon,
+  VoiceIdIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
   DEFAULT_SETTINGS,
@@ -31,11 +33,14 @@ import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { NumberStepper } from "@/shared/ui/number-stepper";
 import { Select, type SelectOption } from "@/shared/ui/select";
 import { useTranscriptionHistorySync } from "../api/use-history-sync";
+import { computeVoiceProfile } from "../lib/voice-profile";
 import { aggregate, filterEntriesByDateRange } from "../lib/word-stats";
 import { useTranscriptionHistoryStore } from "../model/history-store";
 import { ActivityHeatmap } from "./ActivityHeatmap";
+import { HistoryImpact } from "./HistoryImpact";
 import { HistorySummary } from "./HistorySummary";
 import { HistoryTable } from "./HistoryTable";
+import { VoiceProfile } from "./VoiceProfile";
 
 type RetentionValue = "never" | "cap" | "days3" | "weeks2" | "months3";
 
@@ -80,7 +85,11 @@ export function TranscriptionHistoryPanel() {
     selectedRange?.from ?? null,
     selectedRange?.to ?? null,
   );
-  const stats = aggregate(filteredEntries);
+  const stats = useMemo(() => aggregate(filteredEntries), [filteredEntries]);
+  const voiceProfile = useMemo(
+    () => computeVoiceProfile(filteredEntries),
+    [filteredEntries],
+  );
 
   const handleClear = () => {
     clearTranscriptionHistory().then(() => clearLocal());
@@ -99,6 +108,18 @@ export function TranscriptionHistoryPanel() {
       <SettingSection icon={Analytics01Icon} title={t("summaryTitle")}>
         <div className="py-2">
           <HistorySummary stats={stats} />
+        </div>
+      </SettingSection>
+
+      <SettingSection icon={SparklesIcon} title={t("impactTitle")}>
+        <div className="py-2">
+          <HistoryImpact stats={stats} />
+        </div>
+      </SettingSection>
+
+      <SettingSection icon={VoiceIdIcon} title={t("profileTitle")}>
+        <div className="py-2">
+          <VoiceProfile stats={voiceProfile} />
         </div>
       </SettingSection>
 

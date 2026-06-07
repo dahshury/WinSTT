@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Select, type SelectOption } from "./Select";
 
@@ -42,6 +42,36 @@ describe("Select", () => {
 		expect(
 			screen.getByText("French").closest("[data-menu-option]")?.getAttribute("data-menu-option")
 		).toBe("fr");
+	});
+
+	test("renders trailing row content only inside the open popup", () => {
+		const onChange = mock(() => undefined);
+		const onPreview = mock(() => undefined);
+		const meteredOptions: SelectOption[] = [
+			{
+				id: "default",
+				label: "System Default",
+				trailing: <span data-testid="mic-meter-placeholder" />,
+			},
+			{
+				id: "usb",
+				label: "USB Microphone",
+				trailing: (
+					<button data-testid="mic-meter-placeholder" onClick={onPreview} type="button">
+						Preview
+					</button>
+				),
+			},
+		];
+		render(<Select aria-label="mic" onChange={onChange} options={meteredOptions} value="default" />);
+		expect(screen.queryAllByTestId("mic-meter-placeholder")).toHaveLength(0);
+
+		fireEvent.click(screen.getByRole("button", { name: "mic" }));
+
+		expect(screen.getAllByTestId("mic-meter-placeholder")).toHaveLength(2);
+		fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+		expect(onPreview).toHaveBeenCalledTimes(1);
+		expect(onChange).not.toHaveBeenCalled();
 	});
 
 	test("grouped mode renders section headers and still stamps rows with data-menu-option", () => {

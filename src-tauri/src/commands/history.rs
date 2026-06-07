@@ -102,6 +102,9 @@ pub async fn retry_history_entry_transcription(
             processed.post_processed_text,
             processed.post_process_prompt,
             processed.llm_meta,
+            processed.dictionary_fixes,
+            processed.history_tag,
+            serde_json::to_string(&processed.privacy_markers).ok(),
         )
         .map(|_| ())
         .map_err(|e| e.to_string())

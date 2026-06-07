@@ -32,12 +32,12 @@ export const __test_shouldResetSavedIndex = shouldResetSavedIndex;
 
 function shouldResetSavedOutputDevice(
   savedDeviceId: string | null | undefined,
-  devices: ReadonlyArray<{ deviceId: string }>,
+  sinkIds: readonly string[],
 ): boolean {
-  if (!savedDeviceId || devices.length === 0) {
+  if (!savedDeviceId || sinkIds.length === 0) {
     return false;
   }
-  return !devices.some((d) => d.deviceId === savedDeviceId);
+  return !sinkIds.includes(savedDeviceId);
 }
 
 export const __test_shouldResetSavedOutputDevice =
@@ -63,8 +63,12 @@ export const __test_shouldResetSavedOutputDevice =
  *
  * Output devices use browser-owned ``deviceId`` values because Web Audio
  * ``setSinkId`` needs them. The same hook reconciles a saved
- * ``general.outputDeviceId`` against the live browser output list and resets
- * it to ``""`` (system default) when the selected sink disappears.
+ * ``general.outputDeviceId`` against the live browser sink ids
+ * (``useOutputDevices().sinkIds``) and resets it to ``""`` (system default)
+ * when the selected sink disappears. It MUST check ``sinkIds`` — the browser's
+ * authority for browser-deviceId existence — not the backend-authoritative
+ * ``devices`` list, whose not-yet-joined entries carry synthetic ids and would
+ * spuriously reset a still-connected sink.
  *
  * The fallback is persisted immediately (bypassing useSyncSettings' 300 ms
  * debounce) — otherwise a user closing the app within that window would
@@ -83,7 +87,7 @@ export function useDeviceSwitchFeedback(): void {
   const updateGeneral = useSettingsStore((s) => s.updateGeneralSettings);
   const showEphemeral = useTranscriptionStore((s) => s.showEphemeral);
   const { devices, refresh } = useInputDevices();
-  const { devices: outputDevices } = useOutputDevices();
+  const { sinkIds: outputSinkIds } = useOutputDevices();
   const lastSyncedMicRef = useRef<string | null>(null);
 
   // Bridge the renderer's `audio.inputDeviceIndex` selection to the BACKEND recorder's
@@ -148,10 +152,10 @@ export function useDeviceSwitchFeedback(): void {
   }, [devices, savedIndex, updateAudio]);
 
   useEffect(() => {
-    if (!shouldResetSavedOutputDevice(savedOutputDeviceId, outputDevices)) {
+    if (!shouldResetSavedOutputDevice(savedOutputDeviceId, outputSinkIds)) {
       return;
     }
     updateGeneral({ outputDeviceId: "" });
     settingsSave({ general: useSettingsStore.getState().settings.general });
-  }, [outputDevices, savedOutputDeviceId, updateGeneral]);
+  }, [outputSinkIds, savedOutputDeviceId, updateGeneral]);
 }

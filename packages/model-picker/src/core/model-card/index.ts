@@ -4,10 +4,7 @@ export { FavoritesGroupLabel } from "./FavoritesGroupLabel";
 export { GroupHeader, type GroupHeaderProps, NeutralHeaderIcon } from "./GroupHeader";
 export { ModelCard, type ModelCardProps } from "./ModelCard";
 export {
-	BadgeIconButton,
-	badgeToneForCache,
 	type QuantCacheState,
-	QuantBadgeLabel,
 	type QuantDownloadAction,
 	type QuantDownloadSnapshot,
 	QuantShelf,

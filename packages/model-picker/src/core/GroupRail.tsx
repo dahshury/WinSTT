@@ -296,25 +296,6 @@ function GroupRailTile({
  * any tile shade without needing the substrate level.
  */
 /**
- * The pinned "Favorites" rail tile — maker-agnostic (an amber star instead of a
- * brand logo) jumping to the synthetic Favorites group at the top of the list.
- * Shared so every picker's Favorites tile is byte-identical.
- */
-export function buildFavoritesRailItem(count: number): GroupRailItem {
-  return {
-    id: FAVORITES_GROUP_VALUE,
-    label: "Favorites",
-    pinned: true,
-    badge: count,
-    icon: (
-      <RailIconChip tone="favorite">
-        <HugeiconsIcon className="size-3 fill-amber-400" icon={StarIcon} />
-      </RailIconChip>
-    ),
-  };
-}
-
-/**
  * The pinned "All authors" rail tile. Selecting it returns the picker to its
  * normal grouped view (Favorites / sort / sections), while author tiles narrow
  * the list to that author only.

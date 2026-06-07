@@ -74,6 +74,20 @@ pub struct TranscriptionHistoryEntry {
     /// provider reported token usage and the pass took a measurable duration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_tokens_per_second: Option<f64>,
+    /// Count of dictionary replacement-pair substitutions applied to this
+    /// transcription. Omitted on legacy rows (column added later); summed into
+    /// the History "AI Impact" → dictionary-fixes stat.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dictionary_fixes: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privacy_markers: Option<Vec<String>>,
+    /// Human-friendly name of the STT ("main") model that produced this
+    /// transcription (e.g. `Whisper Tiny`), resolved from the stored model id.
+    /// Omitted on legacy rows and renderer-driven manual adds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_model: Option<String>,
 }
 
 /// Legacy-table compatible transform row for the settings History tab. It uses
@@ -112,6 +126,10 @@ pub struct HistoryRow {
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
     pub post_process_requested: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privacy_markers: Option<Vec<String>>,
 }
 
 /// `PaginatedHistory` (camelCase `hasMore`) returned by `history_list`.
@@ -147,6 +165,33 @@ pub struct ClearResult {
 
 fn count_words(text: &str) -> i64 {
     text.split_whitespace().count() as i64
+}
+
+fn parse_privacy_markers(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return Vec::new();
+    };
+    let Some(arr) = value.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|item| item.as_str())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn optional_privacy_markers(raw: Option<&str>) -> Option<Vec<String>> {
+    let markers = parse_privacy_markers(raw);
+    if markers.is_empty() {
+        None
+    } else {
+        Some(markers)
+    }
 }
 
 /// Effective user-facing text: the post-processed (LLM-cleaned) text when present
@@ -198,6 +243,15 @@ fn to_transcription_entry(
         }
         _ => None,
     };
+    // Resolve the stored STT model id to its catalog display name (e.g.
+    // `tiny` → "Whisper Tiny"); cloud ids fall back to the raw id. Blank ids
+    // collapse to `None` so the renderer simply omits the chip.
+    let stt_model = entry
+        .stt_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(crate::winstt::catalog::display_name_for_id);
     TranscriptionHistoryEntry {
         id: entry.id.to_string(),
         word_count: count_words(&text),
@@ -211,6 +265,10 @@ fn to_transcription_entry(
         llm_model: meta.model,
         llm_processing_ms: meta.processing_ms,
         llm_tokens_per_second,
+        dictionary_fixes: entry.dictionary_fixes,
+        history_tag: entry.history_tag.clone(),
+        privacy_markers: optional_privacy_markers(entry.privacy_markers_json.as_deref()),
+        stt_model,
     }
 }
 
@@ -293,6 +351,8 @@ fn to_history_row(entry: &DbHistoryEntry) -> HistoryRow {
         post_processed_text: entry.post_processed_text.clone(),
         post_process_prompt: entry.post_process_prompt.clone(),
         post_process_requested: entry.post_process_requested,
+        history_tag: entry.history_tag.clone(),
+        privacy_markers: optional_privacy_markers(entry.privacy_markers_json.as_deref()),
     }
 }
 
@@ -361,6 +421,10 @@ fn map_db_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbHistoryEntry> {
         post_process_prompt: row.get("post_process_prompt")?,
         post_process_requested: row.get("post_process_requested")?,
         llm_meta: row.get("llm_meta")?,
+        dictionary_fixes: row.get("dictionary_fixes")?,
+        history_tag: row.get("history_tag")?,
+        privacy_markers_json: row.get("privacy_markers_json")?,
+        stt_model: row.get("stt_model")?,
     })
 }
 
@@ -382,7 +446,8 @@ pub async fn history_list(
     let mut stmt = conn
         .prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
-             post_processed_text, post_process_prompt, post_process_requested, llm_meta \
+             post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
+             dictionary_fixes, history_tag, privacy_markers_json, stt_model \
              FROM transcription_history ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )
         .map_err(|e| e.to_string())?;
@@ -410,7 +475,8 @@ pub async fn history_recent(app: AppHandle, value: Option<i64>) -> Result<Vec<Hi
     let mut stmt = conn
         .prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
-             post_processed_text, post_process_prompt, post_process_requested, llm_meta \
+             post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
+             dictionary_fixes, history_tag, privacy_markers_json, stt_model \
              FROM transcription_history ORDER BY id DESC LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -514,7 +580,11 @@ pub async fn history_add(
             post_process_requested.unwrap_or(false),
             post_processed_text,
             post_process_prompt,
-            // Manual renderer-driven add — no LLM telemetry to attach.
+            // Manual renderer-driven add — no LLM telemetry or engine context.
+            None,
+            None,
+            None,
+            None,
             None,
         )
         .map_err(|e| e.to_string())?;
@@ -536,7 +606,8 @@ pub async fn history_get_all(
     let mut stmt = conn
         .prepare(
             "SELECT id, file_name, timestamp, saved, title, transcription_text, \
-             post_processed_text, post_process_prompt, post_process_requested, llm_meta \
+             post_processed_text, post_process_prompt, post_process_requested, llm_meta, \
+             dictionary_fixes, history_tag, privacy_markers_json, stt_model \
              FROM transcription_history ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;

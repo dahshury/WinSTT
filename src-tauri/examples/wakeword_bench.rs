@@ -8,8 +8,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use handy_app_lib::winstt::audio_conditioning::StreamingRmsNormalizer;
-use handy_app_lib::winstt::wakeword::{
+use winstt_app_lib::winstt::audio_conditioning::StreamingRmsNormalizer;
+use winstt_app_lib::winstt::wakeword::{
     build_keywords_file, keyword_label, tokenize_phrase_for_kws_model, KeywordSpec, KwsModelPaths,
     WakeWordConfig, WakeWordDetector, WakeWordProvider, KWS_BUNDLE_DIRNAME,
 };

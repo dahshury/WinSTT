@@ -154,6 +154,15 @@ pub enum LiveTranscriptionDisplay {
     Both,
 }
 
+/// `general.contextAppMode`. Chooses whether context capture reads every app
+/// except the deny-list or only apps/sites explicitly selected by the user.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextAppMode {
+    AllExceptDenied,
+    SelectedOnly,
+}
+
 /// `general.visualizerType`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
@@ -216,7 +225,7 @@ pub enum LlmProvider {
     AppleIntelligence,
 }
 
-/// OpenRouter reasoning effort / verbosity (`low`/`medium`/`high`).
+/// OpenRouter verbosity (`low`/`medium`/`high`).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum EffortLevel {
@@ -225,7 +234,9 @@ pub enum EffortLevel {
     High,
 }
 
-/// Ollama thinking budget — mirrors Ollama's `ThinkValue` (`off` → `think:false`).
+/// Off/Low/Medium/High effort scale, shared by Ollama's thinking budget AND
+/// OpenRouter's reasoning effort. `off` disables the thinking pass entirely:
+/// for Ollama → `think: false`; for OpenRouter → `reasoning: { enabled: false }`.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingEffort {
@@ -292,6 +303,10 @@ pub struct SoundLibraryEntry {
 pub struct DictionaryEntry {
     pub id: String,
     pub term: String,
+    /// True when the entry was inserted by the LLM dictionary tool rather than
+    /// typed manually in Settings. Omitted for manual/legacy entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_added: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement: Option<String>,
 }
@@ -374,6 +389,12 @@ pub struct ModelSettings {
     /// Forced decode language (`""` = auto-detect). HOT-SWAP.
     #[serde(default = "ModelSettings::default_language")]
     pub language: String,
+    /// Full auto language detection. When false, `language_candidates` can constrain detection.
+    #[serde(default)]
+    pub auto_detect_language: bool,
+    /// Candidate decode languages used when `auto_detect_language` is false.
+    #[serde(default)]
+    pub language_candidates: Vec<String>,
     /// CPU vs auto-GPU. HOT-SWAP through targeted model reload.
     #[serde(default)]
     pub device: DeviceType,
@@ -421,7 +442,7 @@ impl Default for TranscriberBackend {
 }
 impl Default for ModelUnloadTimeout {
     fn default() -> Self {
-        ModelUnloadTimeout::Min5
+        ModelUnloadTimeout::Min15
     }
 }
 
@@ -431,6 +452,8 @@ impl Default for ModelSettings {
             model: Self::default_model(),
             realtime_model: Self::default_realtime_model(),
             language: Self::default_language(),
+            auto_detect_language: false,
+            language_candidates: Vec::new(),
             device: DeviceType::default(),
             backend: TranscriberBackend::default(),
             onnx_quantization: String::new(),
@@ -445,7 +468,7 @@ impl Default for ModelSettings {
 #[serde(rename_all = "camelCase")]
 pub struct GlobalSettings {
     /// Idle-unload policy shared by local STT, realtime preview, local TTS, and
-    /// Ollama keep-alive. HOT-SWAP. Zod `.catch("min5")`.
+    /// Ollama keep-alive. HOT-SWAP. Zod `.catch("min15")`.
     #[serde(default)]
     pub model_unload_timeout: ModelUnloadTimeout,
 }
@@ -480,12 +503,6 @@ pub struct QualitySettings {
     /// Early-finalize-on-silence threshold (s). HOT-SWAP / config-only in this port.
     #[serde(default = "QualitySettings::default_early_transcription_on_silence")]
     pub early_transcription_on_silence: f64,
-    /// Capitalize first letter of output. HOT-SWAP.
-    #[serde(default = "bool_true")]
-    pub ensure_sentence_starting_uppercase: bool,
-    /// Append terminal period. HOT-SWAP.
-    #[serde(default = "bool_true")]
-    pub ensure_sentence_ends_with_period: bool,
     /// DistilBERT sentence-completion classifier for endpointing. HOT-SWAP.
     #[serde(default = "bool_true")]
     pub smart_endpoint: bool,
@@ -535,8 +552,6 @@ impl Default for QualitySettings {
             realtime_processing_pause: Self::default_realtime_processing_pause(),
             init_realtime_after_seconds: Self::default_init_realtime_after_seconds(),
             early_transcription_on_silence: Self::default_early_transcription_on_silence(),
-            ensure_sentence_starting_uppercase: true,
-            ensure_sentence_ends_with_period: true,
             smart_endpoint: true,
             smart_endpoint_speed: Self::default_smart_endpoint_speed(),
             end_of_sentence_detection_pause: Self::default_end_of_sentence_detection_pause(),
@@ -679,7 +694,8 @@ pub struct GeneralSettings {
     /// Play chime on record start/stop. HOT-SWAP.
     #[serde(default = "bool_true")]
     pub recording_sound: bool,
-    /// Active chime clip; `""` = built-in default, else absolute path. HOT-SWAP.
+    /// Active chime clip; `""` = original built-in default, `builtin:<file>` =
+    /// allow-listed bundled alternate, else absolute library path. HOT-SWAP.
     #[serde(default)]
     pub recording_sound_path: String,
     /// User-uploaded chime clips (copied into `userData/sounds/`). HOT-SWAP. Zod `.catch([])`.
@@ -773,6 +789,13 @@ pub struct GeneralSettings {
     /// Read focused-window text (UIA/AX) → feed LLM cleanup. HOT-SWAP.
     #[serde(default)]
     pub context_awareness: bool,
+    /// Context capture app scope. HOT-SWAP. Zod `.catch("all-except-denied")`.
+    #[serde(default)]
+    pub context_app_mode: ContextAppMode,
+    /// Allow-list for selected-only context capture (exe basenames / URL hosts).
+    /// HOT-SWAP. Empty means no app text is captured in selected-only mode.
+    #[serde(default)]
+    pub context_allow_list: Vec<String>,
     /// Deny-list for context capture (exe basenames / URL host suffixes). HOT-SWAP.
     /// Seeded with common password managers. Zod `.catch(<same seed>)`.
     #[serde(default = "GeneralSettings::default_context_deny_list")]
@@ -825,12 +848,6 @@ pub struct GeneralSettings {
     /// Server fuzzy-corrector max score (lower=stricter). Range 0..1. HOT-SWAP. Zod `.catch(0.18)`.
     #[serde(default = "GeneralSettings::default_word_correction_threshold")]
     pub word_correction_threshold: f64,
-    /// Strip filler words + collapse 3+ stutters. HOT-SWAP. Zod `.catch(true)`.
-    #[serde(default = "bool_true")]
-    pub filter_fillers: bool,
-    /// Per-user override of the filler-word table. HOT-SWAP. Zod `.catch([])`.
-    #[serde(default)]
-    pub custom_filler_words: Vec<String>,
 }
 
 impl GeneralSettings {
@@ -915,7 +932,7 @@ impl Default for RecordingMode {
 }
 impl Default for OverlayMode {
     fn default() -> Self {
-        OverlayMode::FloatingBottom
+        OverlayMode::DynamicIsland
     }
 }
 impl Default for OverlayPosition {
@@ -931,6 +948,11 @@ impl Default for VisualizerSize {
 impl Default for LiveTranscriptionDisplay {
     fn default() -> Self {
         LiveTranscriptionDisplay::Both
+    }
+}
+impl Default for ContextAppMode {
+    fn default() -> Self {
+        ContextAppMode::AllExceptDenied
     }
 }
 impl Default for VisualizerType {
@@ -999,6 +1021,8 @@ impl Default for GeneralSettings {
             visualizer_aura_bloom: 0,
             visualizer_aura_color_shift: Self::default_visualizer_aura_color_shift(),
             context_awareness: false,
+            context_app_mode: ContextAppMode::default(),
+            context_allow_list: Vec::new(),
             context_deny_list: Self::default_context_deny_list(),
             speaker_diarization: false,
             send_crash_reports: true,
@@ -1014,8 +1038,6 @@ impl Default for GeneralSettings {
             history_max_entries: Self::default_history_max_entries(),
             recording_retention: RecordingRetention::default(),
             word_correction_threshold: Self::default_word_correction_threshold(),
-            filter_fillers: true,
-            custom_filler_words: Vec::new(),
         }
     }
 }
@@ -1080,14 +1102,20 @@ pub struct LlmFeatureBase {
     pub openrouter_model: String,
     #[serde(default)]
     pub openrouter_fallback_model: String,
-    #[serde(default)]
-    pub reasoning_effort: EffortLevel,
+    #[serde(default = "default_reasoning_effort")]
+    pub reasoning_effort: ThinkingEffort,
     #[serde(default)]
     pub verbosity: EffortLevel,
     #[serde(default)]
     pub max_output_tokens: Option<i64>,
     #[serde(default)]
     pub thinking_effort: ThinkingEffort,
+}
+
+/// OpenRouter reasoning effort defaults to Medium (not the enum's `Off`
+/// default, which is the right zero value only for Ollama's `thinking_effort`).
+fn default_reasoning_effort() -> ThinkingEffort {
+    ThinkingEffort::Medium
 }
 
 impl Default for LlmProvider {
@@ -1102,7 +1130,7 @@ impl Default for EffortLevel {
 }
 impl Default for ThinkingEffort {
     fn default() -> Self {
-        ThinkingEffort::Medium
+        ThinkingEffort::Off
     }
 }
 
@@ -1113,10 +1141,10 @@ impl Default for LlmFeatureBase {
             model: String::new(),
             openrouter_model: String::new(),
             openrouter_fallback_model: String::new(),
-            reasoning_effort: EffortLevel::Medium,
+            reasoning_effort: ThinkingEffort::Medium,
             verbosity: EffortLevel::Medium,
             max_output_tokens: None,
-            thinking_effort: ThinkingEffort::Medium,
+            thinking_effort: ThinkingEffort::Off,
         }
     }
 }
@@ -1126,12 +1154,16 @@ impl Default for LlmFeatureBase {
 pub struct LlmDictation {
     #[serde(default)]
     pub enabled: bool,
+    /// Optional Ollama tool-calling dictionary suggestions. Backend execution
+    /// still requires the selected model to advertise the `tools` capability.
+    #[serde(default)]
+    pub dictionary_auto_add_enabled: bool,
     /// Flattened so the shared fields sit at `llm.dictation.<field>` (matches
     /// Zod's `...llmFeatureBaseShape` spread). Inner-field defaults handle a
     /// partial JSON; see the note on `LlmFeatureBase`.
     #[serde(flatten)]
     pub base: LlmFeatureBase,
-    #[serde(default = "default_neutral_presets")]
+    #[serde(default = "default_dictation_presets")]
     pub presets: Vec<PresetEntry>,
     #[serde(default)]
     pub custom_modifiers: Vec<CustomModifier>,
@@ -1141,8 +1173,9 @@ impl Default for LlmDictation {
     fn default() -> Self {
         Self {
             enabled: false,
+            dictionary_auto_add_enabled: false,
             base: LlmFeatureBase::default(),
-            presets: default_neutral_presets(),
+            presets: default_dictation_presets(),
             custom_modifiers: Vec::new(),
         }
     }
@@ -1548,13 +1581,39 @@ pub fn bool_true() -> bool {
     true
 }
 
-/// The `presetsSchema` default: a single `neutral` tone preset.
+/// The transform `presetsSchema` default: a single `neutral` tone preset.
 fn default_neutral_presets() -> Vec<PresetEntry> {
     vec![PresetEntry {
         key: PresetKey::Neutral,
         level: None,
         target_lang: None,
     }]
+}
+
+/// Dictation post-processing defaults: neutral tone plus clarity modifiers.
+fn default_dictation_presets() -> Vec<PresetEntry> {
+    vec![
+        PresetEntry {
+            key: PresetKey::Neutral,
+            level: None,
+            target_lang: None,
+        },
+        PresetEntry {
+            key: PresetKey::Reorder,
+            level: None,
+            target_lang: None,
+        },
+        PresetEntry {
+            key: PresetKey::Restructure,
+            level: None,
+            target_lang: None,
+        },
+        PresetEntry {
+            key: PresetKey::RewordForClarity,
+            level: None,
+            target_lang: None,
+        },
+    ]
 }
 
 // ===========================================================================
@@ -1638,19 +1697,19 @@ mod tests {
         assert_eq!(s.model.model, "tiny");
         assert_eq!(s.model.realtime_model, "tiny");
         assert_eq!(s.model.language, "en");
+        assert!(!s.model.auto_detect_language);
+        assert!(s.model.language_candidates.is_empty());
         assert_eq!(s.model.device, DeviceType::Auto);
         assert_eq!(s.model.backend, TranscriberBackend::FasterWhisper);
         assert_eq!(s.model.onnx_quantization, "");
         assert!(!s.model.translate_to_english);
-        assert_eq!(s.global.model_unload_timeout, ModelUnloadTimeout::Min5);
+        assert_eq!(s.global.model_unload_timeout, ModelUnloadTimeout::Min15);
 
         // quality
         assert!(!s.quality.use_main_model_for_realtime);
         assert_eq!(s.quality.realtime_processing_pause, 0.02);
         assert_eq!(s.quality.init_realtime_after_seconds, 0.2);
         assert_eq!(s.quality.early_transcription_on_silence, 0.2);
-        assert!(s.quality.ensure_sentence_starting_uppercase);
-        assert!(s.quality.ensure_sentence_ends_with_period);
         assert!(s.quality.smart_endpoint);
         assert_eq!(s.quality.smart_endpoint_speed, 2.0);
         assert_eq!(s.quality.end_of_sentence_detection_pause, 0.45);
@@ -1684,7 +1743,7 @@ mod tests {
             s.general.live_transcription_display,
             LiveTranscriptionDisplay::Both
         );
-        assert_eq!(s.general.overlay_mode, OverlayMode::FloatingBottom);
+        assert_eq!(s.general.overlay_mode, OverlayMode::DynamicIsland);
         assert_eq!(s.general.overlay_position, OverlayPosition::Auto);
         assert_eq!(s.general.visualizer_size, VisualizerSize::Xs);
         assert_eq!(s.general.visualizer_type, VisualizerType::Bar);
@@ -1695,13 +1754,14 @@ mod tests {
         assert_eq!(s.general.visualizer_grid_speed, 6);
         assert_eq!(s.general.visualizer_aura_shape, VisualizerAuraShape::Circle);
         assert!(s.general.send_crash_reports);
-        assert!(s.general.filter_fillers);
         assert_eq!(s.general.history_max_entries, 1000);
         assert_eq!(s.general.recording_retention, RecordingRetention::Cap);
         assert_eq!(s.general.word_correction_threshold, 0.18);
         assert_eq!(s.general.auto_submit_key, AutoSubmitKey::Enter);
         assert!(!s.general.word_by_word_pasting);
         assert_eq!(s.general.onboarded_track, OnboardedTrack::Unset);
+        assert_eq!(s.general.context_app_mode, ContextAppMode::AllExceptDenied);
+        assert!(s.general.context_allow_list.is_empty());
         assert_eq!(
             s.general.context_deny_list,
             vec![
@@ -1725,11 +1785,15 @@ mod tests {
         assert_eq!(s.llm.endpoint, "http://localhost:11434");
         assert_eq!(s.llm.timeout, 5000);
         assert!(!s.llm.dictation.enabled);
+        assert!(!s.llm.dictation.dictionary_auto_add_enabled);
         assert_eq!(s.llm.dictation.base.provider, LlmProvider::Ollama);
-        assert_eq!(s.llm.dictation.base.reasoning_effort, EffortLevel::Medium);
-        assert_eq!(s.llm.dictation.base.thinking_effort, ThinkingEffort::Medium);
-        assert_eq!(s.llm.dictation.presets.len(), 1);
+        assert_eq!(s.llm.dictation.base.reasoning_effort, ThinkingEffort::Medium);
+        assert_eq!(s.llm.dictation.base.thinking_effort, ThinkingEffort::Off);
+        assert_eq!(s.llm.dictation.presets.len(), 4);
         assert_eq!(s.llm.dictation.presets[0].key, PresetKey::Neutral);
+        assert_eq!(s.llm.dictation.presets[1].key, PresetKey::Reorder);
+        assert_eq!(s.llm.dictation.presets[2].key, PresetKey::Restructure);
+        assert_eq!(s.llm.dictation.presets[3].key, PresetKey::RewordForClarity);
         assert_eq!(s.llm.transforms.hotkey, "LCtrl+LShift+T");
 
         // tts
@@ -1791,6 +1855,8 @@ mod tests {
         let v = serde_json::to_value(&s).expect("serialize");
         // Renderer reads these exact keys.
         assert!(v["model"]["realtimeModel"].is_string());
+        assert!(v["model"]["autoDetectLanguage"].is_boolean());
+        assert!(v["model"]["languageCandidates"].is_array());
         assert!(v["quality"]["smartEndpointSpeed"].is_number());
         assert!(v["audio"]["microphoneRelease"].is_string());
         assert!(v["general"]["liveTranscriptionDisplay"].is_string());
@@ -1822,10 +1888,10 @@ mod tests {
         assert_eq!(s.llm.dictation.base.openrouter_model, "x/y");
         // Inner fields absent from JSON → defaults.
         assert_eq!(s.llm.dictation.base.verbosity, EffortLevel::Medium);
-        assert_eq!(s.llm.dictation.base.thinking_effort, ThinkingEffort::Medium);
+        assert_eq!(s.llm.dictation.base.thinking_effort, ThinkingEffort::Off);
         assert_eq!(s.llm.dictation.base.max_output_tokens, None);
         // Sibling non-flattened fields default too.
-        assert_eq!(s.llm.dictation.presets.len(), 1);
+        assert_eq!(s.llm.dictation.presets.len(), 4);
         // Shared infra + transforms default.
         assert_eq!(s.llm.endpoint, "http://localhost:11434");
         assert_eq!(s.llm.transforms.hotkey, "LCtrl+LShift+T");
@@ -1901,16 +1967,31 @@ mod tests {
         let entry = DictionaryEntry {
             id: "1".into(),
             term: "WinSTT".into(),
+            auto_added: None,
             replacement: None,
         };
         let v = serde_json::to_value(&entry).unwrap();
         assert!(v.get("replacement").is_none()); // vocab-bias word, not a pair
+        assert!(v.get("autoAdded").is_none()); // manual/legacy entry
         let pair = DictionaryEntry {
             id: "2".into(),
             term: "win s t t".into(),
+            auto_added: None,
             replacement: Some("WinSTT".into()),
         };
         let v2 = serde_json::to_value(&pair).unwrap();
         assert_eq!(v2["replacement"], serde_json::json!("WinSTT"));
+    }
+
+    #[test]
+    fn dictionary_entry_serializes_auto_added_marker() {
+        let entry = DictionaryEntry {
+            id: "1".into(),
+            term: "WinSTT".into(),
+            auto_added: Some(true),
+            replacement: None,
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert_eq!(v["autoAdded"], serde_json::json!(true));
     }
 }

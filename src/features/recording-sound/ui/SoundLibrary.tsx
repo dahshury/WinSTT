@@ -8,7 +8,11 @@ import { ElevatedSurface } from "@/shared/ui/elevated-surface";
 import { useSoundDrop } from "../lib/use-sound-drop";
 import { useSoundLibrary } from "../lib/use-sound-library";
 import { useSoundPreview } from "../lib/use-sound-preview";
-import { isActive, type SoundLibraryItem } from "../model/recording-sound";
+import {
+  isActive,
+  MAX_CUSTOM_SOUNDS,
+  type SoundLibraryItem,
+} from "../model/recording-sound";
 import { SoundLibraryAddRow } from "./SoundLibraryAddRow";
 import { SoundLibraryEmptyState } from "./SoundLibraryEmptyState";
 import { SoundLibraryHighlight } from "./SoundLibraryHighlight";
@@ -29,8 +33,10 @@ export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {
   );
   const listRef = useRef<HTMLDivElement | null>(null);
 
+  const limitText = t("soundLibraryLimitReached", { max: MAX_CUSTOM_SOUNDS });
   const library = useSoundLibrary({
     defaultName,
+    limitMessage: limitText,
     onError: (msg) => setBannerError(msg),
   });
 
@@ -72,47 +78,59 @@ export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {
   return (
     <div className="flex flex-col gap-2">
       <ElevatedSurface className={containerClass}>
+        {/* Drop target wraps both the scrollable list and the pinned add row so
+            a file dropped anywhere on the card is accepted. */}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: drop target surface — interactive controls live in child rows. */}
         {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: drop target surface — interactive controls live in child rows. */}
-        <RadioGroup
-          className="relative flex flex-col"
-          name="sound-library-row"
+        <div
+          className="flex flex-col"
           onDragLeave={drop.handlers.onDragLeave}
           onDragOver={drop.handlers.onDragOver}
           onDrop={drop.handlers.onDrop}
-          onValueChange={(id) => {
-            const item = library.items.find((it) => it.id === id);
-            if (item) {
-              handleSelect(item);
-            }
-          }}
-          ref={listRef}
-          value={selectedId}
         >
-          <SoundLibraryHighlight
-            containerRef={listRef}
-            rowsKey={rowsKey}
-            selectedId={selectedId}
-          />
-          {library.items.map((item) => (
-            <SoundLibraryRow
-              active={isActive(item, library.activePath)}
-              deleteLabel={t("soundLibraryDelete")}
-              isPlaying={preview.playingId === item.id}
-              item={item}
-              key={item.id}
-              labels={{
-                play: t("soundLibraryPlay"),
-                pause: t("soundLibraryStop"),
-              }}
-              onDelete={() => setPendingDelete(item)}
-              onRename={(it, newName) => library.rename(it.id, newName)}
-              onTogglePreview={(it) => preview.toggle(it.id, it.path)}
-              renameLabel={t("soundLibraryRename")}
+          {/* The row list grows with the library only up to ~6.5 rows (the half
+              row peeking past the cap is the scroll affordance), then scrolls —
+              the section never expands unbounded as sounds are added (capped at
+              MAX_CUSTOM_SOUNDS). The selected-pill highlight tracks scroll
+              because its geometry is measured in container content space. */}
+          <RadioGroup
+            className="relative flex max-h-[19.5rem] flex-col overflow-y-auto"
+            name="sound-library-row"
+            onValueChange={(id) => {
+              const item = library.items.find((it) => it.id === id);
+              if (item) {
+                handleSelect(item);
+              }
+            }}
+            ref={listRef}
+            value={selectedId}
+          >
+            <SoundLibraryHighlight
+              containerRef={listRef}
+              rowsKey={rowsKey}
+              selectedId={selectedId}
             />
-          ))}
+            {library.items.map((item) => (
+              <SoundLibraryRow
+                active={isActive(item, library.activePath)}
+                deleteLabel={t("soundLibraryDelete")}
+                isPlaying={preview.playingId === item.id}
+                item={item}
+                key={item.id}
+                labels={{
+                  play: t("soundLibraryPlay"),
+                  pause: t("soundLibraryStop"),
+                }}
+                onDelete={() => setPendingDelete(item)}
+                onRename={(it, newName) => library.rename(it.id, newName)}
+                onTogglePreview={(it) => preview.toggle(it.id, it.path)}
+                renameLabel={t("soundLibraryRename")}
+              />
+            ))}
+          </RadioGroup>
           {hasCustoms ? (
             <SoundLibraryAddRow
+              disabled={library.isFull}
               label={t("soundLibraryAddSound")}
               onClick={handleAdd}
             />
@@ -125,12 +143,17 @@ export function SoundLibrary({ t, tCommon }: SoundLibraryProps): ReactNode {
               title={t("soundLibraryEmptyTitle")}
             />
           )}
-        </RadioGroup>
+        </div>
       </ElevatedSurface>
+      {library.isFull ? (
+        <p className="text-center text-foreground-muted text-xs-tight">
+          {limitText}
+        </p>
+      ) : null}
       {drop.dropError ? (
         <p className="text-center text-error text-xs-tight">{drop.dropError}</p>
       ) : null}
-      {bannerError ? (
+      {bannerError && bannerError !== limitText ? (
         <p className="text-center text-error text-xs-tight">{bannerError}</p>
       ) : null}
       <ConfirmDialog

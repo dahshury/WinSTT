@@ -39,6 +39,11 @@ const OVERLAY_LABEL: &str = "overlay";
 /// the previous session's grace-timer hide the freshly-shown pill.
 static OVERLAY_SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Desired native visibility. Generation alone cancels old hide retries after a
+/// newer show, but the fresh-show opacity ramp also needs to know if a hide
+/// landed during its 80ms renderer-paint delay.
+static OVERLAY_DESIRED_VISIBLE: AtomicBool = AtomicBool::new(false);
+
 /// Native hit regions are accepted only while the overlay is intentionally
 /// visible. Hide disables this before the renderer's close animation can report
 /// stale rects back to Rust.
@@ -53,12 +58,19 @@ static TTS_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Overlay window inner size (logical px). Mirrors WINDOW_SPECS[overlay].
 const OVERLAY_WIDTH: f64 = 720.0;
 const OVERLAY_HEIGHT: f64 = 240.0;
-const OVERLAY_HIDE_GRACE_MS: u64 = 400;
+const FLOATING_BOTTOM_HIDE_GRACE_MS: u64 = 220;
+const DYNAMIC_ISLAND_HIDE_GRACE_MS: u64 = 400;
+const OVERLAY_HIDE_REAPPLY_DELAYS_MS: &[u64] = &[50, 150, 400];
+const OVERLAY_SHOW_OPACITY_RAMP_DELAY_MS: u64 = 80;
+const OVERLAY_OFFSCREEN_POS: f64 = -10_000.0;
 
 /// Grown overlay height while the editable preview-before-pasting pill is open.
-/// The multi-view edit/enhance/review content needs more room than the passive
-/// 240px recording pill; restored to `OVERLAY_HEIGHT` on confirm/cancel.
-const PREVIEW_OVERLAY_HEIGHT: f64 = 520.0;
+/// The split enhance layout (top transcript/diff half + bottom AI-controls half)
+/// needs more room than the passive 240px recording pill; restored to
+/// `OVERLAY_HEIGHT` on confirm/cancel. The island/floating surface self-size to
+/// their content (fitContent / measured) — this is just the window envelope that
+/// must be tall enough not to clip the tallest preview state.
+const PREVIEW_OVERLAY_HEIGHT: f64 = 660.0;
 
 /// Gap above the work-area bottom edge for the floating-bottom layout. Matches
 /// the reference's `y = height - winHeight - 60` (computeOverlayPosition).
@@ -202,6 +214,76 @@ fn ensure_overlay_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     }
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn overlay_opacity_byte(opacity: f64) -> u8 {
+    (opacity.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+#[cfg(target_os = "windows")]
+fn set_overlay_window_opacity(window: &tauri::WebviewWindow, opacity: f64) -> Result<(), String> {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
+        WS_EX_LAYERED,
+    };
+
+    let alpha = overlay_opacity_byte(opacity);
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    unsafe {
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let layered_style = ex_style | WS_EX_LAYERED.0 as isize;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, layered_style);
+        SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_overlay_window_opacity(_window: &tauri::WebviewWindow, _opacity: f64) -> Result<(), String> {
+    Ok(())
+}
+
+fn overlay_hide_should_wait_for_renderer(mode: OverlayMode) -> bool {
+    mode == OverlayMode::DynamicIsland
+}
+
+fn overlay_hide_grace_ms(mode: OverlayMode, force_renderer_grace: bool) -> u64 {
+    if force_renderer_grace || overlay_hide_should_wait_for_renderer(mode) {
+        DYNAMIC_ISLAND_HIDE_GRACE_MS
+    } else {
+        FLOATING_BOTTOM_HIDE_GRACE_MS
+    }
+}
+
+fn apply_overlay_hide(window: &tauri::WebviewWindow) {
+    let _ = set_overlay_window_opacity(window, 0.0);
+    let _ = window.set_position(tauri::LogicalPosition::new(
+        OVERLAY_OFFSCREEN_POS,
+        OVERLAY_OFFSCREEN_POS,
+    ));
+    set_empty_overlay_hit_region(window);
+    let _ = window.hide();
+}
+
+fn overlay_hide_is_still_desired(generation: u64) -> bool {
+    !OVERLAY_DESIRED_VISIBLE.load(Ordering::SeqCst)
+        && OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation
+}
+
+fn schedule_overlay_hide_reapply(window: tauri::WebviewWindow, generation: u64, base_delay: u64) {
+    for delay in OVERLAY_HIDE_REAPPLY_DELAYS_MS {
+        let win = window.clone();
+        let total_delay = base_delay + *delay;
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(total_delay));
+            if overlay_hide_is_still_desired(generation) {
+                apply_overlay_hide(&win);
+            }
+        });
+    }
+}
+
 /// Position + reveal the overlay window without re-activating it (showInactive
 /// parity → no focus steal, so the user's target app stays the keyboard sink).
 /// `reason` ("recording" | "tts") is forwarded to the renderer's `show-overlay`
@@ -213,14 +295,34 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
         return;
     };
     // Mark a fresh show so any in-flight deferred-hide thread cancels itself.
-    OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
+    let generation = OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    OVERLAY_DESIRED_VISIBLE.store(true, Ordering::SeqCst);
     OVERLAY_HIT_REGIONS_ENABLED.store(true, Ordering::SeqCst);
+    let was_visible = window.is_visible().unwrap_or(false);
     // Reset to the caller's footprint; preview and STT+TTS overlap both grow the
     // window, and the next owner must not inherit that size.
     let _ = window.set_size(tauri::LogicalSize::new(OVERLAY_WIDTH, height));
-    set_empty_overlay_hit_region(&window);
+    // Clear the native window region ONLY on a fresh show. `SetWindowRgn` clips
+    // RENDERING, not just hit-testing (see `set_overlay_hit_regions`), so wiping
+    // it to empty on a RE-show of an already-visible overlay blanks the live pill
+    // until the renderer next reports a region — and the renderer dedupes
+    // identical payloads, so an unchanged pill stays invisible until its content
+    // resizes. That is exactly the dictation `transcribing → post-processing`
+    // re-show (`show_recording_overlay` is called again when the LLM clean-up is
+    // about to run): the island vanished after "Transcribing" and only popped
+    // back when the thinking indicator changed the pill's size. On a fresh show
+    // the window is hidden (opacity 0 below) while the renderer paints and reports
+    // its first region, so an empty start is correct there; on a re-show the
+    // existing region already matches the on-screen pill, so leave it untouched
+    // and let the renderer's ResizeObserver morph it smoothly.
+    if !was_visible {
+        set_empty_overlay_hit_region(&window);
+    }
     if let Some((x, y)) = position {
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    }
+    if !was_visible {
+        let _ = set_overlay_window_opacity(&window, 0.0);
     }
     // `show()` alone (no `set_focus`) keeps the pill from stealing keyboard focus
     // mid-dictation — the window is created with `focused(false)` + skip_taskbar +
@@ -239,6 +341,21 @@ fn place_and_show_at(app: &AppHandle, height: f64, position: Option<(f64, f64)>,
     // Tell the renderer the overlay window is now on screen (parity with Handy's
     // `show-overlay` event; the OverlayPage also self-clears on visibilitychange).
     let _ = window.emit("show-overlay", reason);
+    if was_visible {
+        let _ = set_overlay_window_opacity(&window, 1.0);
+        return;
+    }
+    let win = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(
+            OVERLAY_SHOW_OPACITY_RAMP_DELAY_MS,
+        ));
+        if OVERLAY_DESIRED_VISIBLE.load(Ordering::SeqCst)
+            && OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation
+        {
+            let _ = set_overlay_window_opacity(&win, 1.0);
+        }
+    });
 }
 
 fn place_and_show(app: &AppHandle, mode: OverlayMode, edge: ResolvedPosition, reason: &str) {
@@ -455,7 +572,7 @@ pub fn show_tts_overlay(app: &AppHandle) {
 pub fn hide_tts_overlay(app: &AppHandle) {
     TTS_OVERLAY_ACTIVE.store(false, Ordering::SeqCst);
     if !RECORDING_OVERLAY_ACTIVE.load(Ordering::SeqCst) {
-        hide_overlay_window(app);
+        hide_overlay_window_with_options(app, true);
         return;
     }
     let Some(edge) = overlay_show_decision(app) else {
@@ -484,13 +601,19 @@ pub fn hide_recording_overlay(app: &AppHandle) {
 }
 
 /// Hide the shared overlay window. Emits `hide-overlay` first so the renderer
-/// can play its slide-up exit, then hides the OS window after a short grace so the
-/// animation has time to land (mirrors the reference's DYNAMIC_ISLAND_HIDE_GRACE_MS).
+/// can play its exit, then applies an opacity-zero/offscreen/hide pass with
+/// retries. The delay is mode-specific: the dynamic island needs the longer
+/// slide-up grace; floating-bottom only needs enough time for its opacity fade.
 fn hide_overlay_window(app: &AppHandle) {
+    hide_overlay_window_with_options(app, false);
+}
+
+fn hide_overlay_window_with_options(app: &AppHandle, force_renderer_grace: bool) {
+    OVERLAY_DESIRED_VISIBLE.store(false, Ordering::SeqCst);
+    OVERLAY_HIT_REGIONS_ENABLED.store(false, Ordering::SeqCst);
     let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
         return;
     };
-    OVERLAY_HIT_REGIONS_ENABLED.store(false, Ordering::SeqCst);
     let _ = window.emit("hide-overlay", ());
     // Restore click-through while hidden so a stale transparent overlay can never
     // keep capturing the cursor after the session/read has ended.
@@ -498,14 +621,16 @@ fn hide_overlay_window(app: &AppHandle) {
     // Snapshot the current generation; only hide if no newer show lands during the
     // grace window (the press→release→press race guard — the reference's `desired`).
     let generation = OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst);
+    let mode = read_settings(app).general.overlay_mode;
+    let grace_ms = overlay_hide_grace_ms(mode, force_renderer_grace);
     let win = window.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(OVERLAY_HIDE_GRACE_MS));
-        if OVERLAY_SHOW_GENERATION.load(Ordering::SeqCst) == generation {
-            set_empty_overlay_hit_region(&win);
-            let _ = win.hide();
+        std::thread::sleep(std::time::Duration::from_millis(grace_ms));
+        if overlay_hide_is_still_desired(generation) {
+            apply_overlay_hide(&win);
         }
     });
+    schedule_overlay_hide_reapply(window, generation, grace_ms);
 }
 
 /// Re-anchor a CURRENTLY-VISIBLE overlay after a live `general.overlayMode` /
@@ -564,28 +689,14 @@ pub fn enter_preview_overlay(app: &AppHandle) {
         place_and_show_stacked(app, "preview");
         return;
     }
-    let Some(window) = app.get_webview_window(OVERLAY_LABEL) else {
-        return;
-    };
-    OVERLAY_SHOW_GENERATION.fetch_add(1, Ordering::SeqCst);
-    OVERLAY_HIT_REGIONS_ENABLED.store(true, Ordering::SeqCst);
-    let _ = window.set_size(tauri::LogicalSize::new(
-        OVERLAY_WIDTH,
-        PREVIEW_OVERLAY_HEIGHT,
-    ));
-    set_empty_overlay_hit_region(&window);
     let mode = read_settings(app).general.overlay_mode;
     let edge = overlay_show_decision(app).unwrap_or(ResolvedPosition::Top);
-    if let Some((x, y)) = compute_overlay_position_h(app, mode, edge, PREVIEW_OVERLAY_HEIGHT) {
-        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
-    }
-    let _ = window.show();
-    // Capture the cursor so the preview is clickable/typeable; this is the same
-    // native switch the shown recording and TTS pills use for their controls.
-    let _ = window.set_ignore_cursor_events(false);
-    #[cfg(target_os = "windows")]
-    force_overlay_topmost(&window);
-    let _ = window.emit("show-overlay", "preview");
+    place_and_show_at(
+        app,
+        PREVIEW_OVERLAY_HEIGHT,
+        compute_overlay_position_h(app, mode, edge, PREVIEW_OVERLAY_HEIGHT),
+        "preview",
+    );
 }
 
 /// Tear down the preview pill: restore the passive geometry, then either hide
@@ -662,5 +773,23 @@ mod tests {
     #[test]
     fn unknown_show_reason_stays_click_through() {
         assert!(ignore_cursor_events_for_show_reason("unknown"));
+    }
+
+    #[test]
+    fn only_dynamic_island_waits_for_renderer_hide_by_default() {
+        assert!(overlay_hide_should_wait_for_renderer(
+            OverlayMode::DynamicIsland
+        ));
+        assert!(!overlay_hide_should_wait_for_renderer(
+            OverlayMode::FloatingBottom
+        ));
+    }
+
+    #[test]
+    fn tts_can_force_dynamic_hide_grace() {
+        assert_eq!(
+            overlay_hide_grace_ms(OverlayMode::FloatingBottom, true),
+            DYNAMIC_ISLAND_HIDE_GRACE_MS
+        );
     }
 }

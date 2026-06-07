@@ -1,13 +1,15 @@
-// About panel backend. No manager — reads bundled text + app metadata.
+// About metadata and bundled legal text readers. No manager.
 //
-// The About panel (widgets/about-settings) calls three commands on mount:
-//   about_get_license   -> String   (the EULA / LICENSE text)
-//   about_get_notices   -> String   (THIRD_PARTY_NOTICES.md)
+// The settings About panel currently calls only:
 //   about_get_app_info  -> AboutAppInfo { version, frameworkVersion, webview2Version, copyright }
 //
-// The renderer's `AboutAppInfo` shape (shared/api/ipc-client.ts) matches the
-// `#[serde(rename_all = "camelCase")]` struct below, so `invoke` passes the value through
-// unchanged (no reshape).
+// The legal text commands stay registered for native/legal surfaces that need
+// the bundled files without shipping them in the renderer bundle:
+//   about_get_license   -> String   (the EULA / LICENSE text)
+//   about_get_notices   -> String   (THIRD_PARTY_NOTICES.md)
+//
+// The renderer consumes the public app version + copyright and ignores the
+// implementation-version fields.
 //
 // LICENSE / THIRD_PARTY_NOTICES.md ship as compile-time `include_str!` blobs (relative to this
 // source file → repo root) rather than runtime resources. They are tiny (a ~1 KB MIT body + a
@@ -31,9 +33,9 @@ const LICENSE_TEXT: &str = include_str!("../../../../LICENSE");
 /// The bundled third-party notices (repo-root `THIRD_PARTY_NOTICES.md`).
 const NOTICES_TEXT: &str = include_str!("../../../../THIRD_PARTY_NOTICES.md");
 
-/// App metadata surfaced in the About panel. Field names mirror the renderer's
-/// `AboutAppInfo` interface exactly (camelCase) so the value round-trips through
-/// `invoke` with no reshape.
+/// App metadata returned to the renderer. The About panel only displays the
+/// product version and copyright; framework/runtime versions remain available
+/// to native callers and generated bindings.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AboutAppInfo {
@@ -66,7 +68,7 @@ pub fn about_get_notices() -> String {
     NOTICES_TEXT.to_string()
 }
 
-/// `about_get_app_info` — version + framework/webview versions + copyright.
+/// `about_get_app_info` — app metadata for About/native surfaces.
 #[tauri::command]
 #[specta::specta]
 pub fn about_get_app_info(app: AppHandle) -> AboutAppInfo {

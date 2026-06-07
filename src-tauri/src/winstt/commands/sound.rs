@@ -31,6 +31,14 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::winstt::commands::settings::read_settings;
 
+const ORIGINAL_DEFAULT_SOUND_RESOURCE: &str = "resources/recording_sound_default.wav";
+const BUILTIN_SOUND_PREFIX: &str = "builtin:";
+const BUILTIN_RECORDING_SOUND_FILES: &[&str] = &[
+    "marimba_start.wav",
+    "recording_sound_ui_earcon_1.wav",
+    "recording_sound_ui_earcon_4.wav",
+];
+
 /// Process-local monotonic counter, combined with the wall-clock nanos to form a
 /// collision-free library filename id (no `uuid` crate dependency — mirrors the
 /// codebase's `format!("fq-{counter}-{millis}")` idiom in file_transcribe_manager).
@@ -129,6 +137,25 @@ fn canonical_library_file(app: &AppHandle, path: &str) -> Option<PathBuf> {
     canonical_existing_path_inside_dir(Path::new(path), &dir)
 }
 
+fn resource_path(app: &AppHandle, resource: impl AsRef<Path>) -> Option<PathBuf> {
+    app.path()
+        .resolve(resource, tauri::path::BaseDirectory::Resource)
+        .ok()
+}
+
+fn built_in_recording_sound_path(app: &AppHandle, path: &str) -> Option<PathBuf> {
+    let resource = built_in_recording_sound_resource(path)?;
+    resource_path(app, resource)
+}
+
+fn built_in_recording_sound_resource(path: &str) -> Option<PathBuf> {
+    let file_name = path.strip_prefix(BUILTIN_SOUND_PREFIX)?;
+    if !BUILTIN_RECORDING_SOUND_FILES.contains(&file_name) {
+        return None;
+    }
+    Some(Path::new("resources").join(file_name))
+}
+
 fn absolute_path(path: &Path) -> Option<PathBuf> {
     std::path::absolute(path).ok()
 }
@@ -200,10 +227,7 @@ fn copy_sound_into_library(
     if !metadata.is_file() {
         return Err("Source path is not a file".into());
     }
-    let dir = match library_dir(app) {
-        Ok(d) => d,
-        Err(e) => return Err(e),
-    };
+    let dir = library_dir(app)?;
     let id = next_sound_id();
     let dest = dir.join(format!("{id}{ext}"));
     std::fs::copy(source_path, &dest).map_err(|err| format!("Failed to copy file: {err}"))?;
@@ -296,13 +320,18 @@ pub fn sound_library_remove(app: AppHandle, path: String) -> SoundLibraryRemoveR
 }
 
 /// `sound_library_read_file` — read a sound file's bytes for the renderer's Web
-/// Audio preview decode. Returns `None` on any error (the renderer treats null as
-/// "couldn't load"). Mirrors `handleReadFile`.
+/// Audio preview decode. Supports the original empty-path bundled default,
+/// allow-listed `builtin:<file>` bundled sounds, and managed-library files.
+/// Returns `None` on any error (the renderer treats null as "couldn't load").
 #[tauri::command]
 #[specta::specta]
 pub fn sound_library_read_file(app: AppHandle, path: String) -> Option<Vec<u8>> {
     if path.is_empty() {
-        return None;
+        let default_path = default_recording_sound_path(&app)?;
+        return std::fs::read(default_path).ok();
+    }
+    if let Some(built_in_path) = built_in_recording_sound_path(&app, &path) {
+        return std::fs::read(built_in_path).ok();
     }
     let resolved = canonical_library_file(&app, &path)?;
     std::fs::read(resolved).ok()
@@ -341,17 +370,13 @@ fn is_allowed_recording_sound_ext(path: &str) -> bool {
 /// Resolve the bundled default chime (`resources/recording_sound_default.wav`,
 /// copied from the reference build's `build/splash.wav`). Mirrors `DEFAULT_SOUND_PATH`.
 fn default_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .resolve(
-            "resources/recording_sound_default.wav",
-            tauri::path::BaseDirectory::Resource,
-        )
-        .ok()
+    resource_path(app, ORIGINAL_DEFAULT_SOUND_RESOURCE)
 }
 
 /// Resolve the ACTIVE recording-sound file, or `None` when the chime is disabled.
-/// Mirrors `getSoundPath()` in `sound.ts`: disabled → None; a valid custom path →
-/// that path; missing/empty/bad-extension custom → the bundled default.
+/// Mirrors `getSoundPath()` in `sound.ts`: disabled -> None; a valid bundled
+/// token or custom path -> that path; missing/empty/bad-extension custom -> the
+/// bundled default.
 fn active_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
     let general = read_settings(app).general;
     if !general.recording_sound {
@@ -359,6 +384,9 @@ fn active_recording_sound_path(app: &AppHandle) -> Option<PathBuf> {
     }
     let custom = general.recording_sound_path;
     if !custom.is_empty() {
+        if let Some(built_in_path) = built_in_recording_sound_path(app, &custom) {
+            return Some(built_in_path);
+        }
         if is_allowed_recording_sound_ext(&custom) {
             if let Some(path) = canonical_library_file(app, &custom) {
                 return Some(path);
@@ -455,5 +483,31 @@ mod tests {
             &sibling.join("missing.wav"),
             &library
         ));
+    }
+
+    #[test]
+    fn built_in_recording_sound_resource_allows_only_packaged_sounds() {
+        assert_eq!(
+            built_in_recording_sound_resource("builtin:marimba_start.wav"),
+            Some(Path::new("resources").join("marimba_start.wav"))
+        );
+        assert_eq!(
+            built_in_recording_sound_resource("builtin:recording_sound_ui_earcon_1.wav"),
+            Some(Path::new("resources").join("recording_sound_ui_earcon_1.wav"))
+        );
+        assert_eq!(
+            built_in_recording_sound_resource("builtin:recording_sound_ui_earcon_4.wav"),
+            Some(Path::new("resources").join("recording_sound_ui_earcon_4.wav"))
+        );
+
+        assert!(built_in_recording_sound_resource("builtin:marimba_stop.wav").is_none());
+        assert!(built_in_recording_sound_resource("builtin:pop_start.wav").is_none());
+        assert!(built_in_recording_sound_resource("builtin:pop_stop.wav").is_none());
+        assert!(built_in_recording_sound_resource("builtin:recording_sound_default.wav").is_none());
+        assert!(
+            built_in_recording_sound_resource("builtin:../recording_sound_ui_earcon_1.wav")
+                .is_none()
+        );
+        assert!(built_in_recording_sound_resource("recording_sound_ui_earcon_1.wav").is_none());
     }
 }

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { onAudioDeviceChangeDetected } from "@/shared/api/ipc-client";
+import {
+  type AudioOutputDevice,
+  audioGetOutputDevices,
+  audioRefreshOutputDevices,
+  onAudioDeviceChangeDetected,
+  onAudioOutputDevicesChanged,
+} from "@/shared/api/ipc-client";
 
 /**
  * One ``audiooutput`` device entry, denormalized from
@@ -16,6 +22,16 @@ interface UseOutputDevicesResult {
   defaultDevice: OutputDevice | null;
   devices: OutputDevice[];
   refresh: () => Promise<void>;
+  /**
+   * The browser ``MediaDeviceInfo.deviceId`` of every output sink the browser
+   * currently knows about (real, routable ids — the synthetic name-ids used for
+   * not-yet-resolved backend devices are excluded). Consumers that need to
+   * reconcile a SAVED browser deviceId (e.g. ``useDeviceSwitchFeedback`` resetting
+   * a vanished sink) must check against THIS, not ``devices`` — a backend device
+   * shown before its browser join resolves carries a synthetic id, so checking
+   * ``devices`` would spuriously treat a still-connected sink as gone.
+   */
+  sinkIds: string[];
 }
 
 /**
@@ -42,9 +58,40 @@ function areOutputDeviceListsEqual(
   });
 }
 
+// ── Module-level state ────────────────────────────────────────────────────────
+//
+// Output devices have TWO sources that are merged into the published list:
+//
+//   1. `backendOutputDevices` — the AUTHORITATIVE membership (name + default),
+//      pushed from Rust/cpal via `audio:output-devices-changed`. This is what
+//      makes the picker update in real time on hot-plug: the native endpoint
+//      watcher reliably detects the change, whereas the browser's own
+//      `enumerateDevices()` cache lags (or never fires) for output devices
+//      inside the embedded WebView2 — the exact reason inputs already enumerate
+//      backend-side.
+//
+//   2. `browserSinkMap` — `normalizedLabel → MediaDeviceInfo.deviceId`, the only
+//      place a usable `setSinkId`/`sinkId` id can come from (the backend can't
+//      produce it). We JOIN the backend list to it by name so a device the
+//      backend reports is routable as soon as the browser also knows it.
+//
+// When the backend list is empty (non-desktop, cpal failure, or the unit-test
+// environment where the IPC invoke resolves to `[]`), we fall back to the pure
+// browser-derived list so behaviour never regresses below "what the browser
+// shows".
 let outputDeviceCache: OutputDevice[] = [];
-let outputDeviceRefreshInFlight: Promise<void> | null = null;
 const outputDeviceSubscribers = new Set<(devices: OutputDevice[]) => void>();
+
+let backendOutputDevices: AudioOutputDevice[] = [];
+let browserSinkMap = new Map<string, string>();
+let browserOutputDevices: OutputDevice[] = [];
+let outputDeviceRefreshInFlight: Promise<void> | null = null;
+
+// The set of real, routable browser sink ids (values of `browserSinkMap`),
+// published separately so a saved-deviceId reconcile can compare against the
+// browser's authority for browser-deviceId existence (see `sinkIds` doc above).
+let browserSinkIdsCache: string[] = [];
+const browserSinkIdsSubscribers = new Set<(ids: string[]) => void>();
 
 function publishOutputDevices(next: OutputDevice[]): void {
   if (areOutputDeviceListsEqual(outputDeviceCache, next)) {
@@ -56,7 +103,67 @@ function publishOutputDevices(next: OutputDevice[]): void {
   }
 }
 
-function refreshOutputDeviceCache(): Promise<void> {
+function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function publishBrowserSinkIds(next: string[]): void {
+  if (arraysEqual(browserSinkIdsCache, next)) {
+    return;
+  }
+  browserSinkIdsCache = next;
+  for (const subscriber of browserSinkIdsSubscribers) {
+    subscriber(next);
+  }
+}
+
+function normalizeOutputName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/**
+ * Resolve a backend device name to a browser `deviceId` usable with
+ * ``setSinkId``. Exact (normalized) match first, then a contains match for the
+ * minor framing differences between cpal names and browser labels. When the
+ * browser doesn't know the device yet (e.g. just hot-plugged, or no mic
+ * permission so labels are blank), fall back to the device name as a stable,
+ * non-empty synthetic id — the device still SHOWS in the picker, and routing to
+ * it degrades gracefully to the system default (``routeContextToSink`` /
+ * ``createOutputContext`` both swallow an unknown sinkId). A newly-plugged
+ * device is usually the system default anyway, so the default ("") option still
+ * reaches it.
+ */
+function resolveSinkId(name: string): string {
+  const normalized = normalizeOutputName(name);
+  const exact = browserSinkMap.get(normalized);
+  if (exact !== undefined) {
+    return exact;
+  }
+  for (const [label, deviceId] of browserSinkMap) {
+    if (label.includes(normalized) || normalized.includes(label)) {
+      return deviceId;
+    }
+  }
+  return name;
+}
+
+function mergeBackendOutputDevices(): OutputDevice[] {
+  return backendOutputDevices.map((device) => ({
+    deviceId: resolveSinkId(device.name),
+    label: device.name,
+    isDefault: device.isDefault,
+  }));
+}
+
+function recomputeOutputDevices(): void {
+  const merged =
+    backendOutputDevices.length > 0
+      ? mergeBackendOutputDevices()
+      : browserOutputDevices;
+  publishOutputDevices(merged);
+}
+
+function refreshBrowserOutputDevices(): Promise<void> {
   if (outputDeviceRefreshInFlight) {
     return outputDeviceRefreshInFlight;
   }
@@ -67,6 +174,7 @@ function refreshOutputDeviceCache(): Promise<void> {
     .enumerateDevices()
     .then((raw) => {
       const outputs: OutputDevice[] = [];
+      const sinkMap = new Map<string, string>();
       let fallbackCounter = 1;
       for (const d of raw) {
         if (d.kind !== "audiooutput") {
@@ -82,8 +190,22 @@ function refreshOutputDeviceCache(): Promise<void> {
           label: d.label || `Output ${fallbackCounter++}`,
           isDefault: d.deviceId === "default",
         });
+        // Index real, named device rows for the backend→browser name join.
+        // Skip the synthetic ``default``/``communications`` rows and unlabeled
+        // entries (no mic permission yet) — those can't be matched by name.
+        if (
+          d.label &&
+          d.deviceId !== "default" &&
+          d.deviceId !== "communications" &&
+          d.deviceId !== ""
+        ) {
+          sinkMap.set(normalizeOutputName(d.label), d.deviceId);
+        }
       }
-      publishOutputDevices(outputs);
+      browserOutputDevices = outputs;
+      browserSinkMap = sinkMap;
+      publishBrowserSinkIds(Array.from(sinkMap.values()));
+      recomputeOutputDevices();
     })
     .finally(() => {
       outputDeviceRefreshInFlight = null;
@@ -91,75 +213,123 @@ function refreshOutputDeviceCache(): Promise<void> {
   return outputDeviceRefreshInFlight;
 }
 
+function applyBackendOutputDevices(devices: AudioOutputDevice[]): void {
+  backendOutputDevices = devices;
+  recomputeOutputDevices();
+}
+
+function loadBackendOutputDevices(): Promise<void> {
+  return audioGetOutputDevices()
+    .then(applyBackendOutputDevices)
+    .catch(() => undefined);
+}
+
+function refreshBackendOutputDevices(): Promise<void> {
+  return audioRefreshOutputDevices()
+    .then(applyBackendOutputDevices)
+    .catch(() => undefined);
+}
+
 /**
- * Returns the list of audio OUTPUT devices reported by the browser via
- * ``navigator.mediaDevices.enumerateDevices()`` (filtered to
- * ``kind === "audiooutput"``).
+ * Returns the list of audio OUTPUT devices, kept in sync with hot-plug events
+ * in real time — exactly like :func:`useInputDevices`.
  *
- * Why the renderer-side enumeration (vs. backend-side input enumeration): output
- * device routing is handled in the renderer — recording-sound chimes
- * play via ``HTMLAudioElement``, TTS plays via ``AudioContext``, both
- * accept ``setSinkId(deviceId)``. The backend never sees the deviceId, so
- * adding an IPC enumeration just for outputs would be redundant.
+ * The device MEMBERSHIP (which speakers exist + which is the system default)
+ * comes from the Rust/cpal backend, pushed over ``audio:output-devices-changed``
+ * by the native audio-endpoint watcher. The renderer additionally enumerates
+ * ``navigator.mediaDevices`` purely to obtain each device's
+ * ``MediaDeviceInfo.deviceId`` (the only value ``setSinkId`` accepts), joining
+ * it to the backend list by name.
  *
- * Permissions: enumerateDevices() returns empty ``label`` strings until
- * the user has granted microphone permission once. WinSTT already prompts
- * for that during onboarding (OnboardingMicTestStep), so on the live app
- * the labels are populated by the time the user reaches this picker.
- * When labels are empty (no permission yet), we fall back to ``Output 1``
- * / ``Output 2`` / ... so the picker is still usable.
+ * Why not enumerate output devices entirely in the browser (as before): the
+ * embedded WebView2's ``enumerateDevices()`` cache does not reliably refresh on
+ * output hot-plug, so the picker would never see a newly-plugged speaker. The
+ * backend's WASAPI/CoreAudio endpoint notifications do, which is why the input
+ * list already routes through Rust.
+ *
+ * Permissions: ``enumerateDevices()`` returns empty ``label`` strings until the
+ * user grants microphone permission once (WinSTT does this during onboarding).
+ * Until then the backend still provides real device NAMES for display, and
+ * routing to a non-default device falls back to the system default.
  */
 export function useOutputDevices(): UseOutputDevicesResult {
   const [devices, setDevices] = useState<OutputDevice[]>(
     () => outputDeviceCache,
   );
+  const [sinkIds, setSinkIds] = useState<string[]>(() => browserSinkIdsCache);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refresh = useCallback(() => refreshOutputDeviceCache(), []);
+  const refresh = useCallback(
+    () =>
+      Promise.all([
+        refreshBackendOutputDevices(),
+        refreshBrowserOutputDevices(),
+      ]).then(() => undefined),
+    [],
+  );
 
   useEffect(() => {
     outputDeviceSubscribers.add(setDevices);
+    browserSinkIdsSubscribers.add(setSinkIds);
     setDevices(outputDeviceCache);
+    setSinkIds(browserSinkIdsCache);
+    // Real-time backend push: a hot-plugged speaker shows up the instant the
+    // native endpoint watcher reports it, without waiting on the browser.
+    const offOutputDevicesChanged = onAudioOutputDevicesChanged(
+      applyBackendOutputDevices,
+    );
     return () => {
+      offOutputDevicesChanged();
       outputDeviceSubscribers.delete(setDevices);
+      browserSinkIdsSubscribers.delete(setSinkIds);
     };
   }, []);
 
   useEffect(() => {
-    const refreshSafely = () => {
-      refresh().catch(() => undefined);
+    const refreshBrowserSafely = () => {
+      refreshBrowserOutputDevices().catch(() => undefined);
     };
-    const scheduleRefresh = () => {
+    const scheduleBrowserRefresh = () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
       }
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null;
-        refreshSafely();
+        refreshBrowserSafely();
       }, DEVICECHANGE_DEBOUNCE_MS);
     };
-    refreshSafely();
-    const offDeviceChangeDetected =
-      onAudioDeviceChangeDetected(scheduleRefresh);
+    // Initial load: backend (authoritative membership) + browser (sink ids).
+    loadBackendOutputDevices().catch(() => undefined);
+    refreshBrowserSafely();
+    // The generic backend devicechange ping also re-reads the browser sink map
+    // so deviceIds resolve as soon as the browser catches up.
+    const offDeviceChangeDetected = onAudioDeviceChangeDetected(
+      scheduleBrowserRefresh,
+    );
     const mediaDevices =
       typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
-    mediaDevices?.addEventListener("devicechange", scheduleRefresh);
+    mediaDevices?.addEventListener("devicechange", scheduleBrowserRefresh);
     return () => {
       offDeviceChangeDetected();
-      mediaDevices?.removeEventListener("devicechange", scheduleRefresh);
+      mediaDevices?.removeEventListener("devicechange", scheduleBrowserRefresh);
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
         debounceRef.current = null;
       }
     };
-  }, [refresh]);
+  }, []);
 
   const defaultDevice = devices.find((d) => d.isDefault) ?? devices[0] ?? null;
-  return { devices, defaultDevice, refresh };
+  return { devices, defaultDevice, refresh, sinkIds };
 }
 
 export function _resetOutputDevicesCacheForTests(): void {
   outputDeviceCache = [];
   outputDeviceRefreshInFlight = null;
   outputDeviceSubscribers.clear();
+  backendOutputDevices = [];
+  browserSinkMap = new Map();
+  browserOutputDevices = [];
+  browserSinkIdsCache = [];
+  browserSinkIdsSubscribers.clear();
 }

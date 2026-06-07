@@ -3,16 +3,21 @@ import { Dialog as VanillaDialog } from "@base-ui/react/dialog";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
+	Children,
 	type ComponentProps,
 	type ComponentPropsWithoutRef,
 	type CSSProperties,
 	createContext,
+	Fragment,
+	isValidElement,
+	type ReactElement,
 	type ReactNode,
 	useContext,
 } from "react";
 import { cn } from "@/shared/lib/cn";
 import { SurfaceProvider, surfaceClasses, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import { dialogAnimation } from "@/shared/ui/dialog-animation";
 
 /** DialogContent lifts the popup four surface levels above its substrate — the
@@ -178,7 +183,9 @@ export function DialogContent({
 	const usePreset = !(fluid || width !== undefined);
 	const popupClass = cn(
 		dialogAnimation.popup,
-		"fixed top-1/2 left-1/2 rounded-xl outline-none",
+		"fixed top-1/2 left-1/2 overflow-hidden rounded-xl border-[3px] border-foreground/10 bg-clip-padding outline-none",
+		"before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-foreground/30",
+		"after:pointer-events-none after:absolute after:inset-x-[3px] after:top-[3px] after:h-16 after:bg-gradient-to-b after:from-foreground/[0.045] after:to-transparent",
 		alert ? "z-confirm" : "z-modal",
 		surfaceClasses(popupLevel, popupShadow),
 		padded && "flex flex-col gap-4 p-6",
@@ -227,7 +234,33 @@ export function DialogFooter({
 	children?: ReactNode;
 	className?: string;
 }) {
-	return <div className={cn("flex justify-end gap-2", className)}>{children}</div>;
+	const actions = flattenDialogActions(children);
+
+	return (
+		<div className={cn("flex justify-end", className)}>
+			{actions.length >= 2 ? (
+				<ButtonGroup aria-label="Dialog actions" connected>
+					{actions}
+				</ButtonGroup>
+			) : (
+				actions
+			)}
+		</div>
+	);
+}
+
+function flattenDialogActions(children: ReactNode): ReactNode[] {
+	return Children.toArray(children).flatMap((child) => {
+		if (
+			isValidElement<{ children?: ReactNode }>(child) &&
+			child.type === Fragment
+		) {
+			return flattenDialogActions(
+				(child as ReactElement<{ children?: ReactNode }>).props.children,
+			);
+		}
+		return [child];
+	});
 }
 
 export interface DialogTitleProps {
@@ -298,17 +331,21 @@ export function DialogActionButton({
 	// Neutral derives its fill/hover from the popup surface, so it can't live in
 	// a static map; accent/danger are flat brand colors.
 	const solidVariant: Record<"accent" | "danger", string> = {
-		accent: "bg-accent text-white hover:bg-accent-dim",
-		danger: "bg-error text-white hover:bg-error-dim",
+		accent: "bg-accent text-white shadow-elevated hover:bg-accent-hover",
+		danger: "bg-error text-white shadow-elevated hover:bg-error/95",
 	};
 	const variantClass =
 		variant === "neutral"
-			? cn(surfaceClasses(fill), "text-foreground-secondary", surfaceHoverBg(hover))
+			? cn(
+					surfaceClasses(fill),
+					"text-foreground-secondary",
+					surfaceHoverBg(hover),
+				)
 			: solidVariant[variant];
 	return (
 		<Button
 			className={cn(
-				"h-8 rounded-md px-4 font-medium text-body transition-colors duration-150",
+				"h-8 gap-1.5 rounded-md px-4 font-medium text-body transition-[background-color,color,box-shadow,transform] duration-150 active:scale-[0.98]",
 				variantClass,
 				className
 			)}

@@ -17,6 +17,9 @@ export interface SwitcherOptionToggleProps<T extends string> {
 	 *  render). */
 	dataIndex: number;
 	fullWidth: boolean | undefined;
+	/** When true the option fills its grid cell (`w-full`) instead of flexing —
+	 *  used by the Switcher's `columns` grid layout. */
+	grid?: boolean;
 	isHovered: boolean;
 	isSelected: boolean;
 	onBlur: (e: ReactFocusEvent<HTMLButtonElement>) => void;
@@ -32,6 +35,7 @@ export function SwitcherOptionToggle<T extends string>({
 	isSelected,
 	isHovered,
 	fullWidth,
+	grid,
 	onBlur,
 	onFocus,
 	onMouseEnter,
@@ -65,7 +69,7 @@ export function SwitcherOptionToggle<T extends string>({
 				"relative z-raised inline-flex items-center justify-center gap-1.5 bg-transparent px-3 py-1 font-medium text-body-sm outline-none transition-colors focus-visible:outline-none",
 				textClass,
 				option.disabled && "cursor-not-allowed opacity-60",
-				fullWidth && "flex-1"
+				grid ? "w-full" : fullWidth && "flex-1"
 			)}
 			data-switcher-index={dataIndex}
 			disabled={option.disabled}

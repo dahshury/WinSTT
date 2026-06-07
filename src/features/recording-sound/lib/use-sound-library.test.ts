@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
 import type { SoundLibraryEntry } from "@/shared/config/settings-schema";
+import { MAX_CUSTOM_SOUNDS } from "../model/recording-sound";
 import { useSoundLibrary } from "./use-sound-library";
 
 // Drives the hook through generated Tauri commands for the sound-library IPC
@@ -98,6 +99,9 @@ describe("useSoundLibrary", () => {
     );
     expect(result.current.items.map((i) => i.name)).toEqual([
       "Default",
+      "Marimba",
+      "UI Earcon 1",
+      "UI Earcon 4",
       "Alpha",
     ]);
     expect(result.current.defaultEntry.isDefault).toBe(true);
@@ -111,6 +115,17 @@ describe("useSoundLibrary", () => {
     );
     expect(result.current.activeItem.id).toBe("a");
     expect(result.current.activePath).toBe("/a.wav");
+  });
+
+  test("activeItem resolves to a bundled item whose builtin token matches activePath", () => {
+    setLibrary([], "builtin:recording_sound_ui_earcon_4.wav");
+    const { result } = renderHook(() =>
+      useSoundLibrary({ defaultName: "Default" }),
+    );
+    expect(result.current.activeItem.name).toBe("UI Earcon 4");
+    expect(result.current.activeItem.path).toBe(
+      "builtin:recording_sound_ui_earcon_4.wav",
+    );
   });
 
   describe("addFromPath", () => {
@@ -209,13 +224,79 @@ describe("useSoundLibrary", () => {
     });
   });
 
+  describe("limit (MAX_CUSTOM_SOUNDS)", () => {
+    const fullLibrary = (): SoundLibraryEntry[] =>
+      Array.from({ length: MAX_CUSTOM_SOUNDS }, (_, i) =>
+        entry(`s${i}`, `/s${i}.wav`),
+      );
+
+    test("isFull is false below the cap and true at the cap", () => {
+      setLibrary(fullLibrary().slice(0, MAX_CUSTOM_SOUNDS - 1));
+      const { result, rerender } = renderHook(() =>
+        useSoundLibrary({ defaultName: "Default" }),
+      );
+      expect(result.current.isFull).toBe(false);
+      act(() => setLibrary(fullLibrary()));
+      rerender();
+      expect(result.current.isFull).toBe(true);
+    });
+
+    test("addFromPath at the cap rejects with the limit message and skips the add command", async () => {
+      setLibrary(fullLibrary());
+      addResult = { ok: true, entry: entry("over", "/over.wav") };
+      const errors: string[] = [];
+      const { result } = renderHook(() =>
+        useSoundLibrary({
+          defaultName: "Default",
+          limitMessage: "FULL",
+          onError: (m) => errors.push(m),
+        }),
+      );
+      let returned: unknown = "sentinel";
+      await act(async () => {
+        returned = await result.current.addFromPath("/src/over.wav");
+      });
+      expect(returned).toBeNull();
+      expect(errors).toEqual(["FULL"]);
+      expect(tauriCalls.some((i) => i.cmd === "sound_library_add")).toBe(false);
+    });
+
+    test("addFromBrowse at the cap rejects without opening the picker dialog", async () => {
+      setLibrary(fullLibrary());
+      pickResult = { ok: true, entry: entry("over", "/over.wav") };
+      const errors: string[] = [];
+      const { result } = renderHook(() =>
+        useSoundLibrary({
+          defaultName: "Default",
+          limitMessage: "FULL",
+          onError: (m) => errors.push(m),
+        }),
+      );
+      let returned: unknown = "sentinel";
+      await act(async () => {
+        returned = await result.current.addFromBrowse();
+      });
+      expect(returned).toBeNull();
+      expect(errors).toEqual(["FULL"]);
+      expect(
+        tauriCalls.some((i) => i.cmd === "sound_library_pick_and_add"),
+      ).toBe(false);
+    });
+  });
+
   describe("remove", () => {
-    test("no-ops for the default entry", async () => {
+    test("no-ops for built-in entries", async () => {
       const { result } = renderHook(() =>
         useSoundLibrary({ defaultName: "Default" }),
       );
       await act(async () => {
         await result.current.remove(result.current.defaultEntry);
+        const builtIn = result.current.items.find(
+          (i) => i.path === "builtin:recording_sound_ui_earcon_1.wav",
+        );
+        if (builtIn) {
+          await result.current.remove(builtIn);
+        }
       });
       expect(tauriCalls.some((i) => i.cmd === "sound_library_remove")).toBe(
         false,
@@ -296,7 +377,7 @@ describe("useSoundLibrary", () => {
   });
 
   describe("select / rename", () => {
-    test("select sets path to empty for default and to the file path otherwise", () => {
+    test("select sets path to empty for original default, builtin token for bundled choices, and file path for customs", () => {
       setLibrary([entry("a", "/a.wav")]);
       const { result } = renderHook(() =>
         useSoundLibrary({ defaultName: "Default" }),
@@ -310,6 +391,17 @@ describe("useSoundLibrary", () => {
       expect(
         useSettingsStore.getState().settings.general.recordingSoundPath,
       ).toBe("/a.wav");
+      act(() => {
+        const builtIn = result.current.items.find(
+          (i) => i.path === "builtin:recording_sound_ui_earcon_1.wav",
+        );
+        if (builtIn) {
+          result.current.select(builtIn);
+        }
+      });
+      expect(
+        useSettingsStore.getState().settings.general.recordingSoundPath,
+      ).toBe("builtin:recording_sound_ui_earcon_1.wav");
       act(() => result.current.select(result.current.defaultEntry));
       expect(
         useSettingsStore.getState().settings.general.recordingSoundPath,

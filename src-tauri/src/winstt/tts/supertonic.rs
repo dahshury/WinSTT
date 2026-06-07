@@ -212,9 +212,7 @@ fn preprocess_text(text: &str, lang: &str) -> String {
         .replace("i.e.,", "that is,")
         .replace("I.e.,", "That is,");
     s = normalize_spacing(s);
-    if s.is_empty() {
-        s.push('.');
-    } else if !has_terminal_punctuation(&s) {
+    if s.is_empty() || !has_terminal_punctuation(&s) {
         s.push('.');
     }
 
@@ -645,7 +643,7 @@ fn run_pipeline(
 
     let wav_len = (duration_sec * SUPERTONIC_SAMPLE_RATE as f32).floor() as usize;
     let wav_len = wav_len.max(1);
-    let latent_len = ((wav_len + LATENT_SIZE - 1) / LATENT_SIZE).max(1);
+    let latent_len = wav_len.div_ceil(LATENT_SIZE).max(1);
     let latent_shape = vec![1usize, LATENT_CHANNELS, latent_len];
     let latent_mask_shape = vec![1usize, 1usize, latent_len];
     let latent_mask = vec![1.0_f32; latent_len];
@@ -726,8 +724,8 @@ mod tests {
 
     fn ascii_indexer() -> Vec<i64> {
         let mut indexer = vec![-1; 65_536];
-        for code in 0..128 {
-            indexer[code] = code as i64;
+        for (code, slot) in indexer.iter_mut().enumerate().take(128) {
+            *slot = code as i64;
         }
         indexer
     }

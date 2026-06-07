@@ -1,13 +1,54 @@
+import { buildTranscriptDiff } from "@/shared/lib/transcript-diff";
 import type { TranscriptionHistoryEntry } from "../model/history-store";
 
 const MS_PER_MIN = 60 * 1000;
 const MIN_DURATION_FOR_WPM_MS = 500;
 
 export interface AggregateStats {
+	/**
+	 * Transcriptions the AI cleanup pass actually changed (a non-empty
+	 * word-level diff between the raw transcript and the final text). The
+	 * History "AI Impact" → "fixes made" tile.
+	 */
+	aiFixes: number;
 	count: number;
+	/**
+	 * Total dictionary replacement-pair substitutions across all entries,
+	 * summed from each entry's persisted `dictionaryFixes` count. `0` for
+	 * legacy rows recorded before the count was tracked.
+	 */
+	dictionaryFixes: number;
 	totalDurationMs: number;
 	totalWords: number;
+	/**
+	 * Total words the AI altered, summed across every change hunk of every
+	 * entry's diff. The History "AI Impact" → "words corrected" tile.
+	 */
+	wordsCorrected: number;
 	wpm: number;
+}
+
+function countWords(text: string): number {
+	return (text.match(/\S+/g) ?? []).length;
+}
+
+/**
+ * Words the AI altered between the raw transcript (`before`) and the cleaned
+ * text (`after`), summed across every change hunk. Built on the shared
+ * word-level diff so the count tracks exactly what the History diff view marks
+ * up. Each change contributes the larger of its before/after word count, so a
+ * 2-word→1-word rewrite counts as 2. Returns `0` when nothing changed.
+ */
+export function wordsCorrectedBetween(before: string, after: string): number {
+	const diff = buildTranscriptDiff(before, after);
+	if (diff === null) {
+		return 0;
+	}
+	let total = 0;
+	for (const change of diff.changes) {
+		total += Math.max(countWords(change.before), countWords(change.after));
+	}
+	return total;
 }
 
 /**
@@ -50,14 +91,31 @@ export function filterEntriesByDateRange(
 export function aggregate(entries: TranscriptionHistoryEntry[]): AggregateStats {
 	let totalWords = 0;
 	let totalDurationMs = 0;
+	let aiFixes = 0;
+	let wordsCorrected = 0;
+	let dictionaryFixes = 0;
 	for (const entry of entries) {
 		totalWords += entry.wordCount;
 		totalDurationMs += entry.durationMs;
+		dictionaryFixes += entry.dictionaryFixes ?? 0;
+		// `originalText` is present only when a cleanup pass produced different
+		// text, so the diff runs on the handful of AI-touched entries — not the
+		// whole list.
+		if (typeof entry.originalText === "string" && entry.originalText.length > 0) {
+			const corrected = wordsCorrectedBetween(entry.originalText, entry.text);
+			if (corrected > 0) {
+				aiFixes += 1;
+				wordsCorrected += corrected;
+			}
+		}
 	}
 	return {
+		aiFixes,
 		count: entries.length,
-		totalWords,
+		dictionaryFixes,
 		totalDurationMs,
+		totalWords,
+		wordsCorrected,
 		wpm: wordsPerMinute(totalWords, totalDurationMs),
 	};
 }

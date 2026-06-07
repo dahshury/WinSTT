@@ -21,6 +21,22 @@ use crate::audio_toolkit::vad::{SileroVad, VoiceActivityDetector, VAD_FRAME_SAMP
 use super::{TranscribeOptions, Transcriber};
 
 const SR: usize = 16_000;
+const MAX_RETAINED_SILENCE: usize = SR * 200 / 1000;
+const MIN_DECODE_CHUNK: usize = SR * 750 / 1000;
+
+fn speech_mask(vad: &mut SileroVad, audio: &[f32]) -> Vec<bool> {
+    vad.reset();
+    let mut mask = Vec::with_capacity(audio.len() / VAD_FRAME_SAMPLES + 1);
+    let mut i = 0;
+    while i + VAD_FRAME_SAMPLES <= audio.len() {
+        let speech = vad
+            .is_voice(&audio[i..i + VAD_FRAME_SAMPLES])
+            .unwrap_or(false);
+        mask.push(speech);
+        i += VAD_FRAME_SAMPLES;
+    }
+    mask
+}
 
 /// Build raw speech segments `(start_sample, end_sample)` from a per-frame speech mask.
 /// Each `true` run becomes one segment; a trailing open run closes at `total_len`.
@@ -97,6 +113,122 @@ fn merge_segments(
     out
 }
 
+fn coalesce_short_chunks(
+    chunks: Vec<(usize, usize)>,
+    max_chunk: usize,
+    min_decode_chunk: usize,
+) -> Vec<(usize, usize)> {
+    if chunks.len() <= 1 {
+        return chunks;
+    }
+
+    let mut out: Vec<(usize, usize)> = Vec::with_capacity(chunks.len());
+    let mut i = 0usize;
+    while i < chunks.len() {
+        let (s, e) = chunks[i];
+        if e.saturating_sub(s) >= min_decode_chunk {
+            out.push((s, e));
+            i += 1;
+            continue;
+        }
+
+        if let Some(last) = out.last_mut() {
+            if e.saturating_sub(last.0) <= max_chunk {
+                last.1 = e;
+                i += 1;
+                continue;
+            }
+        }
+
+        if let Some(&(_, next_e)) = chunks.get(i + 1) {
+            if next_e.saturating_sub(s) <= max_chunk {
+                out.push((s, next_e));
+                i += 2;
+                continue;
+            }
+        }
+
+        out.push((s, e));
+        i += 1;
+    }
+    out
+}
+
+fn expand_short_chunk(
+    start: usize,
+    end: usize,
+    total_len: usize,
+    min_decode_chunk: usize,
+) -> (usize, usize) {
+    if end.saturating_sub(start) >= min_decode_chunk || total_len <= end.saturating_sub(start) {
+        return (start, end);
+    }
+
+    let target = min_decode_chunk.min(total_len);
+    let center = start + (end.saturating_sub(start) / 2);
+    let mut s = center.saturating_sub(target / 2);
+    let mut e = (s + target).min(total_len);
+    s = e.saturating_sub(target);
+
+    if s > start {
+        s = start;
+        e = (s + target).min(total_len);
+    }
+    if e < end {
+        e = end;
+        s = e.saturating_sub(target);
+    }
+    (s, e)
+}
+
+fn compact_silences(audio: &[f32], segs: &[(usize, usize)], max_silence: usize) -> Vec<f32> {
+    if segs.is_empty() {
+        return audio.to_vec();
+    }
+
+    let mut out = Vec::with_capacity(
+        audio.len().min(
+            segs.iter()
+                .map(|(s, e)| e.saturating_sub(*s))
+                .sum::<usize>()
+                + (segs.len() + 1) * max_silence,
+        ),
+    );
+
+    let (first_start, first_end) = segs[0];
+    let leading = first_start.min(max_silence);
+    out.extend_from_slice(&audio[first_start - leading..first_end]);
+    let mut prev_end = first_end;
+
+    for &(start, end) in segs.iter().skip(1) {
+        if start <= prev_end {
+            if end > prev_end {
+                out.extend_from_slice(&audio[prev_end..end]);
+                prev_end = end;
+            }
+            continue;
+        }
+
+        let gap = start - prev_end;
+        if gap <= max_silence {
+            out.extend_from_slice(&audio[prev_end..end]);
+        } else {
+            let after_prev = max_silence / 2;
+            let before_next = max_silence - after_prev;
+            out.extend_from_slice(&audio[prev_end..prev_end + after_prev]);
+            out.extend_from_slice(&audio[start - before_next..end]);
+        }
+        prev_end = end;
+    }
+
+    let trailing_end = (prev_end + max_silence).min(audio.len());
+    if trailing_end > prev_end {
+        out.extend_from_slice(&audio[prev_end..trailing_end]);
+    }
+
+    out
+}
+
 /// Last `n` chars of `s` (char-safe), for the optional Whisper prior-chunk continuation prompt.
 fn tail_chars(s: &str, n: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
@@ -125,52 +257,120 @@ pub fn vad_segment_decode(
     opts: &TranscribeOptions,
 ) -> super::SttResult<String> {
     let max_chunk = (max_chunk_s * SR as f32) as usize;
-    if audio.len() <= max_chunk {
+
+    // 1. Per-frame speech mask (30 ms / 480-sample Silero frames).
+    let debug_segments = std::env::var("WINSTT_SEGMENT_DEBUG").is_ok();
+    let mask = speech_mask(vad, audio);
+    let raw_original = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
+
+    // The offline segmenter can score an all-silent buffer as zero chunks even though the upstream
+    // RMS gate passed — fall back to a single pass so we still produce output.
+    if raw_original.is_empty() {
         return engine.transcribe(audio, opts).map(|t| t.text);
     }
 
-    // 1. Per-frame speech mask (30 ms / 480-sample Silero frames).
-    let mut mask = Vec::with_capacity(audio.len() / VAD_FRAME_SAMPLES + 1);
-    let mut i = 0;
-    while i + VAD_FRAME_SAMPLES <= audio.len() {
-        let speech = vad
-            .is_voice(&audio[i..i + VAD_FRAME_SAMPLES])
-            .unwrap_or(false);
-        mask.push(speech);
-        i += VAD_FRAME_SAMPLES;
+    let compacted = compact_silences(audio, &raw_original, MAX_RETAINED_SILENCE);
+    if debug_segments {
+        eprintln!(
+            "[vad-segment] compacted {:.2}s -> {:.2}s (max_silence=200ms)",
+            audio.len() as f32 / SR as f32,
+            compacted.len() as f32 / SR as f32
+        );
+    }
+    if compacted.len() <= max_chunk {
+        return engine.transcribe(&compacted, opts).map(|t| t.text);
     }
 
     // 2. Raw regions → merged chunks (onnx-asr constants @ 16 kHz).
     let pad = SR * 30 / 1000; // 480
     let min_speech = (SR * 250 / 1000).saturating_sub(2 * pad); // 3040
-    let min_silence = SR * 100 / 1000 + 2 * pad; // 2560
-    let raw = find_segments(&mask, VAD_FRAME_SAMPLES, audio.len());
+    // PACK-TO-CAP: onnx-asr's 100 ms min_silence splits on every thinking-pause, and since
+    // `compact_silences` already caps every retained gap at 200 ms, ~every pause in spontaneous
+    // dictation exceeds it → dozens of 1–2 s chunks. Short chunks are exactly where Whisper (and
+    // the fragile lite-whisper low-rank encoder especially) hallucinate "..." walls and repeat
+    // text. whisperX instead packs speech into fixed near-window chunks; we do the same by merging
+    // across any pause and letting ONLY the max-chunk cap force a split (on a real region boundary).
+    // This hands the decoder long, coherent context — the configuration that transcribes cleanly.
+    let min_silence = max_chunk;
+    let compacted_mask = speech_mask(vad, &compacted);
+    let raw = find_segments(&compacted_mask, VAD_FRAME_SAMPLES, compacted.len());
     // Cap so a +pad on each side keeps the emitted chunk ≤ max_chunk (under the engine window).
     let merged = merge_segments(
         &raw,
-        audio.len(),
+        compacted.len(),
         max_chunk.saturating_sub(2 * pad),
         min_speech,
         min_silence,
         pad,
     );
+    let merged_len = merged.len();
+    let merged = coalesce_short_chunks(merged, max_chunk, MIN_DECODE_CHUNK);
+    if debug_segments {
+        eprintln!(
+            "[vad-segment] raw={} merged={} coalesced={}",
+            raw.len(),
+            merged_len,
+            merged.len()
+        );
+    }
 
-    // The offline segmenter can score an all-silent buffer as zero chunks even though the upstream
-    // RMS gate passed — fall back to a single pass so we still produce output.
     if merged.is_empty() {
-        return engine.transcribe(audio, opts).map(|t| t.text);
+        return engine.transcribe(&compacted, opts).map(|t| t.text);
     }
 
     // 3. Decode each chunk independently; optional Whisper prior-chunk prompt.
     let track_prev = prior_prompt && engine.kind().supports_initial_prompt();
     let mut prev = String::new();
     let mut parts: Vec<String> = Vec::with_capacity(merged.len());
-    for (s, e) in merged {
+    for (idx, (s, e)) in merged.into_iter().enumerate() {
+        let (s, e) = if e.saturating_sub(s) < MIN_DECODE_CHUNK {
+            let expanded = expand_short_chunk(s, e, compacted.len(), MIN_DECODE_CHUNK);
+            if debug_segments {
+                eprintln!(
+                    "[vad-segment] chunk {} expanded: {:.2}s..{:.2}s -> {:.2}s..{:.2}s",
+                    idx + 1,
+                    s as f32 / SR as f32,
+                    e as f32 / SR as f32,
+                    expanded.0 as f32 / SR as f32,
+                    expanded.1 as f32 / SR as f32
+                );
+            }
+            expanded
+        } else {
+            (s, e)
+        };
+        if debug_segments {
+            eprintln!(
+                "[vad-segment] chunk {}: {:.2}s..{:.2}s ({:.2}s)",
+                idx + 1,
+                s as f32 / SR as f32,
+                e as f32 / SR as f32,
+                (e - s) as f32 / SR as f32
+            );
+        }
         let mut o = opts.clone();
         if track_prev && !prev.trim().is_empty() {
             o.initial_prompt_text = Some(tail_chars(&prev, 200));
         }
-        let txt = engine.transcribe(&audio[s..e], &o)?.text.trim().to_string();
+        let txt = engine
+            .transcribe(&compacted[s..e], &o)
+            .map_err(|err| {
+                if debug_segments {
+                    eprintln!(
+                        "[vad-segment] chunk {} failed at {:.2}s..{:.2}s: {err}",
+                        idx + 1,
+                        s as f32 / SR as f32,
+                        e as f32 / SR as f32
+                    );
+                }
+                err
+            })?
+            .text
+            .trim()
+            .to_string();
+        if debug_segments {
+            eprintln!("[vad-segment] chunk {} text_len={}", idx + 1, txt.len());
+        }
         if !txt.is_empty() {
             if track_prev {
                 prev = txt.clone();
@@ -228,6 +428,23 @@ mod tests {
     }
 
     #[test]
+    fn merge_packs_to_cap_when_min_silence_is_the_cap() {
+        // PACK-TO-CAP (the runtime default `min_silence = max_chunk`): regions separated by
+        // ordinary thinking-pauses are absorbed into one near-cap chunk instead of splitting on
+        // every pause — the fix for lite-whisper hallucinating on dozens of tiny fragments.
+        let cap = 16_000 * 28;
+        let segs = [
+            (0usize, 4000usize),
+            (8000, 12000), // ~250 ms gaps — would split under the old 160 ms min_silence
+            (16000, 20000),
+            (24000, 28000),
+        ];
+        let merged = merge_segments(&segs, 28000, cap, 3040, cap, 480);
+        assert_eq!(merged.len(), 1, "all sub-cap speech should pack into one chunk");
+        assert!(merged[0].1 - merged[0].0 <= cap + 2 * 480);
+    }
+
+    #[test]
     fn merge_hard_splits_continuous_speech_over_cap() {
         // One 60 s continuous-speech region, cap 28 s → forced sub-splits, none exceeding the cap.
         let cap = 16_000 * 28;
@@ -237,6 +454,50 @@ mod tests {
         for (s, e) in &merged {
             assert!(e - s <= cap + 2 * 480, "chunk {}..{} exceeds cap", s, e);
         }
+    }
+
+    #[test]
+    fn coalesce_merges_short_chunk_into_previous() {
+        let chunks = vec![(0usize, 10_000usize), (11_000, 12_000), (20_000, 30_000)];
+        let merged = coalesce_short_chunks(chunks, 60_000, 4_000);
+        assert_eq!(merged, vec![(0, 12_000), (20_000, 30_000)]);
+    }
+
+    #[test]
+    fn coalesce_merges_leading_short_chunk_into_next() {
+        let chunks = vec![(1_000usize, 2_000usize), (5_000, 15_000)];
+        let merged = coalesce_short_chunks(chunks, 60_000, 4_000);
+        assert_eq!(merged, vec![(1_000, 15_000)]);
+    }
+
+    #[test]
+    fn expand_short_chunk_adds_context_without_losing_original_span() {
+        let (s, e) = expand_short_chunk(10_000, 11_000, 40_000, 8_000);
+        assert!(s <= 10_000);
+        assert!(e >= 11_000);
+        assert_eq!(e - s, 8_000);
+    }
+
+    #[test]
+    fn compact_silences_caps_long_gap_and_keeps_context() {
+        let audio: Vec<f32> = (0..1000).map(|n| n as f32).collect();
+        let compacted = compact_silences(&audio, &[(100, 200), (800, 900)], 100);
+
+        assert_eq!(compacted.len(), 500);
+        assert_eq!(&compacted[0..100], &audio[0..100]);
+        assert_eq!(&compacted[100..200], &audio[100..200]);
+        assert_eq!(&compacted[200..250], &audio[200..250]);
+        assert_eq!(&compacted[250..300], &audio[750..800]);
+        assert_eq!(&compacted[300..400], &audio[800..900]);
+        assert_eq!(&compacted[400..500], &audio[900..1000]);
+    }
+
+    #[test]
+    fn compact_silences_keeps_short_gap_intact() {
+        let audio: Vec<f32> = (0..500).map(|n| n as f32).collect();
+        let compacted = compact_silences(&audio, &[(100, 200), (250, 300)], 100);
+
+        assert_eq!(compacted, audio[0..400].to_vec());
     }
 
     #[test]

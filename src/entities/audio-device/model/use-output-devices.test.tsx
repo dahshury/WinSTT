@@ -115,6 +115,46 @@ function fireNativeBridgeEvent(
   }
 }
 
+interface FakeBackendDevice {
+  index: number;
+  isDefault: boolean;
+  name: string;
+}
+
+// A native bridge whose `invoke` serves the backend OUTPUT-device list for the
+// two output commands (and `undefined` otherwise), plus an `on` that records
+// event listeners. Mutating `state.devices` then firing
+// `AUDIO_OUTPUT_DEVICES_CHANGED` simulates a real-time hot-plug push.
+function installFakeBackendBridge(state: { devices: FakeBackendDevice[] }): {
+  listeners: Map<string, NativeBridgeListener[]>;
+} {
+  const listeners = new Map<string, NativeBridgeListener[]>();
+  window.nativeBridge = {
+    ...window.nativeBridge,
+    invoke: async (channel: string) => {
+      if (
+        channel === IPC.AUDIO_GET_OUTPUT_DEVICES ||
+        channel === IPC.AUDIO_REFRESH_OUTPUT_DEVICES
+      ) {
+        return state.devices;
+      }
+      return undefined;
+    },
+    on: (channel, cb) => {
+      const list = listeners.get(channel) ?? [];
+      list.push(cb);
+      listeners.set(channel, list);
+      return () => {
+        listeners.set(
+          channel,
+          (listeners.get(channel) ?? []).filter((listener) => listener !== cb),
+        );
+      };
+    },
+  };
+  return { listeners };
+}
+
 beforeEach(() => {
   _resetOutputDevicesCacheForTests();
   enumResult = [];
@@ -325,6 +365,56 @@ describe("useOutputDevices", () => {
     await new Promise((r) => setTimeout(r, 300));
     // No enumeration happened after the unmount — the armed timer was cleared.
     expect(enumCallCount).toBe(callsBeforeUnmount);
+  });
+
+  test("sources the device list from the backend push, joining browser deviceIds by name, and surfaces a hot-plug the browser is stale about", async () => {
+    const savedBridge = window.nativeBridge;
+    try {
+      // The browser knows the speakers (so the name→deviceId join resolves) but
+      // its enumerateDevices() stays STALE across the later hot-plug.
+      installFakeMediaDevices();
+      enumResult = [
+        { deviceId: "default", kind: "audiooutput", label: "Default" },
+        { deviceId: "spk-1", kind: "audiooutput", label: "Speakers A" },
+      ];
+      const state: { devices: FakeBackendDevice[] } = {
+        devices: [{ index: 0, name: "Speakers A", isDefault: true }],
+      };
+      const { listeners } = installFakeBackendBridge(state);
+
+      const { result } = renderTrackedHook();
+      // Backend membership (1 device), with the deviceId joined from the browser.
+      await waitFor(() => expect(result.current.devices.length).toBe(1));
+      expect(result.current.devices[0]).toMatchObject({
+        deviceId: "spk-1",
+        label: "Speakers A",
+        isDefault: true,
+      });
+
+      // Hot-plug a headset. The native watcher pushes the new list even though
+      // navigator.mediaDevices.enumerateDevices() (enumResult) is unchanged.
+      act(() => {
+        fireNativeBridgeEvent(listeners, IPC.AUDIO_OUTPUT_DEVICES_CHANGED, {
+          devices: [
+            { index: 0, name: "Speakers A", isDefault: false },
+            { index: 1, name: "USB Headset", isDefault: true },
+          ],
+        });
+      });
+
+      await waitFor(() => expect(result.current.devices.length).toBe(2));
+      const headset = result.current.devices.find(
+        (d) => d.label === "USB Headset",
+      );
+      expect(headset).toBeDefined();
+      // No browser deviceId yet → a stable synthetic id (the name) keeps it
+      // visible and selectable; routing falls back to the system default.
+      expect(headset?.deviceId).toBe("USB Headset");
+      expect(headset?.isDefault).toBe(true);
+      expect(result.current.defaultDevice?.label).toBe("USB Headset");
+    } finally {
+      window.nativeBridge = savedBridge;
+    }
   });
 
   test("manual refresh() re-enumerates and updates the list", async () => {

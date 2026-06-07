@@ -1,577 +1,25 @@
 import { MonitorDotIcon } from "@hugeicons/core-free-icons";
-import type { ReactNode } from "react";
 import { useTranslations } from "use-intl";
-import {
-	DEFAULT_SETTINGS,
-	SettingField,
-	SettingSection,
-	useSettingsStore,
-} from "@/entities/setting";
-import { DEFAULT_LOCALE, LOCALE_NAMES, LOCALES, type Locale, useLocaleStore } from "@/shared/i18n";
+import { SettingSection, useSettingsStore } from "@/entities/setting";
+import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
+import { resolveRealtimeLanguageGuardPatch } from "@/features/realtime-preview-fallback";
+import { useLocaleStore } from "@/shared/i18n";
 import { shouldSuppressPillPreviewForWordByWordPaste } from "@/shared/lib/realtime-enabled";
-import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
-import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import { SearchableSelect } from "@/shared/ui/searchable-select";
-import type { SelectOption } from "@/shared/ui/select";
-import { Slider } from "@/shared/ui/slider";
-import { Switcher } from "@/shared/ui/switcher";
+import { computeDisplayFlags } from "../lib/appearance-settings-helpers";
 import {
-	buildAuraShapeSwitcherOptions,
-	buildOverlayModeSwitcherOptions,
-	buildVisualizerTypeSwitcherOptions,
-	computeDisplayFlags,
-	effectiveLiveDisplay,
-	flagsToLiveDisplay,
-	getVisualizerType,
-	type LiveTranscriptionDisplayValue,
-	liveDisplayToFlags,
-	liveOverlayDisabled,
-	overlaySliderLabel,
-	overlaySliderMax,
-	overlaySliderPatch,
-	overlaySliderToIndex,
-	pickAuraShape,
-	pickLocale,
-	pickVisualizerType,
-} from "../lib/appearance-settings-helpers";
-
-// Country-code chip shown in the language picker — the ISO 3166-1 alpha-2
-// country most associated with each locale (English → US per the product
-// spec; the rest use the language's canonical/origin country). Text only, no
-// flag image. Keep entries in sync with LOCALES in shared/i18n/config.ts when
-// adding a new locale baseline.
-const LOCALE_BADGE: Record<Locale, string> = {
-	en: "US",
-	ar: "SA",
-	bg: "BG",
-	cs: "CZ",
-	de: "DE",
-	es: "ES",
-	fr: "FR",
-	he: "IL",
-	hi: "IN",
-	it: "IT",
-	ja: "JP",
-	ko: "KR",
-	pl: "PL",
-	pt: "PT",
-	ru: "RU",
-	sv: "SE",
-	tr: "TR",
-	uk: "UA",
-	vi: "VN",
-	zh: "CN",
-};
-
-const LANGUAGE_OPTIONS: SelectOption[] = LOCALES.map((code) => ({
-	id: code,
-	label: LOCALE_NAMES[code].native,
-	badge: LOCALE_BADGE[code],
-}));
-
-type GeneralT = ReturnType<typeof useTranslations<"general">>;
-type GeneralSettings = NonNullable<
-	ReturnType<typeof useSettingsStore.getState>["settings"]["general"]
->;
-type UpdateFn = (patch: Partial<GeneralSettings>) => void;
-
-interface LanguageControlProps {
-	locale: Locale;
-	setLocale: (locale: Locale) => void;
-	t: GeneralT;
-}
-
-function LanguageControl({ locale, setLocale, t }: LanguageControlProps): ReactNode {
-	return (
-		<SettingField
-			isDefault={locale === DEFAULT_LOCALE}
-			label={t("language")}
-			layout="row"
-			onReset={() => setLocale(DEFAULT_LOCALE)}
-			tooltip={t("languageTooltip")}
-		>
-			<ElevatedSurface className="w-52" inline>
-				<SearchableSelect
-					onChange={(v) => pickLocale(v, setLocale)}
-					options={LANGUAGE_OPTIONS}
-					value={locale}
-				/>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-interface OverlayControlProps {
-	general: GeneralSettings | undefined;
-	isListenMode: boolean;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function OverlayControl({ t, isListenMode, general, update }: OverlayControlProps): ReactNode {
-	const idx = overlaySliderToIndex(general);
-	return (
-		<SettingField
-			disabled={isListenMode}
-			hideReset={isListenMode}
-			isDefault={idx === overlaySliderToIndex(DEFAULT_SETTINGS.general)}
-			label={t("showRecordingOverlay")}
-			onReset={() =>
-				update(overlaySliderPatch(overlaySliderToIndex(DEFAULT_SETTINGS.general), general))
-			}
-			tooltip={t("showRecordingOverlayTooltip")}
-		>
-			<ElevatedSurface
-				className={isListenMode ? "pointer-events-none opacity-40" : undefined}
-				inline
-			>
-				<Slider
-					aria-label={t("showRecordingOverlay")}
-					formatValue={(v) => overlaySliderLabel(v, t)}
-					max={overlaySliderMax()}
-					min={0}
-					onChange={(v) => update(overlaySliderPatch(v, general))}
-					step={1}
-					value={idx}
-				/>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-interface OverlayModeControlProps {
-	general: GeneralSettings | undefined;
-	subDisabled: boolean;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function OverlayModeControl({
-	t,
-	subDisabled,
-	general,
-	update,
-}: OverlayModeControlProps): ReactNode {
-	const value = general?.overlayMode ?? "floating-bottom";
-	const options = buildOverlayModeSwitcherOptions(t);
-	const onChange = (next: string): void => {
-		if (next === "floating-bottom" || next === "dynamic-island") {
-			update({ overlayMode: next });
-		}
-	};
-	return (
-		<SettingField
-			hideReset={subDisabled}
-			isDefault={value === DEFAULT_SETTINGS.general.overlayMode}
-			label={t("overlayMode")}
-			onReset={() => update({ overlayMode: DEFAULT_SETTINGS.general.overlayMode })}
-			tooltip={t("overlayModeTooltip")}
-		>
-			<ElevatedSurface className={subDisabled ? "pointer-events-none opacity-40" : undefined}>
-				<Switcher fullWidth onChange={onChange} options={options} value={value} />
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-interface LiveTranscriptionDisplayControlProps {
-	general: GeneralSettings | undefined;
-	suppressWordByWordPillPreview: boolean;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function LiveTranscriptionDisplayControl({
-	t,
-	general,
-	suppressWordByWordPillPreview,
-	update,
-}: LiveTranscriptionDisplayControlProps): ReactNode {
-	const overlayDisabled = liveOverlayDisabled(general);
-	const pillDisabled = overlayDisabled || suppressWordByWordPillPreview;
-	const stored: LiveTranscriptionDisplayValue = general?.liveTranscriptionDisplay ?? "both";
-	const value = effectiveLiveDisplay(stored, overlayDisabled);
-	const { inApp, inOverlay: storedInOverlay } = liveDisplayToFlags(value);
-	const inOverlay = suppressWordByWordPillPreview ? false : storedInOverlay;
-	const checkedIndices = new Set<number>();
-	if (inApp) {
-		checkedIndices.add(0);
-	}
-	if (inOverlay) {
-		checkedIndices.add(1);
-	}
-	const setInApp = (next: boolean): void => {
-		update({ liveTranscriptionDisplay: flagsToLiveDisplay(next, inOverlay) });
-	};
-	const setInOverlay = (next: boolean): void => {
-		if (pillDisabled) {
-			return;
-		}
-		update({ liveTranscriptionDisplay: flagsToLiveDisplay(inApp, next) });
-	};
-	return (
-		<SettingField
-			isDefault={stored === DEFAULT_SETTINGS.general.liveTranscriptionDisplay}
-			label={t("liveTranscriptionDisplay")}
-			onReset={() =>
-				update({
-					liveTranscriptionDisplay: DEFAULT_SETTINGS.general.liveTranscriptionDisplay,
-				})
-			}
-			tooltip={t("liveTranscriptionDisplayTooltip")}
-		>
-			<ElevatedSurface>
-				<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
-					<CheckboxItem
-						checked={inApp}
-						index={0}
-						label={t("liveTranscriptionDisplayInApp")}
-						onToggle={() => setInApp(!inApp)}
-					/>
-					<CheckboxItem
-						checked={inOverlay}
-						disabled={pillDisabled}
-						index={1}
-						label={t("liveTranscriptionDisplayInPill")}
-						onToggle={() => setInOverlay(!inOverlay)}
-					/>
-				</CheckboxGroup>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-interface VisualizerTypeControlProps {
-	general: GeneralSettings | undefined;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function VisualizerTypeControl({ t, general, update }: VisualizerTypeControlProps): ReactNode {
-	const value = general?.visualizerType ?? "bar";
-	const options = buildVisualizerTypeSwitcherOptions(t);
-	return (
-		<SettingField
-			isDefault={value === DEFAULT_SETTINGS.general.visualizerType}
-			label={t("visualizerType")}
-			onReset={() => pickVisualizerType(DEFAULT_SETTINGS.general.visualizerType, update)}
-			tooltip={t("visualizerTypeTooltip")}
-		>
-			<ElevatedSurface>
-				<Switcher
-					fullWidth
-					onChange={(v) => pickVisualizerType(v, update)}
-					options={options}
-					value={value}
-				/>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-interface VisualizerBarCountControlProps {
-	general: GeneralSettings | undefined;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function VisualizerBarCountControl({
-	t,
-	general,
-	update,
-}: VisualizerBarCountControlProps): ReactNode {
-	const value = general?.visualizerBarCount ?? DEFAULT_SETTINGS.general.visualizerBarCount;
-	return (
-		<SettingField
-			isDefault={value === DEFAULT_SETTINGS.general.visualizerBarCount}
-			label={t("visualizerBarCount")}
-			onReset={() => update({ visualizerBarCount: DEFAULT_SETTINGS.general.visualizerBarCount })}
-			tooltip={t("visualizerBarCountTooltip")}
-		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={t("visualizerBarCount")}
-					max={21}
-					min={3}
-					onChange={(v) => update({ visualizerBarCount: v })}
-					step={2}
-					value={value}
-				/>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-type GeneralMessageKey = Parameters<GeneralT>[0];
-
-const formatPercent = (v: number): string => `${v}%`;
-
-interface VizSliderControlProps {
-	defaultValue: number;
-	formatValue?: (v: number) => string;
-	labelKey: GeneralMessageKey;
-	max: number;
-	min: number;
-	onChange: (v: number) => void;
-	step: number;
-	t: GeneralT;
-	tooltipKey: GeneralMessageKey;
-	value: number;
-}
-
-/**
- * Shared presentational slider row for the per-shape visualizer knobs. Mirrors
- * `VisualizerBarCountControl` (label + reset + ElevatedSurface slider) so every
- * shape's controls read identically.
- */
-function VizSliderControl({
-	t,
-	labelKey,
-	tooltipKey,
-	value,
-	defaultValue,
-	onChange,
-	min,
-	max,
-	step,
-	formatValue,
-}: VizSliderControlProps): ReactNode {
-	const label = t(labelKey);
-	return (
-		<SettingField
-			defaultValue={defaultValue}
-			label={label}
-			onReset={() => onChange(defaultValue)}
-			tooltip={t(tooltipKey)}
-			value={value}
-		>
-			<ElevatedSurface inline>
-				<Slider
-					aria-label={label}
-					max={max}
-					min={min}
-					onChange={onChange}
-					step={step}
-					value={value}
-					{...(formatValue ? { formatValue } : {})}
-				/>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-interface VisualizerShapeControlsProps {
-	general: GeneralSettings | undefined;
-	t: GeneralT;
-	update: UpdateFn;
-}
-
-function VisualizerRadialControls({ t, general, update }: VisualizerShapeControlsProps): ReactNode {
-	const d = DEFAULT_SETTINGS.general;
-	return (
-		<>
-			<VizSliderControl
-				defaultValue={d.visualizerRadialDotCount}
-				labelKey="visualizerRadialDotCount"
-				max={48}
-				min={6}
-				onChange={(v) => update({ visualizerRadialDotCount: v })}
-				step={2}
-				t={t}
-				tooltipKey="visualizerRadialDotCountTooltip"
-				value={general?.visualizerRadialDotCount ?? d.visualizerRadialDotCount}
-			/>
-			<VizSliderControl
-				defaultValue={d.visualizerRadialRadius}
-				formatValue={formatPercent}
-				labelKey="visualizerRadialRadius"
-				max={90}
-				min={20}
-				onChange={(v) => update({ visualizerRadialRadius: v })}
-				step={1}
-				t={t}
-				tooltipKey="visualizerRadialRadiusTooltip"
-				value={general?.visualizerRadialRadius ?? d.visualizerRadialRadius}
-			/>
-		</>
-	);
-}
-
-function VisualizerGridControls({ t, general, update }: VisualizerShapeControlsProps): ReactNode {
-	const d = DEFAULT_SETTINGS.general;
-	return (
-		<>
-			<VizSliderControl
-				defaultValue={d.visualizerGridRows}
-				labelKey="visualizerGridRows"
-				max={8}
-				min={3}
-				onChange={(v) => update({ visualizerGridRows: v })}
-				step={1}
-				t={t}
-				tooltipKey="visualizerGridRowsTooltip"
-				value={general?.visualizerGridRows ?? d.visualizerGridRows}
-			/>
-			<VizSliderControl
-				defaultValue={d.visualizerGridColumns}
-				labelKey="visualizerGridColumns"
-				max={8}
-				min={3}
-				onChange={(v) => update({ visualizerGridColumns: v })}
-				step={1}
-				t={t}
-				tooltipKey="visualizerGridColumnsTooltip"
-				value={general?.visualizerGridColumns ?? d.visualizerGridColumns}
-			/>
-			<VizSliderControl
-				defaultValue={d.visualizerGridSpeed}
-				labelKey="visualizerGridSpeed"
-				max={10}
-				min={1}
-				onChange={(v) => update({ visualizerGridSpeed: v })}
-				step={1}
-				t={t}
-				tooltipKey="visualizerGridSpeedTooltip"
-				value={general?.visualizerGridSpeed ?? d.visualizerGridSpeed}
-			/>
-		</>
-	);
-}
-
-function VisualizerWaveControls({ t, general, update }: VisualizerShapeControlsProps): ReactNode {
-	const d = DEFAULT_SETTINGS.general;
-	return (
-		<>
-			<VizSliderControl
-				defaultValue={d.visualizerWaveLineWidth}
-				labelKey="visualizerWaveLineWidth"
-				max={6}
-				min={1}
-				onChange={(v) => update({ visualizerWaveLineWidth: v })}
-				step={1}
-				t={t}
-				tooltipKey="visualizerWaveLineWidthTooltip"
-				value={general?.visualizerWaveLineWidth ?? d.visualizerWaveLineWidth}
-			/>
-			<VizSliderControl
-				defaultValue={d.visualizerWaveSmoothing}
-				formatValue={formatPercent}
-				labelKey="visualizerWaveSmoothing"
-				max={100}
-				min={0}
-				onChange={(v) => update({ visualizerWaveSmoothing: v })}
-				step={5}
-				t={t}
-				tooltipKey="visualizerWaveSmoothingTooltip"
-				value={general?.visualizerWaveSmoothing ?? d.visualizerWaveSmoothing}
-			/>
-			<VizSliderControl
-				defaultValue={d.visualizerWaveColorShift}
-				formatValue={formatPercent}
-				labelKey="visualizerWaveColorShift"
-				max={100}
-				min={0}
-				onChange={(v) => update({ visualizerWaveColorShift: v })}
-				step={5}
-				t={t}
-				tooltipKey="visualizerWaveColorShiftTooltip"
-				value={general?.visualizerWaveColorShift ?? d.visualizerWaveColorShift}
-			/>
-		</>
-	);
-}
-
-function VisualizerAuraShapeControl({
-	t,
-	general,
-	update,
-}: VisualizerShapeControlsProps): ReactNode {
-	const value = general?.visualizerAuraShape ?? DEFAULT_SETTINGS.general.visualizerAuraShape;
-	const options = buildAuraShapeSwitcherOptions(t);
-	return (
-		<SettingField
-			isDefault={value === DEFAULT_SETTINGS.general.visualizerAuraShape}
-			label={t("visualizerAuraShape")}
-			onReset={() => pickAuraShape(DEFAULT_SETTINGS.general.visualizerAuraShape, update)}
-			tooltip={t("visualizerAuraShapeTooltip")}
-		>
-			<ElevatedSurface>
-				<Switcher
-					fullWidth
-					onChange={(v) => pickAuraShape(v, update)}
-					options={options}
-					value={value}
-				/>
-			</ElevatedSurface>
-		</SettingField>
-	);
-}
-
-function VisualizerAuraControls({ t, general, update }: VisualizerShapeControlsProps): ReactNode {
-	const d = DEFAULT_SETTINGS.general;
-	return (
-		<>
-			<VisualizerAuraShapeControl general={general} t={t} update={update} />
-			<VizSliderControl
-				defaultValue={d.visualizerAuraBlur}
-				formatValue={formatPercent}
-				labelKey="visualizerAuraBlur"
-				max={100}
-				min={0}
-				onChange={(v) => update({ visualizerAuraBlur: v })}
-				step={5}
-				t={t}
-				tooltipKey="visualizerAuraBlurTooltip"
-				value={general?.visualizerAuraBlur ?? d.visualizerAuraBlur}
-			/>
-			<VizSliderControl
-				defaultValue={d.visualizerAuraBloom}
-				formatValue={formatPercent}
-				labelKey="visualizerAuraBloom"
-				max={100}
-				min={0}
-				onChange={(v) => update({ visualizerAuraBloom: v })}
-				step={5}
-				t={t}
-				tooltipKey="visualizerAuraBloomTooltip"
-				value={general?.visualizerAuraBloom ?? d.visualizerAuraBloom}
-			/>
-			<VizSliderControl
-				defaultValue={d.visualizerAuraColorShift}
-				formatValue={formatPercent}
-				labelKey="visualizerAuraColorShift"
-				max={100}
-				min={0}
-				onChange={(v) => update({ visualizerAuraColorShift: v })}
-				step={5}
-				t={t}
-				tooltipKey="visualizerAuraColorShiftTooltip"
-				value={general?.visualizerAuraColorShift ?? d.visualizerAuraColorShift}
-			/>
-		</>
-	);
-}
-
-/** Renders the customization controls for whichever visualizer shape is active. */
-function VisualizerShapeControls({ t, general, update }: VisualizerShapeControlsProps): ReactNode {
-	switch (getVisualizerType(general)) {
-		case "radial":
-			return <VisualizerRadialControls general={general} t={t} update={update} />;
-		case "grid":
-			return <VisualizerGridControls general={general} t={t} update={update} />;
-		case "wave":
-			return <VisualizerWaveControls general={general} t={t} update={update} />;
-		case "aura":
-			return <VisualizerAuraControls general={general} t={t} update={update} />;
-		default:
-			return <VisualizerBarCountControl general={general} t={t} update={update} />;
-	}
-}
+	LanguageControl,
+	LiveTranscriptionDisplayControl,
+	OverlayControl,
+	OverlayModeControl,
+	VisualizerTypeControl,
+} from "./DisplayControls";
+import { VisualizerShapeControls } from "./VisualizerShapeControls";
 
 export function AppearanceSettingsPanel() {
 	const general = useSettingsStore((s) => s.settings.general);
-	const mainModelId = useSettingsStore((s) => s.settings.model?.model ?? "");
-	const realtimeModelId = useSettingsStore((s) => s.settings.model?.realtimeModel ?? "");
+	const modelSettings = useSettingsStore((s) => s.settings.model);
+	const mainModelId = modelSettings?.model ?? "";
+	const realtimeModelId = modelSettings?.realtimeModel ?? "";
 	const useMainModelForRealtime = useSettingsStore(
 		(s) => s.settings.quality?.useMainModelForRealtime ?? false,
 	);
@@ -580,6 +28,10 @@ export function AppearanceSettingsPanel() {
 	);
 	const update = useSettingsStore((s) => s.updateGeneralSettings);
 	const t = useTranslations("general");
+	const catalogLoaded = useCatalogStore((s) => s.isLoaded);
+	const catalogModels = useCatalogStore((s) => s.models);
+	const statesLoaded = useModelStateStore((s) => s.isLoaded);
+	const statesById = useModelStateStore((s) => s.statesById);
 
 	const locale = useLocaleStore((s) => s.locale);
 	const setLocale = useLocaleStore((s) => s.setLocale);
@@ -587,13 +39,27 @@ export function AppearanceSettingsPanel() {
 	const recordingMode = general?.recordingMode ?? "ptt";
 	const isListenMode = recordingMode === "listen";
 	const flags = computeDisplayFlags(isListenMode, general);
-	const suppressWordByWordPillPreview = shouldSuppressPillPreviewForWordByWordPaste({
-		llmDictationEnabled,
-		mainModelId,
-		realtimeModelId,
-		useMainModelForRealtime,
-		wordByWordPasting: general?.wordByWordPasting ?? false,
-	});
+	const suppressWordByWordPillPreview =
+		shouldSuppressPillPreviewForWordByWordPaste({
+			llmDictationEnabled,
+			mainModelId,
+			realtimeModelId,
+			useMainModelForRealtime,
+			wordByWordPasting: general?.wordByWordPasting ?? false,
+		});
+	const realtimeLanguageUnavailable =
+		resolveRealtimeLanguageGuardPatch({
+			catalogLoaded,
+			catalogModels,
+			currentMainModel: mainModelId,
+			currentRealtimeModel: realtimeModelId,
+			liveTranscriptionDisplay: "both",
+			realtimeEnabled: true,
+			sourceLanguageSelection: modelSettings,
+			statesById,
+			statesLoaded,
+			wordByWordPasting: false,
+		}) !== null;
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -601,7 +67,12 @@ export function AppearanceSettingsPanel() {
 				<LanguageControl locale={locale} setLocale={setLocale} t={t} />
 				<VisualizerTypeControl general={general} t={t} update={update} />
 				<VisualizerShapeControls general={general} t={t} update={update} />
-				<OverlayControl general={general} isListenMode={isListenMode} t={t} update={update} />
+				<OverlayControl
+					general={general}
+					isListenMode={isListenMode}
+					t={t}
+					update={update}
+				/>
 				<OverlayModeControl
 					general={general}
 					subDisabled={flags.subDisabled}
@@ -610,6 +81,7 @@ export function AppearanceSettingsPanel() {
 				/>
 				<LiveTranscriptionDisplayControl
 					general={general}
+					realtimeLanguageUnavailable={realtimeLanguageUnavailable}
 					suppressWordByWordPillPreview={suppressWordByWordPillPreview}
 					t={t}
 					update={update}

@@ -141,13 +141,23 @@ class TestModelCatalog:
         assert info.supports_language_detection is False
         assert info.languages == ["en"]
 
-    def test_nemo_canary_supports_language_detection(self, catalog: ModelCatalog) -> None:
+    def test_nemo_canary_does_not_advertise_language_detection(self, catalog: ModelCatalog) -> None:
         info = catalog.get("nemo-canary-1b-v2")
         assert info is not None
-        assert info.supports_language_detection is True
+        assert info.supports_language_detection is False
+        assert "de" in info.languages
         # 978 M params per NVIDIA's canary-1b-v2 model card (despite the "1B" name).
         assert info.size_label == "978M"
         assert info.param_count == 978_000_000
+
+    def test_runtime_language_ignored_models_do_not_advertise_language_detection(
+        self, catalog: ModelCatalog
+    ) -> None:
+        for model_id in ("nemo-parakeet-tdt-0.6b-v3", "dolphin-base-ctc"):
+            info = catalog.get(model_id)
+            assert info is not None
+            assert len(info.languages) > 1
+            assert info.supports_language_detection is False
 
     def test_gigaam_models_are_russian(self, catalog: ModelCatalog) -> None:
         info = catalog.get("gigaam-v3-e2e-ctc")

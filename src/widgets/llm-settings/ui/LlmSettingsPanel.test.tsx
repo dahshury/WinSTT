@@ -565,9 +565,15 @@ describe("LlmSettingsPanel helpers — DEFAULT_LLM / DEFAULT_FEATURE", () => {
     expect(helpers.DEFAULT_LLM.endpoint).toBe("http://localhost:11434");
     expect(helpers.DEFAULT_LLM.openrouterApiKey).toBe("");
     expect(helpers.DEFAULT_LLM.dictation.enabled).toBe(false);
+    expect(helpers.DEFAULT_LLM.dictation.dictionaryAutoAddEnabled).toBe(false);
     expect(helpers.DEFAULT_LLM.dictation.provider).toBe("ollama");
     expect(helpers.DEFAULT_LLM.dictation.model).toBe("");
-    expect(helpers.DEFAULT_LLM.dictation.presets).toEqual([{ key: "neutral" }]);
+    expect(helpers.DEFAULT_LLM.dictation.presets).toEqual([
+      { key: "neutral" },
+      { key: "reorder" },
+      { key: "restructure" },
+      { key: "rewordForClarity" },
+    ]);
     expect(helpers.DEFAULT_LLM.transforms.enabled).toBe(false);
     expect(helpers.DEFAULT_LLM.transforms.provider).toBe("ollama");
     expect(helpers.DEFAULT_LLM.transforms.model).toBe("");
@@ -575,13 +581,14 @@ describe("LlmSettingsPanel helpers — DEFAULT_LLM / DEFAULT_FEATURE", () => {
 
   test("DEFAULT_FEATURE is the shared per-feature baseline (no presets)", () => {
     expect(helpers.DEFAULT_FEATURE).toEqual({
+      dictionaryAutoAddEnabled: false,
       enabled: false,
       provider: "ollama",
       model: "",
       openrouterModel: "",
       openrouterFallbackModel: "",
       reasoningEffort: "medium",
-      thinkingEffort: "medium",
+      thinkingEffort: "off",
       verbosity: "medium",
       maxOutputTokens: null,
     });

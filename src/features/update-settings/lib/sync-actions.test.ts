@@ -15,7 +15,6 @@ import {
 	syncDiarizationParams,
 	syncModelParams,
 	syncQualityParams,
-	syncTextCorrectionParams,
 	syncToServer,
 } from "./sync-actions";
 
@@ -61,19 +60,19 @@ describe("shouldSendParam", () => {
 describe("sendIfChanged", () => {
 	test("invokes sttSetParameter when the gate says yes", () => {
 		const { deps, calls } = makeDeps();
-		sendIfChanged(deps, false, true, "filter_fillers", false);
-		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["filter_fillers", false] }]);
+		sendIfChanged(deps, false, true, "silence_timing", false);
+		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["silence_timing", false] }]);
 	});
 
 	test("is a no-op when the value is unchanged (incremental)", () => {
 		const { deps, calls } = makeDeps();
-		sendIfChanged(deps, false, false, "filter_fillers", false);
+		sendIfChanged(deps, false, false, "silence_timing", false);
 		expect(calls).toEqual([]);
 	});
 
 	test("is a no-op when the value is null on initial connect", () => {
 		const { deps, calls } = makeDeps();
-		sendIfChanged(deps, null, undefined, "filter_fillers", true);
+		sendIfChanged(deps, null, undefined, "silence_timing", true);
 		expect(calls).toEqual([]);
 	});
 });
@@ -284,41 +283,6 @@ describe("syncQualityParams", () => {
 	});
 });
 
-describe("syncTextCorrectionParams", () => {
-	test("pushes filter_fillers on initial connect (including false)", () => {
-		const { deps, calls } = makeDeps();
-		syncTextCorrectionParams(
-			deps,
-			settingsWith({ general: { filterFillers: false } as never }),
-			undefined
-		);
-		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["filter_fillers", false] }]);
-	});
-
-	test("pushes filter_fillers when the toggle flips (true → false)", () => {
-		const { deps, calls } = makeDeps();
-		syncTextCorrectionParams(
-			deps,
-			settingsWith({ general: { filterFillers: false } as never }),
-			settingsWith({ general: { filterFillers: true } as never })
-		);
-		expect(calls).toEqual([{ kind: "sttSetParameter", args: ["filter_fillers", false] }]);
-	});
-
-	test("does NOT push filter_fillers on a no-op (unchanged)", () => {
-		const { deps, calls } = makeDeps();
-		const same = settingsWith({ general: { filterFillers: false } as never });
-		syncTextCorrectionParams(deps, same, same);
-		expect(calls).toEqual([]);
-	});
-
-	test("no-ops when general is missing", () => {
-		const { deps, calls } = makeDeps();
-		syncTextCorrectionParams(deps, settingsWith({}), undefined);
-		expect(calls).toEqual([]);
-	});
-});
-
 describe("readDiarizationEnabled", () => {
 	test("returns the speakerDiarization flag when set", () => {
 		expect(
@@ -428,14 +392,14 @@ describe("resolveModelUnloadTimeoutSeconds", () => {
 		expect(resolveModelUnloadTimeoutSeconds(key)).toBe(seconds);
 	});
 
-	test("falls back to 300s default on unknown string", () => {
-		expect(resolveModelUnloadTimeoutSeconds("totally-bogus")).toBe(300);
+	test("falls back to 900s default on unknown string", () => {
+		expect(resolveModelUnloadTimeoutSeconds("totally-bogus")).toBe(900);
 	});
 
-	test("falls back to 300s default on non-string input", () => {
-		expect(resolveModelUnloadTimeoutSeconds(null)).toBe(300);
-		expect(resolveModelUnloadTimeoutSeconds(undefined)).toBe(300);
-		expect(resolveModelUnloadTimeoutSeconds(42)).toBe(300);
+	test("falls back to 900s default on non-string input", () => {
+		expect(resolveModelUnloadTimeoutSeconds(null)).toBe(900);
+		expect(resolveModelUnloadTimeoutSeconds(undefined)).toBe(900);
+		expect(resolveModelUnloadTimeoutSeconds(42)).toBe(900);
 	});
 });
 

@@ -24,7 +24,6 @@ import {
   emit as tauriEmit,
   listen as tauriListen,
 } from "@tauri-apps/api/event";
-import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 import { IPC } from "./ipc-channels";
 
 // Exhaustiveness guard for discriminated-union switches. Reaching it is a
@@ -194,9 +193,14 @@ const ROUTE: Partial<Record<string, Route>> = {
   },
   [IPC.STT_VAD_SENSITIVITY_ADAPTED]: {
     kind: "event",
-    event: "vad-sensitivity-adapted",
+    // Backend emits with the `stt:` namespace (listen_events.rs); the renderer
+    // MUST listen on the exact same string or the event silently never arrives.
+    event: "stt:vad-sensitivity-adapted",
   },
-  [IPC.STT_SPEAKER_SEGMENTS]: { kind: "event", event: "speaker-segments" },
+  [IPC.STT_SPEAKER_SEGMENTS]: {
+    kind: "event",
+    event: "stt:speaker-segments",
+  },
 
   // ── Model catalog / picker / download (slices 01/03) ──
   [IPC.STT_GET_MODEL_CATALOG]: { kind: "command", cmd: "list_models" },
@@ -315,6 +319,14 @@ const ROUTE: Partial<Record<string, Route>> = {
     kind: "command",
     cmd: "refresh_audio_devices",
   },
+  [IPC.AUDIO_GET_OUTPUT_DEVICES]: {
+    kind: "command",
+    cmd: "get_audio_output_devices",
+  },
+  [IPC.AUDIO_REFRESH_OUTPUT_DEVICES]: {
+    kind: "command",
+    cmd: "refresh_audio_output_devices",
+  },
   [IPC.AUDIO_DEVICES_CHANGED]: {
     kind: "event",
     event: "audio:devices-changed",
@@ -323,12 +335,29 @@ const ROUTE: Partial<Record<string, Route>> = {
     kind: "event",
     event: "audio:devicechange-detected",
   },
+  [IPC.AUDIO_OUTPUT_DEVICES_CHANGED]: {
+    kind: "event",
+    event: "audio:output-devices-changed",
+  },
   [IPC.AUDIO_SET_SELECTED_MICROPHONE]: {
     kind: "command",
     cmd: "set_selected_microphone",
   },
+  [IPC.AUDIO_START_MICROPHONE_LEVEL_MONITOR]: {
+    kind: "command",
+    cmd: "start_microphone_level_monitor",
+  },
+  [IPC.AUDIO_STOP_MICROPHONE_LEVEL_MONITOR]: {
+    kind: "command",
+    cmd: "stop_microphone_level_monitor",
+  },
+  [IPC.AUDIO_MICROPHONE_LEVELS]: {
+    kind: "event",
+    event: "audio:microphone-levels",
+  },
   [IPC.GPU_GET_INFO]: { kind: "command", cmd: "gpu_get_info" },
   [IPC.APP_GET_SYSTEM_LOCALE]: { kind: "plugin", plugin: "os:locale" },
+  [IPC.CONTEXT_LIST_APPS]: { kind: "command", cmd: "list_context_apps" },
 
   // ── Window controls / navigation ──
   [IPC.WINDOW_MINIMIZE]: { kind: "window", op: "minimize" },
@@ -351,6 +380,10 @@ const ROUTE: Partial<Record<string, Route>> = {
     kind: "command",
     cmd: "open_window",
     inject: { name: "settings" },
+  },
+  [IPC.SETTINGS_WINDOW_READY]: {
+    kind: "command",
+    cmd: "settings_window_ready",
   },
   [IPC.MODEL_PICKER_OPEN]: {
     kind: "command",
@@ -402,6 +435,12 @@ const ROUTE: Partial<Record<string, Route>> = {
     cmd: "open_window",
     inject: { name: "context-playground" },
   },
+  // The live/deep controls drive the Rust poll loop. The backend registers these
+  // commands under `#[cfg(any(debug_assertions, feature = "context-playground"))]`
+  // — i.e. exactly when the playground window can be opened. In a shipped build
+  // (no debug_assertions, feature off) the window never opens, so the renderer
+  // hook never fires these and the missing command ids are never invoked.
+  // SET_LIVE carries `{ enabled }` (start/stop polling); ARM_DEEP takes no args.
   [IPC.CONTEXT_PLAYGROUND_SET_LIVE]: {
     kind: "command",
     cmd: "context_playground_set_live",
@@ -697,8 +736,6 @@ const ROUTE: Partial<Record<string, Route>> = {
     kind: "plugin",
     plugin: "opener:custom-models",
   },
-  [IPC.ABOUT_GET_LICENSE]: { kind: "command", cmd: "about_get_license" },
-  [IPC.ABOUT_GET_NOTICES]: { kind: "command", cmd: "about_get_notices" },
   [IPC.ABOUT_GET_APP_INFO]: { kind: "command", cmd: "about_get_app_info" },
 
   // ── Updater (secure → plugin) ──
@@ -832,151 +869,27 @@ function reshape(channel: string, payload: unknown): unknown {
 }
 
 // ── Plugin dispatch ─────────────────────────────────────────────────────────────
-// Tauri's updater API is available in the renderer, while the ported WinSTT UI
-// expects Electron-style status events and a small status history. Keep that
-// compatibility layer here instead of inventing a Rust-side updater facade.
-const MAX_UPDATER_STATUS_HISTORY = 200;
-const updaterStatusHistory: UpdaterStatusEntry[] = [];
-let pendingUpdate: Update | null = null;
+// The Rust updater facade owns GitHub release selection, download/install state,
+// and the shared status history. This bridge keeps the ported Electron-style IPC
+// names stable for the renderer.
 let updaterCheckPromise: Promise<UpdaterResult> | null = null;
 
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-
-function copyDefinedNumber(
-  target: UpdaterStatusEntry,
-  source: UpdaterStatusEntryInput,
-  key: "bytesPerSecond" | "percent" | "total" | "transferred",
-): void {
-  const value = source[key];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    target[key] = value;
-  }
-}
-
-function copyDefinedString(
-  target: UpdaterStatusEntry,
-  source: UpdaterStatusEntryInput,
-  key: "message" | "version",
-): void {
-  const value = source[key];
-  if (value) {
-    target[key] = value;
-  }
-}
-
-function recordUpdaterStatus(
-  input: UpdaterStatusEntryInput,
-): UpdaterStatusEntry {
-  const entry: UpdaterStatusEntry = {
-    status: input.status,
-    timestamp: Date.now(),
-  };
-  copyDefinedNumber(entry, input, "bytesPerSecond");
-  copyDefinedNumber(entry, input, "percent");
-  copyDefinedNumber(entry, input, "total");
-  copyDefinedNumber(entry, input, "transferred");
-  copyDefinedString(entry, input, "message");
-  copyDefinedString(entry, input, "version");
-
-  updaterStatusHistory.push(entry);
-  if (updaterStatusHistory.length > MAX_UPDATER_STATUS_HISTORY) {
-    updaterStatusHistory.splice(
-      0,
-      updaterStatusHistory.length - MAX_UPDATER_STATUS_HISTORY,
-    );
-  }
-
-  void evt.emit("updater:status", entry).catch((error) => {
-    console.error("[ipc-adapter] failed to emit updater status:", error);
-  });
-  return entry;
-}
-
-function makeDownloadProgressRecorder(version: string) {
-  let transferred = 0;
-  let total: number | undefined;
-  let lastTransferred = 0;
-  let lastAt = performance.now();
-
-  return (event: DownloadEvent): void => {
-    if (event.event === "Started") {
-      total = event.data.contentLength;
-      transferred = 0;
-      lastTransferred = 0;
-      lastAt = performance.now();
-      recordUpdaterStatus({
-        status: "downloading",
-        version,
-        transferred,
-        ...(typeof total === "number" ? { percent: 0, total } : {}),
-      });
-      return;
-    }
-
-    if (event.event === "Progress") {
-      transferred += event.data.chunkLength;
-      const now = performance.now();
-      const elapsedSeconds = Math.max((now - lastAt) / 1000, 0.001);
-      const bytesPerSecond = (transferred - lastTransferred) / elapsedSeconds;
-      lastAt = now;
-      lastTransferred = transferred;
-      recordUpdaterStatus({
-        bytesPerSecond,
-        status: "downloading",
-        transferred,
-        version,
-        ...(typeof total === "number"
-          ? { percent: (transferred / total) * 100, total }
-          : {}),
-      });
-      return;
-    }
-
-    recordUpdaterStatus({
-      status: "downloading",
-      transferred,
-      version,
-      ...(typeof total === "number" ? { percent: 100, total } : {}),
-    });
-  };
-}
-
-async function checkAndDownloadUpdate(): Promise<UpdaterResult> {
+async function checkAndDownloadUpdate(
+  includePrereleaseUpdates?: boolean,
+): Promise<UpdaterResult> {
   if (updaterCheckPromise) {
     return updaterCheckPromise;
   }
 
   updaterCheckPromise = (async () => {
-    try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      recordUpdaterStatus({ status: "checking" });
-      const update = await check();
-      if (!update) {
-        recordUpdaterStatus({ status: "not-available" });
-        return { triggered: true };
-      }
-
-      if (pendingUpdate) {
-        void pendingUpdate.close().catch(() => {
-          // Best effort: the previous pending resource is obsolete.
-        });
-      }
-      pendingUpdate = null;
-      recordUpdaterStatus({ status: "available", version: update.version });
-      await update.download(makeDownloadProgressRecorder(update.version));
-      pendingUpdate = update;
-      recordUpdaterStatus({ status: "downloaded", version: update.version });
-      return { triggered: true };
-    } catch (error) {
-      const message = toErrorMessage(error);
-      recordUpdaterStatus({ message, status: "error" });
-      return { reason: message, triggered: false };
-    }
+    const payload =
+      includePrereleaseUpdates === undefined
+        ? {}
+        : { includePrereleaseUpdates };
+    return core.invoke<UpdaterResult>(
+      "winstt_updater_check_and_download",
+      payload,
+    );
   })();
 
   try {
@@ -987,37 +900,7 @@ async function checkAndDownloadUpdate(): Promise<UpdaterResult> {
 }
 
 async function installPendingUpdateAndRelaunch(): Promise<UpdaterResult> {
-  if (!pendingUpdate) {
-    const checkResult = await checkAndDownloadUpdate();
-    if (!checkResult.triggered) {
-      return checkResult;
-    }
-  }
-
-  const update = pendingUpdate;
-  if (!update) {
-    return { reason: "no-update-downloaded", triggered: false };
-  }
-
-  pendingUpdate = null;
-  window.setTimeout(() => {
-    void (async () => {
-      try {
-        await update.install();
-        const proc = await import("@tauri-apps/plugin-process");
-        await proc.relaunch();
-      } catch (error) {
-        pendingUpdate = update;
-        recordUpdaterStatus({
-          message: toErrorMessage(error),
-          status: "error",
-          version: update.version,
-        });
-      }
-    })();
-  }, 0);
-
-  return { triggered: true };
+  return core.invoke<UpdaterResult>("winstt_updater_install");
 }
 
 async function wireUpdaterCheckTrigger(): Promise<void> {
@@ -1085,12 +968,16 @@ async function callPlugin(
       }
     }
     case "updater:status-history":
-      return [...updaterStatusHistory];
+      return core.invoke<UpdaterStatusEntry[]>(
+        "winstt_updater_get_status_history",
+      );
     case "updater:clear-status-history":
-      updaterStatusHistory.splice(0, updaterStatusHistory.length);
-      return { cleared: true };
+      return core.invoke("winstt_updater_clear_status_history");
     case "updater:check-now":
-      return checkAndDownloadUpdate();
+      return checkAndDownloadUpdate(
+        (args as { includePrereleaseUpdates?: boolean } | undefined)
+          ?.includePrereleaseUpdates,
+      );
     case "updater:quit-and-install":
       return installPendingUpdateAndRelaunch();
     case "autostart:set": {
@@ -1221,13 +1108,27 @@ const CRITICAL_SEND_CHANNELS: ReadonlySet<string> = new Set([
 // ── Install ──────────────────────────────────────────────────────────────────
 let installed = false;
 
+function hasTauriRuntime(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const maybeWindow = window as Window & {
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return maybeWindow.__TAURI_INTERNALS__ != null;
+}
+
 /**
  * Install the `window.nativeBridge` polyfill. SYNCHRONOUS + idempotent so it
  * runs before React's first render fires the IPC hooks. No-ops outside a
- * browser context.
+ * browser context or a real Tauri webview; plain Vite/browser mode relies on
+ * ipc-client fallbacks plus the dev settings bridge instead.
  */
 export function installNativeBridge(): void {
   if (installed || typeof window === "undefined") {
+    return;
+  }
+  if (!hasTauriRuntime()) {
     return;
   }
   installed = true;

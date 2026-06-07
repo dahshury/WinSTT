@@ -135,13 +135,14 @@ fn position_tray_menu(
     anchor: (f64, f64),
 ) -> Result<(), String> {
     // Use the window's live logical inner size so the clamp matches what the
-    // renderer's ResizeObserver has reported (the menu is `w-fit` and reports
-    // its real size right after mount via TRAY_MENU_RESIZE → resize_window).
+    // renderer's ResizeObserver has reported (the menu is width-capped —
+    // `w-max max-w-[…]` — and reports its real size right after mount via
+    // TRAY_MENU_RESIZE → resize_window).
     let scale = window.scale_factor().unwrap_or(1.0);
     let menu_size = window
         .inner_size()
         .map(|s| (s.width as f64 / scale, s.height as f64 / scale))
-        .unwrap_or((280.0, 360.0));
+        .unwrap_or((192.0, 360.0));
 
     let work_area = monitor_rect_for_point(app, anchor);
     let (px, py) = clamp_to_work_area(anchor, menu_size, work_area);

@@ -2,15 +2,18 @@ import { useEffect } from "react";
 import { useCatalogStore, useModelStateStore } from "@/entities/model-catalog";
 import { useSettingsStore } from "@/entities/setting";
 import { isRealtimeEnabled } from "@/shared/lib/realtime-enabled";
-import { resolveRealtimePreviewFallbackPatch } from "../model/realtime-preview-fallback";
+import {
+  resolveRealtimeLanguageGuardPatch,
+  resolveRealtimePreviewFallbackPatch,
+} from "../model/realtime-preview-fallback";
 
 /**
  * Global guard for the optional separate realtime model.
  *
  * Live transcription itself is enabled by display settings. If there is no
  * cached compatible native-streaming realtime model, we clear the realtime
- * slot and let the backend preview through the main model's chunked/window
- * path instead of selecting or downloading a model implicitly.
+ * slot; if the selected source-language set cannot be served by any cached
+ * realtime path, the language guard disables the realtime-consuming settings.
  */
 export function useRealtimePreviewFallback(): void {
   const settingsLoaded = useSettingsStore((s) => s.isLoaded);
@@ -28,6 +31,9 @@ export function useRealtimePreviewFallback(): void {
     (s) => s.settings.llm.dictation.enabled,
   );
   const updateModelSettings = useSettingsStore((s) => s.updateModelSettings);
+  const updateGeneralSettings = useSettingsStore(
+    (s) => s.updateGeneralSettings,
+  );
   const catalogLoaded = useCatalogStore((s) => s.isLoaded);
   const catalogModels = useCatalogStore((s) => s.models);
   const statesLoaded = useModelStateStore((s) => s.isLoaded);
@@ -56,21 +62,43 @@ export function useRealtimePreviewFallback(): void {
       currentMainModel: model.model,
       currentRealtimeModel: model.realtimeModel,
       realtimeEnabled,
+      sourceLanguageSelection: model,
       statesById,
       statesLoaded,
     });
     if (patch) {
       updateModelSettings(patch);
     }
+    const generalPatch = resolveRealtimeLanguageGuardPatch({
+      catalogLoaded,
+      catalogModels,
+      currentMainModel: model.model,
+      currentRealtimeModel: patch?.realtimeModel ?? model.realtimeModel,
+      liveTranscriptionDisplay,
+      realtimeEnabled,
+      sourceLanguageSelection: model,
+      statesById,
+      statesLoaded,
+      wordByWordPasting,
+    });
+    if (generalPatch) {
+      updateGeneralSettings(generalPatch);
+    }
   }, [
     catalogLoaded,
     catalogModels,
+    liveTranscriptionDisplay,
     model.model,
+    model.autoDetectLanguage,
+    model.language,
+    model.languageCandidates,
     model.realtimeModel,
     realtimeEnabled,
     settingsLoaded,
     statesById,
     statesLoaded,
+    updateGeneralSettings,
     updateModelSettings,
+    wordByWordPasting,
   ]);
 }

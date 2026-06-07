@@ -25,3 +25,8 @@ export { SttModelSelectorTriggerButton } from "./stt/ui/SttModelSelectorTrigger"
 export { TtsModelCard, type TtsModelCardProps } from "./tts/ui/TtsModelCard";
 export { TtsModelSelector, type TtsModelSelectorProps } from "./tts/ui/TtsModelSelector";
 export { OpenRouterModelSelector } from "./ui/OpenRouterModelSelector";
+export {
+	ReasoningEffortDropdown,
+	type ReasoningEffortDropdownProps,
+} from "./ui/ReasoningEffortDropdown";
+export type { ReasoningEffort } from "./config/model-selector-options";

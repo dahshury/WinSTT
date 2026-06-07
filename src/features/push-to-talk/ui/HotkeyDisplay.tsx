@@ -1,5 +1,6 @@
 import { useTranslations } from "use-intl";
 import { formatKeyName } from "@/shared/lib/format-key-name";
+import { Elevated } from "@/shared/lib/surface";
 import type { InputGroupTone } from "@/shared/ui/input-group";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { FOOTER_TOOLTIP_DELAY, resolveTone, TONE_TEXT } from "../lib/hotkey-display-helpers";
@@ -17,7 +18,10 @@ interface HotkeyDisplayProps {
 	side?: "top" | "bottom";
 }
 
-export function HotkeyDisplay({ isConnected, side = "top" }: HotkeyDisplayProps) {
+export function HotkeyDisplay({
+	isConnected,
+	side = "top",
+}: HotkeyDisplayProps) {
 	const isPressed = useHotkeyStore((s) => s.isPressed);
 	const accelerator = useHotkeyStore((s) => s.accelerator);
 	const keys = accelerator.split("+").map(formatKeyName);
@@ -29,28 +33,39 @@ export function HotkeyDisplay({ isConnected, side = "top" }: HotkeyDisplayProps)
 
 	return (
 		<Tooltip content={tooltipContent} delay={FOOTER_TOOLTIP_DELAY} side={side}>
-			<div className="inline-flex cursor-help">
+			<Elevated
+				className={`inline-flex h-4 w-auto max-w-[min(48vw,18rem)] cursor-help items-center overflow-hidden rounded-xs px-1.5 ring-1 transition-colors duration-150 ${
+					showPulse ? "ring-accent/35" : "ring-divider/60"
+				}`}
+				data-disconnected={!isConnected || undefined}
+				data-pressed={showPulse || undefined}
+				offset={1}
+				shadowLevel={1}
+			>
 				<kbd
 					aria-label={tooltipContent}
-					className={`inline-flex items-center gap-1 bg-transparent px-1 py-[1px] font-mono text-2xs leading-none ${TONE_TEXT[tone]}`}
+					className={`inline-flex min-w-0 items-center gap-1 overflow-hidden bg-transparent font-mono text-2xs leading-none ${TONE_TEXT[tone]}`}
 					data-disconnected={!isConnected || undefined}
 					data-pressed={showPulse || undefined}
 					data-tone={tone}
 				>
 					{keys.map((key, i) => (
-						<span className="flex items-center gap-1" key={key}>
+						<span
+							className="flex min-w-0 items-center gap-1"
+							key={`${key}-${i}`}
+						>
 							{i > 0 && (
 								<span aria-hidden className="text-[8px] text-foreground-dim">
 									{PLUS_GLYPH}
 								</span>
 							)}
-							<kbd
-								className={`rounded-[4px] bg-surface-1/60 px-1 py-px ring-1 ring-divider/60 ${
-									isConnected ? "" : "line-through"
+							<span
+								className={`inline-flex min-w-0 items-center justify-center bg-transparent p-0 font-medium shadow-none ring-0 ${
+									isConnected ? "" : "line-through decoration-foreground-dim/80"
 								}`}
 							>
 								{key}
-							</kbd>
+							</span>
 						</span>
 					))}
 					{showPulse && (
@@ -60,7 +75,7 @@ export function HotkeyDisplay({ isConnected, side = "top" }: HotkeyDisplayProps)
 						/>
 					)}
 				</kbd>
-			</div>
+			</Elevated>
 		</Tooltip>
 	);
 }

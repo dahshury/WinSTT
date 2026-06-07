@@ -1,11 +1,13 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { Mic01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "use-intl";
 import {
   buildInputDeviceOptions,
+  MicrophoneLevelMeter,
   useInputDevices,
+  useMicrophoneLevels,
 } from "@/entities/audio-device";
 import { IPC } from "@/shared/api/ipc-channels";
 import {
@@ -96,11 +98,19 @@ export function DevicePickerWindow() {
   const defaultLabel = defaultDevice
     ? `${t("systemDefault")} (${defaultDevice.name})`
     : t("systemDefault");
-  const { deviceOptions, currentDeviceId } = buildInputDeviceOptions(
-    devices,
-    inputDeviceIndex,
-    defaultLabel,
-    defaultDevice?.name,
+  const { deviceOptions, currentDeviceId } = useMemo(
+    () =>
+      buildInputDeviceOptions(
+        devices,
+        inputDeviceIndex,
+        defaultLabel,
+        defaultDevice?.name,
+      ),
+    [defaultDevice?.name, defaultLabel, devices, inputDeviceIndex],
+  );
+  const levels = useMicrophoneLevels(
+    true,
+    deviceOptions.map((opt) => opt.id),
   );
 
   return (
@@ -153,11 +163,15 @@ export function DevicePickerWindow() {
                 {active ? (
                   <HugeiconsIcon
                     aria-hidden="true"
-                    className="ms-auto shrink-0 text-accent"
+                    className="shrink-0 text-accent"
                     icon={Tick02Icon}
                     size={16}
                   />
                 ) : null}
+                <MicrophoneLevelMeter
+                  active={active}
+                  level={levels[opt.id] ?? 0}
+                />
               </BaseButton>
             );
           })}

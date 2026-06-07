@@ -5,10 +5,10 @@
   "identifier": "com.winstt.winstt",
   "build": {
     "beforeDevCommand": {
-      "script": "bun tools/tauri-vite-dev.ts",
+      "script": "node tools/tauri-vite-dev.ts",
       "cwd": ".."
     },
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
@@ -31,6 +31,8 @@
     "createUpdaterArtifacts": true,
     "targets": ["nsis", "appimage", "deb", "rpm"],
     "resources": [
+      "../LICENSE",
+      "../THIRD_PARTY_NOTICES.md",
       "resources/*.json",
       "resources/*.png",
       "resources/*.wav",

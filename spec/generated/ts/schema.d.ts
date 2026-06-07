@@ -318,7 +318,7 @@ export interface components {
             message: string;
         };
         /** @enum {string} */
-        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index" | "end_of_sentence_detection_pause" | "mid_sentence_detection_pause" | "unknown_sentence_detection_pause" | "initial_prompt" | "initial_prompt_realtime" | "onnx_quantization" | "translate_to_english" | "model_unload_timeout_seconds" | "webrtc_sensitivity" | "silero_deactivity_detection" | "always_on_microphone" | "lazy_stream_close" | "lazy_close_timeout_seconds" | "filter_fillers";
+        AllowedParameter: "model" | "language" | "silero_sensitivity" | "wake_word_activation_delay" | "post_speech_silence_duration" | "listen_start" | "recording_stop_time" | "last_transcription_bytes" | "last_transcription_bytes_b64" | "speech_end_silence_start" | "is_recording" | "use_wake_words" | "silence_timing" | "silence_endpoint_enabled" | "smart_endpoint_enabled" | "detection_speed" | "input_device_index" | "end_of_sentence_detection_pause" | "mid_sentence_detection_pause" | "unknown_sentence_detection_pause" | "initial_prompt" | "initial_prompt_realtime" | "onnx_quantization" | "translate_to_english" | "model_unload_timeout_seconds" | "webrtc_sensitivity" | "silero_deactivity_detection" | "always_on_microphone" | "lazy_stream_close" | "lazy_close_timeout_seconds";
         /** @enum {string} */
         AllowedMethod: "set_microphone" | "abort" | "stop" | "clear_audio_queue" | "wakeup" | "shutdown" | "text" | "request_diarization_toggle";
         /** @enum {string} */
@@ -346,7 +346,7 @@ export interface components {
         /** @enum {string} */
         TranscriberBackend: "faster_whisper" | "onnx_asr";
         /** @enum {string} */
-        ModelFamily: "whisper" | "lite-whisper" | "nemo" | "gigaam" | "kaldi" | "t-one" | "moonshine" | "cohere" | "sense_voice" | "dolphin" | "custom";
+        ModelFamily: "whisper" | "lite-whisper" | "nemo" | "granite" | "gigaam" | "kaldi" | "t-one" | "moonshine" | "cohere" | "sense_voice" | "dolphin" | "custom";
         ModelInfo: {
             id: string;
             displayName: string;
@@ -461,8 +461,6 @@ export interface components {
             earlyTranscriptionOnSilence?: number;
             batchSize?: number;
             realtimeBatchSize?: number;
-            ensureSentenceStartingUppercase?: boolean;
-            ensureSentenceEndsWithPeriod?: boolean;
             /** @description Use DistilBERT classifier for intelligent speech endpoint detection */
             smartEndpoint?: boolean;
             /**
@@ -690,11 +688,11 @@ export interface components {
              */
             openrouterFallbackModel: string;
             /**
-             * @description OpenRouter `reasoning.effort` parameter. Only sent when the selected model advertises reasoning support via `supported_parameters`.
+             * @description OpenRouter reasoning effort. Only sent when the selected model advertises reasoning support via `supported_parameters`. `off` disables reasoning entirely (`reasoning: { enabled: false }`); the others map to `reasoning.effort`.
              * @default medium
              * @enum {string}
              */
-            reasoningEffort: "low" | "medium" | "high";
+            reasoningEffort: "off" | "low" | "medium" | "high";
             /**
              * @description OpenRouter `verbosity` parameter. Only sent when the selected model advertises support via `supported_parameters`.
              * @default medium

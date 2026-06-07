@@ -28,6 +28,7 @@ function resetStore(): void {
 			ephemeral: null,
 			isRecordingActive: false,
 			isTranscribing: false,
+			recordingSessionId: 0,
 			transcribingStartedAt: null,
 		},
 		false,
@@ -67,7 +68,9 @@ class AddFinalCmd implements fc.Command<Model, Real> {
 			throw new Error(`items exceeded cap: ${state.items.length}`);
 		}
 		if (state.items.length !== m.itemTexts.length) {
-			throw new Error(`length mismatch real=${state.items.length} model=${m.itemTexts.length}`);
+			throw new Error(
+				`length mismatch real=${state.items.length} model=${m.itemTexts.length}`,
+			);
 		}
 		if (state.currentRealtime !== "") {
 			throw new Error("addFinalSentence did not clear currentRealtime");
@@ -224,6 +227,9 @@ class ClearAllCmd implements fc.Command<Model, Real> {
 		if (s.isTranscribing !== false || s.transcribingStartedAt !== null) {
 			throw new Error("clearAll did not clear transcribing state");
 		}
+		if (s.recordingSessionId !== 0) {
+			throw new Error("clearAll did not reset recordingSessionId");
+		}
 	}
 	toString(): string {
 		return "clearAll()";
@@ -249,7 +255,10 @@ class AttachSegmentsCmd implements fc.Command<Model, Real> {
 			}
 		} else {
 			const last = after.at(-1);
-			if (!last || JSON.stringify(last.speakerSegments) !== JSON.stringify(this.segments)) {
+			if (
+				!last ||
+				JSON.stringify(last.speakerSegments) !== JSON.stringify(this.segments)
+			) {
 				throw new Error("segments not attached to last item");
 			}
 			if (after.length !== m.itemTexts.length) {
@@ -278,7 +287,9 @@ const commandsArb = fc.commands(
 		fc.string({ maxLength: 16 }).map((s) => new ShowEphemeralCmd(s)),
 		fc.constant(new ClearEphemeralCmd()),
 		fc.constant(new ClearAllCmd()),
-		fc.array(segmentArb, { maxLength: 5 }).map((segs) => new AttachSegmentsCmd(segs)),
+		fc
+			.array(segmentArb, { maxLength: 5 })
+			.map((segs) => new AttachSegmentsCmd(segs)),
 	],
 	{ maxCommands: 40 },
 );

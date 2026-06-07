@@ -1,0 +1,267 @@
+import type { ReactNode } from "react";
+import { DEFAULT_SETTINGS, SettingField } from "@/entities/setting";
+import { DEFAULT_LOCALE, type Locale } from "@/shared/i18n";
+import { CheckboxGroup, CheckboxItem } from "@/shared/ui/checkbox-group";
+import { ElevatedSurface } from "@/shared/ui/elevated-surface";
+import { SearchableSelect } from "@/shared/ui/searchable-select";
+import { Slider } from "@/shared/ui/slider";
+import { Switcher } from "@/shared/ui/switcher";
+import {
+	buildOverlayModeSwitcherOptions,
+	buildVisualizerTypeSwitcherOptions,
+	effectiveLiveDisplay,
+	flagsToLiveDisplay,
+	type LiveTranscriptionDisplayValue,
+	liveDisplayToFlags,
+	liveOverlayDisabled,
+	overlaySliderLabel,
+	overlaySliderMax,
+	overlaySliderPatch,
+	overlaySliderToIndex,
+	pickLocale,
+	pickVisualizerType,
+} from "../lib/appearance-settings-helpers";
+import {
+	type GeneralSettings,
+	type GeneralT,
+	LANGUAGE_OPTIONS,
+	type UpdateFn,
+} from "./appearance-settings-types";
+
+interface LanguageControlProps {
+	locale: Locale;
+	setLocale: (locale: Locale) => void;
+	t: GeneralT;
+}
+
+export function LanguageControl({
+	locale,
+	setLocale,
+	t,
+}: LanguageControlProps): ReactNode {
+	return (
+		<SettingField
+			isDefault={locale === DEFAULT_LOCALE}
+			label={t("language")}
+			layout="row"
+			onReset={() => setLocale(DEFAULT_LOCALE)}
+			tooltip={t("languageTooltip")}
+		>
+			<ElevatedSurface className="w-52" inline>
+				<SearchableSelect
+					onChange={(v) => pickLocale(v, setLocale)}
+					options={LANGUAGE_OPTIONS}
+					value={locale}
+				/>
+			</ElevatedSurface>
+		</SettingField>
+	);
+}
+
+interface OverlayControlProps {
+	general: GeneralSettings | undefined;
+	isListenMode: boolean;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+export function OverlayControl({
+	t,
+	isListenMode,
+	general,
+	update,
+}: OverlayControlProps): ReactNode {
+	const idx = overlaySliderToIndex(general);
+	return (
+		<SettingField
+			disabled={isListenMode}
+			hideReset={isListenMode}
+			isDefault={idx === overlaySliderToIndex(DEFAULT_SETTINGS.general)}
+			label={t("showRecordingOverlay")}
+			onReset={() =>
+				update(
+					overlaySliderPatch(
+						overlaySliderToIndex(DEFAULT_SETTINGS.general),
+						general,
+					),
+				)
+			}
+			tooltip={t("showRecordingOverlayTooltip")}
+		>
+			<ElevatedSurface
+				className={isListenMode ? "pointer-events-none opacity-40" : undefined}
+				inline
+			>
+				<Slider
+					aria-label={t("showRecordingOverlay")}
+					formatValue={(v) => overlaySliderLabel(v, t)}
+					max={overlaySliderMax()}
+					min={0}
+					onChange={(v) => update(overlaySliderPatch(v, general))}
+					step={1}
+					value={idx}
+				/>
+			</ElevatedSurface>
+		</SettingField>
+	);
+}
+
+interface OverlayModeControlProps {
+	general: GeneralSettings | undefined;
+	subDisabled: boolean;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+export function OverlayModeControl({
+	t,
+	subDisabled,
+	general,
+	update,
+}: OverlayModeControlProps): ReactNode {
+	const value = general?.overlayMode ?? DEFAULT_SETTINGS.general.overlayMode;
+	const options = buildOverlayModeSwitcherOptions(t);
+	const onChange = (next: string): void => {
+		if (next === "floating-bottom" || next === "dynamic-island") {
+			update({ overlayMode: next });
+		}
+	};
+	return (
+		<SettingField
+			hideReset={subDisabled}
+			isDefault={value === DEFAULT_SETTINGS.general.overlayMode}
+			label={t("overlayMode")}
+			onReset={() =>
+				update({ overlayMode: DEFAULT_SETTINGS.general.overlayMode })
+			}
+			tooltip={t("overlayModeTooltip")}
+		>
+			<ElevatedSurface
+				className={subDisabled ? "pointer-events-none opacity-40" : undefined}
+			>
+				<Switcher
+					fullWidth
+					onChange={onChange}
+					options={options}
+					value={value}
+				/>
+			</ElevatedSurface>
+		</SettingField>
+	);
+}
+
+interface LiveTranscriptionDisplayControlProps {
+	general: GeneralSettings | undefined;
+	realtimeLanguageUnavailable: boolean;
+	suppressWordByWordPillPreview: boolean;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+export function LiveTranscriptionDisplayControl({
+	t,
+	general,
+	realtimeLanguageUnavailable,
+	suppressWordByWordPillPreview,
+	update,
+}: LiveTranscriptionDisplayControlProps): ReactNode {
+	const overlayDisabled = liveOverlayDisabled(general);
+	const pillDisabled =
+		realtimeLanguageUnavailable ||
+		overlayDisabled ||
+		suppressWordByWordPillPreview;
+	const stored: LiveTranscriptionDisplayValue =
+		general?.liveTranscriptionDisplay ?? "both";
+	const value = realtimeLanguageUnavailable
+		? "none"
+		: effectiveLiveDisplay(stored, overlayDisabled);
+	const { inApp, inOverlay: storedInOverlay } = liveDisplayToFlags(value);
+	const inOverlay = suppressWordByWordPillPreview ? false : storedInOverlay;
+	const checkedIndices = new Set<number>();
+	if (inApp) {
+		checkedIndices.add(0);
+	}
+	if (inOverlay) {
+		checkedIndices.add(1);
+	}
+	const setInApp = (next: boolean): void => {
+		if (realtimeLanguageUnavailable) {
+			return;
+		}
+		update({ liveTranscriptionDisplay: flagsToLiveDisplay(next, inOverlay) });
+	};
+	const setInOverlay = (next: boolean): void => {
+		if (pillDisabled) {
+			return;
+		}
+		update({ liveTranscriptionDisplay: flagsToLiveDisplay(inApp, next) });
+	};
+	return (
+		<SettingField
+			disabled={realtimeLanguageUnavailable}
+			hideReset={realtimeLanguageUnavailable}
+			isDefault={stored === DEFAULT_SETTINGS.general.liveTranscriptionDisplay}
+			label={t("liveTranscriptionDisplay")}
+			onReset={() =>
+				update({
+					liveTranscriptionDisplay:
+						DEFAULT_SETTINGS.general.liveTranscriptionDisplay,
+				})
+			}
+			tooltip={t("liveTranscriptionDisplayTooltip")}
+		>
+			<ElevatedSurface>
+				<CheckboxGroup checkedIndices={checkedIndices} className="w-full">
+					<CheckboxItem
+						checked={inApp}
+						disabled={realtimeLanguageUnavailable}
+						index={0}
+						label={t("liveTranscriptionDisplayInApp")}
+						onToggle={() => setInApp(!inApp)}
+					/>
+					<CheckboxItem
+						checked={inOverlay}
+						disabled={pillDisabled}
+						index={1}
+						label={t("liveTranscriptionDisplayInPill")}
+						onToggle={() => setInOverlay(!inOverlay)}
+					/>
+				</CheckboxGroup>
+			</ElevatedSurface>
+		</SettingField>
+	);
+}
+
+interface VisualizerTypeControlProps {
+	general: GeneralSettings | undefined;
+	t: GeneralT;
+	update: UpdateFn;
+}
+
+export function VisualizerTypeControl({
+	t,
+	general,
+	update,
+}: VisualizerTypeControlProps): ReactNode {
+	const value = general?.visualizerType ?? "bar";
+	const options = buildVisualizerTypeSwitcherOptions(t);
+	return (
+		<SettingField
+			isDefault={value === DEFAULT_SETTINGS.general.visualizerType}
+			label={t("visualizerType")}
+			onReset={() =>
+				pickVisualizerType(DEFAULT_SETTINGS.general.visualizerType, update)
+			}
+			tooltip={t("visualizerTypeTooltip")}
+		>
+			<ElevatedSurface>
+				<Switcher
+					fullWidth
+					onChange={(v) => pickVisualizerType(v, update)}
+					options={options}
+					value={value}
+				/>
+			</ElevatedSurface>
+		</SettingField>
+	);
+}

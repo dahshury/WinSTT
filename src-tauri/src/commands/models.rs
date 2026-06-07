@@ -144,7 +144,7 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
     }
 
     // Load the model. On failure, revert the persisted selection.
-    if let Err(e) = transcription_manager.load_model(model_id) {
+    if let Err(e) = transcription_manager.load_model_blocking(model_id) {
         let mut settings = get_settings(app);
         settings.selected_model = old_model;
         write_settings(app, settings);

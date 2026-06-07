@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { computePillReveal } from "./OverlayPage";
+import { computePillReveal, computeStickyPillReveal } from "./OverlayPage";
 
 // `computePillReveal` is the gate that decides WHEN the overlay pill
 // (floating-bottom chip/bubble OR dynamic island) becomes visible during a
@@ -24,11 +24,15 @@ describe("computePillReveal", () => {
 	});
 
 	test("recording + real VAD speech onset → revealed (snappy, lands on speech)", () => {
-		expect(computePillReveal({ ...BASE, isRecordingActive: true, isSpeaking: true })).toBe(true);
+		expect(
+			computePillReveal({ ...BASE, isRecordingActive: true, isSpeaking: true }),
+		).toBe(true);
 	});
 
 	test("recording + transcribed words → revealed (fallback when VAD is quiet)", () => {
-		expect(computePillReveal({ ...BASE, isRecordingActive: true, hasText: true })).toBe(true);
+		expect(
+			computePillReveal({ ...BASE, isRecordingActive: true, hasText: true }),
+		).toBe(true);
 	});
 
 	test("LLM thinking (recording already ended) → revealed", () => {
@@ -61,5 +65,43 @@ describe("computePillReveal", () => {
 
 	test("stale transcribing without an armed recording stays hidden", () => {
 		expect(computePillReveal({ ...BASE, isTranscribing: true })).toBe(false);
+	});
+});
+
+describe("computeStickyPillReveal", () => {
+	test("keeps a revealed pill mounted through a brief same-session drop", () => {
+		expect(
+			computeStickyPillReveal({
+				latchSessionId: 2,
+				latched: true,
+				recordingSessionId: 2,
+				sessionActive: true,
+				sessionShouldShow: false,
+			}),
+		).toBe(true);
+	});
+
+	test("does not reuse a revealed latch from a previous recording session", () => {
+		expect(
+			computeStickyPillReveal({
+				latchSessionId: 1,
+				latched: true,
+				recordingSessionId: 2,
+				sessionActive: true,
+				sessionShouldShow: false,
+			}),
+		).toBe(false);
+	});
+
+	test("terminal inactive state hides even when the latch is set", () => {
+		expect(
+			computeStickyPillReveal({
+				latchSessionId: 2,
+				latched: true,
+				recordingSessionId: 2,
+				sessionActive: false,
+				sessionShouldShow: true,
+			}),
+		).toBe(false);
 	});
 });

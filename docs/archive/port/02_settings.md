@@ -84,8 +84,6 @@ no separate cloud section; the load path routes on the prefix.
 | `realtimeProcessingPause` | `f64` | `0.02` | — | **STARTUP** |
 | `initRealtimeAfterSeconds` | `f64` | `0.2` | — | **STARTUP** |
 | `earlyTranscriptionOnSilence` | `f64` | `0.2` | — | **STARTUP** |
-| `ensureSentenceStartingUppercase` | `bool` | `true` | — | HOT |
-| `ensureSentenceEndsWithPeriod` | `bool` | `true` | — | HOT |
 | `smartEndpoint` | `bool` | `true` | — | HOT |
 | `smartEndpointSpeed` | `f64` | `2.0` | 0.5–3.0 | HOT |
 | `endOfSentenceDetectionPause` | `f64` | `0.45` | 0.1–5.0 | HOT |
@@ -147,7 +145,6 @@ Highlights (full set in the struct; all HOT unless flagged):
 | `historyMaxEntries` | `i64` | `1000` (10–10000) | HOT |
 | `recordingRetention` | `RecordingRetention` | `cap` | HOT |
 | `wordCorrectionThreshold` | `f64` | `0.18` (0–1) | HOT |
-| `filterFillers` / `customFillerWords` | `bool`/`Vec<String>` | `true`/`[]` | HOT |
 
 The visualizer per-shape knobs (radial dot-count/radius; grid rows/cols/speed;
 wave line-width/smoothing/color-shift; aura shape/blur/bloom/color-shift) are

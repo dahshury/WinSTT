@@ -21,6 +21,10 @@ const QUANTIZATION_LABELS: Record<OnnxQuantization, { label: string; tooltip: st
 		label: "fp16",
 		tooltip: "16-bit float. Fastest on GPU, near-fp32 quality.",
 	},
+	fp16w: {
+		label: "fp16w",
+		tooltip: "16-bit stored weights with fp32 compute. Near-fp32 quality at about half the disk size.",
+	},
 	uint8: {
 		label: "uint8",
 		tooltip: "Unsigned 8-bit quantization. Similar trade-off to int8.",
@@ -54,6 +58,7 @@ function isKnownQuantization(value: string): value is OnnxQuantization {
 const QUANTIZATION_WEIGHT: Record<OnnxQuantization, number> = {
 	"": 32,
 	fp16: 16,
+	fp16w: 16,
 	int8: 8,
 	uint8: 8,
 	q4f16: 6,

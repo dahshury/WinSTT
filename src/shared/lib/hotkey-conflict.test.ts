@@ -10,7 +10,7 @@ import {
 const DEFAULTS: HotkeyTriple = {
 	pushToTalkKey: "LCtrl+LMeta",
 	repasteHotkey: "LCtrl+LShift+V",
-	ttsHotkey: "LMeta+LShift+E",
+	ttsHotkey: "LCtrl+Space",
 };
 
 describe("compareHotkeys", () => {

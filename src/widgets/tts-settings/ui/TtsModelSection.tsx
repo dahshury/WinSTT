@@ -14,7 +14,6 @@ import {
   useSettingsTabStore,
 } from "@/entities/setting";
 import {
-  type TtsVoiceCatalog,
   ttsCancel,
   ttsCloudPreview,
   ttsDeleteModel,
@@ -23,13 +22,31 @@ import {
 } from "@/shared/api/ipc-client";
 import { cn } from "@/shared/lib/cn";
 import { ElevatedSurface } from "@/shared/ui/elevated-surface";
-import type { SelectOptionGroup } from "@/shared/ui/searchable-select";
-import type { SelectOption } from "@/shared/ui/select";
 import { Switcher, type SwitcherOption } from "@/shared/ui/switcher";
 import {
-  type UseCloudTtsVoices,
-  useCloudTtsVoices,
-} from "../model/use-cloud-tts-voices";
+  cloudLockFooterText,
+  deriveCloudGate,
+  OUT_OF_CREDITS_NOTE,
+} from "../lib/cloud-gate";
+import {
+  demoSentenceForLang,
+  deriveLanguage,
+} from "../lib/voice-demo-text";
+import {
+  buildCloningVoiceGroups,
+  buildLanguageGroups,
+  buildStyleVoiceGroups,
+  buildVoiceGroups,
+  clampSupertonicSpeed,
+  resolveSupertonicLanguage,
+  SUPERTONIC_DEFAULT_LANG,
+  SUPERTONIC_DEFAULT_VOICE,
+  SUPERTONIC_MODEL_ID,
+  SUPERTONIC_SPEED_MAX,
+  SUPERTONIC_SPEED_MIN,
+  TTS_CLONE_ADD,
+} from "../lib/voice-groups";
+import { useCloudTtsVoices } from "../model/use-cloud-tts-voices";
 import { useTtsDownloadProgress } from "../model/use-tts-download-progress";
 import {
   resolveTtsEnabledModelPatch,
@@ -46,325 +63,6 @@ import { useTtsVoiceCatalog } from "../model/use-tts-voice-catalog";
 import { CloudTtsControls } from "./CloudTtsControls";
 import { TtsControls } from "./TtsControls";
 import { TtsInstallBanner } from "./TtsInstallBanner";
-
-// Sample sentence read aloud by the "Test voice" button. Static so the speed/
-// voice change is the only audible variable.
-const TEST_SAMPLE_FALLBACK = "The quick brown fox jumps over the lazy dog.";
-const SUPERTONIC_MODEL_ID = "supertonic-3";
-const SUPERTONIC_DEFAULT_VOICE = "M3";
-const SUPERTONIC_DEFAULT_LANG = "en";
-const SUPERTONIC_SPEED_MIN = 0.8;
-const SUPERTONIC_SPEED_MAX = 1.3;
-
-// Per-language demo line so previewing a non-English voice actually demonstrates
-// THAT language. Keyed by the language PREFIX (the part before any region tag:
-// "pt-br" → "pt", "en-gb" → "en").
-//
-// Supertonic 3 consumes Unicode text directly, so its previews can use native
-// text for every supported language. Other engines still fall back to English
-// when their phonemizer does not support a language well enough.
-const DEMO_SENTENCE_BY_LANG: Record<string, string> = {
-  ar: "مرحبا، هذا عرض قصير لتوليد الكلام.",
-  bg: "Здравейте, това е кратка демонстрация на синтез на реч.",
-  cs: "Dobrý den, toto je krátká ukázka syntézy řeči.",
-  da: "Hej, dette er en kort demonstration af talesyntese.",
-  de: "Hallo, dies ist eine kurze Demonstration der Sprachsynthese.",
-  el: "Γεια σας, αυτή είναι μια σύντομη επίδειξη σύνθεσης ομιλίας.",
-  en: TEST_SAMPLE_FALLBACK,
-  es: "Hola, esta es una breve demostración de síntesis de voz.",
-  et: "Tere, see on lühike kõnesünteesi näide.",
-  fi: "Hei, tämä on lyhyt puhesynteesin esittely.",
-  fr: "Bonjour, ceci est une courte démonstration de synthèse vocale.",
-  hi: "नमस्ते, यह वाक् संश्लेषण का एक छोटा सा उदाहरण है।",
-  hr: "Pozdrav, ovo je kratka demonstracija sinteze govora.",
-  hu: "Üdvözlöm, ez egy rövid beszédszintézis-bemutató.",
-  id: "Halo, ini adalah demo singkat sintesis suara.",
-  it: "Ciao, questa è una breve dimostrazione di sintesi vocale.",
-  ja: "こんにちは。これは短い音声合成のデモです。",
-  ko: "안녕하세요. 이것은 짧은 음성 합성 데모입니다.",
-  lt: "Sveiki, tai trumpas kalbos sintezės demonstravimas.",
-  lv: "Sveiki, šī ir īsa runas sintēzes demonstrācija.",
-  nl: "Hallo, dit is een korte demonstratie van spraaksynthese.",
-  pl: "Dzień dobry, to krótka demonstracja syntezy mowy.",
-  pt: "Olá, esta é uma breve demonstração de síntese de voz.",
-  ro: "Bună, aceasta este o scurtă demonstrație de sinteză vocală.",
-  ru: "Здравствуйте, это короткая демонстрация синтеза речи.",
-  sk: "Dobrý deň, toto je krátka ukážka syntézy reči.",
-  sl: "Pozdravljeni, to je kratek prikaz sinteze govora.",
-  sv: "Hej, det här är en kort demonstration av talsyntes.",
-  tr: "Merhaba, bu kısa bir konuşma sentezi demosudur.",
-  uk: "Вітаю, це коротка демонстрація синтезу мовлення.",
-  vi: "Xin chào, đây là bản demo ngắn về tổng hợp giọng nói.",
-};
-
-// Resolve the demo line for a voice's language: native sentence when we have one
-// AND can pronounce it, else the (English) i18n sample or the pangram fallback.
-function demoSentenceForLang(lang: string, i18nSample: string): string {
-  const prefix = lang.split("-")[0]?.toLowerCase() ?? "";
-  return DEMO_SENTENCE_BY_LANG[prefix] || i18nSample || TEST_SAMPLE_FALLBACK;
-}
-
-// Shown when the ElevenLabs character quota is spent (free OR paid) — Cloud is
-// locked until it resets / the plan upgrades. Plain const (not an i18n key) to
-// avoid touching the 20 locale files the cleanup sweep is editing.
-const OUT_OF_CREDITS_NOTE =
-  "Out of ElevenLabs credits — cloud text-to-speech is paused until your quota resets or you upgrade.";
-
-// Voice ids encode language as a short prefix ("af_heart" → "a" → "en-us").
-// When the catalog response provides an explicit `language` field we use that;
-// this fallback only fires if the field is missing.
-function deriveLanguage(voiceId: string): string {
-  const prefix = voiceId.slice(0, 1).toLowerCase();
-  switch (prefix) {
-    case "a":
-      return "en-us";
-    case "b":
-      return "en-gb";
-    case "e":
-      return "es";
-    case "f":
-      return "fr-fr";
-    case "h":
-      return "hi";
-    case "i":
-      return "it";
-    case "j":
-      return "ja";
-    case "p":
-      return "pt-br";
-    case "z":
-      return "zh";
-    default:
-      return "en-us";
-  }
-}
-
-// Short country/region code shown as the group-header badge and on the
-// selected voice in the (closed) trigger. Falls back to the language code so
-// an unknown future locale still gets *a* badge.
-const REGION_BADGE: Record<string, string> = {
-  ar: "AR",
-  bg: "BG",
-  cs: "CS",
-  da: "DA",
-  de: "DE",
-  el: "EL",
-  en: "EN",
-  "en-us": "US",
-  "en-gb": "UK",
-  es: "ES",
-  et: "ET",
-  fi: "FI",
-  fr: "FR",
-  hi: "HI",
-  hr: "HR",
-  hu: "HU",
-  id: "ID",
-  it: "IT",
-  ja: "JP",
-  ko: "KO",
-  lt: "LT",
-  lv: "LV",
-  cmn: "ZH",
-  nl: "NL",
-  pl: "PL",
-  pt: "PT",
-  "pt-br": "BR",
-  ro: "RO",
-  ru: "RU",
-  sk: "SK",
-  sl: "SL",
-  sv: "SV",
-  tr: "TR",
-  uk: "UK",
-  vi: "VI",
-};
-
-function regionBadge(language: string): string {
-  return (
-    REGION_BADGE[language] ??
-    language.split("-")[0]?.toUpperCase() ??
-    language.toUpperCase()
-  );
-}
-
-// Catalog labels already suffix the country ("Heart (US)"); under a country
-// header that suffix is redundant, so strip a trailing parenthetical for the
-// row text. The badge keeps the country legible in the closed trigger.
-const TRAILING_PAREN_RE = /\s*\([^)]*\)\s*$/;
-
-function stripRegionSuffix(label: string): string {
-  return label.replace(TRAILING_PAREN_RE, "").trim() || label;
-}
-
-// Group the 54 voices by country (their language/locale) so the picker reads
-// like the STT model selector — one sticky header per country, voices nested
-// under it. Group order follows the catalog's own language ordering; voices
-// whose language isn't listed there sort last, then alphabetically by code.
-function buildVoiceGroups(catalog: TtsVoiceCatalog): SelectOptionGroup[] {
-  const order = new Map(catalog.languages.map((l, i) => [l.code, i]));
-  const labelFor = new Map(catalog.languages.map((l) => [l.code, l.label]));
-  const byLang = new Map<string, SelectOption[]>();
-  for (const voice of catalog.voices) {
-    const opts = byLang.get(voice.language) ?? [];
-    opts.push({
-      id: voice.id,
-      label: stripRegionSuffix(voice.label),
-      badge: regionBadge(voice.language),
-    });
-    byLang.set(voice.language, opts);
-  }
-  const LAST = Number.MAX_SAFE_INTEGER;
-  return [...byLang.entries()]
-    .toSorted(([a], [b]) => {
-      const ai = order.get(a) ?? LAST;
-      const bi = order.get(b) ?? LAST;
-      return ai === bi ? a.localeCompare(b) : ai - bi;
-    })
-    .map<SelectOptionGroup>(([code, opts]) => ({
-      value: code,
-      label: labelFor.get(code) ?? code,
-      badge: regionBadge(code),
-      options: opts.toSorted((x, y) => x.label.localeCompare(y.label)),
-    }));
-}
-
-function buildStyleVoiceGroups(catalog: TtsVoiceCatalog): SelectOptionGroup[] {
-  return [
-    {
-      value: "supertonic-style",
-      label: "Voice styles",
-      options: catalog.voices.map((voice) => ({
-        id: voice.id,
-        label: voice.label,
-        badge: voice.gender === "male" ? "M" : "F",
-      })),
-    },
-  ];
-}
-
-function buildLanguageGroups(
-  catalog: TtsVoiceCatalog,
-  label: string,
-): SelectOptionGroup[] {
-  return [
-    {
-      value: "supertonic-language",
-      label,
-      options: catalog.languages.map((language) => ({
-        id: language.code,
-        label: language.label,
-        badge: regionBadge(language.code),
-      })),
-    },
-  ];
-}
-
-function resolveSupertonicLanguage(
-  lang: string,
-  catalog: TtsVoiceCatalog,
-): string {
-  const available = new Set(catalog.languages.map((language) => language.code));
-  const normalized = lang.trim().toLowerCase().replaceAll("_", "-");
-  if (available.has(normalized)) {
-    return normalized;
-  }
-  const prefix = normalized.split("-")[0] ?? "";
-  if (available.has(prefix)) {
-    return prefix;
-  }
-  return available.has(SUPERTONIC_DEFAULT_LANG)
-    ? SUPERTONIC_DEFAULT_LANG
-    : (catalog.languages[0]?.code ?? SUPERTONIC_DEFAULT_LANG);
-}
-
-function clampSupertonicSpeed(speed: number): number {
-  if (!Number.isFinite(speed)) {
-    return DEFAULT_SETTINGS.tts.speed;
-  }
-  return Math.min(SUPERTONIC_SPEED_MAX, Math.max(SUPERTONIC_SPEED_MIN, speed));
-}
-
-// Sentinel option id: picking it opens a file dialog to clone from an audio clip.
-const TTS_CLONE_ADD = "__tts_clone_add__";
-
-function fileBaseName(p: string): string {
-  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return i >= 0 ? p.slice(i + 1) : p;
-}
-
-// Voice groups for a CLONING engine (Chatterbox): the same SearchableSelect the
-// preset-voice models use, but offering the bundled default voice, the currently
-// selected reference clip (if any), and a "clone from a file" action — so voice
-// selection is one unified control across every model.
-function buildCloningVoiceGroups(
-  currentVoice: string,
-  t: ReturnType<typeof useTranslations>,
-): SelectOptionGroup[] {
-  const opts: SelectOption[] = [{ id: "default", label: t("defaultVoice") }];
-  if (
-    currentVoice &&
-    currentVoice !== "default" &&
-    currentVoice !== "af_heart"
-  ) {
-    opts.push({ id: currentVoice, label: fileBaseName(currentVoice) });
-  }
-  opts.push({ id: TTS_CLONE_ADD, label: t("cloneFromFile") });
-  return [{ value: "clone", label: t("voice"), options: opts }];
-}
-
-interface CloudGate {
-  /** Cloud source is selectable (key verified AND voices available/loading). */
-  cloudAllowed: boolean;
-  /** Verified key that authenticated but can't list voices — drives the notice. */
-  noVoiceAccess: boolean;
-}
-
-// Derive the cloud-source gate from the live voice-catalog probe. A verified
-// ElevenLabs key proves authentication (dictation / cloud STT work), but cloud
-// TTS additionally needs the `voices_read` scope. An in-flight fetch is treated
-// as optimistically allowed (most keys grant the scope, so the switch shouldn't
-// flicker to local while we confirm); we lock only once the catalog resolves
-// empty, surfacing the server's permission message via `noVoiceAccess`. Pulled
-// out of the component to keep it under the complexity budget.
-function deriveCloudGate(
-  elevenVerified: boolean,
-  cloud: UseCloudTtsVoices,
-): CloudGate {
-  if (!elevenVerified) {
-    return { cloudAllowed: false, noVoiceAccess: false };
-  }
-  // Out of ElevenLabs credits (free OR paid) → cloud is unusable regardless of
-  // voices, so lock the whole source. The reason is surfaced by the caller.
-  if (cloud.creditsExhausted) {
-    return { cloudAllowed: false, noVoiceAccess: false };
-  }
-  if (cloud.isLoading) {
-    return { cloudAllowed: true, noVoiceAccess: false };
-  }
-  const hasVoices = cloud.voices.length > 0;
-  return {
-    cloudAllowed: hasVoices,
-    noVoiceAccess: !hasVoices && cloud.error !== null,
-  };
-}
-
-// Tooltip footer for the locked Cloud switch: prefer the out-of-credits note,
-// then the server's voice/permission error, else the generic "add a key" hint.
-// Extracted to keep `TtsModelSection` under the complexity budget.
-function cloudLockFooterText(
-  elevenVerified: boolean,
-  cloud: UseCloudTtsVoices,
-  fallbackHint: string,
-): string {
-  if (cloud.creditsExhausted) {
-    return OUT_OF_CREDITS_NOTE;
-  }
-  if (elevenVerified && cloud.error) {
-    return cloud.error;
-  }
-  return fallbackHint;
-}
 
 export function TtsModelSection() {
   const t = useTranslations("tts");

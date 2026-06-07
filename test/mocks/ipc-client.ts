@@ -229,6 +229,7 @@ export function ipcClientMock(): Record<string, unknown> {
     windowMaximize: () => send(IPC.WINDOW_MAXIMIZE),
     windowClose: () => send(IPC.WINDOW_CLOSE),
     windowOpenSettings: () => send(IPC.WINDOW_OPEN_SETTINGS),
+    settingsWindowReady: () => send(IPC.SETTINGS_WINDOW_READY),
     windowCloseSelf: () => send(IPC.WINDOW_CLOSE_SELF),
 
     // STT event subscriptions
@@ -916,8 +917,12 @@ export function ipcClientMock(): Record<string, unknown> {
       }),
 
     // ── Updater (action commands) ──
-    updaterCheckNow: () =>
-      invokeOrDefault<unknown>(IPC.UPDATER_CHECK_NOW, { triggered: false }),
+    updaterCheckNow: (options?: { includePrereleaseUpdates?: boolean }) =>
+      invokeOrDefault<unknown>(
+        IPC.UPDATER_CHECK_NOW,
+        { triggered: false },
+        options,
+      ),
     updaterQuitAndInstall: () =>
       invokeOrDefault<unknown>(IPC.UPDATER_QUIT_AND_INSTALL, {
         triggered: false,

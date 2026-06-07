@@ -6,8 +6,6 @@ authors = ["dahshury", "WinSTT contributors", "cjpais (Handy foundation)"]
 edition = "2021"
 license = "MIT"
 default-run = "winstt"
-# NOTE(port): [lib] name stays `handy_app_lib` for now (main.rs references it);
-# rename to winstt_app_lib during the compile loop. Tracked in docs/archive/port/PROGRESS.md.
 
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
@@ -31,7 +29,7 @@ opt-level = 2
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "handy_app_lib"
+name = "winstt_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
@@ -80,6 +78,7 @@ rusqlite_migration = "2.3"
 tauri-plugin-fs = "2.4.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 cpal = "0.16.0"
 anyhow = "1.0.95"
 rubato = "0.16.2"
@@ -90,11 +89,21 @@ hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"
 tokio = "1.43.0"
+# Awaitable, latching cancellation for racing in-flight reqwest/genai futures
+# (cloud LLM/STT/TTS abort). Already in the tree transitively; `rt` gates the
+# `sync::CancellationToken` we use. Dropping the raced future aborts the request.
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "multipart", "rustls"] }
 futures-util = "0.3"
+# Multi-provider cloud LLM transport (OpenAI/OpenRouter/Anthropic-native/Groq/Z.AI/Bedrock/…).
+# Replaces the hand-rolled OpenAI-compat client for the CLOUD post-process + dictation/transform
+# paths; local Ollama keeps its native REST client (genai's Ollama adapter can't express
+# keep_alive / the `think` knob / the native `format` schema). Pins reqwest 0.13 (unifies with
+# ours), tokio 1, NO ort dep. rustls-tls forwards to reqwest/rustls (the feature we already use).
+genai = { version = "0.6.5", default-features = false, features = ["rustls-tls"] }
 rustfft = "6.4.0"
 strsim = "0.11.0"
 natural = "0.5.0"
@@ -176,8 +185,10 @@ windows = { version = "0.61.3", features = [
   "Win32_Security_Cryptography",
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
+  "Win32_Storage_FileSystem",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
   "Win32_Graphics_Dxgi",
   "Win32_System_Console",
 ] }

@@ -154,7 +154,7 @@ describe("HotkeyRecorder", () => {
 
 describe("findConflict", () => {
 	const repaste = { combo: "LCtrl+LShift+V", label: "Re-paste" };
-	const tts = { combo: "LMeta+LShift+E", label: "Text-to-speech" };
+	const tts = { combo: "LCtrl+Space", label: "Text-to-speech" };
 
 	test("returns null when no forbiddenCombos provided", () => {
 		expect(findConflict("LCtrl+A", undefined)).toBeNull();
@@ -183,7 +183,7 @@ describe("findConflict", () => {
 
 describe("HotkeyRecorder conflict gating", () => {
 	const repaste: ForbiddenCombo = { combo: "LCtrl+LShift+V", label: "Re-paste" };
-	const tts: ForbiddenCombo = { combo: "LMeta+LShift+E", label: "Text-to-speech" };
+	const tts: ForbiddenCombo = { combo: "LCtrl+Space", label: "Text-to-speech" };
 
 	function startThenRecord(combo: string | null): void {
 		// Mirror what the real flow does: user clicks Record, the recorder hook

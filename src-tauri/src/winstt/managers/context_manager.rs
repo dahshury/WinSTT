@@ -17,6 +17,7 @@ use crate::winstt::context::{
 };
 #[cfg(windows)]
 use crate::winstt::context::{MAX_BUFFER_BYTES, READ_TIMEOUT_MS};
+use crate::winstt::settings_schema::ContextAppMode;
 
 pub struct ContextManager {
     app: AppHandle,
@@ -47,8 +48,14 @@ impl ContextManager {
 
     /// Read → deny-list → format, the full capture-to-prompt path the dictation
     /// pipeline calls. Returns "" when nothing usable was captured.
-    pub fn capture_fragment(&self, mode: ContextMode, deny_list: &[String]) -> String {
-        capture_prompt_fragment(self, mode, deny_list)
+    pub fn capture_fragment(
+        &self,
+        mode: ContextMode,
+        app_mode: ContextAppMode,
+        deny_list: &[String],
+        allow_list: &[String],
+    ) -> String {
+        capture_prompt_fragment(self, mode, app_mode, deny_list, allow_list)
     }
 }
 

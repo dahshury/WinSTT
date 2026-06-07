@@ -17,6 +17,7 @@ import {
   pickCachedSttModel,
   pickDefaultSttModel,
   supportsInitialPrompt,
+  supportsTranslateToEnglish,
 } from "./model-options";
 
 const fixture: ModelInfo[] = [
@@ -752,6 +753,7 @@ describe("supportsInitialPrompt", () => {
   test("is false for every non-Whisper engine (no prompt slot, or an untrained one)", () => {
     for (const family of [
       "nemo",
+      "granite",
       "gigaam",
       "kaldi",
       "t-one",
@@ -763,5 +765,44 @@ describe("supportsInitialPrompt", () => {
     ] as const) {
       expect(supportsInitialPrompt(withFamily(family))).toBe(false);
     }
+  });
+});
+
+describe("supportsTranslateToEnglish", () => {
+  const withModel = (overrides: Partial<ModelInfo>): ModelInfo =>
+    ({ ...fixture[0], ...overrides }) as ModelInfo;
+
+  test("is true for multilingual Whisper and Canary", () => {
+    expect(
+      supportsTranslateToEnglish(
+        withModel({ family: "whisper", supportsLanguageDetection: true }),
+      ),
+    ).toBe(true);
+    expect(
+      supportsTranslateToEnglish(
+        withModel({
+          id: "nemo-canary-180m-flash",
+          family: "nemo",
+          supportsLanguageDetection: false,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  test("is false for English-only Whisper and non-Canary NeMo rows", () => {
+    expect(
+      supportsTranslateToEnglish(
+        withModel({ family: "whisper", supportsLanguageDetection: false }),
+      ),
+    ).toBe(false);
+    expect(
+      supportsTranslateToEnglish(
+        withModel({
+          id: "nemo-parakeet-tdt-0.6b-v3",
+          family: "nemo",
+          supportsLanguageDetection: false,
+        }),
+      ),
+    ).toBe(false);
   });
 });

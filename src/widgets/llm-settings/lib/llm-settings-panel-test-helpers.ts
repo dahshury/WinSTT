@@ -42,11 +42,12 @@ type LlmDictation = LlmSettings["dictation"];
 type LlmTransforms = LlmSettings["transforms"];
 type LlmProvider = LlmDictation["provider"];
 
-type ReasoningEffort = "low" | "medium" | "high";
-type Verbosity = "low" | "medium" | "high";
-type OllamaThinkingEffort = "off" | "low" | "medium" | "high";
+type ReasoningEffort = LlmDictation["reasoningEffort"];
+type Verbosity = LlmDictation["verbosity"];
+type OllamaThinkingEffort = LlmDictation["thinkingEffort"];
 
 export interface LlmFeatureDraft {
+  dictionaryAutoAddEnabled?: boolean;
   enabled: boolean;
   maxOutputTokens: number | null;
   model: string;
@@ -71,27 +72,38 @@ export interface LlmDraftSnapshot {
 }
 
 export const DEFAULT_FEATURE: LlmFeatureDraft = {
+  dictionaryAutoAddEnabled: false,
   enabled: false,
   provider: "ollama",
   model: "",
   openrouterModel: "",
   openrouterFallbackModel: "",
   reasoningEffort: "medium",
-  thinkingEffort: "medium",
+  thinkingEffort: "off",
   verbosity: "medium",
   maxOutputTokens: null,
 };
 
-const DEFAULT_PRESET_CARRIER: PresetCarrier = {
+const DEFAULT_NEUTRAL_PRESET_CARRIER: PresetCarrier = {
   presets: [{ key: "neutral" }],
+  customModifiers: [],
+};
+
+const DEFAULT_DICTATION_PRESET_CARRIER: PresetCarrier = {
+  presets: [
+    { key: "neutral" },
+    { key: "reorder" },
+    { key: "restructure" },
+    { key: "rewordForClarity" },
+  ],
   customModifiers: [],
 };
 
 export const DEFAULT_LLM: LlmDraftSnapshot = {
   endpoint: "http://localhost:11434",
   openrouterApiKey: "",
-  dictation: { ...DEFAULT_FEATURE, ...DEFAULT_PRESET_CARRIER },
-  transforms: { ...DEFAULT_FEATURE, ...DEFAULT_PRESET_CARRIER, hotkey: "" },
+  dictation: { ...DEFAULT_FEATURE, ...DEFAULT_DICTATION_PRESET_CARRIER },
+  transforms: { ...DEFAULT_FEATURE, ...DEFAULT_NEUTRAL_PRESET_CARRIER, hotkey: "" },
 };
 
 export const PRESET_LABEL_KEY = {
@@ -140,27 +152,30 @@ function isNonEmptyPresetList(
 
 function resolvePresets(
   src: Partial<PresetCarrier>,
+  fallback: PresetCarrier,
 ): readonly BuiltinPresetEntry[] {
   return isNonEmptyPresetList(src.presets)
     ? src.presets
-    : DEFAULT_PRESET_CARRIER.presets;
+    : fallback.presets;
 }
 
 function resolveCustomModifiers(
   src: Partial<PresetCarrier>,
+  fallback: PresetCarrier,
 ): readonly CustomModifier[] {
   return Array.isArray(src.customModifiers)
     ? (src.customModifiers as readonly CustomModifier[])
-    : DEFAULT_PRESET_CARRIER.customModifiers;
+    : fallback.customModifiers;
 }
 
 function readPresetCarrier(
   incoming: Partial<PresetCarrier> | null | undefined,
+  fallback: PresetCarrier,
 ): PresetCarrier {
   const src = incoming ?? {};
   return {
-    presets: resolvePresets(src),
-    customModifiers: resolveCustomModifiers(src),
+    presets: resolvePresets(src, fallback),
+    customModifiers: resolveCustomModifiers(src, fallback),
   };
 }
 
@@ -173,7 +188,7 @@ function readDictationDraft(
 ): LlmFeatureDraft & PresetCarrier {
   return {
     ...readFeatureSnapshot(dictationIn),
-    ...readPresetCarrier(dictationIn),
+    ...readPresetCarrier(dictationIn, DEFAULT_DICTATION_PRESET_CARRIER),
   };
 }
 
@@ -182,7 +197,7 @@ function readTransformsDraft(
 ): LlmFeatureDraft & PresetCarrier & { hotkey: string } {
   return {
     ...readFeatureSnapshot(transformsIn),
-    ...readPresetCarrier(transformsIn),
+    ...readPresetCarrier(transformsIn, DEFAULT_NEUTRAL_PRESET_CARRIER),
     hotkey: readHotkey(transformsIn),
   };
 }

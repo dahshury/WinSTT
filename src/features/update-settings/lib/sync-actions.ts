@@ -45,14 +45,6 @@ export interface SyncDeps {
    * `settings.word_correction_threshold`.
    */
   changeWordCorrectionThreshold?: (threshold: number) => void;
-  /**
-   * Push the per-user filler-word override. Writes `settings.custom_filler_words`
-   * (consumed by `filter_transcription_output`). No generated binding exists for
-   * this yet — the integrator must add a `change_custom_filler_words_setting`
-   * Tauri command and wire it here (see summary). Optional + guarded so the file
-   * still works before that command lands.
-   */
-  changeCustomFillerWords?: (words: string[]) => void;
 }
 
 /**
@@ -77,10 +69,10 @@ const MODEL_UNLOAD_TIMEOUT_SECONDS: Record<string, number> = {
   hour1: 3600,
 };
 
-const DEFAULT_MODEL_UNLOAD_SECONDS = 300;
+const DEFAULT_MODEL_UNLOAD_SECONDS = 900;
 
 export function resolveModelUnloadTimeoutSeconds(value: unknown): number {
-  const raw = typeof value === "string" ? value : "min5";
+  const raw = typeof value === "string" ? value : "min15";
   return MODEL_UNLOAD_TIMEOUT_SECONDS[raw] ?? DEFAULT_MODEL_UNLOAD_SECONDS;
 }
 
@@ -401,43 +393,6 @@ export function syncDiarizationParams(
 }
 
 /**
- * Sync settings to the STT server (and the reference system settings).
- *
- * - If `prev` is undefined → initial connect: push all non-null settings.
- * - If `prev` is provided → incremental: push only changed keys.
- */
-/**
- * Push deterministic text-correction toggles that live under `general.*` but
- * are consumed by the recorder's post-decode pipeline.
- *
- * `filter_fillers` is routed HERE (renderer → sttSetParameter, reading the live
- * settings store) rather than through reference main's `custom-words-sync`. That
- * path reads the persisted persisted store and was delivering a STALE value in
- * the long-running main process (it pushed `filter_fillers=true` while disk
- * held `false`), so toggling "Remove Filler Words" never reached the recorder.
- * The renderer always holds the value the user just toggled, and this fires on
- * every change AND on connect (`shouldSyncOnConnect`), so the recorder gets the
- * right value with no restart.
- */
-export function syncTextCorrectionParams(
-  deps: SyncDeps,
-  settings: AppSettings,
-  prev: AppSettings | undefined,
-): void {
-  const general = settings.general;
-  if (!general) {
-    return;
-  }
-  sendIfChanged(
-    deps,
-    general.filterFillers,
-    prev?.general?.filterFillers,
-    "filter_fillers",
-    !prev,
-  );
-}
-
-/**
  * Default fuzzy-corrector threshold. Mirrors the server's
  * ``TextCorrectionConfig`` default (and the renderer schema's
  * ``general.wordCorrectionThreshold`` default) so a settings tree missing the
@@ -477,26 +432,6 @@ function deriveCustomWords(
   return out;
 }
 
-/** Trim + de-duplicate the per-user filler-word override list. */
-function deriveCustomFillerWords(
-  words: readonly string[] | undefined,
-): string[] {
-  if (!words?.length) {
-    return [];
-  }
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const entry of words) {
-    const trimmed = typeof entry === "string" ? entry.trim() : "";
-    if (!trimmed || seen.has(trimmed)) {
-      continue;
-    }
-    seen.add(trimmed);
-    out.push(trimmed);
-  }
-  return out;
-}
-
 /** Resolve ``general.wordCorrectionThreshold`` to a number, defaulting safely. */
 function resolveWordCorrectionThreshold(value: unknown): number {
   return typeof value === "number" ? value : DEFAULT_WORD_CORRECTION_THRESHOLD;
@@ -516,24 +451,22 @@ function listsEqual(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Push the Dictionary (custom words) + threshold + custom filler words to the
- * backend so they take effect.
+ * Push the Dictionary (custom words) + threshold to the backend so they take
+ * effect.
  *
- * Unlike the `set_parameter`-routed knobs above, these three settings are NOT
+ * Unlike the `set_parameter`-routed knobs above, these settings are NOT
  * `AllowedParameter`s — the Tauri backend persists them into its settings store
- * and reads them straight off disk at transcription time
- * (`apply_custom_words` / `filter_transcription_output` in
- * `managers/transcription.rs`). So "taking effect" just means writing the value
- * via the dedicated command. Mirrors the reference's `installCustomWordsSync`:
+ * and reads them straight off disk at transcription time (`apply_custom_words`
+ * in `managers/transcription.rs`). So "taking effect" just means writing the
+ * value via the dedicated command. Mirrors the reference's
+ * `installCustomWordsSync`:
  *
  *   - `dictionary` (entries without `replacement`) → `update_custom_words`
  *   - `general.wordCorrectionThreshold` → `change_word_correction_threshold_setting`
- *   - `general.customFillerWords` → `change_custom_filler_words_setting` (⚠ command TBD)
  *
  * Pushed on initial connect (`prev` undefined) and whenever the derived value
  * actually changes — so unrelated settings edits don't churn a disk write. Each
- * dep is optional + guarded; a host that didn't wire it (or a backend that
- * doesn't yet have the filler command) silently skips that push.
+ * dep is optional + guarded; a host that didn't wire it silently skips that push.
  *
  * NOTE: `settings.snippets` is deliberately NOT pushed here. Snippet expansion
  * is a post-transcription text-processing concern (mirrors the reference's
@@ -565,15 +498,6 @@ function syncDictionaryParams(
   ) {
     deps.changeWordCorrectionThreshold(threshold);
   }
-
-  const fillers = deriveCustomFillerWords(settings.general?.customFillerWords);
-  const prevFillers = deriveCustomFillerWords(prev?.general?.customFillerWords);
-  if (
-    deps.changeCustomFillerWords &&
-    (isInitial || !listsEqual(fillers, prevFillers))
-  ) {
-    deps.changeCustomFillerWords(fillers);
-  }
 }
 
 export function syncToServer(
@@ -586,6 +510,5 @@ export function syncToServer(
   syncModelParams(deps, settings, prev);
   syncQualityParams(deps, settings, prev);
   syncDiarizationParams(deps, settings, prev);
-  syncTextCorrectionParams(deps, settings, prev);
   syncDictionaryParams(deps, settings, prev);
 }

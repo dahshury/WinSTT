@@ -1,13 +1,92 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { visualizer } from "rollup-plugin-visualizer";
 import { defineConfig } from "vite";
+import {
+  readDevSettings,
+  resolveWinsttAppDataDir,
+  writeDevSettings,
+} from "./tools/winstt-dev-settings-store";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const host = process.env.TAURI_DEV_HOST;
+const devServerHost = host || "127.0.0.1";
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(body));
+}
+
+function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolveBody, reject) => {
+    let raw = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk: string) => {
+      raw += chunk;
+    });
+    req.on("end", () => {
+      if (raw.trim() === "") {
+        resolveBody({});
+        return;
+      }
+      try {
+        resolveBody(JSON.parse(raw) as unknown);
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function winsttDevSettingsBridge() {
+  return {
+    name: "winstt-dev-settings-bridge",
+    apply: "serve" as const,
+    configureServer(server: {
+      middlewares: {
+        use: (
+          path: string,
+          handler: (req: IncomingMessage, res: ServerResponse) => void,
+        ) => void;
+      };
+    }) {
+      server.middlewares.use("/__winstt/settings", (req, res) => {
+        void (async () => {
+          try {
+            if (req.method === "GET") {
+              sendJson(res, 200, {
+                appDataDir: resolveWinsttAppDataDir(),
+                settings: await readDevSettings(),
+              });
+              return;
+            }
+            if (req.method === "POST" || req.method === "PATCH") {
+              const body = await readJsonBody(req);
+              const patch = isRecord(body) ? body.settings : undefined;
+              sendJson(res, 200, { settings: await writeDevSettings(patch) });
+              return;
+            }
+            sendJson(res, 405, { error: "Method not allowed" });
+          } catch (err) {
+            sendJson(res, 500, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        })();
+      });
+    },
+  };
+}
 
 // Multi-page Vite config for the Tauri renderer (ported from WinSTT's the reference
 // renderer `frontend/vite.config.ts`). Each Tauri WebviewWindow loads its own
@@ -17,148 +96,153 @@ const host = process.env.TAURI_DEV_HOST;
 // `base: "./"` keeps asset paths relative so the packaged `file://`-style load
 // of each window's HTML resolves assets from the HTML file's directory.
 export default defineConfig(({ command }) => {
-	// react-compiler is a babel pass over every .tsx in the graph. It only
-	// matters for production (ships memoization), and at dev time it dominates
-	// first-window paint (~8 s). Gate it on `vite build` (production) only.
-	const isProdBuild = command === "build";
-	const isAnalyzeBuild =
-		isProdBuild && (process.env.ANALYZE === "1" || process.env.VITE_ANALYZE === "1");
-	const includeContextPlayground =
-		!isProdBuild ||
-		process.env.CONTEXT_PLAYGROUND === "1" ||
-		process.env.VITE_CONTEXT_PLAYGROUND === "1";
-	return {
-		root: rootDir,
-		base: "./",
-		// Vite 8 resolves tsconfig `paths` (@/*, @spec/*, @picker, @picker/*)
-		// natively — replaces vite-tsconfig-paths.
-		resolve: { tsconfigPaths: true },
-		plugins: [
-			react(),
-			...(isProdBuild ? [babel({ presets: [reactCompilerPreset()] })] : []),
-			tailwindcss(),
-			// Optional build-only bundle treemap writes dist/stats.html. Enable with
-			// ANALYZE=1 or VITE_ANALYZE=1 when inspecting chunk layout (including
-			// the per-locale lazy split).
-			...(isAnalyzeBuild
-				? [
-						visualizer({
-							filename: "dist/stats.html",
-							gzipSize: true,
-							template: "treemap",
-						}),
-					]
-				: []),
-		],
-		// Tauri: don't obscure Rust errors; ignore src-tauri in the watcher.
-		clearScreen: false,
-		envPrefix: ["VITE_", "TAURI_ENV_*"],
-		optimizeDeps: {
-			include: [
-				"react",
-				"react-dom",
-				"react-dom/client",
-				"react/jsx-runtime",
-				"react/jsx-dev-runtime",
-				"use-intl",
-				"use-intl/react",
-				"zustand",
-				"zustand/middleware",
-				"zustand/shallow",
-				"motion",
-				"motion/react",
-				"virtua",
-				"zod",
-				"tailwind-merge",
-				"clsx",
-				"class-variance-authority",
-				"fuse.js",
-				"double-metaphone",
-				"@hugeicons/react",
-				"@hugeicons/core-free-icons",
-				"@base-ui/react",
-				"@tauri-apps/api/core",
-				"@tauri-apps/api/event",
-				"@tauri-apps/api/window",
-			],
-		},
-		build: {
-			outDir: "dist",
-			emptyOutDir: true,
-			sourcemap: false,
-			// Tauri's webview (WebView2 / WebKitGTK) supports the modern ES surface.
-			target: "esnext",
-			reportCompressedSize: false,
-			rollupOptions: {
-				input: {
-					// `main` stays at the root so the Tauri dev server serves it from `/`.
-					// Secondary windows live under `windows/`; build output mirrors
-					// the input layout (dist/windows/*).
-					main: resolve(rootDir, "index.html"),
-					settings: resolve(rootDir, "windows/settings.html"),
-					overlay: resolve(rootDir, "windows/overlay.html"),
-					"tray-menu": resolve(rootDir, "windows/tray-menu.html"),
-					"model-picker": resolve(rootDir, "windows/model-picker.html"),
-					"device-picker": resolve(rootDir, "windows/device-picker.html"),
-					onboarding: resolve(rootDir, "windows/onboarding.html"),
-					history: resolve(rootDir, "windows/history.html"),
-					...(includeContextPlayground
-						? {
-								"context-playground": resolve(rootDir, "windows/context-playground.html"),
-							}
-						: {}),
-				},
-				output: {
-					manualChunks: (id) => {
-						if (id.includes("node_modules")) {
-							// INVARIANT: React core, react-dom, and @base-ui/* must share
-							// ONE chunk. Splitting them produces circular ESM imports
-							// between vendor-react and vendor-base-ui and crashes the
-							// webview with "Cannot read properties of undefined (reading
-							// 'useLayoutEffect')" on an unbound React namespace.
-							if (
-								id.includes("@base-ui/") ||
-								id.includes("react-dom") ||
-								id.includes("/react/")
-							) {
-								return "vendor-react";
-							}
-							if (id.includes("/motion/") || id.includes("framer-motion")) {
-								return "vendor-motion";
-							}
-							if (id.includes("@hugeicons/")) {
-								return "vendor-hugeicons";
-							}
-							if (id.includes("use-intl") || id.includes("@formatjs/")) {
-								return "vendor-intl";
-							}
-							if (id.includes("zustand")) {
-								return "vendor-zustand";
-							}
-						}
-					},
-				},
-			},
-		},
-		server: {
-			// Tauri expects a fixed port and fails if it's not available.
-			port: 1420,
-			strictPort: true,
-			host: host || false,
-			hmr: host
-				? {
-						protocol: "ws",
-						host,
-						port: 1421,
-					}
-				: undefined,
-			watch: {
-				// Tell Vite to ignore watching `src-tauri`.
-				ignored: ["**/src-tauri/**"],
-			},
-			// Warm only the main entry so its module graph is transformed in the
-			// background; warming every entry regresses first-paint.
-			warmup: { clientFiles: ["./src/entries/main.tsx"] },
-		},
-	};
+  // react-compiler is a babel pass over every .tsx in the graph. It only
+  // matters for production (ships memoization), and at dev time it dominates
+  // first-window paint (~8 s). Gate it on `vite build` (production) only.
+  const isProdBuild = command === "build";
+  const isAnalyzeBuild =
+    isProdBuild &&
+    (process.env.ANALYZE === "1" || process.env.VITE_ANALYZE === "1");
+  const includeContextPlayground =
+    !isProdBuild ||
+    process.env.CONTEXT_PLAYGROUND === "1" ||
+    process.env.VITE_CONTEXT_PLAYGROUND === "1";
+  return {
+    root: rootDir,
+    base: "./",
+    // Vite 8 resolves tsconfig `paths` (@/*, @spec/*, @picker, @picker/*)
+    // natively — replaces vite-tsconfig-paths.
+    resolve: { tsconfigPaths: true },
+    plugins: [
+      winsttDevSettingsBridge(),
+      react(),
+      ...(isProdBuild ? [babel({ presets: [reactCompilerPreset()] })] : []),
+      tailwindcss(),
+      // Optional build-only bundle treemap writes dist/stats.html. Enable with
+      // ANALYZE=1 or VITE_ANALYZE=1 when inspecting chunk layout (including
+      // the per-locale lazy split).
+      ...(isAnalyzeBuild
+        ? [
+            visualizer({
+              filename: "dist/stats.html",
+              gzipSize: true,
+              template: "treemap",
+            }),
+          ]
+        : []),
+    ],
+    // Tauri: don't obscure Rust errors; ignore src-tauri in the watcher.
+    clearScreen: false,
+    envPrefix: ["VITE_", "TAURI_ENV_*"],
+    optimizeDeps: {
+      include: [
+        "react",
+        "react-dom",
+        "react-dom/client",
+        "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+        "use-intl",
+        "use-intl/react",
+        "zustand",
+        "zustand/middleware",
+        "zustand/shallow",
+        "motion",
+        "motion/react",
+        "virtua",
+        "zod",
+        "tailwind-merge",
+        "clsx",
+        "class-variance-authority",
+        "fuse.js",
+        "double-metaphone",
+        "@hugeicons/react",
+        "@hugeicons/core-free-icons",
+        "@base-ui/react",
+        "@tauri-apps/api/core",
+        "@tauri-apps/api/event",
+        "@tauri-apps/api/window",
+      ],
+    },
+    build: {
+      outDir: "dist",
+      emptyOutDir: true,
+      sourcemap: false,
+      // Tauri's webview (WebView2 / WebKitGTK) supports the modern ES surface.
+      target: "esnext",
+      reportCompressedSize: false,
+      rollupOptions: {
+        input: {
+          // `main` stays at the root so the Tauri dev server serves it from `/`.
+          // Secondary windows live under `windows/`; build output mirrors
+          // the input layout (dist/windows/*).
+          main: resolve(rootDir, "index.html"),
+          settings: resolve(rootDir, "windows/settings.html"),
+          overlay: resolve(rootDir, "windows/overlay.html"),
+          "tray-menu": resolve(rootDir, "windows/tray-menu.html"),
+          "model-picker": resolve(rootDir, "windows/model-picker.html"),
+          "device-picker": resolve(rootDir, "windows/device-picker.html"),
+          onboarding: resolve(rootDir, "windows/onboarding.html"),
+          history: resolve(rootDir, "windows/history.html"),
+          ...(includeContextPlayground
+            ? {
+                "context-playground": resolve(
+                  rootDir,
+                  "windows/context-playground.html",
+                ),
+              }
+            : {}),
+        },
+        output: {
+          manualChunks: (id) => {
+            if (id.includes("node_modules")) {
+              // INVARIANT: React core, react-dom, and @base-ui/* must share
+              // ONE chunk. Splitting them produces circular ESM imports
+              // between vendor-react and vendor-base-ui and crashes the
+              // webview with "Cannot read properties of undefined (reading
+              // 'useLayoutEffect')" on an unbound React namespace.
+              if (
+                id.includes("@base-ui/") ||
+                id.includes("react-dom") ||
+                id.includes("/react/")
+              ) {
+                return "vendor-react";
+              }
+              if (id.includes("/motion/") || id.includes("framer-motion")) {
+                return "vendor-motion";
+              }
+              if (id.includes("@hugeicons/")) {
+                return "vendor-hugeicons";
+              }
+              if (id.includes("use-intl") || id.includes("@formatjs/")) {
+                return "vendor-intl";
+              }
+              if (id.includes("zustand")) {
+                return "vendor-zustand";
+              }
+            }
+          },
+        },
+      },
+    },
+    server: {
+      // Tauri expects a fixed port and fails if it's not available.
+      port: 1420,
+      strictPort: true,
+      host: devServerHost,
+      hmr: host
+        ? {
+            protocol: "ws",
+            host,
+            port: 1421,
+          }
+        : undefined,
+      watch: {
+        // Tell Vite to ignore watching `src-tauri`.
+        ignored: ["**/src-tauri/**"],
+      },
+      // Warm only the main entry so its module graph is transformed in the
+      // background; warming every entry regresses first-paint.
+      warmup: { clientFiles: ["./src/entries/main.tsx"] },
+    },
+  };
 });

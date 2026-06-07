@@ -41,8 +41,19 @@ pub fn cancel_current_operation(app: &AppHandle) -> bool {
     let tm = app.state::<Arc<TranscriptionManager>>();
     tm.maybe_unload_immediately("cancellation");
 
+    // Abort every in-flight cloud operation the overlay X / Esc should stop:
+    // cloud STT uploads, cloud/local LLM dictation+transform chats, and cloud/
+    // local TTS reads. Each manager's `cancel_all` fires the awaitable cancel
+    // tokens so reqwest/genai futures are dropped mid-flight (not just stopped at
+    // the next boundary).
     if let Some(cloud) = app.try_state::<Arc<crate::winstt::managers::CloudSttManager>>() {
         cloud.cancel_all();
+    }
+    if let Some(llm) = app.try_state::<Arc<crate::winstt::managers::LlmManager>>() {
+        llm.cancel_all();
+    }
+    if let Some(tts) = app.try_state::<Arc<crate::winstt::managers::TtsManager>>() {
+        tts.cancel_all();
     }
 
     // Notify coordinator so it can keep lifecycle state coherent.

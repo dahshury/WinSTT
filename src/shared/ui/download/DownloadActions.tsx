@@ -12,10 +12,11 @@ import {
   m,
   useReducedMotion,
 } from "motion/react";
-import type { MouseEvent, PointerEvent, ReactNode } from "react";
+import type { MouseEvent, PointerEvent, ReactElement, ReactNode } from "react";
 import { cn } from "@/shared/lib/cn";
 import { surfaceBg, surfaceHoverBg, useSurface } from "@/shared/lib/surface";
 import { Button } from "@/shared/ui/button";
+import { DialogActionButton } from "@/shared/ui/dialog";
 import { Tooltip } from "@/shared/ui/tooltip";
 
 /** Phase of the download workflow as seen by the action row.
@@ -32,6 +33,10 @@ interface DownloadActionLabels {
 }
 
 export interface DownloadActionsProps {
+  /** Dialog footers wrap sibling actions in ButtonGroup. This option removes
+   *  internal spacing and uses the shared dialog button treatment so phase
+   *  changes still join into one segmented action row. */
+  appearance?: "default" | "dialog";
   /** Tooltip shown when hovering the destructive "Discard" button. Optional
    *  because the dictation modal already has the explanation in the modal
    *  body, but Ollama's list rows benefit from a hover hint. */
@@ -90,6 +95,7 @@ function downloadButtonHandlers(onAction: () => void) {
  *  "Close", "Hide") stays at the caller because it isn't a download
  *  concern. */
 export function DownloadActions({
+  appearance = "default",
   phase,
   labels,
   discardTooltip,
@@ -99,6 +105,7 @@ export function DownloadActions({
   onResume,
   size = "md",
 }: DownloadActionsProps): ReactNode {
+  const dialogAppearance = appearance === "dialog";
   const sizeCls = SIZE_CLASS[size];
   const iconSize = actionIconSize(size);
   const substrate = useSurface();
@@ -110,29 +117,53 @@ export function DownloadActions({
     surfaceHoverBg(buttonHover),
   );
   const reduceMotion = useReducedMotion();
+  const renderActionButton = (
+    variant: "neutral" | "accent",
+    defaultClassName: string,
+    onAction: () => void,
+    icon: ReactNode,
+    label: string,
+  ): ReactElement => {
+    const handlers = downloadButtonHandlers(onAction);
+    if (dialogAppearance) {
+      return (
+        <DialogActionButton className={sizeCls} variant={variant} {...handlers}>
+          {icon}
+          <span>{label}</span>
+        </DialogActionButton>
+      );
+    }
+    return (
+      <Button className={cn(defaultClassName, sizeCls)} {...handlers}>
+        {icon}
+        <span>{label}</span>
+      </Button>
+    );
+  };
   let content: ReactNode;
   if (phase === "active") {
-    content = (
-      <Button
-        className={cn(neutralCls, sizeCls)}
-        {...downloadButtonHandlers(onStop)}
-      >
-        <HugeiconsIcon icon={PauseIcon} size={iconSize} />
-        <span>{labels.stop}</span>
-      </Button>
+    content = renderActionButton(
+      "neutral",
+      neutralCls,
+      onStop,
+      <HugeiconsIcon icon={PauseIcon} size={iconSize} />,
+      labels.stop,
     );
   } else if (phase === "paused") {
-    const discardButton = (
-      <Button
-        className={cn(neutralCls, sizeCls)}
-        {...downloadButtonHandlers(onDiscard)}
-      >
-        <HugeiconsIcon icon={Cancel01Icon} size={iconSize} />
-        <span>{labels.discard}</span>
-      </Button>
+    const discardButton = renderActionButton(
+      "neutral",
+      neutralCls,
+      onDiscard,
+      <HugeiconsIcon icon={Cancel01Icon} size={iconSize} />,
+      labels.discard,
     );
     content = (
-      <div className="flex items-center gap-1.5">
+      <div
+        className={cn(
+          "flex items-center",
+          dialogAppearance ? "divide-x divide-divider" : "gap-1.5",
+        )}
+      >
         {discardTooltip ? (
           <Tooltip content={discardTooltip} side="top">
             {discardButton}
@@ -140,24 +171,22 @@ export function DownloadActions({
         ) : (
           discardButton
         )}
-        <Button
-          className={cn(ACCENT_BASE, sizeCls)}
-          {...downloadButtonHandlers(onResume)}
-        >
-          <HugeiconsIcon icon={PlayIcon} size={iconSize} />
-          <span>{labels.resume}</span>
-        </Button>
+        {renderActionButton(
+          "accent",
+          ACCENT_BASE,
+          onResume,
+          <HugeiconsIcon icon={PlayIcon} size={iconSize} />,
+          labels.resume,
+        )}
       </div>
     );
   } else {
-    content = (
-      <Button
-        className={cn(ACCENT_BASE, sizeCls)}
-        {...downloadButtonHandlers(onDownload)}
-      >
-        <HugeiconsIcon icon={CloudDownloadIcon} size={iconSize} />
-        <span>{labels.download}</span>
-      </Button>
+    content = renderActionButton(
+      "accent",
+      ACCENT_BASE,
+      onDownload,
+      <HugeiconsIcon icon={CloudDownloadIcon} size={iconSize} />,
+      labels.download,
     );
   }
   return (
