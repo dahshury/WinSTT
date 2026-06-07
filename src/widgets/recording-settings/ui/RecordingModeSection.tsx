@@ -241,8 +241,7 @@ function WakeWordControl({
 			/>
 			{lowerAccuracy ? (
 				<p className="mt-1 text-body-sm text-warning">
-					Custom/flexible wake phrases use sherpa-onnx and are lower accuracy
-					than built-in Porcupine phrases.
+					{t("wakeWordCustomLowerAccuracy")}
 				</p>
 			) : null}
 		</SettingField>

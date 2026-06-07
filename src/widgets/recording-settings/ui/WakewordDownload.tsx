@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslations } from "use-intl";
 import {
 	onWakewordModelStatus,
 	wakewordModelStatus,
@@ -101,19 +102,21 @@ export function WakewordDownloadProgress({
 }: {
 	status: WakewordModelStatusPayload;
 }): ReactNode {
+	const t = useTranslations("general");
 	if (status.available) {
 		return null;
 	}
 	if (status.downloading) {
 		const percent = wakewordProgressPercent(status);
-		const engineLabel = status.engineLabel ?? "wake word model";
+		const engineLabel =
+			status.engineLabel ?? t("wakewordDownloadEngineFallback");
 		return (
 			<div className="py-3">
 				<DownloadProgressBar
 					label={
 						percent == null
-							? `Preparing ${engineLabel}`
-							: `${percent}% - downloading ${engineLabel}`
+							? t("wakewordDownloadPreparing", { engineLabel })
+							: t("wakewordDownloadProgressLabel", { percent, engineLabel })
 					}
 					percent={percent}
 					statsLabel={wakewordDownloadStatsLabel(status)}
@@ -126,7 +129,10 @@ export function WakewordDownloadProgress({
 		return (
 			<div className="py-3">
 				<DownloadProgressBar
-					label={`Paused - ${status.artifactLabel ?? "wake word files"}`}
+					label={t("wakewordDownloadPausedLabel", {
+						artifactLabel:
+							status.artifactLabel ?? t("wakewordDownloadFilesFallback"),
+					})}
 					percent={wakewordProgressPercent(status)}
 					statsLabel={wakewordDownloadStatsLabel(status)}
 					variant="paused"
@@ -137,7 +143,7 @@ export function WakewordDownloadProgress({
 	if (status.error) {
 		return (
 			<div className="py-3 text-body-sm text-error">
-				Wake word model download failed: {status.error}
+				{t("wakewordDownloadFailed", { error: status.error })}
 			</div>
 		);
 	}
@@ -165,38 +171,39 @@ export function WakewordDownloadDialog({
 	open,
 	status,
 }: WakewordDownloadDialogProps): ReactNode {
+	const t = useTranslations("general");
 	const phase = wakewordDownloadPhase(status);
 	const flowStarted =
 		enablePending ||
 		phase !== "idle" ||
 		!!status.error ||
 		status.phase === "failed";
-	const engineLabel = status.engineLabel ?? "wake word detection";
-	const artifactLabel = status.artifactLabel ?? "wake word files";
+	const engineLabel =
+		status.engineLabel ?? t("wakewordDownloadDetectionFallback");
+	const artifactLabel =
+		status.artifactLabel ?? t("wakewordDownloadFilesFallback");
 	const description = flowStarted ? (
 		<div className="flex flex-col gap-2">
 			<p>
-				Downloading {artifactLabel} for {engineLabel}. Your current recording
-				mode stays active while this runs.
+				{t("wakewordDownloadInProgressDescription", {
+					artifactLabel,
+					engineLabel,
+				})}
 			</p>
-			<p>
-				Wake Word mode will be enabled automatically after the files are ready.
-			</p>
+			<p>{t("wakewordDownloadInProgressNote")}</p>
 		</div>
 	) : (
 		<div className="flex flex-col gap-2">
 			<p>
-				Wake Word mode needs a one-time local download for {engineLabel} (
-				{status.downloadSizeLabel ?? WAKEWORD_DOWNLOAD_SIZE_LABEL}). The files
-				stay on this device and are used to listen for the selected wake word.
+				{t("wakewordDownloadPromptDescription", {
+					engineLabel,
+					sizeLabel: status.downloadSizeLabel ?? WAKEWORD_DOWNLOAD_SIZE_LABEL,
+				})}
 			</p>
 			{status.qualityLabel ? (
 				<p className="text-warning">{status.qualityLabel}</p>
 			) : null}
-			<p>
-				Your current recording mode will stay active during the download, then
-				Wake Word mode will turn on automatically.
-			</p>
+			<p>{t("wakewordDownloadPromptNote")}</p>
 		</div>
 	);
 	const handleCancelDownload = () => {
@@ -212,8 +219,8 @@ export function WakewordDownloadDialog({
 			open={open}
 			title={
 				flowStarted
-					? "Downloading wake word files"
-					: "Download wake word files?"
+					? t("wakewordDownloadTitleInProgress")
+					: t("wakewordDownloadTitlePrompt")
 			}
 			width={500}
 		>
@@ -223,20 +230,22 @@ export function WakewordDownloadDialog({
 						onClick={() => onOpenChange(false)}
 						variant="neutral"
 					>
-						Hide
+						{t("wakewordDownloadHide")}
 					</DialogActionButton>
 					{phase === "active" ? (
 						<DialogActionButton onClick={handleCancelDownload} variant="danger">
-							Cancel download
+							{t("wakewordDownloadCancel")}
 						</DialogActionButton>
 					) : null}
 					<DownloadActions
 						appearance="dialog"
 						labels={{
-							discard: "Cancel download",
-							download: status.error ? "Retry" : "Download",
-							resume: "Resume",
-							stop: "Pause",
+							discard: t("wakewordDownloadCancel"),
+							download: status.error
+								? t("wakewordDownloadRetry")
+								: t("wakewordDownloadStart"),
+							resume: t("wakewordDownloadResume"),
+							stop: t("wakewordDownloadPause"),
 						}}
 						onDiscard={handleCancelDownload}
 						onDownload={onStart}
@@ -251,10 +260,10 @@ export function WakewordDownloadDialog({
 						onClick={() => onOpenChange(false)}
 						variant="neutral"
 					>
-						Cancel
+						{t("wakewordDownloadCancelPrompt")}
 					</DialogActionButton>
 					<DialogActionButton onClick={onStart} variant="accent">
-						Download and enable
+						{t("wakewordDownloadAndEnable")}
 					</DialogActionButton>
 				</>
 			)}
