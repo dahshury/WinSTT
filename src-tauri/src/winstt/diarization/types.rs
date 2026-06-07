@@ -1,5 +1,4 @@
-// Source: E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
-//         docs/archive/port/05_wakeword_diarization_loopback_wordts.md §B
+// Reference: E:/DL/Projects/onnx-asr/src/onnx_asr/diarization.py
 //
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Data types — mirror onnx-asr `DiarSegment` / WinSTT `SpeakerSegment`.

@@ -1,6 +1,4 @@
-// Source: docs/archive/port/10_frontend_port_plan.md
-// (WU-9 §6 — "loopback/lid/device-switch events, diarization-toggle events,
-// vad-sensitivity-adapted"), lib_wiring.md §4b, frontend/electron/ipc/relay.ts
+// Reference: frontend/electron/ipc/relay.ts
 // (DATA_EVENT_HANDLERS — the exact camelCase shapes the renderer consumes).
 //
 // PLAIN-event emit helpers for the WinSTT listen / device / diarization channels.

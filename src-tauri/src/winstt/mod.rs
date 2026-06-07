@@ -8,7 +8,6 @@
 // ───────────────────────── pure-logic (no new deps) ─────────────────────────
 
 /// WinSTT's full nested settings tree (9 tabs) as a specta-typed struct.
-/// See docs/archive/port/02_settings.md.
 pub mod settings_schema;
 
 /// Full 65-model STT catalog + quant/EP auto-policy (pure data + string logic).

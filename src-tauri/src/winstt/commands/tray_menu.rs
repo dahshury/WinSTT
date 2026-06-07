@@ -1,5 +1,3 @@
-// PORT IMPL — WU-12 (docs/archive/port/10_frontend_port_plan.md §6 WU-12 + §4b).
-//
 // Tray-menu window placement. WinSTT's tray menu is NOT a native OS menu — it is
 // a custom transparent HTML BrowserWindow (`views/tray-menu`) the user pops open
 // from the tray icon, anchored at the icon/cursor location and clamped to the

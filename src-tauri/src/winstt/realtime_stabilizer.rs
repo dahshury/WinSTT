@@ -41,7 +41,7 @@
 //   - On a fresh recording, reset() wipes committed_text AND the stabilizer.
 // `RealtimeAccumulator` below ports the PURE text+watermark bookkeeping; the
 // actual transcribe calls + audio slicing stay in the recorder pipeline (the
-// transcriber is the heavy ORT subsystem — see PORT/03_*.md), and are injected
+// transcriber is the heavy ORT subsystem), and are injected
 // as a closure in `commit_and_publish`.
 
 /// RealtimeSTT default tail-match length (audio_recorder.py:2740).

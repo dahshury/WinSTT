@@ -1,5 +1,4 @@
-// Source: docs/archive/port/07_*.md §3 + lib_wiring.md §3,
-// memory project_context_playground_debug. Wraps managers::ContextManager.
+// Wraps managers::ContextManager.
 //
 // Context-awareness debug command — gated behind
 // `any(debug_assertions, feature = "context-playground")`: on automatically in

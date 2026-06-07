@@ -1,5 +1,4 @@
-// PORT IMPL — Source: docs/archive/port/06_tts.md + lib_wiring.md §3,
-// frontend/electron/ipc/{tts,tts-cloud,tts-reader}.ts. Wraps managers::TtsManager.
+// Reference: frontend/electron/ipc/{tts,tts-cloud,tts-reader}.ts. Wraps managers::TtsManager.
 //
 // TTS commands. Local synthesis runs blocking on a worker (spawn_blocking) so the
 // async pump never stalls on the first-run download / session create / inference.

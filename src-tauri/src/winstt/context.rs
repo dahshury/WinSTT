@@ -130,47 +130,7 @@ pub fn parse_snapshot(raw: &str) -> WindowContextSnapshot {
     }
 }
 
-// ── sidecar spawn sketch (DRAFT — wire during compile loop) ────────────
-//
-// Two viable transports — pick during the compile loop:
-//
-// (A) tauri-plugin-shell sidecar (preferred — Tauri resolves the bundled
-//     target-triple path for you):
-//   use tauri_plugin_shell::ShellExt;
-//   let mut cmd = app.shell().sidecar("winstt-context")
-//       .map_err(|e| e.to_string())?;
-//   if let Some(flag) = mode.flag() { cmd = cmd.arg(flag); }
-//   let output = tokio::time::timeout(
-//       Duration::from_millis(READ_TIMEOUT_MS),
-//       cmd.output(),
-//   ).await.map_err(|_| "context sidecar timed out")?
-//    .map_err(|e| e.to_string())?;
-//   Ok(parse_snapshot(&String::from_utf8_lossy(&output.stdout)))
-//
-// (B) std::process::Command (matches how Handy already shells out for
-//     clamshell/audio — no extra plugin):
-//   #[cfg(windows)] {
-//     let bin = resolve_sidecar_path(app)?;        // resource dir, then dev path
-//     let mut c = std::process::Command::new(bin);
-//     if let Some(flag) = mode.flag() { c.arg(flag); }
-//     c.creation_flags(CREATE_NO_WINDOW);          // windowsHide
-//     // spawn + wait with a watchdog thread that kills on READ_TIMEOUT_MS,
-//     // bounded read of stdout to MAX_BUFFER_BYTES.
-//   }
-//   #[cfg(not(windows))] { Ok(empty_context()) }    // non-Windows ⇒ empty
-//
-// resolve_sidecar_path(app):
-//   packaged: app.path().resource_dir()?.join("binaries/winstt-context.exe")
-//   dev:      <repo>/frontend/electron/native/bin/winstt-context.exe (reuse
-//             the already-built binary; or copy into src-tauri/binaries/ with
-//             the target-triple suffix Tauri's externalBin expects).
-//
-// ALWAYS resolves to a snapshot — never propagate an error past this layer.
-// An empty snapshot just means "no extra hint"; the LLM cleanup degrades
-// cleanly (same contract as readWindowContext in context-reader.ts).
-
 /// Public reader trait so the manager can inject a fake sidecar in tests.
-/// The production impl is one of the sketches above.
 pub trait ContextReader {
     /// Run the sidecar in `mode`. ALWAYS resolves (returns empty on failure).
     fn read(&self, mode: ContextMode) -> WindowContextSnapshot;

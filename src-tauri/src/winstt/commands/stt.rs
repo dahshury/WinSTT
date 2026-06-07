@@ -1,5 +1,4 @@
-// Source: docs/archive/port/01_stt_catalog.md +
-// 03_stt_engine.md + lib_wiring.md §3, frontend/electron/ipc/stt-models / model-picker.
+// Reference: frontend/electron/ipc/stt-models / model-picker.
 //
 // STT catalog + picker commands. These wrap the pure `winstt::catalog` policy
 // tables (the 65-model catalog, quant/EP resolution, effective-quant badge) and

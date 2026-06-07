@@ -30,8 +30,6 @@
 // shared support layer live in the submodules declared below; the dispatch (`build_family_engine`),
 // the `pub(crate) file` re-export (used by `streaming.rs`), and the pure-logic tests stay here.
 
-#![allow(dead_code)] // surface defined ahead of the dispatch call sites / resolver wiring.
-
 mod aed;
 mod ctc;
 mod frontend;

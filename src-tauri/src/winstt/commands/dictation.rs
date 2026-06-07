@@ -1,5 +1,5 @@
-// PORT IMPL — WU-3 (docs/archive/port/10_frontend_port_plan.md §6 "Main window: dictation
-// overlay + PTT + live transcription"). Source: frontend/electron/ipc/stt-commands.ts
+// Main window dictation core (overlay + PTT + live transcription).
+// Reference: frontend/electron/ipc/stt-commands.ts
 // + relay.ts (the IPC → recorder bridge) + frontend/src/shared/api/ipc-client.ts
 // (sttSetParameter / sttGetParameter / sttCallMethod / sttReloadModel wrappers).
 //

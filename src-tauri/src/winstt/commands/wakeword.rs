@@ -1,5 +1,4 @@
-// Source: docs/archive/port/05_*.md §A + lib_wiring.md §3,
-// frontend/electron/ipc/wakeword. Wraps managers::WakeWordManager.
+// Reference: frontend/electron/ipc/wakeword. Wraps managers::WakeWordManager.
 //
 // Wake-word commands. set_wake_word rebuilds the detector from the chosen preset
 // (or custom phrase) + sensitivity + timeout; list_wake_word_presets feeds the

@@ -1,4 +1,4 @@
-// Source: docs/archive/port/07_llm_cloud_context_longtail.md, frontend/electron/ipc/llm.ts,
+// Reference: frontend/electron/ipc/llm.ts,
 // frontend/src/shared/lib/preset-prompts.ts, and frontend/src/shared/lib/ollama-endpoint.ts.
 //
 // Pure LLM post-processing for WinSTT. This module owns prompt composition,

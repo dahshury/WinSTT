@@ -1,5 +1,5 @@
-// PORT IMPL. Source: docs/archive/port/05_*.md §A + lib_wiring.md §2/§3, server wake-word
-// backends (porcupine_detector.py / oww_detector.py / composite_wake_word.py).
+// Reference: server wake-word backends
+// (porcupine_detector.py / oww_detector.py / composite_wake_word.py).
 // Wraps winstt::wakeword (presets + tokenizer + keyword-content builder + the live
 // sherpa-onnx KeywordSpotter detector).
 //

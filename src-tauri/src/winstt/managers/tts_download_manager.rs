@@ -13,8 +13,6 @@
 //   tts:model-download-complete { model, quantization, cancelled }
 //   tts:model-cache-changed     { modelId }
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

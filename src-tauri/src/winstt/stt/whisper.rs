@@ -40,8 +40,6 @@
 // created per step (mirrors onnx-asr's per-`_decode` `io_binding()`); the device present.* outputs
 // are extracted as session-owned `DynValue`s (survive the binding drop) and rebound next step.
 
-#![allow(dead_code)]
-
 mod degenerate;
 mod loader;
 mod ort_shapes;

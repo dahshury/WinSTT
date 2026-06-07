@@ -8,8 +8,6 @@
 // engines are in {kokoro,kitten,piper,supertonic}.rs. Cloning engines
 // (OuteTTS-0.6B → Chatterbox) are added in Phase 2.
 
-#![allow(dead_code)]
-
 /// Which in-process engine backs a catalog entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TtsEngineId {

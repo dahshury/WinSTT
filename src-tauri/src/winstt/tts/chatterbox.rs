@@ -1,4 +1,4 @@
-// PORT IMPL — Chatterbox-multilingual (Resemble AI, MIT) voice-cloning TTS on ort 2.0.
+// Chatterbox-multilingual (Resemble AI, MIT) voice-cloning TTS on ort 2.0.
 //
 // Faithful port of the verbatim onnxruntime pipeline shipped on the HF model card
 // (onnx-community/chatterbox-multilingual-ONNX). FOUR ort sessions:
@@ -16,7 +16,7 @@
 // used when none is supplied. EN-first: the `[en]` language tag is prepended; per-language CJK/he
 // frontends are deferred.
 
-#![allow(dead_code)]
+#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;

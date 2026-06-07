@@ -1,10 +1,9 @@
 // Unified ort-ONNX STT engine: the public `Transcriber` trait, the family/engine taxonomy, and
-// the per-family engines. A Rust re-port of onnx-asr onto raw `ort` 2.x. Source: the onnx-asr
+// the per-family engines. A Rust re-port of onnx-asr onto raw `ort` 2.x. Reference: the onnx-asr
 // fork (E:/DL/Projects/onnx-asr/src/onnx_asr/) and the WinSTT server
-// (server/src/recorder/infrastructure/{onnxasr_transcriber,device,bootstrap}.py); porting notes
-// in docs/archive/port/03_stt_engine.md.
+// (server/src/recorder/infrastructure/{onnxasr_transcriber,device,bootstrap}.py).
 //
-// Load-bearing invariants (docs/archive/port/03_stt_engine.md §10):
+// Load-bearing invariants:
 //   * Silero VAD is CPU-only (CUDA/DML deadlock) — enforced in the VAD slice, not here.
 //   * Several families' graphs crash on DirectML → forced to the CPU EP. The list is per-engine
 //     and empirically measured (see `EngineKind::is_dml_incompatible`), NOT a blanket family ban.
@@ -12,8 +11,6 @@
 //     prompt bias for those families (`EngineKind::supports_initial_prompt`).
 //   * `panic = "unwind"` stays load-bearing — `transcribe()` is wrapped in `catch_unwind` by the
 //     caller (transcription_coordinator); engines must be panic-safe, the coordinator catches.
-
-#![allow(dead_code)] // public engine surface is defined ahead of some call sites.
 
 use std::path::PathBuf;
 
@@ -224,8 +221,6 @@ pub trait Transcriber: Send {
     }
 
     /// Transcribe one utterance. `audio` is mono 16 kHz f32 PCM.
-    ///
-    /// DRAFT: body lives behind the de-risking spike. See 03_stt_engine.md §4–§6.
     fn transcribe(&mut self, audio: &[f32], opts: &TranscribeOptions) -> SttResult<Transcription>;
 
     /// Run a best-effort dummy inference to initialize provider kernels/caches.
@@ -311,7 +306,7 @@ pub fn build_engine(cfg: EngineConfig) -> SttResult<Box<dyn Transcriber>> {
         EngineKind::WhisperHf => Ok(Box::new(whisper::WhisperEngine::load(&cfg)?)),
         // Own engine files not yet ported.
         EngineKind::WhisperOrt => Err(SttError::Unsupported(
-            "WhisperOrt engine not yet ported (PORT/03 §4.1 whisper_ort)",
+            "WhisperOrt engine not yet ported",
         )),
         EngineKind::Moonshine => Ok(Box::new(moonshine::MoonshineEngine::load(&cfg)?)),
         // All other families dispatch through `families::build_family_engine` (SenseVoice /

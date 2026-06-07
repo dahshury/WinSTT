@@ -1,5 +1,5 @@
-// PORT IMPL — Moonshine ASR (Useful Sensors / onnx-community export).
-// Source (decode correctness): onnx-asr fork src/onnx_asr/models/moonshine.py
+// Moonshine ASR (Useful Sensors / onnx-community export).
+// Reference (decode correctness): onnx-asr fork src/onnx_asr/models/moonshine.py
 //   (E:/DL/Projects/onnx-asr/src/onnx_asr/models/moonshine.py) — the 3-graph structure,
 //   greedy KV decode loop, and the SentencePiece byte-fallback `_decode_text`.
 //
@@ -23,8 +23,6 @@
 // (encoder), `encoder_attention_mask`, and a recomputed `encoder_hidden_states` on the past-step
 // decoder. We gate every one of those on the graph actually declaring the input (session.inputs()
 // name probe) so both layouts load through the same code — exactly like moonshine.py.
-
-#![allow(dead_code)]
 
 use std::borrow::Cow;
 use std::collections::HashMap;

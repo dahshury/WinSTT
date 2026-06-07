@@ -201,7 +201,7 @@ impl TtsManager {
 // ---------------------------------------------------------------------------
 
 /// The `tts://chunk` event payload — the exact JSON field shape the renderer
-/// playback queue already consumes (PORT/06_tts.md §1). `pcm` carries the f32le
+/// playback queue already consumes. `pcm` carries the f32le
 /// samples re-interpreted as bytes (local) or the encoded mp3 bytes (cloud).
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "snake_case")]

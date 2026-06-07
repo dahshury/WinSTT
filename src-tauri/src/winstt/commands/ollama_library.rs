@@ -1,5 +1,4 @@
-// Source: docs/archive/port/10_frontend_port_plan.md
-// (WU-6: ollama-library MISSING) + lib_wiring.md §3. Faithful Rust port of
+// Faithful Rust port of
 // `frontend/electron/ipc/ollama-registry.ts` (the HTML scraper) — Ollama publishes no JSON search
 // API, so we scrape ollama.com/library, ollama.com/search, and ollama.com/library/<m>/tags with a
 // handful of regex extractors (no scraper/cheerio dep, matching the TS source byte-for-byte on

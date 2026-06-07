@@ -1,4 +1,4 @@
-// PORT IMPL — WU-0 settings persistence + apply. Source: frontend/electron/ipc/settings.ts
+// Settings persistence + apply. Reference: frontend/electron/ipc/settings.ts
 // (the behavioral truth), frontend/electron/lib/store.ts + secret-storage.ts. Wraps
 // winstt::settings_schema (the ~150-field nested WinsttSettings tree).
 //

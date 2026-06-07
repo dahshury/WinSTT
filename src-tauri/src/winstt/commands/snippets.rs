@@ -1,6 +1,6 @@
-// PORT IMPL — snippet expansion command + cache-warm bridge.
+// Snippet expansion command + cache-warm bridge.
 //
-// Source (behavioral): frontend/electron/lib/text-processing.ts
+// Reference (behavioral): frontend/electron/lib/text-processing.ts
 // (`applyPostProcessing` / `getPostProcessingVocab` / the `onDidChange("snippets")`
 // watcher) + frontend/src/shared/lib/fuzzy-match.ts (`replaceWithSnippets`).
 //

@@ -1,4 +1,4 @@
-// PORT IMPL — models slice. Source (authoritative):
+// Models slice. Reference (authoritative):
 //   server/src/recorder/infrastructure/model_state.py (model_state_dict — per-quant cache scan)
 //   server/src/recorder/infrastructure/model_cache.py (_file_quantization, snapshot scan)
 //   + onnx-asr resolver (which files a (family, quant) needs)
@@ -27,8 +27,6 @@
 // `family` string plus the handful of id/name patterns that split a catalog family across two
 // decode archetypes (e.g. NeMo ctc/rnnt/tdt/aed, GigaAM ctc/rnnt, Kaldi vosk-transducer vs
 // zipformer-transducer — both transducer).
-
-#![allow(dead_code)] // probe surface is consumed by runtime.rs + download_manager.rs as they wire in.
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -24,8 +24,6 @@
 // `melscale_fbanks(n_fft//2+1, 0, sr/2, n_mels, sr, "slaney", "slaney")`), so no
 // `fbanks.npz` asset is needed — the matrix is tiny (≤ 128×200) and trivial to build.
 
-#![allow(dead_code)]
-
 use std::f32::consts::PI;
 use std::sync::Arc;
 

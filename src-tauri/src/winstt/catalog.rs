@@ -32,8 +32,6 @@
 //   * `policy` — `Family`/`Accelerator` + the deterministic precision/EP resolution policy.
 // Every previously public path (`crate::winstt::catalog::X`) is preserved via the globs below.
 
-#![allow(dead_code)]
-
 mod data;
 mod policy;
 

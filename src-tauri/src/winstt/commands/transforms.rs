@@ -1,4 +1,4 @@
-// PORT IMPL. Source (authoritative):
+// Reference (authoritative):
 // frontend/electron/ipc/transforms.ts + frontend/electron/ipc/transform-hotkeys.ts
 // + frontend/electron/lib/selection-capture.ts
 // + frontend/electron/ipc/llm.ts (runProcessText provider routing).

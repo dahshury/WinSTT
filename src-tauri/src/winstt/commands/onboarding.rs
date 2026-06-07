@@ -1,5 +1,3 @@
-// PORT IMPL — WU-12 (docs/archive/port/10_frontend_port_plan.md §6 WU-12).
-//
 // `onboarding_finish` — the backend side of WinSTT's first-run wizard
 // (`views/onboarding` + `widgets/onboarding-wizard`). Ports the reference
 // `onboarding-window.ts` FINISH handler:

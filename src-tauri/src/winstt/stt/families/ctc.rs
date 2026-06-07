@@ -5,8 +5,6 @@
 // Lifted verbatim out of the old monolithic `families.rs`; depends only on the shared `support`
 // layer and the `frontend` featurizers, never on a peer engine.
 
-#![allow(dead_code)] // surface defined ahead of the dispatch call sites / resolver wiring.
-
 use std::collections::BTreeMap;
 
 use ndarray::{Array2, Axis};

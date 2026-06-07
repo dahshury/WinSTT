@@ -1,13 +1,12 @@
-// Source: server/src/synthesizer/ (Kokoro-ONNX hexagonal subsystem),
+// Reference: server/src/synthesizer/ (Kokoro-ONNX hexagonal subsystem),
 //   frontend/electron/ipc/{tts.ts,tts-cloud.ts,tts-reader.ts,tts-hotkey.ts},
-//   frontend/src/shared/config/settings-schema.ts (ttsSettingsSchema),
-//   docs/archive/port/06_tts.md, docs.rs/reqwest (blocking client, POST, GET).
+//   frontend/src/shared/config/settings-schema.ts (ttsSettingsSchema).
 //
 // TtsManager + 54-voice Kokoro catalog + sentence-splitter + per-sentence streaming + cancel +
 // cloud ElevenLabs (reqwest). The local engine is the REAL in-process Kokoro-82M ONNX engine in
 // `kokoro.rs` (on OUR ort 2.0.0-rc.12); G2P is `phonemize.rs` (espeak-ng CLI, process-separated).
 //
-// ⚠️ LICENSING — see PORT/06_tts.md §1. The DEFAULT build shells out to the system `espeak-ng`
+// ⚠️ LICENSING. The DEFAULT build shells out to the system `espeak-ng`
 // binary (process separation = "mere aggregation" → main binary stays non-GPL). The engine code is
 // compiled-in (no kokoroxide; we run the ONNX directly), so there is NO 30 MB engine pack — only the
 // two model FILES download on first use.
@@ -16,8 +15,6 @@
 // source-agnostic — features/tts-playback):
 //   tts://chunk { request_id, sample_rate, seq, is_final, format, channels, pcm }
 // where format == "f32le" (raw mono f32, local Kokoro) | "mp3" (cloud, renderer decodeAudioData's).
-
-#![allow(dead_code)]
 
 pub mod catalog;
 pub mod chatterbox;

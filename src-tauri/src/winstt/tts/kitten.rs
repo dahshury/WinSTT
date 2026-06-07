@@ -1,4 +1,4 @@
-// PORT IMPL — KittenTTS nano (StyleTTS2-derived, single-graph) on ort 2.0.0-rc.12.
+// KittenTTS nano (StyleTTS2-derived, single-graph) on ort 2.0.0-rc.12.
 //
 // Recipe verified verbatim from KittenML/KittenTTS `kittentts/onnx_model.py` +
 // devnen/Kitten-TTS-Server `engine.py` (see TTS research run, model:kitten):
@@ -16,7 +16,7 @@
 //  * the tail trim is a fixed -5000 crop (not librosa energy trim).
 // Reuses the shared espeak-ng phonemizer (phonemize.rs) and a local npz/npy parser.
 
-#![allow(dead_code)]
+#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
 
 use std::collections::HashMap;
 use std::io::Read;

@@ -1,4 +1,4 @@
-// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
+// Model-download command surface. Reference:
 //   frontend/src/shared/api/ipc-client.ts (predownloadModelQuant / pauseModelDownload /
 //     resumeModelDownload / cancelModelDownloadQuant / deleteModelQuantization /
 //     deleteModelCache / cancelDownload — the exact arg shapes)

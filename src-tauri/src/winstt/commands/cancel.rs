@@ -1,7 +1,6 @@
-// Source (authoritative):
+// Reference (authoritative):
 // frontend/electron/ipc/stt-commands.ts::handleAbortOperation + frontend/electron/main.ts
-// (the overlay X button + Escape cancel shortcut both call it) +
-// docs/archive/port/10_frontend_port_plan.md §6 (WU-3 dictation core) + the adapter ROUTE map.
+// (the overlay X button + Escape cancel shortcut both call it).
 //
 // The renderer's user-initiated cancel — overlay X button, and (in the reference build)
 // the Escape shortcut — sends `STT_ABORT_OPERATION`, which the adapter

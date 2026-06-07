@@ -427,44 +427,6 @@ pub fn patch_fp16_decoder(path: &Path) -> SttResult<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// Detecting the missing-external-data load error (port of _is_external_data_missing_error)
-// ---------------------------------------------------------------------------
-// NOTE: the fp16-decoder load-error classifier lives in `whisper::loader::is_fp16_decoder_error`
-// (the loader already knows the decoder path, so it needs only a bool, not path extraction).
-
-/// True iff an ORT error string is the missing-external-data-sidecar case (port of
-/// `_is_external_data_missing_error`): ORT's own "External data path does not exist" OR a
-/// platform file-not-found on a path that IS an `.onnx?data` / `.onnx?data_N` sidecar. The loader
-/// uses this to trigger a `resolver` refetch + retry (spec §2.3 / cohere fix).
-pub fn is_external_data_missing_error(msg: &str) -> bool {
-    if msg.contains("External data path does not exist") {
-        return true;
-    }
-    let looks_like_sidecar = msg_mentions_sidecar(msg);
-    let file_not_found = msg.contains("The system cannot find the file specified")
-        || msg.contains("No such file or directory")
-        || msg.contains("file_size:");
-    looks_like_sidecar && file_not_found
-}
-
-/// Heuristic for `_ONNX_EXTERNAL_DATA_PATH_RE` (`\.onnx[._]data(_\d+)?`): does the message mention
-/// an onnx external-data sidecar path?
-fn msg_mentions_sidecar(msg: &str) -> bool {
-    let lower = msg.to_ascii_lowercase();
-    // Find `.onnx` then require a following `_data` or `.data` (optionally `_<digits>`).
-    let mut from = 0;
-    while let Some(rel) = lower[from..].find(".onnx") {
-        let i = from + rel + ".onnx".len();
-        let tail = &lower[i..];
-        if tail.starts_with("_data") || tail.starts_with(".data") {
-            return true;
-        }
-        from = i;
-    }
-    false
-}
-
-// ---------------------------------------------------------------------------
 // Pass 2: external-data location enumeration (for the resolver shard check)
 // ---------------------------------------------------------------------------
 
@@ -656,30 +618,6 @@ mod tests {
         // Second call short-circuits on the marker → 0 edits, no re-parse.
         let again = patch_whisper_decoder(&path).unwrap();
         assert_eq!(again, 0);
-    }
-
-    #[test]
-    fn external_data_missing_detection() {
-        assert!(is_external_data_missing_error(
-            "External data path does not exist: encoder_model_fp16.onnx_data"
-        ));
-        // Win32 file-not-found on a sharded sidecar path.
-        assert!(is_external_data_missing_error(
-            "Load failed: file_size: The system cannot find the file specified ... \
-             encoder_model_fp16.onnx_data_1"
-        ));
-        // POSIX ENOENT on a `.onnx.data` sidecar.
-        assert!(is_external_data_missing_error(
-            "No such file or directory: model.onnx.data"
-        ));
-        // A plain non-sidecar file-not-found must NOT trip it.
-        assert!(!is_external_data_missing_error(
-            "No such file or directory: config.json"
-        ));
-        // A fp16-decoder subgraph error is NOT an external-data error.
-        assert!(!is_external_data_missing_error(
-            "Subgraph output ... outer scope value"
-        ));
     }
 
     #[test]

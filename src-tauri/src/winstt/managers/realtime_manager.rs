@@ -1,4 +1,4 @@
-// PORT IMPL. Source: examples/winstt-electron/server/src/recorder/application/
+// Realtime worker. Reference: examples/winstt-electron/server/src/recorder/application/
 // recorder_service.py `_realtime_worker` (L2621-2638) + its helpers
 // `_realtime_step` / `_realtime_idle_reset` / `_realtime_mark_recording_start` /
 // `_realtime_ready` / `_realtime_run_if_fresh` / `_realtime_process_once` /

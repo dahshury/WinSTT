@@ -1,5 +1,5 @@
-// Source: docs/archive/port/07_*.md §3 + lib_wiring.md §6,
-// frontend/electron/lib/context-reader.ts. Wraps winstt::context (pure deny-list + formatter + parser).
+// Reference: frontend/electron/lib/context-reader.ts.
+// Wraps winstt::context (pure deny-list + formatter + parser).
 //
 // ContextManager resolves the `winstt-context.exe` sidecar path and implements
 // `ContextReader` by spawning it with the mode flag, bounded by a hard timeout

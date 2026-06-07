@@ -7,8 +7,6 @@
 // Lifted verbatim out of the old monolithic `families.rs`; depends only on the shared `support`
 // layer (incl. the `KvTensor` enum) and the `frontend` featurizers, never on a peer engine.
 
-#![allow(dead_code)] // surface defined ahead of the dispatch call sites / resolver wiring.
-
 use std::collections::BTreeMap;
 
 use ndarray::{Array1, Array2, ArrayD, ArrayView2, Axis};

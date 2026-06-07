@@ -1,6 +1,6 @@
-// PORT IMPL — WU-3 overlay visibility (docs/archive/port/10_frontend_port_plan.md §6).
+// Overlay visibility commands.
 //
-// Source of truth: frontend/electron/ipc/overlay.ts (showOverlay / hideOverlay /
+// Reference: frontend/electron/ipc/overlay.ts (showOverlay / hideOverlay /
 // computeOverlayPosition / isOverlaySuppressedBySettings / repositionIfVisible).
 //
 // The WinSTT recording pill is the `overlay` WebviewWindow (windows/overlay.html,

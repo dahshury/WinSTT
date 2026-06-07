@@ -7,7 +7,6 @@
 //   server/src/recorder/infrastructure/composite_wake_word.py
 //   server/src/recorder/bootstrap.py (WAKE_WORD_BACKENDS registry, L938-945)
 //   frontend/src/shared/config/settings-schema.ts (general.wakeWord/wakeWordSensitivity/wakeWordTimeout)
-//   docs/archive/port/05_wakeword_diarization_loopback_wordts.md (§A)
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // REAL sherpa-onnx 1.13.2 KWS API (the ONLY thing that changed vs the sherpa-rs draft):

@@ -1,4 +1,4 @@
-// PORT IMPL - WU-0 settings secret-at-rest. Source: frontend/electron/lib/secret-storage.ts.
+// Settings secret-at-rest. Reference: frontend/electron/lib/secret-storage.ts.
 //
 // This is the Rust analogue of Electron's `safeStorage` wrapper: the persisted
 // settings tree carries an `enc:v1:<hex>` envelope, while IPC callers continue to

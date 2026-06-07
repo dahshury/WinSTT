@@ -2,8 +2,6 @@
 // tensor-shape reads for KV-cache shaping, and tolerant config.json integer reads. Self-free;
 // split out of `whisper.rs` so the engine core stays cohesive.
 
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use ort::memory::AllocationDevice;

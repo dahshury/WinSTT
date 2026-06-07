@@ -1,4 +1,4 @@
-// PORT IMPL — deterministic snippet / text-expansion engine.
+// Deterministic snippet / text-expansion engine.
 //
 // Source of truth (behavioral): frontend/src/shared/lib/fuzzy-match.ts
 // (`replaceWithSnippets` / `findSnippetMatches` + `doubleMetaphone`) and

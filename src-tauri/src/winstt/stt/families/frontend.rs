@@ -6,7 +6,7 @@
 // `crate::winstt::stt::gigaam_v3_consts` window/filterbank tables. Lifted verbatim out of the old
 // monolithic `families.rs` (was an inline `mod frontend`).
 
-#![allow(dead_code)] // surface defined ahead of the dispatch call sites / resolver wiring.
+#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
 
 use ndarray::Array2;
 

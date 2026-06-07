@@ -1,16 +1,11 @@
-// Source: docs/archive/port/lib_wiring.md §1c/§2.
-//
 // The WinSTT manager layer. Each manager is an `Arc`-friendly struct holding the
 // relevant engine/state, constructed with `new(&AppHandle)` and exposing the
 // methods the Tauri command layer (`winstt/commands/*.rs`) calls.
 //
 // These are the "managed state" objects registered in `initialize_core_logic`
 // (lib.rs) via `app_handle.manage(Arc::new(<Manager>::new(app_handle)))`. They
-// wrap the pure-logic + transport modules already drafted under `winstt/`
+// wrap the pure-logic + transport modules under `winstt/`
 // (llm, cloud_stt, context, catalog, settings_schema, tts, wakeword).
-//
-// HARD RULE: new files only. The orchestrator adds `pub mod managers;` to
-// `winstt/mod.rs` and the `.manage(...)` / `collect_commands!` wiring to lib.rs.
 //
 // DUAL-MANAGER BOUNDARY: `winstt/managers/` = WinSTT feature subsystems (cloud STT,
 // TTS, diarization, wakeword, LLM, realtime, context, file-transcribe, downloads);
@@ -29,7 +24,7 @@ pub mod tts_download_manager;
 pub mod tts_manager;
 pub mod wakeword_manager;
 pub mod word_aligner;
-// ── slice: model download (docs/archive/port/10_frontend_port_plan.md §6 WU-4) ──
+// ── slice: model download ──
 /// Per-quant streaming download manager (predownload/pause/resume/cancel/delete +
 /// the stt:model-download-* / stt:model-cache-changed broadcasts).
 pub mod download_manager;

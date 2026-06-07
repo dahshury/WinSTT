@@ -17,7 +17,7 @@ pub struct ModelEntry {
     pub family: Family,
     /// HuggingFace repo id OR a bare onnx-asr alias (Moonshine/NeMo/GigaAM/etc. use aliases;
     /// Whisper/Cohere/SenseVoice/Kaldi-Vosk use slashed HF repos). The onnx-asr resolver is the
-    /// single source of truth for which files this maps to — see PORT/01_stt_catalog.md.
+    /// single source of truth for which files this maps to.
     pub onnx_model_name: &'static str,
     /// ONNX quantization suffixes the upstream repo actually ships. The empty string `""` is the
     /// default (un-suffixed fp32) export. Order is preserved from `catalog.json`.

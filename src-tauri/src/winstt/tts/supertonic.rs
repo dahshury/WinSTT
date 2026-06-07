@@ -17,8 +17,6 @@
 //                    total_step, current_step) -> denoised_latent
 //   vocoder(latent) -> wav_tts @ 44.1 kHz
 
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;

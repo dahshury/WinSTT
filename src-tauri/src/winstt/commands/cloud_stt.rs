@@ -1,5 +1,4 @@
-// Source: docs/archive/port/07_*.md §2 + lib_wiring.md §3,
-// frontend/electron/ipc/{stt-cloud,credentials}.ts. Wraps managers::CloudSttManager.
+// Reference: frontend/electron/ipc/{stt-cloud,credentials}.ts. Wraps managers::CloudSttManager.
 //
 // Cloud-STT credential verify + cancel commands. The actual transcribe call is
 // invoked internally by the TranscriptionManager when the active model is a cloud

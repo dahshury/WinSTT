@@ -11,9 +11,7 @@
 //
 // The ONNX graph + voice pack are downloaded on first warm-up (the engine code itself is compiled
 // in, unlike the Python sys.path support pack — only the two model FILES are fetched). espeak-ng
-// G2P lives in `phonemize.rs` (process-separated → GPL "mere aggregation"; see PORT/06_tts.md §1).
-
-#![allow(dead_code)]
+// G2P lives in `phonemize.rs` (process-separated → GPL "mere aggregation").
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,7 +25,7 @@ pub const KOKORO_SAMPLE_RATE: u32 = 24_000;
 /// Style/voice-embedding dimensionality (the third axis of a `[510,1,256]` pack).
 pub const STYLE_DIM: usize = 256;
 
-/// Pinned upstream model-file URLs (PORT/06_tts.md §3; same release the Python
+/// Pinned upstream model-file URLs (same release the Python
 /// downloader uses). Overridable via env for CI / self-host.
 /// Kokoro is now a normal HF ONNX model (onnx-community), downloaded through the
 /// shared TTS download manager like every other engine — NOT its old

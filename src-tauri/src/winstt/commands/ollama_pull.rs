@@ -1,7 +1,6 @@
-// Source: docs/archive/port/10_frontend_port_plan.md
-// (WU-6: pull-cancel MISSING + warmup-status) + lib_wiring.md §3/§4b, frontend/electron/ipc/llm.ts.
+// Reference: frontend/electron/ipc/llm.ts.
 //
-// Two WU-6 commands that don't belong in the (already-landed) `commands/llm.rs` and that the
+// Two commands that don't belong in the (already-landed) `commands/llm.rs` and that the
 // existing `LlmManager` has no field for, so they live here behind a small module-local registry —
 // keeps the HARD RULE intact (NEW file under winstt/commands/, no edits to llm.rs / llm_manager.rs):
 //

@@ -39,8 +39,6 @@
 //   * `fetch`    — the async hf-hub resolution + download pipeline that consumes the above.
 // The `pub use` re-exports below keep every `resolver::X` path stable for external callers.
 
-#![allow(dead_code)] // surface defined ahead of the engine call sites.
-
 mod fetch;
 mod globs;
 mod sidecars;

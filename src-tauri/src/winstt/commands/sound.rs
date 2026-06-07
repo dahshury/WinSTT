@@ -1,7 +1,5 @@
-// Source: docs/archive/port/10_frontend_port_plan.md
-// §6 WU-5 (recording-sound shares audio plumbing) + the AUTHORITATIVE
-// frontend/electron/lib/sound-library.ts. Verbatim port of the custom recording-sound
-// file-library manager.
+// Reference (authoritative): frontend/electron/lib/sound-library.ts. Verbatim port of
+// the custom recording-sound file-library manager.
 //
 // The renderer's `features/recording-sound` slice persists user-supplied recording
 // sounds (.wav / .mp3) under `<appData>/sounds/`. It drives these via the

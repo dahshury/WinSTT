@@ -1,5 +1,3 @@
-// PORT IMPL — WU-0 (docs/archive/port/10_frontend_port_plan.md §4b + lib_wiring.md).
-//
 // Window-management commands for the WinSTT window topology. Each WinSTT
 // the reference BrowserWindow becomes a Tauri WebviewWindow loading its own HTML
 // entry (main at "/", secondary windows at "windows/<name>.html"). The chrome

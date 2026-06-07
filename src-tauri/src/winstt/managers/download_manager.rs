@@ -1,4 +1,4 @@
-// PORT IMPL — models slice (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
+// Models slice. Reference shapes:
 //   frontend/electron/ipc/stt-commands.ts + frontend/src/shared/api/ipc-client.ts
 //     (predownload/pause/resume/cancel/delete + the model_download_start/progress/complete +
 //      model_cache_changed broadcasts — the EXACT renderer-facing IPC shapes)

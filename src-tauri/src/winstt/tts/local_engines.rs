@@ -4,8 +4,6 @@
 // catalog entry's TtsEngineId. Asset download is the manager's responsibility
 // (the underlying engine errors `AssetsMissing` until files are on disk).
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;

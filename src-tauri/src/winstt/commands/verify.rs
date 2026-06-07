@@ -1,5 +1,4 @@
-// Source: docs/archive/port/10_frontend_port_plan.md
-// (WU-7) + lib_wiring.md §3, frontend/electron/ipc/credentials.ts + frontend/electron/lib/
+// Reference: frontend/electron/ipc/credentials.ts + frontend/electron/lib/
 // cloud-provider-http.ts. Owns the ONE renderer verify seam (`integrations:verify`).
 //
 // The WinSTT renderer probes ALL THREE cloud credentials — OpenAI, ElevenLabs AND OpenRouter —

@@ -1,4 +1,4 @@
-// PORT IMPL — WU-3 hotkey (docs/archive/port/10_frontend_port_plan.md §6). Source:
+// Hotkey command surface. Reference:
 // frontend/electron/ipc/hotkey.ts + the renderer wrappers in
 // src/shared/api/ipc-client.ts (hotkeyRegister / hotkeyUnregister /
 // hotkeyStartRecording / hotkeyStopRecording / onHotkeyPressed / onHotkeyReleased /

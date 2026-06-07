@@ -1,6 +1,4 @@
-// Source: docs/archive/port/10_frontend_port_plan.md
-// (WU-9 §6 — "add loopback device-list"), lib_wiring.md §3/§4b,
-// server/src/stt_server/control_handler.py `_handle_list_loopback_devices` +
+// Reference: server/src/stt_server/control_handler.py `_handle_list_loopback_devices` +
 // server/src/stt_server/loopback.py `LoopbackCapture.list_devices`. Wraps
 // `winstt::loopback::LoopbackCapture::list_devices`.
 //

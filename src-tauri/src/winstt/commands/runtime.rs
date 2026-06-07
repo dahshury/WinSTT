@@ -1,4 +1,4 @@
-// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
+// Runtime info + fitness command surface. Reference:
 //   frontend/src/shared/api/ipc-client.ts (fetchRuntimeInfo / fetchModelsWithState /
 //     assessDictationFit / assessOllamaFitOnServer + the RuntimeInfoPayload /
 //     ModelsWithStatePayload / FitAssessmentEntry shapes)

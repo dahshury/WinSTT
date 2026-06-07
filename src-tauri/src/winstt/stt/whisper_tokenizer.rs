@@ -12,8 +12,6 @@
 // each char back through the inverse GPT-2 byte table yields raw bytes, which are then
 // UTF-8 decoded (lossy). Special tokens (`<|...|>`) are skipped during text decode.
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -199,11 +197,6 @@ impl WhisperTokenizer {
             .get(&id)
             .map(|t| t.starts_with("<|"))
             .unwrap_or(false)
-    }
-
-    /// True if `id` is a segment-timestamp token (`>= <|0.00|>`).
-    pub fn is_timestamp(&self, id: i64) -> bool {
-        self.timestamp_begin_id.map(|b| id >= b).unwrap_or(false)
     }
 
     /// Decode token ids → text, skipping `<|...|>` markers and stripping ONE leading

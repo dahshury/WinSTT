@@ -5,7 +5,7 @@
 // phonemes, so we reproduce that pipeline:
 //   text  --espeak-ng--> IPA phoneme string  --filter to VOCAB--> token ids (Vec<i64>)
 //
-// Two phonemizer backends behind one `Phonemizer` trait so the GPL question (PORT/06_tts.md §1) is
+// Two phonemizer backends behind one `Phonemizer` trait so the GPL question is
 // a runtime/feature decision, NOT baked into call sites:
 //   * `EspeakCliPhonemizer` — shells out to the system `espeak-ng` binary. Process separation =
 //     "mere aggregation" under the GPL (FSF guidance), so this keeps the main binary non-GPL.
@@ -24,7 +24,7 @@
 //   * `resolve` — espeak shared-lib / data-home path resolution.
 //   * `vocab`   — the Kokoro v1.0 phoneme→token-id vocab table.
 
-#![allow(dead_code)]
+#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
 
 mod resolve;
 mod runtime;
@@ -111,8 +111,8 @@ pub trait Phonemizer: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Shells out to the system `espeak-ng` binary. Process isolation keeps the
-/// GPL-v3 espeak-ng out of the main binary's link graph (PORT/06_tts.md §1
-/// escape hatch — separate process = mere aggregation).
+/// GPL-v3 espeak-ng out of the main binary's link graph (separate process =
+/// mere aggregation).
 ///
 /// Invocation: `espeak-ng -q --ipa=3 -v <lang> -- <text>`
 ///   `-q`        quiet (don't speak; we only want phonemes)

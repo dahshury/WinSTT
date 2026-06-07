@@ -11,7 +11,7 @@
 // Lifted verbatim out of the old monolithic `families.rs`; depends only on the shared `support`
 // layer and the `frontend` featurizers, never on a peer engine.
 
-#![allow(dead_code)] // surface defined ahead of the dispatch call sites / resolver wiring.
+#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
 
 use ndarray::{Array1, Array2, ArrayD, Axis};
 use ort::session::Session;

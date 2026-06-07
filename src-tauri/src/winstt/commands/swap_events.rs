@@ -1,4 +1,4 @@
-// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4 + lib_wiring.md §7). Source:
+// Model-swap event surface. Reference:
 //   frontend/src/shared/api/ipc-client.ts (onModelSwapStarted / onModelSwapCompleted /
 //     onModelSwapFailed / onRuntimeInfo + ModelSwapPayload / ModelSwapFailedPayload /
 //     RuntimeInfoPayload shapes)

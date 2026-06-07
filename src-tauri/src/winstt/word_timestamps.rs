@@ -1,7 +1,5 @@
-// Source: E:/DL/Projects/onnx-asr/src/onnx_asr/word_timestamps.py
+// Reference: E:/DL/Projects/onnx-asr/src/onnx_asr/word_timestamps.py
 //         (itself a port of openai-whisper/whisper/timing.py, MIT)
-//         docs/archive/port/05_wakeword_diarization_loopback_wordts.md §D
-//         memory: project_word_highlight_playback
 // External crates (declared in Cargo.toml, verified docs.rs 2026-05):
 //   ndarray 0.17.2  — Array2/Array3/ArrayView for the alignment matrix math
 //   base85  2.0.0   — RFC1924 == Python base64.b85decode alphabet
@@ -33,8 +31,6 @@
 //   text_map  — the independent LCS text-relabel path (`map_timings_to_text`)
 // All public items below are re-exported so `crate::winstt::word_timestamps::X`
 // paths stay stable for `stt::whisper` and `managers::word_aligner`.
-
-#![allow(dead_code)] // some defensive early-returns / helpers are exercised only by the engine.
 
 mod align;
 mod dsp;

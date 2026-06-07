@@ -212,8 +212,7 @@ impl ElevenLabsEngine {
     }
 
     /// Fetch a CDN preview mp3 for a voice (no character credits). Refuses any
-    /// non-https URL and local/private destinations (trust-boundary check,
-    /// PORT/06_tts.md §4).
+    /// non-https URL and local/private destinations (trust-boundary check).
     pub fn fetch_preview(&self, preview_url: &str) -> TtsResult<Vec<u8>> {
         use tauri::async_runtime::block_on;
         let url = validate_preview_url(preview_url).map_err(TtsError::Cloud)?;

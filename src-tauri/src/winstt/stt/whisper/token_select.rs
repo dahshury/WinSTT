@@ -2,8 +2,6 @@
 // suppress-token mask, the allowed-token-restricted variant, and the softmax + argmax primitives.
 // Self-free (everything is passed in); split out of `whisper.rs` so the engine core stays cohesive.
 
-#![allow(dead_code)]
-
 pub(super) const WHISPER_NO_SPEECH_THRESHOLD: f32 = 0.2;
 pub(super) const WHISPER_SUPPRESS_TOKENS: &[usize] = &[
     1, 2, 7, 8, 9, 10, 14, 25, 26, 27, 28, 29, 31, 58, 59, 60, 61, 62, 63, 90, 91, 92, 93, 359,

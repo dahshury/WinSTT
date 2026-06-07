@@ -8,7 +8,7 @@
 // (`ctc`, `transducer`, `aed`) call these via `use super::support::*`. Most fns are `pub(super)`
 // so the leakage stays inside the `families/` module tree (it does not widen the crate API).
 
-#![allow(dead_code)] // surface defined ahead of the dispatch call sites / resolver wiring.
+#![allow(dead_code)] // staged: surface defined ahead of call sites / wiring.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

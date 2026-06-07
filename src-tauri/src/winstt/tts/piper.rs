@@ -1,4 +1,4 @@
-// PORT IMPL — Piper (VITS) per-voice TTS on ort 2.0.0-rc.12.
+// Piper (VITS) per-voice TTS on ort 2.0.0-rc.12.
 //
 // Recipe verified verbatim from OHF-Voice/piper1-gpl (voice.py, phoneme_ids.py,
 // const.py, config.py, phonemize_espeak.py) + a real en_US-lessac-medium.onnx.json
@@ -13,8 +13,6 @@
 // Each VOICE is its own {voice}.onnx + {voice}.onnx.json (no shared model, no quant
 // matrix). Reuses the bundled espeak-ng via EspeakLibPhonemizer::phonemize_voice
 // (explicit espeak voice id — NOT the Kokoro lang remap).
-
-#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

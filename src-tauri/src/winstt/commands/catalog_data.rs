@@ -1,4 +1,4 @@
-// PORT IMPL — WU-4 (docs/archive/port/10_frontend_port_plan.md §6 WU-4). Source:
+// The rich model catalog. Reference shapes:
 //   server/src/recorder/domain/catalog.json (the 69-model editorial catalog)
 //   + server/src/recorder/domain/model_registry.py (_serialize_model / _size_label /
 //     _accuracy_score / _speed_score / _backend_from_str)

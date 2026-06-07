@@ -1,5 +1,3 @@
-// PORT IMPL — WU-10 (docs/archive/port/10_frontend_port_plan.md §6 WU-10 + §1b History rows).
-//
 // History command surface for the WinSTT renderer. The WinSTT renderer drives
 // history through TWO disjoint channel groups (both routed by the WU-0 adapter,
 // `shared/api/native-bridge-adapter.ts`):

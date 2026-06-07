@@ -1,5 +1,4 @@
-// Source: docs/archive/port/10_frontend_port_plan.md
-// (WU-9 §6 — `entities/audio-device`), lib_wiring.md §3, spec/openapi.yaml `AudioDevice`,
+// Reference: spec/openapi.yaml `AudioDevice`,
 // server/src/stt_server/control_handler.py `list_input_devices`. Wraps Handy's
 // `audio_toolkit::audio::device::list_input_devices` (cpal).
 //

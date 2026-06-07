@@ -1,5 +1,4 @@
-// Source: docs/archive/port/07_*.md +
-// 10_frontend_port_plan.md §6 WU-8 + lib_wiring.md §3, and the authoritative
+// Reference (authoritative):
 // frontend/electron/ipc/file-transcribe-queue.ts. Wraps managers::FileTranscribeManager.
 //
 // The multi-file transcription queue command surface. The renderer
