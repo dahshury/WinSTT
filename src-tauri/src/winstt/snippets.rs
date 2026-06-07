@@ -201,13 +201,8 @@ pub fn replace_with_snippets(text: &str, snippets: &[SnippetEntry]) -> String {
 }
 
 // ===========================================================================
-// SnippetStore — thread-safe cache mirroring cachedSnippets / rebuildSnippets.
+// SnippetsManager — thread-safe cache mirroring cachedSnippets / rebuildSnippets.
 // ===========================================================================
-
-/// Process-wide snippet cache. Loaded from `WinsttSettings.snippets` and rebuilt
-/// whenever settings change (the relay seam calls `reload` after a settings save,
-/// just like the TS `onDidChange("snippets", rebuildSnippets)` watcher).
-static SNIPPET_STORE: Lazy<RwLock<Vec<SnippetEntry>>> = Lazy::new(|| RwLock::new(Vec::new()));
 
 /// Keep only entries with BOTH a non-empty trigger AND a non-empty expansion
 /// (mirrors `rebuildSnippets`'s `Boolean(e.trigger && e.expansion)` filter).
@@ -219,48 +214,69 @@ fn sanitize(entries: &[SnippetEntry]) -> Vec<SnippetEntry> {
         .collect()
 }
 
-/// Replace the cached snippet set (called on init + after every settings save).
-pub fn set_snippets(entries: &[SnippetEntry]) {
-    let sanitized = sanitize(entries);
-    if let Ok(mut guard) = SNIPPET_STORE.write() {
-        *guard = sanitized;
+/// Owns the warm snippet cache. Registered as Tauri managed state
+/// (`Arc<SnippetsManager>`) in lib.rs setup, mirroring the other WinSTT managers.
+/// Loaded from `WinsttSettings.snippets` and rebuilt whenever settings change (the
+/// relay seam calls `reload_from_settings` after a save, just like the TS
+/// `onDidChange("snippets", rebuildSnippets)` watcher). Replaces the former
+/// process-wide `SNIPPET_STORE` static so the cache lifecycle is owned + testable.
+pub struct SnippetsManager {
+    app: AppHandle,
+    /// The active snippet set the expansion pass uses (sanitized).
+    store: RwLock<Vec<SnippetEntry>>,
+}
+
+impl SnippetsManager {
+    pub fn new(app: &AppHandle) -> Self {
+        Self {
+            app: app.clone(),
+            store: RwLock::new(Vec::new()),
+        }
     }
-}
 
-/// Reload the cache from the persisted settings tree. Call once at startup and
-/// from the settings-changed seam so a live snippet edit takes effect on the very
-/// next utterance — the in-proc analogue of `rebuildSnippets`.
-pub fn reload_from_settings(app: &AppHandle) {
-    let settings = read_settings(app);
-    set_snippets(&settings.snippets);
-}
-
-/// Snapshot the cached snippets (the active set the expansion pass uses).
-fn cached_snippets() -> Vec<SnippetEntry> {
-    SNIPPET_STORE.read().map(|g| g.clone()).unwrap_or_default()
-}
-
-/// Apply snippet expansion using the in-memory cache. Pure given the cache;
-/// returns `text` unchanged when the cache is empty. This is the hot-path entry
-/// the paste pipeline calls (no settings read — the cache is kept warm by
-/// `reload_from_settings`).
-pub fn expand_cached(text: &str) -> String {
-    if text.is_empty() {
-        return text.to_string();
+    /// Replace the cached snippet set (called on init + after every settings save).
+    pub fn set_snippets(&self, entries: &[SnippetEntry]) {
+        let sanitized = sanitize(entries);
+        if let Ok(mut guard) = self.store.write() {
+            *guard = sanitized;
+        }
     }
-    let snippets = cached_snippets();
-    if snippets.is_empty() {
-        return text.to_string();
-    }
-    replace_with_snippets(text, &snippets)
-}
 
-/// Apply snippet expansion, reading the live settings first. Used by callers that
-/// don't run on the cache-kept-warm hot path (e.g. a one-shot CLI / test seam).
-/// The paste pipeline should prefer `expand_cached` (warmed by the relay).
-pub fn expand_snippets(app: &AppHandle, text: &str) -> String {
-    reload_from_settings(app);
-    expand_cached(text)
+    /// Reload the cache from the persisted settings tree. Call once at startup and
+    /// from the settings-changed seam so a live snippet edit takes effect on the very
+    /// next utterance — the in-proc analogue of `rebuildSnippets`.
+    pub fn reload_from_settings(&self) {
+        let settings = read_settings(&self.app);
+        self.set_snippets(&settings.snippets);
+    }
+
+    /// Snapshot the cached snippets (the active set the expansion pass uses).
+    fn cached_snippets(&self) -> Vec<SnippetEntry> {
+        self.store.read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// Apply snippet expansion using the in-memory cache. Pure given the cache;
+    /// returns `text` unchanged when the cache is empty. This is the hot-path entry
+    /// the paste pipeline calls (no settings read — the cache is kept warm by
+    /// `reload_from_settings`).
+    pub fn expand_cached(&self, text: &str) -> String {
+        if text.is_empty() {
+            return text.to_string();
+        }
+        let snippets = self.cached_snippets();
+        if snippets.is_empty() {
+            return text.to_string();
+        }
+        replace_with_snippets(text, &snippets)
+    }
+
+    /// Apply snippet expansion, reading the live settings first. Used by callers that
+    /// don't run on the cache-kept-warm hot path (e.g. the read-only preview command).
+    /// The paste pipeline should prefer `expand_cached` (warmed by the relay).
+    pub fn expand_snippets(&self, text: &str) -> String {
+        self.reload_from_settings();
+        self.expand_cached(text)
+    }
 }
 
 #[cfg(test)]

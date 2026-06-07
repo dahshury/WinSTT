@@ -32,11 +32,12 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::managers::transcription::TranscriptionManager;
+
 use crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE;
 use crate::audio_toolkit::vad::{
     SileroVad, SmoothedVad, VoiceActivityDetector, VAD_FRAME_SAMPLES, VAD_SPEECH_THRESHOLD,
 };
-use crate::managers::transcription::TranscriptionManager;
 use crate::winstt::commands::dictation::SttEvents;
 use crate::winstt::commands::listen_events::{emit_speaker_segments, EmitSpeakerSegment};
 use crate::winstt::commands::settings::read_settings_raw;
@@ -79,6 +80,12 @@ const MIN_SPEECH_SAMPLES: usize = (WHISPER_SAMPLE_RATE as usize) * 150 / 1000;
 
 pub struct LoopbackManager {
     app: AppHandle,
+    /// Shared transcription engine — injected at construction (the same
+    /// `Arc<TranscriptionManager>` Tauri manages). Listen mode feeds final chunks
+    /// here, mirroring how mic dictation reuses the one engine. Previously resolved
+    /// per-call via `app.try_state`; injection makes the dependency explicit and
+    /// drops the fallible state lookups on the hot path.
+    transcription: Arc<TranscriptionManager>,
     /// True while loopback capture is running (listen mode active).
     capturing: AtomicBool,
     /// The native WASAPI capture (render endpoint, shared-mode loopback). Owned
@@ -92,9 +99,10 @@ pub struct LoopbackManager {
 }
 
 impl LoopbackManager {
-    pub fn new(app: &AppHandle) -> Self {
+    pub fn new(app: &AppHandle, transcription: Arc<TranscriptionManager>) -> Self {
         Self {
             app: app.clone(),
+            transcription,
             capturing: AtomicBool::new(false),
             capture: Mutex::new(LoopbackCapture::new()),
             consumer: Mutex::new(None),
@@ -150,9 +158,7 @@ impl LoopbackManager {
         // TranscribeAction::start). By the time the first ~2 s-silence endpoint
         // fires the model is ready; if it's still loading, `transcribe()` blocks
         // on the loading condvar rather than erroring.
-        if let Some(tm) = self.app.try_state::<Arc<TranscriptionManager>>() {
-            tm.initiate_model_load();
-        }
+        self.transcription.initiate_model_load();
 
         // 16 kHz mono f32 frames flow from the capture thread into the consumer.
         let (tx, rx) = mpsc::channel::<Vec<f32>>();
@@ -167,11 +173,12 @@ impl LoopbackManager {
 
         // Spawn the consumer/transcription loop.
         let app = self.app.clone();
+        let transcription = self.transcription.clone();
         let stop_flag = self.stop_flag.clone();
         let handle = std::thread::Builder::new()
             .name("loopback-consumer".into())
             .spawn(move || {
-                consumer_loop(app, rx, stop_flag, vad);
+                consumer_loop(app, transcription, rx, stop_flag, vad);
             })
             .map_err(|e| {
                 // Roll back the capture if the consumer thread couldn't spawn.
@@ -214,6 +221,7 @@ impl Drop for LoopbackManager {
 /// speech is finalized by rolling commits.
 fn consumer_loop(
     app: AppHandle,
+    transcription: Arc<TranscriptionManager>,
     rx: Receiver<Vec<f32>>,
     stop_flag: Arc<AtomicBool>,
     mut vad: Box<dyn VoiceActivityDetector>,
@@ -225,9 +233,10 @@ fn consumer_loop(
 
     let (commit_tx, commit_rx) = mpsc::sync_channel::<Vec<f32>>(LISTEN_COMMIT_QUEUE_CAPACITY);
     let worker_app = app.clone();
+    let worker_transcription = transcription.clone();
     let worker = match std::thread::Builder::new()
         .name("loopback-transcriber".into())
-        .spawn(move || transcription_worker_loop(worker_app, commit_rx))
+        .spawn(move || transcription_worker_loop(worker_app, worker_transcription, commit_rx))
     {
         Ok(handle) => handle,
         Err(e) => {
@@ -301,7 +310,7 @@ fn consumer_loop(
             // else: not in speech and no voice → drop (idle system audio).
         }
 
-        publish_realtime_preview_if_due(&app, &speech, &mut last_preview);
+        publish_realtime_preview_if_due(&app, &transcription, &speech, &mut last_preview);
     }
 
     // Session ending: flush whatever speech remains so the last sentence isn't
@@ -390,17 +399,19 @@ fn loopback_language(app: &AppHandle) -> Option<String> {
     fixed_realtime_language_from_model(&settings.model)
 }
 
-fn publish_realtime_preview_if_due(app: &AppHandle, speech: &[f32], last_preview: &mut Instant) {
+fn publish_realtime_preview_if_due(
+    app: &AppHandle,
+    transcription: &TranscriptionManager,
+    speech: &[f32],
+    last_preview: &mut Instant,
+) {
     if speech.len() < MIN_SPEECH_SAMPLES || last_preview.elapsed() < listen_realtime_interval(app) {
         return;
     }
     *last_preview = Instant::now();
 
-    let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() else {
-        return;
-    };
     let language = loopback_language(app);
-    let Some(text) = tm.transcribe_realtime(speech, language.as_deref()) else {
+    let Some(text) = transcription.transcribe_realtime(speech, language.as_deref()) else {
         return;
     };
     let trimmed = text.trim();
@@ -411,27 +422,26 @@ fn publish_realtime_preview_if_due(app: &AppHandle, speech: &[f32], last_preview
     SttEvents::realtime_text(app, trimmed);
 }
 
-fn transcription_worker_loop(app: AppHandle, rx: Receiver<Vec<f32>>) {
+fn transcription_worker_loop(
+    app: AppHandle,
+    transcription: Arc<TranscriptionManager>,
+    rx: Receiver<Vec<f32>>,
+) {
     while let Ok(audio) = rx.recv() {
-        transcribe_and_emit(&app, audio);
+        transcribe_and_emit(&app, &transcription, audio);
     }
 }
 
 /// Transcribe a completed speech buffer and route the result the same way mic dictation does:
 /// emit `stt:full-sentence`, run diarization, paste. No-op for sub-threshold buffers.
-fn transcribe_and_emit(app: &AppHandle, audio: Vec<f32>) {
+fn transcribe_and_emit(app: &AppHandle, transcription: &TranscriptionManager, audio: Vec<f32>) {
     if audio.len() < MIN_SPEECH_SAMPLES {
         return;
     }
 
-    let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() else {
-        log::warn!("[loopback] TranscriptionManager not available; dropping utterance");
-        return;
-    };
-
     SttEvents::transcription_start(app, None);
     let start = std::time::Instant::now();
-    let text = match tm.transcribe(audio) {
+    let text = match transcription.transcribe(audio) {
         Ok(t) => t,
         Err(e) => {
             log::error!("[loopback] transcription failed: {e}");

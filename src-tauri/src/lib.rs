@@ -149,7 +149,15 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
         app_handle.manage(tts_manager);
         app_handle.manage(Arc::new(WakeWordManager::new(app_handle)));
         app_handle.manage(Arc::new(DiarizationManager::new(app_handle)));
-        app_handle.manage(Arc::new(LoopbackManager::new(app_handle)));
+        app_handle.manage(Arc::new(LoopbackManager::new(
+            app_handle,
+            transcription_manager.clone(),
+        )));
+        // Snippet expansion cache owner (warmed at startup + on settings:changed by
+        // install_snippet_reload_bridge below). Must be managed before that bridge runs.
+        app_handle.manage(Arc::new(crate::winstt::snippets::SnippetsManager::new(
+            app_handle,
+        )));
         app_handle.manage(Arc::new(WordAligner::new(
             app_handle,
             model_manager.clone(),
