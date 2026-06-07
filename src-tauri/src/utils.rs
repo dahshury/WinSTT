@@ -9,10 +9,7 @@ use tauri::{AppHandle, Manager};
 // Re-export all utility modules for easy access
 pub use crate::clipboard::*;
 pub use crate::tray::*;
-pub use crate::winstt::commands::overlay::{
-    hide_recording_overlay, reposition_overlay_if_visible as update_overlay_position,
-    show_recording_overlay,
-};
+pub use crate::winstt::commands::overlay::{hide_recording_overlay, show_recording_overlay};
 
 /// Centralized cancellation function that can be called from anywhere in the app.
 /// Handles cancelling both recording and transcription operations and updates UI state.

@@ -23,30 +23,6 @@ fn apply_and_reload_accelerator(app: &AppHandle, s: settings::AppSettings) {
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_whisper_accelerator_setting(
-    app: AppHandle,
-    accelerator: settings::WhisperAcceleratorSetting,
-) -> Result<(), String> {
-    let mut s = settings::get_settings(&app);
-    s.whisper_accelerator = accelerator;
-    apply_and_reload_accelerator(&app, s);
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn change_ort_accelerator_setting(
-    app: AppHandle,
-    accelerator: settings::OrtAcceleratorSetting,
-) -> Result<(), String> {
-    let mut s = settings::get_settings(&app);
-    s.ort_accelerator = accelerator;
-    apply_and_reload_accelerator(&app, s);
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn change_whisper_gpu_device(app: AppHandle, device: i32) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     s.whisper_gpu_device = device;
