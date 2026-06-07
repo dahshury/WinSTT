@@ -1472,6 +1472,19 @@ pub struct WinsttSettings {
     pub tts: TtsSettings,
     #[serde(default)]
     pub integrations: IntegrationsSettings,
+    /// SINGLE-STORE MIGRATION: the formerly-separate `settings_store.json`
+    /// (`AppSettings`) is now embedded here so `winstt-settings.json` is the ONE
+    /// persisted settings file. This sub-section carries every backend-only field
+    /// that has no renderer-facing WinsttSettings home: the hotkey `bindings` map,
+    /// the audio-feedback subsystem, the paste/clipboard subsystem, the legacy
+    /// `post_process_*` LLM subsystem (with the `post_process_api_keys` SecretMap
+    /// sealed at rest), the keyboard implementation, accelerators, and the
+    /// tray/debug/update-check toggles. The renderer never reads/writes `core`
+    /// (it is masked out of the renderer-facing snapshot); the backend reaches it
+    /// through `crate::settings::get_settings`, which now derives an `AppSettings`
+    /// view from this field. Seeded once from the old store (see `seed_defaults`).
+    #[serde(default = "crate::settings::get_default_settings")]
+    pub core: crate::settings::AppSettings,
 }
 
 impl Default for WinsttSettings {
@@ -1488,6 +1501,7 @@ impl Default for WinsttSettings {
             llm: LlmSettings::default(),
             tts: TtsSettings::default(),
             integrations: IntegrationsSettings::default(),
+            core: crate::settings::get_default_settings(),
         }
     }
 }
@@ -1517,6 +1531,11 @@ struct WinsttSettingsWire {
     tts: TtsSettings,
     #[serde(default)]
     integrations: IntegrationsSettings,
+    // The embedded legacy AppSettings view. Absent in pre-migration stores → the
+    // canonical defaults, which `seed_defaults` then overwrites once from the old
+    // `settings_store.json` so existing users keep their bindings / API keys / etc.
+    #[serde(default = "crate::settings::get_default_settings")]
+    core: crate::settings::AppSettings,
 }
 
 impl From<WinsttSettingsWire> for WinsttSettings {
@@ -1533,6 +1552,7 @@ impl From<WinsttSettingsWire> for WinsttSettings {
             llm: w.llm,
             tts: w.tts,
             integrations: w.integrations,
+            core: w.core,
         }
     }
 }

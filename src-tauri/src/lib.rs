@@ -75,6 +75,15 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
     // after onboarding completes. This avoids triggering permission dialogs
     // on macOS before the user is ready.
 
+    // SINGLE-STORE: seed WinSTT settings defaults + run the one-time migration of
+    // the legacy `settings_store.json` into the embedded `WinsttSettings.core`
+    // BEFORE any manager reads settings. `crate::settings::get_settings` now derives
+    // its `AppSettings` view from `core`, so this must run first or early readers
+    // (e.g. `apply_accelerator_settings`) would see defaults instead of the
+    // migrated user values.
+    winstt::commands::settings::seed_defaults(app_handle);
+    startup.mark("settings defaults seeded");
+
     // Initialize the managers
     let recording_manager = Arc::new(
         AudioRecordingManager::new(app_handle).expect("Failed to initialize recording manager"),
@@ -128,10 +137,6 @@ fn initialize_core_logic(app_handle: &AppHandle, startup: &mut StartupProfiler) 
         });
     }
     startup.mark("VAD preload scheduled");
-
-    // Seed WinSTT settings defaults BEFORE managers read them (first-run materialization).
-    winstt::commands::settings::seed_defaults(app_handle);
-    startup.mark("settings defaults seeded");
 
     // ── WinSTT managers (lib_wiring.md §2) ──
     {

@@ -95,27 +95,35 @@ pub fn recording_mode(app: &AppHandle) -> RecordingMode {
     read_settings_raw(app).general.recording_mode
 }
 
-/// Open (decrypt) the three secret fields on a settings tree in place. Idempotent
-/// on already-plaintext values (legacy passthrough).
+/// Open (decrypt) the secret fields on a settings tree in place. Idempotent
+/// on already-plaintext values (legacy passthrough). Covers the three
+/// renderer-facing string secrets AND the embedded `core.post_process_api_keys`
+/// SecretMap (the legacy post-processing LLM keys, now single-store + sealed).
 fn try_open_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_decrypt_secret(&settings.llm.openrouter_api_key)?;
     settings.integrations.openai.api_key =
         try_decrypt_secret(&settings.integrations.openai.api_key)?;
     settings.integrations.elevenlabs.api_key =
         try_decrypt_secret(&settings.integrations.elevenlabs.api_key)?;
+    for value in settings.core.post_process_api_keys.values_mut() {
+        *value = try_decrypt_secret(value)?;
+    }
     Ok(())
 }
 
-/// Seal (encrypt) the three secret fields on a settings tree in place, ready for
-/// the store. A value that is already a sealed envelope (the renderer echoed it
-/// back without touching it — it can't, the IPC path always sends plaintext, but
-/// the guard keeps this total) is left as-is via `encrypt_secret`'s idempotence.
+/// Seal (encrypt) the secret fields on a settings tree in place, ready for
+/// the store. A value that is already a sealed envelope is left as-is via
+/// `encrypt_secret`'s idempotence. Covers the three renderer-facing string
+/// secrets AND the embedded `core.post_process_api_keys` SecretMap.
 pub(super) fn try_seal_secrets(settings: &mut WinsttSettings) -> Result<(), String> {
     settings.llm.openrouter_api_key = try_encrypt_secret(&settings.llm.openrouter_api_key)?;
     settings.integrations.openai.api_key =
         try_encrypt_secret(&settings.integrations.openai.api_key)?;
     settings.integrations.elevenlabs.api_key =
         try_encrypt_secret(&settings.integrations.elevenlabs.api_key)?;
+    for value in settings.core.post_process_api_keys.values_mut() {
+        *value = try_encrypt_secret(value)?;
+    }
     Ok(())
 }
 
@@ -129,6 +137,12 @@ pub(super) fn sanitize_settings_for_renderer(settings: &mut WinsttSettings) {
     mask_secret_for_renderer(&mut settings.llm.openrouter_api_key);
     mask_secret_for_renderer(&mut settings.integrations.openai.api_key);
     mask_secret_for_renderer(&mut settings.integrations.elevenlabs.api_key);
+    // The embedded legacy post-process API keys never cross to the renderer in
+    // plaintext (the renderer doesn't use `core` at all, but mask defensively so
+    // a future debug surface can't leak them).
+    for value in settings.core.post_process_api_keys.values_mut() {
+        mask_secret_for_renderer(value);
+    }
 }
 
 fn preserve_masked_secret(previous: &str, next: &mut String) {
@@ -152,6 +166,25 @@ pub(super) fn preserve_masked_secrets(previous: &WinsttSettings, next: &mut Wins
     );
 }
 
+/// SINGLE-STORE BRIDGE write path for the embedded legacy `AppSettings` view.
+///
+/// `crate::settings::write_settings` (every legacy per-field setter command —
+/// bindings, post-process CRUD, custom words, accelerators, log level, …) funnels
+/// here. We read the current plaintext WinSTT tree, graft the new `core` onto it,
+/// re-seal ALL secrets (incl. the embedded post-process API keys), persist, and
+/// re-broadcast nothing (the legacy `core` is renderer-invisible). The non-`core`
+/// sections are preserved untouched so a legacy write can't clobber the renderer's
+/// model/general/llm/etc. settings.
+pub fn write_core_settings(
+    app: &AppHandle,
+    core: crate::settings::AppSettings,
+) -> Result<(), String> {
+    let mut next = try_read_settings(app)?; // plaintext (secrets opened)
+    next.core = core;
+    try_seal_secrets(&mut next)?;
+    write_settings_value(app, &next)
+}
+
 /// Persist a full settings tree (with secrets ALREADY sealed) to the store and flush.
 pub(super) fn write_settings_value(
     app: &AppHandle,
@@ -166,24 +199,81 @@ pub(super) fn write_settings_value(
     Ok(())
 }
 
+/// One-time-migration marker stored alongside `winstt_settings`. Once the embedded
+/// `core` section has been seeded from the legacy `settings_store.json` (or seeded
+/// fresh on a brand-new install) this is set to `true` so the seed never re-runs
+/// and can't clobber later user edits to bindings / API keys / paste settings.
+const CORE_MIGRATED_KEY: &str = "core_migrated";
+
 /// Seed the default settings tree on first run so the store file exists and a cold
-/// renderer boots against a complete tree (matching the reference's persisted store, which
-/// writes the schema defaults on creation). Idempotent: if the `winstt_settings` key
-/// is already present we leave it untouched. Called once from lib.rs setup.
+/// renderer boots against a complete tree, AND perform the one-time single-store
+/// migration of the legacy `AppSettings` (`settings_store.json`) into the embedded
+/// `WinsttSettings.core` section. Called once from lib.rs setup.
+///
+/// Migration semantics (data-preserving, idempotent via [`CORE_MIGRATED_KEY`]):
+///   * Fresh install (no `winstt_settings` key): write the default tree (whose
+///     `core` is the canonical AppSettings defaults) and mark migrated.
+///   * Existing WinsttSettings store, `core` never migrated, legacy
+///     `settings_store.json` present: read the legacy AppSettings, seal its
+///     secrets (incl. plaintext post-process API keys), graft it onto the
+///     persisted tree's `core`, persist, and mark migrated. The user keeps their
+///     bindings, audio-feedback, paste, post-process, accelerator, and tray
+///     settings — now in the single store, with the API keys encrypted at rest.
+///   * Existing store, already migrated: no-op.
 pub fn seed_defaults(app: &AppHandle) {
     let Ok(store) = app.store(store_path()) else {
         return;
     };
-    if store.get(WINSTT_SETTINGS_KEY).is_some() {
-        return; // already seeded — never clobber a real store.
+
+    // Brand-new install: materialize the full default tree and short-circuit.
+    if store.get(WINSTT_SETTINGS_KEY).is_none() {
+        let defaults = WinsttSettings::default();
+        if let Ok(value) = serde_json::to_value(&defaults) {
+            store.set(WINSTT_SETTINGS_KEY, value);
+            store.set(CORE_MIGRATED_KEY, serde_json::json!(true));
+            let _ = store.save();
+        }
+        return;
     }
-    // Defaults have empty secret fields, so sealing is a no-op (empty → empty);
-    // write the canonical default tree so the file materializes.
-    let defaults = WinsttSettings::default();
-    if let Ok(value) = serde_json::to_value(&defaults) {
-        store.set(WINSTT_SETTINGS_KEY, value);
-        let _ = store.save();
+
+    // Existing store. If the one-time core migration already ran, leave it alone.
+    let already_migrated = store
+        .get(CORE_MIGRATED_KEY)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if already_migrated {
+        return;
     }
+
+    // Pull the legacy AppSettings out of the old `settings_store.json` (plaintext),
+    // if it exists. `load_legacy_app_settings` returns `None` when the legacy store
+    // is absent or unreadable — in that case the embedded `core` keeps whatever it
+    // already deserialized to (defaults for a pre-migration tree), which is correct.
+    let mut current = match try_read_settings(app) {
+        Ok(settings) => settings,
+        Err(err) => {
+            log::warn!("[settings] core-migration: failed to read WinSTT settings: {err}");
+            return;
+        }
+    };
+    if let Some(legacy) = crate::settings::load_legacy_app_settings(app) {
+        log::info!("[settings] core-migration: seeding embedded `core` from legacy settings_store.json");
+        current.core = legacy;
+    }
+
+    // Seal secrets (the legacy post-process API keys are plaintext on disk in the
+    // old store; this is where they get DPAPI-sealed into the single store).
+    let mut to_persist = current;
+    if let Err(err) = try_seal_secrets(&mut to_persist) {
+        log::warn!("[settings] core-migration: failed to seal secrets: {err}");
+        return;
+    }
+    if let Err(err) = write_settings_value(app, &to_persist) {
+        log::warn!("[settings] core-migration: failed to persist migrated settings: {err}");
+        return;
+    }
+    store.set(CORE_MIGRATED_KEY, serde_json::json!(true));
+    let _ = store.save();
 }
 
 #[cfg(test)]
@@ -253,6 +343,71 @@ mod tests {
         assert_eq!(opened.llm.openrouter_api_key, "sk-or-v1-secret");
         assert_eq!(opened.integrations.openai.api_key, "sk-openai-secret");
         assert_eq!(opened.integrations.elevenlabs.api_key, "xi-el-secret");
+    }
+
+    /// The single-store migration's load-bearing new behavior: the embedded legacy
+    /// `core.post_process_api_keys` SecretMap is sealed at rest (DPAPI) on save and
+    /// opened to plaintext on read, exactly like the three string secrets.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn seal_then_open_round_trips_embedded_post_process_api_keys() {
+        let mut s = WinsttSettings::default();
+        s.core
+            .post_process_api_keys
+            .insert("openai".into(), "sk-pp-openai-secret".into());
+        s.core
+            .post_process_api_keys
+            .insert("groq".into(), "gsk-pp-groq-secret".into());
+        // Empty key must stay empty (no spurious envelope).
+        s.core
+            .post_process_api_keys
+            .insert("custom".into(), String::new());
+
+        let mut sealed = s.clone();
+        try_seal_secrets(&mut sealed).unwrap();
+        assert!(is_encrypted(sealed.core.post_process_api_keys.get("openai").unwrap()));
+        assert!(is_encrypted(sealed.core.post_process_api_keys.get("groq").unwrap()));
+        assert_eq!(sealed.core.post_process_api_keys.get("custom").unwrap(), "");
+        // Plaintext must not leak into the on-disk envelope.
+        assert!(!sealed
+            .core
+            .post_process_api_keys
+            .get("openai")
+            .unwrap()
+            .contains("sk-pp-openai-secret"));
+
+        let mut opened = sealed.clone();
+        try_open_secrets(&mut opened).unwrap();
+        assert_eq!(
+            opened.core.post_process_api_keys.get("openai").unwrap(),
+            "sk-pp-openai-secret"
+        );
+        assert_eq!(
+            opened.core.post_process_api_keys.get("groq").unwrap(),
+            "gsk-pp-groq-secret"
+        );
+        assert_eq!(opened.core.post_process_api_keys.get("custom").unwrap(), "");
+    }
+
+    /// The renderer-facing snapshot masks the embedded post-process API keys so
+    /// they never cross IPC in plaintext, while empty keys stay empty.
+    #[test]
+    fn renderer_sanitization_masks_embedded_post_process_keys() {
+        let mut s = WinsttSettings::default();
+        s.core
+            .post_process_api_keys
+            .insert("openai".into(), "sk-pp-secret".into());
+        s.core
+            .post_process_api_keys
+            .insert("custom".into(), String::new());
+
+        sanitize_settings_for_renderer(&mut s);
+
+        assert_eq!(
+            s.core.post_process_api_keys.get("openai").unwrap(),
+            SECRET_PRESENT_SENTINEL
+        );
+        assert_eq!(s.core.post_process_api_keys.get("custom").unwrap(), "");
     }
 
     #[test]

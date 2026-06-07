@@ -71,7 +71,7 @@ use self::wakeword::apply_wakeword_runtime_settings;
 // NOT re-exported here — re-exporting an unused path would trip `-D warnings`.
 pub(crate) use self::learning::auto_apply_dictation_learning;
 pub(crate) use self::persistence::read_settings_raw;
-pub use self::persistence::{read_settings, recording_mode, seed_defaults};
+pub use self::persistence::{read_settings, recording_mode, seed_defaults, write_core_settings};
 pub(crate) use self::runtime::{
     core_timeout_from_winstt, enabled_ollama_models, should_warm_tts, warm_stt_model_async,
     warm_tts_async,

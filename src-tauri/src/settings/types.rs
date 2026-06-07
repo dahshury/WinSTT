@@ -78,7 +78,7 @@ impl From<LogLevel> for tauri_plugin_log::LogLevel {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 pub struct ShortcutBinding {
     pub id: String,
     pub name: String,
@@ -87,14 +87,14 @@ pub struct ShortcutBinding {
     pub current_binding: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 pub struct LLMPrompt {
     pub id: String,
     pub name: String,
     pub prompt: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
 pub struct PostProcessProvider {
     pub id: String,
     pub label: String,
@@ -312,9 +312,9 @@ impl Default for OrtAcceleratorSetting {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Type)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(transparent)]
-pub(crate) struct SecretMap(HashMap<String, String>);
+pub struct SecretMap(HashMap<String, String>);
 
 impl SecretMap {
     // Tuple-struct field is module-private; sibling submodules (defaults.rs, tests)
@@ -349,7 +349,7 @@ impl std::ops::DerefMut for SecretMap {
 }
 
 /* still handy for composing the initial JSON in the store ------------- */
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
     // NOTE: the Handy-era `push_to_talk` bool was removed — the recording mode

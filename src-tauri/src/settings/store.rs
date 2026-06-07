@@ -153,94 +153,80 @@ impl AppSettings {
     }
 }
 
-pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
-    // Initialize store
+/// Read the LEGACY `settings_store.json` `AppSettings` blob directly, WITHOUT
+/// touching the WinSTT store. Returns `None` when the legacy file is absent or
+/// the `settings` key can't be parsed. Used exactly once by the single-store
+/// migration in `winstt::commands::settings::seed_defaults` to seed the embedded
+/// `WinsttSettings.core` from a pre-migration install. Secrets in the returned
+/// value are plaintext (the legacy store never sealed them); the migration seals
+/// them on write.
+pub fn load_legacy_app_settings(app: &AppHandle) -> Option<AppSettings> {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
-
-    let mut settings = if let Some(settings_value) = store.get("settings") {
-        // Parse the entire settings object
-        match serde_json::from_value::<AppSettings>(settings_value) {
-            Ok(mut settings) => {
-                debug!("Found existing settings: {:?}", settings);
-                let default_settings = get_default_settings();
-                let mut updated = false;
-
-                // Merge default bindings into existing settings
-                for (key, value) in default_settings.bindings {
-                    if let std::collections::hash_map::Entry::Vacant(entry) =
-                        settings.bindings.entry(key.clone())
-                    {
-                        debug!("Adding missing binding: {}", key);
-                        entry.insert(value);
-                        updated = true;
-                    }
-                }
-
-                if updated {
-                    debug!("Settings updated with new bindings");
-                    store.set("settings", serde_json::to_value(&settings).unwrap());
-                }
-
-                settings
+        .ok()?;
+    let value = store.get("settings")?;
+    match serde_json::from_value::<AppSettings>(value) {
+        Ok(mut settings) => {
+            // Backfill any bindings / providers added since the legacy store was last
+            // written so the migrated `core` is complete.
+            let default_settings = get_default_settings();
+            for (key, binding) in default_settings.bindings {
+                settings.bindings.entry(key).or_insert(binding);
             }
-            Err(e) => {
-                warn!("Failed to parse settings: {}", e);
-                // Fall back to default settings if parsing fails
-                let default_settings = get_default_settings();
-                store.set("settings", serde_json::to_value(&default_settings).unwrap());
-                default_settings
-            }
+            ensure_post_process_defaults(&mut settings);
+            Some(settings)
         }
-    } else {
-        let default_settings = get_default_settings();
-        store.set("settings", serde_json::to_value(&default_settings).unwrap());
-        default_settings
-    };
-
-    if ensure_post_process_defaults(&mut settings) {
-        store.set("settings", serde_json::to_value(&settings).unwrap());
+        Err(e) => {
+            warn!("Failed to parse legacy settings_store.json: {}", e);
+            None
+        }
     }
+}
 
-    settings
+/// SINGLE-STORE BRIDGE: `AppSettings` is no longer a separately-persisted file —
+/// it is a derived view over `WinsttSettings.core` (persisted in
+/// `winstt-settings.json`). This reads the embedded `core`, backfills any newly
+/// added default bindings / post-process providers (the merge the old loader did),
+/// and returns it with secrets OPENED (the WinSTT read path decrypts them).
+pub fn load_or_create_app_settings(app: &AppHandle) -> AppSettings {
+    // The WinSTT store is seeded/migrated in lib.rs setup before this runs; reading
+    // it here also tolerates a not-yet-seeded store (defaults).
+    get_settings(app)
 }
 
 pub fn get_settings(app: &AppHandle) -> AppSettings {
-    let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
-
-    let mut settings = if let Some(settings_value) = store.get("settings") {
-        serde_json::from_value::<AppSettings>(settings_value).unwrap_or_else(|_| {
-            let default_settings = get_default_settings();
-            store.set("settings", serde_json::to_value(&default_settings).unwrap());
-            default_settings
-        })
-    } else {
-        let default_settings = get_default_settings();
-        store.set("settings", serde_json::to_value(&default_settings).unwrap());
-        default_settings
-    };
-
-    if ensure_post_process_defaults(&mut settings) {
-        store.set("settings", serde_json::to_value(&settings).unwrap());
+    // `read_settings` opens the secret fields (incl. the embedded post-process API
+    // keys), so the returned `core` is plaintext — exactly what every legacy reader
+    // expects from the old store.
+    let mut settings = crate::winstt::commands::settings::read_settings(app).core;
+    let default_settings = get_default_settings();
+    let mut updated = false;
+    for (key, binding) in default_settings.bindings {
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            settings.bindings.entry(key.clone())
+        {
+            debug!("Adding missing binding: {}", key);
+            entry.insert(binding);
+            updated = true;
+        }
     }
-
+    if ensure_post_process_defaults(&mut settings) {
+        updated = true;
+    }
+    if updated {
+        // Persist the backfilled bindings / providers back into the single store so
+        // the merge isn't recomputed on every read.
+        write_settings(app, settings.clone());
+    }
     settings
 }
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
-    let store = app
-        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
-        .expect("Failed to initialize store");
-
-    store.set("settings", serde_json::to_value(&settings).unwrap());
-    // Flush to disk so the AppSettings store has the same durability semantics as the WinSTT
-    // store (winstt/commands/settings.rs::write_settings_value calls store.save()). Without
-    // this, a write could live only in the in-memory store and be lost if the process exits
-    // before the plugin's auto-save (e.g. a crash right after a settings change).
-    if let Err(e) = store.save() {
+    // Route the mutation back into the single store: read the current WinSTT tree
+    // (raw — secrets still sealed so we don't re-seal already-sealed string secrets),
+    // graft the new `core` on, re-seal, and persist. We open+reseal here via the
+    // WinSTT persistence API so the embedded post-process API keys land encrypted.
+    if let Err(e) = crate::winstt::commands::settings::write_core_settings(app, settings) {
         warn!("Failed to persist settings to disk: {}", e);
     }
 }
