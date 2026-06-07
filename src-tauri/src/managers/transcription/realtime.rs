@@ -10,6 +10,7 @@ use super::{
     SILENCE_AC_FLOOR,
 };
 use crate::winstt::stt::SttResult;
+use crate::winstt::sync_ext::MutexExt;
 use log::{info, warn};
 
 impl TranscriptionManager {
@@ -255,7 +256,7 @@ impl TranscriptionManager {
                 covered,
                 raw_text.chars().count()
             );
-            *self.realtime_reuse.lock().unwrap() = Some(RealtimeReuse {
+            *self.realtime_reuse.lock_recover() = Some(RealtimeReuse {
                 generation,
                 covered,
                 raw_text,
@@ -293,7 +294,7 @@ impl TranscriptionManager {
         if raw_text.trim().is_empty() {
             return;
         }
-        *self.realtime_reuse.lock().unwrap() = Some(RealtimeReuse {
+        *self.realtime_reuse.lock_recover() = Some(RealtimeReuse {
             generation,
             covered,
             raw_text: raw_text.to_string(),
@@ -304,7 +305,7 @@ impl TranscriptionManager {
     /// Preview-before-pasting needs a fresh batch decode so the editable/rewrite
     /// surface starts from the main finalization path, not the live preview cache.
     pub fn clear_realtime_reuse(&self) {
-        let _ = self.realtime_reuse.lock().unwrap().take();
+        let _ = self.realtime_reuse.lock_recover().take();
     }
 
     /// Satisfy the FINAL transcription by REUSING the realtime worker's last full-buffer decode —
@@ -329,7 +330,7 @@ impl TranscriptionManager {
         // Consume the cache after the capability wait above. For native streaming, that wait also
         // lets an in-flight realtime `stream_accept` publish the newest covered sample count before
         // finalization computes and feeds the remaining tail.
-        let entry = self.realtime_reuse.lock().unwrap().take()?;
+        let entry = self.realtime_reuse.lock_recover().take()?;
         if !capabilities.final_reuse_safe {
             return None;
         }

@@ -39,26 +39,19 @@ const MAX_NEW_TOKENS: usize = 256;
 const REPETITION_PENALTY: f32 = 1.2;
 const DEFAULT_EXAGGERATION: f32 = 0.5;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ChatterboxError {
+    #[error("chatterbox assets missing: {0}")]
     AssetsMissing(String),
+    #[error("chatterbox session error: {0}")]
     Session(String),
+    #[error("chatterbox tokenizer error: {0}")]
     Tokenizer(String),
+    #[error("chatterbox audio error: {0}")]
     Audio(String),
+    #[error("chatterbox inference error: {0}")]
     Inference(String),
 }
-impl std::fmt::Display for ChatterboxError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ChatterboxError::AssetsMissing(m) => write!(f, "chatterbox assets missing: {m}"),
-            ChatterboxError::Session(m) => write!(f, "chatterbox session error: {m}"),
-            ChatterboxError::Tokenizer(m) => write!(f, "chatterbox tokenizer error: {m}"),
-            ChatterboxError::Audio(m) => write!(f, "chatterbox audio error: {m}"),
-            ChatterboxError::Inference(m) => write!(f, "chatterbox inference error: {m}"),
-        }
-    }
-}
-impl std::error::Error for ChatterboxError {}
 pub type ChatterboxResult<T> = Result<T, ChatterboxError>;
 
 type NamedInput = (Cow<'static, str>, SessionInputValue<'static>);

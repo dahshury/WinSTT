@@ -9,6 +9,8 @@ use std::time::Instant;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
+use crate::winstt::sync_ext::MutexExt;
+
 // ── Aggregate progress across the planned files of one quant download ──────────────────────────
 
 /// Folds per-file `(bytes_completed, total_bytes)` deltas into a model-level running total. Each
@@ -31,7 +33,7 @@ impl ProgressAgg {
 
     /// Update one file's live byte counts from an hf-hub progress event.
     pub(super) fn update_file(&self, name: &str, completed: u64, total: u64) {
-        let mut m = self.files.lock().expect("progress agg poisoned");
+        let mut m = self.files.lock_recover();
         let slot = m.entry(name.to_string()).or_insert((0, 0));
         slot.0 = completed.max(slot.0);
         if total > slot.1 {
@@ -43,13 +45,13 @@ impl ProgressAgg {
     /// learned via the cache-hit fast-path; for our purposes we treat cached files as size 0 here
     /// and let live downloads dominate the bar — the final `complete` event is authoritative).
     pub(super) fn mark_file_cached(&self, name: &str) {
-        let mut m = self.files.lock().expect("progress agg poisoned");
+        let mut m = self.files.lock_recover();
         m.entry(name.to_string()).or_insert((0, 0));
     }
 
     /// Mark a file complete: clamp completed == total.
     pub(super) fn mark_file_complete(&self, name: &str) {
-        let mut m = self.files.lock().expect("progress agg poisoned");
+        let mut m = self.files.lock_recover();
         if let Some(slot) = m.get_mut(name) {
             if slot.1 > 0 {
                 slot.0 = slot.1;
@@ -59,7 +61,7 @@ impl ProgressAgg {
 
     /// Aggregate `(downloaded, total)` across all tracked files.
     pub(super) fn totals(&self) -> (u64, u64) {
-        let m = self.files.lock().expect("progress agg poisoned");
+        let m = self.files.lock_recover();
         let mut down = 0u64;
         let mut total = 0u64;
         for (c, t) in m.values() {

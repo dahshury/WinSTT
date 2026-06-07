@@ -40,6 +40,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::managers::transcription::TranscriptionManager;
+use crate::winstt::sync_ext::MutexExt;
 
 /// Auto-clear delay: once every row is terminal the queue clears itself after
 /// this delay so the main window returns to the visualizer without a click.
@@ -483,7 +484,7 @@ impl FileTranscribeManager {
     /// proof, matching the event-driven re-pump of the single-threaded the reference
     /// queue this ports.
     fn park(&self) {
-        let gate = self.worker_gate.lock().expect("worker gate poisoned");
+        let gate = self.worker_gate.lock_recover();
         let _ = self
             .cv
             .wait_timeout(gate, std::time::Duration::from_millis(200));
@@ -657,7 +658,7 @@ impl FileTranscribeManager {
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, QueueState> {
-        self.state.lock().expect("file queue state poisoned")
+        self.state.lock_recover()
     }
 
     fn next_counter(&self) -> u64 {

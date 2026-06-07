@@ -1,4 +1,3 @@
-use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -8,22 +7,13 @@ use std::time::{Duration, Instant};
 use reqwest::header::{CONTENT_RANGE, RANGE};
 use reqwest::{Client, StatusCode};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TransferError {
+    #[error("io: {0}")]
     Io(String),
+    #[error("network: {0}")]
     Network(String),
 }
-
-impl fmt::Display for TransferError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TransferError::Io(message) => write!(f, "io: {message}"),
-            TransferError::Network(message) => write!(f, "network: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for TransferError {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferOutcome {

@@ -1,6 +1,7 @@
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::ModelManager;
 use crate::settings::{get_settings, ModelUnloadTimeout};
+use crate::winstt::sync_ext::MutexExt;
 use anyhow::Result;
 use log::{debug, error, info, warn};
 use serde::Serialize;
@@ -187,10 +188,7 @@ impl Drop for LoadingGuard {
     fn drop(&mut self) {
         // Recover a poisoned lock so the loading flag is always cleared (uniform
         // with the manager's poison-recovery discipline); never panic in a Drop.
-        let mut is_loading = self
-            .is_loading
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut is_loading = self.is_loading.lock_recover();
         *is_loading = false;
         self.loading_condvar.notify_all();
     }
@@ -330,7 +328,7 @@ impl TranscriptionManager {
                 }
                 debug!("Idle watcher thread shutting down gracefully");
             });
-            *manager.watcher_handle.lock().unwrap() = Some(handle);
+            *manager.watcher_handle.lock_recover() = Some(handle);
         }
 
         Ok(manager)
@@ -436,7 +434,7 @@ impl Drop for TranscriptionManager {
         self.shutdown_signal.store(true, Ordering::Relaxed);
 
         // Wait for the thread to finish gracefully
-        if let Some(handle) = self.watcher_handle.lock().unwrap().take() {
+        if let Some(handle) = self.watcher_handle.lock_recover().take() {
             if let Err(e) = handle.join() {
                 warn!("Failed to join idle watcher thread: {:?}", e);
             } else {

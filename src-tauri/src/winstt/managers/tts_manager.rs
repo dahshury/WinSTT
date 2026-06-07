@@ -30,6 +30,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::winstt::commands::settings::read_settings;
 use crate::winstt::managers::tts_download_manager::{TtsDownloadErr, TtsDownloadManager};
+use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::model_swap::ModelSwapCoordinator;
 use crate::winstt::settings_schema::{DeviceType, TtsSource as SettingsTtsSource};
 use crate::winstt::tts::catalog::{self, TtsEngineId};
@@ -452,7 +453,7 @@ impl TtsManager {
     /// the engine + its source. Cheap when nothing changed (fingerprint match).
     fn ensure_engine(&self) -> (TtsSource, Arc<dyn TtsEngine>, String) {
         let (source, fingerprint) = self.engine_fingerprint();
-        let mut a = self.active.lock().expect("tts active engine lock");
+        let mut a = self.active.lock_recover();
         let mut outgoing: Option<Arc<dyn TtsEngine>> = None;
         if a.fingerprint != fingerprint || a.source != source {
             let old_fp = a.fingerprint.clone();
@@ -820,7 +821,7 @@ impl TtsManager {
     // ── cancellation ────────────────────────────────────────────────────────
 
     fn cancel_flag(&self, request_id: &str) -> Arc<AtomicBool> {
-        let mut m = self.cancelled.lock().expect("tts cancel lock");
+        let mut m = self.cancelled.lock_recover();
         m.entry(request_id.to_string())
             .or_insert_with(|| Arc::new(AtomicBool::new(false)))
             .clone()

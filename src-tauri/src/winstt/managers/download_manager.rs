@@ -46,6 +46,7 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::winstt::catalog;
+use crate::winstt::sync_ext::MutexExt;
 use crate::winstt::downloads::{
     transfer_url_blocking, TransferControl, TransferOutcome, TransferRequest,
 };
@@ -259,7 +260,7 @@ impl DownloadManager {
         // A cancel-while-queued flips `cancelled`; the worker re-checks it on dequeue before any I/O.
         let k = key(&model, &quantization);
         let (handle, should_enqueue) = {
-            let mut map = self.inflight.lock().expect("download registry poisoned");
+            let mut map = self.inflight.lock_recover();
             match map.get(&k) {
                 Some(h) => {
                     h.paused.store(false, Ordering::Release);
@@ -398,7 +399,7 @@ impl DownloadManager {
         // worker), no worker will ever observe the flag, so settle it HERE (remove + emit complete);
         // otherwise the active worker sees `cancelled` on its next chunk and finishes itself.
         let settle = {
-            let mut map = self.inflight.lock().expect("download registry poisoned");
+            let mut map = self.inflight.lock_recover();
             match map.get(&k) {
                 Some(h) => {
                     h.cancelled.store(true, Ordering::Release);
@@ -429,7 +430,7 @@ impl DownloadManager {
     /// `false` when a resume/cancel already cleared `paused` in the race window, so the worker keeps
     /// going instead of stranding the job.
     fn try_park(&self, handle: &DownloadHandle) -> bool {
-        let _guard = self.inflight.lock().expect("download registry poisoned");
+        let _guard = self.inflight.lock_recover();
         if handle.paused.load(Ordering::Acquire) && !handle.cancelled.load(Ordering::Acquire) {
             handle.parked.store(true, Ordering::Release);
             true
@@ -455,7 +456,7 @@ impl DownloadManager {
         // First, stop any in-flight download for this key (deleting under it would race).
         self.cancel_quant(model, quantization);
         {
-            let mut map = self.inflight.lock().expect("download registry poisoned");
+            let mut map = self.inflight.lock_recover();
             map.remove(&key(model, quantization));
         }
         // Glob the HF cache snapshot for this model and unlink the `.onnx` graphs whose stem carries
@@ -482,7 +483,7 @@ impl DownloadManager {
         // workers see `cancelled` per-chunk and emit themselves.
         let mut parked_removed: Vec<String> = Vec::new();
         {
-            let mut map = self.inflight.lock().expect("download registry poisoned");
+            let mut map = self.inflight.lock_recover();
             map.retain(|k, h| {
                 if k.starts_with(&prefix) {
                     h.cancelled.store(true, Ordering::Release);
@@ -559,7 +560,7 @@ impl DownloadManager {
         probed: &BTreeMap<String, cache_probe::ModelQuantCache>,
     ) -> BTreeMap<String, BTreeMap<String, (CacheState, u64, u64)>> {
         let mut out: BTreeMap<String, BTreeMap<String, (CacheState, u64, u64)>> = BTreeMap::new();
-        let inflight = self.inflight.lock().expect("download registry poisoned");
+        let inflight = self.inflight.lock_recover();
         for m in models {
             let mqc = probed.get(&m.id).cloned().unwrap_or_default();
             let mut by_quant: BTreeMap<String, (CacheState, u64, u64)> = BTreeMap::new();

@@ -44,25 +44,17 @@ pub enum KittenDevice {
     Cpu,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum KittenError {
+    #[error("kitten assets missing: {0}")]
     AssetsMissing(String),
+    #[error("kitten session error: {0}")]
     Session(String),
+    #[error("kitten voice error: {0}")]
     Voice(String),
+    #[error("kitten phonemize error: {0}")]
     Phonemize(String),
 }
-
-impl std::fmt::Display for KittenError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KittenError::AssetsMissing(m) => write!(f, "kitten assets missing: {m}"),
-            KittenError::Session(m) => write!(f, "kitten session error: {m}"),
-            KittenError::Voice(m) => write!(f, "kitten voice error: {m}"),
-            KittenError::Phonemize(m) => write!(f, "kitten phonemize error: {m}"),
-        }
-    }
-}
-impl std::error::Error for KittenError {}
 pub type KittenResult<T> = Result<T, KittenError>;
 
 // ---------------------------------------------------------------------------

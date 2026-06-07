@@ -181,36 +181,27 @@ pub fn clamp_cloud_speed(speed: f32) -> f32 {
 // Errors
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TtsError {
     /// Engine model download could not finish (network).
+    #[error("TTS download failed: {0}")]
     Download(String),
     /// Download/synthesis was paused cooperatively (resume via re-init).
+    #[error("TTS install paused")]
     Paused,
     /// User cancelled — distinct from a real failure.
+    #[error("TTS cancelled")]
     Cancelled,
     /// ONNX session create / inference / G2P failure.
+    #[error("TTS engine error: {0}")]
     Engine(String),
     /// Cloud HTTP / auth / quota error (human-readable, already classified).
+    #[error("{0}")]
     Cloud(String),
     /// Bad input (empty text, unknown voice, etc.).
+    #[error("invalid TTS request: {0}")]
     Invalid(String),
 }
-
-impl std::fmt::Display for TtsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TtsError::Download(m) => write!(f, "TTS download failed: {m}"),
-            TtsError::Paused => write!(f, "TTS install paused"),
-            TtsError::Cancelled => write!(f, "TTS cancelled"),
-            TtsError::Engine(m) => write!(f, "TTS engine error: {m}"),
-            TtsError::Cloud(m) => write!(f, "{m}"),
-            TtsError::Invalid(m) => write!(f, "invalid TTS request: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for TtsError {}
 
 pub type TtsResult<T> = Result<T, TtsError>;
 

@@ -20,6 +20,9 @@ pub mod vad_calibrator;
 /// Shared in-flight request cancel registry (cloud STT / LLM / TTS).
 pub mod cancel_registry;
 
+/// Shared `std::sync::Mutex` poison-recovery idiom (`MutexExt::lock_recover`).
+pub mod sync_ext;
+
 /// Shared audio conditioning for batch STT and streaming wakeword detection.
 pub mod audio_conditioning;
 

@@ -32,24 +32,17 @@ const DEFAULT_NOISE_SCALE: f32 = 0.667;
 const DEFAULT_LENGTH_SCALE: f32 = 1.0;
 const DEFAULT_NOISE_W: f32 = 0.8;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PiperError {
+    #[error("piper assets missing: {0}")]
     AssetsMissing(String),
+    #[error("piper config error: {0}")]
     Config(String),
+    #[error("piper session error: {0}")]
     Session(String),
+    #[error("piper phonemize error: {0}")]
     Phonemize(String),
 }
-impl std::fmt::Display for PiperError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PiperError::AssetsMissing(m) => write!(f, "piper assets missing: {m}"),
-            PiperError::Config(m) => write!(f, "piper config error: {m}"),
-            PiperError::Session(m) => write!(f, "piper session error: {m}"),
-            PiperError::Phonemize(m) => write!(f, "piper phonemize error: {m}"),
-        }
-    }
-}
-impl std::error::Error for PiperError {}
 pub type PiperResult<T> = Result<T, PiperError>;
 
 /// Parsed `{voice}.onnx.json`.

@@ -57,29 +57,18 @@ use resolve::{resolve_espeak_data_home, strip_unc_prefix};
 pub const MAX_PHONEME_LENGTH: usize = 510;
 
 /// Errors from the G2P stage.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PhonemizeError {
     /// The `espeak-ng` binary is not on PATH / failed to spawn.
+    #[error("espeak-ng unavailable: {0}")]
     EspeakUnavailable(String),
     /// `espeak-ng` ran but exited non-zero / produced no usable output.
+    #[error("espeak-ng failed: {0}")]
     EspeakFailed(String),
     /// Phoneme sequence exceeds `MAX_PHONEME_LENGTH` after vocab filtering.
+    #[error("phoneme sequence too long ({0} > {MAX_PHONEME_LENGTH})")]
     TooLong(usize),
 }
-
-impl std::fmt::Display for PhonemizeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PhonemizeError::EspeakUnavailable(m) => write!(f, "espeak-ng unavailable: {m}"),
-            PhonemizeError::EspeakFailed(m) => write!(f, "espeak-ng failed: {m}"),
-            PhonemizeError::TooLong(n) => {
-                write!(f, "phoneme sequence too long ({n} > {MAX_PHONEME_LENGTH})")
-            }
-        }
-    }
-}
-
-impl std::error::Error for PhonemizeError {}
 
 pub type PhonemizeResult<T> = Result<T, PhonemizeError>;
 

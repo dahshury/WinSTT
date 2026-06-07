@@ -18,6 +18,7 @@ use crate::audio_toolkit::{
     vad::{self, VadFrame},
     VoiceActivityDetector,
 };
+use crate::winstt::sync_ext::MutexExt;
 
 enum Cmd {
     Start,
@@ -366,7 +367,7 @@ impl AudioRecorder {
     /// has been captured since the last Cmd::Start. O(N) clone — kept for back-compat; the
     /// realtime worker uses `snapshot_from` (O(new samples)) instead.
     pub fn snapshot_recorded(&self) -> Vec<f32> {
-        self.live_audio.lock().unwrap().clone()
+        self.live_audio.lock_recover().clone()
     }
 
     /// Snapshot only the TAIL of the live recording mirror past `offset` samples, plus the
@@ -376,7 +377,7 @@ impl AudioRecorder {
     /// instead of O(N) — eliminating the O(N²)-per-utterance full-buffer clone on every tick.
     /// Indices the caller derives from absolute frame numbers must be re-based by `offset`.
     pub fn snapshot_from(&self, offset: usize) -> (usize, Vec<f32>) {
-        let mirror = self.live_audio.lock().unwrap();
+        let mirror = self.live_audio.lock_recover();
         let total = mirror.len();
         let tail = if offset < total {
             mirror[offset..].to_vec()
@@ -661,7 +662,7 @@ fn publish_realtime_audio_progress(
     len: usize,
 ) {
     let (lock, cvar) = &**signal;
-    let mut progress = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut progress = lock.lock_recover();
     progress.len = len;
     progress.version = progress.version.wrapping_add(1);
     drop(progress);
@@ -828,7 +829,7 @@ fn run_consumer(
         if recording && realtime_enabled.load(Ordering::Relaxed) {
             if let Some(mirror) = &live_audio {
                 let new_len = {
-                    let mut m = mirror.lock().unwrap();
+                    let mut m = mirror.lock_recover();
                     let mirrored = m.len();
                     if processed_samples.len() > mirrored {
                         m.extend_from_slice(&processed_samples[mirrored..]);
@@ -852,7 +853,7 @@ fn run_consumer(
                     // Clear the realtime mirror in lock-step so the worker's first snapshot of
                     // the new recording starts empty (no stale tail from the previous take).
                     if let Some(mirror) = &live_audio {
-                        mirror.lock().unwrap().clear();
+                        mirror.lock_recover().clear();
                     }
                     publish_realtime_audio_progress(&realtime_audio_signal, 0);
                     recording = true;
@@ -908,7 +909,7 @@ fn run_consumer(
                     // the previous utterance). Cmd::Start also clears it; doing it here too frees
                     // the second copy immediately and closes the cross-recording snapshot window.
                     if let Some(mirror) = &live_audio {
-                        mirror.lock().unwrap().clear();
+                        mirror.lock_recover().clear();
                     }
                     publish_realtime_audio_progress(&realtime_audio_signal, 0);
 

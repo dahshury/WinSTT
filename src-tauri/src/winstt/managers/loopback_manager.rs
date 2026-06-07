@@ -43,6 +43,7 @@ use crate::winstt::commands::settings::read_settings_raw;
 use crate::winstt::loopback::LoopbackCapture;
 use crate::winstt::managers::DiarizationManager;
 use crate::winstt::stt::backend::fixed_realtime_language_from_model;
+use crate::winstt::sync_ext::MutexExt;
 
 /// Silence (seconds) after speech that closes the current loopback tail. Rolling
 /// commits are the primary finalization path for continuous listen-mode audio.
@@ -158,7 +159,7 @@ impl LoopbackManager {
 
         // Open WASAPI loopback (resolves device + surfaces open errors here).
         {
-            let mut capture = self.capture.lock().unwrap();
+            let mut capture = self.capture.lock_recover();
             capture
                 .start(None, tx)
                 .map_err(|e| format!("failed to start loopback capture: {e}"))?;
@@ -174,11 +175,11 @@ impl LoopbackManager {
             })
             .map_err(|e| {
                 // Roll back the capture if the consumer thread couldn't spawn.
-                self.capture.lock().unwrap().stop();
+                self.capture.lock_recover().stop();
                 format!("failed to spawn loopback consumer: {e}")
             })?;
 
-        *self.consumer.lock().unwrap() = Some(handle);
+        *self.consumer.lock_recover() = Some(handle);
         self.capturing.store(true, Ordering::Release);
         Ok(())
     }
@@ -190,9 +191,9 @@ impl LoopbackManager {
 
         // Stop the WASAPI capture first; this closes the channel so the consumer
         // loop's recv() returns and the thread winds down.
-        self.capture.lock().unwrap().stop();
+        self.capture.lock_recover().stop();
 
-        if let Some(handle) = self.consumer.lock().unwrap().take() {
+        if let Some(handle) = self.consumer.lock_recover().take() {
             let _ = handle.join();
         }
     }

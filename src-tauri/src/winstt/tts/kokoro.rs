@@ -48,30 +48,21 @@ pub enum KokoroDevice {
     Cpu,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum KokoroError {
     /// A model file is missing and `download_assets` was not run / failed.
+    #[error("kokoro assets missing: {0}")]
     AssetsMissing(String),
     /// ONNX session create / inference failure.
+    #[error("kokoro session error: {0}")]
     Session(String),
     /// Voice pack parse / unknown voice / token-length overflow.
+    #[error("kokoro voice error: {0}")]
     Voice(String),
     /// G2P (phonemize) failed.
+    #[error("kokoro phonemize error: {0}")]
     Phonemize(String),
 }
-
-impl std::fmt::Display for KokoroError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KokoroError::AssetsMissing(m) => write!(f, "kokoro assets missing: {m}"),
-            KokoroError::Session(m) => write!(f, "kokoro session error: {m}"),
-            KokoroError::Voice(m) => write!(f, "kokoro voice error: {m}"),
-            KokoroError::Phonemize(m) => write!(f, "kokoro phonemize error: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for KokoroError {}
 
 pub type KokoroResult<T> = Result<T, KokoroError>;
 

@@ -78,26 +78,17 @@ pub const SUPERTONIC_LANGUAGES: &[(&str, &str)] = &[
     ("vi", "Vietnamese"),
 ];
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SupertonicError {
+    #[error("supertonic assets missing: {0}")]
     AssetsMissing(String),
+    #[error("supertonic session error: {0}")]
     Session(String),
+    #[error("supertonic voice error: {0}")]
     Voice(String),
+    #[error("supertonic inference error: {0}")]
     Inference(String),
 }
-
-impl std::fmt::Display for SupertonicError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SupertonicError::AssetsMissing(m) => write!(f, "supertonic assets missing: {m}"),
-            SupertonicError::Session(m) => write!(f, "supertonic session error: {m}"),
-            SupertonicError::Voice(m) => write!(f, "supertonic voice error: {m}"),
-            SupertonicError::Inference(m) => write!(f, "supertonic inference error: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for SupertonicError {}
 
 pub type SupertonicResult<T> = Result<T, SupertonicError>;
 
