@@ -131,10 +131,11 @@ $Assets = @($WindowsInstaller, $WindowsPortableZip)
 $WindowsSignature = Get-ChildItem -LiteralPath $AssetsRoot -Recurse -File -Filter "*.exe.sig" |
     Sort-Object FullName |
     Select-Object -First 1
-if ($null -eq $WindowsSignature) {
-    throw "Missing Windows updater signature (*.exe.sig) under: $AssetsRoot"
+if ($null -ne $WindowsSignature) {
+    $Assets += $WindowsSignature
+} else {
+    Write-Warning "Missing Windows updater signature (*.exe.sig) under: $AssetsRoot; latest.json will not be generated."
 }
-$Assets += $WindowsSignature
 
 $LinuxAssets = @(
     Get-ChildItem -LiteralPath $AssetsRoot -Recurse -File |
@@ -154,23 +155,27 @@ if ($null -eq $LinuxAppImage) {
     throw "Missing Linux AppImage updater asset under: $AssetsRoot"
 }
 $LinuxSignaturePath = "$($LinuxAppImage.FullName).sig"
-if (-not (Test-Path -LiteralPath $LinuxSignaturePath)) {
-    throw "Missing Linux AppImage updater signature: $LinuxSignaturePath"
+$LinuxSignature = $null
+if (Test-Path -LiteralPath $LinuxSignaturePath) {
+    $LinuxSignature = Get-Item -LiteralPath $LinuxSignaturePath
+} else {
+    Write-Warning "Missing Linux AppImage updater signature: $LinuxSignaturePath; latest.json will not be generated."
 }
-$LinuxSignature = Get-Item -LiteralPath $LinuxSignaturePath
 
-$LatestJson = Join-Path $AssetsRoot "latest.json"
-$Manifest = New-UpdaterManifest `
-    -Repository $Repository `
-    -Tag $Tag `
-    -Version $Version `
-    -Notes $Notes `
-    -WindowsAsset $WindowsInstaller `
-    -WindowsSignature $WindowsSignature `
-    -LinuxAppImage $LinuxAppImage `
-    -LinuxSignature $LinuxSignature
-$Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LatestJson -Encoding utf8
-$Assets += Get-Item -LiteralPath $LatestJson
+if ($null -ne $WindowsSignature -and $null -ne $LinuxSignature) {
+    $LatestJson = Join-Path $AssetsRoot "latest.json"
+    $Manifest = New-UpdaterManifest `
+        -Repository $Repository `
+        -Tag $Tag `
+        -Version $Version `
+        -Notes $Notes `
+        -WindowsAsset $WindowsInstaller `
+        -WindowsSignature $WindowsSignature `
+        -LinuxAppImage $LinuxAppImage `
+        -LinuxSignature $LinuxSignature
+    $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $LatestJson -Encoding utf8
+    $Assets += Get-Item -LiteralPath $LatestJson
+}
 $Assets = @($Assets | Sort-Object FullName -Unique)
 
 if ($DryRun) {

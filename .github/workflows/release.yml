@@ -95,7 +95,7 @@ jobs:
           if ($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
             $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD.TrimStart([char]0xFEFF).TrimEnd("`r", "`n")
           }
-          tools\windows\tauri-build.ps1 -Bundles nsis
+          tools\windows\tauri-build.ps1 -Bundles nsis -Config tools\tauri-ci-artifacts.conf.json
 
       - name: Collect portable Windows artifacts
         shell: pwsh
@@ -163,7 +163,6 @@ jobs:
 
       - name: Build Linux artifacts
         env:
-          TAURI_BUNDLE_CONFIG: none
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
