@@ -88,7 +88,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: tools\windows\tauri-build.ps1 -Bundles nsis
+        run: |
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            $env:TAURI_SIGNING_PRIVATE_KEY = $env:TAURI_SIGNING_PRIVATE_KEY.TrimStart([char]0xFEFF)
+          }
+          tools\windows\tauri-build.ps1 -Bundles nsis
 
       - name: Collect portable Windows artifacts
         shell: pwsh
@@ -159,7 +163,12 @@ jobs:
           TAURI_BUNDLE_CONFIG: none
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bash tools/linux/tauri-bundles.sh
+        run: |
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY#$'\xef\xbb\xbf'}"
+            export TAURI_SIGNING_PRIVATE_KEY
+          fi
+          bash tools/linux/tauri-bundles.sh
 
       - name: Upload Linux artifacts to workflow run
         uses: actions/upload-artifact@v4
