@@ -526,7 +526,7 @@ async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>>
 }
 },
 /**
- * Checks if Windows reports a built-in lid switch.
+ * Stub implementation for Linux and other unsupported platforms.
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {

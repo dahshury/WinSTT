@@ -233,8 +233,15 @@ export function ipcClientMock(): Record<string, unknown> {
     windowCloseSelf: () => send(IPC.WINDOW_CLOSE_SELF),
 
     // STT event subscriptions
-    onRealtimeText: (cb: (t: string) => void) =>
-      onTyped(IPC.STT_REALTIME_TEXT, (d: { text: string }) => d.text, cb),
+    onRealtimeText: (cb: (payload: { text: string; isFinal: boolean }) => void) =>
+      onTyped(
+        IPC.STT_REALTIME_TEXT,
+        (d: { text: string; isFinal?: boolean; is_final?: boolean }) => ({
+          text: d.text,
+          isFinal: d.isFinal ?? d.is_final ?? false,
+        }),
+        cb,
+      ),
     onFullSentence: (cb: (t: string) => void) =>
       onTyped(IPC.STT_FULL_SENTENCE, (d: { text: string }) => d.text, cb),
     onNoAudioDetected: (cb: () => void) => on(IPC.STT_NO_AUDIO_DETECTED, cb),
@@ -638,6 +645,12 @@ export function ipcClientMock(): Record<string, unknown> {
         IPC.SOUND_LIBRARY_ADD,
         { ok: false, error: "IPC unavailable" },
         { sourcePath, name },
+      ),
+    soundLibraryPickAndAdd: (name?: string) =>
+      invokeOrDefault<unknown>(
+        IPC.SOUND_LIBRARY_PICK_AND_ADD,
+        { ok: false, error: "IPC unavailable" },
+        { name },
       ),
     soundLibraryRemove: (filePath: string) =>
       invokeOrDefault<unknown>(

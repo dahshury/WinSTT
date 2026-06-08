@@ -235,7 +235,8 @@ mod tests {
                 llm_meta TEXT,
                 dictionary_fixes INTEGER,
                 history_tag TEXT,
-                privacy_markers_json TEXT
+                privacy_markers_json TEXT,
+                stt_model TEXT
             );",
         )
         .expect("create transcription_history table");

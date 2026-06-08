@@ -236,6 +236,7 @@ pub fn build_loopback_ollama_api_url(endpoint: &str, api_path: &str) -> Result<S
 }
 
 fn is_loopback_ollama_host(host: &str) -> bool {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
     if host.eq_ignore_ascii_case("localhost") {
         return true;
     }

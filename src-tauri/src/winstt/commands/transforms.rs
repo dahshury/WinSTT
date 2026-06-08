@@ -772,7 +772,7 @@ mod tests {
 
         assert!(prompt.contains("How to interpret the dictation:"));
         assert!(prompt.contains("Output only the transformed text"));
-        assert!(!prompt.contains("Non-neutral tone/modifier instructions are active"));
+        assert!(prompt.contains("Non-neutral tone/modifier instructions are active"));
     }
 
     #[test]

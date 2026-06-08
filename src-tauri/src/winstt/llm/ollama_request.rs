@@ -468,7 +468,7 @@ mod tests {
         assert!(body["messages"][0]["content"]
             .as_str()
             .unwrap()
-            .contains("fill every side-channel field"));
+            .contains(OLLAMA_SIDE_EFFECT_SCHEMA_INSTRUCTION_ENABLED));
         assert!(body.get("tools").is_none());
     }
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, renderHook } from "@testing-library/react";
 import { useSettingsStore } from "@/entities/setting";
+import { IPC } from "@/shared/api/ipc-channels";
 import type { SoundLibraryEntry } from "@/shared/config/settings-schema";
 import { MAX_CUSTOM_SOUNDS } from "../model/recording-sound";
 import { useSoundLibrary } from "./use-sound-library";
@@ -58,7 +59,18 @@ function installStub(): void {
 		getPathForFile: () => "",
 		send: () => undefined,
 		on: () => () => undefined,
-		invoke: async () => undefined,
+		invoke: async (channel: string) => {
+			if (channel === IPC.SOUND_LIBRARY_ADD) {
+				return addResult;
+			}
+			if (channel === IPC.SOUND_LIBRARY_PICK_AND_ADD) {
+				return pickResult;
+			}
+			if (channel === IPC.SOUND_LIBRARY_REMOVE) {
+				return removeResult;
+			}
+			return;
+		},
 	};
 }
 

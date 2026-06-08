@@ -5,6 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 config="${TAURI_BUNDLE_CONFIG:-$repo_root/tools/tauri-ci-artifacts.conf.json}"
 output_dir="$repo_root/dist/linux"
+bundle_dir="$repo_root/src-tauri/target/release/bundle"
 
 cd "$repo_root"
 
@@ -16,13 +17,15 @@ if [ "$config" != "none" ]; then
   build_args+=(--config "$config")
 fi
 
+rm -rf "$bundle_dir/appimage" "$bundle_dir/deb" "$bundle_dir/rpm"
+
 bun run tauri build "${build_args[@]}"
 
 rm -rf "$output_dir"
 mkdir -p "$output_dir"
 
 mapfile -d '' artifacts < <(
-  find "$repo_root/src-tauri/target/release/bundle" -type f \
+  find "$bundle_dir" -type f \
     \( -name '*.AppImage' -o -name '*.AppImage.sig' -o -name '*.deb' -o -name '*.rpm' \) \
     -print0
 )

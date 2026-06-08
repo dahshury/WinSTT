@@ -77,6 +77,10 @@ function fire(channel: string, ...args: unknown[]) {
 	}
 }
 
+function matchesHistoryRead(cmd: string, channel: string, tauriCommand: string) {
+	return cmd === channel || cmd === tauriCommand;
+}
+
 describe("useTranscriptionHistorySync", () => {
 	test("subscribes to history:added on mount", () => {
 		renderHook(() => useTranscriptionHistorySync());
@@ -86,7 +90,7 @@ describe("useTranscriptionHistorySync", () => {
 	test("hydrates the store from history:get-all on mount", async () => {
 		invokeImpl = (cmd) =>
 			Promise.resolve(
-				cmd === "history_get_all"
+				matchesHistoryRead(cmd, IPC.HISTORY_GET_ALL, "history_get_all")
 					? [
 							{
 								id: "a",
@@ -110,7 +114,11 @@ describe("useTranscriptionHistorySync", () => {
 	test("hydrates transform history on mount", async () => {
 		invokeImpl = (cmd) =>
 			Promise.resolve(
-				cmd === "transform_history_get_all"
+				matchesHistoryRead(
+					cmd,
+					IPC.TRANSFORM_HISTORY_GET_ALL,
+					"transform_history_get_all",
+				)
 					? [
 							{
 								durationMs: 0,

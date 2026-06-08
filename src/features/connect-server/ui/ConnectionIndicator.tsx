@@ -203,11 +203,11 @@ function GpuChip({ isGpu, gpuName, resource, t }: GpuChipProps): ReactNode {
 					className="absolute inset-0 bg-[linear-gradient(180deg,oklch(100%_0_0_/_0.055),transparent_62%)]"
 				/>
 				<HugeiconsIcon
-					className={cn("relative z-[1]", colorClass)}
+					className={cn("relative z-raised", colorClass)}
 					icon={icon}
 					size={12}
 				/>
-				<span className={cn("relative z-[1] font-medium text-2xs", colorClass)}>
+				<span className={cn("relative z-raised font-medium text-2xs", colorClass)}>
 					{label}
 				</span>
 			</output>

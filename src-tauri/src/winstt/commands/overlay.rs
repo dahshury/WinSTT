@@ -83,10 +83,10 @@ const FLOATING_BOTTOM_GAP: f64 = 60.0;
 #[derive(Clone, Debug, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct OverlayHitRect {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// Resolved screen-edge for the overlay. Ports `resolveOverlayPosition`: "auto"
