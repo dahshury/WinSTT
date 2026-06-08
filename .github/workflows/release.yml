@@ -122,6 +122,7 @@ jobs:
             curl \
             file \
             fuse \
+            libasound2-dev \
             libayatana-appindicator3-dev \
             libfuse2 \
             libgtk-3-dev \
