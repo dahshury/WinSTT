@@ -92,6 +92,9 @@ jobs:
           if ($env:TAURI_SIGNING_PRIVATE_KEY) {
             $env:TAURI_SIGNING_PRIVATE_KEY = $env:TAURI_SIGNING_PRIVATE_KEY.TrimStart([char]0xFEFF)
           }
+          if ($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+            $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD.TrimStart([char]0xFEFF).TrimEnd("`r", "`n")
+          }
           tools\windows\tauri-build.ps1 -Bundles nsis
 
       - name: Collect portable Windows artifacts
@@ -167,6 +170,11 @@ jobs:
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
             TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY#$'\xef\xbb\xbf'}"
             export TAURI_SIGNING_PRIVATE_KEY
+          fi
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD#$'\xef\xbb\xbf'}"
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" | tr -d '\r\n')"
+            export TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           fi
           bash tools/linux/tauri-bundles.sh
 
