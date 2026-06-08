@@ -107,7 +107,7 @@ jobs:
   linux:
     name: Build Linux bundle artifacts
     needs: metadata
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
